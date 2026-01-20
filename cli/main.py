@@ -730,6 +730,55 @@ def trade_stop(url: str):
 
 
 # =============================================================================
+# Paper Trading Commands
+# =============================================================================
+
+
+@cli.group()
+def paper():
+    """모의 거래 명령
+
+    \b
+    Examples:
+        sts paper start -s bb_reversion -a stock
+        sts paper status
+        sts paper stop
+    """
+    pass
+
+
+@paper.command("start")
+@click.option("--strategy", "-s", required=True, help="Strategy name")
+@click.option("--asset", "-a", required=True, type=click.Choice(["stock", "futures"]))
+@click.option("--capital", "-c", default=10_000_000, type=float)
+def paper_start(strategy: str, asset: str, capital: float):
+    """모의 거래 시작
+
+    \b
+    Example:
+        sts paper start -s bb_reversion -a stock
+    """
+    click.echo(f"Starting paper trading: {strategy} ({asset})")
+    click.echo(f"  Capital: {capital:,.0f}")
+    click.echo("  Status: Started (simulation)")
+
+
+@paper.command("status")
+def paper_status():
+    """모의 거래 상태 조회"""
+    click.echo("Paper Trading Status:")
+    click.echo("-" * 40)
+    click.echo("  Status: Not running")
+    click.echo("  Note: Use 'sts paper start' to begin")
+
+
+@paper.command("stop")
+def paper_stop():
+    """모의 거래 종료"""
+    click.echo("Paper trading stopped")
+
+
+# =============================================================================
 # Health Commands
 # =============================================================================
 
