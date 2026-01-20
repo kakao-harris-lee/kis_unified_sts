@@ -150,6 +150,50 @@ pytest tests/ -v --cov=shared
 
 - `KIS_APP_KEY`, `KIS_APP_SECRET` - KIS API credentials
 - `KIS_CONFIG_DIR` - Override config directory path
+- `OPENAI_API_KEY` - OpenAI API key for LLM analysis
+- `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` - Telegram notifications
+- `DART_API_KEY` - DART 전자공시 API key
+
+## LLM Market Analysis Module
+
+The `shared/llm/` module provides OpenAI GPT-based market analysis with Korean financial data collectors.
+
+### Data Sources
+
+| Source | URL | Data |
+|--------|-----|------|
+| pykrx | - | 주식 시세 (기본) |
+| KRX | data.krx.co.kr | 거래소 공식, 투자자별 동향 |
+| SEIBRO | seibro.or.kr | 증권정보, 배당, 주주현황 |
+| DART | dart.fss.or.kr | 공시정보, 재무제표 |
+| KSD | ksd.or.kr | 공매도, 대차잔고 |
+| MK Stock | stock.mk.co.kr | 증권뉴스, 감성분석 |
+
+### Usage
+
+```python
+from shared.llm import run_unified_analysis, get_stock_detail_briefing
+from shared.notification import TelegramNotifier
+
+# 통합 분석 실행
+notifier = TelegramNotifier()
+stock_plans, futures_plan, data = await run_unified_analysis(
+    notifier=notifier,
+    mode='all',
+    send_telegram=True
+)
+
+# 개별 종목 상세 브리핑
+briefing = await get_stock_detail_briefing("005930", notifier=notifier)
+```
+
+### Cron Scripts
+
+| Script | Time | Description |
+|--------|------|-------------|
+| `scripts/analysis/llm_nightly_analysis.py` | 21:00 | 익일 트레이딩 분석 |
+| `scripts/analysis/llm_premarket_briefing.py` | 08:30 | 장전 최종 브리핑 |
+| `scripts/analysis/llm_market_close_briefing.py` | 15:30 | 장 마감 요약 |
 
 ## Key Patterns
 

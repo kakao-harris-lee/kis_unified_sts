@@ -1,0 +1,37 @@
+# LLM Market Analysis Configuration
+# 환경변수로 덮어쓸 수 있음: OPENAI_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, DART_API_KEY
+
+openai:
+  # OpenAI API 설정
+  model: "gpt-4o-mini"
+  max_tokens: 1500
+  temperature: 0.3
+
+stock:
+  # 주식 스크리닝 필터
+  min_price: 5000           # 최소 주가 (원)
+  max_price: 500000         # 최대 주가 (원)
+  min_market_cap: 500000000000    # 최소 시가총액 (5000억)
+  max_market_cap: 100000000000000 # 최대 시가총액 (100조)
+  top_n_volume: 20          # 거래량 상위 N개 분석
+  final_selection: 5        # 최종 추천 종목 수
+  backtest_days: 60         # 백테스트 기간 (일)
+  max_position: 0.2         # 최대 포지션 비율 (20%)
+
+futures:
+  # 선물 분석 가중치
+  weight_global: 0.4        # 글로벌 시장 가중치
+  weight_flow: 0.35         # 수급 가중치
+  weight_technical: 0.25    # 기술적 분석 가중치
+  stop_loss_pt: 3.0         # 손절 포인트
+  take_profit_pt: 5.0       # 익절 포인트
+
+notification:
+  # 알림 시간대 설정
+  start_time: "08:30"
+  end_time: "15:40"
+  critical_always: true     # 중요 알림은 시간 제한 무시
+
+output:
+  # 분석 결과 저장 경로
+  dir: "output/llm"

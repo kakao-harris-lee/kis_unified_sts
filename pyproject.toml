@@ -65,6 +65,12 @@ dependencies = [
 
     # MLflow (Backtesting)
     "mlflow>=2.9",
+
+    # LLM Analysis
+    "openai>=1.0",
+    "python-telegram-bot>=20.0",
+    "pykrx>=1.0",
+    "beautifulsoup4>=4.12",
 ]
 
 [project.optional-dependencies]
