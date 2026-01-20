@@ -1,0 +1,6 @@
+execution:
+  trading_mode: ${TRADING_MODE:PAPER}
+  max_retries: 3
+  retry_delay: 1.0
+  orders_per_second: 5.0
+  account_no: ${KIS_ACCOUNT_NO:}
