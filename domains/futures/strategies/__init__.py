@@ -12,8 +12,16 @@ from domains.futures.strategies.dl_trend import (
     TechnicalData,
     FilterResult,
 )
+from domains.futures.strategies.dual_mode import (
+    DualModeStrategy,
+    DualModeConfig,
+    DualModeEntry,
+    TradingMode,
+    BarData,
+)
 
 __all__ = [
+    # DL Trend
     "DLTrendEntry",
     "DLTrendConfig",
     "EnsembleFilter",
@@ -21,4 +29,10 @@ __all__ = [
     "TechnicalCalculator",
     "TechnicalData",
     "FilterResult",
+    # Dual Mode (from kospi_mini_sts bug fix)
+    "DualModeStrategy",
+    "DualModeConfig",
+    "DualModeEntry",
+    "TradingMode",
+    "BarData",
 ]
