@@ -18,6 +18,12 @@ class OFIConfig(BaseModel):
     threshold: float = Field(default=2.0, description="Z-score threshold for signals")
     min_samples: int = Field(default=10, description="Minimum samples before signals")
 
+    # Liquidity scoring weights
+    spread_weight: float = Field(default=0.4, description="Weight for spread component")
+    depth_weight: float = Field(default=0.4, description="Weight for depth component")
+    balance_weight: float = Field(default=0.2, description="Weight for balance component")
+    default_score: float = Field(default=0.5, description="Default score when data unavailable")
+
 
 class OFICalculator:
     """Calculate Order Flow Imbalance from order book data.
@@ -102,7 +108,10 @@ class OFICalculator:
         return sum(self._ofi_history)
 
     def get_ofi_zscore(self) -> Optional[float]:
-        """Get z-score of current OFI.
+        """Get z-score of the latest tick OFI.
+
+        The z-score measures how extreme the most recent tick OFI is
+        compared to the historical distribution of tick OFIs.
 
         Returns:
             Z-score or None if not enough samples
@@ -117,9 +126,9 @@ class OFICalculator:
         if std == 0:
             return 0.0
 
-        current_ofi = self.get_ofi()
-        # Z-score of cumulative OFI
-        return (current_ofi - mean * len(self._ofi_history)) / (std * np.sqrt(len(self._ofi_history)))
+        # Z-score of the latest tick OFI relative to historical distribution
+        latest_tick_ofi = self._ofi_history[-1]
+        return (latest_tick_ofi - mean) / std
 
     def is_signal(self) -> Tuple[bool, Optional[str]]:
         """Check if OFI indicates a trading signal.
@@ -158,28 +167,34 @@ class OFICalculator:
         Returns:
             Liquidity score (0.0 to 1.0)
         """
+        default_score = self.config.default_score
+
         # Spread component (tighter is better)
         if avg_spread > 0:
             spread_score = min(1.0, avg_spread / spread) if spread > 0 else 1.0
         else:
-            spread_score = 0.5
+            spread_score = default_score
 
         # Depth component (deeper is better)
         total_depth = bid_depth + ask_depth
         if avg_depth > 0:
             depth_score = min(1.0, total_depth / (2 * avg_depth))
         else:
-            depth_score = 0.5
+            depth_score = default_score
 
         # Imbalance penalty (balanced is better)
         if total_depth > 0:
             imbalance = abs(bid_depth - ask_depth) / total_depth
             balance_score = 1.0 - imbalance
         else:
-            balance_score = 0.5
+            balance_score = default_score
 
-        # Weighted average
-        score = 0.4 * spread_score + 0.4 * depth_score + 0.2 * balance_score
+        # Weighted average using configurable weights
+        score = (
+            self.config.spread_weight * spread_score
+            + self.config.depth_weight * depth_score
+            + self.config.balance_weight * balance_score
+        )
 
         return score
 

@@ -27,6 +27,10 @@ class ProcessorConfig(BaseModel):
     # Spread tracking
     spread_window: int = Field(default=20, description="Window for spread average")
 
+    # Liquidity scoring
+    depth_baseline: float = Field(default=100.0, description="Baseline depth for liquidity scoring")
+    default_liquidity_score: float = Field(default=0.5, description="Default liquidity score when data unavailable")
+
 
 class FeatureProcessor:
     """Process real-time market data into features.
@@ -177,15 +181,14 @@ class FeatureProcessor:
         avg_spread = sum(self._spreads) / len(self._spreads) if self._spreads else 0.0
 
         # Liquidity score
-        liquidity_score = 0.5
+        liquidity_score = self.config.default_liquidity_score
         if self._last_spread is not None and self._last_bid_depth is not None:
-            avg_depth = 100.0  # Default baseline
             liquidity_score = self.ofi_calculator.get_liquidity_score(
                 spread=self._last_spread,
                 bid_depth=self._last_bid_depth,
                 ask_depth=self._last_ask_depth or 0,
                 avg_spread=avg_spread or self._last_spread,
-                avg_depth=avg_depth,
+                avg_depth=self.config.depth_baseline,
             )
 
         return {
