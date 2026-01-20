@@ -24,5 +24,5 @@ class ArbitrageConfig(BaseModel):
     quarterly_blackout_days: int = Field(default=14, description="Days before expiry to avoid")
 
     # Futures constants
-    tick_size: float = Field(default=0.05, description="KOSPI Mini tick size")
+    tick_size: float = Field(default=0.05, gt=0, description="KOSPI Mini tick size")
     multiplier: int = Field(default=50000, description="KRW per point")

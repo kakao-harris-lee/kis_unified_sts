@@ -35,6 +35,9 @@ def cli(verbose: bool):
         backtest    백테스트 실행 및 관리
         optimize    파라미터 최적화
         mlflow      MLflow 관련 명령
+        collect     데이터 수집 명령
+        trade       트레이딩 제어 명령
+        health      시스템 헬스 체크
     """
     if verbose:
         logging.getLogger().setLevel(logging.DEBUG)
@@ -662,17 +665,24 @@ def trade_start(
 
 
 @trade.command("status")
-def trade_status():
+@click.option(
+    "--url",
+    "-u",
+    default="http://localhost:8000",
+    help="API server URL",
+)
+def trade_status(url: str):
     """트레이딩 상태 조회
 
     \b
     Example:
         sts trade status
+        sts trade status --url http://localhost:8000
     """
     try:
         import httpx
 
-        response = httpx.get("http://localhost:8000/api/v1/trading/status", timeout=5.0)
+        response = httpx.get(f"{url}/api/v1/trading/status", timeout=5.0)
         if response.status_code == 200:
             data = response.json()
             click.echo("Trading Status:")
@@ -689,18 +699,25 @@ def trade_status():
 
 
 @trade.command("stop")
-def trade_stop():
+@click.option(
+    "--url",
+    "-u",
+    default="http://localhost:8000",
+    help="API server URL",
+)
+def trade_stop(url: str):
     """트레이딩 종료
 
     \b
     Example:
         sts trade stop
+        sts trade stop --url http://localhost:8000
     """
     try:
         import httpx
 
         response = httpx.post(
-            "http://localhost:8000/api/v1/trading/stop",
+            f"{url}/api/v1/trading/stop",
             timeout=10.0,
         )
         if response.status_code == 200:
