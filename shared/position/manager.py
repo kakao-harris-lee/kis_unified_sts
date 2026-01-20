@@ -2,7 +2,7 @@
 import uuid
 import logging
 from datetime import datetime
-from typing import Dict, List, Optional, Callable
+from typing import Dict, List, Optional, Callable, Any
 
 from shared.models.position import Position, PositionState, PositionSide
 from .exit_checker import ExitChecker, ExitConfig
@@ -19,6 +19,7 @@ class PositionManager:
         - Integrated exit condition checking
         - Position history tracking
         - Callbacks for position events
+        - Optional order executor integration
     """
 
     def __init__(
@@ -27,6 +28,7 @@ class PositionManager:
         on_position_opened: Optional[Callable[[Position], None]] = None,
         on_position_closed: Optional[Callable[[Position], None]] = None,
         on_exit_triggered: Optional[Callable[[Position, str], None]] = None,
+        order_executor: Optional[Any] = None,
     ):
         """Initialize position manager.
 
@@ -35,9 +37,11 @@ class PositionManager:
             on_position_opened: Callback when position is opened
             on_position_closed: Callback when position is closed
             on_exit_triggered: Callback when exit condition triggers
+            order_executor: Optional order executor for trade execution
         """
         self.exit_config = exit_config
         self.exit_checker = ExitChecker(exit_config)
+        self.order_executor = order_executor
 
         # Callbacks
         self.on_position_opened = on_position_opened
@@ -238,3 +242,43 @@ class PositionManager:
                 for p in self.positions.values()
             ],
         }
+
+    async def restore_positions(self, positions: List[Position]) -> None:
+        """Restore positions from a list.
+
+        Used for recovering positions after restart.
+
+        Args:
+            positions: List of positions to restore
+        """
+        for position in positions:
+            self.positions[position.id] = position
+            self.monitor.add_position(position)
+            logger.info(f"Position restored: {position.id}")
+
+    async def close_all_positions(
+        self,
+        prices: Dict[str, float],
+        reason: str,
+    ) -> List[Position]:
+        """Close all open positions.
+
+        Args:
+            prices: Dict mapping code to current price
+            reason: Exit reason for all positions
+
+        Returns:
+            List of closed positions
+        """
+        closed = []
+        position_ids = list(self.positions.keys())
+
+        for pos_id in position_ids:
+            position = self.positions.get(pos_id)
+            if position and position.code in prices:
+                exit_price = prices[position.code]
+                closed_pos = await self.close_position(pos_id, exit_price, reason)
+                if closed_pos:
+                    closed.append(closed_pos)
+
+        return closed
