@@ -6,7 +6,7 @@ from typing import Deque, Optional
 import numpy as np
 
 from .config import TechnicalConfig
-from .models import IchimokuData
+from .models import IchimokuData, TechnicalData
 
 logger = logging.getLogger(__name__)
 
@@ -213,6 +213,58 @@ class TechnicalCalculator:
         cloud_bottom = min(ichimoku.senkou_a, ichimoku.senkou_b)
 
         return current_price < cloud_bottom
+
+    # Volatility methods
+
+    def get_volatility_regime(self) -> str:
+        """Determine current volatility regime based on ATR.
+
+        Returns:
+            "LOW", "NORMAL", or "HIGH"
+        """
+        if not self._atr or not self._prices:
+            return "NORMAL"
+
+        current_price = self._prices[-1]
+        if current_price == 0:
+            return "NORMAL"
+
+        # ATR as percentage of price
+        atr_pct = (self._atr / current_price) * 100
+
+        if atr_pct < 1.0:
+            return "LOW"
+        elif atr_pct > 3.0:
+            return "HIGH"
+        return "NORMAL"
+
+    # Snapshot methods
+
+    def get_technical_data(self, timestamp: float) -> Optional[TechnicalData]:
+        """Get complete technical data snapshot.
+
+        Args:
+            timestamp: Timestamp for the data point
+
+        Returns:
+            TechnicalData with all indicators, or None if not ready
+        """
+        if not self._prices:
+            return None
+
+        ichimoku = self.get_ichimoku()
+
+        return TechnicalData(
+            timestamp=timestamp,
+            close=self._prices[-1],
+            ma_short=self.get_ma_short() or 0.0,
+            ma_long=self.get_ma_long() or 0.0,
+            ichimoku_tenkan=ichimoku.tenkan if ichimoku else 0.0,
+            ichimoku_kijun=ichimoku.kijun if ichimoku else 0.0,
+            ichimoku_senkou_a=ichimoku.senkou_a if ichimoku else 0.0,
+            ichimoku_senkou_b=ichimoku.senkou_b if ichimoku else 0.0,
+            atr=self._atr or 0.0,
+        )
 
     def reset(self) -> None:
         """Reset calculator state."""
