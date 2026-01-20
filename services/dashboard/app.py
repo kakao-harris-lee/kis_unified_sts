@@ -38,11 +38,12 @@ def create_app(
 
 def _register_routes(app: FastAPI) -> None:
     """Register API routes."""
-    from services.dashboard.routes import signals, trading
+    from services.dashboard.routes import signals, trades, trading
 
     # Include API routers
     app.include_router(trading.router)
     app.include_router(signals.router)
+    app.include_router(trades.router)
 
     @app.get("/health")
     async def health_check():
