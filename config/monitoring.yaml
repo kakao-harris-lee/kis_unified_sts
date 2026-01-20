@@ -1,0 +1,187 @@
+# Monitoring 설정
+# 메트릭 수집, 알림, 헬스 체크 관련 설정
+
+monitoring:
+  # =============================================================================
+  # Prometheus 메트릭 설정
+  # =============================================================================
+  metrics:
+    enabled: true
+
+    # Prometheus HTTP 서버 (standalone 모드용)
+    server:
+      enabled: false  # FastAPI /metrics 사용 시 false
+      host: "127.0.0.1"
+      port: 9090
+
+    # 메트릭 수집 간격
+    collection:
+      interval_seconds: 10
+
+    # 히스토그램 버킷 설정
+    buckets:
+      trade_pnl:
+        - -100000
+        - -50000
+        - -10000
+        - 0
+        - 10000
+        - 50000
+        - 100000
+        - 500000
+      signal_latency_ms:
+        - 1
+        - 5
+        - 10
+        - 25
+        - 50
+        - 100
+        - 250
+        - 500
+        - 1000
+      order_latency_ms:
+        - 10
+        - 50
+        - 100
+        - 250
+        - 500
+        - 1000
+        - 2500
+        - 5000
+
+    # 라벨 설정
+    labels:
+      environment: "production"
+      service: "kis-unified-sts"
+
+  # =============================================================================
+  # 알림 설정
+  # =============================================================================
+  notifications:
+    enabled: true
+
+    # Telegram 설정
+    # 토큰과 chat_id는 환경변수에서 로드: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+    telegram:
+      enabled: true
+      # 재시도 설정
+      retry:
+        max_attempts: 3
+        delay_seconds: 1
+      # 요청 타임아웃
+      timeout_seconds: 10
+      # 메시지 포맷
+      parse_mode: "HTML"
+
+    # 콘솔 알림 (개발/디버깅용)
+    console:
+      enabled: false
+
+    # 알림 레벨별 활성화
+    levels:
+      info: true
+      warning: true
+      error: true
+      critical: true
+
+    # 알림 필터링
+    filters:
+      # 동일 메시지 중복 방지 (초)
+      dedup_window_seconds: 60
+      # 최대 알림 빈도 (분당)
+      max_per_minute: 10
+
+    # 알림 대상 이벤트
+    events:
+      trading_start: true
+      trading_stop: true
+      trading_pause: true
+      trade_executed: true
+      daily_summary: true
+      error_occurred: true
+      circuit_breaker_open: true
+
+  # =============================================================================
+  # 헬스 체크 설정
+  # =============================================================================
+  health:
+    enabled: true
+
+    # 체크 타임아웃 (초)
+    timeout_seconds: 5
+
+    # 체크 간격 (초) - 백그라운드 체크용
+    interval_seconds: 30
+
+    # 컴포넌트별 설정
+    components:
+      # 시스템 기본 체크
+      system:
+        enabled: true
+
+      # Redis 연결 체크
+      redis:
+        enabled: true
+        # 연결 URL은 환경변수: REDIS_URL
+        timeout_seconds: 3
+
+      # ClickHouse 데이터베이스 체크
+      database:
+        enabled: true
+        # 연결 URL은 환경변수: CLICKHOUSE_URL
+        timeout_seconds: 5
+
+      # KIS API 연결 체크
+      kis_api:
+        enabled: true
+        timeout_seconds: 10
+
+    # Liveness probe 설정
+    liveness:
+      path: "/health/live"
+      # 실패 임계값 (연속 실패 시 unhealthy)
+      failure_threshold: 3
+
+    # Readiness probe 설정
+    readiness:
+      path: "/health/ready"
+      # 필수 컴포넌트 (이 컴포넌트가 unhealthy면 not ready)
+      required_components:
+        - system
+        - redis
+
+
+# =============================================================================
+# 환경별 오버라이드
+# =============================================================================
+
+development:
+  monitoring:
+    metrics:
+      labels:
+        environment: "development"
+
+    notifications:
+      telegram:
+        enabled: false  # 개발 시 비활성화
+      console:
+        enabled: true   # 콘솔 출력 활성화
+
+    health:
+      components:
+        redis:
+          enabled: false  # 로컬 개발 시 Redis 없을 수 있음
+        database:
+          enabled: false  # 로컬 개발 시 DB 없을 수 있음
+        kis_api:
+          enabled: false  # 로컬 개발 시 API 테스트 안함
+
+staging:
+  monitoring:
+    metrics:
+      labels:
+        environment: "staging"
+
+    notifications:
+      events:
+        trade_executed: false  # 스테이징에서 거래 알림 제외

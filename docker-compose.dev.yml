@@ -1,0 +1,47 @@
+# KIS Unified Trading Platform - Development Override
+# 개발 환경 전용 설정 오버라이드
+#
+# Usage:
+#   docker-compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      # 개발 시 캐시 활용
+      args:
+        - BUILDKIT_INLINE_CACHE=1
+    environment:
+      - ENVIRONMENT=development
+      - KIS_IS_REAL=false
+      # 디버그 모드
+      - LOG_LEVEL=DEBUG
+    volumes:
+      # 소스 코드 마운트 (핫 리로드)
+      - .:/app
+      - /app/.venv  # venv 제외
+    command: ["python", "-m", "uvicorn", "services.api.app:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    # 개발 시 의존성 완화
+    depends_on:
+      redis:
+        condition: service_started
+
+  grafana:
+    environment:
+      # 개발 시 익명 접근 허용
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      # 디버그
+      - GF_LOG_LEVEL=debug
+
+  prometheus:
+    # 개발 시 더 짧은 보존 기간
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=3d'
+      - '--web.enable-lifecycle'
+      - '--web.enable-admin-api'
