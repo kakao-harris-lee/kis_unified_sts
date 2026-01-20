@@ -1,0 +1,40 @@
+# Redis Streams Configuration
+
+redis:
+  host: ${REDIS_HOST:localhost}
+  port: ${REDIS_PORT:6379}
+  password: ${REDIS_PASSWORD:}
+  db: ${REDIS_DB:0}
+
+streams:
+  # 원시 데이터 스트림
+  raw_data:
+    name: RAW_DATA_STREAM
+    maxlen: 10000
+
+  # 피처 스트림 (기술적 지표 포함)
+  feature:
+    name: FEATURE_STREAM
+    maxlen: 10000
+
+  # 예측 스트림 (CNN-LSTM 결과)
+  prediction:
+    name: PREDICTION_STREAM
+    maxlen: 10000
+
+  # 주문 명령 스트림
+  order_command:
+    name: ORDER_COMMAND_STREAM
+    maxlen: 5000
+
+consumer:
+  # 메시지 읽기 설정
+  read_count: 10
+  block_ms: 1000
+
+  # Consumer Group 이름
+  groups:
+    processor: processor_group
+    prediction: prediction_group
+    strategy: strategy_group
+    order: order_group

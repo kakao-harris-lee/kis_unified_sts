@@ -1,0 +1,9 @@
+# Ensemble Models
+
+Multi-horizon 앙상블 모델 디렉토리
+
+학습 후 이 디렉토리에 다음 파일들이 생성됩니다:
+- model_h1.pth / model_h1.json
+- model_h3.pth / model_h3.json
+- model_h5.pth / model_h5.json
+- model_h10.pth / model_h10.json

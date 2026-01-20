@@ -1,0 +1,27 @@
+{
+  "model_type": "cnn-lstm",
+  "input_dim": 10,
+  "hidden_dim": 64,
+  "num_layers": 2,
+  "num_classes": 3,
+  "dropout": 0.2,
+  "cnn_channels": [32, 64],
+  "kernel_size": 3,
+  "seq_len": 60,
+  "version": "1.0.0",
+  "feature_columns": [
+    "returns",
+    "ma_ratio_5",
+    "ma_ratio_10",
+    "ma_ratio_20",
+    "rsi",
+    "bb_position",
+    "volume_ratio",
+    "volatility",
+    "hl_range",
+    "candle_body"
+  ],
+  "trained_at": null,
+  "training_samples": 0,
+  "validation_accuracy": 0.0
+}
