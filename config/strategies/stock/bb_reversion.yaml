@@ -1,0 +1,209 @@
+# BB Reversion Strategy (Mean Reversion)
+#
+# quant_moment_sts V35OptimizedStrategy의 Mean Reversion 로직 추출
+#
+# 핵심 아이디어:
+#   볼린저 밴드 하단 터치 + RSI 과매도 → 평균 회귀 기대 매수
+#   시장 상태(MFI/ADX)에 따라 진입 조건 조정
+#
+# 백테스트 결과 (V35 Optimized, 2019-2024):
+#   - CAGR: 23.91%
+#   - Sharpe: 2.62
+#   - Win Rate: 40%
+
+strategy:
+  name: bb_reversion
+  asset_class: stock
+  enabled: true
+  description: "볼린저 밴드 하단 + RSI 과매도 평균 회귀 전략"
+
+  # ===========================================================================
+  # 진입 조건 (Entry)
+  # ===========================================================================
+  entry:
+    type: bb_lower_reentry
+    params:
+      # -----------------------------------------------------------------
+      # Bollinger Bands 설정
+      # -----------------------------------------------------------------
+      bb_period: 20           # BB 이동평균 기간
+      bb_std: 2.0             # BB 표준편차 배수
+      bb_touch_buffer: 1.01   # 하단 터치 버퍼 (price <= bb_lower * 1.01)
+
+      # -----------------------------------------------------------------
+      # RSI 설정
+      # -----------------------------------------------------------------
+      rsi_period: 14          # RSI 기간
+      rsi_oversold: 38        # 과매도 기준 (SIDEWAYS_FLAT)
+      rsi_deep_oversold: 35   # 깊은 과매도 (SIDEWAYS_DOWN, 보수적)
+
+      # -----------------------------------------------------------------
+      # 거래량 확인 (선택적)
+      # -----------------------------------------------------------------
+      volume_confirm: false   # 거래량 확인 비활성화 (Mean Reversion은 불필요)
+      volume_ma_period: 20
+      volume_threshold: 1.2   # 평균 대비 1.2배 이상
+
+      # -----------------------------------------------------------------
+      # 시장 상태 필터 (MarketClassifier 기반)
+      # -----------------------------------------------------------------
+      market_state_filter:
+        enabled: true
+        # MFI/ADX 기반 시장 분류
+        allowed_states:
+          - SIDEWAYS_FLAT     # MFI 43-57, 보통 Mean Reversion
+          - SIDEWAYS_DOWN     # MFI 41-43, 보수적 Mean Reversion
+        blocked_states:
+          - BEAR              # MFI < 41, 진입 금지
+          - BEAR_STRONG
+          - BEAR_MODERATE
+
+      # -----------------------------------------------------------------
+      # 시가총액 필터
+      # -----------------------------------------------------------------
+      min_market_cap: 300     # 최소 시가총액 (억원)
+
+      # -----------------------------------------------------------------
+      # 시간 필터
+      # -----------------------------------------------------------------
+      skip_market_open_minutes: 30    # 장 시작 30분 스킵 (09:00-09:30)
+      skip_market_close_minutes: 15   # 장 마감 15분 전 스킵 (15:15 이후)
+
+      # -----------------------------------------------------------------
+      # 시그널 쿨다운 (동일 종목 재진입 방지)
+      # -----------------------------------------------------------------
+      signal_cooldown_seconds: 300    # 5분
+
+  # ===========================================================================
+  # 청산 조건 (Exit)
+  # ===========================================================================
+  exit:
+    type: three_stage
+    params:
+      # Stage 1: Survival (손절)
+      stop_loss_pct: -0.015            # -1.5% 손절
+
+      # Stage 2: Breakeven (본전 확보)
+      breakeven_threshold_pct: 0.015   # +1.5% 도달 시 본전 전환
+
+      # Stage 3: Maximize (수익 극대화)
+      # SIDEWAYS 시장용 보수적 익절 (작은 수익 빠른 실현)
+      maximize_threshold_pct: 0.03     # +3% 도달 시 트레일링 시작
+      trailing_stop_pct: -0.03         # 고점 대비 -3% 하락 시 청산
+
+      # Overshooting 감지 (급등 시 빠른 익절)
+      overshoot_threshold_pct: 0.07    # +7% 이상 급등
+      overshoot_trailing_pct: -0.015   # 급등 시 -1.5%로 축소
+
+      # 시간 기반 청산
+      time_cut_minutes: 20             # 20분 무익 시 청산
+      eod_close_hour: 15
+      eod_close_minute: 15             # 15:15 강제 청산
+
+      # 수수료
+      fee_rate: 0.003                  # 0.3% (편도 0.15% × 2)
+
+      # BEAR 시장 즉시 청산
+      enable_bear_exit: true
+
+  # ===========================================================================
+  # 포지션 사이징 (Position Sizing)
+  # ===========================================================================
+  position:
+    type: risk_based
+    params:
+      # 계좌 대비 최대 포지션 비율
+      max_position_pct: 10.0           # 종목당 최대 10%
+
+      # 최대 동시 보유 종목 수
+      max_positions: 5
+
+      # 거래당 리스크 (손실 허용)
+      risk_per_trade_pct: 1.0          # 계좌의 1% 리스크
+
+      # 종목당 투자 금액 (고정 금액 방식 사용 시)
+      order_amount_per_stock: 1000000  # 100만원
+
+  # ===========================================================================
+  # 지표 설정 (Indicators)
+  # ===========================================================================
+  indicators:
+    # Bollinger Bands
+    bollinger_bands:
+      period: 20
+      std_dev: 2.0
+
+    # RSI
+    rsi:
+      period: 14
+
+    # MACD (모멘텀 확인용)
+    macd:
+      fast_period: 12
+      slow_period: 26
+      signal_period: 9
+
+    # MFI (시장 분류용)
+    mfi:
+      period: 14
+
+    # ADX (추세 강도 측정)
+    adx:
+      period: 14
+
+  # ===========================================================================
+  # 시장 분류 임계값 (MarketClassifier)
+  # ===========================================================================
+  market_classifier:
+    # MFI 기반 분류 (Money Flow Index)
+    mfi_thresholds:
+      bull_strong: 57      # MFI > 57: 강한 상승
+      bull_moderate: 55    # MFI 55-57: 보통 상승
+      sideways_up: 51      # MFI 51-55: 횡보 상승
+      sideways_flat_upper: 57
+      sideways_flat_lower: 43  # MFI 43-57: 횡보
+      sideways_down_lower: 41  # MFI 41-43: 횡보 하락
+      bear: 41             # MFI < 41: 하락
+
+    # ADX 기반 추세 강도
+    adx_thresholds:
+      strong_trend: 25     # ADX > 25: 강한 추세
+      moderate_trend: 20   # ADX 20-25: 보통 추세
+      weak_trend: 15       # ADX < 15: 약한 추세/횡보
+
+
+# ===========================================================================
+# 전략 변형 (Variants)
+# ===========================================================================
+# 시장 상태별 다른 파라미터 조합을 사용하고 싶을 때 참고
+
+variants:
+  # 공격적 설정 (SIDEWAYS_FLAT)
+  aggressive:
+    entry:
+      bb_touch_buffer: 1.01
+      rsi_oversold: 38
+    exit:
+      stop_loss_pct: -0.02
+      maximize_threshold_pct: 0.05
+
+  # 보수적 설정 (SIDEWAYS_DOWN)
+  conservative:
+    entry:
+      bb_touch_buffer: 1.00   # 정확히 터치해야 함
+      rsi_oversold: 35        # 더 깊은 과매도 필요
+    exit:
+      stop_loss_pct: -0.015
+      maximize_threshold_pct: 0.03
+
+  # 단기 스캘핑 (빠른 익절)
+  scalping:
+    entry:
+      bb_touch_buffer: 1.01
+      rsi_oversold: 40
+    exit:
+      stop_loss_pct: -0.01
+      breakeven_threshold_pct: 0.01
+      maximize_threshold_pct: 0.016
+      trailing_stop_pct: -0.015
+      time_cut_minutes: 10

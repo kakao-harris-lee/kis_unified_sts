@@ -1,0 +1,219 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "kis-unified-sts"
+version = "0.1.0"
+description = "KIS Unified Short-Term Trading System - 주식/선물 통합 단기매매 시스템"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+authors = [
+    { name = "Harris Lee" }
+]
+keywords = [
+    "trading",
+    "algorithmic-trading",
+    "kis",
+    "korea-investment",
+    "stock",
+    "futures",
+    "backtesting",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Financial and Insurance Industry",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Office/Business :: Financial :: Investment",
+]
+
+dependencies = [
+    # Core
+    "pydantic>=2.0",
+    "pyyaml>=6.0",
+    "python-dotenv>=1.0",
+
+    # Async
+    "aiohttp>=3.9",
+    "asyncio>=3.4",
+
+    # Data Processing
+    "numpy>=1.26",
+    "pandas>=2.1",
+
+    # HTTP Client
+    "requests>=2.31",
+    "httpx>=0.25",
+
+    # CLI
+    "click>=8.1",
+
+    # Logging & Monitoring
+    "structlog>=23.0",
+    "rich>=13.0",
+
+    # Redis (Futures)
+    "redis>=5.0",
+
+    # Database
+    "clickhouse-driver>=0.2",
+
+    # MLflow (Backtesting)
+    "mlflow>=2.9",
+]
+
+[project.optional-dependencies]
+dev = [
+    # Testing
+    "pytest>=7.4",
+    "pytest-asyncio>=0.21",
+    "pytest-cov>=4.1",
+    "pytest-mock>=3.12",
+
+    # Linting & Formatting
+    "black>=23.0",
+    "ruff>=0.1",
+    "mypy>=1.7",
+
+    # Type Stubs
+    "types-PyYAML",
+    "types-requests",
+    "types-redis",
+    "pandas-stubs",
+]
+
+optimization = [
+    "optuna>=3.4",
+    "optuna-dashboard>=0.14",
+]
+
+visualization = [
+    "plotly>=5.18",
+    "matplotlib>=3.8",
+    "seaborn>=0.13",
+]
+
+api = [
+    "fastapi>=0.109",
+    "uvicorn[standard]>=0.25",
+]
+
+monitoring = [
+    "prometheus-client>=0.19",
+]
+
+all = [
+    "kis-unified-sts[dev,optimization,visualization,api,monitoring]",
+]
+
+[project.scripts]
+sts = "cli.main:main"
+
+[project.urls]
+Homepage = "https://github.com/kakao-harris-lee/kis-unified-sts"
+Documentation = "https://github.com/kakao-harris-lee/kis-unified-sts#readme"
+Repository = "https://github.com/kakao-harris-lee/kis-unified-sts"
+Issues = "https://github.com/kakao-harris-lee/kis-unified-sts/issues"
+
+# =============================================================================
+# Tool Configurations
+# =============================================================================
+
+[tool.hatch.build.targets.wheel]
+packages = ["shared", "domains", "services", "cli"]
+
+[tool.black]
+line-length = 88
+target-version = ["py311", "py312"]
+include = '\.pyi?$'
+exclude = '''
+/(
+    \.git
+    | \.hg
+    | \.mypy_cache
+    | \.tox
+    | \.venv
+    | _build
+    | buck-out
+    | build
+    | dist
+    | __pycache__
+)/
+'''
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # pyflakes
+    "I",      # isort
+    "B",      # flake8-bugbear
+    "C4",     # flake8-comprehensions
+    "UP",     # pyupgrade
+    "ARG",    # flake8-unused-arguments
+    "SIM",    # flake8-simplify
+]
+ignore = [
+    "E501",   # line too long (handled by black)
+    "B008",   # do not perform function calls in argument defaults
+    "B905",   # zip() without an explicit strict= parameter
+    "ARG001", # unused function argument
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["shared", "domains", "services", "cli"]
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+strict_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+module = [
+    "redis.*",
+    "clickhouse_driver.*",
+    "mlflow.*",
+    "optuna.*",
+]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = "-ra -q --strict-markers"
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = [
+    "unit: Unit tests",
+    "integration: Integration tests",
+    "slow: Slow tests",
+    "backtest: Backtesting tests",
+]
+
+[tool.coverage.run]
+source = ["shared", "domains", "services"]
+branch = true
+omit = ["*/tests/*", "*/__pycache__/*"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+]

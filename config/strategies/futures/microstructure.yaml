@@ -1,0 +1,221 @@
+# Microstructure Entry Strategy (Futures)
+#
+# kospi_mini_sts의 PureMicrostructureStrategy를 통합 프로젝트용으로 마이그레이션
+#
+# 핵심 아이디어:
+#   OFI (Order Flow Imbalance) + 호가 불균형 + 스프레드 분석
+#   마이크로스트럭처 시그널 복합 스코어링으로 진입 판단
+#
+# 시그널 구성:
+#   - OFI Z-Score: 호가 변화 기반 매수/매도 압력 (40%)
+#   - 호가 불균형: 매수/매도 잔량 비율 (30%)
+#   - 스프레드: 유동성 상태 (20%)
+#   - 변동성 레짐: 시장 상태별 조정 (10%)
+#
+# 대상: KOSPI Mini Futures (101V), KOSPI 200 Futures (101S)
+
+strategy:
+  name: microstructure
+  asset_class: futures
+  enabled: true
+  description: "마이크로스트럭처 기반 선물 진입 전략 (OFI + 호가불균형)"
+
+  # ===========================================================================
+  # 진입 조건 (Entry)
+  # ===========================================================================
+  entry:
+    type: microstructure
+    params:
+      # -----------------------------------------------------------------
+      # 시그널 가중치 (합계 = 1.0)
+      # -----------------------------------------------------------------
+      ofi_weight: 0.4           # OFI 시그널 가중치
+      imbalance_weight: 0.3     # 호가 불균형 가중치
+      spread_weight: 0.2        # 스프레드 가중치
+      regime_weight: 0.1        # 레짐 가중치
+
+      # -----------------------------------------------------------------
+      # OFI 조건 (Order Flow Imbalance)
+      # -----------------------------------------------------------------
+      ofi_zscore_threshold: 2.0   # OFI Z-Score 임계값 (±2σ)
+      ofi_consecutive_bars: 3     # 연속 확인 바 수
+      ofi_lookback: 20            # OFI 계산 기간 (바)
+      ofi_zscore_period: 60       # Z-Score 계산 기간 (바)
+
+      # -----------------------------------------------------------------
+      # 호가 불균형 조건
+      # -----------------------------------------------------------------
+      imbalance_threshold: 0.5    # 불균형 임계값 (0.5 = 50%)
+      imbalance_lookback: 20      # 불균형 계산 기간
+
+      # -----------------------------------------------------------------
+      # 스프레드 조건
+      # -----------------------------------------------------------------
+      max_spread_ticks: 2               # 최대 허용 스프레드 (틱)
+      spread_percentile_threshold: 0.7  # 스프레드 백분위 임계값
+      spread_lookback: 60               # 스프레드 계산 기간
+      tick_size: 0.02                   # 1틱 크기 (KOSPI Mini: 0.02p)
+
+      # -----------------------------------------------------------------
+      # 진입 조건
+      # -----------------------------------------------------------------
+      entry_score_threshold: 0.6  # 복합 점수 진입 임계값 (60%)
+      min_history: 20             # 최소 히스토리 바 수
+      cooldown_bars: 5            # 진입 후 쿨다운 바 수
+
+      # -----------------------------------------------------------------
+      # 레짐별 동작
+      # -----------------------------------------------------------------
+      low_regime_bias: mean_reversion   # LOW 레짐: 역추세 (평균회귀)
+      high_regime_bias: breakout        # HIGH 레짐: 추세 (돌파)
+
+  # ===========================================================================
+  # 청산 조건 (Exit)
+  # ===========================================================================
+  exit:
+    type: scalping
+    params:
+      # Stage 1: Survival (손절)
+      stop_loss_ticks: 5              # 5틱 손절 (0.1p)
+      stop_loss_pct: -0.005           # -0.5% 손절 (백분율 기준)
+
+      # Stage 2: Breakeven (본전 확보)
+      breakeven_threshold_ticks: 3    # +3틱 도달 시 본전 전환
+      breakeven_threshold_pct: 0.003  # +0.3% 도달 시 본전 전환
+
+      # Stage 3: Maximize (수익 극대화)
+      target_ticks: 10                # 목표 수익 10틱 (0.2p)
+      target_pct: 0.01                # 목표 수익 1%
+      trailing_stop_ticks: 3          # 트레일링 3틱
+
+      # 시간 기반 청산
+      max_hold_seconds: 300           # 최대 보유 시간 5분
+      max_hold_bars: 60               # 최대 보유 바 수 (5초 바 기준 5분)
+
+      # OFI 역전 시 청산
+      ofi_reversal_exit: true         # OFI 방향 역전 시 청산
+      ofi_reversal_threshold: -1.5    # 역전 Z-Score 임계값
+
+      # 세션 청산
+      session_close_time: "15:35"     # 세션 종료 시간 (KOSPI 선물)
+
+      # 수수료
+      fee_per_contract: 100           # 계약당 수수료 (원)
+
+  # ===========================================================================
+  # 포지션 사이징 (Position Sizing)
+  # ===========================================================================
+  position:
+    type: fixed
+    params:
+      # 기본 계약 수
+      contracts: 1                    # 기본 1계약
+      max_contracts: 2                # 최대 2계약
+
+      # 리스크 기반 (선택적)
+      risk_per_trade_pct: 0.5         # 계좌의 0.5% 리스크
+      max_daily_loss_pct: 2.0         # 일일 최대 손실 2%
+      max_daily_trades: 20            # 일일 최대 거래 횟수
+
+      # 계약 정보
+      contract_multiplier: 50000      # KOSPI Mini 승수 (5만원)
+      margin_per_contract: 1500000    # 계약당 증거금 (약 150만원)
+
+  # ===========================================================================
+  # 지표 설정 (Indicators)
+  # ===========================================================================
+  indicators:
+    # OFI (Order Flow Imbalance)
+    ofi:
+      lookback: 20
+      zscore_period: 60
+
+    # 변동성 레짐 (ATR 기반)
+    volatility_regime:
+      atr_period: 14
+      low_threshold_percentile: 25    # ATR 25% 이하: LOW
+      high_threshold_percentile: 75   # ATR 75% 이상: HIGH
+
+    # 스프레드 분석
+    spread:
+      lookback: 60
+      tick_size: 0.02
+
+  # ===========================================================================
+  # 시장 필터 (Market Filters)
+  # ===========================================================================
+  market_filter:
+    # 시간 필터 (장 시작/종료 스킵)
+    skip_market_open_minutes: 5       # 장 시작 5분 스킵
+    skip_market_close_minutes: 10     # 장 마감 10분 전 스킵
+
+    # 세션 타임
+    regular_session:
+      start: "09:00"
+      end: "15:45"
+
+    night_session:
+      enabled: false
+      start: "18:00"
+      end: "06:00"
+
+    # 유동성 필터
+    min_volume_per_bar: 10            # 바당 최소 거래량
+    min_quote_depth: 50               # 최소 호가 잔량
+
+
+# ===========================================================================
+# 전략 변형 (Variants)
+# ===========================================================================
+# 시장 상태별 다른 파라미터 조합
+
+variants:
+  # 공격적 설정 (HIGH 변동성)
+  aggressive:
+    entry:
+      ofi_zscore_threshold: 1.5       # 낮은 임계값 (빠른 진입)
+      entry_score_threshold: 0.5
+      ofi_consecutive_bars: 2
+    exit:
+      stop_loss_ticks: 7
+      target_ticks: 15
+      max_hold_seconds: 600
+    position:
+      contracts: 2
+
+  # 보수적 설정 (LOW 변동성)
+  conservative:
+    entry:
+      ofi_zscore_threshold: 2.5       # 높은 임계값 (신중한 진입)
+      entry_score_threshold: 0.7
+      ofi_consecutive_bars: 4
+    exit:
+      stop_loss_ticks: 3
+      target_ticks: 6
+      max_hold_seconds: 180
+    position:
+      contracts: 1
+
+  # 스캘핑 (초단타)
+  scalping:
+    entry:
+      ofi_zscore_threshold: 1.8
+      entry_score_threshold: 0.55
+      cooldown_bars: 3
+      min_history: 10
+    exit:
+      stop_loss_ticks: 3
+      target_ticks: 5
+      max_hold_seconds: 60
+      max_hold_bars: 12
+    position:
+      max_daily_trades: 50
+
+  # OFI 집중 (OFI 시그널 가중치 증가)
+  ofi_focused:
+    entry:
+      ofi_weight: 0.6
+      imbalance_weight: 0.2
+      spread_weight: 0.1
+      regime_weight: 0.1
+      ofi_zscore_threshold: 2.2

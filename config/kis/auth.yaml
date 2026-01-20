@@ -1,0 +1,25 @@
+# KIS API 인증 설정
+# 환경변수 참조: ${VAR_NAME} 형식 사용
+
+kis:
+  auth:
+    # API 키 (환경변수에서 로드)
+    app_key: ${KIS_APP_KEY}
+    app_secret: ${KIS_APP_SECRET}
+
+    # 실전/모의 투자 선택
+    # true: 실전투자 (https://openapi.koreainvestment.com:9443)
+    # false: 모의투자 (https://openapivts.koreainvestment.com:29443)
+    is_real: true
+
+    # 토큰 캐시 설정
+    token_cache_dir: .cache
+    token_expiry_buffer_seconds: 600  # 만료 10분 전 갱신
+    request_timeout_seconds: 30
+
+  # Circuit Breaker 설정 (API 장애 대응)
+  circuit_breaker:
+    enabled: true
+    failure_threshold: 5        # 연속 5회 실패 시 회로 차단
+    recovery_timeout_seconds: 60  # 60초 후 재시도
+    half_open_max_calls: 3      # 복구 테스트 3회 성공 시 정상화

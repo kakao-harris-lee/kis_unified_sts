@@ -1,0 +1,54 @@
+"""백테스트 모듈
+
+통합 백테스트 엔진, MLflow 트래킹, 결과 분석.
+
+Usage:
+    from shared.backtest import BacktestEngine, BacktestConfig, BacktestResult
+    from shared.backtest import MLflowTracker
+
+    engine = BacktestEngine(strategy, config)
+    result = engine.run(data)
+
+    # MLflow 추적
+    with MLflowTracker("experiment") as tracker:
+        tracker.log_result(result, strategy_config)
+"""
+
+from shared.backtest.result import (
+    BacktestResult,
+    BacktestTrade,
+)
+from shared.backtest.config import (
+    BacktestConfig,
+    CostConfig,
+    RiskConfig,
+)
+from shared.backtest.engine import BacktestEngine
+from shared.backtest.mlflow_tracker import (
+    MLflowTracker,
+    track_backtest,
+)
+from shared.backtest.optimizer import (
+    StrategyOptimizer,
+    ParamSpec,
+    quick_optimize,
+)
+
+__all__ = [
+    # Result
+    "BacktestResult",
+    "BacktestTrade",
+    # Config
+    "BacktestConfig",
+    "CostConfig",
+    "RiskConfig",
+    # Engine
+    "BacktestEngine",
+    # MLflow
+    "MLflowTracker",
+    "track_backtest",
+    # Optimizer
+    "StrategyOptimizer",
+    "ParamSpec",
+    "quick_optimize",
+]

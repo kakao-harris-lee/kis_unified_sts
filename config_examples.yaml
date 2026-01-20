@@ -1,0 +1,358 @@
+# =============================================================================
+# 전략 설정 파일 예시 모음
+# =============================================================================
+# 이 파일들을 config/strategies/ 하위에 배치
+# 
+# 디렉토리 구조:
+# config/
+# ├── strategies/
+# │   ├── stock/
+# │   │   ├── bb_reversion.yaml
+# │   │   └── volume_momentum.yaml
+# │   └── futures/
+# │       ├── pure_micro.yaml
+# │       └── ofi_momentum.yaml
+# └── ...
+# =============================================================================
+
+---
+# =============================================================================
+# FILE: config/strategies/stock/bb_reversion.yaml
+# =============================================================================
+# 볼린저 밴드 하단 평균회귀 전략 (주식용)
+# 
+# 진입: BB 하단 이탈 후 재진입 + RSI 과매도
+# 청산: 3-Stage Dynamic Exit
+# =============================================================================
+
+strategy:
+  name: bb_reversion
+  asset_class: stock
+  enabled: true
+  description: "볼린저 밴드 하단 평균회귀 전략"
+  
+  entry:
+    type: bb_lower_reentry
+    params:
+      # 볼린저 밴드 설정
+      bb_period: 20
+      bb_std: 2.0
+      
+      # RSI 설정
+      rsi_period: 14
+      rsi_oversold: 30        # RSI가 이 값 이하일 때 과매도
+      
+      # 거래량 확인
+      volume_confirm: true
+      volume_ma_period: 20
+      volume_threshold: 1.5   # 평균 대비 1.5배 이상
+  
+  exit:
+    type: three_stage
+    params:
+      # Stage 1: Survival (생존 모드)
+      hard_stop_pct: 2.0          # -2% 손절
+      
+      # Stage 2: Breakeven (본전 모드)
+      breakeven_threshold_pct: 2.0 # +2% 도달 시 전환
+      breakeven_buffer_pct: 0.1    # 본전 + 0.1% 버퍼
+      
+      # Stage 3: Maximize (추세 모드)
+      maximize_threshold_pct: 5.0  # +5% 도달 시 전환
+      trailing_stop_pct: 3.0       # 고점 대비 -3% 청산
+      tight_trailing_pct: 1.5      # 급등 시 -1.5%로 축소
+      tight_trailing_trigger_pct: 10.0  # +10% 이상일 때 축소
+  
+  position:
+    type: risk_based
+    params:
+      max_position_pct: 10.0   # 계좌의 최대 10%
+      max_positions: 5         # 최대 5종목
+      risk_per_trade_pct: 1.0  # 거래당 리스크 1%
+
+---
+# =============================================================================
+# FILE: config/strategies/stock/volume_momentum.yaml
+# =============================================================================
+# 거래량 폭발 모멘텀 전략 (주식용)
+#
+# 진입: 거래량 급증 + 가격 돌파
+# 청산: 트레일링 스탑
+# =============================================================================
+
+strategy:
+  name: volume_momentum
+  asset_class: stock
+  enabled: true
+  description: "거래량 폭발 모멘텀 전략"
+  
+  entry:
+    type: volume_breakout
+    params:
+      # 거래량 조건
+      volume_ma_period: 20
+      volume_multiplier: 3.0     # 평균 대비 3배 이상
+      
+      # 가격 조건
+      price_breakout_period: 20
+      breakout_threshold_pct: 1.0  # 최근 고가 대비 +1%
+      
+      # 섹터 확인 (False Signal 필터)
+      sector_confirm: true
+      sector_min_stocks: 2        # 동일 섹터 2종목 이상 동반 상승
+      
+      # 기본 필터
+      min_price: 5000            # 최소 가격
+      max_price: 500000          # 최대 가격
+  
+  exit:
+    type: three_stage
+    params:
+      hard_stop_pct: 3.0          # 모멘텀 전략은 좀 더 넓게
+      breakeven_threshold_pct: 3.0
+      breakeven_buffer_pct: 0.2
+      maximize_threshold_pct: 7.0
+      trailing_stop_pct: 5.0
+      tight_trailing_pct: 2.5
+      tight_trailing_trigger_pct: 15.0
+  
+  position:
+    type: risk_based
+    params:
+      max_position_pct: 8.0
+      max_positions: 3            # 모멘텀은 집중 투자
+      risk_per_trade_pct: 1.5
+
+---
+# =============================================================================
+# FILE: config/strategies/futures/pure_micro.yaml
+# =============================================================================
+# 순수 마이크로스트럭처 전략 (선물용)
+#
+# 진입: OFI + 호가 불균형 기반
+# 청산: 스캘핑 (틱 기반)
+# =============================================================================
+
+strategy:
+  name: pure_micro
+  asset_class: futures
+  enabled: true
+  description: "OFI 기반 마이크로스트럭처 전략"
+  
+  entry:
+    type: ofi_imbalance
+    params:
+      # OFI 조건
+      ofi_threshold: 1.5         # OFI z-score 임계값
+      ofi_lookback: 20           # OFI 계산 윈도우
+      
+      # 호가 불균형
+      imbalance_threshold: 0.3   # 30% 이상 불균형
+      
+      # 유동성 필터
+      liquidity_min: 0.5         # 최소 유동성 점수
+  
+  exit:
+    type: scalping
+    params:
+      stop_ticks: 5              # 5틱 손절
+      target_ticks: 10           # 10틱 목표
+      max_hold_seconds: 300      # 최대 5분 보유
+      ofi_reversal_exit: true    # OFI 반전 시 청산
+  
+  position:
+    type: fixed
+    params:
+      contracts: 1               # 기본 1계약
+      max_contracts: 2           # 최대 2계약
+
+---
+# =============================================================================
+# FILE: config/strategies/futures/ofi_momentum.yaml
+# =============================================================================
+# OFI 모멘텀 전략 (선물용)
+#
+# 진입: OFI 추세 + 가격 확인
+# 청산: 트레일링 (틱 기반)
+# =============================================================================
+
+strategy:
+  name: ofi_momentum
+  asset_class: futures
+  enabled: true
+  description: "OFI 모멘텀 추세 추종 전략"
+  
+  entry:
+    type: ofi_momentum
+    params:
+      # OFI 조건
+      ofi_fast_period: 5
+      ofi_slow_period: 20
+      ofi_crossover_threshold: 0.5
+      
+      # 가격 확인
+      price_ma_period: 20
+      price_above_ma: true       # 가격이 MA 위에 있어야 매수
+      
+      # 변동성 필터
+      atr_period: 14
+      min_atr_pct: 0.3           # 최소 변동성
+  
+  exit:
+    type: trailing_ticks
+    params:
+      initial_stop_ticks: 8      # 초기 손절
+      target_ticks: 15           # 목표
+      trailing_start_ticks: 5    # 트레일링 시작점
+      trailing_distance_ticks: 3 # 트레일링 거리
+      max_hold_seconds: 600      # 최대 10분
+  
+  position:
+    type: fixed
+    params:
+      contracts: 1
+      max_contracts: 3
+
+---
+# =============================================================================
+# FILE: config/base.yaml
+# =============================================================================
+# 전역 기본 설정
+# =============================================================================
+
+system:
+  trading_mode: paper           # paper | real
+  log_level: INFO
+  timezone: Asia/Seoul
+
+kis_api:
+  paper_base_url: "https://openapivts.koreainvestment.com:29443"
+  real_base_url: "https://openapi.koreainvestment.com:9443"
+  token_refresh_minutes: 60
+
+redis:
+  host: localhost
+  port: 6379
+  db: 0
+
+clickhouse:
+  host: localhost
+  port: 9000
+  database: trading
+
+mlflow:
+  tracking_uri: "http://localhost:5000"
+  experiment_prefix: "backtest"
+
+telegram:
+  enabled: true
+  send_on_signal: true
+  send_on_trade: true
+  send_on_exit: true
+
+monitoring:
+  prometheus_port: 9090
+  grafana_port: 3000
+
+---
+# =============================================================================
+# FILE: config/risk/stock.yaml
+# =============================================================================
+# 주식 리스크 관리 설정
+# =============================================================================
+
+risk:
+  # 계좌 레벨 리스크
+  max_daily_loss_pct: 3.0        # 일일 최대 손실 3%
+  max_drawdown_pct: 10.0         # 최대 낙폭 10%
+  
+  # 포지션 레벨 리스크
+  max_single_position_pct: 15.0  # 단일 종목 최대 비중
+  max_total_exposure_pct: 80.0   # 총 노출 비중
+  
+  # Negative Screening
+  blacklist:
+    - "관리종목"
+    - "투자주의"
+    - "환기종목"
+  
+  keyword_filter:
+    - "횡령"
+    - "배임"
+    - "감자"
+    - "상장폐지"
+    - "회생절차"
+  
+  # 종목 필터
+  filters:
+    min_market_cap: 50000000000   # 최소 시총 500억
+    min_avg_volume: 100000        # 최소 평균 거래량
+    max_margin_rate: 50           # 최대 증거금률 50%
+
+---
+# =============================================================================
+# FILE: config/risk/futures.yaml
+# =============================================================================
+# 선물 리스크 관리 설정
+# =============================================================================
+
+risk:
+  # 계좌 레벨 리스크
+  max_daily_loss_pct: 5.0        # 일일 최대 손실 5%
+  max_drawdown_pct: 15.0         # 최대 낙폭 15%
+  
+  # 포지션 레벨 리스크
+  max_contracts: 5               # 최대 계약 수
+  max_notional_pct: 50.0         # 최대 명목가치 비중
+  
+  # 시간 필터
+  trading_hours:
+    start: "09:00"
+    end: "15:30"
+    exclude_times:
+      - "11:30-12:00"            # 점심시간 전후 제외
+  
+  # 변동성 필터
+  volatility:
+    max_atr_multiple: 3.0        # ATR 3배 이상이면 거래 중지
+    min_liquidity_score: 0.3     # 최소 유동성 점수
+
+---
+# =============================================================================
+# FILE: config/exit/three_stage_conservative.yaml
+# =============================================================================
+# 보수적인 3-Stage Exit 프리셋
+# =============================================================================
+
+exit_preset:
+  name: three_stage_conservative
+  description: "손실 최소화 중심의 보수적 청산 전략"
+  
+  params:
+    hard_stop_pct: 1.5
+    breakeven_threshold_pct: 1.5
+    breakeven_buffer_pct: 0.2
+    maximize_threshold_pct: 3.0
+    trailing_stop_pct: 2.0
+    tight_trailing_pct: 1.0
+    tight_trailing_trigger_pct: 5.0
+
+---
+# =============================================================================
+# FILE: config/exit/three_stage_aggressive.yaml
+# =============================================================================
+# 공격적인 3-Stage Exit 프리셋
+# =============================================================================
+
+exit_preset:
+  name: three_stage_aggressive
+  description: "수익 극대화 중심의 공격적 청산 전략"
+  
+  params:
+    hard_stop_pct: 3.0
+    breakeven_threshold_pct: 3.0
+    breakeven_buffer_pct: 0.1
+    maximize_threshold_pct: 7.0
+    trailing_stop_pct: 5.0
+    tight_trailing_pct: 2.0
+    tight_trailing_trigger_pct: 15.0

@@ -1,0 +1,138 @@
+# OFI Momentum Strategy (Futures)
+#
+# kospi_mini_sts의 OFIMomentumStrategy를 통합 프로젝트용으로 마이그레이션
+#
+# 핵심 아이디어:
+#   OFI Z-Score가 ±Nσ를 연속 M분 유지 → 모멘텀 진입
+#   단순하고 명확한 룰 기반 진입
+#
+# Microstructure 전략과의 차이점:
+#   - OFI 시그널에만 집중 (단순화)
+#   - 연속 바 확인 필수 (노이즈 제거)
+#   - 복합 스코어링 없음 (명확한 룰)
+#
+# 대상: KOSPI Mini Futures (101V), KOSPI 200 Futures (101S)
+
+strategy:
+  name: ofi_momentum
+  asset_class: futures
+  enabled: true
+  description: "OFI Z-Score 연속 모멘텀 기반 선물 전략"
+
+  # ===========================================================================
+  # 진입 조건 (Entry)
+  # ===========================================================================
+  entry:
+    type: ofi_momentum
+    params:
+      # -----------------------------------------------------------------
+      # OFI 시그널 설정
+      # -----------------------------------------------------------------
+      ofi_zscore_threshold: 2.0   # Z-Score 임계값 (±2σ)
+      consecutive_bars: 3         # 연속 확인 바 수 (3분)
+      ofi_lookback: 60            # OFI 히스토리 기간 (60바)
+
+      # -----------------------------------------------------------------
+      # 스프레드 필터
+      # -----------------------------------------------------------------
+      require_tight_spread: true  # 스프레드 좁을 때만 진입
+      max_spread_points: 0.04     # 최대 허용 스프레드 (2틱 = 0.04p)
+      tick_size: 0.02             # 1틱 크기 (KOSPI Mini)
+
+      # -----------------------------------------------------------------
+      # 호가 불균형 확인
+      # -----------------------------------------------------------------
+      imbalance_confirm: true     # 호가 불균형 확인 활성화
+      imbalance_threshold: 0.2    # 불균형 임계값 (20%)
+
+      # -----------------------------------------------------------------
+      # 진입 조건
+      # -----------------------------------------------------------------
+      min_history: 20             # 최소 히스토리 바 수
+      cooldown_bars: 5            # 진입 후 쿨다운 바 수
+
+  # ===========================================================================
+  # 청산 조건 (Exit)
+  # ===========================================================================
+  exit:
+    type: scalping
+    params:
+      # 손절/익절 (포인트 단위)
+      stop_loss_points: 1.0       # 손절폭 1포인트 (50틱)
+      take_profit_points: 2.0     # 익절폭 2포인트 (100틱)
+
+      # 틱 단위 환산
+      stop_loss_ticks: 50         # 손절 50틱
+      take_profit_ticks: 100      # 익절 100틱
+
+      # 시간 기반 청산
+      max_bars_in_position: 10    # 최대 보유 바 수 (10분)
+      max_hold_seconds: 600       # 최대 보유 시간 10분
+
+      # OFI 역전 시 청산
+      ofi_reversal_exit: true     # OFI 방향 역전 시 청산
+      ofi_reversal_threshold: -1.0  # 역전 Z-Score 임계값
+
+      # 세션 청산
+      session_close_time: "15:35"
+
+  # ===========================================================================
+  # 포지션 사이징 (Position Sizing)
+  # ===========================================================================
+  position:
+    type: fixed
+    params:
+      contracts: 1                # 기본 1계약
+      max_contracts: 2            # 최대 2계약
+      max_daily_trades: 30        # 일일 최대 거래 횟수
+
+  # ===========================================================================
+  # 지표 설정 (Indicators)
+  # ===========================================================================
+  indicators:
+    ofi:
+      lookback: 60
+      zscore_period: 60
+
+    spread:
+      lookback: 60
+      tick_size: 0.02
+
+
+# ===========================================================================
+# 전략 변형 (Variants)
+# ===========================================================================
+
+variants:
+  # 공격적 설정 (빠른 진입)
+  aggressive:
+    entry:
+      ofi_zscore_threshold: 1.5   # 낮은 임계값
+      consecutive_bars: 2         # 2분 연속
+      imbalance_confirm: false    # 불균형 확인 비활성화
+    exit:
+      stop_loss_points: 1.5
+      take_profit_points: 3.0
+      max_bars_in_position: 15
+
+  # 보수적 설정 (신중한 진입)
+  conservative:
+    entry:
+      ofi_zscore_threshold: 2.5   # 높은 임계값
+      consecutive_bars: 4         # 4분 연속
+      imbalance_threshold: 0.3    # 높은 불균형 요구
+    exit:
+      stop_loss_points: 0.8
+      take_profit_points: 1.5
+      max_bars_in_position: 8
+
+  # 스캘핑 (초단타)
+  scalping:
+    entry:
+      ofi_zscore_threshold: 1.8
+      consecutive_bars: 2
+      cooldown_bars: 3
+    exit:
+      stop_loss_points: 0.5       # 25틱 손절
+      take_profit_points: 1.0     # 50틱 익절
+      max_bars_in_position: 5     # 5분 최대
