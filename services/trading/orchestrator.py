@@ -28,11 +28,59 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime, date, time, timedelta
 from enum import Enum
-from typing import Any
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+import yaml
 
 from services.trading.pipeline import TradingPipeline, PipelineStage
 
+if TYPE_CHECKING:
+    from shared.config.schema import MarketScheduleConfig, PipelineConfig
+
 logger = logging.getLogger(__name__)
+
+
+def _load_holidays_from_config(config_path: str = "config/market_schedule.yaml") -> set[date]:
+    """설정 파일에서 공휴일 로드"""
+    holidays: set[date] = set()
+    path = Path(config_path)
+
+    if not path.exists():
+        logger.warning(f"Holiday config not found: {config_path}, using empty set")
+        return holidays
+
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+
+        for holiday_str in data.get("holidays", []):
+            try:
+                holidays.add(date.fromisoformat(holiday_str))
+            except (ValueError, TypeError):
+                pass
+    except Exception as e:
+        logger.error(f"Failed to load holidays: {e}")
+
+    return holidays
+
+
+# 설정에서 로드된 공휴일 (lazy load)
+_cached_holidays: set[date] | None = None
+
+
+def _get_holidays() -> set[date]:
+    """공휴일 가져오기 (캐시 사용)"""
+    global _cached_holidays
+    if _cached_holidays is None:
+        _cached_holidays = _load_holidays_from_config()
+    return _cached_holidays
+
+
+def reload_holidays():
+    """공휴일 다시 로드 (설정 변경 시)"""
+    global _cached_holidays
+    _cached_holidays = None
 
 
 class TradingState(Enum):
@@ -68,67 +116,16 @@ class MarketSchedule:
         return self.stock_close if asset_class == "stock" else self.futures_close
 
 
-# 한국 공휴일 (2024-2026)
-KOREAN_HOLIDAYS = {
-    # 2024
-    date(2024, 1, 1),
-    date(2024, 2, 9),
-    date(2024, 2, 10),
-    date(2024, 2, 11),
-    date(2024, 2, 12),
-    date(2024, 3, 1),
-    date(2024, 4, 10),
-    date(2024, 5, 5),
-    date(2024, 5, 6),
-    date(2024, 5, 15),
-    date(2024, 6, 6),
-    date(2024, 8, 15),
-    date(2024, 9, 16),
-    date(2024, 9, 17),
-    date(2024, 9, 18),
-    date(2024, 10, 3),
-    date(2024, 10, 9),
-    date(2024, 12, 25),
-    # 2025
-    date(2025, 1, 1),
-    date(2025, 1, 28),
-    date(2025, 1, 29),
-    date(2025, 1, 30),
-    date(2025, 3, 1),
-    date(2025, 3, 3),
-    date(2025, 5, 5),
-    date(2025, 5, 6),
-    date(2025, 6, 6),
-    date(2025, 8, 15),
-    date(2025, 10, 3),
-    date(2025, 10, 5),
-    date(2025, 10, 6),
-    date(2025, 10, 7),
-    date(2025, 10, 8),
-    date(2025, 10, 9),
-    date(2025, 12, 25),
-    # 2026
-    date(2026, 1, 1),
-    date(2026, 2, 16),
-    date(2026, 2, 17),
-    date(2026, 2, 18),
-    date(2026, 3, 1),
-    date(2026, 3, 2),
-    date(2026, 5, 5),
-    date(2026, 5, 24),
-    date(2026, 6, 6),
-    date(2026, 8, 15),
-    date(2026, 9, 24),
-    date(2026, 9, 25),
-    date(2026, 9, 26),
-    date(2026, 10, 3),
-    date(2026, 10, 9),
-    date(2026, 12, 25),
-}
+def is_trading_day(d: date | None = None, holidays: set[date] | None = None) -> bool:
+    """거래일 여부 확인
 
+    Args:
+        d: 확인할 날짜 (None이면 오늘)
+        holidays: 공휴일 set (None이면 설정 파일에서 로드)
 
-def is_trading_day(d: date | None = None) -> bool:
-    """거래일 여부 확인"""
+    Returns:
+        거래일이면 True
+    """
     if d is None:
         d = date.today()
 
@@ -137,7 +134,10 @@ def is_trading_day(d: date | None = None) -> bool:
         return False
 
     # 공휴일
-    if d in KOREAN_HOLIDAYS:
+    if holidays is None:
+        holidays = _get_holidays()
+
+    if d in holidays:
         return False
 
     return True
@@ -423,10 +423,38 @@ class TradingOrchestrator:
     async def _notify(self, message: str):
         """알림 전송"""
         if not self.config.enable_telegram:
+            logger.info(f"Notification (telegram disabled): {message}")
             return
 
-        # TODO: 실제 텔레그램 알림 구현
-        logger.info(f"Notification: {message}")
+        try:
+            from services.monitoring.notifier import TelegramConfig, TelegramNotifier
+
+            # 환경변수 또는 config에서 토큰 로드
+            config = TelegramConfig.from_env()
+
+            # config에 토큰이 있으면 우선 사용
+            if self.config.telegram_token and self.config.telegram_chat_id:
+                config = TelegramConfig(
+                    token=self.config.telegram_token,
+                    chat_id=self.config.telegram_chat_id,
+                )
+
+            if not config.is_configured:
+                logger.warning("Telegram not configured, skipping notification")
+                return
+
+            notifier = TelegramNotifier(config)
+            try:
+                success = await notifier.send(message)
+                if not success:
+                    logger.warning(f"Failed to send telegram notification: {message[:50]}...")
+            finally:
+                await notifier.close()
+
+        except ImportError:
+            logger.debug("TelegramNotifier not available")
+        except Exception as e:
+            logger.error(f"Notification error: {e}")
 
     def get_status(self) -> dict[str, Any]:
         """상태 조회"""

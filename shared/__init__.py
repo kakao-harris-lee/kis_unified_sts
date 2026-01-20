@@ -8,3 +8,13 @@
 - models: 데이터 모델
 - backtest: 백테스트 엔진
 """
+
+from importlib.metadata import version, PackageNotFoundError
+
+try:
+    __version__ = version("kis-unified-sts")
+except PackageNotFoundError:
+    # 패키지가 설치되지 않은 경우 (개발 모드)
+    __version__ = "0.1.0"
+
+__all__ = ["__version__"]

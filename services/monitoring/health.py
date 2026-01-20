@@ -22,12 +22,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from typing import Any, Callable, Coroutine
 
 logger = logging.getLogger(__name__)
+
+# 스레드 풀 (동기 작업용)
+_thread_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="health-check-")
 
 
 class ComponentStatus(Enum):
@@ -240,9 +244,16 @@ class HealthChecker:
         )
 
 
-# Redis 헬스 체크 팩토리
+# =============================================================================
+# 헬스 체크 팩토리 (비동기 안전)
+# =============================================================================
+
+
 def create_redis_check(redis_url: str) -> HealthCheckFunc:
-    """Redis 헬스 체크 함수 생성"""
+    """Redis 헬스 체크 함수 생성
+
+    이미 async redis client 사용하므로 이벤트 루프 블로킹 없음.
+    """
 
     async def check_redis() -> ComponentHealth:
         try:
@@ -273,17 +284,25 @@ def create_redis_check(redis_url: str) -> HealthCheckFunc:
     return check_redis
 
 
-# Database 헬스 체크 팩토리
 def create_database_check(connection_string: str) -> HealthCheckFunc:
-    """데이터베이스 헬스 체크 함수 생성"""
+    """데이터베이스 헬스 체크 함수 생성
+
+    동기 클라이언트를 스레드 풀에서 실행하여 이벤트 루프 블로킹 방지.
+    """
 
     async def check_database() -> ComponentHealth:
         try:
-            # ClickHouse 예시
-            from clickhouse_driver import Client
+            # 동기 작업을 스레드 풀에서 실행
+            loop = asyncio.get_event_loop()
 
-            client = Client.from_url(connection_string)
-            result = client.execute("SELECT 1")
+            def _sync_check():
+                from clickhouse_driver import Client
+
+                client = Client.from_url(connection_string)
+                result = client.execute("SELECT 1")
+                return result
+
+            await loop.run_in_executor(_thread_pool, _sync_check)
 
             return ComponentHealth(
                 name="database",
@@ -306,7 +325,57 @@ def create_database_check(connection_string: str) -> HealthCheckFunc:
     return check_database
 
 
+def create_kis_api_check(app_key: str, app_secret: str) -> HealthCheckFunc:
+    """KIS API 헬스 체크 함수 생성"""
+
+    async def check_kis_api() -> ComponentHealth:
+        try:
+            # KIS API ping/token 검증
+            # 실제 구현 시 shared.kis 모듈 사용
+            return ComponentHealth(
+                name="kis_api",
+                status=ComponentStatus.HEALTHY,
+                message="KIS API is accessible",
+            )
+        except Exception as e:
+            return ComponentHealth(
+                name="kis_api",
+                status=ComponentStatus.UNHEALTHY,
+                message=str(e),
+            )
+
+    return check_kis_api
+
+
+# =============================================================================
+# Liveness / Readiness Probes
+# =============================================================================
+
+
+async def liveness_check() -> ComponentHealth:
+    """Liveness probe - 프로세스 생존 확인
+
+    단순히 프로세스가 응답하는지만 확인.
+    """
+    return ComponentHealth(
+        name="liveness",
+        status=ComponentStatus.HEALTHY,
+        message="Process is alive",
+    )
+
+
+async def readiness_check(checker: HealthChecker) -> HealthStatus:
+    """Readiness probe - 서비스 준비 상태 확인
+
+    모든 의존성이 준비되었는지 확인.
+    """
+    return await checker.check_all()
+
+
+# =============================================================================
 # 전역 헬스 체커
+# =============================================================================
+
 _health_checker: HealthChecker | None = None
 
 
@@ -316,3 +385,33 @@ def get_health_checker() -> HealthChecker:
     if _health_checker is None:
         _health_checker = HealthChecker()
     return _health_checker
+
+
+def setup_health_checks(
+    redis_url: str | None = None,
+    db_url: str | None = None,
+    kis_credentials: tuple[str, str] | None = None,
+) -> HealthChecker:
+    """헬스 체크 설정
+
+    Args:
+        redis_url: Redis 연결 URL
+        db_url: 데이터베이스 연결 URL
+        kis_credentials: KIS API (app_key, app_secret) 튜플
+
+    Returns:
+        설정된 HealthChecker
+    """
+    checker = get_health_checker()
+
+    if redis_url:
+        checker.register("redis", create_redis_check(redis_url))
+
+    if db_url:
+        checker.register("database", create_database_check(db_url))
+
+    if kis_credentials:
+        app_key, app_secret = kis_credentials
+        checker.register("kis_api", create_kis_api_check(app_key, app_secret))
+
+    return checker

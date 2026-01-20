@@ -98,9 +98,15 @@ visualization = [
     "seaborn>=0.13",
 ]
 
+ml = [
+    "torch>=2.0",
+    "clickhouse-connect>=0.7",
+]
+
 api = [
     "fastapi>=0.109",
     "uvicorn[standard]>=0.25",
+    "slowapi>=0.1.9",  # Rate limiting
 ]
 
 monitoring = [
@@ -108,7 +114,7 @@ monitoring = [
 ]
 
 all = [
-    "kis-unified-sts[dev,optimization,visualization,api,monitoring]",
+    "kis-unified-sts[dev,optimization,visualization,ml,api,monitoring]",
 ]
 
 [project.scripts]

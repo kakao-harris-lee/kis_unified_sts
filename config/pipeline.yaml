@@ -1,0 +1,42 @@
+# Trading Pipeline 설정
+# 파이프라인 스테이지별 인터벌 및 서킷 브레이커 설정
+
+pipeline:
+  # 스테이지별 실행 간격 (초)
+  intervals:
+    regime: 300      # 5분 - 시장 상태 분석
+    entry: 1         # 1초 - 진입 신호 탐색
+    monitoring: 0.1  # 100ms - 포지션 모니터링
+    exit: 0.5        # 500ms - 청산 조건 확인
+
+  # 서킷 브레이커 설정
+  circuit_breakers:
+    regime:
+      fail_threshold: 3      # 연속 실패 허용 횟수
+      reset_timeout: 60      # 복구 대기 시간 (초)
+      success_threshold: 2   # 복구 성공 필요 횟수
+
+    entry:
+      fail_threshold: 5
+      reset_timeout: 30
+      success_threshold: 2
+
+    monitoring:
+      fail_threshold: 5
+      reset_timeout: 30
+      success_threshold: 2
+
+    exit:
+      fail_threshold: 2      # 청산은 더 민감하게
+      reset_timeout: 10
+      success_threshold: 1
+
+  # 재시도 설정
+  retry:
+    max_retries: 2
+    delay: 1.0  # 초
+
+  # 로깅 설정
+  logging:
+    log_interval: 60  # 상태 로깅 간격 (초)
+    log_metrics: true

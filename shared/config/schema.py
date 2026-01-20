@@ -80,7 +80,116 @@ class AssetClass(BaseModel):
     market: str = Field(description="시장 (KOSPI, KOSDAQ, KOSPI200F 등)")
 
 
+class CircuitBreakerStageConfig(BaseModel):
+    """스테이지별 서킷 브레이커 설정"""
+
+    fail_threshold: int = Field(default=5, description="연속 실패 허용 횟수")
+    reset_timeout: float = Field(default=30.0, description="복구 대기 시간 (초)")
+    success_threshold: int = Field(default=2, description="복구 성공 필요 횟수")
+
+
+class PipelineIntervalsConfig(BaseModel):
+    """파이프라인 스테이지별 인터벌 설정"""
+
+    regime: float = Field(default=300.0, description="Regime 스테이지 간격 (초)")
+    entry: float = Field(default=1.0, description="Entry 스테이지 간격 (초)")
+    monitoring: float = Field(default=0.1, description="Monitoring 스테이지 간격 (초)")
+    exit: float = Field(default=0.5, description="Exit 스테이지 간격 (초)")
+
+
+class PipelineCircuitBreakersConfig(BaseModel):
+    """파이프라인 서킷 브레이커 설정"""
+
+    regime: CircuitBreakerStageConfig = Field(
+        default_factory=lambda: CircuitBreakerStageConfig(
+            fail_threshold=3, reset_timeout=60.0, success_threshold=2
+        )
+    )
+    entry: CircuitBreakerStageConfig = Field(
+        default_factory=lambda: CircuitBreakerStageConfig(
+            fail_threshold=5, reset_timeout=30.0, success_threshold=2
+        )
+    )
+    monitoring: CircuitBreakerStageConfig = Field(
+        default_factory=lambda: CircuitBreakerStageConfig(
+            fail_threshold=5, reset_timeout=30.0, success_threshold=2
+        )
+    )
+    exit: CircuitBreakerStageConfig = Field(
+        default_factory=lambda: CircuitBreakerStageConfig(
+            fail_threshold=2, reset_timeout=10.0, success_threshold=1
+        )
+    )
+
+
+class PipelineRetryConfig(BaseModel):
+    """재시도 설정"""
+
+    max_retries: int = Field(default=2, description="최대 재시도 횟수")
+    delay: float = Field(default=1.0, description="재시도 간격 (초)")
+
+
+class PipelineConfig(BaseModel):
+    """파이프라인 전체 설정"""
+
+    intervals: PipelineIntervalsConfig = Field(default_factory=PipelineIntervalsConfig)
+    circuit_breakers: PipelineCircuitBreakersConfig = Field(
+        default_factory=PipelineCircuitBreakersConfig
+    )
+    retry: PipelineRetryConfig = Field(default_factory=PipelineRetryConfig)
+
+
+class TradingHoursConfig(BaseModel):
+    """거래 시간 설정"""
+
+    open: str = Field(default="09:00", description="거래 시작 시간")
+    close: str = Field(default="15:30", description="거래 종료 시간")
+
+
+class MarketHoursConfig(BaseModel):
+    """자산별 시장 시간 설정"""
+
+    regular: TradingHoursConfig = Field(default_factory=TradingHoursConfig)
+
+
+class MarketScheduleConfig(BaseModel):
+    """시장 스케줄 설정"""
+
+    stock: MarketHoursConfig = Field(
+        default_factory=lambda: MarketHoursConfig(
+            regular=TradingHoursConfig(open="09:00", close="15:30")
+        )
+    )
+    futures: MarketHoursConfig = Field(
+        default_factory=lambda: MarketHoursConfig(
+            regular=TradingHoursConfig(open="09:00", close="15:45")
+        )
+    )
+    pre_market_buffer: int = Field(default=5, description="장 시작 전 준비 시간 (분)")
+    pre_close_buffer: int = Field(default=5, description="장 종료 전 정리 시간 (분)")
+
+
+class HolidaysConfig(BaseModel):
+    """공휴일 설정"""
+
+    holidays: list[str] = Field(default_factory=list, description="휴장일 목록 (YYYY-MM-DD)")
+
+    def to_date_set(self) -> set:
+        """date 객체 set으로 변환"""
+        from datetime import date as dt_date
+
+        result = set()
+        for holiday_str in self.holidays:
+            try:
+                result.add(dt_date.fromisoformat(holiday_str))
+            except ValueError:
+                pass  # 잘못된 형식 무시
+        return result
+
+
 class BaseConfig(BaseModel):
     """기본 설정 (모든 설정 파일의 루트)"""
 
     kis: KISConfig = Field(default_factory=KISConfig)
+    pipeline: PipelineConfig = Field(default_factory=PipelineConfig)
+    market_schedule: MarketScheduleConfig = Field(default_factory=MarketScheduleConfig)

@@ -1,0 +1,110 @@
+"""API 인증 테스트"""
+
+import os
+import pytest
+from unittest.mock import patch
+
+
+class TestAPIKeyValidation:
+    """API Key 검증 테스트"""
+
+    def test_validate_api_key_disabled_when_not_set(self):
+        """API_KEY 미설정 시 인증 비활성화"""
+        from services.api.auth import is_auth_enabled, validate_api_key
+
+        with patch.dict(os.environ, {}, clear=True):
+            # 환경변수 제거 시뮬레이션
+            with patch("services.api.auth.get_api_key", return_value=None):
+                assert not is_auth_enabled()
+                assert validate_api_key(None) is True  # 인증 비활성화면 모두 통과
+
+    def test_validate_api_key_success(self):
+        """올바른 API Key 검증 성공"""
+        from services.api.auth import validate_api_key
+
+        test_key = "test-api-key-12345"
+
+        with patch("services.api.auth.get_api_key", return_value=test_key):
+            assert validate_api_key(test_key) is True
+
+    def test_validate_api_key_failure(self):
+        """잘못된 API Key 검증 실패"""
+        from services.api.auth import validate_api_key
+
+        test_key = "correct-key"
+        wrong_key = "wrong-key"
+
+        with patch("services.api.auth.get_api_key", return_value=test_key):
+            assert validate_api_key(wrong_key) is False
+
+    def test_validate_api_key_none_when_auth_enabled(self):
+        """인증 활성화 시 None key 검증 실패"""
+        from services.api.auth import validate_api_key
+
+        test_key = "test-api-key"
+
+        with patch("services.api.auth.get_api_key", return_value=test_key):
+            assert validate_api_key(None) is False
+
+
+class TestAPIKeyGeneration:
+    """API Key 생성 테스트"""
+
+    def test_generate_api_key_default_length(self):
+        """기본 길이 API Key 생성"""
+        from services.api.auth import generate_api_key
+
+        key = generate_api_key()
+        # URL-safe base64는 약 4/3배 길이
+        assert len(key) >= 32
+
+    def test_generate_api_key_custom_length(self):
+        """커스텀 길이 API Key 생성"""
+        from services.api.auth import generate_api_key
+
+        key = generate_api_key(length=16)
+        assert len(key) >= 16
+
+    def test_generate_api_key_uniqueness(self):
+        """생성된 키 고유성"""
+        from services.api.auth import generate_api_key
+
+        keys = [generate_api_key() for _ in range(10)]
+        assert len(set(keys)) == 10  # 모두 유니크
+
+
+@pytest.mark.asyncio
+class TestFastAPIIntegration:
+    """FastAPI 의존성 통합 테스트"""
+
+    async def test_verify_api_key_auth_disabled(self):
+        """인증 비활성화 시 의존성 통과"""
+        pytest.importorskip("fastapi")
+        from services.api.auth import verify_api_key
+
+        with patch("services.api.auth.is_auth_enabled", return_value=False):
+            result = await verify_api_key(None)
+            assert result is None
+
+    async def test_verify_api_key_valid(self):
+        """유효한 API Key로 의존성 통과"""
+        pytest.importorskip("fastapi")
+        from services.api.auth import verify_api_key
+
+        test_key = "valid-key"
+
+        with patch("services.api.auth.is_auth_enabled", return_value=True):
+            with patch("services.api.auth.validate_api_key", return_value=True):
+                result = await verify_api_key(test_key)
+                assert result == test_key
+
+    async def test_verify_api_key_invalid_raises(self):
+        """잘못된 API Key로 HTTPException 발생"""
+        fastapi = pytest.importorskip("fastapi")
+        from services.api.auth import verify_api_key
+
+        with patch("services.api.auth.is_auth_enabled", return_value=True):
+            with patch("services.api.auth.validate_api_key", return_value=False):
+                with pytest.raises(fastapi.HTTPException) as exc_info:
+                    await verify_api_key("invalid-key")
+                assert exc_info.value.status_code == 401

@@ -20,7 +20,10 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any, Callable, Coroutine
+from typing import TYPE_CHECKING, Any, Callable, Coroutine
+
+if TYPE_CHECKING:
+    from shared.config.schema import PipelineConfig
 
 logger = logging.getLogger(__name__)
 
@@ -267,7 +270,11 @@ class TradingPipeline:
     4-Stage 파이프라인을 관리하고 실행.
 
     Usage:
+        from shared.config.loader import ConfigLoader
+
+        pipeline_config = ConfigLoader.load("pipeline.yaml")
         pipeline = TradingPipeline(
+            config=pipeline_config,
             regime_handler=regime_detector.detect,
             entry_handler=entry_manager.scan,
             monitoring_handler=position_tracker.update,
@@ -277,29 +284,13 @@ class TradingPipeline:
         await pipeline.start()
     """
 
-    # 스테이지별 기본 주기 (초)
-    DEFAULT_INTERVALS = {
-        PipelineStage.REGIME: 300,  # 5분
-        PipelineStage.ENTRY: 1,
-        PipelineStage.MONITORING: 0.1,
-        PipelineStage.EXIT: 0.5,
-    }
-
-    # 스테이지별 회로 차단기 설정
-    DEFAULT_BREAKER_CONFIG = {
-        PipelineStage.REGIME: {"fail_threshold": 3, "reset_timeout": 60},
-        PipelineStage.ENTRY: {"fail_threshold": 5, "reset_timeout": 30},
-        PipelineStage.MONITORING: {"fail_threshold": 5, "reset_timeout": 30},
-        PipelineStage.EXIT: {"fail_threshold": 2, "reset_timeout": 10},
-    }
-
     def __init__(
         self,
         regime_handler: Callable | None = None,
         entry_handler: Callable | None = None,
         monitoring_handler: Callable | None = None,
         exit_handler: Callable | None = None,
-        intervals: dict[PipelineStage, float] | None = None,
+        config: "PipelineConfig | None" = None,
     ):
         """
         Args:
@@ -307,7 +298,7 @@ class TradingPipeline:
             entry_handler: Entry 시그널 핸들러
             monitoring_handler: Monitoring 핸들러
             exit_handler: Exit 시그널 핸들러
-            intervals: 스테이지별 실행 주기 (초)
+            config: 파이프라인 설정 (None이면 기본값 사용)
         """
         self.handlers = {
             PipelineStage.REGIME: regime_handler,
@@ -316,11 +307,55 @@ class TradingPipeline:
             PipelineStage.EXIT: exit_handler,
         }
 
-        self.intervals = {**self.DEFAULT_INTERVALS, **(intervals or {})}
+        # 설정에서 인터벌 로드 (없으면 기본값)
+        if config is not None:
+            self.intervals = {
+                PipelineStage.REGIME: config.intervals.regime,
+                PipelineStage.ENTRY: config.intervals.entry,
+                PipelineStage.MONITORING: config.intervals.monitoring,
+                PipelineStage.EXIT: config.intervals.exit,
+            }
+            self._breaker_config = {
+                PipelineStage.REGIME: {
+                    "fail_threshold": config.circuit_breakers.regime.fail_threshold,
+                    "reset_timeout": config.circuit_breakers.regime.reset_timeout,
+                },
+                PipelineStage.ENTRY: {
+                    "fail_threshold": config.circuit_breakers.entry.fail_threshold,
+                    "reset_timeout": config.circuit_breakers.entry.reset_timeout,
+                },
+                PipelineStage.MONITORING: {
+                    "fail_threshold": config.circuit_breakers.monitoring.fail_threshold,
+                    "reset_timeout": config.circuit_breakers.monitoring.reset_timeout,
+                },
+                PipelineStage.EXIT: {
+                    "fail_threshold": config.circuit_breakers.exit.fail_threshold,
+                    "reset_timeout": config.circuit_breakers.exit.reset_timeout,
+                },
+            }
+            self._retry_config = {
+                "max_retries": config.retry.max_retries,
+                "delay": config.retry.delay,
+            }
+        else:
+            # 기본값 (하위 호환성)
+            self.intervals = {
+                PipelineStage.REGIME: 300.0,
+                PipelineStage.ENTRY: 1.0,
+                PipelineStage.MONITORING: 0.1,
+                PipelineStage.EXIT: 0.5,
+            }
+            self._breaker_config = {
+                PipelineStage.REGIME: {"fail_threshold": 3, "reset_timeout": 60.0},
+                PipelineStage.ENTRY: {"fail_threshold": 5, "reset_timeout": 30.0},
+                PipelineStage.MONITORING: {"fail_threshold": 5, "reset_timeout": 30.0},
+                PipelineStage.EXIT: {"fail_threshold": 2, "reset_timeout": 10.0},
+            }
+            self._retry_config = {"max_retries": 2, "delay": 1.0}
 
         # 회로 차단기 초기화
         self.breakers = {
-            stage: CircuitBreaker(stage.value, **self.DEFAULT_BREAKER_CONFIG[stage])
+            stage: CircuitBreaker(stage.value, **self._breaker_config[stage])
             for stage in PipelineStage
         }
 
@@ -388,7 +423,11 @@ class TradingPipeline:
                 start_time = datetime.now()
 
                 # 핸들러 실행
-                result = await with_retry(handler, max_retries=2, delay=1.0)
+                result = await with_retry(
+                    handler,
+                    max_retries=self._retry_config["max_retries"],
+                    delay=self._retry_config["delay"],
+                )
 
                 # 메트릭 업데이트
                 latency = (datetime.now() - start_time).total_seconds() * 1000
