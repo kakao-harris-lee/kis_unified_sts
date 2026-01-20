@@ -1,0 +1,11 @@
+arbitrage:
+  risk_free_rate: 0.035
+  rolling_window: 60
+  min_samples: 20
+  basis_threshold: 2.5
+  max_spread_ticks: 2
+  depth_multiplier: 5.0
+  order_size: 5.0
+  quarterly_blackout_days: 14
+  tick_size: 0.05
+  multiplier: 50000

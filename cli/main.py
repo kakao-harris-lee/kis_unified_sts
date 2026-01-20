@@ -35,6 +35,9 @@ def cli(verbose: bool):
         backtest    백테스트 실행 및 관리
         optimize    파라미터 최적화
         mlflow      MLflow 관련 명령
+        collect     데이터 수집 명령
+        trade       트레이딩 제어 명령
+        health      시스템 헬스 체크
     """
     if verbose:
         logging.getLogger().setLevel(logging.DEBUG)
@@ -446,6 +449,338 @@ def mlflow_list():
             click.echo(f"  [{exp.experiment_id}] {exp.name}")
     except ImportError:
         click.echo("MLflow not installed", err=True)
+        sys.exit(1)
+
+
+# =============================================================================
+# Data Collection Commands
+# =============================================================================
+
+
+@cli.group()
+def collect():
+    """데이터 수집 명령
+
+    \b
+    Examples:
+        sts collect start --symbol 005930
+        sts collect stop
+        sts collect status
+    """
+    pass
+
+
+@collect.command("start")
+@click.option(
+    "--symbol",
+    "-s",
+    required=True,
+    multiple=True,
+    help="Symbol to collect (can specify multiple)",
+)
+@click.option(
+    "--interval",
+    "-i",
+    default=1.0,
+    type=float,
+    help="Collection interval in seconds (default: 1.0)",
+)
+@click.option(
+    "--output",
+    "-o",
+    type=click.Path(),
+    help="Output directory for collected data",
+)
+def collect_start(symbol: tuple, interval: float, output: str | None):
+    """데이터 수집 시작
+
+    \b
+    Example:
+        sts collect start -s 005930 -s 000660
+        sts collect start -s 101S06 --interval 0.5
+    """
+    import asyncio
+
+    click.echo(f"Starting data collection for: {list(symbol)}")
+    click.echo(f"Interval: {interval}s")
+
+    try:
+        from shared.collector import DataCollector, CollectorConfig
+
+        config = CollectorConfig(
+            symbols=list(symbol),
+            tick_interval=interval,
+        )
+        collector = DataCollector(config)
+
+        click.echo("Press Ctrl+C to stop collection")
+
+        async def run():
+            await collector.start()
+            try:
+                while True:
+                    await asyncio.sleep(1)
+            except asyncio.CancelledError:
+                pass
+            finally:
+                await collector.stop()
+
+        asyncio.run(run())
+
+    except ImportError as e:
+        click.echo(f"Error: Required module not installed: {e}", err=True)
+        sys.exit(1)
+    except KeyboardInterrupt:
+        click.echo("\nData collection stopped")
+
+
+@collect.command("status")
+def collect_status():
+    """데이터 수집 상태 조회
+
+    \b
+    Example:
+        sts collect status
+    """
+    click.echo("Collector Status:")
+    click.echo("-" * 40)
+    click.echo("  Status: Not running (use 'sts collect start' to begin)")
+    click.echo("  Note: For persistent collection, use the API or daemon mode")
+
+
+# =============================================================================
+# Trading Commands
+# =============================================================================
+
+
+@cli.group()
+def trade():
+    """트레이딩 제어 명령
+
+    \b
+    Examples:
+        sts trade start --strategy bb_reversion --asset stock
+        sts trade stop
+        sts trade status
+    """
+    pass
+
+
+@trade.command("start")
+@click.option(
+    "--strategy",
+    "-s",
+    required=True,
+    help="Strategy name",
+)
+@click.option(
+    "--asset",
+    "-a",
+    required=True,
+    type=click.Choice(["stock", "futures"]),
+    help="Asset class",
+)
+@click.option(
+    "--capital",
+    "-c",
+    default=10_000_000,
+    type=float,
+    help="Initial capital (default: 10,000,000)",
+)
+@click.option(
+    "--paper/--live",
+    default=True,
+    help="Paper trading mode (default: paper)",
+)
+@click.option(
+    "--daemon/--single",
+    default=False,
+    help="Daemon mode (run daily) or single session",
+)
+def trade_start(
+    strategy: str,
+    asset: str,
+    capital: float,
+    paper: bool,
+    daemon: bool,
+):
+    """트레이딩 시작
+
+    \b
+    Example:
+        sts trade start -s bb_reversion -a stock
+        sts trade start -s pure_micro -a futures --capital 5000000
+        sts trade start -s bb_reversion -a stock --daemon
+    """
+    import asyncio
+
+    mode_str = "Paper" if paper else "LIVE"
+    click.echo(f"Starting {mode_str} Trading")
+    click.echo(f"  Strategy: {strategy}")
+    click.echo(f"  Asset: {asset}")
+    click.echo(f"  Capital: {capital:,.0f}")
+    click.echo(f"  Mode: {'Daemon' if daemon else 'Single Session'}")
+
+    if not paper:
+        if not click.confirm("⚠️  LIVE TRADING - Are you sure?"):
+            click.echo("Aborted.")
+            return
+
+    try:
+        from services.trading.orchestrator import (
+            TradingOrchestrator,
+            TradingConfig,
+        )
+
+        if asset == "stock":
+            config = TradingConfig.stock(
+                strategy_name=strategy,
+                initial_capital=capital,
+            )
+        else:
+            config = TradingConfig.futures(
+                strategy_name=strategy,
+                initial_capital=capital,
+            )
+
+        config.paper_trading = paper
+
+        orchestrator = TradingOrchestrator(config)
+
+        click.echo("\nPress Ctrl+C to stop trading")
+
+        async def run():
+            if daemon:
+                await orchestrator.run()
+            else:
+                await orchestrator.run_session()
+
+        asyncio.run(run())
+
+    except ImportError as e:
+        click.echo(f"Error: Required module not installed: {e}", err=True)
+        sys.exit(1)
+    except KeyboardInterrupt:
+        click.echo("\nTrading stopped")
+
+
+@trade.command("status")
+@click.option(
+    "--url",
+    "-u",
+    default="http://localhost:8000",
+    help="API server URL",
+)
+def trade_status(url: str):
+    """트레이딩 상태 조회
+
+    \b
+    Example:
+        sts trade status
+        sts trade status --url http://localhost:8000
+    """
+    try:
+        import httpx
+
+        response = httpx.get(f"{url}/api/v1/trading/status", timeout=5.0)
+        if response.status_code == 200:
+            data = response.json()
+            click.echo("Trading Status:")
+            click.echo("-" * 40)
+            for key, value in data.items():
+                click.echo(f"  {key}: {value}")
+        else:
+            click.echo(f"Error: {response.status_code}")
+    except Exception:
+        click.echo("Trading Status:")
+        click.echo("-" * 40)
+        click.echo("  Status: Not running")
+        click.echo("  Note: Start API server with 'uvicorn services.api.app:app'")
+
+
+@trade.command("stop")
+@click.option(
+    "--url",
+    "-u",
+    default="http://localhost:8000",
+    help="API server URL",
+)
+def trade_stop(url: str):
+    """트레이딩 종료
+
+    \b
+    Example:
+        sts trade stop
+        sts trade stop --url http://localhost:8000
+    """
+    try:
+        import httpx
+
+        response = httpx.post(
+            f"{url}/api/v1/trading/stop",
+            timeout=10.0,
+        )
+        if response.status_code == 200:
+            click.echo("Trading stopped successfully")
+        else:
+            click.echo(f"Error: {response.status_code} - {response.text}")
+    except Exception as e:
+        click.echo(f"Error stopping trading: {e}", err=True)
+        click.echo("Note: Ensure API server is running")
+
+
+# =============================================================================
+# Health Commands
+# =============================================================================
+
+
+@cli.command("health")
+@click.option(
+    "--url",
+    "-u",
+    default="http://localhost:8000",
+    help="API server URL",
+)
+def health(url: str):
+    """시스템 헬스 체크
+
+    \b
+    Example:
+        sts health
+        sts health --url http://localhost:8000
+    """
+    try:
+        import httpx
+
+        click.echo(f"Checking health: {url}")
+
+        # Basic health
+        response = httpx.get(f"{url}/api/v1/health", timeout=5.0)
+        if response.status_code == 200:
+            data = response.json()
+            click.echo("Health Check: ✓")
+            click.echo(f"  Status: {data.get('status', 'unknown')}")
+            click.echo(f"  Version: {data.get('version', 'unknown')}")
+        else:
+            click.echo(f"Health Check: ✗ ({response.status_code})")
+
+        # Readiness
+        response = httpx.get(f"{url}/api/v1/health/ready", timeout=5.0)
+        if response.status_code == 200:
+            data = response.json()
+            click.echo("Readiness: ✓")
+            components = data.get("components", {})
+            for name, status in components.items():
+                icon = "✓" if status else "✗"
+                click.echo(f"  {name}: {icon}")
+        else:
+            click.echo(f"Readiness: ✗ ({response.status_code})")
+
+    except httpx.ConnectError:
+        click.echo("Health Check: ✗ (Connection refused)")
+        click.echo("Note: Start API server with 'uvicorn services.api.app:app'")
+    except ImportError:
+        click.echo("Error: httpx not installed (pip install httpx)", err=True)
         sys.exit(1)
 
 

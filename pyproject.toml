@@ -208,6 +208,7 @@ ignore_missing_imports = true
 minversion = "7.0"
 addopts = "-ra -q --strict-markers"
 testpaths = ["tests"]
+pythonpath = ["."]
 asyncio_mode = "auto"
 markers = [
     "unit: Unit tests",
