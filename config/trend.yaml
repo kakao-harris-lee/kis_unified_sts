@@ -1,0 +1,17 @@
+trend:
+  technical:
+    ma_short_period: 20
+    ma_long_period: 60
+    ichimoku_tenkan_period: 9
+    ichimoku_kijun_period: 26
+    ichimoku_senkou_b_period: 52
+    atr_period: 14
+
+  entry_threshold: 0.7
+  min_atr: 0.5
+  atr_stop_multiplier: 2.0
+  atr_target_multiplier: 3.0
+  max_positions: 3
+  position_size: 5.0
+  tick_size: 0.05
+  multiplier: 50000
