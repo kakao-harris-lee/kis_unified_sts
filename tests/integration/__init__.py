@@ -1,1 +1,1 @@
-"""Integration tests for the KIS Unified Trading System."""
+"""Integration tests."""
