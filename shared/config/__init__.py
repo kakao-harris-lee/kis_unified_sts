@@ -22,6 +22,7 @@ from shared.config.loader import (
     load_strategy_config,
 )
 from shared.config.schema import KISConfig
+from shared.config.secrets import SecretsManager, require_secret
 
 __all__ = [
     # Loader
@@ -34,4 +35,7 @@ __all__ = [
     "get_strategy_names",
     # Schema
     "KISConfig",
+    # Secrets
+    "SecretsManager",
+    "require_secret",
 ]

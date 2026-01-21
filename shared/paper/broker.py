@@ -11,6 +11,7 @@ from .models import (
     OrderSide,
     OrderType,
     PositionSide,
+    InsufficientBalanceError,
 )
 
 logger = logging.getLogger(__name__)
@@ -78,6 +79,13 @@ class VirtualBroker:
         # Apply slippage
         if order.side == OrderSide.BUY:
             fill_price = market_price * (1 + self.slippage_rate)
+            # Check sufficient balance for BUY orders
+            estimated_commission = fill_price * order.quantity * self.commission_rate
+            required_balance = fill_price * order.quantity + estimated_commission
+            if self.balance < required_balance:
+                raise InsufficientBalanceError(
+                    f"Insufficient balance: need {required_balance:.2f}, have {self.balance:.2f}"
+                )
         else:
             fill_price = market_price * (1 - self.slippage_rate)
 

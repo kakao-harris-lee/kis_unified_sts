@@ -1,0 +1,1 @@
+"""Regime detection unit tests."""

@@ -1,0 +1,58 @@
+import axios from 'axios';
+
+const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+
+export const apiClient = axios.create({
+  baseURL: API_BASE,
+  timeout: 10000,
+  headers: {
+    'Content-Type': 'application/json',
+  },
+});
+
+// Add API key header if configured
+const apiKey = import.meta.env.VITE_API_KEY;
+if (apiKey) {
+  apiClient.defaults.headers.common['X-API-Key'] = apiKey;
+}
+
+// Trading API
+export const tradingApi = {
+  getStatus: () => apiClient.get('/api/trading/status'),
+  getPositions: () => apiClient.get('/api/trading/positions'),
+  startTrading: () => apiClient.post('/api/trading/start'),
+  stopTrading: () => apiClient.post('/api/trading/stop'),
+};
+
+// Signals API
+export const signalsApi = {
+  getSignals: (params?: { strategy?: string; side?: string; limit?: number }) =>
+    apiClient.get('/api/signals', { params }),
+  getHistory: (days?: number) =>
+    apiClient.get('/api/signals/history', { params: { days } }),
+};
+
+// Trades API
+export const tradesApi = {
+  getTrades: (params?: { strategy?: string; side?: string; limit?: number }) =>
+    apiClient.get('/api/trades', { params }),
+  getStatistics: () => apiClient.get('/api/trades/statistics'),
+  getByStrategy: () => apiClient.get('/api/trades/by-strategy'),
+};
+
+// Backtest API
+export const backtestApi = {
+  list: () => apiClient.get('/api/backtest'),
+  run: (params: { strategy: string; start_date: string; end_date: string }) =>
+    apiClient.post('/api/backtest/run', null, { params }),
+  getResult: (runId: string) => apiClient.get(`/api/backtest/${runId}`),
+};
+
+// Experiments API
+export const experimentsApi = {
+  list: () => apiClient.get('/api/experiments'),
+  getRuns: (experimentId: string, params?: { status?: string; limit?: number }) =>
+    apiClient.get(`/api/experiments/${experimentId}/runs`, { params }),
+  getBest: (experimentId: string, metric?: string) =>
+    apiClient.get(`/api/experiments/${experimentId}/best`, { params: { metric } }),
+};
