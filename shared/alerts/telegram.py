@@ -21,9 +21,9 @@ class TelegramAlertService:
     """
 
     LEVEL_EMOJIS = {
-        AlertLevel.INFO: "info",
-        AlertLevel.WARNING: "Warning",
-        AlertLevel.CRITICAL: "CRITICAL",
+        AlertLevel.INFO: "\u2139\ufe0f",      # ℹ️
+        AlertLevel.WARNING: "\u26a0\ufe0f",   # ⚠️
+        AlertLevel.CRITICAL: "\U0001f6a8",    # 🚨
     }
 
     def __init__(self, config: AlertConfig):

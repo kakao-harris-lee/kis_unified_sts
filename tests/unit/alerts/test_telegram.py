@@ -25,9 +25,37 @@ async def test_telegram_format_message():
 
     formatted = service._format_message(alert)
 
-    assert "Warning" in formatted or "warning" in formatted.lower()
+    # Should contain emoji for warning level
+    assert "\u26a0" in formatted  # Warning emoji
     assert "Test Alert" in formatted
     assert "This is a test" in formatted
+
+
+@pytest.mark.asyncio
+async def test_telegram_emoji_mapping():
+    """Test that all alert levels have correct emoji mappings."""
+    from shared.alerts.telegram import TelegramAlertService
+    from shared.alerts.models import AlertLevel
+
+    # Verify all levels are mapped
+    assert AlertLevel.INFO in TelegramAlertService.LEVEL_EMOJIS
+    assert AlertLevel.WARNING in TelegramAlertService.LEVEL_EMOJIS
+    assert AlertLevel.CRITICAL in TelegramAlertService.LEVEL_EMOJIS
+
+    # Verify emojis are actual Unicode characters, not text
+    info_emoji = TelegramAlertService.LEVEL_EMOJIS[AlertLevel.INFO]
+    warning_emoji = TelegramAlertService.LEVEL_EMOJIS[AlertLevel.WARNING]
+    critical_emoji = TelegramAlertService.LEVEL_EMOJIS[AlertLevel.CRITICAL]
+
+    # Should be short Unicode sequences, not words
+    assert len(info_emoji) <= 3  # emoji + variation selector
+    assert len(warning_emoji) <= 3
+    assert len(critical_emoji) <= 3
+
+    # Should not be plain text words
+    assert info_emoji.lower() != "info"
+    assert warning_emoji.lower() != "warning"
+    assert critical_emoji.lower() != "critical"
 
 
 @pytest.mark.asyncio
