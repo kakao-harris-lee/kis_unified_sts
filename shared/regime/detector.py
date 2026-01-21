@@ -7,6 +7,7 @@ import pandas as pd
 import numpy as np
 
 from .models import RegimeState, RegimeSignal, RegimeConfig
+from shared.utils.math import safe_divide
 
 logger = logging.getLogger(__name__)
 
@@ -50,12 +51,20 @@ class StockRegimeDetector:
         current_sma_fast = sma_fast.iloc[-1]
         current_sma_slow = sma_slow.iloc[-1]
 
-        # Calculate trend strength
-        trend_pct = (current_sma_fast - current_sma_slow) / current_sma_slow
+        # Calculate trend strength (safe division)
+        trend_pct = safe_divide(
+            current_sma_fast - current_sma_slow,
+            current_sma_slow,
+            default=0.0,
+        )
 
-        # Calculate volatility
+        # Calculate volatility (handle empty or all-NaN returns)
         returns = close.pct_change().dropna()
-        volatility = returns.rolling(self.config.volatility_window).std().iloc[-1]
+        if len(returns) < self.config.volatility_window:
+            volatility = 0.0
+        else:
+            vol_series = returns.rolling(self.config.volatility_window).std()
+            volatility = vol_series.iloc[-1] if len(vol_series) > 0 and pd.notna(vol_series.iloc[-1]) else 0.0
 
         # Determine regime
         indicators = {

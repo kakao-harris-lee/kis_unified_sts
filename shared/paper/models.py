@@ -4,6 +4,8 @@ from datetime import datetime
 from enum import Enum
 from typing import Optional
 
+from shared.utils.math import safe_divide
+
 
 class OrderSide(str, Enum):
     BUY = "BUY"
@@ -65,7 +67,8 @@ class TradeRecord:
     @property
     def pnl_pct(self) -> float:
         """Calculate P&L percentage."""
-        return (self.pnl / (self.entry_price * self.quantity)) * 100
+        base_value = self.entry_price * self.quantity
+        return safe_divide(self.pnl, base_value, default=0.0) * 100
 
 
 @dataclass
