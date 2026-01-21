@@ -127,13 +127,23 @@ def backtest_run(
         sts backtest run -s bb_reversion -a stock --start 2024-01-01 --end 2024-12-31
         sts backtest run -s bb_reversion -a stock -d ./data/005930.csv --track
     """
-    import pandas as pd
-
     from shared.backtest import BacktestConfig, BacktestEngine, MLflowTracker
     from shared.config.loader import ConfigLoader
     from shared.strategy.registry import StrategyFactory
+    from shared.validation.cli_validators import (
+        validate_csv_file,
+        validate_capital,
+        ValidationError,
+    )
 
     click.echo(f"Running backtest: {strategy} ({asset})")
+
+    # 자본금 검증
+    try:
+        capital = validate_capital(capital)
+    except ValidationError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
 
     # 전략 설정 로드
     try:
@@ -144,10 +154,14 @@ def backtest_run(
 
     click.echo(f"Loaded strategy config: {strategy_config['strategy']['name']}")
 
-    # 데이터 로드
+    # 데이터 로드 및 검증
     if data:
-        df = pd.read_csv(data, parse_dates=["datetime"])
-        click.echo(f"Loaded data: {len(df)} rows")
+        try:
+            df = validate_csv_file(data)
+            click.echo(f"Loaded data: {len(df)} rows")
+        except ValidationError as e:
+            click.echo(f"Error: {e}", err=True)
+            sys.exit(1)
     else:
         click.echo("Error: Data file required (use --data option)", err=True)
         click.echo("Hint: Create sample data or download from data source")
@@ -344,14 +358,18 @@ def optimize(
         sts optimize -s bb_reversion -a stock -d ./data/005930.csv -n 100
         sts optimize -s bb_reversion -a stock -d data.csv --metric profit_factor
     """
-    import pandas as pd
+    from shared.validation.cli_validators import validate_csv_file, ValidationError
 
     click.echo(f"Optimizing: {strategy} ({asset})")
     click.echo(f"Trials: {trials}, Metric: {metric}")
 
-    # 데이터 로드
-    df = pd.read_csv(data, parse_dates=["datetime"])
-    click.echo(f"Loaded data: {len(df)} rows")
+    # 데이터 로드 및 검증
+    try:
+        df = validate_csv_file(data)
+        click.echo(f"Loaded data: {len(df)} rows")
+    except ValidationError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
 
     click.echo("\nNote: Strategy-specific optimization coming soon.")
     click.echo("For now, use the Python API directly:")
