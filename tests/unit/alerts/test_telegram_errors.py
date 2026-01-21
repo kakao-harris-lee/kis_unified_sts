@@ -159,7 +159,7 @@ async def test_telegram_successful_send(alert_config, test_alert):
     """Test successful message sending."""
     service = TelegramAlertService(alert_config)
 
-    # Create a proper async context manager mock
+    # Create a proper mock for the persistent session approach
     mock_response = MagicMock()
     mock_response.status = 200
 
@@ -168,15 +168,15 @@ async def test_telegram_successful_send(alert_config, test_alert):
 
     mock_session = MagicMock()
     mock_session.post.return_value = mock_post_cm
+    mock_session.closed = False
 
-    mock_session_cm = AsyncMock()
-    mock_session_cm.__aenter__.return_value = mock_session
+    # Inject mock session directly (bypassing _get_session)
+    service._session = mock_session
 
-    with patch("aiohttp.ClientSession", return_value=mock_session_cm):
-        result = await service.send(test_alert)
+    result = await service.send(test_alert)
 
-        assert result is True
-        assert test_alert.sent is True
+    assert result is True
+    assert test_alert.sent is True
 
 
 @pytest.mark.asyncio

@@ -17,6 +17,7 @@ class TelegramAlertService:
     - Formatted messages with emojis
     - Rate limiting
     - Async sending
+    - Persistent HTTP session for connection reuse
     """
 
     LEVEL_EMOJIS = {
@@ -29,11 +30,31 @@ class TelegramAlertService:
         self.config = config
         self._last_sent: Optional[datetime] = None
         self._enabled = bool(config.telegram_token and config.telegram_chat_id)
+        self._session: Optional[aiohttp.ClientSession] = None
 
     @property
     def is_enabled(self) -> bool:
         """Check if service is enabled."""
         return self._enabled
+
+    async def _get_session(self) -> aiohttp.ClientSession:
+        """Get or create persistent HTTP session.
+
+        Reuses existing session for connection pooling and better performance.
+        """
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession()
+        return self._session
+
+    async def close(self) -> None:
+        """Close the HTTP session.
+
+        Should be called when the service is being shut down
+        to properly release resources.
+        """
+        if self._session and not self._session.closed:
+            await self._session.close()
+            self._session = None
 
     def _format_message(self, alert: Alert) -> str:
         """Format alert for Telegram."""
@@ -80,16 +101,16 @@ class TelegramAlertService:
         }
 
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(url, json=payload) as resp:
-                    if resp.status == 200:
-                        self._last_sent = datetime.now()
-                        alert.sent = True
-                        logger.info(f"Alert sent: {alert.title}")
-                        return True
-                    else:
-                        logger.error(f"Telegram API error: {resp.status}")
-                        return False
+            session = await self._get_session()
+            async with session.post(url, json=payload) as resp:
+                if resp.status == 200:
+                    self._last_sent = datetime.now()
+                    alert.sent = True
+                    logger.info(f"Alert sent: {alert.title}")
+                    return True
+                else:
+                    logger.error(f"Telegram API error: {resp.status}")
+                    return False
         except Exception as e:
             logger.error(f"Failed to send alert: {e}")
             return False
