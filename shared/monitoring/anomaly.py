@@ -5,6 +5,7 @@ from typing import List, Dict, Optional
 from dataclasses import dataclass
 
 import numpy as np
+import pandas as pd
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +35,10 @@ class AnomalyDetector:
         values: List[float],
         window: int = 20,
     ) -> List[Dict]:
-        """Detect outliers using rolling z-score.
+        """Detect outliers using vectorized rolling z-score.
+
+        Uses pandas rolling operations for O(n) complexity instead of
+        O(n×window) with manual loops.
 
         Args:
             values: List of values to check
@@ -46,31 +50,43 @@ class AnomalyDetector:
         if len(values) < self.config.min_samples:
             return []
 
-        arr = np.array(values)
+        # Convert to pandas Series for vectorized operations
+        series = pd.Series(values)
+
+        # Vectorized rolling calculations - O(n) complexity
+        rolling_mean = series.rolling(window).mean()
+        rolling_std = series.rolling(window).std()
+
+        # Vectorized z-score calculation (avoid division by zero)
+        # Use shift to compare current value against previous window's stats
+        z_scores = np.abs(series - rolling_mean.shift(1)) / rolling_std.shift(1)
+
+        # Find outliers where z-score exceeds threshold
+        outlier_mask = z_scores > self.config.outlier_std_threshold
+
+        # Build results only for outliers (avoid iterating all values)
         anomalies = []
+        outlier_indices = np.where(outlier_mask)[0]
 
-        # Calculate rolling mean and std
-        for i in range(window, len(arr)):
-            window_data = arr[i - window:i]
-            mean = np.mean(window_data)
-            std = np.std(window_data)
+        for i in outlier_indices:
+            if i >= window and pd.notna(z_scores.iloc[i]):
+                mean = rolling_mean.iloc[i - 1] if i > 0 else rolling_mean.iloc[i]
+                std = rolling_std.iloc[i - 1] if i > 0 else rolling_std.iloc[i]
 
-            if std == 0:
-                continue
-
-            z_score = abs(arr[i] - mean) / std
-
-            if z_score > self.config.outlier_std_threshold:
-                anomalies.append({
-                    "index": i,
-                    "value": arr[i],
-                    "z_score": z_score,
-                    "expected_range": (
-                        mean - self.config.outlier_std_threshold * std,
-                        mean + self.config.outlier_std_threshold * std,
-                    ),
-                })
-                logger.warning(f"Outlier detected at index {i}: {arr[i]} (z={z_score:.2f})")
+                if pd.notna(mean) and pd.notna(std) and std > 0:
+                    anomalies.append({
+                        "index": int(i),
+                        "value": float(values[i]),
+                        "z_score": float(z_scores.iloc[i]),
+                        "expected_range": (
+                            float(mean - self.config.outlier_std_threshold * std),
+                            float(mean + self.config.outlier_std_threshold * std),
+                        ),
+                    })
+                    logger.warning(
+                        f"Outlier detected at index {i}: {values[i]} "
+                        f"(z={z_scores.iloc[i]:.2f})"
+                    )
 
         return anomalies
 
