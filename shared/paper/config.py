@@ -21,6 +21,12 @@ class PaperTradingConfig(BaseModel):
     allow_shorting: bool = Field(default=False)
     market_hours_only: bool = Field(default=True)
 
+    # Memory management
+    max_equity_points: int = Field(
+        default=10000,
+        description="Maximum equity curve points (circular buffer size)"
+    )
+
     @classmethod
     def from_yaml(cls, path: str) -> "PaperTradingConfig":
         """Load config from YAML file."""

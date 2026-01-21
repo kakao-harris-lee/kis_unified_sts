@@ -106,13 +106,21 @@ class PaperTradingEngine:
                 await result
 
     def _record_equity(self) -> None:
-        """Record equity point."""
+        """Record equity point with circular buffer.
+
+        Uses a circular buffer to prevent unbounded memory growth
+        during long-running trading sessions.
+        """
         self.equity_curve.append({
             "timestamp": datetime.now(),
             "equity": self.broker.get_equity(),
             "balance": self.broker.balance,
             "positions": len(self.broker.positions),
         })
+
+        # Circular buffer: remove oldest if exceeded max points
+        if len(self.equity_curve) > self.config.max_equity_points:
+            self.equity_curve.pop(0)
 
     def get_performance(self) -> Dict:
         """Get performance metrics."""
