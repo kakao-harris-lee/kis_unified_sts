@@ -28,3 +28,33 @@ def test_metrics_export():
     # Should be able to get text output
     output = metrics.export()
     assert "trades_total" in output
+
+
+def test_metrics_singleton_pattern():
+    """Test that TradingMetrics follows singleton pattern."""
+    from shared.monitoring.metrics import TradingMetrics
+
+    metrics1 = TradingMetrics()
+    metrics2 = TradingMetrics()
+
+    # Same instance
+    assert metrics1 is metrics2
+
+
+def test_metrics_reset_instance():
+    """Test that reset_instance creates a fresh singleton."""
+    from shared.monitoring.metrics import TradingMetrics
+
+    # Get first instance
+    metrics1 = TradingMetrics()
+    assert metrics1._initialized is True
+
+    # Reset
+    TradingMetrics.reset_instance()
+    assert TradingMetrics._instance is None
+    assert TradingMetrics._initialized is False
+
+    # Get new instance (should be different)
+    metrics2 = TradingMetrics()
+    # After reset, a new instance can be created
+    assert metrics2._initialized is True

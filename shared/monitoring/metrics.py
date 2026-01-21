@@ -31,6 +31,23 @@ class TradingMetrics:
             cls._instance = super().__new__(cls)
         return cls._instance
 
+    @classmethod
+    def reset_instance(cls) -> None:
+        """Reset singleton for testing purposes.
+
+        This method should only be used in tests to ensure
+        test isolation. It clears the singleton instance so
+        a new one can be created.
+
+        Usage in tests:
+            @pytest.fixture(autouse=True)
+            def reset_metrics():
+                yield
+                TradingMetrics.reset_instance()
+        """
+        cls._instance = None
+        cls._initialized = False
+
     def __init__(self, prefix: str = "trading"):
         if self._initialized:
             return
