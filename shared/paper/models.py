@@ -7,6 +7,11 @@ from typing import Optional
 from shared.utils.math import safe_divide
 
 
+class InsufficientBalanceError(Exception):
+    """Raised when account balance is insufficient for order."""
+    pass
+
+
 class OrderSide(str, Enum):
     BUY = "BUY"
     SELL = "SELL"

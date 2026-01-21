@@ -20,11 +20,12 @@ class RegimeSignal:
     confidence: float
     timestamp: datetime
     indicators: Optional[Dict] = None
+    confidence_threshold: float = 0.7  # Default from RegimeConfig.confidence_threshold
 
     @property
     def is_confident(self) -> bool:
         """Check if signal has high confidence."""
-        return self.confidence >= 0.7
+        return self.confidence >= self.confidence_threshold
 
 
 @dataclass

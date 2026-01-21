@@ -2,32 +2,32 @@
 import pytest
 
 from shared.paper.broker import VirtualBroker
-from shared.paper.models import OrderSide, OrderType
+from shared.paper.models import OrderSide, OrderType, InsufficientBalanceError
 
 
 @pytest.mark.asyncio
 async def test_broker_insufficient_balance():
     """Test order execution with insufficient balance.
 
-    The broker should handle orders that exceed available balance
-    gracefully without going into negative balance.
+    The broker should reject orders that exceed available balance
+    with an InsufficientBalanceError.
     """
     broker = VirtualBroker(initial_balance=1000)
 
     # Try to buy more than balance allows
     # 1000 shares at 58000 = 58,000,000 which exceeds 1000 balance
-    order = await broker.submit_order(
-        symbol="005930",
-        side=OrderSide.BUY,
-        quantity=1000,
-        price=58000,
-    )
+    with pytest.raises(InsufficientBalanceError) as exc_info:
+        await broker.submit_order(
+            symbol="005930",
+            side=OrderSide.BUY,
+            quantity=1000,
+            price=58000,
+        )
 
-    # The broker currently executes regardless - check balance doesn't go negative
-    # This test documents the current behavior and may need updating
-    # when proper validation is added
-    assert order.filled is True  # Current behavior: executes anyway
-    # Note: Balance will be negative, which is a known issue
+    # Verify error message contains useful information
+    assert "Insufficient balance" in str(exc_info.value)
+    # Balance should remain unchanged
+    assert broker.balance == 1000
 
 
 @pytest.mark.asyncio
@@ -97,7 +97,7 @@ async def test_broker_partial_close_more_than_position():
 @pytest.mark.asyncio
 async def test_broker_extreme_prices():
     """Test handling of extreme price values."""
-    broker = VirtualBroker(initial_balance=10_000_000)
+    broker = VirtualBroker(initial_balance=100_000_000)  # 100M for large price test
 
     # Very small price
     order1 = await broker.submit_order(
@@ -108,7 +108,7 @@ async def test_broker_extreme_prices():
     )
     assert order1.filled is True
 
-    # Very large price
+    # Very large price (within balance)
     order2 = await broker.submit_order(
         symbol="TEST2",
         side=OrderSide.BUY,
@@ -116,6 +116,21 @@ async def test_broker_extreme_prices():
         price=10_000_000,
     )
     assert order2.filled is True
+
+
+@pytest.mark.asyncio
+async def test_broker_large_price_exceeds_balance():
+    """Test that large orders exceeding balance are rejected."""
+    broker = VirtualBroker(initial_balance=1_000_000)
+
+    # Price that exceeds balance
+    with pytest.raises(InsufficientBalanceError):
+        await broker.submit_order(
+            symbol="TEST",
+            side=OrderSide.BUY,
+            quantity=1,
+            price=10_000_000,  # 10M exceeds 1M balance
+        )
 
 
 @pytest.mark.asyncio

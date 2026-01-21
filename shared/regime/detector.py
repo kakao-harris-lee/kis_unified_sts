@@ -39,6 +39,7 @@ class StockRegimeDetector:
                 state=RegimeState.UNKNOWN,
                 confidence=0.0,
                 timestamp=datetime.now(),
+                confidence_threshold=self.config.confidence_threshold,
             )
 
         # Calculate indicators
@@ -93,6 +94,7 @@ class StockRegimeDetector:
             confidence=confidence,
             timestamp=datetime.now(),
             indicators=indicators,
+            confidence_threshold=self.config.confidence_threshold,
         )
 
         self._last_signal = signal
