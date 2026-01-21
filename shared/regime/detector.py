@@ -75,9 +75,9 @@ class StockRegimeDetector:
             state = RegimeState.SIDEWAYS
             confidence = 1.0 - abs(trend_pct) / self.config.trend_threshold
 
-        # Adjust confidence by volatility
-        if volatility > 0.03:  # High volatility reduces confidence
-            confidence *= 0.8
+        # Adjust confidence by volatility (using config instead of magic numbers)
+        if volatility > self.config.high_volatility_threshold:
+            confidence *= self.config.volatility_confidence_adjustment
 
         signal = RegimeSignal(
             state=state,

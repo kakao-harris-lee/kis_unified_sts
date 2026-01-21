@@ -36,3 +36,6 @@ class RegimeConfig:
     volatility_window: int = 20
     trend_threshold: float = 0.02  # 2% threshold for trend
     confidence_threshold: float = 0.7
+    # Volatility adjustment parameters (previously hardcoded)
+    high_volatility_threshold: float = 0.03  # 3% volatility = high
+    volatility_confidence_adjustment: float = 0.8  # Reduce confidence by 20%
