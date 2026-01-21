@@ -26,6 +26,8 @@ class V35Config:
     macd_fast: int = 12
     macd_slow: int = 26
     macd_signal: int = 9
+    # Confidence calculation parameters
+    macd_normalization_factor: float = 0.5
 
     @classmethod
     def from_dict(cls, data: dict) -> "V35Config":
@@ -106,5 +108,5 @@ class V35OptimizedEntry(EntrySignalGenerator[V35Config]):
         else:
             rsi_score = min(1, max(0, (self.config.rsi_oversold - rsi) / self.config.rsi_oversold))
 
-        macd_score = min(1, max(0, macd_hist / 0.5)) if macd_hist > 0 else 0
+        macd_score = min(1, max(0, macd_hist / self.config.macd_normalization_factor)) if macd_hist > 0 else 0
         return (rsi_score + macd_score) / 2

@@ -25,6 +25,8 @@ class MeanReversionConfig:
     rsi_period: int = 14
     rsi_oversold: int = 30
     rsi_overbought: int = 70
+    # Confidence calculation parameters
+    bb_width_scale_factor: float = 0.5
 
     @classmethod
     def from_dict(cls, data: dict) -> "MeanReversionConfig":
@@ -119,7 +121,7 @@ class MeanReversionEntry(EntrySignalGenerator[MeanReversionConfig]):
 
         if is_long:
             # How far below lower band
-            bb_score = min(1, max(0, (bb_lower - close) / (bb_width * 0.5)))
+            bb_score = min(1, max(0, (bb_lower - close) / (bb_width * self.config.bb_width_scale_factor)))
             # How oversold - guard against division by zero
             if self.config.rsi_oversold <= 0:
                 rsi_score = 0.5
@@ -127,7 +129,7 @@ class MeanReversionEntry(EntrySignalGenerator[MeanReversionConfig]):
                 rsi_score = max(0, (self.config.rsi_oversold - rsi) / self.config.rsi_oversold)
         else:
             # How far above upper band
-            bb_score = min(1, max(0, (close - bb_upper) / (bb_width * 0.5)))
+            bb_score = min(1, max(0, (close - bb_upper) / (bb_width * self.config.bb_width_scale_factor)))
             # How overbought - guard against division by zero
             divisor = 100 - self.config.rsi_overbought
             if divisor <= 0:

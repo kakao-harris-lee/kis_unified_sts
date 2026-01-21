@@ -23,6 +23,8 @@ class BreakoutConfig:
     lookback_period: int = 20
     volume_confirm: bool = True
     volume_threshold: float = 1.5  # Volume must be this multiple of MA
+    # Confidence calculation parameters
+    breakout_scale_factor: float = 5.0
 
     @classmethod
     def from_dict(cls, data: dict) -> "BreakoutConfig":
@@ -128,7 +130,7 @@ class BreakoutEntry(EntrySignalGenerator[BreakoutConfig]):
         else:
             breakout_pct = (low_n - close) / range_size
 
-        breakout_score = min(1, max(0, breakout_pct * 5))  # Scale 0-1, clamp to [0, 1]
+        breakout_score = min(1, max(0, breakout_pct * self.config.breakout_scale_factor))
 
         # Volume strength - guard against division by zero
         if volume_ma <= 0:
