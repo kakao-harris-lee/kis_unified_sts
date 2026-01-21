@@ -348,6 +348,34 @@ def register_builtin_components() -> None:
     except ImportError:
         logger.debug("OFIMomentumEntry not available")
 
+    try:
+        from shared.strategy.entry.v35_optimized import V35OptimizedEntry
+
+        EntryRegistry.register_class("v35_optimized", V35OptimizedEntry)
+    except ImportError:
+        logger.debug("V35OptimizedEntry not available")
+
+    try:
+        from shared.strategy.entry.stochrsi_trend import StochRSITrendEntry
+
+        EntryRegistry.register_class("stochrsi_trend", StochRSITrendEntry)
+    except ImportError:
+        logger.debug("StochRSITrendEntry not available")
+
+    try:
+        from shared.strategy.entry.mean_reversion import MeanReversionEntry
+
+        EntryRegistry.register_class("mean_reversion", MeanReversionEntry)
+    except ImportError:
+        logger.debug("MeanReversionEntry not available")
+
+    try:
+        from shared.strategy.entry.breakout import BreakoutEntry
+
+        EntryRegistry.register_class("breakout", BreakoutEntry)
+    except ImportError:
+        logger.debug("BreakoutEntry not available")
+
     # Exit 전략 등록
     try:
         from shared.strategy.exit.three_stage import ThreeStageExit
