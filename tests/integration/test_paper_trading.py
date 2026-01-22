@@ -223,7 +223,8 @@ async def test_full_trading_pipeline_flow():
 @pytest.mark.asyncio
 async def test_pipeline_circuit_breaker_integration():
     """Test circuit breaker integration with pipeline."""
-    from services.trading.pipeline import TradingPipeline, CircuitBreaker
+    from services.trading.pipeline import TradingPipeline, PipelineStage
+    from shared.resilience import CircuitState
 
     # Create pipeline with handlers that fail
     fail_count = 0
@@ -243,7 +244,7 @@ async def test_pipeline_circuit_breaker_integration():
     )
 
     # Get regime breaker
-    regime_breaker = pipeline.breakers[pipeline.breakers.__class__.__mro__[0].__dict__.get("REGIME", list(pipeline.breakers.keys())[0])]
+    regime_breaker = pipeline.breakers[PipelineStage.REGIME]
 
     # Verify initial state
     assert not regime_breaker.is_open
@@ -253,7 +254,7 @@ async def test_pipeline_circuit_breaker_integration():
         regime_breaker.record_failure()
 
     # Breaker should be open after threshold
-    assert regime_breaker.state == CircuitBreaker.State.OPEN
+    assert regime_breaker.state == CircuitState.OPEN
 
 
 @pytest.mark.integration

@@ -8,6 +8,7 @@ import logging
 from dataclasses import dataclass
 from typing import Optional
 
+from shared.config.mixins import ConfigMixin
 from shared.models.signal import Signal, SignalType
 from shared.strategy.base import EntryContext, EntrySignalGenerator
 
@@ -15,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class StochRSIConfig:
+class StochRSIConfig(ConfigMixin):
     """StochRSI 전략 설정"""
 
     rsi_period: int = 14
@@ -24,13 +25,6 @@ class StochRSIConfig:
     d_period: int = 3
     oversold: int = 20
     overbought: int = 80
-
-    @classmethod
-    def from_dict(cls, data: dict) -> "StochRSIConfig":
-        """Create config from dictionary, ignoring unknown keys."""
-        import dataclasses
-        field_names = {f.name for f in dataclasses.fields(cls)}
-        return cls(**{k: v for k, v in data.items() if k in field_names})
 
 
 class StochRSITrendEntry(EntrySignalGenerator[StochRSIConfig]):

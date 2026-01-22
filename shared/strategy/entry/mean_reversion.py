@@ -10,6 +10,7 @@ import logging
 from dataclasses import dataclass
 from typing import Optional
 
+from shared.config.mixins import ConfigMixin
 from shared.models.signal import Signal, SignalType
 from shared.strategy.base import EntryContext, EntrySignalGenerator
 
@@ -17,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class MeanReversionConfig:
+class MeanReversionConfig(ConfigMixin):
     """Mean Reversion 전략 설정"""
 
     bb_period: int = 20
@@ -27,13 +28,6 @@ class MeanReversionConfig:
     rsi_overbought: int = 70
     # Confidence calculation parameters
     bb_width_scale_factor: float = 0.5
-
-    @classmethod
-    def from_dict(cls, data: dict) -> "MeanReversionConfig":
-        """Create config from dictionary, ignoring unknown keys."""
-        import dataclasses
-        field_names = {f.name for f in dataclasses.fields(cls)}
-        return cls(**{k: v for k, v in data.items() if k in field_names})
 
 
 class MeanReversionEntry(EntrySignalGenerator[MeanReversionConfig]):

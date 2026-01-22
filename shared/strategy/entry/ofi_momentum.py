@@ -30,6 +30,7 @@ from typing import TYPE_CHECKING, Any, Deque, Optional
 
 import numpy as np
 
+from shared.config.mixins import ConfigMixin
 from shared.models.signal import Signal, SignalType
 from shared.strategy.base import EntryContext, EntrySignalGenerator
 
@@ -45,7 +46,7 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class OFIMomentumConfig:
+class OFIMomentumConfig(ConfigMixin):
     """OFI Momentum 진입 전략 설정
 
     Attributes:
@@ -96,40 +97,6 @@ class OFIMomentumConfig:
 
         if not (0 < self.imbalance_threshold <= 1):
             raise ValueError("imbalance_threshold must be between 0 and 1")
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> OFIMomentumConfig:
-        """딕셔너리에서 생성"""
-        if "params" in data:
-            data = data["params"]
-
-        return cls(
-            ofi_zscore_threshold=data.get("ofi_zscore_threshold", 2.0),
-            consecutive_bars=data.get("consecutive_bars", 3),
-            ofi_lookback=data.get("ofi_lookback", 60),
-            require_tight_spread=data.get("require_tight_spread", True),
-            max_spread_points=data.get("max_spread_points", 0.04),
-            tick_size=data.get("tick_size", 0.02),
-            imbalance_confirm=data.get("imbalance_confirm", True),
-            imbalance_threshold=data.get("imbalance_threshold", 0.2),
-            min_history=data.get("min_history", 20),
-            cooldown_bars=data.get("cooldown_bars", 5),
-        )
-
-    def to_dict(self) -> dict[str, Any]:
-        """딕셔너리로 변환"""
-        return {
-            "ofi_zscore_threshold": self.ofi_zscore_threshold,
-            "consecutive_bars": self.consecutive_bars,
-            "ofi_lookback": self.ofi_lookback,
-            "require_tight_spread": self.require_tight_spread,
-            "max_spread_points": self.max_spread_points,
-            "tick_size": self.tick_size,
-            "imbalance_confirm": self.imbalance_confirm,
-            "imbalance_threshold": self.imbalance_threshold,
-            "min_history": self.min_history,
-            "cooldown_bars": self.cooldown_bars,
-        }
 
 
 # =============================================================================

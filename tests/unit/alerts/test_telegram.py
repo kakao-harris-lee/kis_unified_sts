@@ -90,8 +90,8 @@ async def test_telegram_session_lifecycle():
     )
     service = TelegramAlertService(config)
 
-    # Initially no session
-    assert service._session is None
+    # Initially no session (attribute doesn't exist yet - use property check)
+    assert not service._session_active
 
     # Get session creates one
     session = await service._get_session()
@@ -104,7 +104,7 @@ async def test_telegram_session_lifecycle():
 
     # Close cleans up
     await service.close()
-    assert service._session is None
+    assert not service._session_active
 
 
 @pytest.mark.asyncio

@@ -22,6 +22,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Optional, TypeVar
 
+from shared.resilience import CircuitBreaker, CircuitBreakerConfig
+
 if TYPE_CHECKING:
     import aiohttp
     import requests
@@ -123,85 +125,8 @@ class TokenCache:
 
 
 # =============================================================================
-# Circuit Breaker (Optional)
+# Circuit Breaker Exceptions
 # =============================================================================
-
-
-@dataclass
-class CircuitBreakerConfig:
-    """Circuit Breaker 설정"""
-
-    failure_threshold: int = 5  # 연속 실패 임계값
-    recovery_timeout_seconds: int = 60  # 복구 대기 시간
-    half_open_max_calls: int = 3  # Half-open 상태에서 허용 호출 수
-
-
-class CircuitState:
-    CLOSED = "closed"
-    OPEN = "open"
-    HALF_OPEN = "half_open"
-
-
-class CircuitBreaker:
-    """간단한 Circuit Breaker 구현"""
-
-    def __init__(self, config: CircuitBreakerConfig):
-        self.config = config
-        self._state = CircuitState.CLOSED
-        self._failure_count = 0
-        self._last_failure_time: Optional[float] = None
-        self._half_open_calls = 0
-        self._lock = threading.Lock()
-
-    @property
-    def state(self) -> str:
-        with self._lock:
-            return self._get_state()
-
-    def _get_state(self) -> str:
-        """현재 상태 계산 (락 필요)"""
-        if self._state == CircuitState.OPEN:
-            # 복구 타임아웃 지났으면 Half-Open으로 전환
-            if (
-                self._last_failure_time
-                and time.time() - self._last_failure_time
-                > self.config.recovery_timeout_seconds
-            ):
-                self._state = CircuitState.HALF_OPEN
-                self._half_open_calls = 0
-        return self._state
-
-    def record_success(self):
-        """성공 기록"""
-        with self._lock:
-            if self._state == CircuitState.HALF_OPEN:
-                self._half_open_calls += 1
-                if self._half_open_calls >= self.config.half_open_max_calls:
-                    self._state = CircuitState.CLOSED
-                    self._failure_count = 0
-            else:
-                self._failure_count = 0
-
-    def record_failure(self):
-        """실패 기록"""
-        with self._lock:
-            self._failure_count += 1
-            self._last_failure_time = time.time()
-
-            if self._failure_count >= self.config.failure_threshold:
-                self._state = CircuitState.OPEN
-                logger.warning(
-                    f"Circuit breaker opened after {self._failure_count} failures"
-                )
-
-    def can_execute(self) -> bool:
-        """실행 가능 여부"""
-        state = self.state
-        if state == CircuitState.CLOSED:
-            return True
-        if state == CircuitState.HALF_OPEN:
-            return True
-        return False
 
 
 class CircuitOpenError(Exception):
@@ -614,7 +539,14 @@ def create_auth_manager(
 
     circuit = None
     if use_circuit_breaker:
-        circuit = CircuitBreaker(CircuitBreakerConfig())
+        circuit = CircuitBreaker(
+            name="kis-auth",
+            config=CircuitBreakerConfig(
+                failure_threshold=5,
+                reset_timeout=60.0,
+                half_open_max_calls=3,
+            ),
+        )
 
     if use_singleton:
         return KISAuthManager.get_instance(config, circuit)

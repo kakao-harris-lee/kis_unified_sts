@@ -11,53 +11,53 @@ class TestCircuitBreaker:
 
     def test_initial_state_is_closed(self):
         """초기 상태는 CLOSED"""
-        from services.trading.pipeline import CircuitBreaker
+        from shared.resilience import CircuitBreaker, CircuitState
 
         breaker = CircuitBreaker("test")
-        assert breaker.state == breaker.State.CLOSED
+        assert breaker.state == CircuitState.CLOSED
         assert not breaker.is_open
 
     def test_opens_after_threshold_failures(self):
         """임계값 초과 실패 시 OPEN"""
-        from services.trading.pipeline import CircuitBreaker
+        from shared.resilience import CircuitBreaker, CircuitState
 
-        breaker = CircuitBreaker("test", fail_threshold=3)
+        breaker = CircuitBreaker("test", failure_threshold=3)
 
         for _ in range(3):
             breaker.record_failure()
 
-        assert breaker.state == breaker.State.OPEN
+        assert breaker.state == CircuitState.OPEN
         assert breaker.is_open
 
     def test_success_resets_failure_count(self):
         """성공 시 실패 카운트 리셋"""
-        from services.trading.pipeline import CircuitBreaker
+        from shared.resilience import CircuitBreaker, CircuitState
 
-        breaker = CircuitBreaker("test", fail_threshold=3)
+        breaker = CircuitBreaker("test", failure_threshold=3)
 
         breaker.record_failure()
         breaker.record_failure()
         breaker.record_success()
 
         assert breaker._failure_count == 0
-        assert breaker.state == breaker.State.CLOSED
+        assert breaker.state == CircuitState.CLOSED
 
     def test_reset_forces_closed(self):
         """reset() 호출 시 강제 CLOSED"""
-        from services.trading.pipeline import CircuitBreaker
+        from shared.resilience import CircuitBreaker, CircuitState
 
-        breaker = CircuitBreaker("test", fail_threshold=2)
+        breaker = CircuitBreaker("test", failure_threshold=2)
         breaker.record_failure()
         breaker.record_failure()
 
-        assert breaker.state == breaker.State.OPEN
+        assert breaker.state == CircuitState.OPEN
 
         breaker.reset()
-        assert breaker.state == breaker.State.CLOSED
+        assert breaker.state == CircuitState.CLOSED
 
     def test_get_status(self):
         """상태 딕셔너리 반환"""
-        from services.trading.pipeline import CircuitBreaker
+        from shared.resilience import CircuitBreaker
 
         breaker = CircuitBreaker("test")
         status = breaker.get_status()
@@ -141,14 +141,18 @@ class TestTradingPipeline:
         mock_config.intervals.entry = 2.0
         mock_config.intervals.monitoring = 0.2
         mock_config.intervals.exit = 1.0
-        mock_config.circuit_breakers.regime.fail_threshold = 5
+        mock_config.circuit_breakers.regime.failure_threshold = 5
         mock_config.circuit_breakers.regime.reset_timeout = 120.0
-        mock_config.circuit_breakers.entry.fail_threshold = 10
+        mock_config.circuit_breakers.regime.half_open_max_calls = 2
+        mock_config.circuit_breakers.entry.failure_threshold = 10
         mock_config.circuit_breakers.entry.reset_timeout = 60.0
-        mock_config.circuit_breakers.monitoring.fail_threshold = 10
+        mock_config.circuit_breakers.entry.half_open_max_calls = 2
+        mock_config.circuit_breakers.monitoring.failure_threshold = 10
         mock_config.circuit_breakers.monitoring.reset_timeout = 60.0
-        mock_config.circuit_breakers.exit.fail_threshold = 3
+        mock_config.circuit_breakers.monitoring.half_open_max_calls = 2
+        mock_config.circuit_breakers.exit.failure_threshold = 3
         mock_config.circuit_breakers.exit.reset_timeout = 15.0
+        mock_config.circuit_breakers.exit.half_open_max_calls = 1
         mock_config.retry.max_retries = 5
         mock_config.retry.delay = 2.0
 

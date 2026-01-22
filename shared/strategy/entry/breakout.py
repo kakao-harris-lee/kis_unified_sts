@@ -10,6 +10,7 @@ import logging
 from dataclasses import dataclass
 from typing import Optional
 
+from shared.config.mixins import ConfigMixin
 from shared.models.signal import Signal, SignalType
 from shared.strategy.base import EntryContext, EntrySignalGenerator
 
@@ -17,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class BreakoutConfig:
+class BreakoutConfig(ConfigMixin):
     """Breakout 전략 설정"""
 
     lookback_period: int = 20
@@ -25,13 +26,6 @@ class BreakoutConfig:
     volume_threshold: float = 1.5  # Volume must be this multiple of MA
     # Confidence calculation parameters
     breakout_scale_factor: float = 5.0
-
-    @classmethod
-    def from_dict(cls, data: dict) -> "BreakoutConfig":
-        """Create config from dictionary, ignoring unknown keys."""
-        import dataclasses
-        field_names = {f.name for f in dataclasses.fields(cls)}
-        return cls(**{k: v for k, v in data.items() if k in field_names})
 
 
 class BreakoutEntry(EntrySignalGenerator[BreakoutConfig]):

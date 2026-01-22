@@ -9,6 +9,7 @@ import logging
 from dataclasses import dataclass
 from typing import Optional
 
+from shared.config.mixins import ConfigMixin
 from shared.models.signal import Signal, SignalType
 from shared.strategy.base import EntryContext, EntrySignalGenerator
 
@@ -16,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class V35Config:
+class V35Config(ConfigMixin):
     """V35 전략 설정"""
 
     bb_period: int = 20
@@ -28,13 +29,6 @@ class V35Config:
     macd_signal: int = 9
     # Confidence calculation parameters
     macd_normalization_factor: float = 0.5
-
-    @classmethod
-    def from_dict(cls, data: dict) -> "V35Config":
-        """Create config from dictionary, ignoring unknown keys."""
-        import dataclasses
-        field_names = {f.name for f in dataclasses.fields(cls)}
-        return cls(**{k: v for k, v in data.items() if k in field_names})
 
 
 class V35OptimizedEntry(EntrySignalGenerator[V35Config]):

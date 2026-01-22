@@ -1,16 +1,20 @@
 """Telegram alert service."""
 import logging
-from datetime import datetime
+import re
+from datetime import datetime, timezone
 from typing import Optional
 
-import aiohttp
+from shared.http import AsyncSessionMixin
 
 from .models import Alert, AlertLevel, AlertConfig
 
 logger = logging.getLogger(__name__)
 
+# Telegram API base URL (token appended at runtime)
+_TELEGRAM_API_BASE = "https://api.telegram.org/bot"
 
-class TelegramAlertService:
+
+class TelegramAlertService(AsyncSessionMixin):
     """Send alerts via Telegram.
 
     Features:
@@ -30,48 +34,56 @@ class TelegramAlertService:
         self.config = config
         self._last_sent: Optional[datetime] = None
         self._enabled = bool(config.telegram_token and config.telegram_chat_id)
-        self._session: Optional[aiohttp.ClientSession] = None
 
     @property
     def is_enabled(self) -> bool:
         """Check if service is enabled."""
         return self._enabled
 
-    async def _get_session(self) -> aiohttp.ClientSession:
-        """Get or create persistent HTTP session.
+    @staticmethod
+    def _escape_markdown(text: str) -> str:
+        """Escape Markdown special characters to prevent injection.
 
-        Reuses existing session for connection pooling and better performance.
+        Args:
+            text: Raw text that may contain Markdown special chars
+
+        Returns:
+            Escaped text safe for Telegram Markdown
         """
-        if self._session is None or self._session.closed:
-            self._session = aiohttp.ClientSession()
-        return self._session
+        # Telegram Markdown v1 special characters: _ * ` [
+        escape_chars = r"_*`["
+        return re.sub(f"([{re.escape(escape_chars)}])", r"\\\1", text)
 
     async def close(self) -> None:
-        """Close the HTTP session.
-
-        Should be called when the service is being shut down
-        to properly release resources.
-        """
-        if self._session and not self._session.closed:
-            await self._session.close()
-            self._session = None
+        """Close the HTTP session."""
+        await self._close_session()
 
     def _format_message(self, alert: Alert) -> str:
-        """Format alert for Telegram."""
+        """Format alert for Telegram.
+
+        Note: User input (title, message, source) is escaped to prevent
+        Markdown injection attacks.
+        """
         level_text = self.LEVEL_EMOJIS.get(alert.level, "Alert")
         timestamp = alert.timestamp.strftime("%Y-%m-%d %H:%M:%S")
 
+        # Escape user-controlled content to prevent Markdown injection
+        safe_title = self._escape_markdown(alert.title)
+        safe_message = self._escape_markdown(alert.message)
+        safe_source = self._escape_markdown(alert.source)
+
         return (
-            f"[{level_text}] *{alert.title}*\n\n"
-            f"{alert.message}\n\n"
-            f"_{timestamp}_ | `{alert.source}`"
+            f"[{level_text}] *{safe_title}*\n\n"
+            f"{safe_message}\n\n"
+            f"_{timestamp}_ | `{safe_source}`"
         )
 
     def _should_send(self, alert: Alert) -> bool:
         """Check if alert should be sent (rate limiting)."""
         # Check rate limit
         if self._last_sent:
-            elapsed = (datetime.now() - self._last_sent).total_seconds()
+            now = datetime.now(timezone.utc)
+            elapsed = (now - self._last_sent).total_seconds()
             if elapsed < self.config.rate_limit_seconds:
                 # Allow critical alerts to bypass rate limit
                 if alert.level != AlertLevel.CRITICAL:
@@ -84,6 +96,9 @@ class TelegramAlertService:
 
         Returns:
             True if sent successfully, False otherwise
+
+        Note:
+            Token is never logged to prevent exposure in log files.
         """
         if not self._enabled:
             logger.debug("Telegram alerts disabled")
@@ -93,7 +108,8 @@ class TelegramAlertService:
             logger.debug(f"Alert skipped (rate limit or level): {alert.title}")
             return False
 
-        url = f"https://api.telegram.org/bot{self.config.telegram_token}/sendMessage"
+        # Build URL with token (never log this URL)
+        url = f"{_TELEGRAM_API_BASE}{self.config.telegram_token}/sendMessage"
         payload = {
             "chat_id": self.config.telegram_chat_id,
             "text": self._format_message(alert),
@@ -104,13 +120,20 @@ class TelegramAlertService:
             session = await self._get_session()
             async with session.post(url, json=payload) as resp:
                 if resp.status == 200:
-                    self._last_sent = datetime.now()
+                    self._last_sent = datetime.now(timezone.utc)
                     alert.sent = True
                     logger.info(f"Alert sent: {alert.title}")
                     return True
                 else:
-                    logger.error(f"Telegram API error: {resp.status}")
+                    # Log status without URL to prevent token exposure
+                    logger.error(f"Telegram API error: status={resp.status}")
                     return False
         except Exception as e:
-            logger.error(f"Failed to send alert: {e}")
+            # Sanitize error message to prevent token leak
+            error_msg = str(e)
+            if self.config.telegram_token and self.config.telegram_token in error_msg:
+                error_msg = error_msg.replace(
+                    self.config.telegram_token, "[REDACTED]"
+                )
+            logger.error(f"Failed to send alert: {error_msg}")
             return False

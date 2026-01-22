@@ -8,32 +8,29 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any, Optional
+from typing import Any
+
 import aiohttp
 
+from shared.http import AsyncSessionMixin
 from shared.kis.auth import KISAuthConfig, KISAuthManager
 
 logger = logging.getLogger(__name__)
 
+# Default timeout for KIS API requests (seconds)
+_DEFAULT_REQUEST_TIMEOUT = 10.0
 
-class KISClient:
+
+class KISClient(AsyncSessionMixin):
     """KIS API Client wrapper."""
 
     def __init__(self, config: KISAuthConfig):
         self.config = config
         self.auth_manager = KISAuthManager.get_instance(config)
-        self._session: Optional[aiohttp.ClientSession] = None
-
-    async def _get_session(self) -> aiohttp.ClientSession:
-        """Get or create aiohttp session."""
-        if self._session is None or self._session.closed:
-            self._session = aiohttp.ClientSession()
-        return self._session
 
     async def close(self):
         """Close the session."""
-        if self._session:
-            await self._session.close()
+        await self._close_session()
 
     async def get_current_price(self, symbol: str) -> dict[str, Any]:
         """Fetch current price for a Stock symbol.
@@ -56,7 +53,13 @@ class KISClient:
             path = "/uapi/domestic-stock/v1/quotations/inquire-price"
             url = f"{self.config.base_url}{path}"
 
-            async with session.get(url, headers=headers, params=params, timeout=10) as response:
+            timeout_seconds = getattr(
+                self.config, "request_timeout_seconds", _DEFAULT_REQUEST_TIMEOUT
+            )
+            request_timeout = aiohttp.ClientTimeout(total=float(timeout_seconds))
+            async with session.get(
+                url, headers=headers, params=params, timeout=request_timeout
+            ) as response:
                 if response.status != 200:
                     text = await response.text()
                     logger.error(f"KIS API Error {response.status} for {symbol}: {text}")

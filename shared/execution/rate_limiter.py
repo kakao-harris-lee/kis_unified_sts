@@ -30,6 +30,8 @@ import time
 from collections import deque
 from typing import TYPE_CHECKING
 
+from shared.resilience import CircuitBreaker, CircuitState
+
 from .exceptions import CircuitBreakerOpen, RateLimitExceeded
 
 if TYPE_CHECKING:
@@ -127,84 +129,6 @@ class InMemoryRateLimiter:
         return len(self._timestamps)
 
 
-class CircuitBreaker:
-    """Circuit breaker for external service failures.
-
-    States:
-    - CLOSED: Normal operation, requests pass through
-    - OPEN: Service failing, requests blocked for reset_timeout
-    - HALF_OPEN: Testing if service recovered
-    """
-
-    CLOSED = "closed"
-    OPEN = "open"
-    HALF_OPEN = "half_open"
-
-    def __init__(self, failure_threshold: int = 5, reset_timeout: float = 30.0):
-        """Initialize circuit breaker.
-
-        Args:
-            failure_threshold: Consecutive failures before opening
-            reset_timeout: Seconds to wait before attempting recovery
-        """
-        self.failure_threshold = failure_threshold
-        self.reset_timeout = reset_timeout
-
-        self._state = self.CLOSED
-        self._failure_count = 0
-        self._last_failure_time: float = 0.0
-        self._success_count = 0
-
-    @property
-    def state(self) -> str:
-        """Get current circuit breaker state."""
-        if self._state == self.OPEN:
-            # Check if we should transition to half-open
-            if time.time() - self._last_failure_time >= self.reset_timeout:
-                self._state = self.HALF_OPEN
-        return self._state
-
-    def is_available(self) -> bool:
-        """Check if requests should be allowed through."""
-        return self.state != self.OPEN
-
-    def record_success(self) -> None:
-        """Record a successful operation."""
-        if self._state == self.HALF_OPEN:
-            self._success_count += 1
-            # Require 2 successes to close circuit
-            if self._success_count >= 2:
-                self._state = self.CLOSED
-                self._failure_count = 0
-                self._success_count = 0
-                logger.info("Circuit breaker closed - service recovered")
-        elif self._state == self.CLOSED:
-            self._failure_count = 0
-
-    def record_failure(self) -> None:
-        """Record a failed operation."""
-        self._failure_count += 1
-        self._last_failure_time = time.time()
-        self._success_count = 0
-
-        if self._state == self.HALF_OPEN:
-            # Failed during recovery attempt - reopen
-            self._state = self.OPEN
-            logger.warning("Circuit breaker reopened - recovery failed")
-        elif self._failure_count >= self.failure_threshold:
-            self._state = self.OPEN
-            logger.warning(
-                f"Circuit breaker opened after {self._failure_count} failures"
-            )
-
-    def get_reset_time(self) -> float:
-        """Get time remaining until circuit breaker resets."""
-        if self._state != self.OPEN:
-            return 0.0
-        elapsed = time.time() - self._last_failure_time
-        return max(0.0, self.reset_timeout - elapsed)
-
-
 class RedisRateLimiter:
     """Distributed rate limiter using Redis sliding window.
 
@@ -272,8 +196,10 @@ class RedisRateLimiter:
 
         # Circuit breaker for Redis failures
         self._circuit_breaker = CircuitBreaker(
+            name=f"redis:{key_prefix}",
             failure_threshold=circuit_breaker_threshold,
             reset_timeout=circuit_breaker_timeout,
+            thread_safe=False,  # Async-only usage
         )
 
         # In-memory fallback limiter
@@ -493,7 +419,7 @@ class RedisRateLimiter:
             "window_size": self.window_size,
             "utilization_pct": round(utilization, 1),
             "circuit_breaker_state": self._circuit_breaker.state,
-            "using_fallback": self._circuit_breaker.state != CircuitBreaker.CLOSED,
+            "using_fallback": self._circuit_breaker.state != CircuitState.CLOSED,
         }
 
         # Update cache

@@ -22,6 +22,8 @@ from datetime import datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Callable, Coroutine
 
+from shared.resilience import CircuitBreaker
+
 if TYPE_CHECKING:
     from shared.config.schema import PipelineConfig
 
@@ -90,139 +92,6 @@ class PipelineMetrics:
             "total_orders": self.total_orders,
             "total_errors": self.total_errors,
             "collected_at": self.collected_at.isoformat(),
-        }
-
-
-class CircuitBreaker:
-    """회로 차단기
-
-    연속 실패 시 일시적으로 실행 중단.
-
-    States:
-        CLOSED: 정상 동작
-        OPEN: 실패 임계값 초과, 실행 중단
-        HALF_OPEN: 테스트 실행 허용
-
-    Usage:
-        breaker = CircuitBreaker("entry", fail_threshold=5)
-
-        if breaker.is_open:
-            # 실행 건너뛰기
-            return
-
-        try:
-            result = await do_work()
-            breaker.record_success()
-        except Exception:
-            breaker.record_failure()
-    """
-
-    class State(Enum):
-        CLOSED = "closed"
-        OPEN = "open"
-        HALF_OPEN = "half_open"
-
-    def __init__(
-        self,
-        name: str,
-        fail_threshold: int = 5,
-        reset_timeout: float = 30.0,
-        half_open_max_calls: int = 3,
-    ):
-        """
-        Args:
-            name: 회로 차단기 이름
-            fail_threshold: 연속 실패 임계값
-            reset_timeout: 차단 후 재시도까지 대기 시간 (초)
-            half_open_max_calls: 반열림 상태에서 허용할 최대 호출 수
-        """
-        self.name = name
-        self.fail_threshold = fail_threshold
-        self.reset_timeout = reset_timeout
-        self.half_open_max_calls = half_open_max_calls
-
-        self._state = self.State.CLOSED
-        self._failure_count = 0
-        self._success_count = 0
-        self._last_failure_time: datetime | None = None
-        self._half_open_calls = 0
-
-    @property
-    def state(self) -> State:
-        return self._state
-
-    @property
-    def is_open(self) -> bool:
-        """실행 가능 여부 (CLOSED 또는 HALF_OPEN 시 실행 가능)"""
-        if self._state == self.State.CLOSED:
-            return False
-
-        if self._state == self.State.OPEN:
-            # 타임아웃 경과 시 HALF_OPEN으로 전환
-            if self._last_failure_time:
-                elapsed = (datetime.now() - self._last_failure_time).total_seconds()
-                if elapsed >= self.reset_timeout:
-                    self._transition_to_half_open()
-                    return False
-            return True
-
-        if self._state == self.State.HALF_OPEN:
-            return self._half_open_calls >= self.half_open_max_calls
-
-        return True
-
-    def record_success(self):
-        """성공 기록"""
-        self._success_count += 1
-
-        if self._state == self.State.HALF_OPEN:
-            self._half_open_calls += 1
-            # 충분한 성공 시 CLOSED로 전환
-            if self._half_open_calls >= self.half_open_max_calls:
-                self._transition_to_closed()
-        else:
-            self._failure_count = 0
-
-    def record_failure(self):
-        """실패 기록"""
-        self._failure_count += 1
-        self._last_failure_time = datetime.now()
-
-        if self._state == self.State.HALF_OPEN:
-            # 반열림 상태에서 실패 시 다시 OPEN
-            self._transition_to_open()
-        elif self._failure_count >= self.fail_threshold:
-            self._transition_to_open()
-
-    def _transition_to_open(self):
-        """OPEN 상태로 전환"""
-        self._state = self.State.OPEN
-        logger.warning(f"Circuit breaker '{self.name}' OPENED (failures: {self._failure_count})")
-
-    def _transition_to_half_open(self):
-        """HALF_OPEN 상태로 전환"""
-        self._state = self.State.HALF_OPEN
-        self._half_open_calls = 0
-        logger.info(f"Circuit breaker '{self.name}' transitioned to HALF_OPEN")
-
-    def _transition_to_closed(self):
-        """CLOSED 상태로 전환"""
-        self._state = self.State.CLOSED
-        self._failure_count = 0
-        self._half_open_calls = 0
-        logger.info(f"Circuit breaker '{self.name}' CLOSED")
-
-    def reset(self):
-        """강제 리셋"""
-        self._transition_to_closed()
-
-    def get_status(self) -> dict[str, Any]:
-        return {
-            "state": self._state.value,
-            "failure_count": self._failure_count,
-            "last_failure": (
-                self._last_failure_time.isoformat() if self._last_failure_time else None
-            ),
         }
 
 
@@ -317,20 +186,24 @@ class TradingPipeline:
             }
             self._breaker_config = {
                 PipelineStage.REGIME: {
-                    "fail_threshold": config.circuit_breakers.regime.fail_threshold,
+                    "failure_threshold": config.circuit_breakers.regime.failure_threshold,
                     "reset_timeout": config.circuit_breakers.regime.reset_timeout,
+                    "half_open_max_calls": config.circuit_breakers.regime.half_open_max_calls,
                 },
                 PipelineStage.ENTRY: {
-                    "fail_threshold": config.circuit_breakers.entry.fail_threshold,
+                    "failure_threshold": config.circuit_breakers.entry.failure_threshold,
                     "reset_timeout": config.circuit_breakers.entry.reset_timeout,
+                    "half_open_max_calls": config.circuit_breakers.entry.half_open_max_calls,
                 },
                 PipelineStage.MONITORING: {
-                    "fail_threshold": config.circuit_breakers.monitoring.fail_threshold,
+                    "failure_threshold": config.circuit_breakers.monitoring.failure_threshold,
                     "reset_timeout": config.circuit_breakers.monitoring.reset_timeout,
+                    "half_open_max_calls": config.circuit_breakers.monitoring.half_open_max_calls,
                 },
                 PipelineStage.EXIT: {
-                    "fail_threshold": config.circuit_breakers.exit.fail_threshold,
+                    "failure_threshold": config.circuit_breakers.exit.failure_threshold,
                     "reset_timeout": config.circuit_breakers.exit.reset_timeout,
+                    "half_open_max_calls": config.circuit_breakers.exit.half_open_max_calls,
                 },
             }
             self._retry_config = {
@@ -346,10 +219,10 @@ class TradingPipeline:
                 PipelineStage.EXIT: 0.5,
             }
             self._breaker_config = {
-                PipelineStage.REGIME: {"fail_threshold": 3, "reset_timeout": 60.0},
-                PipelineStage.ENTRY: {"fail_threshold": 5, "reset_timeout": 30.0},
-                PipelineStage.MONITORING: {"fail_threshold": 5, "reset_timeout": 30.0},
-                PipelineStage.EXIT: {"fail_threshold": 2, "reset_timeout": 10.0},
+                PipelineStage.REGIME: {"failure_threshold": 3, "reset_timeout": 60.0, "half_open_max_calls": 2},
+                PipelineStage.ENTRY: {"failure_threshold": 5, "reset_timeout": 30.0, "half_open_max_calls": 2},
+                PipelineStage.MONITORING: {"failure_threshold": 5, "reset_timeout": 30.0, "half_open_max_calls": 2},
+                PipelineStage.EXIT: {"failure_threshold": 2, "reset_timeout": 10.0, "half_open_max_calls": 1},
             }
             self._retry_config = {"max_retries": 2, "delay": 1.0}
 

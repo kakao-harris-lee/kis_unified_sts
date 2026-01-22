@@ -21,6 +21,7 @@ from shared.config.loader import (
     load_config,
     load_strategy_config,
 )
+from shared.config.mixins import ConfigMixin
 from shared.config.schema import KISConfig
 from shared.config.secrets import SecretsManager, require_secret
 
@@ -33,6 +34,8 @@ __all__ = [
     "load_config",
     "load_strategy_config",
     "get_strategy_names",
+    # Mixins
+    "ConfigMixin",
     # Schema
     "KISConfig",
     # Secrets

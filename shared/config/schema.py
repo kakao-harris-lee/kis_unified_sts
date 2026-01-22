@@ -83,9 +83,9 @@ class AssetClass(BaseModel):
 class CircuitBreakerStageConfig(BaseModel):
     """스테이지별 서킷 브레이커 설정"""
 
-    fail_threshold: int = Field(default=5, description="연속 실패 허용 횟수")
+    failure_threshold: int = Field(default=5, description="연속 실패 허용 횟수")
     reset_timeout: float = Field(default=30.0, description="복구 대기 시간 (초)")
-    success_threshold: int = Field(default=2, description="복구 성공 필요 횟수")
+    half_open_max_calls: int = Field(default=2, description="반열림 상태 최대 호출 수")
 
 
 class PipelineIntervalsConfig(BaseModel):
@@ -102,22 +102,22 @@ class PipelineCircuitBreakersConfig(BaseModel):
 
     regime: CircuitBreakerStageConfig = Field(
         default_factory=lambda: CircuitBreakerStageConfig(
-            fail_threshold=3, reset_timeout=60.0, success_threshold=2
+            failure_threshold=3, reset_timeout=60.0, half_open_max_calls=2
         )
     )
     entry: CircuitBreakerStageConfig = Field(
         default_factory=lambda: CircuitBreakerStageConfig(
-            fail_threshold=5, reset_timeout=30.0, success_threshold=2
+            failure_threshold=5, reset_timeout=30.0, half_open_max_calls=2
         )
     )
     monitoring: CircuitBreakerStageConfig = Field(
         default_factory=lambda: CircuitBreakerStageConfig(
-            fail_threshold=5, reset_timeout=30.0, success_threshold=2
+            failure_threshold=5, reset_timeout=30.0, half_open_max_calls=2
         )
     )
     exit: CircuitBreakerStageConfig = Field(
         default_factory=lambda: CircuitBreakerStageConfig(
-            fail_threshold=2, reset_timeout=10.0, success_threshold=1
+            failure_threshold=2, reset_timeout=10.0, half_open_max_calls=1
         )
     )
 
