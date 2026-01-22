@@ -49,6 +49,10 @@ class OrderExecutor:
                 redis_url=config.redis_url,
                 key_prefix=config.rate_limit_key,
                 requests_per_second=config.requests_per_second,
+                initial_retry_delay=config.rate_limit_initial_delay,
+                max_retry_delay=config.rate_limit_max_delay,
+                backoff_multiplier=config.rate_limit_backoff_multiplier,
+                metrics_cache_ttl=config.metrics_cache_ttl,
             )
 
         # Account parsing
@@ -133,11 +137,12 @@ class OrderExecutor:
         """Send order based on trading mode."""
         mode = self.config.trading_mode
 
-        if mode == TradingMode.PAPER.value:
+        # Compare against enum values (config uses use_enum_values=True)
+        if mode == TradingMode.PAPER:
             return await self._simulate_order(order)
-        elif mode == TradingMode.MOCK.value:
+        elif mode == TradingMode.MOCK:
             return await self._send_kis_order(order, is_mock=True)
-        elif mode == TradingMode.REAL.value:
+        elif mode == TradingMode.REAL:
             return await self._send_kis_order(order, is_mock=False)
         else:
             return OrderResponse(success=False, message=f"Unknown mode: {mode}")

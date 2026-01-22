@@ -200,6 +200,126 @@ class TestRedisUrlSanitization:
         assert sanitized == url
 
 
+class TestMetricsCaching:
+    """Test metrics caching functionality."""
+
+    @pytest.fixture
+    def mock_redis(self):
+        """Create a mock Redis client."""
+        redis = AsyncMock()
+        redis.script_load = AsyncMock(return_value="mock_sha")
+        redis.zcard = AsyncMock(return_value=5)
+        redis.zremrangebyscore = AsyncMock()
+        redis.close = AsyncMock()
+        return redis
+
+    @pytest.mark.asyncio
+    async def test_metrics_cache_returns_cached_value(self, mock_redis):
+        """Test that get_metrics returns cached value within TTL."""
+        with patch("redis.asyncio.Redis") as MockRedis:
+            MockRedis.from_url = MagicMock(return_value=mock_redis)
+
+            from shared.execution.rate_limiter import RedisRateLimiter
+            limiter = RedisRateLimiter(
+                redis_url="redis://localhost:6379",
+                key_prefix="test-cache",
+                metrics_cache_ttl=10.0,  # Long TTL for test
+            )
+            limiter._redis = mock_redis
+            mock_redis.zcard.return_value = 5
+
+            # First call - hits Redis
+            metrics1 = await limiter.get_metrics()
+            assert metrics1["current_usage"] == 5
+            assert mock_redis.zcard.call_count == 1
+
+            # Change the mock return value
+            mock_redis.zcard.return_value = 10
+
+            # Second call - should return cached value
+            metrics2 = await limiter.get_metrics()
+            assert metrics2["current_usage"] == 5  # Still 5 from cache
+            assert mock_redis.zcard.call_count == 1  # No additional call
+
+    @pytest.mark.asyncio
+    async def test_metrics_cache_bypass(self, mock_redis):
+        """Test that use_cache=False bypasses cache."""
+        with patch("redis.asyncio.Redis") as MockRedis:
+            MockRedis.from_url = MagicMock(return_value=mock_redis)
+
+            from shared.execution.rate_limiter import RedisRateLimiter
+            limiter = RedisRateLimiter(
+                redis_url="redis://localhost:6379",
+                key_prefix="test-cache",
+                metrics_cache_ttl=10.0,
+            )
+            limiter._redis = mock_redis
+            mock_redis.zcard.return_value = 5
+
+            # First call
+            await limiter.get_metrics()
+            mock_redis.zcard.return_value = 10
+
+            # Second call with cache bypass
+            metrics = await limiter.get_metrics(use_cache=False)
+            assert metrics["current_usage"] == 10
+            assert mock_redis.zcard.call_count == 2
+
+
+class TestRedisFailureScenarios:
+    """Test various Redis failure scenarios."""
+
+    @pytest.fixture
+    def mock_redis(self):
+        """Create a mock Redis client."""
+        redis = AsyncMock()
+        redis.script_load = AsyncMock(return_value="mock_sha")
+        redis.evalsha = AsyncMock(return_value=1)
+        redis.close = AsyncMock()
+        return redis
+
+    @pytest.mark.asyncio
+    async def test_os_error_fails_open(self, mock_redis):
+        """Test OSError triggers fail-open."""
+        with patch("redis.asyncio.Redis") as MockRedis:
+            MockRedis.from_url = MagicMock(return_value=mock_redis)
+
+            from shared.execution.rate_limiter import RedisRateLimiter
+            limiter = RedisRateLimiter(
+                redis_url="redis://localhost:6379",
+                key_prefix="test",
+            )
+            limiter._redis = mock_redis
+            limiter._script_sha = "mock_sha"
+            mock_redis.evalsha.side_effect = OSError("Network unreachable")
+
+            result = await limiter.acquire(timeout=1.0)
+            assert result is True  # Fail-open
+
+    @pytest.mark.asyncio
+    async def test_timeout_error_fails_open(self, mock_redis):
+        """Test TimeoutError triggers fail-open."""
+        with patch("redis.asyncio.Redis") as MockRedis:
+            MockRedis.from_url = MagicMock(return_value=mock_redis)
+
+            from shared.execution.rate_limiter import RedisRateLimiter
+            limiter = RedisRateLimiter(
+                redis_url="redis://localhost:6379",
+                key_prefix="test",
+            )
+            limiter._redis = mock_redis
+            limiter._script_sha = "mock_sha"
+
+            # Create an exception with the right __name__
+            class TimeoutError(Exception):
+                pass
+
+            mock_redis.evalsha.side_effect = TimeoutError("Connection timed out")
+
+            result = await limiter.acquire(timeout=1.0)
+            assert result is True  # Fail-open
+
+
 class TestOrderExecutorWithRateLimiter:
     """Test OrderExecutor integration with rate limiter."""
 

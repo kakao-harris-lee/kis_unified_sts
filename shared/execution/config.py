@@ -1,6 +1,9 @@
 """Order execution configuration."""
+import re
 from enum import Enum
-from pydantic import BaseModel, ConfigDict, Field
+from typing import Optional
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class TradingMode(str, Enum):
@@ -42,8 +45,48 @@ class ExecutionConfig(BaseModel):
         description="Max wait time when rate limited (seconds)"
     )
 
+    # Rate limit retry behavior (configurable backoff)
+    rate_limit_initial_delay: float = Field(
+        default=0.05,
+        ge=0.01,
+        le=1.0,
+        description="Initial retry delay when rate limited (seconds)"
+    )
+    rate_limit_max_delay: float = Field(
+        default=0.2,
+        ge=0.05,
+        le=5.0,
+        description="Maximum retry delay cap (seconds)"
+    )
+    rate_limit_backoff_multiplier: float = Field(
+        default=1.5,
+        ge=1.0,
+        le=3.0,
+        description="Backoff multiplier for retry delays"
+    )
+
+    # Metrics caching
+    metrics_cache_ttl: float = Field(
+        default=1.0,
+        ge=0.1,
+        le=60.0,
+        description="TTL for cached metrics (seconds)"
+    )
+
     # Account info (loaded from environment)
-    account_no: str = Field(default="", description="Account number")
+    account_no: str = Field(default="", description="Account number (10 digits)")
+
+    @field_validator("account_no")
+    @classmethod
+    def validate_account_no(cls, v: str) -> str:
+        """Validate account number format."""
+        if not v:
+            return v  # Empty is allowed (for PAPER mode)
+        if not re.match(r"^\d{10}$", v):
+            raise ValueError(
+                f"Account number must be exactly 10 digits, got: {v!r}"
+            )
+        return v
 
     # KIS API endpoints (configurable for testing/environment flexibility)
     kis_mock_base_url: str = Field(

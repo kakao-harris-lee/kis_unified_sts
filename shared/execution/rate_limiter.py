@@ -36,6 +36,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Expiry multiplier for Redis keys: keys expire after this multiple of window_size.
+# Using 2x ensures keys aren't prematurely expired during normal operation while
+# still preventing memory leaks from abandoned rate limit keys.
+EXPIRE_WINDOW_MULTIPLIER = 2
+
 # Lua script for atomic rate limit check-and-increment
 # Uses sorted set with timestamps as scores for sliding window
 RATE_LIMIT_SCRIPT = """
@@ -44,6 +49,7 @@ local now = tonumber(ARGV[1])
 local window = tonumber(ARGV[2])
 local max_requests = tonumber(ARGV[3])
 local request_id = ARGV[4]
+local expire_multiplier = tonumber(ARGV[5])
 
 -- Remove entries older than the window
 redis.call('ZREMRANGEBYSCORE', key, 0, now - window)
@@ -54,8 +60,8 @@ local count = redis.call('ZCARD', key)
 if count < max_requests then
     -- Add this request with current timestamp as score
     redis.call('ZADD', key, now, request_id)
-    -- Set expiry to prevent memory leaks (2x window for safety)
-    redis.call('EXPIRE', key, math.ceil(window * 2))
+    -- Set expiry to prevent memory leaks (multiplier * window for safety)
+    redis.call('EXPIRE', key, math.ceil(window * expire_multiplier))
     return 1  -- Allowed
 else
     return 0  -- Rate limited
@@ -81,6 +87,10 @@ class RedisRateLimiter:
         key_prefix: str,
         requests_per_second: float = 20.0,
         window_size: float = 1.0,
+        initial_retry_delay: float = 0.05,
+        max_retry_delay: float = 0.2,
+        backoff_multiplier: float = 1.5,
+        metrics_cache_ttl: float = 1.0,
     ):
         """Initialize rate limiter.
 
@@ -89,6 +99,10 @@ class RedisRateLimiter:
             key_prefix: Prefix for Redis key (e.g., "stock", "futures")
             requests_per_second: Maximum requests per second
             window_size: Sliding window size in seconds
+            initial_retry_delay: Initial delay when retrying (seconds)
+            max_retry_delay: Maximum retry delay cap (seconds)
+            backoff_multiplier: Multiplier for exponential backoff
+            metrics_cache_ttl: TTL for cached metrics (seconds)
         """
         self._redis_url = redis_url
         self._redis: Redis | None = None
@@ -98,6 +112,16 @@ class RedisRateLimiter:
         self.max_requests = int(requests_per_second * window_size)
         self.window_size = window_size
         self._request_counter = 0
+
+        # Retry configuration
+        self._initial_retry_delay = initial_retry_delay
+        self._max_retry_delay = max_retry_delay
+        self._backoff_multiplier = backoff_multiplier
+
+        # Metrics cache
+        self._metrics_cache_ttl = metrics_cache_ttl
+        self._metrics_cache: dict | None = None
+        self._metrics_cache_time: float = 0.0
 
         logger.info(
             f"RedisRateLimiter initialized: key={self.key}, "
@@ -139,7 +163,7 @@ class RedisRateLimiter:
             RateLimitExceeded: If timeout expires while rate limited
         """
         start_time = time.monotonic()
-        retry_delay = 0.05  # Start with 50ms
+        retry_delay = self._initial_retry_delay
 
         while True:
             try:
@@ -155,9 +179,9 @@ class RedisRateLimiter:
                         wait_time=self.window_size,
                     )
 
-                # Exponential backoff with jitter, capped at 200ms
-                await asyncio.sleep(min(retry_delay, 0.2))
-                retry_delay *= 1.5
+                # Exponential backoff, capped at max_retry_delay
+                await asyncio.sleep(min(retry_delay, self._max_retry_delay))
+                retry_delay *= self._backoff_multiplier
 
             except RateLimitExceeded:
                 raise
@@ -201,6 +225,7 @@ class RedisRateLimiter:
                 str(self.window_size),
                 str(self.max_requests),
                 request_id,
+                str(EXPIRE_WINDOW_MULTIPLIER),
             )
         else:
             result = await redis.eval(
@@ -211,6 +236,7 @@ class RedisRateLimiter:
                 str(self.window_size),
                 str(self.max_requests),
                 request_id,
+                str(EXPIRE_WINDOW_MULTIPLIER),
             )
 
         return result == 1
@@ -235,22 +261,41 @@ class RedisRateLimiter:
             logger.warning(f"Failed to get usage: {e}")
             return 0
 
-    async def get_metrics(self) -> dict:
+    async def get_metrics(self, use_cache: bool = True) -> dict:
         """Get rate limiter metrics for monitoring.
+
+        Args:
+            use_cache: Whether to use cached metrics if available
 
         Returns:
             Dict with current usage, limits, and utilization
         """
+        now = time.time()
+
+        # Return cached metrics if still valid
+        if (
+            use_cache
+            and self._metrics_cache is not None
+            and (now - self._metrics_cache_time) < self._metrics_cache_ttl
+        ):
+            return self._metrics_cache
+
         current = await self.get_current_usage()
         utilization = (current / self.max_requests * 100) if self.max_requests > 0 else 0
 
-        return {
+        metrics = {
             "rate_limit_key": self.key,
             "current_usage": current,
             "max_requests": self.max_requests,
             "window_size": self.window_size,
             "utilization_pct": round(utilization, 1),
         }
+
+        # Update cache
+        self._metrics_cache = metrics
+        self._metrics_cache_time = now
+
+        return metrics
 
     async def reset(self) -> None:
         """Reset rate limit counter (for testing)."""
