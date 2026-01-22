@@ -18,6 +18,14 @@ class TestRedisRateLimiter:
         redis.zremrangebyscore = AsyncMock()
         redis.delete = AsyncMock()
         redis.close = AsyncMock()
+
+        # Setup pipeline mock for get_current_usage
+        mock_pipe = MagicMock()
+        mock_pipe.zremrangebyscore = MagicMock(return_value=mock_pipe)
+        mock_pipe.zcard = MagicMock(return_value=mock_pipe)
+        mock_pipe.execute = AsyncMock(return_value=[0, 5])  # [zremrangebyscore result, zcard result]
+        redis.pipeline = MagicMock(return_value=mock_pipe)
+
         return redis
 
     @pytest.fixture
@@ -84,18 +92,21 @@ class TestRedisRateLimiter:
     @pytest.mark.asyncio
     async def test_get_current_usage(self, limiter, mock_redis):
         """Test get_current_usage returns count from Redis."""
-        mock_redis.zcard.return_value = 15
+        # Update pipeline mock to return desired value
+        mock_pipe = mock_redis.pipeline.return_value
+        mock_pipe.execute.return_value = [0, 15]  # [zremrangebyscore, zcard]
 
         usage = await limiter.get_current_usage()
 
         assert usage == 15
-        mock_redis.zremrangebyscore.assert_called_once()
-        mock_redis.zcard.assert_called_once()
+        mock_redis.pipeline.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_get_metrics(self, limiter, mock_redis):
         """Test get_metrics returns formatted metrics."""
-        mock_redis.zcard.return_value = 10
+        # Update pipeline mock for get_current_usage call within get_metrics
+        mock_pipe = mock_redis.pipeline.return_value
+        mock_pipe.execute.return_value = [0, 10]  # [zremrangebyscore, zcard]
 
         metrics = await limiter.get_metrics()
 
@@ -211,6 +222,14 @@ class TestMetricsCaching:
         redis.zcard = AsyncMock(return_value=5)
         redis.zremrangebyscore = AsyncMock()
         redis.close = AsyncMock()
+
+        # Setup pipeline mock for get_current_usage
+        mock_pipe = MagicMock()
+        mock_pipe.zremrangebyscore = MagicMock(return_value=mock_pipe)
+        mock_pipe.zcard = MagicMock(return_value=mock_pipe)
+        mock_pipe.execute = AsyncMock(return_value=[0, 5])
+        redis.pipeline = MagicMock(return_value=mock_pipe)
+
         return redis
 
     @pytest.mark.asyncio
@@ -226,20 +245,21 @@ class TestMetricsCaching:
                 metrics_cache_ttl=10.0,  # Long TTL for test
             )
             limiter._redis = mock_redis
-            mock_redis.zcard.return_value = 5
+            mock_pipe = mock_redis.pipeline.return_value
+            mock_pipe.execute.return_value = [0, 5]
 
             # First call - hits Redis
             metrics1 = await limiter.get_metrics()
             assert metrics1["current_usage"] == 5
-            assert mock_redis.zcard.call_count == 1
+            assert mock_redis.pipeline.call_count == 1
 
             # Change the mock return value
-            mock_redis.zcard.return_value = 10
+            mock_pipe.execute.return_value = [0, 10]
 
             # Second call - should return cached value
             metrics2 = await limiter.get_metrics()
             assert metrics2["current_usage"] == 5  # Still 5 from cache
-            assert mock_redis.zcard.call_count == 1  # No additional call
+            assert mock_redis.pipeline.call_count == 1  # No additional call
 
     @pytest.mark.asyncio
     async def test_metrics_cache_bypass(self, mock_redis):
@@ -254,16 +274,17 @@ class TestMetricsCaching:
                 metrics_cache_ttl=10.0,
             )
             limiter._redis = mock_redis
-            mock_redis.zcard.return_value = 5
+            mock_pipe = mock_redis.pipeline.return_value
+            mock_pipe.execute.return_value = [0, 5]
 
             # First call
             await limiter.get_metrics()
-            mock_redis.zcard.return_value = 10
+            mock_pipe.execute.return_value = [0, 10]
 
             # Second call with cache bypass
             metrics = await limiter.get_metrics(use_cache=False)
             assert metrics["current_usage"] == 10
-            assert mock_redis.zcard.call_count == 2
+            assert mock_redis.pipeline.call_count == 2
 
 
 class TestRedisFailureScenarios:
@@ -419,4 +440,240 @@ class TestOrderExecutorWithRateLimiter:
         response = await executor.execute_order(order)
 
         assert response.success is True
+        await executor.cleanup()
+
+
+class TestInMemoryRateLimiter:
+    """Test in-memory fallback rate limiter."""
+
+    def test_acquire_under_limit(self):
+        """Test acquire succeeds when under limit."""
+        from shared.execution.rate_limiter import InMemoryRateLimiter
+
+        limiter = InMemoryRateLimiter(max_requests=5, window_size=1.0)
+
+        # Should succeed for all 5 requests
+        for _ in range(5):
+            assert limiter.acquire() is True
+
+    def test_acquire_at_limit(self):
+        """Test acquire fails when at limit."""
+        from shared.execution.rate_limiter import InMemoryRateLimiter
+
+        limiter = InMemoryRateLimiter(max_requests=3, window_size=1.0)
+
+        # First 3 succeed
+        for _ in range(3):
+            assert limiter.acquire() is True
+
+        # 4th fails
+        assert limiter.acquire() is False
+
+    def test_acquire_after_window_expires(self):
+        """Test acquire succeeds after window expires."""
+        from shared.execution.rate_limiter import InMemoryRateLimiter
+
+        limiter = InMemoryRateLimiter(max_requests=2, window_size=0.1)
+
+        # Fill the limit
+        assert limiter.acquire() is True
+        assert limiter.acquire() is True
+        assert limiter.acquire() is False
+
+        # Wait for window to expire
+        time.sleep(0.15)
+
+        # Should succeed again
+        assert limiter.acquire() is True
+
+    def test_get_usage(self):
+        """Test get_usage returns correct count."""
+        from shared.execution.rate_limiter import InMemoryRateLimiter
+
+        limiter = InMemoryRateLimiter(max_requests=10, window_size=1.0)
+
+        assert limiter.get_usage() == 0
+
+        limiter.acquire()
+        limiter.acquire()
+        limiter.acquire()
+
+        assert limiter.get_usage() == 3
+
+
+class TestCircuitBreaker:
+    """Test circuit breaker functionality."""
+
+    def test_initial_state_closed(self):
+        """Test circuit breaker starts in closed state."""
+        from shared.execution.rate_limiter import CircuitBreaker
+
+        cb = CircuitBreaker(failure_threshold=3, reset_timeout=1.0)
+        assert cb.state == CircuitBreaker.CLOSED
+        assert cb.is_available() is True
+
+    def test_opens_after_threshold_failures(self):
+        """Test circuit breaker opens after threshold failures."""
+        from shared.execution.rate_limiter import CircuitBreaker
+
+        cb = CircuitBreaker(failure_threshold=3, reset_timeout=1.0)
+
+        # Record failures
+        cb.record_failure()
+        assert cb.state == CircuitBreaker.CLOSED
+
+        cb.record_failure()
+        assert cb.state == CircuitBreaker.CLOSED
+
+        cb.record_failure()  # Threshold reached
+        assert cb.state == CircuitBreaker.OPEN
+        assert cb.is_available() is False
+
+    def test_success_resets_failure_count(self):
+        """Test success resets failure count in closed state."""
+        from shared.execution.rate_limiter import CircuitBreaker
+
+        cb = CircuitBreaker(failure_threshold=3, reset_timeout=1.0)
+
+        cb.record_failure()
+        cb.record_failure()
+        cb.record_success()  # Reset count
+
+        # Should need 3 more failures to open
+        cb.record_failure()
+        cb.record_failure()
+        assert cb.state == CircuitBreaker.CLOSED
+
+        cb.record_failure()
+        assert cb.state == CircuitBreaker.OPEN
+
+    def test_transitions_to_half_open(self):
+        """Test circuit transitions to half-open after reset timeout."""
+        from shared.execution.rate_limiter import CircuitBreaker
+
+        cb = CircuitBreaker(failure_threshold=2, reset_timeout=0.1)
+
+        # Open the circuit
+        cb.record_failure()
+        cb.record_failure()
+        assert cb.state == CircuitBreaker.OPEN
+
+        # Wait for reset timeout
+        time.sleep(0.15)
+
+        # Should transition to half-open
+        assert cb.state == CircuitBreaker.HALF_OPEN
+        assert cb.is_available() is True
+
+    def test_half_open_closes_on_success(self):
+        """Test circuit closes after 2 successes in half-open state."""
+        from shared.execution.rate_limiter import CircuitBreaker
+
+        cb = CircuitBreaker(failure_threshold=2, reset_timeout=0.1)
+
+        # Open and wait for half-open
+        cb.record_failure()
+        cb.record_failure()
+        time.sleep(0.15)
+        assert cb.state == CircuitBreaker.HALF_OPEN
+
+        # First success
+        cb.record_success()
+        assert cb.state == CircuitBreaker.HALF_OPEN
+
+        # Second success closes circuit
+        cb.record_success()
+        assert cb.state == CircuitBreaker.CLOSED
+
+    def test_half_open_reopens_on_failure(self):
+        """Test circuit reopens on failure in half-open state."""
+        from shared.execution.rate_limiter import CircuitBreaker
+
+        cb = CircuitBreaker(failure_threshold=2, reset_timeout=0.1)
+
+        # Open and wait for half-open
+        cb.record_failure()
+        cb.record_failure()
+        time.sleep(0.15)
+        assert cb.state == CircuitBreaker.HALF_OPEN
+
+        # Failure reopens circuit
+        cb.record_failure()
+        assert cb.state == CircuitBreaker.OPEN
+
+    def test_get_reset_time(self):
+        """Test get_reset_time returns correct remaining time."""
+        from shared.execution.rate_limiter import CircuitBreaker
+
+        cb = CircuitBreaker(failure_threshold=2, reset_timeout=1.0)
+
+        # Closed state returns 0
+        assert cb.get_reset_time() == 0.0
+
+        # Open state returns remaining time
+        cb.record_failure()
+        cb.record_failure()
+        reset_time = cb.get_reset_time()
+        assert 0.9 < reset_time <= 1.0
+
+
+class TestExecutorWarmup:
+    """Test executor connection warmup."""
+
+    @pytest.mark.asyncio
+    async def test_warmup_paper_mode_skips(self):
+        """Test warmup is skipped in PAPER mode."""
+        from shared.execution.executor import OrderExecutor
+        from shared.execution.config import ExecutionConfig
+
+        config = ExecutionConfig(trading_mode="PAPER")
+        executor = OrderExecutor(config)
+
+        result = await executor.warmup()
+        assert result is True
+
+        await executor.cleanup()
+
+    @pytest.mark.asyncio
+    async def test_warmup_mock_mode_makes_request(self):
+        """Test warmup makes HEAD request in MOCK mode."""
+        from shared.execution.executor import OrderExecutor
+        from shared.execution.config import ExecutionConfig
+
+        config = ExecutionConfig(trading_mode="MOCK")
+        executor = OrderExecutor(config)
+        await executor.initialize()
+
+        with patch.object(executor.session, "head") as mock_head:
+            mock_response = MagicMock()
+            mock_response.status = 200
+            mock_head.return_value.__aenter__.return_value = mock_response
+
+            result = await executor.warmup()
+
+            assert result is True
+            mock_head.assert_called_once()
+            # Verify it used the mock URL
+            call_args = mock_head.call_args
+            assert "openapivts.koreainvestment.com" in call_args[0][0]
+
+        await executor.cleanup()
+
+    @pytest.mark.asyncio
+    async def test_warmup_handles_connection_error(self):
+        """Test warmup returns False on connection error."""
+        from shared.execution.executor import OrderExecutor
+        from shared.execution.config import ExecutionConfig
+
+        config = ExecutionConfig(trading_mode="MOCK")
+        executor = OrderExecutor(config)
+        await executor.initialize()
+
+        with patch.object(executor.session, "head") as mock_head:
+            mock_head.side_effect = ConnectionError("Connection refused")
+
+            result = await executor.warmup()
+
+            assert result is False
+
         await executor.cleanup()

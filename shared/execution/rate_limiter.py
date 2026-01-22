@@ -3,6 +3,12 @@
 Provides cross-process rate limiting for KIS API calls using
 Redis sorted sets with sliding window algorithm.
 
+Features:
+- Redis-based distributed rate limiting
+- In-memory fallback when Redis is unavailable
+- Circuit breaker for Redis failures
+- Metrics caching for reduced Redis load
+
 Usage:
     limiter = RedisRateLimiter(
         redis_url="redis://localhost:6379",
@@ -21,20 +27,22 @@ import asyncio
 import logging
 import re
 import time
+from collections import deque
 from typing import TYPE_CHECKING
 
-from .exceptions import RateLimitExceeded
-
-
-def _sanitize_redis_url(url: str) -> str:
-    """Remove password from Redis URL for safe logging."""
-    # Pattern: redis://[:password@]host:port/db
-    return re.sub(r"(redis://[^:]*:)[^@]+(@)", r"\1****\2", url)
+from .exceptions import CircuitBreakerOpen, RateLimitExceeded
 
 if TYPE_CHECKING:
     from redis.asyncio import Redis
 
 logger = logging.getLogger(__name__)
+
+
+def _sanitize_redis_url(url: str) -> str:
+    """Remove password from Redis URL for safe logging."""
+    # Pattern: redis://[:password@]host:port/db
+    return re.sub(r"(rediss?://[^:]*:)[^@]+(@)", r"\1****\2", url)
+
 
 # Expiry multiplier for Redis keys: keys expire after this multiple of window_size.
 # Using 2x ensures keys aren't prematurely expired during normal operation while
@@ -69,11 +77,146 @@ end
 """
 
 
+class InMemoryRateLimiter:
+    """Simple in-memory sliding window rate limiter.
+
+    Used as fallback when Redis is unavailable. Provides local-only
+    rate limiting (not distributed across processes).
+    """
+
+    def __init__(self, max_requests: int, window_size: float):
+        """Initialize in-memory rate limiter.
+
+        Args:
+            max_requests: Maximum requests allowed per window
+            window_size: Window size in seconds
+        """
+        self.max_requests = max_requests
+        self.window_size = window_size
+        self._timestamps: deque[float] = deque()
+
+    def acquire(self) -> bool:
+        """Try to acquire a rate limit slot.
+
+        Returns:
+            True if allowed, False if rate limited
+        """
+        now = time.time()
+        cutoff = now - self.window_size
+
+        # Remove expired timestamps
+        while self._timestamps and self._timestamps[0] < cutoff:
+            self._timestamps.popleft()
+
+        # Check if under limit
+        if len(self._timestamps) < self.max_requests:
+            self._timestamps.append(now)
+            return True
+
+        return False
+
+    def get_usage(self) -> int:
+        """Get current number of requests in window."""
+        now = time.time()
+        cutoff = now - self.window_size
+
+        # Remove expired timestamps
+        while self._timestamps and self._timestamps[0] < cutoff:
+            self._timestamps.popleft()
+
+        return len(self._timestamps)
+
+
+class CircuitBreaker:
+    """Circuit breaker for external service failures.
+
+    States:
+    - CLOSED: Normal operation, requests pass through
+    - OPEN: Service failing, requests blocked for reset_timeout
+    - HALF_OPEN: Testing if service recovered
+    """
+
+    CLOSED = "closed"
+    OPEN = "open"
+    HALF_OPEN = "half_open"
+
+    def __init__(self, failure_threshold: int = 5, reset_timeout: float = 30.0):
+        """Initialize circuit breaker.
+
+        Args:
+            failure_threshold: Consecutive failures before opening
+            reset_timeout: Seconds to wait before attempting recovery
+        """
+        self.failure_threshold = failure_threshold
+        self.reset_timeout = reset_timeout
+
+        self._state = self.CLOSED
+        self._failure_count = 0
+        self._last_failure_time: float = 0.0
+        self._success_count = 0
+
+    @property
+    def state(self) -> str:
+        """Get current circuit breaker state."""
+        if self._state == self.OPEN:
+            # Check if we should transition to half-open
+            if time.time() - self._last_failure_time >= self.reset_timeout:
+                self._state = self.HALF_OPEN
+        return self._state
+
+    def is_available(self) -> bool:
+        """Check if requests should be allowed through."""
+        return self.state != self.OPEN
+
+    def record_success(self) -> None:
+        """Record a successful operation."""
+        if self._state == self.HALF_OPEN:
+            self._success_count += 1
+            # Require 2 successes to close circuit
+            if self._success_count >= 2:
+                self._state = self.CLOSED
+                self._failure_count = 0
+                self._success_count = 0
+                logger.info("Circuit breaker closed - service recovered")
+        elif self._state == self.CLOSED:
+            self._failure_count = 0
+
+    def record_failure(self) -> None:
+        """Record a failed operation."""
+        self._failure_count += 1
+        self._last_failure_time = time.time()
+        self._success_count = 0
+
+        if self._state == self.HALF_OPEN:
+            # Failed during recovery attempt - reopen
+            self._state = self.OPEN
+            logger.warning("Circuit breaker reopened - recovery failed")
+        elif self._failure_count >= self.failure_threshold:
+            self._state = self.OPEN
+            logger.warning(
+                f"Circuit breaker opened after {self._failure_count} failures"
+            )
+
+    def get_reset_time(self) -> float:
+        """Get time remaining until circuit breaker resets."""
+        if self._state != self.OPEN:
+            return 0.0
+        elapsed = time.time() - self._last_failure_time
+        return max(0.0, self.reset_timeout - elapsed)
+
+
 class RedisRateLimiter:
     """Distributed rate limiter using Redis sliding window.
 
     Uses Redis sorted sets for precise sliding window rate limiting.
     More accurate than token bucket for bursty traffic patterns.
+
+    Features:
+    - Distributed rate limiting via Redis
+    - In-memory fallback when Redis unavailable
+    - Circuit breaker to prevent cascading failures
+    - Configurable retry behavior with exponential backoff
+    - Metrics caching to reduce Redis load
 
     Attributes:
         key: Redis key for this rate limiter
@@ -91,6 +234,8 @@ class RedisRateLimiter:
         max_retry_delay: float = 0.2,
         backoff_multiplier: float = 1.5,
         metrics_cache_ttl: float = 1.0,
+        circuit_breaker_threshold: int = 5,
+        circuit_breaker_timeout: float = 30.0,
     ):
         """Initialize rate limiter.
 
@@ -103,6 +248,8 @@ class RedisRateLimiter:
             max_retry_delay: Maximum retry delay cap (seconds)
             backoff_multiplier: Multiplier for exponential backoff
             metrics_cache_ttl: TTL for cached metrics (seconds)
+            circuit_breaker_threshold: Failures before opening circuit
+            circuit_breaker_timeout: Time before attempting recovery
         """
         self._redis_url = redis_url
         self._redis: Redis | None = None
@@ -123,6 +270,18 @@ class RedisRateLimiter:
         self._metrics_cache: dict | None = None
         self._metrics_cache_time: float = 0.0
 
+        # Circuit breaker for Redis failures
+        self._circuit_breaker = CircuitBreaker(
+            failure_threshold=circuit_breaker_threshold,
+            reset_timeout=circuit_breaker_timeout,
+        )
+
+        # In-memory fallback limiter
+        self._fallback_limiter = InMemoryRateLimiter(
+            max_requests=self.max_requests,
+            window_size=self.window_size,
+        )
+
         logger.info(
             f"RedisRateLimiter initialized: key={self.key}, "
             f"max={self.max_requests}/{self.window_size}s"
@@ -137,6 +296,8 @@ class RedisRateLimiter:
                 self._redis = Redis.from_url(
                     self._redis_url,
                     decode_responses=True,
+                    socket_timeout=5.0,  # Prevent hangs
+                    socket_connect_timeout=5.0,
                 )
                 # Register Lua script for better performance
                 self._script_sha = await self._redis.script_load(RATE_LIMIT_SCRIPT)
@@ -152,6 +313,7 @@ class RedisRateLimiter:
         """Acquire permission to make an API call.
 
         Blocks up to timeout seconds waiting for rate limit capacity.
+        Uses Redis when available, falls back to in-memory limiter.
 
         Args:
             timeout: Maximum time to wait for capacity (seconds)
@@ -161,14 +323,22 @@ class RedisRateLimiter:
 
         Raises:
             RateLimitExceeded: If timeout expires while rate limited
+            CircuitBreakerOpen: If circuit breaker is open and fallback fails
         """
         start_time = time.monotonic()
         retry_delay = self._initial_retry_delay
+
+        # Check circuit breaker
+        if not self._circuit_breaker.is_available():
+            # Use fallback limiter when circuit is open
+            logger.debug("Circuit breaker open, using in-memory fallback")
+            return await self._acquire_with_fallback(timeout)
 
         while True:
             try:
                 allowed = await self._try_acquire()
                 if allowed:
+                    self._circuit_breaker.record_success()
                     return True
 
                 # Check timeout
@@ -186,25 +356,54 @@ class RedisRateLimiter:
             except RateLimitExceeded:
                 raise
             except (OSError, ConnectionError) as e:
-                # Network/connection errors - fail open to avoid blocking trading
+                self._circuit_breaker.record_failure()
                 logger.warning(
-                    f"Redis connection error in rate limiter, bypassing: {e}"
+                    f"Redis connection error, using fallback: {e}"
                 )
-                return True
+                return await self._acquire_with_fallback(timeout - (time.monotonic() - start_time))
             except Exception as e:
-                # Check for redis-specific errors (imported dynamically)
                 error_type = type(e).__name__
                 if error_type in ("ConnectionError", "TimeoutError", "RedisError"):
+                    self._circuit_breaker.record_failure()
                     logger.warning(
-                        f"Redis error in rate limiter, bypassing: {e}"
+                        f"Redis error, using fallback: {e}"
                     )
-                    return True
-                # Re-raise unexpected errors (programming bugs, etc.)
+                    return await self._acquire_with_fallback(timeout - (time.monotonic() - start_time))
+                # Re-raise unexpected errors
                 logger.error(f"Unexpected error in rate limiter: {e}")
                 raise
 
+    async def _acquire_with_fallback(self, remaining_timeout: float) -> bool:
+        """Acquire using in-memory fallback limiter.
+
+        Args:
+            remaining_timeout: Time remaining to acquire
+
+        Returns:
+            True if allowed
+
+        Raises:
+            RateLimitExceeded: If timeout expires
+        """
+        start_time = time.monotonic()
+        retry_delay = self._initial_retry_delay
+
+        while True:
+            if self._fallback_limiter.acquire():
+                return True
+
+            elapsed = time.monotonic() - start_time
+            if elapsed >= remaining_timeout:
+                raise RateLimitExceeded(
+                    key=f"{self.key}:fallback",
+                    wait_time=self.window_size,
+                )
+
+            await asyncio.sleep(min(retry_delay, self._max_retry_delay))
+            retry_delay *= self._backoff_multiplier
+
     async def _try_acquire(self) -> bool:
-        """Attempt to acquire rate limit slot.
+        """Attempt to acquire rate limit slot from Redis.
 
         Returns:
             True if slot acquired, False if rate limited
@@ -244,6 +443,8 @@ class RedisRateLimiter:
     async def get_current_usage(self) -> int:
         """Get current number of requests in window.
 
+        Uses Redis pipelining for efficiency.
+
         Returns:
             Number of requests in current sliding window
         """
@@ -251,15 +452,17 @@ class RedisRateLimiter:
             redis = await self._get_redis()
             now = time.time()
 
-            # Remove old entries and count
-            await redis.zremrangebyscore(
-                self.key, 0, now - self.window_size
-            )
-            count = await redis.zcard(self.key)
-            return count
+            # Use pipeline for atomic operation with single round-trip
+            pipe = redis.pipeline()
+            pipe.zremrangebyscore(self.key, 0, now - self.window_size)
+            pipe.zcard(self.key)
+            results = await pipe.execute()
+
+            return results[1]  # zcard result
         except Exception as e:
-            logger.warning(f"Failed to get usage: {e}")
-            return 0
+            logger.warning(f"Failed to get usage from Redis: {e}")
+            # Return fallback usage
+            return self._fallback_limiter.get_usage()
 
     async def get_metrics(self, use_cache: bool = True) -> dict:
         """Get rate limiter metrics for monitoring.
@@ -268,7 +471,7 @@ class RedisRateLimiter:
             use_cache: Whether to use cached metrics if available
 
         Returns:
-            Dict with current usage, limits, and utilization
+            Dict with current usage, limits, utilization, and circuit state
         """
         now = time.time()
 
@@ -289,6 +492,8 @@ class RedisRateLimiter:
             "max_requests": self.max_requests,
             "window_size": self.window_size,
             "utilization_pct": round(utilization, 1),
+            "circuit_breaker_state": self._circuit_breaker.state,
+            "using_fallback": self._circuit_breaker.state != CircuitBreaker.CLOSED,
         }
 
         # Update cache
@@ -305,6 +510,9 @@ class RedisRateLimiter:
             logger.debug(f"Rate limit reset: {self.key}")
         except Exception as e:
             logger.warning(f"Failed to reset rate limit: {e}")
+
+        # Also reset fallback
+        self._fallback_limiter._timestamps.clear()
 
     async def close(self) -> None:
         """Close Redis connection."""

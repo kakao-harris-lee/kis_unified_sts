@@ -76,6 +76,33 @@ class ExecutionConfig(BaseModel):
     # Account info (loaded from environment)
     account_no: str = Field(default="", description="Account number (10 digits)")
 
+    # Circuit breaker settings
+    circuit_breaker_threshold: int = Field(
+        default=5,
+        ge=1,
+        le=100,
+        description="Number of consecutive failures before opening circuit"
+    )
+    circuit_breaker_timeout: float = Field(
+        default=30.0,
+        ge=1.0,
+        le=300.0,
+        description="Time to wait before attempting to close circuit (seconds)"
+    )
+
+    @field_validator("redis_url")
+    @classmethod
+    def validate_redis_url(cls, v: str) -> str:
+        """Validate Redis URL format."""
+        if not v:
+            return v  # Empty is allowed (disables rate limiting)
+        # Accept redis:// or rediss:// (TLS) schemes
+        if not re.match(r"^rediss?://", v):
+            raise ValueError(
+                f"Redis URL must start with 'redis://' or 'rediss://', got: {v!r}"
+            )
+        return v
+
     @field_validator("account_no")
     @classmethod
     def validate_account_no(cls, v: str) -> str:
@@ -85,6 +112,17 @@ class ExecutionConfig(BaseModel):
         if not re.match(r"^\d{10}$", v):
             raise ValueError(
                 f"Account number must be exactly 10 digits, got: {v!r}"
+            )
+        return v
+
+    @field_validator("rate_limit_key")
+    @classmethod
+    def validate_rate_limit_key(cls, v: str) -> str:
+        """Validate rate limit key contains only safe characters."""
+        if not re.match(r"^[a-zA-Z0-9_-]+$", v):
+            raise ValueError(
+                f"Rate limit key must contain only alphanumeric, underscore, "
+                f"or dash characters, got: {v!r}"
             )
         return v
 

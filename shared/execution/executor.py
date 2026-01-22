@@ -53,6 +53,8 @@ class OrderExecutor:
                 max_retry_delay=config.rate_limit_max_delay,
                 backoff_multiplier=config.rate_limit_backoff_multiplier,
                 metrics_cache_ttl=config.metrics_cache_ttl,
+                circuit_breaker_threshold=config.circuit_breaker_threshold,
+                circuit_breaker_timeout=config.circuit_breaker_timeout,
             )
 
         # Account parsing
@@ -80,6 +82,39 @@ class OrderExecutor:
             self.session = aiohttp.ClientSession(connector=connector)
             self._initialized = True
             logger.debug("OrderExecutor initialized with connection pooling")
+
+    async def warmup(self) -> bool:
+        """Pre-establish HTTP connections to KIS API endpoints.
+
+        Call this during application startup (after initialize()) to
+        reduce latency on the first real order. Makes HEAD requests to
+        pre-warm the connection pool and DNS cache.
+
+        Returns:
+            True if warmup succeeded, False otherwise
+        """
+        if not self._initialized:
+            await self.initialize()
+
+        mode = self.config.trading_mode
+        if mode == TradingMode.PAPER.value:
+            logger.debug("Skipping warmup for PAPER mode")
+            return True
+
+        # Determine target URL based on mode
+        if mode == TradingMode.MOCK.value:
+            base_url = self.config.kis_mock_base_url
+        else:
+            base_url = self.config.kis_real_base_url
+
+        try:
+            # HEAD request to establish connection without full response
+            async with self.session.head(base_url, timeout=aiohttp.ClientTimeout(total=5)) as response:
+                logger.info(f"Connection warmup to {base_url}: status={response.status}")
+                return True
+        except Exception as e:
+            logger.warning(f"Connection warmup failed for {base_url}: {e}")
+            return False
 
     async def cleanup(self) -> None:
         """Cleanup HTTP session and rate limiter."""
