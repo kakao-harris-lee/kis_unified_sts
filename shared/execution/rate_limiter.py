@@ -443,7 +443,7 @@ class RedisRateLimiter:
     async def close(self) -> None:
         """Close Redis connection."""
         if self._redis:
-            await self._redis.close()
+            await self._redis.aclose()
             self._redis = None
             self._script_sha = None
             logger.debug("Redis connection closed")

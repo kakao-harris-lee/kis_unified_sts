@@ -128,7 +128,7 @@ class TestRedisRateLimiter:
         """Test close cleans up Redis connection."""
         await limiter.close()
 
-        mock_redis.close.assert_called_once()
+        mock_redis.aclose.assert_called_once()
         assert limiter._redis is None
         assert limiter._script_sha is None
 
