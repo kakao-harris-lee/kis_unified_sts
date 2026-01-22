@@ -44,3 +44,19 @@ class ExecutionConfig(BaseModel):
 
     # Account info (loaded from environment)
     account_no: str = Field(default="", description="Account number")
+
+    # KIS API endpoints (configurable for testing/environment flexibility)
+    kis_mock_base_url: str = Field(
+        default="https://openapivts.koreainvestment.com:29443",
+        description="KIS 모의투자 API base URL"
+    )
+    kis_real_base_url: str = Field(
+        default="https://openapi.koreainvestment.com:9443",
+        description="KIS 실전투자 API base URL"
+    )
+
+    # KIS TR codes for order types
+    tr_code_buy_mock: str = Field(default="VTTC0802U", description="TR code for mock buy order")
+    tr_code_buy_real: str = Field(default="TTTC0802U", description="TR code for real buy order")
+    tr_code_sell_mock: str = Field(default="VTTC0801U", description="TR code for mock sell order")
+    tr_code_sell_real: str = Field(default="TTTC0801U", description="TR code for real sell order")

@@ -59,11 +59,23 @@ class OrderExecutor:
             self.account_suffix = config.account_no[8:10]
 
     async def initialize(self) -> None:
-        """Initialize HTTP session."""
+        """Initialize HTTP session with connection pooling.
+
+        Should be called during application startup to avoid latency
+        on first order. If not called, will be auto-initialized on
+        first order with a warning.
+        """
         if not self._initialized:
-            self.session = aiohttp.ClientSession()
+            # Configure connection pool for optimal performance
+            connector = aiohttp.TCPConnector(
+                limit=10,               # Total connection pool size
+                limit_per_host=5,       # Per-host connection limit
+                ttl_dns_cache=300,      # DNS cache TTL (5 minutes)
+                keepalive_timeout=30,   # Keep-alive for connection reuse
+            )
+            self.session = aiohttp.ClientSession(connector=connector)
             self._initialized = True
-            logger.debug("OrderExecutor initialized")
+            logger.debug("OrderExecutor initialized with connection pooling")
 
     async def cleanup(self) -> None:
         """Cleanup HTTP session and rate limiter."""
@@ -153,16 +165,20 @@ class OrderExecutor:
             return OrderResponse(success=False, message="Auth manager not configured")
 
         if not self.session:
+            logger.warning(
+                "OrderExecutor not initialized - calling initialize() now. "
+                "For predictable latency, call initialize() during app startup."
+            )
             await self.initialize()
 
         # Get auth headers
         headers = await self.auth_manager.get_auth_headers()
 
-        # Determine TR code
+        # Determine TR code from config
         if order.side == OrderSide.BUY.value:
-            tr_id = "VTTC0802U" if is_mock else "TTTC0802U"
+            tr_id = self.config.tr_code_buy_mock if is_mock else self.config.tr_code_buy_real
         else:
-            tr_id = "VTTC0801U" if is_mock else "TTTC0801U"
+            tr_id = self.config.tr_code_sell_mock if is_mock else self.config.tr_code_sell_real
 
         headers["tr_id"] = tr_id
 
@@ -176,8 +192,8 @@ class OrderExecutor:
             "ORD_UNPR": str(int(order.price)) if order.price else "0",
         }
 
-        # Send request
-        base_url = "https://openapivts.koreainvestment.com:29443" if is_mock else "https://openapi.koreainvestment.com:9443"
+        # Send request using configured base URL
+        base_url = self.config.kis_mock_base_url if is_mock else self.config.kis_real_base_url
         url = f"{base_url}/uapi/domestic-stock/v1/trading/order-cash"
 
         try:

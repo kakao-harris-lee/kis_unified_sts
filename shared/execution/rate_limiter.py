@@ -19,10 +19,17 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from typing import TYPE_CHECKING
 
 from .exceptions import RateLimitExceeded
+
+
+def _sanitize_redis_url(url: str) -> str:
+    """Remove password from Redis URL for safe logging."""
+    # Pattern: redis://[:password@]host:port/db
+    return re.sub(r"(redis://[^:]*:)[^@]+(@)", r"\1****\2", url)
 
 if TYPE_CHECKING:
     from redis.asyncio import Redis
@@ -109,7 +116,7 @@ class RedisRateLimiter:
                 )
                 # Register Lua script for better performance
                 self._script_sha = await self._redis.script_load(RATE_LIMIT_SCRIPT)
-                logger.debug(f"Redis connected: {self._redis_url}")
+                logger.debug(f"Redis connected: {_sanitize_redis_url(self._redis_url)}")
             except ImportError:
                 raise ImportError(
                     "redis package required for rate limiting. "
@@ -152,15 +159,25 @@ class RedisRateLimiter:
                 await asyncio.sleep(min(retry_delay, 0.2))
                 retry_delay *= 1.5
 
-            except Exception as e:
-                if isinstance(e, RateLimitExceeded):
-                    raise
-
-                # Redis connection error - fail open
+            except RateLimitExceeded:
+                raise
+            except (OSError, ConnectionError) as e:
+                # Network/connection errors - fail open to avoid blocking trading
                 logger.warning(
-                    f"Redis error in rate limiter, bypassing: {e}"
+                    f"Redis connection error in rate limiter, bypassing: {e}"
                 )
                 return True
+            except Exception as e:
+                # Check for redis-specific errors (imported dynamically)
+                error_type = type(e).__name__
+                if error_type in ("ConnectionError", "TimeoutError", "RedisError"):
+                    logger.warning(
+                        f"Redis error in rate limiter, bypassing: {e}"
+                    )
+                    return True
+                # Re-raise unexpected errors (programming bugs, etc.)
+                logger.error(f"Unexpected error in rate limiter: {e}")
+                raise
 
     async def _try_acquire(self) -> bool:
         """Attempt to acquire rate limit slot.

@@ -72,9 +72,9 @@ class TestRedisRateLimiter:
         assert "test" in exc_info.value.key
 
     @pytest.mark.asyncio
-    async def test_acquire_redis_error_fails_open(self, limiter, mock_redis):
-        """Test Redis errors allow requests (fail-open)."""
-        mock_redis.evalsha.side_effect = Exception("Connection lost")
+    async def test_acquire_redis_connection_error_fails_open(self, limiter, mock_redis):
+        """Test Redis connection errors allow requests (fail-open)."""
+        mock_redis.evalsha.side_effect = ConnectionError("Connection lost")
 
         # Should return True (fail-open), not raise
         result = await limiter.acquire(timeout=1.0)
@@ -129,6 +129,75 @@ class TestRedisRateLimiter:
         """Test max_requests is calculated from requests_per_second."""
         # 20 req/sec * 1.0 sec window = 20 max requests
         assert limiter.max_requests == 20
+
+    @pytest.mark.asyncio
+    async def test_acquire_uses_eval_fallback_when_no_script_sha(self, mock_redis):
+        """Test acquire falls back to eval() when script_sha is None."""
+        with patch("redis.asyncio.Redis") as MockRedis:
+            MockRedis.from_url = MagicMock(return_value=mock_redis)
+
+            from shared.execution.rate_limiter import RedisRateLimiter
+            limiter = RedisRateLimiter(
+                redis_url="redis://localhost:6379",
+                key_prefix="test-fallback",
+                requests_per_second=20.0,
+                window_size=1.0,
+            )
+            # Inject mock with NO script_sha (simulates script_load failure)
+            limiter._redis = mock_redis
+            limiter._script_sha = None  # Force fallback path
+
+            mock_redis.eval.return_value = 1  # Allowed
+
+            result = await limiter.acquire(timeout=1.0)
+
+            assert result is True
+            # Should use eval(), not evalsha()
+            mock_redis.eval.assert_called_once()
+            mock_redis.evalsha.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_acquire_connection_error_fails_open(self, limiter, mock_redis):
+        """Test ConnectionError specifically triggers fail-open."""
+        mock_redis.evalsha.side_effect = ConnectionError("Connection refused")
+
+        result = await limiter.acquire(timeout=1.0)
+
+        assert result is True  # Should fail open
+
+    @pytest.mark.asyncio
+    async def test_acquire_unexpected_error_propagates(self, limiter, mock_redis):
+        """Test unexpected errors are re-raised, not swallowed."""
+        mock_redis.evalsha.side_effect = ValueError("Unexpected programming error")
+
+        with pytest.raises(ValueError) as exc_info:
+            await limiter.acquire(timeout=1.0)
+
+        assert "Unexpected programming error" in str(exc_info.value)
+
+
+class TestRedisUrlSanitization:
+    """Test Redis URL sanitization for logging."""
+
+    def test_sanitize_url_with_password(self):
+        """Test password is removed from Redis URL."""
+        from shared.execution.rate_limiter import _sanitize_redis_url
+
+        url = "redis://user:secretpassword@localhost:6379/0"
+        sanitized = _sanitize_redis_url(url)
+
+        assert "secretpassword" not in sanitized
+        assert "****" in sanitized
+        assert "localhost:6379" in sanitized
+
+    def test_sanitize_url_without_password(self):
+        """Test URL without password is unchanged."""
+        from shared.execution.rate_limiter import _sanitize_redis_url
+
+        url = "redis://localhost:6379/0"
+        sanitized = _sanitize_redis_url(url)
+
+        assert sanitized == url
 
 
 class TestOrderExecutorWithRateLimiter:
