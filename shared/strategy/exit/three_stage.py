@@ -209,6 +209,7 @@ class ThreeStageExit(ExitSignalGenerator[ThreeStageExitConfig]):
     NAME = "THREE_STAGE_EXIT"
     VERSION = "E1"
     DESCRIPTION = "3단계 동적 청산 전략 (Survival → Breakeven → Maximize)"
+    CONFIG_CLASS = ThreeStageExitConfig  # For registry auto-conversion
 
     def __init__(self, config: ThreeStageExitConfig):
         super().__init__(config)

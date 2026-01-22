@@ -195,19 +195,19 @@ class TestTradingOrchestrator:
         assert metrics == {}
 
 
-class TestLoadHolidaysFromConfig:
-    """_load_holidays_from_config 함수 테스트"""
+class TestDefaultHolidayLoader:
+    """default_holiday_loader 함수 테스트"""
 
     def test_returns_empty_set_when_file_not_found(self):
         """파일 없으면 빈 set 반환"""
-        from services.trading.orchestrator import _load_holidays_from_config
+        from services.trading.orchestrator import default_holiday_loader
 
-        holidays = _load_holidays_from_config("nonexistent.yaml")
+        holidays = default_holiday_loader("nonexistent.yaml")
         assert holidays == set()
 
     def test_loads_holidays_from_config(self):
         """설정 파일에서 공휴일 로드"""
-        from services.trading.orchestrator import _load_holidays_from_config
+        from services.trading.orchestrator import default_holiday_loader
         import tempfile
         import os
 
@@ -221,23 +221,67 @@ holidays:
             temp_path = f.name
 
         try:
-            holidays = _load_holidays_from_config(temp_path)
+            holidays = default_holiday_loader(temp_path)
             assert date(2024, 1, 1) in holidays
             assert date(2024, 3, 1) in holidays
         finally:
             os.unlink(temp_path)
 
 
+class TestHolidayCache:
+    """HolidayCache 클래스 테스트"""
+
+    def test_get_returns_holidays(self):
+        """get()은 공휴일 반환"""
+        from services.trading.orchestrator import HolidayCache
+
+        test_holidays = {date(2024, 1, 1)}
+        cache = HolidayCache(loader=lambda _: test_holidays)
+
+        result = cache.get()
+        assert result == test_holidays
+
+    def test_reload_clears_cache(self):
+        """reload()는 캐시 클리어"""
+        from services.trading.orchestrator import HolidayCache
+
+        call_count = [0]
+
+        def counting_loader(_):
+            call_count[0] += 1
+            return {date(2024, 1, 1)}
+
+        cache = HolidayCache(loader=counting_loader)
+
+        # First call
+        cache.get()
+        assert call_count[0] == 1
+
+        # Second call uses cache
+        cache.get()
+        assert call_count[0] == 1
+
+        # Reload and call again
+        cache.reload()
+        cache.get()
+        assert call_count[0] == 2
+
+
 class TestReloadHolidays:
     """reload_holidays 함수 테스트"""
 
-    def test_clears_cache(self):
-        """캐시 클리어"""
+    def test_reloads_global_cache(self):
+        """전역 캐시 리로드"""
         from services.trading import orchestrator
 
-        # 캐시 설정
-        orchestrator._cached_holidays = {date(2024, 1, 1)}
+        # Get initial holidays
+        holidays1 = orchestrator._get_holidays()
 
+        # Reload
         orchestrator.reload_holidays()
 
-        assert orchestrator._cached_holidays is None
+        # Can get holidays again (may or may not be same)
+        holidays2 = orchestrator._get_holidays()
+
+        # Should still work
+        assert isinstance(holidays2, set)
