@@ -24,8 +24,23 @@ class ExecutionConfig(BaseModel):
     max_retries: int = Field(default=3, description="Max retry attempts")
     retry_delay: float = Field(default=1.0, description="Delay between retries (seconds)")
 
-    # Rate limiting
-    orders_per_second: float = Field(default=5.0, description="Max orders per second")
+    # Rate limiting (Redis-based distributed limiter)
+    redis_url: str = Field(
+        default="",
+        description="Redis URL for distributed rate limiting (empty = no rate limiting)"
+    )
+    rate_limit_key: str = Field(
+        default="default",
+        description="Rate limit key prefix: 'stock', 'futures', or custom"
+    )
+    requests_per_second: float = Field(
+        default=20.0,
+        description="Max API requests per second (KIS limit)"
+    )
+    rate_limit_timeout: float = Field(
+        default=5.0,
+        description="Max wait time when rate limited (seconds)"
+    )
 
     # Account info (loaded from environment)
     account_no: str = Field(default="", description="Account number")

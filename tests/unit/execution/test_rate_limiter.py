@@ -1,0 +1,233 @@
+"""Test Redis rate limiter."""
+import pytest
+from unittest.mock import AsyncMock, MagicMock, patch
+import time
+
+
+class TestRedisRateLimiter:
+    """Unit tests for RedisRateLimiter with mocked Redis."""
+
+    @pytest.fixture
+    def mock_redis(self):
+        """Create a mock Redis client."""
+        redis = AsyncMock()
+        redis.script_load = AsyncMock(return_value="mock_sha")
+        redis.evalsha = AsyncMock(return_value=1)  # 1 = allowed
+        redis.eval = AsyncMock(return_value=1)
+        redis.zcard = AsyncMock(return_value=5)
+        redis.zremrangebyscore = AsyncMock()
+        redis.delete = AsyncMock()
+        redis.close = AsyncMock()
+        return redis
+
+    @pytest.fixture
+    def limiter(self, mock_redis):
+        """Create rate limiter with mocked Redis."""
+        with patch("redis.asyncio.Redis") as MockRedis:
+            MockRedis.from_url = MagicMock(return_value=mock_redis)
+
+            from shared.execution.rate_limiter import RedisRateLimiter
+            limiter = RedisRateLimiter(
+                redis_url="redis://localhost:6379",
+                key_prefix="test",
+                requests_per_second=20.0,
+                window_size=1.0,
+            )
+            # Inject mock directly
+            limiter._redis = mock_redis
+            limiter._script_sha = "mock_sha"
+            return limiter
+
+    @pytest.mark.asyncio
+    async def test_acquire_allowed(self, limiter, mock_redis):
+        """Test acquire returns True when under limit."""
+        mock_redis.evalsha.return_value = 1  # Allowed
+
+        result = await limiter.acquire(timeout=1.0)
+
+        assert result is True
+        mock_redis.evalsha.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_acquire_blocked_then_allowed(self, limiter, mock_redis):
+        """Test acquire waits and retries when rate limited."""
+        # First call blocked, second allowed
+        mock_redis.evalsha.side_effect = [0, 1]
+
+        result = await limiter.acquire(timeout=1.0)
+
+        assert result is True
+        assert mock_redis.evalsha.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_acquire_timeout_raises(self, limiter, mock_redis):
+        """Test acquire raises RateLimitExceeded on timeout."""
+        from shared.execution.exceptions import RateLimitExceeded
+
+        mock_redis.evalsha.return_value = 0  # Always blocked
+
+        with pytest.raises(RateLimitExceeded) as exc_info:
+            await limiter.acquire(timeout=0.2)
+
+        assert "test" in exc_info.value.key
+
+    @pytest.mark.asyncio
+    async def test_acquire_redis_error_fails_open(self, limiter, mock_redis):
+        """Test Redis errors allow requests (fail-open)."""
+        mock_redis.evalsha.side_effect = Exception("Connection lost")
+
+        # Should return True (fail-open), not raise
+        result = await limiter.acquire(timeout=1.0)
+
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_get_current_usage(self, limiter, mock_redis):
+        """Test get_current_usage returns count from Redis."""
+        mock_redis.zcard.return_value = 15
+
+        usage = await limiter.get_current_usage()
+
+        assert usage == 15
+        mock_redis.zremrangebyscore.assert_called_once()
+        mock_redis.zcard.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_get_metrics(self, limiter, mock_redis):
+        """Test get_metrics returns formatted metrics."""
+        mock_redis.zcard.return_value = 10
+
+        metrics = await limiter.get_metrics()
+
+        assert metrics["rate_limit_key"] == "kis:ratelimit:test"
+        assert metrics["current_usage"] == 10
+        assert metrics["max_requests"] == 20
+        assert metrics["window_size"] == 1.0
+        assert metrics["utilization_pct"] == 50.0
+
+    @pytest.mark.asyncio
+    async def test_reset(self, limiter, mock_redis):
+        """Test reset clears the rate limit counter."""
+        await limiter.reset()
+
+        mock_redis.delete.assert_called_once_with("kis:ratelimit:test")
+
+    @pytest.mark.asyncio
+    async def test_close(self, limiter, mock_redis):
+        """Test close cleans up Redis connection."""
+        await limiter.close()
+
+        mock_redis.close.assert_called_once()
+        assert limiter._redis is None
+        assert limiter._script_sha is None
+
+    def test_key_format(self, limiter):
+        """Test Redis key format."""
+        assert limiter.key == "kis:ratelimit:test"
+
+    def test_max_requests_calculation(self, limiter):
+        """Test max_requests is calculated from requests_per_second."""
+        # 20 req/sec * 1.0 sec window = 20 max requests
+        assert limiter.max_requests == 20
+
+
+class TestOrderExecutorWithRateLimiter:
+    """Test OrderExecutor integration with rate limiter."""
+
+    @pytest.mark.asyncio
+    async def test_executor_acquires_before_order(self):
+        """Test executor calls rate limiter before sending order."""
+        from shared.execution.executor import OrderExecutor
+        from shared.execution.config import ExecutionConfig
+        from shared.execution.models import OrderRequest, OrderSide, OrderType
+
+        with patch("shared.execution.rate_limiter.RedisRateLimiter") as MockLimiter:
+            mock_limiter = AsyncMock()
+            mock_limiter.acquire = AsyncMock(return_value=True)
+            mock_limiter.close = AsyncMock()
+            MockLimiter.return_value = mock_limiter
+
+            config = ExecutionConfig(
+                trading_mode="PAPER",
+                redis_url="redis://localhost:6379",
+                rate_limit_key="test",
+            )
+            executor = OrderExecutor(config)
+
+            order = OrderRequest(
+                code="005930",
+                side=OrderSide.BUY,
+                order_type=OrderType.MARKET,
+                quantity=10,
+            )
+
+            response = await executor.execute_order(order)
+
+            mock_limiter.acquire.assert_called_once()
+            assert response.success is True
+
+            await executor.cleanup()
+
+    @pytest.mark.asyncio
+    async def test_executor_rate_limit_error_returns_failure(self):
+        """Test executor returns failure when rate limited."""
+        from shared.execution.executor import OrderExecutor
+        from shared.execution.config import ExecutionConfig
+        from shared.execution.models import OrderRequest, OrderSide, OrderType
+        from shared.execution.exceptions import RateLimitExceeded
+
+        with patch("shared.execution.rate_limiter.RedisRateLimiter") as MockLimiter:
+            mock_limiter = AsyncMock()
+            mock_limiter.acquire = AsyncMock(
+                side_effect=RateLimitExceeded(key="test", wait_time=1.0)
+            )
+            mock_limiter.close = AsyncMock()
+            MockLimiter.return_value = mock_limiter
+
+            config = ExecutionConfig(
+                trading_mode="PAPER",
+                redis_url="redis://localhost:6379",
+                rate_limit_key="test",
+            )
+            executor = OrderExecutor(config)
+
+            order = OrderRequest(
+                code="005930",
+                side=OrderSide.BUY,
+                order_type=OrderType.MARKET,
+                quantity=10,
+            )
+
+            response = await executor.execute_order(order)
+
+            assert response.success is False
+            assert "Rate limit exceeded" in response.message
+
+            await executor.cleanup()
+
+    @pytest.mark.asyncio
+    async def test_executor_works_without_redis_configured(self):
+        """Test executor works normally when redis_url is empty."""
+        from shared.execution.executor import OrderExecutor
+        from shared.execution.config import ExecutionConfig
+        from shared.execution.models import OrderRequest, OrderSide, OrderType
+
+        config = ExecutionConfig(
+            trading_mode="PAPER",
+            redis_url="",  # No Redis configured
+        )
+        executor = OrderExecutor(config)
+
+        assert executor._rate_limiter is None
+
+        order = OrderRequest(
+            code="005930",
+            side=OrderSide.BUY,
+            order_type=OrderType.MARKET,
+            quantity=10,
+        )
+
+        response = await executor.execute_order(order)
+
+        assert response.success is True
+        await executor.cleanup()

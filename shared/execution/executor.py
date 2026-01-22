@@ -1,13 +1,19 @@
 """Order execution engine."""
+from __future__ import annotations
+
 import asyncio
 import logging
 import uuid
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 import aiohttp
 
 from .config import ExecutionConfig, TradingMode
+from .exceptions import RateLimitExceeded
 from .models import OrderRequest, OrderResponse, OrderSide
+
+if TYPE_CHECKING:
+    from .rate_limiter import RedisRateLimiter
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +41,16 @@ class OrderExecutor:
         self.session: Optional[aiohttp.ClientSession] = None
         self._initialized = False
 
+        # Rate limiter (optional, requires redis_url)
+        self._rate_limiter: Optional[RedisRateLimiter] = None
+        if config.redis_url:
+            from .rate_limiter import RedisRateLimiter
+            self._rate_limiter = RedisRateLimiter(
+                redis_url=config.redis_url,
+                key_prefix=config.rate_limit_key,
+                requests_per_second=config.requests_per_second,
+            )
+
         # Account parsing
         self.account_prefix = ""
         self.account_suffix = ""
@@ -50,10 +66,12 @@ class OrderExecutor:
             logger.debug("OrderExecutor initialized")
 
     async def cleanup(self) -> None:
-        """Cleanup HTTP session."""
+        """Cleanup HTTP session and rate limiter."""
         if self.session:
             await self.session.close()
             self.session = None
+        if self._rate_limiter:
+            await self._rate_limiter.close()
         self._initialized = False
         logger.debug("OrderExecutor cleaned up")
 
@@ -66,6 +84,16 @@ class OrderExecutor:
         Returns:
             OrderResponse with result
         """
+        # Acquire rate limit before retry loop
+        if self._rate_limiter:
+            try:
+                await self._rate_limiter.acquire(timeout=self.config.rate_limit_timeout)
+            except RateLimitExceeded:
+                return OrderResponse(
+                    success=False,
+                    message="Rate limit exceeded, try again later"
+                )
+
         for attempt in range(self.config.max_retries):
             try:
                 response = await self._send_order(order)
