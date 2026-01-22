@@ -21,7 +21,7 @@ strategy:
   # 진입 조건 (Entry)
   # ===========================================================================
   entry:
-    type: bb_lower_reentry
+    type: mean_reversion  # BB + RSI mean reversion
     params:
       # -----------------------------------------------------------------
       # Bollinger Bands 설정

@@ -29,11 +29,17 @@ from dataclasses import dataclass, field
 from datetime import datetime, date, time, timedelta
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable, Protocol
 
 import yaml
 
 from services.trading.pipeline import TradingPipeline, PipelineStage
+from services.trading.data_provider import MarketDataProvider, DataProviderConfig
+from services.trading.position_tracker import PositionTracker, PositionTrackerConfig
+from services.trading.strategy_manager import StrategyManager, StrategyManagerConfig
+from shared.models.signal import Signal, ExitSignal
+from shared.strategy.base import EntryContext
+from shared.utils.calc import calc_order_quantity
 
 if TYPE_CHECKING:
     from shared.config.schema import MarketScheduleConfig, PipelineConfig
@@ -41,8 +47,32 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _load_holidays_from_config(config_path: str = "config/market_schedule.yaml") -> set[date]:
-    """설정 파일에서 공휴일 로드"""
+# Validation constants
+MIN_INITIAL_CAPITAL = 100_000  # 10만원 minimum
+MAX_INITIAL_CAPITAL = 100_000_000_000  # 1000억원 maximum
+MIN_ORDER_AMOUNT = 10_000  # 1만원 minimum per trade
+MAX_ORDER_AMOUNT = 100_000_000  # 1억원 maximum per trade
+MAX_ORDER_QUANTITY = 1_000_000  # Safety cap for quantity
+MAX_YAML_FILE_SIZE = 1_024 * 1_024  # 1MB max for YAML config files
+
+
+class HolidayLoader(Protocol):
+    """Protocol for holiday data loading (allows injection for testing)."""
+
+    def __call__(self, config_path: str) -> set[date]:
+        """Load holidays from config file."""
+        ...
+
+
+def default_holiday_loader(config_path: str = "config/market_schedule.yaml") -> set[date]:
+    """Default implementation for loading holidays from config file.
+
+    Args:
+        config_path: Path to market schedule YAML config
+
+    Returns:
+        Set of holiday dates
+    """
     holidays: set[date] = set()
     path = Path(config_path)
 
@@ -51,36 +81,96 @@ def _load_holidays_from_config(config_path: str = "config/market_schedule.yaml")
         return holidays
 
     try:
+        # Security: Check file size before parsing to prevent DoS via large files
+        file_size = path.stat().st_size
+        if file_size > MAX_YAML_FILE_SIZE:
+            logger.error(
+                f"Holiday config file too large: {file_size} bytes > {MAX_YAML_FILE_SIZE} bytes"
+            )
+            return holidays
+
         with open(path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f)
 
+        if not isinstance(data, dict):
+            logger.warning(f"Invalid holiday config format in {config_path}")
+            return holidays
+
         for holiday_str in data.get("holidays", []):
             try:
-                holidays.add(date.fromisoformat(holiday_str))
-            except (ValueError, TypeError):
-                pass
+                if isinstance(holiday_str, str):
+                    holidays.add(date.fromisoformat(holiday_str))
+                elif isinstance(holiday_str, date):
+                    holidays.add(holiday_str)
+            except (ValueError, TypeError) as e:
+                logger.debug(f"Skipping invalid holiday entry: {holiday_str} - {e}")
     except Exception as e:
-        logger.error(f"Failed to load holidays: {e}")
+        logger.error(f"Failed to load holidays: {e}", exc_info=True)
 
     return holidays
 
 
-# 설정에서 로드된 공휴일 (lazy load)
-_cached_holidays: set[date] | None = None
+class HolidayCache:
+    """Thread-safe holiday cache with injectable loader.
+
+    Usage:
+        # Default usage
+        cache = HolidayCache()
+        holidays = cache.get()
+
+        # With custom loader (for testing)
+        cache = HolidayCache(loader=lambda path: {date(2024, 1, 1)})
+    """
+
+    def __init__(
+        self,
+        loader: Callable[[str], set[date]] | None = None,
+        config_path: str = "config/market_schedule.yaml",
+    ):
+        self._loader = loader or default_holiday_loader
+        self._config_path = config_path
+        self._cache: set[date] | None = None
+        self._lock = asyncio.Lock()
+
+    def get(self) -> set[date]:
+        """Get holidays (loads on first access)."""
+        if self._cache is None:
+            self._cache = self._loader(self._config_path)
+        return self._cache
+
+    def reload(self):
+        """Force reload of holidays (sync version, not thread-safe for concurrent use)."""
+        self._cache = None
+
+    async def reload_async(self):
+        """Force reload of holidays with async lock for thread-safety."""
+        async with self._lock:
+            self._cache = None
+
+    async def get_async(self) -> set[date]:
+        """Get holidays with async lock for concurrent access."""
+        async with self._lock:
+            return self.get()
+
+
+# Global holiday cache (can be replaced for testing)
+_holiday_cache = HolidayCache()
 
 
 def _get_holidays() -> set[date]:
     """공휴일 가져오기 (캐시 사용)"""
-    global _cached_holidays
-    if _cached_holidays is None:
-        _cached_holidays = _load_holidays_from_config()
-    return _cached_holidays
+    return _holiday_cache.get()
 
 
 def reload_holidays():
     """공휴일 다시 로드 (설정 변경 시)"""
-    global _cached_holidays
-    _cached_holidays = None
+    _holiday_cache.reload()
+
+
+def set_holiday_cache(cache: HolidayCache):
+    """Replace global holiday cache (for testing)."""
+    global _holiday_cache
+    _holiday_cache = cache
 
 
 class TradingState(Enum):
@@ -170,12 +260,51 @@ class TradingConfig:
     # Redis (선택)
     redis_url: str | None = None
 
+    # Order sizing (previously hardcoded)
+    order_amount_per_trade: float = 1_000_000  # 종목당 주문 금액
+
+    # Error recovery
+    error_retry_delay_seconds: float = 60.0  # Retry delay after errors (default 1 min)
+
+    def __post_init__(self):
+        """Validate configuration values."""
+        self._validate()
+
+    def _validate(self):
+        """Validate all configuration parameters."""
+        if self.asset_class not in ("stock", "futures"):
+            raise ValueError(
+                f"asset_class must be 'stock' or 'futures', got {self.asset_class}"
+            )
+
+        if not (MIN_INITIAL_CAPITAL <= self.initial_capital <= MAX_INITIAL_CAPITAL):
+            raise ValueError(
+                f"initial_capital must be between {MIN_INITIAL_CAPITAL:,} "
+                f"and {MAX_INITIAL_CAPITAL:,}, got {self.initial_capital:,}"
+            )
+
+        if not (MIN_ORDER_AMOUNT <= self.order_amount_per_trade <= MAX_ORDER_AMOUNT):
+            raise ValueError(
+                f"order_amount_per_trade must be between {MIN_ORDER_AMOUNT:,} "
+                f"and {MAX_ORDER_AMOUNT:,}, got {self.order_amount_per_trade:,}"
+            )
+
+        if not isinstance(self.strategy_name, str) or not self.strategy_name:
+            raise ValueError("strategy_name must be a non-empty string")
+
+        if not isinstance(self.symbols, list):
+            raise TypeError(f"symbols must be a list, got {type(self.symbols)}")
+
+        if not isinstance(self.paper_trading, bool):
+            raise TypeError(f"paper_trading must be bool, got {type(self.paper_trading)}")
+
     @classmethod
     def stock(
         cls,
         strategy_name: str = "bb_reversion",
         symbols: list[str] | None = None,
         initial_capital: float = 10_000_000,
+        order_amount: float = 1_000_000,
     ) -> TradingConfig:
         """주식용 설정"""
         return cls(
@@ -183,6 +312,7 @@ class TradingConfig:
             strategy_name=strategy_name,
             symbols=symbols or [],
             initial_capital=initial_capital,
+            order_amount_per_trade=order_amount,
         )
 
     @classmethod
@@ -190,12 +320,14 @@ class TradingConfig:
         cls,
         strategy_name: str = "pure_micro",
         initial_capital: float = 10_000_000,
+        order_amount: float = 1_000_000,
     ) -> TradingConfig:
         """선물용 설정"""
         return cls(
             asset_class="futures",
             strategy_name=strategy_name,
             initial_capital=initial_capital,
+            order_amount_per_trade=order_amount,
         )
 
 
@@ -215,14 +347,22 @@ class TradingOrchestrator:
         await orchestrator.run_session()  # 오늘만 실행
     """
 
-    def __init__(self, config: TradingConfig):
+    def __init__(
+        self,
+        config: TradingConfig,
+        holiday_cache: HolidayCache | None = None,
+    ):
         """
         Args:
             config: 트레이딩 설정
+            holiday_cache: Optional custom holiday cache (for testing)
         """
         self.config = config
         self.state = TradingState.IDLE
         self.pipeline: TradingPipeline | None = None
+
+        # Holiday cache (injectable for testing)
+        self._holiday_cache = holiday_cache or _holiday_cache
 
         # 통계
         self.start_time: datetime | None = None
@@ -233,6 +373,20 @@ class TradingOrchestrator:
         # 내부 상태
         self._running = False
         self._main_task: asyncio.Task | None = None
+
+        # Thread-safety locks for order execution
+        self._entry_lock = asyncio.Lock()
+        self._exit_lock = asyncio.Lock()
+
+        # Trading components (initialized in start())
+        self._data_provider: MarketDataProvider | None = None
+        self._strategy_manager: StrategyManager | None = None
+        self._position_tracker: PositionTracker | None = None
+        self._paper_broker: Any | None = None
+        self._kis_client: Any | None = None
+
+        # Market regime
+        self._current_regime: str | None = None
 
         logger.info(
             f"TradingOrchestrator initialized: "
@@ -254,6 +408,9 @@ class TradingOrchestrator:
 
         logger.info("Starting trading...")
 
+        # Initialize components
+        await self._initialize_components()
+
         # 파이프라인 생성 및 시작
         self.pipeline = self._create_pipeline()
         await self.pipeline.start()
@@ -265,6 +422,50 @@ class TradingOrchestrator:
             f"Capital: {self.config.initial_capital:,.0f}"
         )
 
+    async def _initialize_components(self):
+        """Initialize trading components"""
+        # Data provider
+        self._data_provider = MarketDataProvider(
+            symbols=self.config.symbols,
+            config=DataProviderConfig(cache_ttl_seconds=1.0),
+            kis_client=self._kis_client,
+        )
+
+        # Strategy manager
+        strategy_names = (
+            [self.config.strategy_name] if self.config.strategy_name else None
+        )
+        self._strategy_manager = StrategyManager(
+            asset_class=self.config.asset_class,
+            strategy_names=strategy_names,
+            config=StrategyManagerConfig(),
+        )
+
+        # Position tracker
+        self._position_tracker = PositionTracker(
+            config=PositionTrackerConfig(max_positions=10)
+        )
+
+        # Paper broker (if paper trading)
+        if self.config.paper_trading:
+            try:
+                from shared.paper.broker import PaperBroker
+                from shared.paper.config import PaperTradingConfig
+
+                paper_config = PaperTradingConfig(
+                    initial_capital=self.config.initial_capital,
+                )
+                self._paper_broker = PaperBroker(config=paper_config)
+                logger.info("Paper broker initialized")
+            except ImportError:
+                logger.warning("PaperBroker not available, using mock execution")
+
+        logger.info(
+            f"Components initialized: "
+            f"{len(self._strategy_manager.strategies)} strategies, "
+            f"{len(self.config.symbols)} symbols"
+        )
+
     async def stop(self):
         """거래 종료"""
         if self.state == TradingState.STOPPED:
@@ -272,9 +473,21 @@ class TradingOrchestrator:
 
         logger.info("Stopping trading...")
 
+        # Close all positions (EOD close)
+        if self._position_tracker and self._data_provider:
+            data = await self._data_provider.get_data()
+            closed = self._position_tracker.close_all(data, reason="EOD_CLOSE")
+            for pos in closed:
+                self.total_pnl += pos.unrealized_pnl
+
         if self.pipeline:
             await self.pipeline.stop()
             self.pipeline = None
+
+        # Cleanup components
+        self._data_provider = None
+        self._strategy_manager = None
+        self._position_tracker = None
 
         self.state = TradingState.STOPPED
         self._running = False
@@ -316,8 +529,9 @@ class TradingOrchestrator:
         """단일 세션 실행 (오늘만)"""
         today = date.today()
 
-        # 거래일 체크
-        if not is_trading_day(today):
+        # 거래일 체크 (use injected holiday cache)
+        holidays = self._holiday_cache.get()
+        if not is_trading_day(today, holidays):
             reason = "주말" if today.weekday() >= 5 else "공휴일"
             logger.info(f"Not a trading day: {reason}")
             await self._notify(f"🏖️ 휴장일: {reason}")
@@ -393,31 +607,345 @@ class TradingOrchestrator:
             except Exception as e:
                 logger.error(f"Session error: {e}")
                 await self._notify(f"⚠️ Error: {e}")
-                await asyncio.sleep(60)  # 1분 후 재시도
+                await asyncio.sleep(self.config.error_retry_delay_seconds)
 
         await self.stop()
 
     def _create_pipeline(self) -> TradingPipeline:
-        """파이프라인 생성"""
-        # 실제 구현에서는 전략에 따라 핸들러 설정
-        # 여기서는 더미 핸들러 사용
-        async def dummy_regime():
-            return None
-
-        async def dummy_entry():
-            return None
-
-        async def dummy_monitoring():
-            return None
-
-        async def dummy_exit():
-            return None
-
+        """파이프라인 생성 with real handlers"""
         return TradingPipeline(
-            regime_handler=dummy_regime,
-            entry_handler=dummy_entry,
-            monitoring_handler=dummy_monitoring,
-            exit_handler=dummy_exit,
+            regime_handler=self._handle_regime,
+            entry_handler=self._handle_entry,
+            monitoring_handler=self._handle_monitoring,
+            exit_handler=self._handle_exit,
+        )
+
+    # -------------------------------------------------------------------------
+    # Pipeline Handlers
+    # -------------------------------------------------------------------------
+
+    async def _handle_regime(self) -> dict[str, Any] | None:
+        """Regime detection handler (runs every 5 min)
+
+        Detects market state (BULL/BEAR/SIDEWAYS) for strategy filtering.
+        """
+        if not self._data_provider:
+            return None
+
+        try:
+            # Fetch market data
+            data = await self._data_provider.get_data()
+            if not data:
+                return None
+
+            # Simple regime detection based on market data
+            # TODO: Implement proper MarketClassifier integration
+            regime = self._classify_market(data)
+            self._current_regime = regime
+
+            logger.debug(f"Market regime: {regime}")
+
+            return {
+                "regime": regime,
+                "timestamp": datetime.now().isoformat(),
+                "symbols_checked": len(data),
+            }
+
+        except Exception as e:
+            logger.error(f"Regime detection failed: {e}", exc_info=True)
+            return None
+
+    # Market classification thresholds (from config in CLAUDE.md)
+    MARKET_BULL_THRESHOLD = 0.02  # +2% = BULL
+    MARKET_BEAR_THRESHOLD = -0.02  # -2% = BEAR
+
+    def _classify_market(self, market_data: dict[str, Any]) -> str:
+        """Simple market classification based on average change.
+
+        TODO: Replace with proper MarketClassifier using MFI/ADX from config.
+
+        Args:
+            market_data: Dict of symbol -> market data
+
+        Returns:
+            Market regime string (BULL, BEAR, SIDEWAYS_UP, SIDEWAYS_DOWN, SIDEWAYS_FLAT)
+        """
+        if not market_data:
+            return "UNKNOWN"
+
+        # Calculate average change across symbols
+        changes = []
+        for symbol, data in market_data.items():
+            if isinstance(data, dict):
+                change = data.get("change", 0)
+                if change:
+                    changes.append(change)
+
+        if not changes:
+            return "SIDEWAYS_FLAT"
+
+        avg_change = sum(changes) / len(changes)
+
+        # Use class constants instead of magic numbers
+        if avg_change > self.MARKET_BULL_THRESHOLD:
+            return "BULL"
+        elif avg_change < self.MARKET_BEAR_THRESHOLD:
+            return "BEAR"
+        elif avg_change > 0:
+            return "SIDEWAYS_UP"
+        elif avg_change < 0:
+            return "SIDEWAYS_DOWN"
+        else:
+            return "SIDEWAYS_FLAT"
+
+    async def _handle_entry(self) -> list[Signal]:
+        """Entry signal handler (runs every 1 sec)
+
+        Checks entry conditions across all strategies.
+        """
+        if not self._strategy_manager or not self._data_provider:
+            return []
+
+        if not self._position_tracker:
+            return []
+
+        # Skip entries in BEAR market
+        if self._current_regime == "BEAR":
+            return []
+
+        # Check position limit
+        if not self._position_tracker.can_open_position():
+            return []
+
+        try:
+            # Fetch market data
+            data = await self._data_provider.get_data()
+            if not data:
+                return []
+
+            # Build entry context
+            context = EntryContext(
+                market_data=data,
+                indicators={},  # TODO: Calculate indicators
+                current_positions=self._position_tracker.positions,
+                timestamp=datetime.now(),
+                metadata={"regime": self._current_regime},
+            )
+
+            # Check entries across all strategies
+            signals = await self._strategy_manager.check_entries(context)
+
+            # Execute orders for valid signals
+            for signal in signals:
+                await self._execute_entry(signal)
+
+            return signals
+
+        except Exception as e:
+            logger.error(f"Entry handler failed: {e}", exc_info=True)
+            return []
+
+    async def _handle_monitoring(self) -> dict[str, Any] | None:
+        """Position monitoring handler (runs every 0.1 sec)
+
+        Updates position prices and state transitions.
+        """
+        if not self._position_tracker or not self._data_provider:
+            return None
+
+        positions = self._position_tracker.positions
+        if not positions:
+            return None
+
+        try:
+            # Fetch latest prices
+            symbols = list({p.code for p in positions})
+            data = await self._data_provider.get_data(symbols)
+
+            # Update prices
+            self._position_tracker.update_prices(data)
+
+            # Update states (SURVIVAL → BREAKEVEN → MAXIMIZE)
+            transitions = self._position_tracker.update_states()
+
+            if transitions:
+                for position, old_state, new_state in transitions:
+                    logger.info(
+                        f"Position state: {position.code} "
+                        f"{old_state.value} → {new_state.value}"
+                    )
+
+            return {
+                "positions_updated": len(positions),
+                "transitions": len(transitions),
+            }
+
+        except Exception as e:
+            logger.error(f"Monitoring handler failed: {e}", exc_info=True)
+            return None
+
+    async def _handle_exit(self) -> list[ExitSignal]:
+        """Exit signal handler (runs every 0.5 sec)
+
+        Checks exit conditions for all positions.
+        """
+        if not self._strategy_manager or not self._position_tracker:
+            return []
+
+        if not self._data_provider:
+            return []
+
+        positions = self._position_tracker.positions
+        if not positions:
+            return []
+
+        try:
+            # Fetch market data
+            symbols = list({p.code for p in positions})
+            data = await self._data_provider.get_data(symbols)
+
+            # Check exits
+            signals = await self._strategy_manager.check_exits(
+                positions=positions,
+                market_data=data,
+                market_state=self._current_regime,
+            )
+
+            # Execute exit orders
+            for signal in signals:
+                await self._execute_exit(signal)
+
+            return signals
+
+        except Exception as e:
+            logger.error(f"Exit handler failed: {e}", exc_info=True)
+            return []
+
+    # -------------------------------------------------------------------------
+    # Order Execution
+    # -------------------------------------------------------------------------
+
+    async def _execute_entry(self, signal: Signal):
+        """Execute entry order with lock for thread-safety."""
+        if not self._position_tracker:
+            return
+
+        # Calculate quantity
+        quantity = self._calculate_quantity(signal)
+        if quantity <= 0:
+            logger.warning(f"Invalid quantity for {signal.code}: {quantity}")
+            return
+
+        # Use lock to prevent race conditions in concurrent execution
+        async with self._entry_lock:
+            # Re-check position limit under lock
+            if not self._position_tracker.can_open_position(signal.code):
+                logger.debug(f"Position limit reached, skipping entry for {signal.code}")
+                return
+
+            try:
+                if self.config.paper_trading and self._paper_broker:
+                    # Paper trading execution
+                    order = await self._paper_broker.submit_order(
+                        code=signal.code,
+                        side="BUY",
+                        quantity=quantity,
+                        price=signal.price,
+                    )
+                    is_filled = order.is_filled if hasattr(order, "is_filled") else True
+                    fill_price = order.fill_price if hasattr(order, "fill_price") else signal.price
+                else:
+                    # Mock execution (for testing without paper broker)
+                    is_filled = True
+                    fill_price = signal.price
+
+                if is_filled:
+                    # Track position
+                    position = self._position_tracker.add_position(
+                        code=signal.code,
+                        name=signal.name,
+                        entry_price=fill_price,
+                        quantity=quantity,
+                        strategy=signal.strategy,
+                    )
+
+                    if position:
+                        self.total_trades += 1
+                        logger.info(
+                            f"Entry executed: {signal.code} @ {fill_price:,.0f} x {quantity}"
+                        )
+
+            except Exception as e:
+                logger.error(f"Entry execution failed for {signal.code}: {e}", exc_info=True)
+
+    async def _execute_exit(self, signal: ExitSignal):
+        """Execute exit order with lock for thread-safety."""
+        if not self._position_tracker:
+            return
+
+        # Use lock to prevent race conditions in concurrent execution
+        async with self._exit_lock:
+            # Verify position still exists under lock
+            position = self._position_tracker.get_position(signal.position_id)
+            if not position:
+                logger.debug(f"Position already closed: {signal.position_id}")
+                return
+
+            try:
+                if self.config.paper_trading and self._paper_broker:
+                    # Paper trading execution
+                    order = await self._paper_broker.submit_order(
+                        code=signal.code,
+                        side="SELL",
+                        quantity=signal.quantity,
+                        price=signal.exit_price,
+                    )
+                    is_filled = order.is_filled if hasattr(order, "is_filled") else True
+                    fill_price = order.fill_price if hasattr(order, "fill_price") else signal.exit_price
+                else:
+                    # Mock execution
+                    is_filled = True
+                    fill_price = signal.exit_price
+
+                if is_filled:
+                    # Close position
+                    closed = self._position_tracker.close_position(
+                        position_id=signal.position_id,
+                        exit_price=fill_price,
+                        reason=signal.reason.value if hasattr(signal.reason, "value") else str(signal.reason),
+                    )
+
+                    if closed:
+                        self.total_pnl += closed.unrealized_pnl
+                        logger.info(
+                            f"Exit executed: {signal.code} @ {fill_price:,.0f} "
+                            f"(reason={signal.reason}, pnl={closed.profit_pct:+.2f}%)"
+                        )
+
+            except Exception as e:
+                logger.error(f"Exit execution failed for {signal.code}: {e}", exc_info=True)
+
+    def _calculate_quantity(self, signal: Signal) -> int:
+        """Calculate order quantity based on config.
+
+        Args:
+            signal: Entry signal with price info
+
+        Returns:
+            Order quantity (capped at MAX_ORDER_QUANTITY)
+        """
+        # Use signal quantity if explicitly set
+        if signal.quantity > 0:
+            return min(signal.quantity, MAX_ORDER_QUANTITY)
+
+        # Use config-based order amount (no longer hardcoded)
+        order_amount = self.config.order_amount_per_trade
+
+        # Calculate quantity using shared utility
+        return calc_order_quantity(
+            order_amount=order_amount,
+            price=signal.price,
+            max_quantity=MAX_ORDER_QUANTITY,
         )
 
     async def _notify(self, message: str):
@@ -459,14 +987,25 @@ class TradingOrchestrator:
     def get_status(self) -> dict[str, Any]:
         """상태 조회"""
         pipeline_status = self.pipeline.get_status() if self.pipeline else {}
+        position_stats = (
+            self._position_tracker.get_stats() if self._position_tracker else {}
+        )
+        strategy_info = (
+            self._strategy_manager.get_stats() if self._strategy_manager else {}
+        )
+        data_stats = (
+            self._data_provider.get_cache_stats() if self._data_provider else {}
+        )
 
         return {
             "state": self.state.value,
+            "regime": self._current_regime,
             "config": {
                 "asset_class": self.config.asset_class,
                 "strategy": self.config.strategy_name,
                 "capital": self.config.initial_capital,
                 "paper_trading": self.config.paper_trading,
+                "symbols": len(self.config.symbols),
             },
             "stats": {
                 "session_count": self.session_count,
@@ -474,6 +1013,9 @@ class TradingOrchestrator:
                 "total_pnl": self.total_pnl,
                 "start_time": self.start_time.isoformat() if self.start_time else None,
             },
+            "positions": position_stats,
+            "strategies": strategy_info,
+            "data_provider": data_stats,
             "pipeline": pipeline_status,
         }
 

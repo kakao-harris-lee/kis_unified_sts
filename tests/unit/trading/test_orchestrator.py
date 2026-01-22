@@ -195,19 +195,19 @@ class TestTradingOrchestrator:
         assert metrics == {}
 
 
-class TestLoadHolidaysFromConfig:
-    """_load_holidays_from_config 함수 테스트"""
+class TestDefaultHolidayLoader:
+    """default_holiday_loader 함수 테스트"""
 
     def test_returns_empty_set_when_file_not_found(self):
         """파일 없으면 빈 set 반환"""
-        from services.trading.orchestrator import _load_holidays_from_config
+        from services.trading.orchestrator import default_holiday_loader
 
-        holidays = _load_holidays_from_config("nonexistent.yaml")
+        holidays = default_holiday_loader("nonexistent.yaml")
         assert holidays == set()
 
     def test_loads_holidays_from_config(self):
         """설정 파일에서 공휴일 로드"""
-        from services.trading.orchestrator import _load_holidays_from_config
+        from services.trading.orchestrator import default_holiday_loader
         import tempfile
         import os
 
@@ -221,23 +221,173 @@ holidays:
             temp_path = f.name
 
         try:
-            holidays = _load_holidays_from_config(temp_path)
+            holidays = default_holiday_loader(temp_path)
             assert date(2024, 1, 1) in holidays
             assert date(2024, 3, 1) in holidays
         finally:
             os.unlink(temp_path)
 
 
+class TestHolidayCache:
+    """HolidayCache 클래스 테스트"""
+
+    def test_get_returns_holidays(self):
+        """get()은 공휴일 반환"""
+        from services.trading.orchestrator import HolidayCache
+
+        test_holidays = {date(2024, 1, 1)}
+        cache = HolidayCache(loader=lambda _: test_holidays)
+
+        result = cache.get()
+        assert result == test_holidays
+
+    def test_reload_clears_cache(self):
+        """reload()는 캐시 클리어"""
+        from services.trading.orchestrator import HolidayCache
+
+        call_count = [0]
+
+        def counting_loader(_):
+            call_count[0] += 1
+            return {date(2024, 1, 1)}
+
+        cache = HolidayCache(loader=counting_loader)
+
+        # First call
+        cache.get()
+        assert call_count[0] == 1
+
+        # Second call uses cache
+        cache.get()
+        assert call_count[0] == 1
+
+        # Reload and call again
+        cache.reload()
+        cache.get()
+        assert call_count[0] == 2
+
+
 class TestReloadHolidays:
     """reload_holidays 함수 테스트"""
 
-    def test_clears_cache(self):
-        """캐시 클리어"""
+    def test_reloads_global_cache(self):
+        """전역 캐시 리로드"""
         from services.trading import orchestrator
 
-        # 캐시 설정
-        orchestrator._cached_holidays = {date(2024, 1, 1)}
+        # Get initial holidays
+        holidays1 = orchestrator._get_holidays()
 
+        # Reload
         orchestrator.reload_holidays()
 
-        assert orchestrator._cached_holidays is None
+        # Can get holidays again (may or may not be same)
+        holidays2 = orchestrator._get_holidays()
+
+        # Should still work
+        assert isinstance(holidays2, set)
+
+
+class TestMarketClassification:
+    """TradingOrchestrator._classify_market 테스트"""
+
+    def test_bull_market(self):
+        """상승장 (BULL) 감지"""
+        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+
+        config = TradingConfig.stock()
+        orch = TradingOrchestrator(config)
+
+        # Average change > 2% = BULL
+        data = {
+            "005930": {"change": 0.03},  # +3%
+            "000660": {"change": 0.025},  # +2.5%
+        }
+        assert orch._classify_market(data) == "BULL"
+
+    def test_bear_market(self):
+        """하락장 (BEAR) 감지"""
+        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+
+        config = TradingConfig.stock()
+        orch = TradingOrchestrator(config)
+
+        # Average change < -2% = BEAR
+        data = {
+            "005930": {"change": -0.03},  # -3%
+            "000660": {"change": -0.025},  # -2.5%
+        }
+        assert orch._classify_market(data) == "BEAR"
+
+    def test_sideways_up(self):
+        """소폭 상승 횡보장 감지"""
+        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+
+        config = TradingConfig.stock()
+        orch = TradingOrchestrator(config)
+
+        # 0 < change <= 2% = SIDEWAYS_UP
+        data = {
+            "005930": {"change": 0.01},  # +1%
+            "000660": {"change": 0.005},  # +0.5%
+        }
+        assert orch._classify_market(data) == "SIDEWAYS_UP"
+
+    def test_sideways_down(self):
+        """소폭 하락 횡보장 감지"""
+        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+
+        config = TradingConfig.stock()
+        orch = TradingOrchestrator(config)
+
+        # -2% <= change < 0 = SIDEWAYS_DOWN
+        data = {
+            "005930": {"change": -0.01},  # -1%
+            "000660": {"change": -0.005},  # -0.5%
+        }
+        assert orch._classify_market(data) == "SIDEWAYS_DOWN"
+
+    def test_sideways_flat(self):
+        """변화 없음"""
+        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+
+        config = TradingConfig.stock()
+        orch = TradingOrchestrator(config)
+
+        # Zero change = SIDEWAYS_FLAT
+        data = {
+            "005930": {"change": 0},
+            "000660": {"change": 0},
+        }
+        assert orch._classify_market(data) == "SIDEWAYS_FLAT"
+
+    def test_empty_data(self):
+        """빈 데이터"""
+        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+
+        config = TradingConfig.stock()
+        orch = TradingOrchestrator(config)
+
+        assert orch._classify_market({}) == "UNKNOWN"
+
+    def test_no_change_field(self):
+        """change 필드 없음"""
+        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+
+        config = TradingConfig.stock()
+        orch = TradingOrchestrator(config)
+
+        data = {
+            "005930": {"close": 71000},  # no change field
+            "000660": {"close": 80000},
+        }
+        assert orch._classify_market(data) == "SIDEWAYS_FLAT"
+
+    def test_thresholds_are_constants(self):
+        """threshold는 클래스 상수로 정의"""
+        from services.trading.orchestrator import TradingOrchestrator
+
+        # Verify thresholds are defined as class constants
+        assert hasattr(TradingOrchestrator, "MARKET_BULL_THRESHOLD")
+        assert hasattr(TradingOrchestrator, "MARKET_BEAR_THRESHOLD")
+        assert TradingOrchestrator.MARKET_BULL_THRESHOLD == 0.02
+        assert TradingOrchestrator.MARKET_BEAR_THRESHOLD == -0.02

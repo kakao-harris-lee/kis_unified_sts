@@ -19,12 +19,33 @@ from services.trading.pipeline import (
     PipelineStage,
     CircuitBreaker,
 )
+from services.trading.data_provider import (
+    MarketDataProvider,
+    DataProviderConfig,
+)
+from services.trading.position_tracker import (
+    PositionTracker,
+    PositionTrackerConfig,
+)
+from services.trading.strategy_manager import (
+    StrategyManager,
+    StrategyManagerConfig,
+)
 
 __all__ = [
+    # Orchestrator
     "TradingOrchestrator",
     "TradingConfig",
     "TradingState",
+    # Pipeline
     "TradingPipeline",
     "PipelineStage",
     "CircuitBreaker",
+    # Components
+    "MarketDataProvider",
+    "DataProviderConfig",
+    "PositionTracker",
+    "PositionTrackerConfig",
+    "StrategyManager",
+    "StrategyManagerConfig",
 ]
