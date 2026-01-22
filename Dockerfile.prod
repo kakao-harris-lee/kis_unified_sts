@@ -1,0 +1,74 @@
+# Dockerfile.prod
+# Multi-stage production build for minimal image size
+
+# =============================================================================
+# Stage 1: Builder
+# =============================================================================
+FROM python:3.11-slim AS builder
+
+WORKDIR /build
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create virtual environment
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Copy source files needed for installation
+COPY pyproject.toml README.md ./
+COPY shared/ ./shared/
+COPY domains/ ./domains/
+COPY services/ ./services/
+COPY cli/ ./cli/
+
+# Install dependencies
+RUN pip install --upgrade pip && \
+    pip install --no-cache-dir .
+
+# =============================================================================
+# Stage 2: Runtime
+# =============================================================================
+FROM python:3.11-slim AS runtime
+
+LABEL maintainer="harris"
+LABEL description="KIS Unified Trading Platform (Production)"
+
+# Copy virtual environment from builder
+COPY --from=builder /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Install runtime dependencies only
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+WORKDIR /app
+
+# Copy application code
+COPY shared/ ./shared/
+COPY domains/ ./domains/
+COPY services/ ./services/
+COPY cli/ ./cli/
+COPY config/ ./config/
+COPY pyproject.toml README.md ./
+
+# Create non-root user
+RUN useradd -m -u 1000 appuser && \
+    chown -R appuser:appuser /app
+USER appuser
+
+# Environment
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    ENVIRONMENT=production
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD curl -f http://localhost:8000/health/live || exit 1
+
+CMD ["python", "-m", "uvicorn", "services.api.app:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]

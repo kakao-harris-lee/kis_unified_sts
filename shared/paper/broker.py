@@ -193,9 +193,19 @@ class VirtualBroker:
         return self.positions.get(symbol)
 
     def get_equity(self) -> float:
-        """Calculate total equity (balance + unrealized P&L)."""
-        unrealized = sum(p.unrealized_pnl for p in self.positions.values())
-        return self.balance + unrealized
+        """Calculate total equity (balance + position market value).
+
+        For long positions, market value is added (we own the asset).
+        For short positions, market value is subtracted (liability to return shares).
+        """
+        position_value = 0.0
+        for p in self.positions.values():
+            market_value = p.current_price * p.quantity
+            if p.side == PositionSide.LONG:
+                position_value += market_value
+            elif p.side == PositionSide.SHORT:
+                position_value -= market_value
+        return self.balance + position_value
 
     def get_summary(self) -> dict:
         """Get account summary."""
