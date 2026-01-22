@@ -431,3 +431,123 @@ class TestPositionTracker:
         assert len(events) >= 1
         assert events[0]["type"] == "opened"
         assert "position_id" in events[0]
+
+    def test_events_deque_fifo_order(self):
+        """Test events deque maintains FIFO order"""
+        from services.trading.position_tracker import (
+            PositionTracker,
+            PositionTrackerConfig,
+        )
+
+        config = PositionTrackerConfig(max_events=5)
+        tracker = PositionTracker(config=config)
+
+        # Add 7 positions (more than max_events=5)
+        for i in range(7):
+            tracker.add_position(
+                code=f"TEST{i}", name=f"Test{i}", entry_price=100, quantity=1, strategy="test"
+            )
+
+        # Events should be capped at 5
+        assert len(tracker._events) == 5
+
+        # Should contain most recent events (TEST2 through TEST6)
+        # The oldest events (TEST0, TEST1) should have been evicted
+        events = tracker.get_recent_events(limit=10)
+        event_codes = [e["details"].get("code") for e in events]
+
+        # Verify FIFO: oldest evicted first, newest kept
+        assert "TEST0" not in event_codes
+        assert "TEST1" not in event_codes
+        assert "TEST6" in event_codes
+
+    def test_closed_positions_deque_fifo_order(self):
+        """Test closed positions deque maintains FIFO order"""
+        from services.trading.position_tracker import (
+            PositionTracker,
+            PositionTrackerConfig,
+        )
+
+        config = PositionTrackerConfig(max_closed_positions=3)
+        tracker = PositionTracker(config=config)
+
+        # Add and close 5 positions
+        for i in range(5):
+            pos = tracker.add_position(
+                code=f"TEST{i}", name=f"Test{i}", entry_price=100, quantity=1, strategy="test"
+            )
+            tracker.close_position(pos.id, exit_price=110, reason="test")
+
+        # Closed positions should be capped at 3
+        assert len(tracker._closed_positions) == 3
+
+        # Should contain most recent closed positions
+        closed_codes = [p.code for p in tracker._closed_positions]
+
+        # FIFO: oldest evicted first
+        assert "TEST0" not in closed_codes
+        assert "TEST1" not in closed_codes
+        assert "TEST4" in closed_codes
+        assert "TEST3" in closed_codes
+        assert "TEST2" in closed_codes
+
+
+class TestConcurrentOperations:
+    """Thread-safety tests for PositionTracker"""
+
+    @pytest.mark.asyncio
+    async def test_concurrent_close_same_position(self):
+        """Test that concurrent close of same position is handled safely"""
+        import asyncio
+        from services.trading.position_tracker import PositionTracker
+
+        tracker = PositionTracker()
+        pos = tracker.add_position(
+            code="005930", name="Test", entry_price=100, quantity=10, strategy="test"
+        )
+
+        # Simulate concurrent close attempts
+        async def close_position():
+            return tracker.close_position(pos.id, exit_price=110, reason="test")
+
+        # Run multiple close attempts concurrently
+        results = await asyncio.gather(
+            close_position(),
+            close_position(),
+            close_position(),
+        )
+
+        # Only one should succeed (return the position)
+        successful = [r for r in results if r is not None]
+        failed = [r for r in results if r is None]
+
+        assert len(successful) == 1
+        assert len(failed) == 2
+        assert tracker.position_count == 0
+
+    @pytest.mark.asyncio
+    async def test_concurrent_add_and_close(self):
+        """Test concurrent add and close operations"""
+        import asyncio
+        from services.trading.position_tracker import PositionTracker
+
+        tracker = PositionTracker()
+
+        async def add_and_close(code: str):
+            pos = tracker.add_position(
+                code=code, name=f"Test-{code}", entry_price=100, quantity=10, strategy="test"
+            )
+            if pos:
+                await asyncio.sleep(0.001)  # Small delay
+                return tracker.close_position(pos.id, exit_price=110, reason="test")
+            return None
+
+        # Run multiple add/close cycles concurrently
+        results = await asyncio.gather(
+            *[add_and_close(f"TEST{i}") for i in range(5)]
+        )
+
+        # All should succeed
+        successful = [r for r in results if r is not None]
+        assert len(successful) == 5
+        assert tracker.position_count == 0

@@ -53,6 +53,7 @@ MAX_INITIAL_CAPITAL = 100_000_000_000  # 1000억원 maximum
 MIN_ORDER_AMOUNT = 10_000  # 1만원 minimum per trade
 MAX_ORDER_AMOUNT = 100_000_000  # 1억원 maximum per trade
 MAX_ORDER_QUANTITY = 1_000_000  # Safety cap for quantity
+MAX_YAML_FILE_SIZE = 1_024 * 1_024  # 1MB max for YAML config files
 
 
 class HolidayLoader(Protocol):
@@ -80,6 +81,14 @@ def default_holiday_loader(config_path: str = "config/market_schedule.yaml") -> 
         return holidays
 
     try:
+        # Security: Check file size before parsing to prevent DoS via large files
+        file_size = path.stat().st_size
+        if file_size > MAX_YAML_FILE_SIZE:
+            logger.error(
+                f"Holiday config file too large: {file_size} bytes > {MAX_YAML_FILE_SIZE} bytes"
+            )
+            return holidays
+
         with open(path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f)
 
@@ -130,8 +139,13 @@ class HolidayCache:
         return self._cache
 
     def reload(self):
-        """Force reload of holidays."""
+        """Force reload of holidays (sync version, not thread-safe for concurrent use)."""
         self._cache = None
+
+    async def reload_async(self):
+        """Force reload of holidays with async lock for thread-safety."""
+        async with self._lock:
+            self._cache = None
 
     async def get_async(self) -> set[date]:
         """Get holidays with async lock for concurrent access."""
@@ -248,6 +262,9 @@ class TradingConfig:
 
     # Order sizing (previously hardcoded)
     order_amount_per_trade: float = 1_000_000  # 종목당 주문 금액
+
+    # Error recovery
+    error_retry_delay_seconds: float = 60.0  # Retry delay after errors (default 1 min)
 
     def __post_init__(self):
         """Validate configuration values."""
@@ -590,7 +607,7 @@ class TradingOrchestrator:
             except Exception as e:
                 logger.error(f"Session error: {e}")
                 await self._notify(f"⚠️ Error: {e}")
-                await asyncio.sleep(60)  # 1분 후 재시도
+                await asyncio.sleep(self.config.error_retry_delay_seconds)
 
         await self.stop()
 

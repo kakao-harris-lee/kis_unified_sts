@@ -167,7 +167,8 @@ def calc_realized_pnl(
 
     Example:
         >>> calc_realized_pnl(100.0, 105.0, 10, "long", 0.003)
-        46.85  # 50 - (100*10*0.003 + 105*10*0.003)
+        46.925  # 50 - (100*10*0.0015 + 105*10*0.0015)
+        # Note: fee_rate is the total round-trip fee, split evenly between entry and exit
     """
     gross_pnl = calc_unrealized_pnl(entry_price, exit_price, quantity, side)
 

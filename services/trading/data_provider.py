@@ -401,8 +401,18 @@ class MarketDataProvider:
                     return (symbol, None)
 
             # Execute all fetches in parallel within this batch
+            # Use overall timeout to prevent batch from hanging indefinitely
             tasks = [fetch_single(symbol) for symbol in batch]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
+            try:
+                # Overall timeout is 2x individual timeout to allow for overhead
+                batch_timeout = self.config.fetch_timeout_seconds * 2
+                results = await asyncio.wait_for(
+                    asyncio.gather(*tasks, return_exceptions=True),
+                    timeout=batch_timeout,
+                )
+            except asyncio.TimeoutError:
+                logger.error(f"Batch fetch timeout after {batch_timeout}s for {len(batch)} symbols")
+                results = []  # Skip this batch on timeout
 
             for item in results:
                 if isinstance(item, Exception):

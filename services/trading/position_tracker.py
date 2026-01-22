@@ -612,8 +612,6 @@ class PositionTracker:
 
     def get_stats(self) -> dict[str, Any]:
         """Get tracker statistics"""
-        from shared.utils.calc import calc_unrealized_pnl
-
         total_pnl = sum(p.unrealized_pnl for p in self._positions.values())
         winning = sum(1 for p in self._positions.values() if p.profit_rate > 0)
 
@@ -621,13 +619,9 @@ class PositionTracker:
         closed_wins = 0
         for p in self._closed_positions:
             if p.exit_price:
-                # Use shared calc function for consistency
-                pnl = calc_unrealized_pnl(
-                    entry_price=p.entry_price,
-                    current_price=p.exit_price,
-                    quantity=p.quantity,
-                    side=p.side.value,
-                )
+                # Use Position's built-in unrealized_pnl property
+                # (current_price is set to exit_price when closing)
+                pnl = p.unrealized_pnl
                 closed_pnl += pnl
                 if pnl > 0:
                     closed_wins += 1

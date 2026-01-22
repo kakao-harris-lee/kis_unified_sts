@@ -349,6 +349,73 @@ class TestStrategyManager:
                 # Should have called scan_positions with the position
                 mock_strategy.exit.scan_positions.assert_called_once()
 
+    @pytest.mark.asyncio
+    async def test_check_exits_returns_scan_positions_results(
+        self, mock_strategy, mock_position
+    ):
+        """Test that check_exits returns the signals from scan_positions"""
+        mock_exit_signal = MagicMock()
+        mock_exit_signal.priority = 1
+        mock_exit_signal.position_id = "pos-123"
+        mock_strategy.exit.scan_positions = AsyncMock(return_value=[mock_exit_signal])
+
+        with patch(
+            "services.trading.strategy_manager.register_builtin_components"
+        ):
+            with patch(
+                "services.trading.strategy_manager.StrategyFactory"
+            ) as mock_factory:
+                mock_factory.create_all.return_value = []
+
+                from services.trading.strategy_manager import StrategyManager
+
+                manager = StrategyManager(asset_class="stock")
+                manager.add_strategy(mock_strategy)
+
+                signals = await manager.check_exits(
+                    positions=[mock_position], market_data={}, market_state=None
+                )
+
+                # Verify signals are returned
+                assert len(signals) == 1
+                assert signals[0] is mock_exit_signal
+
+    @pytest.mark.asyncio
+    async def test_check_exits_passes_correct_arguments(
+        self, mock_strategy, mock_position
+    ):
+        """Test that check_exits passes correct arguments to scan_positions"""
+        mock_strategy.exit.scan_positions = AsyncMock(return_value=[])
+
+        with patch(
+            "services.trading.strategy_manager.register_builtin_components"
+        ):
+            with patch(
+                "services.trading.strategy_manager.StrategyFactory"
+            ) as mock_factory:
+                mock_factory.create_all.return_value = []
+
+                from services.trading.strategy_manager import StrategyManager
+
+                manager = StrategyManager(asset_class="stock")
+                manager.add_strategy(mock_strategy)
+
+                market_data = {"005930": {"close": 100}}
+                market_state = "BULL"
+
+                await manager.check_exits(
+                    positions=[mock_position],
+                    market_data=market_data,
+                    market_state=market_state,
+                )
+
+                # Verify correct arguments were passed
+                mock_strategy.exit.scan_positions.assert_called_once()
+                call_args = mock_strategy.exit.scan_positions.call_args
+                assert call_args.kwargs["positions"] == [mock_position]
+                assert call_args.kwargs["market_data"] == market_data
+                assert call_args.kwargs["market_state"] == market_state
+
     def test_get_strategy_info(self, mock_strategy):
         """Test get_strategy_info returns details"""
         with patch(

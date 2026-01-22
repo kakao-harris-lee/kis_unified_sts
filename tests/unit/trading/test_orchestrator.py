@@ -285,3 +285,109 @@ class TestReloadHolidays:
 
         # Should still work
         assert isinstance(holidays2, set)
+
+
+class TestMarketClassification:
+    """TradingOrchestrator._classify_market 테스트"""
+
+    def test_bull_market(self):
+        """상승장 (BULL) 감지"""
+        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+
+        config = TradingConfig.stock()
+        orch = TradingOrchestrator(config)
+
+        # Average change > 2% = BULL
+        data = {
+            "005930": {"change": 0.03},  # +3%
+            "000660": {"change": 0.025},  # +2.5%
+        }
+        assert orch._classify_market(data) == "BULL"
+
+    def test_bear_market(self):
+        """하락장 (BEAR) 감지"""
+        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+
+        config = TradingConfig.stock()
+        orch = TradingOrchestrator(config)
+
+        # Average change < -2% = BEAR
+        data = {
+            "005930": {"change": -0.03},  # -3%
+            "000660": {"change": -0.025},  # -2.5%
+        }
+        assert orch._classify_market(data) == "BEAR"
+
+    def test_sideways_up(self):
+        """소폭 상승 횡보장 감지"""
+        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+
+        config = TradingConfig.stock()
+        orch = TradingOrchestrator(config)
+
+        # 0 < change <= 2% = SIDEWAYS_UP
+        data = {
+            "005930": {"change": 0.01},  # +1%
+            "000660": {"change": 0.005},  # +0.5%
+        }
+        assert orch._classify_market(data) == "SIDEWAYS_UP"
+
+    def test_sideways_down(self):
+        """소폭 하락 횡보장 감지"""
+        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+
+        config = TradingConfig.stock()
+        orch = TradingOrchestrator(config)
+
+        # -2% <= change < 0 = SIDEWAYS_DOWN
+        data = {
+            "005930": {"change": -0.01},  # -1%
+            "000660": {"change": -0.005},  # -0.5%
+        }
+        assert orch._classify_market(data) == "SIDEWAYS_DOWN"
+
+    def test_sideways_flat(self):
+        """변화 없음"""
+        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+
+        config = TradingConfig.stock()
+        orch = TradingOrchestrator(config)
+
+        # Zero change = SIDEWAYS_FLAT
+        data = {
+            "005930": {"change": 0},
+            "000660": {"change": 0},
+        }
+        assert orch._classify_market(data) == "SIDEWAYS_FLAT"
+
+    def test_empty_data(self):
+        """빈 데이터"""
+        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+
+        config = TradingConfig.stock()
+        orch = TradingOrchestrator(config)
+
+        assert orch._classify_market({}) == "UNKNOWN"
+
+    def test_no_change_field(self):
+        """change 필드 없음"""
+        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+
+        config = TradingConfig.stock()
+        orch = TradingOrchestrator(config)
+
+        data = {
+            "005930": {"close": 71000},  # no change field
+            "000660": {"close": 80000},
+        }
+        assert orch._classify_market(data) == "SIDEWAYS_FLAT"
+
+    def test_thresholds_are_constants(self):
+        """threshold는 클래스 상수로 정의"""
+        from services.trading.orchestrator import TradingOrchestrator
+
+        # Verify thresholds are defined as class constants
+        assert hasattr(TradingOrchestrator, "MARKET_BULL_THRESHOLD")
+        assert hasattr(TradingOrchestrator, "MARKET_BEAR_THRESHOLD")
+        assert TradingOrchestrator.MARKET_BULL_THRESHOLD == 0.02
+        assert TradingOrchestrator.MARKET_BEAR_THRESHOLD == -0.02
