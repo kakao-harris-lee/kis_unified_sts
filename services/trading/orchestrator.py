@@ -424,6 +424,18 @@ class TradingOrchestrator:
 
     async def _initialize_components(self):
         """Initialize trading components"""
+        # Initialize KIS Client
+        try:
+            from shared.kis.auth import KISAuthConfig
+            from shared.kis.client import KISClient
+
+            kis_config = KISAuthConfig()
+            self._kis_client = KISClient(kis_config)
+            logger.info("KIS Client initialized")
+        except Exception as e:
+            logger.warning(f"Failed to initialize KIS Client: {e}")
+            self._kis_client = None
+
         # Data provider
         self._data_provider = MarketDataProvider(
             symbols=self.config.symbols,
