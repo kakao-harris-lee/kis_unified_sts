@@ -62,6 +62,7 @@ dependencies = [
 
     # Database
     "clickhouse-driver>=0.2",
+    "aiochclient>=2.4",
 
     # MLflow (Backtesting)
     "mlflow>=2.9",

@@ -31,6 +31,7 @@ Usage:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, time
@@ -213,6 +214,10 @@ class ThreeStageExit(ExitSignalGenerator[ThreeStageExitConfig]):
 
     def __init__(self, config: ThreeStageExitConfig):
         super().__init__(config)
+
+        # Concurrency protection: per-position locks
+        self._position_locks: dict[str, asyncio.Lock] = {}
+        self._locks_lock = asyncio.Lock()
 
         logger.info(
             f"{self.name} ({self.version}) initialized: "
@@ -642,16 +647,54 @@ class ThreeStageExit(ExitSignalGenerator[ThreeStageExitConfig]):
         return 0.50
 
     # -------------------------------------------------------------------------
-    # State Management
+    # State Management (Thread-Safe)
     # -------------------------------------------------------------------------
 
-    def update_position_state(
+    async def _get_position_lock(self, position_id: str) -> asyncio.Lock:
+        """Position별 Lock 획득 (lazy initialization with double-checked locking)
+
+        Args:
+            position_id: 포지션 ID
+
+        Returns:
+            해당 포지션의 Lock
+        """
+        # Fast path: lock already exists
+        if position_id in self._position_locks:
+            return self._position_locks[position_id]
+
+        # Slow path: create new lock (with double-checked locking)
+        async with self._locks_lock:
+            if position_id not in self._position_locks:
+                self._position_locks[position_id] = asyncio.Lock()
+            return self._position_locks[position_id]
+
+    async def update_position_state(
         self, position: Position, current_price: float
     ) -> Optional[PositionState]:
-        """포지션 상태 업데이트 (State Transition)
+        """Thread-safe 포지션 상태 업데이트 (State Transition)
 
         외부에서 호출하여 Position의 state를 업데이트.
         상태 전이가 발생하면 새로운 상태를 반환.
+
+        동시에 여러 코루틴이 같은 포지션을 업데이트해도
+        race condition이 발생하지 않도록 per-position lock 사용.
+
+        Returns:
+            새로운 상태 (전이 발생 시) 또는 None (전이 없음)
+        """
+        lock = await self._get_position_lock(position.id)
+        async with lock:
+            return self._update_position_state_internal(position, current_price)
+
+    def _update_position_state_internal(
+        self, position: Position, current_price: float
+    ) -> Optional[PositionState]:
+        """실제 상태 업데이트 로직 (lock 내에서 호출)
+
+        Args:
+            position: 업데이트할 포지션
+            current_price: 현재 가격
 
         Returns:
             새로운 상태 (전이 발생 시) 또는 None (전이 없음)
@@ -685,6 +728,14 @@ class ThreeStageExit(ExitSignalGenerator[ThreeStageExitConfig]):
             )
 
         return new_state
+
+    def cleanup_position(self, position_id: str) -> None:
+        """포지션 종료 시 lock 정리 (메모리 누수 방지)
+
+        Args:
+            position_id: 정리할 포지션 ID
+        """
+        self._position_locks.pop(position_id, None)
 
     def get_config(self) -> dict[str, Any]:
         """설정 반환"""
