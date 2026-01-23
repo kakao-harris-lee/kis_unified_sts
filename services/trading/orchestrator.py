@@ -37,6 +37,10 @@ from services.trading.pipeline import TradingPipeline, PipelineStage
 from services.trading.data_provider import MarketDataProvider, DataProviderConfig
 from services.trading.position_tracker import PositionTracker, PositionTrackerConfig
 from services.trading.strategy_manager import StrategyManager, StrategyManagerConfig
+from services.trading.holiday_cache import (
+    AsyncHolidayCache,
+    async_holiday_loader,
+)
 from shared.models.signal import Signal, ExitSignal
 from shared.strategy.base import EntryContext
 from shared.utils.calc import calc_order_quantity
@@ -112,6 +116,9 @@ def default_holiday_loader(config_path: str = "config/market_schedule.yaml") -> 
 
 class HolidayCache:
     """Thread-safe holiday cache with injectable loader.
+
+    NOTE: This is a legacy sync version. For async contexts, use
+    AsyncHolidayCache from services.trading.holiday_cache instead.
 
     Usage:
         # Default usage
