@@ -289,16 +289,21 @@ class AsyncClickHouseClient:
 
     async def connect(self):
         if self._session is None:
-            self._session = ClientSession()
-            self._client = ChClient(
-                self._session,
-                url=f"http://{self.config.host}:{self.config.http_port}",
-                user=self.config.user,
-                password=self.config.password,
-                database=self.config.database,
-            )
-            self._initialized = True
-            logger.info(f"Connected to ClickHouse (Async): {self.config.host} (HTTP)")
+            session = ClientSession()
+            try:
+                self._client = ChClient(
+                    session,
+                    url=f"http://{self.config.host}:{self.config.http_port}",
+                    user=self.config.user,
+                    password=self.config.password,
+                    database=self.config.database,
+                )
+                self._session = session
+                self._initialized = True
+                logger.info(f"Connected to ClickHouse (Async): {self.config.host} (HTTP)")
+            except Exception:
+                await session.close()
+                raise
 
     async def close(self) -> None:
         """Close all resources properly."""

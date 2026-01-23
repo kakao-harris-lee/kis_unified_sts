@@ -224,3 +224,23 @@ async def test_close_handles_client_close_error(mock_config):
         assert client._client is None
         assert client._session is None
         assert client._initialized is False
+
+
+@pytest.mark.asyncio
+async def test_connect_cleans_session_on_chclient_failure(mock_config):
+    """If ChClient constructor fails, session should be cleaned up."""
+    mock_session = MagicMock()
+    mock_session.close = AsyncMock()
+
+    with patch.object(sys.modules['shared.db.client'], 'ClientSession', return_value=mock_session), \
+         patch.object(sys.modules['shared.db.client'], 'ChClient', side_effect=Exception("Connection failed")):
+
+        client = AsyncClickHouseClient(mock_config)
+
+        with pytest.raises(Exception, match="Connection failed"):
+            await client.connect()
+
+        # Session should have been cleaned up
+        mock_session.close.assert_awaited_once()
+        assert client._session is None
+        assert client._client is None
