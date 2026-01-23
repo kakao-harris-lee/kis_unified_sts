@@ -105,20 +105,21 @@ def _get_cors_config(api_config: dict) -> dict:
 
     환경변수 ENVIRONMENT=development 면 개발 모드 CORS 적용.
     Always uses explicit methods and headers for security.
+    Config can override defaults if needed.
     """
     env = os.getenv("ENVIRONMENT", "production")
     cors = api_config.get("cors", {})
 
     if env == "development":
-        # 개발 환경: localhost 허용, but explicit methods/headers
+        # 개발 환경: localhost 허용, with config override capability
         return {
             "allow_origins": cors.get("allowed_origins", [
                 "http://localhost:3000",
                 "http://localhost:8080",
             ]),
             "allow_credentials": True,
-            "allow_methods": CORS_ALLOWED_METHODS,  # Explicit, not "*"
-            "allow_headers": CORS_ALLOWED_HEADERS,   # Explicit, not "*"
+            "allow_methods": cors.get("allowed_methods", CORS_ALLOWED_METHODS),
+            "allow_headers": cors.get("allowed_headers", CORS_ALLOWED_HEADERS),
         }
 
     # 프로덕션: 명시적 도메인만 허용

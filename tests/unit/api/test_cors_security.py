@@ -62,3 +62,39 @@ class TestCORSSecurity:
             cors_config = _get_cors_config({})
 
         assert "OPTIONS" in cors_config["allow_methods"]
+
+    def test_development_cors_respects_config_override(self):
+        """Development mode should respect custom config values."""
+        from services.api.app import _get_cors_config
+
+        custom_config = {
+            "cors": {
+                "allowed_methods": ["GET", "POST"],  # Custom subset
+                "allowed_headers": ["Content-Type", "X-Custom-Header"],
+            }
+        }
+
+        with patch.dict(os.environ, {"ENVIRONMENT": "development"}):
+            cors_config = _get_cors_config(custom_config)
+
+        # Should use custom values, not defaults
+        assert cors_config["allow_methods"] == ["GET", "POST"]
+        assert "X-Custom-Header" in cors_config["allow_headers"]
+
+    def test_production_cors_respects_config(self):
+        """Production mode should respect config values."""
+        from services.api.app import _get_cors_config
+
+        custom_config = {
+            "cors": {
+                "allowed_origins": ["https://example.com"],
+                "allowed_methods": ["GET", "POST"],
+                "allowed_headers": ["Content-Type"],
+            }
+        }
+
+        with patch.dict(os.environ, {"ENVIRONMENT": "production"}):
+            cors_config = _get_cors_config(custom_config)
+
+        assert cors_config["allow_methods"] == ["GET", "POST"]
+        assert cors_config["allow_headers"] == ["Content-Type"]
