@@ -285,6 +285,7 @@ class AsyncClickHouseClient:
         self.config = config or ClickHouseConfig()
         self._session: Optional[ClientSession] = None
         self._client: Optional[ChClient] = None
+        self._initialized: bool = False
 
     async def connect(self):
         if self._session is None:
@@ -296,13 +297,49 @@ class AsyncClickHouseClient:
                 password=self.config.password,
                 database=self.config.database,
             )
+            self._initialized = True
             logger.info(f"Connected to ClickHouse (Async): {self.config.host} (HTTP)")
 
-    async def close(self):
-        if self._session:
-            await self._session.close()
-            self._session = None
-            self._client = None
+    async def close(self) -> None:
+        """Close all resources properly."""
+        errors = []
+
+        # 1. Close ChClient first (if it has close method)
+        if self._client is not None:
+            try:
+                if hasattr(self._client, 'close'):
+                    close_method = self._client.close
+                    if asyncio.iscoroutinefunction(close_method):
+                        await close_method()
+                    else:
+                        close_method()
+            except Exception as e:
+                errors.append(f"ChClient close error: {e}")
+            finally:
+                self._client = None
+
+        # 2. Close aiohttp session
+        if self._session is not None:
+            try:
+                await self._session.close()
+            except Exception as e:
+                errors.append(f"Session close error: {e}")
+            finally:
+                self._session = None
+
+        self._initialized = False
+
+        if errors:
+            logger.warning(f"Errors during AsyncClickHouseClient close: {errors}")
+
+    async def __aenter__(self) -> "AsyncClickHouseClient":
+        """Async context manager entry."""
+        await self.connect()
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+        """Async context manager exit."""
+        await self.close()
 
     async def get_client(self):
         """Get or create async client.
