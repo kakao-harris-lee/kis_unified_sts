@@ -50,6 +50,20 @@ except ImportError:
     Limiter = None
 
 
+# Allowed HTTP methods - explicit list for security
+CORS_ALLOWED_METHODS = ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"]
+
+# Allowed headers - explicit list for security
+CORS_ALLOWED_HEADERS = [
+    "Content-Type",
+    "Authorization",
+    "X-API-Key",
+    "X-Request-ID",
+    "Accept",
+    "Accept-Language",
+]
+
+
 def _load_api_config() -> dict[str, Any]:
     """API 설정 파일 로드
 
@@ -90,28 +104,29 @@ def _get_cors_config(api_config: dict) -> dict:
     """CORS 설정 추출
 
     환경변수 ENVIRONMENT=development 면 개발 모드 CORS 적용.
+    Always uses explicit methods and headers for security.
     """
     env = os.getenv("ENVIRONMENT", "production")
     cors = api_config.get("cors", {})
 
     if env == "development":
-        # 개발 환경: localhost 허용
+        # 개발 환경: localhost 허용, but explicit methods/headers
         return {
             "allow_origins": cors.get("allowed_origins", [
                 "http://localhost:3000",
                 "http://localhost:8080",
             ]),
             "allow_credentials": True,
-            "allow_methods": ["*"],
-            "allow_headers": ["*"],
+            "allow_methods": CORS_ALLOWED_METHODS,  # Explicit, not "*"
+            "allow_headers": CORS_ALLOWED_HEADERS,   # Explicit, not "*"
         }
 
     # 프로덕션: 명시적 도메인만 허용
     return {
         "allow_origins": cors.get("allowed_origins", []),
         "allow_credentials": cors.get("allow_credentials", True),
-        "allow_methods": cors.get("allowed_methods", ["GET", "POST", "PUT", "DELETE"]),
-        "allow_headers": cors.get("allowed_headers", ["Content-Type", "Authorization", "X-API-Key"]),
+        "allow_methods": cors.get("allowed_methods", CORS_ALLOWED_METHODS),
+        "allow_headers": cors.get("allowed_headers", CORS_ALLOWED_HEADERS),
     }
 
 
