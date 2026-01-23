@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Optional
 
-from shared.models.position import PositionState
+from shared.models.position import PositionSide, PositionState
 from shared.models.signal import ExitReason, ExitSignal
 from shared.strategy.base import ExitContext, ExitSignalGenerator
 from shared.strategy.registry import ExitRegistry
@@ -135,10 +135,14 @@ class ATRTrailingExit(ExitSignalGenerator[ATRTrailingConfig]):
             return True, signal
 
         # 4. ATR trailing stop
-        if atr > 0:
+        if atr <= 0:
+            logger.debug(
+                f"ATR not available for position {position.id}, skipping ATR trailing"
+            )
+        else:
             if position.id not in self._trailing_stops:
                 # Initialize trailing stop
-                if position.side == "long":
+                if position.side == PositionSide.LONG:
                     self._trailing_stops[position.id] = (
                         position.entry_price - atr * self.config.initial_stop_atr
                     )
@@ -149,7 +153,7 @@ class ATRTrailingExit(ExitSignalGenerator[ATRTrailingConfig]):
 
             # Update trailing stop
             trailing_stop = self._trailing_stops[position.id]
-            if position.side == "long":
+            if position.side == PositionSide.LONG:
                 new_stop = current_price - atr * self.config.atr_multiplier
                 if new_stop > trailing_stop:
                     self._trailing_stops[position.id] = new_stop
@@ -206,7 +210,7 @@ class ATRTrailingExit(ExitSignalGenerator[ATRTrailingConfig]):
 
     def _calc_tick_pnl(self, position: "Position", current_price: float) -> float:
         """틱 단위 손익 계산."""
-        if position.side == "long":
+        if position.side == PositionSide.LONG:
             return (current_price - position.entry_price) / self.config.tick_size
         return (position.entry_price - current_price) / self.config.tick_size
 
