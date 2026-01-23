@@ -18,9 +18,10 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 from functools import lru_cache
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, ClassVar, TypeVar
 from urllib.parse import unquote
 
 import yaml
@@ -56,6 +57,7 @@ class ConfigLoader:
 
     Singleton 패턴으로 구현.
     설정 파일 캐싱 지원.
+    Thread-safe: 모든 캐시 및 설정 디렉토리 작업이 thread-safe함.
 
     Usage:
         # 전략 설정 로드
@@ -72,6 +74,10 @@ class ConfigLoader:
     _instance: ConfigLoader | None = None
     _config_dir: Path | None = None
     _cache: dict[str, Any] = {}
+
+    # Thread-safety locks
+    _cache_lock: ClassVar[threading.Lock] = threading.Lock()
+    _dir_lock: ClassVar[threading.Lock] = threading.Lock()
 
     def __new__(cls) -> ConfigLoader:
         if cls._instance is None:
@@ -113,12 +119,17 @@ class ConfigLoader:
     def set_config_dir(cls, path: str | Path) -> None:
         """설정 디렉토리 변경 (테스트용)
 
+        Thread-safe: 디렉토리 변경과 캐시 클리어가 원자적으로 수행됨.
+
         Args:
             path: 새 설정 디렉토리 경로
         """
-        cls._config_dir = Path(path)
-        cls._cache.clear()
-        logger.info(f"Config directory changed to: {cls._config_dir}")
+        with cls._dir_lock:
+            cls._config_dir = Path(path)
+            # Clear cache when changing directory
+            with cls._cache_lock:
+                cls._cache.clear()
+            logger.info(f"Config directory changed to: {cls._config_dir}")
 
     @classmethod
     def get_config_dir(cls) -> Path:
@@ -129,8 +140,12 @@ class ConfigLoader:
 
     @classmethod
     def clear_cache(cls) -> None:
-        """캐시 초기화"""
-        cls._cache.clear()
+        """캐시 초기화
+
+        Thread-safe: 다중 스레드가 동시에 호출해도 안전함.
+        """
+        with cls._cache_lock:
+            cls._cache.clear()
         logger.debug("Config cache cleared")
 
     @classmethod
@@ -176,6 +191,10 @@ class ConfigLoader:
     ) -> T | dict[str, Any]:
         """YAML 설정 파일 로드
 
+        Thread-safe: Double-checked locking 패턴 사용.
+        Fast path: 캐시된 항목은 lock 없이 반환 (읽기 전용 안전).
+        Slow path: 캐시 미스 시 lock으로 보호된 로딩.
+
         Args:
             path: 설정 파일 경로 (config 디렉토리 기준 상대 경로)
             schema: Pydantic 모델 클래스 (선택)
@@ -197,44 +216,51 @@ class ConfigLoader:
         """
         cache_key = f"{path}:{schema.__name__ if schema else 'dict'}"
 
-        # 캐시 확인
+        # Fast path: Check cache without lock (thread-safe read)
         if use_cache and cache_key in cls._cache:
             logger.debug(f"Config loaded from cache: {path}")
             return cls._cache[cache_key]
 
-        # Path validation (path traversal 방어)
-        full_path = cls._validate_path(path)
+        # Slow path: Acquire lock for loading
+        with cls._cache_lock:
+            # Double-check after acquiring lock
+            if use_cache and cache_key in cls._cache:
+                logger.debug(f"Config loaded from cache (after lock): {path}")
+                return cls._cache[cache_key]
 
-        if not full_path.exists():
-            raise ConfigNotFoundError(f"Config file not found: {full_path}")
+            # Path validation (path traversal 방어)
+            full_path = cls._validate_path(path)
 
-        # YAML 로드
-        try:
-            with open(full_path, "r", encoding="utf-8") as f:
-                data = yaml.safe_load(f)
-        except yaml.YAMLError as e:
-            raise ConfigError(f"Failed to parse YAML file: {full_path}") from e
+            if not full_path.exists():
+                raise ConfigNotFoundError(f"Config file not found: {full_path}")
 
-        if data is None:
-            data = {}
-
-        # 스키마 검증
-        if schema:
+            # YAML 로드
             try:
-                result = schema(**data)  # type: ignore
-            except Exception as e:
-                raise ConfigValidationError(
-                    f"Config validation failed for {path}: {e}"
-                ) from e
-        else:
-            result = data
+                with open(full_path, "r", encoding="utf-8") as f:
+                    data = yaml.safe_load(f)
+            except yaml.YAMLError as e:
+                raise ConfigError(f"Failed to parse YAML file: {full_path}") from e
 
-        # 캐시 저장
-        if use_cache:
-            cls._cache[cache_key] = result
+            if data is None:
+                data = {}
 
-        logger.debug(f"Config loaded: {path}")
-        return result
+            # 스키마 검증
+            if schema:
+                try:
+                    result = schema(**data)  # type: ignore
+                except Exception as e:
+                    raise ConfigValidationError(
+                        f"Config validation failed for {path}: {e}"
+                    ) from e
+            else:
+                result = data
+
+            # 캐시 저장 (still inside lock)
+            if use_cache:
+                cls._cache[cache_key] = result
+
+            logger.debug(f"Config loaded: {path}")
+            return result
 
     @classmethod
     def load_strategy(
@@ -381,6 +407,8 @@ class ConfigLoader:
     def reload(cls, path: str) -> dict[str, Any]:
         """설정 파일 강제 리로드 (캐시 무시)
 
+        Thread-safe: 캐시 invalidation이 원자적으로 수행됨.
+
         Args:
             path: 설정 파일 경로 (config 디렉토리 기준 상대 경로)
 
@@ -390,14 +418,19 @@ class ConfigLoader:
         Raises:
             ConfigError: Path traversal 감지 시
         """
-        # Path validation
+        # Path validation (outside lock - no state modification)
         cls._validate_path(path)
 
         cache_key_prefix = f"{path}:"
-        # 해당 경로의 캐시 삭제
-        cls._cache = {
-            k: v for k, v in cls._cache.items() if not k.startswith(cache_key_prefix)
-        }
+
+        # Invalidate cache entries for this path (inside lock)
+        with cls._cache_lock:
+            # Create new dict without matching keys (atomic replacement)
+            cls._cache = {
+                k: v for k, v in cls._cache.items() if not k.startswith(cache_key_prefix)
+            }
+
+        # Load will acquire lock again if needed
         return cls.load(path, use_cache=True)  # type: ignore
 
 
