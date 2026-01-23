@@ -35,3 +35,32 @@ notification:
 output:
   # 분석 결과 저장 경로
   dir: "output/llm"
+
+krx_api:
+  # KRX Open API 설정
+  # API Key는 환경변수 KRX_API_KEY로 설정
+  base_url: "http://data.krx.co.kr/svc/apis"
+  timeout_seconds: 30
+  analysis_days: 20
+
+  # 섹터별 ETF 코드 매핑
+  sector_etfs:
+    반도체: ["091160", "091170", "395160"]
+    2차전지: ["305720", "371460", "394670"]
+    바이오: ["244580", "261060"]
+    금융: ["091180", "140700"]
+    자동차: ["091170", "204450"]
+    철강: ["117680"]
+    조선: ["140710"]
+    건설: ["117700"]
+    에너지: ["117460", "261220"]
+    인터넷: ["261110"]
+    게임: ["251340"]
+
+  # 주요 지수 코드 매핑
+  indices:
+    KOSPI: "KS11"
+    KOSDAQ: "KQ11"
+    KOSPI200: "KS200"
+    KOSPI_LARGE: "KS100"
+    KOSDAQ150: "KQ150"

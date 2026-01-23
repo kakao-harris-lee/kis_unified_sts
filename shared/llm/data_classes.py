@@ -43,6 +43,149 @@ class NewsSentiment(Enum):
     VERY_NEGATIVE = "매우 부정"
 
 
+class MarketSignal(Enum):
+    """시장 신호 (KRX 분석용)"""
+
+    STRONG_BULLISH = "강한 상승"
+    BULLISH = "상승"
+    NEUTRAL = "중립"
+    BEARISH = "하락"
+    STRONG_BEARISH = "강한 하락"
+
+
+class RiskMode(Enum):
+    """리스크 모드"""
+
+    RISK_ON = "위험선호"
+    NEUTRAL = "중립"
+    RISK_OFF = "위험회피"
+
+
+# ============================================================
+# KRX API Data Classes
+# ============================================================
+
+
+@dataclass
+class ETFData:
+    """KRX API ETF 데이터"""
+
+    code: str
+    name: str
+    close_price: float
+    change_rate: float
+    volume: int
+    trade_value: float  # 거래대금
+    sector: str = ""
+
+
+@dataclass
+class ETFFlowData:
+    """ETF 자금흐름 데이터 (FinanceDataReader)"""
+
+    sector: str
+    etf_code: str
+    etf_name: str
+    volume_5d_avg: float
+    volume_20d_avg: float
+    volume_ratio: float  # 5일/20일 비율
+    price_change_5d: float  # 5일 수익률
+    price_change_20d: float  # 20일 수익률
+    money_flow: float  # 추정 자금유입 (거래대금)
+    signal: str  # 강세/약세/중립
+
+
+@dataclass
+class FuturesData:
+    """선물 데이터"""
+
+    product_name: str
+    close_price: float
+    change: float
+    change_rate: float
+    volume: int
+    open_interest: int
+    basis: float = 0.0
+
+
+@dataclass
+class OptionsData:
+    """옵션 데이터"""
+
+    call_volume: int
+    put_volume: int
+    put_call_ratio: float
+    call_oi: int = 0
+    put_oi: int = 0
+    pcr_5d_avg: float = 0.0
+    implied_vol: float = 0.0
+    iv_percentile: float = 0.0
+    signal: str = ""  # 과매수/과매도/중립
+
+
+@dataclass
+class BondData:
+    """채권 시장 데이터"""
+
+    bond_index: float  # 채권지수
+    bond_change: float
+    yield_3y: float  # 국고채 3년
+    yield_10y: float  # 국고채 10년
+    yield_spread: float  # 장단기 스프레드
+    risk_mode: RiskMode = RiskMode.NEUTRAL
+
+
+@dataclass
+class BondIndexData:
+    """KRX 채권지수 데이터"""
+
+    index_name: str
+    index_value: float
+    change: float
+    change_rate: float
+
+
+@dataclass
+class IndexData:
+    """지수 데이터 (확장)"""
+
+    name: str
+    price: float
+    change_1d: float = 0.0
+    change_5d: float = 0.0
+    change_20d: float = 0.0
+    change_rate: float = 0.0
+    volume: int = 0
+    volume_ratio: float = 0.0
+    trade_value: float = 0.0
+    rsi: float = 50.0
+    trend: str = ""
+
+
+@dataclass
+class MarketAnalysis:
+    """종합 시장 분석 결과"""
+
+    date: str
+
+    # 각 분석 결과
+    etf_flows: List["ETFFlowData"] = field(default_factory=list)
+    futures: "FuturesData" = None
+    options: "OptionsData" = None
+    bonds: "BondData" = None
+    indices: List["IndexData"] = field(default_factory=list)
+
+    # 종합 판단
+    overall_signal: MarketSignal = MarketSignal.NEUTRAL
+    risk_mode: RiskMode = RiskMode.NEUTRAL
+    sector_rotation: Dict[str, str] = field(default_factory=dict)  # 섹터별 강세/약세
+
+    # LLM 분석
+    llm_summary: str = ""
+    llm_strategy: str = ""
+    key_points: List[str] = field(default_factory=list)
+
+
 # ============================================================
 # Analysis Data Classes
 # ============================================================
