@@ -102,14 +102,29 @@ def get_rate_limit_health():
     return _create_rate_limit_dependency("120/minute")
 
 
+def get_rate_limit_status():
+    """Status 엔드포인트용 rate limit (높음)"""
+    return _create_rate_limit_dependency("120/minute")
+
+
 def get_rate_limit_trading():
-    """Trading 엔드포인트용 rate limit"""
+    """Trading read 엔드포인트용 rate limit (중간)"""
+    return _create_rate_limit_dependency("60/minute")
+
+
+def get_rate_limit_trading_write():
+    """Trading write 엔드포인트용 rate limit (낮음)"""
     return _create_rate_limit_dependency("5/minute")
 
 
 def get_rate_limit_strategies():
-    """Strategies 엔드포인트용 rate limit"""
+    """Strategies 엔드포인트용 rate limit (중간)"""
     return _create_rate_limit_dependency("30/minute")
+
+
+def get_rate_limit_backtest():
+    """Backtest 엔드포인트용 rate limit (낮음)"""
+    return _create_rate_limit_dependency("10/minute")
 
 
 # Dummy classes for when FastAPI is not available
@@ -305,7 +320,11 @@ async def readiness_probe():
     return status.to_dict()
 
 
-@router.get("/api/v1/status", tags=["Status"])
+@router.get(
+    "/api/v1/status",
+    tags=["Status"],
+    dependencies=[Depends(get_rate_limit_status())],
+)
 async def get_status(
     state: Annotated[AppState, Depends(get_app_state)],
 ):
@@ -482,7 +501,11 @@ async def resume_trading(
     }
 
 
-@router.get("/api/v1/trading/status", tags=["Trading"])
+@router.get(
+    "/api/v1/trading/status",
+    tags=["Trading"],
+    dependencies=[Depends(get_rate_limit_trading())],
+)
 async def get_trading_status(
     state: Annotated[AppState, Depends(get_app_state)],
 ):
@@ -498,7 +521,11 @@ async def get_trading_status(
     return orchestrator.get_status()
 
 
-@router.get("/api/v1/trading/metrics", tags=["Trading"])
+@router.get(
+    "/api/v1/trading/metrics",
+    tags=["Trading"],
+    dependencies=[Depends(get_rate_limit_trading())],
+)
 async def get_trading_metrics(
     state: Annotated[AppState, Depends(get_app_state)],
 ):
@@ -516,7 +543,11 @@ async def get_trading_metrics(
 # =============================================================================
 
 
-@router.get("/api/v1/strategies", tags=["Strategies"])
+@router.get(
+    "/api/v1/strategies",
+    tags=["Strategies"],
+    dependencies=[Depends(get_rate_limit_strategies())],
+)
 async def list_strategies(asset_class: AssetClass | None = None):
     """전략 목록 조회"""
     try:
@@ -540,14 +571,21 @@ async def list_strategies(asset_class: AssetClass | None = None):
         return {"strategies": [], "error": str(e)}
 
 
-@router.get("/api/v1/strategies/{name}", tags=["Strategies"])
+@router.get(
+    "/api/v1/strategies/{name}",
+    tags=["Strategies"],
+    dependencies=[Depends(get_rate_limit_strategies())],
+)
 async def get_strategy(
-    name: Annotated[str, Path(
-        min_length=1,
-        max_length=50,
-        pattern=r"^[a-z0-9_]+$",
-        description="전략 이름",
-    )],
+    name: Annotated[
+        str,
+        Path(
+            min_length=1,
+            max_length=50,
+            pattern=r"^[a-z0-9_]+$",
+            description="전략 이름",
+        ),
+    ],
     asset_class: AssetClass = AssetClass.STOCK,
 ):
     """전략 상세 조회"""
@@ -587,7 +625,11 @@ async def run_backtest(
     }
 
 
-@router.get("/api/v1/backtest/results", tags=["Backtest"])
+@router.get(
+    "/api/v1/backtest/results",
+    tags=["Backtest"],
+    dependencies=[Depends(get_rate_limit_backtest())],
+)
 async def get_backtest_results(experiment: str | None = None, limit: int = 10):
     """백테스트 결과 조회"""
     try:
