@@ -134,6 +134,40 @@ class ConfigLoader:
         logger.debug("Config cache cleared")
 
     @classmethod
+    def _validate_path(cls, path: str) -> Path:
+        """Validate and resolve a path within config directory.
+
+        Args:
+            path: Path string to validate
+
+        Returns:
+            Resolved Path object within config directory
+
+        Raises:
+            ConfigError: If path traversal detected or path resolves outside config directory
+        """
+        # 1. URL 인코딩 디코드 (..%2F → ../)
+        decoded_path = unquote(path)
+
+        # 2. 백슬래시를 슬래시로 정규화 (Windows 경로 대응)
+        normalized_path = decoded_path.replace("\\", "/")
+
+        # 3. 경로 정규화 및 검증
+        config_dir = cls.get_config_dir().resolve()
+        try:
+            full_path = (config_dir / normalized_path).resolve()
+            # 4. 해결된 경로가 config_dir 내부에 있는지 확인
+            full_path.relative_to(config_dir)
+        except (ValueError, RuntimeError):
+            # ValueError: relative_to() 실패 (경로가 config_dir 외부)
+            # RuntimeError: 무한 루프 (심볼릭 링크 순환)
+            raise ConfigError(
+                f"Path traversal detected: {path} resolves outside config directory"
+            )
+
+        return full_path
+
+    @classmethod
     def load(
         cls,
         path: str,
@@ -168,25 +202,8 @@ class ConfigLoader:
             logger.debug(f"Config loaded from cache: {path}")
             return cls._cache[cache_key]
 
-        # Path traversal 공격 방어
-        # 1. URL 인코딩 디코드 (..%2F → ../)
-        decoded_path = unquote(path)
-
-        # 2. 백슬래시를 슬래시로 정규화 (Windows 경로 대응)
-        normalized_path = decoded_path.replace("\\", "/")
-
-        # 3. 경로 정규화 및 검증
-        config_dir = cls.get_config_dir().resolve()
-        try:
-            full_path = (config_dir / normalized_path).resolve()
-            # 4. 해결된 경로가 config_dir 내부에 있는지 확인
-            full_path.relative_to(config_dir)
-        except (ValueError, RuntimeError):
-            # ValueError: relative_to() 실패 (경로가 config_dir 외부)
-            # RuntimeError: 무한 루프 (심볼릭 링크 순환)
-            raise ConfigError(
-                f"Path traversal detected: {path} resolves outside config directory"
-            )
+        # Path validation (path traversal 방어)
+        full_path = cls._validate_path(path)
 
         if not full_path.exists():
             raise ConfigNotFoundError(f"Config file not found: {full_path}")
@@ -343,13 +360,39 @@ class ConfigLoader:
 
     @classmethod
     def exists(cls, path: str) -> bool:
-        """설정 파일 존재 여부 확인"""
-        full_path = cls.get_config_dir() / path
-        return full_path.exists()
+        """설정 파일 존재 여부 확인
+
+        Args:
+            path: 설정 파일 경로 (config 디렉토리 기준 상대 경로)
+
+        Returns:
+            파일 존재 여부
+
+        Note:
+            Path traversal 공격이 감지되면 False 반환
+        """
+        try:
+            full_path = cls._validate_path(path)
+            return full_path.exists()
+        except ConfigError:
+            return False
 
     @classmethod
     def reload(cls, path: str) -> dict[str, Any]:
-        """설정 파일 강제 리로드 (캐시 무시)"""
+        """설정 파일 강제 리로드 (캐시 무시)
+
+        Args:
+            path: 설정 파일 경로 (config 디렉토리 기준 상대 경로)
+
+        Returns:
+            설정 데이터
+
+        Raises:
+            ConfigError: Path traversal 감지 시
+        """
+        # Path validation
+        cls._validate_path(path)
+
         cache_key_prefix = f"{path}:"
         # 해당 경로의 캐시 삭제
         cls._cache = {
