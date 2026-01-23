@@ -11,7 +11,7 @@ def test_client_singleton():
     config = ClickHouseConfig()
 
     # Reset singleton for test
-    ClickHouseClient._instance = None
+    ClickHouseClient.reset_singleton()
 
     client1 = ClickHouseClient(config)
     client2 = ClickHouseClient(config)
@@ -20,30 +20,35 @@ def test_client_singleton():
 
 
 def test_client_ping_mock():
-    """Test ping with mocked connection."""
+    """Test get_sync_client with mocked connection."""
     from shared.db.client import ClickHouseClient
     from shared.db.config import ClickHouseConfig
 
     config = ClickHouseConfig()
-    ClickHouseClient._instance = None
+    ClickHouseClient.reset_singleton()
 
     client = ClickHouseClient(config)
 
-    with patch.object(client, '_sync_client') as mock_sync:
-        mock_sync.execute.return_value = [(1,)]
+    # Test that get_sync_client creates connection when called
+    with patch('shared.db.client.SyncClient') as MockSyncClient:
+        mock_conn = Mock()
+        MockSyncClient.return_value = mock_conn
 
-        result = client.ping()
+        result = client.get_sync_client()
 
-        assert result is True
+        assert result is mock_conn
+        MockSyncClient.assert_called_once()
 
 
 def test_get_clickhouse_client_factory():
-    """Test factory function."""
+    """Test factory function with config."""
     from shared.db.client import get_clickhouse_client, ClickHouseClient
+    from shared.db.config import ClickHouseConfig
 
     # Reset singleton
-    ClickHouseClient._instance = None
+    ClickHouseClient.reset_singleton()
 
-    # Should not raise
-    client = get_clickhouse_client()
+    # Factory should accept config
+    config = ClickHouseConfig()
+    client = get_clickhouse_client(config)
     assert client is not None
