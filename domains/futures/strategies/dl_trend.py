@@ -311,14 +311,115 @@ class EnsembleFilter:
             "rejected_ma": 0,
             "rejected_ichimoku": 0,
             "rejected_not_ready": 0,
+            "rejected_weak_prediction": 0,
             "calibrated_signals": 0,
             "uncalibrated_signals": 0,
         }
 
-    def check_entry(self, up_prob: float, tech: TechnicalData) -> FilterResult:
-        """진입 조건 확인 (단일 horizon)"""
+    def _extract_probabilities(
+        self,
+        up_prob: float,
+        down_prob: float | None,
+        hold_prob: float | None,
+    ) -> tuple[float, float, float]:
+        """확률 추출 및 정규화
+
+        Triple barrier (up/down/hold) 또는 binary (up/down) 지원.
+
+        Args:
+            up_prob: 상승 확률
+            down_prob: 하락 확률 (Optional)
+            hold_prob: 보유 확률 (Optional)
+
+        Returns:
+            (up_prob, down_prob, hold_prob) tuple
+        """
+        if down_prob is None:
+            # Legacy binary mode: down = 1 - up
+            down_prob = 1.0 - up_prob
+            hold_prob = 0.0
+        elif hold_prob is None:
+            # down_prob provided, calculate hold
+            hold_prob = max(0.0, 1.0 - up_prob - down_prob)
+
+        # Clamp negative probabilities to 0
+        up_prob = max(0.0, up_prob)
+        down_prob = max(0.0, down_prob)
+        hold_prob = max(0.0, hold_prob)
+
+        # Normalize if needed (handle floating point errors)
+        total = up_prob + down_prob + hold_prob
+
+        # Handle edge case: all probabilities are zero or near-zero
+        if total < 1e-9:
+            logger.warning(
+                f"All probabilities are zero or near-zero, using uniform distribution: "
+                f"up={up_prob:.6f}, down={down_prob:.6f}, hold={hold_prob:.6f}"
+            )
+            return (1/3, 1/3, 1/3)
+
+        if abs(total - 1.0) > 0.01:  # Tolerance for floating point
+            logger.warning(
+                f"Probabilities sum to {total:.3f}, normalizing: "
+                f"up={up_prob:.3f}, down={down_prob:.3f}, hold={hold_prob:.3f}"
+            )
+            up_prob /= total
+            down_prob /= total
+            hold_prob /= total
+
+        return up_prob, down_prob, hold_prob
+
+    def _is_weak_prediction(
+        self, up_prob: float, down_prob: float, hold_prob: float
+    ) -> tuple[bool, str]:
+        """약한 예측 감지
+
+        Args:
+            up_prob: 상승 확률
+            down_prob: 하락 확률
+            hold_prob: 보유 확률
+
+        Returns:
+            (is_weak, reason) tuple
+        """
+        # Hold probability dominant
+        if hold_prob > max(up_prob, down_prob):
+            return True, f"Hold probability {hold_prob:.1%} is dominant"
+
+        # Up and down too close (no clear direction)
+        prob_diff = abs(up_prob - down_prob)
+        if prob_diff < 0.1 and hold_prob < 0.3:  # Ambiguous prediction
+            return (
+                True,
+                f"Ambiguous: up={up_prob:.1%}, down={down_prob:.1%} (diff={prob_diff:.1%})",
+            )
+
+        return False, ""
+
+    def check_entry(
+        self,
+        up_prob: float,
+        tech: TechnicalData,
+        down_prob: float | None = None,
+        hold_prob: float | None = None,
+    ) -> FilterResult:
+        """진입 조건 확인 (단일 horizon)
+
+        Args:
+            up_prob: 상승 확률
+            tech: 기술적 지표
+            down_prob: 하락 확률 (Optional). None이면 1-up_prob로 계산
+            hold_prob: 보유 확률 (Optional). Triple barrier 모델용
+
+        Returns:
+            FilterResult with can_enter flag and details
+        """
         self._stats["total_checks"] += 1
-        down_prob = 1.0 - up_prob
+
+        # Extract probabilities (handle binary vs triple barrier)
+        up_prob, down_prob, hold_prob = self._extract_probabilities(
+            up_prob, down_prob, hold_prob
+        )
 
         if not tech.is_ready:
             self._stats["rejected_not_ready"] += 1
@@ -326,6 +427,19 @@ class EnsembleFilter:
                 can_enter=False,
                 direction=None,
                 rejection_reason="Technical indicators warming up",
+                dl_passed=False,
+                ma_passed=False,
+                ichimoku_passed=False,
+            )
+
+        # Weak prediction check
+        is_weak, weak_reason = self._is_weak_prediction(up_prob, down_prob, hold_prob)
+        if is_weak:
+            self._stats["rejected_weak_prediction"] += 1
+            return FilterResult(
+                can_enter=False,
+                direction=None,
+                rejection_reason=f"Weak prediction: {weak_reason}",
                 dl_passed=False,
                 ma_passed=False,
                 ichimoku_passed=False,
