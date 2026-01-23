@@ -21,6 +21,7 @@ import os
 from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
+from urllib.parse import unquote
 
 import yaml
 
@@ -167,8 +168,25 @@ class ConfigLoader:
             logger.debug(f"Config loaded from cache: {path}")
             return cls._cache[cache_key]
 
-        # 파일 경로 확인
-        full_path = cls.get_config_dir() / path
+        # Path traversal 공격 방어
+        # 1. URL 인코딩 디코드 (..%2F → ../)
+        decoded_path = unquote(path)
+
+        # 2. 백슬래시를 슬래시로 정규화 (Windows 경로 대응)
+        normalized_path = decoded_path.replace("\\", "/")
+
+        # 3. 경로 정규화 및 검증
+        config_dir = cls.get_config_dir().resolve()
+        try:
+            full_path = (config_dir / normalized_path).resolve()
+            # 4. 해결된 경로가 config_dir 내부에 있는지 확인
+            full_path.relative_to(config_dir)
+        except (ValueError, RuntimeError):
+            # ValueError: relative_to() 실패 (경로가 config_dir 외부)
+            # RuntimeError: 무한 루프 (심볼릭 링크 순환)
+            raise ConfigError(
+                f"Path traversal detected: {path} resolves outside config directory"
+            )
 
         if not full_path.exists():
             raise ConfigNotFoundError(f"Config file not found: {full_path}")
