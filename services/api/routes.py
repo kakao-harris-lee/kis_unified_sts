@@ -27,7 +27,7 @@ import logging
 import re
 from datetime import datetime
 from enum import Enum
-from typing import TYPE_CHECKING, Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any, Callable
 
 logger = logging.getLogger(__name__)
 
@@ -330,6 +330,41 @@ async def get_status(
 # =============================================================================
 
 
+def _create_session_runner(orchestrator: "TradingOrchestrator") -> Callable:
+    """Create background task runner with proper error handling.
+
+    Args:
+        orchestrator: Trading orchestrator to run
+
+    Returns:
+        Async callable for background task execution
+    """
+    from services.trading.orchestrator import TradingState
+
+    async def run_with_error_handling():
+        try:
+            await orchestrator.run_session()
+        except Exception as e:
+            logger.error(f"Trading session failed: {e}", exc_info=True)
+
+            # Update orchestrator state to reflect failure
+            orchestrator.state = TradingState.ERROR
+            orchestrator.last_error = str(e)
+            orchestrator.last_error_time = datetime.now()
+
+            # Send notification if notifier available
+            if hasattr(orchestrator, '_notify') and callable(orchestrator._notify):
+                try:
+                    await orchestrator._notify(
+                        f"⚠️ Trading Session Failed\n"
+                        f"Error: {e}"
+                    )
+                except Exception as notify_error:
+                    logger.error(f"Failed to send error notification: {notify_error}")
+
+    return run_with_error_handling
+
+
 @router.post("/api/v1/trading/start", tags=["Trading"])
 async def start_trading(
     request_body: "TradingStartRequest",
@@ -367,14 +402,9 @@ async def start_trading(
     if not success:
         raise HTTPException(status_code=400, detail="Failed to set orchestrator")
 
-    # 백그라운드에서 실행
-    async def run_with_error_handling():
-        try:
-            await orchestrator.run_session()
-        except Exception as e:
-            logger.error(f"Trading session failed: {e}", exc_info=True)
-
-    background_tasks.add_task(run_with_error_handling)
+    # 백그라운드에서 실행 (with proper error handling)
+    runner = _create_session_runner(orchestrator)
+    background_tasks.add_task(runner)
 
     logger.info(f"Trading started: {request_body.strategy} ({request_body.asset_class.value})")
 

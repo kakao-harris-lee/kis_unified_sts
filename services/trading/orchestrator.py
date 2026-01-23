@@ -181,6 +181,7 @@ class TradingState(Enum):
     RUNNING = "running"  # 거래 중
     PAUSED = "paused"  # 일시 정지
     STOPPED = "stopped"  # 종료됨
+    ERROR = "error"  # 오류 발생
 
 
 @dataclass
@@ -369,6 +370,10 @@ class TradingOrchestrator:
         self.session_count = 0
         self.total_trades = 0
         self.total_pnl = 0.0
+
+        # 에러 추적
+        self.last_error: str | None = None
+        self.last_error_time: datetime | None = None
 
         # 내부 상태
         self._running = False
