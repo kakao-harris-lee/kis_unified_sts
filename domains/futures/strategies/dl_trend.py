@@ -835,11 +835,11 @@ class DLTrendEntry(EntrySignalGenerator[DLTrendConfig]):
             signal_type=SignalType.ENTRY,
             strategy=self.name,
             price=market_data.get("close", 0.0),
-            direction=result.direction,
             confidence=prediction.get("up_prob", 0.5)
             if result.direction == "LONG"
             else prediction.get("down_prob", 0.5),
             metadata={
+                "direction": result.direction,
                 "trigger_horizon": result.trigger_horizon,
                 "confirm_horizon": result.confirm_horizon,
                 "ma_fast": tech.ma_fast,
