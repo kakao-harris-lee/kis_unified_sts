@@ -384,7 +384,11 @@ def _create_session_runner(orchestrator: "TradingOrchestrator") -> Callable:
     return run_with_error_handling
 
 
-@router.post("/api/v1/trading/start", tags=["Trading"])
+@router.post(
+    "/api/v1/trading/start",
+    tags=["Trading"],
+    dependencies=[Depends(get_rate_limit_trading_write())],
+)
 async def start_trading(
     request_body: "TradingStartRequest",
     background_tasks: BackgroundTasks,
@@ -434,7 +438,11 @@ async def start_trading(
     }
 
 
-@router.post("/api/v1/trading/stop", tags=["Trading"])
+@router.post(
+    "/api/v1/trading/stop",
+    tags=["Trading"],
+    dependencies=[Depends(get_rate_limit_trading_write())],
+)
 async def stop_trading(
     state: Annotated[AppState, Depends(get_app_state)],
     _api_key: Annotated[str | None, Depends(require_trading_permission)] = None,
@@ -457,7 +465,11 @@ async def stop_trading(
     }
 
 
-@router.post("/api/v1/trading/pause", tags=["Trading"])
+@router.post(
+    "/api/v1/trading/pause",
+    tags=["Trading"],
+    dependencies=[Depends(get_rate_limit_trading_write())],
+)
 async def pause_trading(
     state: Annotated[AppState, Depends(get_app_state)],
     _api_key: Annotated[str | None, Depends(require_trading_permission)] = None,
@@ -479,7 +491,11 @@ async def pause_trading(
     }
 
 
-@router.post("/api/v1/trading/resume", tags=["Trading"])
+@router.post(
+    "/api/v1/trading/resume",
+    tags=["Trading"],
+    dependencies=[Depends(get_rate_limit_trading_write())],
+)
 async def resume_trading(
     state: Annotated[AppState, Depends(get_app_state)],
     _api_key: Annotated[str | None, Depends(require_trading_permission)] = None,
@@ -607,7 +623,11 @@ async def get_strategy(
 # =============================================================================
 
 
-@router.post("/api/v1/backtest/run", tags=["Backtest"])
+@router.post(
+    "/api/v1/backtest/run",
+    tags=["Backtest"],
+    dependencies=[Depends(get_rate_limit_backtest())],
+)
 async def run_backtest(
     request_body: "BacktestRequest",
     background_tasks: BackgroundTasks,

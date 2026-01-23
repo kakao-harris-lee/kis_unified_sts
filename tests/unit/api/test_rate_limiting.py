@@ -149,3 +149,104 @@ class TestRateLimiting:
         from services.api.routes import get_rate_limit_status
 
         assert callable(get_rate_limit_status)
+
+    def test_rate_limit_trading_write_helper_exists(self):
+        """Rate limit helper for trading write should be defined."""
+        from services.api.routes import get_rate_limit_trading_write
+
+        assert callable(get_rate_limit_trading_write)
+
+    def test_api_v1_trading_start_has_rate_limit(self):
+        """Trading start endpoint should have rate limiting."""
+        from services.api.routes import router
+
+        route = next(
+            (
+                r
+                for r in router.routes
+                if getattr(r, "path", "") == "/api/v1/trading/start"
+            ),
+            None,
+        )
+        assert route is not None, "/api/v1/trading/start route not found"
+
+        deps = getattr(route, "dependencies", []) or []
+        assert (
+            len(deps) > 0
+        ), "/api/v1/trading/start should have rate limit dependency"
+
+    def test_api_v1_trading_stop_has_rate_limit(self):
+        """Trading stop endpoint should have rate limiting."""
+        from services.api.routes import router
+
+        route = next(
+            (
+                r
+                for r in router.routes
+                if getattr(r, "path", "") == "/api/v1/trading/stop"
+            ),
+            None,
+        )
+        assert route is not None, "/api/v1/trading/stop route not found"
+
+        deps = getattr(route, "dependencies", []) or []
+        assert (
+            len(deps) > 0
+        ), "/api/v1/trading/stop should have rate limit dependency"
+
+    def test_api_v1_trading_pause_has_rate_limit(self):
+        """Trading pause endpoint should have rate limiting."""
+        from services.api.routes import router
+
+        route = next(
+            (
+                r
+                for r in router.routes
+                if getattr(r, "path", "") == "/api/v1/trading/pause"
+            ),
+            None,
+        )
+        assert route is not None, "/api/v1/trading/pause route not found"
+
+        deps = getattr(route, "dependencies", []) or []
+        assert (
+            len(deps) > 0
+        ), "/api/v1/trading/pause should have rate limit dependency"
+
+    def test_api_v1_trading_resume_has_rate_limit(self):
+        """Trading resume endpoint should have rate limiting."""
+        from services.api.routes import router
+
+        route = next(
+            (
+                r
+                for r in router.routes
+                if getattr(r, "path", "") == "/api/v1/trading/resume"
+            ),
+            None,
+        )
+        assert route is not None, "/api/v1/trading/resume route not found"
+
+        deps = getattr(route, "dependencies", []) or []
+        assert (
+            len(deps) > 0
+        ), "/api/v1/trading/resume should have rate limit dependency"
+
+    def test_api_v1_backtest_run_has_rate_limit(self):
+        """Backtest run endpoint should have rate limiting."""
+        from services.api.routes import router
+
+        route = next(
+            (
+                r
+                for r in router.routes
+                if getattr(r, "path", "") == "/api/v1/backtest/run"
+            ),
+            None,
+        )
+        assert route is not None, "/api/v1/backtest/run route not found"
+
+        deps = getattr(route, "dependencies", []) or []
+        assert (
+            len(deps) > 0
+        ), "/api/v1/backtest/run should have rate limit dependency"
