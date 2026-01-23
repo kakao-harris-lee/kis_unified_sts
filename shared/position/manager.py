@@ -1,8 +1,9 @@
 """Position manager for managing multiple positions."""
 import uuid
 import logging
+from collections import deque
 from datetime import datetime
-from typing import Dict, List, Optional, Callable, Any
+from typing import Dict, List, Optional, Callable, Any, Deque
 
 from shared.models.position import Position, PositionState, PositionSide
 from .exit_checker import ExitChecker, ExitConfig
@@ -22,6 +23,8 @@ class PositionManager:
         - Optional order executor integration
     """
 
+    DEFAULT_MAX_CLOSED_HISTORY = 10000
+
     def __init__(
         self,
         exit_config: ExitConfig,
@@ -29,6 +32,7 @@ class PositionManager:
         on_position_closed: Optional[Callable[[Position], None]] = None,
         on_exit_triggered: Optional[Callable[[Position, str], None]] = None,
         order_executor: Optional[Any] = None,
+        max_closed_history: int = DEFAULT_MAX_CLOSED_HISTORY,
     ):
         """Initialize position manager.
 
@@ -38,10 +42,12 @@ class PositionManager:
             on_position_closed: Callback when position is closed
             on_exit_triggered: Callback when exit condition triggers
             order_executor: Optional order executor for trade execution
+            max_closed_history: Maximum number of closed positions to keep in memory
         """
         self.exit_config = exit_config
         self.exit_checker = ExitChecker(exit_config)
         self.order_executor = order_executor
+        self.max_closed_history = max_closed_history
 
         # Callbacks
         self.on_position_opened = on_position_opened
@@ -50,12 +56,21 @@ class PositionManager:
 
         # Position storage
         self.positions: Dict[str, Position] = {}
-        self.closed_positions: List[Position] = []
+        self._closed_positions: Deque[Position] = deque(maxlen=max_closed_history)
 
         # Monitor
         self.monitor = PositionMonitor(
             on_exit_triggered=self._handle_exit_triggered
         )
+
+    @property
+    def closed_positions(self) -> List[Position]:
+        """Get closed positions (backward compatible list).
+
+        Returns:
+            List of closed positions (most recent first)
+        """
+        return list(self._closed_positions)
 
     async def open_position(
         self,
@@ -139,8 +154,8 @@ class PositionManager:
         # Remove from monitor
         self.monitor.remove_position(position_id)
 
-        # Add to history
-        self.closed_positions.append(position)
+        # Add to history (deque automatically handles maxlen)
+        self._closed_positions.append(position)
 
         # Calculate P&L
         pnl = position.unrealized_pnl
