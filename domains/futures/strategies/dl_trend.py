@@ -205,6 +205,9 @@ class ProbabilityCalibrator:
     모델 바이어스를 정규화하여 상대적 신호 강도 측정.
     """
 
+    # Minimum std threshold for meaningful z-score calculation
+    MIN_STD_THRESHOLD = 1e-8
+
     def __init__(self, window_size: int = 200, min_samples: int = 50):
         self.window_size = window_size
         self.min_samples = min_samples
@@ -217,7 +220,13 @@ class ProbabilityCalibrator:
         self._history[horizon].append(prob)
 
     def get_zscore(self, horizon: int, prob: float) -> Optional[float]:
-        """예측의 z-score 계산"""
+        """예측의 z-score 계산
+
+        Returns None if:
+        - Not enough samples
+        - Standard deviation is too small for meaningful calculation
+        - Result is non-finite (NaN or Inf)
+        """
         if horizon not in self._history:
             return None
 
@@ -228,10 +237,22 @@ class ProbabilityCalibrator:
         mean = np.mean(list(history))
         std = np.std(list(history))
 
-        if std < 0.001:
+        # Check for numerical stability
+        if std < self.MIN_STD_THRESHOLD or not np.isfinite(std):
+            logger.debug(
+                f"Std too small for z-score: {std:.2e} "
+                f"(threshold: {self.MIN_STD_THRESHOLD:.2e})"
+            )
             return None
 
-        return (prob - mean) / std
+        zscore = (prob - mean) / std
+
+        # Sanity check on result
+        if not np.isfinite(zscore):
+            logger.warning(f"Non-finite z-score: {zscore}")
+            return None
+
+        return float(zscore)
 
     def get_stats(self, horizon: int) -> dict[str, float]:
         """horizon 통계"""

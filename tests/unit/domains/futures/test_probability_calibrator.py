@@ -28,9 +28,9 @@ class TestProbabilityCalibratorDivisionSafety:
         """When std is extremely small, should return None."""
         calibrator = ProbabilityCalibrator(window_size=100, min_samples=10)
 
-        # Add nearly identical values
+        # Add nearly identical values (std will be extremely small, < 1e-8)
         for i in range(50):
-            calibrator.update(horizon=10, prob=0.5 + (i % 2) * 0.0001)
+            calibrator.update(horizon=10, prob=0.5 + (i % 2) * 1e-10)
 
         result = calibrator.get_zscore(horizon=10, prob=0.6)
         assert result is None
@@ -125,3 +125,22 @@ class TestEnsembleFilterDivisionSafety:
             assert result_up >= 0, f"up_prob should be >= 0, got {result_up}"
             assert result_down >= 0, f"down_prob should be >= 0, got {result_down}"
             assert result_hold >= 0, f"hold_prob should be >= 0, got {result_hold}"
+
+    def test_zscore_returns_none_for_inf_mean(self):
+        """When mean/std is infinite, should return None."""
+        calibrator = ProbabilityCalibrator(window_size=10, min_samples=5)
+
+        # Add normal values first
+        for i in range(10):
+            calibrator.update(horizon=1, prob=0.5)
+
+        # Mock the history to include inf (edge case)
+        calibrator._history[1].append(float('inf'))
+
+        result = calibrator.get_zscore(horizon=1, prob=0.6)
+        assert result is None  # Should handle gracefully
+
+    def test_zscore_uses_class_constant_threshold(self):
+        """Verify class constant MIN_STD_THRESHOLD is used."""
+        assert hasattr(ProbabilityCalibrator, 'MIN_STD_THRESHOLD')
+        assert ProbabilityCalibrator.MIN_STD_THRESHOLD == 1e-8
