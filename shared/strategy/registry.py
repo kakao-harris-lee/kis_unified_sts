@@ -384,6 +384,13 @@ def register_builtin_components() -> None:
     except ImportError:
         logger.debug("ThreeStageExit not available")
 
+    try:
+        from shared.strategy.exit.atr_trailing import ATRTrailingExit
+
+        ExitRegistry.register_class("atr_trailing", ATRTrailingExit)
+    except ImportError:
+        logger.debug("ATRTrailingExit not available")
+
     # Position Sizer 등록
     try:
         from shared.strategy.position import FixedSizer, RiskBasedSizer
