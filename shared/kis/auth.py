@@ -136,6 +136,51 @@ class CircuitOpenError(Exception):
 
 
 # =============================================================================
+# Secure Token Cache Save
+# =============================================================================
+
+
+def _save_token_cache_secure(cache: TokenCache, cache_path: Path) -> None:
+    """토큰 캐시를 안전한 권한으로 atomic하게 저장
+
+    SECURITY: 파일을 default 권한으로 생성한 후 chmod하면
+    그 사이 world-readable 상태로 노출되는 race condition 발생.
+    os.open()으로 파일 생성과 동시에 0o600 권한 설정.
+
+    Args:
+        cache: 저장할 토큰 캐시
+        cache_path: 저장 경로
+
+    Raises:
+        OSError: 파일 생성/쓰기 실패
+    """
+    cache_path = Path(cache_path)
+
+    # os.open으로 atomic하게 파일 생성 및 권한 설정
+    # O_CREAT: 파일이 없으면 생성
+    # O_WRONLY: 쓰기 전용
+    # O_TRUNC: 기존 파일 내용 삭제
+    # 0o600: owner read/write only (rw-------)
+    fd = os.open(
+        str(cache_path),
+        os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+        0o600
+    )
+
+    try:
+        # file descriptor를 파일 객체로 변환
+        with os.fdopen(fd, 'w') as f:
+            json.dump(cache.to_dict(), f, indent=2)
+    except Exception:
+        # 예외 발생 시 file descriptor leak 방지
+        try:
+            os.close(fd)
+        except OSError:
+            pass  # 이미 닫혀있을 수 있음
+        raise
+
+
+# =============================================================================
 # KIS Auth Manager
 # =============================================================================
 
@@ -270,11 +315,8 @@ class KISAuthManager:
             # 디렉토리 생성
             cache_path.parent.mkdir(parents=True, exist_ok=True)
 
-            with open(cache_path, "w") as f:
-                json.dump(cache.to_dict(), f, indent=2)
-
-            # 보안을 위해 파일 권한 설정 (소유자만 읽기/쓰기)
-            os.chmod(cache_path, 0o600)
+            # 보안: os.open으로 파일 생성과 동시에 권한 설정 (atomic)
+            _save_token_cache_secure(cache, cache_path)
 
             logger.debug(f"[KISAuth] Token cached to {cache_path}")
 
