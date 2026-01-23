@@ -8,15 +8,37 @@ from unittest.mock import patch
 class TestAPIKeyValidation:
     """API Key 검증 테스트"""
 
-    def test_validate_api_key_disabled_when_not_set(self):
-        """API_KEY 미설정 시 인증 비활성화"""
+    def test_validate_api_key_disabled_in_development(self):
+        """Development 환경에서 API_KEY 미설정 시 인증 우회 허용"""
         from services.api.auth import is_auth_enabled, validate_api_key
 
-        with patch.dict(os.environ, {}, clear=True):
+        with patch.dict(os.environ, {"ENVIRONMENT": "development"}, clear=False):
             # 환경변수 제거 시뮬레이션
             with patch("services.api.auth.get_api_key", return_value=None):
                 assert not is_auth_enabled()
-                assert validate_api_key(None) is True  # 인증 비활성화면 모두 통과
+                assert validate_api_key(None) is True  # Development에서 인증 우회
+
+    def test_validate_api_key_required_in_production(self):
+        """Production 환경에서 API_KEY 미설정 시 RuntimeError 발생"""
+        from services.api.auth import validate_api_key
+
+        with patch.dict(os.environ, {"ENVIRONMENT": "production"}, clear=False):
+            with patch("services.api.auth.get_api_key", return_value=None):
+                with pytest.raises(RuntimeError, match="API_KEY must be set in production"):
+                    validate_api_key(None)
+
+    def test_validate_api_key_required_when_environment_not_set(self):
+        """ENVIRONMENT 미설정 시 기본값은 production으로 API_KEY 필수"""
+        from services.api.auth import validate_api_key
+
+        # ENVIRONMENT 환경변수 제거
+        env = os.environ.copy()
+        env.pop("ENVIRONMENT", None)
+
+        with patch.dict(os.environ, env, clear=True):
+            with patch("services.api.auth.get_api_key", return_value=None):
+                with pytest.raises(RuntimeError, match="API_KEY must be set in production"):
+                    validate_api_key(None)
 
     def test_validate_api_key_success(self):
         """올바른 API Key 검증 성공"""

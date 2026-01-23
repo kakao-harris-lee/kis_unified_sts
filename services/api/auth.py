@@ -63,12 +63,27 @@ def validate_api_key(provided_key: str | None) -> bool:
 
     Returns:
         유효 여부
+
+    Raises:
+        RuntimeError: Production 환경에서 API_KEY 미설정 시
     """
     expected_key = get_api_key()
 
-    # 인증 비활성화 상태
-    if expected_key is None:
-        logger.warning("API authentication is disabled (API_KEY not set)")
+    # 인증 비활성화 상태 체크
+    if expected_key is None or expected_key == "":
+        environment = os.getenv("ENVIRONMENT", "production").lower()
+
+        if environment == "production":
+            raise RuntimeError(
+                "API_KEY must be set in production environment. "
+                "Set API_KEY environment variable or ENVIRONMENT=development for local development."
+            )
+
+        # Development 환경에서는 인증 우회 허용
+        logger.warning(
+            "API authentication is disabled (API_KEY not set). "
+            "This is only allowed in development environment."
+        )
         return True
 
     if provided_key is None:
