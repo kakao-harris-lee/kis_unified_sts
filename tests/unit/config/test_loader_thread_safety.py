@@ -371,3 +371,83 @@ strategy:
 
         # No errors
         assert len(errors) == 0, f"Errors occurred: {errors}"
+
+    def test_concurrent_singleton_creation(self):
+        """동시 singleton 생성 시 단일 인스턴스만 생성되어야 함
+
+        여러 스레드가 동시에 ConfigLoader()를 호출해도
+        단 하나의 인스턴스만 생성되어야 함 (race condition 방지)
+        """
+        num_threads = 50
+        instances = []
+        errors = []
+        lock = threading.Lock()
+
+        def create_instance():
+            try:
+                # Force a slight delay to maximize race condition chance
+                time.sleep(0.001)
+                instance = ConfigLoader()
+                with lock:
+                    instances.append(id(instance))
+            except Exception as e:
+                errors.append(e)
+                raise
+
+        with ThreadPoolExecutor(max_workers=num_threads) as executor:
+            futures = [executor.submit(create_instance) for _ in range(num_threads)]
+            for future in as_completed(futures):
+                future.result()
+
+        # No errors
+        assert len(errors) == 0, f"Errors occurred: {errors}"
+
+        # All instances should have the same id
+        assert len(instances) == num_threads
+        unique_instances = set(instances)
+        assert len(unique_instances) == 1, (
+            f"Expected 1 unique instance, got {len(unique_instances)}: {unique_instances}"
+        )
+
+    def test_concurrent_get_config_dir(self):
+        """get_config_dir 동시 호출 시 안전해야 함
+
+        여러 스레드가 동시에 get_config_dir를 호출해도
+        일관된 결과를 반환해야 함 (초기화 race condition 방지)
+        """
+        # Reset config_dir to None to test initialization
+        ConfigLoader._config_dir = None
+
+        num_threads = 30
+        results = []
+        errors = []
+        lock = threading.Lock()
+
+        def get_dir():
+            try:
+                # Force a slight delay to maximize race condition chance
+                time.sleep(0.001)
+                result = ConfigLoader.get_config_dir()
+                with lock:
+                    results.append(result)
+            except Exception as e:
+                errors.append(e)
+                raise
+
+        with ThreadPoolExecutor(max_workers=num_threads) as executor:
+            futures = [executor.submit(get_dir) for _ in range(num_threads)]
+            for future in as_completed(futures):
+                future.result()
+
+        # No errors
+        assert len(errors) == 0, f"Errors occurred: {errors}"
+
+        # All results should be identical
+        assert len(results) == num_threads
+        first_result = results[0]
+        for result in results[1:]:
+            assert result == first_result, "get_config_dir results differ across threads"
+
+        # Result should be a valid Path
+        assert isinstance(first_result, Path)
+        assert first_result.exists()

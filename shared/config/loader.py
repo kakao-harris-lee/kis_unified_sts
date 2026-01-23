@@ -76,13 +76,17 @@ class ConfigLoader:
     _cache: dict[str, Any] = {}
 
     # Thread-safety locks
+    _instance_lock: ClassVar[threading.Lock] = threading.Lock()
     _cache_lock: ClassVar[threading.Lock] = threading.Lock()
     _dir_lock: ClassVar[threading.Lock] = threading.Lock()
 
     def __new__(cls) -> ConfigLoader:
         if cls._instance is None:
-            cls._instance = super().__new__(cls)
-            cls._initialize_config_dir()
+            with cls._instance_lock:
+                # Double-check after acquiring lock
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+                    cls._initialize_config_dir()
         return cls._instance
 
     @classmethod
@@ -133,9 +137,15 @@ class ConfigLoader:
 
     @classmethod
     def get_config_dir(cls) -> Path:
-        """현재 설정 디렉토리 반환"""
+        """현재 설정 디렉토리 반환
+
+        Thread-safe: 초기화가 보호됨
+        """
         if cls._config_dir is None:
-            cls._initialize_config_dir()
+            with cls._dir_lock:
+                # Double-check after acquiring lock
+                if cls._config_dir is None:
+                    cls._initialize_config_dir()
         return cls._config_dir  # type: ignore
 
     @classmethod
