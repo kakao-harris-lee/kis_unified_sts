@@ -1,0 +1,28 @@
+# E3: Time Decay Exit Strategy Configuration
+# 시간 기반 포지션 청산 전략
+#
+# 핵심 아이디어:
+# - 단타 전략은 빠른 수익 실현이 목표
+# - 오래 보유 = 예상대로 움직이지 않음 = 청산 고려
+# - 시간이 지날수록 기대 수익 threshold를 낮춤
+
+exit:
+  type: time_decay
+  version: "E3"
+  enabled: true
+
+  params:
+    # 시간대별 수익 threshold (minutes_start, required_profit_pct)
+    # hold_minutes >= minutes_start 이고 profit < required_profit_pct 이면 청산
+    decay_tiers:
+      - [10, 0.0]     # 10분 이후: 손실이면 청산 (profit < 0)
+      - [20, 0.005]   # 20분 이후: +0.5% 미달 시 청산
+
+    # 최대 보유 시간 (분) - 이후 무조건 청산
+    max_hold_minutes: 30
+
+    # MAXIMIZE 상태는 예외 처리 (수익 상태이므로 E1/E2에 맡김)
+    skip_maximize_state: true
+
+    # 장 시작 후 N분간 time decay 미적용 (시장 안정화)
+    market_warmup_minutes: 10
