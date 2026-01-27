@@ -1,15 +1,13 @@
-"""Dual Mode Strategy - Combines MODE_A and MODE_B with State Machine
+"""Hybrid Trend Strategy - DL + Technical Fallback
 
-MODE_A: OFI Mean Reversion (extreme z-scores)
-MODE_B: Triple Barrier + TrendEngine (Combined Approach)
-        - Triple Barrier CNN-LSTM for direction signal (BUY/SELL)
-        - TrendEngine for technical confirmation (MA + Ichimoku)
-        - TrendEngine PositionManager for risk management (ATR stops, time cuts)
+DL 예측이 있으면 Multi-horizon Ensemble을 사용하고,
+없으면 MA + Ichimoku 기술적 지표로 합성 확률을 생성하는 하이브리드 전략.
 
-State Machine:
-1. Check liquidity - if below threshold, AVOID
-2. Check basis gap - if extreme, MODE_A (arbitrage opportunity)
-3. Otherwise, MODE_B (combined triple barrier + trend engine)
+Features:
+- Multi-horizon DL 예측 (h1, h3, h5, h10) 지원
+- DL 없을 때 기술적 지표 기반 자동 대체 (fallback)
+- MA(20/60) + Ichimoku Cloud 확인
+- 완화된 임계값 (0.60) - 신호 빈도 vs 정확도 트레이드오프
 
 Migrated from kospi_mini_sts/src/strategy/strategies/dual_mode.py
 """
@@ -17,9 +15,8 @@ Migrated from kospi_mini_sts/src/strategy/strategies/dual_mode.py
 from __future__ import annotations
 
 import logging
-import time
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 from typing import Any, Optional
@@ -27,17 +24,9 @@ from typing import Any, Optional
 from shared.models.signal import Signal as SignalModel, SignalType
 from shared.strategy.base import EntryContext, EntrySignalGenerator
 from shared.strategy.registry import EntryRegistry
-from .dl_trend import TechnicalCalculator, TechnicalData, EnsembleFilter
+from .dl_trend import TechnicalCalculator, EnsembleFilter
 
 logger = logging.getLogger(__name__)
-
-
-class TradingMode(Enum):
-    """Trading mode for state machine"""
-
-    AVOID = "AVOID"  # Low liquidity - avoid trading
-    MODE_A = "MODE_A"  # Arbitrage opportunity (OFI mean reversion)
-    MODE_B = "MODE_B"  # Trend following (Triple Barrier + TrendEngine)
 
 
 class Signal(Enum):
@@ -49,33 +38,23 @@ class Signal(Enum):
 
 
 @dataclass
-class DualModeConfig:
-    """Configuration for Dual Mode Strategy"""
+class HybridTrendConfig:
+    """Configuration for Hybrid Trend Strategy"""
 
-    # Liquidity thresholds
-    liquidity_avoid_threshold: float = 40.0  # Below this = AVOID
-    liquidity_mode_a_threshold: float = 50.0  # Above this = MODE_A eligible
+    # Triple Barrier Classification (optional)
+    triple_barrier_threshold: float = 0.60
+    triple_barrier_buffer_size: int = 100
+    triple_barrier_cache_bars: int = 3
 
-    # Basis thresholds for MODE_A
-    basis_threshold: float = 1.5  # Z-score threshold for arbitrage
-
-    # MODE_A: Arbitrage settings
-    arb_max_spread_ticks: int = 4  # Allow wider spreads
-    arb_depth_multiplier: float = 3.0
-
-    # MODE_B: Triple Barrier Classification
-    triple_barrier_threshold: float = 0.70  # Confidence threshold for BUY/SELL
-    triple_barrier_buffer_size: int = 100  # Rolling OHLCV buffer size
-
-    # MODE_B: Trend settings (legacy - used as fallback)
-    trend_dl_threshold: float = 0.60  # Lowered to 0.60~0.65 range
+    # Trend settings
+    trend_dl_threshold: float = 0.60  # 완화된 임계값
     trend_ma_fast: int = 20
     trend_ma_slow: int = 60
     trend_atr_period: int = 14
-    trend_atr_multiplier: float = 2.0  # Reduced for tighter stops
-    trend_time_cut_minutes: int = 45  # Extended to let winners run
-    trend_max_stop_points: float = 1.5  # Cap max loss at 1.5 points = 75K KRW
-    trend_time_cut_atr_threshold: float = 0.3  # Lower bar for favorable movement
+    trend_atr_multiplier: float = 2.0
+    trend_time_cut_minutes: int = 45
+    trend_max_stop_points: float = 1.5
+    trend_time_cut_atr_threshold: float = 0.3
 
     # Order size
     order_size: float = 1.0
@@ -146,27 +125,26 @@ class BarData:
         )
 
 
-class DualModeStrategy:
-    """Dual Mode Strategy with State Machine
+class HybridTrendStrategy:
+    """Hybrid Trend Strategy - DL + Technical Fallback
 
-    Automatically switches between:
-    - MODE_A: Pure Basis Arbitrage (when OFI z-score is extreme)
-    - MODE_B: Combined Triple Barrier + TrendEngine
-        - Triple Barrier (CNN-LSTM) provides direction signal
-        - TrendEngine provides technical confirmation (MA + Ichimoku)
-        - TrendEngine PositionManager handles risk (ATR stops, time cuts)
-    - AVOID: When liquidity is too low
+    DL 예측이 있으면 Multi-horizon Ensemble을 사용하고,
+    없으면 MA + Ichimoku 기술적 지표로 합성 확률을 생성.
 
-    Migrated from kospi_mini_sts with bug fixes:
-    - Unified strategy delegation instead of separate engines
-    - Proper ensemble probability support (h1, h3, h5, h10)
-    - Simplified process_message flow
+    Approach:
+    1. Multi-horizon DL 예측 확인 (h1, h3, h5, h10)
+    2. 있으면 "Shortest Confirms Longest" 전략 적용
+    3. 없으면 MA + Ichimoku로 합성 확률 생성 (fallback)
+    4. MA(20) > MA(60) + Price > Cloud = LONG
+    5. MA(20) < MA(60) + Price < Cloud = SHORT
+
+    Migrated from kospi_mini_sts.
     """
 
-    def __init__(self, config: Optional[DualModeConfig] = None):
-        self.config = config or DualModeConfig()
+    def __init__(self, config: Optional[HybridTrendConfig] = None):
+        self.config = config or HybridTrendConfig()
 
-        # Initialize ensemble filter for MODE_B
+        # Initialize ensemble filter
         self.ensemble_filter = EnsembleFilter(
             dl_threshold=self.config.trend_dl_threshold,
             max_atr_threshold=self.config.trend_max_stop_points,
@@ -179,151 +157,71 @@ class DualModeStrategy:
             atr_period=self.config.trend_atr_period,
         )
 
-        # Rolling OHLCV buffer for triple barrier predictor
+        # Rolling OHLCV buffer
         self._ohlcv_buffer: deque = deque(maxlen=self.config.triple_barrier_buffer_size)
 
-        # Current mode
-        self.current_mode = TradingMode.AVOID
-        self._prev_mode = TradingMode.AVOID  # Track mode changes
-        self.active_engine: Optional[str] = None  # "arb", "triple_barrier+trend", or "trend"
+        self.active_engine: Optional[str] = None
 
         # Statistics
         self._stats = {
             "total_bars": 0,
-            "mode_a_bars": 0,
-            "mode_b_bars": 0,
-            "avoid_bars": 0,
-            "mode_a_signals": 0,
-            "mode_b_signals": 0,
-            "triple_barrier_signals": 0,  # Signals where TB+Trend agreed
-            "trend_fallback_signals": 0,  # Signals from legacy trend engine fallback
+            "dl_signals": 0,  # DL 예측 기반 신호
+            "fallback_signals": 0,  # 기술적 지표 fallback 신호
+            "long_signals": 0,
+            "short_signals": 0,
         }
 
-        # Last notification time to avoid spam
-        self._last_mode_notify = 0
-        self._mode_notify_cooldown = 60  # seconds
+        # Triple Barrier prediction cache
+        self._tb_cache_result: Optional[dict[str, Any]] = None
+        self._tb_cache_bar_count: int = 0
 
         logger.info(
-            f"DualModeStrategy initialized: "
-            f"basis_threshold={self.config.basis_threshold}, "
-            f"trend_dl_threshold={self.config.trend_dl_threshold}"
+            f"HybridTrendStrategy initialized: "
+            f"dl_threshold={self.config.trend_dl_threshold}"
         )
 
-    def _determine_mode(self, bar: BarData) -> TradingMode:
-        """Determine trading mode based on current conditions."""
-        # Check spread (if spread is too wide, avoid)
-        spread = bar.spread if bar.spread > 0 else (bar.best_ask - bar.best_bid)
-
-        # If spread is too wide, avoid (but allow in backtest mode where spread=0)
-        if spread > 0.5:
-            return TradingMode.AVOID
-
-        # Check OFI z-score for arbitrage opportunity
-        if abs(bar.ofi_zscore) > self.config.basis_threshold:
-            return TradingMode.MODE_A
-
-        # Default to MODE_B (trend following)
-        return TradingMode.MODE_B
-
     def generate_signal(self, bar: BarData) -> Signal:
-        """Generate signal using state machine logic."""
+        """Generate signal using hybrid DL + technical approach."""
         self._stats["total_bars"] += 1
 
-        # ALWAYS update technical indicators, regardless of mode
-        # This ensures proper warm-up for when we do enter MODE_B
+        # Update technical indicators
         self.tech_calc.update(
             high=bar.high,
             low=bar.low,
             close=bar.close,
         )
 
-        # Update calibrator with ensemble predictions
-        if bar.up_prob_h10 != 0.5:  # Has ensemble predictions
+        # Update calibrator with ensemble predictions if available
+        if bar.up_prob_h10 != 0.5:
             self.ensemble_filter.calibrator.update(1, bar.up_prob_h1)
             self.ensemble_filter.calibrator.update(3, bar.up_prob_h3)
             self.ensemble_filter.calibrator.update(5, bar.up_prob_h5)
             self.ensemble_filter.calibrator.update(10, bar.up_prob_h10)
 
-        # Determine current mode
-        mode = self._determine_mode(bar)
-        self.current_mode = mode
+        return self._generate_hybrid_signal(bar)
 
-        # Notify on mode change (with cooldown to avoid spam)
-        now = time.time()
-        if mode != self._prev_mode and (now - self._last_mode_notify) > self._mode_notify_cooldown:
-            self._notify_mode_change(self._prev_mode, mode, bar)
-            self._last_mode_notify = now
-        self._prev_mode = mode
-
-        if mode == TradingMode.AVOID:
-            self._stats["avoid_bars"] += 1
-            return Signal.HOLD
-
-        elif mode == TradingMode.MODE_A:
-            self._stats["mode_a_bars"] += 1
-            return self._process_mode_a(bar)
-
-        else:  # MODE_B
-            self._stats["mode_b_bars"] += 1
-            return self._process_mode_b(bar)
-
-    def _notify_mode_change(self, prev: TradingMode, curr: TradingMode, bar: BarData) -> None:
-        """Log mode change event."""
-        logger.info(f"Mode change: {prev.value} -> {curr.value} @ {bar.close:.2f}")
-
-    def _process_mode_a(self, bar: BarData) -> Signal:
-        """Process MODE_A: Arbitrage based on OFI z-score extremes."""
-        ofi_z = bar.ofi_zscore
-
-        # Check spread is acceptable
-        spread = bar.spread if bar.spread > 0 else (bar.best_ask - bar.best_bid)
-        if spread > self.config.arb_max_spread_ticks * 0.05:  # 0.05 point per tick
-            return Signal.HOLD
-
-        # Check depth is sufficient
-        total_bid_qty = bar.bid_qty1 + bar.bid_qty2 + bar.bid_qty3
-        total_ask_qty = bar.ask_qty1 + bar.ask_qty2 + bar.ask_qty3
-        min_depth = self.config.order_size * self.config.arb_depth_multiplier
-        if total_bid_qty < min_depth or total_ask_qty < min_depth:
-            return Signal.HOLD
-
-        # Arbitrage signal: extreme OFI z-score suggests mean reversion
-        if ofi_z < -self.config.basis_threshold:
-            # Oversold - expect bounce (BUY)
-            self._stats["mode_a_signals"] += 1
-            self.active_engine = "arb"
-            logger.info(f"MODE_A BUY: OFI oversold (z={ofi_z:.2f})")
-            return Signal.BUY
-        elif ofi_z > self.config.basis_threshold:
-            # Overbought - expect pullback (SELL)
-            self._stats["mode_a_signals"] += 1
-            self.active_engine = "arb"
-            logger.info(f"MODE_A SELL: OFI overbought (z={ofi_z:.2f})")
-            return Signal.SELL
-
-        return Signal.HOLD
-
-    def _process_mode_b(self, bar: BarData) -> Signal:
-        """Process MODE_B: Combined Triple Barrier + TrendEngine.
+    def _generate_hybrid_signal(self, bar: BarData) -> Signal:
+        """Hybrid signal generation: DL first, technical fallback.
 
         Entry Flow:
         1. Check if multi-horizon predictions are available
-        2. Use ensemble filter for entry confirmation
-        3. MA + Ichimoku technical confirmation
+        2. If yes, use ensemble filter with calibrated z-scores
+        3. If no, generate synthetic probability from technicals
+        4. Apply MA + Ichimoku confirmation
         """
         tech = self.tech_calc.last_data
         if tech is None or not tech.is_ready:
             return Signal.HOLD
 
         # Check if multi-horizon predictions are available
-        has_ensemble = (
+        has_dl_prediction = (
             bar.up_prob_h10 != 0.5
             or bar.up_prob_h1 != 0.5
             or bar.up_prob_h3 != 0.5
             or bar.up_prob_h5 != 0.5
         )
 
-        if has_ensemble:
+        if has_dl_prediction:
             # Use multi-horizon "Shortest Confirms Longest" strategy
             horizon_probs = {
                 1: bar.up_prob_h1,
@@ -332,8 +230,9 @@ class DualModeStrategy:
                 10: bar.up_prob_h10,
             }
             result = self.ensemble_filter.check_entry_multi_horizon(horizon_probs, tech)
+            signal_source = "dl"
         else:
-            # Fallback: Use single up_prob or MA + Ichimoku-based momentum
+            # Fallback: Generate synthetic probability from technicals
             up_prob = bar.up_prob
             if up_prob == 0.5:
                 # No DL prediction - use technical only
@@ -342,31 +241,45 @@ class DualModeStrategy:
                 below_cloud = tech.current_price < tech.cloud_bottom
 
                 if ma_bullish and above_cloud:
-                    up_prob = 0.80
+                    up_prob = 0.75  # Strong bullish
                 elif ma_bullish:
-                    up_prob = 0.70
+                    up_prob = 0.65  # Moderate bullish
                 elif not ma_bullish and below_cloud:
-                    up_prob = 0.20
+                    up_prob = 0.25  # Strong bearish
                 elif not ma_bullish:
-                    up_prob = 0.30
+                    up_prob = 0.35  # Moderate bearish
+
+                logger.debug(f"Technical fallback: synthetic prob={up_prob:.1%}")
 
             result = self.ensemble_filter.check_entry(up_prob, tech)
+            signal_source = "fallback"
 
         if not result.can_enter:
             return Signal.HOLD
 
         # Generate signal
         if result.direction == "LONG":
-            self._stats["mode_b_signals"] += 1
-            self._stats["trend_fallback_signals"] += 1
-            self.active_engine = "trend"
-            logger.info(f"MODE_B LONG: prob confirmed, MA/Ichimoku passed")
+            self._stats["long_signals"] += 1
+            if signal_source == "dl":
+                self._stats["dl_signals"] += 1
+                self.active_engine = "dl_ensemble"
+                logger.info("LONG: DL ensemble confirmed")
+            else:
+                self._stats["fallback_signals"] += 1
+                self.active_engine = "technical_fallback"
+                logger.info("LONG: Technical fallback")
             return Signal.BUY
+
         elif result.direction == "SHORT":
-            self._stats["mode_b_signals"] += 1
-            self._stats["trend_fallback_signals"] += 1
-            self.active_engine = "trend"
-            logger.info(f"MODE_B SHORT: prob confirmed, MA/Ichimoku passed")
+            self._stats["short_signals"] += 1
+            if signal_source == "dl":
+                self._stats["dl_signals"] += 1
+                self.active_engine = "dl_ensemble"
+                logger.info("SHORT: DL ensemble confirmed")
+            else:
+                self._stats["fallback_signals"] += 1
+                self.active_engine = "technical_fallback"
+                logger.info("SHORT: Technical fallback")
             return Signal.SELL
 
         return Signal.HOLD
@@ -374,24 +287,25 @@ class DualModeStrategy:
     def get_stats(self) -> dict[str, Any]:
         """Get strategy statistics."""
         total = self._stats["total_bars"]
+        signals = self._stats["long_signals"] + self._stats["short_signals"]
         return {
             **self._stats,
-            "current_mode": self.current_mode.value,
             "active_engine": self.active_engine,
-            "mode_a_ratio": self._stats["mode_a_bars"] / total if total > 0 else 0,
-            "mode_b_ratio": self._stats["mode_b_bars"] / total if total > 0 else 0,
-            "avoid_ratio": self._stats["avoid_bars"] / total if total > 0 else 0,
+            "signal_rate": signals / total if total > 0 else 0,
+            "dl_ratio": self._stats["dl_signals"] / signals if signals > 0 else 0,
+            "fallback_ratio": self._stats["fallback_signals"] / signals if signals > 0 else 0,
             "filter_stats": self.ensemble_filter.get_stats(),
         }
 
     def reset(self):
         """Reset strategy state."""
-        self.current_mode = TradingMode.AVOID
         self.active_engine = None
         for key in self._stats:
             if isinstance(self._stats[key], int):
                 self._stats[key] = 0
         self.ensemble_filter.reset_stats()
+        self._tb_cache_result = None
+        self._tb_cache_bar_count = 0
 
 
 # =============================================================================
@@ -399,41 +313,33 @@ class DualModeStrategy:
 # =============================================================================
 
 
-@EntryRegistry.register("futures_dual_mode")
-class DualModeEntry(EntrySignalGenerator[DualModeConfig]):
-    """Dual Mode Entry Strategy wrapper for registry integration.
+@EntryRegistry.register("futures_hybrid_trend")
+class HybridTrendEntry(EntrySignalGenerator[HybridTrendConfig]):
+    """Hybrid Trend Entry Strategy wrapper for registry integration.
 
-    Wraps DualModeStrategy for use with the shared strategy framework.
+    DL 예측 + 기술적 지표 Fallback 하이브리드 전략.
     """
 
-    CONFIG_CLASS = DualModeConfig
+    CONFIG_CLASS = HybridTrendConfig
 
-    def __init__(self, config: DualModeConfig):
+    def __init__(self, config: HybridTrendConfig):
         super().__init__(config)
-        self.strategy = DualModeStrategy(config)
+        self.strategy = HybridTrendStrategy(config)
 
     def _validate_config(self) -> None:
         """Validate configuration."""
-        assert self.config.basis_threshold > 0, "basis_threshold must be positive"
         assert 0 < self.config.trend_dl_threshold < 1, "trend_dl_threshold must be between 0 and 1"
 
     @property
     def name(self) -> str:
-        return "futures_dual_mode"
+        return "futures_hybrid_trend"
 
     @property
     def required_indicators(self) -> list[str]:
         return ["prediction", "ohlcv", "orderbook"]
 
     async def generate(self, context: EntryContext) -> Optional[SignalModel]:
-        """Generate entry signal.
-
-        Args:
-            context: Entry context with market_data and indicators
-
-        Returns:
-            Signal if entry condition met, None otherwise
-        """
+        """Generate entry signal."""
         market_data = context.market_data
         indicators = context.indicators
 
@@ -484,7 +390,6 @@ class DualModeEntry(EntrySignalGenerator[DualModeConfig]):
             direction=direction,
             confidence=confidence,
             metadata={
-                "mode": self.strategy.current_mode.value,
                 "active_engine": self.strategy.active_engine,
                 "ofi_zscore": bar.ofi_zscore,
             },
