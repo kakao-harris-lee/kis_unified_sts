@@ -938,7 +938,7 @@ def health(url: str):
         click.echo(f"Checking health: {url}")
 
         # Basic health
-        response = httpx.get(f"{url}/api/v1/health", timeout=5.0)
+        response = httpx.get(f"{url}/health", timeout=5.0)
         if response.status_code == 200:
             data = response.json()
             click.echo("Health Check: ✓")
@@ -947,17 +947,22 @@ def health(url: str):
         else:
             click.echo(f"Health Check: ✗ ({response.status_code})")
 
-        # Readiness
-        response = httpx.get(f"{url}/api/v1/health/ready", timeout=5.0)
-        if response.status_code == 200:
-            data = response.json()
-            click.echo("Readiness: ✓")
-            components = data.get("components", {})
-            for name, status in components.items():
-                icon = "✓" if status else "✗"
-                click.echo(f"  {name}: {icon}")
-        else:
-            click.echo(f"Readiness: ✗ ({response.status_code})")
+        # Readiness (optional - not all servers have this endpoint)
+        try:
+            response = httpx.get(f"{url}/health/ready", timeout=5.0)
+            if response.status_code == 200:
+                data = response.json()
+                click.echo("Readiness: ✓")
+                components = data.get("components", {})
+                for name, status in components.items():
+                    icon = "✓" if status else "✗"
+                    click.echo(f"  {name}: {icon}")
+            elif response.status_code == 404:
+                click.echo("Readiness: N/A (endpoint not available)")
+            else:
+                click.echo(f"Readiness: ✗ ({response.status_code})")
+        except httpx.HTTPError:
+            click.echo("Readiness: N/A")
 
     except httpx.ConnectError:
         click.echo("Health Check: ✗ (Connection refused)")

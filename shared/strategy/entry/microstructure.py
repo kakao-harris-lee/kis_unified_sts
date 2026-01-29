@@ -511,6 +511,7 @@ class MicrostructureEntry(EntrySignalGenerator[MicrostructureEntryConfig]):
     """
 
     NAME = "MICROSTRUCTURE"
+    CONFIG_CLASS = MicrostructureEntryConfig
     REQUIRED_INDICATORS = [
         "ofi",
         "ofi_zscore",

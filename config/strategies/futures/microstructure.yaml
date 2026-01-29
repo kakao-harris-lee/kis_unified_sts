@@ -73,7 +73,7 @@ strategy:
   # 청산 조건 (Exit)
   # ===========================================================================
   exit:
-    type: scalping
+    type: three_stage
     params:
       # Stage 1: Survival (손절)
       stop_loss_ticks: 5              # 5틱 손절 (0.1p)
