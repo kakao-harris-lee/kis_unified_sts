@@ -678,6 +678,135 @@ def backfill_status(days: int):
         click.echo()
 
 
+# =============================================================================
+# Stock Backfill Commands
+# =============================================================================
+
+
+@cli.group("stock-backfill")
+def stock_backfill():
+    """주식 분봉 데이터 백필 명령
+
+    \b
+    Examples:
+        sts stock-backfill today          # 오늘 데이터 수집
+        sts stock-backfill run --days 7   # 최근 7일 백필
+        sts stock-backfill status         # 수집 현황 조회
+    """
+    pass
+
+
+@stock_backfill.command("today")
+def stock_backfill_today():
+    """오늘 주식 분봉 데이터 수집 (장 마감 후 실행)
+
+    \b
+    Example:
+        sts stock-backfill today
+    """
+    import asyncio
+
+    from shared.collector.historical.stock import collect_stock_minute_today
+
+    click.echo("Collecting stock minute data for today...")
+    asyncio.run(collect_stock_minute_today())
+    click.echo("Collection complete!")
+
+
+@stock_backfill.command("run")
+@click.option(
+    "--days",
+    "-d",
+    default=7,
+    type=int,
+    help="Number of days to backfill (max 30, default: 7)",
+)
+@click.option(
+    "--codes",
+    "-c",
+    multiple=True,
+    help="Specific stock codes to backfill (default: all universe)",
+)
+def stock_backfill_run(days: int, codes: tuple):
+    """주식 분봉 데이터 백필 실행
+
+    \b
+    Example:
+        sts stock-backfill run --days 7
+        sts stock-backfill run --days 30 -c 005930 -c 000660
+    """
+    import asyncio
+
+    from shared.collector.historical.stock import backfill_stock_minute
+
+    click.echo(f"Starting stock minute backfill for {days} days...")
+
+    codes_list = list(codes) if codes else None
+    asyncio.run(backfill_stock_minute(days=days, codes=codes_list))
+
+    click.echo("Backfill complete!")
+
+
+@stock_backfill.command("status")
+@click.option(
+    "--days",
+    "-d",
+    default=30,
+    type=int,
+    help="Period to check (default: 30 days)",
+)
+def stock_backfill_status(days: int):
+    """주식 분봉 데이터 수집 현황 조회
+
+    \b
+    Example:
+        sts stock-backfill status
+        sts stock-backfill status --days 90
+    """
+    from shared.collector.historical.stock import (
+        get_stock_collection_status,
+        STOCK_UNIVERSE,
+    )
+
+    click.echo(f"Stock Minute Data Collection Status (last {days} days)")
+    click.echo("=" * 50)
+    click.echo(f"Universe: {len(STOCK_UNIVERSE)} stocks")
+    click.echo()
+
+    status = get_stock_collection_status(days=days)
+
+    if "error" in status:
+        click.echo(f"Error: {status['error']}", err=True)
+        return
+
+    click.echo(f"📊 {status['table']}:")
+    click.echo(f"   Rows: {status.get('rows', 0):,}")
+    click.echo(f"   Days Collected: {status.get('days_collected', 0)}")
+    click.echo(f"   Unique Codes: {status.get('unique_codes', 0)}")
+    if status.get("min_datetime"):
+        click.echo(f"   Range: {status['min_datetime']} ~ {status['max_datetime']}")
+
+
+@stock_backfill.command("universe")
+def stock_backfill_universe():
+    """주식 유니버스 조회
+
+    \b
+    Example:
+        sts stock-backfill universe
+    """
+    from shared.collector.historical.stock import STOCK_UNIVERSE
+
+    click.echo("Stock Universe (30 stocks by market cap tier)")
+    click.echo("=" * 50)
+
+    for tier, label in [("top", "📈 Top (대형주)"), ("mid", "📊 Mid (중형주)"), ("bottom", "📉 Bottom (소형주)")]:
+        stocks = [s for s in STOCK_UNIVERSE if s["tier"] == tier]
+        click.echo(f"\n{label}:")
+        for s in stocks:
+            click.echo(f"  {s['code']} {s['name']}")
+
+
 @collect.command("start")
 @click.option(
     "--symbol",
