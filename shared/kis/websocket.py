@@ -9,6 +9,7 @@ Features:
     - AES256 암호화 데이터 복호화
     - L5 호가 파싱
     - OHLC 데이터 파싱
+    - Thread-safe state management
 
 Usage:
     >>> from shared.kis.websocket import KISWebSocketAdapter
@@ -25,14 +26,12 @@ Reference:
 from __future__ import annotations
 
 import base64
-import hashlib
 import json
 import logging
-import os
 import queue
+import re
 import threading
 import time
-from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
@@ -57,11 +56,172 @@ logger = logging.getLogger(__name__)
 TR_FUTURES_ASK = "H0IFASP0"  # 선물옵션 호가
 TR_FUTURES_CNT = "H0IFCNT0"  # 선물옵션 체결
 
+# Queue configuration
+MESSAGE_QUEUE_MAXSIZE = 10000
+
+# Symbol validation pattern (alphanumeric, 5-10 chars)
+SYMBOL_PATTERN = re.compile(r'^[0-9A-Za-z]{5,10}$')
+
+# Field indices for H0IFASP0 (orderbook)
+ORDERBOOK_FIELDS = {
+    'bid_price': [22, 23, 24, 25, 26],  # L1-L5
+    'bid_qty': [32, 33, 34, 35, 36],
+    'ask_price': [2, 3, 4, 5, 6],
+    'ask_qty': [12, 13, 14, 15, 16],
+}
+
+# Field indices for H0IFCNT0 (trade)
+TRADE_FIELDS = {
+    'current_price': 2,
+    'open_price': 6,
+    'high_price': 7,
+    'low_price': 8,
+    'tick_volume': 11,
+    'cumulative_volume': 12,
+    'open_interest': 14,
+}
+
+# Value bounds for validation
+MAX_PRICE = 1e9
+MIN_PRICE = -1e9
+
 
 class WSMessageType(str, Enum):
     """WebSocket message types."""
     SUBSCRIBE = "1"
     UNSUBSCRIBE = "2"
+
+
+# =============================================================================
+# Pure Parsing Functions (for testability)
+# =============================================================================
+
+
+def _safe_float(
+    fields: List[str],
+    index: int,
+    default: Optional[float] = None
+) -> Optional[float]:
+    """Safely extract and validate float from fields.
+
+    Args:
+        fields: List of string fields
+        index: Index to extract from
+        default: Default value if extraction fails
+
+    Returns:
+        Extracted float or default value
+    """
+    try:
+        if index < len(fields) and fields[index]:
+            value = float(fields[index])
+            # Bounds validation
+            if MIN_PRICE < value < MAX_PRICE:
+                return value
+            logger.debug(f"[KIS WS] Value out of bounds at index {index}: {value}")
+            return default
+        return default
+    except (ValueError, IndexError):
+        return default
+
+
+def parse_futures_orderbook(
+    symbol: str,
+    data: str,
+    timestamp: float
+) -> Optional[TickData]:
+    """Parse futures orderbook (호가) data.
+
+    Pure function for easy testing.
+
+    Args:
+        symbol: Futures symbol code
+        data: Pipe-separated data string
+        timestamp: Unix timestamp
+
+    Returns:
+        TickData or None if parsing fails
+    """
+    fields = data.split("^")
+    if len(fields) < 42:
+        return None
+
+    try:
+        return TickData(
+            symbol=symbol,
+            timestamp=timestamp,
+            # 매수호가 (bid) L1-L5
+            bid_price_1=_safe_float(fields, 22, 0.0),
+            bid_qty_1=_safe_float(fields, 32, 0.0),
+            bid_price_2=_safe_float(fields, 23),
+            bid_qty_2=_safe_float(fields, 33),
+            bid_price_3=_safe_float(fields, 24),
+            bid_qty_3=_safe_float(fields, 34),
+            bid_price_4=_safe_float(fields, 25),
+            bid_qty_4=_safe_float(fields, 35),
+            bid_price_5=_safe_float(fields, 26),
+            bid_qty_5=_safe_float(fields, 36),
+            # 매도호가 (ask) L1-L5
+            ask_price_1=_safe_float(fields, 2, 0.0),
+            ask_qty_1=_safe_float(fields, 12, 0.0),
+            ask_price_2=_safe_float(fields, 3),
+            ask_qty_2=_safe_float(fields, 13),
+            ask_price_3=_safe_float(fields, 4),
+            ask_qty_3=_safe_float(fields, 14),
+            ask_price_4=_safe_float(fields, 5),
+            ask_qty_4=_safe_float(fields, 15),
+            ask_price_5=_safe_float(fields, 6),
+            ask_qty_5=_safe_float(fields, 16),
+        )
+    except Exception as e:
+        logger.warning(f"[KIS WS] Failed to parse orderbook: {e}")
+        return None
+
+
+def parse_futures_trade(
+    symbol: str,
+    data: str,
+    timestamp: float
+) -> Optional[TickData]:
+    """Parse futures trade (체결) data.
+
+    Pure function for easy testing.
+
+    Args:
+        symbol: Futures symbol code
+        data: Pipe-separated data string
+        timestamp: Unix timestamp
+
+    Returns:
+        TickData or None if parsing fails
+    """
+    fields = data.split("^")
+    if len(fields) < 15:
+        return None
+
+    try:
+        return TickData(
+            symbol=symbol,
+            timestamp=timestamp,
+            # 최우선 호가 (체결 시점에는 없음)
+            bid_price_1=0.0,
+            bid_qty_1=0.0,
+            ask_price_1=0.0,
+            ask_qty_1=0.0,
+            # 체결가 및 OHLC
+            current_price=_safe_float(fields, TRADE_FIELDS['current_price']),
+            open_price=_safe_float(fields, TRADE_FIELDS['open_price']),
+            high_price=_safe_float(fields, TRADE_FIELDS['high_price']),
+            low_price=_safe_float(fields, TRADE_FIELDS['low_price']),
+            # 거래량
+            tick_volume=_safe_float(fields, TRADE_FIELDS['tick_volume']),
+            cumulative_volume=_safe_float(fields, TRADE_FIELDS['cumulative_volume']),
+            # 미결제약정
+            open_interest=_safe_float(fields, TRADE_FIELDS['open_interest']),
+        )
+    except Exception as e:
+        logger.warning(f"[KIS WS] Failed to parse trade: {e}")
+        return None
 
 
 # =============================================================================
@@ -73,6 +233,7 @@ class KISWebSocketAdapter(BaseAPIAdapter):
     """KIS WebSocket Adapter for realtime futures data.
 
     Implements BaseAPIAdapter interface for integration with DataCollector.
+    Thread-safe with proper locking and event-based synchronization.
 
     Attributes:
         config: KIS authentication configuration
@@ -100,12 +261,17 @@ class KISWebSocketAdapter(BaseAPIAdapter):
         self.config = config
         self.ws_url = self.WS_URL_REAL if config.is_real else self.WS_URL_MOCK
 
+        # WebSocket instance
         self.ws: Optional[websocket.WebSocketApp] = None
         self._ws_thread: Optional[threading.Thread] = None
+
+        # Thread-safe state management
+        self._state_lock = threading.Lock()
+        self._connected_event = threading.Event()
         self._running = False
         self._connected = False
 
-        # Callback
+        # Callback (protected by _state_lock)
         self._callback: Optional[Callable[[TickData], None]] = None
         self._subscribed_symbols: List[str] = []
 
@@ -116,17 +282,52 @@ class KISWebSocketAdapter(BaseAPIAdapter):
         # Approval key (for subscription)
         self._approval_key: Optional[str] = None
 
-        # Message queue for thread safety
-        self._message_queue: queue.Queue = queue.Queue()
+        # Bounded message queue to prevent OOM
+        self._message_queue: queue.Queue = queue.Queue(maxsize=MESSAGE_QUEUE_MAXSIZE)
+
+    # -------------------------------------------------------------------------
+    # Thread-Safe State Accessors
+    # -------------------------------------------------------------------------
+
+    @property
+    def is_connected(self) -> bool:
+        """Thread-safe connected state check."""
+        with self._state_lock:
+            return self._connected
+
+    @property
+    def is_running(self) -> bool:
+        """Thread-safe running state check."""
+        with self._state_lock:
+            return self._running
+
+    def _set_connected(self, value: bool) -> None:
+        """Thread-safe connected state setter."""
+        with self._state_lock:
+            self._connected = value
+        if value:
+            self._connected_event.set()
+        else:
+            self._connected_event.clear()
+
+    def _set_running(self, value: bool) -> None:
+        """Thread-safe running state setter."""
+        with self._state_lock:
+            self._running = value
 
     # -------------------------------------------------------------------------
     # BaseAPIAdapter Implementation
     # -------------------------------------------------------------------------
 
     def connect(self) -> None:
-        """Establish WebSocket connection."""
-        if self._connected:
-            logger.warning("Already connected")
+        """Establish WebSocket connection.
+
+        Raises:
+            ConnectionError: If connection times out
+            ValueError: If approval key request fails
+        """
+        if self.is_connected:
+            logger.warning("[KIS WS] Already connected")
             return
 
         # Get approval key first (REST API call)
@@ -141,21 +342,21 @@ class KISWebSocketAdapter(BaseAPIAdapter):
             on_close=self._on_close,
         )
 
+        # Reset event before starting
+        self._connected_event.clear()
+
         # Start WebSocket in background thread
-        self._running = True
+        self._set_running(True)
         self._ws_thread = threading.Thread(
             target=self._run_websocket,
-            daemon=True
+            daemon=True,
+            name="KISWebSocket"
         )
         self._ws_thread.start()
 
-        # Wait for connection
-        timeout = 10.0
-        start = time.time()
-        while not self._connected and time.time() - start < timeout:
-            time.sleep(0.1)
-
-        if not self._connected:
+        # Wait for connection using event (not busy-wait)
+        if not self._connected_event.wait(timeout=10.0):
+            self._set_running(False)
             raise ConnectionError("WebSocket connection timeout")
 
         logger.info(f"[KIS WS] Connected to {self.ws_url}")
@@ -172,9 +373,22 @@ class KISWebSocketAdapter(BaseAPIAdapter):
         Args:
             symbols: List of futures codes to subscribe
             callback: Function called on each tick
+
+        Raises:
+            ValueError: If symbols list is empty or contains invalid format
         """
-        self._callback = callback
-        self._subscribed_symbols = symbols
+        # Input validation
+        if not symbols:
+            raise ValueError("At least one symbol required")
+
+        for symbol in symbols:
+            if not SYMBOL_PATTERN.match(symbol):
+                raise ValueError(f"Invalid symbol format: {symbol}")
+
+        # Store callback and symbols (thread-safe)
+        with self._state_lock:
+            self._callback = callback
+            self._subscribed_symbols = list(symbols)
 
         # Subscribe to each symbol for both orderbook and trade
         for symbol in symbols:
@@ -186,7 +400,7 @@ class KISWebSocketAdapter(BaseAPIAdapter):
         logger.info(f"[KIS WS] Subscribed to {len(symbols)} symbols")
 
         # Process messages from queue (blocking)
-        while self._running:
+        while self.is_running:
             try:
                 msg = self._message_queue.get(timeout=1.0)
                 self._process_message(msg)
@@ -197,11 +411,15 @@ class KISWebSocketAdapter(BaseAPIAdapter):
 
     def disconnect(self) -> None:
         """Close WebSocket connection."""
-        self._running = False
+        self._set_running(False)
+
+        # Get subscribed symbols safely
+        with self._state_lock:
+            symbols_to_unsub = list(self._subscribed_symbols)
 
         if self.ws:
             # Unsubscribe from all symbols
-            for symbol in self._subscribed_symbols:
+            for symbol in symbols_to_unsub:
                 try:
                     self._send_unsubscribe(symbol, TR_FUTURES_ASK)
                     self._send_unsubscribe(symbol, TR_FUTURES_CNT)
@@ -213,7 +431,7 @@ class KISWebSocketAdapter(BaseAPIAdapter):
         if self._ws_thread and self._ws_thread.is_alive():
             self._ws_thread.join(timeout=5.0)
 
-        self._connected = False
+        self._set_connected(False)
         logger.info("[KIS WS] Disconnected")
 
     # -------------------------------------------------------------------------
@@ -221,10 +439,19 @@ class KISWebSocketAdapter(BaseAPIAdapter):
     # -------------------------------------------------------------------------
 
     def _get_approval_key(self) -> None:
-        """Get WebSocket approval key via REST API."""
+        """Get WebSocket approval key via REST API.
+
+        Raises:
+            ValueError: If HTTPS is not used or approval key not received
+        """
         import requests
 
         url = f"{self.config.base_url}/oauth2/Approval"
+
+        # Security: Ensure HTTPS is used
+        if not url.startswith("https://"):
+            raise ValueError("Approval key request requires HTTPS")
+
         payload = {
             "grant_type": "client_credentials",
             "appkey": self.config.app_key,
@@ -238,13 +465,18 @@ class KISWebSocketAdapter(BaseAPIAdapter):
             data = resp.json()
 
             if "approval_key" not in data:
-                raise ValueError(f"Failed to get approval key: {data}")
+                # Sanitize error message (don't leak secrets)
+                error_code = data.get("error_code", data.get("msg_cd", "unknown"))
+                raise ValueError(f"Failed to get approval key: error_code={error_code}")
 
             self._approval_key = data["approval_key"]
             logger.info("[KIS WS] Approval key obtained")
 
+        except requests.RequestException as e:
+            logger.error(f"[KIS WS] Network error getting approval key: {type(e).__name__}")
+            raise
         except Exception as e:
-            logger.error(f"[KIS WS] Failed to get approval key: {e}")
+            logger.error(f"[KIS WS] Failed to get approval key: {type(e).__name__}")
             raise
 
     # -------------------------------------------------------------------------
@@ -258,18 +490,29 @@ class KISWebSocketAdapter(BaseAPIAdapter):
         except Exception as e:
             logger.error(f"[KIS WS] WebSocket error: {e}")
         finally:
-            self._connected = False
-            self._running = False
+            self._set_connected(False)
+            self._set_running(False)
 
     def _on_open(self, ws) -> None:
         """WebSocket connection opened."""
         logger.info("[KIS WS] Connection opened")
-        self._connected = True
+        self._set_connected(True)
 
     def _on_message(self, ws, message: str) -> None:
-        """WebSocket message received."""
-        # Queue message for processing in main thread
-        self._message_queue.put(message)
+        """WebSocket message received.
+
+        Uses bounded queue with overflow handling.
+        """
+        try:
+            self._message_queue.put_nowait(message)
+        except queue.Full:
+            # Drop oldest message to make room
+            logger.warning("[KIS WS] Message queue full, dropping oldest message")
+            try:
+                self._message_queue.get_nowait()
+                self._message_queue.put_nowait(message)
+            except queue.Empty:
+                pass
 
     def _on_error(self, ws, error) -> None:
         """WebSocket error occurred."""
@@ -278,7 +521,7 @@ class KISWebSocketAdapter(BaseAPIAdapter):
     def _on_close(self, ws, close_status_code, close_msg) -> None:
         """WebSocket connection closed."""
         logger.info(f"[KIS WS] Connection closed: {close_status_code} {close_msg}")
-        self._connected = False
+        self._set_connected(False)
 
     # -------------------------------------------------------------------------
     # Subscribe/Unsubscribe
@@ -301,7 +544,7 @@ class KISWebSocketAdapter(BaseAPIAdapter):
             }
         }
 
-        if self.ws and self._connected:
+        if self.ws and self.is_connected:
             self.ws.send(json.dumps(msg))
             logger.debug(f"[KIS WS] Subscribed: {tr_id} {symbol}")
 
@@ -322,7 +565,7 @@ class KISWebSocketAdapter(BaseAPIAdapter):
             }
         }
 
-        if self.ws and self._connected:
+        if self.ws and self.is_connected:
             self.ws.send(json.dumps(msg))
             logger.debug(f"[KIS WS] Unsubscribed: {tr_id} {symbol}")
 
@@ -342,17 +585,30 @@ class KISWebSocketAdapter(BaseAPIAdapter):
 
                 if is_encrypted and self._aes_key:
                     # Decrypt data
-                    data_str = self._decrypt(data_str)
+                    try:
+                        data_str = self._decrypt(data_str)
+                    except Exception as e:
+                        logger.warning(f"[KIS WS] Decryption failed, skipping: {e}")
+                        return
 
-                # Parse based on TR ID
+                # Parse based on TR ID using pure functions
+                timestamp = time.time()
                 tick = None
-                if tr_id == TR_FUTURES_ASK:
-                    tick = self._parse_futures_ask(parts[2], data_str)
-                elif tr_id == TR_FUTURES_CNT:
-                    tick = self._parse_futures_cnt(parts[2], data_str)
 
-                if tick and self._callback:
-                    self._callback(tick)
+                if tr_id == TR_FUTURES_ASK:
+                    tick = parse_futures_orderbook(parts[2], data_str, timestamp)
+                elif tr_id == TR_FUTURES_CNT:
+                    tick = parse_futures_trade(parts[2], data_str, timestamp)
+
+                # Invoke callback (thread-safe read)
+                if tick:
+                    with self._state_lock:
+                        callback = self._callback
+                    if callback:
+                        try:
+                            callback(tick)
+                        except Exception as e:
+                            logger.error(f"[KIS WS] Callback error: {e}")
 
         else:
             # JSON message (subscription response, etc.)
@@ -367,8 +623,6 @@ class KISWebSocketAdapter(BaseAPIAdapter):
         header = data.get("header", {})
         body = data.get("body", {})
 
-        tr_id = header.get("tr_id")
-
         # Check for encryption key
         if "output" in body:
             output = body["output"]
@@ -378,10 +632,10 @@ class KISWebSocketAdapter(BaseAPIAdapter):
                 self._aes_iv = output["iv"].encode("utf-8")
                 logger.info("[KIS WS] AES key received")
 
-        # Check for error
+        # Respond to PINGPONG
         if header.get("tr_cd") == "PINGPONG":
-            # Respond to ping
-            self.ws.send(message)
+            if self.ws and self.is_connected:
+                self.ws.send(json.dumps(data))
 
         msg_code = body.get("msg_cd", "")
         if msg_code and msg_code != "OPSP0000":
@@ -400,124 +654,29 @@ class KISWebSocketAdapter(BaseAPIAdapter):
 
         Returns:
             Decrypted string
+
+        Raises:
+            ValueError: If AES key not initialized
         """
         if not self._aes_key or not self._aes_iv:
             raise ValueError("AES key not initialized")
 
-        try:
-            encrypted_bytes = base64.b64decode(encrypted_data)
-            cipher = AES.new(self._aes_key, AES.MODE_CBC, self._aes_iv)
-            decrypted = unpad(cipher.decrypt(encrypted_bytes), AES.block_size)
-            return decrypted.decode("utf-8")
-        except Exception as e:
-            logger.error(f"[KIS WS] Decryption failed: {e}")
-            raise
+        encrypted_bytes = base64.b64decode(encrypted_data)
+        cipher = AES.new(self._aes_key, AES.MODE_CBC, self._aes_iv)
+        decrypted = unpad(cipher.decrypt(encrypted_bytes), AES.block_size)
+        return decrypted.decode("utf-8")
 
     # -------------------------------------------------------------------------
-    # Futures Data Parsing
+    # Legacy Parsing Methods (delegate to pure functions)
     # -------------------------------------------------------------------------
 
     def _parse_futures_ask(self, symbol: str, data: str) -> Optional[TickData]:
-        """Parse futures orderbook (호가) data.
-
-        Format: ^-separated fields
-        주요 필드:
-            - 0: 종목코드
-            - 1: 영업시간
-            - 2-11: 매도호가 1-10 (2,3=1차, 4,5=2차, ...)
-            - 12-21: 매도호가잔량 1-10
-            - 22-31: 매수호가 1-10
-            - 32-41: 매수호가잔량 1-10
-        """
-        try:
-            fields = data.split("^")
-            if len(fields) < 42:
-                return None
-
-            # L5 호가 파싱
-            tick = TickData(
-                symbol=symbol,
-                timestamp=time.time(),
-                # 매수호가 (bid)
-                bid_price_1=float(fields[22]) if fields[22] else 0.0,
-                bid_qty_1=float(fields[32]) if fields[32] else 0.0,
-                bid_price_2=float(fields[23]) if fields[23] else None,
-                bid_qty_2=float(fields[33]) if fields[33] else None,
-                bid_price_3=float(fields[24]) if fields[24] else None,
-                bid_qty_3=float(fields[34]) if fields[34] else None,
-                bid_price_4=float(fields[25]) if fields[25] else None,
-                bid_qty_4=float(fields[35]) if fields[35] else None,
-                bid_price_5=float(fields[26]) if fields[26] else None,
-                bid_qty_5=float(fields[36]) if fields[36] else None,
-                # 매도호가 (ask)
-                ask_price_1=float(fields[2]) if fields[2] else 0.0,
-                ask_qty_1=float(fields[12]) if fields[12] else 0.0,
-                ask_price_2=float(fields[3]) if fields[3] else None,
-                ask_qty_2=float(fields[13]) if fields[13] else None,
-                ask_price_3=float(fields[4]) if fields[4] else None,
-                ask_qty_3=float(fields[14]) if fields[14] else None,
-                ask_price_4=float(fields[5]) if fields[5] else None,
-                ask_qty_4=float(fields[15]) if fields[15] else None,
-                ask_price_5=float(fields[6]) if fields[6] else None,
-                ask_qty_5=float(fields[16]) if fields[16] else None,
-            )
-
-            return tick
-
-        except (ValueError, IndexError) as e:
-            logger.warning(f"[KIS WS] Failed to parse orderbook: {e}")
-            return None
+        """Parse futures orderbook data. Delegates to pure function."""
+        return parse_futures_orderbook(symbol, data, time.time())
 
     def _parse_futures_cnt(self, symbol: str, data: str) -> Optional[TickData]:
-        """Parse futures trade (체결) data.
-
-        Format: ^-separated fields
-        주요 필드:
-            - 0: 종목코드
-            - 1: 영업시간
-            - 2: 현재가
-            - 3: 전일대비부호
-            - 4: 전일대비
-            - 5: 등락율
-            - 6: 시가
-            - 7: 고가
-            - 8: 저가
-            - 11: 체결량 (tick volume)
-            - 12: 누적거래량
-            - 13: 누적거래대금
-            - 14: 미결제약정
-        """
-        try:
-            fields = data.split("^")
-            if len(fields) < 15:
-                return None
-
-            # 체결 데이터 파싱
-            tick = TickData(
-                symbol=symbol,
-                timestamp=time.time(),
-                # 최우선 호가 (체결 시점의 호가는 없으므로 0으로 설정)
-                bid_price_1=0.0,
-                bid_qty_1=0.0,
-                ask_price_1=0.0,
-                ask_qty_1=0.0,
-                # 체결가 및 OHLC
-                current_price=float(fields[2]) if fields[2] else None,
-                open_price=float(fields[6]) if fields[6] else None,
-                high_price=float(fields[7]) if fields[7] else None,
-                low_price=float(fields[8]) if fields[8] else None,
-                # 거래량
-                tick_volume=float(fields[11]) if fields[11] else None,
-                cumulative_volume=float(fields[12]) if fields[12] else None,
-                # 미결제약정
-                open_interest=float(fields[14]) if fields[14] else None,
-            )
-
-            return tick
-
-        except (ValueError, IndexError) as e:
-            logger.warning(f"[KIS WS] Failed to parse trade: {e}")
-            return None
+        """Parse futures trade data. Delegates to pure function."""
+        return parse_futures_trade(symbol, data, time.time())
 
 
 # =============================================================================

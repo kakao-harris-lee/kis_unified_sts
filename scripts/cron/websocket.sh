@@ -69,10 +69,15 @@ start() {
 
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting WebSocket collector..." | tee -a "$LOG_FILE"
 
-    # 코드 인자 구성
+    # 코드 인자 구성 (입력 검증 포함)
     code_args=""
     if [ -n "$codes" ]; then
         for code in $codes; do
+            # 보안: 선물 코드 형식 검증 (영숫자만 허용)
+            if [[ ! "$code" =~ ^[0-9A-Za-z]+$ ]]; then
+                echo "[$(date '+%Y-%m-%d %H:%M:%S')] 오류: 유효하지 않은 코드 형식: $code" | tee -a "$LOG_FILE"
+                exit 1
+            fi
             code_args="$code_args -c $code"
         done
     fi
