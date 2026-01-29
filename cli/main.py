@@ -14,6 +14,10 @@ import sys
 from pathlib import Path
 
 import click
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # 로깅 설정
 logging.basicConfig(
