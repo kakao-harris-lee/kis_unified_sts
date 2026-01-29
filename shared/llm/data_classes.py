@@ -244,32 +244,64 @@ class StockInfo:
 class GlobalMarketData:
     """글로벌 시장 데이터"""
 
-    sp500_futures: float = 0.0
-    nasdaq_futures: float = 0.0
+    # Index values
+    sp500: float = 0.0
+    nasdaq: float = 0.0
+    nikkei: float = 0.0
+    shanghai: float = 0.0
+
+    # Change percentages
     sp500_change_pct: float = 0.0
     nasdaq_change_pct: float = 0.0
+    nikkei_change_pct: float = 0.0
+    shanghai_change_pct: float = 0.0
+
+    # Other indicators
     vix: float = 0.0
-    vix_change: float = 0.0
+    wti: float = 0.0
+    gold: float = 0.0
+    dxy: float = 0.0
     usd_krw: float = 0.0
+
+    # Computed
+    global_score: float = 0.0
+    global_bias: MarketBias = MarketBias.NEUTRAL
+
+    # Legacy fields (backwards compatibility)
+    sp500_futures: float = 0.0
+    nasdaq_futures: float = 0.0
+    vix_change: float = 0.0
     usd_krw_change: float = 0.0
     china_change_pct: float = 0.0
     japan_change_pct: float = 0.0
-    global_score: float = 0.0
-    global_bias: MarketBias = MarketBias.NEUTRAL
 
 
 @dataclass
 class FlowData:
     """수급 데이터"""
 
-    foreign_futures_net: float = 0.0
+    # Current positions
+    foreign_futures: float = 0.0
+    institution_futures: float = 0.0
+    retail_futures: float = 0.0
+
+    # 5-day cumulative
     foreign_futures_5d: float = 0.0
-    institution_futures_net: float = 0.0
-    retail_futures_net: float = 0.0
+    institution_futures_5d: float = 0.0
+
+    # Market indicators
     basis: float = 0.0
-    basis_rate: float = 0.0
+    put_call_ratio: float = 0.0
+
+    # Computed
     flow_score: float = 0.0
     flow_bias: MarketBias = MarketBias.NEUTRAL
+
+    # Legacy fields (backwards compatibility)
+    foreign_futures_net: float = 0.0
+    institution_futures_net: float = 0.0
+    retail_futures_net: float = 0.0
+    basis_rate: float = 0.0
 
 
 @dataclass

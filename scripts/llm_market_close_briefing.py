@@ -14,6 +14,9 @@ from datetime import datetime
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from dotenv import load_dotenv
+load_dotenv()
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -92,7 +95,7 @@ async def main():
 
         # Send via Telegram if available
         try:
-            from shared.notifier import TelegramNotifier
+            from shared.notification import TelegramNotifier
 
             notifier = TelegramNotifier()
             await notifier.send_message(message, is_critical=True)

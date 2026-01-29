@@ -13,6 +13,9 @@ import sys
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from dotenv import load_dotenv
+load_dotenv()
+
 from shared.llm.llm_analyzer import run_unified_analysis
 
 logging.basicConfig(
@@ -42,7 +45,7 @@ async def main():
         # Import notifier if available
         notifier = None
         try:
-            from shared.notifier import TelegramNotifier
+            from shared.notification import TelegramNotifier
 
             notifier = TelegramNotifier()
             await notifier.send_message(
