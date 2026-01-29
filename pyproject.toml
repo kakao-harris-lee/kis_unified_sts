@@ -60,6 +60,10 @@ dependencies = [
     # Redis (Futures)
     "redis>=5.0",
 
+    # WebSocket (Realtime)
+    "websocket-client>=1.6",
+    "pycryptodome>=3.19",  # AES decryption
+
     # Database
     "clickhouse-driver>=0.2",
     "aiochclient>=2.4",
