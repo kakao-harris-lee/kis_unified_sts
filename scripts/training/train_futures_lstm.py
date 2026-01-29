@@ -64,16 +64,27 @@ class ClickHouseDataLoader:
 
     def __init__(
         self,
-        host: str = "localhost",
-        port: int = 8123,
-        database: str = "default",
+        host: str = None,
+        port: int = None,
+        username: str = None,
+        password: str = None,
+        database: str = "kospi",
         table: str = "kospi_mini_1m",
     ):
         if not CLICKHOUSE_AVAILABLE:
             raise ImportError("clickhouse-connect package required")
 
+        # Load from environment if not provided
+        import os
+        from dotenv import load_dotenv
+        load_dotenv()
+
         self.client = clickhouse_connect.get_client(
-            host=host, port=port, database=database
+            host=host or os.getenv("CLICKHOUSE_HOST", "localhost"),
+            port=port or int(os.getenv("CLICKHOUSE_PORT", "8123")),
+            username=username or os.getenv("CLICKHOUSE_USER", "default"),
+            password=password or os.getenv("CLICKHOUSE_PASSWORD", ""),
+            database=database,
         )
         self.table = table
 
@@ -382,7 +393,7 @@ def main():
 
     # 특성 계산
     calculator = FeatureCalculator()
-    features_df = calculator.calculate_features(df)
+    features_df = calculator.calculate(df)
     features_df = features_df.dropna()
 
     features = features_df[FEATURE_COLUMNS].values.astype(np.float32)
