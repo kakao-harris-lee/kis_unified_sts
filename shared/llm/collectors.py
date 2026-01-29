@@ -79,6 +79,9 @@ class StockDataCollector(DataCollector):
                         market="KOSPI"
                     )
                 if len(cap_df) > 0:
+                    # Drop existing 시가총액 column if present to avoid overlap
+                    if '시가총액' in df.columns:
+                        df = df.drop(columns=['시가총액'])
                     df = df.join(cap_df[['시가총액']])
 
             return df
