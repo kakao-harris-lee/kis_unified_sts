@@ -492,6 +492,192 @@ def collect():
     pass
 
 
+# =============================================================================
+# Backfill Commands
+# =============================================================================
+
+
+@cli.group()
+def backfill():
+    """과거 데이터 백필 명령
+
+    \b
+    Examples:
+        sts backfill today          # 오늘 데이터 수집
+        sts backfill --days 30      # 최근 30일 백필
+        sts backfill status         # 데이터 현황 조회
+        sts backfill --all          # 모든 상품 백필
+    """
+    pass
+
+
+@backfill.command("today")
+@click.option(
+    "--all",
+    "-a",
+    "all_products",
+    is_flag=True,
+    help="Collect all products (Mini, Index, Futures)",
+)
+@click.option(
+    "--mini/--no-mini",
+    default=True,
+    help="Collect Mini KOSPI200 futures (default: True)",
+)
+@click.option(
+    "--index/--no-index",
+    default=False,
+    help="Collect KOSPI200 index (default: False)",
+)
+@click.option(
+    "--futures/--no-futures",
+    default=False,
+    help="Collect KOSPI200 full-size futures (default: False)",
+)
+def backfill_today(all_products: bool, mini: bool, index: bool, futures: bool):
+    """오늘 데이터 수집 (장 마감 후 실행)
+
+    \b
+    Example:
+        sts backfill today
+        sts backfill today --all
+        sts backfill today --index --futures
+    """
+    import asyncio
+
+    from shared.collector.historical import (
+        collect_today,
+        collect_today_kospi200_index,
+        collect_today_kospi200f,
+        collect_today_all,
+    )
+
+    if all_products:
+        click.echo("Collecting today's data for all products...")
+        asyncio.run(collect_today_all())
+    else:
+        if mini:
+            click.echo("Collecting Mini KOSPI200 futures...")
+            asyncio.run(collect_today())
+        if index:
+            click.echo("Collecting KOSPI200 index...")
+            asyncio.run(collect_today_kospi200_index())
+        if futures:
+            click.echo("Collecting KOSPI200 futures...")
+            asyncio.run(collect_today_kospi200f())
+
+    click.echo("Done!")
+
+
+@backfill.command("run")
+@click.option(
+    "--days",
+    "-d",
+    default=30,
+    type=int,
+    help="Number of days to backfill (default: 30)",
+)
+@click.option(
+    "--all",
+    "-a",
+    "all_products",
+    is_flag=True,
+    help="Backfill all products (Mini, Index, Futures)",
+)
+@click.option(
+    "--mini/--no-mini",
+    default=True,
+    help="Backfill Mini KOSPI200 futures (default: True)",
+)
+@click.option(
+    "--index/--no-index",
+    default=False,
+    help="Backfill KOSPI200 index (default: False)",
+)
+@click.option(
+    "--futures/--no-futures",
+    default=False,
+    help="Backfill KOSPI200 full-size futures (default: False)",
+)
+def backfill_run(days: int, all_products: bool, mini: bool, index: bool, futures: bool):
+    """과거 데이터 백필 실행
+
+    \b
+    Example:
+        sts backfill run --days 30
+        sts backfill run --days 180 --all
+        sts backfill run --days 90 --index --futures
+    """
+    import asyncio
+
+    from shared.collector.historical import (
+        backfill as do_backfill,
+        backfill_kospi200_index,
+        backfill_kospi200f,
+        backfill_all,
+    )
+
+    click.echo(f"Starting backfill for {days} days...")
+
+    if all_products:
+        asyncio.run(backfill_all(days=days))
+    else:
+        if mini:
+            click.echo("Backfilling Mini KOSPI200 futures...")
+            asyncio.run(do_backfill(days=days))
+        if index:
+            click.echo("Backfilling KOSPI200 index...")
+            asyncio.run(backfill_kospi200_index(days=days))
+        if futures:
+            click.echo("Backfilling KOSPI200 futures...")
+            asyncio.run(backfill_kospi200f(days=days))
+
+    click.echo("Backfill complete!")
+
+
+@backfill.command("status")
+@click.option(
+    "--days",
+    "-d",
+    default=30,
+    type=int,
+    help="Period to check (default: 30 days)",
+)
+def backfill_status(days: int):
+    """데이터 수집 현황 조회
+
+    \b
+    Example:
+        sts backfill status
+        sts backfill status --days 90
+    """
+    from shared.collector.historical.backfill import get_data_status
+
+    click.echo(f"Data Collection Status (last {days} days)")
+    click.echo("=" * 50)
+
+    status = get_data_status(days=days)
+
+    if "error" in status:
+        click.echo(f"Error: {status['error']}", err=True)
+        return
+
+    click.echo(f"Period: {status['period']}")
+    click.echo(f"Trading Days: {status['trading_days']}")
+    click.echo()
+
+    for table_name, info in status.get("tables", {}).items():
+        click.echo(f"📊 {table_name}:")
+        if "error" in info:
+            click.echo(f"   Error: {info['error']}")
+        else:
+            click.echo(f"   Rows: {info['rows']:,}")
+            click.echo(f"   Days Collected: {info['days_collected']}")
+            if info.get("min_datetime"):
+                click.echo(f"   Range: {info['min_datetime']} ~ {info['max_datetime']}")
+        click.echo()
+
+
 @collect.command("start")
 @click.option(
     "--symbol",
