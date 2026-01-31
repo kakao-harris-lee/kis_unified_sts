@@ -60,24 +60,47 @@ class DataCollector(ABC):
 class StockDataCollector(DataCollector):
     """주식 시세 데이터 수집 (pykrx 기반)"""
 
+    # 장 시작 시간 (09:00)
+    MARKET_OPEN_HOUR = 9
+
+    def _get_last_trading_date(self) -> str:
+        """가장 최근 거래일 반환 (장 시작 전이면 전일)"""
+        now = datetime.now()
+
+        # 장 시작 전(09:00 전)이면 전일 데이터 사용
+        if now.hour < self.MARKET_OPEN_HOUR:
+            target = now - timedelta(days=1)
+            logger.info(f"Pre-market hours ({now.strftime('%H:%M')}), using previous day data")
+        else:
+            target = now
+
+        # 주말 처리: 토요일(5) -> 금요일, 일요일(6) -> 금요일
+        while target.weekday() >= 5:
+            target -= timedelta(days=1)
+
+        return target.strftime("%Y%m%d")
+
     def collect(self) -> Optional[pd.DataFrame]:
         """전체 시장 데이터 수집"""
         try:
             from pykrx import stock
 
-            today = datetime.now().strftime("%Y%m%d")
-            df = stock.get_market_ohlcv(today, market="KOSPI")
+            target_date = self._get_last_trading_date()
+            logger.info(f"Collecting market data for {target_date}")
+
+            df = stock.get_market_ohlcv(target_date, market="KOSPI")
+
+            # 데이터가 없으면 하루 더 이전 시도
             if len(df) == 0:
-                yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y%m%d")
-                df = stock.get_market_ohlcv(yesterday, market="KOSPI")
+                prev_date = (datetime.strptime(target_date, "%Y%m%d") - timedelta(days=1)).strftime("%Y%m%d")
+                logger.info(f"No data for {target_date}, trying {prev_date}")
+                df = stock.get_market_ohlcv(prev_date, market="KOSPI")
 
             if len(df) > 0:
-                cap_df = stock.get_market_cap(today, market="KOSPI")
+                cap_df = stock.get_market_cap(target_date, market="KOSPI")
                 if len(cap_df) == 0:
-                    cap_df = stock.get_market_cap(
-                        (datetime.now() - timedelta(days=1)).strftime("%Y%m%d"),
-                        market="KOSPI"
-                    )
+                    prev_date = (datetime.strptime(target_date, "%Y%m%d") - timedelta(days=1)).strftime("%Y%m%d")
+                    cap_df = stock.get_market_cap(prev_date, market="KOSPI")
                 if len(cap_df) > 0:
                     # Drop existing 시가총액 column if present to avoid overlap
                     if '시가총액' in df.columns:

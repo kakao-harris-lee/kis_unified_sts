@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from shared.llm import run_unified_analysis
 from shared.notification import TelegramNotifier
+from shared.calendar import is_market_open_today
 
 logging.basicConfig(
     level=logging.INFO,
@@ -25,6 +26,10 @@ logger = logging.getLogger(__name__)
 
 async def main():
     logger.info("LLM Nightly Analysis Started")
+
+    if not is_market_open_today():
+        logger.info("Market closed today. Skipping.")
+        return
 
     try:
         notifier = TelegramNotifier()
