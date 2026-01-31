@@ -35,7 +35,7 @@ async def async_holiday_loader(
 ) -> set[date]:
     """Async holiday loader (non-blocking).
 
-    Uses aiofiles if available, otherwise runs sync I/O in thread pool.
+    Uses aiofiles if available, otherwise performs a small synchronous read.
 
     Args:
         config_path: Path to YAML config file containing holidays.
@@ -64,11 +64,11 @@ async def async_holiday_loader(
             async with aiofiles.open(path, "r", encoding="utf-8") as f:
                 content = await f.read()
         else:
-            # Fallback: run sync I/O in thread pool
-            loop = asyncio.get_running_loop()
-            content = await loop.run_in_executor(
-                None, lambda: path.read_text(encoding="utf-8")
-            )
+            # NOTE: In some constrained environments, asyncio's default executor can
+            # intermittently hang when used for file I/O. This loader only allows
+            # up to 1MB, and it is called infrequently, so a direct synchronous read
+            # is a safer fallback.
+            content = path.read_text(encoding="utf-8")
 
         data = yaml.safe_load(content)
         if not isinstance(data, dict):

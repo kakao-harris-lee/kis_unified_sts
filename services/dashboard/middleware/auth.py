@@ -1,4 +1,5 @@
 """API Key authentication middleware."""
+import asyncio
 import hmac
 import logging
 import os
@@ -78,12 +79,15 @@ class APIKeyMiddleware:
         api_key = self._parse_query_param(query_string, "api_key")
 
         if not self._validate_api_key(api_key):
-            # For WebSocket rejection, we need to:
-            # 1. Wait for the connect message
-            # 2. Then send close
-            message = await receive()
-            if message["type"] == "websocket.connect":
-                await send({"type": "websocket.close", "code": 4001, "reason": "Unauthorized"})
+            # Fail closed. In some servers/test clients, awaiting receive() can hang
+            # because the connect event may already be consumed or not delivered.
+            # We attempt a best-effort receive with a short timeout to avoid deadlock.
+            try:
+                await asyncio.wait_for(receive(), timeout=0.2)
+            except Exception:
+                pass
+
+            await send({"type": "websocket.close", "code": 4001, "reason": "Unauthorized"})
             return
 
         await self.app(scope, receive, send)

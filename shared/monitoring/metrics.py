@@ -25,7 +25,9 @@ class TradingMetrics:
     _instance = None
     _initialized = False
 
-    def __new__(cls, prefix: str = "trading"):
+    # Use a distinct default prefix to avoid metric name collisions with
+    # services.monitoring.metrics (which also defines "trading_*" series).
+    def __new__(cls, prefix: str = "internal_trading"):
         """Singleton pattern to avoid duplicate metric registration."""
         if cls._instance is None:
             cls._instance = super().__new__(cls)
@@ -48,7 +50,7 @@ class TradingMetrics:
         cls._instance = None
         cls._initialized = False
 
-    def __init__(self, prefix: str = "trading"):
+    def __init__(self, prefix: str = "internal_trading"):
         if self._initialized:
             return
 

@@ -170,14 +170,13 @@ class OrderExecutor:
 
     async def _send_order(self, order: OrderRequest) -> OrderResponse:
         """Send order based on trading mode."""
-        mode = self.config.trading_mode
+        mode = str(self.config.trading_mode or "").upper()
 
-        # Compare against enum values (config uses use_enum_values=True)
-        if mode == TradingMode.PAPER:
+        if mode == TradingMode.PAPER.value:
             return await self._simulate_order(order)
-        elif mode == TradingMode.MOCK:
+        elif mode == TradingMode.MOCK.value:
             return await self._send_kis_order(order, is_mock=True)
-        elif mode == TradingMode.REAL:
+        elif mode == TradingMode.REAL.value:
             return await self._send_kis_order(order, is_mock=False)
         else:
             return OrderResponse(success=False, message=f"Unknown mode: {mode}")
@@ -211,8 +210,21 @@ class OrderExecutor:
             )
             await self.initialize()
 
-        # Get auth headers
-        headers = await self.auth_manager.get_auth_headers()
+        # Get auth headers (supports both sync + async auth managers).
+        headers = None
+        try:
+            maybe = self.auth_manager.get_auth_headers()
+            if asyncio.iscoroutine(maybe):
+                headers = await maybe
+            else:
+                headers = maybe
+        except Exception:
+            # Prefer explicit async method when available.
+            if hasattr(self.auth_manager, "get_auth_headers_async"):
+                headers = await self.auth_manager.get_auth_headers_async()
+
+        if not isinstance(headers, dict) or not headers:
+            return OrderResponse(success=False, message="Failed to get auth headers")
 
         # Determine TR code from config
         if order.side == OrderSide.BUY.value:

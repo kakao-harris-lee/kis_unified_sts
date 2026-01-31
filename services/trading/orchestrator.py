@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, date, time, timedelta
@@ -46,6 +47,12 @@ from services.monitoring.metrics import get_metrics_collector
 from shared.models.signal import Signal, ExitSignal
 from shared.strategy.base import EntryContext
 from shared.utils.calc import calc_order_quantity
+
+try:
+    # Optional: only used when paper_trading=True
+    from shared.paper.models import OrderSide as PaperOrderSide
+except Exception:  # pragma: no cover
+    PaperOrderSide = None  # type: ignore
 
 if TYPE_CHECKING:
     from shared.config.schema import MarketScheduleConfig, PipelineConfig
@@ -262,6 +269,10 @@ class TradingConfig:
     paper_trading: bool = True  # 모의투자 여부
     auto_start: bool = True  # 장 시작 시 자동 시작
 
+    # Optional execution mode override (PAPER/MOCK/REAL).
+    # If empty, inferred from paper_trading (PAPER if True, else MOCK).
+    execution_mode: str = ""
+
     # 알림
     enable_telegram: bool = True
     telegram_token: str = ""
@@ -278,6 +289,9 @@ class TradingConfig:
 
     # Market data refresh cadence (seconds)
     market_data_refresh_seconds: float = 0.5
+
+    # Per-symbol metadata (e.g. watchlist baseline volumes).
+    symbol_metadata: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     # Error recovery
     error_retry_delay_seconds: float = 60.0  # Retry delay after errors (default 1 min)
@@ -337,6 +351,9 @@ class TradingConfig:
         symbols: list[str] | None = None,
         initial_capital: float = 10_000_000,
         order_amount: float = 1_000_000,
+        paper_trading: bool = True,
+        execution_mode: str = "",
+        symbol_metadata: dict[str, dict[str, Any]] | None = None,
     ) -> TradingConfig:
         """주식용 설정"""
         return cls(
@@ -345,6 +362,9 @@ class TradingConfig:
             symbols=symbols or [],
             initial_capital=initial_capital,
             order_amount_per_trade=order_amount,
+            paper_trading=paper_trading,
+            execution_mode=execution_mode,
+            symbol_metadata=symbol_metadata or {},
         )
 
     @classmethod
@@ -422,6 +442,7 @@ class TradingOrchestrator:
         self._position_tracker: PositionTracker | None = None
         self._paper_broker: Any | None = None
         self._kis_client: Any | None = None
+        self._order_executor: Any | None = None
 
         # Market regime
         self._current_regime: str | None = None
@@ -510,16 +531,39 @@ class TradingOrchestrator:
         # Paper broker (if paper trading)
         if self.config.paper_trading:
             try:
-                from shared.paper.broker import PaperBroker
-                from shared.paper.config import PaperTradingConfig
+                from shared.paper import VirtualBroker
 
-                paper_config = PaperTradingConfig(
-                    initial_capital=self.config.initial_capital,
+                self._paper_broker = VirtualBroker(
+                    initial_balance=self.config.initial_capital,
                 )
-                self._paper_broker = PaperBroker(config=paper_config)
-                logger.info("Paper broker initialized")
-            except ImportError:
-                logger.warning("PaperBroker not available, using mock execution")
+                logger.info("Paper broker (VirtualBroker) initialized")
+            except Exception as e:
+                logger.warning(f"Paper broker init failed, using mock execution: {e}")
+        else:
+            # KIS execution via shared.execution.OrderExecutor (MOCK/REAL).
+            # NOTE: Will fail closed (no orders) if credentials are missing.
+            try:
+                from shared.execution.config import ExecutionConfig
+                from shared.execution.executor import OrderExecutor
+
+                mode = (self.config.execution_mode or os.getenv("TRADING_MODE", "MOCK")).upper()
+                if mode not in ("MOCK", "REAL"):
+                    raise ValueError(f"execution_mode must be MOCK or REAL for live execution, got {mode!r}")
+
+                exec_cfg = ExecutionConfig(
+                    trading_mode=mode,
+                    account_no=os.getenv("KIS_ACCOUNT_NO", ""),
+                    redis_url=os.getenv("REDIS_URL", ""),
+                    rate_limit_key="stock",
+                )
+
+                auth_manager = getattr(self._kis_client, "auth_manager", None) if self._kis_client else None
+                self._order_executor = OrderExecutor(config=exec_cfg, auth_manager=auth_manager)
+                await self._order_executor.initialize()
+                logger.info(f"OrderExecutor initialized (mode={mode})")
+            except Exception as e:
+                logger.warning(f"OrderExecutor init failed; orders will be mocked: {e}")
+                self._order_executor = None
 
         logger.info(
             f"Components initialized: "
@@ -548,6 +592,12 @@ class TradingOrchestrator:
             self.pipeline = None
 
         # Cleanup components
+        if self._order_executor is not None:
+            try:
+                await self._order_executor.cleanup()
+            except Exception as e:
+                logger.warning(f"OrderExecutor cleanup failed: {e}")
+            self._order_executor = None
         self._data_provider = None
         self._strategy_manager = None
         self._position_tracker = None
@@ -894,17 +944,44 @@ class TradingOrchestrator:
             if not data:
                 return []
 
-            # Build entry context
-            context = EntryContext(
-                market_data=data,
-                indicators={},  # TODO: Calculate indicators
-                current_positions=self._position_tracker.positions,
-                timestamp=datetime.now(),
-                metadata={"regime": self._current_regime},
-            )
+            now = datetime.now()
 
-            # Check entries across all strategies
-            signals = await self._strategy_manager.check_entries(context)
+            # Check entries per symbol (Entry strategies expect single-symbol market_data).
+            async def check_symbol(symbol: str) -> list[Signal]:
+                symbol_data = data.get(symbol)
+                if not isinstance(symbol_data, dict):
+                    return []
+
+                # Enrich with watchlist/baseline metadata (if present).
+                meta = (self.config.symbol_metadata or {}).get(symbol, {})
+                enriched = dict(symbol_data)
+                enriched["code"] = symbol
+                if meta.get("name"):
+                    enriched["name"] = meta["name"]
+                enriched.update(meta)
+
+                context = EntryContext(
+                    market_data=enriched,
+                    indicators={},  # TODO: Calculate indicators
+                    current_positions=self._position_tracker.positions,
+                    timestamp=now,
+                    metadata={"regime": self._current_regime, "symbol_metadata": meta},
+                )
+                return await self._strategy_manager.check_entries(context)
+
+            symbols = list(data.keys())
+            # Bound concurrency to avoid stampeding (data may have many symbols).
+            sem = asyncio.Semaphore(20)
+
+            async def check_symbol_limited(symbol: str) -> list[Signal]:
+                async with sem:
+                    return await check_symbol(symbol)
+
+            results = await asyncio.gather(*(check_symbol_limited(s) for s in symbols))
+            signals: list[Signal] = []
+            for r in results:
+                if r:
+                    signals.extend(r)
 
             # Execute orders for valid signals (bounded parallelism)
             async def run_entry(signal: Signal) -> None:
@@ -1045,14 +1122,31 @@ class TradingOrchestrator:
             try:
                 if self.config.paper_trading and self._paper_broker:
                     # Paper trading execution
+                    if PaperOrderSide is None:
+                        raise RuntimeError("PaperOrderSide not available (paper trading dependencies missing)")
                     order = await self._paper_broker.submit_order(
-                        code=signal.code,
-                        side="BUY",
+                        symbol=signal.code,
+                        side=PaperOrderSide.BUY,
                         quantity=quantity,
                         price=signal.price,
                     )
-                    is_filled = order.is_filled if hasattr(order, "is_filled") else True
-                    fill_price = order.fill_price if hasattr(order, "fill_price") else signal.price
+                    is_filled = bool(getattr(order, "filled", True))
+                    fill_price = float(getattr(order, "fill_price", signal.price) or signal.price)
+                elif self._order_executor is not None:
+                    # Live/mock execution via KIS API
+                    from shared.execution.models import OrderRequest, OrderSide, OrderType
+
+                    resp = await self._order_executor.execute_order(
+                        OrderRequest(
+                            code=signal.code,
+                            side=OrderSide.BUY,
+                            order_type=OrderType.MARKET,
+                            quantity=quantity,
+                            price=None,
+                        )
+                    )
+                    is_filled = bool(resp.success)
+                    fill_price = float(resp.filled_price or signal.price)
                 else:
                     # Mock execution (for testing without paper broker)
                     is_filled = True
@@ -1093,14 +1187,30 @@ class TradingOrchestrator:
             try:
                 if self.config.paper_trading and self._paper_broker:
                     # Paper trading execution
+                    if PaperOrderSide is None:
+                        raise RuntimeError("PaperOrderSide not available (paper trading dependencies missing)")
                     order = await self._paper_broker.submit_order(
-                        code=signal.code,
-                        side="SELL",
+                        symbol=signal.code,
+                        side=PaperOrderSide.SELL,
                         quantity=signal.quantity,
                         price=signal.exit_price,
                     )
-                    is_filled = order.is_filled if hasattr(order, "is_filled") else True
-                    fill_price = order.fill_price if hasattr(order, "fill_price") else signal.exit_price
+                    is_filled = bool(getattr(order, "filled", True))
+                    fill_price = float(getattr(order, "fill_price", signal.exit_price) or signal.exit_price)
+                elif self._order_executor is not None:
+                    from shared.execution.models import OrderRequest, OrderSide, OrderType
+
+                    resp = await self._order_executor.execute_order(
+                        OrderRequest(
+                            code=signal.code,
+                            side=OrderSide.SELL,
+                            order_type=OrderType.MARKET,
+                            quantity=signal.quantity,
+                            price=None,
+                        )
+                    )
+                    is_filled = bool(resp.success)
+                    fill_price = float(resp.filled_price or signal.exit_price)
                 else:
                     # Mock execution
                     is_filled = True
@@ -1137,15 +1247,40 @@ class TradingOrchestrator:
         if signal.quantity > 0:
             return min(signal.quantity, MAX_ORDER_QUANTITY)
 
-        # Use config-based order amount (no longer hardcoded)
-        order_amount = self.config.order_amount_per_trade
+        # Prefer strategy-defined sizer (YAML position config), fallback to fixed amount.
+        if self._strategy_manager and signal.strategy in self._strategy_manager.strategies:
+            try:
+                strategy = self._strategy_manager.strategies[signal.strategy]
+                balance = self._get_account_balance()
+                qty = strategy.calculate_position_size(
+                    signal=signal,
+                    account_balance=balance,
+                    current_positions=self._position_tracker.positions if self._position_tracker else [],
+                )
+                if qty > 0:
+                    return min(qty, MAX_ORDER_QUANTITY)
+            except Exception as e:
+                logger.warning(f"Strategy sizer failed for {signal.code}: {e}")
 
-        # Calculate quantity using shared utility
-        return calc_order_quantity(
-            order_amount=order_amount,
-            price=signal.price,
-            max_quantity=MAX_ORDER_QUANTITY,
-        )
+        # Fallback: config-based fixed order amount.
+        order_amount = float(self.config.order_amount_per_trade)
+        return calc_order_quantity(order_amount=order_amount, price=signal.price, max_quantity=MAX_ORDER_QUANTITY)
+
+    def _get_account_balance(self) -> float:
+        """Best-effort account balance/equity for sizing."""
+        if self._paper_broker is not None:
+            # VirtualBroker exposes balance and get_equity().
+            if hasattr(self._paper_broker, "get_equity"):
+                try:
+                    return float(self._paper_broker.get_equity())
+                except Exception:
+                    pass
+            if hasattr(self._paper_broker, "balance"):
+                try:
+                    return float(self._paper_broker.balance)
+                except Exception:
+                    pass
+        return float(self.config.initial_capital)
 
     async def _notify(self, message: str):
         """알림 전송"""
@@ -1220,12 +1355,17 @@ class TradingOrchestrator:
 
     def get_metrics(self) -> dict[str, Any]:
         """메트릭 조회"""
+        # Keep init-time behavior stable: if the trading pipeline hasn't been
+        # started yet, expose no metrics.
+        if not self.pipeline:
+            return {}
+
         staleness = self._get_market_data_staleness_seconds()
         if staleness is not None:
             self._metrics.record_market_data_staleness(staleness)
         self._metrics.record_order_queue_depth(self._order_queue_depth)
 
-        metrics = self.pipeline.metrics.to_dict() if self.pipeline else {}
+        metrics = self.pipeline.metrics.to_dict()
         metrics["market_data_staleness_seconds"] = staleness
         metrics["order_queue_depth"] = self._order_queue_depth
         metrics["market_data_updated_at"] = (
@@ -1241,6 +1381,9 @@ async def run_stock_trading(
     strategy: str = "bb_reversion",
     symbols: list[str] | None = None,
     capital: float = 10_000_000,
+    paper_trading: bool = True,
+    execution_mode: str = "",
+    symbol_metadata: dict[str, dict[str, Any]] | None = None,
     daemon: bool = False,
 ):
     """주식 트레이딩 실행"""
@@ -1248,6 +1391,9 @@ async def run_stock_trading(
         strategy_name=strategy,
         symbols=symbols,
         initial_capital=capital,
+        paper_trading=paper_trading,
+        execution_mode=execution_mode,
+        symbol_metadata=symbol_metadata or {},
     )
 
     orchestrator = TradingOrchestrator(config)

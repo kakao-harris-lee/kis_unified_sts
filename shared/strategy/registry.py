@@ -376,6 +376,13 @@ def register_builtin_components() -> None:
     except ImportError:
         logger.debug("BreakoutEntry not available")
 
+    try:
+        from shared.strategy.entry.opening_volume_surge import OpeningVolumeSurgeEntry
+
+        EntryRegistry.register_class("opening_volume_surge", OpeningVolumeSurgeEntry)
+    except ImportError:
+        logger.debug("OpeningVolumeSurgeEntry not available")
+
     # Exit 전략 등록
     try:
         from shared.strategy.exit.three_stage import ThreeStageExit
