@@ -555,7 +555,23 @@ class UnifiedTradingAnalyzer:
         """주식 분석 (다중 데이터 소스 활용)"""
         logger.info("Starting stock analysis with multiple data sources")
 
-        market_df = self.stock_collector.collect()
+        # KOSPI + KOSDAQ (best-effort).
+        market_kospi = self.stock_collector.collect("KOSPI")
+        market_kosdaq = self.stock_collector.collect("KOSDAQ")
+        frames = []
+        if market_kospi is not None and len(market_kospi) > 0:
+            frames.append(market_kospi)
+        if market_kosdaq is not None and len(market_kosdaq) > 0:
+            frames.append(market_kosdaq)
+
+        if not frames:
+            market_df = None
+        elif len(frames) == 1:
+            market_df = frames[0]
+        else:
+            import pandas as pd
+
+            market_df = pd.concat(frames, axis=0)
         if market_df is None or len(market_df) == 0:
             logger.error("Failed to collect market data")
             return [], {}
@@ -928,11 +944,12 @@ class UnifiedTradingAnalyzer:
             volume_ratio = volume / avg_volume if avg_volume > 0 else 1.0
 
             try:
-                market_df = self.stock_collector.collect()
-                if market_df is not None and code in market_df.index:
-                    market_cap = float(market_df.loc[code, '시가총액'])
-                else:
-                    market_cap = 0.0
+                market_cap = 0.0
+                for mkt in ("KOSPI", "KOSDAQ"):
+                    market_df = self.stock_collector.collect(mkt)
+                    if market_df is not None and code in market_df.index:
+                        market_cap = float(market_df.loc[code, "시가총액"])
+                        break
             except:
                 market_cap = 0.0
 

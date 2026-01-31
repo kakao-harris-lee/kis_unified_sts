@@ -1,0 +1,66 @@
+# Opening Volume Surge Strategy (Stocks)
+#
+# Use case:
+#   - First 30 minutes after open: if today's cumulative volume >= yesterday's total volume,
+#     and price action is strong (up + near high), enter quickly.
+#   - Exit:
+#     - Hard stop: -5%
+#     - Profit protection: early trailing stop to preserve gains
+#
+# Requirements:
+#   - Provide `prev_day_volume` in per-symbol metadata (e.g. from after-close watchlist).
+#
+strategy:
+  name: opening_volume_surge
+  asset_class: stock
+  enabled: true
+  description: "09:00~09:30 거래량 폭증 종목 단기 진입 + 수익 보전 트레일링"
+
+  entry:
+    type: opening_volume_surge
+    params:
+      only_first_minutes: 30
+      market_open_hour: 9
+      market_open_minute: 0
+      min_change_pct: 1.0
+      require_above_open: true
+      min_range_position: 0.7
+      stop_loss_pct: 5.0
+
+  exit:
+    type: three_stage
+    params:
+      # Hard stop (-5%)
+      stop_loss_pct: -0.05
+
+      # Protect quickly once up a bit
+      breakeven_threshold_pct: 0.005
+
+      # Start trailing early to preserve profits
+      maximize_threshold_pct: 0.01
+      trailing_stop_pct: -0.015
+
+      # If it overshoots, tighten trailing even more
+      overshoot_threshold_pct: 0.05
+      overshoot_trailing_pct: -0.01
+
+      # Time cut: if it doesn't go anywhere, free capital
+      time_cut_minutes: 60
+
+      # Force close later in the day (keep default conservative)
+      eod_close_hour: 15
+      eod_close_minute: 15
+
+      fee_rate: 0.003
+      enable_bear_exit: true
+
+  position:
+    type: risk_based
+    params:
+      max_position_pct: 10.0
+      max_positions: 5
+      risk_per_trade_pct: 1.0
+      stop_loss_pct: 5.0
+      min_quantity: 1
+      max_quantity: 100000
+

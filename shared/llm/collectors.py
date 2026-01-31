@@ -62,6 +62,7 @@ class StockDataCollector(DataCollector):
 
     # 장 시작 시간 (09:00)
     MARKET_OPEN_HOUR = 9
+    SUPPORTED_MARKETS = ("KOSPI", "KOSDAQ")
 
     def _get_last_trading_date(self) -> str:
         """가장 최근 거래일 반환 (장 시작 전이면 전일)"""
@@ -80,32 +81,39 @@ class StockDataCollector(DataCollector):
 
         return target.strftime("%Y%m%d")
 
-    def collect(self) -> Optional[pd.DataFrame]:
-        """전체 시장 데이터 수집"""
+    def collect(self, market: str = "KOSPI") -> Optional[pd.DataFrame]:
+        """전체 시장 데이터 수집 (단일 시장)"""
         try:
             from pykrx import stock
 
-            target_date = self._get_last_trading_date()
-            logger.info(f"Collecting market data for {target_date}")
+            if market not in self.SUPPORTED_MARKETS:
+                raise ValueError(f"Unsupported market: {market} (supported={self.SUPPORTED_MARKETS})")
 
-            df = stock.get_market_ohlcv(target_date, market="KOSPI")
+            target_date = self._get_last_trading_date()
+            logger.info(f"Collecting market data for {target_date} ({market})")
+
+            df = stock.get_market_ohlcv(target_date, market=market)
 
             # 데이터가 없으면 하루 더 이전 시도
             if len(df) == 0:
                 prev_date = (datetime.strptime(target_date, "%Y%m%d") - timedelta(days=1)).strftime("%Y%m%d")
                 logger.info(f"No data for {target_date}, trying {prev_date}")
-                df = stock.get_market_ohlcv(prev_date, market="KOSPI")
+                df = stock.get_market_ohlcv(prev_date, market=market)
 
             if len(df) > 0:
-                cap_df = stock.get_market_cap(target_date, market="KOSPI")
+                cap_df = stock.get_market_cap(target_date, market=market)
                 if len(cap_df) == 0:
                     prev_date = (datetime.strptime(target_date, "%Y%m%d") - timedelta(days=1)).strftime("%Y%m%d")
-                    cap_df = stock.get_market_cap(prev_date, market="KOSPI")
+                    cap_df = stock.get_market_cap(prev_date, market=market)
                 if len(cap_df) > 0:
                     # Drop existing 시가총액 column if present to avoid overlap
                     if '시가총액' in df.columns:
                         df = df.drop(columns=['시가총액'])
                     df = df.join(cap_df[['시가총액']])
+
+            if len(df) > 0:
+                # Keep market info for downstream merges.
+                df["시장"] = market
 
             return df
         except Exception as e:
@@ -664,6 +672,64 @@ class MKStockNewsCollector(DataCollector):
             return NewsSentiment.NEGATIVE
         else:
             return NewsSentiment.NEUTRAL
+
+
+class NaverFinanceNewsCollector(DataCollector):
+    """Naver Finance 종목 뉴스 수집기.
+
+    NOTE:
+      - HTML 구조 변경 가능성이 있으므로 실패 시 빈 리스트 반환.
+      - 외부 호출 비용이 크므로 상위 후보군에만 사용 권장.
+    """
+
+    BASE_URL = "https://finance.naver.com"
+
+    def __init__(self):
+        super().__init__()
+        self.session.headers.update(
+            {
+                "Referer": "https://finance.naver.com/",
+            }
+        )
+
+    def collect(self, code: str) -> Dict:
+        """종목 뉴스 데이터 수집"""
+        return {"stock_news": self._get_stock_news(code)}
+
+    def _get_stock_news(self, code: str) -> List[Dict]:
+        news_list: List[Dict] = []
+        try:
+            url = f"{self.BASE_URL}/item/news_news.nhn"
+            response = self.session.get(url, params={"code": code}, timeout=10)
+            if response.status_code != 200:
+                return news_list
+
+            soup = BeautifulSoup(response.text, "html.parser")
+
+            # Naver finance: news list is usually in table rows under .type5
+            table = soup.find("table", class_="type5")
+            if not table:
+                return news_list
+
+            for a in table.select("a"):
+                title = a.get_text(strip=True)
+                href = a.get("href", "")
+                if not title or "read" not in href:
+                    continue
+                news_list.append(
+                    {
+                        "title": title,
+                        "link": f"{self.BASE_URL}{href}" if href.startswith("/") else href,
+                        "code": code,
+                        "source": "네이버금융",
+                    }
+                )
+
+                if len(news_list) >= 10:
+                    break
+        except Exception as e:
+            logger.debug(f"Naver finance stock news failed for {code}: {e}")
+        return news_list
 
 
 # ============================================================

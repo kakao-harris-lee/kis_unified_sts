@@ -293,7 +293,16 @@ class StrategyManager:
     ) -> Signal | None:
         """Check entry with exception handling"""
         try:
-            return await strategy.check_entry(context)
+            signal = await strategy.check_entry(context)
+            if signal is None:
+                return None
+
+            # Ensure exit routing works: positions are grouped by TradingStrategy.name.
+            # Preserve the original entry component name in metadata for debugging.
+            if signal.strategy and signal.strategy != strategy.name:
+                signal.metadata.setdefault("entry_component", signal.strategy)
+            signal.strategy = strategy.name
+            return signal
         except Exception as e:
             logger.error(f"Entry check failed for {strategy.name}: {e}", exc_info=True)
             return None
