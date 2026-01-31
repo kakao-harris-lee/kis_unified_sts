@@ -64,6 +64,10 @@ class TradingMetrics:
     errors: int = 0
     uptime_seconds: float = 0.0
 
+    # 성능 관측
+    market_data_staleness_seconds: float = 0.0
+    order_queue_depth: int = 0
+
     # 타임스탬프
     last_trade_time: datetime | None = None
     last_signal_time: datetime | None = None
@@ -107,6 +111,12 @@ class TradingMetrics:
             "system": {
                 "errors": self.errors,
                 "uptime_seconds": round(self.uptime_seconds, 0),
+            },
+            "performance": {
+                "market_data_staleness_seconds": round(
+                    self.market_data_staleness_seconds, 3
+                ),
+                "order_queue_depth": self.order_queue_depth,
             },
             "timestamps": {
                 "last_trade": (
@@ -192,6 +202,19 @@ class MetricsCollector:
         self.prom_win_rate = Gauge(
             "trading_win_rate",
             "Win rate percentage",
+        )
+        self.prom_market_data_staleness = Gauge(
+            "trading_market_data_staleness_seconds",
+            "Market data snapshot staleness in seconds",
+        )
+        self.prom_market_data_staleness_hist = Histogram(
+            "trading_market_data_staleness_seconds_hist",
+            "Market data snapshot staleness distribution",
+            buckets=[0.05, 0.1, 0.25, 0.5, 0.75, 1, 2, 5],
+        )
+        self.prom_order_queue_depth = Gauge(
+            "trading_order_queue_depth",
+            "Number of queued order tasks waiting for execution capacity",
         )
 
         # Histograms
@@ -289,6 +312,19 @@ class MetricsCollector:
 
         if HAS_PROMETHEUS:
             self.prom_errors_total.labels(component=component).inc()
+
+    def record_market_data_staleness(self, staleness_seconds: float):
+        """Market data snapshot staleness 기록"""
+        self.metrics.market_data_staleness_seconds = staleness_seconds
+        if HAS_PROMETHEUS:
+            self.prom_market_data_staleness.set(staleness_seconds)
+            self.prom_market_data_staleness_hist.observe(staleness_seconds)
+
+    def record_order_queue_depth(self, depth: int):
+        """Order queue depth 기록"""
+        self.metrics.order_queue_depth = depth
+        if HAS_PROMETHEUS:
+            self.prom_order_queue_depth.set(depth)
 
     def get_metrics(self) -> TradingMetrics:
         """메트릭 조회"""

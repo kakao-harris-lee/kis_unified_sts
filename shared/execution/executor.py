@@ -237,7 +237,12 @@ class OrderExecutor:
         url = f"{base_url}/uapi/domestic-stock/v1/trading/order-cash"
 
         try:
-            async with self.session.post(url, headers=headers, json=body) as response:
+            request_timeout = aiohttp.ClientTimeout(
+                total=float(self.config.order_request_timeout_seconds)
+            )
+            async with self.session.post(
+                url, headers=headers, json=body, timeout=request_timeout
+            ) as response:
                 data = await response.json()
 
                 if response.status == 200 and data.get("rt_cd") == "0":

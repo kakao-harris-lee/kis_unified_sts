@@ -31,3 +31,12 @@ mlruns/
 # Logs
 *.log
 logs/
+
+# Local artifacts
+.venv/
+output/
+pids/
+*.pth
+monitoring/prometheus/alert_rules.yml
+scripts/cron/
+scripts/test_model.py

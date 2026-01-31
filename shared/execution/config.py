@@ -27,6 +27,14 @@ class ExecutionConfig(BaseModel):
     max_retries: int = Field(default=3, description="Max retry attempts")
     retry_delay: float = Field(default=1.0, description="Delay between retries (seconds)")
 
+    # Order request timeout
+    order_request_timeout_seconds: float = Field(
+        default=5.0,
+        ge=0.5,
+        le=60.0,
+        description="Timeout for order requests (seconds)"
+    )
+
     # Rate limiting (Redis-based distributed limiter)
     redis_url: str = Field(
         default="",

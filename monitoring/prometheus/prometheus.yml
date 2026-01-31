@@ -15,8 +15,8 @@ global:
 #           - alertmanager:9093
 
 # 규칙 파일 (선택)
-# rule_files:
-#   - "alert_rules.yml"
+rule_files:
+  - "alert_rules.yml"
 
 scrape_configs:
   # Prometheus 자체 메트릭

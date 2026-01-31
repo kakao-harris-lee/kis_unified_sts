@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -285,15 +286,17 @@ class TradingPipeline:
 
         logger.info(f"{stage.value} loop started (interval: {interval}s)")
 
+        next_tick = time.monotonic()
         while self._is_running:
             # 회로 차단기 체크
             if breaker.is_open:
                 logger.warning(f"{stage.value} circuit OPEN, waiting...")
                 await asyncio.sleep(5)
+                next_tick = time.monotonic() + interval
                 continue
 
             try:
-                start_time = datetime.now()
+                start_time = time.monotonic()
 
                 # 핸들러 실행
                 result = await with_retry(
@@ -303,7 +306,7 @@ class TradingPipeline:
                 )
 
                 # 메트릭 업데이트
-                latency = (datetime.now() - start_time).total_seconds() * 1000
+                latency = (time.monotonic() - start_time) * 1000
                 metrics.executions += 1
                 metrics.successes += 1
                 metrics.total_latency_ms += latency
@@ -320,7 +323,14 @@ class TradingPipeline:
                 breaker.record_failure()
                 logger.error(f"{stage.value} failed: {e}")
 
-            await asyncio.sleep(interval)
+            next_tick += interval
+            sleep_time = next_tick - time.monotonic()
+            if sleep_time > 0:
+                await asyncio.sleep(sleep_time)
+            else:
+                # If we're too far behind, reset schedule to avoid drift
+                if -sleep_time > interval * 3:
+                    next_tick = time.monotonic()
 
     def get_status(self) -> dict[str, Any]:
         """파이프라인 상태"""

@@ -5,7 +5,10 @@
   "num_layers": 2,
   "num_classes": 3,
   "dropout": 0.2,
-  "cnn_channels": [32, 64],
+  "cnn_channels": [
+    32,
+    64
+  ],
   "kernel_size": 3,
   "seq_len": 60,
   "version": "1.0.0",
@@ -21,7 +24,7 @@
     "hl_range",
     "candle_body"
   ],
-  "trained_at": null,
-  "training_samples": 0,
-  "validation_accuracy": 0.0
+  "trained_at": "2026-01-29T17:56:18.803218",
+  "training_samples": 14024,
+  "validation_accuracy": 0.5077010838562465
 }

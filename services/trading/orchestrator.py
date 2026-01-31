@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, date, time, timedelta
 from enum import Enum
@@ -41,6 +42,7 @@ from services.trading.holiday_cache import (
     AsyncHolidayCache,
     async_holiday_loader,
 )
+from services.monitoring.metrics import get_metrics_collector
 from shared.models.signal import Signal, ExitSignal
 from shared.strategy.base import EntryContext
 from shared.utils.calc import calc_order_quantity
@@ -271,6 +273,12 @@ class TradingConfig:
     # Order sizing (previously hardcoded)
     order_amount_per_trade: float = 1_000_000  # 종목당 주문 금액
 
+    # Order execution concurrency
+    max_concurrent_orders: int = 5
+
+    # Market data refresh cadence (seconds)
+    market_data_refresh_seconds: float = 0.5
+
     # Error recovery
     error_retry_delay_seconds: float = 60.0  # Retry delay after errors (default 1 min)
 
@@ -305,6 +313,22 @@ class TradingConfig:
 
         if not isinstance(self.paper_trading, bool):
             raise TypeError(f"paper_trading must be bool, got {type(self.paper_trading)}")
+
+        if not isinstance(self.max_concurrent_orders, int) or self.max_concurrent_orders < 1:
+            raise ValueError(
+                f"max_concurrent_orders must be int >= 1, got {self.max_concurrent_orders}"
+            )
+
+        if not isinstance(self.market_data_refresh_seconds, (int, float)):
+            raise TypeError(
+                "market_data_refresh_seconds must be numeric, "
+                f"got {type(self.market_data_refresh_seconds)}"
+            )
+        if not (0.5 <= float(self.market_data_refresh_seconds) <= 5.0):
+            raise ValueError(
+                "market_data_refresh_seconds must be between 0.5 and 5.0, "
+                f"got {self.market_data_refresh_seconds}"
+            )
 
     @classmethod
     def stock(
@@ -386,9 +410,11 @@ class TradingOrchestrator:
         self._running = False
         self._main_task: asyncio.Task | None = None
 
-        # Thread-safety locks for order execution
-        self._entry_lock = asyncio.Lock()
-        self._exit_lock = asyncio.Lock()
+        # Per-symbol locks and order concurrency control
+        self._symbol_locks: dict[str, asyncio.Lock] = {}
+        self._order_semaphore = asyncio.Semaphore(config.max_concurrent_orders)
+        self._order_queue_depth = 0
+        self._order_queue_lock = asyncio.Lock()
 
         # Trading components (initialized in start())
         self._data_provider: MarketDataProvider | None = None
@@ -399,6 +425,14 @@ class TradingOrchestrator:
 
         # Market regime
         self._current_regime: str | None = None
+
+        # Market data loop state
+        self._market_data_task: asyncio.Task | None = None
+        self._market_data_running = False
+        self._market_data_lock = asyncio.Lock()
+        self._market_data_snapshot: dict[str, dict[str, Any]] = {}
+        self._market_data_updated_at: datetime | None = None
+        self._metrics = get_metrics_collector()
 
         logger.info(
             f"TradingOrchestrator initialized: "
@@ -422,6 +456,9 @@ class TradingOrchestrator:
 
         # Initialize components
         await self._initialize_components()
+
+        # Start shared market data loop before pipeline
+        await self._start_market_data_loop()
 
         # 파이프라인 생성 및 시작
         self.pipeline = self._create_pipeline()
@@ -496,6 +533,8 @@ class TradingOrchestrator:
             return
 
         logger.info("Stopping trading...")
+
+        await self._stop_market_data_loop()
 
         # Close all positions (EOD close)
         if self._position_tracker and self._data_provider:
@@ -644,6 +683,114 @@ class TradingOrchestrator:
             exit_handler=self._handle_exit,
         )
 
+    def _get_symbol_lock(self, symbol: str) -> asyncio.Lock:
+        lock = self._symbol_locks.get(symbol)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._symbol_locks[symbol] = lock
+        return lock
+
+    def _get_market_data_staleness_seconds(self) -> float | None:
+        if not self._market_data_updated_at:
+            return None
+        return (datetime.now() - self._market_data_updated_at).total_seconds()
+
+    async def _increment_order_queue(self) -> None:
+        async with self._order_queue_lock:
+            self._order_queue_depth += 1
+            self._metrics.record_order_queue_depth(self._order_queue_depth)
+
+    async def _decrement_order_queue(self) -> None:
+        async with self._order_queue_lock:
+            self._order_queue_depth = max(0, self._order_queue_depth - 1)
+            self._metrics.record_order_queue_depth(self._order_queue_depth)
+
+    def _get_market_symbols(self) -> list[str]:
+        symbols = set(self.config.symbols or [])
+        if self._position_tracker:
+            for position in self._position_tracker.positions:
+                symbols.add(position.code)
+        return list(symbols)
+
+    async def _refresh_market_data_once(self) -> dict[str, dict[str, Any]]:
+        if not self._data_provider:
+            return {}
+        symbols = self._get_market_symbols()
+        if not symbols:
+            return {}
+        return await self._data_provider.get_data(symbols=symbols, force_refresh=True)
+
+    async def _start_market_data_loop(self) -> None:
+        if self._market_data_running:
+            return
+
+        self._market_data_running = True
+
+        # Initial refresh to avoid empty snapshots on first pipeline tick
+        try:
+            data = await self._refresh_market_data_once()
+            async with self._market_data_lock:
+                self._market_data_snapshot = data
+                self._market_data_updated_at = datetime.now()
+        except Exception as e:
+            logger.warning(f"Initial market data refresh failed: {e}")
+
+        interval = float(self.config.market_data_refresh_seconds)
+        if self.pipeline:
+            interval = max(interval, min(self.pipeline.intervals.values()))
+
+        self._market_data_task = asyncio.create_task(
+            self._market_data_loop(interval),
+            name="market_data_loop",
+        )
+
+    async def _stop_market_data_loop(self) -> None:
+        if not self._market_data_running:
+            return
+
+        self._market_data_running = False
+        if self._market_data_task:
+            self._market_data_task.cancel()
+            await asyncio.gather(self._market_data_task, return_exceptions=True)
+            self._market_data_task = None
+
+    async def _market_data_loop(self, interval: float) -> None:
+        logger.info(f"Market data loop started (interval: {interval}s)")
+        next_tick = time.monotonic()
+
+        while self._market_data_running:
+            try:
+                data = await self._refresh_market_data_once()
+                if data:
+                    async with self._market_data_lock:
+                        self._market_data_snapshot = data
+                        self._market_data_updated_at = datetime.now()
+                    staleness = self._get_market_data_staleness_seconds()
+                    if staleness is not None:
+                        self._metrics.record_market_data_staleness(staleness)
+            except Exception as e:
+                logger.warning(f"Market data refresh failed: {e}")
+
+            next_tick += interval
+            sleep_time = next_tick - time.monotonic()
+            if sleep_time > 0:
+                await asyncio.sleep(sleep_time)
+            else:
+                if -sleep_time > interval * 3:
+                    next_tick = time.monotonic()
+
+        logger.info("Market data loop stopped")
+
+    async def _get_market_data_snapshot(
+        self, symbols: list[str] | None = None
+    ) -> dict[str, dict[str, Any]]:
+        async with self._market_data_lock:
+            snapshot = dict(self._market_data_snapshot)
+
+        if symbols:
+            return {symbol: snapshot[symbol] for symbol in symbols if symbol in snapshot}
+        return snapshot
+
     # -------------------------------------------------------------------------
     # Pipeline Handlers
     # -------------------------------------------------------------------------
@@ -658,7 +805,7 @@ class TradingOrchestrator:
 
         try:
             # Fetch market data
-            data = await self._data_provider.get_data()
+            data = await self._get_market_data_snapshot()
             if not data:
                 return None
 
@@ -743,7 +890,7 @@ class TradingOrchestrator:
 
         try:
             # Fetch market data
-            data = await self._data_provider.get_data()
+            data = await self._get_market_data_snapshot()
             if not data:
                 return []
 
@@ -759,9 +906,23 @@ class TradingOrchestrator:
             # Check entries across all strategies
             signals = await self._strategy_manager.check_entries(context)
 
-            # Execute orders for valid signals
-            for signal in signals:
-                await self._execute_entry(signal)
+            # Execute orders for valid signals (bounded parallelism)
+            async def run_entry(signal: Signal) -> None:
+                queued = getattr(self._order_semaphore, "_value", 0) <= 0
+                acquired = False
+                if queued:
+                    await self._increment_order_queue()
+                try:
+                    async with self._order_semaphore:
+                        acquired = True
+                        if queued:
+                            await self._decrement_order_queue()
+                        await self._execute_entry(signal)
+                finally:
+                    if queued and not acquired:
+                        await self._decrement_order_queue()
+
+            await asyncio.gather(*(run_entry(signal) for signal in signals))
 
             return signals
 
@@ -784,7 +945,7 @@ class TradingOrchestrator:
         try:
             # Fetch latest prices
             symbols = list({p.code for p in positions})
-            data = await self._data_provider.get_data(symbols)
+            data = await self._get_market_data_snapshot(symbols)
 
             # Update prices
             self._position_tracker.update_prices(data)
@@ -826,7 +987,7 @@ class TradingOrchestrator:
         try:
             # Fetch market data
             symbols = list({p.code for p in positions})
-            data = await self._data_provider.get_data(symbols)
+            data = await self._get_market_data_snapshot(symbols)
 
             # Check exits
             signals = await self._strategy_manager.check_exits(
@@ -835,9 +996,23 @@ class TradingOrchestrator:
                 market_state=self._current_regime,
             )
 
-            # Execute exit orders
-            for signal in signals:
-                await self._execute_exit(signal)
+            # Execute exit orders (bounded parallelism)
+            async def run_exit(signal: ExitSignal) -> None:
+                queued = getattr(self._order_semaphore, "_value", 0) <= 0
+                acquired = False
+                if queued:
+                    await self._increment_order_queue()
+                try:
+                    async with self._order_semaphore:
+                        acquired = True
+                        if queued:
+                            await self._decrement_order_queue()
+                        await self._execute_exit(signal)
+                finally:
+                    if queued and not acquired:
+                        await self._decrement_order_queue()
+
+            await asyncio.gather(*(run_exit(signal) for signal in signals))
 
             return signals
 
@@ -860,8 +1035,8 @@ class TradingOrchestrator:
             logger.warning(f"Invalid quantity for {signal.code}: {quantity}")
             return
 
-        # Use lock to prevent race conditions in concurrent execution
-        async with self._entry_lock:
+        # Per-symbol lock to prevent race conditions on the same symbol
+        async with self._get_symbol_lock(signal.code):
             # Re-check position limit under lock
             if not self._position_tracker.can_open_position(signal.code):
                 logger.debug(f"Position limit reached, skipping entry for {signal.code}")
@@ -907,8 +1082,8 @@ class TradingOrchestrator:
         if not self._position_tracker:
             return
 
-        # Use lock to prevent race conditions in concurrent execution
-        async with self._exit_lock:
+        # Per-symbol lock to prevent race conditions on the same symbol
+        async with self._get_symbol_lock(signal.code):
             # Verify position still exists under lock
             position = self._position_tracker.get_position(signal.position_id)
             if not position:
@@ -1045,9 +1220,20 @@ class TradingOrchestrator:
 
     def get_metrics(self) -> dict[str, Any]:
         """메트릭 조회"""
-        if self.pipeline:
-            return self.pipeline.metrics.to_dict()
-        return {}
+        staleness = self._get_market_data_staleness_seconds()
+        if staleness is not None:
+            self._metrics.record_market_data_staleness(staleness)
+        self._metrics.record_order_queue_depth(self._order_queue_depth)
+
+        metrics = self.pipeline.metrics.to_dict() if self.pipeline else {}
+        metrics["market_data_staleness_seconds"] = staleness
+        metrics["order_queue_depth"] = self._order_queue_depth
+        metrics["market_data_updated_at"] = (
+            self._market_data_updated_at.isoformat()
+            if self._market_data_updated_at
+            else None
+        )
+        return metrics
 
 
 # 편의 함수
