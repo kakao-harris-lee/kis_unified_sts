@@ -205,23 +205,39 @@ class MultiStreamConsumer(ABC):
     Strategy Manager처럼 여러 소스를 조합해야 할 때 사용.
     """
 
+    HEARTBEAT_INTERVAL = 30.0
+
     def __init__(
         self,
         streams: dict[str, str],  # {stream_name: group_name}
         consumer_name: str | None = None,
+        component_name: str | None = None,
     ):
         """
         Args:
             streams: {stream_name: group_name} 딕셔너리
             consumer_name: Consumer 이름
+            component_name: 헬스체크용 컴포넌트 이름
         """
         self.streams = streams
         self.consumer = consumer_name or "multi_consumer_1"
         self.client = RedisClient.get_client()
         self.running = False
 
+        self._component_name = component_name
+        self._last_heartbeat_time = 0.0
+
         self._read_count = int(os.environ.get("REDIS_CONSUMER_READ_COUNT", "10"))
         self._block_ms = int(os.environ.get("REDIS_CONSUMER_BLOCK_MS", "1000"))
+
+        # Multi-stream XREADGROUP requires a single group name across streams.
+        groups = set(streams.values())
+        if len(groups) != 1:
+            raise ValueError(
+                "MultiStreamConsumer requires the same consumer group for all streams. "
+                f"Got groups={sorted(groups)}"
+            )
+        self.group = next(iter(groups))
 
         for stream, group in streams.items():
             self._ensure_group_exists(stream, group)
@@ -240,32 +256,94 @@ class MultiStreamConsumer(ABC):
         """메시지 처리 로직"""
         pass
 
+    def set_component_name(self, name: str) -> None:
+        """헬스체크용 컴포넌트 이름 설정"""
+        self._component_name = name
+
+    def _publish_heartbeat(self) -> None:
+        """헬스 모니터링용 heartbeat 발행"""
+        if not self._component_name:
+            return
+
+        now = time.time()
+        if now - self._last_heartbeat_time < self.HEARTBEAT_INTERVAL:
+            return
+
+        try:
+            heartbeat_key = f"heartbeat:{self._component_name}"
+            self.client.set(heartbeat_key, str(now), ex=120)
+            self._last_heartbeat_time = now
+            logger.debug(f"Heartbeat published: {heartbeat_key}")
+        except Exception as e:
+            logger.warning(f"Failed to publish heartbeat: {e}")
+
+    def _read_pending(self) -> list[StreamMessage]:
+        """미처리(Pending) 메시지 읽기"""
+        messages: list[StreamMessage] = []
+        stream_ids = {s: "0" for s in self.streams.keys()}
+        pending = self.client.xreadgroup(
+            self.group,
+            self.consumer,
+            stream_ids,
+            count=self._read_count,
+            block=None,
+        )
+
+        if pending:
+            for stream_name, stream_msgs in pending:
+                for msg_id, fields in stream_msgs:
+                    if fields:
+                        messages.append(StreamMessage.from_raw(stream_name, msg_id, fields))
+        return messages
+
+    def _read_new(self) -> list[StreamMessage]:
+        """새 메시지 읽기"""
+        messages: list[StreamMessage] = []
+        stream_ids = {s: ">" for s in self.streams.keys()}
+        result = self.client.xreadgroup(
+            self.group,
+            self.consumer,
+            stream_ids,
+            count=self._read_count,
+            block=self._block_ms,
+        )
+
+        if result:
+            for stream_name, stream_msgs in result:
+                for msg_id, fields in stream_msgs:
+                    messages.append(StreamMessage.from_raw(stream_name, msg_id, fields))
+        return messages
+
     def run(self) -> None:
         """메인 처리 루프"""
         self.running = True
         logger.info(f"MultiStreamConsumer 시작: {list(self.streams.keys())}")
 
+        # 초기 heartbeat
+        self._publish_heartbeat()
+
+        # 1) Pending 먼저 처리
+        pending = self._read_pending()
+        if pending:
+            logger.info(f"미처리 메시지 {len(pending)}개 발견, 처리 시작")
+            for msg in pending:
+                try:
+                    if self.process_message(msg):
+                        self.client.xack(msg.stream, self.group, msg.id)
+                except Exception as e:
+                    logger.error(f"메시지 처리 실패 (pending): {msg.id}, {e}")
+
         while self.running:
             try:
-                stream_ids = {s: ">" for s in self.streams.keys()}
-                result = self.client.xreadgroup(
-                    list(self.streams.values())[0],  # 첫 번째 그룹 사용
-                    self.consumer,
-                    stream_ids,
-                    count=self._read_count,
-                    block=self._block_ms,
-                )
+                self._publish_heartbeat()
 
-                if result:
-                    for stream_name, stream_msgs in result:
-                        group = self.streams[stream_name]
-                        for msg_id, fields in stream_msgs:
-                            msg = StreamMessage.from_raw(stream_name, msg_id, fields)
-                            try:
-                                if self.process_message(msg):
-                                    self.client.xack(stream_name, group, msg_id)
-                            except Exception as e:
-                                logger.error(f"메시지 처리 실패: {msg_id}, {e}")
+                messages = self._read_new()
+                for msg in messages:
+                    try:
+                        if self.process_message(msg):
+                            self.client.xack(msg.stream, self.group, msg.id)
+                    except Exception as e:
+                        logger.error(f"메시지 처리 실패: {msg.id}, {e}")
 
             except KeyboardInterrupt:
                 self.stop()

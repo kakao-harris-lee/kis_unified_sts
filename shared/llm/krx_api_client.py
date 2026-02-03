@@ -12,6 +12,8 @@ from typing import List, Optional
 
 import requests
 
+from shared.calendar import MarketCalendar
+
 from .config import LLMConfig
 from .data_classes import (
     BondIndexData,
@@ -38,6 +40,7 @@ class KRXOpenAPIClient:
             "AUTH_KEY": self.config.krx_api_key,
             "Content-Type": "application/json",
         })
+        self._calendar = MarketCalendar()
 
     def _request(self, endpoint: str, params: Optional[dict] = None) -> list:
         """
@@ -309,24 +312,19 @@ class KRXOpenAPIClient:
     # ============================================================
 
     def _get_last_trading_date(self) -> str:
-        """최근 거래일 (주말 제외)"""
-        today = datetime.now()
+        """최근 거래일 (휴장일/공휴일 반영, 장마감 전에는 전일 사용)."""
+        now = datetime.now()
+        today = now.date()
 
-        # 주말이면 금요일로
-        if today.weekday() == 5:  # 토요일
-            today = today - timedelta(days=1)
-        elif today.weekday() == 6:  # 일요일
-            today = today - timedelta(days=2)
+        if now.time() < self._calendar.MARKET_CLOSE_TIME:
+            target = self._calendar.get_previous_market_day(today)
+            return target.strftime("%Y%m%d")
 
-        # 장 마감 전이면 전일
-        if today.hour < 16:
-            today = today - timedelta(days=1)
-            if today.weekday() == 5:
-                today = today - timedelta(days=1)
-            elif today.weekday() == 6:
-                today = today - timedelta(days=2)
+        if self._calendar.is_market_day(today):
+            return today.strftime("%Y%m%d")
 
-        return today.strftime("%Y%m%d")
+        target = self._calendar.get_previous_market_day(today)
+        return target.strftime("%Y%m%d")
 
     def get_date_range(self, days: Optional[int] = None) -> List[str]:
         """과거 N 거래일 리스트"""

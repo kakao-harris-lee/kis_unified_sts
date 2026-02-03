@@ -43,8 +43,15 @@ export const tradesApi = {
 // Backtest API
 export const backtestApi = {
   list: () => apiClient.get('/api/backtest'),
-  run: (params: { strategy: string; start_date: string; end_date: string }) =>
-    apiClient.post('/api/backtest/run', null, { params }),
+  run: (params: {
+    asset_class: string;
+    strategy: string;
+    symbol: string;
+    start_date: string;
+    end_date: string;
+    initial_capital: number;
+    params?: Record<string, unknown>;
+  }) => apiClient.post('/api/backtest/run', params),
   getResult: (runId: string) => apiClient.get(`/api/backtest/${runId}`),
 };
 

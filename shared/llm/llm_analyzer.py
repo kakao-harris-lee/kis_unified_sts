@@ -10,6 +10,7 @@ import os
 import re
 from dataclasses import asdict
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from .analyzers import (
@@ -40,6 +41,7 @@ from .data_classes import (
     StockInfo,
     StockTradingPlan,
 )
+from .identifiers import DARTCorpCodeMapper
 
 logger = logging.getLogger(__name__)
 
@@ -405,13 +407,22 @@ class UnifiedTradingAnalyzer:
     - MK Stock (stock.mk.co.kr): 증권뉴스, 테마, 분석
     """
 
-    def __init__(self, notifier=None, dart_api_key: str = None):
+    def __init__(
+        self,
+        notifier=None,
+        dart_api_key: str | None = None,
+        config: Optional[LLMConfig] = None,
+        config_path: str | Path | None = None,
+    ):
         """
         Args:
             notifier: TelegramNotifier 인스턴스
             dart_api_key: DART API 키 (없으면 환경변수 DART_API_KEY 사용)
+            config: LLMConfig (None이면 기본 설정 로드)
+            config_path: LLM 설정 YAML 경로 (config가 None일 때만 사용)
         """
         self.notifier = notifier
+        self.config = config or LLMConfig.load(config_path)
 
         # Stock analyzers
         self.stock_collector = StockDataCollector()
@@ -426,6 +437,11 @@ class UnifiedTradingAnalyzer:
         self.ksd_collector = KSDDataCollector()
         self.kofia_collector = KOFIADataCollector()
         self.mk_news_collector = MKStockNewsCollector()
+        self._dart_corp_mapper = DARTCorpCodeMapper(
+            api_key=getattr(self.dart_collector, "api_key", "") or "",
+            cache_path=Path(self.config.output_dir) / "dart_corp_codes.json",
+            auto_refresh=bool(getattr(self.dart_collector, "api_key", "")),
+        )
 
         # Futures analyzers
         self.futures_global_collector = FuturesGlobalCollector()
@@ -436,7 +452,42 @@ class UnifiedTradingAnalyzer:
         # Output
         self.date = datetime.now().strftime("%Y%m%d")
         self.datetime_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        os.makedirs(UnifiedConfig.OUTPUT_DIR, exist_ok=True)
+        os.makedirs(self.config.output_dir, exist_ok=True)
+
+    def _is_preferred_share(self, name: str) -> bool:
+        normalized = name.strip()
+        return (
+            "우선주" in normalized
+            or normalized.endswith("우")
+            or normalized.endswith("우B")
+            or normalized.endswith("우C")
+        )
+
+    def _name_exclusion_reasons(self, name: str) -> List[str]:
+        reasons: List[str] = []
+
+        if self.config.stock_exclude_preferred_shares and self._is_preferred_share(name):
+            reasons.append("preferred_share")
+
+        for kw in self.config.stock_exclude_name_keywords:
+            if kw and kw in name:
+                reasons.append(f"name_keyword:{kw}")
+
+        return reasons
+
+    @staticmethod
+    def _find_keyword_hits(texts: List[str], keywords: List[str]) -> List[str]:
+        hits: List[str] = []
+        if not keywords:
+            return hits
+
+        for t in texts:
+            if not t:
+                continue
+            for kw in keywords:
+                if kw and kw in t and kw not in hits:
+                    hits.append(kw)
+        return hits
 
     def collect_all_data_sources(self, code: str = None) -> Dict:
         """모든 데이터 소스에서 데이터 수집"""
@@ -469,7 +520,12 @@ class UnifiedTradingAnalyzer:
 
         # DART 공시 데이터
         try:
-            data["sources"]["dart"] = self.dart_collector.collect(code)
+            corp_code = self._dart_corp_mapper.get_corp_code(code) if code else None
+            data["sources"]["dart"] = (
+                self.dart_collector.collect(corp_code)
+                if corp_code
+                else {"error": "corp_code_not_found"}
+            )
             logger.debug("DART data collected")
         except Exception as e:
             logger.warning(f"DART data collection failed: {e}")
@@ -586,37 +642,52 @@ class UnifiedTradingAnalyzer:
 
         # 필터링
         filtered = market_df[
-            (market_df['종가'] >= UnifiedConfig.STOCK_MIN_PRICE) &
-            (market_df['종가'] <= UnifiedConfig.STOCK_MAX_PRICE) &
-            (market_df['시가총액'] >= UnifiedConfig.STOCK_MIN_MARKET_CAP) &
-            (market_df['시가총액'] <= UnifiedConfig.STOCK_MAX_MARKET_CAP)
+            (market_df["종가"] >= self.config.stock_min_price)
+            & (market_df["종가"] <= self.config.stock_max_price)
+            & (market_df["시가총액"] >= self.config.stock_min_market_cap)
+            & (market_df["시가총액"] <= self.config.stock_max_market_cap)
         ].copy()
 
-        filtered['거래량비율'] = filtered['거래량'] / filtered['거래량'].mean()
-        filtered['등락률'] = (filtered['종가'] - filtered['시가']) / filtered['시가'] * 100
+        filtered["등락률"] = (filtered["종가"] - filtered["시가"]) / filtered["시가"] * 100
 
-        top_volume = filtered.nlargest(UnifiedConfig.STOCK_TOP_N_VOLUME, '거래량')
+        top_volume = filtered.nlargest(self.config.stock_top_n_volume, "거래량")
 
         stocks = []
+        excluded: Dict[str, List[str]] = {}
         for code in top_volume.index:
             row = top_volume.loc[code]
             name = self.stock_collector.get_stock_name(code)
+            name_exclusions = self._name_exclusion_reasons(name)
+            if name_exclusions:
+                excluded[code] = name_exclusions
+                continue
             stocks.append(StockInfo(
                 code=code, name=name,
                 price=row['종가'], change_pct=round(row['등락률'], 2),
-                volume=int(row['거래량']), volume_ratio=round(row['거래량비율'], 2),
+                volume=int(row['거래량']), volume_ratio=1.0,
                 market_cap=row['시가총액']
             ))
 
-        logger.info(f"Screened {len(stocks)} stocks")
+        logger.info(f"Screened {len(stocks)} stocks (excluded={len(excluded)}) from {markets}")
 
         # 개별 분석
         candidates = []
-        analysis_results = {}
+        analysis_results: Dict[str, Any] = {"_excluded": excluded}
 
-        for stock in stocks[:UnifiedConfig.STOCK_TOP_N_VOLUME]:
-            df = self.stock_collector.get_stock_history(stock.code, UnifiedConfig.STOCK_BACKTEST_DAYS)
+        for stock in stocks[: self.config.stock_top_n_volume]:
+            df = self.stock_collector.get_stock_history(
+                stock.code, self.config.stock_backtest_days
+            )
             if df is None or len(df) < 30:
+                continue
+
+            # Volume ratio and liquidity filter (per-stock)
+            lookback = max(1, int(self.config.stock_volume_lookback_days))
+            vol_window = df["거래량"].tail(lookback + 1)
+            avg_volume = float(vol_window.iloc[:-1].mean()) if len(vol_window) > 1 else float(vol_window.mean())
+            stock.volume_ratio = round((stock.volume / avg_volume) if avg_volume > 0 else 1.0, 2)
+            if avg_volume < float(self.config.stock_min_avg_volume):
+                analysis_results["_excluded"][stock.code] = [f"min_avg_volume:{int(avg_volume)}"]
                 continue
 
             tech = self.stock_tech_analyzer.analyze(df)
@@ -634,7 +705,12 @@ class UnifiedTradingAnalyzer:
             # DART 공시 확인
             dart_data = {}
             try:
-                dart_data = self.dart_collector.collect(stock.code)
+                corp_code = self._dart_corp_mapper.get_corp_code(stock.code)
+                dart_data = (
+                    self.dart_collector.collect(corp_code)
+                    if corp_code
+                    else {"error": "corp_code_not_found"}
+                )
             except Exception as e:
                 logger.debug(f"DART data failed for {stock.code}: {e}")
 
@@ -644,6 +720,31 @@ class UnifiedTradingAnalyzer:
                 ksd_data = self.ksd_collector.collect(stock.code)
             except Exception as e:
                 logger.debug(f"KSD data failed for {stock.code}: {e}")
+
+            # KRX 종목 상태(가능 시) 확인 → blacklist 키워드 탐지
+            krx_stock_info: Dict[str, Any] = {}
+            try:
+                krx_stock_info = self.krx_collector.get_stock_info(stock.code) or {}
+            except Exception as e:
+                logger.debug(f"KRX stock info failed for {stock.code}: {e}")
+
+            texts_to_scan: List[str] = [stock.name]
+            texts_to_scan.extend([n.get("title", "") for n in mk_news.get("stock_news", [])])
+            texts_to_scan.extend([n.get("title", "") for n in mk_news.get("market_news", [])])
+            texts_to_scan.append(json.dumps(krx_stock_info, ensure_ascii=False, default=str))
+            if dart_data.get("recent_disclosures"):
+                texts_to_scan.extend(
+                    [d.get("report_nm", "") for d in dart_data.get("recent_disclosures", [])]
+                )
+
+            blacklist_hits = self._find_keyword_hits(texts_to_scan, self.config.stock_blacklist)
+            keyword_hits = self._find_keyword_hits(texts_to_scan, self.config.stock_keyword_filter)
+            if blacklist_hits or keyword_hits:
+                reasons: List[str] = []
+                reasons.extend([f"blacklist:{kw}" for kw in blacklist_hits])
+                reasons.extend([f"keyword:{kw}" for kw in keyword_hits])
+                analysis_results["_excluded"][stock.code] = reasons
+                continue
 
             # 기존 news 분석에 MK 뉴스 통합
             news = self.stock_news_analyzer.analyze(stock.code, stock.name)
@@ -660,6 +761,7 @@ class UnifiedTradingAnalyzer:
                     "mk_news": mk_news,
                     "dart": dart_data,
                     "ksd": ksd_data,
+                    "krx_stock_info": krx_stock_info,
                 }
             }
 
@@ -686,10 +788,15 @@ class UnifiedTradingAnalyzer:
             if dart.get("recent_disclosures"):
                 score += 5
 
+            if stock.volume_ratio >= 2.0:
+                score += 10
+            elif stock.volume_ratio >= 1.5:
+                score += 5
+
             return score
 
         candidates.sort(key=score_candidate, reverse=True)
-        final = candidates[:UnifiedConfig.STOCK_FINAL_SELECTION]
+        final = candidates[: self.config.stock_final_selection]
 
         # 매매 계획 생성
         plans = []
@@ -705,11 +812,11 @@ class UnifiedTradingAnalyzer:
             take_profit = entry * (1 + tp_pct)
 
             if best.win_rate >= 55:
-                position, confidence = UnifiedConfig.STOCK_MAX_POSITION, "높음"
+                position, confidence = self.config.stock_max_position, "높음"
             elif best.win_rate >= 48:
-                position, confidence = UnifiedConfig.STOCK_MAX_POSITION * 0.7, "중간"
+                position, confidence = self.config.stock_max_position * 0.7, "중간"
             else:
-                position, confidence = UnifiedConfig.STOCK_MAX_POSITION * 0.5, "낮음"
+                position, confidence = self.config.stock_max_position * 0.5, "낮음"
 
             reasons = []
             if tech.signal in [Signal.STRONG_BUY, Signal.BUY]:
@@ -761,9 +868,9 @@ class UnifiedTradingAnalyzer:
 
         # 종합 판단
         overall_score = (
-            global_data.global_score * UnifiedConfig.FUTURES_WEIGHT_GLOBAL +
-            flow_data.flow_score * UnifiedConfig.FUTURES_WEIGHT_FLOW +
-            technical['score'] * UnifiedConfig.FUTURES_WEIGHT_TECHNICAL
+            global_data.global_score * self.config.futures_weight_global
+            + flow_data.flow_score * self.config.futures_weight_flow
+            + technical["score"] * self.config.futures_weight_technical
         )
 
         if high_events:
@@ -785,15 +892,15 @@ class UnifiedTradingAnalyzer:
             direction = "롱"
             confidence = "높음" if overall_score >= 40 else "중간"
             entry = technical['index_price']
-            stop_loss = entry - UnifiedConfig.FUTURES_STOP_LOSS_PT
-            take_profit = entry + UnifiedConfig.FUTURES_TAKE_PROFIT_PT
+            stop_loss = entry - self.config.futures_stop_loss_pt
+            take_profit = entry + self.config.futures_take_profit_pt
             entry_cond = f"5일선({technical['ma5']:.2f}) 돌파 또는 시가 진입"
         elif overall_score <= -25:
             direction = "숏"
             confidence = "높음" if overall_score <= -40 else "중간"
             entry = technical['index_price']
-            stop_loss = entry + UnifiedConfig.FUTURES_STOP_LOSS_PT
-            take_profit = entry - UnifiedConfig.FUTURES_TAKE_PROFIT_PT
+            stop_loss = entry + self.config.futures_stop_loss_pt
+            take_profit = entry - self.config.futures_take_profit_pt
             entry_cond = f"5일선({technical['ma5']:.2f}) 이탈 또는 시가 진입"
         else:
             direction = "관망"
@@ -916,7 +1023,7 @@ class UnifiedTradingAnalyzer:
             "analysis": analysis_data
         }
 
-        json_path = os.path.join(UnifiedConfig.OUTPUT_DIR, f"unified_data_{self.date}.json")
+        json_path = os.path.join(self.config.output_dir, f"unified_data_{self.date}.json")
         with open(json_path, 'w', encoding='utf-8') as f:
             json.dump(json_data, f, ensure_ascii=False, indent=2, default=str)
 
@@ -973,7 +1080,12 @@ class UnifiedTradingAnalyzer:
 
             dart_disclosures = []
             try:
-                dart_data = self.dart_collector.collect(code)
+                corp_code = self._dart_corp_mapper.get_corp_code(code)
+                dart_data = (
+                    self.dart_collector.collect(corp_code)
+                    if corp_code
+                    else {"error": "corp_code_not_found"}
+                )
                 disclosures = dart_data.get("recent_disclosures", [])
                 dart_disclosures = [d.get("report_nm", "") for d in disclosures[:3]]
             except:

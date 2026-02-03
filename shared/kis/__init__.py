@@ -10,10 +10,12 @@ Modules:
 
 from shared.kis.auth import KISAuthManager, KISAuthConfig
 from shared.kis.websocket import KISWebSocketAdapter, create_websocket_adapter
+from shared.kis.ranking_client import KISRankingClient
 
 __all__ = [
     "KISAuthManager",
     "KISAuthConfig",
     "KISWebSocketAdapter",
     "create_websocket_adapter",
+    "KISRankingClient",
 ]

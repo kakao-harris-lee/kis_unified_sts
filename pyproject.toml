@@ -45,6 +45,8 @@ dependencies = [
     # Data Processing
     "numpy>=1.26",
     "pandas>=2.1",
+    "matplotlib>=3.8",
+    "mplfinance>=0.12",
 
     # HTTP Client
     "requests>=2.31",
@@ -143,7 +145,7 @@ Issues = "https://github.com/kakao-harris-lee/kis-unified-sts/issues"
 # =============================================================================
 
 [tool.hatch.build.targets.wheel]
-packages = ["shared", "domains", "services", "cli"]
+packages = ["shared", "domains", "services", "cli", "core"]
 
 [tool.black]
 line-length = 88
@@ -188,7 +190,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.isort]
-known-first-party = ["shared", "domains", "services", "cli"]
+known-first-party = ["shared", "domains", "services", "cli", "core"]
 
 [tool.mypy]
 python_version = "3.11"
@@ -224,7 +226,7 @@ markers = [
 ]
 
 [tool.coverage.run]
-source = ["shared", "domains", "services"]
+source = ["shared", "domains", "services", "core"]
 branch = true
 omit = ["*/tests/*", "*/__pycache__/*"]
 

@@ -691,6 +691,7 @@ def stock_backfill():
     Examples:
         sts stock-backfill today          # 오늘 데이터 수집
         sts stock-backfill run --days 7   # 최근 7일 백필
+        sts stock-backfill refresh        # DB 종목 기준 재수집
         sts stock-backfill status         # 수집 현황 조회
     """
     pass
@@ -744,6 +745,51 @@ def stock_backfill_run(days: int, codes: tuple):
     codes_list = list(codes) if codes else None
     asyncio.run(backfill_stock_minute(days=days, codes=codes_list))
 
+    click.echo("Backfill complete!")
+
+
+@stock_backfill.command("refresh")
+@click.option(
+    "--days",
+    "-d",
+    default=30,
+    type=int,
+    help="Number of days to backfill (max 30, default: 30)",
+)
+@click.option(
+    "--code-days",
+    default=None,
+    type=int,
+    help="Limit codes to those seen in last N days (default: all codes in DB)",
+)
+def stock_backfill_refresh(days: int, code_days: int | None):
+    """DB에 이미 존재하는 종목 기준으로 분봉 재수집
+
+    \b
+    Example:
+        sts stock-backfill refresh --days 30
+        sts stock-backfill refresh --days 7 --code-days 90
+    """
+    import asyncio
+
+    from shared.collector.historical.stock import (
+        backfill_stock_minute,
+        get_stock_codes_from_db,
+    )
+
+    if code_days:
+        click.echo(f"Loading codes from last {code_days} days in DB...")
+        codes = get_stock_codes_from_db(days=code_days)
+    else:
+        click.echo("Loading codes from DB...")
+        codes = get_stock_codes_from_db()
+
+    if not codes:
+        click.echo("No codes found in DB.")
+        return
+
+    click.echo(f"Found {len(codes)} codes. Starting backfill for {days} days...")
+    asyncio.run(backfill_stock_minute(days=days, codes=codes))
     click.echo("Backfill complete!")
 
 

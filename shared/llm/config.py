@@ -25,6 +25,7 @@ class LLMConfig:
     output_dir: str = "./trading_reports"
 
     # 주식 스크리닝 설정
+    stock_markets: List[str] = field(default_factory=lambda: ["KOSPI"])
     stock_min_market_cap: int = 100_000_000_000  # 1000억
     stock_max_market_cap: int = 50_000_000_000_000  # 50조
     stock_min_price: int = 1000
@@ -32,9 +33,21 @@ class LLMConfig:
     stock_top_n_volume: int = 30
     stock_final_selection: int = 5
     stock_backtest_days: int = 60
+    stock_volume_lookback_days: int = 20
+    stock_min_avg_volume: int = 100_000
     stock_max_position: float = 0.20
     stock_stop_loss: float = 0.05
     stock_take_profit: float = 0.10
+    stock_blacklist: List[str] = field(
+        default_factory=lambda: ["관리종목", "투자주의", "환기종목", "거래정지"]
+    )
+    stock_keyword_filter: List[str] = field(
+        default_factory=lambda: ["횡령", "배임", "감자", "상장폐지", "회생절차"]
+    )
+    stock_exclude_name_keywords: List[str] = field(
+        default_factory=lambda: ["스팩", "SPAC", "리츠", "REIT"]
+    )
+    stock_exclude_preferred_shares: bool = True
 
     # 선물 분석 가중치
     futures_weight_global: float = 0.35
@@ -133,6 +146,7 @@ class LLMConfig:
             enabled=openai_config.get("enabled", True),
             output_dir=output_config.get("dir", "./trading_reports"),
             # 주식 설정
+            stock_markets=stock_config.get("markets", ["KOSPI"]),
             stock_min_market_cap=stock_config.get("min_market_cap", 100_000_000_000),
             stock_max_market_cap=stock_config.get("max_market_cap", 50_000_000_000_000),
             stock_min_price=stock_config.get("min_price", 1000),
@@ -140,9 +154,23 @@ class LLMConfig:
             stock_top_n_volume=stock_config.get("top_n_volume", 30),
             stock_final_selection=stock_config.get("final_selection", 5),
             stock_backtest_days=stock_config.get("backtest_days", 60),
+            stock_volume_lookback_days=stock_config.get("volume_lookback_days", 20),
+            stock_min_avg_volume=stock_config.get("min_avg_volume", 100_000),
             stock_max_position=stock_config.get("max_position", 0.20),
             stock_stop_loss=stock_config.get("stop_loss", 0.05),
             stock_take_profit=stock_config.get("take_profit", 0.10),
+            stock_blacklist=stock_config.get(
+                "blacklist", ["관리종목", "투자주의", "환기종목", "거래정지"]
+            ),
+            stock_keyword_filter=stock_config.get(
+                "keyword_filter", ["횡령", "배임", "감자", "상장폐지", "회생절차"]
+            ),
+            stock_exclude_name_keywords=stock_config.get(
+                "exclude_name_keywords", ["스팩", "SPAC", "리츠", "REIT"]
+            ),
+            stock_exclude_preferred_shares=stock_config.get(
+                "exclude_preferred_shares", True
+            ),
             # 선물 설정
             futures_weight_global=futures_config.get("weight_global", 0.35),
             futures_weight_flow=futures_config.get("weight_flow", 0.30),
@@ -158,3 +186,32 @@ class LLMConfig:
             sector_etfs=krx_config.get("sector_etfs", default_sector_etfs),
             indices=krx_config.get("indices", default_indices),
         )
+
+    @classmethod
+    def load(cls, path: str | Path | None = None) -> "LLMConfig":
+        """기본 경로/환경변수에서 설정 로드.
+
+        우선순위:
+        1) 인자로 받은 path
+        2) 환경변수 LLM_CONFIG_PATH
+        3) 레포 기본값 config/llm.yaml (CWD 또는 레포 루트)
+        4) 환경변수 기반(from_env)
+        """
+        if path is not None:
+            return cls.from_yaml(path)
+
+        env_path = os.environ.get("LLM_CONFIG_PATH")
+        if env_path:
+            p = Path(env_path)
+            if p.exists():
+                return cls.from_yaml(p)
+
+        candidates = [
+            Path.cwd() / "config" / "llm.yaml",
+            Path(__file__).resolve().parents[3] / "config" / "llm.yaml",
+        ]
+        for p in candidates:
+            if p.exists():
+                return cls.from_yaml(p)
+
+        return cls.from_env()

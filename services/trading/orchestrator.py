@@ -403,6 +403,7 @@ class TradingOrchestrator:
         self,
         config: TradingConfig,
         holiday_cache: HolidayCache | None = None,
+        order_executor: Any | None = None,
     ):
         """
         Args:
@@ -454,11 +455,20 @@ class TradingOrchestrator:
         self._market_data_snapshot: dict[str, dict[str, Any]] = {}
         self._market_data_updated_at: datetime | None = None
         self._metrics = get_metrics_collector()
+        self._order_executor = order_executor
 
         logger.info(
             f"TradingOrchestrator initialized: "
             f"{config.asset_class}/{config.strategy_name}"
         )
+
+    def set_order_executor(self, executor: Any | None) -> None:
+        """Attach an order executor (optional).
+
+        If provided and paper_trading is False, execution will use this
+        executor instead of mock fills.
+        """
+        self._order_executor = executor
 
     @property
     def is_running(self) -> bool:
@@ -1364,6 +1374,9 @@ class TradingOrchestrator:
         if staleness is not None:
             self._metrics.record_market_data_staleness(staleness)
         self._metrics.record_order_queue_depth(self._order_queue_depth)
+
+        if not self.pipeline:
+            return {}
 
         metrics = self.pipeline.metrics.to_dict()
         metrics["market_data_staleness_seconds"] = staleness

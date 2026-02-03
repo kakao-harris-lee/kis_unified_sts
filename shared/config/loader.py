@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import threading
 from functools import lru_cache
 from pathlib import Path
@@ -74,6 +75,9 @@ class ConfigLoader:
     _instance: ConfigLoader | None = None
     _config_dir: Path | None = None
     _cache: dict[str, Any] = {}
+    _ENV_VAR_PATTERN: ClassVar[re.Pattern[str]] = re.compile(
+        r"^\$\{([A-Za-z_][A-Za-z0-9_]*)(?::([^}]*))?\}$"
+    )
 
     # Thread-safety locks
     _instance_lock: ClassVar[threading.Lock] = threading.Lock()
@@ -157,6 +161,28 @@ class ConfigLoader:
         with cls._cache_lock:
             cls._cache.clear()
         logger.debug("Config cache cleared")
+
+    @classmethod
+    def _resolve_env_vars(cls, obj: Any) -> Any:
+        """Resolve ${VAR} / ${VAR:default} patterns recursively.
+
+        Notes:
+            - Only replaces when the entire string matches the pattern.
+            - For ${VAR:default}, ":" introduces a default string if the env var
+              is not set. Defaults are treated as raw strings.
+        """
+        if isinstance(obj, dict):
+            return {k: cls._resolve_env_vars(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [cls._resolve_env_vars(v) for v in obj]
+        if isinstance(obj, str):
+            m = cls._ENV_VAR_PATTERN.match(obj.strip())
+            if not m:
+                return obj
+            var_name = m.group(1)
+            default = m.group(2) if m.group(2) is not None else ""
+            return os.environ.get(var_name, default)
+        return obj
 
     @classmethod
     def _validate_path(cls, path: str) -> Path:
@@ -253,6 +279,9 @@ class ConfigLoader:
 
             if data is None:
                 data = {}
+
+            # 환경변수 치환 (${VAR} / ${VAR:default})
+            data = cls._resolve_env_vars(data)
 
             # 스키마 검증
             if schema:

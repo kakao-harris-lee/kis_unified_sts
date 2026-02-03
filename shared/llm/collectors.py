@@ -22,6 +22,8 @@ import pandas as pd
 import requests
 from bs4 import BeautifulSoup
 
+from shared.calendar import MarketCalendar
+
 from .data_classes import (
     EconomicEvent,
     FlowData,
@@ -64,21 +66,30 @@ class StockDataCollector(DataCollector):
     MARKET_OPEN_HOUR = 9
     SUPPORTED_MARKETS = ("KOSPI", "KOSDAQ")
 
+    def __init__(self):
+        super().__init__()
+        self._calendar = MarketCalendar()
+
     def _get_last_trading_date(self) -> str:
-        """가장 최근 거래일 반환 (장 시작 전이면 전일)"""
+        """가장 최근 거래일 반환 (휴장일/공휴일 반영)."""
         now = datetime.now()
+        today = now.date()
 
-        # 장 시작 전(09:00 전)이면 전일 데이터 사용
-        if now.hour < self.MARKET_OPEN_HOUR:
-            target = now - timedelta(days=1)
-            logger.info(f"Pre-market hours ({now.strftime('%H:%M')}), using previous day data")
-        else:
-            target = now
+        # 장 시작 전에는 전일(최근 거래일) 데이터 사용
+        if now.time() < self._calendar.MARKET_OPEN_TIME:
+            target = self._calendar.get_previous_market_day(today)
+            logger.info(
+                f"Pre-market hours ({now.strftime('%H:%M')}), "
+                f"using previous market day {target}"
+            )
+            return target.strftime("%Y%m%d")
 
-        # 주말 처리: 토요일(5) -> 금요일, 일요일(6) -> 금요일
-        while target.weekday() >= 5:
-            target -= timedelta(days=1)
+        # 장중/장마감 이후: 오늘이 거래일이면 오늘, 아니면 직전 거래일
+        if self._calendar.is_market_day(today):
+            return today.strftime("%Y%m%d")
 
+        target = self._calendar.get_previous_market_day(today)
+        logger.info(f"Non-trading day {today}, using previous market day {target}")
         return target.strftime("%Y%m%d")
 
     def collect(self, market: str = "KOSPI") -> Optional[pd.DataFrame]:
@@ -107,9 +118,9 @@ class StockDataCollector(DataCollector):
                     cap_df = stock.get_market_cap(prev_date, market=market)
                 if len(cap_df) > 0:
                     # Drop existing 시가총액 column if present to avoid overlap
-                    if '시가총액' in df.columns:
-                        df = df.drop(columns=['시가총액'])
-                    df = df.join(cap_df[['시가총액']])
+                    if "시가총액" in df.columns:
+                        df = df.drop(columns=["시가총액"])
+                    df = df.join(cap_df[["시가총액"]], how="left")
 
             if len(df) > 0:
                 # Keep market info for downstream merges.
@@ -158,6 +169,23 @@ class KRXDataCollector(DataCollector):
 
     BASE_URL = "https://data.krx.co.kr/comm/bldAttendant/getJsonData.cmd"
 
+    def __init__(self):
+        super().__init__()
+        self._calendar = MarketCalendar()
+
+    def _get_last_trading_date(self) -> str:
+        """KRX 기준 최근 거래일 (휴장일/공휴일 반영)."""
+        now = datetime.now()
+        today = now.date()
+
+        if now.time() < self._calendar.MARKET_CLOSE_TIME:
+            return self._calendar.get_previous_market_day(today).strftime("%Y%m%d")
+
+        if self._calendar.is_market_day(today):
+            return today.strftime("%Y%m%d")
+
+        return self._calendar.get_previous_market_day(today).strftime("%Y%m%d")
+
     def collect(self) -> Dict:
         """KRX 데이터 수집"""
         data = {
@@ -201,7 +229,7 @@ class KRXDataCollector(DataCollector):
     def _get_investor_trading(self) -> Dict:
         """투자자별 매매동향"""
         try:
-            today = datetime.now().strftime("%Y%m%d")
+            today = self._get_last_trading_date()
             payload = {
                 "bld": "dbms/MDC/STAT/standard/MDCSTAT02401",
                 "mktId": "STK",
@@ -237,7 +265,7 @@ class KRXDataCollector(DataCollector):
     def _get_program_trading(self) -> Dict:
         """프로그램 매매"""
         try:
-            today = datetime.now().strftime("%Y%m%d")
+            today = self._get_last_trading_date()
             payload = {
                 "bld": "dbms/MDC/STAT/standard/MDCSTAT02701",
                 "mktId": "STK",
@@ -279,18 +307,27 @@ class SEIBRODataCollector(DataCollector):
 
     def collect(self, code: str = None) -> Dict:
         """SEIBRO 데이터 수집"""
+        isin = None
+        if code:
+            try:
+                from .identifiers import to_isin
+
+                isin = to_isin(code)
+            except Exception:
+                isin = None
+
         data = {
-            "company_info": self._get_company_info(code) if code else {},
-            "dividend_info": self._get_dividend_info(code) if code else {},
-            "shareholder_info": self._get_shareholder_info(code) if code else {},
+            "company_info": self._get_company_info(isin) if isin else {},
+            "dividend_info": self._get_dividend_info(isin) if isin else {},
+            "shareholder_info": self._get_shareholder_info(isin) if isin else {},
         }
         return data
 
-    def _get_company_info(self, code: str) -> Dict:
+    def _get_company_info(self, isin: str) -> Dict:
         """기업 기본정보"""
         try:
             url = f"{self.BASE_URL}/websquare/engine/pro498.do"
-            response = self.session.get(url, params={"isin": code}, timeout=10)
+            response = self.session.get(url, params={"isin": isin}, timeout=10)
             if response.status_code == 200:
                 soup = BeautifulSoup(response.text, 'html.parser')
                 return {"status": "available", "raw_html_length": len(response.text)}
@@ -298,22 +335,22 @@ class SEIBRODataCollector(DataCollector):
             logger.debug(f"SEIBRO company info failed: {e}")
         return {}
 
-    def _get_dividend_info(self, code: str) -> Dict:
+    def _get_dividend_info(self, isin: str) -> Dict:
         """배당 정보"""
         try:
             url = f"{self.BASE_URL}/websquare/engine/proq11.do"
-            response = self.session.get(url, params={"isin": code}, timeout=10)
+            response = self.session.get(url, params={"isin": isin}, timeout=10)
             if response.status_code == 200:
                 return {"status": "available"}
         except Exception as e:
             logger.debug(f"SEIBRO dividend info failed: {e}")
         return {}
 
-    def _get_shareholder_info(self, code: str) -> Dict:
+    def _get_shareholder_info(self, isin: str) -> Dict:
         """주주 현황"""
         try:
             url = f"{self.BASE_URL}/websquare/engine/proq21.do"
-            response = self.session.get(url, params={"isin": code}, timeout=10)
+            response = self.session.get(url, params={"isin": isin}, timeout=10)
             if response.status_code == 200:
                 return {"status": "available"}
         except Exception as e:
@@ -418,40 +455,49 @@ class KSDDataCollector(DataCollector):
 
     def collect(self, code: str = None) -> Dict:
         """KSD 데이터 수집"""
+        isin = None
+        if code:
+            try:
+                from .identifiers import to_isin
+
+                isin = to_isin(code)
+            except Exception:
+                isin = None
+
         data = {
-            "short_selling": self._get_short_selling(code) if code else {},
-            "stock_lending": self._get_stock_lending(code) if code else {},
-            "large_holdings": self._get_large_holdings(code) if code else {},
+            "short_selling": self._get_short_selling(isin) if isin else {},
+            "stock_lending": self._get_stock_lending(isin) if isin else {},
+            "large_holdings": self._get_large_holdings(isin) if isin else {},
         }
         return data
 
-    def _get_short_selling(self, code: str) -> Dict:
+    def _get_short_selling(self, isin: str) -> Dict:
         """공매도 현황"""
         try:
             url = f"{self.BASE_URL}/kor/market/shortsel.do"
-            response = self.session.get(url, params={"isin": code}, timeout=10)
+            response = self.session.get(url, params={"isin": isin}, timeout=10)
             if response.status_code == 200:
                 return {"status": "available"}
         except Exception as e:
             logger.debug(f"KSD short selling failed: {e}")
         return {}
 
-    def _get_stock_lending(self, code: str) -> Dict:
+    def _get_stock_lending(self, isin: str) -> Dict:
         """대차잔고"""
         try:
             url = f"{self.BASE_URL}/kor/market/sllending.do"
-            response = self.session.get(url, params={"isin": code}, timeout=10)
+            response = self.session.get(url, params={"isin": isin}, timeout=10)
             if response.status_code == 200:
                 return {"status": "available"}
         except Exception as e:
             logger.debug(f"KSD stock lending failed: {e}")
         return {}
 
-    def _get_large_holdings(self, code: str) -> Dict:
+    def _get_large_holdings(self, isin: str) -> Dict:
         """대량보유 현황"""
         try:
             url = f"{self.BASE_URL}/kor/market/largeholding.do"
-            response = self.session.get(url, params={"isin": code}, timeout=10)
+            response = self.session.get(url, params={"isin": isin}, timeout=10)
             if response.status_code == 200:
                 return {"status": "available"}
         except Exception as e:

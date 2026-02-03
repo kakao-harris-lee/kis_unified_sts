@@ -9,6 +9,7 @@ openai:
 
 stock:
   # 주식 스크리닝 필터
+  markets: ["KOSPI"]        # ["KOSPI", "KOSDAQ"] 로 확장 가능
   min_price: 5000           # 최소 주가 (원)
   max_price: 500000         # 최대 주가 (원)
   min_market_cap: 500000000000    # 최소 시가총액 (5000억)
@@ -16,7 +17,15 @@ stock:
   top_n_volume: 20          # 거래량 상위 N개 분석
   final_selection: 5        # 최종 추천 종목 수
   backtest_days: 60         # 백테스트 기간 (일)
+  volume_lookback_days: 20  # 거래량 평균 계산 기간 (일)
+  min_avg_volume: 100000    # 최소 평균 거래량 (유동성 필터)
   max_position: 0.2         # 최대 포지션 비율 (20%)
+
+  # Negative screening (옵션)
+  blacklist: ["관리종목", "투자주의", "환기종목", "거래정지"]
+  keyword_filter: ["횡령", "배임", "감자", "상장폐지", "회생절차"]
+  exclude_name_keywords: ["스팩", "SPAC", "리츠", "REIT"]
+  exclude_preferred_shares: true
 
 futures:
   # 선물 분석 가중치

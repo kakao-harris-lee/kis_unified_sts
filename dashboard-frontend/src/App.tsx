@@ -4,6 +4,7 @@ import Dashboard from './pages/Dashboard';
 import Positions from './pages/Positions';
 import Signals from './pages/Signals';
 import Trades from './pages/Trades';
+import Backtest from './pages/Backtest';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -51,6 +52,12 @@ function App() {
                     >
                       Trades
                     </Link>
+                    <Link
+                      to="/backtest"
+                      className="px-3 py-2 rounded-md hover:bg-gray-700"
+                    >
+                      Backtest
+                    </Link>
                   </div>
                 </div>
               </div>
@@ -63,6 +70,7 @@ function App() {
               <Route path="/positions" element={<Positions />} />
               <Route path="/signals" element={<Signals />} />
               <Route path="/trades" element={<Trades />} />
+              <Route path="/backtest" element={<Backtest />} />
             </Routes>
           </main>
         </div>

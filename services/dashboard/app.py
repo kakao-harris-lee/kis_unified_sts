@@ -17,8 +17,8 @@ ALLOWED_ORIGINS = [
     "http://127.0.0.1:5173",
 ]
 
-# Check if in development mode - allows any origin
-_DEV_MODE = os.getenv("DASHBOARD_DEV_MODE", "false").lower() == "true"
+def _is_dev_mode() -> bool:
+    return os.getenv("DASHBOARD_DEV_MODE", "false").lower() == "true"
 
 # OpenAPI tags for documentation organization
 OPENAPI_TAGS = [
@@ -72,7 +72,7 @@ def create_app(
     )
 
     # CORS middleware - configure allowed origins based on environment
-    cors_origins = ["*"] if _DEV_MODE else ALLOWED_ORIGINS
+    cors_origins = ["*"] if _is_dev_mode() else ALLOWED_ORIGINS
     app.add_middleware(
         CORSMiddleware,
         allow_origins=cors_origins,

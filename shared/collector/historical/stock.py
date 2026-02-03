@@ -94,6 +94,27 @@ def _get_clickhouse_config() -> Dict[str, Any]:
 
 
 STATE_FILE = Path(os.getenv("STOCK_COLLECTOR_STATE_FILE", "logs/stock_minute_collector_state.json"))
+MAX_MINUTE_PAGES = int(os.getenv("STOCK_MINUTE_MAX_PAGES", "20"))
+STOCK_MINUTE_END_HOUR = os.getenv("STOCK_MINUTE_END_HOUR", "153000")
+
+
+def _normalize_time_str(value: str) -> str:
+    if not value:
+        return ""
+    value = str(value).strip()
+    if len(value) == 4:
+        return f"{value}00"
+    return value
+
+
+def _minus_one_minute(date_str: str, time_str: str) -> str:
+    try:
+        time_str = _normalize_time_str(time_str)
+        dt = datetime.strptime(f"{date_str}{time_str}", "%Y%m%d%H%M%S")
+        dt = dt - timedelta(minutes=1)
+        return dt.strftime("%H%M%S")
+    except Exception:
+        return time_str
 
 
 # =============================================================================
@@ -106,9 +127,12 @@ class StockKISToken:
     _instance: Optional["StockKISToken"] = None
 
     def __init__(self):
+        import threading
+
         self._token: Optional[str] = None
         self._expires_at: float = 0
         self._cache_path = os.path.expanduser("~/.cache/kis_token_stock.json")
+        self._refresh_lock = threading.Lock()
         self._load_cache()
 
     @classmethod
@@ -125,6 +149,11 @@ class StockKISToken:
         if self._token and time.time() < self._expires_at - 60:
             return self._token
 
+        # 다른 프로세스가 갱신한 캐시 재확인
+        self._load_cache()
+        if self._token and time.time() < self._expires_at - 60:
+            return self._token
+
         self._refresh()
         return self._token
 
@@ -136,9 +165,11 @@ class StockKISToken:
             with open(self._cache_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 import time
-                if data.get("expires_at", 0) > time.time() + 60:
-                    self._token = data["token"]
-                    self._expires_at = data["expires_at"]
+                token = data.get("token") or data.get("access_token")
+                expires_at = data.get("expires_at", 0)
+                if token and expires_at > time.time() + 60:
+                    self._token = token
+                    self._expires_at = float(expires_at)
                     logger.debug("Loaded cached stock token")
         except Exception as e:
             logger.debug(f"Failed to load cached token: {e}")
@@ -150,6 +181,7 @@ class StockKISToken:
             with open(self._cache_path, "w", encoding="utf-8") as f:
                 json.dump({
                     "token": self._token,
+                    "access_token": self._token,
                     "expires_at": self._expires_at,
                 }, f)
         except Exception as e:
@@ -165,23 +197,27 @@ class StockKISToken:
         if not app_key or not app_secret:
             raise ValueError("Stock KIS credentials not configured")
 
-        url = "https://openapi.koreainvestment.com:9443/oauth2/tokenP"
-        payload = {
-            "grant_type": "client_credentials",
-            "appkey": app_key,
-            "appsecret": app_secret,
-        }
+        with self._refresh_lock:
+            if self._token and time.time() < self._expires_at - 60:
+                return
 
-        import requests
-        resp = requests.post(url, json=payload, timeout=10)
-        resp.raise_for_status()
-        data = resp.json()
+            url = "https://openapi.koreainvestment.com:9443/oauth2/tokenP"
+            payload = {
+                "grant_type": "client_credentials",
+                "appkey": app_key,
+                "appsecret": app_secret,
+            }
 
-        self._token = data["access_token"]
-        # Token valid for 24 hours
-        self._expires_at = time.time() + 86400 - 300
-        self._save_cache()
-        logger.info("Stock KIS token refreshed")
+            import requests
+            resp = requests.post(url, json=payload, timeout=10)
+            resp.raise_for_status()
+            data = resp.json()
+
+            self._token = data["access_token"]
+            expires_in = int(data.get("expires_in", 86400))
+            self._expires_at = time.time() + expires_in
+            self._save_cache()
+            logger.info("Stock KIS token refreshed")
 
 
 # =============================================================================
@@ -207,20 +243,22 @@ class RateLimiter:
 
 
 _rate_limiter: Optional[RateLimiter] = None
+_rate_limit_per_sec = int(os.getenv("STOCK_RATE_LIMIT", "5"))
+_max_concurrent_requests = int(os.getenv("STOCK_MAX_CONCURRENCY", "3"))
 _semaphore: Optional[asyncio.Semaphore] = None
 
 
 def _get_rate_limiter() -> RateLimiter:
     global _rate_limiter
     if _rate_limiter is None:
-        _rate_limiter = RateLimiter(10)  # 10 requests per second
+        _rate_limiter = RateLimiter(_rate_limit_per_sec)
     return _rate_limiter
 
 
 def _get_semaphore() -> asyncio.Semaphore:
     global _semaphore
     if _semaphore is None:
-        _semaphore = asyncio.Semaphore(5)
+        _semaphore = asyncio.Semaphore(_max_concurrent_requests)
     return _semaphore
 
 
@@ -301,6 +339,18 @@ def insert_stock_minute_batch(db_client, rows: List[Tuple], table_name: str = "m
     return len(rows)
 
 
+def delete_stock_minute_day(db_client, code: str, day: date) -> None:
+    """Delete existing rows for a code/day to avoid duplicates."""
+    if not code or not isinstance(day, date):
+        return
+    if not str(code).isalnum():
+        raise ValueError(f"Invalid code: {code}")
+    day_str = day.strftime("%Y-%m-%d")
+    db_client.command(
+        f"ALTER TABLE minute_candles DELETE WHERE code = '{code}' AND toDate(datetime) = '{day_str}'"
+    )
+
+
 # =============================================================================
 # API Fetching
 # =============================================================================
@@ -330,60 +380,119 @@ async def fetch_stock_minute_async(
     token = StockKISToken.get_instance()
     base_url = "https://openapi.koreainvestment.com:9443"
 
-    # 주식당일분봉조회 API (FHKST03010200)
-    # Note: This API only returns data for the specified date, not historical ranges
-    url = f"{base_url}/uapi/domestic-stock/v1/quotations/inquire-time-itemchartprice"
-    params = {
-        "FID_COND_MRKT_DIV_CODE": "J",  # 주식
-        "FID_INPUT_ISCD": code,
-        "FID_INPUT_DATE_1": date_str,
-        "FID_INPUT_HOUR_1": "",  # 빈 값 = 전체 시간대
-        "FID_PW_DATA_INCU_YN": "Y",  # 과거 데이터 포함
-    }
-
-    last_error = None
-    for attempt in range(max_retries):
-        headers = {
-            "Authorization": f"Bearer {token.get()}",
-            "appkey": app_key,
-            "appsecret": app_secret,
-            "tr_id": "FHKST03010200",  # 주식당일분봉조회
-            "content-type": "application/json; charset=utf-8",
+    # 주식일별분봉조회 API (FHKST03010230)
+    # Historical minute data; max 120 rows per call
+    url = f"{base_url}/uapi/domestic-stock/v1/quotations/inquire-time-dailychartprice"
+    async def _request(input_hour: str) -> dict:
+        params = {
+            "FID_COND_MRKT_DIV_CODE": "J",  # 주식
+            "FID_INPUT_ISCD": code,
+            "FID_INPUT_DATE_1": date_str,
+            "FID_INPUT_HOUR_1": input_hour,
+            "FID_PW_DATA_INCU_YN": "Y",  # 과거 데이터 포함
+            "FID_FAKE_TICK_INCU_YN": "N",  # 허봉 포함 여부
         }
 
-        async with _get_semaphore():
-            try:
-                await _get_rate_limiter().wait()
-                resp = await client.get(url, headers=headers, params=params)
+        last_error = None
+        for attempt in range(max_retries):
+            headers = {
+                "Authorization": f"Bearer {token.get()}",
+                "appkey": app_key,
+                "appsecret": app_secret,
+                "tr_id": "FHKST03010230",  # 주식일별분봉조회
+                "content-type": "application/json; charset=utf-8",
+            }
 
-                if not resp.text or resp.text.strip() == "":
-                    return (code, date_str, {"error": f"empty response (status {resp.status_code})"})
-
+            async with _get_semaphore():
                 try:
-                    data = resp.json()
-                except Exception as json_err:
-                    return (code, date_str, {"error": f"json parse: {json_err}"})
+                    await _get_rate_limiter().wait()
+                    resp = await client.get(url, headers=headers, params=params)
 
-                rt_cd = data.get("rt_cd", "")
-                if rt_cd and rt_cd != "0":
-                    msg = data.get("msg1", "Unknown error")
-                    if "초당 거래건수" in msg or "RATE" in msg.upper():
-                        await asyncio.sleep(1.0 * (attempt + 1))
+                    if resp.status_code >= 500:
+                        last_error = f"http {resp.status_code}"
+                        await asyncio.sleep(0.5 * (attempt + 1))
                         continue
-                    return (code, date_str, {"error": msg})
 
-                # API may return empty rt_cd with no data - this is OK
-                if not rt_cd and not data.get("output2"):
-                    logger.debug(f"No minute data for {code} on {date_str}")
+                    if not resp.text or resp.text.strip() == "":
+                        last_error = f"empty response (status {resp.status_code})"
+                        await asyncio.sleep(0.5 * (attempt + 1))
+                        continue
 
-                return (code, date_str, data)
+                    try:
+                        data = resp.json()
+                    except Exception as json_err:
+                        last_error = f"json parse: {json_err}"
+                        await asyncio.sleep(0.5 * (attempt + 1))
+                        continue
 
-            except Exception as e:
-                last_error = e
-                logger.warning(f"Fetch error for {code} {date_str}: {e}")
-                await asyncio.sleep(0.5 * (attempt + 1))
+                    rt_cd = data.get("rt_cd", "")
+                    if rt_cd and rt_cd != "0":
+                        msg = data.get("msg1", "Unknown error")
+                        if "초당 거래건수" in msg or "RATE" in msg.upper():
+                            await asyncio.sleep(1.0 * (attempt + 1))
+                            continue
+                        return {"error": msg}
 
-    return (code, date_str, {"error": str(last_error)})
+                    return data
+
+                except Exception as e:
+                    last_error = e
+                    logger.warning(f"Fetch error for {code} {date_str}: {e}")
+                    await asyncio.sleep(0.5 * (attempt + 1))
+
+        return {"error": str(last_error)}
+
+    all_rows: list[dict] = []
+    seen_times: set[str] = set()
+    current_hour = STOCK_MINUTE_END_HOUR
+    pages = 0
+    last_min_time: str | None = None
+    base_data: dict | None = None
+
+    while True:
+        data = await _request(current_hour)
+        if "error" in data:
+            return (code, date_str, {"error": data["error"]})
+
+        if base_data is None:
+            base_data = data
+
+        output = data.get("output2", []) or data.get("output1", [])
+        if not output:
+            break
+
+        times = []
+        for item in output:
+            time_str = _normalize_time_str(item.get("stck_cntg_hour", ""))
+            if not time_str:
+                continue
+            if time_str in seen_times:
+                continue
+            seen_times.add(time_str)
+            all_rows.append(item)
+            times.append(time_str)
+
+        if not times:
+            break
+
+        min_time = min(times)
+        if last_min_time and min_time >= last_min_time:
+            break
+        last_min_time = min_time
+
+        if min_time <= "090000":
+            break
+
+        current_hour = _minus_one_minute(date_str, min_time)
+        pages += 1
+        if pages >= MAX_MINUTE_PAGES:
+            break
+
+    if base_data is None:
+        base_data = {"output2": []}
+
+    base_data["output2"] = all_rows
+    return (code, date_str, base_data)
 
 
 def parse_stock_minute_ohlcv(code: str, date_str: str, data: dict) -> List[Tuple]:
@@ -466,6 +575,8 @@ async def collect_stock_batch(
     client: httpx.AsyncClient,
     db_client,
     tasks: List[Tuple[str, date]],
+    retry_rounds: int = 2,
+    retry_delay: float = 1.0,
 ) -> int:
     """
     Collect a batch of (code, date) combinations.
@@ -476,22 +587,62 @@ async def collect_stock_batch(
     if not tasks:
         return 0
 
-    coros = [
-        fetch_stock_minute_async(client, code, dt.strftime("%Y%m%d"))
-        for code, dt in tasks
-    ]
+    async def _run(
+        task_list: List[Tuple[str, date]]
+    ) -> Tuple[List[Tuple], List[Tuple[str, date]], List[Tuple[str, date]]]:
+        coros = [
+            fetch_stock_minute_async(client, code, dt.strftime("%Y%m%d"))
+            for code, dt in task_list
+        ]
 
-    results = await asyncio.gather(*coros)
+        results = await asyncio.gather(*coros)
 
-    all_rows = []
-    for code, date_str, data in results:
-        if "error" in data:
-            logger.warning(f"Fetch failed for {code} {date_str}: {data['error']}")
-            continue
-        rows = parse_stock_minute_ohlcv(code, date_str, data)
-        all_rows.extend(rows)
+        batch_rows: List[Tuple] = []
+        failed: List[Tuple[str, date]] = []
+        succeeded: List[Tuple[str, date]] = []
+        for code, date_str, data in results:
+            if "error" in data:
+                logger.warning(f"Fetch failed for {code} {date_str}: {data['error']}")
+                try:
+                    failed.append((code, datetime.strptime(date_str, "%Y%m%d").date()))
+                except Exception:
+                    continue
+                continue
+            rows = parse_stock_minute_ohlcv(code, date_str, data)
+            if not rows:
+                try:
+                    failed.append((code, datetime.strptime(date_str, "%Y%m%d").date()))
+                except Exception:
+                    continue
+                continue
+            try:
+                succeeded.append((code, datetime.strptime(date_str, "%Y%m%d").date()))
+            except Exception:
+                continue
+            batch_rows.extend(rows)
+
+        return batch_rows, failed, succeeded
+
+    all_rows, failed_tasks, succeeded_tasks = await _run(tasks)
+
+    for attempt in range(retry_rounds):
+        if not failed_tasks:
+            break
+        await asyncio.sleep(retry_delay * (attempt + 1))
+        retry_rows, failed_tasks, retry_succeeded = await _run(failed_tasks)
+        all_rows.extend(retry_rows)
+        succeeded_tasks.extend(retry_succeeded)
+
+    if failed_tasks:
+        logger.warning(f"Fetch failed after retries: {len(failed_tasks)} tasks")
 
     if all_rows:
+        # Remove existing rows only for successfully fetched code/day
+        for code, day in succeeded_tasks:
+            try:
+                delete_stock_minute_day(db_client, code, day)
+            except Exception as e:
+                logger.warning(f"Failed to delete existing rows for {code} {day}: {e}")
         insert_stock_minute_batch(db_client, all_rows)
         print(f"Inserted {len(all_rows)} rows from {len(tasks)} tasks into minute_candles")
 
@@ -577,20 +728,20 @@ async def backfill_stock_minute(
     ensure_stock_database()
     db_client = get_stock_db_client()
 
-    # Select stocks
+    # Select codes
     if codes:
-        stocks = [s for s in STOCK_UNIVERSE if s["code"] in codes]
+        selected_codes = list(dict.fromkeys(codes))
     else:
-        stocks = STOCK_UNIVERSE
+        selected_codes = [s["code"] for s in STOCK_UNIVERSE]
 
     if verbose:
-        print(f"Stocks: {len(stocks)}")
+        print(f"Stocks: {len(selected_codes)}")
 
     total_rows = 0
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         for day_idx, day in enumerate(reversed(trading_days), start=1):
-            tasks = [(stock["code"], day) for stock in stocks]
+            tasks = [(code, day) for code in selected_codes]
 
             if verbose:
                 print(f"{day_idx}/{len(trading_days)} {day} stocks={len(tasks)}")
@@ -604,6 +755,31 @@ async def backfill_stock_minute(
         print(f"Backfill complete. Total rows: {total_rows}")
 
     return total_rows
+
+
+def get_stock_codes_from_db(days: Optional[int] = None) -> List[str]:
+    """Get distinct stock codes from ClickHouse minute_candles."""
+    db_client = get_stock_db_client()
+    try:
+        if days:
+            start_date = date.today() - timedelta(days=days)
+            query = f"""
+                SELECT DISTINCT code
+                FROM minute_candles
+                WHERE toDate(datetime) >= '{start_date}'
+                ORDER BY code
+            """
+        else:
+            query = """
+                SELECT DISTINCT code
+                FROM minute_candles
+                ORDER BY code
+            """
+
+        result = db_client.query(query)
+        return [row[0] for row in result.result_rows]
+    finally:
+        db_client.close()
 
 
 def get_stock_collection_status(days: int = 30) -> Dict[str, Any]:
@@ -656,6 +832,7 @@ __all__ = [
     "STOCK_UNIVERSE",
     "collect_stock_minute_today",
     "backfill_stock_minute",
+    "get_stock_codes_from_db",
     "get_stock_collection_status",
     "get_stock_db_client",
     "ensure_stock_database",
