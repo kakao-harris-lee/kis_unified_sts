@@ -9,12 +9,15 @@ import asyncio
 import logging
 import os
 import sys
+from pathlib import Path
 
-# Add project root to path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Add project root to path and ensure consistent working directory
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT))
+os.chdir(PROJECT_ROOT)
 
 from dotenv import load_dotenv
-load_dotenv()
+load_dotenv(PROJECT_ROOT / ".env")
 
 from shared.llm.llm_analyzer import run_unified_analysis
 
@@ -34,7 +37,10 @@ async def main():
         try:
             from shared.notification import TelegramNotifier
 
-            notifier = TelegramNotifier()
+            notifier = TelegramNotifier(
+                notification_start="00:00",
+                notification_end="23:59",
+            )
         except ImportError:
             logger.warning("TelegramNotifier not available, running without notifications")
 
