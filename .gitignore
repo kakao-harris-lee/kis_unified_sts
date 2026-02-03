@@ -40,3 +40,6 @@ pids/
 monitoring/prometheus/alert_rules.yml
 scripts/cron/
 scripts/test_model.py
+
+# KIS API documentation (binary files)
+kis_docs/
