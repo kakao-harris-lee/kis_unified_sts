@@ -615,10 +615,13 @@ class UnifiedTradingAnalyzer:
         market_kospi = self.stock_collector.collect("KOSPI")
         market_kosdaq = self.stock_collector.collect("KOSDAQ")
         frames = []
+        markets = []
         if market_kospi is not None and len(market_kospi) > 0:
             frames.append(market_kospi)
+            markets.append("KOSPI")
         if market_kosdaq is not None and len(market_kosdaq) > 0:
             frames.append(market_kosdaq)
+            markets.append("KOSDAQ")
 
         if not frames:
             market_df = None
