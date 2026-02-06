@@ -61,6 +61,10 @@ class RiskConfig:
     max_hold_bars: int = 0  # 0 = 제한 없음
     force_close_time: str | None = None  # "15:15" 형식
 
+    # ATR 기반 동적 손절
+    use_atr_stop: bool = False
+    atr_stop_multiplier: float = 2.0
+
     # 일별 리스크 한도
     max_daily_loss: float = 0.0  # 0 = 제한 없음
     max_daily_trades: int = 0  # 0 = 제한 없음
@@ -75,6 +79,8 @@ class RiskConfig:
             trailing_stop_distance_pct=data.get("trailing_stop_distance_pct", 1.5),
             max_hold_bars=data.get("max_hold_bars", 0),
             force_close_time=data.get("force_close_time"),
+            use_atr_stop=data.get("use_atr_stop", False),
+            atr_stop_multiplier=data.get("atr_stop_multiplier", 2.0),
             max_daily_loss=data.get("max_daily_loss", 0.0),
             max_daily_trades=data.get("max_daily_trades", 0),
         )

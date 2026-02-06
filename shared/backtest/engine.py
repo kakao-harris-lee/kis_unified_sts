@@ -76,6 +76,7 @@ class Position:
     highest_price: float = 0.0
     lowest_price: float = 0.0
     bars_held: int = 0
+    atr_at_entry: float = 0.0
 
     @property
     def current_value(self) -> float:
@@ -236,6 +237,7 @@ class BacktestEngine:
                     side="BUY",
                     price=current_price,
                     timestamp=timestamp,
+                    bar=bar,
                 )
             elif signal == SignalType.SELL:
                 self._open_position(
@@ -244,6 +246,7 @@ class BacktestEngine:
                     side="SELL",
                     price=current_price,
                     timestamp=timestamp,
+                    bar=bar,
                 )
         else:
             # 포지션 있음 → 반대 시그널 시 청산
@@ -271,8 +274,18 @@ class BacktestEngine:
         else:
             pnl_pct = (pos.entry_price - current_price) / pos.entry_price * 100
 
-        # 1. 손절
-        if pnl_pct <= -risk.stop_loss_pct:
+        # 1. 손절 (ATR 기반 또는 고정 %)
+        if risk.use_atr_stop and pos.atr_at_entry > 0:
+            atr_stop_distance = pos.atr_at_entry * risk.atr_stop_multiplier
+            if pos.side == "BUY":
+                stop_price = pos.entry_price - atr_stop_distance
+                if current_price <= stop_price:
+                    return ExitReason.STOP_LOSS
+            else:
+                stop_price = pos.entry_price + atr_stop_distance
+                if current_price >= stop_price:
+                    return ExitReason.STOP_LOSS
+        elif pnl_pct <= -risk.stop_loss_pct:
             return ExitReason.STOP_LOSS
 
         # 2. 익절
@@ -315,6 +328,7 @@ class BacktestEngine:
         side: str,
         price: float,
         timestamp: datetime,
+        bar: dict[str, Any] | None = None,
     ):
         """포지션 진입"""
         # 최대 포지션 수 체크
@@ -339,6 +353,7 @@ class BacktestEngine:
             return
 
         # 포지션 생성
+        atr_value = float(bar.get("atr", 0)) if bar else 0.0
         position = Position(
             code=code,
             name=name,
@@ -349,6 +364,7 @@ class BacktestEngine:
             quantity=quantity,
             highest_price=price,
             lowest_price=price,
+            atr_at_entry=atr_value,
         )
 
         self.positions[code] = position
