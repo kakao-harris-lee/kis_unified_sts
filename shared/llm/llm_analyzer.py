@@ -595,7 +595,6 @@ class UnifiedTradingAnalyzer:
             "date": self.date,
             "generated_at": self.datetime_str,
             "stock": stock_analysis,
-            "futures": None,
         }
 
         # 리포트 저장
