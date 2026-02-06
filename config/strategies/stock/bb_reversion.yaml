@@ -36,6 +36,7 @@ strategy:
       rsi_period: 14          # RSI 기간
       rsi_oversold: 38        # 과매도 기준 (SIDEWAYS_FLAT)
       rsi_deep_oversold: 35   # 깊은 과매도 (SIDEWAYS_DOWN, 보수적)
+      allow_short: false      # 현물 기준 숏 비활성화
 
       # -----------------------------------------------------------------
       # 거래량 확인 (선택적)
@@ -68,11 +69,18 @@ strategy:
       # -----------------------------------------------------------------
       skip_market_open_minutes: 30    # 장 시작 30분 스킵 (09:00-09:30)
       skip_market_close_minutes: 15   # 장 마감 15분 전 스킵 (15:15 이후)
+      market_open_hour: 9
+      market_open_minute: 0
+      market_close_hour: 15
+      market_close_minute: 15
 
       # -----------------------------------------------------------------
       # 시그널 쿨다운 (동일 종목 재진입 방지)
       # -----------------------------------------------------------------
       signal_cooldown_seconds: 300    # 5분
+
+      # 포지션 사이징 힌트 (RiskBasedSizer에서 사용)
+      stop_loss_pct: 1.5              # -1.5% 손절 기준
 
   # ===========================================================================
   # 청산 조건 (Exit)
