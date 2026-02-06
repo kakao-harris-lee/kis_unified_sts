@@ -36,8 +36,15 @@ strategy:
       macd_signal: 9
 
       # BUY-only 모드 (BUY WR 70% vs SELL WR 53%)
-      # TODO: 시장 레짐에 따라 동적으로 전환 (상승장=BUY-only, 횡보=양방향)
       buy_only: true
+
+      # 시장 레짐 필터: 테스트 결과 효과 없음 (2026-02-06)
+      # - 200 trials Optuna 최적화 (Sharpe 기준, SMA 레짐 감지)
+      # - 최적 결과: 모든 레짐에서 buy_only → 기존과 동일 (Sharpe 11.74)
+      # - sell_only/none/both 모드는 Sharpe 1.2~10.6으로 악화
+      # - regime_bear_mode 중요도 75.6% (buy_only 아닌 값은 일관적 손실)
+      # - 결론: 현행 buy_only=true 유지, 하락장 SELL 전략은 이 데이터에서 비유효
+      use_regime_filter: false
 
       # BB bandwidth 필터 (좁은 밴드 = 횡보 → 오신호 제거)
       # Optuna 탐색 결과: 0.003 최적 (score=86.31, ret+82%, sharpe=22.3, pf=13.18)

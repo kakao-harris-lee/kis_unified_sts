@@ -385,6 +385,16 @@ def _compute_base_indicators(df: pd.DataFrame, params: dict[str, Any]) -> pd.Dat
         axis=1,
     ).max(axis=1)
     df["atr"] = tr.rolling(atr_period).mean()
+
+    # 레짐 감지 (SMA 기반)
+    regime_period = int(params.get("regime_sma_period", 200))
+    regime_threshold = float(params.get("regime_threshold", 0.001))
+    df["regime_sma"] = close.rolling(regime_period).mean()
+    ratio = close / df["regime_sma"].replace(0, np.nan)
+    df["regime"] = "sideways"
+    df.loc[ratio > 1 + regime_threshold, "regime"] = "bull"
+    df.loc[ratio < 1 - regime_threshold, "regime"] = "bear"
+
     return df
 
 
@@ -426,19 +436,36 @@ class IndicatorSignalStrategy:
             buy_only = bool(self.params.get("buy_only", False))
             min_bw = float(self.params.get("min_bb_bandwidth", 0))
 
+            # 레짐 기반 방향 결정
+            use_regime = bool(self.params.get("use_regime_filter", False))
+            if use_regime:
+                regime = str(bar.get("regime", "sideways"))
+                mode_map = {
+                    "bull": str(self.params.get("regime_bull_mode", "buy_only")),
+                    "sideways": str(self.params.get("regime_sideways_mode", "buy_only")),
+                    "bear": str(self.params.get("regime_bear_mode", "sell_only")),
+                }
+                mode = mode_map.get(regime, "buy_only")
+                if mode == "none":
+                    return SignalType.HOLD
+                allow_buy = mode in ("buy_only", "both")
+                allow_sell = mode in ("sell_only", "both")
+            else:
+                allow_buy = True
+                allow_sell = not buy_only
+
             # BB bandwidth 필터: 밴드가 너무 좁으면 횡보 → 스킵
             if min_bw > 0 and bb_bandwidth < min_bw:
                 return SignalType.HOLD
 
             # BUY: BB 하단 터치 + RSI 과매도 (+ MACD 확인)
-            if close <= bb_lower * buffer and rsi < oversold:
+            if allow_buy and close <= bb_lower * buffer and rsi < oversold:
                 if use_macd and macd_hist <= 0:
                     return SignalType.HOLD
                 return SignalType.BUY
 
             # SELL: BB 상단 터치 + RSI 과매수 (+ MACD 확인)
-            # TODO: 시장 레짐(상승/횡보/하락)에 따라 buy_only 동적 전환
-            if not buy_only:
+            if allow_sell:
                 if close >= bb_upper and rsi > overbought:
                     if use_macd and macd_hist >= 0:
                         return SignalType.HOLD
