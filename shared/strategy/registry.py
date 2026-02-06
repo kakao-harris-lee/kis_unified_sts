@@ -383,6 +383,13 @@ def register_builtin_components() -> None:
     except ImportError:
         logger.debug("OpeningVolumeSurgeEntry not available")
 
+    try:
+        from shared.strategy.entry.rl_mppo import RLMPPOEntry
+
+        EntryRegistry.register_class("rl_mppo", RLMPPOEntry)
+    except ImportError:
+        logger.debug("RLMPPOEntry not available")
+
     # Exit 전략 등록
     try:
         from shared.strategy.exit.three_stage import ThreeStageExit

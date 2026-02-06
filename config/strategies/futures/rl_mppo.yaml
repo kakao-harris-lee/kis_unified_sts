@@ -1,0 +1,40 @@
+# RL M-PPO 전략 설정 (선물 전용)
+# 학습된 M-PPO 모델을 EntrySignalGenerator로 래핑
+
+strategy:
+  name: rl_mppo
+  asset_class: futures
+  enabled: false                     # 학습 완료 후 활성화
+  description: "Maskable PPO RL agent for KOSPI200 futures intraday trading"
+
+  entry:
+    type: rl_mppo
+    params:
+      # 학습된 모델 경로
+      model_path: "models/futures/rl/mppo_best/best_model.zip"
+
+      # 추론 설정
+      deterministic: true
+      device: auto
+
+      # 진입 필터
+      min_confidence: 0.6            # action probability 최소값
+      skip_market_open_minutes: 5    # 장 시작 후 관망
+      skip_market_close_minutes: 10  # 장 마감 전 신규 진입 금지
+
+  exit:
+    type: three_stage                # 기존 3-Stage Exit 재사용
+    params:
+      hard_stop_pct: 1.5
+      breakeven_threshold_pct: 1.0
+      breakeven_buffer_pct: 0.1
+      maximize_threshold_pct: 3.0
+      trailing_stop_pct: 2.0
+      tight_trailing_pct: 1.0
+      tight_trailing_trigger_pct: 5.0
+
+  position:
+    type: fixed
+    params:
+      contracts: 1
+      max_contracts: 1
