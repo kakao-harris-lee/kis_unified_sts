@@ -24,6 +24,7 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import time
@@ -457,6 +458,11 @@ class TradingOrchestrator:
         self._metrics = get_metrics_collector()
         self._order_executor = order_executor
 
+        # Universe refresh from screener
+        self._universe_refresh_task: asyncio.Task | None = None
+        self._universe_refresh_interval = 30.0  # seconds
+        self._symbol_names: dict[str, str] = {}  # code -> name mapping
+
         logger.info(
             f"TradingOrchestrator initialized: "
             f"{config.asset_class}/{config.strategy_name}"
@@ -575,11 +581,65 @@ class TradingOrchestrator:
                 logger.warning(f"OrderExecutor init failed; orders will be mocked: {e}")
                 self._order_executor = None
 
+        # Bootstrap symbols from screener if none configured
+        if not self.config.symbols and self.config.asset_class == "stock":
+            self._refresh_universe_from_screener()
+
         logger.info(
             f"Components initialized: "
             f"{len(self._strategy_manager.strategies)} strategies, "
             f"{len(self.config.symbols)} symbols"
         )
+
+    def _refresh_universe_from_screener(self) -> bool:
+        """Read screener universe from Redis and update symbols."""
+        try:
+            from shared.streaming.client import RedisClient
+            redis = RedisClient.get_client()
+            raw = redis.get(
+                os.environ.get("UNIVERSE_LATEST_KEY", "system:universe:latest")
+            )
+            if not raw:
+                logger.debug("No screener universe found in Redis")
+                return False
+
+            payload = json.loads(raw)
+            codes = payload.get("codes", [])
+            names = payload.get("names", {})
+
+            if not codes:
+                return False
+
+            old_set = set(self.config.symbols)
+            new_set = set(codes)
+
+            if new_set != old_set:
+                added = new_set - old_set
+                removed = old_set - new_set
+                self.config.symbols = list(codes)
+                self._symbol_names.update(names)
+
+                if self._data_provider:
+                    self._data_provider.symbols = list(codes)
+
+                if added or removed:
+                    logger.info(
+                        f"Universe refreshed: {len(codes)} symbols "
+                        f"(+{len(added)} -{len(removed)})"
+                    )
+                return True
+        except Exception as e:
+            logger.warning(f"Universe refresh failed: {e}")
+        return False
+
+    async def _universe_refresh_loop(self) -> None:
+        """Periodically refresh symbols from screener."""
+        while self._market_data_running:
+            try:
+                self._refresh_universe_from_screener()
+            except Exception as e:
+                logger.warning(f"Universe refresh loop error: {e}")
+            await asyncio.sleep(self._universe_refresh_interval)
 
     async def stop(self):
         """거래 종료"""
@@ -804,11 +864,22 @@ class TradingOrchestrator:
             name="market_data_loop",
         )
 
+        # Start universe refresh loop for stock trading
+        if self.config.asset_class == "stock":
+            self._universe_refresh_task = asyncio.create_task(
+                self._universe_refresh_loop(),
+                name="universe_refresh_loop",
+            )
+
     async def _stop_market_data_loop(self) -> None:
         if not self._market_data_running:
             return
 
         self._market_data_running = False
+        if self._universe_refresh_task:
+            self._universe_refresh_task.cancel()
+            await asyncio.gather(self._universe_refresh_task, return_exceptions=True)
+            self._universe_refresh_task = None
         if self._market_data_task:
             self._market_data_task.cancel()
             await asyncio.gather(self._market_data_task, return_exceptions=True)
@@ -1174,8 +1245,18 @@ class TradingOrchestrator:
 
                     if position:
                         self.total_trades += 1
+                        name = signal.name or self._symbol_names.get(signal.code, "")
                         logger.info(
-                            f"Entry executed: {signal.code} @ {fill_price:,.0f} x {quantity}"
+                            f"Entry executed: {name} ({signal.code}) @ {fill_price:,.0f} x {quantity}"
+                        )
+                        amount = fill_price * quantity
+                        await self._notify(
+                            f"🟢 <b>매수 진입</b>\n"
+                            f"종목: {name} ({signal.code})\n"
+                            f"가격: {fill_price:,.0f}원 x {quantity}주\n"
+                            f"금액: {amount:,.0f}원\n"
+                            f"전략: {signal.strategy}\n"
+                            f"신뢰도: {signal.confidence:.1%}"
                         )
 
             except Exception as e:
@@ -1236,9 +1317,21 @@ class TradingOrchestrator:
 
                     if closed:
                         self.total_pnl += closed.unrealized_pnl
+                        name = getattr(closed, "name", "") or self._symbol_names.get(signal.code, "")
+                        reason_str = signal.reason.value if hasattr(signal.reason, "value") else str(signal.reason)
+                        pnl = closed.unrealized_pnl
+                        pnl_pct = closed.profit_pct
+                        pnl_emoji = "🟢" if pnl >= 0 else "🔴"
                         logger.info(
-                            f"Exit executed: {signal.code} @ {fill_price:,.0f} "
-                            f"(reason={signal.reason}, pnl={closed.profit_pct:+.2f}%)"
+                            f"Exit executed: {name} ({signal.code}) @ {fill_price:,.0f} "
+                            f"(reason={reason_str}, pnl={pnl_pct:+.2f}%)"
+                        )
+                        await self._notify(
+                            f"{pnl_emoji} <b>매도 청산</b>\n"
+                            f"종목: {name} ({signal.code})\n"
+                            f"가격: {fill_price:,.0f}원 x {signal.quantity}주\n"
+                            f"사유: {reason_str}\n"
+                            f"손익: {pnl:+,.0f}원 ({pnl_pct:+.2f}%)"
                         )
 
             except Exception as e:
