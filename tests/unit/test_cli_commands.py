@@ -80,10 +80,11 @@ class TestCollectCommands:
 class TestTradeCommands:
     """Test trade commands."""
 
-    def test_trade_status(self, runner):
-        """Test trade status command."""
+    def test_trade_status(self, runner, mocker):
+        """Test trade status command shows 'not running' when no server."""
         from cli.main import cli
 
+        mocker.patch("httpx.get", side_effect=ConnectionError("no server"))
         result = runner.invoke(cli, ["trade", "status"])
         assert result.exit_code == 0
         assert "Status" in result.output
