@@ -569,7 +569,7 @@ class UnifiedTradingAnalyzer:
         """전체 분석 실행
 
         Args:
-            mode: "all", "stock", "futures"
+            mode: "all", "stock" (선물 분석 비활성화)
             send_telegram: 텔레그램 알림 전송 여부
 
         Returns:
@@ -586,16 +586,16 @@ class UnifiedTradingAnalyzer:
         if mode in ["all", "stock"]:
             stock_plans, stock_analysis = await self._analyze_stocks()
 
-        # 선물 분석
+        # 선물 분석 (비활성화)
         if mode in ["all", "futures"]:
-            futures_plan, futures_analysis = await self._analyze_futures()
+            logger.info("Futures analysis disabled: skipping futures data in LLM output")
 
         # 통합 데이터
         analysis_data = {
             "date": self.date,
             "generated_at": self.datetime_str,
             "stock": stock_analysis,
-            "futures": futures_analysis,
+            "futures": None,
         }
 
         # 리포트 저장
