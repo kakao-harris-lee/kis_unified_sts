@@ -135,6 +135,9 @@ async def run_screener(config: ScreenerConfig) -> None:
     publisher = StreamPublisher(config.universe_stream)
 
     last_codes: list[str] = []
+    last_notified_codes: set[str] = set()
+    last_notify_time: float = 0.0
+    notify_interval = 60.0  # minimum seconds between Telegram notifications
     notifier: TelegramNotifier | None = None
     if config.telegram_enabled:
         tg_cfg = TelegramConfig.from_env()
@@ -175,15 +178,27 @@ async def run_screener(config: ScreenerConfig) -> None:
                     publisher.publish(payload)
                     redis_client.set(config.universe_latest_key, json.dumps(payload, ensure_ascii=False))
 
-                    if notifier:
+                    current_set = set(codes)
+                    now = time.time()
+                    set_changed = current_set != last_notified_codes
+                    enough_time = (now - last_notify_time) >= notify_interval
+
+                    if notifier and set_changed and enough_time:
+                        added = current_set - last_notified_codes
+                        removed = last_notified_codes - current_set
                         msg_lines = [
                             "🔎 <b>Screener Update</b>",
                             f"⏱️ {payload['generated_at']}",
                             f"종목 수: {len(codes)}",
-                            "",
                         ]
+                        if last_notified_codes and added:
+                            added_names = [f"{info.get(c, {}).get('name', c)}" for c in added]
+                            msg_lines.append(f"🆕 편입: {', '.join(added_names)}")
+                        if last_notified_codes and removed:
+                            removed_names = [f"{c}" for c in removed]
+                            msg_lines.append(f"🔻 제외: {', '.join(removed_names)}")
+                        msg_lines.append("")
                         for idx, code in enumerate(codes, start=1):
-                            score = scores.get(code, 0.0)
                             stock_info = info.get(code, {})
                             name = stock_info.get("name", "")
                             price = stock_info.get("price", 0)
@@ -193,6 +208,8 @@ async def run_screener(config: ScreenerConfig) -> None:
                                 f"{idx}. {name} ({code}) {price:,.0f}원 {sign}{change_pct:.2f}%"
                             )
                         await notifier.send("\n".join(msg_lines))
+                        last_notified_codes = current_set
+                        last_notify_time = now
 
                     last_codes = codes
                     logger.info(f"Published new universe: {len(codes)} codes")
