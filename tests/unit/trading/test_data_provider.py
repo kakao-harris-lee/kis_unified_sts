@@ -303,7 +303,7 @@ class TestMarketDataSourceProtocol:
         elapsed = (datetime.now() - start).total_seconds()
 
         # Should be faster than sequential (3 * 0.01 = 0.03s)
-        # With parallel, should be around 0.01s
+        # With staggered parallel (50ms apart), ~0.12s for 3 symbols
         assert len(data) == 3
-        # Allow some overhead
-        assert elapsed < 0.05
+        # Allow for stagger overhead (3 * 50ms + 10ms API + margin)
+        assert elapsed < 0.3

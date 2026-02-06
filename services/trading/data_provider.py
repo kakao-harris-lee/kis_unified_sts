@@ -385,9 +385,11 @@ class MarketDataProvider:
         for i in range(0, len(symbols), self.config.batch_size):
             batch = symbols[i : i + self.config.batch_size]
 
-            # Create tasks for parallel execution
-            async def fetch_single(symbol: str) -> tuple[str, dict[str, Any] | None]:
+            # Create tasks with staggered start to avoid KIS API rate limit
+            async def fetch_single(symbol: str, idx: int) -> tuple[str, dict[str, Any] | None]:
                 try:
+                    if idx > 0:
+                        await asyncio.sleep(idx * 0.05)
                     price_data = await asyncio.wait_for(
                         source.get_current_price(symbol),
                         timeout=self.config.fetch_timeout_seconds,
@@ -400,9 +402,9 @@ class MarketDataProvider:
                     logger.warning(f"Error fetching {symbol}: {e}")
                     return (symbol, None)
 
-            # Execute all fetches in parallel within this batch
-            # Use overall timeout to prevent batch from hanging indefinitely
-            tasks = [fetch_single(symbol) for symbol in batch]
+            # Execute fetches in parallel with staggered starts (50ms apart)
+            # Prevents KIS "초당 거래건수 초과" rate limit on burst
+            tasks = [fetch_single(symbol, idx) for idx, symbol in enumerate(batch)]
             try:
                 # Overall timeout is 2x individual timeout to allow for overhead
                 batch_timeout = self.config.fetch_timeout_seconds * 2
