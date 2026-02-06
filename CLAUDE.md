@@ -14,6 +14,18 @@
 
 ## 📋 프로젝트 개요
 
+### 트레이딩 목표
+
+#### 선물 (Futures)
+- **대상 종목**: KOSPI200 선물, KOSPI200 mini 선물
+- **주요 목표**: KOSPI200 mini futures로 안정적인 전략을 구사하는 것이 목표
+- **현재 전략**: bb_reversion (볼린저 밴드 + RSI 평균 회귀, buy_only, intraday)
+- **현황**: 백테스트/파라미터 최적화 완료. 거래 빈도 부족(29회/14개월)이 근본 과제
+
+#### 주식 (Stock)
+- Screener 기반 종목 선정 + bb_reversion / ma_crossover 전략
+- Paper trading 운용 중
+
 ### 통합 대상
 
 | 프로젝트 | 대상 | 핵심 기능 | GitHub |
