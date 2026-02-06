@@ -24,6 +24,7 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import time
@@ -457,6 +458,14 @@ class TradingOrchestrator:
         self._metrics = get_metrics_collector()
         self._order_executor = order_executor
 
+        # Streaming indicator engine (initialized in _initialize_components)
+        self._indicator_engine: Any | None = None
+
+        # Universe refresh from screener
+        self._universe_refresh_task: asyncio.Task | None = None
+        self._universe_refresh_interval = 30.0  # seconds
+        self._symbol_names: dict[str, str] = {}  # code -> name mapping
+
         logger.info(
             f"TradingOrchestrator initialized: "
             f"{config.asset_class}/{config.strategy_name}"
@@ -538,6 +547,35 @@ class TradingOrchestrator:
             config=PositionTrackerConfig(max_positions=10)
         )
 
+        # Streaming indicator engine for live BB/RSI
+        try:
+            from services.trading.indicator_engine import StreamingIndicatorEngine
+
+            # Read BB/RSI params from strategy entry config if available
+            bb_period, bb_std, rsi_period = 20, 2.0, 14
+            if self._strategy_manager:
+                for strategy in self._strategy_manager.strategies.values():
+                    entry = getattr(strategy, "entry", None)
+                    if entry is not None:
+                        cfg = entry.get_config()
+                        bb_period = cfg.get("bb_period", bb_period)
+                        bb_std = cfg.get("bb_std", bb_std)
+                        rsi_period = cfg.get("rsi_period", rsi_period)
+                        break
+
+            self._indicator_engine = StreamingIndicatorEngine(
+                bb_period=bb_period,
+                bb_std=bb_std,
+                rsi_period=rsi_period,
+            )
+            logger.info(
+                f"Indicator engine initialized (bb={bb_period}, "
+                f"std={bb_std}, rsi={rsi_period})"
+            )
+        except Exception as e:
+            logger.warning(f"Indicator engine init failed: {e}")
+            self._indicator_engine = None
+
         # Paper broker (if paper trading)
         if self.config.paper_trading:
             try:
@@ -575,11 +613,65 @@ class TradingOrchestrator:
                 logger.warning(f"OrderExecutor init failed; orders will be mocked: {e}")
                 self._order_executor = None
 
+        # Bootstrap symbols from screener if none configured
+        if not self.config.symbols and self.config.asset_class == "stock":
+            self._refresh_universe_from_screener()
+
         logger.info(
             f"Components initialized: "
             f"{len(self._strategy_manager.strategies)} strategies, "
             f"{len(self.config.symbols)} symbols"
         )
+
+    def _refresh_universe_from_screener(self) -> bool:
+        """Read screener universe from Redis and update symbols."""
+        try:
+            from shared.streaming.client import RedisClient
+            redis = RedisClient.get_client()
+            raw = redis.get(
+                os.environ.get("UNIVERSE_LATEST_KEY", "system:universe:latest")
+            )
+            if not raw:
+                logger.debug("No screener universe found in Redis")
+                return False
+
+            payload = json.loads(raw)
+            codes = payload.get("codes", [])
+            names = payload.get("names", {})
+
+            if not codes:
+                return False
+
+            old_set = set(self.config.symbols)
+            new_set = set(codes)
+
+            if new_set != old_set:
+                added = new_set - old_set
+                removed = old_set - new_set
+                self.config.symbols = list(codes)
+                self._symbol_names.update(names)
+
+                if self._data_provider:
+                    self._data_provider.symbols = list(codes)
+
+                if added or removed:
+                    logger.info(
+                        f"Universe refreshed: {len(codes)} symbols "
+                        f"(+{len(added)} -{len(removed)})"
+                    )
+                return True
+        except Exception as e:
+            logger.warning(f"Universe refresh failed: {e}")
+        return False
+
+    async def _universe_refresh_loop(self) -> None:
+        """Periodically refresh symbols from screener."""
+        while self._market_data_running:
+            try:
+                self._refresh_universe_from_screener()
+            except Exception as e:
+                logger.warning(f"Universe refresh loop error: {e}")
+            await asyncio.sleep(self._universe_refresh_interval)
 
     async def stop(self):
         """거래 종료"""
@@ -804,11 +896,22 @@ class TradingOrchestrator:
             name="market_data_loop",
         )
 
+        # Start universe refresh loop for stock trading
+        if self.config.asset_class == "stock":
+            self._universe_refresh_task = asyncio.create_task(
+                self._universe_refresh_loop(),
+                name="universe_refresh_loop",
+            )
+
     async def _stop_market_data_loop(self) -> None:
         if not self._market_data_running:
             return
 
         self._market_data_running = False
+        if self._universe_refresh_task:
+            self._universe_refresh_task.cancel()
+            await asyncio.gather(self._universe_refresh_task, return_exceptions=True)
+            self._universe_refresh_task = None
         if self._market_data_task:
             self._market_data_task.cancel()
             await asyncio.gather(self._market_data_task, return_exceptions=True)
@@ -822,9 +925,17 @@ class TradingOrchestrator:
             try:
                 data = await self._refresh_market_data_once()
                 if data:
+                    now_ts = datetime.now()
                     async with self._market_data_lock:
                         self._market_data_snapshot = data
-                        self._market_data_updated_at = datetime.now()
+                        self._market_data_updated_at = now_ts
+
+                    # Feed ticks to streaming indicator engine
+                    if self._indicator_engine:
+                        for sym, sym_data in data.items():
+                            if isinstance(sym_data, dict):
+                                self._indicator_engine.on_tick(sym, sym_data, now_ts)
+
                     staleness = self._get_market_data_staleness_seconds()
                     if staleness is not None:
                         self._metrics.record_market_data_staleness(staleness)
@@ -858,19 +969,17 @@ class TradingOrchestrator:
     async def _handle_regime(self) -> dict[str, Any] | None:
         """Regime detection handler (runs every 5 min)
 
-        Detects market state (BULL/BEAR/SIDEWAYS) for strategy filtering.
+        Uses MarketClassifier with MFI computed from streaming indicator engine.
+        Falls back to simple avg-change classification when MFI is unavailable.
         """
         if not self._data_provider:
             return None
 
         try:
-            # Fetch market data
             data = await self._get_market_data_snapshot()
             if not data:
                 return None
 
-            # Simple regime detection based on market data
-            # TODO: Implement proper MarketClassifier integration
             regime = self._classify_market(data)
             self._current_regime = regime
 
@@ -886,25 +995,28 @@ class TradingOrchestrator:
             logger.error(f"Regime detection failed: {e}", exc_info=True)
             return None
 
-    # Market classification thresholds (from config in CLAUDE.md)
-    MARKET_BULL_THRESHOLD = 0.02  # +2% = BULL
-    MARKET_BEAR_THRESHOLD = -0.02  # -2% = BEAR
-
     def _classify_market(self, market_data: dict[str, Any]) -> str:
-        """Simple market classification based on average change.
+        """Market classification using MarketClassifier with MFI from indicator engine.
 
-        TODO: Replace with proper MarketClassifier using MFI/ADX from config.
-
-        Args:
-            market_data: Dict of symbol -> market data
-
-        Returns:
-            Market regime string (BULL, BEAR, SIDEWAYS_UP, SIDEWAYS_DOWN, SIDEWAYS_FLAT)
+        Falls back to simple avg-change heuristic when MFI is not yet available
+        (during warmup period).
         """
         if not market_data:
             return "UNKNOWN"
 
-        # Calculate average change across symbols
+        # Try MFI-based classification via MarketClassifier
+        if self._indicator_engine:
+            mfi = self._indicator_engine.get_market_mfi()
+            if mfi is not None:
+                try:
+                    from shared.strategy.market_classifier import MarketClassifier
+                    classifier = MarketClassifier()
+                    state = classifier.classify(mfi=mfi, adx=0.0)
+                    return state.value
+                except Exception as e:
+                    logger.debug(f"MarketClassifier failed: {e}")
+
+        # Fallback: simple avg-change heuristic (used during warmup)
         changes = []
         for symbol, data in market_data.items():
             if isinstance(data, dict):
@@ -917,11 +1029,10 @@ class TradingOrchestrator:
 
         avg_change = sum(changes) / len(changes)
 
-        # Use class constants instead of magic numbers
-        if avg_change > self.MARKET_BULL_THRESHOLD:
-            return "BULL"
-        elif avg_change < self.MARKET_BEAR_THRESHOLD:
-            return "BEAR"
+        if avg_change > 0.02:
+            return "BULL_MODERATE"
+        elif avg_change < -0.02:
+            return "BEAR_MODERATE"
         elif avg_change > 0:
             return "SIDEWAYS_UP"
         elif avg_change < 0:
@@ -940,8 +1051,8 @@ class TradingOrchestrator:
         if not self._position_tracker:
             return []
 
-        # Skip entries in BEAR market
-        if self._current_regime == "BEAR":
+        # Skip entries in BEAR market (covers both old "BEAR" and new MarketState values)
+        if self._current_regime and "BEAR" in self._current_regime:
             return []
 
         # Check position limit
@@ -970,9 +1081,16 @@ class TradingOrchestrator:
                     enriched["name"] = meta["name"]
                 enriched.update(meta)
 
+                # Inject streaming indicators (BB, RSI)
+                indicators: dict[str, Any] = {}
+                if self._indicator_engine:
+                    indicators = self._indicator_engine.get_indicators(symbol)
+                    if indicators:
+                        enriched.update(indicators)
+
                 context = EntryContext(
                     market_data=enriched,
-                    indicators={},  # TODO: Calculate indicators
+                    indicators=indicators,
                     current_positions=self._position_tracker.positions,
                     timestamp=now,
                     metadata={"regime": self._current_regime, "symbol_metadata": meta},
@@ -1174,8 +1292,18 @@ class TradingOrchestrator:
 
                     if position:
                         self.total_trades += 1
+                        name = signal.name or self._symbol_names.get(signal.code, "")
                         logger.info(
-                            f"Entry executed: {signal.code} @ {fill_price:,.0f} x {quantity}"
+                            f"Entry executed: {name} ({signal.code}) @ {fill_price:,.0f} x {quantity}"
+                        )
+                        amount = fill_price * quantity
+                        await self._notify(
+                            f"🟢 <b>매수 진입</b>\n"
+                            f"종목: {name} ({signal.code})\n"
+                            f"가격: {fill_price:,.0f}원 x {quantity}주\n"
+                            f"금액: {amount:,.0f}원\n"
+                            f"전략: {signal.strategy}\n"
+                            f"신뢰도: {signal.confidence:.1%}"
                         )
 
             except Exception as e:
@@ -1236,9 +1364,21 @@ class TradingOrchestrator:
 
                     if closed:
                         self.total_pnl += closed.unrealized_pnl
+                        name = getattr(closed, "name", "") or self._symbol_names.get(signal.code, "")
+                        reason_str = signal.reason.value if hasattr(signal.reason, "value") else str(signal.reason)
+                        pnl = closed.unrealized_pnl
+                        pnl_pct = closed.profit_pct
+                        pnl_emoji = "🟢" if pnl >= 0 else "🔴"
                         logger.info(
-                            f"Exit executed: {signal.code} @ {fill_price:,.0f} "
-                            f"(reason={signal.reason}, pnl={closed.profit_pct:+.2f}%)"
+                            f"Exit executed: {name} ({signal.code}) @ {fill_price:,.0f} "
+                            f"(reason={reason_str}, pnl={pnl_pct:+.2f}%)"
+                        )
+                        await self._notify(
+                            f"{pnl_emoji} <b>매도 청산</b>\n"
+                            f"종목: {name} ({signal.code})\n"
+                            f"가격: {fill_price:,.0f}원 x {signal.quantity}주\n"
+                            f"사유: {reason_str}\n"
+                            f"손익: {pnl:+,.0f}원 ({pnl_pct:+.2f}%)"
                         )
 
             except Exception as e:
