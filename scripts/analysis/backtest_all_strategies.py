@@ -88,16 +88,10 @@ def _min_bars_required(strategy: str, params: dict[str, Any]) -> int:
     ma_long = int(params.get("ma_long", 60))
     base = max(bb_period, rsi_period, macd_slow, atr_period, ma_long)
 
-    if strategy in {"ma_crossover", "simple_ma"}:
+    if strategy == "ma_crossover":
         short_period = int(params.get("short_period", params.get("ma_short", 5)))
         long_period = int(params.get("long_period", params.get("ma_long", 20)))
         base = max(base, short_period, long_period)
-
-    if strategy == "stochrsi_trend":
-        stoch_period = int(params.get("stoch_period", 14))
-        k_period = int(params.get("k_period", 3))
-        d_period = int(params.get("d_period", 3))
-        base = max(base, rsi_period + stoch_period + max(k_period, d_period))
 
     return base + 5
 

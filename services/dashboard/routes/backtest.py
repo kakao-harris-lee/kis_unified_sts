@@ -30,11 +30,7 @@ MAX_CHART_SECONDS = int(os.getenv("BACKTEST_CHART_RESAMPLE_SECONDS", "1800"))
 MAX_CHART_DAYS = int(os.getenv("BACKTEST_CHART_MAX_DAYS", "30"))
 SUPPORTED_STRATEGIES = {
     "bb_reversion",
-    "mean_reversion",
-    "v35_optimized",
-    "stochrsi_trend",
     "ma_crossover",
-    "simple_ma",
 }
 
 
@@ -355,6 +351,7 @@ def _compute_base_indicators(df: pd.DataFrame, params: dict[str, Any]) -> pd.Dat
     df["bb_std"] = rolling.std(ddof=0)
     df["bb_upper"] = df["bb_middle"] + bb_std * df["bb_std"]
     df["bb_lower"] = df["bb_middle"] - bb_std * df["bb_std"]
+    df["bb_bandwidth"] = (df["bb_upper"] - df["bb_lower"]) / df["bb_middle"].replace(0, np.nan)
 
     rsi_period = int(params.get("rsi_period", 14))
     delta = close.diff()
@@ -395,29 +392,9 @@ def _compute_indicators(
     df: pd.DataFrame, strategy: str, params: dict[str, Any]
 ) -> pd.DataFrame:
     df = _compute_base_indicators(df, params)
-    close = df["close"]
 
-    if strategy == "stochrsi_trend":
-        rsi_period = int(params.get("rsi_period", 14))
-        stoch_period = int(params.get("stoch_period", 14))
-        k_period = int(params.get("k_period", 3))
-        d_period = int(params.get("d_period", 3))
-
-        delta = close.diff()
-        gain = delta.clip(lower=0)
-        loss = -delta.clip(upper=0)
-        avg_gain = gain.ewm(alpha=1 / rsi_period, adjust=False).mean()
-        avg_loss = loss.ewm(alpha=1 / rsi_period, adjust=False).mean()
-        rs = avg_gain / avg_loss.replace(0, np.nan)
-        rsi = 100 - (100 / (1 + rs))
-        rsi_min = rsi.rolling(stoch_period).min()
-        rsi_max = rsi.rolling(stoch_period).max()
-        stoch = (rsi - rsi_min) / (rsi_max - rsi_min)
-        df["stochrsi_k"] = stoch.rolling(k_period).mean() * 100
-        df["stochrsi_d"] = df["stochrsi_k"].rolling(d_period).mean()
-        df["stochrsi_k_prev"] = df["stochrsi_k"].shift(1)
-
-    if strategy in {"ma_crossover", "simple_ma"}:
+    if strategy == "ma_crossover":
+        close = df["close"]
         short_period = int(params.get("short_period", params.get("ma_short", 5)))
         long_period = int(params.get("long_period", params.get("ma_long", 20)))
         df["ma_short"] = close.rolling(short_period).mean()
@@ -435,45 +412,41 @@ class IndicatorSignalStrategy:
 
     def on_bar(self, bar: dict[str, Any]) -> SignalType:
         close = float(bar.get("close") or 0)
-        if self.name in {"bb_reversion", "mean_reversion"}:
-            bb_lower = float(bar.get("bb_lower") or 0)
-            bb_upper = float(bar.get("bb_upper") or 0)
-            rsi = float(bar.get("rsi") or 50)
-            oversold = float(self.params.get("rsi_oversold", 30))
-            overbought = float(self.params.get("rsi_overbought", 70))
-            buffer = float(self.params.get("bb_touch_buffer", 1.0))
-            if close <= bb_lower * buffer and rsi < oversold:
-                return SignalType.BUY
-            if close >= bb_upper and rsi > overbought:
-                return SignalType.SELL
-            return SignalType.HOLD
-
-        if self.name == "v35_optimized":
+        if self.name == "bb_reversion":
             bb_lower = float(bar.get("bb_lower") or 0)
             bb_upper = float(bar.get("bb_upper") or 0)
             rsi = float(bar.get("rsi") or 50)
             macd_hist = float(bar.get("macd_hist") or 0)
+            bb_bandwidth = float(bar.get("bb_bandwidth") or 0)
+
             oversold = float(self.params.get("rsi_oversold", 30))
             overbought = float(self.params.get("rsi_overbought", 70))
-            if close < bb_lower and rsi < oversold and macd_hist > 0:
+            buffer = float(self.params.get("bb_touch_buffer", 1.0))
+            use_macd = bool(self.params.get("use_macd_filter", False))
+            buy_only = bool(self.params.get("buy_only", False))
+            min_bw = float(self.params.get("min_bb_bandwidth", 0))
+
+            # BB bandwidth 필터: 밴드가 너무 좁으면 횡보 → 스킵
+            if min_bw > 0 and bb_bandwidth < min_bw:
+                return SignalType.HOLD
+
+            # BUY: BB 하단 터치 + RSI 과매도 (+ MACD 확인)
+            if close <= bb_lower * buffer and rsi < oversold:
+                if use_macd and macd_hist <= 0:
+                    return SignalType.HOLD
                 return SignalType.BUY
-            if close > bb_upper and rsi > overbought and macd_hist < 0:
-                return SignalType.SELL
+
+            # SELL: BB 상단 터치 + RSI 과매수 (+ MACD 확인)
+            # TODO: 시장 레짐(상승/횡보/하락)에 따라 buy_only 동적 전환
+            if not buy_only:
+                if close >= bb_upper and rsi > overbought:
+                    if use_macd and macd_hist >= 0:
+                        return SignalType.HOLD
+                    return SignalType.SELL
+
             return SignalType.HOLD
 
-        if self.name == "stochrsi_trend":
-            k = float(bar.get("stochrsi_k") or 50)
-            d = float(bar.get("stochrsi_d") or 50)
-            k_prev = float(bar.get("stochrsi_k_prev") or 50)
-            oversold = float(self.params.get("oversold", 20))
-            overbought = float(self.params.get("overbought", 80))
-            if (k < oversold or d < oversold) and k > d and k_prev < d:
-                return SignalType.BUY
-            if (k > overbought or d > overbought) and k < d and k_prev > d:
-                return SignalType.SELL
-            return SignalType.HOLD
-
-        if self.name in {"ma_crossover", "simple_ma"}:
+        if self.name == "ma_crossover":
             short = bar.get("ma_short")
             long = bar.get("ma_long")
             short_prev = bar.get("ma_short_prev")

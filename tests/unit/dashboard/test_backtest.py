@@ -57,7 +57,7 @@ async def test_backtest_run(monkeypatch):
             "/api/backtest/run",
             json={
                 "asset_class": "stock",
-                "strategy": "v35_optimized",
+                "strategy": "bb_reversion",
                 "symbol": "005930",
                 "start_date": "2024-01-01",
                 "end_date": "2024-12-31",

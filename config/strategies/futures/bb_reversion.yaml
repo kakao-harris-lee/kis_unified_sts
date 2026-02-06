@@ -1,0 +1,72 @@
+# BB Reversion Strategy (Futures)
+#
+# Optuna 최적화 결과 기반 선물 전용 파라미터
+# - 데이터: KOSPI200 선물 (101S6000), 98,127 bars, 2024-12 ~ 2026-01
+# - 최적화: 200 trials, TPE sampler, Sharpe 기준
+#
+# 주요 개선:
+#   1. MACD 히스토그램 필터 (역추세 진입 방지)
+#   2. BUY-only 모드 (상승 추세 시장에서 SELL 손실 제거)
+#   3. BB 기간/표준편차 조정 (32/1.8 → 노이즈 감소)
+#   4. BB bandwidth 필터 (횡보 구간 오신호 제거)
+
+strategy:
+  name: bb_reversion
+  asset_class: futures
+  enabled: true
+  description: "볼린저 밴드 하단 + RSI 과매도 + MACD 필터 선물 전략"
+
+  entry:
+    type: mean_reversion
+    params:
+      # Bollinger Bands (Optuna: bb_period=32, bb_std=1.8)
+      bb_period: 32
+      bb_std: 1.8
+      bb_touch_buffer: 1.03
+
+      # RSI (Optuna: rsi_oversold=32, rsi_overbought=80)
+      rsi_period: 16
+      rsi_oversold: 32
+      rsi_overbought: 80
+
+      # MACD 필터 (Optuna importance 10%, top5 전원 True)
+      use_macd_filter: true
+      macd_fast: 12
+      macd_slow: 26
+      macd_signal: 9
+
+      # BUY-only 모드 (BUY WR 70% vs SELL WR 53%)
+      # TODO: 시장 레짐에 따라 동적으로 전환 (상승장=BUY-only, 횡보=양방향)
+      buy_only: true
+
+      # BB bandwidth 필터 (좁은 밴드 = 횡보 → 오신호 제거)
+      # Optuna 탐색 결과: 0.003 최적 (score=86.31, ret+82%, sharpe=22.3, pf=13.18)
+      min_bb_bandwidth: 0.003
+
+  exit:
+    type: three_stage
+    params:
+      stop_loss_pct: -0.04
+      take_profit_pct: 0.05
+      breakeven_threshold_pct: 0.02
+      trailing_stop_pct: -0.03
+      # TODO: ATR 기반 동적 손절로 전환
+      # atr_stop_multiplier: 2.0
+      session_close_time: "15:35"
+
+  position:
+    type: fixed
+    params:
+      contracts: 1
+      max_contracts: 2
+
+  indicators:
+    bollinger_bands:
+      period: 32
+      std_dev: 1.8
+    rsi:
+      period: 16
+    macd:
+      fast_period: 12
+      slow_period: 26
+      signal_period: 9
