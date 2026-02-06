@@ -458,6 +458,9 @@ class TradingOrchestrator:
         self._metrics = get_metrics_collector()
         self._order_executor = order_executor
 
+        # Streaming indicator engine (initialized in _initialize_components)
+        self._indicator_engine: Any | None = None
+
         # Universe refresh from screener
         self._universe_refresh_task: asyncio.Task | None = None
         self._universe_refresh_interval = 30.0  # seconds
@@ -543,6 +546,35 @@ class TradingOrchestrator:
         self._position_tracker = PositionTracker(
             config=PositionTrackerConfig(max_positions=10)
         )
+
+        # Streaming indicator engine for live BB/RSI
+        try:
+            from services.trading.indicator_engine import StreamingIndicatorEngine
+
+            # Read BB/RSI params from strategy entry config if available
+            bb_period, bb_std, rsi_period = 20, 2.0, 14
+            if self._strategy_manager:
+                for strategy in self._strategy_manager.strategies.values():
+                    entry = getattr(strategy, "entry", None)
+                    if entry is not None:
+                        cfg = entry.get_config()
+                        bb_period = cfg.get("bb_period", bb_period)
+                        bb_std = cfg.get("bb_std", bb_std)
+                        rsi_period = cfg.get("rsi_period", rsi_period)
+                        break
+
+            self._indicator_engine = StreamingIndicatorEngine(
+                bb_period=bb_period,
+                bb_std=bb_std,
+                rsi_period=rsi_period,
+            )
+            logger.info(
+                f"Indicator engine initialized (bb={bb_period}, "
+                f"std={bb_std}, rsi={rsi_period})"
+            )
+        except Exception as e:
+            logger.warning(f"Indicator engine init failed: {e}")
+            self._indicator_engine = None
 
         # Paper broker (if paper trading)
         if self.config.paper_trading:
@@ -893,9 +925,17 @@ class TradingOrchestrator:
             try:
                 data = await self._refresh_market_data_once()
                 if data:
+                    now_ts = datetime.now()
                     async with self._market_data_lock:
                         self._market_data_snapshot = data
-                        self._market_data_updated_at = datetime.now()
+                        self._market_data_updated_at = now_ts
+
+                    # Feed ticks to streaming indicator engine
+                    if self._indicator_engine:
+                        for sym, sym_data in data.items():
+                            if isinstance(sym_data, dict):
+                                self._indicator_engine.on_tick(sym, sym_data, now_ts)
+
                     staleness = self._get_market_data_staleness_seconds()
                     if staleness is not None:
                         self._metrics.record_market_data_staleness(staleness)
@@ -1041,9 +1081,16 @@ class TradingOrchestrator:
                     enriched["name"] = meta["name"]
                 enriched.update(meta)
 
+                # Inject streaming indicators (BB, RSI)
+                indicators: dict[str, Any] = {}
+                if self._indicator_engine:
+                    indicators = self._indicator_engine.get_indicators(symbol)
+                    if indicators:
+                        enriched.update(indicators)
+
                 context = EntryContext(
                     market_data=enriched,
-                    indicators={},  # TODO: Calculate indicators
+                    indicators=indicators,
                     current_positions=self._position_tracker.positions,
                     timestamp=now,
                     metadata={"regime": self._current_regime, "symbol_metadata": meta},
