@@ -13,6 +13,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+import numpy as np
+import pandas as pd
+
 from .analyzers import (
     FuturesTechnicalAnalyzer,
     StockBacktester,
@@ -34,12 +37,14 @@ from .collectors import (
 from .config import LLMConfig
 from .data_classes import (
     AnalysisResult,
+    BacktestResult,
     FuturesTradingPlan,
     MarketBias,
     Signal,
     StockDetailedBriefing,
     StockInfo,
     StockTradingPlan,
+    TechnicalAnalysis,
 )
 from .errors import DataUnavailableError
 from .identifiers import DARTCorpCodeMapper
@@ -490,6 +495,189 @@ class UnifiedTradingAnalyzer:
                     hits.append(kw)
         return hits
 
+    @staticmethod
+    def _calc_max_drawdown(close: "pd.Series") -> float:
+        if close is None or len(close) < 2:
+            return 0.0
+        roll_max = close.cummax()
+        drawdown = (close / roll_max) - 1.0
+        return float(abs(drawdown.min())) if len(drawdown) else 0.0
+
+    @staticmethod
+    def _calc_atr_pct(df: "pd.DataFrame", period: int = 14) -> float:
+        if df is None or len(df) < period + 1:
+            return 0.0
+        high = df["고가"].astype(float)
+        low = df["저가"].astype(float)
+        close = df["종가"].astype(float)
+        prev_close = close.shift(1)
+        tr = (high - low).abs()
+        tr = tr.combine((high - prev_close).abs(), max)
+        tr = tr.combine((low - prev_close).abs(), max)
+        atr = tr.rolling(period).mean().iloc[-1]
+        last_close = close.iloc[-1]
+        if pd.isna(atr) or last_close == 0:
+            return 0.0
+        return float(atr / last_close)
+
+    @staticmethod
+    def _calc_consecutive_up(returns: "pd.Series") -> int:
+        if returns is None or len(returns) == 0:
+            return 0
+        count = 0
+        for val in reversed(returns.dropna().tolist()):
+            if val > 0:
+                count += 1
+            else:
+                break
+        return count
+
+    @staticmethod
+    def _calc_momentum_metrics(close: "pd.Series", lookback: int) -> Dict[str, float]:
+        metrics: Dict[str, float] = {}
+        if close is None or len(close) < 2:
+            return metrics
+
+        def _ret(days: int) -> float:
+            if len(close) <= days:
+                return 0.0
+            prev = float(close.iloc[-days - 1])
+            cur = float(close.iloc[-1])
+            return ((cur / prev) - 1.0) * 100 if prev else 0.0
+
+        metrics["ret_5d"] = _ret(5)
+        metrics["ret_20d"] = _ret(20)
+        metrics["ret_60d"] = _ret(60)
+
+        window = close.tail(min(len(close), lookback))
+        high = float(window.max()) if len(window) else 0.0
+        metrics["high_lookback"] = high
+        metrics["high_proximity"] = float(close.iloc[-1] / high) if high else 0.0
+        return metrics
+
+    def _score_stock_candidate(
+        self,
+        stock: StockInfo,
+        tech: TechnicalAnalysis,
+        best: BacktestResult,
+        news: Dict[str, Any],
+        screening: Dict[str, Any],
+    ) -> tuple[float, Dict[str, float]]:
+        momentum = screening.get("momentum", {})
+        ret_5d = float(momentum.get("ret_5d", 0.0))
+        ret_20d = float(momentum.get("ret_20d", 0.0))
+        ret_60d = float(momentum.get("ret_60d", 0.0))
+        high_prox = float(momentum.get("high_proximity", 0.0))
+        consecutive_up = int(screening.get("consecutive_up", 0))
+
+        momentum_raw = ret_5d * 0.6 + ret_20d * 0.3 + ret_60d * 0.1
+        momentum_score = max(min(momentum_raw, 20.0), -20.0)
+        if high_prox >= 0.95:
+            momentum_score += 5
+        elif high_prox <= 0.75:
+            momentum_score -= 5
+        if consecutive_up >= 3:
+            momentum_score += 3
+
+        signal_map = {
+            Signal.STRONG_BUY: 12,
+            Signal.BUY: 6,
+            Signal.HOLD: 0,
+            Signal.SELL: -6,
+            Signal.STRONG_SELL: -12,
+        }
+        technical_score = float(signal_map.get(tech.signal, 0))
+
+        win_rate_score = (best.win_rate - 50) * 0.6
+        total_return = max(min(best.total_return, 30.0), -30.0)
+        return_score = total_return * 0.4
+        backtest_score = win_rate_score + return_score
+        if best.trade_count < 10:
+            backtest_score *= 0.8
+
+        sentiment = news.get("sentiment", "중립")
+        news_score = 0.0
+        if sentiment in ["긍정", "매우 긍정"]:
+            news_score += 5
+        elif sentiment in ["부정", "매우 부정"]:
+            news_score -= 5
+
+        risk_hits = screening.get("risk_keywords", [])
+        if risk_hits:
+            news_score -= min(len(risk_hits) * 2, 6)
+
+        liquidity_score = 0.0
+        trade_value = float(stock.trade_value or 0.0)
+        min_trade_value = float(self.config.stock_min_trade_value)
+        if trade_value >= min_trade_value * 3:
+            liquidity_score += 6
+        elif trade_value >= min_trade_value * 2:
+            liquidity_score += 4
+        elif trade_value >= min_trade_value:
+            liquidity_score += 2
+        else:
+            liquidity_score -= 4
+
+        turnover = float(stock.turnover or 0.0)
+        min_turnover = float(self.config.stock_min_turnover)
+        if turnover >= min_turnover * 2:
+            liquidity_score += 3
+        elif turnover >= min_turnover:
+            liquidity_score += 1
+
+        if stock.volume_ratio >= 2.0:
+            liquidity_score += 3
+        elif stock.volume_ratio >= 1.5:
+            liquidity_score += 1
+
+        risk_penalty = 0.0
+        atr_pct = float(screening.get("atr_pct", 0.0))
+        max_dd = float(screening.get("max_drawdown_pct", 0.0))
+        volatility = float(screening.get("volatility", 0.0))
+
+        if atr_pct >= self.config.stock_max_atr_pct:
+            risk_penalty += 6
+        elif atr_pct >= self.config.stock_max_atr_pct * 0.8:
+            risk_penalty += 3
+
+        if max_dd >= self.config.stock_max_drawdown_pct:
+            risk_penalty += 6
+        elif max_dd >= self.config.stock_max_drawdown_pct * 0.8:
+            risk_penalty += 3
+
+        if volatility >= 0.6:
+            risk_penalty += 3
+
+        weights = {
+            "momentum": self.config.stock_score_weight_momentum,
+            "technical": self.config.stock_score_weight_technical,
+            "backtest": self.config.stock_score_weight_backtest,
+            "news": self.config.stock_score_weight_news,
+            "liquidity": self.config.stock_score_weight_liquidity,
+            "risk": self.config.stock_score_weight_risk,
+        }
+
+        total_score = (
+            momentum_score * weights["momentum"]
+            + technical_score * weights["technical"]
+            + backtest_score * weights["backtest"]
+            + news_score * weights["news"]
+            + liquidity_score * weights["liquidity"]
+            - risk_penalty * weights["risk"]
+        )
+
+        breakdown = {
+            "momentum": momentum_score,
+            "technical": technical_score,
+            "backtest": backtest_score,
+            "news": news_score,
+            "liquidity": liquidity_score,
+            "risk_penalty": risk_penalty,
+            "total": total_score,
+        }
+
+        return total_score, breakdown
+
     def collect_all_data_sources(self, code: str = None) -> Dict:
         """모든 데이터 소스에서 데이터 수집"""
         logger.info(f"Collecting data from all sources{f' for {code}' if code else ''}")
@@ -635,6 +823,22 @@ class UnifiedTradingAnalyzer:
             logger.error("Failed to collect market data")
             return [], {}
 
+        required_cols = ["종가", "시가", "거래량", "시가총액"]
+        missing_cols = [c for c in required_cols if c not in market_df.columns]
+        if missing_cols:
+            logger.error(f"Market data missing columns: {missing_cols}")
+            return [], {"_excluded": {"_error": [f"missing_columns:{','.join(missing_cols)}"]}}
+
+        trade_value_fallback = False
+        if "거래대금" not in market_df.columns:
+            trade_value_fallback = True
+            market_df["거래대금"] = market_df["종가"] * market_df["거래량"]
+
+        market_df["거래대금"] = pd.to_numeric(market_df["거래대금"], errors="coerce")
+        market_df["시가총액"] = pd.to_numeric(market_df["시가총액"], errors="coerce")
+        market_df["거래량"] = pd.to_numeric(market_df["거래량"], errors="coerce")
+        market_df = market_df.dropna(subset=["거래대금", "시가총액", "거래량", "종가", "시가"])
+
         # KRX 투자자별 거래동향 수집
         krx_data = {}
         try:
@@ -649,7 +853,13 @@ class UnifiedTradingAnalyzer:
             & (market_df["종가"] <= self.config.stock_max_price)
             & (market_df["시가총액"] >= self.config.stock_min_market_cap)
             & (market_df["시가총액"] <= self.config.stock_max_market_cap)
+            & (market_df["거래대금"] >= self.config.stock_min_trade_value)
         ].copy()
+
+        filtered["거래대금비율"] = (
+            filtered["거래대금"] / filtered["시가총액"].replace(0, np.nan)
+        )
+        filtered = filtered[filtered["거래대금비율"] >= self.config.stock_min_turnover]
 
         filtered["등락률"] = (filtered["종가"] - filtered["시가"]) / filtered["시가"] * 100
 
@@ -668,7 +878,9 @@ class UnifiedTradingAnalyzer:
                 code=code, name=name,
                 price=row['종가'], change_pct=round(row['등락률'], 2),
                 volume=int(row['거래량']), volume_ratio=1.0,
-                market_cap=row['시가총액']
+                market_cap=row['시가총액'],
+                trade_value=float(row.get("거래대금", 0.0)),
+                turnover=float(row.get("거래대금비율", 0.0)),
             ))
 
         logger.info(f"Screened {len(stocks)} stocks (excluded={len(excluded)}) from {markets}")
@@ -678,11 +890,28 @@ class UnifiedTradingAnalyzer:
         analysis_results: Dict[str, Any] = {"_excluded": excluded}
 
         for stock in stocks[: self.config.stock_top_n_volume]:
-            df = self.stock_collector.get_stock_history(
-                stock.code, self.config.stock_backtest_days
+            history_days = max(
+                int(self.config.stock_backtest_days),
+                int(self.config.stock_history_days),
+                int(self.config.stock_momentum_lookback_days),
             )
-            if df is None or len(df) < 30:
+            df = self.stock_collector.get_stock_history(stock.code, history_days)
+            if df is None or len(df) < int(self.config.stock_min_history_days):
+                analysis_results["_excluded"][stock.code] = [
+                    f"history_insufficient:{0 if df is None else len(df)}"
+                ]
                 continue
+
+            required_hist_cols = ["종가", "고가", "저가", "거래량"]
+            missing_hist_cols = [c for c in required_hist_cols if c not in df.columns]
+            if missing_hist_cols:
+                analysis_results["_excluded"][stock.code] = [
+                    f"history_missing:{','.join(missing_hist_cols)}"
+                ]
+                continue
+
+            if "거래대금" not in df.columns:
+                df["거래대금"] = df["종가"] * df["거래량"]
 
             # Volume ratio and liquidity filter (per-stock)
             lookback = max(1, int(self.config.stock_volume_lookback_days))
@@ -693,8 +922,45 @@ class UnifiedTradingAnalyzer:
                 analysis_results["_excluded"][stock.code] = [f"min_avg_volume:{int(avg_volume)}"]
                 continue
 
+            trade_window = df["거래대금"].tail(lookback + 1)
+            avg_trade_value = float(trade_window.iloc[:-1].mean()) if len(trade_window) > 1 else float(trade_window.mean())
+            if avg_trade_value < float(self.config.stock_min_trade_value):
+                analysis_results["_excluded"][stock.code] = [f"min_avg_trade_value:{int(avg_trade_value)}"]
+                continue
+
+            # Momentum & risk metrics
+            close = df["종가"].astype(float)
+            returns = close.pct_change()
+            momentum = self._calc_momentum_metrics(close, int(self.config.stock_momentum_lookback_days))
+            consecutive_up = self._calc_consecutive_up(returns)
+            atr_pct = self._calc_atr_pct(df)
+            max_dd = self._calc_max_drawdown(close)
+            volatility = float(returns.std() * np.sqrt(252)) if returns is not None else 0.0
+
+            if atr_pct > float(self.config.stock_max_atr_pct):
+                analysis_results["_excluded"][stock.code] = [f"atr_pct:{atr_pct:.2%}"]
+                continue
+            if max_dd > float(self.config.stock_max_drawdown_pct):
+                analysis_results["_excluded"][stock.code] = [f"max_drawdown:{max_dd:.2%}"]
+                continue
+
             tech = self.stock_tech_analyzer.analyze(df)
             bt_results = self.stock_backtester.run_all_strategies(df)
+            if not bt_results:
+                analysis_results["_excluded"][stock.code] = ["backtest_empty"]
+                continue
+
+            best = max(bt_results, key=lambda x: x.total_return)
+            if best.trade_count < int(self.config.stock_min_backtest_trades):
+                analysis_results["_excluded"][stock.code] = [
+                    f"backtest_trades:{best.trade_count}"
+                ]
+                continue
+            if best.win_rate < float(self.config.stock_min_backtest_win_rate):
+                analysis_results["_excluded"][stock.code] = [
+                    f"backtest_win_rate:{best.win_rate:.1f}"
+                ]
+                continue
 
             # MK 뉴스 수집
             mk_news = {}
@@ -749,6 +1015,8 @@ class UnifiedTradingAnalyzer:
                 analysis_results["_excluded"][stock.code] = reasons
                 continue
 
+            risk_hits = self._find_keyword_hits(texts_to_scan, self.config.stock_risk_keywords)
+
             # 기존 news 분석에 MK 뉴스 통합
             news = self.stock_news_analyzer.analyze(stock.code, stock.name)
             if mk_news.get("sentiment"):
@@ -756,10 +1024,33 @@ class UnifiedTradingAnalyzer:
             if mk_news.get("stock_news"):
                 news["mk_headlines"] = [n.get("title") for n in mk_news["stock_news"][:3]]
 
+            screening_metrics = {
+                "avg_volume": round(avg_volume, 2),
+                "avg_trade_value": round(avg_trade_value, 2),
+                "volume_ratio": stock.volume_ratio,
+                "trade_value": round(stock.trade_value, 2),
+                "turnover": round(stock.turnover, 6),
+                "momentum": momentum,
+                "consecutive_up": consecutive_up,
+                "atr_pct": round(atr_pct, 4),
+                "max_drawdown_pct": round(max_dd, 4),
+                "volatility": round(volatility, 4),
+                "risk_keywords": risk_hits,
+            }
+
+            screening_score, score_breakdown = self._score_stock_candidate(
+                stock, tech, best, news, screening_metrics
+            )
+
             analysis_results[stock.code] = {
                 "technical": asdict(tech),
                 "backtest": [asdict(b) for b in bt_results],
                 "news": news,
+                "screening": {
+                    "metrics": screening_metrics,
+                    "score": round(screening_score, 2),
+                    "score_breakdown": {k: round(v, 2) for k, v in score_breakdown.items()},
+                },
                 "data_sources": {
                     "mk_news": mk_news,
                     "dart": dart_data,
@@ -768,42 +1059,42 @@ class UnifiedTradingAnalyzer:
                 }
             }
 
-            if bt_results:
-                best = max(bt_results, key=lambda x: x.total_return)
-                if tech.signal in [Signal.STRONG_BUY, Signal.BUY] or best.win_rate >= 45:
-                    candidates.append((stock, tech, best, news, dart_data, ksd_data))
+            if tech.signal in [Signal.STRONG_BUY, Signal.BUY] or best.win_rate >= float(self.config.stock_min_backtest_win_rate):
+                candidates.append((screening_score, stock, tech, best, news, dart_data, ksd_data, screening_metrics))
 
         # KRX 데이터 추가
         analysis_results["_market_data"] = {"krx": krx_data}
 
+        # 스크리닝 메타 요약
+        excluded_counts: Dict[str, int] = {}
+        for _code, reasons in analysis_results.get("_excluded", {}).items():
+            for reason in reasons:
+                key = reason.split(":", 1)[0]
+                excluded_counts[key] = excluded_counts.get(key, 0) + 1
+
+        analysis_results["_screening_meta"] = {
+            "trade_value_fallback": trade_value_fallback,
+            "excluded_count": len(analysis_results.get("_excluded", {})),
+            "excluded_reasons": excluded_counts,
+            "filters": {
+                "min_trade_value": self.config.stock_min_trade_value,
+                "min_turnover": self.config.stock_min_turnover,
+                "min_avg_volume": self.config.stock_min_avg_volume,
+                "min_history_days": self.config.stock_min_history_days,
+                "max_atr_pct": self.config.stock_max_atr_pct,
+                "max_drawdown_pct": self.config.stock_max_drawdown_pct,
+                "min_backtest_trades": self.config.stock_min_backtest_trades,
+                "min_backtest_win_rate": self.config.stock_min_backtest_win_rate,
+            },
+        }
+
         # 최종 선정
-        def score_candidate(c):
-            stock, tech, best, news, dart, ksd = c
-            score = best.win_rate * 0.3 + best.total_return * 0.3
-
-            if tech.signal in [Signal.STRONG_BUY, Signal.BUY]:
-                score += 20
-            if news.get("sentiment") in ["긍정", "매우 긍정"]:
-                score += 15
-            elif news.get("sentiment") in ["부정", "매우 부정"]:
-                score -= 15
-
-            if dart.get("recent_disclosures"):
-                score += 5
-
-            if stock.volume_ratio >= 2.0:
-                score += 10
-            elif stock.volume_ratio >= 1.5:
-                score += 5
-
-            return score
-
-        candidates.sort(key=score_candidate, reverse=True)
+        candidates.sort(key=lambda x: x[0], reverse=True)
         final = candidates[: self.config.stock_final_selection]
 
         # 매매 계획 생성
         plans = []
-        for stock, tech, best, news, dart, ksd in final:
+        for _score, stock, tech, best, news, dart, ksd, screening in final:
             entry = stock.price
 
             if "변동성" in best.strategy_name:
@@ -832,6 +1123,17 @@ class UnifiedTradingAnalyzer:
                 reasons.append(f"백테스트 승률 {best.win_rate}%")
             if news.get("sentiment") in ["긍정", "매우 긍정"]:
                 reasons.append(f"뉴스 감성: {news.get('sentiment')}")
+
+            momentum = screening.get("momentum", {})
+            ret_20d = momentum.get("ret_20d")
+            if ret_20d is not None and ret_20d > 3:
+                reasons.append(f"20일 상승률 {ret_20d:.1f}%")
+            high_prox = momentum.get("high_proximity")
+            if high_prox is not None and high_prox >= 0.9:
+                reasons.append(f"52주 고점 근접 ({high_prox:.0%})")
+            atr_pct = screening.get("atr_pct")
+            if atr_pct is not None and atr_pct < 0.04:
+                reasons.append(f"변동성 안정 (ATR {atr_pct:.1%})")
 
             key_events = news.get("mk_headlines", news.get("key_events", []))
 

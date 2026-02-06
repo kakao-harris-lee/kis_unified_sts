@@ -33,8 +33,17 @@ class LLMConfig:
     stock_top_n_volume: int = 30
     stock_final_selection: int = 5
     stock_backtest_days: int = 60
+    stock_history_days: int = 252
+    stock_min_history_days: int = 90
     stock_volume_lookback_days: int = 20
     stock_min_avg_volume: int = 100_000
+    stock_min_trade_value: float = 500_000_000  # 최소 거래대금 (5억)
+    stock_min_turnover: float = 0.003  # 거래대금/시가총액 최소 비율
+    stock_momentum_lookback_days: int = 252
+    stock_max_atr_pct: float = 0.08
+    stock_max_drawdown_pct: float = 0.25
+    stock_min_backtest_trades: int = 5
+    stock_min_backtest_win_rate: float = 45.0
     stock_max_position: float = 0.20
     stock_stop_loss: float = 0.05
     stock_take_profit: float = 0.10
@@ -48,6 +57,23 @@ class LLMConfig:
         default_factory=lambda: ["스팩", "SPAC", "리츠", "REIT"]
     )
     stock_exclude_preferred_shares: bool = True
+    stock_risk_keywords: List[str] = field(
+        default_factory=lambda: [
+            "유상증자",
+            "전환사채",
+            "CB",
+            "BW",
+            "불성실공시",
+            "감사의견",
+            "실적부진",
+        ]
+    )
+    stock_score_weight_momentum: float = 0.25
+    stock_score_weight_technical: float = 0.20
+    stock_score_weight_backtest: float = 0.25
+    stock_score_weight_news: float = 0.10
+    stock_score_weight_liquidity: float = 0.10
+    stock_score_weight_risk: float = 0.10
 
     # 선물 분석 가중치
     futures_weight_global: float = 0.35
@@ -164,8 +190,17 @@ class LLMConfig:
             stock_top_n_volume=stock_config.get("top_n_volume", 30),
             stock_final_selection=stock_config.get("final_selection", 5),
             stock_backtest_days=stock_config.get("backtest_days", 60),
+            stock_history_days=stock_config.get("history_days", 252),
+            stock_min_history_days=stock_config.get("min_history_days", 90),
             stock_volume_lookback_days=stock_config.get("volume_lookback_days", 20),
             stock_min_avg_volume=stock_config.get("min_avg_volume", 100_000),
+            stock_min_trade_value=stock_config.get("min_trade_value", 500_000_000),
+            stock_min_turnover=stock_config.get("min_turnover", 0.003),
+            stock_momentum_lookback_days=stock_config.get("momentum_lookback_days", 252),
+            stock_max_atr_pct=stock_config.get("max_atr_pct", 0.08),
+            stock_max_drawdown_pct=stock_config.get("max_drawdown_pct", 0.25),
+            stock_min_backtest_trades=stock_config.get("min_backtest_trades", 5),
+            stock_min_backtest_win_rate=stock_config.get("min_backtest_win_rate", 45.0),
             stock_max_position=stock_config.get("max_position", 0.20),
             stock_stop_loss=stock_config.get("stop_loss", 0.05),
             stock_take_profit=stock_config.get("take_profit", 0.10),
@@ -181,6 +216,16 @@ class LLMConfig:
             stock_exclude_preferred_shares=stock_config.get(
                 "exclude_preferred_shares", True
             ),
+            stock_risk_keywords=stock_config.get(
+                "risk_keywords",
+                ["유상증자", "전환사채", "CB", "BW", "불성실공시", "감사의견", "실적부진"],
+            ),
+            stock_score_weight_momentum=stock_config.get("score_weight_momentum", 0.25),
+            stock_score_weight_technical=stock_config.get("score_weight_technical", 0.20),
+            stock_score_weight_backtest=stock_config.get("score_weight_backtest", 0.25),
+            stock_score_weight_news=stock_config.get("score_weight_news", 0.10),
+            stock_score_weight_liquidity=stock_config.get("score_weight_liquidity", 0.10),
+            stock_score_weight_risk=stock_config.get("score_weight_risk", 0.10),
             # 선물 설정
             futures_weight_global=futures_config.get("weight_global", 0.35),
             futures_weight_flow=futures_config.get("weight_flow", 0.30),

@@ -232,6 +232,8 @@ class StockInfo:
     volume: int
     volume_ratio: float
     market_cap: float
+    trade_value: float = 0.0
+    turnover: float = 0.0
     sector: str = ""
 
 

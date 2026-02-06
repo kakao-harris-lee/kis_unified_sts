@@ -17,15 +17,33 @@ stock:
   top_n_volume: 20          # 거래량 상위 N개 분석
   final_selection: 5        # 최종 추천 종목 수
   backtest_days: 60         # 백테스트 기간 (일)
+  history_days: 252         # 스크리닝용 히스토리 기간 (일)
+  min_history_days: 90      # 최소 필요 히스토리 (일)
   volume_lookback_days: 20  # 거래량 평균 계산 기간 (일)
   min_avg_volume: 100000    # 최소 평균 거래량 (유동성 필터)
+  min_trade_value: 500000000   # 최소 거래대금 (5억)
+  min_turnover: 0.003          # 거래대금/시가총액 최소 비율
+  momentum_lookback_days: 252  # 모멘텀/52주 고점 기준
+  max_atr_pct: 0.08            # ATR/가격 최대 비율
+  max_drawdown_pct: 0.25       # 최대 낙폭 제한
+  min_backtest_trades: 5       # 백테스트 최소 거래 수
+  min_backtest_win_rate: 45    # 백테스트 최소 승률
   max_position: 0.2         # 최대 포지션 비율 (20%)
 
   # Negative screening (옵션)
   blacklist: ["관리종목", "투자주의", "환기종목", "거래정지"]
   keyword_filter: ["횡령", "배임", "감자", "상장폐지", "회생절차"]
+  risk_keywords: ["유상증자", "전환사채", "CB", "BW", "불성실공시", "감사의견", "실적부진"]
   exclude_name_keywords: ["스팩", "SPAC", "리츠", "REIT"]
   exclude_preferred_shares: true
+
+  # 스코어 가중치
+  score_weight_momentum: 0.25
+  score_weight_technical: 0.20
+  score_weight_backtest: 0.25
+  score_weight_news: 0.10
+  score_weight_liquidity: 0.10
+  score_weight_risk: 0.10
 
 futures:
   # 선물 분석 가중치
