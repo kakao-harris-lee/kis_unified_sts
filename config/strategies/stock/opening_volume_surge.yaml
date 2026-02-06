@@ -22,9 +22,13 @@ strategy:
       only_first_minutes: 30
       market_open_hour: 9
       market_open_minute: 0
+      volume_multiplier: 1.0
       min_change_pct: 1.0
       require_above_open: true
       min_range_position: 0.7
+      min_day_range_pct: 0.5
+      change_input_unit: "ratio"          # ratio | percent | auto
+      change_auto_threshold_pct: 1.0      # only used if auto
       stop_loss_pct: 5.0
 
   exit:
@@ -63,4 +67,3 @@ strategy:
       stop_loss_pct: 5.0
       min_quantity: 1
       max_quantity: 100000
-
