@@ -71,7 +71,7 @@ def _select_top_codes(
     top_n: int,
     weight_trade_value: float,
     weight_gainer: float,
-) -> tuple[list[str], dict[str, float]]:
+) -> tuple[list[str], dict[str, float], dict[str, dict[str, Any]]]:
     # Normalize inputs
     volume_rows = list(sources.get("kospi_volume", [])) + list(sources.get("kosdaq_volume", []))
     gainer_rows = list(sources.get("kospi_gainer", [])) + list(sources.get("kosdaq_gainer", []))
@@ -85,18 +85,31 @@ def _select_top_codes(
     )[:rank_limit]
 
     score_by_code: dict[str, float] = {}
+    info_by_code: dict[str, dict[str, Any]] = {}
 
     for i, row in enumerate(volume_sorted_by_value, start=1):
         code = str(row.get("code", "")).strip()
         if not code:
             continue
         score_by_code[code] = score_by_code.get(code, 0.0) + weight_trade_value * _rank_to_score(i, rank_limit)
+        if code not in info_by_code:
+            info_by_code[code] = {
+                "name": str(row.get("name", "")).strip(),
+                "price": row.get("price", 0),
+                "change_pct": row.get("change_pct", 0),
+            }
 
     for i, row in enumerate(gainer_rows[:rank_limit], start=1):
         code = str(row.get("code", "")).strip()
         if not code:
             continue
         score_by_code[code] = score_by_code.get(code, 0.0) + weight_gainer * _rank_to_score(i, rank_limit)
+        if code not in info_by_code:
+            info_by_code[code] = {
+                "name": str(row.get("name", "")).strip(),
+                "price": row.get("price", 0),
+                "change_pct": row.get("change_pct", 0),
+            }
 
     # Final selection
     codes = [
@@ -110,7 +123,7 @@ def _select_top_codes(
     else:
         normalized_scores = {}
 
-    return codes, normalized_scores
+    return codes, normalized_scores, info_by_code
 
 
 async def run_screener(config: ScreenerConfig) -> None:
@@ -140,7 +153,7 @@ async def run_screener(config: ScreenerConfig) -> None:
             started = time.time()
             try:
                 sources = await ranking.get_all_aggressive_sources(limit=config.rank_limit)
-                codes, scores = _select_top_codes(
+                codes, scores, info = _select_top_codes(
                     sources,
                     rank_limit=config.rank_limit,
                     top_n=config.top_n,
@@ -149,9 +162,11 @@ async def run_screener(config: ScreenerConfig) -> None:
                 )
 
                 if codes and codes != last_codes:
+                    names = {c: info[c]["name"] for c in codes if c in info}
                     payload = {
                         "codes": codes,
                         "scores": scores,
+                        "names": names,
                         "generated_at": datetime.now().isoformat(),
                         "sources": {
                             "counts": {k: len(v) for k, v in sources.items()},
@@ -169,7 +184,14 @@ async def run_screener(config: ScreenerConfig) -> None:
                         ]
                         for idx, code in enumerate(codes, start=1):
                             score = scores.get(code, 0.0)
-                            msg_lines.append(f"{idx}. {code} (score={score:.3f})")
+                            stock_info = info.get(code, {})
+                            name = stock_info.get("name", "")
+                            price = stock_info.get("price", 0)
+                            change_pct = stock_info.get("change_pct", 0)
+                            sign = "+" if change_pct >= 0 else ""
+                            msg_lines.append(
+                                f"{idx}. {name} ({code}) {price:,.0f}원 {sign}{change_pct:.2f}%"
+                            )
                         await notifier.send("\n".join(msg_lines))
 
                     last_codes = codes
