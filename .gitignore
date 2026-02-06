@@ -43,3 +43,5 @@ scripts/test_model.py
 
 # KIS API documentation (binary files)
 kis_docs/
+.kis_token_real
+.serena/
