@@ -13,6 +13,7 @@ Environment variables:
   - `SCREENER_TOP_N` (default: 20)
   - `SCREENER_WEIGHT_TRADE_VALUE` (default: 0.6)
   - `SCREENER_WEIGHT_GAINER` (default: 0.4)
+  - `SCREENER_NOTIFY_INTERVAL_SECONDS` (default: 1800)
   - `UNIVERSE_STREAM` (default: system:universe)
   - `UNIVERSE_LATEST_KEY` (default: system:universe:latest)
 """
@@ -44,6 +45,9 @@ class ScreenerConfig:
     top_n: int = int(os.environ.get("SCREENER_TOP_N", "20"))
     weight_trade_value: float = float(os.environ.get("SCREENER_WEIGHT_TRADE_VALUE", "0.6"))
     weight_gainer: float = float(os.environ.get("SCREENER_WEIGHT_GAINER", "0.4"))
+    notify_interval_seconds: float = float(
+        os.environ.get("SCREENER_NOTIFY_INTERVAL_SECONDS", "1800")
+    )
 
     universe_stream: str = os.environ.get("UNIVERSE_STREAM", "system:universe")
     universe_latest_key: str = os.environ.get(
@@ -137,7 +141,7 @@ async def run_screener(config: ScreenerConfig) -> None:
     last_codes: list[str] = []
     last_notified_codes: set[str] = set()
     last_notify_time: float = 0.0
-    notify_interval = 60.0  # minimum seconds between Telegram notifications
+    notify_interval = max(0.0, config.notify_interval_seconds)
     notifier: TelegramNotifier | None = None
     if config.telegram_enabled:
         tg_cfg = TelegramConfig.from_env()
