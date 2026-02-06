@@ -228,12 +228,13 @@ class StreamingIndicatorEngine:
     # ------------------------------------------------------------------
 
     def _calc_bb(self, closes: list[float]) -> tuple[float, float, float]:
-        """Bollinger Bands using population std (matching core/indicator_engine.py)."""
+        """Bollinger Bands using sample std (ddof=1, matching Polars rolling_std)."""
         window = closes[-self.bb_period:]
-        mean = sum(window) / len(window)
+        n = len(window)
+        mean = sum(window) / n
 
-        # Population variance (ddof=0) to match Polars rolling_std default
-        variance = sum((x - mean) ** 2 for x in window) / len(window)
+        # Sample variance (ddof=1) to match Polars rolling_std default
+        variance = sum((x - mean) ** 2 for x in window) / (n - 1)
         std = math.sqrt(variance)
 
         upper = mean + self.bb_std * std

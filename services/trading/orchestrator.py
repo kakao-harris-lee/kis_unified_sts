@@ -995,6 +995,10 @@ class TradingOrchestrator:
             logger.error(f"Regime detection failed: {e}", exc_info=True)
             return None
 
+    # Market classification thresholds
+    MARKET_BULL_THRESHOLD = 0.02  # +2% = BULL
+    MARKET_BEAR_THRESHOLD = -0.02  # -2% = BEAR
+
     def _classify_market(self, market_data: dict[str, Any]) -> str:
         """Market classification using MarketClassifier with MFI from indicator engine.
 
@@ -1029,10 +1033,10 @@ class TradingOrchestrator:
 
         avg_change = sum(changes) / len(changes)
 
-        if avg_change > 0.02:
-            return "BULL_MODERATE"
-        elif avg_change < -0.02:
-            return "BEAR_MODERATE"
+        if avg_change > self.MARKET_BULL_THRESHOLD:
+            return "BULL"
+        elif avg_change < self.MARKET_BEAR_THRESHOLD:
+            return "BEAR"
         elif avg_change > 0:
             return "SIDEWAYS_UP"
         elif avg_change < 0:
