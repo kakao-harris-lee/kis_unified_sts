@@ -171,17 +171,48 @@ class StreamingIndicatorEngine:
         if acc is None or len(acc.candles) < self.bb_period:
             return {}
 
-        closes = [c.close for c in acc.candles]
+        candles = list(acc.candles)
+        closes = [c.close for c in candles]
 
         bb_lower, bb_middle, bb_upper = self._calc_bb(closes)
         rsi = self._calc_rsi(closes)
 
-        return {
+        result = {
             "bb_lower": bb_lower,
             "bb_middle": bb_middle,
             "bb_upper": bb_upper,
             "rsi": rsi,
         }
+
+        # MFI needs volume data; only compute if candles have volume
+        mfi = self._calc_mfi(candles)
+        if mfi is not None:
+            result["mfi"] = mfi
+
+        return result
+
+    def get_market_mfi(self) -> float | None:
+        """Compute aggregate MFI across all warm symbols.
+
+        Returns the median MFI of all warm symbols, or None if insufficient data.
+        """
+        mfi_values = []
+        for symbol, acc in self._accumulators.items():
+            if len(acc.candles) < 14:
+                continue
+            mfi = self._calc_mfi(list(acc.candles))
+            if mfi is not None:
+                mfi_values.append(mfi)
+
+        if not mfi_values:
+            return None
+
+        # Median is more robust than mean for market-wide MFI
+        mfi_values.sort()
+        n = len(mfi_values)
+        if n % 2 == 0:
+            return (mfi_values[n // 2 - 1] + mfi_values[n // 2]) / 2
+        return mfi_values[n // 2]
 
     def get_stats(self) -> dict:
         """Diagnostic stats."""
@@ -231,3 +262,33 @@ class StreamingIndicatorEngine:
 
         rs = avg_gain / avg_loss
         return 100.0 - (100.0 / (1.0 + rs))
+
+    def _calc_mfi(self, candles: list[Candle], period: int = 14) -> float | None:
+        """Money Flow Index (14-period).
+
+        MFI = 100 - 100 / (1 + positive_flow / negative_flow)
+        Typical Price = (high + low + close) / 3
+        Raw Money Flow = Typical Price * Volume
+        """
+        if len(candles) < period + 1:
+            return None
+
+        recent = candles[-(period + 1):]
+        positive_flow = 0.0
+        negative_flow = 0.0
+
+        for i in range(1, len(recent)):
+            tp_prev = (recent[i - 1].high + recent[i - 1].low + recent[i - 1].close) / 3
+            tp_curr = (recent[i].high + recent[i].low + recent[i].close) / 3
+            raw_flow = tp_curr * recent[i].volume
+
+            if tp_curr > tp_prev:
+                positive_flow += raw_flow
+            elif tp_curr < tp_prev:
+                negative_flow += raw_flow
+
+        if negative_flow == 0:
+            return 100.0 if positive_flow > 0 else 50.0
+
+        money_ratio = positive_flow / negative_flow
+        return 100.0 - (100.0 / (1.0 + money_ratio))

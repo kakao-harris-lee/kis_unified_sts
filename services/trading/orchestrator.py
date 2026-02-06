@@ -969,19 +969,17 @@ class TradingOrchestrator:
     async def _handle_regime(self) -> dict[str, Any] | None:
         """Regime detection handler (runs every 5 min)
 
-        Detects market state (BULL/BEAR/SIDEWAYS) for strategy filtering.
+        Uses MarketClassifier with MFI computed from streaming indicator engine.
+        Falls back to simple avg-change classification when MFI is unavailable.
         """
         if not self._data_provider:
             return None
 
         try:
-            # Fetch market data
             data = await self._get_market_data_snapshot()
             if not data:
                 return None
 
-            # Simple regime detection based on market data
-            # TODO: Implement proper MarketClassifier integration
             regime = self._classify_market(data)
             self._current_regime = regime
 
@@ -997,25 +995,28 @@ class TradingOrchestrator:
             logger.error(f"Regime detection failed: {e}", exc_info=True)
             return None
 
-    # Market classification thresholds (from config in CLAUDE.md)
-    MARKET_BULL_THRESHOLD = 0.02  # +2% = BULL
-    MARKET_BEAR_THRESHOLD = -0.02  # -2% = BEAR
-
     def _classify_market(self, market_data: dict[str, Any]) -> str:
-        """Simple market classification based on average change.
+        """Market classification using MarketClassifier with MFI from indicator engine.
 
-        TODO: Replace with proper MarketClassifier using MFI/ADX from config.
-
-        Args:
-            market_data: Dict of symbol -> market data
-
-        Returns:
-            Market regime string (BULL, BEAR, SIDEWAYS_UP, SIDEWAYS_DOWN, SIDEWAYS_FLAT)
+        Falls back to simple avg-change heuristic when MFI is not yet available
+        (during warmup period).
         """
         if not market_data:
             return "UNKNOWN"
 
-        # Calculate average change across symbols
+        # Try MFI-based classification via MarketClassifier
+        if self._indicator_engine:
+            mfi = self._indicator_engine.get_market_mfi()
+            if mfi is not None:
+                try:
+                    from shared.strategy.market_classifier import MarketClassifier
+                    classifier = MarketClassifier()
+                    state = classifier.classify(mfi=mfi, adx=0.0)
+                    return state.value
+                except Exception as e:
+                    logger.debug(f"MarketClassifier failed: {e}")
+
+        # Fallback: simple avg-change heuristic (used during warmup)
         changes = []
         for symbol, data in market_data.items():
             if isinstance(data, dict):
@@ -1028,11 +1029,10 @@ class TradingOrchestrator:
 
         avg_change = sum(changes) / len(changes)
 
-        # Use class constants instead of magic numbers
-        if avg_change > self.MARKET_BULL_THRESHOLD:
-            return "BULL"
-        elif avg_change < self.MARKET_BEAR_THRESHOLD:
-            return "BEAR"
+        if avg_change > 0.02:
+            return "BULL_MODERATE"
+        elif avg_change < -0.02:
+            return "BEAR_MODERATE"
         elif avg_change > 0:
             return "SIDEWAYS_UP"
         elif avg_change < 0:
@@ -1051,8 +1051,8 @@ class TradingOrchestrator:
         if not self._position_tracker:
             return []
 
-        # Skip entries in BEAR market
-        if self._current_regime == "BEAR":
+        # Skip entries in BEAR market (covers both old "BEAR" and new MarketState values)
+        if self._current_regime and "BEAR" in self._current_regime:
             return []
 
         # Check position limit

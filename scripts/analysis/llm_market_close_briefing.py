@@ -25,11 +25,10 @@ logger = logging.getLogger(__name__)
 
 
 async def get_daily_performance() -> dict:
-    """Get today's trading performance.
+    """Get today's trading performance from Redis.
 
-    Returns placeholder stats. In production, this would fetch from:
-    - Redis for real-time stats
-    - SQLite/PostgreSQL for trade records
+    Reads the orchestrator's status published to Redis, falling back
+    to zeroed stats if unavailable.
     """
     stats = {
         'total_trades': 0,
@@ -38,13 +37,31 @@ async def get_daily_performance() -> dict:
         'win_rate': 0.0
     }
 
-    # TODO: Integrate with actual trading system
-    # try:
-    #     from services.trading.orchestrator import get_orchestrator
-    #     orchestrator = get_orchestrator()
-    #     stats = await orchestrator.get_daily_stats()
-    # except Exception as e:
-    #     logger.warning(f"Failed to get performance: {e}")
+    try:
+        from shared.streaming.client import RedisClient
+        import json
+
+        redis = RedisClient.get_client()
+
+        # Read orchestrator status from Redis (published by monitoring systems)
+        raw = redis.get("trading:status:latest")
+        if raw:
+            data = json.loads(raw)
+            s = data.get("stats", {})
+            stats['total_trades'] = s.get("total_trades", 0)
+            stats['total_pnl'] = s.get("total_pnl", 0.0)
+
+        # Read position tracker stats for win rate
+        raw_positions = redis.get("trading:positions:stats")
+        if raw_positions:
+            pos_data = json.loads(raw_positions)
+            stats['winning_trades'] = pos_data.get("winning_trades", 0)
+            total = stats['total_trades']
+            if total > 0:
+                stats['win_rate'] = (stats['winning_trades'] / total) * 100
+
+    except Exception as e:
+        logger.warning(f"Failed to get performance from Redis: {e}")
 
     return stats
 

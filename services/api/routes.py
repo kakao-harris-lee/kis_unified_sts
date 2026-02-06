@@ -634,15 +634,64 @@ async def run_backtest(
     _api_key: Annotated[str | None, Depends(require_trading_permission)] = None,
 ):
     """백테스트 실행 (인증 필요)"""
-    # TODO: 실제 백테스트 실행 구현
     logger.info(f"Backtest requested: {request_body.strategy}")
 
-    return {
-        "success": True,
-        "message": "Backtest started",
-        "run_id": None,
-        "result": None,
-    }
+    try:
+        from services.dashboard.routes.backtest import (
+            SUPPORTED_STRATEGIES,
+            IndicatorSignalStrategy,
+            _compute_indicators,
+            _fetch_ohlcv,
+            _parse_date_range,
+            _resolve_strategy_params,
+        )
+        from shared.backtest import BacktestConfig, BacktestEngine
+
+        strategy = request_body.strategy.strip()
+        asset_class = request_body.asset_class.value
+
+        if strategy not in SUPPORTED_STRATEGIES:
+            raise HTTPException(status_code=400, detail=f"Unsupported strategy: {strategy}")
+
+        start, end = _parse_date_range(request_body.start_date, request_body.end_date)
+        params = _resolve_strategy_params(asset_class, strategy, None)
+
+        # Use first available symbol from data, or require data_path
+        symbol = getattr(request_body, "data_path", None) or "DEFAULT"
+        df = _fetch_ohlcv(asset_class, symbol, start, end, params)
+        if df.empty:
+            return {"success": False, "message": "No data found", "run_id": None, "result": None}
+
+        df = _compute_indicators(df, strategy, params)
+
+        capital = request_body.capital
+        if asset_class == "stock":
+            config = BacktestConfig.stock(initial_capital=capital)
+        else:
+            config = BacktestConfig.futures(initial_capital=capital)
+
+        engine = BacktestEngine(IndicatorSignalStrategy(strategy, params), config)
+        result = engine.run(df)
+
+        return {
+            "success": True,
+            "message": "Backtest completed",
+            "run_id": None,
+            "result": {
+                "total_trades": result.total_trades,
+                "win_rate": round(result.win_rate, 2),
+                "total_return_pct": round(result.total_return_pct, 2),
+                "max_drawdown_pct": round(result.max_drawdown_pct, 2),
+                "sharpe_ratio": round(result.sharpe_ratio, 2),
+                "final_capital": round(result.final_capital, 0),
+            },
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Backtest failed: {e}", exc_info=True)
+        return {"success": False, "message": str(e), "run_id": None, "result": None}
 
 
 @router.get(
