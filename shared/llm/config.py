@@ -56,6 +56,10 @@ class LLMConfig:
     futures_weight_event: float = 0.15
     futures_stop_loss_pt: float = 3.0
     futures_take_profit_pt: float = 6.0
+    futures_tick_stream: str = "raw_data"
+    futures_tick_lookback_seconds: int = 600
+    futures_tick_max: int = 2000
+    futures_tick_symbol: str = ""
 
     # KRX Open API 설정
     krx_api_key: str = ""
@@ -98,6 +102,12 @@ class LLMConfig:
             enabled=os.environ.get("LLM_ANALYSIS_ENABLED", "true").lower() == "true",
             output_dir=os.environ.get("LLM_OUTPUT_DIR", "./trading_reports"),
             krx_api_key=os.environ.get("KRX_API_KEY", ""),
+            futures_tick_stream=os.environ.get("LLM_FUTURES_TICK_STREAM", "raw_data"),
+            futures_tick_lookback_seconds=int(
+                os.environ.get("LLM_FUTURES_TICK_LOOKBACK_SECONDS", "600")
+            ),
+            futures_tick_max=int(os.environ.get("LLM_FUTURES_TICK_MAX", "2000")),
+            futures_tick_symbol=os.environ.get("LLM_FUTURES_TICK_SYMBOL", ""),
         )
 
     @classmethod
@@ -178,6 +188,10 @@ class LLMConfig:
             futures_weight_event=futures_config.get("weight_event", 0.15),
             futures_stop_loss_pt=futures_config.get("stop_loss_pt", 3.0),
             futures_take_profit_pt=futures_config.get("take_profit_pt", 6.0),
+            futures_tick_stream=futures_config.get("tick_stream", "raw_data"),
+            futures_tick_lookback_seconds=futures_config.get("tick_lookback_seconds", 600),
+            futures_tick_max=futures_config.get("tick_max", 2000),
+            futures_tick_symbol=futures_config.get("tick_symbol", ""),
             # KRX API 설정
             krx_api_key=os.environ.get("KRX_API_KEY", krx_config.get("api_key", "")),
             krx_base_url=krx_config.get("base_url", "http://data.krx.co.kr/svc/apis"),

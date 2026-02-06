@@ -4,18 +4,29 @@ Technical Analyzers and Backtesters
 Stock and Futures technical analysis, backtesting engines.
 """
 import logging
+import os
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
+import requests
 
+from shared.calendar import MarketCalendar
+from shared.collector.historical.futures import KIS_SHORT_CODES, KOSPI200F_FRONT_CODE
+from shared.config.secrets import SecretsManager
+from shared.kis.auth import KISAuthConfig, KISAuthManager
+
+from .config import LLMConfig
 from .data_classes import (
     BacktestResult,
     MarketBias,
     Signal,
     TechnicalAnalysis,
 )
+from .errors import DataUnavailableError
+from .krx_api_client import KRXOpenAPIClient
 
 logger = logging.getLogger(__name__)
 
@@ -165,46 +176,57 @@ class StockTechnicalAnalyzer:
 class FuturesTechnicalAnalyzer:
     """선물 기술적 분석"""
 
+    def __init__(self, config: Optional[LLMConfig] = None):
+        self.config = config or LLMConfig.from_env()
+        self._calendar = MarketCalendar()
+        self._krx_client = KRXOpenAPIClient(self.config)
+
     def analyze(self) -> Dict:
-        """선물 기술적 분석 (샘플 데이터 기반)"""
-        np.random.seed(int(pd.Timestamp.now().timestamp()) % 1000 + 2)
+        """선물 기술적 분석 (실제 데이터 우선, 실패 시 샘플)"""
+        df = self._build_price_frame()
+        if df is None or len(df) < 2:
+            raise DataUnavailableError("futures_technical", "price_data_unavailable")
 
-        days = 120
-        base_price = 350
-        returns = np.random.normal(0.0005, 0.012, days)
-        prices = base_price * np.exp(np.cumsum(returns))
+        index_price = float(df["close"].iloc[-1])
+        index_change = (
+            (float(df["close"].iloc[-1]) / float(df["close"].iloc[-2]) - 1) * 100
+            if len(df) > 1
+            else 0.0
+        )
 
-        df = pd.DataFrame({
-            'close': prices,
-            'high': prices * (1 + np.random.uniform(0, 0.015, days)),
-            'low': prices * (1 - np.random.uniform(0, 0.015, days)),
-        })
-
-        index_price = df['close'].iloc[-1]
-        index_change = (df['close'].iloc[-1] / df['close'].iloc[-2] - 1) * 100
-
-        ma5 = df['close'].rolling(5).mean().iloc[-1]
-        ma20 = df['close'].rolling(20).mean().iloc[-1]
-        ma60 = df['close'].rolling(60).mean().iloc[-1]
+        ma5 = df["close"].rolling(5).mean().iloc[-1]
+        ma20 = df["close"].rolling(20).mean().iloc[-1]
+        ma60 = df["close"].rolling(60).mean().iloc[-1]
+        if pd.isna(ma5):
+            ma5 = index_price
+        if pd.isna(ma20):
+            ma20 = index_price
+        if pd.isna(ma60):
+            ma60 = index_price
 
         # RSI
-        delta = df['close'].diff()
+        delta = df["close"].diff()
         gain = (delta.where(delta > 0, 0)).rolling(14).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
         rs = gain / loss
         rsi = (100 - (100 / (1 + rs))).iloc[-1]
+        if pd.isna(rsi):
+            rsi = 50.0
 
         # MACD
-        ema12 = df['close'].ewm(span=12).mean()
-        ema26 = df['close'].ewm(span=26).mean()
+        ema12 = df["close"].ewm(span=12).mean()
+        ema26 = df["close"].ewm(span=26).mean()
         macd = ema12 - ema26
         signal = macd.ewm(span=9).mean()
         macd_hist = (macd - signal).iloc[-1]
 
         # 피벗 포인트
-        pivot = (df['high'].iloc[-1] + df['low'].iloc[-1] + df['close'].iloc[-1]) / 3
-        r1 = 2 * pivot - df['low'].iloc[-1]
-        s1 = 2 * pivot - df['high'].iloc[-1]
+        high = float(df["high"].iloc[-1])
+        low = float(df["low"].iloc[-1])
+        close = float(df["close"].iloc[-1])
+        pivot = (high + low + close) / 3
+        r1 = 2 * pivot - low
+        s1 = 2 * pivot - high
 
         # 추세 판단
         trend_short = "상승" if index_price > ma5 else "하락"
@@ -271,6 +293,191 @@ class FuturesTechnicalAnalyzer:
             "score": round(score, 0),
             "bias": bias.value
         }
+
+    def _build_price_frame(self) -> Optional[pd.DataFrame]:
+        """KRX 일봉 + KIS 분봉(가능 시)로 가격 프레임 구성"""
+        history = self._fetch_krx_history()
+        intraday = self._fetch_kis_intraday()
+
+        if history is None and intraday is None:
+            return None
+
+        if history is None and intraday is not None:
+            df = intraday.copy()
+            df = df[["close", "high", "low"]]
+            df["open"] = df["close"]
+            return df
+
+        df = history if history is not None else pd.DataFrame()
+        if intraday is not None and len(intraday) > 0 and len(df) > 0:
+            last = intraday.iloc[-1]
+            df.iloc[-1, df.columns.get_loc("open")] = float(last["open"])
+            df.iloc[-1, df.columns.get_loc("high")] = float(last["high"])
+            df.iloc[-1, df.columns.get_loc("low")] = float(last["low"])
+            df.iloc[-1, df.columns.get_loc("close")] = float(last["close"])
+        return df
+
+    def _fetch_krx_history(self) -> Optional[pd.DataFrame]:
+        """KRX Open API로 KOSPI200 선물 일봉 히스토리 수집"""
+        if not self.config.krx_api_key:
+            return None
+
+        days = max(5, int(self.config.krx_analysis_days))
+        dates = self._get_recent_trading_dates(days)
+        rows = []
+
+        for date_str in reversed(dates):
+            futures_list = self._krx_client.get_kospi200_futures(date_str)
+            if not futures_list:
+                continue
+            fut = max(futures_list, key=lambda f: f.volume)
+            close = float(fut.close_price)
+            rows.append(
+                {
+                    "date": date_str,
+                    "open": close,
+                    "high": close,
+                    "low": close,
+                    "close": close,
+                }
+            )
+
+        if not rows:
+            return None
+
+        df = pd.DataFrame(rows)
+        df["date"] = pd.to_datetime(df["date"], format="%Y%m%d")
+        df = df.sort_values("date").reset_index(drop=True)
+        return df[["open", "high", "low", "close"]]
+
+    def _fetch_kis_intraday(self) -> Optional[pd.DataFrame]:
+        """KIS 선물 분봉(근월물) 수집"""
+        app_key = SecretsManager.kis_app_key("futures") or ""
+        app_secret = SecretsManager.kis_app_secret("futures") or ""
+        if not app_key or not app_secret:
+            return None
+
+        market = SecretsManager.kis_market("futures")
+        is_real = str(market).lower() != "mock"
+
+        config = KISAuthConfig(app_key=app_key, app_secret=app_secret, is_real=is_real)
+        auth = KISAuthManager.get_instance(config)
+
+        code = os.environ.get("LLM_FUTURES_CODE", "") or KIS_SHORT_CODES.get(
+            "kospi_front", KOSPI200F_FRONT_CODE
+        )
+
+        date_str = self._get_last_trading_date()
+        url = f"{config.base_url}/uapi/domestic-futureoption/v1/quotations/inquire-time-fuopchartprice"
+        headers = auth.get_auth_headers()
+        headers["tr_id"] = "FHKIF03020200"
+        headers["custtype"] = "P"
+        params = {
+            "FID_COND_MRKT_DIV_CODE": "F",
+            "FID_INPUT_ISCD": code,
+            "FID_HOUR_CLS_CODE": "1",
+            "FID_PW_DATA_INCU_YN": "Y",
+            "FID_FAKE_TICK_INCU_YN": "N",
+            "FID_INPUT_DATE_1": date_str,
+            "FID_INPUT_HOUR_1": "",
+        }
+
+        try:
+            resp = requests.get(url, headers=headers, params=params, timeout=10)
+            if resp.status_code != 200:
+                return None
+            data = resp.json()
+            if data.get("rt_cd") != "0":
+                return None
+
+            rows = self._parse_kis_ohlcv(code, date_str, data)
+            if not rows:
+                return None
+            df = pd.DataFrame(
+                rows, columns=["code", "datetime", "open", "high", "low", "close", "volume"]
+            )
+            df = df.sort_values("datetime")
+            return df
+        except Exception:
+            return None
+
+    def _get_last_trading_date(self) -> str:
+        now = datetime.now()
+        today = now.date()
+
+        if now.time() < self._calendar.MARKET_OPEN_TIME:
+            target = self._calendar.get_previous_market_day(today)
+        elif self._calendar.is_market_day(today):
+            target = today
+        else:
+            target = self._calendar.get_previous_market_day(today)
+
+        return target.strftime("%Y%m%d")
+
+    def _get_recent_trading_dates(self, days: int) -> List[str]:
+        dates = []
+        current = datetime.strptime(self._get_last_trading_date(), "%Y%m%d").date()
+        while len(dates) < days:
+            dates.append(current.strftime("%Y%m%d"))
+            current = self._calendar.get_previous_market_day(current)
+        return dates
+
+    @staticmethod
+    def _parse_kis_ohlcv(code: str, date_str: str, data: dict) -> List[Tuple]:
+        rows = []
+        output = data.get("output2", []) or data.get("output1", []) or data.get("output", [])
+        if not output:
+            return rows
+
+        def _first_present(item: dict, keys: List[str], default: float = 0.0):
+            for k in keys:
+                v = item.get(k)
+                if v is not None and (not isinstance(v, str) or v.strip()):
+                    return v
+            return default
+
+        for item in output:
+            if not isinstance(item, dict):
+                continue
+            time_str = _first_present(
+                item,
+                ["stck_cntg_hour", "futs_cntg_hour", "cntg_hour", "bsop_hour", "hour"],
+                "",
+            )
+            if not time_str:
+                continue
+            if len(time_str) == 4:
+                time_str = f"{time_str}00"
+            try:
+                dt = datetime.strptime(f"{date_str}{time_str}", "%Y%m%d%H%M%S")
+            except ValueError:
+                continue
+
+            o = _first_present(item, ["futs_oprc", "open", "stck_oprc", "oprc"], 0)
+            h = _first_present(item, ["futs_hgpr", "high", "stck_hgpr", "hgpr"], 0)
+            l = _first_present(item, ["futs_lwpr", "low", "stck_lwpr", "lwpr"], 0)
+            c = _first_present(
+                item, ["futs_prpr", "close", "stck_prpr", "stck_clpr", "prpr"], 0
+            )
+            v = _first_present(item, ["cntg_vol", "acml_vol", "volume"], 0)
+
+            try:
+                rows.append(
+                    (
+                        code,
+                        dt,
+                        float(o or 0),
+                        float(h or 0),
+                        float(l or 0),
+                        float(c or 0),
+                        int(v or 0),
+                    )
+                )
+            except (TypeError, ValueError):
+                continue
+
+        return rows
+
 
 
 # ============================================================

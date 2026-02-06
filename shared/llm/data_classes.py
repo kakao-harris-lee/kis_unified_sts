@@ -281,27 +281,36 @@ class FlowData:
     """수급 데이터"""
 
     # Current positions
-    foreign_futures: float = 0.0
-    institution_futures: float = 0.0
-    retail_futures: float = 0.0
+    foreign_futures: float | None = None
+    institution_futures: float | None = None
+    retail_futures: float | None = None
 
     # 5-day cumulative
-    foreign_futures_5d: float = 0.0
-    institution_futures_5d: float = 0.0
+    foreign_futures_5d: float | None = None
+    institution_futures_5d: float | None = None
 
     # Market indicators
-    basis: float = 0.0
-    put_call_ratio: float = 0.0
+    basis: float | None = None
+    put_call_ratio: float | None = None
+
+    # Microstructure proxy (orderbook/trades)
+    orderbook_imbalance: float | None = None
+    ofi_zscore: float | None = None
+    aggressor_ratio: float | None = None
+    aggressor_balance: float | None = None
+    oi_change: float | None = None
+    price_change: float | None = None
+    microstructure_score: float | None = None
 
     # Computed
     flow_score: float = 0.0
     flow_bias: MarketBias = MarketBias.NEUTRAL
 
     # Legacy fields (backwards compatibility)
-    foreign_futures_net: float = 0.0
-    institution_futures_net: float = 0.0
-    retail_futures_net: float = 0.0
-    basis_rate: float = 0.0
+    foreign_futures_net: float | None = None
+    institution_futures_net: float | None = None
+    retail_futures_net: float | None = None
+    basis_rate: float | None = None
 
 
 @dataclass

@@ -41,6 +41,7 @@ from .data_classes import (
     StockInfo,
     StockTradingPlan,
 )
+from .errors import DataUnavailableError
 from .identifiers import DARTCorpCodeMapper
 
 logger = logging.getLogger(__name__)
@@ -444,10 +445,10 @@ class UnifiedTradingAnalyzer:
         )
 
         # Futures analyzers
-        self.futures_global_collector = FuturesGlobalCollector()
-        self.futures_flow_collector = FuturesFlowCollector()
+        self.futures_global_collector = FuturesGlobalCollector(self.config)
+        self.futures_flow_collector = FuturesFlowCollector(self.config)
         self.futures_event_collector = FuturesEventCollector()
-        self.futures_tech_analyzer = FuturesTechnicalAnalyzer()
+        self.futures_tech_analyzer = FuturesTechnicalAnalyzer(self.config)
 
         # Output
         self.date = datetime.now().strftime("%Y%m%d")
@@ -852,29 +853,62 @@ class UnifiedTradingAnalyzer:
         logger.info(f"Final stock recommendations: {len(plans)}")
         return plans, analysis_results
 
-    async def _analyze_futures(self) -> Tuple[FuturesTradingPlan, Dict]:
+    async def _analyze_futures(self) -> Tuple[Optional[FuturesTradingPlan], Dict]:
         """선물 분석"""
         logger.info("Starting futures analysis")
 
+        missing_sources: List[str] = []
+
+        def _record_missing(err: DataUnavailableError):
+            label = err.source if not err.detail else f"{err.source}:{err.detail}"
+            missing_sources.append(label)
+
         # 글로벌 시장
-        global_data = self.futures_global_collector.collect()
+        global_data = None
+        try:
+            global_data = self.futures_global_collector.collect()
+        except DataUnavailableError as e:
+            _record_missing(e)
 
         # 경제 이벤트
-        events = self.futures_event_collector.collect()
-        high_events = [e for e in events if e.importance == "높음"]
+        events: List[Any] = []
+        high_events: List[Any] = []
+        try:
+            events = self.futures_event_collector.collect()
+            high_events = [e for e in events if e.importance == "높음"]
+        except DataUnavailableError as e:
+            _record_missing(e)
 
         # 수급
-        flow_data = self.futures_flow_collector.collect()
+        flow_data = None
+        flow_missing: List[str] = []
+        try:
+            flow_data, flow_missing = self.futures_flow_collector.collect()
+            missing_sources.extend([f"futures_flow:{m}" for m in flow_missing])
+        except DataUnavailableError as e:
+            _record_missing(e)
 
         # 기술적 분석
-        technical = self.futures_tech_analyzer.analyze()
+        technical = None
+        try:
+            technical = self.futures_tech_analyzer.analyze()
+        except DataUnavailableError as e:
+            _record_missing(e)
 
         # 종합 판단
-        overall_score = (
-            global_data.global_score * self.config.futures_weight_global
-            + flow_data.flow_score * self.config.futures_weight_flow
-            + technical["score"] * self.config.futures_weight_technical
-        )
+        score_components: List[Tuple[float, float]] = []
+        if global_data is not None:
+            score_components.append((global_data.global_score, self.config.futures_weight_global))
+        if flow_data is not None:
+            score_components.append((flow_data.flow_score, self.config.futures_weight_flow))
+        if technical is not None:
+            score_components.append((technical["score"], self.config.futures_weight_technical))
+
+        if score_components:
+            total_weight = sum(w for _s, w in score_components) or 1.0
+            overall_score = sum(s * w for s, w in score_components) / total_weight
+        else:
+            overall_score = 0.0
 
         if high_events:
             overall_score *= 0.8
@@ -891,7 +925,15 @@ class UnifiedTradingAnalyzer:
             overall_bias = MarketBias.NEUTRAL
 
         # 전략 생성
-        if overall_score >= 25:
+        insufficient_data = len(score_components) < 2 or technical is None
+        if insufficient_data:
+            direction = "관망"
+            confidence = "낮음"
+            entry = technical['index_price'] if technical else 0.0
+            stop_loss = 0
+            take_profit = 0
+            entry_cond = "데이터 부족으로 관망"
+        elif overall_score >= 25:
             direction = "롱"
             confidence = "높음" if overall_score >= 40 else "중간"
             entry = technical['index_price']
@@ -908,7 +950,7 @@ class UnifiedTradingAnalyzer:
         else:
             direction = "관망"
             confidence = "낮음"
-            entry = technical['index_price']
+            entry = technical['index_price'] if technical else 0.0
             stop_loss = 0
             take_profit = 0
             entry_cond = "조건 충족 시까지 대기"
@@ -918,44 +960,55 @@ class UnifiedTradingAnalyzer:
 
         # 촉매/리스크
         catalysts = []
-        if global_data.sp500_change_pct > 0.5:
+        if global_data and global_data.sp500_change_pct > 0.5:
             catalysts.append(f"미국 증시 강세 ({global_data.sp500_change_pct:+.1f}%)")
-        if flow_data.foreign_futures_5d > 15000:
+        if flow_data and flow_data.foreign_futures_5d is not None and flow_data.foreign_futures_5d > 15000:
             catalysts.append(f"외국인 5일 순매수 ({flow_data.foreign_futures_5d:+,.0f})")
-        if flow_data.basis < -1:
+        if flow_data and flow_data.basis is not None and flow_data.basis < -1:
             catalysts.append(f"선물 저평가 (베이시스 {flow_data.basis:.2f}pt)")
+        if flow_data and flow_data.microstructure_score is not None:
+            if flow_data.microstructure_score >= 6:
+                catalysts.append(f"단기 주문흐름 매수 우위 (점수 {flow_data.microstructure_score:+.1f})")
+            elif flow_data.microstructure_score <= -6:
+                risks.append(f"단기 주문흐름 매도 우위 (점수 {flow_data.microstructure_score:+.1f})")
 
         risks = []
-        if global_data.vix > 20:
+        if global_data and global_data.vix > 20:
             risks.append(f"VIX {global_data.vix:.1f} 상승")
         if high_events:
             risks.append(f"주요 이벤트: {high_events[0].event}")
-        if technical['rsi'] > 70:
+        if technical and technical['rsi'] > 70:
             risks.append(f"RSI {technical['rsi']:.0f} 과매수")
-        elif technical['rsi'] < 30:
+        elif technical and technical['rsi'] < 30:
             risks.append(f"RSI {technical['rsi']:.0f} 과매도")
 
-        plan = FuturesTradingPlan(
-            direction=direction,
-            confidence=confidence,
-            entry_condition=entry_cond,
-            entry_price=round(entry, 2),
-            stop_loss=round(stop_loss, 2),
-            take_profit=round(take_profit, 2),
-            position_size=position,
-            time_horizon=time_horizon,
-            key_levels=[technical['pivot'], technical['support_1'], technical['resistance_1']],
-            risk_factors=risks,
-            catalysts=catalysts
-        )
+        if missing_sources:
+            risks.append(f"데이터 누락: {', '.join(missing_sources)}")
+
+        plan = None
+        if technical is not None:
+            plan = FuturesTradingPlan(
+                direction=direction,
+                confidence=confidence,
+                entry_condition=entry_cond,
+                entry_price=round(entry, 2),
+                stop_loss=round(stop_loss, 2),
+                take_profit=round(take_profit, 2),
+                position_size=position,
+                time_horizon=time_horizon,
+                key_levels=[technical['pivot'], technical['support_1'], technical['resistance_1']],
+                risk_factors=risks,
+                catalysts=catalysts
+            )
 
         analysis_data = {
             "overall_score": round(overall_score, 1),
             "overall_bias": overall_bias.value,
-            "global": asdict(global_data),
-            "flow": asdict(flow_data),
+            "global": asdict(global_data) if global_data else None,
+            "flow": asdict(flow_data) if flow_data else None,
             "technical": technical,
-            "events": [asdict(e) for e in events[:5]]
+            "events": [asdict(e) for e in events[:5]] if events else [],
+            "missing_sources": missing_sources,
         }
 
         logger.info(f"Futures recommendation: {direction} ({confidence})")
@@ -979,6 +1032,14 @@ class UnifiedTradingAnalyzer:
 📅 {self.datetime_str}
 """
             await self.notifier.send_message(header, is_critical=True)
+
+            missing_sources = futures_analysis.get("missing_sources") if futures_analysis else None
+            if missing_sources:
+                missing_text = "\n".join(f"  • {m}" for m in missing_sources)
+                await self.notifier.send_message(
+                    f"⚠️ <b>선물 데이터 누락</b>\n{missing_text}",
+                    is_critical=True,
+                )
 
             # 선물 브리핑
             if futures_plan:

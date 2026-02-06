@@ -10,8 +10,10 @@ Data Sources:
 - KOFIA (freesis.kofia.or.kr): 펀드, 채권, 투자자동향
 - MK Stock (stock.mk.co.kr): 증권뉴스, 테마, 분석
 """
+import json
 import logging
 import os
+import time
 from abc import ABC, abstractmethod
 from dataclasses import asdict
 from datetime import datetime, timedelta
@@ -23,6 +25,14 @@ import requests
 from bs4 import BeautifulSoup
 
 from shared.calendar import MarketCalendar
+from shared.features.ofi import OFICalculator, OFIConfig
+from shared.indicators.orderbook import OrderBookAnalyzer
+from shared.streaming.client import RedisClient
+from shared.streaming.message import StreamMessage
+
+from .config import LLMConfig
+from .errors import DataUnavailableError
+from .krx_api_client import KRXOpenAPIClient
 
 from .data_classes import (
     EconomicEvent,
@@ -30,6 +40,14 @@ from .data_classes import (
     GlobalMarketData,
     NewsSentiment,
 )
+
+# Optional imports (used for global markets)
+try:
+    import FinanceDataReader as fdr
+
+    FDR_AVAILABLE = True
+except ImportError:
+    FDR_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -786,121 +804,518 @@ class NaverFinanceNewsCollector(DataCollector):
 class FuturesGlobalCollector(DataCollector):
     """글로벌 시장 데이터 수집"""
 
+    def __init__(self, config: Optional[LLMConfig] = None):
+        super().__init__()
+        self.config = config or LLMConfig.from_env()
+
     def collect(self) -> GlobalMarketData:
-        """글로벌 시장 데이터 수집 (샘플 데이터)"""
-        np.random.seed(int(datetime.now().timestamp()) % 1000)
+        """글로벌 시장 데이터 수집 (가능하면 실제 데이터 사용)"""
+        snapshot = self._load_snapshot()
+        if snapshot:
+            return snapshot
 
-        sp500 = 5800 + np.random.normal(0, 50)
-        sp500_change = np.random.normal(0.2, 0.8)
-        nasdaq = 18000 + np.random.normal(0, 150)
-        nasdaq_change = np.random.normal(0.3, 1.0)
-        nikkei = 38000 + np.random.normal(0, 300)
-        nikkei_change = np.random.normal(0.1, 0.7)
-        shanghai = 3300 + np.random.normal(0, 30)
-        shanghai_change = np.random.normal(0, 0.6)
-        vix = max(10, 18 + np.random.normal(0, 3))
-        wti = 75 + np.random.normal(0, 2)
-        gold = 2400 + np.random.normal(0, 20)
-        dxy = 105 + np.random.normal(0, 0.5)
-        usd_krw = 1380 + np.random.normal(0, 5)
+        if FDR_AVAILABLE:
+            try:
+                data = self._collect_from_fdr()
+                if data:
+                    return data
+            except Exception as e:
+                logger.debug(f"FDR global market collection failed: {e}")
+            raise DataUnavailableError("global_market_data", "fdr_empty")
 
-        global_score = (
-            sp500_change * 15 +
-            nasdaq_change * 10 +
-            nikkei_change * 5 -
-            (vix - 15) * 2
+        raise DataUnavailableError("global_market_data", "fdr_not_available")
+
+    def _load_snapshot(self) -> Optional[GlobalMarketData]:
+        """외부 스냅샷(JSON)에서 글로벌 데이터 로드 (선택)"""
+        snapshot_json = os.environ.get("LLM_GLOBAL_SNAPSHOT_JSON", "").strip()
+        snapshot_path = os.environ.get("LLM_GLOBAL_SNAPSHOT_PATH", "").strip()
+
+        payload = None
+        if snapshot_json:
+            try:
+                payload = json.loads(snapshot_json)
+            except Exception as e:
+                logger.debug(f"Invalid LLM_GLOBAL_SNAPSHOT_JSON: {e}")
+                payload = None
+        elif snapshot_path:
+            try:
+                with open(snapshot_path, "r", encoding="utf-8") as f:
+                    payload = json.load(f)
+            except Exception as e:
+                logger.debug(f"Failed to load snapshot file: {e}")
+                payload = None
+
+        if not isinstance(payload, dict):
+            return None
+
+        allowed = set(GlobalMarketData.__dataclass_fields__.keys())
+        data = {k: payload.get(k) for k in allowed if k in payload}
+        if not data:
+            return None
+
+        result = GlobalMarketData(**data)
+        if not result.global_score:
+            result.global_score = self._compute_global_score(result)
+        return result
+
+    def _collect_from_fdr(self) -> Optional[GlobalMarketData]:
+        """FinanceDataReader 기반 글로벌 지표 수집 (Investing.com/TradingView 연계)"""
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=7)
+
+        tickers = {
+            "sp500": os.environ.get("LLM_TICKER_SP500", "US500"),
+            "nasdaq": os.environ.get("LLM_TICKER_NASDAQ", "IXIC"),
+            "nikkei": os.environ.get("LLM_TICKER_NIKKEI", "N225"),
+            "shanghai": os.environ.get("LLM_TICKER_SHANGHAI", "000001.SS"),
+            "vix": os.environ.get("LLM_TICKER_VIX", "VIX"),
+            "wti": os.environ.get("LLM_TICKER_WTI", "CL=F"),
+            "gold": os.environ.get("LLM_TICKER_GOLD", "GC=F"),
+            "dxy": os.environ.get("LLM_TICKER_DXY", "DXY"),
+            "usd_krw": os.environ.get("LLM_TICKER_USDKRW", "USDKRW"),
+        }
+
+        def _fetch_last(ticker: str) -> Optional[tuple[float, float]]:
+            if not ticker:
+                return None
+            df = fdr.DataReader(ticker, start_date, end_date)
+            if df is None or len(df) < 2:
+                return None
+            col = "Close" if "Close" in df.columns else "close"
+            last = float(df[col].iloc[-1])
+            prev = float(df[col].iloc[-2])
+            change_pct = (last / prev - 1) * 100 if prev else 0.0
+            return last, change_pct
+
+        values: dict[str, tuple[float, float]] = {}
+        for key, ticker in tickers.items():
+            try:
+                res = _fetch_last(ticker)
+                if res:
+                    values[key] = res
+            except Exception:
+                continue
+
+        if not values:
+            return None
+
+        result = GlobalMarketData(
+            sp500=round(values.get("sp500", (0.0, 0.0))[0], 2),
+            sp500_change_pct=round(values.get("sp500", (0.0, 0.0))[1], 2),
+            nasdaq=round(values.get("nasdaq", (0.0, 0.0))[0], 2),
+            nasdaq_change_pct=round(values.get("nasdaq", (0.0, 0.0))[1], 2),
+            nikkei=round(values.get("nikkei", (0.0, 0.0))[0], 2),
+            nikkei_change_pct=round(values.get("nikkei", (0.0, 0.0))[1], 2),
+            shanghai=round(values.get("shanghai", (0.0, 0.0))[0], 2),
+            shanghai_change_pct=round(values.get("shanghai", (0.0, 0.0))[1], 2),
+            vix=round(values.get("vix", (0.0, 0.0))[0], 2),
+            wti=round(values.get("wti", (0.0, 0.0))[0], 2),
+            gold=round(values.get("gold", (0.0, 0.0))[0], 2),
+            dxy=round(values.get("dxy", (0.0, 0.0))[0], 2),
+            usd_krw=round(values.get("usd_krw", (0.0, 0.0))[0], 2),
+        )
+        result.global_score = self._compute_global_score(result)
+        return result
+
+    @staticmethod
+    def _compute_global_score(data: GlobalMarketData) -> float:
+        return round(
+            data.sp500_change_pct * 15
+            + data.nasdaq_change_pct * 10
+            + data.nikkei_change_pct * 5
+            - (data.vix - 15) * 2,
+            1,
         )
 
-        return GlobalMarketData(
-            sp500=round(sp500, 2),
-            sp500_change_pct=round(sp500_change, 2),
-            nasdaq=round(nasdaq, 2),
-            nasdaq_change_pct=round(nasdaq_change, 2),
-            nikkei=round(nikkei, 2),
-            nikkei_change_pct=round(nikkei_change, 2),
-            shanghai=round(shanghai, 2),
-            shanghai_change_pct=round(shanghai_change, 2),
-            vix=round(vix, 2),
-            wti=round(wti, 2),
-            gold=round(gold, 2),
-            dxy=round(dxy, 2),
-            usd_krw=round(usd_krw, 2),
-            global_score=round(global_score, 1)
-        )
 
 
 class FuturesFlowCollector(DataCollector):
     """수급 데이터 수집"""
 
-    def collect(self) -> FlowData:
-        """수급 데이터 수집 (샘플 데이터)"""
-        np.random.seed(int(datetime.now().timestamp()) % 1000 + 1)
+    def __init__(self, config: Optional[LLMConfig] = None):
+        super().__init__()
+        self.config = config or LLMConfig.from_env()
+        self._calendar = MarketCalendar()
+        self._krx_client = KRXOpenAPIClient(self.config)
 
-        foreign = np.random.randint(-20000, 20000)
-        institution = np.random.randint(-15000, 15000)
-        retail = -(foreign + institution)
+    def collect(self) -> tuple[FlowData | None, List[str]]:
+        """수급 데이터 수집 (투자자별 수급 제외, 실제 데이터만 사용)"""
+        missing: List[str] = ["investor_flow_excluded"]
+        base_date = self._get_last_trading_date()
 
-        foreign_5d = foreign * 5 + np.random.randint(-5000, 5000)
-        inst_5d = institution * 5 + np.random.randint(-3000, 3000)
+        # KOSPI200 선물/옵션 지표 (베이시스, 풋콜)
+        basis: float | None = None
+        put_call: float | None = None
+        if not self.config.krx_api_key:
+            missing.append("krx_api_key_missing")
+        else:
+            try:
+                futures_list = self._krx_client.get_kospi200_futures(base_date)
+                futures = max(futures_list, key=lambda f: f.volume) if futures_list else None
+                options = self._krx_client.get_kospi200_options(base_date)
+                spot = self._get_kospi200_index_price(base_date)
+                if futures is not None and spot is not None:
+                    basis = float(futures.close_price) - float(spot)
+                else:
+                    missing.append("basis")
+                if options:
+                    put_call = float(options.put_call_ratio)
+                else:
+                    missing.append("put_call_ratio")
+            except Exception as e:
+                logger.debug(f"KRX futures basis/put-call failed: {e}")
+                missing.extend(["basis", "put_call_ratio"])
 
-        basis = np.random.normal(0, 0.5)
-        put_call = 0.8 + np.random.normal(0, 0.15)
+        micro_data, micro_missing = self._collect_microstructure()
+        missing.extend(micro_missing)
 
-        flow_score = (
-            (foreign / 1000) * 2 +
-            (institution / 1000) * 1.5 -
-            basis * 10
+        if missing:
+            missing = list(dict.fromkeys(missing))
+
+        if basis is None and put_call is None and not micro_data:
+            return None, missing
+
+        flow_score = 0.0
+        if basis is not None:
+            flow_score -= basis * 10
+        if put_call is not None:
+            if put_call > 1.1:
+                flow_score += 5
+            elif put_call < 0.9:
+                flow_score -= 5
+
+        micro_score = micro_data.get("microstructure_score") if micro_data else None
+        if micro_score is not None:
+            flow_score += micro_score
+
+        return (
+            FlowData(
+                foreign_futures=None,
+                institution_futures=None,
+                retail_futures=None,
+                foreign_futures_5d=None,
+                institution_futures_5d=None,
+                basis=round(basis, 2) if basis is not None else None,
+                put_call_ratio=round(put_call, 2) if put_call is not None else None,
+                orderbook_imbalance=micro_data.get("orderbook_imbalance") if micro_data else None,
+                ofi_zscore=micro_data.get("ofi_zscore") if micro_data else None,
+                aggressor_ratio=micro_data.get("aggressor_ratio") if micro_data else None,
+                aggressor_balance=micro_data.get("aggressor_balance") if micro_data else None,
+                oi_change=micro_data.get("oi_change") if micro_data else None,
+                price_change=micro_data.get("price_change") if micro_data else None,
+                microstructure_score=micro_score,
+                flow_score=round(flow_score, 1),
+            ),
+            missing,
         )
 
-        return FlowData(
-            foreign_futures=foreign,
-            institution_futures=institution,
-            retail_futures=retail,
-            foreign_futures_5d=foreign_5d,
-            institution_futures_5d=inst_5d,
-            basis=round(basis, 2),
-            put_call_ratio=round(put_call, 2),
-            flow_score=round(flow_score, 1)
+    @staticmethod
+    def _to_float(value: Any) -> Optional[float]:
+        if value is None or value == "":
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _load_recent_ticks(self) -> tuple[List[StreamMessage], List[str]]:
+        missing: List[str] = []
+        stream_name = self.config.futures_tick_stream or "raw_data"
+        lookback_seconds = max(60, int(self.config.futures_tick_lookback_seconds))
+        max_entries = max(100, int(self.config.futures_tick_max))
+
+        try:
+            redis_client = RedisClient.get_client()
+            raw_msgs = redis_client.xrevrange(stream_name, max="+", min="-", count=max_entries)
+        except Exception as e:
+            logger.debug(f"Redis tick fetch failed: {e}")
+            missing.append("redis_unavailable")
+            return [], missing
+
+        now = time.time()
+        parsed: List[StreamMessage] = []
+        for msg_id, fields in raw_msgs:
+            try:
+                msg = StreamMessage.from_raw(stream_name, msg_id, dict(fields))
+            except Exception:
+                continue
+            if now - msg.timestamp > lookback_seconds:
+                continue
+            parsed.append(msg)
+
+        parsed.reverse()
+        if not parsed:
+            missing.append("microstructure_ticks")
+        return parsed, missing
+
+    @staticmethod
+    def _resolve_symbol(ticks: List[StreamMessage], explicit: str | None) -> Optional[str]:
+        if explicit:
+            for msg in ticks:
+                if msg.data.get("symbol") == explicit:
+                    return explicit
+            return None
+
+        counts: Dict[str, int] = {}
+        for msg in ticks:
+            symbol = msg.data.get("symbol")
+            if symbol:
+                counts[symbol] = counts.get(symbol, 0) + 1
+        if not counts:
+            return None
+        return max(counts.items(), key=lambda item: item[1])[0]
+
+    def _extract_orderbook_levels(self, data: Dict[str, Any]) -> tuple[list[float], list[float], list[float], list[float]]:
+        bid_prices: list[float] = []
+        bid_qtys: list[float] = []
+        ask_prices: list[float] = []
+        ask_qtys: list[float] = []
+        for i in range(1, 6):
+            bid_price = self._to_float(data.get(f"bid_price_{i}"))
+            bid_qty = self._to_float(data.get(f"bid_qty_{i}"))
+            ask_price = self._to_float(data.get(f"ask_price_{i}"))
+            ask_qty = self._to_float(data.get(f"ask_qty_{i}"))
+            if bid_price is not None and bid_qty is not None and bid_price > 0:
+                bid_prices.append(bid_price)
+                bid_qtys.append(bid_qty)
+            if ask_price is not None and ask_qty is not None and ask_price > 0:
+                ask_prices.append(ask_price)
+                ask_qtys.append(ask_qty)
+        return bid_prices, ask_prices, bid_qtys, ask_qtys
+
+    def _collect_microstructure(self) -> tuple[Dict[str, Any], List[str]]:
+        missing: List[str] = []
+        ticks, tick_missing = self._load_recent_ticks()
+        missing.extend(tick_missing)
+        if not ticks:
+            return {}, missing
+
+        symbol = self._resolve_symbol(ticks, self.config.futures_tick_symbol or None)
+        if not symbol:
+            missing.append("microstructure_symbol")
+            return {}, missing
+
+        filtered = [msg for msg in ticks if msg.data.get("symbol") == symbol]
+        if not filtered:
+            missing.append("microstructure_ticks")
+            return {}, missing
+
+        orderbook_analyzer = OrderBookAnalyzer()
+        ofi_calc = OFICalculator(OFIConfig())
+
+        last_orderbook: Dict[str, Any] | None = None
+        last_bid: float | None = None
+        last_ask: float | None = None
+        last_mid: float | None = None
+
+        buy_volume = 0.0
+        sell_volume = 0.0
+        trade_count = 0
+        first_trade_price: float | None = None
+        last_trade_price: float | None = None
+        first_oi: float | None = None
+        last_oi: float | None = None
+
+        for msg in filtered:
+            data = msg.data
+
+            bid = self._to_float(data.get("bid_price_1"))
+            ask = self._to_float(data.get("ask_price_1"))
+            bid_qty = self._to_float(data.get("bid_qty_1")) or 0.0
+            ask_qty = self._to_float(data.get("ask_qty_1")) or 0.0
+
+            if bid is not None and ask is not None and bid > 0 and ask > 0:
+                last_bid = bid
+                last_ask = ask
+                last_mid = (bid + ask) / 2
+                last_orderbook = data
+                try:
+                    ofi_calc.update(bid, bid_qty, ask, ask_qty)
+                except Exception:
+                    pass
+
+            price = self._to_float(data.get("current_price"))
+            if price is not None and price > 0:
+                trade_count += 1
+                size = self._to_float(data.get("tick_volume")) or 1.0
+
+                if first_trade_price is None:
+                    first_trade_price = price
+                last_trade_price = price
+
+                oi = self._to_float(data.get("open_interest"))
+                if oi is not None:
+                    if first_oi is None:
+                        first_oi = oi
+                    last_oi = oi
+
+                side = None
+                if last_bid is not None and last_ask is not None:
+                    if price >= last_ask:
+                        side = "BUY"
+                    elif price <= last_bid:
+                        side = "SELL"
+                    elif last_mid is not None:
+                        if price > last_mid:
+                            side = "BUY"
+                        elif price < last_mid:
+                            side = "SELL"
+
+                if side == "BUY":
+                    buy_volume += size
+                elif side == "SELL":
+                    sell_volume += size
+
+        orderbook_imbalance: float | None = None
+        if last_orderbook:
+            bid_prices, ask_prices, bid_qtys, ask_qtys = self._extract_orderbook_levels(last_orderbook)
+            if bid_prices and ask_prices and bid_qtys and ask_qtys:
+                try:
+                    imbalance = orderbook_analyzer.calculate(
+                        bid_prices=bid_prices,
+                        ask_prices=ask_prices,
+                        bid_volumes=[int(q) for q in bid_qtys],
+                        ask_volumes=[int(q) for q in ask_qtys],
+                    )
+                    orderbook_imbalance = imbalance.imbalance
+                except Exception:
+                    orderbook_imbalance = None
+            else:
+                missing.append("orderbook_imbalance")
+        else:
+            missing.append("orderbook_imbalance")
+
+        ofi_zscore = ofi_calc.get_ofi_zscore()
+        if ofi_zscore is None:
+            missing.append("ofi_zscore")
+
+        total_vol = buy_volume + sell_volume
+        aggressor_ratio: float | None = None
+        aggressor_balance: float | None = None
+        if total_vol > 0:
+            aggressor_ratio = buy_volume / total_vol
+            aggressor_balance = (buy_volume - sell_volume) / total_vol
+        else:
+            missing.append("aggressor_ratio")
+
+        oi_change: float | None = None
+        if first_oi is not None and last_oi is not None and trade_count >= 2:
+            oi_change = last_oi - first_oi
+        else:
+            missing.append("open_interest_change")
+
+        price_change: float | None = None
+        if first_trade_price is not None and last_trade_price is not None and trade_count >= 2:
+            price_change = last_trade_price - first_trade_price
+        else:
+            missing.append("price_change")
+
+        micro_score = 0.0
+        components = 0
+        if orderbook_imbalance is not None:
+            micro_score += orderbook_imbalance * 8
+            components += 1
+        if ofi_zscore is not None:
+            capped = max(min(ofi_zscore, 3.0), -3.0)
+            micro_score += capped * 1.5
+            components += 1
+        if aggressor_balance is not None:
+            micro_score += aggressor_balance * 6
+            components += 1
+        if oi_change is not None and price_change is not None:
+            components += 1
+            if oi_change > 0 and price_change > 0:
+                micro_score += 3
+            elif oi_change > 0 and price_change < 0:
+                micro_score -= 3
+            elif oi_change < 0 and price_change > 0:
+                micro_score += 1.5
+            elif oi_change < 0 and price_change < 0:
+                micro_score -= 1.5
+
+        if components == 0:
+            missing.append("microstructure_unavailable")
+            return {}, missing
+
+        return (
+            {
+                "orderbook_imbalance": round(orderbook_imbalance, 3) if orderbook_imbalance is not None else None,
+                "ofi_zscore": round(ofi_zscore, 2) if ofi_zscore is not None else None,
+                "aggressor_ratio": round(aggressor_ratio, 3) if aggressor_ratio is not None else None,
+                "aggressor_balance": round(aggressor_balance, 3) if aggressor_balance is not None else None,
+                "oi_change": round(oi_change, 2) if oi_change is not None else None,
+                "price_change": round(price_change, 2) if price_change is not None else None,
+                "microstructure_score": round(micro_score, 1),
+            },
+            missing,
         )
 
+    def _get_last_trading_date(self) -> str:
+        now = datetime.now()
+        today = now.date()
+
+        if now.time() < self._calendar.MARKET_OPEN_TIME:
+            target = self._calendar.get_previous_market_day(today)
+        elif self._calendar.is_market_day(today):
+            target = today
+        else:
+            target = self._calendar.get_previous_market_day(today)
+
+        return target.strftime("%Y%m%d")
+
+    def _get_kospi200_index_price(self, base_date: str) -> Optional[float]:
+        data = self._krx_client.get_kospi_index(base_date)
+        for item in data or []:
+            name = str(item.get("IDX_NM", ""))
+            if "KOSPI200" in name or "코스피200" in name:
+                return KRXOpenAPIClient._parse_number(item.get("CLSPRC_IDX", 0))
+        return None
 
 class FuturesEventCollector(DataCollector):
     """경제 이벤트 수집"""
 
     def collect(self, days_ahead: int = 3) -> List[EconomicEvent]:
-        """경제 이벤트 수집 (샘플 데이터)"""
-        today = datetime.now()
+        """경제 이벤트 수집 (외부 스냅샷 사용)"""
+        snapshot_json = os.environ.get("LLM_EVENT_SNAPSHOT_JSON", "").strip()
+        snapshot_path = os.environ.get("LLM_EVENT_SNAPSHOT_PATH", "").strip()
 
-        major_events = [
-            {"country": "미국", "event": "FOMC 금리결정", "importance": "높음"},
-            {"country": "미국", "event": "비농업 고용지표", "importance": "높음"},
-            {"country": "미국", "event": "소비자물가지수(CPI)", "importance": "높음"},
-            {"country": "미국", "event": "GDP 성장률", "importance": "높음"},
-            {"country": "미국", "event": "ISM 제조업지수", "importance": "중간"},
-            {"country": "한국", "event": "한국은행 기준금리", "importance": "높음"},
-            {"country": "중국", "event": "제조업 PMI", "importance": "중간"},
-        ]
+        payload = None
+        if snapshot_json:
+            try:
+                payload = json.loads(snapshot_json)
+            except Exception as e:
+                logger.debug(f"Invalid LLM_EVENT_SNAPSHOT_JSON: {e}")
+        elif snapshot_path:
+            try:
+                with open(snapshot_path, "r", encoding="utf-8") as f:
+                    payload = json.load(f)
+            except Exception as e:
+                logger.debug(f"Failed to load event snapshot file: {e}")
+
+        if not payload:
+            raise DataUnavailableError("macro_events", "snapshot_missing")
 
         events = []
-        np.random.seed(int(datetime.now().timestamp()) % 1000)
-
-        for i in range(days_ahead):
-            date = (today + timedelta(days=i)).strftime("%Y-%m-%d")
-            day_events = np.random.choice(
-                len(major_events),
-                size=min(2, np.random.randint(1, 3)),
-                replace=False
-            )
-
-            for idx in day_events:
-                evt = major_events[idx]
+        for item in payload:
+            try:
                 events.append(EconomicEvent(
-                    date=date,
-                    time=f"{np.random.randint(8, 23):02d}:{np.random.choice(['00', '30'])}",
-                    country=evt["country"],
-                    event=evt["event"],
-                    importance=evt["importance"]
+                    date=str(item.get("date", "")),
+                    time=str(item.get("time", "")),
+                    country=str(item.get("country", "")),
+                    event=str(item.get("event", "")),
+                    importance=str(item.get("importance", "")),
+                    impact_analysis=str(item.get("impact_analysis", "")),
                 ))
+            except Exception:
+                continue
+
+        if not events:
+            raise DataUnavailableError("macro_events", "snapshot_empty")
+
+        # limit by days_ahead
+        if days_ahead:
+            cutoff = (datetime.now() + timedelta(days=days_ahead)).strftime("%Y-%m-%d")
+            events = [e for e in events if e.date <= cutoff]
 
         events.sort(key=lambda x: (x.date, x.time))
         return events
