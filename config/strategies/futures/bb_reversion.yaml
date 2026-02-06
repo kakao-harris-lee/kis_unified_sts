@@ -50,6 +50,16 @@ strategy:
       # Optuna 탐색 결과: 0.003 최적 (score=86.31, ret+82%, sharpe=22.3, pf=13.18)
       min_bb_bandwidth: 0.003
 
+      # 파라미터 완화 + 오버피팅 검증 결과 (2026-02-06)
+      # - 감도 분석: bb_std, bb_touch_buffer, min_bb_bandwidth 안정적; rsi_oversold가 거래 빈도 주도
+      # - 완화 최적화 (200t, Sharpe*trade_penalty): bb_std=1.6, rsi=35, no_macd → 33회/Sharpe 10.9
+      #   거래 4회 증가에 불과, MaxDD 6.7%→10.2% 악화
+      # - Walk-Forward 3구간 (60/20/20):
+      #   현재 파라미터: Train Sharpe=7.59(16t), Val=13.58(5t), Test=13.50(8t) — 거래 수 과소
+      #   완화 파라미터: Train=10.21(16t), Val=18.54(6t), Test=3.61(13t) — 오버피팅 확인
+      # - 결론: 현행 파라미터 유지. 거래 수 부족(29회/14개월)이 근본 문제.
+      #   더 많은 데이터 축적 또는 다른 자산군 확장 필요
+
   exit:
     type: three_stage
     params:
