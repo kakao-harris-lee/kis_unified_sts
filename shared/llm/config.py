@@ -68,9 +68,9 @@ class LLMConfig:
             "실적부진",
         ]
     )
-    stock_score_weight_momentum: float = 0.25
-    stock_score_weight_technical: float = 0.20
-    stock_score_weight_backtest: float = 0.25
+    stock_score_weight_momentum: float = 0.35
+    stock_score_weight_technical: float = 0.15
+    stock_score_weight_backtest: float = 0.20
     stock_score_weight_news: float = 0.10
     stock_score_weight_liquidity: float = 0.10
     stock_score_weight_risk: float = 0.10
@@ -220,9 +220,9 @@ class LLMConfig:
                 "risk_keywords",
                 ["유상증자", "전환사채", "CB", "BW", "불성실공시", "감사의견", "실적부진"],
             ),
-            stock_score_weight_momentum=stock_config.get("score_weight_momentum", 0.25),
-            stock_score_weight_technical=stock_config.get("score_weight_technical", 0.20),
-            stock_score_weight_backtest=stock_config.get("score_weight_backtest", 0.25),
+            stock_score_weight_momentum=stock_config.get("score_weight_momentum", 0.35),
+            stock_score_weight_technical=stock_config.get("score_weight_technical", 0.15),
+            stock_score_weight_backtest=stock_config.get("score_weight_backtest", 0.20),
             stock_score_weight_news=stock_config.get("score_weight_news", 0.10),
             stock_score_weight_liquidity=stock_config.get("score_weight_liquidity", 0.10),
             stock_score_weight_risk=stock_config.get("score_weight_risk", 0.10),

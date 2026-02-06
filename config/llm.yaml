@@ -38,9 +38,9 @@ stock:
   exclude_preferred_shares: true
 
   # 스코어 가중치
-  score_weight_momentum: 0.25
-  score_weight_technical: 0.20
-  score_weight_backtest: 0.25
+  score_weight_momentum: 0.35
+  score_weight_technical: 0.15
+  score_weight_backtest: 0.20
   score_weight_news: 0.10
   score_weight_liquidity: 0.10
   score_weight_risk: 0.10
