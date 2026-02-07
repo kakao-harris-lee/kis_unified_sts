@@ -13,8 +13,8 @@
 strategy:
   name: bb_reversion
   asset_class: futures
-  enabled: true
-  description: "볼린저 밴드 하단 + RSI 과매도 + MACD 필터 선물 전략"
+  enabled: false  # 15min 단독 운용 전환 (2026-02-06)
+  description: "볼린저 밴드 하단 + RSI 과매도 + MACD 필터 선물 전략 (1분봉)"
 
   entry:
     type: mean_reversion
@@ -59,6 +59,12 @@ strategy:
       #   완화 파라미터: Train=10.21(16t), Val=18.54(6t), Test=3.61(13t) — 오버피팅 확인
       # - 결론: 현행 파라미터 유지. 거래 수 부족(29회/14개월)이 근본 문제.
       #   더 많은 데이터 축적 또는 다른 자산군 확장 필요
+      #
+      # 멀티 전략 통합 분석 (2026-02-06): 15min 단독 운용 전환
+      # - 1min+15min 50:50 합산: 329t, Sharpe 1.52, Return +5.94%
+      # - 시그널 겹침률 29.1% (70%+ 독립) — 상보성 확인
+      # - 그러나 1min WF 미검증, 15min 단독이 우월 (Sharpe 5.11, Return +13.72%)
+      # - 1min은 데이터 축적 후 WF 재검증 시 활성화 검토
 
   exit:
     type: three_stage
