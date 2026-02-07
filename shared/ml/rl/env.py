@@ -75,13 +75,13 @@ class RLEnvConfig:
     market_close: str = "15:45"
 
     # 보상함수 가중치
-    w_profit: float = 1.0
-    w_cost: float = 0.1
-    w_risk: float = 0.1
-    w_mtm: float = 1.0
-    inaction_penalty: float = 0.001
+    w_profit: float = 5.0
+    w_cost: float = 2.0
+    w_risk: float = 0.3
+    w_mtm: float = 0.0
+    inaction_penalty: float = 0.0
     reward_scale: float = 100.0
-    max_loss: float = -500_000
+    max_loss: float = -5_000_000
     loss_penalty_coeff: float = 2.0
 
     @classmethod
@@ -346,13 +346,10 @@ class FuturesTradingEnv(gym.Env):
     def _calculate_reward(
         self, trade_pnl: float, trade_cost: float, current_price: float, prev_balance: float
     ) -> float:
-        """보상함수 (논문 식 2~5 + mark-to-market + inaction penalty)
+        """보상함수 — 실현 PnL 중심 (Phase 1)
 
-        R = w_profit * r_profit - w_cost * r_cost - w_risk * r_risk
-            + w_mtm * r_mtm - w_inaction * r_inaction
-
-        mark-to-market: 포지션 보유 시 미실현 PnL 변동을 매 스텝 보상에 반영.
-        inaction penalty: 포지션 없이 HOLD만 할 때 소액 페널티 (탐색 유도).
+        R = (w_profit * r_profit - w_cost * r_cost - w_risk * r_risk
+             + w_mtm * r_mtm - inaction_penalty) * reward_scale
 
         Args:
             trade_pnl: 실현 손익 (수수료 차감 후)
@@ -365,20 +362,24 @@ class FuturesTradingEnv(gym.Env):
         # 수익 보상 (정규화)
         r_profit = trade_pnl / cfg.initial_balance
 
-        # 비용 보상 (실제 수수료 사용 — trade_pnl에서 이중 계산 방지)
+        # 비용 보상 (거래 시에만 발생)
         r_cost = trade_cost / cfg.initial_balance
 
         # 리스크 보상 (미실현 손실)
         unrealized_pnl = self._get_unrealized_pnl(current_price)
         r_risk = max(0.0, -unrealized_pnl / cfg.initial_balance)
 
-        # Mark-to-market: 미실현 PnL 변동 (포지션 보유 시 연속 피드백)
-        r_mtm = (unrealized_pnl - self._prev_unrealized_pnl) / cfg.initial_balance
+        # Mark-to-market (w_mtm=0이면 비활성)
+        r_mtm = 0.0
+        if cfg.w_mtm > 0 and self.position != PositionSide.FLAT:
+            # 청산 스텝에서는 MTM 제외 (r_profit과 이중 계산 방지)
+            if trade_pnl == 0.0:
+                r_mtm = (unrealized_pnl - self._prev_unrealized_pnl) / cfg.initial_balance
         self._prev_unrealized_pnl = unrealized_pnl
 
-        # Inaction penalty: FLAT 상태에서 매 스텝 소액 페널티
+        # Inaction penalty (0이면 비활성)
         r_inaction = 0.0
-        if self.position == PositionSide.FLAT and trade_pnl == 0.0:
+        if cfg.inaction_penalty > 0 and self.position == PositionSide.FLAT and trade_pnl == 0.0:
             r_inaction = cfg.inaction_penalty
 
         reward = (
