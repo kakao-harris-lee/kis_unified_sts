@@ -3,7 +3,7 @@
 
 # === Gymnasium 환경 ===
 env:
-  initial_balance: 10_000_000
+  initial_balance: 100_000_000   # 1억 (KOSPI200 선물 1계약 증거금 ~6천만)
   commission_rate: 0.00003       # CostConfig.futures() 와 동일
   tick_size: 0.05
   tick_value: 250_000
@@ -20,12 +20,15 @@ env:
   market_open: "09:00"
   market_close: "15:45"
 
-# === 보상함수 가중치 (논문 식 2~5) ===
+# === 보상함수 가중치 (논문 식 2~5 + mark-to-market) ===
 reward:
   w_profit: 1.0
-  w_cost: 1.0
-  w_risk: 0.5
-  max_loss: -500_000
+  w_cost: 0.1                      # 수수료 페널티 최소화 (탐색 유도)
+  w_risk: 0.1
+  w_mtm: 1.0                       # mark-to-market 보상 (핵심 학습 시그널)
+  inaction_penalty: 0.001           # FLAT 페널티 (~0.4/에피소드, 거래 강제)
+  reward_scale: 100.0               # 보상 스케일 (10M balance → 실질 ±1 범위)
+  max_loss: -5_000_000
   loss_penalty_coeff: 2.0
 
 # === M-PPO 하이퍼파라미터 ===
@@ -34,7 +37,7 @@ mppo:
   gamma: 0.99
   gae_lambda: 0.95
   clip_range: 0.2
-  ent_coef: 0.01
+  ent_coef: 0.1                     # 높은 엔트로피로 탐색 강화 (0.01→0.1)
   vf_coef: 0.5
   max_grad_norm: 0.5
   n_steps: 2048
@@ -88,10 +91,11 @@ slippage_test_values: [0.00, 0.05, 0.10, 0.15, 0.20]
 
 # === 데이터 ===
 data:
-  source: clickhouse               # 기존 ClickHouse에서 로드
-  symbol: "101S3000"                # KOSPI200 선물 근월물
-  train_months: 10
-  test_months: 2
+  source: clickhouse
+  database: kospi
+  table: kospi200f_1m
+  symbol: "101S6000"                # KOSPI200 선물 (연결선물)
+  train_ratio: 0.8                  # 80% train, 20% test
   min_bars_per_day: 300             # 최소 바 수 (불완전 일자 제외)
 
 # === 학습 관리 ===

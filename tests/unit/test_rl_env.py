@@ -206,11 +206,13 @@ class TestPositionTransitions:
 class TestReward:
     """보상 함수 테스트"""
 
-    def test_hold_zero_reward(self, env: FuturesTradingEnv):
-        """Hold 행동 → 보상 ≈ 0"""
+    def test_hold_inaction_penalty(self, env: FuturesTradingEnv):
+        """Hold 행동 → inaction penalty로 소액 음수 보상"""
         env.reset()
         _, reward, _, _, _ = env.step(Action.HOLD)
-        assert abs(reward) < 0.01, f"Hold reward should be ~0, got {reward}"
+        # FLAT 상태 HOLD → inaction_penalty * reward_scale 만큼 음수
+        assert reward < 0, f"Hold in FLAT should have negative reward (inaction penalty), got {reward}"
+        assert reward > -1.0, f"Hold penalty should be small, got {reward}"
 
     def test_commission_cost(self, env: FuturesTradingEnv):
         """진입 시 수수료로 약간의 음수 보상"""

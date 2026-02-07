@@ -76,8 +76,11 @@ class RLEnvConfig:
 
     # 보상함수 가중치
     w_profit: float = 1.0
-    w_cost: float = 1.0
-    w_risk: float = 0.5
+    w_cost: float = 0.1
+    w_risk: float = 0.1
+    w_mtm: float = 1.0
+    inaction_penalty: float = 0.001
+    reward_scale: float = 100.0
     max_loss: float = -500_000
     loss_penalty_coeff: float = 2.0
 
@@ -157,6 +160,7 @@ class FuturesTradingEnv(gym.Env):
         self.wins = 0
         self.losses = 0
         self.trade_history: list[dict[str, Any]] = []
+        self._prev_unrealized_pnl = 0.0
 
     def reset(
         self,
@@ -209,14 +213,15 @@ class FuturesTradingEnv(gym.Env):
                 )
             terminated = True
 
-        # 최대 손실 초과 (마지막 스텝에서 이미 종료된 경우 중복 적용 방지)
-        if not terminated and self.balance <= self.config.initial_balance + self.config.max_loss:
+        # 최대 손실 초과: 실현 PnL + 미실현 PnL 기준 (증거금 제외)
+        actual_pnl = self.total_pnl + self._get_unrealized_pnl(current_price)
+        if not terminated and actual_pnl <= self.config.max_loss:
             if self.position != PositionSide.FLAT:
                 self._force_close(current_price)
             terminated = True
             reward += self.config.max_loss * self.config.loss_penalty_coeff / (
                 self.config.initial_balance
-            )
+            ) * self.config.reward_scale
 
         obs = self._get_observation()
         info = self._get_info()
@@ -341,11 +346,13 @@ class FuturesTradingEnv(gym.Env):
     def _calculate_reward(
         self, trade_pnl: float, trade_cost: float, current_price: float, prev_balance: float
     ) -> float:
-        """보상함수 (논문 식 2~5)
+        """보상함수 (논문 식 2~5 + mark-to-market + inaction penalty)
 
         R = w_profit * r_profit - w_cost * r_cost - w_risk * r_risk
+            + w_mtm * r_mtm - w_inaction * r_inaction
 
-        모든 가중치는 config에서 로드.
+        mark-to-market: 포지션 보유 시 미실현 PnL 변동을 매 스텝 보상에 반영.
+        inaction penalty: 포지션 없이 HOLD만 할 때 소액 페널티 (탐색 유도).
 
         Args:
             trade_pnl: 실현 손익 (수수료 차감 후)
@@ -365,7 +372,22 @@ class FuturesTradingEnv(gym.Env):
         unrealized_pnl = self._get_unrealized_pnl(current_price)
         r_risk = max(0.0, -unrealized_pnl / cfg.initial_balance)
 
-        reward = cfg.w_profit * r_profit - cfg.w_cost * r_cost - cfg.w_risk * r_risk
+        # Mark-to-market: 미실현 PnL 변동 (포지션 보유 시 연속 피드백)
+        r_mtm = (unrealized_pnl - self._prev_unrealized_pnl) / cfg.initial_balance
+        self._prev_unrealized_pnl = unrealized_pnl
+
+        # Inaction penalty: FLAT 상태에서 매 스텝 소액 페널티
+        r_inaction = 0.0
+        if self.position == PositionSide.FLAT and trade_pnl == 0.0:
+            r_inaction = cfg.inaction_penalty
+
+        reward = (
+            cfg.w_profit * r_profit
+            - cfg.w_cost * r_cost
+            - cfg.w_risk * r_risk
+            + cfg.w_mtm * r_mtm
+            - r_inaction
+        ) * cfg.reward_scale
 
         return reward
 
@@ -450,6 +472,7 @@ class FuturesTradingEnv(gym.Env):
         self.position = PositionSide.FLAT
         self.contracts = 0
         self.entry_price = 0.0
+        self._prev_unrealized_pnl = 0.0
 
     def _record_trade(self, pnl: float) -> None:
         """거래 기록"""

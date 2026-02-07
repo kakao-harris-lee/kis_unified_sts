@@ -49,33 +49,32 @@ def load_data_from_clickhouse(
     config = ConfigLoader.load(config_path)
     data_cfg = config.get("data", {})
 
-    symbol = data_cfg.get("symbol", "101S3000")
-    train_months = data_cfg.get("train_months", 10)
-    test_months = data_cfg.get("test_months", 2)
+    symbol = data_cfg.get("symbol", "101S6000")
+    database = data_cfg.get("database", "kospi")
+    table = data_cfg.get("table", "kospi200f_1m")
+    train_ratio = float(data_cfg.get("train_ratio", 0.8))
     min_bars = data_cfg.get("min_bars_per_day", 300)
 
     logger.info(
-        f"Loading data: symbol={symbol}, "
-        f"train={train_months}mo, test={test_months}mo"
+        f"Loading data: {database}.{table}, symbol={symbol}, "
+        f"train_ratio={train_ratio}"
     )
 
     try:
-        from shared.db.client import ClickHouseClient
-        from shared.db.config import ClickHouseConfig
+        from clickhouse_driver import Client as CHSyncClient
 
-        ch_client = ClickHouseClient(ClickHouseConfig())
-        client = ch_client.get_sync_client()
+        client = CHSyncClient(
+            host="localhost", port=9000,
+            user="default", password="@1tidh6ls6ls",
+        )
 
-        # 전체 데이터 기간 조회 (파라미터 바인딩으로 SQL Injection 방지)
-        total_months = train_months + test_months
-        query = """
+        query = f"""
             SELECT datetime, open, high, low, close, volume
-            FROM minute_candles
+            FROM {database}.{table}
             WHERE code = %(symbol)s
-            AND datetime >= now() - INTERVAL %(months)s MONTH
             ORDER BY datetime
         """
-        rows = client.execute(query, {"symbol": symbol, "months": total_months})
+        rows = client.execute(query, {"symbol": symbol})
         df = pd.DataFrame(rows, columns=["datetime", "open", "high", "low", "close", "volume"])
 
     except Exception as e:
@@ -107,7 +106,7 @@ def load_data_from_clickhouse(
     logger.info(f"Valid dates: {len(valid_dates)} / {len(dates)}")
 
     # train/test 분할
-    split_idx = int(len(valid_dates) * train_months / (train_months + test_months))
+    split_idx = int(len(valid_dates) * train_ratio)
     train_dates = valid_dates[:split_idx]
     test_dates = valid_dates[split_idx:]
 

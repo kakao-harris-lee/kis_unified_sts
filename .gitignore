@@ -45,3 +45,9 @@ scripts/test_model.py
 kis_docs/
 .kis_token_real
 .serena/
+
+# RL training artifacts
+models/futures/rl/mppo*/
+models/futures/rl/mppo_final.zip
+results/
+mlflow.db
