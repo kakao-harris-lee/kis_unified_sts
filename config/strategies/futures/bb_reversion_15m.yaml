@@ -1,0 +1,78 @@
+# BB Reversion Strategy - 15분봉 (Futures)
+#
+# 1분봉 데이터를 15분으로 리샘플링한 bb_reversion 전략
+# - 데이터: KOSPI200 선물 (101S6000), 15분봉 6,760 bars, 14개월
+# - 목적: 1분봉 전략(29회)과 독립적 시그널 → 거래 빈도 향상
+#
+# 타임프레임 확장 분석 결과 (2026-02-06):
+#   1min: WF 실패 (Train 3.88 → Test -2.94, 저하율 -175.8%)
+#   5min: WF 실패 (Train 5.32 → Test -8.41, 저하율 -257.9%)
+#   15min: WF 통과 (Train 5.16 → Test 3.84, 저하율 -25.5%) ← 유일
+#
+# Optuna 전체 데이터 결과 (200 trials):
+#   Trades=144, Sharpe=5.35, Return=+14.44%, WR=59.0%, PF=1.90, MaxDD=4.49%
+#
+# Walk-Forward 검증 (60/20/20, 100 trials on Train):
+#   Train: Sharpe=5.16, 85 trades, Return=+8.52%, WR=61.2%, PF=1.97
+#   Val:   Sharpe=7.44, 24 trades, Return=+2.48%, WR=50.0%, PF=2.55
+#   Test:  Sharpe=3.84, 34 trades, Return=+2.25%, WR=55.9%, PF=1.44
+#   저하율: -25.5% (< 30% 기준 통과)
+#
+# 파라미터 중요도: bb_touch_buffer=58.1%, rsi_oversold=29.5%, min_bb_bandwidth=4.9%
+#
+# 주의: 아직 실전 배포 전. 추가 데이터 축적 후 재검증 필요.
+# - Test 구간 34회 → 통계적 유의성 경계 (최소 30회 충족)
+# - 1분봉 전략과 시그널 겹침 여부 미확인
+
+strategy:
+  name: bb_reversion_15m
+  asset_class: futures
+  enabled: true
+  timeframe: 15min  # 1분봉 데이터를 15분으로 리샘플링
+  description: "볼린저 밴드 평균회귀 선물 전략 (15분봉)"
+
+  entry:
+    type: mean_reversion
+    params:
+      # WF 최적 파라미터 (Train에서 Optuna → Test에서 검증)
+      bb_period: 43
+      bb_std: 1.4
+      bb_touch_buffer: 1.06
+
+      rsi_period: 16
+      rsi_oversold: 45
+      rsi_overbought: 83
+
+      use_macd_filter: true
+      macd_fast: 12
+      macd_slow: 26
+      macd_signal: 9
+
+      buy_only: true
+      min_bb_bandwidth: 0.003
+
+  exit:
+    type: three_stage
+    params:
+      stop_loss_pct: -0.04
+      take_profit_pct: 0.05
+      breakeven_threshold_pct: 0.02
+      trailing_stop_pct: -0.03
+      session_close_time: "15:35"
+
+  position:
+    type: fixed
+    params:
+      contracts: 1
+      max_contracts: 2
+
+  indicators:
+    bollinger_bands:
+      period: 43
+      std_dev: 1.4
+    rsi:
+      period: 16
+    macd:
+      fast_period: 12
+      slow_period: 26
+      signal_period: 9
