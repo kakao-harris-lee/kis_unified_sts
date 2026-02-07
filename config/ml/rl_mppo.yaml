@@ -9,7 +9,7 @@ env:
   tick_value: 250_000
   contract_multiplier: 250_000
   max_contracts: 1
-  slippage: 0.0                  # 학습 시 기본값, 평가 시 오버라이드
+  slippage: 0.0                  # Phase 3 슬리피지 학습 실패 → 0으로 복원
   margin_rate: 0.15              # 증거금률 (선물 위탁증거금 ~15%)
 
   # 상태 공간

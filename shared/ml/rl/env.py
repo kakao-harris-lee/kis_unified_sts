@@ -285,6 +285,7 @@ class FuturesTradingEnv(gym.Env):
             self.contracts = self.config.max_contracts
             self.entry_price = exec_price
             self.balance -= (cost + margin)
+            self.total_pnl -= cost  # 진입 수수료 반영
             trade_pnl = -cost  # 진입 비용
             trade_cost = cost
 
@@ -304,7 +305,7 @@ class FuturesTradingEnv(gym.Env):
             trade_pnl = pnl - cost
             self.balance += (margin + trade_pnl)
             self.total_pnl += trade_pnl
-            self._record_trade(pnl=trade_pnl)
+            self._record_trade(pnl=trade_pnl, side="LONG")
             self._clear_position()
             trade_cost = cost
 
@@ -319,6 +320,7 @@ class FuturesTradingEnv(gym.Env):
             self.contracts = self.config.max_contracts
             self.entry_price = exec_price
             self.balance -= (cost + margin)
+            self.total_pnl -= cost  # 진입 수수료 반영
             trade_pnl = -cost
             trade_cost = cost
 
@@ -338,7 +340,7 @@ class FuturesTradingEnv(gym.Env):
             trade_pnl = pnl - cost
             self.balance += (margin + trade_pnl)
             self.total_pnl += trade_pnl
-            self._record_trade(pnl=trade_pnl)
+            self._record_trade(pnl=trade_pnl, side="SHORT")
             self._clear_position()
             trade_cost = cost
 
@@ -490,7 +492,7 @@ class FuturesTradingEnv(gym.Env):
         self.entry_price = 0.0
         self._prev_unrealized_pnl = 0.0
 
-    def _record_trade(self, pnl: float) -> None:
+    def _record_trade(self, pnl: float, side: str = "") -> None:
         """거래 기록"""
         self.n_trades += 1
         if pnl > 0:
@@ -503,7 +505,7 @@ class FuturesTradingEnv(gym.Env):
                 "step": self.current_step,
                 "pnl": pnl,
                 "balance": self.balance,
-                "position": int(self.position),
+                "side": side,
             }
         )
 
