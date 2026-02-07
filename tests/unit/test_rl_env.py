@@ -296,6 +296,8 @@ class TestEpisodeTermination:
         assert "balance" in info
         assert "total_pnl" in info
         assert "n_trades" in info
+        assert "wins" in info
+        assert "losses" in info
         assert "win_rate" in info
         assert "position" in info
 
@@ -349,3 +351,22 @@ class TestTradeHistory:
         env.step(Action.LONG_EXIT)
 
         assert env.wins + env.losses == env.n_trades
+
+    def test_force_close_counts_win_loss(self, env: FuturesTradingEnv):
+        """강제 청산 시에도 win/loss 카운팅"""
+        env.reset()
+        env.step(Action.LONG_ENTRY)
+
+        # 끝까지 Hold → force_close 발생
+        info = None
+        for _ in range(200):
+            _, _, terminated, _, info = env.step(Action.HOLD)
+            if terminated:
+                break
+
+        assert terminated
+        assert info is not None
+        # force_close에 의한 거래가 기록되어야 함
+        assert info["n_trades"] >= 1
+        assert info["wins"] + info["losses"] == info["n_trades"]
+        assert info["win_rate"] >= 0.0  # 0% 또는 100% (가격 방향에 따라)

@@ -514,6 +514,8 @@ class FuturesTradingEnv(gym.Env):
             "balance": self.balance,
             "total_pnl": self.total_pnl,
             "n_trades": self.n_trades,
+            "wins": self.wins,
+            "losses": self.losses,
             "win_rate": win_rate,
             "position": int(self.position),
             "step": self.current_step,
