@@ -116,10 +116,12 @@ class RLFeatureCalculator(FeatureCalculator):
             df[f"ema_ratio_{window}"] = df["close"] / (ema + 1e-10)
 
         # === 볼린저 밴드 확장 (3개) ===
+        # 부모 FeatureCalculator.calculate()는 bb_position만 저장하고
+        # bb_mid/bb_upper/bb_lower는 로컬 변수로 소멸 → 재계산 불가피
         bb_mid = df["close"].rolling(window=self.bb_period).mean()
-        bb_std = df["close"].rolling(window=self.bb_period).std()
-        bb_upper = bb_mid + self.bb_std * bb_std
-        bb_lower = bb_mid - self.bb_std * bb_std
+        bb_std_val = df["close"].rolling(window=self.bb_period).std()
+        bb_upper = bb_mid + self.bb_std * bb_std_val
+        bb_lower = bb_mid - self.bb_std * bb_std_val
 
         # 상단/하단 거리 (정규화)
         df["bb_upper_dist"] = (bb_upper - df["close"]) / (df["close"] + 1e-10)

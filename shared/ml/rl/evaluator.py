@@ -12,6 +12,7 @@ Usage:
 
 from __future__ import annotations
 
+import copy
 import logging
 from pathlib import Path
 from typing import Any
@@ -60,7 +61,7 @@ class RLEvaluator:
         Returns:
             평가 지표 딕셔너리
         """
-        config = RLEnvConfig.from_yaml()
+        config = copy.copy(self.env_config)
         config.slippage = slippage
 
         daily_returns = []

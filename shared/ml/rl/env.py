@@ -64,6 +64,7 @@ class RLEnvConfig:
     contract_multiplier: int = 250_000
     max_contracts: int = 1
     slippage: float = 0.0
+    margin_rate: float = 0.15  # 증거금률 (선물 위탁증거금 ~15%)
 
     # 상태 공간
     n_market_features: int = 25
@@ -187,10 +188,10 @@ class FuturesTradingEnv(gym.Env):
         prev_balance = self.balance
 
         # 행동 실행
-        trade_pnl = self._execute_action(action, current_price)
+        trade_pnl, trade_cost = self._execute_action(action, current_price)
 
         # 보상 계산
-        reward = self._calculate_reward(trade_pnl, current_price, prev_balance)
+        reward = self._calculate_reward(trade_pnl, trade_cost, current_price, prev_balance)
 
         # 다음 스텝
         self.current_step += 1
@@ -202,14 +203,14 @@ class FuturesTradingEnv(gym.Env):
         # 마지막 스텝: 강제 청산
         if self.current_step >= len(self.day_data) - 1:
             if self.position != PositionSide.FLAT:
-                close_pnl = self._force_close(current_price)
+                close_pnl, close_cost = self._force_close(current_price)
                 reward += self._calculate_reward(
-                    close_pnl, current_price, self.balance - close_pnl
+                    close_pnl, close_cost, current_price, self.balance - close_pnl
                 )
             terminated = True
 
-        # 최대 손실 초과
-        if self.balance <= self.config.initial_balance + self.config.max_loss:
+        # 최대 손실 초과 (마지막 스텝에서 이미 종료된 경우 중복 적용 방지)
+        if not terminated and self.balance <= self.config.initial_balance + self.config.max_loss:
             if self.position != PositionSide.FLAT:
                 self._force_close(current_price)
             terminated = True
@@ -248,30 +249,38 @@ class FuturesTradingEnv(gym.Env):
 
         return masks
 
-    def _execute_action(self, action: Action, price: float) -> float:
+    def _execute_action(self, action: Action, price: float) -> tuple[float, float]:
         """행동 실행 및 거래 손익 반환
 
         무효한 행동은 Hold로 대체.
 
         Returns:
-            이번 행동에 의한 실현 손익 (진입 시 0, 청산 시 실현 PnL)
+            (trade_pnl, trade_cost) 튜플
+            trade_pnl: 이번 행동에 의한 실현 손익 (진입 시 0, 청산 시 실현 PnL)
+            trade_cost: 이번 행동의 수수료 비용
         """
         masks = self.action_masks()
 
         # 무효한 행동 → Hold 대체
         if not masks[action]:
-            return 0.0
+            return 0.0, 0.0
 
         trade_pnl = 0.0
+        trade_cost = 0.0
 
         if action == Action.LONG_ENTRY:
             exec_price = self._apply_slippage(price, is_buy=True)
             cost = exec_price * self.config.contract_multiplier * self.config.commission_rate
+            margin = (
+                exec_price * self.config.contract_multiplier
+                * self.config.max_contracts * self.config.margin_rate
+            )
             self.position = PositionSide.LONG
             self.contracts = self.config.max_contracts
             self.entry_price = exec_price
-            self.balance -= cost
+            self.balance -= (cost + margin)
             trade_pnl = -cost  # 진입 비용
+            trade_cost = cost
 
         elif action == Action.LONG_EXIT:
             exec_price = self._apply_slippage(price, is_buy=False)
@@ -281,20 +290,31 @@ class FuturesTradingEnv(gym.Env):
                 * self.config.contract_multiplier
                 * self.contracts
             )
+            # 증거금 반환 + PnL 반영
+            margin = (
+                self.entry_price * self.config.contract_multiplier
+                * self.contracts * self.config.margin_rate
+            )
             trade_pnl = pnl - cost
-            self.balance += trade_pnl
+            self.balance += (margin + trade_pnl)
             self.total_pnl += trade_pnl
             self._record_trade(pnl=trade_pnl)
             self._clear_position()
+            trade_cost = cost
 
         elif action == Action.SHORT_ENTRY:
             exec_price = self._apply_slippage(price, is_buy=False)
             cost = exec_price * self.config.contract_multiplier * self.config.commission_rate
+            margin = (
+                exec_price * self.config.contract_multiplier
+                * self.config.max_contracts * self.config.margin_rate
+            )
             self.position = PositionSide.SHORT
             self.contracts = self.config.max_contracts
             self.entry_price = exec_price
-            self.balance -= cost
+            self.balance -= (cost + margin)
             trade_pnl = -cost
+            trade_cost = cost
 
         elif action == Action.SHORT_EXIT:
             exec_price = self._apply_slippage(price, is_buy=True)
@@ -304,30 +324,42 @@ class FuturesTradingEnv(gym.Env):
                 * self.config.contract_multiplier
                 * self.contracts
             )
+            # 증거금 반환 + PnL 반영
+            margin = (
+                self.entry_price * self.config.contract_multiplier
+                * self.contracts * self.config.margin_rate
+            )
             trade_pnl = pnl - cost
-            self.balance += trade_pnl
+            self.balance += (margin + trade_pnl)
             self.total_pnl += trade_pnl
             self._record_trade(pnl=trade_pnl)
             self._clear_position()
+            trade_cost = cost
 
-        return trade_pnl
+        return trade_pnl, trade_cost
 
     def _calculate_reward(
-        self, trade_pnl: float, current_price: float, prev_balance: float
+        self, trade_pnl: float, trade_cost: float, current_price: float, prev_balance: float
     ) -> float:
         """보상함수 (논문 식 2~5)
 
         R = w_profit * r_profit - w_cost * r_cost - w_risk * r_risk
 
         모든 가중치는 config에서 로드.
+
+        Args:
+            trade_pnl: 실현 손익 (수수료 차감 후)
+            trade_cost: 실제 수수료 비용
+            current_price: 현재 가격
+            prev_balance: 행동 전 잔고
         """
         cfg = self.config
 
         # 수익 보상 (정규화)
         r_profit = trade_pnl / cfg.initial_balance
 
-        # 비용 보상 (수수료)
-        r_cost = abs(trade_pnl) * cfg.commission_rate / cfg.initial_balance if trade_pnl != 0 else 0.0
+        # 비용 보상 (실제 수수료 사용 — trade_pnl에서 이중 계산 방지)
+        r_cost = trade_cost / cfg.initial_balance
 
         # 리스크 보상 (미실현 손실)
         unrealized_pnl = self._get_unrealized_pnl(current_price)
@@ -359,11 +391,18 @@ class FuturesTradingEnv(gym.Env):
         return obs
 
     def _get_current_price(self) -> float:
-        """현재 종가 반환"""
+        """현재 종가 반환
+
+        Raises:
+            ValueError: prices가 제공되지 않은 경우
+        """
+        if self.prices is None:
+            raise ValueError(
+                "prices array is required for PnL calculation. "
+                "Provide OHLC prices when creating FuturesTradingEnv."
+            )
         step = min(self.current_step, len(self.day_data) - 1)
-        if self.prices is not None and step < len(self.prices):
-            return float(self.prices[step, 3])  # close price
-        return 0.0
+        return float(self.prices[step, 3])  # close price
 
     def _get_unrealized_pnl(self, current_price: float) -> float:
         """미실현 손익 계산"""
@@ -394,13 +433,17 @@ class FuturesTradingEnv(gym.Env):
             return price + slip
         return price - slip
 
-    def _force_close(self, price: float) -> float:
-        """포지션 강제 청산 (장 마감)"""
+    def _force_close(self, price: float) -> tuple[float, float]:
+        """포지션 강제 청산 (장 마감)
+
+        Returns:
+            (trade_pnl, trade_cost) 튜플
+        """
         if self.position == PositionSide.LONG:
             return self._execute_action(Action.LONG_EXIT, price)
         elif self.position == PositionSide.SHORT:
             return self._execute_action(Action.SHORT_EXIT, price)
-        return 0.0
+        return 0.0, 0.0
 
     def _clear_position(self) -> None:
         """포지션 초기화"""

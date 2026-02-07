@@ -104,19 +104,20 @@ class RLTrainer:
         }
         self._log_mlflow_start(algo, mlflow_params)
 
-        # 학습
-        model.learn(
-            total_timesteps=total_timesteps,
-            callback=callbacks,
-            progress_bar=True,
-        )
+        try:
+            # 학습
+            model.learn(
+                total_timesteps=total_timesteps,
+                callback=callbacks,
+                progress_bar=True,
+            )
 
-        # 저장
-        save_path = self.save_dir / f"{algo}_final"
-        model.save(str(save_path))
-        logger.info(f"Model saved: {save_path}")
-
-        self._log_mlflow_end(algo)
+            # 저장
+            save_path = self.save_dir / f"{algo}_final"
+            model.save(str(save_path))
+            logger.info(f"Model saved: {save_path}")
+        finally:
+            self._log_mlflow_end(algo)
 
         return model
 
@@ -305,8 +306,30 @@ class RLTrainer:
             eval_freq = training_cfg.get("eval_freq", 10_000)
 
             if algo == "mppo":
-                # MaskablePPO는 별도 eval callback 필요 없음 (action masking 내장)
-                pass
+                # MaskablePPO용 EvalCallback (action masking 지원)
+                try:
+                    from sb3_contrib.common.maskable.callbacks import MaskableEvalCallback
+
+                    callbacks.append(
+                        MaskableEvalCallback(
+                            eval_env,
+                            best_model_save_path=str(self.save_dir / f"{algo}_best"),
+                            log_path=str(self.save_dir / f"{algo}_eval"),
+                            eval_freq=eval_freq,
+                            deterministic=True,
+                        )
+                    )
+                except ImportError:
+                    # MaskableEvalCallback 미지원 버전 — 일반 EvalCallback 사용
+                    callbacks.append(
+                        EvalCallback(
+                            eval_env,
+                            best_model_save_path=str(self.save_dir / f"{algo}_best"),
+                            log_path=str(self.save_dir / f"{algo}_eval"),
+                            eval_freq=eval_freq,
+                            deterministic=True,
+                        )
+                    )
             else:
                 callbacks.append(
                     EvalCallback(

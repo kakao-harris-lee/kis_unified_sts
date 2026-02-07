@@ -60,20 +60,22 @@ def load_data_from_clickhouse(
     )
 
     try:
-        from clickhouse_driver import Client
+        from shared.db.client import ClickHouseClient
+        from shared.db.config import ClickHouseConfig
 
-        client = Client(host="localhost")
+        ch_client = ClickHouseClient(ClickHouseConfig())
+        client = ch_client.get_sync_client()
 
-        # 전체 데이터 기간 조회
+        # 전체 데이터 기간 조회 (파라미터 바인딩으로 SQL Injection 방지)
         total_months = train_months + test_months
-        query = f"""
+        query = """
             SELECT datetime, open, high, low, close, volume
-            FROM futures_1m
-            WHERE symbol = '{symbol}'
-            AND datetime >= now() - INTERVAL {total_months} MONTH
+            FROM minute_candles
+            WHERE code = %(symbol)s
+            AND datetime >= now() - INTERVAL %(months)s MONTH
             ORDER BY datetime
         """
-        rows = client.execute(query)
+        rows = client.execute(query, {"symbol": symbol, "months": total_months})
         df = pd.DataFrame(rows, columns=["datetime", "open", "high", "low", "close", "volume"])
 
     except Exception as e:

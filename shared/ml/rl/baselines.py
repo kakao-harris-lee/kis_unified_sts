@@ -10,6 +10,7 @@ Usage:
 
 from __future__ import annotations
 
+import copy
 import logging
 from typing import Any
 
@@ -33,6 +34,7 @@ class MACrossBaseline:
         ma_config = config.get("ma_cross", {})
         self.short_window = ma_config.get("short_window", 5)
         self.long_window = ma_config.get("long_window", 20)
+        self._env_config = RLEnvConfig.from_yaml(config_path)
 
     def get_action(
         self,
@@ -85,7 +87,7 @@ class MACrossBaseline:
         Returns:
             평가 지표 딕셔너리
         """
-        config = RLEnvConfig.from_yaml()
+        config = copy.copy(self._env_config)
         config.slippage = slippage
 
         daily_returns = []

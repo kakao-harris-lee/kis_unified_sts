@@ -63,6 +63,7 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
         self._model = None
         self._feature_calculator = None
         self._device = get_device(config.device)
+        self._env_config = None  # lazy loaded
 
     def _validate_config(self) -> None:
         """설정 유효성 검증"""
@@ -187,6 +188,13 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
 
         return None
 
+    def _get_env_config(self):
+        """RL 환경 설정 로드 (lazy)"""
+        if self._env_config is None:
+            from shared.ml.rl.env import RLEnvConfig
+            self._env_config = RLEnvConfig.from_yaml()
+        return self._env_config
+
     def _load_model(self) -> Any:
         """학습된 모델 로드 (lazy loading)"""
         if self._model is not None:
@@ -224,9 +232,20 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
         from shared.ml.rl.features import RL_FEATURE_COLUMNS
 
         market_features = []
+        missing_features = []
         for col in RL_FEATURE_COLUMNS:
-            val = indicators.get(col, market_data.get(col, 0.0))
-            market_features.append(float(val) if val is not None else 0.0)
+            val = indicators.get(col, market_data.get(col, None))
+            if val is None:
+                missing_features.append(col)
+                market_features.append(0.0)
+            else:
+                market_features.append(float(val))
+
+        if missing_features:
+            logger.warning(
+                f"Missing {len(missing_features)} RL features (filled with 0.0): "
+                f"{missing_features[:5]}{'...' if len(missing_features) > 5 else ''}"
+            )
 
         # 포지션 피처 (3개)
         position = 0.0  # flat (진입 판단이므로 항상 flat)
@@ -237,8 +256,9 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
             pos = context.current_positions[0]
             if hasattr(pos, "side"):
                 position = 1.0 if pos.side == "long" else -1.0
-            contracts = getattr(pos, "quantity", 0) / 1.0  # 정규화
-            unrealized_pnl = getattr(pos, "unrealized_pnl", 0.0) / 10_000_000
+            env_cfg = self._get_env_config()
+            contracts = getattr(pos, "quantity", 0) / max(env_cfg.max_contracts, 1)
+            unrealized_pnl = getattr(pos, "unrealized_pnl", 0.0) / env_cfg.initial_balance
 
         obs = np.array(
             market_features + [position, contracts, unrealized_pnl],

@@ -24,21 +24,26 @@ from shared.ml.rl.env import (
 
 @pytest.fixture
 def config() -> RLEnvConfig:
-    """기본 테스트 설정"""
+    """기본 테스트 설정
+
+    initial_balance를 증거금(price * multiplier * margin_rate)보다 충분히 크게 설정.
+    price ~350, multiplier=250_000, margin_rate=0.15 → margin ~13.1M → balance=100M
+    """
     return RLEnvConfig(
-        initial_balance=10_000_000,
+        initial_balance=100_000_000,
         commission_rate=0.00003,
         tick_size=0.05,
         tick_value=250_000,
         contract_multiplier=250_000,
         max_contracts=1,
         slippage=0.0,
+        margin_rate=0.15,
         n_market_features=25,
         n_position_features=3,
         w_profit=1.0,
         w_cost=1.0,
         w_risk=0.5,
-        max_loss=-500_000,
+        max_loss=-50_000_000,
         loss_penalty_coeff=2.0,
     )
 
@@ -53,6 +58,7 @@ def sample_data() -> tuple[np.ndarray, np.ndarray]:
     features = np.random.randn(n_steps, n_features).astype(np.float32)
     prices = np.zeros((n_steps, 4), dtype=np.float32)
 
+    # 증거금 대비 적절한 가격 사용 (initial_balance=10M, multiplier=250K → max ~40 포인트)
     base_price = 350.0
     for i in range(n_steps):
         price = base_price + np.random.normal(0, 0.5)
