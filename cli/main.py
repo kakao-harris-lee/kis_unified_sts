@@ -1525,6 +1525,193 @@ def health(url: str):
         sys.exit(1)
 
 
+
+
+# =============================================================================
+# RL (Reinforcement Learning) Commands
+# =============================================================================
+
+
+@cli.group()
+def rl():
+    """강화학습 모델 관련 명령
+
+    \b
+    Examples:
+        sts rl train --algo mppo
+        sts rl train --algo all
+        sts rl evaluate --model mppo_best
+        sts rl slippage --model mppo_best
+        sts rl tensorboard
+    """
+    pass
+
+
+@rl.command("train")
+@click.option("--algo", "-a", default="mppo", type=click.Choice(["mppo", "dqn", "a2c", "ppo", "all"]), help="Algorithm to train (default: mppo)")
+@click.option("--config", "-c", default="ml/rl_mppo.yaml", help="Config file path")
+def rl_train(algo: str, config: str):
+    """RL 모델 학습
+
+    \b
+    Example:
+        sts rl train --algo mppo
+        sts rl train --algo all
+    """
+    click.echo("Starting RL Training")
+    click.echo(f"  Algorithm: {algo}")
+    click.echo(f"  Config: {config}")
+    click.echo("-" * 40)
+
+    try:
+        from scripts.training.train_rl import load_data_from_clickhouse
+        from shared.ml.rl.trainer import RLTrainer
+
+        train_days, train_prices, test_days, test_prices = load_data_from_clickhouse(config)
+        trainer = RLTrainer(config_path=config)
+
+        if algo == "all":
+            models = trainer.train_all(
+                train_days=train_days,
+                train_prices=train_prices,
+                eval_days=test_days,
+                eval_prices=test_prices,
+            )
+            click.echo(f"Trained {len(models)} models: {list(models.keys())}")
+        else:
+            model = trainer.train(
+                algo=algo,
+                train_days=train_days,
+                train_prices=train_prices,
+                eval_days=test_days,
+                eval_prices=test_prices,
+            )
+            click.echo(f"Training complete: {algo}")
+
+    except ImportError as e:
+        click.echo(f"Error: Required package not installed: {e}", err=True)
+        click.echo("Install with: pip install -e .[ml]", err=True)
+        sys.exit(1)
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+@rl.command("evaluate")
+@click.option("--model", "-m", default="mppo_best", help="Model name to evaluate")
+@click.option("--config", "-c", default="ml/rl_mppo.yaml", help="Config file path")
+def rl_evaluate(model: str, config: str):
+    """RL 모델 평가 (표1 재현)
+
+    \b
+    Example:
+        sts rl evaluate --model mppo_best
+    """
+    click.echo(f"Evaluating RL Model: {model}")
+
+    try:
+        from scripts.training.train_rl import load_data_from_clickhouse
+        from shared.ml.rl.evaluator import RLEvaluator
+        from sb3_contrib import MaskablePPO
+
+        _, _, test_days, test_prices = load_data_from_clickhouse(config)
+
+        model_path = f"models/futures/rl/{model}/best_model.zip"
+        loaded_model = MaskablePPO.load(model_path)
+
+        evaluator = RLEvaluator(config_path=config)
+        results = evaluator.evaluate_model(loaded_model, test_days, test_prices)
+
+        click.echo("\nEvaluation Results:")
+        click.echo("-" * 40)
+        for k, v in results.items():
+            if k != "daily_returns":
+                click.echo(f"  {k}: {v}")
+
+    except FileNotFoundError:
+        click.echo(f"Error: Model not found at models/futures/rl/{model}/", err=True)
+        sys.exit(1)
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+@rl.command("slippage")
+@click.option("--model", "-m", default="mppo_best", help="Model name")
+@click.option("--retrain", is_flag=True, help="Retrain with each slippage (Table 3)")
+@click.option("--config", "-c", default="ml/rl_mppo.yaml", help="Config file path")
+def rl_slippage(model: str, retrain: bool, config: str):
+    """슬리피지 분석 (표2/표3)
+
+    \b
+    Example:
+        sts rl slippage --model mppo_best
+        sts rl slippage --model mppo_best --retrain
+    """
+    table = "Table 3 (retrain)" if retrain else "Table 2 (test-only)"
+    click.echo(f"Slippage Analysis: {table}")
+
+    try:
+        from scripts.training.train_rl import load_data_from_clickhouse
+        from shared.ml.rl.evaluator import RLEvaluator
+        from shared.ml.rl.trainer import RLTrainer
+        from sb3_contrib import MaskablePPO
+
+        train_days, train_prices, test_days, test_prices = load_data_from_clickhouse(config)
+
+        model_path = f"models/futures/rl/{model}/best_model.zip"
+        loaded_model = MaskablePPO.load(model_path)
+
+        evaluator = RLEvaluator(config_path=config)
+        trainer = RLTrainer(config_path=config) if retrain else None
+
+        df = evaluator.slippage_analysis(
+            loaded_model,
+            test_days,
+            test_prices,
+            retrain=retrain,
+            trainer=trainer,
+            train_days=train_days if retrain else None,
+            train_prices=train_prices if retrain else None,
+        )
+
+        click.echo(f"\n{df.to_string(index=False)}")
+
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+@rl.command("tensorboard")
+@click.option("--logdir", default="./results/rl/tensorboard/", help="TensorBoard log directory")
+@click.option("--port", default=6006, type=int, help="TensorBoard port")
+def rl_tensorboard(logdir: str, port: int):
+    """TensorBoard 실행 (학습 커브 확인)
+
+    \b
+    Example:
+        sts rl tensorboard
+        sts rl tensorboard --port 6007
+    """
+    import subprocess
+
+    click.echo("Starting TensorBoard")
+    click.echo(f"  Log dir: {logdir}")
+    click.echo(f"  URL: http://localhost:{port}")
+
+    try:
+        subprocess.run(
+            ["tensorboard", "--logdir", logdir, "--port", str(port)],
+            check=True,
+        )
+    except FileNotFoundError:
+        click.echo("Error: TensorBoard not installed", err=True)
+        click.echo("Install with: pip install tensorboard", err=True)
+        sys.exit(1)
+    except KeyboardInterrupt:
+        click.echo("\nTensorBoard stopped")
+
+
 # =============================================================================
 # Entry Point
 # =============================================================================

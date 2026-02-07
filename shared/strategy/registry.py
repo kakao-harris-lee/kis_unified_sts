@@ -383,6 +383,9 @@ def register_builtin_components() -> None:
     except ImportError:
         logger.debug("OpeningVolumeSurgeEntry not available")
 
+    # rl_mppo는 @EntryRegistry.register 데코레이터로 자동 등록됨
+    # 수동 등록 불필요 (이중 등록 방지)
+
     # Exit 전략 등록
     try:
         from shared.strategy.exit.three_stage import ThreeStageExit
