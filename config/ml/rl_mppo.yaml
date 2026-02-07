@@ -14,7 +14,7 @@ env:
 
   # 상태 공간
   n_market_features: 25          # 기술적 지표 수
-  n_position_features: 3         # position, contracts, unrealized_pnl
+  n_position_features: 6         # position(3) + time(3)
 
   # 장 운영시간 (KST)
   market_open: "09:00"
@@ -97,6 +97,7 @@ data:
   symbol: "101S6000"                # KOSPI200 선물 (연결선물)
   train_ratio: 0.8                  # 80% train, 20% test
   min_bars_per_day: 300             # 최소 바 수 (불완전 일자 제외)
+  mirror_augmentation: true         # 가격 미러링 증강 (LONG/SHORT 균형 학습)
 
 # === 학습 관리 ===
 training:

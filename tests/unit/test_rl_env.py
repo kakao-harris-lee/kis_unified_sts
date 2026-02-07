@@ -39,7 +39,7 @@ def config() -> RLEnvConfig:
         slippage=0.0,
         margin_rate=0.15,
         n_market_features=25,
-        n_position_features=3,
+        n_position_features=6,  # position(3) + time(3)
         w_profit=1.0,
         w_cost=1.0,
         w_risk=0.5,
@@ -84,9 +84,9 @@ class TestObservationSpace:
     """관측 공간 테스트"""
 
     def test_observation_shape(self, env: FuturesTradingEnv):
-        """관측값 shape = (28,): 25 시장 + 3 포지션"""
+        """관측값 shape = (31,): 25 시장 + 3 포지션 + 3 시간"""
         obs, info = env.reset()
-        assert obs.shape == (28,), f"Expected (28,), got {obs.shape}"
+        assert obs.shape == (31,), f"Expected (31,), got {obs.shape}"
 
     def test_observation_dtype(self, env: FuturesTradingEnv):
         """관측값 dtype은 float32"""
@@ -96,8 +96,50 @@ class TestObservationSpace:
     def test_initial_position_features(self, env: FuturesTradingEnv):
         """초기 포지션 피처 = [0, 0, 0]"""
         obs, _ = env.reset()
-        position_features = obs[-3:]
+        # 포지션 피처: obs[25:28], 시간 피처: obs[28:31]
+        position_features = obs[25:28]
         np.testing.assert_array_almost_equal(position_features, [0, 0, 0])
+
+    def test_time_features_at_start(self, env: FuturesTradingEnv):
+        """step 0에서 시간 피처: progress=0, sin=0, cos=1"""
+        obs, _ = env.reset()
+        time_features = obs[28:31]
+        assert time_features[0] == pytest.approx(0.0, abs=1e-5), "progress should be 0 at start"
+        assert time_features[1] == pytest.approx(0.0, abs=1e-5), "sin(0) should be 0"
+        assert time_features[2] == pytest.approx(1.0, abs=1e-5), "cos(0) should be 1"
+
+    def test_time_features_at_end(self, env: FuturesTradingEnv):
+        """마지막 step에서 시간 피처: progress≈1, sin≈0, cos≈1"""
+        env.reset()
+        # Hold until near end
+        terminated = False
+        obs = None
+        for _ in range(200):
+            obs, _, terminated, _, _ = env.step(Action.HOLD)
+            if terminated:
+                break
+        # 마지막 obs의 시간 피처 확인
+        assert obs is not None
+        time_features = obs[28:31]
+        # 마지막 step에서 progress ≈ 1.0
+        assert time_features[0] == pytest.approx(1.0, abs=0.02), (
+            f"progress should be ~1 at end, got {time_features[0]}"
+        )
+
+    def test_time_features_monotonic(self, env: FuturesTradingEnv):
+        """시간 진행률은 단조 증가"""
+        env.reset()
+        progresses = []
+        for _ in range(50):
+            obs, _, terminated, _, _ = env.step(Action.HOLD)
+            if terminated:
+                break
+            progresses.append(obs[28])  # progress
+        # 단조 증가 확인
+        for i in range(1, len(progresses)):
+            assert progresses[i] > progresses[i - 1], (
+                f"Progress not monotonic at step {i}: {progresses[i]} <= {progresses[i-1]}"
+            )
 
 
 class TestActionSpace:

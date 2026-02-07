@@ -85,16 +85,46 @@ def load_data_from_clickhouse(
         logger.warning("No data loaded. Using sample data.")
         df = _generate_sample_data()
 
-    # 피처 계산
+    # 가격 미러링 증강 설정
+    mirror_aug = data_cfg.get("mirror_augmentation", True)
+
+    # 미러 데이터 생성 (OHLC를 평균가 기준으로 반전)
+    df_mirror = None
+    if mirror_aug:
+        ref_price = df["close"].mean()
+        df_mirror = df.copy()
+        for col in ["open", "high", "low", "close"]:
+            df_mirror[col] = 2 * ref_price - df[col]
+        # 반전 시 high/low 스왑
+        df_mirror["high"], df_mirror["low"] = (
+            df_mirror["low"].copy(),
+            df_mirror["high"].copy(),
+        )
+        logger.info(
+            f"Mirror augmentation: ref_price={ref_price:.2f}, "
+            f"original close range [{df['close'].min():.2f}, {df['close'].max():.2f}] → "
+            f"mirror close range [{df_mirror['close'].min():.2f}, {df_mirror['close'].max():.2f}]"
+        )
+
+    # 피처 계산 (원본)
     calc = RLFeatureCalculator()
     df = calc.calculate(df)
 
+    # 피처 계산 (미러)
+    if mirror_aug and df_mirror is not None:
+        df_mirror = calc.calculate(df_mirror)
+
     # NaN 제거
     df = df.dropna(subset=RL_FEATURE_COLUMNS)
+    if mirror_aug and df_mirror is not None:
+        df_mirror = df_mirror.dropna(subset=RL_FEATURE_COLUMNS)
 
     # 일별 분할
     df["date"] = pd.to_datetime(df["datetime"]).dt.date
     dates = sorted(df["date"].unique())
+
+    if mirror_aug and df_mirror is not None:
+        df_mirror["date"] = pd.to_datetime(df_mirror["datetime"]).dt.date
 
     # 최소 바 수 필터
     valid_dates = []
@@ -119,19 +149,32 @@ def load_data_from_clickhouse(
     train_all = pd.concat([df[df["date"] == d][RL_FEATURE_COLUMNS] for d in train_dates])
     scaler.fit(train_all.values)
 
-    def split_days(date_list):
+    def split_days(date_list, source_df):
         days = []
         prices = []
         for d in date_list:
-            day_df = df[df["date"] == d]
+            day_df = source_df[source_df["date"] == d]
+            if len(day_df) == 0:
+                continue
             features = scaler.transform(day_df[RL_FEATURE_COLUMNS].values)
             ohlc = day_df[["open", "high", "low", "close"]].values
             days.append(features.astype(np.float32))
             prices.append(ohlc.astype(np.float32))
         return days, prices
 
-    train_days, train_prices = split_days(train_dates)
-    test_days, test_prices = split_days(test_dates)
+    train_days, train_prices = split_days(train_dates, df)
+    test_days, test_prices = split_days(test_dates, df)
+
+    # 미러 데이터를 훈련 세트에만 추가 (테스트 제외)
+    if mirror_aug and df_mirror is not None:
+        mirror_train_days, mirror_train_prices = split_days(train_dates, df_mirror)
+        n_original = len(train_days)
+        train_days.extend(mirror_train_days)
+        train_prices.extend(mirror_train_prices)
+        logger.info(
+            f"Mirror augmentation: train {n_original} → {len(train_days)} days "
+            f"(+{len(mirror_train_days)} mirrored)"
+        )
 
     logger.info(
         f"Data split: train={len(train_days)} days, test={len(test_days)} days"

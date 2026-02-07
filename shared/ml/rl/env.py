@@ -13,6 +13,7 @@ sb3-contrib ActionMasker와 호환되는 action_masks() 메서드 포함.
 상태 공간 (Box):
     - 시장 피처 (25개): RLFeatureCalculator에서 생성
     - 포지션 피처 (3개): position, contracts, unrealized_pnl_normalized
+    - 시간 피처 (3개): session_progress, sin_encoding, cos_encoding
 """
 
 from __future__ import annotations
@@ -68,7 +69,7 @@ class RLEnvConfig:
 
     # 상태 공간
     n_market_features: int = 25
-    n_position_features: int = 3
+    n_position_features: int = 6  # position(3) + time(3)
 
     # 장 운영시간
     market_open: str = "09:00"
@@ -393,7 +394,7 @@ class FuturesTradingEnv(gym.Env):
         return reward
 
     def _get_observation(self) -> np.ndarray:
-        """현재 관측값 (시장 피처 + 포지션 피처)"""
+        """현재 관측값 (시장 피처 + 포지션 피처 + 시간 피처)"""
         step = min(self.current_step, len(self.day_data) - 1)
 
         # 시장 피처 (25개)
@@ -410,7 +411,21 @@ class FuturesTradingEnv(gym.Env):
             dtype=np.float32,
         )
 
-        obs = np.concatenate([market_features, position_features]).astype(np.float32)
+        # 시간 피처 (3개): 장중 위치 인식
+        total_steps = len(self.day_data)
+        progress = self.current_step / max(total_steps - 1, 1)
+        time_features = np.array(
+            [
+                progress,                          # 세션 진행률 (0=개장, 1=마감)
+                np.sin(2 * np.pi * progress),      # sin 인코딩
+                np.cos(2 * np.pi * progress),      # cos 인코딩
+            ],
+            dtype=np.float32,
+        )
+
+        obs = np.concatenate(
+            [market_features, position_features, time_features]
+        ).astype(np.float32)
         return obs
 
     def _get_current_price(self) -> float:
