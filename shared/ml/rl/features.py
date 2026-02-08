@@ -1,6 +1,7 @@
 """RL 전용 피처 엔지니어링
 
-기존 FeatureCalculator (10개)를 확장하여 RL용 25개 피처 생성.
+기존 FeatureCalculator (10개)를 확장하여 RL용 25개 기술적 피처 생성.
++ 시장 레짐 피처 3개 (KOSPI200 일간 지수에서 계산).
 
 기존 10개: returns, ma_ratio_{5,10,20}, rsi, bb_position,
            volume_ratio, volatility, hl_range, candle_body
@@ -9,6 +10,7 @@
            ema_ratio_5, ema_ratio_10, ema_ratio_20,
            bb_upper_dist, bb_lower_dist, bb_width,
            atr, stoch_k, stoch_d, price_change_5
+레짐 3개: regime_trend, regime_momentum, regime_volatility
 """
 
 from __future__ import annotations
@@ -44,6 +46,12 @@ RL_EXTRA_COLUMNS = [
 
 # 전체 RL 피처 컬럼 (기존 10 + 추가 15 = 25)
 RL_FEATURE_COLUMNS = FEATURE_COLUMNS + RL_EXTRA_COLUMNS
+
+# 시장 레짐 피처 (KOSPI200 일간 지수에서 계산)
+REGIME_FEATURE_COLUMNS = ["regime_trend", "regime_momentum", "regime_volatility"]
+
+# 레짐 포함 전체 피처 (25 + 3 = 28)
+RL_FEATURE_COLUMNS_WITH_REGIME = RL_FEATURE_COLUMNS + REGIME_FEATURE_COLUMNS
 
 
 class RLFeatureCalculator(FeatureCalculator):
@@ -184,3 +192,40 @@ class RLFeatureCalculator(FeatureCalculator):
     def get_feature_names(self) -> list[str]:
         """피처 이름 목록 반환"""
         return RL_FEATURE_COLUMNS.copy()
+
+
+def load_daily_regime_features() -> pd.DataFrame:
+    """ClickHouse에서 KOSPI200 일간 지수 로드 → 레짐 피처 계산
+
+    레짐 피처 3개:
+        - regime_trend: SMA(20)/SMA(60) - 1.0 (양수=bull, 음수=bear)
+        - regime_momentum: 20일 수익률
+        - regime_volatility: 20일 수익률 표준편차
+
+    Returns:
+        DataFrame[date, regime_trend, regime_momentum, regime_volatility]
+    """
+    from clickhouse_driver import Client
+
+    client = Client(
+        host="localhost", port=9000,
+        user="default", password="@1tidh6ls6ls",
+    )
+    rows = client.execute(
+        "SELECT date, close FROM kospi.kospi200_index_daily ORDER BY date"
+    )
+    df = pd.DataFrame(rows, columns=["date", "close"])
+
+    close = df["close"].astype(float)
+    sma20 = close.rolling(20).mean()
+    sma60 = close.rolling(60).mean()
+    df["regime_trend"] = sma20 / (sma60 + 1e-10) - 1.0
+    df["regime_momentum"] = close.pct_change(20)
+    df["regime_volatility"] = close.pct_change().rolling(20).std()
+
+    logger.info(
+        f"Regime features loaded: {len(df)} rows, "
+        f"date range {df['date'].min()} ~ {df['date'].max()}"
+    )
+
+    return df[["date"] + REGIME_FEATURE_COLUMNS].dropna()
