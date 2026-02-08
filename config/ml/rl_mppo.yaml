@@ -20,11 +20,11 @@ env:
   market_open: "09:00"
   market_close: "15:45"
 
-# === 보상함수 가중치 (Phase 1: 실현 PnL 중심) ===
+# === 보상함수 가중치 (Phase 4: 보상 재조정) ===
 reward:
-  w_profit: 5.0                     # 실현 수익 가중치 대폭 상향 (핵심 시그널)
-  w_cost: 0.5                       # 적정 수수료 페널티 (능동 매매 유도)
-  w_risk: 0.3
+  w_profit: 10.0                    # 수익 시그널 2배 강화
+  w_cost: 0.3                       # 진입 이중 패널티 완화 (w_profit에도 cost 포함)
+  w_risk: 0.0                       # 미실현 손실 패널티 제거 (조기 청산 방지)
   w_mtm: 0.0                        # MTM 제거 (보상 해킹 원인)
   inaction_penalty: 0.0              # 제거 (과매매 원인)
   reward_scale: 100.0
