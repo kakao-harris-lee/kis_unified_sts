@@ -24,6 +24,7 @@ import logging
 import sys
 from pathlib import Path
 
+import joblib
 import numpy as np
 import pandas as pd
 
@@ -149,6 +150,15 @@ def load_data_from_clickhouse(
     train_all = pd.concat([df[df["date"] == d][RL_FEATURE_COLUMNS] for d in train_dates])
     scaler.fit(train_all.values)
 
+    # scaler 저장 (paper trading 추론 시 재사용)
+    save_dir = Path(ConfigLoader.load(config_path).get("training", {}).get(
+        "save_dir", "./models/futures/rl/"
+    ))
+    save_dir.mkdir(parents=True, exist_ok=True)
+    scaler_path = save_dir / "scaler.joblib"
+    joblib.dump(scaler, scaler_path)
+    logger.info(f"Scaler saved to {scaler_path}")
+
     def split_days(date_list, source_df):
         days = []
         prices = []
@@ -241,6 +251,11 @@ def main():
         action="store_true",
         help="평가만 실행 (학습 건너뛰기)",
     )
+    parser.add_argument(
+        "--save-scaler-only",
+        action="store_true",
+        help="Scaler만 저장 (학습/평가 건너뛰기)",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -248,10 +263,14 @@ def main():
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
 
-    # 데이터 로드
+    # 데이터 로드 (scaler 저장은 load_data_from_clickhouse 내부에서 수행)
     train_days, train_prices, test_days, test_prices = load_data_from_clickhouse(
         args.config
     )
+
+    if args.save_scaler_only:
+        logger.info("Scaler saved. Exiting (--save-scaler-only).")
+        return
 
     if not args.evaluate_only:
         from shared.ml.rl.trainer import RLTrainer

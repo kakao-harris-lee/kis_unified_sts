@@ -1682,6 +1682,54 @@ def rl_slippage(model: str, retrain: bool, config: str):
         sys.exit(1)
 
 
+@rl.command("paper")
+@click.option("--model", "-m", default="mppo_final", help="Model name (default: mppo_final)")
+@click.option("--config", "-c", default="ml/rl_mppo.yaml", help="Config file path")
+@click.option("--symbol", "-s", default=None, help="Futures symbol (default: from config)")
+@click.option("--no-daemon", is_flag=True, help="Run single session (foreground, no loop)")
+def rl_paper(model: str, config: str, symbol: str, no_daemon: bool):
+    """RL Paper Trading 실행
+
+    \b
+    학습된 MaskablePPO 모델로 실시간 paper trading.
+    KIS WebSocket으로 체결 수신 → 분봉 집계 → RL 추론.
+
+    \b
+    Example:
+        sts rl paper                          # 기본 (mppo_final)
+        sts rl paper --model mppo_best        # 특정 모델
+        sts rl paper --no-daemon              # 단일 세션
+        sts rl paper --symbol 101S6000        # 종목 지정
+    """
+    import asyncio
+
+    click.echo("RL Paper Trading")
+    click.echo(f"  Model: {model}")
+    click.echo(f"  Config: {config}")
+    if symbol:
+        click.echo(f"  Symbol: {symbol}")
+    click.echo(f"  Mode: {'single session' if no_daemon else 'daemon'}")
+
+    try:
+        from shared.ml.rl.paper_trader import run_paper_trader
+
+        asyncio.run(run_paper_trader(
+            config_path=config,
+            model_name=model,
+            symbol=symbol,
+        ))
+    except FileNotFoundError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+    except KeyboardInterrupt:
+        click.echo("\nPaper trading stopped")
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
+
+
 @rl.command("tensorboard")
 @click.option("--logdir", default="./results/rl/tensorboard/", help="TensorBoard log directory")
 @click.option("--port", default=6006, type=int, help="TensorBoard port")
