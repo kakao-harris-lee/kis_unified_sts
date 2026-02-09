@@ -325,19 +325,19 @@ class AccumulationScanner:
         query = """
             SELECT code, date, open, high, low, close, volume, value
             FROM market.daily_candles
-            WHERE date >= %(start_date)s
-              AND date <= %(end_date)s
+            WHERE date >= {start_date:Date}
+              AND date <= {end_date:Date}
         """
         params = {
-            "start_date": start_date.strftime("%Y%m%d"),
-            "end_date": end_date.strftime("%Y%m%d"),
+            "start_date": start_date.date() if hasattr(start_date, 'date') else start_date,
+            "end_date": end_date.date() if hasattr(end_date, 'date') else end_date,
         }
 
         if codes:
             # Validate codes to prevent injection
             if not all(isinstance(c, str) and c.isalnum() for c in codes):
                 raise ValueError("Invalid stock codes: all codes must be alphanumeric strings")
-            query += " AND code IN %(codes)s"
+            query += " AND code IN {codes:Array(String)}"
             params["codes"] = codes
 
         query += " ORDER BY code, date"
