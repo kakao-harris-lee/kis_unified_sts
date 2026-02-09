@@ -25,6 +25,10 @@ from shared.strategy.exit.market_regime import (
     MarketRegimeExit,
     MarketRegimeConfig,
 )
+from shared.strategy.exit.momentum_decay import (
+    MomentumDecayExit,
+    MomentumDecayConfig,
+)
 
 __all__ = [
     # E1: Three Stage Exit
@@ -39,4 +43,7 @@ __all__ = [
     # E4: Market Regime Exit
     "MarketRegimeExit",
     "MarketRegimeConfig",
+    # E5: Momentum Decay Exit
+    "MomentumDecayExit",
+    "MomentumDecayConfig",
 ]

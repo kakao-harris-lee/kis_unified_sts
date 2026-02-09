@@ -33,6 +33,7 @@ Usage:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from collections import deque
@@ -644,6 +645,145 @@ class PositionTracker:
             ),
             "events_count": len(self._events),
         }
+
+    async def save_to_db(self) -> int:
+        """Persist all open positions to ClickHouse swing_positions table.
+
+        Returns:
+            Number of positions saved
+        """
+        if not self._positions:
+            return 0
+
+        try:
+            from shared.db.config import ClickHouseConfig
+            from shared.db.client import ClickHouseClient
+
+            ch = ClickHouseClient(ClickHouseConfig())
+            database = ch.config.database
+            if not database.replace("_", "").isalnum():
+                raise ValueError(f"Invalid database name: {database}")
+
+            rows = []
+            for position in self._positions.values():
+                rows.append((
+                    position.id,
+                    position.code,
+                    position.name,
+                    position.entry_time,
+                    position.entry_price,
+                    position.quantity,
+                    position.strategy,
+                    position.stop_price,
+                    position.highest_price,
+                    position.state.value,
+                    1,  # is_open
+                    None,  # exit_date
+                    None,  # exit_price
+                    None,  # exit_reason
+                    None,  # pnl
+                ))
+
+            def _sync_save():
+                client = ch.get_sync_client()
+                client.execute(
+                    f"INSERT INTO {database}.swing_positions "
+                    "(id, code, name, entry_date, entry_price, quantity, strategy, "
+                    "stop_loss_price, high_since_entry, current_state, is_open, "
+                    "exit_date, exit_price, exit_reason, pnl) VALUES",
+                    rows,
+                )
+
+            await asyncio.to_thread(_sync_save)
+
+            logger.info(f"Saved {len(rows)} swing positions to DB")
+            return len(rows)
+
+        except Exception as e:
+            logger.error(f"Failed to save swing positions: {e}")
+            return 0
+
+    async def load_from_db(self) -> int:
+        """Load open positions from ClickHouse on startup.
+
+        Returns:
+            Number of positions loaded
+        """
+        try:
+            from shared.db.config import ClickHouseConfig
+            from shared.db.client import ClickHouseClient
+
+            ch = ClickHouseClient(ClickHouseConfig())
+            database = ch.config.database
+            if not database.replace("_", "").isalnum():
+                raise ValueError(f"Invalid database name: {database}")
+
+            def _sync_load():
+                client = ch.get_sync_client()
+                return client.execute(
+                    f"""
+                    SELECT id, code, name, entry_date, entry_price, quantity,
+                           strategy, stop_loss_price, high_since_entry, current_state
+                    FROM {database}.swing_positions FINAL
+                    WHERE is_open = 1
+                    ORDER BY entry_date ASC
+                    """
+                )
+
+            result = await asyncio.to_thread(_sync_load)
+
+            loaded = 0
+            for row in result:
+                pos_id, code, name, entry_time, entry_price, quantity, \
+                    strategy, stop_price, high_since_entry, state_str = row
+
+                # Skip if already tracked
+                if pos_id in self._positions:
+                    continue
+
+                # Map state string to PositionState
+                try:
+                    state = PositionState(state_str)
+                except ValueError:
+                    state = PositionState.SURVIVAL
+
+                position = Position(
+                    id=pos_id,
+                    code=code,
+                    name=name,
+                    side=PositionSide.LONG,
+                    quantity=quantity,
+                    entry_price=entry_price,
+                    entry_time=entry_time,
+                    current_price=entry_price,
+                    highest_price=high_since_entry or entry_price,
+                    lowest_price=entry_price,
+                    state=state,
+                    strategy=strategy,
+                    fee_rate=self.config.default_fee_rate,
+                )
+                position.stop_price = stop_price or 0.0
+
+                # Add to tracker indices
+                self._positions[pos_id] = position
+
+                if code not in self._by_symbol:
+                    self._by_symbol[code] = []
+                self._by_symbol[code].append(pos_id)
+
+                if strategy not in self._by_strategy:
+                    self._by_strategy[strategy] = []
+                self._by_strategy[strategy].append(pos_id)
+
+                loaded += 1
+
+            if loaded:
+                logger.info(f"Loaded {loaded} swing positions from DB")
+            return loaded
+
+        except Exception as e:
+            logger.error(f"Failed to load swing positions: {e}")
+            return 0
 
     def get_recent_events(self, limit: int = 20) -> list[dict[str, Any]]:
         """Get recent events (most recent first)"""

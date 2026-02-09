@@ -155,6 +155,40 @@ class StreamingIndicatorEngine:
                 f"({len(acc.candles)} candles)"
             )
 
+    def seed_candles(self, symbol: str, candles: list[dict]) -> None:
+        """Pre-warm a symbol with historical candle data.
+
+        Each candle dict must have: open, high, low, close, volume.
+        Candles should be in chronological order.
+        """
+        acc = self._accumulators.get(symbol)
+        if acc is None:
+            acc = CandleAccumulator(maxlen=self._candle_maxlen)
+            self._accumulators[symbol] = acc
+
+        seeded = 0
+        for c in candles:
+            try:
+                candle = Candle(
+                    open=float(c["open"]),
+                    high=float(c["high"]),
+                    low=float(c["low"]),
+                    close=float(c["close"]),
+                    volume=float(c.get("volume", 0)),
+                    minute=0,
+                )
+                acc.candles.append(candle)
+                seeded += 1
+            except (KeyError, ValueError):
+                continue
+
+        if seeded > 0 and self.is_warm(symbol) and symbol not in self._warm_logged:
+            self._warm_logged.add(symbol)
+            logger.info(
+                f"Indicator engine: {symbol} pre-warmed "
+                f"({len(acc.candles)} candles, {seeded} seeded)"
+            )
+
     def is_warm(self, symbol: str) -> bool:
         """Whether enough candles exist to compute indicators."""
         acc = self._accumulators.get(symbol)

@@ -1,6 +1,6 @@
 """거래량 지표 계산기
 
-거래량 가속도 및 VWAP 계산.
+거래량 가속도, VWAP, OBV, RVOL 계산.
 
 quant_moment_sts의 VolumeAccelerationCalculator, VWAPCalculator를 마이그레이션.
 
@@ -17,6 +17,17 @@ Usage:
     vwap_calc = VWAPCalculator()
     vwap_calc.add_tick("005930", price=50000, volume=100, date_str="20240115")
     vwap_data = vwap_calc.calculate("005930", current_price=50500)
+
+    # OBV (On-Balance Volume)
+    obv_calc = OBVCalculator()
+    obv_data = obv_calc.calculate(prices=[100, 102, 101, 103], volumes=[1000, 1500, 800, 2000])
+    if obv_data.is_accumulating:
+        print("기관 매집 감지!")
+
+    # RVOL (Relative Volume)
+    rvol_calc = RVOLCalculator()
+    rvol_data = rvol_calc.calculate(volumes=[100]*20 + [200]*5)
+    print(f"RVOL: {rvol_data.rvol_ratio:.2f}x")
 """
 
 from __future__ import annotations
@@ -403,3 +414,239 @@ class VWAPCalculator:
             self._data.pop(code, None)
         else:
             self._data.clear()
+
+
+# =============================================================================
+# OBV (On-Balance Volume)
+# =============================================================================
+
+
+@dataclass
+class OBVData:
+    """OBV 분석 결과
+
+    Attributes:
+        obv_values: OBV 시계열 값
+        obv_sma: OBV의 SMA (sma_period일 이동평균)
+        obv_trend: OBV 추세 기울기 (최근 trend_period일)
+        price_trend: 가격 추세 기울기 (최근 trend_period일)
+        is_accumulating: 매집 패턴 여부 (OBV 상승 + 가격 횡보)
+    """
+
+    obv_values: list[float]
+    obv_sma: float
+    obv_trend: float
+    price_trend: float
+    is_accumulating: bool
+
+
+class OBVCalculator:
+    """On-Balance Volume 계산기
+
+    OBV = 누적(가격 상승일 거래량 - 가격 하락일 거래량)
+
+    핵심 용도:
+    - OBV 상승 + 가격 횡보 = 기관 매집 (accumulation)
+    - OBV 하락 + 가격 횡보 = 기관 분배 (distribution)
+
+    Usage:
+        calc = OBVCalculator()
+        data = calc.calculate(prices=[100, 102, 101, 103], volumes=[1000, 1500, 800, 2000])
+        if data.is_accumulating:
+            print("Accumulation detected!")
+    """
+
+    def __init__(self, sma_period: int = 20, trend_period: int = 10):
+        self.sma_period = sma_period
+        self.trend_period = trend_period
+
+    def calculate(
+        self,
+        prices: list[float],
+        volumes: list[int],
+        price_flat_threshold: float = 0.02,
+    ) -> OBVData:
+        """OBV 계산
+
+        Args:
+            prices: 종가 리스트 (oldest first)
+            volumes: 거래량 리스트
+            price_flat_threshold: 가격 횡보 판정 임계값 (변동률)
+
+        Returns:
+            OBVData
+        """
+        n = min(len(prices), len(volumes))
+        if n < 2:
+            return OBVData(
+                obv_values=[], obv_sma=0.0,
+                obv_trend=0.0, price_trend=0.0,
+                is_accumulating=False,
+            )
+
+        # OBV 계산
+        obv = [0.0]
+        for i in range(1, n):
+            if prices[i] > prices[i - 1]:
+                obv.append(obv[-1] + volumes[i])
+            elif prices[i] < prices[i - 1]:
+                obv.append(obv[-1] - volumes[i])
+            else:
+                obv.append(obv[-1])
+
+        # OBV SMA
+        if len(obv) >= self.sma_period:
+            obv_sma = float(np.mean(obv[-self.sma_period:]))
+        else:
+            obv_sma = float(np.mean(obv))
+
+        # OBV 추세 (선형 회귀 기울기)
+        tp = min(self.trend_period, len(obv))
+        obv_trend = self._slope(obv[-tp:]) if tp >= 2 else 0.0
+
+        # 가격 추세
+        price_trend = self._slope(prices[-tp:]) if tp >= 2 else 0.0
+
+        # 매집 판정: OBV 상승 + 가격 횡보
+        price_range = (max(prices[-tp:]) - min(prices[-tp:])) / prices[-tp] if prices[-tp] > 0 else 0.0
+        is_accumulating = obv_trend > 0 and price_range < price_flat_threshold
+
+        return OBVData(
+            obv_values=obv,
+            obv_sma=obv_sma,
+            obv_trend=obv_trend,
+            price_trend=price_trend,
+            is_accumulating=is_accumulating,
+        )
+
+    def is_accumulating(
+        self,
+        prices: list[float],
+        volumes: list[int],
+        threshold: float = 0.02,
+    ) -> bool:
+        """매집 패턴 여부 간편 체크"""
+        data = self.calculate(prices, volumes, price_flat_threshold=threshold)
+        return data.is_accumulating
+
+    @staticmethod
+    def _slope(values: list[float]) -> float:
+        """간단한 선형 회귀 기울기 (정규화)"""
+        n = len(values)
+        if n < 2:
+            return 0.0
+        arr = np.array(values, dtype=np.float64)
+        x = np.arange(n, dtype=np.float64)
+        # 정규화: 평균 대비 변화율
+        denom = np.std(arr)
+        if denom == 0:
+            return 0.0
+        coeffs = np.polyfit(x, arr, 1)
+        return float(coeffs[0] / denom)
+
+
+# =============================================================================
+# RVOL (Relative Volume)
+# =============================================================================
+
+
+@dataclass
+class RVOLData:
+    """RVOL 분석 결과
+
+    Attributes:
+        rvol_ratio: 상대 거래량 비율 (short_avg / long_avg)
+        short_avg: 단기 평균 거래량
+        long_avg: 장기 평균 거래량
+        rvol_trend: RVOL 추세 (단기 거래량이 상승 중인지)
+        is_unusual: 비정상적 거래량 여부 (rvol > threshold)
+    """
+
+    rvol_ratio: float
+    short_avg: float
+    long_avg: float
+    rvol_trend: float
+    is_unusual: bool
+
+
+class RVOLCalculator:
+    """Relative Volume (상대 거래량) 계산기
+
+    RVOL = 단기 평균 거래량 / 장기 평균 거래량
+
+    RVOL > 1.5 = 비정상적 활동
+    RVOL이 며칠에 걸쳐 상승 = 관심 증가 (매집 가능성)
+
+    Usage:
+        calc = RVOLCalculator()
+        data = calc.calculate(volumes=[100]*20 + [200]*5)
+        print(f"RVOL: {data.rvol_ratio:.2f}x")
+    """
+
+    def __init__(
+        self,
+        short_window: int = 5,
+        long_window: int = 20,
+        unusual_threshold: float = 1.5,
+    ):
+        self.short_window = short_window
+        self.long_window = long_window
+        self.unusual_threshold = unusual_threshold
+
+    def calculate(
+        self,
+        volumes: list[int],
+        short_window: int | None = None,
+        long_window: int | None = None,
+    ) -> RVOLData:
+        """RVOL 계산
+
+        Args:
+            volumes: 거래량 리스트 (oldest first)
+            short_window: 단기 윈도우 (None이면 기본값)
+            long_window: 장기 윈도우 (None이면 기본값)
+
+        Returns:
+            RVOLData
+        """
+        sw = short_window or self.short_window
+        lw = long_window or self.long_window
+
+        if len(volumes) < max(sw, lw):
+            return RVOLData(
+                rvol_ratio=1.0, short_avg=0.0, long_avg=0.0,
+                rvol_trend=0.0, is_unusual=False,
+            )
+
+        short_avg = float(np.mean(volumes[-sw:]))
+        long_avg = float(np.mean(volumes[-lw:]))
+
+        if long_avg == 0:
+            return RVOLData(
+                rvol_ratio=1.0, short_avg=short_avg, long_avg=0.0,
+                rvol_trend=0.0, is_unusual=False,
+            )
+
+        rvol_ratio = short_avg / long_avg
+
+        # RVOL 추세: 슬라이딩 윈도우로 RVOL이 상승 중인지 확인
+        rvol_trend = 0.0
+        if len(volumes) >= lw + sw:
+            rvol_series = []
+            for i in range(min(sw, len(volumes) - lw + 1)):
+                end = len(volumes) - sw + i + 1
+                if end > sw and end <= len(volumes):
+                    s_avg = float(np.mean(volumes[end - sw:end]))
+                    l_avg = float(np.mean(volumes[end - lw:end]))
+                    if l_avg > 0:
+                        rvol_series.append(s_avg / l_avg)
+            if len(rvol_series) >= 2:
+                rvol_trend = rvol_series[-1] - rvol_series[0]
+
+        return RVOLData(
+            rvol_ratio=rvol_ratio,
+            short_avg=short_avg,
+            long_avg=long_avg,
+            rvol_trend=rvol_trend,
+            is_unusual=rvol_ratio >= self.unusual_threshold,
+        )

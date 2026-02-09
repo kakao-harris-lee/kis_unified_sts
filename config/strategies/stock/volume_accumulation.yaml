@@ -1,0 +1,93 @@
+# Volume Accumulation Breakout Strategy (Swing Trading)
+#
+# Detects institutional volume accumulation → enters on breakout confirmation
+# → exits on momentum decay or trailing stop.
+#
+# Holding period: 1-5 trading days (swing)
+# Edge: Volume leads price — detect accumulation before the crowd notices.
+
+strategy:
+  name: volume_accumulation
+  asset_class: stock
+  enabled: true
+  description: "Volume accumulation breakout with momentum decay exit (swing)"
+
+  # ===========================================================================
+  # Entry: Volume Accumulation Breakout
+  # ===========================================================================
+  entry:
+    type: volume_accumulation
+    params:
+      # Breakout detection
+      breakout_period: 5              # N-day high for breakout
+      breakout_buffer_pct: 0.3        # Must exceed high by 0.3%
+
+      # Volume confirmation
+      rvol_threshold: 2.0             # Minimum RVOL for entry (2x average)
+      require_volume_acceleration: true
+
+      # VWAP
+      require_above_vwap: true
+
+      # Accumulation candidate filter (from overnight scan)
+      min_accumulation_score: 60
+
+      # Time filters
+      skip_market_open_minutes: 15    # Skip first 15 min noise
+      skip_market_close_minutes: 30   # No new entries in last 30 min
+      market_open_hour: 9
+      market_open_minute: 0
+      market_close_hour: 15
+      market_close_minute: 30
+
+      # Position limits
+      max_positions: 5
+      stop_loss_pct: 3.0              # For position sizer hint (wider for swing)
+
+      # Cooldown
+      signal_cooldown_seconds: 600    # 10 min between signals per stock
+
+  # ===========================================================================
+  # Exit: Momentum Decay
+  # ===========================================================================
+  exit:
+    type: momentum_decay
+    params:
+      # Hard stop
+      stop_loss_pct: -0.03            # -3%
+
+      # Momentum decay detection
+      decay_retracement_pct: 0.015    # 1.5% drop from session high
+      decay_volume_threshold: 0.0     # Volume velocity must be negative
+
+      # VWAP breakdown
+      vwap_breakdown_enabled: true
+
+      # Trailing stop (swing-width)
+      trailing_activation_pct: 0.05   # Activate at +5%
+      trailing_stop_pct: -0.05        # Trail at -5%
+      tight_trail_activation: 0.10    # At +10%, tighten
+      tight_trail_pct: -0.03          # Tighten to -3%
+
+      # Time-based
+      no_profit_days: 2               # Exit if no profit after 2 days
+      max_hold_days: 5                # Force exit after 5 days
+      close_before_weekend: false
+
+      # EOD
+      eod_close_hour: 15
+      eod_close_minute: 15
+
+      # Fee
+      fee_rate: 0.003                 # 0.3% round-trip
+
+  # ===========================================================================
+  # Position Sizing
+  # ===========================================================================
+  position:
+    type: risk_based
+    params:
+      max_position_pct: 15.0          # 15% per stock (concentrated swing)
+      max_positions: 5
+      risk_per_trade_pct: 1.5         # 1.5% risk per trade
+      order_amount_per_stock: 2000000 # 200만원 per stock
