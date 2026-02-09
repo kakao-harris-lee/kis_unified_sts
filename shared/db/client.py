@@ -57,6 +57,28 @@ SCHEMAS = {
         ORDER BY (code, datetime)
         TTL datetime + INTERVAL 90 DAY
     """,
+    "swing_positions": """
+        CREATE TABLE IF NOT EXISTS {database}.swing_positions (
+            id String,
+            code String,
+            name String,
+            entry_date DateTime,
+            entry_price Float64,
+            quantity Int32,
+            strategy String,
+            stop_loss_price Float64,
+            high_since_entry Float64,
+            current_state String,
+            is_open Bool,
+            exit_date Nullable(DateTime),
+            exit_price Nullable(Float64),
+            exit_reason Nullable(String),
+            pnl Nullable(Float64),
+            updated_at DateTime DEFAULT now()
+        ) ENGINE = ReplacingMergeTree(updated_at)
+        ORDER BY (code, entry_date, id)
+        COMMENT 'Swing position state for multi-day strategies (volume_accumulation)'
+    """,
     "tick_data": """
         CREATE TABLE IF NOT EXISTS {database}.tick_data (
             code String,

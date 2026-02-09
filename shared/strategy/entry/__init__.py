@@ -37,6 +37,10 @@ from shared.strategy.entry.breakout import (
     BreakoutConfig,
     BreakoutEntry,
 )
+from shared.strategy.entry.volume_accumulation import (
+    VolumeAccumulationBreakoutEntry,
+    VolumeAccumulationConfig,
+)
 
 __all__ = [
     # Microstructure
@@ -60,4 +64,7 @@ __all__ = [
     # Breakout
     "BreakoutEntry",
     "BreakoutConfig",
+    # Volume Accumulation
+    "VolumeAccumulationBreakoutEntry",
+    "VolumeAccumulationConfig",
 ]

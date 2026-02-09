@@ -383,6 +383,13 @@ def register_builtin_components() -> None:
     except ImportError:
         logger.debug("OpeningVolumeSurgeEntry not available")
 
+    try:
+        from shared.strategy.entry.volume_accumulation import VolumeAccumulationBreakoutEntry
+
+        EntryRegistry.register_class("volume_accumulation", VolumeAccumulationBreakoutEntry)
+    except ImportError:
+        logger.debug("VolumeAccumulationBreakoutEntry not available")
+
     # rl_mppo는 @EntryRegistry.register 데코레이터로 자동 등록됨
     # 수동 등록 불필요 (이중 등록 방지)
 
@@ -400,6 +407,13 @@ def register_builtin_components() -> None:
         ExitRegistry.register_class("atr_trailing", ATRTrailingExit)
     except ImportError:
         logger.debug("ATRTrailingExit not available")
+
+    try:
+        from shared.strategy.exit.momentum_decay import MomentumDecayExit
+
+        ExitRegistry.register_class("momentum_decay", MomentumDecayExit)
+    except ImportError:
+        logger.debug("MomentumDecayExit not available")
 
     # Position Sizer 등록
     try:

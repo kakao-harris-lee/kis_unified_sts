@@ -29,7 +29,8 @@ import logging
 import os
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, date, time, timedelta
+from datetime import datetime, date, timedelta
+from datetime import time as dt_time
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Protocol
@@ -206,21 +207,21 @@ class MarketSchedule:
     """장 시간 설정"""
 
     # 주식
-    stock_open: time = field(default_factory=lambda: time(9, 0))
-    stock_close: time = field(default_factory=lambda: time(15, 30))
+    stock_open: dt_time = field(default_factory=lambda: dt_time(9, 0))
+    stock_close: dt_time = field(default_factory=lambda: dt_time(15, 30))
 
     # 선물
-    futures_open: time = field(default_factory=lambda: time(9, 0))
-    futures_close: time = field(default_factory=lambda: time(15, 45))
+    futures_open: dt_time = field(default_factory=lambda: dt_time(9, 0))
+    futures_close: dt_time = field(default_factory=lambda: dt_time(15, 45))
 
     # 서비스 시작/종료 (장 시작 전/후 여유)
     service_start_offset_minutes: int = 5
     service_end_offset_minutes: int = 5
 
-    def get_open_time(self, asset_class: str) -> time:
+    def get_open_time(self, asset_class: str) -> dt_time:
         return self.stock_open if asset_class == "stock" else self.futures_open
 
-    def get_close_time(self, asset_class: str) -> time:
+    def get_close_time(self, asset_class: str) -> dt_time:
         return self.stock_close if asset_class == "stock" else self.futures_close
 
 
@@ -366,6 +367,9 @@ class TradingConfig:
             paper_trading=paper_trading,
             execution_mode=execution_mode,
             symbol_metadata=symbol_metadata or {},
+            # Slower refresh for stock (40-50 symbols with retention)
+            # avoids KIS API rate limiting
+            market_data_refresh_seconds=2.0,
         )
 
     @classmethod
@@ -465,6 +469,12 @@ class TradingOrchestrator:
         self._universe_refresh_task: asyncio.Task | None = None
         self._universe_refresh_interval = 30.0  # seconds
         self._symbol_names: dict[str, str] = {}  # code -> name mapping
+
+        # Universe stability: retain symbols for a window after they leave
+        # the screener top-N, so the indicator engine can warm up.
+        self._symbol_last_seen: dict[str, datetime] = {}
+        self._universe_retention_seconds = 600.0  # 10 minutes
+        self._max_universe_size = 50
 
         logger.info(
             f"TradingOrchestrator initialized: "
@@ -613,6 +623,14 @@ class TradingOrchestrator:
                 logger.warning(f"OrderExecutor init failed; orders will be mocked: {e}")
                 self._order_executor = None
 
+        # Load swing positions from DB (for swing strategies)
+        if self._position_tracker and self.config.strategy_name in ("volume_accumulation",):
+            await self._position_tracker.load_from_db()
+
+        # Load accumulation candidates from Redis
+        self._accumulation_candidates: dict[str, int] = {}
+        self._refresh_accumulation_candidates()
+
         # Bootstrap symbols from screener if none configured
         if not self.config.symbols and self.config.asset_class == "stock":
             self._refresh_universe_from_screener()
@@ -623,8 +641,50 @@ class TradingOrchestrator:
             f"{len(self.config.symbols)} symbols"
         )
 
+    ACCUMULATION_REDIS_KEY = "system:accumulation:latest"
+
+    def _refresh_accumulation_candidates(self) -> bool:
+        """Load accumulation candidates from Redis (published by overnight scanner)."""
+        try:
+            from shared.streaming.client import RedisClient
+            redis_client = RedisClient.get_client()
+            raw = redis_client.get(self.ACCUMULATION_REDIS_KEY)
+            if not raw:
+                return False
+
+            payload = json.loads(raw)
+            if not isinstance(payload, dict):
+                logger.warning("Accumulation candidates: invalid payload type")
+                return False
+
+            candidates = payload.get("candidates", [])
+            if not isinstance(candidates, list):
+                logger.warning("Accumulation candidates: 'candidates' is not a list")
+                return False
+
+            validated = {}
+            for c in candidates:
+                if not isinstance(c, dict):
+                    continue
+                code = c.get("code")
+                score = c.get("score")
+                if isinstance(code, str) and code.isalnum() and isinstance(score, (int, float)):
+                    validated[code] = int(score)
+
+            self._accumulation_candidates = validated
+            logger.info(f"Loaded {len(self._accumulation_candidates)} accumulation candidates")
+            return True
+        except Exception as e:
+            logger.debug(f"Accumulation candidates not available: {e}")
+            return False
+
     def _refresh_universe_from_screener(self) -> bool:
-        """Read screener universe from Redis and update symbols."""
+        """Read screener universe from Redis and update symbols.
+
+        Uses a retention window so symbols persist after leaving the screener
+        top-N.  This allows the indicator engine to warm up (needs ~20 min of
+        1-minute candles) even though the screener ranking is volatile.
+        """
         try:
             from shared.streaming.client import RedisClient
             redis = RedisClient.get_client()
@@ -642,22 +702,51 @@ class TradingOrchestrator:
             if not codes:
                 return False
 
-            old_set = set(self.config.symbols)
-            new_set = set(codes)
+            now = datetime.now()
 
-            if new_set != old_set:
-                added = new_set - old_set
-                removed = old_set - new_set
-                self.config.symbols = list(codes)
-                self._symbol_names.update(names)
+            # Update last-seen timestamps for current screener symbols
+            for code in codes:
+                self._symbol_last_seen[code] = now
+            self._symbol_names.update(names)
+
+            # Build stable universe: all symbols seen within retention window
+            retention_cutoff = now - timedelta(seconds=self._universe_retention_seconds)
+            stable_symbols: set[str] = set()
+            expired: list[str] = []
+            for code, last_seen in self._symbol_last_seen.items():
+                if last_seen >= retention_cutoff:
+                    stable_symbols.add(code)
+                else:
+                    expired.append(code)
+
+            # Clean up expired symbols
+            for code in expired:
+                del self._symbol_last_seen[code]
+
+            # Cap universe size — keep most recently seen
+            if len(stable_symbols) > self._max_universe_size:
+                by_recency = sorted(
+                    stable_symbols,
+                    key=lambda c: self._symbol_last_seen.get(c, datetime.min),
+                    reverse=True,
+                )
+                stable_symbols = set(by_recency[: self._max_universe_size])
+
+            old_set = set(self.config.symbols)
+
+            if stable_symbols != old_set:
+                added = stable_symbols - old_set
+                removed = old_set - stable_symbols
+                self.config.symbols = list(stable_symbols)
 
                 if self._data_provider:
-                    self._data_provider.symbols = list(codes)
+                    self._data_provider.symbols = list(stable_symbols)
 
                 if added or removed:
                     logger.info(
-                        f"Universe refreshed: {len(codes)} symbols "
-                        f"(+{len(added)} -{len(removed)})"
+                        f"Universe refreshed: {len(stable_symbols)} symbols "
+                        f"(+{len(added)} -{len(removed)}, "
+                        f"retained {len(stable_symbols) - len(added)})"
                     )
                 return True
         except Exception as e:
@@ -668,10 +757,40 @@ class TradingOrchestrator:
         """Periodically refresh symbols from screener."""
         while self._market_data_running:
             try:
+                old_symbols = set(self.config.symbols)
                 self._refresh_universe_from_screener()
+                new_symbols = set(self.config.symbols) - old_symbols
+
+                # Pre-warm new symbols (fire-and-forget to not block refresh)
+                if new_symbols and self._indicator_engine and self._kis_client:
+                    asyncio.create_task(
+                        self._prewarm_symbols(list(new_symbols)),
+                        name="prewarm_symbols",
+                    )
             except Exception as e:
                 logger.warning(f"Universe refresh loop error: {e}")
             await asyncio.sleep(self._universe_refresh_interval)
+
+    async def _prewarm_symbols(self, symbols: list[str]) -> None:
+        """Fetch recent 1-min bars from KIS and seed the indicator engine."""
+        logger.info(f"Prewarm starting for {len(symbols)} symbols")
+        for symbol in symbols:
+            if self._indicator_engine.is_warm(symbol):
+                continue
+            try:
+                candles = await asyncio.wait_for(
+                    self._kis_client.get_minute_bars(symbol, count=25),
+                    timeout=5.0,
+                )
+                if candles:
+                    self._indicator_engine.seed_candles(symbol, candles)
+                    logger.info(f"Prewarm {symbol}: {len(candles)} candles seeded")
+                else:
+                    logger.debug(f"Prewarm {symbol}: no candles returned")
+                await asyncio.sleep(0.3)  # rate-limit protection
+            except (asyncio.TimeoutError, Exception) as e:
+                logger.warning(f"Prewarm failed for {symbol}: {e}")
+        logger.info("Prewarm complete")
 
     async def stop(self):
         """거래 종료"""
@@ -682,12 +801,19 @@ class TradingOrchestrator:
 
         await self._stop_market_data_loop()
 
-        # Close all positions (EOD close)
+        # For swing strategies: persist positions instead of closing
+        is_swing = self.config.strategy_name in ("volume_accumulation",)
         if self._position_tracker and self._data_provider:
-            data = await self._data_provider.get_data()
-            closed = self._position_tracker.close_all(data, reason="EOD_CLOSE")
-            for pos in closed:
-                self.total_pnl += pos.unrealized_pnl
+            if is_swing and self._position_tracker.position_count > 0:
+                await self._position_tracker.save_to_db()
+                logger.info(
+                    f"Swing positions saved ({self._position_tracker.position_count} open)"
+                )
+            else:
+                data = await self._data_provider.get_data()
+                closed = self._position_tracker.close_all(data, reason="EOD_CLOSE")
+                for pos in closed:
+                    self.total_pnl += pos.unrealized_pnl
 
         if self.pipeline:
             await self.pipeline.stop()
@@ -870,7 +996,9 @@ class TradingOrchestrator:
         symbols = self._get_market_symbols()
         if not symbols:
             return {}
-        return await self._data_provider.get_data(symbols=symbols, force_refresh=True)
+        # Use cache TTL (1s) instead of force_refresh to avoid API rate limits
+        # when tracking many symbols. Each symbol refreshes at most once per TTL.
+        return await self._data_provider.get_data(symbols=symbols)
 
     async def _start_market_data_loop(self) -> None:
         if self._market_data_running:
@@ -878,7 +1006,11 @@ class TradingOrchestrator:
 
         self._market_data_running = True
 
-        # Initial refresh to avoid empty snapshots on first pipeline tick
+        # Pre-warm indicators FIRST (exclusive API access, no rate conflicts)
+        if self._indicator_engine and self._kis_client and self.config.symbols:
+            await self._prewarm_symbols(self.config.symbols[:20])
+
+        # Initial price refresh (some may be rate-limited; the data loop will catch up)
         try:
             data = await self._refresh_market_data_once()
             async with self._market_data_lock:
@@ -918,12 +1050,29 @@ class TradingOrchestrator:
             self._market_data_task = None
 
     async def _market_data_loop(self, interval: float) -> None:
-        logger.info(f"Market data loop started (interval: {interval}s)")
+        logger.info(
+            f"Market data loop started (interval={interval}s, "
+            f"symbols={len(self._get_market_symbols())})"
+        )
         next_tick = time.monotonic()
+        _tick_count = 0
+        _diag_interval = 30  # log diagnostics every 30 ticks (~60s at 2s interval)
 
         while self._market_data_running:
             try:
+                t0 = time.monotonic()
                 data = await self._refresh_market_data_once()
+                fetch_ms = (time.monotonic() - t0) * 1000
+                _tick_count += 1
+
+                # Log first few ticks and then periodically
+                if _tick_count <= 3 or _tick_count % _diag_interval == 0:
+                    n_syms = len(data) if data else 0
+                    logger.info(
+                        f"[tick {_tick_count}] fetched {n_syms} symbols "
+                        f"in {fetch_ms:.0f}ms"
+                    )
+
                 if data:
                     now_ts = datetime.now()
                     async with self._market_data_lock:
@@ -936,6 +1085,23 @@ class TradingOrchestrator:
                             if isinstance(sym_data, dict):
                                 self._indicator_engine.on_tick(sym, sym_data, now_ts)
 
+                    # Periodic diagnostic log
+                    if _tick_count % _diag_interval == 0 and self._indicator_engine:
+                        warm_count = sum(
+                            1 for s in self._indicator_engine._accumulators
+                            if self._indicator_engine.is_warm(s)
+                        )
+                        sample_sym = next(iter(self._indicator_engine._accumulators), None)
+                        sample_candles = 0
+                        if sample_sym:
+                            sample_candles = len(self._indicator_engine._accumulators[sample_sym].candles)
+                        logger.info(
+                            f"Market data: {len(data)} symbols fetched, "
+                            f"{len(self._indicator_engine._accumulators)} tracked, "
+                            f"{warm_count} warm, "
+                            f"sample {sample_sym}={sample_candles} candles"
+                        )
+
                     staleness = self._get_market_data_staleness_seconds()
                     if staleness is not None:
                         self._metrics.record_market_data_staleness(staleness)
@@ -947,6 +1113,9 @@ class TradingOrchestrator:
             if sleep_time > 0:
                 await asyncio.sleep(sleep_time)
             else:
+                # Yield to event loop even when behind schedule,
+                # so other tasks (universe refresh, prewarm) can run.
+                await asyncio.sleep(0)
                 if -sleep_time > interval * 3:
                     next_tick = time.monotonic()
 
@@ -1097,7 +1266,12 @@ class TradingOrchestrator:
                     indicators=indicators,
                     current_positions=self._position_tracker.positions,
                     timestamp=now,
-                    metadata={"regime": self._current_regime, "symbol_metadata": meta},
+                    metadata={
+                        "regime": self._current_regime,
+                        "market_state": self._current_regime,
+                        "symbol_metadata": meta,
+                        "accumulation_candidates": getattr(self, "_accumulation_candidates", {}),
+                    },
                 )
                 return await self._strategy_manager.check_entries(context)
 

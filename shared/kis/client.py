@@ -90,3 +90,73 @@ class KISClient(AsyncSessionMixin):
         except Exception as e:
             logger.warning(f"Failed to fetch price for {symbol}: {e}")
             raise
+
+    async def get_minute_bars(
+        self, symbol: str, count: int = 30
+    ) -> list[dict[str, Any]]:
+        """Fetch recent intraday 1-minute bars for a stock symbol.
+
+        Uses KIS 주식당일분봉조회 (FHKST03010200).
+
+        Args:
+            symbol: Stock code (e.g., '005930')
+            count: Number of bars to return (max ~30 for current session)
+
+        Returns:
+            List of candle dicts with open, high, low, close, volume keys,
+            sorted chronologically (oldest first).
+        """
+        try:
+            session = await self._get_session()
+            headers = await self.auth_manager.get_auth_headers_async()
+
+            headers["tr_id"] = "FHKST03010200"
+            headers["custtype"] = "P"
+
+            from datetime import datetime as _dt
+
+            now_str = _dt.now().strftime("%H%M%S")
+            params = {
+                "FID_COND_MRKT_DIV_CODE": "J",
+                "FID_INPUT_ISCD": symbol,
+                "FID_INPUT_HOUR_1": now_str,
+                "FID_PW_DATA_INCU_YN": "N",
+            }
+
+            path = "/uapi/domestic-stock/v1/quotations/inquire-time-itemchartprice"
+            url = f"{self.config.base_url}{path}"
+
+            timeout_seconds = getattr(
+                self.config, "request_timeout_seconds", _DEFAULT_REQUEST_TIMEOUT
+            )
+            request_timeout = aiohttp.ClientTimeout(total=float(timeout_seconds))
+            async with session.get(
+                url, headers=headers, params=params, timeout=request_timeout
+            ) as response:
+                if response.status != 200:
+                    return []
+
+                data = await response.json()
+                if data.get("rt_cd") != "0":
+                    return []
+
+                rows = data.get("output2", [])
+                candles: list[dict[str, Any]] = []
+                for row in rows[:count]:
+                    try:
+                        candles.append({
+                            "open": float(row.get("stck_oprc", 0)),
+                            "high": float(row.get("stck_hgpr", 0)),
+                            "low": float(row.get("stck_lwpr", 0)),
+                            "close": float(row.get("stck_prpr", 0)),
+                            "volume": int(row.get("cntg_vol", 0)),
+                        })
+                    except (ValueError, TypeError):
+                        continue
+
+                candles.reverse()  # API returns newest first; we need oldest first
+                return candles
+
+        except Exception as e:
+            logger.debug(f"Failed to fetch minute bars for {symbol}: {e}")
+            return []

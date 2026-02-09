@@ -389,7 +389,7 @@ class MarketDataProvider:
             async def fetch_single(symbol: str, idx: int) -> tuple[str, dict[str, Any] | None]:
                 try:
                     if idx > 0:
-                        await asyncio.sleep(idx * 0.05)
+                        await asyncio.sleep(idx * 0.1)
                     price_data = await asyncio.wait_for(
                         source.get_current_price(symbol),
                         timeout=self.config.fetch_timeout_seconds,
@@ -423,6 +423,10 @@ class MarketDataProvider:
                 symbol, data = item
                 if data is not None:
                     result[symbol] = data
+
+            # Pause between batches to avoid sustained rate limiting
+            if i + self.config.batch_size < len(symbols):
+                await asyncio.sleep(1.0)
 
         return result
 
