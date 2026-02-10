@@ -18,6 +18,7 @@ import aiohttp
 
 from shared.http import AsyncSessionMixin
 from shared.kis.auth import KISAuthConfig, KISAuthManager
+from shared.utils.parsing import parse_float, parse_int
 
 logger = logging.getLogger(__name__)
 
@@ -27,40 +28,6 @@ MarketType = Literal["KOSPI", "KOSDAQ", "ALL", "KOSPI200", "KRX100"]
 
 
 _MAX_KIS_RANKING_ROWS = 30
-
-
-def _parse_int(value: Any) -> int:
-    if value is None:
-        return 0
-    if isinstance(value, bool):
-        return int(value)
-    if isinstance(value, int):
-        return value
-    if isinstance(value, float):
-        return int(value)
-    s = str(value).strip().replace(",", "")
-    if not s:
-        return 0
-    try:
-        return int(float(s))
-    except ValueError:
-        return 0
-
-
-def _parse_float(value: Any) -> float:
-    if value is None:
-        return 0.0
-    if isinstance(value, bool):
-        return float(value)
-    if isinstance(value, (int, float)):
-        return float(value)
-    s = str(value).strip().replace(",", "")
-    if not s:
-        return 0.0
-    try:
-        return float(s)
-    except ValueError:
-        return 0.0
 
 
 def _market_to_input_iscd(market: str) -> str:
@@ -247,11 +214,11 @@ class KISRankingClient(AsyncSessionMixin):
         return {
             "code": str(code).strip(),
             "name": str(name).strip(),
-            "price": _parse_float(row.get("stck_prpr")),
-            "change_pct": _parse_float(row.get("prdy_ctrt")),
-            "volume": _parse_int(row.get("acml_vol")),
-            "trade_value": _parse_int(row.get("acml_tr_pbmn")),
-            "rank": _parse_int(row.get("data_rank")),
+            "price": parse_float(row.get("stck_prpr")),
+            "change_pct": parse_float(row.get("prdy_ctrt")),
+            "volume": parse_int(row.get("acml_vol")),
+            "trade_value": parse_int(row.get("acml_tr_pbmn")),
+            "rank": parse_int(row.get("data_rank")),
             "raw": row,
         }
 
@@ -262,11 +229,10 @@ class KISRankingClient(AsyncSessionMixin):
         return {
             "code": str(code).strip(),
             "name": str(name).strip(),
-            "price": _parse_float(row.get("stck_prpr")),
-            "change_pct": _parse_float(row.get("prdy_ctrt") or row.get("prd_rsfl_rate")),
-            "volume": _parse_int(row.get("acml_vol") or row.get("cntg_vol")),
-            "trade_value": _parse_int(row.get("acml_tr_pbmn") or row.get("tr_pbmn")),
-            "rank": _parse_int(row.get("data_rank")),
+            "price": parse_float(row.get("stck_prpr")),
+            "change_pct": parse_float(row.get("prdy_ctrt") or row.get("prd_rsfl_rate")),
+            "volume": parse_int(row.get("acml_vol") or row.get("cntg_vol")),
+            "trade_value": parse_int(row.get("acml_tr_pbmn") or row.get("tr_pbmn")),
+            "rank": parse_int(row.get("data_rank")),
             "raw": row,
         }
-

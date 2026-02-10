@@ -10,6 +10,9 @@ from datetime import datetime
 from typing import Any, Optional
 from zoneinfo import ZoneInfo
 
+from shared.trading.minute_bar import MinuteBar
+from shared.utils.parsing import parse_float, parse_int
+
 logger = logging.getLogger(__name__)
 
 
@@ -19,74 +22,6 @@ def _require_polars():
     except ImportError as e:  # pragma: no cover
         raise RuntimeError("polars is required for core.data_engine") from e
     return pl
-
-
-def _parse_int(value: Any) -> int:
-    if value is None:
-        return 0
-    if isinstance(value, bool):
-        return int(value)
-    if isinstance(value, int):
-        return value
-    if isinstance(value, float):
-        return int(value)
-    s = str(value).strip().replace(",", "")
-    if not s:
-        return 0
-    try:
-        return int(float(s))
-    except ValueError:
-        return 0
-
-
-def _parse_float(value: Any) -> float:
-    if value is None:
-        return 0.0
-    if isinstance(value, bool):
-        return float(value)
-    if isinstance(value, (int, float)):
-        return float(value)
-    s = str(value).strip().replace(",", "")
-    if not s:
-        return 0.0
-    try:
-        return float(s)
-    except ValueError:
-        return 0.0
-
-
-@dataclass
-class _MinuteBar:
-    code: str
-    datetime: datetime
-    open: float
-    high: float
-    low: float
-    close: float
-    volume: int
-    value: int
-
-    def update(self, price: float, volume: int) -> None:
-        self.close = price
-        if price > self.high:
-            self.high = price
-        if price < self.low:
-            self.low = price
-        if volume > 0:
-            self.volume += volume
-            self.value += int(price * volume)
-
-    def to_row(self) -> dict[str, Any]:
-        return {
-            "code": self.code,
-            "datetime": self.datetime,
-            "open": float(self.open),
-            "high": float(self.high),
-            "low": float(self.low),
-            "close": float(self.close),
-            "volume": int(self.volume),
-            "value": int(self.value),
-        }
 
 
 @dataclass(frozen=True)
@@ -102,7 +37,7 @@ class DataEngine:
         self.config = config or DataEngineConfig()
         self._lock = threading.RLock()
         self._frames: dict[str, Any] = {}
-        self._builders: dict[str, _MinuteBar] = {}
+        self._builders: dict[str, MinuteBar] = {}
 
         try:
             self._tz = ZoneInfo(self.config.timezone)
@@ -125,11 +60,11 @@ class DataEngine:
         if not code:
             return
 
-        price = _parse_float(payload.get("current_price") or payload.get("price"))
+        price = parse_float(payload.get("current_price") or payload.get("price"))
         if price <= 0:
             return
 
-        ts = _parse_float(payload.get("timestamp"))
+        ts = parse_float(payload.get("timestamp"))
         if ts <= 0:
             ts = datetime.now().timestamp()
 
@@ -138,12 +73,12 @@ class DataEngine:
             .replace(second=0, microsecond=0, tzinfo=None)
         )
 
-        vol = _parse_int(payload.get("tick_volume"))
+        vol = parse_int(payload.get("tick_volume"))
 
         with self._lock:
             bar = self._builders.get(code)
             if bar is None:
-                self._builders[code] = _MinuteBar(
+                self._builders[code] = MinuteBar(
                     code=code,
                     datetime=minute,
                     open=price,
@@ -160,7 +95,7 @@ class DataEngine:
                 return
 
             self._append_bar_row(bar.to_row())
-            self._builders[code] = _MinuteBar(
+            self._builders[code] = MinuteBar(
                 code=code,
                 datetime=minute,
                 open=price,
@@ -195,4 +130,3 @@ class DataEngine:
     def get_frames(self) -> dict[str, Any]:
         with self._lock:
             return dict(self._frames)
-
