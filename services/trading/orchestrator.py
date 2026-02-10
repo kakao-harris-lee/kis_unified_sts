@@ -258,7 +258,7 @@ class TradingConfig:
 
     # 기본 설정
     asset_class: str = "stock"  # "stock" or "futures"
-    strategy_name: str = "bb_reversion"
+    strategy_name: str | None = None  # None = load all enabled strategies
     initial_capital: float = 10_000_000
 
     # 거래 대상
@@ -321,8 +321,10 @@ class TradingConfig:
                 f"and {MAX_ORDER_AMOUNT:,}, got {self.order_amount_per_trade:,}"
             )
 
-        if not isinstance(self.strategy_name, str) or not self.strategy_name:
-            raise ValueError("strategy_name must be a non-empty string")
+        if self.strategy_name is not None and (
+            not isinstance(self.strategy_name, str) or not self.strategy_name
+        ):
+            raise ValueError("strategy_name must be a non-empty string or None")
 
         if not isinstance(self.symbols, list):
             raise TypeError(f"symbols must be a list, got {type(self.symbols)}")
@@ -349,7 +351,7 @@ class TradingConfig:
     @classmethod
     def stock(
         cls,
-        strategy_name: str = "bb_reversion",
+        strategy_name: str | None = None,
         symbols: list[str] | None = None,
         initial_capital: float = 10_000_000,
         order_amount: float = 1_000_000,
@@ -375,7 +377,7 @@ class TradingConfig:
     @classmethod
     def futures(
         cls,
-        strategy_name: str = "pure_micro",
+        strategy_name: str | None = None,
         initial_capital: float = 10_000_000,
         order_amount: float = 1_000_000,
     ) -> TradingConfig:
@@ -1709,7 +1711,7 @@ class TradingOrchestrator:
 
 # 편의 함수
 async def run_stock_trading(
-    strategy: str = "bb_reversion",
+    strategy: str | None = None,
     symbols: list[str] | None = None,
     capital: float = 10_000_000,
     paper_trading: bool = True,
@@ -1736,7 +1738,7 @@ async def run_stock_trading(
 
 
 async def run_futures_trading(
-    strategy: str = "pure_micro",
+    strategy: str | None = None,
     capital: float = 10_000_000,
     daemon: bool = False,
 ):

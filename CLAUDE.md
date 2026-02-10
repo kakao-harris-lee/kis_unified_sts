@@ -32,6 +32,9 @@
 
 - Screener 기반 종목 선정 + bb_reversion / opening_volume_surge 전략
 - Paper trading 운용 중
+- **EOD 전량 청산 금지**: Intraday trading이 아님. 장 마감 시 무조건 전량 청산하지 않는다
+- **슬리피지 반영 필수**: 백테스트 및 페이퍼 트레이딩 모두 슬리피지를 반드시 고려한다
+- **상승 여력 종목 보유 유지**: 3-Stage Exit(SURVIVAL→BREAKEVEN→MAXIMIZE) 상태가 MAXIMIZE이고 추세가 유효한 종목은 EOD라는 이유만으로 매도하지 않는다. 청산 판단은 전략 시그널 기반이어야 한다
 
 ### 핵심 원칙
 

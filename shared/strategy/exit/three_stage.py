@@ -408,17 +408,15 @@ class ThreeStageExit(ExitSignalGenerator[ThreeStageExitConfig]):
         """현재가 조회"""
         # market_data에서 조회
         if market_data:
-            # code -> price 매핑
             price = market_data.get(position.code)
-            if price and price > 0:
-                return price
+            if isinstance(price, (int, float)) and price > 0:
+                return float(price)
 
             # 중첩 구조 (code -> {close: price})
-            data = market_data.get(position.code, {})
-            if isinstance(data, dict):
-                price = data.get("close") or data.get("price")
-                if price and price > 0:
-                    return price
+            if isinstance(price, dict):
+                val = price.get("close") or price.get("price")
+                if isinstance(val, (int, float)) and val > 0:
+                    return float(val)
 
         # Position의 current_price 사용 (fallback)
         if position.current_price > 0:

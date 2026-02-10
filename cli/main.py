@@ -1141,8 +1141,8 @@ def trade():
 @click.option(
     "--strategy",
     "-s",
-    required=True,
-    help="Strategy name",
+    default=None,
+    help="Strategy name (omit to load all enabled strategies)",
 )
 @click.option(
     "--asset",
@@ -1187,7 +1187,7 @@ def trade_start(
 
     mode_str = "Paper" if paper else "LIVE"
     click.echo(f"Starting {mode_str} Trading")
-    click.echo(f"  Strategy: {strategy}")
+    click.echo(f"  Strategy: {strategy or 'all enabled'}")
     click.echo(f"  Asset: {asset}")
     click.echo(f"  Capital: {capital:,.0f}")
     click.echo(f"  Mode: {'Daemon' if daemon else 'Single Session'}")
