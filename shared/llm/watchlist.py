@@ -110,14 +110,58 @@ class WatchlistGenerator:
         """Generate a next-day watchlist after market close."""
         if list_size <= 0:
             return []
+        market_df = self._build_market_df()
+        if market_df is None or len(market_df) == 0:
+            return []
 
-        # Universe: KOSPI + KOSDAQ (best-effort).
+        cols = self._resolve_columns(market_df)
+        if cols is None:
+            return []
+        price_col, open_col, vol_col, cap_col, value_col = cols
+
+        df = self._prepare_filtered_df(
+            market_df,
+            price_col,
+            open_col,
+            vol_col,
+            cap_col,
+            value_col,
+            min_price,
+            max_price,
+            min_market_cap,
+            max_market_cap,
+        )
+        if df is None or len(df) == 0:
+            return []
+
+        cand_df = self._select_candidates(df, value_col, per_market_candidates)
+        if cand_df is None or len(cand_df) == 0:
+            return []
+
+        items = self._build_items(
+            cand_df,
+            price_col,
+            vol_col,
+            value_col,
+            history_days,
+        )
+        if not items:
+            return []
+
+        self._score_items(items)
+        items.sort(key=lambda x: x.score, reverse=True)
+
+        self._enrich_news(items, list_size, news_shortlist_multiplier)
+        items.sort(key=lambda x: x.score, reverse=True)
+        return items[:list_size]
+
+    def _build_market_df(self):
         kospi = self.stock_collector.collect("KOSPI")
         kosdaq = self.stock_collector.collect("KOSDAQ")
 
         if kospi is None and kosdaq is None:
             logger.error("Watchlist generation failed: no market data")
-            return []
+            return None
 
         frames = []
         if kospi is not None and len(kospi) > 0:
@@ -125,12 +169,14 @@ class WatchlistGenerator:
         if kosdaq is not None and len(kosdaq) > 0:
             frames.append(kosdaq)
 
+        if not frames:
+            return None
+
         import pandas as pd  # local import to keep import surface small
 
-        market_df = pd.concat(frames, axis=0) if len(frames) > 1 else frames[0]
-        if market_df is None or len(market_df) == 0:
-            return []
+        return pd.concat(frames, axis=0) if len(frames) > 1 else frames[0]
 
+    def _resolve_columns(self, market_df) -> Optional[tuple[str, str, str, str, str]]:
         price_col = _get_col(market_df, ["종가", "close"])
         open_col = _get_col(market_df, ["시가", "open"])
         vol_col = _get_col(market_df, ["거래량", "volume"])
@@ -142,20 +188,37 @@ class WatchlistGenerator:
                 f"Watchlist generation failed: missing required cols "
                 f"(price={price_col}, open={open_col}, volume={vol_col})"
             )
-            return []
+            return None
 
-        df = market_df.copy()
         if cap_col is None:
-            # Keep it permissive if market cap isn't available.
+            cap_col = "시가총액"
+        if value_col is None:
+            value_col = "_trade_value"
+
+        return price_col, open_col, vol_col, cap_col, value_col
+
+    def _prepare_filtered_df(
+        self,
+        market_df,
+        price_col: str,
+        open_col: str,
+        vol_col: str,
+        cap_col: str,
+        value_col: str,
+        min_price: int,
+        max_price: int,
+        min_market_cap: int,
+        max_market_cap: int,
+    ):
+        df = market_df.copy()
+        if cap_col not in df.columns:
             df["시가총액"] = 0
             cap_col = "시가총액"
 
-        # Best-effort trade value (turnover proxy).
-        if value_col is None:
+        if value_col not in df.columns:
             df["_trade_value"] = df[price_col].astype(float) * df[vol_col].astype(float)
             value_col = "_trade_value"
 
-        # Filters
         df = df[
             (df[price_col] >= min_price)
             & (df[price_col] <= max_price)
@@ -164,12 +227,12 @@ class WatchlistGenerator:
         ].copy()
 
         if len(df) == 0:
-            return []
+            return df
 
-        # Compute simple daily change
         df["_change_pct"] = (df[price_col] - df[open_col]) / df[open_col] * 100.0
+        return df
 
-        # Candidate shortlist per market by trade value (liquidity).
+    def _select_candidates(self, df, value_col: str, per_market_candidates: int):
         candidates = []
         if "시장" in df.columns:
             for mkt in ("KOSPI", "KOSDAQ"):
@@ -181,10 +244,53 @@ class WatchlistGenerator:
         else:
             candidates.append(df.nlargest(per_market_candidates, value_col))
 
-        cand_df = pd.concat(candidates, axis=0) if len(candidates) > 1 else candidates[0]
-        cand_df = cand_df[~cand_df.index.duplicated(keep="first")]
+        if not candidates:
+            return None
 
-        # Build base items with trend features (per-ticker history).
+        import pandas as pd  # local import to keep import surface small
+
+        cand_df = pd.concat(candidates, axis=0) if len(candidates) > 1 else candidates[0]
+        return cand_df[~cand_df.index.duplicated(keep="first")]
+
+    def _compute_trend_features(self, hist) -> tuple[float, float, float]:
+        volume_trend = 1.0
+        value_trend = 1.0
+        momentum_5d = 0.0
+
+        if hist is None or len(hist) < 10:
+            return volume_trend, value_trend, momentum_5d
+
+        h_vol = _get_col(hist, ["거래량", "volume"])
+        h_value = _get_col(hist, ["거래대금", "거래대금(원)", "trade_value"])
+        h_close = _get_col(hist, ["종가", "close"])
+
+        try:
+            if h_vol:
+                v5 = float(hist[h_vol].tail(5).mean())
+                v20 = float(hist[h_vol].tail(20).mean()) if len(hist) >= 20 else float(hist[h_vol].mean())
+                volume_trend = v5 / v20 if v20 > 0 else 1.0
+            if h_value:
+                tv5 = float(hist[h_value].tail(5).mean())
+                tv20 = float(hist[h_value].tail(20).mean()) if len(hist) >= 20 else float(hist[h_value].mean())
+                value_trend = tv5 / tv20 if tv20 > 0 else 1.0
+            if h_close and len(hist) >= 6:
+                c_now = float(hist[h_close].iloc[-1])
+                c_5 = float(hist[h_close].iloc[-6])
+                if c_5 > 0:
+                    momentum_5d = (c_now - c_5) / c_5 * 100.0
+        except Exception:
+            pass
+
+        return volume_trend, value_trend, momentum_5d
+
+    def _build_items(
+        self,
+        cand_df,
+        price_col: str,
+        vol_col: str,
+        value_col: str,
+        history_days: int,
+    ) -> list[WatchlistItem]:
         items: list[WatchlistItem] = []
         for code in cand_df.index:
             row = cand_df.loc[code]
@@ -196,33 +302,8 @@ class WatchlistGenerator:
             prev_trade_value = _safe_float(row.get(value_col))
             change_pct = _safe_float(row.get("_change_pct"))
 
-            volume_trend = 1.0
-            value_trend = 1.0
-            momentum_5d = 0.0
-
             hist = self.stock_collector.get_stock_history(code, days=history_days)
-            if hist is not None and len(hist) >= 10:
-                h_vol = _get_col(hist, ["거래량", "volume"])
-                h_value = _get_col(hist, ["거래대금", "거래대금(원)", "trade_value"])
-                h_close = _get_col(hist, ["종가", "close"])
-
-                try:
-                    if h_vol:
-                        v5 = float(hist[h_vol].tail(5).mean())
-                        v20 = float(hist[h_vol].tail(20).mean()) if len(hist) >= 20 else float(hist[h_vol].mean())
-                        volume_trend = v5 / v20 if v20 > 0 else 1.0
-                    if h_value:
-                        tv5 = float(hist[h_value].tail(5).mean())
-                        tv20 = float(hist[h_value].tail(20).mean()) if len(hist) >= 20 else float(hist[h_value].mean())
-                        value_trend = tv5 / tv20 if tv20 > 0 else 1.0
-                    if h_close and len(hist) >= 6:
-                        c_now = float(hist[h_close].iloc[-1])
-                        c_5 = float(hist[h_close].iloc[-6])
-                        if c_5 > 0:
-                            momentum_5d = (c_now - c_5) / c_5 * 100.0
-                except Exception:
-                    # Keep defaults.
-                    pass
+            volume_trend, value_trend, momentum_5d = self._compute_trend_features(hist)
 
             items.append(
                 WatchlistItem(
@@ -240,11 +321,9 @@ class WatchlistGenerator:
                 )
             )
 
-        if not items:
-            return []
+        return items
 
-        # Base score: liquidity + inflow proxy + mild momentum (no news yet).
-        # Use log trade value to reduce scale effects.
+    def _score_items(self, items: list[WatchlistItem]) -> None:
         for it in items:
             tv = max(1.0, it.prev_trade_value)
             liquidity = math.log(tv)
@@ -252,20 +331,26 @@ class WatchlistGenerator:
             mom = it.momentum_5d * 0.5
             it.score = liquidity * 0.6 + _clip(trend, -50, 200) * 0.3 + _clip(mom, -20, 50) * 0.1
 
-        items.sort(key=lambda x: x.score, reverse=True)
+    def _enrich_news(
+        self,
+        items: list[WatchlistItem],
+        list_size: int,
+        news_shortlist_multiplier: int,
+    ) -> None:
+        shortlist_size = max(list_size * news_shortlist_multiplier, list_size)
+        news_shortlist = items[:shortlist_size]
 
-        # News enrichment: only for a small shortlist.
-        news_shortlist = items[: max(list_size * news_shortlist_multiplier, list_size)]
+        sentiment_map = {
+            "매우 긍정": 2,
+            "긍정": 1,
+            "중립": 0,
+            "부정": -1,
+            "매우 부정": -2,
+        }
 
         for it in news_shortlist:
-            try:
-                mk = self.mk_news.collect(it.code)
-            except Exception:
-                mk = {}
-            try:
-                nv = self.naver_news.collect(it.code)
-            except Exception:
-                nv = {}
+            mk = self._safe_collect(self.mk_news, it.code)
+            nv = self._safe_collect(self.naver_news, it.code)
 
             all_news = (mk.get("stock_news", []) or []) + (nv.get("stock_news", []) or [])
             sentiment = self.mk_news.analyze_sentiment(all_news).value if all_news else "중립"
@@ -274,20 +359,15 @@ class WatchlistGenerator:
             it.news_sentiment = sentiment
             it.news_headlines = [n.get("title", "") for n in all_news[:5] if n.get("title")]
 
-            # News score (lightweight): sentiment + count.
-            sentiment_map = {
-                "매우 긍정": 2,
-                "긍정": 1,
-                "중립": 0,
-                "부정": -1,
-                "매우 부정": -2,
-            }
             s = float(sentiment_map.get(sentiment, 0))
             it.score += s * 2.0 + _clip(float(it.news_count), 0.0, 10.0) * 0.2
 
-        # Final re-rank using updated scores.
-        items.sort(key=lambda x: x.score, reverse=True)
-        return items[:list_size]
+    @staticmethod
+    def _safe_collect(collector, code: str) -> dict:
+        try:
+            return collector.collect(code)
+        except Exception:
+            return {}
 
 
 def save_watchlist(
@@ -332,4 +412,3 @@ def build_symbol_metadata(items: list[WatchlistItem]) -> dict[str, dict[str, Any
             "watchlist_score": it.score,
         }
     return meta
-
