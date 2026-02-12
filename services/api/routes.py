@@ -154,6 +154,28 @@ router = APIRouter()
 
 
 # =============================================================================
+# Root
+# =============================================================================
+
+
+@router.get("/", tags=["Root"])
+async def root(request: Request):
+    """API 루트 — 사용 가능한 엔드포인트 안내"""
+    debug = getattr(request.app.state, "debug", False)
+    return {
+        "service": "KIS Unified Trading System API",
+        "docs": "/docs" if debug else None,
+        "endpoints": {
+            "health": "/health",
+            "status": "/api/v1/status",
+            "trading": "/api/v1/trading/status",
+            "strategies": "/api/v1/strategies",
+            "metrics": "/metrics",
+        },
+    }
+
+
+# =============================================================================
 # Enums & Validators
 # =============================================================================
 

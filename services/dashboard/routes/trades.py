@@ -1,4 +1,5 @@
 """Trades endpoints."""
+import os
 from datetime import datetime
 from typing import List, Optional
 
@@ -57,8 +58,38 @@ class StrategyPerformance(BaseModel):
     avg_pnl: float
 
 
-# In-memory trade storage
-_trades_store: List[TradeResponse] = []
+def _get_reader():
+    from shared.streaming.trading_state import TradingStateReader
+    asset = os.environ.get("TRADING_ASSET_CLASS", "stock")
+    return TradingStateReader(asset)
+
+
+def _load_trades() -> list[dict]:
+    """Load all trades from Redis."""
+    try:
+        reader = _get_reader()
+        return reader.get_trades(start=0, count=500)
+    except Exception:
+        return []
+
+
+def _to_trade_response(t: dict) -> Optional[TradeResponse]:
+    try:
+        return TradeResponse(
+            id=t.get("id", ""),
+            symbol=t.get("symbol", ""),
+            side=t.get("side", "long"),
+            quantity=int(t.get("quantity", 0)),
+            entry_price=float(t.get("entry_price", 0)),
+            exit_price=float(t.get("exit_price", 0)),
+            pnl=float(t.get("pnl", 0)),
+            pnl_pct=float(t.get("pnl_pct", 0)),
+            strategy=t.get("strategy", ""),
+            entry_time=datetime.fromisoformat(t["entry_time"]) if "entry_time" in t else datetime.now(),
+            exit_time=datetime.fromisoformat(t["exit_time"]) if "exit_time" in t else datetime.now(),
+        )
+    except Exception:
+        return None
 
 
 @router.get("", response_model=TradeListResponse)
@@ -69,43 +100,35 @@ async def get_trades(
     page: int = Query(1, ge=1, description="Page number"),
 ):
     """Get list of trades with optional filters."""
-    trades = _trades_store.copy()
+    raw = _load_trades()
+    trades = [_to_trade_response(t) for t in raw]
+    trades = [t for t in trades if t is not None]
 
-    # Apply filters
     if strategy:
         trades = [t for t in trades if t.strategy == strategy]
     if symbol:
         trades = [t for t in trades if t.symbol == symbol]
 
-    # Pagination
+    total = len(trades)
     start = (page - 1) * limit
     end = start + limit
     paginated = trades[start:end]
 
-    return TradeListResponse(
-        trades=paginated,
-        total=len(trades),
-        page=page,
-        limit=limit,
-    )
+    return TradeListResponse(trades=paginated, total=total, page=page, limit=limit)
 
 
 @router.get("/statistics", response_model=TradeStatistics)
 async def get_trade_statistics():
     """Get overall trade statistics."""
-    trades = _trades_store
+    raw = _load_trades()
+    trades = [_to_trade_response(t) for t in raw]
+    trades = [t for t in trades if t is not None]
 
     if not trades:
         return TradeStatistics(
-            total_trades=0,
-            winning_trades=0,
-            losing_trades=0,
-            win_rate=0.0,
-            total_pnl=0.0,
-            avg_pnl=0.0,
-            max_win=0.0,
-            max_loss=0.0,
-            profit_factor=0.0,
+            total_trades=0, winning_trades=0, losing_trades=0,
+            win_rate=0.0, total_pnl=0.0, avg_pnl=0.0,
+            max_win=0.0, max_loss=0.0, profit_factor=0.0,
         )
 
     winning = [t for t in trades if t.pnl > 0]
@@ -130,23 +153,23 @@ async def get_trade_statistics():
 @router.get("/by-strategy", response_model=List[StrategyPerformance])
 async def get_trades_by_strategy():
     """Get trade performance grouped by strategy."""
-    trades = _trades_store
+    raw = _load_trades()
+    trades = [_to_trade_response(t) for t in raw]
+    trades = [t for t in trades if t is not None]
 
-    # Group by strategy
-    strategy_trades: dict = {}
+    strategy_trades: dict[str, list[TradeResponse]] = {}
     for trade in trades:
         if trade.strategy not in strategy_trades:
             strategy_trades[trade.strategy] = []
         strategy_trades[trade.strategy].append(trade)
 
-    # Calculate per-strategy stats
     results = []
-    for strategy, strades in strategy_trades.items():
+    for strat, strades in strategy_trades.items():
         winning = len([t for t in strades if t.pnl > 0])
         total_pnl = sum(t.pnl for t in strades)
         results.append(
             StrategyPerformance(
-                strategy=strategy,
+                strategy=strat,
                 trades=len(strades),
                 win_rate=winning / len(strades) * 100 if strades else 0,
                 total_pnl=total_pnl,
