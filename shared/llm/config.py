@@ -5,7 +5,6 @@ LLM 분석 설정
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List
 
 import yaml
 
@@ -31,18 +30,18 @@ class LLMConfig:
     output_dir: str = "./trading_reports"
 
     # 주식 스크리닝 설정
-    stock_markets: List[str] = field(default_factory=lambda: ["KOSPI"])
+    stock_markets: list[str] = field(default_factory=lambda: ["KOSPI"])
     stock_min_market_cap: int = 100_000_000_000  # 1000억
     stock_max_market_cap: int = 50_000_000_000_000  # 50조
     stock_min_price: int = 1000
-    stock_max_price: int = 500000
     stock_top_n_volume: int = 30
     stock_final_selection: int = 5
     stock_backtest_days: int = 60
     stock_history_days: int = 252
     stock_min_history_days: int = 90
+    stock_new_listing_min_days: int = 20
+    stock_new_listing_penalty: float = 0.7
     stock_volume_lookback_days: int = 20
-    stock_min_avg_volume: int = 100_000
     stock_min_trade_value: float = 500_000_000  # 최소 거래대금 (5억)
     stock_min_turnover: float = 0.003  # 거래대금/시가총액 최소 비율
     stock_momentum_lookback_days: int = 252
@@ -53,17 +52,17 @@ class LLMConfig:
     stock_max_position: float = 0.20
     stock_stop_loss: float = 0.05
     stock_take_profit: float = 0.10
-    stock_blacklist: List[str] = field(
+    stock_blacklist: list[str] = field(
         default_factory=lambda: ["관리종목", "투자주의", "환기종목", "거래정지"]
     )
-    stock_keyword_filter: List[str] = field(
+    stock_keyword_filter: list[str] = field(
         default_factory=lambda: ["횡령", "배임", "감자", "상장폐지", "회생절차"]
     )
-    stock_exclude_name_keywords: List[str] = field(
+    stock_exclude_name_keywords: list[str] = field(
         default_factory=lambda: ["스팩", "SPAC", "리츠", "REIT"]
     )
     stock_exclude_preferred_shares: bool = True
-    stock_risk_keywords: List[str] = field(
+    stock_risk_keywords: list[str] = field(
         default_factory=lambda: [
             "유상증자",
             "전환사채",
@@ -74,12 +73,19 @@ class LLMConfig:
             "실적부진",
         ]
     )
+    stock_enable_kis_target_price: bool = True
+    stock_target_lookback_days: int = 180
     stock_score_weight_momentum: float = 0.35
     stock_score_weight_technical: float = 0.15
     stock_score_weight_backtest: float = 0.20
     stock_score_weight_news: float = 0.10
     stock_score_weight_liquidity: float = 0.10
+    stock_score_weight_target_price: float = 0.10
     stock_score_weight_risk: float = 0.10
+    stock_llm_scoring_enabled: bool = True
+    stock_llm_scoring_model: str = ""
+    stock_llm_scoring_max_tokens: int = 500
+    stock_llm_scoring_temperature: float = 0.2
 
     # 선물 분석 가중치
     futures_weight_global: float = 0.35
@@ -100,28 +106,32 @@ class LLMConfig:
     krx_analysis_days: int = 20
 
     # 섹터 ETF 매핑
-    sector_etfs: Dict[str, List[str]] = field(default_factory=lambda: {
-        "반도체": ["091160", "091170", "395160"],
-        "2차전지": ["305720", "371460", "394670"],
-        "바이오": ["244580", "261060"],
-        "금융": ["091180", "140700"],
-        "자동차": ["091170", "204450"],
-        "철강": ["117680"],
-        "조선": ["140710"],
-        "건설": ["117700"],
-        "에너지": ["117460", "261220"],
-        "인터넷": ["261110"],
-        "게임": ["251340"],
-    })
+    sector_etfs: dict[str, list[str]] = field(
+        default_factory=lambda: {
+            "반도체": ["091160", "091170", "395160"],
+            "2차전지": ["305720", "371460", "394670"],
+            "바이오": ["244580", "261060"],
+            "금융": ["091180", "140700"],
+            "자동차": ["091170", "204450"],
+            "철강": ["117680"],
+            "조선": ["140710"],
+            "건설": ["117700"],
+            "에너지": ["117460", "261220"],
+            "인터넷": ["261110"],
+            "게임": ["251340"],
+        }
+    )
 
     # 지수 코드 매핑
-    indices: Dict[str, str] = field(default_factory=lambda: {
-        "KOSPI": "KS11",
-        "KOSDAQ": "KQ11",
-        "KOSPI200": "KS200",
-        "KOSPI_LARGE": "KS100",
-        "KOSDAQ150": "KQ150",
-    })
+    indices: dict[str, str] = field(
+        default_factory=lambda: {
+            "KOSPI": "KS11",
+            "KOSDAQ": "KQ11",
+            "KOSPI200": "KS200",
+            "KOSPI_LARGE": "KS100",
+            "KOSDAQ150": "KQ150",
+        }
+    )
 
     @classmethod
     def from_env(cls) -> "LLMConfig":
@@ -131,9 +141,7 @@ class LLMConfig:
             provider = "openai"
 
         default_model = (
-            "claude-3-5-haiku-latest"
-            if provider == "claude"
-            else "gpt-4o-mini"
+            "claude-3-5-haiku-latest" if provider == "claude" else "gpt-4o-mini"
         )
         resolved_key = (
             os.environ.get("ANTHROPIC_API_KEY", "")
@@ -150,10 +158,12 @@ class LLMConfig:
             enabled=os.environ.get("LLM_ANALYSIS_ENABLED", "true").lower() == "true",
             llm_strict_json_schema=os.environ.get(
                 "LLM_STRICT_JSON_SCHEMA", "true"
-            ).lower() == "true",
+            ).lower()
+            == "true",
             llm_prompt_cache_enabled=os.environ.get(
                 "LLM_PROMPT_CACHE_ENABLED", "true"
-            ).lower() == "true",
+            ).lower()
+            == "true",
             llm_prompt_cache_ttl_seconds=int(
                 os.environ.get("LLM_PROMPT_CACHE_TTL_SECONDS", "21600")
             ),
@@ -193,18 +203,18 @@ class LLMConfig:
         if not isinstance(claude_config, dict):
             claude_config = {}
 
-        provider = str(
-            os.environ.get("LLM_PROVIDER", llm_common.get("provider", "openai"))
-        ).strip().lower()
+        provider = (
+            str(os.environ.get("LLM_PROVIDER", llm_common.get("provider", "openai")))
+            .strip()
+            .lower()
+        )
         if provider not in ("openai", "claude"):
             provider = "openai"
 
         provider_config = claude_config if provider == "claude" else openai_config
 
         default_model = (
-            "claude-3-5-haiku-latest"
-            if provider == "claude"
-            else "gpt-4o-mini"
+            "claude-3-5-haiku-latest" if provider == "claude" else "gpt-4o-mini"
         )
         env_key_name = "ANTHROPIC_API_KEY" if provider == "claude" else "OPENAI_API_KEY"
         resolved_api_key = os.environ.get(
@@ -325,17 +335,19 @@ class LLMConfig:
             stock_min_market_cap=stock_config.get("min_market_cap", 100_000_000_000),
             stock_max_market_cap=stock_config.get("max_market_cap", 50_000_000_000_000),
             stock_min_price=stock_config.get("min_price", 1000),
-            stock_max_price=stock_config.get("max_price", 500000),
             stock_top_n_volume=stock_config.get("top_n_volume", 30),
             stock_final_selection=stock_config.get("final_selection", 5),
             stock_backtest_days=stock_config.get("backtest_days", 60),
             stock_history_days=stock_config.get("history_days", 252),
             stock_min_history_days=stock_config.get("min_history_days", 90),
+            stock_new_listing_min_days=stock_config.get("new_listing_min_days", 20),
+            stock_new_listing_penalty=stock_config.get("new_listing_penalty", 0.7),
             stock_volume_lookback_days=stock_config.get("volume_lookback_days", 20),
-            stock_min_avg_volume=stock_config.get("min_avg_volume", 100_000),
             stock_min_trade_value=stock_config.get("min_trade_value", 500_000_000),
             stock_min_turnover=stock_config.get("min_turnover", 0.003),
-            stock_momentum_lookback_days=stock_config.get("momentum_lookback_days", 252),
+            stock_momentum_lookback_days=stock_config.get(
+                "momentum_lookback_days", 252
+            ),
             stock_max_atr_pct=stock_config.get("max_atr_pct", 0.08),
             stock_max_drawdown_pct=stock_config.get("max_drawdown_pct", 0.25),
             stock_min_backtest_trades=stock_config.get("min_backtest_trades", 5),
@@ -357,14 +369,41 @@ class LLMConfig:
             ),
             stock_risk_keywords=stock_config.get(
                 "risk_keywords",
-                ["유상증자", "전환사채", "CB", "BW", "불성실공시", "감사의견", "실적부진"],
+                [
+                    "유상증자",
+                    "전환사채",
+                    "CB",
+                    "BW",
+                    "불성실공시",
+                    "감사의견",
+                    "실적부진",
+                ],
             ),
+            stock_enable_kis_target_price=stock_config.get(
+                "enable_kis_target_price", True
+            ),
+            stock_target_lookback_days=stock_config.get("target_lookback_days", 180),
             stock_score_weight_momentum=stock_config.get("score_weight_momentum", 0.35),
-            stock_score_weight_technical=stock_config.get("score_weight_technical", 0.15),
+            stock_score_weight_technical=stock_config.get(
+                "score_weight_technical", 0.15
+            ),
             stock_score_weight_backtest=stock_config.get("score_weight_backtest", 0.20),
             stock_score_weight_news=stock_config.get("score_weight_news", 0.10),
-            stock_score_weight_liquidity=stock_config.get("score_weight_liquidity", 0.10),
+            stock_score_weight_liquidity=stock_config.get(
+                "score_weight_liquidity", 0.10
+            ),
+            stock_score_weight_target_price=stock_config.get(
+                "score_weight_target_price", 0.10
+            ),
             stock_score_weight_risk=stock_config.get("score_weight_risk", 0.10),
+            stock_llm_scoring_enabled=stock_config.get("llm_scoring_enabled", True),
+            stock_llm_scoring_model=stock_config.get("llm_scoring_model", ""),
+            stock_llm_scoring_max_tokens=stock_config.get(
+                "llm_scoring_max_tokens", 500
+            ),
+            stock_llm_scoring_temperature=stock_config.get(
+                "llm_scoring_temperature", 0.2
+            ),
             # 선물 설정
             futures_weight_global=futures_config.get("weight_global", 0.35),
             futures_weight_flow=futures_config.get("weight_flow", 0.30),
@@ -373,7 +412,9 @@ class LLMConfig:
             futures_stop_loss_pt=futures_config.get("stop_loss_pt", 3.0),
             futures_take_profit_pt=futures_config.get("take_profit_pt", 6.0),
             futures_tick_stream=futures_config.get("tick_stream", "raw_data"),
-            futures_tick_lookback_seconds=futures_config.get("tick_lookback_seconds", 600),
+            futures_tick_lookback_seconds=futures_config.get(
+                "tick_lookback_seconds", 600
+            ),
             futures_tick_max=futures_config.get("tick_max", 2000),
             futures_tick_symbol=futures_config.get("tick_symbol", ""),
             # KRX API 설정

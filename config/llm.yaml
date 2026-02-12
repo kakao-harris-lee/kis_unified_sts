@@ -31,7 +31,6 @@ stock:
   # 주식 스크리닝 필터
   markets: ["KOSPI"]        # ["KOSPI", "KOSDAQ"] 로 확장 가능
   min_price: 5000           # 최소 주가 (원)
-  max_price: 500000         # 최대 주가 (원)
   min_market_cap: 500000000000    # 최소 시가총액 (5000억)
   max_market_cap: 100000000000000 # 최대 시가총액 (100조)
   top_n_volume: 20          # 거래량 상위 N개 분석
@@ -39,8 +38,9 @@ stock:
   backtest_days: 60         # 백테스트 기간 (일)
   history_days: 252         # 스크리닝용 히스토리 기간 (일)
   min_history_days: 90      # 최소 필요 히스토리 (일)
+  new_listing_min_days: 20  # 신규 상장 최소 일수 (미만 제외)
+  new_listing_penalty: 0.7  # 신규 상장 스코어 계수
   volume_lookback_days: 20  # 거래량 평균 계산 기간 (일)
-  min_avg_volume: 100000    # 최소 평균 거래량 (유동성 필터)
   min_trade_value: 500000000   # 최소 거래대금 (5억)
   min_turnover: 0.003          # 거래대금/시가총액 최소 비율
   momentum_lookback_days: 252  # 모멘텀/52주 고점 기준
@@ -56,6 +56,8 @@ stock:
   risk_keywords: ["유상증자", "전환사채", "CB", "BW", "불성실공시", "감사의견", "실적부진"]
   exclude_name_keywords: ["스팩", "SPAC", "리츠", "REIT"]
   exclude_preferred_shares: true
+  enable_kis_target_price: true    # KIS 종목투자의견(목표가) 반영
+  target_lookback_days: 180        # 목표가 조회 기간
 
   # 스코어 가중치
   score_weight_momentum: 0.35
@@ -63,7 +65,14 @@ stock:
   score_weight_backtest: 0.20
   score_weight_news: 0.10
   score_weight_liquidity: 0.10
+  score_weight_target_price: 0.10
   score_weight_risk: 0.10
+
+  # LLM Scoring (confidence factor)
+  llm_scoring_enabled: true
+  llm_scoring_model: ""              # 빈 값 = 기본 모델 사용
+  llm_scoring_max_tokens: 500
+  llm_scoring_temperature: 0.2
 
 futures:
   # 선물 분석 가중치
