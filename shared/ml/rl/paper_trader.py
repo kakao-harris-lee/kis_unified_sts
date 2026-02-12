@@ -140,6 +140,11 @@ class RLPaperTrader:
         # Main event loop reference (set in run())
         self._main_loop: asyncio.AbstractEventLoop | None = None
 
+        # Monitoring (lazy init in run())
+        self._state_publisher: Any = None
+        self._metrics: Any = None
+        self._entry_time: datetime | None = None
+
     async def _get_notifier(self):
         """Telegram notifier (lazy init)"""
         if self._notifier is None and self.telegram_enabled:
@@ -156,6 +161,160 @@ class RLPaperTrader:
                 await notifier.send(message)
             except Exception as e:
                 logger.warning(f"Telegram send failed: {e}")
+
+    # =========================================================================
+    # Monitoring: Redis state publisher + Prometheus
+    # =========================================================================
+
+    def _init_monitoring(self) -> None:
+        """Init Redis state publisher + Prometheus metrics."""
+        try:
+            from shared.streaming.trading_state import TradingStatePublisher
+
+            self._state_publisher = TradingStatePublisher("futures")
+            logger.info("Redis state publisher initialized for futures")
+        except Exception as e:
+            logger.warning(f"Redis state publisher init failed: {e}")
+
+        try:
+            from services.monitoring.metrics import MetricsCollector
+
+            self._metrics = MetricsCollector()
+            self._metrics.start_prometheus_server(port=9092)
+            logger.info("Prometheus metrics server started on port 9092")
+        except Exception as e:
+            logger.warning(f"Prometheus metrics init failed: {e}")
+
+    def _publish_status(self, state: str = "running") -> None:
+        """Publish current status to Redis."""
+        if not self._state_publisher:
+            return
+        s = self.state
+        self._state_publisher.publish_status({
+            "state": state,
+            "config": {
+                "strategy": "rl_mppo",
+                "asset_class": "futures",
+                "symbol": self.symbol,
+            },
+            "stats": {
+                "total_pnl": s.total_pnl,
+                "trades": s.n_trades,
+                "wins": s.wins,
+                "losses": s.losses,
+                "start_time": datetime.now(KST).isoformat(),
+            },
+            "strategies": {"strategies": ["rl_mppo"]},
+            "positions": {
+                "open_positions": 1 if s.position != PositionSide.FLAT else 0,
+            },
+        })
+
+    def _publish_position_update(self) -> None:
+        """Publish current position to Redis (real-time unrealized PnL)."""
+        if not self._state_publisher:
+            return
+        if self.state.position == PositionSide.FLAT:
+            return
+
+        unrealized = self._get_unrealized_pnl()
+        cfg = self.env_config
+        entry_val = self.state.entry_price * cfg.contract_multiplier * self.state.contracts
+        pnl_pct = (unrealized / entry_val * 100) if entry_val > 0 else 0.0
+
+        pos_id = f"rl_{self.symbol}"
+        self._state_publisher.publish_raw_position(pos_id, {
+            "id": pos_id,
+            "code": self.symbol,
+            "name": "KOSPI200 선물",
+            "side": "long" if self.state.position == PositionSide.LONG else "short",
+            "quantity": self.state.contracts,
+            "entry_price": self.state.entry_price,
+            "current_price": self.state.current_price,
+            "unrealized_pnl": unrealized,
+            "pnl_pct": round(pnl_pct, 2),
+            "entry_time": self._entry_time.isoformat() if self._entry_time else datetime.now(KST).isoformat(),
+            "strategy": "rl_mppo",
+            "state": "OPEN",
+        })
+
+    def _publish_entry(self, side: str, price: float) -> None:
+        """Publish entry signal + position to Redis + Prometheus."""
+        self._entry_time = datetime.now(KST)
+        now_str = self._entry_time.isoformat()
+
+        if self._state_publisher:
+            pos_id = f"rl_{self.symbol}"
+            self._state_publisher.publish_raw_position(pos_id, {
+                "id": pos_id,
+                "code": self.symbol,
+                "name": "KOSPI200 선물",
+                "side": side.lower(),
+                "quantity": self.state.contracts,
+                "entry_price": price,
+                "current_price": price,
+                "unrealized_pnl": 0.0,
+                "pnl_pct": 0.0,
+                "entry_time": now_str,
+                "strategy": "rl_mppo",
+                "state": "OPEN",
+            })
+            self._state_publisher.publish_raw_signal({
+                "symbol": self.symbol,
+                "name": "KOSPI200 선물",
+                "side": "entry",
+                "signal_type": "entry",
+                "strategy": "rl_mppo",
+                "price": price,
+                "confidence": 1.0,
+                "timestamp": now_str,
+                "executed": True,
+            })
+
+        if self._metrics:
+            self._metrics.record_signal("entry", strategy="rl_mppo")
+            self._metrics.record_position_change(1)
+
+    def _publish_exit(self, side: str, entry_price: float, exit_price: float, pnl: float) -> None:
+        """Publish exit signal + trade to Redis + Prometheus."""
+        now_str = datetime.now(KST).isoformat()
+        cfg = self.env_config
+        entry_val = entry_price * cfg.contract_multiplier * self.state.contracts
+        pnl_pct = (pnl / entry_val * 100) if entry_val > 0 else 0.0
+
+        if self._state_publisher:
+            pos_id = f"rl_{self.symbol}"
+            self._state_publisher.remove_position(pos_id)
+            self._state_publisher.publish_raw_trade({
+                "id": f"rl_{int(time.time())}",
+                "symbol": self.symbol,
+                "name": "KOSPI200 선물",
+                "side": side.lower(),
+                "quantity": self.state.contracts,
+                "entry_price": entry_price,
+                "exit_price": exit_price,
+                "pnl": pnl,
+                "pnl_pct": round(pnl_pct, 2),
+                "strategy": "rl_mppo",
+                "entry_time": self._entry_time.isoformat() if self._entry_time else now_str,
+                "exit_time": now_str,
+            })
+            self._state_publisher.publish_raw_signal({
+                "symbol": self.symbol,
+                "name": "KOSPI200 선물",
+                "side": "exit",
+                "signal_type": "exit",
+                "strategy": "rl_mppo",
+                "price": exit_price,
+                "confidence": 1.0,
+                "timestamp": now_str,
+                "executed": True,
+            })
+
+        if self._metrics:
+            self._metrics.record_trade(pnl=pnl, win=(pnl > 0), strategy="rl_mppo")
+            self._metrics.record_signal("exit", strategy="rl_mppo")
+            self._metrics.record_position_change(0)
 
     # =========================================================================
     # Warmup: ClickHouse에서 과거 분봉 로드
@@ -382,6 +541,7 @@ class RLPaperTrader:
             self.state.entry_price = price
             cost = price * cfg.contract_multiplier * cfg.commission_rate
             self.state.total_pnl -= cost
+            self._publish_entry("long", price)
 
             await self._notify(
                 f"<b>🔵 LONG 진입</b>\n"
@@ -398,6 +558,7 @@ class RLPaperTrader:
             ) - cost
             self.state.total_pnl += pnl
             self._record_trade(pnl, "LONG", price)
+            self._publish_exit("LONG", self.state.entry_price, price, pnl)
 
             await self._notify(
                 f"<b>🔵 LONG 청산</b>\n"
@@ -413,6 +574,7 @@ class RLPaperTrader:
             self.state.entry_price = price
             cost = price * cfg.contract_multiplier * cfg.commission_rate
             self.state.total_pnl -= cost
+            self._publish_entry("short", price)
 
             await self._notify(
                 f"<b>🔴 SHORT 진입</b>\n"
@@ -429,6 +591,7 @@ class RLPaperTrader:
             ) - cost
             self.state.total_pnl += pnl
             self._record_trade(pnl, "SHORT", price)
+            self._publish_exit("SHORT", self.state.entry_price, price, pnl)
 
             await self._notify(
                 f"<b>🔴 SHORT 청산</b>\n"
@@ -557,6 +720,9 @@ class RLPaperTrader:
             f"time={now.strftime('%H:%M:%S')}"
         )
 
+        # 0. Monitoring (Redis + Prometheus)
+        self._init_monitoring()
+
         # 시작 알림
         await self._notify(
             f"<b>🤖 RL Paper Trader 시작</b>\n"
@@ -564,6 +730,9 @@ class RLPaperTrader:
             f"모델: MaskablePPO (Phase 4 best)\n"
             f"시각: {now.strftime('%H:%M:%S')}"
         )
+
+        # Publish initial status
+        self._publish_status("running")
 
         # 1. Warmup (ClickHouse 과거 데이터)
         warmup_count = self._load_warmup_bars()
@@ -602,6 +771,11 @@ class RLPaperTrader:
             await self._force_close()
             await self._send_daily_summary()
 
+            # Publish final status + clear positions
+            if self._state_publisher:
+                self._state_publisher.remove_position(f"rl_{self.symbol}")
+                self._publish_status("stopped")
+
             # WebSocket 종료
             if self._ws_adapter:
                 self._ws_adapter.disconnect()
@@ -621,8 +795,10 @@ class RLPaperTrader:
                 logger.error(f"WebSocket subscribe error: {e}")
 
     async def _session_loop(self) -> None:
-        """세션 루프 — 강제 청산 시각까지 대기"""
+        """세션 루프 — 강제 청산 시각까지 대기 + periodic monitoring publish"""
         h, m = map(int, self.force_close_time.split(":"))
+        last_status_publish = 0.0
+        last_position_publish = 0.0
 
         while not self._stop_event.is_set():
             now = datetime.now(KST)
@@ -631,6 +807,17 @@ class RLPaperTrader:
             if now.hour > h or (now.hour == h and now.minute >= m):
                 logger.info(f"Force close time reached: {self.force_close_time}")
                 break
+
+            # Periodic status publish (every 5s)
+            mono = time.monotonic()
+            if mono - last_status_publish >= 5.0:
+                self._publish_status("running")
+                last_status_publish = mono
+
+            # Periodic position update (every 2s)
+            if mono - last_position_publish >= 2.0:
+                self._publish_position_update()
+                last_position_publish = mono
 
             # 1초마다 체크
             await asyncio.sleep(1)
