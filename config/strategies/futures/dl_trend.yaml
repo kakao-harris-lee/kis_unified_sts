@@ -4,7 +4,7 @@
 strategy:
   name: dl_trend
   asset_class: futures
-  enabled: true
+  enabled: false  # DEPRECATED: 선물은 RL paper trader (rl_mppo)로 전환 (2026-02-12). CNN-LSTM 모델 미배포.
   description: "Deep Learning Trend Following with Ensemble Filter"
 
   entry:
