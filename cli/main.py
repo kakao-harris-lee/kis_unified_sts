@@ -132,8 +132,9 @@ def backtest_run(
         sts backtest run -s bb_reversion -a stock -d ./data/005930.csv --track
     """
     from shared.backtest import BacktestConfig, BacktestEngine, MLflowTracker
+    from shared.backtest.adapter import BacktestStrategyAdapter
     from shared.config.loader import ConfigLoader
-    from shared.strategy.registry import StrategyFactory
+    from shared.strategy.registry import StrategyFactory, register_builtin_components
     from shared.validation.cli_validators import (
         validate_csv_file,
         validate_capital,
@@ -141,6 +142,8 @@ def backtest_run(
     )
 
     click.echo(f"Running backtest: {strategy} ({asset})")
+
+    register_builtin_components()
 
     # 자본금 검증
     try:
@@ -192,8 +195,11 @@ def backtest_run(
         click.echo(f"Error creating strategy: {e}", err=True)
         sys.exit(1)
 
+    # 어댑터로 감싸기 (TradingStrategy → StrategyProtocol)
+    adapted = BacktestStrategyAdapter(trading_strategy, strategy_config)
+
     # 백테스트 실행
-    engine = BacktestEngine(trading_strategy, config)
+    engine = BacktestEngine(adapted, config)
     result = engine.run(df)
 
     # 결과 출력

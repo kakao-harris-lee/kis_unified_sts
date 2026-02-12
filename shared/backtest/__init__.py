@@ -23,6 +23,7 @@ from shared.backtest.config import (
     CostConfig,
     RiskConfig,
 )
+from shared.backtest.adapter import BacktestStrategyAdapter
 from shared.backtest.engine import BacktestEngine
 from shared.backtest.mlflow_tracker import (
     MLflowTracker,
@@ -44,6 +45,8 @@ __all__ = [
     "RiskConfig",
     # Engine
     "BacktestEngine",
+    # Adapter
+    "BacktestStrategyAdapter",
     # MLflow
     "MLflowTracker",
     "track_backtest",
