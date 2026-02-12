@@ -173,15 +173,18 @@ if TORCH_AVAILABLE:
             return logits
 
 else:
+    def _raise_torch_required() -> None:
+        raise ImportError("PyTorch is required. Install with: pip install torch>=2.0")
+
     # Dummy classes when PyTorch not available
     class TradingLSTM:
         """Placeholder when PyTorch not available"""
 
         def __init__(self, *_args, **_kwargs):
-            raise ImportError("PyTorch is required. Install with: pip install torch>=2.0")
+            _raise_torch_required()
 
     class TradingCNNLSTM:
         """Placeholder when PyTorch not available"""
 
         def __init__(self, *_args, **_kwargs):
-            raise ImportError("PyTorch is required. Install with: pip install torch>=2.0")
+            _raise_torch_required()

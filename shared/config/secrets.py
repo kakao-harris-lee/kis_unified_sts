@@ -52,6 +52,31 @@ class SecretsManager:
             logger.debug(f"Secret {key} not found in environment")
         return value
 
+    @classmethod
+    def _domain_fallback(
+        cls,
+        domain: Optional[Domain],
+        domain_key_map: dict[str, str],
+        legacy_key: str,
+    ) -> Optional[str]:
+        """Return domain-specific secret with legacy fallback."""
+        if domain and domain in domain_key_map:
+            return cls.get(domain_key_map[domain]) or cls.get(legacy_key)
+        return cls.get(legacy_key)
+
+    @classmethod
+    def _domain_value(
+        cls,
+        domain: Optional[Domain],
+        domain_key_map: dict[str, str],
+        legacy_key: str,
+        default: str,
+    ) -> str:
+        """Return domain-specific value with default."""
+        if domain and domain in domain_key_map:
+            return cls.get(domain_key_map[domain], default)
+        return cls.get(legacy_key, default)
+
     # =========================================================================
     # Telegram
     # =========================================================================
@@ -63,13 +88,15 @@ class SecretsManager:
         Args:
             domain: "stock", "futures", "briefing", or None for legacy
         """
-        if domain == "stock":
-            return cls.get("TELEGRAM_STOCK_BOT_TOKEN") or cls.get("TELEGRAM_BOT_TOKEN")
-        elif domain == "futures":
-            return cls.get("TELEGRAM_FUTURES_BOT_TOKEN") or cls.get("TELEGRAM_BOT_TOKEN")
-        elif domain == "briefing":
-            return cls.get("TELEGRAM_BRIEFING_BOT_TOKEN") or cls.get("TELEGRAM_BOT_TOKEN")
-        return cls.get("TELEGRAM_BOT_TOKEN")
+        return cls._domain_fallback(
+            domain,
+            {
+                "stock": "TELEGRAM_STOCK_BOT_TOKEN",
+                "futures": "TELEGRAM_FUTURES_BOT_TOKEN",
+                "briefing": "TELEGRAM_BRIEFING_BOT_TOKEN",
+            },
+            "TELEGRAM_BOT_TOKEN",
+        )
 
     @classmethod
     def telegram_chat_id(cls, domain: Optional[Domain] = None) -> Optional[str]:
@@ -78,13 +105,15 @@ class SecretsManager:
         Args:
             domain: "stock", "futures", "briefing", or None for legacy
         """
-        if domain == "stock":
-            return cls.get("TELEGRAM_STOCK_CHAT_ID") or cls.get("TELEGRAM_CHAT_ID")
-        elif domain == "futures":
-            return cls.get("TELEGRAM_FUTURES_CHAT_ID") or cls.get("TELEGRAM_CHAT_ID")
-        elif domain == "briefing":
-            return cls.get("TELEGRAM_BRIEFING_CHAT_ID") or cls.get("TELEGRAM_CHAT_ID")
-        return cls.get("TELEGRAM_CHAT_ID")
+        return cls._domain_fallback(
+            domain,
+            {
+                "stock": "TELEGRAM_STOCK_CHAT_ID",
+                "futures": "TELEGRAM_FUTURES_CHAT_ID",
+                "briefing": "TELEGRAM_BRIEFING_CHAT_ID",
+            },
+            "TELEGRAM_CHAT_ID",
+        )
 
     # =========================================================================
     # KIS API
@@ -97,11 +126,14 @@ class SecretsManager:
         Args:
             domain: "stock", "futures", or None for legacy
         """
-        if domain == "stock":
-            return cls.get("KIS_STOCK_APP_KEY") or cls.get("KIS_APP_KEY")
-        elif domain == "futures":
-            return cls.get("KIS_FUTURES_APP_KEY") or cls.get("KIS_APP_KEY")
-        return cls.get("KIS_APP_KEY")
+        return cls._domain_fallback(
+            domain,
+            {
+                "stock": "KIS_STOCK_APP_KEY",
+                "futures": "KIS_FUTURES_APP_KEY",
+            },
+            "KIS_APP_KEY",
+        )
 
     @classmethod
     def kis_app_secret(cls, domain: Optional[Domain] = None) -> Optional[str]:
@@ -110,11 +142,14 @@ class SecretsManager:
         Args:
             domain: "stock", "futures", or None for legacy
         """
-        if domain == "stock":
-            return cls.get("KIS_STOCK_APP_SECRET") or cls.get("KIS_APP_SECRET")
-        elif domain == "futures":
-            return cls.get("KIS_FUTURES_APP_SECRET") or cls.get("KIS_APP_SECRET")
-        return cls.get("KIS_APP_SECRET")
+        return cls._domain_fallback(
+            domain,
+            {
+                "stock": "KIS_STOCK_APP_SECRET",
+                "futures": "KIS_FUTURES_APP_SECRET",
+            },
+            "KIS_APP_SECRET",
+        )
 
     @classmethod
     def kis_account_no(cls, domain: Optional[Domain] = None) -> Optional[str]:
@@ -123,11 +158,14 @@ class SecretsManager:
         Args:
             domain: "stock", "futures", or None for legacy
         """
-        if domain == "stock":
-            return cls.get("KIS_STOCK_ACCOUNT_NO") or cls.get("KIS_ACCOUNT_NO")
-        elif domain == "futures":
-            return cls.get("KIS_FUTURES_ACCOUNT_NO") or cls.get("KIS_ACCOUNT_NO")
-        return cls.get("KIS_ACCOUNT_NO")
+        return cls._domain_fallback(
+            domain,
+            {
+                "stock": "KIS_STOCK_ACCOUNT_NO",
+                "futures": "KIS_FUTURES_ACCOUNT_NO",
+            },
+            "KIS_ACCOUNT_NO",
+        )
 
     @classmethod
     def kis_market(cls, domain: Optional[Domain] = None) -> str:
@@ -136,11 +174,15 @@ class SecretsManager:
         Args:
             domain: "stock", "futures", or None for legacy
         """
-        if domain == "stock":
-            return cls.get("KIS_STOCK_MARKET", "mock")
-        elif domain == "futures":
-            return cls.get("KIS_FUTURES_MARKET", "mock")
-        return cls.get("KIS_MARKET", "mock")
+        return cls._domain_value(
+            domain,
+            {
+                "stock": "KIS_STOCK_MARKET",
+                "futures": "KIS_FUTURES_MARKET",
+            },
+            "KIS_MARKET",
+            "mock",
+        )
 
     # =========================================================================
     # Database
@@ -175,11 +217,15 @@ class SecretsManager:
         Args:
             domain: "stock", "futures", or None for default
         """
-        if domain == "stock":
-            return cls.get("CLICKHOUSE_STOCK_DATABASE", "market")
-        elif domain == "futures":
-            return cls.get("CLICKHOUSE_FUTURES_DATABASE", "kospi")
-        return cls.get("CLICKHOUSE_DATABASE", "default")
+        return cls._domain_value(
+            domain,
+            {
+                "stock": "CLICKHOUSE_STOCK_DATABASE",
+                "futures": "CLICKHOUSE_FUTURES_DATABASE",
+            },
+            "CLICKHOUSE_DATABASE",
+            "default",
+        )
 
     # =========================================================================
     # LLM

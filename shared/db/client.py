@@ -96,6 +96,60 @@ SCHEMAS = {
 }
 
 
+def _daily_candle_to_tuple(candle: DailyCandle) -> tuple:
+    return (
+        candle.code,
+        candle.date,
+        candle.open,
+        candle.high,
+        candle.low,
+        candle.close,
+        candle.volume,
+        candle.value,
+        candle.change_rate,
+    )
+
+
+def _minute_candle_to_tuple(candle: MinuteCandle) -> tuple:
+    return (
+        candle.code,
+        candle.datetime,
+        candle.open,
+        candle.high,
+        candle.low,
+        candle.close,
+        candle.volume,
+        candle.value,
+    )
+
+
+def _daily_candle_from_row(row: tuple) -> DailyCandle:
+    return DailyCandle(
+        code=row[0],
+        date=row[1],
+        open=row[2],
+        high=row[3],
+        low=row[4],
+        close=row[5],
+        volume=row[6],
+        value=row[7],
+        change_rate=row[8],
+    )
+
+
+def _minute_candle_from_row(row: tuple) -> MinuteCandle:
+    return MinuteCandle(
+        code=row[0],
+        datetime=row[1],
+        open=row[2],
+        high=row[3],
+        low=row[4],
+        close=row[5],
+        volume=row[6],
+        value=row[7],
+    )
+
+
 class ClickHouseClient:
     """Thread-safe singleton ClickHouse client.
 
@@ -211,11 +265,7 @@ class ClickHouseClient:
             return 0
         try:
             client = self.get_sync_client()
-            data = [
-                (c.code, c.date, c.open, c.high, c.low, c.close,
-                 c.volume, c.value, c.change_rate)
-                for c in candles
-            ]
+            data = [_daily_candle_to_tuple(c) for c in candles]
             client.execute(
                 f"INSERT INTO {self.config.database}.daily_candles "
                 "(code, date, open, high, low, close, volume, value, change_rate) VALUES",
@@ -243,13 +293,7 @@ class ClickHouseClient:
                 """,
                 {"code": code, "start": start_date, "end": end_date}
             )
-            return [
-                DailyCandle(
-                    code=r[0], date=r[1], open=r[2], high=r[3],
-                    low=r[4], close=r[5], volume=r[6], value=r[7], change_rate=r[8]
-                )
-                for r in result
-            ]
+            return [_daily_candle_from_row(r) for r in result]
         except Exception as e:
             logger.error(f"Failed to get daily candles: {e}")
             return []
@@ -259,10 +303,7 @@ class ClickHouseClient:
             return 0
         try:
             client = self.get_sync_client()
-            data = [
-                (c.code, c.datetime, c.open, c.high, c.low, c.close, c.volume, c.value)
-                for c in candles
-            ]
+            data = [_minute_candle_to_tuple(c) for c in candles]
             client.execute(
                 f"INSERT INTO {self.config.database}.minute_candles "
                 "(code, datetime, open, high, low, close, volume, value) VALUES",
@@ -285,13 +326,7 @@ class ClickHouseClient:
                 """,
                 {"code": code, "start": start, "end": end}
             )
-            return [
-                MinuteCandle(
-                    code=r[0], datetime=r[1], open=r[2], high=r[3],
-                    low=r[4], close=r[5], volume=r[6], value=r[7]
-                )
-                for r in result
-            ]
+            return [_minute_candle_from_row(r) for r in result]
         except Exception as e:
             logger.error(f"Failed to get minute candles: {e}")
             return []
@@ -383,11 +418,7 @@ class AsyncClickHouseClient:
         try:
             client = await self.get_client()
             # aiochclient uses *args for values
-            data = [
-                (c.code, c.date, c.open, c.high, c.low, c.close,
-                 c.volume, c.value, c.change_rate)
-                for c in candles
-            ]
+            data = [_daily_candle_to_tuple(c) for c in candles]
             await client.execute(
                 f"INSERT INTO {self.config.database}.daily_candles "
                 "(code, date, open, high, low, close, volume, value, change_rate) VALUES",
@@ -411,13 +442,7 @@ class AsyncClickHouseClient:
                 """,
                 {"code": code, "start": start, "end": end}
             )
-            return [
-                DailyCandle(
-                    code=r[0], date=r[1], open=r[2], high=r[3],
-                    low=r[4], close=r[5], volume=r[6], value=r[7], change_rate=r[8]
-                )
-                for r in result
-            ]
+            return [_daily_candle_from_row(r) for r in result]
         except Exception as e:
             logger.error(f"Async get daily failed: {e}")
             return []
@@ -427,10 +452,7 @@ class AsyncClickHouseClient:
             return 0
         try:
             client = await self.get_client()
-            data = [
-                (c.code, c.datetime, c.open, c.high, c.low, c.close, c.volume, c.value)
-                for c in candles
-            ]
+            data = [_minute_candle_to_tuple(c) for c in candles]
             await client.execute(
                 f"INSERT INTO {self.config.database}.minute_candles "
                 "(code, datetime, open, high, low, close, volume, value) VALUES",
@@ -453,13 +475,7 @@ class AsyncClickHouseClient:
                 """,
                 {"code": code, "start": start, "end": end}
             )
-            return [
-                MinuteCandle(
-                    code=r[0], datetime=r[1], open=r[2], high=r[3],
-                    low=r[4], close=r[5], volume=r[6], value=r[7]
-                )
-                for r in result
-            ]
+            return [_minute_candle_from_row(r) for r in result]
         except Exception as e:
             logger.error(f"Async get minute failed: {e}")
             return []
