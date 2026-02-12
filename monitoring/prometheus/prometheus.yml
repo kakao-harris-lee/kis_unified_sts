@@ -7,14 +7,6 @@ global:
   external_labels:
     monitor: 'kis-unified-sts'
 
-# Alertmanager 설정 (선택)
-# alerting:
-#   alertmanagers:
-#     - static_configs:
-#         - targets:
-#           - alertmanager:9093
-
-# 규칙 파일 (선택)
 rule_files:
   - "alert_rules.yml"
 
@@ -23,23 +15,17 @@ scrape_configs:
   - job_name: 'prometheus'
     static_configs:
       - targets: ['localhost:9090']
-    metrics_path: /metrics
 
-  # KIS Trading API 메트릭
+  # KIS Trading API 메트릭 (호스트에서 실행 중)
   - job_name: 'kis-trading-api'
     static_configs:
-      - targets: ['app:8000']
+      - targets: ['host.docker.internal:8000']
     metrics_path: /metrics
     scrape_interval: 5s
     scrape_timeout: 5s
     honor_labels: true
 
-  # Redis 메트릭 (선택 - Redis Exporter 사용 시)
-  # - job_name: 'redis'
-  #   static_configs:
-  #     - targets: ['redis-exporter:9121']
-
-  # Node Exporter (시스템 메트릭, 선택)
-  # - job_name: 'node'
-  #   static_configs:
-  #     - targets: ['node-exporter:9100']
+  # Redis 메트릭 (Redis Exporter)
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis-exporter:9121']

@@ -136,13 +136,13 @@ class TestParseFuturesTrade:
 
     def test_short_fields_returns_none(self):
         """Test insufficient fields returns None."""
-        data = "^".join([""] * 5)  # Only 5 fields, need 15
+        data = "^".join([""] * 5)  # Only 5 fields, need 19
         result = parse_futures_trade("101V01", data, time.time())
         assert result is None
 
     def test_empty_ohlc_fields(self):
         """Test empty OHLC fields are None."""
-        data = "^".join([""] * 15)
+        data = "^".join([""] * 19)
         result = parse_futures_trade("101V01", data, time.time())
 
         assert result is not None
@@ -153,8 +153,8 @@ class TestParseFuturesTrade:
 
     def test_partial_data(self):
         """Test parsing with only some fields populated."""
-        fields = [""] * 15
-        fields[2] = "330.00"  # Only current price
+        fields = [""] * 19
+        fields[5] = "330.00"  # Only current price
         data = "^".join(fields)
 
         result = parse_futures_trade("101V01", data, time.time())
@@ -175,8 +175,8 @@ class TestEdgeCases:
         assert result is not None
 
     def test_exact_minimum_fields_trade(self):
-        """Test exactly 15 fields for trade."""
-        data = "^".join(["1"] * 15)
+        """Test exactly 19 fields for trade."""
+        data = "^".join(["1"] * 19)
         result = parse_futures_trade("101V01", data, time.time())
         assert result is not None
 
@@ -199,9 +199,9 @@ class TestEdgeCases:
 
     def test_zero_values(self):
         """Test zero values are handled correctly."""
-        fields = [""] * 15
-        fields[2] = "0"  # current_price = 0
-        fields[11] = "0"  # tick_volume = 0
+        fields = [""] * 19
+        fields[5] = "0"  # current_price = 0
+        fields[9] = "0"  # tick_volume = 0
         data = "^".join(fields)
 
         result = parse_futures_trade("101V01", data, time.time())

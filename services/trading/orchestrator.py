@@ -47,6 +47,7 @@ from services.trading.holiday_cache import (
 )
 from services.monitoring.metrics import get_metrics_collector
 from shared.models.signal import Signal, ExitSignal
+from shared.config.loader import ConfigLoader
 from shared.strategy.base import EntryContext
 from shared.utils.calc import calc_order_quantity
 
@@ -467,6 +468,9 @@ class TradingOrchestrator:
         # Streaming indicator engine (initialized in _initialize_components)
         self._indicator_engine: Any | None = None
 
+        # WebSocket stock price feed (initialized in _initialize_components)
+        self._stock_price_feed: Any | None = None
+
         # Universe refresh from screener
         self._universe_refresh_task: asyncio.Task | None = None
         self._universe_refresh_interval = 30.0  # seconds
@@ -525,7 +529,7 @@ class TradingOrchestrator:
 
     async def _initialize_components(self):
         """Initialize trading components"""
-        # Initialize KIS Client
+        # Initialize KIS Client (REST API — used for prewarm + fallback)
         try:
             from shared.kis.auth import KISAuthConfig
             from shared.kis.client import KISClient
@@ -537,11 +541,45 @@ class TradingOrchestrator:
             logger.warning(f"Failed to initialize KIS Client: {e}")
             self._kis_client = None
 
+        # WebSocket price feed for stock (replaces REST polling)
+        self._stock_price_feed = None
+        data_source = None
+        if self.config.asset_class == "stock" and self._kis_client:
+            try:
+                from shared.kis.stock_feed import KISStockPriceFeed
+
+                self._stock_price_feed = KISStockPriceFeed(
+                    config=kis_config,
+                    fallback_client=self._kis_client,
+                )
+                data_source = self._stock_price_feed
+                logger.info("Stock WebSocket price feed initialized")
+            except Exception as e:
+                logger.warning(f"Stock WebSocket feed init failed: {e}")
+
         # Data provider
+        # With WebSocket: cache_ttl can be short (data is push-based, instant)
+        # Without WebSocket (futures/fallback): keep original TTL
+        try:
+            dp_cfg = ConfigLoader.load("streaming.yaml").get("data_provider", {})
+        except Exception:
+            dp_cfg = {}
+        if data_source:
+            cache_ttl = float(dp_cfg.get("cache_ttl_websocket", 2.0))
+        else:
+            if self.config.asset_class == "stock":
+                cache_ttl = float(dp_cfg.get("cache_ttl_stock", 30.0))
+            else:
+                cache_ttl = float(dp_cfg.get("cache_ttl_futures", 5.0))
+        stagger_delay = float(dp_cfg.get("stagger_delay", 0.1))
         self._data_provider = MarketDataProvider(
             symbols=self.config.symbols,
-            config=DataProviderConfig(cache_ttl_seconds=1.0),
-            kis_client=self._kis_client,
+            config=DataProviderConfig(
+                cache_ttl_seconds=cache_ttl,
+                stagger_delay_seconds=stagger_delay,
+            ),
+            kis_client=self._kis_client if not data_source else None,
+            data_source=data_source,
         )
 
         # Strategy manager
@@ -762,6 +800,10 @@ class TradingOrchestrator:
                 old_symbols = set(self.config.symbols)
                 self._refresh_universe_from_screener()
                 new_symbols = set(self.config.symbols) - old_symbols
+
+                # Update WebSocket subscriptions to match new universe
+                if self._stock_price_feed:
+                    self._stock_price_feed.update_symbols(self.config.symbols)
 
                 # Pre-warm new symbols (fire-and-forget to not block refresh)
                 if new_symbols and self._indicator_engine and self._kis_client:
@@ -1008,6 +1050,19 @@ class TradingOrchestrator:
 
         self._market_data_running = True
 
+        # Start WebSocket price feed (if available)
+        if self._stock_price_feed:
+            try:
+                await self._stock_price_feed.start()
+                self._stock_price_feed.update_symbols(self.config.symbols)
+                logger.info(
+                    f"Stock WebSocket feed started, "
+                    f"{self._stock_price_feed.symbol_count} symbols subscribed"
+                )
+            except Exception as e:
+                logger.warning(f"Stock WebSocket feed start failed: {e}")
+                self._stock_price_feed = None
+
         # Pre-warm indicators FIRST (exclusive API access, no rate conflicts)
         if self._indicator_engine and self._kis_client and self.config.symbols:
             await self._prewarm_symbols(self.config.symbols[:20])
@@ -1042,6 +1097,14 @@ class TradingOrchestrator:
             return
 
         self._market_data_running = False
+
+        # Stop WebSocket price feed
+        if self._stock_price_feed:
+            try:
+                await self._stock_price_feed.stop()
+            except Exception as e:
+                logger.warning(f"Stock price feed stop error: {e}")
+
         if self._universe_refresh_task:
             self._universe_refresh_task.cancel()
             await asyncio.gather(self._universe_refresh_task, return_exceptions=True)

@@ -6,27 +6,79 @@ Implements MarketDataSource protocol for integration with MarketDataProvider.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import os
 import time
 from typing import Any
 
 import aiohttp
 
+from shared.config.loader import ConfigLoader
 from shared.http import AsyncSessionMixin
 from shared.kis.auth import KISAuthConfig, KISAuthManager
 
 logger = logging.getLogger(__name__)
 
-# Default timeout for KIS API requests (seconds)
-_DEFAULT_REQUEST_TIMEOUT = 10.0
+
+def _load_rate_limiter_config() -> dict[str, Any]:
+    """Load rate_limiter section from config/streaming.yaml."""
+    try:
+        cfg = ConfigLoader.load("streaming.yaml")
+        return cfg.get("rate_limiter", {})
+    except Exception:
+        logger.warning("[KISClient] Failed to load rate limiter config, using defaults")
+        return {}
+
+
+_rl_cfg = _load_rate_limiter_config()
+_DEFAULT_REQUEST_TIMEOUT = float(_rl_cfg.get("request_timeout", 10.0))
+_DEFAULT_RATE_LIMIT = int(_rl_cfg.get("default_rate", 5))
+_RATE_LIMIT_PENALTY = float(_rl_cfg.get("penalty_seconds", 1.0))
+
+
+class _RateLimiter:
+    """Fixed-interval rate limiter with adaptive backoff for KIS API.
+
+    Enforces a minimum interval (1/rate) between consecutive requests.
+    On rate limit errors, adds a penalty cooldown to back off.
+    """
+
+    def __init__(self, max_requests: int, window_seconds: float = 1.0):
+        self._interval = window_seconds / max_requests
+        self._last_request = 0.0
+        self._penalty_until = 0.0
+        self._lock = asyncio.Lock()
+
+    async def acquire(self):
+        """Wait until the next request slot is available."""
+        async with self._lock:
+            now = time.monotonic()
+
+            # Respect penalty cooldown from rate limit errors
+            if now < self._penalty_until:
+                await asyncio.sleep(self._penalty_until - now)
+                now = time.monotonic()
+
+            elapsed = now - self._last_request
+            if elapsed < self._interval:
+                await asyncio.sleep(self._interval - elapsed)
+            self._last_request = time.monotonic()
+
+    def penalty(self, seconds: float = _RATE_LIMIT_PENALTY):
+        """Add a cooldown penalty after receiving a rate limit error."""
+        self._penalty_until = time.monotonic() + seconds
 
 
 class KISClient(AsyncSessionMixin):
-    """KIS API Client wrapper."""
+    """KIS API Client wrapper with built-in rate limiting."""
 
     def __init__(self, config: KISAuthConfig):
         self.config = config
         self.auth_manager = KISAuthManager.get_instance(config)
+        rate_limit = int(os.environ.get("KIS_API_RATE_LIMIT", str(_DEFAULT_RATE_LIMIT)))
+        self._rate_limiter = _RateLimiter(max_requests=rate_limit)
+        logger.info(f"[KISClient] Rate limiter: {rate_limit} req/s")
 
     async def close(self):
         """Close the session."""
@@ -37,6 +89,7 @@ class KISClient(AsyncSessionMixin):
 
         Implements MarketDataSource protocol.
         """
+        await self._rate_limiter.acquire()
         try:
             session = await self._get_session()
             headers = await self.auth_manager.get_auth_headers_async()
@@ -62,6 +115,9 @@ class KISClient(AsyncSessionMixin):
             ) as response:
                 if response.status != 200:
                     text = await response.text()
+                    # Detect rate limit error and apply backoff
+                    if "EGW00201" in text:
+                        self._rate_limiter.penalty()
                     logger.error(f"KIS API Error {response.status} for {symbol}: {text}")
                     raise Exception(f"KIS API Error {response.status}")
 
@@ -84,7 +140,6 @@ class KISClient(AsyncSessionMixin):
                     "volume": int(output.get("acml_vol", 0)),
                     "change": float(output.get("prdy_ctrt", 0)) / 100.0 if output.get("prdy_ctrt") else 0.0,
                     "timestamp": time.time(), # Use local time as approx
-                    # "origin": "kis_api"
                 }
 
         except Exception as e:
@@ -106,6 +161,7 @@ class KISClient(AsyncSessionMixin):
             List of candle dicts with open, high, low, close, volume keys,
             sorted chronologically (oldest first).
         """
+        await self._rate_limiter.acquire()
         try:
             session = await self._get_session()
             headers = await self.auth_manager.get_auth_headers_async()
@@ -134,6 +190,9 @@ class KISClient(AsyncSessionMixin):
                 url, headers=headers, params=params, timeout=request_timeout
             ) as response:
                 if response.status != 200:
+                    text = await response.text()
+                    if "EGW00201" in text:
+                        self._rate_limiter.penalty()
                     return []
 
                 data = await response.json()

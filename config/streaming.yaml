@@ -38,3 +38,28 @@ consumer:
     prediction: prediction_group
     strategy: strategy_group
     order: order_group
+
+# KIS WebSocket Stock Price Feed (H0STCNT0) 설정
+stock_feed:
+  max_symbols: 40               # KIS 제한: 41, 안전 마진으로 40
+  queue_maxsize: 10000           # 내부 메시지 큐 최대 크기
+  ping_interval: 30              # WebSocket ping 간격 (초)
+  ping_timeout: 10               # WebSocket ping 타임아웃 (초)
+  connection_timeout: 10.0       # 초기 연결 타임아웃 (초)
+  subscription_delay: 0.05       # 구독 간 딜레이 (초)
+  approval_key_timeout: 10       # 인증키 요청 타임아웃 (초)
+  reconnect_initial_delay: 1.0   # 재접속 초기 대기 (초)
+  reconnect_max_delay: 60.0      # 재접속 최대 대기 (초)
+
+# KIS REST API Rate Limiter 설정
+rate_limiter:
+  default_rate: ${KIS_API_RATE_LIMIT:5}   # 초당 최대 요청 수
+  penalty_seconds: 1.0                     # 429 에러 시 패널티 대기 (초)
+  request_timeout: 10.0                    # REST API 요청 타임아웃 (초)
+
+# Data Provider Cache TTL 설정
+data_provider:
+  cache_ttl_websocket: 2.0       # WebSocket 사용 시 (push 기반, 짧은 TTL OK)
+  cache_ttl_stock: 30.0          # 주식 REST polling 시 TTL (초)
+  cache_ttl_futures: 5.0         # 선물 REST polling 시 TTL (초)
+  stagger_delay: 0.1             # 배치 내 요청 간 딜레이 (초)

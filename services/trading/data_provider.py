@@ -74,6 +74,9 @@ class DataProviderConfig:
     # Timeout for data fetch
     fetch_timeout_seconds: float = 5.0
 
+    # Stagger delay between requests in a batch (seconds)
+    stagger_delay_seconds: float = 0.1
+
     # Mock data seed for reproducibility (None = random)
     mock_seed: int | None = None
 
@@ -385,11 +388,14 @@ class MarketDataProvider:
         for i in range(0, len(symbols), self.config.batch_size):
             batch = symbols[i : i + self.config.batch_size]
 
+            # Skip stagger for instant-read sources (e.g. WebSocket cache)
+            instant = getattr(source, "supports_instant_read", False)
+
             # Create tasks with staggered start to avoid KIS API rate limit
             async def fetch_single(symbol: str, idx: int) -> tuple[str, dict[str, Any] | None]:
                 try:
-                    if idx > 0:
-                        await asyncio.sleep(idx * 0.1)
+                    if idx > 0 and not instant:
+                        await asyncio.sleep(idx * self.config.stagger_delay_seconds)
                     price_data = await asyncio.wait_for(
                         source.get_current_price(symbol),
                         timeout=self.config.fetch_timeout_seconds,
