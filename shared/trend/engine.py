@@ -54,7 +54,7 @@ class TrendEngine:
         high: float,
         low: float,
         volume: float,
-        _timestamp: Optional[float] = None
+        timestamp: Optional[float] = None  # noqa: ARG002
     ) -> None:
         """Update engine with new price data.
 

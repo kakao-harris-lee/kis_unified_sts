@@ -94,7 +94,7 @@ async def test_weak_prediction_rejected(dl_trend_strategy):
     for _ in range(100):
         dl_trend_strategy.tech_calc.update(100.0, 95.0, 100.0)
 
-    _ = await dl_trend_strategy.generate(context)
+    signal = await dl_trend_strategy.generate(context)
     # Should be None due to weak prediction
     assert signal is None
 

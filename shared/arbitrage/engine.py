@@ -71,7 +71,7 @@ class ArbitrageEngine:
     def check_entry(
         self,
         spot_index: float,
-        _futures_price: float,
+        futures_price: float,  # noqa: ARG002
         days_to_expiry: int,
         best_bid: float,
         best_ask: float,

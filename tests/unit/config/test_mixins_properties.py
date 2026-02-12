@@ -71,7 +71,7 @@ class TestConfigMixinFromDictProperties:
         ),
     )
     @settings(max_examples=50)
-    def test_ignores_unknown_keys(self, _known_key: str, unknown_keys: dict):
+    def test_ignores_unknown_keys(self, known_key: str, unknown_keys: dict):  # noqa: ARG002
         """Property: Unknown keys should be ignored."""
         # Ensure unknown keys don't overlap with config fields
         config_fields = {"name", "count", "rate", "enabled"}

@@ -52,7 +52,7 @@ class TestCircuitBreakerProperties:
     )
     @settings(max_examples=50)
     def test_success_resets_failure_count(
-        self, failures_before: int, _successes: int
+        self, failures_before: int, successes: int  # noqa: ARG002
     ):
         """Property: Success in CLOSED state resets failure count."""
         breaker = CircuitBreaker(name="test", failure_threshold=5)
