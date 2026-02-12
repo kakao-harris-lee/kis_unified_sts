@@ -4,7 +4,7 @@ redis:
   host: ${REDIS_HOST:localhost}
   port: ${REDIS_PORT:6379}
   password: ${REDIS_PASSWORD:}
-  db: ${REDIS_DB:0}
+  db: ${REDIS_DB:1}
 
 streams:
   # 원시 데이터 스트림
