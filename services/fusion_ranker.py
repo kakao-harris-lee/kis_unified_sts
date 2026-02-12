@@ -13,12 +13,12 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import time
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+from shared.config.loader import ConfigLoader
 from shared.streaming.client import RedisClient
 from shared.streaming.publisher import StreamPublisher
 
@@ -27,27 +27,60 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class FusionRankerConfig:
-    realtime_key: str = os.environ.get("UNIVERSE_LATEST_KEY", "system:universe:latest")
-    llm_quality_key: str = os.environ.get("LLM_QUALITY_LATEST_KEY", "system:llm_quality:latest")
-    output_key: str = os.environ.get("TRADE_TARGETS_LATEST_KEY", "system:trade_targets:latest")
-    output_stream: str = os.environ.get("TRADE_TARGETS_STREAM", "system:trade_targets")
+    realtime_key: str = "system:universe:latest"
+    llm_quality_key: str = "system:llm_quality:latest"
+    output_key: str = "system:trade_targets:latest"
+    output_stream: str = "system:trade_targets"
 
-    interval_seconds: float = float(os.environ.get("FUSION_INTERVAL_SECONDS", "15"))
-    top_n: int = int(os.environ.get("FUSION_TOP_N", "30"))
+    interval_seconds: float = 15.0
+    top_n: int = 30
 
-    weight_realtime: float = float(os.environ.get("FUSION_WEIGHT_REALTIME", "0.55"))
-    weight_llm: float = float(os.environ.get("FUSION_WEIGHT_LLM", "0.35"))
-    weight_recency: float = float(os.environ.get("FUSION_WEIGHT_RECENCY", "0.10"))
+    weight_realtime: float = 0.55
+    weight_llm: float = 0.35
+    weight_recency: float = 0.10
 
-    fresh_window_seconds: float = float(os.environ.get("FUSION_FRESH_WINDOW_SECONDS", "600"))
-    stale_seconds: float = float(os.environ.get("FUSION_STALE_SECONDS", "1800"))
-    llm_stale_seconds: float = float(os.environ.get("FUSION_LLM_STALE_SECONDS", "43200"))
-    llm_risk_penalty_per_hit: float = float(
-        os.environ.get("FUSION_LLM_RISK_PENALTY_PER_HIT", "0.08")
-    )
-    llm_final_bonus: float = float(os.environ.get("FUSION_LLM_FINAL_BONUS", "0.12"))
-    min_llm_quality: float = float(os.environ.get("FUSION_MIN_LLM_QUALITY", "0.0"))
-    block_negative: bool = os.environ.get("FUSION_BLOCK_NEGATIVE", "true").lower() == "true"
+    fresh_window_seconds: float = 600.0
+    stale_seconds: float = 1800.0
+    llm_stale_seconds: float = 43200.0
+    llm_risk_penalty_per_hit: float = 0.08
+    llm_final_bonus: float = 0.12
+    min_llm_quality: float = 0.0
+    block_negative: bool = True
+
+    @classmethod
+    def from_yaml(cls) -> "FusionRankerConfig":
+        """Load configuration from config/fusion_ranker.yaml."""
+        raw = ConfigLoader.load("fusion_ranker.yaml")
+        keys = raw.get("redis_keys", {})
+        ranking = raw.get("ranking", {})
+        weights = raw.get("weights", {})
+        staleness = raw.get("staleness", {})
+        llm_adj = raw.get("llm_adjustments", {})
+
+        return cls(
+            realtime_key=keys.get("realtime", cls.realtime_key),
+            llm_quality_key=keys.get("llm_quality", cls.llm_quality_key),
+            output_key=keys.get("output", cls.output_key),
+            output_stream=keys.get("output_stream", cls.output_stream),
+            interval_seconds=float(ranking.get("interval_seconds", cls.interval_seconds)),
+            top_n=int(ranking.get("top_n", cls.top_n)),
+            weight_realtime=float(weights.get("realtime", cls.weight_realtime)),
+            weight_llm=float(weights.get("llm", cls.weight_llm)),
+            weight_recency=float(weights.get("recency", cls.weight_recency)),
+            fresh_window_seconds=float(
+                staleness.get("fresh_window_seconds", cls.fresh_window_seconds)
+            ),
+            stale_seconds=float(staleness.get("stale_seconds", cls.stale_seconds)),
+            llm_stale_seconds=float(
+                staleness.get("llm_stale_seconds", cls.llm_stale_seconds)
+            ),
+            llm_risk_penalty_per_hit=float(
+                llm_adj.get("risk_penalty_per_hit", cls.llm_risk_penalty_per_hit)
+            ),
+            llm_final_bonus=float(llm_adj.get("final_bonus", cls.llm_final_bonus)),
+            min_llm_quality=float(llm_adj.get("min_quality", cls.min_llm_quality)),
+            block_negative=bool(llm_adj.get("block_negative", cls.block_negative)),
+        )
 
 
 def _parse_json(raw: str | None) -> dict[str, Any]:
@@ -312,7 +345,7 @@ def main() -> None:
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
-    run_fusion_ranker(FusionRankerConfig())
+    run_fusion_ranker(FusionRankerConfig.from_yaml())
 
 
 if __name__ == "__main__":
