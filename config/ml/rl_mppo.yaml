@@ -108,7 +108,7 @@ training:
 
 # === Paper Trading ===
 paper:
-  symbol: "101S6000"
+  symbol: "A01603"                # KOSPI200 선물 3월물 (101S6000 만료)
   warmup_bars: 200             # ClickHouse에서 로드할 과거 분봉 수
   force_close_time: "15:35"    # 강제 청산 시각 (KST)
   telegram_notify: true        # 텔레그램 알림 활성화

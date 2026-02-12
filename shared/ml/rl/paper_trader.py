@@ -137,6 +137,9 @@ class RLPaperTrader:
         # Notifier (lazy init)
         self._notifier = None
 
+        # Main event loop reference (set in run())
+        self._main_loop: asyncio.AbstractEventLoop | None = None
+
     async def _get_notifier(self):
         """Telegram notifier (lazy init)"""
         if self._notifier is None and self.telegram_enabled:
@@ -242,21 +245,13 @@ class RLPaperTrader:
 
         if new_count > prev_count:
             self.state.bar_count = new_count
-            # 새 분봉 → RL 추론 (비동기 예약)
-            try:
-                loop = asyncio.get_running_loop()
-                loop.call_soon_threadsafe(
-                    asyncio.ensure_future, self._on_new_bar()
+            # 새 분봉 → RL 추론 (메인 이벤트 루프에 예약)
+            if self._main_loop and self._main_loop.is_running():
+                asyncio.run_coroutine_threadsafe(
+                    self._on_new_bar(), self._main_loop
                 )
-            except RuntimeError:
-                # event loop 없으면 동기로 실행
-                threading.Thread(
-                    target=self._sync_on_new_bar, daemon=True
-                ).start()
-
-    def _sync_on_new_bar(self):
-        """동기 컨텍스트에서 비동기 on_new_bar 실행"""
-        asyncio.run(self._on_new_bar())
+            else:
+                logger.warning("Main event loop not available for RL inference")
 
     # =========================================================================
     # RL 추론
@@ -555,6 +550,7 @@ class RLPaperTrader:
 
     async def run(self) -> None:
         """메인 실행 — 단일 세션 (장 시작~종료)"""
+        self._main_loop = asyncio.get_running_loop()
         now = datetime.now(KST)
         logger.info(
             f"RL Paper Trader starting | symbol={self.symbol} | "

@@ -18,7 +18,7 @@ Endpoints:
     POST /api/v1/backtest/run     - 백테스트 실행 (인증 필요)
     GET  /api/v1/backtest/results - 백테스트 결과
 
-    GET  /metrics                 - Prometheus 메트릭 (인증 필요)
+    GET  /metrics                 - Prometheus 메트릭 (인증 불필요)
 """
 
 from __future__ import annotations
@@ -720,15 +720,13 @@ async def get_backtest_results(experiment: str | None = None, limit: int = 10):
 
 
 # =============================================================================
-# Metrics (인증 필요)
+# Metrics (인증 없음 — Prometheus scraping용 내부 엔드포인트)
 # =============================================================================
 
 
 @router.get("/metrics", tags=["Monitoring"])
-async def prometheus_metrics(
-    _api_key: Annotated[str | None, Depends(verify_api_key)] = None,
-):
-    """Prometheus 메트릭 (인증 필요)"""
+async def prometheus_metrics():
+    """Prometheus 메트릭 (내부 네트워크 전용, 인증 불필요)"""
     try:
         from services.monitoring import MetricsCollector
 

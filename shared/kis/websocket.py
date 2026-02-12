@@ -71,14 +71,18 @@ ORDERBOOK_FIELDS = {
 }
 
 # Field indices for H0IFCNT0 (trade)
+# [0]=종목코드, [1]=체결시간, [2]=전일대비, [3]=부호, [4]=대비율
+# [5]=현재가, [6]=시가, [7]=고가, [8]=저가
+# [9]=체결수량, [10]=누적체결수량, [11]=누적거래대금
+# [18]=미결제약정
 TRADE_FIELDS = {
-    'current_price': 2,
+    'current_price': 5,
     'open_price': 6,
     'high_price': 7,
     'low_price': 8,
-    'tick_volume': 11,
-    'cumulative_volume': 12,
-    'open_interest': 14,
+    'tick_volume': 9,
+    'cumulative_volume': 10,
+    'open_interest': 18,
 }
 
 # Value bounds for validation

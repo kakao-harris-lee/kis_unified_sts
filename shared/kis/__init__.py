@@ -4,13 +4,15 @@
 
 Modules:
     auth: 인증 및 토큰 관리
-    websocket: 실시간 WebSocket 데이터 수신
+    websocket: 실시간 WebSocket 데이터 수신 (선물)
+    stock_feed: 실시간 WebSocket 데이터 수신 (주식)
     client: REST API 클라이언트
 """
 
 from shared.kis.auth import KISAuthManager, KISAuthConfig
 from shared.kis.websocket import KISWebSocketAdapter, create_websocket_adapter
 from shared.kis.ranking_client import KISRankingClient
+from shared.kis.stock_feed import KISStockPriceFeed
 
 __all__ = [
     "KISAuthManager",
@@ -18,4 +20,5 @@ __all__ = [
     "KISWebSocketAdapter",
     "create_websocket_adapter",
     "KISRankingClient",
+    "KISStockPriceFeed",
 ]
