@@ -9,7 +9,7 @@ async def test_manager_restore_positions():
     """Test restoring positions from list."""
     from shared.position.manager import PositionManager
     from shared.position.exit_checker import ExitConfig
-    from shared.models.position import Position, PositionSide, PositionState
+    from shared.models.position import Position, PositionSide
 
     exit_config = ExitConfig()
     manager = PositionManager(exit_config=exit_config)

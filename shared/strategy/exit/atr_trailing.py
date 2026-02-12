@@ -7,7 +7,7 @@ ATR 기반 트레일링 스탑 청산 전략.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Optional
 

@@ -1,5 +1,4 @@
 """Test StrategyRouter."""
-import pytest
 
 
 def test_router_strategy_selection():

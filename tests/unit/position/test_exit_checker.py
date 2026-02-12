@@ -1,5 +1,4 @@
 """Test ExitChecker class for 3-Stage state machine."""
-import pytest
 from datetime import datetime
 
 
@@ -24,7 +23,7 @@ def test_exit_checker_creation():
 def test_survival_stage_hard_stop():
     """Test hard stop in SURVIVAL stage."""
     from shared.position.exit_checker import ExitChecker, ExitConfig
-    from shared.models.position import Position, PositionSide, PositionState
+    from shared.models.position import Position, PositionSide
 
     config = ExitConfig(hard_stop_pct=2.0)
     checker = ExitChecker(config)

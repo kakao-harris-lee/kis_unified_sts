@@ -12,7 +12,7 @@ class TestOrchestratorFlow:
 
     def test_config_stock_creation(self):
         """Test stock configuration creation."""
-        from services.trading.orchestrator import TradingConfig, MarketSchedule
+        from services.trading.orchestrator import TradingConfig
 
         config = TradingConfig.stock(
             strategy_name="bb_reversion",

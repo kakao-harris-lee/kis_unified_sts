@@ -325,7 +325,7 @@ def create_database_check(connection_string: str) -> HealthCheckFunc:
     return check_database
 
 
-def create_kis_api_check(app_key: str, app_secret: str) -> HealthCheckFunc:
+def create_kis_api_check(_app_key: str, _app_secret: str) -> HealthCheckFunc:
     """KIS API 헬스 체크 함수 생성"""
 
     async def check_kis_api() -> ComponentHealth:

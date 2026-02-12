@@ -4,7 +4,6 @@ Telegram Notifier Module
 Sends trading signals, system status, and analysis results via Telegram.
 Includes trading hours awareness to avoid notifications outside market hours.
 """
-import asyncio
 import logging
 import os
 from datetime import datetime, time

@@ -18,7 +18,7 @@ def test_execution_config_creation():
 
 def test_execution_config_modes():
     """Test valid trading modes."""
-    from shared.execution.config import ExecutionConfig, TradingMode
+    from shared.execution.config import TradingMode
 
     assert TradingMode.PAPER.value == "PAPER"
     assert TradingMode.MOCK.value == "MOCK"

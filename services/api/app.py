@@ -257,7 +257,7 @@ def create_app(
     expose_details = error_config.get("expose_details", False) or _debug
 
     @app.exception_handler(Exception)
-    async def global_exception_handler(request: Request, exc: Exception):
+    async def global_exception_handler(_request: Request, exc: Exception):
         logger.error(f"Unhandled exception: {exc}", exc_info=error_config.get("log_stacktrace", True))
 
         if expose_details:

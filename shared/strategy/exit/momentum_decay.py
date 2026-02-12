@@ -37,7 +37,7 @@ from datetime import datetime, time
 from typing import TYPE_CHECKING, Any, Optional
 
 from shared.config.mixins import ConfigMixin
-from shared.models.position import Position, PositionState
+from shared.models.position import Position
 from shared.models.signal import ExitReason, ExitSignal
 from shared.strategy.base import ExitContext, ExitSignalGenerator
 
@@ -255,7 +255,7 @@ class MomentumDecayExit(ExitSignalGenerator[MomentumDecayConfig]):
         self,
         position: Position,
         market_data: dict[str, Any],
-        market_state: Optional[Any],
+        _market_state: Optional[Any],
         now: datetime,
     ) -> Optional[ExitSignal]:
         """Check individual position for exit conditions

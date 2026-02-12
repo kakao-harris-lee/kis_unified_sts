@@ -24,7 +24,6 @@ import logging
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import List, Tuple, Dict, Any, Optional
-from dataclasses import dataclass
 
 import httpx
 import clickhouse_connect
@@ -495,7 +494,7 @@ async def fetch_stock_minute_async(
     return (code, date_str, base_data)
 
 
-def parse_stock_minute_ohlcv(code: str, date_str: str, data: dict) -> List[Tuple]:
+def parse_stock_minute_ohlcv(code: str, _date_str: str, data: dict) -> List[Tuple]:
     """
     Parse API response to OHLCV rows.
 

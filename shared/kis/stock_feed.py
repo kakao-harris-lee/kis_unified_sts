@@ -331,11 +331,11 @@ class KISStockPriceFeed:
 
     # ----- WebSocket Handlers -----
 
-    def _on_open(self, ws):
+    def _on_open(self, _ws):
         logger.info("[StockPriceFeed] Connection opened")
         self._connected.set()
 
-    def _on_message(self, ws, message: str):
+    def _on_message(self, _ws, message: str):
         try:
             self._queue.put_nowait(message)
         except queue.Full:
@@ -350,10 +350,10 @@ class KISStockPriceFeed:
             except queue.Empty:
                 pass
 
-    def _on_error(self, ws, error):
+    def _on_error(self, _ws, error):
         logger.error(f"[StockPriceFeed] WS error: {error}")
 
-    def _on_close(self, ws, code, msg):
+    def _on_close(self, _ws, code, msg):
         logger.info(f"[StockPriceFeed] Connection closed: {code} {msg}")
         self._connected.clear()
         self._prices.clear()  # Invalidate stale cache

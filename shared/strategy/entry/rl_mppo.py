@@ -10,7 +10,7 @@ Usage:
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
@@ -289,11 +289,10 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
         return masks
 
     def _get_action_confidence(
-        self, model: Any, obs: Any, action: int, action_masks: Any
+        self, model: Any, obs: Any, action: int, _action_masks: Any
     ) -> float:
         """행동의 확률(confidence) 추출"""
         try:
-            import numpy as np
             import torch
 
             obs_tensor = torch.as_tensor(obs).float().unsqueeze(0).to(self._device)

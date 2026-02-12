@@ -1,5 +1,4 @@
 """Tests for math utilities."""
-import pytest
 import logging
 
 from shared.utils.math import safe_divide, safe_pct_change
@@ -181,7 +180,6 @@ class TestRegimeDetectorSafeDivision:
     def test_detect_with_zero_sma(self):
         """Test detection handles zero SMA values gracefully."""
         import pandas as pd
-        import numpy as np
         from shared.regime.detector import StockRegimeDetector
         from shared.regime.models import RegimeConfig, RegimeState
 

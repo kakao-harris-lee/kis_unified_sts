@@ -1,5 +1,4 @@
 """Test config from_dict methods."""
-import pytest
 
 
 def test_v35_config_from_dict():

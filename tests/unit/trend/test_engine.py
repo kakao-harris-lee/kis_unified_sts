@@ -1,5 +1,4 @@
 """Test TrendEngine."""
-import pytest
 
 
 def test_engine_creation():

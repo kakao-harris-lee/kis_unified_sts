@@ -593,9 +593,9 @@ class EnsembleFilter:
 
     def _check_calibrated(
         self,
-        h1: float,
-        h3: float,
-        h10: float,
+        _h1: float,
+        _h3: float,
+        _h10: float,
         z1: float,
         z3: float,
         z10: float,
@@ -666,7 +666,7 @@ class EnsembleFilter:
             ichimoku_passed=False,
         )
 
-    def _check_uncalibrated(self, tech: TechnicalData) -> FilterResult:
+    def _check_uncalibrated(self, _tech: TechnicalData) -> FilterResult:
         """캘리브레이션 워밍업 중 (신호 없음)"""
         self._stats["uncalibrated_signals"] += 1
         self._stats["rejected_dl"] += 1

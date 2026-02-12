@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, time
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -611,7 +611,7 @@ class ThreeStageExit(ExitSignalGenerator[ThreeStageExitConfig]):
         )
 
     def _calculate_confidence(
-        self, reason: ExitReason, profit_pct: float, stage: PositionState
+        self, reason: ExitReason, profit_pct: float, _stage: PositionState
     ) -> float:
         """청산 확신도 계산
 

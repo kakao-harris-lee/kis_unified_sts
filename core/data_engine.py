@@ -7,7 +7,7 @@ import os
 import threading
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from shared.trading.minute_bar import MinuteBar

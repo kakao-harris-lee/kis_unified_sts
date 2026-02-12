@@ -79,7 +79,7 @@ class PaperTradingEngine:
     def _can_open_position(
         self,
         symbol: str,
-        side: OrderSide,
+        _side: OrderSide,
         price: float,
         quantity: int,
     ) -> bool:

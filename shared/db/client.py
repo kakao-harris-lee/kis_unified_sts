@@ -2,9 +2,8 @@
 import logging
 import asyncio
 import threading
-from typing import Optional, List, Any, AsyncGenerator, ClassVar, TYPE_CHECKING
+from typing import Optional, List, AsyncGenerator, ClassVar, TYPE_CHECKING
 from datetime import date, datetime
-from dataclasses import astuple
 
 from clickhouse_driver import Client as SyncClient
 try:
@@ -18,7 +17,7 @@ except ImportError:
         from aiohttp import ClientSession
 
 from .config import ClickHouseConfig
-from .models import DailyCandle, MinuteCandle, TickData
+from .models import DailyCandle, MinuteCandle
 
 logger = logging.getLogger(__name__)
 

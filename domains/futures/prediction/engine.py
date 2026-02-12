@@ -20,7 +20,7 @@ from typing import Any, Optional
 
 import numpy as np
 
-from domains.futures.prediction.features import FEATURE_COLUMNS, FeatureCalculator
+from domains.futures.prediction.features import FeatureCalculator
 from shared.ml import ModelLoader
 from shared.streaming import StreamConsumer, StreamMessage, StreamPublisher
 from shared.streaming.client import RedisClient

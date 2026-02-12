@@ -6,18 +6,15 @@ Market Analyzers
 """
 
 from abc import ABC, abstractmethod
-from dataclasses import asdict
 from datetime import datetime, timedelta
-from typing import List, Optional, Tuple
+from typing import List, Optional
 
 import numpy as np
 import pandas as pd
-import requests
 
 from .config import LLMConfig
 from .data_classes import (
     BondData,
-    BondIndexData,
     ETFFlowData,
     FuturesData,
     IndexData,
@@ -172,7 +169,6 @@ class FuturesAnalyzer(BaseAnalyzer):
         basis = futures_price - kospi200
 
         oi = 300000 + np.random.uniform(-50000, 50000)
-        oi_change = np.random.uniform(-10000, 10000)
 
         return FuturesData(
             product_name="KOSPI200 선물",

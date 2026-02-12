@@ -1,6 +1,5 @@
 """Unit tests for WebSocket parsing functions."""
 import time
-import pytest
 from shared.kis.websocket import (
     parse_futures_orderbook,
     parse_futures_trade,

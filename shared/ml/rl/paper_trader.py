@@ -26,14 +26,13 @@ import signal
 import threading
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
 import joblib
 import numpy as np
-import pandas as pd
 
 from core.data_engine import DataEngine, DataEngineConfig
 from shared.collector.models import TickData
@@ -332,8 +331,6 @@ class RLPaperTrader:
                 password="@1tidh6ls6ls",
             )
 
-            today = datetime.now(KST).strftime("%Y-%m-%d")
-
             rows = client.execute(
                 f"""
                 SELECT datetime, open, high, low, close, volume
@@ -474,7 +471,7 @@ class RLPaperTrader:
             )
 
     def _build_observation(
-        self, market_features: np.ndarray, total_bars: int
+        self, market_features: np.ndarray, _total_bars: int
     ) -> np.ndarray:
         """관측 벡터 구성 (31차원 = market 25 + position 3 + time 3)"""
         # 포지션 피처 (3개)

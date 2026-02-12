@@ -1,5 +1,4 @@
 """Test ProbabilityCalibrator."""
-import pytest
 
 
 def test_calibrator_creation():

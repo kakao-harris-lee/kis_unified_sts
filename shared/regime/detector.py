@@ -4,7 +4,6 @@ from datetime import datetime
 from typing import Optional
 
 import pandas as pd
-import numpy as np
 
 from .models import RegimeState, RegimeSignal, RegimeConfig
 from shared.utils.math import safe_divide
@@ -48,7 +47,6 @@ class StockRegimeDetector:
         sma_slow = close.rolling(self.config.sma_slow).mean()
 
         # Current values
-        current_price = close.iloc[-1]
         current_sma_fast = sma_fast.iloc[-1]
         current_sma_slow = sma_slow.iloc[-1]
 

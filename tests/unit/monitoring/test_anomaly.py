@@ -1,6 +1,4 @@
 """Test AnomalyDetector."""
-import pytest
-import numpy as np
 from datetime import datetime, timedelta
 
 

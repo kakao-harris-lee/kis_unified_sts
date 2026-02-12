@@ -1,6 +1,5 @@
 """Test API adapter interface."""
 import pytest
-from abc import ABC
 
 
 def test_base_adapter_is_abstract():

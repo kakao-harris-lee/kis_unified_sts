@@ -25,7 +25,7 @@ import clickhouse_connect
 
 from shared.config.secrets import SecretsManager
 from .calendar import get_trading_days_range, is_after_market_close
-from .futures import get_active_codes_for_date, KOSPI200F_FRONT_CODE
+from .futures import get_active_codes_for_date
 
 logger = logging.getLogger(__name__)
 

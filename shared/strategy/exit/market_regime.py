@@ -288,7 +288,7 @@ class MarketRegimeExit(ExitSignalGenerator[MarketRegimeConfig]):
         self,
         position: "Position",
         current_price: float,
-        market_state: MarketState,
+        _market_state: MarketState,
         reason: ExitReason,
         priority: int,
         message: str,

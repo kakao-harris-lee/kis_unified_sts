@@ -1,5 +1,4 @@
 """Test alert models."""
-import pytest
 from datetime import datetime
 
 

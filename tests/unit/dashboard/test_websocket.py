@@ -1,6 +1,5 @@
 """Test WebSocket endpoints."""
 import pytest
-from httpx import ASGITransport, AsyncClient
 
 
 @pytest.mark.asyncio

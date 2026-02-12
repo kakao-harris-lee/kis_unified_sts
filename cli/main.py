@@ -358,8 +358,8 @@ def optimize(
     data: str,
     trials: int,
     metric: str,
-    timeout: int | None,
-    output: str | None,
+    _timeout: int | None,
+    _output: str | None,
 ):
     """파라미터 최적화 실행
 
@@ -880,7 +880,7 @@ def stock_backfill_universe():
     type=click.Path(),
     help="Output directory for collected data",
 )
-def collect_start(symbol: tuple, interval: float, output: str | None):
+def collect_start(symbol: tuple, interval: float, _output: str | None):
     """데이터 수집 시작
 
     \b
@@ -1457,7 +1457,7 @@ def paper_stop(url: str):
 @paper.command("history")
 @click.option("--limit", "-n", default=10, type=int, help="Number of trades to show")
 @click.option("--format", "fmt", default="table", type=click.Choice(["table", "json"]))
-def paper_history(limit: int, fmt: str):
+def paper_history(_limit: int, _fmt: str):
     """모의 거래 히스토리 조회
 
     \b
@@ -1585,7 +1585,7 @@ def rl_train(algo: str, config: str):
             )
             click.echo(f"Trained {len(models)} models: {list(models.keys())}")
         else:
-            model = trainer.train(
+            trainer.train(
                 algo=algo,
                 train_days=train_days,
                 train_prices=train_prices,

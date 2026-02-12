@@ -1,6 +1,5 @@
 """Test data collector models."""
 import pytest
-from datetime import datetime
 
 
 def test_tick_data_creation():

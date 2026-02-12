@@ -1,6 +1,5 @@
 """Test PaperTradingEngine."""
 import pytest
-from datetime import datetime
 
 
 @pytest.mark.asyncio

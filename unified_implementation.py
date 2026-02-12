@@ -10,9 +10,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
-from decimal import Decimal
 from enum import Enum
-from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable, Generic, Type, TypeVar
 import yaml
@@ -835,7 +833,7 @@ class FixedSizer(PositionSizer[FixedSizerParams]):
     def calculate(
         self,
         signal: Signal,
-        account_balance: float,
+        _account_balance: float,
         current_positions: list[Position]
     ) -> int:
         c = self.config

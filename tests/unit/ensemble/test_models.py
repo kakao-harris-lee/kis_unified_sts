@@ -1,5 +1,4 @@
 """Test ensemble filter models."""
-import pytest
 
 
 def test_filter_result_creation():

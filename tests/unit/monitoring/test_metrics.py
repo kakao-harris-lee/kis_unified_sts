@@ -1,5 +1,4 @@
 """Test Prometheus metrics."""
-import pytest
 
 
 def test_metrics_registry():

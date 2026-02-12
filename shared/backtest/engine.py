@@ -18,8 +18,8 @@ Usage:
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from dataclasses import dataclass
+from datetime import datetime
 from enum import Enum
 from typing import Any, Protocol
 
@@ -427,8 +427,6 @@ class BacktestEngine:
         self.exit_reasons[reason_name] = self.exit_reasons.get(reason_name, 0) + 1
 
         # 거래 기록 생성
-        holding_days = (exit_time - pos.entry_time).total_seconds() / 86400
-
         trade = BacktestTrade(
             code=pos.code,
             name=pos.name,

@@ -1,5 +1,4 @@
 """Test trend configuration."""
-import pytest
 
 
 def test_technical_config_defaults():

@@ -1,5 +1,4 @@
 """Test registry isolation."""
-import pytest
 
 
 def test_registry_clear_isolates_tests():

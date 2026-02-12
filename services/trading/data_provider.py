@@ -21,7 +21,7 @@ import asyncio
 import logging
 import random
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
@@ -464,7 +464,6 @@ class MarketDataProvider:
 
     def get_cache_stats(self) -> dict[str, Any]:
         """Get cache statistics"""
-        now = datetime.now()
         fresh_count = sum(
             1 for c in self._cache.values()
             if not c.is_stale(self.config.cache_ttl_seconds)

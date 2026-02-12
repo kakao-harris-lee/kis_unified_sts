@@ -1,6 +1,6 @@
 """Experiments (MLflow) endpoints."""
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Query
 from pydantic import BaseModel

@@ -2,7 +2,7 @@
 import pytest
 
 from shared.paper.broker import VirtualBroker
-from shared.paper.models import OrderSide, OrderType, InsufficientBalanceError
+from shared.paper.models import OrderSide, InsufficientBalanceError
 
 
 @pytest.mark.asyncio
@@ -152,9 +152,6 @@ async def test_broker_commission_calculation():
 
     # Cost should include commission
     # 100 * 50000 * 1.0001 (slippage) + commission
-    expected_cost = 100 * 50000 * 1.0001  # With slippage
-    commission = expected_cost * 0.001
-
     # Balance should be reduced by cost + commission
     assert broker.balance < initial - 5_000_000  # Less than just the order cost
 

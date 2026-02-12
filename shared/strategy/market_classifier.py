@@ -69,10 +69,10 @@ class MarketClassifier:
     def classify(
         self,
         mfi: float,
-        adx: float,
-        rsi: Optional[float] = None,
-        macd: Optional[float] = None,
-        macd_signal: Optional[float] = None,
+        _adx: float,
+        _rsi: Optional[float] = None,
+        _macd: Optional[float] = None,
+        _macd_signal: Optional[float] = None,
     ) -> MarketState:
         """시장 상태 분류
 

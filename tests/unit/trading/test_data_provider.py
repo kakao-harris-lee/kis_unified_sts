@@ -3,7 +3,6 @@
 import asyncio
 import pytest
 from datetime import datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock
 
 
 class TestDataProviderConfig:
@@ -184,7 +183,7 @@ class TestMarketDataProvider:
 
         provider = MarketDataProvider(symbols=["005930"])
 
-        data1 = await provider.get_data()
+        _ = await provider.get_data()
         data2 = await provider.get_data(force_refresh=True)
 
         # Values may differ due to random generation

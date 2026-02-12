@@ -1,5 +1,4 @@
 """Test rate limiter memory management."""
-import pytest
 import time
 from unittest.mock import MagicMock
 

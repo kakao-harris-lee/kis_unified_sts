@@ -16,7 +16,7 @@ Usage:
 import argparse
 import json
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -47,7 +47,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from shared.ml.models import TradingCNNLSTM
-from shared.ml.base import get_device, ModelMetadata, ScalerParams
+from shared.ml.base import get_device
 from domains.futures.prediction.features import FeatureCalculator, FEATURE_COLUMNS
 
 logging.basicConfig(

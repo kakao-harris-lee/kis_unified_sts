@@ -1,6 +1,4 @@
 """Test ArbitrageEngine."""
-import pytest
-from datetime import datetime, time as dt_time
 
 
 def test_engine_creation():

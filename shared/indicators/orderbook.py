@@ -103,7 +103,7 @@ class OrderBookAnalyzer:
 
     def calculate(
         self,
-        bid_prices: list[float],
+        _bid_prices: list[float],
         ask_prices: list[float],
         bid_volumes: list[int],
         ask_volumes: list[int],

@@ -5,7 +5,6 @@ Stock and Futures technical analysis, backtesting engines.
 """
 import logging
 import os
-from dataclasses import dataclass
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
@@ -636,7 +635,7 @@ class StockNewsAnalyzer:
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         })
 
-    def analyze(self, code: str, name: str) -> Dict:
+    def analyze(self, _code: str, _name: str) -> Dict:
         """뉴스 분석"""
         return {
             "sentiment": "중립",

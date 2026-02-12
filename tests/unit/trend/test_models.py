@@ -1,5 +1,4 @@
 """Test trend data models."""
-import pytest
 
 
 def test_technical_data_creation():

@@ -23,7 +23,6 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
 from string import Template
-from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -207,7 +206,7 @@ class TelegramNotifier(Notifier):
             self._session = None
             logger.debug("TelegramNotifier session closed")
 
-    async def send(self, message: str, **kwargs) -> bool:
+    async def send(self, message: str, **_kwargs) -> bool:
         """메시지 전송
 
         Args:
@@ -238,7 +237,6 @@ class TelegramNotifier(Notifier):
                     logger.debug(f"Telegram message sent (length: {len(message)})")
                     return True
                 else:
-                    text = await response.text()
                     logger.error(f"Telegram send failed: status={response.status}")
                     return False
 
@@ -250,7 +248,7 @@ class TelegramNotifier(Notifier):
         self,
         message: str,
         level: AlertLevel = AlertLevel.INFO,
-        **kwargs,
+        **_kwargs,
     ) -> bool:
         """알림 전송 (레벨에 따른 이모지 포함)"""
         emoji = self.LEVEL_EMOJIS.get(level, "")
@@ -319,7 +317,7 @@ class TelegramNotifier(Notifier):
 class ConsoleNotifier(Notifier):
     """콘솔 출력 알림 (개발/테스트용)"""
 
-    async def send(self, message: str, **kwargs) -> bool:
+    async def send(self, message: str, **_kwargs) -> bool:
         print(f"[NOTIFY] {message}")
         return True
 
@@ -327,7 +325,7 @@ class ConsoleNotifier(Notifier):
         self,
         message: str,
         level: AlertLevel = AlertLevel.INFO,
-        **kwargs,
+        **_kwargs,
     ) -> bool:
         print(f"[ALERT:{level.value.upper()}] {message}")
         return True

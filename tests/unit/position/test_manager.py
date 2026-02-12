@@ -1,7 +1,5 @@
 """Test PositionManager class."""
 import pytest
-from datetime import datetime
-from unittest.mock import Mock, AsyncMock
 
 
 @pytest.mark.asyncio

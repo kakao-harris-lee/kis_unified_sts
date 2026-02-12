@@ -3,7 +3,6 @@ LLM 분석 데이터 클래스
 """
 
 from dataclasses import dataclass, field, asdict
-from datetime import datetime
 from enum import Enum
 from typing import Dict, List
 

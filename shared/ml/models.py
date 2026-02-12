@@ -177,11 +177,11 @@ else:
     class TradingLSTM:
         """Placeholder when PyTorch not available"""
 
-        def __init__(self, *args, **kwargs):
+        def __init__(self, *_args, **_kwargs):
             raise ImportError("PyTorch is required. Install with: pip install torch>=2.0")
 
     class TradingCNNLSTM:
         """Placeholder when PyTorch not available"""
 
-        def __init__(self, *args, **kwargs):
+        def __init__(self, *_args, **_kwargs):
             raise ImportError("PyTorch is required. Install with: pip install torch>=2.0")

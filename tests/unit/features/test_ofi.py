@@ -1,5 +1,4 @@
 """Test OFICalculator."""
-import pytest
 
 
 def test_ofi_calculator_creation():

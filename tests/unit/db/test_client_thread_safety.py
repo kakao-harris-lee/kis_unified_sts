@@ -1,9 +1,7 @@
 """Thread-safety tests for ClickHouseClient singleton."""
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from unittest.mock import MagicMock
 
-import pytest
 
 
 def test_singleton_thread_safety():

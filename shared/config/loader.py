@@ -28,7 +28,7 @@ from urllib.parse import unquote
 import yaml
 
 if TYPE_CHECKING:
-    from pydantic import BaseModel
+    pass
 
 logger = logging.getLogger(__name__)
 

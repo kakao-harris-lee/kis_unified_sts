@@ -1,5 +1,4 @@
 """Test paper trading CLI commands."""
-import pytest
 from click.testing import CliRunner
 
 

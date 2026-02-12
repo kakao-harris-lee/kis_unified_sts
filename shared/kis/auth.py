@@ -17,16 +17,15 @@ import logging
 import os
 import threading
 import time
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Optional, TypeVar
+from typing import TYPE_CHECKING, Any, Optional
 
 from shared.resilience import CircuitBreaker, CircuitBreakerConfig
 
 if TYPE_CHECKING:
     import aiohttp
-    import requests
 
 logger = logging.getLogger(__name__)
 
@@ -225,6 +224,7 @@ class KISAuthManager:
             use_singleton: 싱글톤 패턴 사용 여부
         """
         self.config = config
+        _ = use_singleton
         self._circuit = circuit_breaker
         self._token: Optional[str] = None
         self._expires_at: float = 0

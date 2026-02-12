@@ -357,7 +357,7 @@ class RLTrainer:
         except Exception as e:
             logger.warning(f"MLflow logging failed: {e}")
 
-    def _log_mlflow_end(self, algo: str) -> None:
+    def _log_mlflow_end(self, _algo: str) -> None:
         """MLflow 실험 종료 로깅"""
         try:
             import mlflow

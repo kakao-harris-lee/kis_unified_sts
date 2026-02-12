@@ -70,7 +70,7 @@ async def test_regime_detection_pipeline():
     signal = detector.detect(df)
 
     # Route to strategy
-    strategy = router.update(signal)
+    _ = router.update(signal)
 
     # Should route to momentum in uptrend
     assert router.current_strategy == "momentum"

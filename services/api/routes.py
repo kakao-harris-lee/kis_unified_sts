@@ -44,7 +44,6 @@ except ImportError:
 # Rate limiting (optional)
 try:
     from slowapi import Limiter
-    from slowapi.util import get_remote_address
 
     HAS_SLOWAPI = True
 except ImportError:
@@ -134,13 +133,13 @@ if not HAS_FASTAPI:
         def __init__(self, **kwargs):
             pass
 
-        def get(self, *args, **kwargs):
+        def get(self, *_args, **_kwargs):
             def decorator(func):
                 return func
 
             return decorator
 
-        def post(self, *args, **kwargs):
+        def post(self, *_args, **_kwargs):
             def decorator(func):
                 return func
 
@@ -276,8 +275,8 @@ if HAS_FASTAPI:
 
 
 if HAS_FASTAPI:
-    from services.api.auth import require_trading_permission, verify_api_key
-    from services.api.state import AppState, get_app_state, get_orchestrator_dep
+    from services.api.auth import require_trading_permission
+    from services.api.state import AppState, get_app_state
 
 
 # =============================================================================
@@ -652,7 +651,7 @@ async def get_strategy(
 )
 async def run_backtest(
     request_body: "BacktestRequest",
-    background_tasks: BackgroundTasks,
+    _background_tasks: BackgroundTasks,
     _api_key: Annotated[str | None, Depends(require_trading_permission)] = None,
 ):
     """백테스트 실행 (인증 필요)"""

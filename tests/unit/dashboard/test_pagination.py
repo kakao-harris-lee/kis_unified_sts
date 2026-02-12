@@ -41,6 +41,7 @@ def mock_trades():
 @pytest.mark.asyncio
 async def test_trades_pagination_first_page(mock_trades):
     """Test trades endpoint returns first page correctly."""
+    _ = mock_trades
     from services.dashboard.app import create_app
 
     app = create_app()
@@ -66,6 +67,7 @@ async def test_trades_pagination_first_page(mock_trades):
 @pytest.mark.asyncio
 async def test_trades_pagination_second_page(mock_trades):
     """Test trades endpoint returns second page correctly."""
+    _ = mock_trades
     from services.dashboard.app import create_app
 
     app = create_app()
@@ -84,6 +86,7 @@ async def test_trades_pagination_second_page(mock_trades):
 @pytest.mark.asyncio
 async def test_trades_pagination_last_page(mock_trades):
     """Test trades endpoint returns partial last page correctly."""
+    _ = mock_trades
     from services.dashboard.app import create_app
 
     app = create_app()
@@ -103,6 +106,7 @@ async def test_trades_pagination_last_page(mock_trades):
 @pytest.mark.asyncio
 async def test_trades_pagination_beyond_last_page(mock_trades):
     """Test trades endpoint returns empty for page beyond data."""
+    _ = mock_trades
     from services.dashboard.app import create_app
 
     app = create_app()
@@ -121,6 +125,7 @@ async def test_trades_pagination_beyond_last_page(mock_trades):
 @pytest.mark.asyncio
 async def test_trades_pagination_with_filter(mock_trades):
     """Test trades pagination with strategy filter."""
+    _ = mock_trades
     from services.dashboard.app import create_app
 
     app = create_app()

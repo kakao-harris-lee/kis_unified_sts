@@ -82,7 +82,7 @@ class TechnicalCalculator:
         else:
             self._ema_long = close * self._ema_long_multiplier + self._ema_long * (1 - self._ema_long_multiplier)
 
-    def _update_atr(self, high: float, low: float, close: float) -> None:
+    def _update_atr(self, high: float, low: float, _close: float) -> None:
         """Update ATR value."""
         if self._prev_close is None:
             return

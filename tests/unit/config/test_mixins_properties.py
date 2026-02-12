@@ -1,9 +1,8 @@
 """Property-based tests for ConfigMixin using Hypothesis."""
 
 from dataclasses import dataclass
-from typing import Optional
 
-from hypothesis import given, settings, strategies as st, assume
+from hypothesis import given, settings, strategies as st
 
 import pytest
 
@@ -72,7 +71,7 @@ class TestConfigMixinFromDictProperties:
         ),
     )
     @settings(max_examples=50)
-    def test_ignores_unknown_keys(self, known_key: str, unknown_keys: dict):
+    def test_ignores_unknown_keys(self, _known_key: str, unknown_keys: dict):
         """Property: Unknown keys should be ignored."""
         # Ensure unknown keys don't overlap with config fields
         config_fields = {"name", "count", "rate", "enabled"}

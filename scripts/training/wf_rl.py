@@ -145,7 +145,6 @@ def train_fold(
     from sb3_contrib import MaskablePPO
     from sb3_contrib.common.maskable.callbacks import MaskableEvalCallback
     from sb3_contrib.common.wrappers import ActionMasker
-    from stable_baselines3.common.callbacks import CheckpointCallback
     from stable_baselines3.common.vec_env import DummyVecEnv
 
     from shared.ml.base import get_device

@@ -1,6 +1,6 @@
 """Anomaly detection for data quality."""
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import List, Dict, Optional
 from dataclasses import dataclass
 

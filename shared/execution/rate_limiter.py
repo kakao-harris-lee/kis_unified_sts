@@ -32,7 +32,7 @@ from typing import TYPE_CHECKING
 
 from shared.resilience import CircuitBreaker, CircuitState
 
-from .exceptions import CircuitBreakerOpen, RateLimitExceeded
+from .exceptions import RateLimitExceeded
 
 if TYPE_CHECKING:
     from redis.asyncio import Redis

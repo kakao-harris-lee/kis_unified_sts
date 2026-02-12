@@ -10,7 +10,7 @@ import logging
 import os
 import time
 import uuid
-from typing import Any, Optional
+from typing import Any
 
 from shared.streaming.client import RedisClient
 from shared.streaming.message import StreamMessage

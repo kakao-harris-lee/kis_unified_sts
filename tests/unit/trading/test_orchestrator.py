@@ -2,7 +2,6 @@
 
 import pytest
 from datetime import date, time
-from unittest.mock import MagicMock, patch, AsyncMock
 
 
 class TestIsTradingDay:
@@ -275,7 +274,7 @@ class TestReloadHolidays:
         from services.trading import orchestrator
 
         # Get initial holidays
-        holidays1 = orchestrator._get_holidays()
+        _ = orchestrator._get_holidays()
 
         # Reload
         orchestrator.reload_holidays()

@@ -1,7 +1,7 @@
 """Test TelegramAlertService."""
 import pytest
 from datetime import datetime
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
 
 @pytest.mark.asyncio

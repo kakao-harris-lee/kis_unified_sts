@@ -144,7 +144,7 @@ async def test_concurrent_updates_different_positions(
 
     # 병렬 실행 (블로킹 없어야 함)
     start = asyncio.get_event_loop().time()
-    results = await asyncio.gather(
+    _ = await asyncio.gather(
         exit_strategy.update_position_state(position1, price1),
         exit_strategy.update_position_state(position2, price2),
     )

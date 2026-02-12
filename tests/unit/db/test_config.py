@@ -1,5 +1,4 @@
 """Test ClickHouse configuration."""
-import pytest
 
 
 def test_clickhouse_config_from_dict():

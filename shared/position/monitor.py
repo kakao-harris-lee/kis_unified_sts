@@ -3,7 +3,7 @@ import asyncio
 import logging
 from typing import Dict, Optional, Callable, List
 
-from shared.models.position import Position, PositionState
+from shared.models.position import Position
 
 logger = logging.getLogger(__name__)
 
@@ -135,7 +135,7 @@ class PositionMonitor:
                 if self.on_exit_triggered:
                     self.on_exit_triggered(position, reason)
 
-    def _check_exit_condition(self, position: Position) -> tuple[bool, str]:
+    def _check_exit_condition(self, _position: Position) -> tuple[bool, str]:
         """Check if position should exit.
 
         This is a placeholder - actual logic delegated to ExitChecker.

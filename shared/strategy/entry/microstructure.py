@@ -28,8 +28,7 @@ from __future__ import annotations
 
 import logging
 from collections import deque
-from dataclasses import dataclass, field
-from datetime import datetime
+from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Deque, Optional
 
@@ -778,7 +777,7 @@ class MicrostructureEntry(EntrySignalGenerator[MicrostructureEntryConfig]):
             return 0.2
 
     def _calculate_regime_score(
-        self, regime: VolatilityRegime, direction: SignalDirection
+        self, regime: VolatilityRegime, _direction: SignalDirection
     ) -> float:
         """레짐 점수 계산
 

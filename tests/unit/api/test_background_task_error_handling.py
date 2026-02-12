@@ -5,7 +5,6 @@ Background task 에러 핸들링 테스트
 """
 
 import pytest
-from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock
 
 

@@ -2,8 +2,7 @@
 
 import asyncio
 from datetime import date
-from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 import yaml
@@ -133,7 +132,7 @@ async def test_async_holiday_cache_double_checked_locking():
 
     call_count = 0
 
-    async def mock_loader(path: str) -> set[date]:
+    async def mock_loader(_path: str) -> set[date]:
         nonlocal call_count
         call_count += 1
         await asyncio.sleep(0.01)  # Simulate I/O
@@ -158,7 +157,7 @@ async def test_async_holiday_cache_concurrent_access():
 
     call_count = 0
 
-    async def mock_loader(path: str) -> set[date]:
+    async def mock_loader(_path: str) -> set[date]:
         nonlocal call_count
         call_count += 1
         await asyncio.sleep(0.05)  # Simulate slow I/O
@@ -184,7 +183,7 @@ async def test_async_holiday_cache_reload():
 
     call_count = 0
 
-    async def mock_loader(path: str) -> set[date]:
+    async def mock_loader(_path: str) -> set[date]:
         nonlocal call_count
         call_count += 1
         return {date(2024, 1, call_count)}
@@ -230,7 +229,7 @@ async def test_is_holiday_uses_cache():
     """is_holiday should use cached data if available."""
     from services.trading.holiday_cache import AsyncHolidayCache
 
-    async def mock_loader(path: str) -> set[date]:
+    async def mock_loader(_path: str) -> set[date]:
         return {date(2024, 1, 1)}
 
     cache = AsyncHolidayCache(loader=mock_loader)

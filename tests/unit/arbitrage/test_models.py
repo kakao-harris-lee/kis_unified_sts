@@ -1,5 +1,4 @@
 """Test arbitrage models."""
-import pytest
 
 
 def test_basis_data_creation():

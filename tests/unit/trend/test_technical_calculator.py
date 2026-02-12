@@ -1,6 +1,5 @@
 """Test TechnicalCalculator."""
 import pytest
-import numpy as np
 
 
 def test_calculator_creation():

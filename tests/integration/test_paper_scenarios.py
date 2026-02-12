@@ -1,6 +1,5 @@
 """Paper trading scenario tests for different market conditions."""
 import pytest
-from datetime import datetime
 
 from shared.paper.broker import VirtualBroker
 from shared.paper.models import OrderSide, PositionSide

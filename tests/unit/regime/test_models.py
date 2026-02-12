@@ -1,5 +1,4 @@
 """Test regime detection models."""
-import pytest
 from datetime import datetime
 
 

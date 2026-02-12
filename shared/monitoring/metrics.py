@@ -1,9 +1,8 @@
 """Prometheus metrics for trading system."""
 import logging
-from typing import Optional
 
 try:
-    from prometheus_client import Counter, Gauge, Histogram, generate_latest, REGISTRY, CollectorRegistry
+    from prometheus_client import Counter, Gauge, Histogram, generate_latest, REGISTRY
     PROMETHEUS_AVAILABLE = True
 except ImportError:
     PROMETHEUS_AVAILABLE = False

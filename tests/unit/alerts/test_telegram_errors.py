@@ -133,6 +133,7 @@ async def test_telegram_disabled_service(test_alert):
 @pytest.mark.asyncio
 async def test_telegram_empty_token(test_alert):
     """Test handling of empty token."""
+    _ = test_alert
     config = AlertConfig(
         telegram_token="",
         telegram_chat_id="123456",
@@ -145,6 +146,7 @@ async def test_telegram_empty_token(test_alert):
 @pytest.mark.asyncio
 async def test_telegram_empty_chat_id(test_alert):
     """Test handling of empty chat_id."""
+    _ = test_alert
     config = AlertConfig(
         telegram_token="test_token",
         telegram_chat_id="",

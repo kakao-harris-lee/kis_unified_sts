@@ -1,6 +1,5 @@
 """Test DataCollector class."""
-import pytest
-from unittest.mock import Mock, MagicMock
+from unittest.mock import Mock
 
 
 def test_collector_creation():

@@ -1,7 +1,6 @@
 """Tests for AsyncClickHouseClient resource cleanup."""
 import pytest
-import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch, Mock
+from unittest.mock import AsyncMock, MagicMock, patch
 import sys
 
 from shared.db.client import HAS_ASYNC

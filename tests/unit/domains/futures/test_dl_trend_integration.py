@@ -36,7 +36,7 @@ async def test_binary_mode_backward_compatible(dl_trend_strategy):
         timestamp=None,
     )
 
-    signal = await dl_trend_strategy.generate(context)
+    _ = await dl_trend_strategy.generate(context)
     # Signal may be None due to technical indicators warming up
     # This test just ensures no errors occur
 
@@ -63,7 +63,7 @@ async def test_triple_barrier_mode(dl_trend_strategy):
         timestamp=None,
     )
 
-    signal = await dl_trend_strategy.generate(context)
+    _ = await dl_trend_strategy.generate(context)
     # Signal may be None due to technical indicators warming up
     # This test ensures triple barrier format is handled
 
@@ -94,7 +94,7 @@ async def test_weak_prediction_rejected(dl_trend_strategy):
     for _ in range(100):
         dl_trend_strategy.tech_calc.update(100.0, 95.0, 100.0)
 
-    signal = await dl_trend_strategy.generate(context)
+    _ = await dl_trend_strategy.generate(context)
     # Should be None due to weak prediction
     assert signal is None
 
@@ -121,5 +121,5 @@ async def test_multi_horizon_fallback_to_binary(dl_trend_strategy):
         timestamp=None,
     )
 
-    signal = await dl_trend_strategy.generate(context)
+    _ = await dl_trend_strategy.generate(context)
     # Should work without errors

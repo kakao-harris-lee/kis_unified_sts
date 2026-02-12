@@ -37,14 +37,10 @@ from typing import TYPE_CHECKING, Any, Callable, Protocol
 
 import yaml
 
-from services.trading.pipeline import TradingPipeline, PipelineStage
+from services.trading.pipeline import TradingPipeline
 from services.trading.data_provider import MarketDataProvider, DataProviderConfig
 from services.trading.position_tracker import PositionTracker, PositionTrackerConfig
 from services.trading.strategy_manager import StrategyManager, StrategyManagerConfig
-from services.trading.holiday_cache import (
-    AsyncHolidayCache,
-    async_holiday_loader,
-)
 from services.monitoring.metrics import get_metrics_collector
 from shared.models.signal import Signal, ExitSignal
 from shared.config.loader import ConfigLoader
@@ -58,7 +54,7 @@ except Exception:  # pragma: no cover
     PaperOrderSide = None  # type: ignore
 
 if TYPE_CHECKING:
-    from shared.config.schema import MarketScheduleConfig, PipelineConfig
+    pass
 
 logger = logging.getLogger(__name__)
 

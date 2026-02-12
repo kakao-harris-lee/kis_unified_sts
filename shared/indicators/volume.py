@@ -35,7 +35,7 @@ from __future__ import annotations
 import logging
 from collections import deque
 from dataclasses import dataclass
-from typing import Any, Deque, Optional
+from typing import Any, Deque
 
 import numpy as np
 

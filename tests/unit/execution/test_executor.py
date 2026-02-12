@@ -1,6 +1,5 @@
 """Test order executor."""
 import pytest
-from unittest.mock import Mock, AsyncMock, patch
 
 
 @pytest.mark.asyncio

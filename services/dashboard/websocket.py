@@ -1,10 +1,8 @@
 """WebSocket manager for real-time updates."""
-import asyncio
-import json
 import logging
 from collections import defaultdict
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional
 
 from fastapi import WebSocket, WebSocketDisconnect
 

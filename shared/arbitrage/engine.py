@@ -1,7 +1,6 @@
 """Arbitrage Engine for Mode A Sniper Basis Trading."""
 import logging
 import time
-from datetime import datetime
 from typing import Optional, Tuple
 
 from .config import ArbitrageConfig
@@ -72,7 +71,7 @@ class ArbitrageEngine:
     def check_entry(
         self,
         spot_index: float,
-        futures_price: float,
+        _futures_price: float,
         days_to_expiry: int,
         best_bid: float,
         best_ask: float,

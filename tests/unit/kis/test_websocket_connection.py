@@ -1,8 +1,6 @@
 """Unit tests for WebSocket connection lifecycle."""
 import pytest
-import threading
-import time
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, patch
 
 
 class TestKISWebSocketAdapterInit:
@@ -131,6 +129,7 @@ class TestSymbolValidation:
 
     def test_valid_symbol_formats(self, mock_adapter):
         """Test valid symbol formats are accepted."""
+        _ = mock_adapter
         from shared.kis.websocket import SYMBOL_PATTERN
 
         valid_symbols = ["101V01", "A05601", "105X25", "KOSPI200"]
@@ -140,6 +139,7 @@ class TestSymbolValidation:
 
     def test_invalid_symbol_formats(self, mock_adapter):
         """Test invalid symbol formats are rejected."""
+        _ = mock_adapter
         from shared.kis.websocket import SYMBOL_PATTERN
 
         invalid_symbols = [
@@ -232,7 +232,7 @@ class TestMessageProcessing:
 
     def test_callback_exception_handled(self, mock_adapter, sample_orderbook_data):
         """Test callback exceptions are handled gracefully."""
-        def bad_callback(tick):
+        def bad_callback(_tick):
             raise RuntimeError("Callback error")
 
         mock_adapter._callback = bad_callback

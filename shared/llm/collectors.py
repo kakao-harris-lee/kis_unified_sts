@@ -15,11 +15,9 @@ import logging
 import os
 import time
 from abc import ABC, abstractmethod
-from dataclasses import asdict
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
-import numpy as np
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
@@ -347,7 +345,6 @@ class SEIBRODataCollector(DataCollector):
             url = f"{self.BASE_URL}/websquare/engine/pro498.do"
             response = self.session.get(url, params={"isin": isin}, timeout=10)
             if response.status_code == 200:
-                soup = BeautifulSoup(response.text, 'html.parser')
                 return {"status": "available", "raw_html_length": len(response.text)}
         except Exception as e:
             logger.debug(f"SEIBRO company info failed: {e}")

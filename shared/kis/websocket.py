@@ -497,12 +497,12 @@ class KISWebSocketAdapter(BaseAPIAdapter):
             self._set_connected(False)
             self._set_running(False)
 
-    def _on_open(self, ws) -> None:
+    def _on_open(self, _ws) -> None:
         """WebSocket connection opened."""
         logger.info("[KIS WS] Connection opened")
         self._set_connected(True)
 
-    def _on_message(self, ws, message: str) -> None:
+    def _on_message(self, _ws, message: str) -> None:
         """WebSocket message received.
 
         Uses bounded queue with overflow handling.
@@ -518,11 +518,11 @@ class KISWebSocketAdapter(BaseAPIAdapter):
             except queue.Empty:
                 pass
 
-    def _on_error(self, ws, error) -> None:
+    def _on_error(self, _ws, error) -> None:
         """WebSocket error occurred."""
         logger.error(f"[KIS WS] Error: {error}")
 
-    def _on_close(self, ws, close_status_code, close_msg) -> None:
+    def _on_close(self, _ws, close_status_code, close_msg) -> None:
         """WebSocket connection closed."""
         logger.info(f"[KIS WS] Connection closed: {close_status_code} {close_msg}")
         self._set_connected(False)

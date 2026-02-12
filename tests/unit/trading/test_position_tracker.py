@@ -1,8 +1,6 @@
 """Tests for services/trading/position_tracker.py"""
 
 import pytest
-from datetime import datetime
-from collections import deque
 
 
 class TestPositionTrackerConfig:

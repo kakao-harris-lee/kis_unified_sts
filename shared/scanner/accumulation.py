@@ -28,7 +28,7 @@ import numpy as np
 import pandas as pd
 import redis
 
-from shared.indicators.volume import OBVCalculator, RVOLCalculator
+from shared.indicators.volume import OBVCalculator
 
 logger = logging.getLogger(__name__)
 

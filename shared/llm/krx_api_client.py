@@ -6,7 +6,6 @@ KRX Open API를 통해 시장 데이터를 수집하는 클라이언트.
 """
 
 import json
-from dataclasses import asdict
 from datetime import datetime, timedelta
 from typing import List, Optional
 

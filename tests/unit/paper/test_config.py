@@ -1,5 +1,4 @@
 """Test paper trading configuration."""
-import pytest
 
 
 def test_paper_config_defaults():

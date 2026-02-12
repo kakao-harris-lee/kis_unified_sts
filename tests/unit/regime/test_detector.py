@@ -1,8 +1,7 @@
 """Test StockRegimeDetector."""
-import pytest
 import pandas as pd
 import numpy as np
-from datetime import datetime, timedelta
+from datetime import datetime
 
 
 def test_detector_bull_regime():

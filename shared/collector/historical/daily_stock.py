@@ -14,20 +14,17 @@ Usage:
 """
 import os
 import asyncio
-import json
 import logging
 from datetime import date, datetime, timedelta
-from pathlib import Path
-from typing import List, Tuple, Dict, Any, Optional
+from typing import List, Tuple, Dict, Any
 
 import httpx
 import clickhouse_connect
 
 from shared.config.secrets import SecretsManager
-from .calendar import get_trading_days_range, is_trading_day
+from .calendar import get_trading_days_range
 from .stock import (
     StockKISToken,
-    RateLimiter,
     _get_rate_limiter,
     _get_semaphore,
     STOCK_UNIVERSE,

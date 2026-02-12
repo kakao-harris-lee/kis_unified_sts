@@ -19,7 +19,7 @@ sb3-contrib ActionMasker와 호환되는 action_masks() 메서드 포함.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import IntEnum
 from typing import Any
 
@@ -167,7 +167,7 @@ class FuturesTradingEnv(gym.Env):
         self,
         *,
         seed: int | None = None,
-        options: dict[str, Any] | None = None,
+        _options: dict[str, Any] | None = None,
     ) -> tuple[np.ndarray, dict[str, Any]]:
         """환경 초기화 (에피소드 시작)"""
         super().reset(seed=seed)
@@ -347,7 +347,7 @@ class FuturesTradingEnv(gym.Env):
         return trade_pnl, trade_cost
 
     def _calculate_reward(
-        self, trade_pnl: float, trade_cost: float, current_price: float, prev_balance: float
+        self, trade_pnl: float, trade_cost: float, current_price: float, _prev_balance: float
     ) -> float:
         """보상함수 — 실현 PnL 중심 (Phase 1)
 

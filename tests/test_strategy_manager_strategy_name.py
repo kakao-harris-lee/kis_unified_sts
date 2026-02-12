@@ -19,7 +19,7 @@ class _DummyEntry(EntrySignalGenerator[dict]):
     def _validate_config(self):
         return
 
-    async def generate(self, context: EntryContext):
+    async def generate(self, _context: EntryContext):
         # Intentionally return a different "strategy" name to ensure StrategyManager rewrites it.
         return Signal(
             code="000000",
@@ -39,15 +39,15 @@ class _DummyExit(ExitSignalGenerator[dict]):
     def _validate_config(self):
         return
 
-    async def should_exit(self, context):
+    async def should_exit(self, _context):
         return (False, None)
 
-    async def scan_positions(self, positions, market_data, market_state=None):
+    async def scan_positions(self, _positions, _market_data, _market_state=None):
         return []
 
 
 class _DummySizer(PositionSizer[dict]):
-    def calculate(self, signal, account_balance, current_positions):
+    def calculate(self, _signal, _account_balance, _current_positions):
         return 1
 
 

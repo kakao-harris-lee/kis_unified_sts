@@ -418,7 +418,7 @@ class UnifiedMarketAnalyzer:
         futures: Optional[FuturesData],
         options: Optional[OptionsData],
         bonds: Optional[BondData],
-        indices: List[IndexData],
+        _indices: List[IndexData],
     ) -> Tuple[str, str, List[str]]:
         """LLM 없이 규칙 기반 분석"""
         # 강세/약세 섹터

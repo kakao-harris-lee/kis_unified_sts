@@ -21,7 +21,7 @@ import numpy as np
 import pandas as pd
 
 from shared.config import ConfigLoader
-from shared.ml.rl.env import FuturesTradingEnv, RLEnvConfig, mask_fn
+from shared.ml.rl.env import FuturesTradingEnv, RLEnvConfig
 
 logger = logging.getLogger(__name__)
 

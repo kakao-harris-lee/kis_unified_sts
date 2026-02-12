@@ -1,5 +1,4 @@
 """Test arbitrage configuration."""
-import pytest
 
 
 def test_arbitrage_config_defaults():

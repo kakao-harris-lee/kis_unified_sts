@@ -1,7 +1,6 @@
 """Tests for services/trading/strategy_manager.py"""
 
 import pytest
-from datetime import datetime
 from unittest.mock import MagicMock, AsyncMock, patch
 
 
@@ -120,7 +119,7 @@ class TestStrategyManager:
 
                 from services.trading.strategy_manager import StrategyManager
 
-                manager = StrategyManager(asset_class="stock")
+                _ = StrategyManager(asset_class="stock")
 
                 mock_register.assert_called_once()
 
@@ -342,7 +341,7 @@ class TestStrategyManager:
                 manager = StrategyManager(asset_class="stock")
                 manager.add_strategy(mock_strategy)
 
-                signals = await manager.check_exits(
+                _ = await manager.check_exits(
                     positions=[mock_position], market_data={}, market_state=None
                 )
 

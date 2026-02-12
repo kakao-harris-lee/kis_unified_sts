@@ -1,5 +1,4 @@
 """Test FeatureProcessor."""
-import pytest
 
 
 def test_processor_creation():

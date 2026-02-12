@@ -1,7 +1,7 @@
 """Trend position manager with ATR-based trailing stops."""
 import logging
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional, List
 import uuid
 

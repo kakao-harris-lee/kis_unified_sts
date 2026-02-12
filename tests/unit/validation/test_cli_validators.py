@@ -1,6 +1,4 @@
 """Tests for CLI validators."""
-import tempfile
-from pathlib import Path
 
 import pytest
 import pandas as pd

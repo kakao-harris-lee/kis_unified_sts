@@ -1,6 +1,6 @@
 """Test WebSocket manager."""
 import pytest
-from unittest.mock import AsyncMock, MagicMock, PropertyMock
+from unittest.mock import AsyncMock, MagicMock
 
 
 @pytest.fixture

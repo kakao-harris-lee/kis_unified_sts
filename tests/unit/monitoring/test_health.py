@@ -1,12 +1,11 @@
 """Test HealthChecker."""
 import pytest
-from datetime import datetime
 
 
 @pytest.mark.asyncio
 async def test_health_check_component():
     """Test component health check."""
-    from shared.monitoring.health import HealthChecker, ComponentHealth
+    from shared.monitoring.health import HealthChecker
 
     checker = HealthChecker()
 

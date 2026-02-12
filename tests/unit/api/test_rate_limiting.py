@@ -1,6 +1,5 @@
 """Tests for rate limiting on API endpoints."""
 
-import pytest
 
 
 class TestRateLimiting:

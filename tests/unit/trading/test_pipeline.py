@@ -1,9 +1,7 @@
 """Trading Pipeline 테스트"""
 
-import asyncio
 import pytest
-from datetime import datetime
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 
 
 class TestCircuitBreaker:

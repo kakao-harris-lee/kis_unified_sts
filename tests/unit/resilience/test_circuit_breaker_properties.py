@@ -3,7 +3,6 @@
 import time
 from hypothesis import given, settings, strategies as st, assume
 
-import pytest
 
 from shared.resilience import CircuitBreaker, CircuitBreakerConfig, CircuitState
 
@@ -53,7 +52,7 @@ class TestCircuitBreakerProperties:
     )
     @settings(max_examples=50)
     def test_success_resets_failure_count(
-        self, failures_before: int, successes: int
+        self, failures_before: int, _successes: int
     ):
         """Property: Success in CLOSED state resets failure count."""
         breaker = CircuitBreaker(name="test", failure_threshold=5)

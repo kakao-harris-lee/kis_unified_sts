@@ -1,5 +1,4 @@
 """Test order execution models."""
-import pytest
 
 
 def test_order_request_creation():
