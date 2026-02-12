@@ -14,6 +14,8 @@ from typing import TYPE_CHECKING, Any, Optional
 from shared.models.position import PositionSide, PositionState
 from shared.models.signal import ExitReason, ExitSignal
 from shared.strategy.base import ExitContext, ExitSignalGenerator
+from shared.strategy.market_data import get_price_from_snapshot, get_symbol_snapshot
+from shared.strategy.market_time import now_kst
 from shared.strategy.registry import ExitRegistry
 
 if TYPE_CHECKING:
@@ -106,7 +108,8 @@ class ATRTrailingExit(ExitSignalGenerator[ATRTrailingConfig]):
             (should_exit, signal) 튜플
         """
         position = context.position
-        current_price = context.market_data.get("close", 0)
+        snapshot = get_symbol_snapshot(context.market_data, position.code)
+        current_price = get_price_from_snapshot(snapshot) or position.current_price
         atr = context.indicators.get("atr", 0)
 
         # 1. Time-based exit
@@ -195,12 +198,14 @@ class ATRTrailingExit(ExitSignalGenerator[ATRTrailingConfig]):
             ExitSignal 리스트
         """
         signals = []
+        now = now_kst()
         for position in positions:
+            snapshot = get_symbol_snapshot(market_data, position.code)
             context = ExitContext(
                 position=position,
-                market_data=market_data,
+                market_data={position.code: snapshot},
                 indicators={},
-                timestamp=datetime.now(),
+                timestamp=now,
                 market_state=market_state,
             )
             should_exit, signal = await self.should_exit(context)
@@ -234,7 +239,7 @@ class ATRTrailingExit(ExitSignalGenerator[ATRTrailingConfig]):
             profit_pct=profit_pct,
             confidence=0.9,
             priority=2,
-            timestamp=datetime.now(),
+            timestamp=now_kst(),
             stage=PositionState.SURVIVAL.value,
             high_since_entry=position.highest_price or position.entry_price,
             holding_minutes=0,

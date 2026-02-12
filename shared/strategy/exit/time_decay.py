@@ -23,12 +23,13 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
 from typing import TYPE_CHECKING, Any, Optional
 
 from shared.models.position import PositionState
 from shared.models.signal import ExitReason, ExitSignal
 from shared.strategy.base import ExitContext, ExitSignalGenerator
+from shared.strategy.market_data import get_price_from_snapshot, get_symbol_snapshot
+from shared.strategy.market_time import now_kst, to_kst
 from shared.strategy.registry import ExitRegistry
 
 if TYPE_CHECKING:
@@ -121,14 +122,15 @@ class TimeDecayExit(ExitSignalGenerator[TimeDecayConfig]):
             (should_exit, signal) 튜플
         """
         position = context.position
-        current_price = context.market_data.get("close", position.current_price)
+        snapshot = get_symbol_snapshot(context.market_data, position.code)
+        current_price = get_price_from_snapshot(snapshot) or position.current_price
 
         # MAXIMIZE 상태 스킵 (수익 중이므로 E1/E2에 맡김)
         if self.config.skip_maximize_state and position.state == PositionState.MAXIMIZE:
             return False, None
 
         # 보유 시간 계산 (분)
-        hold_duration = context.timestamp - position.entry_time
+        hold_duration = to_kst(context.timestamp) - to_kst(position.entry_time)
         hold_minutes = hold_duration.total_seconds() / 60
 
         # 현재가 확인
@@ -185,12 +187,13 @@ class TimeDecayExit(ExitSignalGenerator[TimeDecayConfig]):
             return []
 
         signals = []
-        now = datetime.now()
+        now = now_kst()
 
         for position in positions:
+            snapshot = get_symbol_snapshot(market_data, position.code)
             context = ExitContext(
                 position=position,
-                market_data=market_data,
+                market_data={position.code: snapshot},
                 indicators={},
                 timestamp=now,
                 market_state=market_state,
@@ -252,7 +255,7 @@ class TimeDecayExit(ExitSignalGenerator[TimeDecayConfig]):
             profit_pct=profit_pct,
             confidence=0.7,
             priority=2,  # 중간 우선순위
-            timestamp=datetime.now(),
+            timestamp=now_kst(),
             stage=position.state.value if position.state else "",
             high_since_entry=position.highest_price or position.entry_price,
             holding_minutes=int(hold_minutes),

@@ -40,6 +40,13 @@ from typing import TYPE_CHECKING, Any, Optional
 from shared.models.position import Position, PositionState
 from shared.models.signal import ExitReason, ExitSignal
 from shared.strategy.base import ExitContext, ExitSignalGenerator
+from shared.strategy.market_data import get_price_from_snapshot, get_symbol_snapshot
+from shared.strategy.market_time import (
+    effective_close_time,
+    is_trading_day_kst,
+    now_kst,
+    to_kst,
+)
 
 if TYPE_CHECKING:
     pass
@@ -283,7 +290,7 @@ class ThreeStageExit(ExitSignalGenerator[ThreeStageExitConfig]):
             return []
 
         signals = []
-        now = datetime.now()
+        now = now_kst()
 
         for position in positions:
             signal = await self._check_position(
@@ -337,13 +344,16 @@ class ThreeStageExit(ExitSignalGenerator[ThreeStageExitConfig]):
         )
 
         # 보유 시간 (분)
-        holding_minutes = int((now - position.entry_time).total_seconds() / 60)
+        holding_minutes = int(
+            (to_kst(now) - to_kst(position.entry_time)).total_seconds() / 60
+        )
 
         # 현재 Stage 결정
         stage = self._determine_stage(position, profit_pct)
 
         # 1. EOD 체크 (최우선)
-        if now.time() >= self.config.eod_close_time:
+        close_time = effective_close_time(self.config.eod_close_time)
+        if is_trading_day_kst(now) and to_kst(now).time() >= close_time:
             return self._create_exit_signal(
                 position=position,
                 current_price=current_price,
@@ -406,17 +416,11 @@ class ThreeStageExit(ExitSignalGenerator[ThreeStageExitConfig]):
         self, position: Position, market_data: dict[str, Any]
     ) -> Optional[float]:
         """현재가 조회"""
-        # market_data에서 조회
-        if market_data:
-            price = market_data.get(position.code)
-            if isinstance(price, (int, float)) and price > 0:
-                return float(price)
-
-            # 중첩 구조 (code -> {close: price})
-            if isinstance(price, dict):
-                val = price.get("close") or price.get("price")
-                if isinstance(val, (int, float)) and val > 0:
-                    return float(val)
+        # market_data에서 조회 (code -> dict 표준)
+        snapshot = get_symbol_snapshot(market_data, position.code)
+        price = get_price_from_snapshot(snapshot)
+        if price is not None:
+            return price
 
         # Position의 current_price 사용 (fallback)
         if position.current_price > 0:
@@ -582,6 +586,7 @@ class ThreeStageExit(ExitSignalGenerator[ThreeStageExitConfig]):
     ) -> ExitSignal:
         """ExitSignal 생성"""
         confidence = self._calculate_confidence(reason, profit_pct, stage)
+        now = now_kst()
 
         logger.info(
             f"[{self.name}] Exit signal: {position.code} | "
@@ -603,7 +608,7 @@ class ThreeStageExit(ExitSignalGenerator[ThreeStageExitConfig]):
             profit_pct=profit_pct,
             confidence=confidence,
             priority=priority,
-            timestamp=datetime.now(),
+            timestamp=now,
             stage=stage.value,
             high_since_entry=high_since_entry,
             holding_minutes=holding_minutes,

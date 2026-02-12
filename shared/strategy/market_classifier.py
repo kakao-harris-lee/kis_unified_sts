@@ -69,10 +69,10 @@ class MarketClassifier:
     def classify(
         self,
         mfi: float,
-        _adx: float,
-        _rsi: Optional[float] = None,
-        _macd: Optional[float] = None,
-        _macd_signal: Optional[float] = None,
+        adx: float,
+        rsi: Optional[float] = None,
+        macd: Optional[float] = None,
+        macd_signal: Optional[float] = None,
     ) -> MarketState:
         """시장 상태 분류
 
@@ -86,6 +86,7 @@ class MarketClassifier:
         Returns:
             MarketState enum
         """
+        _ = adx, rsi, macd, macd_signal
         # MFI 기반 1차 분류
         if mfi >= self.config["mfi_bull_strong"]:
             return MarketState.BULL_STRONG

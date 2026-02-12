@@ -203,6 +203,7 @@ class VolumeAccumulationBreakoutEntry(EntrySignalGenerator[VolumeAccumulationCon
             confidence=confidence,
             metadata={
                 "signal_direction": "long",
+                "stop_loss_pct": float(self.config.stop_loss_pct),
                 "accumulation_score": accumulation_score,
                 "rvol": rvol,
                 "breakout_pct": breakout_pct,

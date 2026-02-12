@@ -37,9 +37,21 @@ from datetime import datetime, time
 from typing import TYPE_CHECKING, Any, Optional
 
 from shared.config.mixins import ConfigMixin
+from shared.calendar import get_market_calendar
 from shared.models.position import Position
 from shared.models.signal import ExitReason, ExitSignal
 from shared.strategy.base import ExitContext, ExitSignalGenerator
+from shared.strategy.market_data import (
+    get_numeric_field,
+    get_price_from_snapshot,
+    get_symbol_snapshot,
+)
+from shared.strategy.market_time import (
+    effective_close_time,
+    is_trading_day_kst,
+    now_kst,
+    to_kst,
+)
 
 if TYPE_CHECKING:
     pass
@@ -227,7 +239,7 @@ class MomentumDecayExit(ExitSignalGenerator[MomentumDecayConfig]):
             return []
 
         signals = []
-        now = datetime.now()
+        now = now_kst()
 
         for position in positions:
             signal = self._check_position(
@@ -255,7 +267,7 @@ class MomentumDecayExit(ExitSignalGenerator[MomentumDecayConfig]):
         self,
         position: Position,
         market_data: dict[str, Any],
-        _market_state: Optional[Any],
+        market_state: Optional[Any],
         now: datetime,
     ) -> Optional[ExitSignal]:
         """Check individual position for exit conditions
@@ -270,7 +282,9 @@ class MomentumDecayExit(ExitSignalGenerator[MomentumDecayConfig]):
             7. No-Profit Time Cut
             8. Trailing Stop
         """
+        _ = market_state
         # Get current price
+        snapshot = get_symbol_snapshot(market_data, position.code)
         current_price = self._get_current_price(position, market_data)
         if current_price is None:
             return None
@@ -301,7 +315,8 @@ class MomentumDecayExit(ExitSignalGenerator[MomentumDecayConfig]):
             )
 
         # 2. EOD Close
-        if now.time() >= self.config.eod_close_time:
+        close_time = effective_close_time(self.config.eod_close_time)
+        if is_trading_day_kst(now) and to_kst(now).time() >= close_time:
             return self._create_exit_signal(
                 position=position,
                 current_price=current_price,
@@ -340,7 +355,7 @@ class MomentumDecayExit(ExitSignalGenerator[MomentumDecayConfig]):
             )
 
         # Get volume velocity from market data
-        volume_velocity = market_data.get("volume_velocity", 0.0)
+        volume_velocity = get_numeric_field(snapshot, "volume_velocity", 0.0)
 
         # 5. Momentum Decay
         if self._check_momentum_decay(
@@ -361,7 +376,7 @@ class MomentumDecayExit(ExitSignalGenerator[MomentumDecayConfig]):
 
         # 6. VWAP Breakdown
         if self.config.vwap_breakdown_enabled:
-            vwap = market_data.get("vwap", 0.0)
+            vwap = get_numeric_field(snapshot, "vwap", 0.0)
             if self._check_vwap_breakdown(
                 current_price=current_price,
                 vwap=vwap,
@@ -409,18 +424,10 @@ class MomentumDecayExit(ExitSignalGenerator[MomentumDecayConfig]):
         self, position: Position, market_data: dict[str, Any]
     ) -> Optional[float]:
         """Get current price from market data"""
-        # Direct code -> price mapping
-        if market_data:
-            price = market_data.get(position.code)
-            if price and price > 0:
-                return price
-
-            # Nested structure (code -> {close: price})
-            data = market_data.get(position.code, {})
-            if isinstance(data, dict):
-                price = data.get("close") or data.get("price")
-                if price and price > 0:
-                    return price
+        snapshot = get_symbol_snapshot(market_data, position.code)
+        price = get_price_from_snapshot(snapshot)
+        if price is not None:
+            return price
 
         # Fallback to position's current_price
         if position.current_price > 0:
@@ -429,15 +436,15 @@ class MomentumDecayExit(ExitSignalGenerator[MomentumDecayConfig]):
         return None
 
     def _get_holding_days(self, position: Position, now: datetime) -> int:
-        """Calculate holding days (approximate trading days)
-
-        Uses calendar days / 1.4 as approximation for trading days
-        (5 trading days per 7 calendar days)
-        """
-        calendar_days = (now - position.entry_time).days
-        # Approximate trading days (5 trading days per 7 calendar days)
-        trading_days = int(calendar_days / 1.4)
-        return trading_days
+        """Calculate holding days using exchange trading calendar."""
+        calendar = get_market_calendar()
+        start = to_kst(position.entry_time).date()
+        end = to_kst(now).date()
+        if end <= start:
+            return 0
+        trading_days = calendar.get_trading_days_in_range(start, end)
+        # entry day counts as day 0 holding
+        return max(0, len(trading_days) - 1)
 
     def _is_friday_afternoon(self, now: datetime) -> bool:
         """Check if current time is Friday afternoon"""
@@ -598,7 +605,7 @@ class MomentumDecayExit(ExitSignalGenerator[MomentumDecayConfig]):
             profit_pct=profit_pct,
             confidence=confidence,
             priority=priority,
-            timestamp=datetime.now(),
+            timestamp=now_kst(),
             high_since_entry=high_since_entry,
             holding_minutes=holding_minutes,
             quantity=position.quantity,

@@ -27,13 +27,14 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
 from typing import TYPE_CHECKING, Any, Optional
 
 from shared.models.position import PositionState
 from shared.models.signal import ExitReason, ExitSignal
 from shared.strategy.base import ExitContext, ExitSignalGenerator
+from shared.strategy.market_data import get_price_from_snapshot, get_symbol_snapshot
 from shared.strategy.market_classifier import MarketClassifier, MarketState
+from shared.strategy.market_time import now_kst, to_kst
 from shared.strategy.registry import ExitRegistry
 
 if TYPE_CHECKING:
@@ -167,7 +168,8 @@ class MarketRegimeExit(ExitSignalGenerator[MarketRegimeConfig]):
         """
         position = context.position
         market_state = context.market_state
-        current_price = context.market_data.get("close", position.current_price)
+        snapshot = get_symbol_snapshot(context.market_data, position.code)
+        current_price = get_price_from_snapshot(snapshot) or position.current_price
 
         # 시장 상태가 없으면 스킵
         if market_state is None:
@@ -262,12 +264,13 @@ class MarketRegimeExit(ExitSignalGenerator[MarketRegimeConfig]):
             return []
 
         signals = []
-        now = datetime.now()
+        now = now_kst()
 
         for position in positions:
+            snapshot = get_symbol_snapshot(market_data, position.code)
             context = ExitContext(
                 position=position,
-                market_data=market_data,
+                market_data={position.code: snapshot},
                 indicators={},
                 timestamp=now,
                 market_state=market_state,
@@ -288,15 +291,16 @@ class MarketRegimeExit(ExitSignalGenerator[MarketRegimeConfig]):
         self,
         position: "Position",
         current_price: float,
-        _market_state: MarketState,
+        market_state: MarketState,
         reason: ExitReason,
         priority: int,
         message: str,
     ) -> ExitSignal:
         """청산 시그널 생성."""
+        _ = market_state
         profit_pct = position.profit_rate
         profit_amount = (current_price - position.entry_price) * position.quantity
-        hold_duration = datetime.now() - position.entry_time
+        hold_duration = to_kst(now_kst()) - to_kst(position.entry_time)
         holding_minutes = int(hold_duration.total_seconds() / 60)
 
         logger.info(f"[{self.name}] {position.code}: {message}")
@@ -314,7 +318,7 @@ class MarketRegimeExit(ExitSignalGenerator[MarketRegimeConfig]):
             profit_pct=profit_pct,
             confidence=0.8 if reason == ExitReason.BEAR_EXIT else 0.6,
             priority=priority,
-            timestamp=datetime.now(),
+            timestamp=now_kst(),
             stage=position.state.value if position.state else "",
             high_since_entry=position.highest_price or position.entry_price,
             holding_minutes=holding_minutes,
