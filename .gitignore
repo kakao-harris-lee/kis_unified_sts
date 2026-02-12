@@ -47,7 +47,9 @@ kis_docs/
 .serena/
 
 # RL training artifacts
-models/futures/rl/mppo*/
-models/futures/rl/mppo_final.zip
+models/futures/rl/
 results/
 mlflow.db
+
+# Screenshots / images (root level)
+*.png
