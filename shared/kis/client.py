@@ -14,21 +14,27 @@ from typing import Any
 
 import aiohttp
 
+from shared.config.loader import ConfigLoader
 from shared.http import AsyncSessionMixin
 from shared.kis.auth import KISAuthConfig, KISAuthManager
 
 logger = logging.getLogger(__name__)
 
-# Default timeout for KIS API requests (seconds)
-_DEFAULT_REQUEST_TIMEOUT = 10.0
 
-# KIS API rate limit per token.
-# Real API: ~20 req/s. Mock/virtual API (openapivts): ~5 req/s.
-# Override via KIS_API_RATE_LIMIT env var.
-_DEFAULT_RATE_LIMIT = 5
+def _load_rate_limiter_config() -> dict[str, Any]:
+    """Load rate_limiter section from config/streaming.yaml."""
+    try:
+        cfg = ConfigLoader.load("streaming.yaml")
+        return cfg.get("rate_limiter", {})
+    except Exception:
+        logger.warning("[KISClient] Failed to load rate limiter config, using defaults")
+        return {}
 
-# Cooldown after receiving a rate limit error (seconds)
-_RATE_LIMIT_PENALTY = 1.0
+
+_rl_cfg = _load_rate_limiter_config()
+_DEFAULT_REQUEST_TIMEOUT = float(_rl_cfg.get("request_timeout", 10.0))
+_DEFAULT_RATE_LIMIT = int(_rl_cfg.get("default_rate", 5))
+_RATE_LIMIT_PENALTY = float(_rl_cfg.get("penalty_seconds", 1.0))
 
 
 class _RateLimiter:

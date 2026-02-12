@@ -28,4 +28,4 @@ datasources:
       defaultDatabase: kospi
       username: default
     secureJsonData:
-      password: "@1tidh6ls6ls"
+      password: ${CLICKHOUSE_PASSWORD}

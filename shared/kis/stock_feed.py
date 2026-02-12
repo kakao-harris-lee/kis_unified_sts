@@ -34,6 +34,7 @@ import websocket
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import unpad
 
+from shared.config.loader import ConfigLoader
 from shared.kis.auth import KISAuthConfig
 
 logger = logging.getLogger(__name__)
@@ -51,10 +52,15 @@ _F_VOLUME = 13      # ACML_VOL - 누적거래량
 
 TR_STOCK_TRADE = "H0STCNT0"
 
-# Max symbols per WebSocket session (KIS limit: 41, use 40 for safety)
-MAX_WS_SYMBOLS = 40
 
-_QUEUE_MAXSIZE = 10000
+def _load_feed_config() -> dict[str, Any]:
+    """Load stock_feed section from config/streaming.yaml."""
+    try:
+        cfg = ConfigLoader.load("streaming.yaml")
+        return cfg.get("stock_feed", {})
+    except Exception:
+        logger.warning("[StockPriceFeed] Failed to load config, using defaults")
+        return {}
 
 
 def _parse_stock_trade(data: str) -> Optional[dict[str, Any]]:
@@ -126,6 +132,16 @@ class KISStockPriceFeed:
         self._fallback = fallback_client
         self._ws_url = self.WS_URL_REAL if config.is_real else self.WS_URL_MOCK
 
+        # Load feed config from streaming.yaml
+        feed_cfg = _load_feed_config()
+        self._max_symbols = int(feed_cfg.get("max_symbols", 40))
+        self._ping_interval = int(feed_cfg.get("ping_interval", 30))
+        self._ping_timeout = int(feed_cfg.get("ping_timeout", 10))
+        self._connection_timeout = float(feed_cfg.get("connection_timeout", 10.0))
+        self._subscription_delay = float(feed_cfg.get("subscription_delay", 0.05))
+        self._approval_key_timeout = int(feed_cfg.get("approval_key_timeout", 10))
+        queue_maxsize = int(feed_cfg.get("queue_maxsize", 10000))
+
         # Price cache: {symbol: price_dict}
         self._prices: dict[str, dict[str, Any]] = {}
 
@@ -144,7 +160,7 @@ class KISStockPriceFeed:
         self._aes_iv: Optional[bytes] = None
 
         # Message queue
-        self._queue: queue.Queue = queue.Queue(maxsize=_QUEUE_MAXSIZE)
+        self._queue: queue.Queue = queue.Queue(maxsize=queue_maxsize)
 
         # Subscribed symbols
         self._subscribed: set[str] = set()
@@ -155,8 +171,9 @@ class KISStockPriceFeed:
         self._dropped_count = 0
 
         # Reconnect state
-        self._reconnect_delay = 1.0  # Initial delay (seconds)
-        self._max_reconnect_delay = 60.0
+        self._reconnect_delay = float(feed_cfg.get("reconnect_initial_delay", 1.0))
+        self._max_reconnect_delay = float(feed_cfg.get("reconnect_max_delay", 60.0))
+        self._initial_reconnect_delay = self._reconnect_delay
 
     # ----- MarketDataSource protocol -----
 
@@ -195,7 +212,10 @@ class KISStockPriceFeed:
 
         self._ws_thread = threading.Thread(
             target=self._ws.run_forever,
-            kwargs={"ping_interval": 30, "ping_timeout": 10},
+            kwargs={
+                "ping_interval": self._ping_interval,
+                "ping_timeout": self._ping_timeout,
+            },
             daemon=True,
             name="StockPriceFeed-WS",
         )
@@ -208,7 +228,7 @@ class KISStockPriceFeed:
         )
         self._proc_thread.start()
 
-        if not self._connected.wait(timeout=10.0):
+        if not self._connected.wait(timeout=self._connection_timeout):
             self._running = False
             raise ConnectionError("Stock WebSocket connection timeout")
 
@@ -236,9 +256,9 @@ class KISStockPriceFeed:
     def update_symbols(self, symbols: list[str]) -> None:
         """Update subscribed symbols (subscribe new, unsubscribe removed).
 
-        Respects MAX_WS_SYMBOLS limit. Excess symbols are silently dropped.
+        Respects max_symbols limit. Excess symbols are silently dropped.
         """
-        desired = set(symbols[:MAX_WS_SYMBOLS])
+        desired = set(symbols[:self._max_symbols])
 
         with self._sub_lock:
             to_add = desired - self._subscribed
@@ -252,7 +272,7 @@ class KISStockPriceFeed:
             for sym in to_add:
                 self._send_sub(sym)
                 self._subscribed.add(sym)
-                time.sleep(0.05)  # Small delay between subscriptions
+                time.sleep(self._subscription_delay)
 
             if to_add or to_remove:
                 logger.info(
@@ -295,7 +315,7 @@ class KISStockPriceFeed:
                     "secretkey": self._config.app_secret,
                 },
                 headers={"content-type": "application/json"},
-                timeout=10,
+                timeout=self._approval_key_timeout,
             )
             resp.raise_for_status()
             data = resp.json()
@@ -369,15 +389,18 @@ class KISStockPriceFeed:
 
                 self._ws_thread = threading.Thread(
                     target=self._ws.run_forever,
-                    kwargs={"ping_interval": 30, "ping_timeout": 10},
+                    kwargs={
+                        "ping_interval": self._ping_interval,
+                        "ping_timeout": self._ping_timeout,
+                    },
                     daemon=True,
                     name="StockPriceFeed-WS",
                 )
                 self._ws_thread.start()
 
-                if self._connected.wait(timeout=10.0):
+                if self._connected.wait(timeout=self._connection_timeout):
                     logger.info("[StockPriceFeed] Reconnected successfully")
-                    self._reconnect_delay = 1.0  # Reset backoff
+                    self._reconnect_delay = self._initial_reconnect_delay
                     # Re-subscribe all symbols
                     with self._sub_lock:
                         for sym in list(self._subscribed):

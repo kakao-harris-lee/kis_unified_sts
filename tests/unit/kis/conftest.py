@@ -59,28 +59,28 @@ def sample_orderbook_data():
 def sample_trade_data():
     """Sample H0IFCNT0 (trade) message data.
 
-    15+ fields separated by ^
-    Field layout:
-        0: symbol
-        1: time
-        2: current price
-        6: open price
-        7: high price
-        8: low price
-        11: tick volume
-        12: cumulative volume
-        14: open interest
+    19+ fields separated by ^
+    Field layout (corrected):
+        0: 종목코드
+        1: 체결시간
+        5: 현재가 (current_price)
+        6: 시가 (open_price)
+        7: 고가 (high_price)
+        8: 저가 (low_price)
+        9: 체결수량 (tick_volume)
+        10: 누적체결수량 (cumulative_volume)
+        18: 미결제약정 (open_interest)
     """
-    fields = [""] * 15
+    fields = [""] * 19
     fields[0] = "101V01"
     fields[1] = "093000"
-    fields[2] = "330.25"  # current_price
+    fields[5] = "330.25"  # current_price
     fields[6] = "329.50"  # open_price
     fields[7] = "331.00"  # high_price
     fields[8] = "329.00"  # low_price
-    fields[11] = "5"  # tick_volume
-    fields[12] = "15000"  # cumulative_volume
-    fields[14] = "25000"  # open_interest
+    fields[9] = "5"  # tick_volume
+    fields[10] = "15000"  # cumulative_volume
+    fields[18] = "25000"  # open_interest
 
     return "^".join(fields)
 

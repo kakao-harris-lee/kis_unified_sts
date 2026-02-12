@@ -200,7 +200,7 @@ def parse_futures_trade(
         TickData or None if parsing fails
     """
     fields = data.split("^")
-    if len(fields) < 15:
+    if len(fields) < 19:
         return None
 
     try:

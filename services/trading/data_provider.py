@@ -74,6 +74,9 @@ class DataProviderConfig:
     # Timeout for data fetch
     fetch_timeout_seconds: float = 5.0
 
+    # Stagger delay between requests in a batch (seconds)
+    stagger_delay_seconds: float = 0.1
+
     # Mock data seed for reproducibility (None = random)
     mock_seed: int | None = None
 
@@ -392,7 +395,7 @@ class MarketDataProvider:
             async def fetch_single(symbol: str, idx: int) -> tuple[str, dict[str, Any] | None]:
                 try:
                     if idx > 0 and not instant:
-                        await asyncio.sleep(idx * 0.1)
+                        await asyncio.sleep(idx * self.config.stagger_delay_seconds)
                     price_data = await asyncio.wait_for(
                         source.get_current_price(symbol),
                         timeout=self.config.fetch_timeout_seconds,

@@ -47,6 +47,7 @@ from services.trading.holiday_cache import (
 )
 from services.monitoring.metrics import get_metrics_collector
 from shared.models.signal import Signal, ExitSignal
+from shared.config.loader import ConfigLoader
 from shared.strategy.base import EntryContext
 from shared.utils.calc import calc_order_quantity
 
@@ -559,13 +560,24 @@ class TradingOrchestrator:
         # Data provider
         # With WebSocket: cache_ttl can be short (data is push-based, instant)
         # Without WebSocket (futures/fallback): keep original TTL
+        try:
+            dp_cfg = ConfigLoader.load("streaming.yaml").get("data_provider", {})
+        except Exception:
+            dp_cfg = {}
         if data_source:
-            cache_ttl = 2.0  # WebSocket data is real-time, short TTL OK
+            cache_ttl = float(dp_cfg.get("cache_ttl_websocket", 2.0))
         else:
-            cache_ttl = 30.0 if self.config.asset_class == "stock" else 5.0
+            if self.config.asset_class == "stock":
+                cache_ttl = float(dp_cfg.get("cache_ttl_stock", 30.0))
+            else:
+                cache_ttl = float(dp_cfg.get("cache_ttl_futures", 5.0))
+        stagger_delay = float(dp_cfg.get("stagger_delay", 0.1))
         self._data_provider = MarketDataProvider(
             symbols=self.config.symbols,
-            config=DataProviderConfig(cache_ttl_seconds=cache_ttl),
+            config=DataProviderConfig(
+                cache_ttl_seconds=cache_ttl,
+                stagger_delay_seconds=stagger_delay,
+            ),
             kis_client=self._kis_client if not data_source else None,
             data_source=data_source,
         )
