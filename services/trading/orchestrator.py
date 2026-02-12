@@ -383,12 +383,38 @@ class TradingConfig:
         order_amount: float = 1_000_000,
     ) -> TradingConfig:
         """선물용 설정"""
+        # Auto-detect KOSPI200 mini futures front-month code
+        symbols = cls._get_futures_default_symbols()
         return cls(
             asset_class="futures",
             strategy_name=strategy_name,
             initial_capital=initial_capital,
             order_amount_per_trade=order_amount,
+            symbols=symbols,
         )
+
+    @staticmethod
+    def _get_futures_default_symbols() -> list[str]:
+        """Get default KOSPI200 mini futures front-month symbol.
+
+        KIS mini futures code format: A056{month_code}000
+        Month codes: 1=Jan..9=Sep, A=Oct, B=Nov, C=Dec
+        """
+        from datetime import date as _date
+        today = _date.today()
+        y, m = today.year, today.month
+        # Futures expire 2nd Thursday of contract month.
+        # If past ~15th, roll to next month.
+        if today.day >= 15:
+            m += 1
+            if m > 12:
+                m = 1
+                y += 1
+        month_codes = "123456789ABC"
+        mc = month_codes[m - 1]
+        code = f"A056{mc}000"
+        logger.info(f"Futures default symbol: {code} ({y}-{m:02d})")
+        return [code]
 
 
 class TradingOrchestrator:
@@ -471,6 +497,9 @@ class TradingOrchestrator:
         # WebSocket stock price feed (initialized in _initialize_components)
         self._stock_price_feed: Any | None = None
 
+        # Redis state publisher (initialized in _initialize_components)
+        self._state_publisher: Any | None = None
+
         # Universe refresh from screener
         self._universe_refresh_task: asyncio.Task | None = None
         self._universe_refresh_interval = 30.0  # seconds
@@ -519,6 +548,12 @@ class TradingOrchestrator:
         # 파이프라인 생성 및 시작
         self.pipeline = self._create_pipeline()
         await self.pipeline.start()
+
+        # Publish initial status + start Prometheus
+        if self._state_publisher:
+            self._state_publisher.publish_status(self.get_status())
+        prom_port = 9092 if self.config.asset_class == "futures" else 9091
+        self._metrics.start_prometheus_server(port=prom_port)
 
         await self._notify(
             f"🚀 Trading Started\n"
@@ -670,6 +705,14 @@ class TradingOrchestrator:
         # Load accumulation candidates from Redis
         self._accumulation_candidates: dict[str, int] = {}
         self._refresh_accumulation_candidates()
+
+        # Redis state publisher
+        try:
+            from shared.streaming.trading_state import TradingStatePublisher
+            self._state_publisher = TradingStatePublisher(self.config.asset_class)
+            logger.info("Trading state publisher initialized")
+        except Exception as e:
+            logger.warning(f"Trading state publisher init failed: {e}")
 
         # Bootstrap symbols from screener if none configured
         if not self.config.symbols and self.config.asset_class == "stock":
@@ -876,6 +919,10 @@ class TradingOrchestrator:
 
         self.state = TradingState.STOPPED
         self._running = False
+
+        # Publish final status to Redis
+        if self._state_publisher:
+            self._state_publisher.publish_status(self.get_status())
 
         await self._notify(
             f"🛑 Trading Stopped\n"
@@ -1408,6 +1455,18 @@ class TradingOrchestrator:
                         f"{old_state.value} → {new_state.value}"
                     )
 
+            # Publish position updates to Redis (throttled to 2s)
+            if self._state_publisher and positions:
+                self._state_publisher.publish_positions_update(positions, throttle=2.0)
+
+            # Publish status periodically (throttled to 5s)
+            if self._state_publisher:
+                import time as _time_mod
+                now = _time_mod.monotonic()
+                if now - self._state_publisher._last_status_publish >= 5.0:
+                    self._state_publisher._last_status_publish = now
+                    self._state_publisher.publish_status(self.get_status())
+
             return {
                 "positions_updated": len(positions),
                 "transitions": len(transitions),
@@ -1548,6 +1607,11 @@ class TradingOrchestrator:
                             f"전략: {signal.strategy}\n"
                             f"신뢰도: {signal.confidence:.1%}"
                         )
+                        # Publish to Redis
+                        if self._state_publisher:
+                            self._state_publisher.publish_position_opened(position)
+                            self._state_publisher.publish_signal(signal, "entry", True)
+                            self._metrics.record_signal("entry", strategy=signal.strategy)
 
             except Exception as e:
                 logger.error(f"Entry execution failed for {signal.code}: {e}", exc_info=True)
@@ -1623,6 +1687,11 @@ class TradingOrchestrator:
                             f"사유: {reason_str}\n"
                             f"손익: {pnl:+,.0f}원 ({pnl_pct:+.2f}%)"
                         )
+                        # Publish to Redis
+                        if self._state_publisher:
+                            self._state_publisher.publish_position_closed(closed)
+                            self._state_publisher.publish_signal(signal, "exit", True)
+                            self._metrics.record_trade(pnl=pnl, win=(pnl >= 0), strategy=getattr(signal, "strategy", "default"))
 
             except Exception as e:
                 logger.error(f"Exit execution failed for {signal.code}: {e}", exc_info=True)
