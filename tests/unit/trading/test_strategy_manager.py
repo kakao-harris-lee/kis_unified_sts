@@ -14,6 +14,7 @@ class TestStrategyManagerConfig:
         config = StrategyManagerConfig()
         assert config.min_confidence == 0.3
         assert config.dedupe_by_symbol is True
+        assert config.dedupe_scope == "direction"
         assert config.dedupe_window_seconds == 60.0
         assert config.parallel_entries is True
         assert config.parallel_exits is True
@@ -55,10 +56,12 @@ class TestStrategyManagerConfig:
         config = StrategyManagerConfig.from_dict({
             "min_confidence": 0.5,
             "dedupe_by_symbol": False,
+            "dedupe_scope": "strategy",
             "parallel_entries": False,
         })
         assert config.min_confidence == 0.5
         assert config.dedupe_by_symbol is False
+        assert config.dedupe_scope == "strategy"
         assert config.parallel_entries is False
 
     def test_from_dict_type_validation(self):
@@ -67,6 +70,13 @@ class TestStrategyManagerConfig:
 
         with pytest.raises(TypeError, match="min_confidence"):
             StrategyManagerConfig.from_dict({"min_confidence": "invalid"})
+
+    def test_validation_dedupe_scope(self):
+        """Test dedupe_scope validation."""
+        from services.trading.strategy_manager import StrategyManagerConfig
+
+        with pytest.raises(ValueError, match="dedupe_scope"):
+            StrategyManagerConfig(dedupe_scope="invalid")
 
 
 class TestStrategyManager:
@@ -94,6 +104,7 @@ class TestStrategyManager:
         signal.name = "Samsung"
         signal.confidence = 0.8
         signal.strategy = "test_strategy"
+        signal.metadata = {"signal_direction": "long"}
         return signal
 
     @pytest.fixture
@@ -296,6 +307,48 @@ class TestStrategyManager:
                 # Second call - should be deduped
                 signals2 = await manager.check_entries(context)
                 assert len(signals2) == 0
+
+    @pytest.mark.asyncio
+    async def test_check_entries_dedupes_by_strategy_scope(self, mock_strategy, mock_signal):
+        """Signals from different strategies on same code should both pass."""
+        signal2 = MagicMock()
+        signal2.code = "005930"
+        signal2.name = "Samsung"
+        signal2.confidence = 0.8
+        signal2.strategy = "other_strategy"
+        signal2.metadata = {"signal_direction": "long"}
+
+        strategy2 = MagicMock()
+        strategy2.name = "other_strategy"
+        strategy2.required_indicators = []
+        strategy2.entry = MagicMock()
+        strategy2.exit = MagicMock()
+        strategy2.check_entry = AsyncMock(return_value=signal2)
+
+        with patch(
+            "services.trading.strategy_manager.register_builtin_components"
+        ):
+            with patch(
+                "services.trading.strategy_manager.StrategyFactory"
+            ) as mock_factory:
+                mock_factory.create_all.return_value = []
+
+                from services.trading.strategy_manager import StrategyManager, StrategyManagerConfig
+                from shared.strategy.base import EntryContext
+
+                manager = StrategyManager(
+                    asset_class="stock",
+                    config=StrategyManagerConfig(dedupe_scope="strategy"),
+                )
+                mock_strategy.check_entry = AsyncMock(return_value=mock_signal)
+                mock_signal.metadata = {"signal_direction": "long"}
+                manager.add_strategy(mock_strategy)
+                manager.add_strategy(strategy2)
+
+                context = MagicMock(spec=EntryContext)
+                signals = await manager.check_entries(context)
+
+                assert len(signals) == 2
 
     @pytest.mark.asyncio
     async def test_check_exits_empty_positions(self, mock_strategy):

@@ -48,6 +48,7 @@ MIN_CONFIDENCE = 0.0
 MAX_CONFIDENCE = 1.0
 MIN_DEDUPE_WINDOW = 0.0
 MAX_DEDUPE_WINDOW = 3600.0  # 1 hour max
+DEDUPE_SCOPES = {"symbol", "strategy", "direction"}
 
 
 @dataclass
@@ -59,6 +60,7 @@ class StrategyManagerConfig:
 
     # Deduplication
     dedupe_by_symbol: bool = True
+    dedupe_scope: str = "direction"
     dedupe_window_seconds: float = 60.0
 
     # Parallel execution
@@ -81,6 +83,10 @@ class StrategyManagerConfig:
             raise ValueError(
                 f"dedupe_window_seconds must be between {MIN_DEDUPE_WINDOW} "
                 f"and {MAX_DEDUPE_WINDOW}, got {self.dedupe_window_seconds}"
+            )
+        if self.dedupe_scope not in DEDUPE_SCOPES:
+            raise ValueError(
+                f"dedupe_scope must be one of {sorted(DEDUPE_SCOPES)}, got {self.dedupe_scope}"
             )
 
         if not isinstance(self.dedupe_by_symbol, bool):
@@ -115,6 +121,7 @@ class StrategyManagerConfig:
         min_confidence = data.get("min_confidence", 0.3)
         dedupe_by_symbol = data.get("dedupe_by_symbol", True)
         dedupe_window = data.get("dedupe_window_seconds", 60.0)
+        dedupe_scope = data.get("dedupe_scope", "direction")
         parallel_entries = data.get("parallel_entries", True)
         parallel_exits = data.get("parallel_exits", True)
 
@@ -131,6 +138,7 @@ class StrategyManagerConfig:
         return cls(
             min_confidence=float(min_confidence),
             dedupe_by_symbol=bool(dedupe_by_symbol),
+            dedupe_scope=str(dedupe_scope),
             dedupe_window_seconds=float(dedupe_window),
             parallel_entries=bool(parallel_entries),
             parallel_exits=bool(parallel_exits),
@@ -436,7 +444,7 @@ class StrategyManager:
         result = []
 
         for signal in signals:
-            key = signal.code
+            key = self._dedupe_key(signal)
 
             # Check recent signals
             last_time = self._recent_signals.get(key)
@@ -459,6 +467,27 @@ class StrategyManager:
         }
 
         return result
+
+    def _dedupe_key(self, signal: Signal) -> str:
+        """Build dedupe key according to configured scope."""
+        scope = self.config.dedupe_scope
+        if scope == "symbol":
+            return signal.code
+        if scope == "strategy":
+            return f"{signal.code}:{signal.strategy}"
+
+        metadata = getattr(signal, "metadata", {}) or {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+        direction = metadata.get("signal_direction") or metadata.get("direction")
+        if not direction:
+            # Missing direction should not over-dedupe distinct signals.
+            ts = getattr(signal, "timestamp", None)
+            if isinstance(ts, datetime):
+                return f"{signal.code}:{signal.strategy}:ts:{ts.isoformat()}"
+            return f"{signal.code}:{signal.strategy}:id:{id(signal)}"
+        direction = str(direction)
+        return f"{signal.code}:{signal.strategy}:{direction}"
 
     def get_strategy_info(self) -> list[dict[str, Any]]:
         """Get information about loaded strategies"""
