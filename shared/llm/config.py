@@ -14,12 +14,18 @@ import yaml
 class LLMConfig:
     """LLM Analyzer Configuration"""
 
-    # OpenAI 설정
+    # LLM 공통 설정
+    llm_provider: str = "openai"  # "openai" | "claude"
     api_key: str = ""
     model: str = "gpt-4o-mini"
     max_tokens: int = 1500
     temperature: float = 0.3
     enabled: bool = True
+    llm_strict_json_schema: bool = True
+    llm_prompt_cache_enabled: bool = True
+    llm_prompt_cache_ttl_seconds: int = 21_600
+    llm_prompt_cache_prefix: str = "llm:prompt_cache"
+    llm_batch_size: int = 10
 
     # 출력 설정
     output_dir: str = "./trading_reports"
@@ -120,12 +126,41 @@ class LLMConfig:
     @classmethod
     def from_env(cls) -> "LLMConfig":
         """환경변수에서 설정 로드"""
+        provider = os.environ.get("LLM_PROVIDER", "openai").strip().lower()
+        if provider not in ("openai", "claude"):
+            provider = "openai"
+
+        default_model = (
+            "claude-3-5-haiku-latest"
+            if provider == "claude"
+            else "gpt-4o-mini"
+        )
+        resolved_key = (
+            os.environ.get("ANTHROPIC_API_KEY", "")
+            if provider == "claude"
+            else os.environ.get("OPENAI_API_KEY", "")
+        )
+
         return cls(
-            api_key=os.environ.get("OPENAI_API_KEY", ""),
-            model=os.environ.get("LLM_MODEL", "gpt-4o-mini"),
+            llm_provider=provider,
+            api_key=resolved_key,
+            model=os.environ.get("LLM_MODEL", default_model),
             max_tokens=int(os.environ.get("LLM_MAX_TOKENS", "1500")),
             temperature=float(os.environ.get("LLM_TEMPERATURE", "0.3")),
             enabled=os.environ.get("LLM_ANALYSIS_ENABLED", "true").lower() == "true",
+            llm_strict_json_schema=os.environ.get(
+                "LLM_STRICT_JSON_SCHEMA", "true"
+            ).lower() == "true",
+            llm_prompt_cache_enabled=os.environ.get(
+                "LLM_PROMPT_CACHE_ENABLED", "true"
+            ).lower() == "true",
+            llm_prompt_cache_ttl_seconds=int(
+                os.environ.get("LLM_PROMPT_CACHE_TTL_SECONDS", "21600")
+            ),
+            llm_prompt_cache_prefix=os.environ.get(
+                "LLM_PROMPT_CACHE_PREFIX", "llm:prompt_cache"
+            ),
+            llm_batch_size=max(1, int(os.environ.get("LLM_BATCH_SIZE", "10"))),
             output_dir=os.environ.get("LLM_OUTPUT_DIR", "./trading_reports"),
             krx_api_key=os.environ.get("KRX_API_KEY", ""),
             futures_tick_stream=os.environ.get("LLM_FUTURES_TICK_STREAM", "raw_data"),
@@ -143,11 +178,109 @@ class LLMConfig:
             data = yaml.safe_load(f)
 
         # YAML 섹션 매핑 (새 포맷과 기존 포맷 모두 지원)
-        openai_config = data.get("openai", data.get("llm", {}))
+        llm_common = data.get("llm", {})
+        openai_config = data.get("openai", {})
+        claude_config = data.get("claude", {})
         stock_config = data.get("stock", data.get("stock_screening", {}))
         futures_config = data.get("futures", data.get("futures_analysis", {}))
         output_config = data.get("output", {})
         krx_config = data.get("krx_api", {})
+
+        if not isinstance(llm_common, dict):
+            llm_common = {}
+        if not isinstance(openai_config, dict):
+            openai_config = {}
+        if not isinstance(claude_config, dict):
+            claude_config = {}
+
+        provider = str(
+            os.environ.get("LLM_PROVIDER", llm_common.get("provider", "openai"))
+        ).strip().lower()
+        if provider not in ("openai", "claude"):
+            provider = "openai"
+
+        provider_config = claude_config if provider == "claude" else openai_config
+
+        default_model = (
+            "claude-3-5-haiku-latest"
+            if provider == "claude"
+            else "gpt-4o-mini"
+        )
+        env_key_name = "ANTHROPIC_API_KEY" if provider == "claude" else "OPENAI_API_KEY"
+        resolved_api_key = os.environ.get(
+            env_key_name,
+            provider_config.get("api_key", llm_common.get("api_key", "")),
+        )
+        resolved_model = str(
+            os.environ.get(
+                "LLM_MODEL",
+                provider_config.get("model", llm_common.get("model", default_model)),
+            )
+        )
+        resolved_max_tokens = int(
+            os.environ.get(
+                "LLM_MAX_TOKENS",
+                provider_config.get("max_tokens", llm_common.get("max_tokens", 1500)),
+            )
+        )
+        resolved_temperature = float(
+            os.environ.get(
+                "LLM_TEMPERATURE",
+                provider_config.get("temperature", llm_common.get("temperature", 0.3)),
+            )
+        )
+        resolved_enabled = (
+            os.environ.get("LLM_ANALYSIS_ENABLED", "").strip().lower() == "true"
+            if os.environ.get("LLM_ANALYSIS_ENABLED") is not None
+            else bool(provider_config.get("enabled", llm_common.get("enabled", True)))
+        )
+        resolved_strict_json_schema = (
+            os.environ.get("LLM_STRICT_JSON_SCHEMA", "").strip().lower() == "true"
+            if os.environ.get("LLM_STRICT_JSON_SCHEMA") is not None
+            else bool(
+                llm_common.get(
+                    "strict_json_schema",
+                    provider_config.get("strict_json_schema", True),
+                )
+            )
+        )
+        resolved_prompt_cache_enabled = (
+            os.environ.get("LLM_PROMPT_CACHE_ENABLED", "").strip().lower() == "true"
+            if os.environ.get("LLM_PROMPT_CACHE_ENABLED") is not None
+            else bool(
+                llm_common.get(
+                    "prompt_cache_enabled",
+                    provider_config.get("prompt_cache_enabled", True),
+                )
+            )
+        )
+        resolved_prompt_cache_ttl = int(
+            os.environ.get(
+                "LLM_PROMPT_CACHE_TTL_SECONDS",
+                llm_common.get(
+                    "prompt_cache_ttl_seconds",
+                    provider_config.get("prompt_cache_ttl_seconds", 21600),
+                ),
+            )
+        )
+        resolved_prompt_cache_prefix = str(
+            os.environ.get(
+                "LLM_PROMPT_CACHE_PREFIX",
+                llm_common.get(
+                    "prompt_cache_prefix",
+                    provider_config.get("prompt_cache_prefix", "llm:prompt_cache"),
+                ),
+            )
+        )
+        resolved_batch_size = max(
+            1,
+            int(
+                os.environ.get(
+                    "LLM_BATCH_SIZE",
+                    llm_common.get("batch_size", provider_config.get("batch_size", 10)),
+                )
+            ),
+        )
 
         # 기본 섹터 ETF 매핑
         default_sector_etfs = {
@@ -174,12 +307,18 @@ class LLMConfig:
         }
 
         return cls(
-            # OpenAI 설정
-            api_key=os.environ.get("OPENAI_API_KEY", openai_config.get("api_key", "")),
-            model=openai_config.get("model", "gpt-4o-mini"),
-            max_tokens=openai_config.get("max_tokens", 1500),
-            temperature=openai_config.get("temperature", 0.3),
-            enabled=openai_config.get("enabled", True),
+            # LLM 설정 (provider 선택)
+            llm_provider=provider,
+            api_key=resolved_api_key,
+            model=resolved_model,
+            max_tokens=resolved_max_tokens,
+            temperature=resolved_temperature,
+            enabled=resolved_enabled,
+            llm_strict_json_schema=resolved_strict_json_schema,
+            llm_prompt_cache_enabled=resolved_prompt_cache_enabled,
+            llm_prompt_cache_ttl_seconds=resolved_prompt_cache_ttl,
+            llm_prompt_cache_prefix=resolved_prompt_cache_prefix,
+            llm_batch_size=resolved_batch_size,
             output_dir=output_config.get("dir", "./trading_reports"),
             # 주식 설정
             stock_markets=stock_config.get("markets", ["KOSPI"]),

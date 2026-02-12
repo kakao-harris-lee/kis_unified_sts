@@ -3,7 +3,8 @@
 Publishes real-time-ish stock ticks into Redis Stream `market:ticks`.
 
 This service:
-  1) Reads the latest universe snapshot from Redis key `system:universe:latest`
+  1) Reads the latest ranked snapshot from Redis key
+     `system:trade_targets:latest` (fallback: `system:universe:latest`)
   2) Polls KIS current price for those symbols via `KISStockPollingAdapter`
   3) Publishes each tick to Redis Stream `market:ticks`
 
@@ -13,6 +14,7 @@ Notes:
 Environment variables:
   - `KIS_APP_KEY`, `KIS_APP_SECRET`, `KIS_IS_REAL`
   - `TICK_STREAM` (default: market:ticks)
+  - `TRADE_TARGETS_LATEST_KEY` (default: system:trade_targets:latest)
   - `UNIVERSE_LATEST_KEY` (default: system:universe:latest)
   - `INGESTOR_POLL_INTERVAL_SECONDS` (default: 1.0)
   - `INGESTOR_MAX_WORKERS` (default: 8)
@@ -39,6 +41,9 @@ logger = logging.getLogger(__name__)
 @dataclass(frozen=True)
 class IngestorConfig:
     tick_stream: str = os.environ.get("TICK_STREAM", "market:ticks")
+    trade_targets_latest_key: str = os.environ.get(
+        "TRADE_TARGETS_LATEST_KEY", "system:trade_targets:latest"
+    )
     universe_latest_key: str = os.environ.get(
         "UNIVERSE_LATEST_KEY", "system:universe:latest"
     )
@@ -89,12 +94,16 @@ def run_ingestor(config: IngestorConfig) -> None:
     last_codes: list[str] = []
 
     logger.info(
-        f"Ingestor started (stream={config.tick_stream}, universe_key={config.universe_latest_key})"
+        f"Ingestor started (stream={config.tick_stream}, "
+        f"ranked_key={config.trade_targets_latest_key}, universe_key={config.universe_latest_key})"
     )
 
     try:
         while True:
-            raw = redis_client.get(config.universe_latest_key)
+            raw = (
+                redis_client.get(config.trade_targets_latest_key)
+                or redis_client.get(config.universe_latest_key)
+            )
             if raw:
                 try:
                     snapshot = json.loads(raw)
@@ -123,4 +132,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

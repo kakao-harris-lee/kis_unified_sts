@@ -475,12 +475,22 @@ class TradingOrchestrator:
         self._universe_refresh_task: asyncio.Task | None = None
         self._universe_refresh_interval = 30.0  # seconds
         self._symbol_names: dict[str, str] = {}  # code -> name mapping
+        self._symbol_metadata_cache: dict[str, dict[str, Any]] = {}
+        self._trade_targets_latest_key = os.environ.get(
+            "TRADE_TARGETS_LATEST_KEY", "system:trade_targets:latest"
+        )
+        self._universe_latest_key = os.environ.get(
+            "UNIVERSE_LATEST_KEY", "system:universe:latest"
+        )
 
         # Universe stability: retain symbols for a window after they leave
         # the screener top-N, so the indicator engine can warm up.
         self._symbol_last_seen: dict[str, datetime] = {}
         self._universe_retention_seconds = 600.0  # 10 minutes
         self._max_universe_size = 50
+        self._llm_training_data_dir = os.environ.get(
+            "LLM_TRAINING_DATA_DIR", "output/llm"
+        )
 
         logger.info(
             f"TradingOrchestrator initialized: "
@@ -718,8 +728,52 @@ class TradingOrchestrator:
             logger.debug(f"Accumulation candidates not available: {e}")
             return False
 
+    def _load_ranked_targets(self, redis) -> tuple[list[str], dict[str, str], dict[str, dict[str, Any]]]:
+        """Load ranked symbols from fusion targets first, then screener fallback."""
+        keys = [
+            ("fusion", self._trade_targets_latest_key),
+            ("screener", self._universe_latest_key),
+        ]
+
+        for source, key in keys:
+            raw = redis.get(key)
+            if not raw:
+                continue
+            try:
+                payload = json.loads(raw)
+                codes_raw = payload.get("codes", [])
+                if not isinstance(codes_raw, list):
+                    continue
+                codes = [str(c).strip() for c in codes_raw if str(c).strip()]
+                if not codes:
+                    continue
+
+                names_raw = payload.get("names", {})
+                names = (
+                    {str(k): str(v) for k, v in names_raw.items() if isinstance(k, str)}
+                    if isinstance(names_raw, dict)
+                    else {}
+                )
+
+                metadata_raw = payload.get("metadata", {})
+                metadata = (
+                    {
+                        str(k): dict(v)
+                        for k, v in metadata_raw.items()
+                        if isinstance(k, str) and isinstance(v, dict)
+                    }
+                    if isinstance(metadata_raw, dict)
+                    else {}
+                )
+                logger.debug(f"Loaded {len(codes)} symbols from {source} key: {key}")
+                return codes, names, metadata
+            except Exception as e:
+                logger.debug(f"Failed parsing ranked target payload ({key}): {e}")
+
+        return [], {}, {}
+
     def _refresh_universe_from_screener(self) -> bool:
-        """Read screener universe from Redis and update symbols.
+        """Read ranked universe from Redis and update symbols.
 
         Uses a retention window so symbols persist after leaving the screener
         top-N.  This allows the indicator engine to warm up (needs ~20 min of
@@ -728,16 +782,7 @@ class TradingOrchestrator:
         try:
             from shared.streaming.client import RedisClient
             redis = RedisClient.get_client()
-            raw = redis.get(
-                os.environ.get("UNIVERSE_LATEST_KEY", "system:universe:latest")
-            )
-            if not raw:
-                logger.debug("No screener universe found in Redis")
-                return False
-
-            payload = json.loads(raw)
-            codes = payload.get("codes", [])
-            names = payload.get("names", {})
+            codes, names, metadata = self._load_ranked_targets(redis)
 
             if not codes:
                 return False
@@ -747,6 +792,12 @@ class TradingOrchestrator:
             # Update last-seen timestamps for current screener symbols
             for code in codes:
                 self._symbol_last_seen[code] = now
+                code_meta = dict(metadata.get(code, {}))
+                code_name = names.get(code)
+                if code_name:
+                    code_meta["name"] = code_name
+                if code_meta:
+                    self._symbol_metadata_cache[code] = code_meta
             self._symbol_names.update(names)
 
             # Build stable universe: all symbols seen within retention window
@@ -762,6 +813,7 @@ class TradingOrchestrator:
             # Clean up expired symbols
             for code in expired:
                 del self._symbol_last_seen[code]
+                self._symbol_metadata_cache.pop(code, None)
 
             # Cap universe size — keep most recently seen
             if len(stable_symbols) > self._max_universe_size:
@@ -771,6 +823,15 @@ class TradingOrchestrator:
                     reverse=True,
                 )
                 stable_symbols = set(by_recency[: self._max_universe_size])
+
+            # Keep symbol-level metadata fresh even when universe membership is unchanged.
+            self.config.symbol_metadata = {
+                code: dict(self._symbol_metadata_cache.get(code, {}))
+                for code in stable_symbols
+            }
+            for code, name in self._symbol_names.items():
+                if code in self.config.symbol_metadata and name:
+                    self.config.symbol_metadata[code]["name"] = name
 
             old_set = set(self.config.symbols)
 
@@ -1524,6 +1585,7 @@ class TradingOrchestrator:
                     fill_price = signal.price
 
                 if is_filled:
+                    symbol_meta = (self.config.symbol_metadata or {}).get(signal.code, {})
                     # Track position
                     position = self._position_tracker.add_position(
                         code=signal.code,
@@ -1531,6 +1593,13 @@ class TradingOrchestrator:
                         entry_price=fill_price,
                         quantity=quantity,
                         strategy=signal.strategy,
+                        metadata={
+                            "snapshot_id": str(symbol_meta.get("llm_snapshot_id", "")),
+                            "llm_quality": symbol_meta.get("llm_quality"),
+                            "realtime_score": symbol_meta.get("realtime_score"),
+                            "risk_flags": symbol_meta.get("risk_flags", []),
+                            "entry_signal_confidence": signal.confidence,
+                        },
                     )
 
                     if position:
@@ -1547,6 +1616,21 @@ class TradingOrchestrator:
                             f"금액: {amount:,.0f}원\n"
                             f"전략: {signal.strategy}\n"
                             f"신뢰도: {signal.confidence:.1%}"
+                        )
+                        self._append_training_trade_event(
+                            {
+                                "event": "entry",
+                                "timestamp": datetime.now().isoformat(),
+                                "position_id": position.id,
+                                "snapshot_id": position.metadata.get("snapshot_id", ""),
+                                "code": signal.code,
+                                "name": name,
+                                "strategy": signal.strategy,
+                                "entry_price": fill_price,
+                                "quantity": quantity,
+                                "signal_confidence": signal.confidence,
+                                "metadata": position.metadata,
+                            }
                         )
 
             except Exception as e:
@@ -1623,6 +1707,31 @@ class TradingOrchestrator:
                             f"사유: {reason_str}\n"
                             f"손익: {pnl:+,.0f}원 ({pnl_pct:+.2f}%)"
                         )
+                        self._append_training_trade_event(
+                            {
+                                "event": "exit",
+                                "timestamp": datetime.now().isoformat(),
+                                "position_id": closed.id,
+                                "snapshot_id": (
+                                    closed.metadata.get("snapshot_id", "")
+                                    if isinstance(closed.metadata, dict)
+                                    else ""
+                                ),
+                                "code": signal.code,
+                                "name": name,
+                                "exit_price": fill_price,
+                                "quantity": signal.quantity,
+                                "reason": reason_str,
+                                "trade_pnl": pnl,
+                                "trade_pnl_pct": pnl_pct,
+                                "hold_seconds": (
+                                    (closed.exit_time - closed.entry_time).total_seconds()
+                                    if closed.exit_time and closed.entry_time
+                                    else None
+                                ),
+                                "metadata": closed.metadata if isinstance(closed.metadata, dict) else {},
+                            }
+                        )
 
             except Exception as e:
                 logger.error(f"Exit execution failed for {signal.code}: {e}", exc_info=True)
@@ -1674,6 +1783,15 @@ class TradingOrchestrator:
                 except Exception:
                     pass
         return float(self.config.initial_capital)
+
+    def _append_training_trade_event(self, row: dict[str, Any]) -> None:
+        try:
+            os.makedirs(self._llm_training_data_dir, exist_ok=True)
+            path = os.path.join(self._llm_training_data_dir, "trade_outcomes.jsonl")
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(row, ensure_ascii=False, default=str) + "\n")
+        except Exception as e:
+            logger.debug(f"Failed to append training trade event: {e}")
 
     async def _notify(self, message: str):
         """알림 전송"""

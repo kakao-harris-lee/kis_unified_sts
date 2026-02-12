@@ -1,9 +1,29 @@
 # LLM Market Analysis Configuration
-# 환경변수로 덮어쓸 수 있음: OPENAI_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, DART_API_KEY
+# 환경변수로 덮어쓸 수 있음:
+# LLM_PROVIDER, LLM_MODEL, OPENAI_API_KEY, ANTHROPIC_API_KEY,
+# TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, DART_API_KEY
+
+llm:
+  # 사용 LLM 제공자 선택: "openai" | "claude"
+  provider: "openai"
+  # LLM 응답 JSON 스키마 엄격 검증(파싱 실패 시 규칙기반 fallback)
+  strict_json_schema: true
+  # Prompt cache (Redis 우선, 실패 시 프로세스 메모리 fallback)
+  prompt_cache_enabled: true
+  prompt_cache_ttl_seconds: 21600
+  prompt_cache_prefix: "llm:prompt_cache"
+  # 대량 분석 시 청크 단위 배치 크기
+  batch_size: 10
 
 openai:
-  # OpenAI API 설정
+  # OpenAI API 설정 (provider=openai 일 때 사용)
   model: "gpt-4o-mini"
+  max_tokens: 1500
+  temperature: 0.3
+
+claude:
+  # Anthropic Claude API 설정 (provider=claude 일 때 사용)
+  model: "claude-3-5-haiku-latest"
   max_tokens: 1500
   temperature: 0.3
 

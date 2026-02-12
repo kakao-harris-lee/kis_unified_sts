@@ -294,6 +294,7 @@ class PositionTracker:
         strategy: str,
         side: PositionSide = PositionSide.LONG,
         fee_rate: float | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> Position | None:
         """Add a new position
 
@@ -324,6 +325,7 @@ class PositionTracker:
             state=PositionState.SURVIVAL,
             strategy=strategy,
             fee_rate=fee_rate or self.config.default_fee_rate,
+            metadata=metadata or {},
         )
 
         # Add to main dict

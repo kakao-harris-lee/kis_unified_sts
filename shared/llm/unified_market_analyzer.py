@@ -7,6 +7,7 @@ KRX Open API와 FinanceDataReader를 결합한 종합 시장 분석기.
 
 import json
 import os
+import re
 from dataclasses import asdict
 from datetime import datetime
 from typing import List, Optional, Tuple
@@ -31,14 +32,23 @@ from .market_analyzers import (
     OptionsAnalyzer,
     TechnicalAnalyzerForFutures,
 )
+from .prompt_cache import LLMPromptCache, PromptCacheConfig
+from .schema import normalize_market_summary_payload
 
-# Optional OpenAI import
+# Optional LLM imports
 try:
     from openai import OpenAI
 
     OPENAI_AVAILABLE = True
 except ImportError:
     OPENAI_AVAILABLE = False
+
+try:
+    from anthropic import Anthropic
+
+    ANTHROPIC_AVAILABLE = True
+except ImportError:
+    ANTHROPIC_AVAILABLE = False
 
 
 class UnifiedMarketAnalyzer:
@@ -66,10 +76,21 @@ class UnifiedMarketAnalyzer:
         self.index_analyzer = IndexAnalyzer(self.config)
         self.technical_analyzer = TechnicalAnalyzerForFutures(self.config)
 
-        # OpenAI 클라이언트 (선택적)
-        self.openai_client = None
-        if OPENAI_AVAILABLE and self.config.api_key:
-            self.openai_client = OpenAI(api_key=self.config.api_key)
+        # LLM 클라이언트 (선택적)
+        self.llm_client = None
+        self.prompt_cache = LLMPromptCache(
+            PromptCacheConfig(
+                enabled=bool(self.config.llm_prompt_cache_enabled),
+                ttl_seconds=max(60, int(self.config.llm_prompt_cache_ttl_seconds)),
+                key_prefix=self.config.llm_prompt_cache_prefix,
+            )
+        )
+        provider = (self.config.llm_provider or "openai").lower()
+        if self.config.api_key:
+            if provider == "claude" and ANTHROPIC_AVAILABLE:
+                self.llm_client = Anthropic(api_key=self.config.api_key)
+            elif provider == "openai" and OPENAI_AVAILABLE:
+                self.llm_client = OpenAI(api_key=self.config.api_key)
 
         # 출력 디렉토리 생성
         os.makedirs(self.config.output_dir, exist_ok=True)
@@ -248,7 +269,7 @@ class UnifiedMarketAnalyzer:
         technical: dict,
     ) -> Tuple[str, str, List[str]]:
         """LLM 기반 분석"""
-        if not self.openai_client:
+        if not self.llm_client:
             return self._fallback_analysis(etf_flows, futures, options, bonds, indices)
 
         # 데이터 요약
@@ -257,20 +278,12 @@ class UnifiedMarketAnalyzer:
         )
 
         try:
-            response = self.openai_client.chat.completions.create(
-                model=self.config.model,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": (
-                            "당신은 전문 시장 분석가입니다. "
-                            "주어진 데이터를 바탕으로 간결하고 핵심적인 분석을 제공합니다. "
-                            "반드시 JSON 형식으로 응답하세요."
-                        ),
-                    },
-                    {
-                        "role": "user",
-                        "content": f"""다음 시장 데이터를 분석해주세요:
+            system_prompt = (
+                "당신은 전문 시장 분석가입니다. "
+                "주어진 데이터를 바탕으로 간결하고 핵심적인 분석을 제공합니다. "
+                "반드시 JSON 형식으로 응답하세요."
+            )
+            user_prompt = f"""다음 시장 데이터를 분석해주세요:
 
 {data_summary}
 
@@ -279,19 +292,59 @@ class UnifiedMarketAnalyzer:
     "summary": "시장 상황 요약 (2-3문장)",
     "strategy": "추천 매매 전략 (2-3문장)",
     "key_points": ["핵심 포인트 1", "핵심 포인트 2", "핵심 포인트 3"]
-}}""",
-                    },
-                ],
-                temperature=self.config.temperature,
-                max_tokens=self.config.max_tokens,
-            )
+}}"""
 
-            result = json.loads(response.choices[0].message.content)
+            provider = (self.config.llm_provider or "openai").lower()
+            cache_key = LLMPromptCache.build_key(
+                key_prefix=self.prompt_cache.config.key_prefix,
+                provider=provider,
+                model=self.config.model,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                extra={
+                    "temperature": self.config.temperature,
+                    "max_tokens": self.config.max_tokens,
+                },
+            )
+            cached = self.prompt_cache.get(cache_key)
+            if cached:
+                response_text = cached
+            elif provider == "claude":
+                response = self.llm_client.messages.create(
+                    model=self.config.model,
+                    system=system_prompt,
+                    messages=[{"role": "user", "content": user_prompt}],
+                    temperature=self.config.temperature,
+                    max_tokens=self.config.max_tokens,
+                )
+                text_blocks = [b.text for b in response.content if getattr(b, "type", "") == "text"]
+                response_text = "\n".join(text_blocks).strip()
+                self.prompt_cache.set(cache_key, response_text)
+            else:
+                response = self.llm_client.chat.completions.create(
+                    model=self.config.model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    temperature=self.config.temperature,
+                    max_tokens=self.config.max_tokens,
+                )
+                response_text = response.choices[0].message.content or ""
+                self.prompt_cache.set(cache_key, response_text)
+
+            json_match = re.search(r"\{[\s\S]*\}", response_text)
+            if not json_match:
+                raise ValueError("No JSON object found in LLM response")
+            parsed = json.loads(json_match.group())
+            if not isinstance(parsed, dict):
+                raise ValueError("LLM payload is not an object")
+            result = normalize_market_summary_payload(parsed)
 
             return (
-                result.get("summary", "분석 실패"),
-                result.get("strategy", "전략 없음"),
-                result.get("key_points", []),
+                result["summary"],
+                result["strategy"],
+                result["key_points"],
             )
 
         except Exception as e:
