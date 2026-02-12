@@ -25,8 +25,12 @@
   - KOSPI200 미니: 계약 단위 1/5로 리스크 관리에 유리
   - 비율 기반 지표(BB, RSI, BB bandwidth)는 두 상품 간 전이 가능 확인 완료
   - 미니의 낮은 유동성(F200 대비 1/9~1/42)은 인지하고 수용
-- **현재 전략**: bb_reversion (볼린저 밴드 + RSI 평균 회귀, buy_only, intraday)
-- **현황**: 백테스트/파라미터 최적화 완료. 거래 빈도 부족(29회/14개월)이 근본 과제
+- **현재 운용 전략**: `rl_mppo` (Maskable PPO, long/short intraday)
+- **운용 경로 표준**: `TradingOrchestrator` 경로를 기본으로 사용한다. `shared/ml/rl/paper_trader.py`는 레거시/검증용 보조 경로다.
+- **핵심 합의 사항**
+  - 진입/청산 방향은 `signal_direction` 기준으로 처리한다.
+  - 선물 paper/live 모두 숏 진입 및 숏 청산(BUY to cover)을 지원해야 한다.
+  - RL 입력은 학습 스펙과 동일해야 한다(31차원 obs, scaler 적용, code->dict market_data + OHLCV 기반 피처 복원).
 
 #### 주식 (Stock)
 
@@ -83,6 +87,12 @@ if pnl_pct >= self.config.exit.breakeven_threshold:
 | `PositionTracker` | 포지션 추적 | `services/trading/position_tracker.py` |
 | `HolidayCache` | 장 휴일/거래일 캐시 | `services/trading/holiday_cache.py` |
 | `TradingPipeline` | 데이터 파이프라인 | `services/trading/pipeline.py` |
+
+#### RL 선물 운용 규칙
+
+- `sts rl paper` 기본 엔진은 `orchestrator`다. 레거시 엔진은 `--engine legacy`로만 사용한다.
+- `rl_mppo` 전략의 모델 경로 오버라이드는 `RL_MPPO_MODEL_PATH` 환경변수를 사용한다.
+- 오케스트레이터는 RL 전략에 대해 `IndicatorEngine`의 최근 분봉(OHLCV)을 주입하여 피처 계산을 보조한다.
 
 ---
 

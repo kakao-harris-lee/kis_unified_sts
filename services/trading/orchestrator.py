@@ -42,6 +42,7 @@ from services.trading.data_provider import MarketDataProvider, DataProviderConfi
 from services.trading.position_tracker import PositionTracker, PositionTrackerConfig
 from services.trading.strategy_manager import StrategyManager, StrategyManagerConfig
 from services.monitoring.metrics import get_metrics_collector
+from shared.models.position import PositionSide
 from shared.models.signal import Signal, ExitSignal
 from shared.config.loader import ConfigLoader
 from shared.strategy.base import EntryContext
@@ -377,10 +378,11 @@ class TradingConfig:
         strategy_name: str | None = None,
         initial_capital: float = 10_000_000,
         order_amount: float = 1_000_000,
+        symbols: list[str] | None = None,
     ) -> TradingConfig:
         """선물용 설정"""
         # Auto-detect KOSPI200 mini futures front-month code
-        symbols = cls._get_futures_default_symbols()
+        symbols = symbols or cls._get_futures_default_symbols()
         return cls(
             asset_class="futures",
             strategy_name=strategy_name,
@@ -575,7 +577,13 @@ class TradingOrchestrator:
             from shared.kis.auth import KISAuthConfig
             from shared.kis.client import KISClient
 
-            kis_config = KISAuthConfig()
+            if self.config.asset_class == "futures":
+                app_key = os.getenv("KIS_FUTURES_APP_KEY", os.getenv("KIS_APP_KEY", ""))
+                app_secret = os.getenv("KIS_FUTURES_APP_SECRET", os.getenv("KIS_APP_SECRET", ""))
+            else:
+                app_key = os.getenv("KIS_APP_KEY", "")
+                app_secret = os.getenv("KIS_APP_SECRET", "")
+            kis_config = KISAuthConfig(app_key=app_key, app_secret=app_secret, is_real=True)
             self._kis_client = KISClient(kis_config)
             logger.info("KIS Client initialized")
         except Exception as e:
@@ -691,9 +699,13 @@ class TradingOrchestrator:
 
                 exec_cfg = ExecutionConfig(
                     trading_mode=mode,
-                    account_no=os.getenv("KIS_ACCOUNT_NO", ""),
+                    account_no=(
+                        os.getenv("KIS_FUTURES_ACCOUNT_NO", os.getenv("KIS_ACCOUNT_NO", ""))
+                        if self.config.asset_class == "futures"
+                        else os.getenv("KIS_ACCOUNT_NO", "")
+                    ),
                     redis_url=os.getenv("REDIS_URL", ""),
-                    rate_limit_key="stock",
+                    rate_limit_key=self.config.asset_class,
                 )
 
                 auth_manager = getattr(self._kis_client, "auth_manager", None) if self._kis_client else None
@@ -1427,6 +1439,10 @@ class TradingOrchestrator:
                 indicators: dict[str, Any] = {}
                 if self._indicator_engine:
                     indicators = self._indicator_engine.get_indicators(symbol)
+                    if "ohlcv" in self._strategy_manager.required_indicators:
+                        ohlcv = self._indicator_engine.get_recent_candles(symbol, limit=240)
+                        if ohlcv:
+                            indicators["ohlcv"] = ohlcv
                     if indicators:
                         enriched.update(indicators)
 
@@ -1607,13 +1623,15 @@ class TradingOrchestrator:
                 return
 
             try:
+                direction = self._get_signal_direction(signal)
+                is_short = direction == "short"
                 if self.config.paper_trading and self._paper_broker:
                     # Paper trading execution
                     if PaperOrderSide is None:
                         raise RuntimeError("PaperOrderSide not available (paper trading dependencies missing)")
                     order = await self._paper_broker.submit_order(
                         symbol=signal.code,
-                        side=PaperOrderSide.BUY,
+                        side=PaperOrderSide.SELL if is_short else PaperOrderSide.BUY,
                         quantity=quantity,
                         price=signal.price,
                     )
@@ -1626,7 +1644,7 @@ class TradingOrchestrator:
                     resp = await self._order_executor.execute_order(
                         OrderRequest(
                             code=signal.code,
-                            side=OrderSide.BUY,
+                            side=OrderSide.SELL if is_short else OrderSide.BUY,
                             order_type=OrderType.MARKET,
                             quantity=quantity,
                             price=None,
@@ -1648,12 +1666,14 @@ class TradingOrchestrator:
                         entry_price=fill_price,
                         quantity=quantity,
                         strategy=signal.strategy,
+                        side=PositionSide.SHORT if is_short else PositionSide.LONG,
                         metadata={
                             "snapshot_id": str(symbol_meta.get("llm_snapshot_id", "")),
                             "llm_quality": symbol_meta.get("llm_quality"),
                             "realtime_score": symbol_meta.get("realtime_score"),
                             "risk_flags": symbol_meta.get("risk_flags", []),
                             "entry_signal_confidence": signal.confidence,
+                            "signal_direction": direction,
                         },
                     )
 
@@ -1664,8 +1684,9 @@ class TradingOrchestrator:
                             f"Entry executed: {name} ({signal.code}) @ {fill_price:,.0f} x {quantity}"
                         )
                         amount = fill_price * quantity
+                        entry_label = "숏 진입" if is_short else "롱 진입"
                         await self._notify(
-                            f"🟢 <b>매수 진입</b>\n"
+                            f"🟢 <b>{entry_label}</b>\n"
                             f"종목: {name} ({signal.code})\n"
                             f"가격: {fill_price:,.0f}원 x {quantity}주\n"
                             f"금액: {amount:,.0f}원\n"
@@ -1710,14 +1731,16 @@ class TradingOrchestrator:
                 return
 
             try:
+                close_is_buy = position.side == PositionSide.SHORT
+                exit_quantity = signal.quantity if signal.quantity > 0 else position.quantity
                 if self.config.paper_trading and self._paper_broker:
                     # Paper trading execution
                     if PaperOrderSide is None:
                         raise RuntimeError("PaperOrderSide not available (paper trading dependencies missing)")
                     order = await self._paper_broker.submit_order(
                         symbol=signal.code,
-                        side=PaperOrderSide.SELL,
-                        quantity=signal.quantity,
+                        side=PaperOrderSide.BUY if close_is_buy else PaperOrderSide.SELL,
+                        quantity=exit_quantity,
                         price=signal.exit_price,
                     )
                     is_filled = bool(getattr(order, "filled", True))
@@ -1728,9 +1751,9 @@ class TradingOrchestrator:
                     resp = await self._order_executor.execute_order(
                         OrderRequest(
                             code=signal.code,
-                            side=OrderSide.SELL,
+                            side=OrderSide.BUY if close_is_buy else OrderSide.SELL,
                             order_type=OrderType.MARKET,
-                            quantity=signal.quantity,
+                            quantity=exit_quantity,
                             price=None,
                         )
                     )
@@ -1761,9 +1784,9 @@ class TradingOrchestrator:
                             f"(reason={reason_str}, pnl={pnl_pct:+.2f}%)"
                         )
                         await self._notify(
-                            f"{pnl_emoji} <b>매도 청산</b>\n"
+                            f"{pnl_emoji} <b>{'숏 청산' if close_is_buy else '롱 청산'}</b>\n"
                             f"종목: {name} ({signal.code})\n"
-                            f"가격: {fill_price:,.0f}원 x {signal.quantity}주\n"
+                            f"가격: {fill_price:,.0f}원 x {exit_quantity}주\n"
                             f"사유: {reason_str}\n"
                             f"손익: {pnl:+,.0f}원 ({pnl_pct:+.2f}%)"
                         )
@@ -1780,7 +1803,7 @@ class TradingOrchestrator:
                                 "code": signal.code,
                                 "name": name,
                                 "exit_price": fill_price,
-                                "quantity": signal.quantity,
+                                "quantity": exit_quantity,
                                 "reason": reason_str,
                                 "trade_pnl": pnl,
                                 "trade_pnl_pct": pnl_pct,
@@ -1800,6 +1823,16 @@ class TradingOrchestrator:
 
             except Exception as e:
                 logger.error(f"Exit execution failed for {signal.code}: {e}", exc_info=True)
+
+    @staticmethod
+    def _get_signal_direction(signal: Signal) -> str:
+        """Extract normalized signal direction from metadata."""
+        metadata = getattr(signal, "metadata", {}) or {}
+        if not isinstance(metadata, dict):
+            return "long"
+        direction = metadata.get("signal_direction") or metadata.get("direction") or "long"
+        direction = str(direction).strip().lower()
+        return "short" if direction == "short" else "long"
 
     def _calculate_quantity(self, signal: Signal) -> int:
         """Calculate order quantity based on config.
@@ -1986,12 +2019,14 @@ async def run_stock_trading(
 async def run_futures_trading(
     strategy: str | None = None,
     capital: float = 10_000_000,
+    symbols: list[str] | None = None,
     daemon: bool = False,
 ):
     """선물 트레이딩 실행"""
     config = TradingConfig.futures(
         strategy_name=strategy,
         initial_capital=capital,
+        symbols=symbols,
     )
 
     orchestrator = TradingOrchestrator(config)

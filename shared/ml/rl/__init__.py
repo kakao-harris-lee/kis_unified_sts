@@ -6,7 +6,12 @@ Gymnasium 환경, Maskable PPO 학습, 평가 파이프라인, Paper Trading.
 
 from shared.ml.rl.env import Action, FuturesTradingEnv, PositionSide, RLEnvConfig, mask_fn
 from shared.ml.rl.features import RLFeatureCalculator, RL_FEATURE_COLUMNS
-from shared.ml.rl.paper_trader import RLPaperTrader, run_paper_trader
+
+try:  # Optional runtime dependency (Crypto/websocket stack)
+    from shared.ml.rl.paper_trader import RLPaperTrader, run_paper_trader
+except Exception:  # pragma: no cover
+    RLPaperTrader = None  # type: ignore
+    run_paper_trader = None  # type: ignore
 
 __all__ = [
     "Action",

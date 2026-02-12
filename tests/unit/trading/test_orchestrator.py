@@ -2,6 +2,8 @@
 
 import pytest
 from datetime import date, time
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
 
 class TestIsTradingDay:
@@ -192,6 +194,97 @@ class TestTradingOrchestrator:
 
         metrics = orch.get_metrics()
         assert metrics == {}
+
+    @pytest.mark.asyncio
+    async def test_execute_entry_short_direction_uses_sell_and_short_side(self):
+        """숏 진입 신호는 SELL 주문 + SHORT 포지션으로 처리."""
+        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from shared.models.signal import Signal
+        from shared.paper.models import OrderSide as PaperOrderSide
+
+        config = TradingConfig.futures(strategy_name="rl_mppo")
+        config.paper_trading = True
+        orch = TradingOrchestrator(config)
+
+        orch._position_tracker = MagicMock()
+        orch._position_tracker.can_open_position.return_value = True
+        orch._position_tracker.add_position.return_value = SimpleNamespace(
+            id="p1",
+            metadata={},
+        )
+        orch._paper_broker = MagicMock()
+        orch._paper_broker.submit_order = AsyncMock(
+            return_value=SimpleNamespace(filled=True, fill_price=100.0)
+        )
+        orch._notify = AsyncMock()
+        orch._append_training_trade_event = MagicMock()
+        orch._state_publisher = None
+        orch._symbol_names = {}
+
+        signal = Signal(
+            code="A01603",
+            name="KOSPI200 Futures",
+            strategy="rl_mppo",
+            price=100.0,
+            confidence=0.8,
+            metadata={"signal_direction": "short"},
+        )
+
+        await orch._execute_entry(signal)
+
+        submit_kwargs = orch._paper_broker.submit_order.await_args.kwargs
+        assert submit_kwargs["side"] == PaperOrderSide.SELL
+        add_kwargs = orch._position_tracker.add_position.call_args.kwargs
+        assert str(add_kwargs["side"].value) == "short"
+
+    @pytest.mark.asyncio
+    async def test_execute_exit_short_position_uses_buy(self):
+        """숏 포지션 청산은 BUY 주문으로 처리."""
+        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from shared.models.position import PositionSide
+        from shared.models.signal import ExitSignal, ExitReason
+        from shared.paper.models import OrderSide as PaperOrderSide
+
+        config = TradingConfig.futures(strategy_name="rl_mppo")
+        config.paper_trading = True
+        orch = TradingOrchestrator(config)
+
+        position = SimpleNamespace(
+            id="p1",
+            side=PositionSide.SHORT,
+            quantity=2,
+            metadata={},
+            name="KOSPI200 Futures",
+            unrealized_pnl=0.0,
+            profit_pct=0.0,
+            exit_time=None,
+            entry_time=None,
+        )
+        orch._position_tracker = MagicMock()
+        orch._position_tracker.get_position.return_value = position
+        orch._position_tracker.close_position.return_value = position
+        orch._paper_broker = MagicMock()
+        orch._paper_broker.submit_order = AsyncMock(
+            return_value=SimpleNamespace(filled=True, fill_price=99.0)
+        )
+        orch._notify = AsyncMock()
+        orch._append_training_trade_event = MagicMock()
+        orch._state_publisher = None
+        orch._symbol_names = {}
+
+        signal = ExitSignal(
+            code="A01603",
+            position_id="p1",
+            reason=ExitReason.MANUAL_CLOSE,
+            strategy="three_stage",
+            exit_price=99.0,
+            quantity=0,
+        )
+        await orch._execute_exit(signal)
+
+        submit_kwargs = orch._paper_broker.submit_order.await_args.kwargs
+        assert submit_kwargs["side"] == PaperOrderSide.BUY
+        assert submit_kwargs["quantity"] == 2
 
 
 class TestDefaultHolidayLoader:
