@@ -1,7 +1,7 @@
 """
 LLM-based Stock and Futures Analyzers
 
-OpenAI GPT integration for intelligent market analysis.
+Provider-agnostic LLM integration for intelligent market analysis.
 """
 import asyncio
 import json
@@ -48,6 +48,8 @@ from .data_classes import (
 )
 from .errors import DataUnavailableError
 from .identifiers import DARTCorpCodeMapper
+from .prompt_cache import LLMPromptCache, PromptCacheConfig
+from .schema import normalize_analysis_result_payload
 
 logger = logging.getLogger(__name__)
 
@@ -87,14 +89,47 @@ class UnifiedConfig:
 
 
 class LLMAnalyzer:
-    """OpenAI GPT 기반 종목 분석기 (Legacy Compatible)"""
+    """LLM 기반 종목 분석기 (Legacy Compatible)"""
 
     def __init__(self, api_key: Optional[str] = None):
         """
         Args:
-            api_key: OpenAI API 키 (None이면 환경변수 사용)
+            api_key: LLM API 키 (None이면 provider별 환경변수 사용)
         """
-        self.api_key = api_key or os.environ.get("OPENAI_API_KEY", "")
+        self.provider = os.environ.get("LLM_PROVIDER", "openai").strip().lower()
+        if self.provider not in ("openai", "claude"):
+            self.provider = "openai"
+
+        default_model = (
+            "claude-3-5-haiku-latest"
+            if self.provider == "claude"
+            else "gpt-4o-mini"
+        )
+        self.model = os.environ.get("LLM_MODEL", default_model)
+        self.max_tokens = int(os.environ.get("LLM_MAX_TOKENS", "1500"))
+        self.temperature = float(os.environ.get("LLM_TEMPERATURE", "0.3"))
+        self.strict_json_schema = os.environ.get(
+            "LLM_STRICT_JSON_SCHEMA", "true"
+        ).lower() == "true"
+        self.batch_size = max(1, int(os.environ.get("LLM_BATCH_SIZE", "10")))
+        self.prompt_cache = LLMPromptCache(
+            PromptCacheConfig(
+                enabled=os.environ.get("LLM_PROMPT_CACHE_ENABLED", "true").lower()
+                == "true",
+                ttl_seconds=max(
+                    60, int(os.environ.get("LLM_PROMPT_CACHE_TTL_SECONDS", "21600"))
+                ),
+                key_prefix=os.environ.get("LLM_PROMPT_CACHE_PREFIX", "llm:prompt_cache"),
+            )
+        )
+
+        resolved_key = api_key
+        if not resolved_key:
+            if self.provider == "claude":
+                resolved_key = os.environ.get("ANTHROPIC_API_KEY", "")
+            else:
+                resolved_key = os.environ.get("OPENAI_API_KEY", "")
+        self.api_key = resolved_key or ""
         self.client = None
         self._initialized = False
 
@@ -109,20 +144,28 @@ class LLMAnalyzer:
             return True
 
         if not self.api_key:
-            logger.warning("OPENAI_API_KEY not set. Using rule-based analysis.")
+            logger.warning("LLM API key not set. Using rule-based analysis.")
             return False
 
         try:
-            import openai
-            self.client = openai.AsyncOpenAI(api_key=self.api_key)
+            if self.provider == "claude":
+                from anthropic import AsyncAnthropic
+
+                self.client = AsyncAnthropic(api_key=self.api_key)
+                logger.info("Anthropic API connected successfully")
+            else:
+                import openai
+
+                self.client = openai.AsyncOpenAI(api_key=self.api_key)
+                logger.info("OpenAI API connected successfully")
             self._initialized = True
-            logger.info("OpenAI API connected successfully")
             return True
         except ImportError:
-            logger.error("openai package not installed. Run: pip install openai")
+            pkg = "anthropic" if self.provider == "claude" else "openai"
+            logger.error(f"{pkg} package not installed. Run: pip install {pkg}")
             return False
         except Exception as e:
-            logger.error(f"Failed to initialize OpenAI client: {e}")
+            logger.error(f"Failed to initialize {self.provider} client: {e}")
             return False
 
     async def analyze_stock(
@@ -159,23 +202,50 @@ class LLMAnalyzer:
                         "strategy": best.strategy_name,
                     }
 
-        # OpenAI 분석 시도
+        # LLM 분석 시도
         if await self.initialize():
             prompt = self._build_prompt(code, name, technical_data, backtest_data, market_data)
+            system_prompt = (
+                "당신은 전문 퀀트 트레이더입니다. "
+                "주어진 데이터를 분석하여 JSON 형식으로만 응답합니다."
+            )
+            cache_key = LLMPromptCache.build_key(
+                key_prefix=self.prompt_cache.config.key_prefix,
+                provider=self.provider,
+                model=self.model,
+                system_prompt=system_prompt,
+                user_prompt=prompt,
+                extra={"temperature": self.temperature, "max_tokens": self.max_tokens},
+            )
             try:
-                response = await self.client.chat.completions.create(
-                    model="gpt-4o-mini",
-                    messages=[
-                        {
-                            "role": "system",
-                            "content": "당신은 전문 퀀트 트레이더입니다. 주어진 데이터를 분석하여 JSON 형식으로만 응답합니다."
-                        },
-                        {"role": "user", "content": prompt}
-                    ],
-                    max_tokens=1500,
-                    temperature=0.3,
-                )
-                result_text = response.choices[0].message.content
+                cached = self.prompt_cache.get(cache_key)
+                if cached:
+                    return self._parse_response(code, name, cached)
+
+                if self.provider == "claude":
+                    response = await self.client.messages.create(
+                        model=self.model,
+                        system=system_prompt,
+                        messages=[{"role": "user", "content": prompt}],
+                        max_tokens=self.max_tokens,
+                        temperature=self.temperature,
+                    )
+                    text_blocks = [
+                        b.text for b in response.content if getattr(b, "type", "") == "text"
+                    ]
+                    result_text = "\n".join(text_blocks).strip()
+                else:
+                    response = await self.client.chat.completions.create(
+                        model=self.model,
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": prompt},
+                        ],
+                        max_tokens=self.max_tokens,
+                        temperature=self.temperature,
+                    )
+                    result_text = response.choices[0].message.content or ""
+                self.prompt_cache.set(cache_key, result_text)
                 return self._parse_response(code, name, result_text)
             except Exception as e:
                 logger.warning(f"LLM analysis failed for {name}: {e}")
@@ -200,8 +270,12 @@ class LLMAnalyzer:
                     market_data=stock.get("market"),
                 )
 
-        tasks = [analyze_with_limit(s) for s in stocks]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        results: list[Any] = []
+        for i in range(0, len(stocks), self.batch_size):
+            batch = stocks[i : i + self.batch_size]
+            tasks = [analyze_with_limit(s) for s in batch]
+            part = await asyncio.gather(*tasks, return_exceptions=True)
+            results.extend(part)
 
         return [r for r in results if isinstance(r, AnalysisResult)]
 
@@ -258,18 +332,28 @@ JSON만 출력하고 다른 설명은 생략해주세요."""
             json_match = re.search(r'\{[\s\S]*\}', response)
             if json_match:
                 data = json.loads(json_match.group())
+                if not isinstance(data, dict):
+                    raise ValueError("LLM payload is not an object")
+
+                normalized = normalize_analysis_result_payload(data)
+                if self.strict_json_schema:
+                    if not normalized["key_reasons"]:
+                        raise ValueError("Missing key_reasons in strict mode")
+                    if not normalized["risk_factors"]:
+                        raise ValueError("Missing risk_factors in strict mode")
+
                 return AnalysisResult(
                     code=code,
                     name=name,
-                    overall_score=int(data.get("overall_score", 0)),
-                    recommendation=data.get("recommendation", "관망"),
-                    confidence=data.get("confidence", "중간"),
-                    key_reasons=data.get("key_reasons", [])[:5],
-                    risk_factors=data.get("risk_factors", [])[:3],
-                    entry_strategy=data.get("entry_strategy", ""),
-                    exit_strategy=data.get("exit_strategy", ""),
-                    position_size=min(1.0, max(0.0, float(data.get("position_size", 0.1)))),
-                    time_horizon=data.get("time_horizon", "단기(1-3일)")
+                    overall_score=normalized["overall_score"],
+                    recommendation=normalized["recommendation"],
+                    confidence=normalized["confidence"],
+                    key_reasons=normalized["key_reasons"],
+                    risk_factors=normalized["risk_factors"],
+                    entry_strategy=normalized["entry_strategy"],
+                    exit_strategy=normalized["exit_strategy"],
+                    position_size=normalized["position_size"],
+                    time_horizon=normalized["time_horizon"],
                 )
         except Exception as e:
             logger.warning(f"Failed to parse LLM response: {e}")
@@ -764,6 +848,7 @@ class UnifiedTradingAnalyzer:
             (stock_plans, futures_plan, analysis_data)
         """
         logger.info(f"Starting unified analysis - mode: {mode}")
+        snapshot_id = datetime.now().strftime("%Y%m%dT%H%M%S")
 
         stock_plans = []
         stock_analysis = {}
@@ -780,6 +865,7 @@ class UnifiedTradingAnalyzer:
 
         # 통합 데이터
         analysis_data = {
+            "snapshot_id": snapshot_id,
             "date": self.date,
             "generated_at": self.datetime_str,
             "stock": stock_analysis,
@@ -787,7 +873,12 @@ class UnifiedTradingAnalyzer:
 
         # 리포트 저장
         if stock_plans or futures_plan:
-            self._save_reports(stock_plans, futures_plan, analysis_data)
+            self._save_reports(stock_plans, futures_plan, analysis_data, snapshot_id)
+            self._save_training_rows(snapshot_id, stock_plans, stock_analysis)
+
+        # 실시간-배치 융합용 LLM 품질 스냅샷 게시(best-effort)
+        if stock_analysis:
+            self._publish_llm_quality_snapshot(snapshot_id, stock_plans, stock_analysis)
 
         # 텔레그램 알림
         if send_telegram and self.notifier:
@@ -867,12 +958,21 @@ class UnifiedTradingAnalyzer:
 
         stocks = []
         excluded: Dict[str, List[str]] = {}
+        excluded_features: Dict[str, Dict[str, Any]] = {}
         for code in top_volume.index:
             row = top_volume.loc[code]
             name = self.stock_collector.get_stock_name(code)
             name_exclusions = self._name_exclusion_reasons(name)
             if name_exclusions:
                 excluded[code] = name_exclusions
+                excluded_features[code] = {
+                    "price": float(row.get("종가", 0)),
+                    "change_pct": float(row.get("등락률", 0)),
+                    "volume": float(row.get("거래량", 0)),
+                    "market_cap": float(row.get("시가총액", 0)),
+                    "trade_value": float(row.get("거래대금", 0)),
+                    "turnover": float(row.get("거래대금비율", 0)),
+                }
                 continue
             stocks.append(StockInfo(
                 code=code, name=name,
@@ -887,7 +987,10 @@ class UnifiedTradingAnalyzer:
 
         # 개별 분석
         candidates = []
-        analysis_results: Dict[str, Any] = {"_excluded": excluded}
+        analysis_results: Dict[str, Any] = {
+            "_excluded": excluded,
+            "_excluded_features": excluded_features,
+        }
 
         for stock in stocks[: self.config.stock_top_n_volume]:
             history_days = max(
@@ -900,6 +1003,14 @@ class UnifiedTradingAnalyzer:
                 analysis_results["_excluded"][stock.code] = [
                     f"history_insufficient:{0 if df is None else len(df)}"
                 ]
+                analysis_results["_excluded_features"][stock.code] = {
+                    "price": stock.price,
+                    "change_pct": stock.change_pct,
+                    "volume": stock.volume,
+                    "market_cap": stock.market_cap,
+                    "trade_value": stock.trade_value,
+                    "turnover": stock.turnover,
+                }
                 continue
 
             required_hist_cols = ["종가", "고가", "저가", "거래량"]
@@ -908,6 +1019,14 @@ class UnifiedTradingAnalyzer:
                 analysis_results["_excluded"][stock.code] = [
                     f"history_missing:{','.join(missing_hist_cols)}"
                 ]
+                analysis_results["_excluded_features"][stock.code] = {
+                    "price": stock.price,
+                    "change_pct": stock.change_pct,
+                    "volume": stock.volume,
+                    "market_cap": stock.market_cap,
+                    "trade_value": stock.trade_value,
+                    "turnover": stock.turnover,
+                }
                 continue
 
             if "거래대금" not in df.columns:
@@ -920,12 +1039,27 @@ class UnifiedTradingAnalyzer:
             stock.volume_ratio = round((stock.volume / avg_volume) if avg_volume > 0 else 1.0, 2)
             if avg_volume < float(self.config.stock_min_avg_volume):
                 analysis_results["_excluded"][stock.code] = [f"min_avg_volume:{int(avg_volume)}"]
+                analysis_results["_excluded_features"][stock.code] = {
+                    "avg_volume": round(avg_volume, 2),
+                    "price": stock.price,
+                    "volume": stock.volume,
+                    "trade_value": stock.trade_value,
+                    "turnover": stock.turnover,
+                }
                 continue
 
             trade_window = df["거래대금"].tail(lookback + 1)
             avg_trade_value = float(trade_window.iloc[:-1].mean()) if len(trade_window) > 1 else float(trade_window.mean())
             if avg_trade_value < float(self.config.stock_min_trade_value):
                 analysis_results["_excluded"][stock.code] = [f"min_avg_trade_value:{int(avg_trade_value)}"]
+                analysis_results["_excluded_features"][stock.code] = {
+                    "avg_volume": round(avg_volume, 2),
+                    "avg_trade_value": round(avg_trade_value, 2),
+                    "price": stock.price,
+                    "volume": stock.volume,
+                    "trade_value": stock.trade_value,
+                    "turnover": stock.turnover,
+                }
                 continue
 
             # Momentum & risk metrics
@@ -939,15 +1073,36 @@ class UnifiedTradingAnalyzer:
 
             if atr_pct > float(self.config.stock_max_atr_pct):
                 analysis_results["_excluded"][stock.code] = [f"atr_pct:{atr_pct:.2%}"]
+                analysis_results["_excluded_features"][stock.code] = {
+                    "avg_volume": round(avg_volume, 2),
+                    "avg_trade_value": round(avg_trade_value, 2),
+                    "atr_pct": round(atr_pct, 4),
+                    "max_drawdown_pct": round(max_dd, 4),
+                    "volatility": round(volatility, 4),
+                }
                 continue
             if max_dd > float(self.config.stock_max_drawdown_pct):
                 analysis_results["_excluded"][stock.code] = [f"max_drawdown:{max_dd:.2%}"]
+                analysis_results["_excluded_features"][stock.code] = {
+                    "avg_volume": round(avg_volume, 2),
+                    "avg_trade_value": round(avg_trade_value, 2),
+                    "atr_pct": round(atr_pct, 4),
+                    "max_drawdown_pct": round(max_dd, 4),
+                    "volatility": round(volatility, 4),
+                }
                 continue
 
             tech = self.stock_tech_analyzer.analyze(df)
             bt_results = self.stock_backtester.run_all_strategies(df)
             if not bt_results:
                 analysis_results["_excluded"][stock.code] = ["backtest_empty"]
+                analysis_results["_excluded_features"][stock.code] = {
+                    "avg_volume": round(avg_volume, 2),
+                    "avg_trade_value": round(avg_trade_value, 2),
+                    "atr_pct": round(atr_pct, 4),
+                    "max_drawdown_pct": round(max_dd, 4),
+                    "volatility": round(volatility, 4),
+                }
                 continue
 
             best = max(bt_results, key=lambda x: x.total_return)
@@ -955,11 +1110,23 @@ class UnifiedTradingAnalyzer:
                 analysis_results["_excluded"][stock.code] = [
                     f"backtest_trades:{best.trade_count}"
                 ]
+                analysis_results["_excluded_features"][stock.code] = {
+                    "backtest_best_strategy": best.strategy_name,
+                    "backtest_trade_count": best.trade_count,
+                    "backtest_win_rate": best.win_rate,
+                    "backtest_total_return": best.total_return,
+                }
                 continue
             if best.win_rate < float(self.config.stock_min_backtest_win_rate):
                 analysis_results["_excluded"][stock.code] = [
                     f"backtest_win_rate:{best.win_rate:.1f}"
                 ]
+                analysis_results["_excluded_features"][stock.code] = {
+                    "backtest_best_strategy": best.strategy_name,
+                    "backtest_trade_count": best.trade_count,
+                    "backtest_win_rate": best.win_rate,
+                    "backtest_total_return": best.total_return,
+                }
                 continue
 
             # MK 뉴스 수집
@@ -1013,6 +1180,19 @@ class UnifiedTradingAnalyzer:
                 reasons.extend([f"blacklist:{kw}" for kw in blacklist_hits])
                 reasons.extend([f"keyword:{kw}" for kw in keyword_hits])
                 analysis_results["_excluded"][stock.code] = reasons
+                analysis_results["_excluded_features"][stock.code] = {
+                    "avg_volume": round(avg_volume, 2),
+                    "avg_trade_value": round(avg_trade_value, 2),
+                    "atr_pct": round(atr_pct, 4),
+                    "max_drawdown_pct": round(max_dd, 4),
+                    "volatility": round(volatility, 4),
+                    "backtest_best_strategy": best.strategy_name,
+                    "backtest_trade_count": best.trade_count,
+                    "backtest_win_rate": best.win_rate,
+                    "backtest_total_return": best.total_return,
+                    "blacklist_hits": blacklist_hits,
+                    "keyword_hits": keyword_hits,
+                }
                 continue
 
             risk_hits = self._find_keyword_hits(texts_to_scan, self.config.stock_risk_keywords)
@@ -1377,7 +1557,8 @@ class UnifiedTradingAnalyzer:
         self,
         stock_plans: List[StockTradingPlan],
         futures_plan: Optional[FuturesTradingPlan],
-        analysis_data: Dict
+        analysis_data: Dict,
+        snapshot_id: str,
     ):
         """리포트 저장"""
         json_data = {
@@ -1388,11 +1569,206 @@ class UnifiedTradingAnalyzer:
             "analysis": analysis_data
         }
 
-        json_path = os.path.join(self.config.output_dir, f"unified_data_{self.date}.json")
+        json_path = os.path.join(
+            self.config.output_dir,
+            f"unified_data_{self.date}_{snapshot_id[-6:]}.json",
+        )
         with open(json_path, 'w', encoding='utf-8') as f:
             json.dump(json_data, f, ensure_ascii=False, indent=2, default=str)
 
+        latest_path = os.path.join(self.config.output_dir, "unified_data_latest.json")
+        with open(latest_path, "w", encoding="utf-8") as f:
+            json.dump(json_data, f, ensure_ascii=False, indent=2, default=str)
+
         logger.info(f"Report saved: {json_path}")
+
+    def _build_llm_quality_snapshot(
+        self,
+        snapshot_id: str,
+        stock_plans: List[StockTradingPlan],
+        stock_analysis: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        screening_scores: Dict[str, float] = {}
+        risk_flags: Dict[str, List[str]] = {}
+        names: Dict[str, str] = {}
+
+        for code, data in stock_analysis.items():
+            if not isinstance(data, dict):
+                continue
+            if code.startswith("_"):
+                continue
+
+            score = data.get("screening", {}).get("score")
+            if isinstance(score, (int, float)):
+                screening_scores[code] = float(score)
+
+            metrics = data.get("screening", {}).get("metrics", {})
+            hits = metrics.get("risk_keywords", [])
+            if isinstance(hits, list) and hits:
+                risk_flags[code] = [str(h) for h in hits]
+
+        if screening_scores:
+            min_score = min(screening_scores.values())
+            max_score = max(screening_scores.values())
+            span = max(max_score - min_score, 1e-9)
+            quality = {
+                c: round((s - min_score) / span, 6)
+                for c, s in screening_scores.items()
+            }
+        else:
+            quality = {}
+
+        excluded = stock_analysis.get("_excluded", {})
+        excluded_map: Dict[str, List[str]] = {}
+        if isinstance(excluded, dict):
+            for code, reasons in excluded.items():
+                if isinstance(reasons, list):
+                    excluded_map[str(code)] = [str(r) for r in reasons]
+
+        for p in stock_plans:
+            names[p.code] = p.name
+
+        final_codes = [p.code for p in stock_plans]
+
+        return {
+            "snapshot_id": snapshot_id,
+            "generated_at": self.datetime_str,
+            "codes": sorted(quality.keys()),
+            "final_codes": final_codes,
+            "quality": quality,
+            "raw_scores": {c: round(s, 4) for c, s in screening_scores.items()},
+            "risk_flags": risk_flags,
+            "excluded": excluded_map,
+            "names": names,
+        }
+
+    def _publish_llm_quality_snapshot(
+        self,
+        snapshot_id: str,
+        stock_plans: List[StockTradingPlan],
+        stock_analysis: Dict[str, Any],
+    ) -> None:
+        try:
+            from shared.streaming.client import RedisClient
+
+            key = os.environ.get("LLM_QUALITY_LATEST_KEY", "system:llm_quality:latest")
+            payload = self._build_llm_quality_snapshot(
+                snapshot_id, stock_plans, stock_analysis
+            )
+            redis = RedisClient.get_client()
+            redis.set(key, json.dumps(payload, ensure_ascii=False))
+            logger.info(
+                f"Published LLM quality snapshot: {len(payload.get('codes', []))} symbols"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to publish LLM quality snapshot: {e}")
+
+    def _save_training_rows(
+        self,
+        snapshot_id: str,
+        stock_plans: List[StockTradingPlan],
+        stock_analysis: Dict[str, Any],
+    ) -> None:
+        try:
+            final_codes = {p.code for p in stock_plans}
+            plan_map = {p.code: p for p in stock_plans}
+            rows: list[dict[str, Any]] = []
+
+            for code, data in stock_analysis.items():
+                if not isinstance(data, dict):
+                    continue
+                if str(code).startswith("_"):
+                    continue
+
+                screening = data.get("screening", {})
+                metrics = screening.get("metrics", {}) if isinstance(screening, dict) else {}
+                score_breakdown = (
+                    screening.get("score_breakdown", {})
+                    if isinstance(screening, dict)
+                    else {}
+                )
+                technical = data.get("technical", {})
+                news = data.get("news", {})
+                plan = plan_map.get(code)
+
+                rows.append(
+                    {
+                        "snapshot_id": snapshot_id,
+                        "date": self.date,
+                        "generated_at": self.datetime_str,
+                        "code": code,
+                        "name": plan.name if plan else "",
+                        "selected": code in final_codes,
+                        "decision": {
+                            "strategy": getattr(plan, "strategy", ""),
+                            "position_size": getattr(plan, "position_size", 0.0),
+                            "confidence": getattr(plan, "confidence", ""),
+                            "entry_price": getattr(plan, "entry_price", 0.0),
+                            "stop_loss": getattr(plan, "stop_loss", 0.0),
+                            "take_profit": getattr(plan, "take_profit", 0.0),
+                        },
+                        "features": {
+                            "screening_metrics": metrics,
+                            "screening_score": screening.get("score"),
+                            "score_breakdown": score_breakdown,
+                            "technical_signal": technical.get("signal"),
+                            "news_sentiment": news.get("sentiment"),
+                            "risk_keywords": metrics.get("risk_keywords", []),
+                        },
+                        "labels": {
+                            "horizon_return_1d": None,
+                            "horizon_return_3d": None,
+                            "horizon_return_5d": None,
+                            "trade_pnl": None,
+                            "trade_pnl_pct": None,
+                        },
+                    }
+                )
+
+            excluded = stock_analysis.get("_excluded", {})
+            excluded_features = stock_analysis.get("_excluded_features", {})
+            if isinstance(excluded, dict):
+                for code, reasons in excluded.items():
+                    if not isinstance(reasons, list):
+                        continue
+                    ex_feat = (
+                        excluded_features.get(code, {})
+                        if isinstance(excluded_features, dict)
+                        else {}
+                    )
+                    rows.append(
+                        {
+                            "snapshot_id": snapshot_id,
+                            "date": self.date,
+                            "generated_at": self.datetime_str,
+                            "code": str(code),
+                            "name": "",
+                            "selected": False,
+                            "decision": {"excluded": True},
+                            "features": {
+                                "excluded_reasons": [str(r) for r in reasons],
+                                "excluded_features": ex_feat if isinstance(ex_feat, dict) else {},
+                            },
+                            "labels": {
+                                "horizon_return_1d": None,
+                                "horizon_return_3d": None,
+                                "horizon_return_5d": None,
+                                "trade_pnl": None,
+                                "trade_pnl_pct": None,
+                            },
+                        }
+                    )
+
+            if not rows:
+                return
+
+            training_path = os.path.join(self.config.output_dir, "training_rows.jsonl")
+            with open(training_path, "a", encoding="utf-8") as f:
+                for row in rows:
+                    f.write(json.dumps(row, ensure_ascii=False, default=str) + "\n")
+            logger.info(f"Training rows appended: {len(rows)} -> {training_path}")
+        except Exception as e:
+            logger.warning(f"Failed to save training rows: {e}")
 
     def generate_detailed_briefing(self, code: str) -> Optional[StockDetailedBriefing]:
         """종목 코드에 대한 상세 브리핑 생성"""

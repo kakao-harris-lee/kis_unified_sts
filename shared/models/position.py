@@ -8,7 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Optional
+from typing import Any, Optional
 
 
 class PositionState(Enum):
@@ -72,6 +72,7 @@ class Position:
 
     # 수수료 (설정에서 로드)
     fee_rate: float = 0.003  # 기본 0.3% (편도 0.15% * 2)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     # 청산 관련
     exit_triggered: bool = False

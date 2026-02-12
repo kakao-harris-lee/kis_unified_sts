@@ -1,7 +1,7 @@
 """
 LLM 분석 모듈
 
-OpenAI GPT 기반 시장 분석 및 종목 스크리닝
+다중 LLM provider(OpenAI/Claude) 기반 시장 분석 및 종목 스크리닝
 """
 
 from .config import LLMConfig
