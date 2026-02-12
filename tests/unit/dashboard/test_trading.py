@@ -44,7 +44,7 @@ async def test_start_trading():
         response = await client.post("/api/trading/start")
 
     assert response.status_code == 200
-    assert response.json()["status"] == "started"
+    assert response.json()["status"] == "use CLI: sts trade start"
 
 
 @pytest.mark.asyncio
@@ -58,4 +58,4 @@ async def test_stop_trading():
         response = await client.post("/api/trading/stop")
 
     assert response.status_code == 200
-    assert response.json()["status"] == "stopped"
+    assert response.json()["status"] == "use CLI: sts trade stop"

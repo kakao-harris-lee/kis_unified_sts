@@ -128,9 +128,12 @@ class TestTradingOrchestrator:
         assert orch.is_running is False
 
     @pytest.mark.asyncio
-    async def test_start_changes_state(self):
+    async def test_start_changes_state(self, monkeypatch):
         """start() 호출 시 상태 변경"""
         from services.trading.orchestrator import TradingOrchestrator, TradingConfig, TradingState
+        from services.monitoring.metrics import MetricsCollector
+
+        monkeypatch.setattr(MetricsCollector, "start_prometheus_server", lambda *a, **kw: None)
 
         config = TradingConfig.stock()
         orch = TradingOrchestrator(config)
@@ -141,9 +144,12 @@ class TestTradingOrchestrator:
         await orch.stop()
 
     @pytest.mark.asyncio
-    async def test_stop_changes_state(self):
+    async def test_stop_changes_state(self, monkeypatch):
         """stop() 호출 시 상태 변경"""
         from services.trading.orchestrator import TradingOrchestrator, TradingConfig, TradingState
+        from services.monitoring.metrics import MetricsCollector
+
+        monkeypatch.setattr(MetricsCollector, "start_prometheus_server", lambda *a, **kw: None)
 
         config = TradingConfig.stock()
         orch = TradingOrchestrator(config)
@@ -154,9 +160,12 @@ class TestTradingOrchestrator:
         assert orch.state == TradingState.STOPPED
 
     @pytest.mark.asyncio
-    async def test_pause_and_resume(self):
+    async def test_pause_and_resume(self, monkeypatch):
         """pause/resume 동작"""
         from services.trading.orchestrator import TradingOrchestrator, TradingConfig, TradingState
+        from services.monitoring.metrics import MetricsCollector
+
+        monkeypatch.setattr(MetricsCollector, "start_prometheus_server", lambda *a, **kw: None)
 
         config = TradingConfig.stock()
         orch = TradingOrchestrator(config)

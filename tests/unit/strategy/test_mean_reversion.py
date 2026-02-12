@@ -46,7 +46,7 @@ async def test_mean_reversion_sell_signal():
     from shared.strategy.entry.mean_reversion import MeanReversionEntry, MeanReversionConfig
     from shared.strategy.base import EntryContext
 
-    config = MeanReversionConfig()
+    config = MeanReversionConfig(allow_short=True)
     strategy = MeanReversionEntry(config)
 
     context = EntryContext(
