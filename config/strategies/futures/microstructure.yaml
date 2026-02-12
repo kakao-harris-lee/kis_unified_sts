@@ -17,7 +17,7 @@
 strategy:
   name: microstructure
   asset_class: futures
-  enabled: true
+  enabled: false  # DEPRECATED: 선물은 RL paper trader (rl_mppo)로 전환 (2026-02-12). 호가 데이터 메커니즘 미구현.
   description: "마이크로스트럭처 기반 선물 진입 전략 (OFI + 호가불균형)"
 
   # ===========================================================================

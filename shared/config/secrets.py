@@ -162,7 +162,7 @@ class SecretsManager:
         elif domain == "futures":
             db = cls.get("REDIS_FUTURES_DB", "2")
         else:
-            db = cls.get("REDIS_SYSTEM_DB", "0")
+            db = cls.get("REDIS_SYSTEM_DB", "1")
 
         if password:
             return f"redis://:{password}@{host}:{port}/{db}"

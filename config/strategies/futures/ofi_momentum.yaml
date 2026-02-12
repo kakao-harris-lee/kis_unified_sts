@@ -16,7 +16,7 @@
 strategy:
   name: ofi_momentum
   asset_class: futures
-  enabled: true
+  enabled: false  # DEPRECATED: 선물은 RL paper trader (rl_mppo)로 전환 (2026-02-12). 호가 데이터 메커니즘 미구현.
   description: "OFI Z-Score 연속 모멘텀 기반 선물 전략"
 
   # ===========================================================================
