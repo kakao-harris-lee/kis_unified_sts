@@ -364,17 +364,27 @@ def score_stock_candidate(
     max_dd = float(screening.get("max_drawdown_pct", 0.0))
     volatility = float(screening.get("volatility", 0.0))
 
-    if atr_pct >= config.stock_max_atr_pct:
-        risk_penalty += 6
-    elif atr_pct >= config.stock_max_atr_pct * 0.8:
+    # Graduated ATR penalty (soft filter: extreme values heavily penalized)
+    max_atr = float(config.stock_max_atr_pct)
+    if atr_pct >= max_atr * 1.5:
+        risk_penalty += 15
+    elif atr_pct >= max_atr:
+        risk_penalty += 8
+    elif atr_pct >= max_atr * 0.8:
         risk_penalty += 3
 
-    if max_dd >= config.stock_max_drawdown_pct:
-        risk_penalty += 6
-    elif max_dd >= config.stock_max_drawdown_pct * 0.8:
+    # Graduated drawdown penalty (soft filter)
+    max_drawdown = float(config.stock_max_drawdown_pct)
+    if max_dd >= max_drawdown * 1.5:
+        risk_penalty += 15
+    elif max_dd >= max_drawdown:
+        risk_penalty += 8
+    elif max_dd >= max_drawdown * 0.8:
         risk_penalty += 3
 
-    if volatility >= 0.6:
+    if volatility >= 0.8:
+        risk_penalty += 6
+    elif volatility >= 0.6:
         risk_penalty += 3
 
     weights = {

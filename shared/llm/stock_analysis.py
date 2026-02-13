@@ -48,9 +48,18 @@ logger = logging.getLogger(__name__)
 
 async def analyze_stocks(
     analyzer: UnifiedTradingAnalyzer,
+    *,
+    intraday: bool = False,
 ) -> tuple[list[StockTradingPlan], dict]:
-    """Run the full stock analysis pipeline (multi-source screening)."""
-    logger.info("Starting stock analysis with multiple data sources")
+    """Run the stock analysis pipeline.
+
+    Args:
+        analyzer: The unified trading analyzer instance.
+        intraday: If True, run lightweight mode (skip backtest, DART, KSD,
+                  LLM scoring) for fast intraday refresh.
+    """
+    mode_label = "intraday-refresh" if intraday else "full"
+    logger.info(f"Starting stock analysis ({mode_label})")
 
     # KOSPI + KOSDAQ (best-effort).
     market_kospi = analyzer.stock_collector.collect("KOSPI")
@@ -281,96 +290,51 @@ async def analyze_stocks(
         max_dd = calc_max_drawdown(close)
         volatility = float(returns.std() * np.sqrt(252)) if returns is not None else 0.0
 
-        if atr_pct_val > float(config.stock_max_atr_pct):
-            analysis_results["_excluded"][stock.code] = [f"atr_pct:{atr_pct_val:.2%}"]
-            analysis_results["_excluded_features"][stock.code] = {
-                "avg_volume": round(avg_volume, 2),
-                "avg_trade_value": round(avg_trade_value, 2),
-                "atr_pct": round(atr_pct_val, 4),
-                "max_drawdown_pct": round(max_dd, 4),
-                "volatility": round(volatility, 4),
-            }
-            continue
-        if max_dd > float(config.stock_max_drawdown_pct):
-            analysis_results["_excluded"][stock.code] = [f"max_drawdown:{max_dd:.2%}"]
-            analysis_results["_excluded_features"][stock.code] = {
-                "avg_volume": round(avg_volume, 2),
-                "avg_trade_value": round(avg_trade_value, 2),
-                "atr_pct": round(atr_pct_val, 4),
-                "max_drawdown_pct": round(max_dd, 4),
-                "volatility": round(volatility, 4),
-            }
-            continue
+        # Soft penalty mode: ATR/drawdown/backtest are scored, not hard-filtered.
+        # Extreme values receive heavy score penalties via score_stock_candidate().
 
         tech = analyzer.stock_tech_analyzer.analyze(df)
         best: BacktestResult | None = None
         bt_results: list[BacktestResult] = []
-        if not is_new_listing:
+        if not is_new_listing and not intraday:
             bt_results = analyzer.stock_backtester.run_all_strategies(df)
-            if not bt_results:
-                analysis_results["_excluded"][stock.code] = ["backtest_empty"]
-                analysis_results["_excluded_features"][stock.code] = {
-                    "avg_volume": round(avg_volume, 2),
-                    "avg_trade_value": round(avg_trade_value, 2),
-                    "atr_pct": round(atr_pct_val, 4),
-                    "max_drawdown_pct": round(max_dd, 4),
-                    "volatility": round(volatility, 4),
-                }
-                continue
+            if bt_results:
+                best = max(bt_results, key=lambda x: x.total_return)
 
-            best = max(bt_results, key=lambda x: x.total_return)
-            if best.trade_count < int(config.stock_min_backtest_trades):
-                analysis_results["_excluded"][stock.code] = [
-                    f"backtest_trades:{best.trade_count}"
-                ]
-                analysis_results["_excluded_features"][stock.code] = {
-                    "backtest_best_strategy": best.strategy_name,
-                    "backtest_trade_count": best.trade_count,
-                    "backtest_win_rate": best.win_rate,
-                    "backtest_total_return": best.total_return,
-                }
-                continue
-            if best.win_rate < float(config.stock_min_backtest_win_rate):
-                analysis_results["_excluded"][stock.code] = [
-                    f"backtest_win_rate:{best.win_rate:.1f}"
-                ]
-                analysis_results["_excluded_features"][stock.code] = {
-                    "backtest_best_strategy": best.strategy_name,
-                    "backtest_trade_count": best.trade_count,
-                    "backtest_win_rate": best.win_rate,
-                    "backtest_total_return": best.total_return,
-                }
-                continue
-
-        # MK 뉴스 수집
+        # MK 뉴스 수집 (intraday: skip for speed)
         mk_news = {}
-        try:
-            mk_news = analyzer.mk_news_collector.collect(stock.code)
-            all_news = mk_news.get("market_news", []) + mk_news.get("stock_news", [])
-            mk_news["sentiment"] = analyzer.mk_news_collector.analyze_sentiment(
-                all_news
-            ).value
-        except Exception as e:
-            logger.debug(f"MK news failed for {stock.code}: {e}")
+        if not intraday:
+            try:
+                mk_news = analyzer.mk_news_collector.collect(stock.code)
+                all_news = mk_news.get("market_news", []) + mk_news.get(
+                    "stock_news", []
+                )
+                mk_news["sentiment"] = (
+                    analyzer.mk_news_collector.analyze_sentiment(all_news).value
+                )
+            except Exception as e:
+                logger.debug(f"MK news failed for {stock.code}: {e}")
 
-        # DART 공시 확인
+        # DART 공시 확인 (intraday: skip)
         dart_data = {}
-        try:
-            corp_code = analyzer._dart_corp_mapper.get_corp_code(stock.code)
-            dart_data = (
-                analyzer.dart_collector.collect(corp_code)
-                if corp_code
-                else {"error": "corp_code_not_found"}
-            )
-        except Exception as e:
-            logger.debug(f"DART data failed for {stock.code}: {e}")
+        if not intraday:
+            try:
+                corp_code = analyzer._dart_corp_mapper.get_corp_code(stock.code)
+                dart_data = (
+                    analyzer.dart_collector.collect(corp_code)
+                    if corp_code
+                    else {"error": "corp_code_not_found"}
+                )
+            except Exception as e:
+                logger.debug(f"DART data failed for {stock.code}: {e}")
 
-        # KSD 공매도 확인
+        # KSD 공매도 확인 (intraday: skip)
         ksd_data = {}
-        try:
-            ksd_data = analyzer.ksd_collector.collect(stock.code)
-        except Exception as e:
-            logger.debug(f"KSD data failed for {stock.code}: {e}")
+        if not intraday:
+            try:
+                ksd_data = analyzer.ksd_collector.collect(stock.code)
+            except Exception as e:
+                logger.debug(f"KSD data failed for {stock.code}: {e}")
 
         # KRX 종목 상태(가능 시) 확인 → blacklist 키워드 탐지
         krx_stock_info: dict[str, Any] = {}
@@ -428,20 +392,37 @@ async def analyze_stocks(
         risk_hits = find_keyword_hits(texts_to_scan, config.stock_risk_keywords)
 
         # 기존 news 분석에 MK 뉴스 통합
-        news = analyzer.stock_news_analyzer.analyze(stock.code, stock.name)
-        if mk_news.get("sentiment"):
-            news["sentiment"] = mk_news["sentiment"]
-        if mk_news.get("stock_news"):
-            news["mk_headlines"] = [n.get("title") for n in mk_news["stock_news"][:3]]
-        # 스코어링용 뉴스 건수 집계
-        mk_news_count = len(mk_news.get("market_news", [])) + len(
-            mk_news.get("stock_news", [])
-        )
-        news["news_count"] = mk_news_count
+        # News analysis (intraday: minimal)
+        if intraday:
+            news: dict[str, Any] = {"sentiment": "중립", "news_count": 0}
+        else:
+            news = analyzer.stock_news_analyzer.analyze(stock.code, stock.name)
+            if mk_news.get("sentiment"):
+                news["sentiment"] = mk_news["sentiment"]
+            if mk_news.get("stock_news"):
+                news["mk_headlines"] = [
+                    n.get("title") for n in mk_news["stock_news"][:3]
+                ]
+            mk_news_count = len(mk_news.get("market_news", [])) + len(
+                mk_news.get("stock_news", [])
+            )
+            news["news_count"] = mk_news_count
 
-        target_signal = await collect_target_price_signal(
-            analyzer, stock.code, current_price=float(stock.price)
-        )
+        # Target price (intraday: skip)
+        if intraday:
+            target_signal = {
+                "available": False,
+                "target_price": 0.0,
+                "latest_target_price": 0.0,
+                "target_upside_pct": 0.0,
+                "target_opinion": "",
+                "target_date": "",
+                "target_sample_count": 0,
+            }
+        else:
+            target_signal = await collect_target_price_signal(
+                analyzer, stock.code, current_price=float(stock.price)
+            )
         screening_metrics = {
             "avg_volume": round(avg_volume, 2),
             "avg_trade_value": round(avg_trade_value, 2),
@@ -498,26 +479,19 @@ async def analyze_stocks(
             },
         }
 
-        should_include = tech.signal in [Signal.STRONG_BUY, Signal.BUY]
-        if best is not None:
-            should_include = should_include or best.win_rate >= float(
-                config.stock_min_backtest_win_rate
+        # All scored stocks are candidates; min_score filter handles quality gate.
+        candidates.append(
+            (
+                screening_score,
+                stock,
+                tech,
+                best,
+                news,
+                dart_data,
+                ksd_data,
+                screening_metrics,
             )
-        elif is_new_listing:
-            should_include = True
-        if should_include:
-            candidates.append(
-                (
-                    screening_score,
-                    stock,
-                    tech,
-                    best,
-                    news,
-                    dart_data,
-                    ksd_data,
-                    screening_metrics,
-                )
-            )
+        )
 
     # KRX 데이터 추가
     analysis_results["_market_data"] = {"krx": krx_data}
@@ -530,6 +504,7 @@ async def analyze_stocks(
             excluded_counts[key] = excluded_counts.get(key, 0) + 1
 
     analysis_results["_screening_meta"] = {
+        "mode": "intraday" if intraday else "full",
         "trade_value_fallback": trade_value_fallback,
         "excluded_count": len(analysis_results.get("_excluded", {})),
         "excluded_reasons": excluded_counts,
@@ -546,8 +521,8 @@ async def analyze_stocks(
         },
     }
 
-    # LLM 스코어링 (confidence factor 보정)
-    if config.stock_llm_scoring_enabled and candidates:
+    # LLM 스코어링 (confidence factor 보정) — intraday: skip for speed
+    if config.stock_llm_scoring_enabled and candidates and not intraday:
         scoring_tasks = [
             llm_score_candidate(analyzer, stock, tech, best, news, screening)
             for (

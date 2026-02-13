@@ -705,18 +705,24 @@ class UnifiedTradingAnalyzer:
         return data
 
     async def run_full_analysis(
-        self, mode: str = "all", send_telegram: bool = True
+        self,
+        mode: str = "all",
+        send_telegram: bool = True,
+        *,
+        intraday: bool = False,
     ) -> tuple[list[StockTradingPlan], FuturesTradingPlan | None, dict]:
         """전체 분석 실행
 
         Args:
             mode: "all", "stock" (선물 분석 비활성화)
             send_telegram: 텔레그램 알림 전송 여부
+            intraday: 장중 경량 갱신 모드 (backtest, DART, KSD, LLM scoring 생략)
 
         Returns:
             (stock_plans, futures_plan, analysis_data)
         """
-        logger.info(f"Starting unified analysis - mode: {mode}")
+        mode_label = f"{mode}/intraday" if intraday else mode
+        logger.info(f"Starting unified analysis - mode: {mode_label}")
         snapshot_id = datetime.now().strftime("%Y%m%dT%H%M%S")
 
         stock_plans = []
@@ -726,7 +732,9 @@ class UnifiedTradingAnalyzer:
 
         # 주식 분석
         if mode in ["all", "stock"]:
-            stock_plans, stock_analysis = await self._analyze_stocks()
+            stock_plans, stock_analysis = await self._analyze_stocks(
+                intraday=intraday
+            )
 
         # 선물 분석 (비활성화)
         if mode in ["all", "futures"]:
@@ -759,9 +767,11 @@ class UnifiedTradingAnalyzer:
 
         return stock_plans, futures_plan, analysis_data
 
-    async def _analyze_stocks(self) -> tuple[list[StockTradingPlan], dict]:
+    async def _analyze_stocks(
+        self, *, intraday: bool = False
+    ) -> tuple[list[StockTradingPlan], dict]:
         """주식 분석 (다중 데이터 소스 활용)"""
-        return await _stock_analysis.analyze_stocks(self)
+        return await _stock_analysis.analyze_stocks(self, intraday=intraday)
 
     async def _analyze_futures(self) -> tuple[FuturesTradingPlan | None, dict]:
         """선물 분석"""
@@ -1044,11 +1054,17 @@ async def analyze_stock_with_llm(
 
 
 async def run_unified_analysis(
-    notifier=None, mode: str = "all", send_telegram: bool = True
+    notifier=None,
+    mode: str = "all",
+    send_telegram: bool = True,
+    *,
+    intraday: bool = False,
 ) -> tuple[list[StockTradingPlan], FuturesTradingPlan | None, dict]:
     """Convenience function for unified analysis"""
     analyzer = get_unified_analyzer(notifier=notifier)
-    return await analyzer.run_full_analysis(mode=mode, send_telegram=send_telegram)
+    return await analyzer.run_full_analysis(
+        mode=mode, send_telegram=send_telegram, intraday=intraday
+    )
 
 
 async def get_stock_detail_briefing(
