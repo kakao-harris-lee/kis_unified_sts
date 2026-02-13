@@ -47,8 +47,9 @@ class LLMConfig:
     stock_momentum_lookback_days: int = 252
     stock_max_atr_pct: float = 0.08
     stock_max_drawdown_pct: float = 0.25
-    stock_min_backtest_trades: int = 5
+    stock_min_backtest_trades: int = 10
     stock_min_backtest_win_rate: float = 45.0
+    stock_min_recommendation_score: float = 5.0
     stock_max_position: float = 0.20
     stock_stop_loss: float = 0.05
     stock_take_profit: float = 0.10
@@ -82,6 +83,7 @@ class LLMConfig:
     stock_score_weight_liquidity: float = 0.10
     stock_score_weight_target_price: float = 0.10
     stock_score_weight_risk: float = 0.10
+    stock_score_weight_theme: float = 0.15
     stock_llm_scoring_enabled: bool = True
     stock_llm_scoring_model: str = ""
     stock_llm_scoring_max_tokens: int = 500
@@ -350,8 +352,11 @@ class LLMConfig:
             ),
             stock_max_atr_pct=stock_config.get("max_atr_pct", 0.08),
             stock_max_drawdown_pct=stock_config.get("max_drawdown_pct", 0.25),
-            stock_min_backtest_trades=stock_config.get("min_backtest_trades", 5),
+            stock_min_backtest_trades=stock_config.get("min_backtest_trades", 10),
             stock_min_backtest_win_rate=stock_config.get("min_backtest_win_rate", 45.0),
+            stock_min_recommendation_score=stock_config.get(
+                "min_recommendation_score", 5.0
+            ),
             stock_max_position=stock_config.get("max_position", 0.20),
             stock_stop_loss=stock_config.get("stop_loss", 0.05),
             stock_take_profit=stock_config.get("take_profit", 0.10),
@@ -396,6 +401,7 @@ class LLMConfig:
                 "score_weight_target_price", 0.10
             ),
             stock_score_weight_risk=stock_config.get("score_weight_risk", 0.10),
+            stock_score_weight_theme=stock_config.get("score_weight_theme", 0.15),
             stock_llm_scoring_enabled=stock_config.get("llm_scoring_enabled", True),
             stock_llm_scoring_model=stock_config.get("llm_scoring_model", ""),
             stock_llm_scoring_max_tokens=stock_config.get(

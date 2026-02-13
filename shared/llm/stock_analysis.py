@@ -32,6 +32,7 @@ from .stock_screening import (
     find_keyword_hits,
     name_exclusion_reasons,
     score_stock_candidate,
+    score_theme_relevance,
 )
 
 if TYPE_CHECKING:
@@ -102,6 +103,30 @@ async def analyze_stocks(
         logger.warning(f"KRX data collection failed: {e}")
 
     config = analyzer.config
+
+    # 섹터/테마 연관성 데이터 수집
+    sector_classifications: dict[str, str] = {}  # code → 업종명
+    sector_rotation: dict[str, str] = {}  # theme → signal
+    try:
+        from pykrx import stock as pykrx_stock
+
+        from .market_analyzers import ETFFlowAnalyzer
+
+        date_str = analyzer.stock_collector._get_last_trading_date()
+        for mkt in markets:
+            sec_df = pykrx_stock.get_market_sector_classifications(date_str, mkt)
+            if sec_df is not None and len(sec_df) > 0:
+                for code_idx, row in sec_df.iterrows():
+                    sector_classifications[str(code_idx)] = str(row.get("업종명", ""))
+
+        etf_flows = ETFFlowAnalyzer(config).analyze()
+        sector_rotation = {e.sector: e.signal for e in etf_flows}
+        logger.info(
+            f"Theme data loaded: {len(sector_classifications)} stocks, "
+            f"{len(sector_rotation)} sector signals"
+        )
+    except Exception as e:
+        logger.warning(f"Theme/sector data collection failed (scoring disabled): {e}")
 
     # 필터링
     filtered = market_df[
@@ -408,6 +433,11 @@ async def analyze_stocks(
             news["sentiment"] = mk_news["sentiment"]
         if mk_news.get("stock_news"):
             news["mk_headlines"] = [n.get("title") for n in mk_news["stock_news"][:3]]
+        # 스코어링용 뉴스 건수 집계
+        mk_news_count = len(mk_news.get("market_news", [])) + len(
+            mk_news.get("stock_news", [])
+        )
+        news["news_count"] = mk_news_count
 
         target_signal = await collect_target_price_signal(
             analyzer, stock.code, current_price=float(stock.price)
@@ -436,6 +466,13 @@ async def analyze_stocks(
             "is_new_listing": is_new_listing,
         }
 
+        # 테마/섹터 연관성 점수
+        industry = sector_classifications.get(stock.code, "")
+        theme_s, theme_matched = score_theme_relevance(industry, sector_rotation)
+        screening_metrics["industry"] = industry
+        screening_metrics["theme_score"] = round(theme_s, 2)
+        screening_metrics["theme_matched"] = theme_matched
+
         screening_score, score_breakdown = score_stock_candidate(
             stock, tech, best, news, screening_metrics, config
         )
@@ -447,7 +484,10 @@ async def analyze_stocks(
             "screening": {
                 "metrics": screening_metrics,
                 "score": round(screening_score, 2),
-                "score_breakdown": {k: round(v, 2) for k, v in score_breakdown.items()},
+                "score_breakdown": {
+                    k: round(v, 2) if isinstance(v, (int, float)) else v
+                    for k, v in score_breakdown.items()
+                },
             },
             "data_sources": {
                 "mk_news": mk_news,
@@ -566,6 +606,16 @@ async def analyze_stocks(
 
         candidates = updated_candidates
 
+    # (#5) 최소 스코어 임계값 미달 후보 제거
+    min_score = config.stock_min_recommendation_score
+    pre_filter_count = len(candidates)
+    candidates = [c for c in candidates if c[0] >= min_score]
+    if pre_filter_count > len(candidates):
+        filtered_out = pre_filter_count - len(candidates)
+        logger.info(
+            f"Min score filter: {filtered_out} candidates below {min_score} removed"
+        )
+
     # 최종 선정
     candidates.sort(key=lambda x: x[0], reverse=True)
     final = candidates[: config.stock_final_selection]
@@ -623,6 +673,13 @@ async def analyze_stocks(
                 kw in target_opinion.lower() for kw in ["매수", "buy", "outperform"]
             ):
                 reasons.append(f"KIS 투자의견: {target_opinion}")
+
+        theme_matched_name = screening.get("theme_matched", "")
+        theme_s_val = float(screening.get("theme_score", 0.0))
+        if theme_matched_name and theme_s_val > 0:
+            reasons.append(f"주도 테마 연관: {theme_matched_name} ({theme_s_val:+.0f})")
+        elif not theme_matched_name and theme_s_val < 0:
+            reasons.append("주도 테마 미연관 (감점)")
 
         key_events = news.get("mk_headlines", news.get("key_events", []))
 

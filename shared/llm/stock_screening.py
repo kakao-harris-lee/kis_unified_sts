@@ -17,6 +17,33 @@ if TYPE_CHECKING:
 
 
 # ------------------------------------------------------------------
+# KRX 업종명 → ETF 섹터 테마 매핑
+# ------------------------------------------------------------------
+
+INDUSTRY_TO_THEME: dict[str, list[str]] = {
+    "전기·전자": ["반도체"],
+    "화학": ["2차전지", "에너지"],
+    "제약": ["바이오"],
+    "의료·정밀기기": ["바이오"],
+    "기타금융": ["금융"],
+    "금융": ["금융"],  # KOSDAQ 업종명
+    "보험": ["금융"],
+    "은행": ["금융"],
+    "증권": ["금융"],
+    "운송장비·부품": ["자동차"],
+    "금속": ["철강"],
+    "비금속": ["철강"],
+    "건설": ["건설"],
+    "전기·가스": ["에너지"],
+    "전기·가스·수도": ["에너지"],  # KOSDAQ 업종명
+    "IT 서비스": ["인터넷"],
+    "오락·문화": ["게임"],
+    "통신": ["인터넷"],
+    "기계·장비": ["자동차", "조선"],
+}
+
+
+# ------------------------------------------------------------------
 # Name / keyword filtering
 # ------------------------------------------------------------------
 
@@ -182,6 +209,52 @@ def score_target_price_signal(screening: dict[str, Any]) -> float:
 
 
 # ------------------------------------------------------------------
+# Theme / sector relevance scoring
+# ------------------------------------------------------------------
+
+
+def score_theme_relevance(
+    industry: str,
+    sector_rotation: dict[str, str],
+) -> tuple[float, str]:
+    """Score a stock's theme relevance based on sector rotation.
+
+    Args:
+        industry: KRX 업종명 (e.g. "전기·전자", "운송·창고")
+        sector_rotation: {sector: signal} from ETFFlowAnalyzer
+            signal is one of: "강세", "상승", "중립", "하락", "약세"
+
+    Returns:
+        (score, matched_theme) — score in [-8, +8], matched theme name or ""
+    """
+    if not industry or not sector_rotation:
+        return 0.0, ""
+
+    themes = INDUSTRY_TO_THEME.get(industry, [])
+    if not themes:
+        # 매핑되지 않은 업종: 주도 테마와 무관하므로 소폭 감점
+        return -2.0, ""
+
+    signal_scores = {"강세": 8, "상승": 4, "중립": 0, "하락": -4, "약세": -8}
+
+    best_score = -999.0
+    best_theme = ""
+    for theme in themes:
+        signal = sector_rotation.get(theme, "")
+        if signal in signal_scores:
+            s = float(signal_scores[signal])
+            if s > best_score:
+                best_score = s
+                best_theme = theme
+
+    if best_score == -999.0:
+        # 관련 테마가 sector_rotation에 없음
+        return -1.0, ""
+
+    return best_score, best_theme
+
+
+# ------------------------------------------------------------------
 # Composite candidate scoring
 # ------------------------------------------------------------------
 
@@ -204,12 +277,20 @@ def score_stock_candidate(
 
     momentum_raw = ret_5d * 0.6 + ret_20d * 0.3 + ret_60d * 0.1
     momentum_score = max(min(momentum_raw, 20.0), -20.0)
-    if high_prox >= 0.95:
+
+    # (#2) 52주 고점 보너스: 모멘텀 raw가 양수면 이미 상승이 반영되어 이중 계산 방지
+    if high_prox >= 0.95 and momentum_raw <= 0:
         momentum_score += 5
     elif high_prox <= 0.75:
         momentum_score -= 5
     if consecutive_up >= 3:
         momentum_score += 3
+
+    # (#1) RSI 과매수 모멘텀 감점: 이미 과열된 종목의 모멘텀 점수 차감
+    if tech.rsi > 70:
+        momentum_score -= 8
+    elif tech.rsi > 65:
+        momentum_score -= 4
 
     signal_map = {
         Signal.STRONG_BUY: 12,
@@ -225,8 +306,11 @@ def score_stock_candidate(
         total_return = max(min(best.total_return, 30.0), -30.0)
         return_score = total_return * 0.4
         backtest_score = win_rate_score + return_score
+        # (#3) 백테스트 거래 수 부족 시 강화된 패널티
         if best.trade_count < 10:
-            backtest_score *= 0.8
+            backtest_score *= 0.5
+        elif best.trade_count < 15:
+            backtest_score *= 0.7
     else:
         backtest_score = 0.0
 
@@ -236,6 +320,11 @@ def score_stock_candidate(
         news_score += 5
     elif sentiment in ["부정", "매우 부정"]:
         news_score -= 5
+
+    # (#4) 뉴스 부재 페널티: 뉴스 0건이면 기관/애널리스트 관심 부족으로 감점
+    news_count = int(news.get("news_count", 0))
+    if news_count == 0:
+        news_score -= 3
 
     risk_hits = screening.get("risk_keywords", [])
     if risk_hits:
@@ -267,6 +356,9 @@ def score_stock_candidate(
 
     target_price_score = score_target_price_signal(screening)
 
+    # 테마/섹터 연관성 점수 (ETFFlowAnalyzer 기반)
+    theme_score = float(screening.get("theme_score", 0.0))
+
     risk_penalty = 0.0
     atr_pct = float(screening.get("atr_pct", 0.0))
     max_dd = float(screening.get("max_drawdown_pct", 0.0))
@@ -292,6 +384,7 @@ def score_stock_candidate(
         "news": config.stock_score_weight_news,
         "liquidity": config.stock_score_weight_liquidity,
         "target_price": config.stock_score_weight_target_price,
+        "theme": config.stock_score_weight_theme,
         "risk": config.stock_score_weight_risk,
     }
 
@@ -302,6 +395,7 @@ def score_stock_candidate(
         + news_score * weights["news"]
         + liquidity_score * weights["liquidity"]
         + target_price_score * weights["target_price"]
+        + theme_score * weights["theme"]
         - risk_penalty * weights["risk"]
     )
 
@@ -315,6 +409,8 @@ def score_stock_candidate(
         "news": news_score,
         "liquidity": liquidity_score,
         "target_price": target_price_score,
+        "theme": theme_score,
+        "theme_matched": str(screening.get("theme_matched", "")),
         "risk_penalty": risk_penalty,
         "is_new_listing": screening.get("is_new_listing", False),
         "total": total_score,

@@ -96,6 +96,7 @@ def test_score_stock_candidate_best_none_new_listing():
             "stock_score_weight_news": 0.10,
             "stock_score_weight_liquidity": 0.10,
             "stock_score_weight_target_price": 0.10,
+            "stock_score_weight_theme": 0.15,
             "stock_score_weight_risk": 0.10,
             "stock_min_trade_value": 500_000_000,
             "stock_min_turnover": 0.003,

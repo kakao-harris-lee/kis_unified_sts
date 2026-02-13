@@ -46,8 +46,9 @@ stock:
   momentum_lookback_days: 252  # 모멘텀/52주 고점 기준
   max_atr_pct: 0.08            # ATR/가격 최대 비율
   max_drawdown_pct: 0.25       # 최대 낙폭 제한
-  min_backtest_trades: 5       # 백테스트 최소 거래 수
+  min_backtest_trades: 10      # 백테스트 최소 거래 수
   min_backtest_win_rate: 45    # 백테스트 최소 승률
+  min_recommendation_score: 5.0  # 최소 추천 스코어 (미달 시 추천 제외)
   max_position: 0.2         # 최대 포지션 비율 (20%)
 
   # Negative screening (옵션)
@@ -67,6 +68,7 @@ stock:
   score_weight_liquidity: 0.10
   score_weight_target_price: 0.10
   score_weight_risk: 0.10
+  score_weight_theme: 0.15         # 시장 주도 테마/섹터 연관성 가중치
 
   # LLM Scoring (confidence factor)
   llm_scoring_enabled: true
