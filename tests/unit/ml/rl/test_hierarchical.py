@@ -81,10 +81,11 @@ class TestHighLevelAction:
         assert HighLevelAction.NEUTRAL == 1
         assert HighLevelAction.DEFENSIVE == 2
 
-    def test_risk_budgets(self):
-        assert HighLevelAction.RISK_BUDGETS[0] == 1.0
-        assert HighLevelAction.RISK_BUDGETS[1] == 0.5
-        assert HighLevelAction.RISK_BUDGETS[2] == 0.0
+    def test_risk_budgets_in_config(self):
+        cfg = HighLevelConfig()
+        assert cfg.risk_budgets[0] == 1.0
+        assert cfg.risk_budgets[1] == 0.5
+        assert cfg.risk_budgets[2] == 0.0
 
     def test_names(self):
         assert HighLevelAction.NAMES[0] == "AGGRESSIVE"

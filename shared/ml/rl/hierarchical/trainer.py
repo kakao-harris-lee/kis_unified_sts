@@ -19,7 +19,7 @@ import numpy as np
 from shared.config import ConfigLoader
 from shared.ml.base import get_device
 from shared.ml.rl.env import RLEnvConfig
-from shared.ml.rl.hierarchical.high_level_env import HighLevelConfig, HighLevelEnv
+from shared.ml.rl.hierarchical.high_level_env import HighLevelAction, HighLevelConfig, HighLevelEnv
 from shared.ml.rl.hierarchical.low_level_env import LowLevelEnv
 
 logger = logging.getLogger(__name__)
@@ -160,8 +160,16 @@ class HierarchicalTrainer:
         from sb3_contrib import MaskablePPO
         from stable_baselines3.common.vec_env import DummyVecEnv
 
+        hl_cfg = self.config.get("hierarchical", {})
+        risk_budgets_raw = hl_cfg.get("risk_budgets", {})
+        risk_budgets = {
+            HighLevelAction.AGGRESSIVE: risk_budgets_raw.get("aggressive", 1.0),
+            HighLevelAction.NEUTRAL: risk_budgets_raw.get("neutral", 0.5),
+            HighLevelAction.DEFENSIVE: risk_budgets_raw.get("defensive", 0.0),
+        }
         hl_config = HighLevelConfig(
             initial_balance=self.env_config.initial_balance,
+            risk_budgets=risk_budgets,
         )
 
         # 15분봉 피처 생성 (1분봉을 15분 평균으로 축소)
@@ -198,7 +206,6 @@ class HierarchicalTrainer:
         vec_env = DummyVecEnv([make_fn])
 
         # High-level 하이퍼파라미터 (YAML config에서 로드)
-        hl_cfg = self.config.get("hierarchical", {})
         hl_algo = hl_cfg.get("high_level", {})
         hl_timesteps = hl_cfg.get("high_level_timesteps", 500_000)
 

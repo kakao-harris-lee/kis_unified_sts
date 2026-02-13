@@ -110,6 +110,10 @@ training:
 hierarchical:
   bars_per_step: 15                # 15분봉 = 15개 1분봉
   high_level_timesteps: 500_000    # High-level 학습 타임스텝
+  risk_budgets:                    # 행동별 리스크 예산 (0~1 스케일)
+    aggressive: 1.0                # 풀 사이즈
+    neutral: 0.5                   # 절반
+    defensive: 0.0                 # 거래 금지
   high_level:
     learning_rate: 0.0003
     gamma: 0.99

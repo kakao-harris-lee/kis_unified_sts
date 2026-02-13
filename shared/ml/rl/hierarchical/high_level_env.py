@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import gymnasium as gym
@@ -33,7 +33,6 @@ class HighLevelAction:
     AGGRESSIVE = 0
     NEUTRAL = 1
     DEFENSIVE = 2
-    RISK_BUDGETS = {0: 1.0, 1: 0.5, 2: 0.0}
     NAMES = {0: "AGGRESSIVE", 1: "NEUTRAL", 2: "DEFENSIVE"}
 
 
@@ -46,6 +45,11 @@ class HighLevelConfig:
     bars_per_step: int = 15         # 15분 = 15개 1분봉
     initial_balance: float = 100_000_000
     max_steps: int = 27             # 405분 / 15분 = 27 스텝
+    risk_budgets: dict[int, float] = field(default_factory=lambda: {
+        HighLevelAction.AGGRESSIVE: 1.0,
+        HighLevelAction.NEUTRAL: 0.5,
+        HighLevelAction.DEFENSIVE: 0.0,
+    })
 
 
 class HighLevelEnv(gym.Env):
@@ -103,7 +107,7 @@ class HighLevelEnv(gym.Env):
         return self._get_observation(), self._get_info()
 
     def step(self, action: int):
-        risk_budget = HighLevelAction.RISK_BUDGETS.get(action, 0.5)
+        risk_budget = self.config.risk_budgets.get(action, 0.5)
         self.risk_budget_history.append(risk_budget)
 
         # low-level 결과에서 이 스텝의 PnL 가져오기
