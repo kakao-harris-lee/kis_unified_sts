@@ -47,18 +47,22 @@ class RLEvaluator:
         slippage: float = 0.0,
         deterministic: bool = True,
         continuous: bool = False,
+        is_dt: bool = False,
+        target_return: float = 5_000_000.0,
     ) -> dict[str, float]:
         """단일 모델 평가
 
         논문 식 6~8: 평균수익률, 손익비, 승률
 
         Args:
-            model: 학습된 SB3 모델
+            model: 학습된 SB3 모델 또는 DTAgent
             test_days: 테스트 일별 피처 배열 리스트
             test_prices: 테스트 일별 OHLC 배열 리스트
             slippage: 슬리피지 값
             deterministic: 결정적 행동 사용 여부
             continuous: True면 SAC 등 연속 행동 모델 (ContinuousActionWrapper 사용)
+            is_dt: True면 Decision Transformer 모델
+            target_return: DT 추론 시 목표 returns-to-go
 
         Returns:
             평가 지표 딕셔너리
@@ -97,9 +101,24 @@ class RLEvaluator:
 
             obs, info = env.reset()
 
+            # DT: 에피소드 초기화
+            if is_dt:
+                model.reset(target_return=target_return)
+                prev_reward = 0.0
+
             terminated = False
             while not terminated:
-                if continuous:
+                if is_dt:
+                    masks = base_env.action_masks()
+                    action, _ = model.predict(
+                        obs,
+                        action_masks=masks,
+                        reward=prev_reward,
+                        deterministic=deterministic,
+                    )
+                    obs, reward, terminated, truncated, info = env.step(int(action))
+                    prev_reward = float(reward)
+                elif continuous:
                     action, _ = model.predict(obs, deterministic=deterministic)
                     obs, reward, terminated, truncated, info = env.step(action)
                 else:

@@ -1,0 +1,93 @@
+# Decision Transformer - KOSPI200 선물
+# GPT 아키텍처로 (returns-to-go, state, action) 시퀀스 모델링
+# MPPO expert rollout으로 궤적 생성 → DT 학습
+
+# === Gymnasium 환경 (rl_mppo.yaml 동일) ===
+env:
+  initial_balance: 100_000_000
+  commission_rate: 0.00003
+  tick_size: 0.05
+  tick_value: 250_000
+  contract_multiplier: 250_000
+  max_contracts: 1
+  slippage: 0.0
+  margin_rate: 0.15
+  n_market_features: 25
+  n_position_features: 6
+  market_open: "09:00"
+  market_close: "15:45"
+
+# === 보상함수 가중치 (rl_mppo.yaml 동일) ===
+reward:
+  w_profit: 10.0
+  w_cost: 0.3
+  w_risk: 0.0
+  w_mtm: 0.0
+  inaction_penalty: 0.0
+  reward_scale: 100.0
+  max_loss: -5_000_000
+  loss_penalty_coeff: 2.0
+
+# === Decision Transformer 아키텍처 ===
+dt:
+  state_dim: 31               # market(25) + position(3) + time(3)
+  act_dim: 5                  # LONG_ENTRY/EXIT, SHORT_ENTRY/EXIT, HOLD
+  hidden_size: 128
+  n_layer: 3
+  n_head: 4
+  max_ep_len: 405             # 09:00~15:45 = 405분
+  action_tanh: false          # discrete logits, not continuous
+  context_length: 20          # K=20 과거 스텝 참조
+  resid_pdrop: 0.1
+
+# === 궤적 수집 ===
+trajectory:
+  expert_model: "mppo_final"  # MPPO expert 모델명
+  save_path: "models/futures/rl/dt_trajectories.pt"
+
+# === DT 학습 파라미터 ===
+dt_training:
+  learning_rate: 0.0001
+  weight_decay: 0.0001
+  warmup_steps: 1000
+  max_epochs: 50
+  batch_size: 64
+  grad_clip: 0.25
+  eval_interval: 5            # 매 N 에폭마다 온라인 평가
+  patience: 10                # early stopping patience
+
+# === 데이터 (rl_mppo.yaml 동일) ===
+data:
+  source: clickhouse
+  database: kospi
+  table: kospi200f_1m
+  symbol: "101S6000"
+  train_ratio: 0.8
+  min_bars_per_day: 300
+  mirror_augmentation: false  # DT는 expert 궤적 기반, 미러링 불필요
+
+# === 학습 관리 ===
+training:
+  eval_freq: 10_000
+  checkpoint_freq: 50_000
+  tensorboard_log: "./results/rl/tensorboard/"
+  save_dir: "./models/futures/rl/"
+
+# === Kelly Position Sizing ===
+position_sizing:
+  enabled: true
+  fraction: 0.5
+  min_trades: 10
+  min_scale: 0.2
+  max_scale: 1.0
+  default_win_rate: 0.45
+  default_wl_ratio: 1.83
+
+# === Paper Trading ===
+paper:
+  symbol: "A01603"
+  warmup_bars: 200
+  force_close_time: "15:35"
+  telegram_notify: true
+  log_dir: "./results/rl/paper/"
+  target_return: 5_000_000    # 추론 시 목표 returns-to-go

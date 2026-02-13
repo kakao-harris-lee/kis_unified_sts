@@ -89,6 +89,7 @@ class RLPaperTrader:
         config_path: str = "ml/rl_mppo.yaml",
         model_name: str = "mppo_final",
         symbol: str | None = None,
+        algo: str | None = None,
     ):
         # 설정 로드
         full_config = ConfigLoader.load(config_path)
@@ -103,25 +104,41 @@ class RLPaperTrader:
         self.log_dir = Path(self.paper_config.get("log_dir", "./results/rl/paper/"))
         self.log_dir.mkdir(parents=True, exist_ok=True)
 
-        # 모델 + scaler 로드
+        # 모델 경로 결정
         save_dir = Path(training_config.get("save_dir", "./models/futures/rl/"))
-        model_path = save_dir / model_name / "best_model.zip"
-        scaler_path = save_dir / "scaler.joblib"
 
-        if not model_path.exists():
-            raise FileNotFoundError(f"Model not found: {model_path}")
+        # 알고리즘 자동 감지
+        self.algo = algo or self._detect_algo(save_dir / model_name)
+
+        # 모델 + scaler 로드
+        scaler_path = save_dir / "scaler.joblib"
         if not scaler_path.exists():
             raise FileNotFoundError(
                 f"Scaler not found: {scaler_path}. "
                 "Run: python scripts/training/train_rl.py --save-scaler-only"
             )
-
-        from sb3_contrib import MaskablePPO
-
-        self.model = MaskablePPO.load(model_path)
         self.scaler = joblib.load(scaler_path)
-        logger.info(f"Loaded model: {model_path}")
         logger.info(f"Loaded scaler: {scaler_path}")
+
+        if self.algo == "dt":
+            from shared.ml.rl.decision_transformer.model import DTAgent
+
+            model_dir = save_dir / model_name
+            self.model = DTAgent.load(model_dir)
+            self._dt_target_return = float(
+                self.paper_config.get("target_return", 5_000_000)
+            )
+            self._last_reward = 0.0
+            logger.info(f"Loaded DT model: {model_dir}")
+        else:
+            model_path = save_dir / model_name / "best_model.zip"
+            if not model_path.exists():
+                raise FileNotFoundError(f"Model not found: {model_path}")
+
+            from sb3_contrib import MaskablePPO
+
+            self.model = MaskablePPO.load(model_path)
+            logger.info(f"Loaded model: {model_path}")
 
         # 데이터 인프라
         self.data_engine = DataEngine(DataEngineConfig(max_bars=600))
@@ -153,6 +170,16 @@ class RLPaperTrader:
         self._state_publisher: Any = None
         self._metrics: Any = None
         self._entry_time: datetime | None = None
+
+    @staticmethod
+    def _detect_algo(model_dir: Path) -> str:
+        """모델 디렉토리에서 알고리즘 자동 감지
+
+        model.pt 존재 → DT, 아니면 MPPO.
+        """
+        if (model_dir / "model.pt").exists():
+            return "dt"
+        return "mppo"
 
     async def _get_notifier(self):
         """Telegram notifier (lazy init)"""
@@ -469,15 +496,24 @@ class RLPaperTrader:
         masks = self._get_action_masks()
 
         # 모델 추론
-        action_int, _ = self.model.predict(
-            obs, action_masks=masks, deterministic=True
-        )
+        if self.algo == "dt":
+            action_int, action_probs = self.model.predict(
+                obs, action_masks=masks, reward=self._last_reward, deterministic=True,
+            )
+        else:
+            action_int, _ = self.model.predict(
+                obs, action_masks=masks, deterministic=True
+            )
+            action_probs = None
         action = Action(int(action_int))
 
         # Kelly 포지션 사이징: 진입 행동일 때만 확인
         if action in (Action.LONG_ENTRY, Action.SHORT_ENTRY):
-            action_probs = self._get_action_probs(obs, masks)
-            if not self._kelly_sizer.should_trade(action_probs):
+            if self.algo == "dt":
+                probs_for_kelly = action_probs
+            else:
+                probs_for_kelly = self._get_action_probs(obs, masks)
+            if not self._kelly_sizer.should_trade(probs_for_kelly):
                 logger.debug(
                     f"Kelly filter: skipping {action.name} (low confidence)"
                 )
@@ -773,6 +809,11 @@ class RLPaperTrader:
         # Publish initial status
         self._publish_status("running")
 
+        # DT: 에피소드 초기화
+        if self.algo == "dt":
+            self.model.reset(target_return=self._dt_target_return)
+            self._last_reward = 0.0
+
         # 1. Warmup (ClickHouse 과거 데이터)
         warmup_count = self._load_warmup_bars()
         logger.info(f"Warmup complete: {warmup_count} bars")
@@ -872,12 +913,14 @@ async def run_paper_trader(
     config_path: str = "ml/rl_mppo.yaml",
     model_name: str = "mppo_final",
     symbol: str | None = None,
+    algo: str | None = None,
 ) -> None:
     """Paper trader 실행 진입점"""
     trader = RLPaperTrader(
         config_path=config_path,
         model_name=model_name,
         symbol=symbol,
+        algo=algo,
     )
 
     # Ctrl+C 핸들링

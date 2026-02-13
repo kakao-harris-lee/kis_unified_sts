@@ -1,7 +1,7 @@
 """RL 모듈
 
 KOSPI200 선물 강화학습 기반 자동매매.
-Gymnasium 환경, Maskable PPO / SAC 학습, 평가 파이프라인, Paper Trading.
+Gymnasium 환경, Maskable PPO / SAC / Decision Transformer.
 """
 
 from shared.ml.rl.env import Action, FuturesTradingEnv, PositionSide, RLEnvConfig, mask_fn
@@ -14,9 +14,19 @@ except Exception:  # pragma: no cover
     RLPaperTrader = None  # type: ignore
     run_paper_trader = None  # type: ignore
 
+try:  # Optional: transformers for Decision Transformer
+    from shared.ml.rl.decision_transformer import DTAgent, DTConfig, DTTrainer
+except ImportError:  # pragma: no cover
+    DTAgent = None  # type: ignore
+    DTConfig = None  # type: ignore
+    DTTrainer = None  # type: ignore
+
 __all__ = [
     "Action",
     "ContinuousActionWrapper",
+    "DTAgent",
+    "DTConfig",
+    "DTTrainer",
     "FuturesTradingEnv",
     "PositionSide",
     "RLEnvConfig",
