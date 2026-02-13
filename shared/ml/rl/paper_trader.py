@@ -519,13 +519,17 @@ class RLPaperTrader:
                 )
                 action = Action.HOLD
 
-        # 거래 실행
+        # 거래 실행 — DT RTG 업데이트를 위해 step reward 추적
+        pnl_before = self.state.total_pnl + self._get_unrealized_pnl()
         if action != Action.HOLD:
             await self._execute_action(action)
             logger.info(
                 f"Action: {action.name} | Price: {self.state.current_price:.2f} | "
                 f"Position: {self.state.position.name} | PnL: {self.state.total_pnl:+,.0f}"
             )
+        pnl_after = self.state.total_pnl + self._get_unrealized_pnl()
+        if self.algo == "dt":
+            self._last_reward = pnl_after - pnl_before
 
     def _build_observation(
         self, market_features: np.ndarray, _total_bars: int
