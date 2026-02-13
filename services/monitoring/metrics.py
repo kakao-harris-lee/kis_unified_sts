@@ -343,8 +343,11 @@ class MetricsCollector:
             logger.warning("Prometheus client not installed")
             return
 
-        start_http_server(port)
-        logger.info(f"Prometheus metrics server started on port {port}")
+        try:
+            start_http_server(port)
+            logger.info(f"Prometheus metrics server started on port {port}")
+        except OSError as e:
+            logger.warning(f"Prometheus server failed to bind port {port}: {e}")
 
     def export_prometheus(self) -> str:
         """Prometheus 텍스트 포맷으로 내보내기"""
