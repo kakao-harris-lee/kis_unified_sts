@@ -1693,6 +1693,22 @@ class TradingOrchestrator:
                             f"전략: {signal.strategy}\n"
                             f"신뢰도: {signal.confidence:.1%}"
                         )
+                        # Collect indicator snapshot at entry time
+                        indicator_snapshot = {}
+                        if self._indicator_engine:
+                            raw = self._indicator_engine.get_indicators(signal.code)
+                            if raw:
+                                indicator_snapshot = {
+                                    "bb_lower": raw.get("bb_lower"),
+                                    "bb_upper": raw.get("bb_upper"),
+                                    "bb_middle": raw.get("bb_middle"),
+                                    "rsi": raw.get("rsi"),
+                                    "mfi": raw.get("mfi"),
+                                }
+                                bl, bu = raw.get("bb_lower", 0), raw.get("bb_upper", 0)
+                                if bu and bl and bu > bl:
+                                    indicator_snapshot["bb_position"] = (fill_price - bl) / (bu - bl)
+
                         self._append_training_trade_event(
                             {
                                 "event": "entry",
@@ -1705,6 +1721,8 @@ class TradingOrchestrator:
                                 "entry_price": fill_price,
                                 "quantity": quantity,
                                 "signal_confidence": signal.confidence,
+                                "indicators": indicator_snapshot,
+                                "regime": self._current_regime,
                                 "metadata": position.metadata,
                             }
                         )
@@ -1790,6 +1808,26 @@ class TradingOrchestrator:
                             f"사유: {reason_str}\n"
                             f"손익: {pnl:+,.0f}원 ({pnl_pct:+.2f}%)"
                         )
+                        # Collect indicator snapshot at exit time
+                        exit_indicator_snapshot = {}
+                        if self._indicator_engine:
+                            raw = self._indicator_engine.get_indicators(signal.code)
+                            if raw:
+                                exit_indicator_snapshot = {
+                                    "bb_lower": raw.get("bb_lower"),
+                                    "bb_upper": raw.get("bb_upper"),
+                                    "bb_middle": raw.get("bb_middle"),
+                                    "rsi": raw.get("rsi"),
+                                    "mfi": raw.get("mfi"),
+                                }
+                                bl, bu = raw.get("bb_lower", 0), raw.get("bb_upper", 0)
+                                if bu and bl and bu > bl:
+                                    exit_indicator_snapshot["bb_position"] = (fill_price - bl) / (bu - bl)
+
+                        peak_pnl_pct = 0.0
+                        if signal.high_since_entry and closed.entry_price:
+                            peak_pnl_pct = (signal.high_since_entry - closed.entry_price) / closed.entry_price * 100
+
                         self._append_training_trade_event(
                             {
                                 "event": "exit",
@@ -1802,6 +1840,7 @@ class TradingOrchestrator:
                                 ),
                                 "code": signal.code,
                                 "name": name,
+                                "entry_price": closed.entry_price,
                                 "exit_price": fill_price,
                                 "quantity": exit_quantity,
                                 "reason": reason_str,
@@ -1812,6 +1851,12 @@ class TradingOrchestrator:
                                     if closed.exit_time and closed.entry_time
                                     else None
                                 ),
+                                "indicators": exit_indicator_snapshot,
+                                "regime": self._current_regime,
+                                "exit_stage": signal.stage,
+                                "high_since_entry": signal.high_since_entry,
+                                "holding_minutes": signal.holding_minutes,
+                                "peak_pnl_pct": peak_pnl_pct,
                                 "metadata": closed.metadata if isinstance(closed.metadata, dict) else {},
                             }
                         )

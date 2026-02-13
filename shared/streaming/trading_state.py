@@ -148,6 +148,12 @@ class TradingStatePublisher:
                 "confidence": float(getattr(signal, "confidence", 0) or 0),
                 "timestamp": datetime.now().isoformat(),
                 "executed": executed,
+                "reason": (
+                    getattr(signal, "reason", "").value
+                    if hasattr(getattr(signal, "reason", ""), "value")
+                    else str(getattr(signal, "reason", ""))
+                ),
+                "stage": getattr(signal, "stage", ""),
             }
             pipe = r.pipeline(transaction=False)
             pipe.lpush(key, json.dumps(data))
@@ -247,6 +253,7 @@ class TradingStatePublisher:
             "strategy": getattr(pos, "strategy", ""),
             "entry_time": pos.entry_time.isoformat() if isinstance(pos.entry_time, datetime) else str(pos.entry_time),
             "exit_time": datetime.now().isoformat(),
+            "exit_reason": getattr(pos, "exit_reason", None) or "",
         }
 
 
