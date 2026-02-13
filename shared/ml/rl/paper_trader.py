@@ -41,6 +41,7 @@ from shared.kis.auth import KISAuthConfig
 from shared.kis.websocket import KISWebSocketAdapter
 from shared.ml.rl.env import Action, PositionSide, RLEnvConfig
 from shared.ml.rl.features import RLFeatureCalculator, RL_FEATURE_COLUMNS
+from shared.ml.rl.position_sizing import KellyPositionSizer
 
 logger = logging.getLogger(__name__)
 
@@ -132,6 +133,15 @@ class RLPaperTrader:
         # WebSocket
         self._ws_adapter: KISWebSocketAdapter | None = None
         self._stop_event = threading.Event()
+
+        # Kelly position sizing
+        self._kelly_sizer = KellyPositionSizer.from_yaml(config_path)
+        if self._kelly_sizer.config.enabled:
+            logger.info(
+                f"Kelly position sizing enabled: "
+                f"fraction={self._kelly_sizer.config.fraction}, "
+                f"min_scale={self._kelly_sizer.config.min_scale}"
+            )
 
         # Notifier (lazy init)
         self._notifier = None
@@ -322,13 +332,15 @@ class RLPaperTrader:
     def _load_warmup_bars(self) -> int:
         """ClickHouse에서 과거 분봉 로드 (당일 데이터 우선, 부족하면 전일 포함)"""
         try:
+            import os
+
             from clickhouse_driver import Client
 
             client = Client(
-                host="localhost",
-                port=9000,
-                user="default",
-                password="@1tidh6ls6ls",
+                host=os.getenv("CLICKHOUSE_HOST", "localhost"),
+                port=int(os.getenv("CLICKHOUSE_NATIVE_PORT", "9000")),
+                user=os.getenv("CLICKHOUSE_USER", "default"),
+                password=os.getenv("CLICKHOUSE_PASSWORD", ""),
             )
 
             rows = client.execute(
@@ -462,6 +474,15 @@ class RLPaperTrader:
         )
         action = Action(int(action_int))
 
+        # Kelly 포지션 사이징: 진입 행동일 때만 확인
+        if action in (Action.LONG_ENTRY, Action.SHORT_ENTRY):
+            action_probs = self._get_action_probs(obs, masks)
+            if not self._kelly_sizer.should_trade(action_probs):
+                logger.debug(
+                    f"Kelly filter: skipping {action.name} (low confidence)"
+                )
+                action = Action.HOLD
+
         # 거래 실행
         if action != Action.HOLD:
             await self._execute_action(action)
@@ -506,6 +527,24 @@ class RLPaperTrader:
         return np.concatenate(
             [market_features, position_features, time_features]
         ).astype(np.float32)
+
+    def _get_action_probs(
+        self, obs: np.ndarray, masks: np.ndarray
+    ) -> np.ndarray | None:
+        """모델의 행동 확률 분포 추출 (Kelly confidence 계산용)"""
+        try:
+            import torch
+
+            with torch.no_grad():
+                obs_tensor = torch.as_tensor(obs).unsqueeze(0).to(self.model.device)
+                dist = self.model.policy.get_distribution(obs_tensor)
+                probs = dist.distribution.probs.cpu().numpy()[0]
+            # 유효 행동만 추출
+            valid_probs = probs[masks]
+            return valid_probs if len(valid_probs) > 0 else None
+        except (AttributeError, RuntimeError) as e:
+            logger.debug(f"Could not extract action probs for Kelly sizing: {e}")
+            return None
 
     def _get_action_masks(self) -> np.ndarray:
         """유효 행동 마스크 (env.py action_masks와 동일 로직)"""
@@ -605,6 +644,9 @@ class RLPaperTrader:
             self.state.wins += 1
         elif pnl < 0:
             self.state.losses += 1
+
+        # Kelly sizer 이력 갱신
+        self._kelly_sizer.record_trade(pnl)
 
         self.state.trade_history.append(
             PaperTradeRecord(

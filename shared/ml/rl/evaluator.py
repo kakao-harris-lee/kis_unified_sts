@@ -46,6 +46,7 @@ class RLEvaluator:
         test_prices: list[np.ndarray],
         slippage: float = 0.0,
         deterministic: bool = True,
+        continuous: bool = False,
     ) -> dict[str, float]:
         """단일 모델 평가
 
@@ -57,6 +58,7 @@ class RLEvaluator:
             test_prices: 테스트 일별 OHLC 배열 리스트
             slippage: 슬리피지 값
             deterministic: 결정적 행동 사용 여부
+            continuous: True면 SAC 등 연속 행동 모델 (ContinuousActionWrapper 사용)
 
         Returns:
             평가 지표 딕셔너리
@@ -72,27 +74,47 @@ class RLEvaluator:
         gross_loss = 0.0
         all_trade_pnls: list[float] = []
 
+        # SAC 연속 행동 공간 설정
+        cont_cfg = self.config.get("continuous_action", {})
+        entry_thresh = cont_cfg.get("entry_threshold", 0.3)
+        exit_thresh = cont_cfg.get("exit_threshold", 0.1)
+
         for day_data, day_prices in zip(test_days, test_prices):
-            env = FuturesTradingEnv(
+            base_env = FuturesTradingEnv(
                 day_data=day_data, config=config, prices=day_prices
             )
+
+            if continuous:
+                from shared.ml.rl.wrappers import ContinuousActionWrapper
+
+                env = ContinuousActionWrapper(
+                    base_env,
+                    entry_threshold=entry_thresh,
+                    exit_threshold=exit_thresh,
+                )
+            else:
+                env = base_env
+
             obs, info = env.reset()
 
             terminated = False
             while not terminated:
-                # action masking 처리
-                masks = env.action_masks()
-                try:
-                    action, _ = model.predict(
-                        obs,
-                        deterministic=deterministic,
-                        action_masks=masks,
-                    )
-                except TypeError:
-                    # DQN/A2C/PPO는 action_masks 미지원
+                if continuous:
                     action, _ = model.predict(obs, deterministic=deterministic)
-
-                obs, reward, terminated, truncated, info = env.step(int(action))
+                    obs, reward, terminated, truncated, info = env.step(action)
+                else:
+                    # action masking 처리
+                    masks = base_env.action_masks()
+                    try:
+                        action, _ = model.predict(
+                            obs,
+                            deterministic=deterministic,
+                            action_masks=masks,
+                        )
+                    except TypeError:
+                        # DQN/A2C/PPO는 action_masks 미지원
+                        action, _ = model.predict(obs, deterministic=deterministic)
+                    obs, reward, terminated, truncated, info = env.step(int(action))
 
             # 일일 수익률
             daily_return = (
@@ -155,11 +177,15 @@ class RLEvaluator:
         Returns:
             모델별 평가 지표 DataFrame
         """
+        from shared.ml.rl.trainer import CONTINUOUS_ACTION_ALGOS
+
         results = []
         for name, model in models.items():
             logger.info(f"Evaluating {name}...")
+            is_continuous = name in CONTINUOUS_ACTION_ALGOS
             metrics = self.evaluate_model(
-                model, test_days, test_prices, slippage=0.0
+                model, test_days, test_prices, slippage=0.0,
+                continuous=is_continuous,
             )
             results.append(
                 {

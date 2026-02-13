@@ -62,11 +62,15 @@ def load_data_from_clickhouse(
     )
 
     try:
+        import os
+
         from clickhouse_driver import Client as CHSyncClient
 
         client = CHSyncClient(
-            host="localhost", port=9000,
-            user="default", password="@1tidh6ls6ls",
+            host=os.getenv("CLICKHOUSE_HOST", "localhost"),
+            port=int(os.getenv("CLICKHOUSE_NATIVE_PORT", "9000")),
+            user=os.getenv("CLICKHOUSE_USER", "default"),
+            password=os.getenv("CLICKHOUSE_PASSWORD", ""),
         )
 
         query = f"""

@@ -1,11 +1,12 @@
 """RL 모델 학습 파이프라인
 
-MLflow로 학습 과정 추적. 모든 하이퍼파라미터는 config/ml/rl_mppo.yaml에서 로드.
-지원 알고리즘: MaskablePPO (메인), DQN, A2C, PPO (비교군)
+MLflow로 학습 과정 추적. 모든 하이퍼파라미터는 config에서 로드.
+지원 알고리즘: MaskablePPO (메인), SAC (off-policy), DQN, A2C, PPO (비교군)
 
 Usage:
     trainer = RLTrainer()
     model = trainer.train("mppo")
+    trainer.train("sac")     # SAC (연속 행동 공간)
     trainer.train_all()       # 전체 비교 학습
 """
 
@@ -26,10 +27,14 @@ logger = logging.getLogger(__name__)
 # 알고리즘별 라이브러리 lazy import용
 ALGO_REGISTRY: dict[str, str] = {
     "mppo": "sb3_contrib.MaskablePPO",
+    "sac": "stable_baselines3.SAC",
     "dqn": "stable_baselines3.DQN",
     "a2c": "stable_baselines3.A2C",
     "ppo": "stable_baselines3.PPO",
 }
+
+# 연속 행동 공간 알고리즘 (ActionMasker 대신 ContinuousActionWrapper 사용)
+CONTINUOUS_ACTION_ALGOS = {"sac"}
 
 
 class RLTrainer:
@@ -63,7 +68,7 @@ class RLTrainer:
         """단일 알고리즘 학습
 
         Args:
-            algo: 알고리즘 이름 (mppo, dqn, a2c, ppo)
+            algo: 알고리즘 이름 (mppo, sac, dqn, a2c, ppo)
             train_days: 학습 데이터 (일별 피처 배열 리스트)
             train_prices: 학습 가격 데이터 (일별 OHLC 배열 리스트)
             eval_days: 평가 데이터
@@ -86,14 +91,17 @@ class RLTrainer:
         if slippage is not None:
             env_config.slippage = slippage
 
-        # 학습 환경 생성
-        env = self._make_env(train_days, train_prices, env_config)
+        # 학습 환경 생성 (SAC는 연속 행동 공간)
+        is_continuous = algo in CONTINUOUS_ACTION_ALGOS
+        env = self._make_env(train_days, train_prices, env_config, continuous=is_continuous)
 
         # 모델 생성
         model = self._create_model(algo, env, algo_config)
 
         # 콜백 설정
-        callbacks = self._build_callbacks(algo, eval_days, eval_prices, env_config)
+        callbacks = self._build_callbacks(
+            algo, eval_days, eval_prices, env_config, continuous=is_continuous
+        )
 
         # MLflow 추적
         mlflow_params = {
@@ -152,12 +160,18 @@ class RLTrainer:
         days: list[np.ndarray] | None,
         prices: list[np.ndarray] | None,
         config: RLEnvConfig,
+        continuous: bool = False,
     ) -> Any:
         """학습용 환경 생성
 
         DummyVecEnv로 래핑. 에피소드마다 다른 일자 데이터 사용.
+
+        Args:
+            days: 일별 피처 배열 리스트
+            prices: 일별 OHLC 배열 리스트
+            config: 환경 설정
+            continuous: True면 연속 행동 공간 (SAC용)
         """
-        from sb3_contrib.common.wrappers import ActionMasker
         from stable_baselines3.common.vec_env import DummyVecEnv
 
         if days is None or len(days) == 0:
@@ -185,9 +199,26 @@ class RLTrainer:
                     self.prices = self._all_prices[self._day_idx]
                 return super().reset(**kwargs)
 
-        def make_fn():
-            base_env = _DayRotatingEnv(days, day_prices, config)
-            return ActionMasker(base_env, mask_fn)
+        if continuous:
+            from shared.ml.rl.wrappers import ContinuousActionWrapper
+
+            cont_cfg = self.config.get("continuous_action", {})
+            entry_thresh = cont_cfg.get("entry_threshold", 0.3)
+            exit_thresh = cont_cfg.get("exit_threshold", 0.1)
+
+            def make_fn():
+                base_env = _DayRotatingEnv(days, day_prices, config)
+                return ContinuousActionWrapper(
+                    base_env,
+                    entry_threshold=entry_thresh,
+                    exit_threshold=exit_thresh,
+                )
+        else:
+            from sb3_contrib.common.wrappers import ActionMasker
+
+            def make_fn():
+                base_env = _DayRotatingEnv(days, day_prices, config)
+                return ActionMasker(base_env, mask_fn)
 
         return DummyVecEnv([make_fn])
 
@@ -210,6 +241,32 @@ class RLTrainer:
                 n_steps=algo_config.get("n_steps", 2048),
                 batch_size=algo_config.get("batch_size", 64),
                 n_epochs=algo_config.get("n_epochs", 10),
+                policy_kwargs=policy_kwargs if policy_kwargs else None,
+                tensorboard_log=self.tb_log,
+                device=self.device,
+                verbose=1,
+            )
+
+        elif algo == "sac":
+            from stable_baselines3 import SAC
+
+            policy_kwargs = algo_config.get("policy_kwargs", {})
+            # SAC의 ent_coef는 문자열 "auto" 가능
+            ent_coef = algo_config.get("ent_coef", "auto")
+
+            return SAC(
+                "MlpPolicy",
+                env,
+                learning_rate=algo_config.get("learning_rate", 0.0003),
+                gamma=algo_config.get("gamma", 0.99),
+                buffer_size=algo_config.get("buffer_size", 100_000),
+                learning_starts=algo_config.get("learning_starts", 5_000),
+                batch_size=algo_config.get("batch_size", 256),
+                tau=algo_config.get("tau", 0.005),
+                ent_coef=ent_coef,
+                target_entropy=algo_config.get("target_entropy", "auto"),
+                train_freq=algo_config.get("train_freq", 1),
+                gradient_steps=algo_config.get("gradient_steps", 1),
                 policy_kwargs=policy_kwargs if policy_kwargs else None,
                 tensorboard_log=self.tb_log,
                 device=self.device,
@@ -280,6 +337,7 @@ class RLTrainer:
         eval_days: list[np.ndarray] | None,
         eval_prices: list[np.ndarray] | None,
         env_config: RLEnvConfig,
+        continuous: bool = False,
     ) -> list:
         """학습 콜백 구성"""
         from stable_baselines3.common.callbacks import (
@@ -302,7 +360,9 @@ class RLTrainer:
 
         # 평가 콜백 (eval 데이터가 있는 경우)
         if eval_days is not None and len(eval_days) > 0:
-            eval_env = self._make_env(eval_days, eval_prices, env_config)
+            eval_env = self._make_env(
+                eval_days, eval_prices, env_config, continuous=continuous
+            )
             eval_freq = training_cfg.get("eval_freq", 10_000)
 
             if algo == "mppo":

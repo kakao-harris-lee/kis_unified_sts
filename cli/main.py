@@ -1555,7 +1555,7 @@ def rl():
 
 
 @rl.command("train")
-@click.option("--algo", "-a", default="mppo", type=click.Choice(["mppo", "dqn", "a2c", "ppo", "all"]), help="Algorithm to train (default: mppo)")
+@click.option("--algo", "-a", default="mppo", type=click.Choice(["mppo", "sac", "dqn", "a2c", "ppo", "all"]), help="Algorithm to train (default: mppo)")
 @click.option("--config", "-c", default="ml/rl_mppo.yaml", help="Config file path")
 def rl_train(algo: str, config: str):
     """RL 모델 학습
