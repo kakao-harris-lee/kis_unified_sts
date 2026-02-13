@@ -31,10 +31,14 @@ ALGO_REGISTRY: dict[str, str] = {
     "dqn": "stable_baselines3.DQN",
     "a2c": "stable_baselines3.A2C",
     "ppo": "stable_baselines3.PPO",
+    "dt": "shared.ml.rl.decision_transformer.DTTrainer",
 }
 
 # 연속 행동 공간 알고리즘 (ActionMasker 대신 ContinuousActionWrapper 사용)
 CONTINUOUS_ACTION_ALGOS = {"sac"}
+
+# SB3 외 자체 학습 루프 알고리즘
+NON_SB3_ALGOS = {"dt"}
 
 
 class RLTrainer:
@@ -80,6 +84,15 @@ class RLTrainer:
         """
         if algo not in ALGO_REGISTRY:
             raise ValueError(f"Unknown algo: {algo}. Supported: {list(ALGO_REGISTRY.keys())}")
+
+        # DT uses its own training pipeline
+        if algo in NON_SB3_ALGOS:
+            return self._train_dt(
+                train_days=train_days,
+                train_prices=train_prices,
+                eval_days=eval_days,
+                eval_prices=eval_prices,
+            )
 
         algo_config = self.config.get(algo, {})
         total_timesteps = algo_config.get("total_timesteps", 5_000_000)
@@ -416,6 +429,55 @@ class RLTrainer:
             logger.debug("MLflow not available, skipping tracking")
         except Exception as e:
             logger.warning(f"MLflow logging failed: {e}")
+
+    def _train_dt(
+        self,
+        train_days: list[np.ndarray] | None = None,
+        train_prices: list[np.ndarray] | None = None,
+        eval_days: list[np.ndarray] | None = None,
+        eval_prices: list[np.ndarray] | None = None,
+    ) -> Any:
+        """Decision Transformer 학습 (자체 PyTorch 루프)
+
+        궤적 캐시가 있으면 로드, 없으면 MPPO expert rollout으로 생성.
+        """
+        from shared.ml.rl.decision_transformer.dataset import TrajectoryCollector
+        from shared.ml.rl.decision_transformer.trainer import DTTrainer
+
+        config = ConfigLoader.load("ml/rl_dt.yaml")
+        traj_cfg = config.get("trajectory", {})
+        traj_path = Path(traj_cfg.get("save_path", "models/futures/rl/dt_trajectories.pt"))
+
+        # 궤적 로드 또는 생성
+        if traj_path.exists():
+            logger.info(f"Loading cached trajectories: {traj_path}")
+            all_trajs = TrajectoryCollector.load(traj_path)
+        else:
+            if train_days is None or train_prices is None:
+                raise ValueError("train_days/train_prices required for trajectory collection")
+
+            logger.info("Collecting expert trajectories...")
+            collector = TrajectoryCollector(config_path="ml/rl_dt.yaml")
+            all_trajs = collector.collect(train_days, train_prices)
+            collector.save(all_trajs, traj_path)
+
+        # Train/eval 분할 (궤적 레벨)
+        data_cfg = config.get("data", {})
+        train_ratio = float(data_cfg.get("train_ratio", 0.8))
+        split_idx = int(len(all_trajs) * train_ratio)
+        train_trajs = all_trajs[:split_idx]
+        eval_trajs = all_trajs[split_idx:] if split_idx < len(all_trajs) else None
+
+        # DTTrainer로 학습
+        dt_trainer = DTTrainer(config_path="ml/rl_dt.yaml")
+        agent = dt_trainer.train(
+            train_trajs=train_trajs,
+            eval_trajs=eval_trajs,
+            eval_days=eval_days,
+            eval_prices=eval_prices,
+        )
+
+        return agent
 
     def _log_mlflow_end(self, _algo: str) -> None:
         """MLflow 실험 종료 로깅"""

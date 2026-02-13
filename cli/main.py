@@ -1555,16 +1555,21 @@ def rl():
 
 
 @rl.command("train")
-@click.option("--algo", "-a", default="mppo", type=click.Choice(["mppo", "sac", "dqn", "a2c", "ppo", "all"]), help="Algorithm to train (default: mppo)")
-@click.option("--config", "-c", default="ml/rl_mppo.yaml", help="Config file path")
-def rl_train(algo: str, config: str):
+@click.option("--algo", "-a", default="mppo", type=click.Choice(["mppo", "sac", "dqn", "a2c", "ppo", "dt", "all"]), help="Algorithm to train (default: mppo)")
+@click.option("--config", "-c", default=None, help="Config file path (auto-detected for dt)")
+def rl_train(algo: str, config: str | None):
     """RL 모델 학습
 
     \b
     Example:
         sts rl train --algo mppo
+        sts rl train --algo dt
         sts rl train --algo all
     """
+    # DT일 때 자동으로 rl_dt.yaml 선택
+    if config is None:
+        config = "ml/rl_dt.yaml" if algo == "dt" else "ml/rl_mppo.yaml"
+
     click.echo("Starting RL Training")
     click.echo(f"  Algorithm: {algo}")
     click.echo(f"  Config: {config}")
@@ -1606,28 +1611,50 @@ def rl_train(algo: str, config: str):
 
 @rl.command("evaluate")
 @click.option("--model", "-m", default="mppo_best", help="Model name to evaluate")
-@click.option("--config", "-c", default="ml/rl_mppo.yaml", help="Config file path")
-def rl_evaluate(model: str, config: str):
+@click.option("--config", "-c", default=None, help="Config file path (auto-detected for dt)")
+def rl_evaluate(model: str, config: str | None):
     """RL 모델 평가 (표1 재현)
 
     \b
     Example:
         sts rl evaluate --model mppo_best
+        sts rl evaluate --model dt_final
     """
-    click.echo(f"Evaluating RL Model: {model}")
+    from pathlib import Path
+
+    model_dir = Path(f"models/futures/rl/{model}")
+    is_dt = (model_dir / "model.pt").exists()
+
+    if config is None:
+        config = "ml/rl_dt.yaml" if is_dt else "ml/rl_mppo.yaml"
+
+    click.echo(f"Evaluating RL Model: {model} ({'DT' if is_dt else 'SB3'})")
 
     try:
         from scripts.training.train_rl import load_data_from_clickhouse
         from shared.ml.rl.evaluator import RLEvaluator
-        from sb3_contrib import MaskablePPO
 
         _, _, test_days, test_prices = load_data_from_clickhouse(config)
 
-        model_path = f"models/futures/rl/{model}/best_model.zip"
-        loaded_model = MaskablePPO.load(model_path)
+        if is_dt:
+            from shared.config.loader import ConfigLoader
+            from shared.ml.rl.decision_transformer.model import DTAgent
 
-        evaluator = RLEvaluator(config_path=config)
-        results = evaluator.evaluate_model(loaded_model, test_days, test_prices)
+            loaded_model = DTAgent.load(model_dir)
+            evaluator = RLEvaluator(config_path=config)
+            dt_cfg = ConfigLoader.load(config)
+            target_return = float(dt_cfg.get("paper", {}).get("target_return", 5_000_000))
+            results = evaluator.evaluate_model(
+                loaded_model, test_days, test_prices, is_dt=True,
+                target_return=target_return,
+            )
+        else:
+            from sb3_contrib import MaskablePPO
+
+            model_path = f"models/futures/rl/{model}/best_model.zip"
+            loaded_model = MaskablePPO.load(model_path)
+            evaluator = RLEvaluator(config_path=config)
+            results = evaluator.evaluate_model(loaded_model, test_days, test_prices)
 
         click.echo("\nEvaluation Results:")
         click.echo("-" * 40)
@@ -1782,6 +1809,48 @@ def rl_paper(model: str, config: str, symbol: str, engine: str, no_daemon: bool)
         click.echo(f"Error: {e}", err=True)
         import traceback
         traceback.print_exc()
+        sys.exit(1)
+
+
+@rl.command("generate-trajectories")
+@click.option("--config", "-c", default="ml/rl_dt.yaml", help="Config file path")
+@click.option("--output", "-o", default=None, help="Output path (default: from config)")
+def rl_generate_trajectories(config: str, output: str | None):
+    """MPPO expert rollout으로 DT 학습용 궤적 생성
+
+    \b
+    Example:
+        sts rl generate-trajectories
+        sts rl generate-trajectories --output models/futures/rl/dt_trajs.pt
+    """
+    click.echo("Generating expert trajectories for Decision Transformer")
+    click.echo(f"  Config: {config}")
+
+    try:
+        from scripts.training.train_rl import load_data_from_clickhouse
+        from shared.config.loader import ConfigLoader
+        from shared.ml.rl.decision_transformer.dataset import TrajectoryCollector
+
+        train_days, train_prices, _, _ = load_data_from_clickhouse(config)
+
+        collector = TrajectoryCollector(config_path=config)
+        trajs = collector.collect(train_days, train_prices)
+
+        if output is None:
+            cfg = ConfigLoader.load(config)
+            output = cfg.get("trajectory", {}).get(
+                "save_path", "models/futures/rl/dt_trajectories.pt"
+            )
+
+        collector.save(trajs, output)
+        click.echo(f"Saved {len(trajs)} trajectories to {output}")
+
+    except ImportError as e:
+        click.echo(f"Error: Required package not installed: {e}", err=True)
+        click.echo("Install with: pip install -e .[ml]", err=True)
+        sys.exit(1)
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
         sys.exit(1)
 
 
