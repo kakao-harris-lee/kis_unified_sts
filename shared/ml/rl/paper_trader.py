@@ -322,13 +322,15 @@ class RLPaperTrader:
     def _load_warmup_bars(self) -> int:
         """ClickHouse에서 과거 분봉 로드 (당일 데이터 우선, 부족하면 전일 포함)"""
         try:
+            import os
+
             from clickhouse_driver import Client
 
             client = Client(
-                host="localhost",
-                port=9000,
-                user="default",
-                password="@1tidh6ls6ls",
+                host=os.getenv("CLICKHOUSE_HOST", "localhost"),
+                port=int(os.getenv("CLICKHOUSE_NATIVE_PORT", "9000")),
+                user=os.getenv("CLICKHOUSE_USER", "default"),
+                password=os.getenv("CLICKHOUSE_PASSWORD", ""),
             )
 
             rows = client.execute(

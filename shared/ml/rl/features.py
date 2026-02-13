@@ -311,11 +311,15 @@ def load_daily_regime_features() -> pd.DataFrame:
     Returns:
         DataFrame[date, regime_trend, regime_momentum, regime_volatility]
     """
+    import os
+
     from clickhouse_driver import Client
 
     client = Client(
-        host="localhost", port=9000,
-        user="default", password="@1tidh6ls6ls",
+        host=os.getenv("CLICKHOUSE_HOST", "localhost"),
+        port=int(os.getenv("CLICKHOUSE_NATIVE_PORT", "9000")),
+        user=os.getenv("CLICKHOUSE_USER", "default"),
+        password=os.getenv("CLICKHOUSE_PASSWORD", ""),
     )
     rows = client.execute(
         "SELECT date, close FROM kospi.kospi200_index_daily ORDER BY date"

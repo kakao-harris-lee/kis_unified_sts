@@ -38,11 +38,15 @@ TIMESTEPS_PER_FOLD = 2_000_000
 
 def load_all_data() -> pd.DataFrame:
     """ClickHouse에서 전체 데이터 로드 + 피처 계산"""
+    import os
+
     from clickhouse_driver import Client as CHSyncClient
 
     client = CHSyncClient(
-        host="localhost", port=9000,
-        user="default", password="@1tidh6ls6ls",
+        host=os.getenv("CLICKHOUSE_HOST", "localhost"),
+        port=int(os.getenv("CLICKHOUSE_NATIVE_PORT", "9000")),
+        user=os.getenv("CLICKHOUSE_USER", "default"),
+        password=os.getenv("CLICKHOUSE_PASSWORD", ""),
     )
     rows = client.execute("""
         SELECT datetime, open, high, low, close, volume
