@@ -2,7 +2,7 @@
 import pytest
 
 from shared.paper.broker import VirtualBroker
-from shared.paper.models import OrderSide, InsufficientBalanceError
+from shared.paper.models import OrderSide, PositionSide, InsufficientBalanceError
 
 
 @pytest.mark.asyncio
@@ -59,10 +59,10 @@ async def test_broker_sell_without_position():
         price=58000,
     )
 
-    # Should execute (could be opening a short position)
+    # Should execute and open short position
     assert order.filled is True
-    # No position should exist for this symbol
-    assert "005930" not in broker.positions
+    assert "005930" in broker.positions
+    assert broker.positions["005930"].side == PositionSide.SHORT
 
 
 @pytest.mark.asyncio

@@ -146,17 +146,39 @@ class VirtualBroker:
                     ) / total_qty
                     position.quantity = total_qty
                 else:
-                    # Close short
-                    await self._close_position(symbol, fill_price, commission)
+                    # Cover short (partial or full)
+                    if order.quantity >= position.quantity:
+                        await self._close_position(symbol, fill_price, commission)
+                    else:
+                        position.quantity -= order.quantity
 
         else:  # SELL
-            if position and position.side == PositionSide.LONG:
+            if position is None:
+                # New short position
+                self.positions[symbol] = VirtualPosition(
+                    symbol=symbol,
+                    side=PositionSide.SHORT,
+                    quantity=order.quantity,
+                    entry_price=fill_price,
+                    entry_time=datetime.now(),
+                    current_price=fill_price,
+                    highest_price=fill_price,
+                )
+            elif position.side == PositionSide.LONG:
                 if order.quantity >= position.quantity:
                     # Full close
                     await self._close_position(symbol, fill_price, commission)
                 else:
                     # Partial close
                     position.quantity -= order.quantity
+            else:
+                # Add to existing short
+                total_qty = position.quantity + order.quantity
+                position.entry_price = (
+                    position.entry_price * position.quantity +
+                    fill_price * order.quantity
+                ) / total_qty
+                position.quantity = total_qty
 
     async def _close_position(
         self,

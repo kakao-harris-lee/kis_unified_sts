@@ -225,6 +225,28 @@ class StreamingIndicatorEngine:
 
         return result
 
+    def get_recent_candles(self, symbol: str, limit: int = 240) -> list[dict[str, float]]:
+        """Return recent completed candles for a symbol.
+
+        Used by feature-heavy strategies (e.g., RL) that need OHLCV history.
+        """
+        acc = self._accumulators.get(symbol)
+        if acc is None:
+            return []
+        candles = list(acc.candles)
+        if limit > 0:
+            candles = candles[-limit:]
+        return [
+            {
+                "open": c.open,
+                "high": c.high,
+                "low": c.low,
+                "close": c.close,
+                "volume": c.volume,
+            }
+            for c in candles
+        ]
+
     def get_market_mfi(self) -> float | None:
         """Compute aggregate MFI across all warm symbols.
 

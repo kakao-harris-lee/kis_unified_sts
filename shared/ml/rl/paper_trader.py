@@ -104,7 +104,7 @@ class RLPaperTrader:
 
         # 모델 + scaler 로드
         save_dir = Path(training_config.get("save_dir", "./models/futures/rl/"))
-        model_path = save_dir / f"{model_name}.zip"
+        model_path = save_dir / model_name / "best_model.zip"
         scaler_path = save_dir / "scaler.joblib"
 
         if not model_path.exists():
