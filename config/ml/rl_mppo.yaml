@@ -106,6 +106,28 @@ training:
   tensorboard_log: "./results/rl/tensorboard/"
   save_dir: "./models/futures/rl/"
 
+# === Hierarchical RL ===
+hierarchical:
+  bars_per_step: 15                # 15분봉 = 15개 1분봉
+  high_level_timesteps: 500_000    # High-level 학습 타임스텝
+  high_level:
+    learning_rate: 0.0003
+    gamma: 0.99
+    n_steps: 128
+    batch_size: 32
+    n_epochs: 10
+    ent_coef: 0.05
+
+# === Kelly Position Sizing ===
+position_sizing:
+  enabled: true
+  fraction: 0.5                    # Half-Kelly (full Kelly는 과도하게 공격적)
+  min_trades: 10                   # 최소 거래 수 (이전까지 default 승률/손익비 사용)
+  min_scale: 0.2                   # 최소 스케일 (이하면 거래 스킵)
+  max_scale: 1.0                   # 최대 스케일
+  default_win_rate: 0.45           # 초기 추정 승률 (MPPO Phase 4: 45.1%)
+  default_wl_ratio: 1.83           # 초기 추정 손익비 (MPPO Phase 4: 1.83)
+
 # === Paper Trading ===
 paper:
   symbol: "A01603"                # KOSPI200 선물 3월물 (101S6000 만료)

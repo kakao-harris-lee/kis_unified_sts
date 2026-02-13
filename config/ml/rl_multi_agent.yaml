@@ -1,0 +1,95 @@
+# RL Multi-Agent with HMM Regime Detection
+# HMM 3상태 감지 → 레짐별 특화 에이전트 라우팅
+
+# === Gymnasium 환경 (rl_mppo.yaml과 동일) ===
+env:
+  initial_balance: 100_000_000
+  commission_rate: 0.00003
+  tick_size: 0.05
+  tick_value: 250_000
+  contract_multiplier: 250_000
+  max_contracts: 1
+  slippage: 0.0
+  margin_rate: 0.15
+  n_market_features: 25
+  n_position_features: 6
+  market_open: "09:00"
+  market_close: "15:45"
+
+# === 보상함수 가중치 ===
+reward:
+  w_profit: 10.0
+  w_cost: 0.3
+  w_risk: 0.0
+  w_mtm: 0.0
+  inaction_penalty: 0.0
+  reward_scale: 100.0
+  max_loss: -5_000_000
+  loss_penalty_coeff: 2.0
+
+# === HMM 레짐 감지 ===
+hmm:
+  n_states: 3                      # BULL, BEAR, SIDEWAYS
+  covariance_type: "full"          # full/diag/tied/spherical
+  n_iter: 100                      # EM 반복 수
+  random_state: 42
+  feature_names:                   # HMM 입력 피처
+    - returns
+    - volatility
+    - volume_ratio
+
+# === 멀티 에이전트 설정 ===
+multi_agent:
+  algo: "mppo"                     # 레짐별 학습 알고리즘
+  confidence_threshold: 0.5        # HMM 확신도 < 이하면 fallback 모델 사용
+  min_days_per_regime: 5           # 최소 학습 일수 (미달 시 fallback)
+
+# === M-PPO 하이퍼파라미터 (레짐별 모델) ===
+mppo:
+  learning_rate: 0.0001
+  gamma: 0.999
+  gae_lambda: 0.95
+  clip_range: 0.2
+  ent_coef: 0.05
+  vf_coef: 0.5
+  max_grad_norm: 0.5
+  n_steps: 2048
+  batch_size: 64
+  n_epochs: 10
+  total_timesteps: 3_000_000       # 레짐별이므로 축소 (데이터량 감소 반영)
+  policy_kwargs:
+    net_arch:
+      pi: [256, 256]
+      vf: [256, 256]
+
+ma_cross:
+  short_window: 5
+  long_window: 20
+
+# === 슬리피지 실험 ===
+slippage_test_values: [0.00, 0.05, 0.10, 0.15, 0.20]
+
+# === 데이터 ===
+data:
+  source: clickhouse
+  database: kospi
+  table: kospi200f_1m
+  symbol: "101S6000"
+  train_ratio: 0.8
+  min_bars_per_day: 300
+  mirror_augmentation: true
+
+# === 학습 관리 ===
+training:
+  eval_freq: 10_000
+  checkpoint_freq: 50_000
+  tensorboard_log: "./results/rl/tensorboard/"
+  save_dir: "./models/futures/rl/"
+
+# === Paper Trading ===
+paper:
+  symbol: "A01603"
+  warmup_bars: 200
+  force_close_time: "15:35"
+  telegram_notify: true
+  log_dir: "./results/rl/paper/"
