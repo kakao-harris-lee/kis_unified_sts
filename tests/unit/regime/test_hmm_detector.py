@@ -32,31 +32,35 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.fixture
 def simple_features():
-    """Generate simple 3-feature test data (returns, volatility, volume_ratio)."""
-    np.random.seed(42)
-    n = 200
+    """Generate simple 3-feature test data (returns, volatility, volume_ratio).
 
-    # Create 3 regimes manually
-    bull_period = 80  # High positive returns
-    bear_period = 60  # Negative returns
-    sideways_period = 60  # Low returns, high volatility
+    Uses well-separated regimes with sufficient variance to ensure
+    GaussianHMM produces positive-definite covariance matrices.
+    """
+    np.random.seed(42)
+    n = 300
+
+    # Create 3 regimes with strong separation
+    bull_period = 100
+    bear_period = 100
+    sideways_period = 100
 
     features = np.zeros((n, 3))
 
-    # Bull regime: positive returns, low volatility
-    features[:bull_period, 0] = np.random.randn(bull_period) * 0.001 + 0.002  # returns
-    features[:bull_period, 1] = np.abs(np.random.randn(bull_period) * 0.005)  # volatility
-    features[:bull_period, 2] = 1.0 + np.random.randn(bull_period) * 0.1  # volume_ratio
+    # Bull regime: positive returns, low volatility, normal volume
+    features[:bull_period, 0] = np.random.randn(bull_period) * 0.01 + 0.02
+    features[:bull_period, 1] = np.abs(np.random.randn(bull_period) * 0.05) + 0.01
+    features[:bull_period, 2] = 1.0 + np.random.randn(bull_period) * 0.2
 
-    # Bear regime: negative returns
-    features[bull_period:bull_period+bear_period, 0] = np.random.randn(bear_period) * 0.001 - 0.002
-    features[bull_period:bull_period+bear_period, 1] = np.abs(np.random.randn(bear_period) * 0.005)
-    features[bull_period:bull_period+bear_period, 2] = 0.8 + np.random.randn(bear_period) * 0.1
+    # Bear regime: negative returns, high volatility, low volume
+    features[bull_period:bull_period+bear_period, 0] = np.random.randn(bear_period) * 0.01 - 0.02
+    features[bull_period:bull_period+bear_period, 1] = np.abs(np.random.randn(bear_period) * 0.05) + 0.03
+    features[bull_period:bull_period+bear_period, 2] = 0.7 + np.random.randn(bear_period) * 0.2
 
-    # Sideways: near-zero returns, high volatility
-    features[bull_period+bear_period:, 0] = np.random.randn(sideways_period) * 0.0005
-    features[bull_period+bear_period:, 1] = np.abs(np.random.randn(sideways_period) * 0.01)
-    features[bull_period+bear_period:, 2] = 1.2 + np.random.randn(sideways_period) * 0.15
+    # Sideways: near-zero returns, moderate volatility, high volume
+    features[bull_period+bear_period:, 0] = np.random.randn(sideways_period) * 0.005
+    features[bull_period+bear_period:, 1] = np.abs(np.random.randn(sideways_period) * 0.08) + 0.02
+    features[bull_period+bear_period:, 2] = 1.3 + np.random.randn(sideways_period) * 0.25
 
     return features
 
@@ -65,21 +69,23 @@ def simple_features():
 def simple_df():
     """Generate DataFrame with OHLCV data for testing."""
     np.random.seed(42)
-    n = 200
+    n = 300
     base = 350.0
 
-    close = base + np.cumsum(np.random.randn(n) * 0.5)
-    high = close + np.abs(np.random.randn(n) * 0.3)
-    low = close - np.abs(np.random.randn(n) * 0.3)
-    open_ = close + np.random.randn(n) * 0.1
-    volume = np.random.randint(100, 1000, n).astype(float)
+    close = base + np.cumsum(np.random.randn(n) * 2.0)
+    high = close + np.abs(np.random.randn(n) * 1.5)
+    low = close - np.abs(np.random.randn(n) * 1.5)
+    open_ = close + np.random.randn(n) * 0.5
+    volume = np.random.randint(500, 5000, n).astype(float)
 
     # Calculate features
     returns = np.diff(close) / close[:-1]
     returns = np.concatenate([[0], returns])
 
     volatility = pd.Series(returns).rolling(20).std().fillna(0).values
-    volume_ratio = volume / pd.Series(volume).rolling(20).mean().fillna(volume).values
+    vol_mean = pd.Series(volume).rolling(20).mean()
+    vol_mean = vol_mean.fillna(pd.Series(volume))
+    volume_ratio = volume / vol_mean.values
 
     return pd.DataFrame({
         'datetime': pd.date_range('2026-01-01', periods=n, freq='min'),
