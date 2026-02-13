@@ -109,19 +109,18 @@ kis-unified-trading/
 │   ├── monitoring.yaml, market_schedule.yaml
 │   ├── strategies/                  # 전략별 설정
 │   │   ├── stock/                   # bb_reversion, opening_volume_surge, volume_accumulation
-│   │   └── futures/                 # bb_reversion, bb_reversion_15m, dl_trend,
-│   │                                #   ma_crossover, microstructure, ofi_momentum, rl_mppo
-│   ├── exit/                        # 청산: three_stage, market_regime, time_decay (momentum_decay는 전략 내 params 사용)
+│   │   └── futures/                 # bb_reversion_15m (WF backup), rl_mppo
+│   ├── exit/                        # 청산: three_stage (momentum_decay는 전략 내 params 사용)
 │   ├── kis/                         # KIS API 인증
-│   └── ml/                          # ML 모델: cnn_lstm, rl_mppo
+│   └── ml/                          # ML 모델: rl_mppo
 │
 ├── shared/                          # 📁 공유 모듈 (핵심)
 │   ├── config/                      # ConfigLoader + Pydantic 스키마
 │   ├── strategy/                    # 전략 프레임워크
 │   │   ├── base.py                  # ABC 정의
 │   │   ├── registry.py              # 레지스트리 + StrategyFactory
-│   │   ├── entry/                   # 진입 전략 9개
-│   │   ├── exit/                    # 청산 전략 5개
+│   │   ├── entry/                   # 진입 전략 7개
+│   │   ├── exit/                    # 청산 전략 2개
 │   │   └── position/sizers.py       # 포지션 사이저
 │   ├── backtest/                    # 백테스트 엔진 + MLflow + Optuna
 │   ├── models/                      # Signal, Position, ExitReason 등
@@ -138,8 +137,7 @@ kis-unified-trading/
 ├── domains/                         # 📁 도메인별 구현 (대부분 shared/로 수렴)
 │   ├── stock/                       # strategies/ 비어있음 → shared/ 사용
 │   └── futures/
-│       ├── strategies/              # DLTrendEntry, HybridTrendEntry
-│       └── prediction/             # CNN-LSTM 예측 인프라
+│       └── strategies/              # (레거시 코드 삭제됨, RL은 shared/ml/rl/)
 │
 ├── services/                        # 📁 애플리케이션 서비스
 │   ├── trading/                     # 런타임 트레이딩 엔진 (7개 모듈)
@@ -168,24 +166,18 @@ kis-unified-trading/
 | 등록명 | 클래스 | 설명 |
 |--------|--------|------|
 | `mean_reversion` | `MeanReversionEntry` | BB + RSI + MACD 필터 |
-| `microstructure` | `MicrostructureEntry` | OFI 기반 마이크로스트럭처 |
-| `ofi_momentum` | `OFIMomentumEntry` | OFI 모멘텀 |
 | `breakout` | `BreakoutEntry` | 브레이크아웃 |
 | `opening_volume_surge` | `OpeningVolumeSurgeEntry` | 장 초반 거래량 폭증 |
 | `stochrsi_trend` | `StochRSITrendEntry` | StochRSI 추세 |
 | `v35_optimized` | `V35OptimizedEntry` | 최적화된 v35 전략 |
 | `volume_accumulation` | `VolumeAccumulationBreakoutEntry` | 거래량 축적 기반 돌파 |
 | `rl_mppo` | `RLMPPOEntry` | 강화학습 기반 |
-| `futures_dl_trend` | `DLTrendEntry` | CNN-LSTM 딥러닝 (`domains/futures/`) |
 
 ### 등록된 청산 전략
 
 | 등록명 | 클래스 | 설명 |
 |--------|--------|------|
 | `three_stage` | `ThreeStageExit` | SURVIVAL→BREAKEVEN→MAXIMIZE 상태 머신 |
-| `atr_trailing` | `ATRTrailingExit` | ATR 기반 트레일링 스탑 |
-| `market_regime` | `MarketRegimeExit` | 시장 국면별 청산 |
-| `time_decay` | `TimeDecayExit` | 시간 경과 기반 청산 |
 | `momentum_decay` | `MomentumDecayExit` | 모멘텀 소진 기반 스윙 청산 |
 
 ### 설정 파일 구조
@@ -221,7 +213,7 @@ strategy:
 ### MarketClassifier
 
 `shared/strategy/market_classifier.py` — MFI/ADX 기반 시장 상태 분류기.
-`MarketRegimeExit`에서 사용.
+`ThreeStageExit` 및 오케스트레이터에서 사용.
 
 ### 3-Stage Exit 상태 머신
 

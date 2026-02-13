@@ -335,20 +335,6 @@ def register_builtin_components() -> None:
     """
     # Entry 전략 등록
     try:
-        from shared.strategy.entry.microstructure import MicrostructureEntry
-
-        EntryRegistry.register_class("microstructure", MicrostructureEntry)
-    except ImportError:
-        logger.debug("MicrostructureEntry not available")
-
-    try:
-        from shared.strategy.entry.ofi_momentum import OFIMomentumEntry
-
-        EntryRegistry.register_class("ofi_momentum", OFIMomentumEntry)
-    except ImportError:
-        logger.debug("OFIMomentumEntry not available")
-
-    try:
         from shared.strategy.entry.v35_optimized import V35OptimizedEntry
 
         EntryRegistry.register_class("v35_optimized", V35OptimizedEntry)
@@ -400,13 +386,6 @@ def register_builtin_components() -> None:
         ExitRegistry.register_class("three_stage", ThreeStageExit)
     except ImportError:
         logger.debug("ThreeStageExit not available")
-
-    try:
-        from shared.strategy.exit.atr_trailing import ATRTrailingExit
-
-        ExitRegistry.register_class("atr_trailing", ATRTrailingExit)
-    except ImportError:
-        logger.debug("ATRTrailingExit not available")
 
     try:
         from shared.strategy.exit.momentum_decay import MomentumDecayExit
