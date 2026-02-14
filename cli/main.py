@@ -1625,10 +1625,17 @@ def rl_evaluate(model: str, config: str | None):
     model_dir = Path(f"models/futures/rl/{model}")
     is_dt = (model_dir / "model.pt").exists()
 
+    is_sac = "sac" in model.lower()
     if config is None:
-        config = "ml/rl_dt.yaml" if is_dt else "ml/rl_mppo.yaml"
+        if is_dt:
+            config = "ml/rl_dt.yaml"
+        elif is_sac:
+            config = "ml/rl_sac.yaml"
+        else:
+            config = "ml/rl_mppo.yaml"
 
-    click.echo(f"Evaluating RL Model: {model} ({'DT' if is_dt else 'SB3'})")
+    algo_label = "DT" if is_dt else ("SAC" if is_sac else "MPPO")
+    click.echo(f"Evaluating RL Model: {model} ({algo_label})")
 
     try:
         from scripts.training.train_rl import load_data_from_clickhouse
@@ -1649,12 +1656,26 @@ def rl_evaluate(model: str, config: str | None):
                 target_return=target_return,
             )
         else:
-            from sb3_contrib import MaskablePPO
+            is_sac = "sac" in model.lower()
+            if is_sac:
+                from stable_baselines3 import SAC
 
-            model_path = f"models/futures/rl/{model}/best_model.zip"
-            loaded_model = MaskablePPO.load(model_path)
-            evaluator = RLEvaluator(config_path=config)
-            results = evaluator.evaluate_model(loaded_model, test_days, test_prices)
+                model_path = f"models/futures/rl/{model}/best_model.zip"
+                if not Path(model_path).exists():
+                    # sac_final.zip 등 직접 파일인 경우
+                    model_path = f"models/futures/rl/{model}.zip"
+                loaded_model = SAC.load(model_path)
+                evaluator = RLEvaluator(config_path=config)
+                results = evaluator.evaluate_model(
+                    loaded_model, test_days, test_prices, continuous=True,
+                )
+            else:
+                from sb3_contrib import MaskablePPO
+
+                model_path = f"models/futures/rl/{model}/best_model.zip"
+                loaded_model = MaskablePPO.load(model_path)
+                evaluator = RLEvaluator(config_path=config)
+                results = evaluator.evaluate_model(loaded_model, test_days, test_prices)
 
         click.echo("\nEvaluation Results:")
         click.echo("-" * 40)

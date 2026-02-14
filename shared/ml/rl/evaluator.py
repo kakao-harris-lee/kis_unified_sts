@@ -141,12 +141,12 @@ class RLEvaluator:
             )
             daily_returns.append(daily_return)
 
-            # 거래 통계
+            # 거래 통계 (wrapper 사용 시 base_env에서 읽기)
             total_trades += info["n_trades"]
-            total_wins += env.wins
-            total_losses += env.losses
+            total_wins += base_env.wins
+            total_losses += base_env.losses
 
-            for trade in env.trade_history:
+            for trade in base_env.trade_history:
                 pnl = trade["pnl"]
                 all_trade_pnls.append(pnl)
                 if pnl > 0:
