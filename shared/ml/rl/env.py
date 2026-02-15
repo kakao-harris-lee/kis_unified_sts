@@ -69,6 +69,7 @@ class RLEnvConfig:
 
     # 상태 공간
     n_market_features: int = 25
+    n_aux_features: int = 0  # TFT 보조 피처 (0이면 비활성)
     n_position_features: int = 6  # position(3) + time(3)
 
     # 장 운영시간
@@ -123,20 +124,27 @@ class FuturesTradingEnv(gym.Env):
         day_data: np.ndarray,
         config: RLEnvConfig | None = None,
         prices: np.ndarray | None = None,
+        aux_data: np.ndarray | None = None,
     ):
         """
         Args:
             day_data: (n_steps, n_market_features) 정규화된 피처 배열
             config: 환경 설정. None이면 YAML에서 로드
             prices: (n_steps, 4) OHLC 원본 가격 (수익 계산용)
+            aux_data: (n_steps, n_aux_features) 보조 피처 (TFT probs 등)
         """
         super().__init__()
 
         self.config = config or RLEnvConfig.from_yaml()
         self.day_data = day_data
         self.prices = prices  # (n_steps, 4): open, high, low, close
+        self.aux_data = aux_data  # (n_steps, n_aux) or None
 
-        n_features = self.config.n_market_features + self.config.n_position_features
+        n_features = (
+            self.config.n_market_features
+            + self.config.n_aux_features
+            + self.config.n_position_features
+        )
 
         # 행동 공간: 5개 이산 행동
         self.action_space = spaces.Discrete(len(Action))
@@ -167,7 +175,7 @@ class FuturesTradingEnv(gym.Env):
         self,
         *,
         seed: int | None = None,
-        _options: dict[str, Any] | None = None,
+        options: dict[str, Any] | None = None,
     ) -> tuple[np.ndarray, dict[str, Any]]:
         """환경 초기화 (에피소드 시작)"""
         super().reset(seed=seed)
@@ -396,11 +404,17 @@ class FuturesTradingEnv(gym.Env):
         return reward
 
     def _get_observation(self) -> np.ndarray:
-        """현재 관측값 (시장 피처 + 포지션 피처 + 시간 피처)"""
+        """현재 관측값 (시장 피처 + [보조 피처] + 포지션 피처 + 시간 피처)"""
         step = min(self.current_step, len(self.day_data) - 1)
 
         # 시장 피처 (25개)
         market_features = self.day_data[step].copy()
+
+        # 보조 피처 (n_aux개, TFT probs 등)
+        if self.aux_data is not None and self.config.n_aux_features > 0:
+            aux_features = self.aux_data[step].astype(np.float32)
+        else:
+            aux_features = np.array([], dtype=np.float32)
 
         # 포지션 피처 (3개)
         position_features = np.array(
@@ -426,7 +440,7 @@ class FuturesTradingEnv(gym.Env):
         )
 
         obs = np.concatenate(
-            [market_features, position_features, time_features]
+            [market_features, aux_features, position_features, time_features]
         ).astype(np.float32)
         return obs
 

@@ -49,6 +49,7 @@ class RLEvaluator:
         continuous: bool = False,
         is_dt: bool = False,
         target_return: float = 5_000_000.0,
+        test_aux: list[np.ndarray] | None = None,
     ) -> dict[str, float]:
         """단일 모델 평가
 
@@ -63,6 +64,7 @@ class RLEvaluator:
             continuous: True면 SAC 등 연속 행동 모델 (ContinuousActionWrapper 사용)
             is_dt: True면 Decision Transformer 모델
             target_return: DT 추론 시 목표 returns-to-go
+            test_aux: 테스트 보조 피처 (TFT probs 등)
 
         Returns:
             평가 지표 딕셔너리
@@ -83,9 +85,11 @@ class RLEvaluator:
         entry_thresh = cont_cfg.get("entry_threshold", 0.3)
         exit_thresh = cont_cfg.get("exit_threshold", 0.1)
 
-        for day_data, day_prices in zip(test_days, test_prices):
+        day_aux_list = test_aux if test_aux is not None else [None] * len(test_days)
+        for day_data, day_prices, day_aux in zip(test_days, test_prices, day_aux_list):
             base_env = FuturesTradingEnv(
-                day_data=day_data, config=config, prices=day_prices
+                day_data=day_data, config=config, prices=day_prices,
+                aux_data=day_aux,
             )
 
             if continuous:

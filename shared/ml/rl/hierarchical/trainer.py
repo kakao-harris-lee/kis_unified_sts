@@ -157,7 +157,7 @@ class HierarchicalTrainer:
         all_segment_results: list[list[dict[str, float]]],
     ) -> Any:
         """Phase 2: High-level 모델 학습"""
-        from sb3_contrib import MaskablePPO
+        from stable_baselines3 import PPO
         from stable_baselines3.common.vec_env import DummyVecEnv
 
         hl_cfg = self.config.get("hierarchical", {})
@@ -209,7 +209,7 @@ class HierarchicalTrainer:
         hl_algo = hl_cfg.get("high_level", {})
         hl_timesteps = hl_cfg.get("high_level_timesteps", 500_000)
 
-        model = MaskablePPO(
+        model = PPO(
             "MlpPolicy",
             vec_env,
             learning_rate=hl_algo.get("learning_rate", 0.0003),

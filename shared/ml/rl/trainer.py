@@ -68,6 +68,8 @@ class RLTrainer:
         eval_days: list[np.ndarray] | None = None,
         eval_prices: list[np.ndarray] | None = None,
         slippage: float | None = None,
+        train_aux: list[np.ndarray] | None = None,
+        eval_aux: list[np.ndarray] | None = None,
     ) -> Any:
         """단일 알고리즘 학습
 
@@ -78,6 +80,8 @@ class RLTrainer:
             eval_days: 평가 데이터
             eval_prices: 평가 가격 데이터
             slippage: 슬리피지 오버라이드 (None이면 config 기본값)
+            train_aux: 학습 보조 피처 (TFT probs 등)
+            eval_aux: 평가 보조 피처
 
         Returns:
             학습된 모델
@@ -106,14 +110,18 @@ class RLTrainer:
 
         # 학습 환경 생성 (SAC는 연속 행동 공간)
         is_continuous = algo in CONTINUOUS_ACTION_ALGOS
-        env = self._make_env(train_days, train_prices, env_config, continuous=is_continuous)
+        env = self._make_env(
+            train_days, train_prices, env_config,
+            continuous=is_continuous, aux_days=train_aux,
+        )
 
         # 모델 생성
         model = self._create_model(algo, env, algo_config)
 
         # 콜백 설정
         callbacks = self._build_callbacks(
-            algo, eval_days, eval_prices, env_config, continuous=is_continuous
+            algo, eval_days, eval_prices, env_config,
+            continuous=is_continuous, eval_aux=eval_aux,
         )
 
         # MLflow 추적
@@ -174,6 +182,7 @@ class RLTrainer:
         prices: list[np.ndarray] | None,
         config: RLEnvConfig,
         continuous: bool = False,
+        aux_days: list[np.ndarray] | None = None,
     ) -> Any:
         """학습용 환경 생성
 
@@ -184,6 +193,7 @@ class RLTrainer:
             prices: 일별 OHLC 배열 리스트
             config: 환경 설정
             continuous: True면 연속 행동 공간 (SAC용)
+            aux_days: 일별 보조 피처 리스트 (TFT probs 등)
         """
         from stable_baselines3.common.vec_env import DummyVecEnv
 
@@ -191,18 +201,21 @@ class RLTrainer:
             raise ValueError("train_days must be provided with at least one day of data")
 
         day_prices = prices if prices is not None else [None] * len(days)
+        day_aux = aux_days if aux_days is not None else [None] * len(days)
 
         class _DayRotatingEnv(FuturesTradingEnv):
             """에피소드마다 다른 일자 데이터를 순회하는 래퍼"""
 
-            def __init__(self, all_days, all_prices, cfg):
+            def __init__(self, all_days, all_prices, all_aux, cfg):
                 self._all_days = all_days
                 self._all_prices = all_prices
+                self._all_aux = all_aux
                 self._day_idx = 0
                 super().__init__(
                     day_data=all_days[0],
                     config=cfg,
                     prices=all_prices[0] if all_prices[0] is not None else None,
+                    aux_data=all_aux[0] if all_aux[0] is not None else None,
                 )
 
             def reset(self, **kwargs):
@@ -210,6 +223,7 @@ class RLTrainer:
                 self.day_data = self._all_days[self._day_idx]
                 if self._all_prices[self._day_idx] is not None:
                     self.prices = self._all_prices[self._day_idx]
+                self.aux_data = self._all_aux[self._day_idx]
                 return super().reset(**kwargs)
 
         if continuous:
@@ -220,7 +234,7 @@ class RLTrainer:
             exit_thresh = cont_cfg.get("exit_threshold", 0.1)
 
             def make_fn():
-                base_env = _DayRotatingEnv(days, day_prices, config)
+                base_env = _DayRotatingEnv(days, day_prices, day_aux, config)
                 return ContinuousActionWrapper(
                     base_env,
                     entry_threshold=entry_thresh,
@@ -230,7 +244,7 @@ class RLTrainer:
             from sb3_contrib.common.wrappers import ActionMasker
 
             def make_fn():
-                base_env = _DayRotatingEnv(days, day_prices, config)
+                base_env = _DayRotatingEnv(days, day_prices, day_aux, config)
                 return ActionMasker(base_env, mask_fn)
 
         return DummyVecEnv([make_fn])
@@ -351,6 +365,7 @@ class RLTrainer:
         eval_prices: list[np.ndarray] | None,
         env_config: RLEnvConfig,
         continuous: bool = False,
+        eval_aux: list[np.ndarray] | None = None,
     ) -> list:
         """학습 콜백 구성"""
         from stable_baselines3.common.callbacks import (
@@ -374,7 +389,8 @@ class RLTrainer:
         # 평가 콜백 (eval 데이터가 있는 경우)
         if eval_days is not None and len(eval_days) > 0:
             eval_env = self._make_env(
-                eval_days, eval_prices, env_config, continuous=continuous
+                eval_days, eval_prices, env_config,
+                continuous=continuous, aux_days=eval_aux,
             )
             eval_freq = training_cfg.get("eval_freq", 10_000)
 

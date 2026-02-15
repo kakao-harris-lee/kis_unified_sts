@@ -197,6 +197,133 @@ def load_data_from_clickhouse(
     return train_days, train_prices, test_days, test_prices
 
 
+def precompute_tft_aux(
+    config_path: str = "ml/rl_mppo.yaml",
+) -> tuple[list[np.ndarray] | None, list[np.ndarray] | None]:
+    """TFT 방향 확률을 RL 학습 보조 피처로 사전 계산
+
+    ClickHouse에서 동일 데이터를 로드하고, TFT scaler + 모델로
+    각 일/스텝별 [p_up_1m, p_up_5m, p_up_15m] 확률을 계산한다.
+
+    Returns:
+        (train_aux, test_aux): 각각 일별 (n_bars, 3) 배열 리스트.
+        tft_aux.enabled가 False면 (None, None).
+    """
+    config = ConfigLoader.load(config_path)
+    tft_aux_cfg = config.get("tft_aux", {})
+
+    if not tft_aux_cfg.get("enabled", False):
+        return None, None
+
+    import torch
+    from shared.ml.tft.dataset import compute_time_features
+    from shared.ml.tft.model import TFTModel
+
+    model_path = tft_aux_cfg["model_path"]
+    lookback = tft_aux_cfg.get("lookback", 60)
+
+    # TFT 모델 로드
+    logger.info(f"Loading TFT model from {model_path}")
+    tft_model = TFTModel.load(model_path)
+    tft_model.eval()
+
+    # TFT scaler 로드 (RL scaler와 별개)
+    tft_scaler_path = Path(model_path).parent / "scaler.joblib"
+    tft_scaler = joblib.load(tft_scaler_path)
+    logger.info(f"TFT scaler loaded from {tft_scaler_path}")
+
+    # ClickHouse에서 동일 데이터 로드
+    data_cfg = config.get("data", {})
+    symbol = data_cfg.get("symbol", "101S6000")
+    database = data_cfg.get("database", "kospi")
+    table = data_cfg.get("table", "kospi200f_1m")
+    train_ratio = float(data_cfg.get("train_ratio", 0.8))
+    min_bars = data_cfg.get("min_bars_per_day", 300)
+    mirror_aug = data_cfg.get("mirror_augmentation", True)
+
+    import os
+    from clickhouse_driver import Client as CHSyncClient
+
+    client = CHSyncClient(
+        host=os.getenv("CLICKHOUSE_HOST", "localhost"),
+        port=int(os.getenv("CLICKHOUSE_NATIVE_PORT", "9000")),
+        user=os.getenv("CLICKHOUSE_USER", "default"),
+        password=os.getenv("CLICKHOUSE_PASSWORD", ""),
+    )
+
+    query = f"""
+        SELECT datetime, open, high, low, close, volume
+        FROM {database}.{table}
+        WHERE code = %(symbol)s
+        ORDER BY datetime
+    """
+    rows = client.execute(query, {"symbol": symbol})
+    df = pd.DataFrame(rows, columns=["datetime", "open", "high", "low", "close", "volume"])
+
+    # 피처 계산
+    calc = RLFeatureCalculator()
+    df = calc.calculate(df)
+    df = df.dropna(subset=RL_FEATURE_COLUMNS)
+    df["date"] = pd.to_datetime(df["datetime"]).dt.date
+    dates = sorted(df["date"].unique())
+
+    # 동일 날짜 필터 + 분할
+    valid_dates = [d for d in dates if len(df[df["date"] == d]) >= min_bars]
+    split_idx = int(len(valid_dates) * train_ratio)
+    train_dates = valid_dates[:split_idx]
+    test_dates = valid_dates[split_idx:]
+
+    def compute_aux_for_dates(date_list: list) -> list[np.ndarray]:
+        """일별 TFT 방향 확률 계산"""
+        aux_list = []
+        for d in date_list:
+            day_df = df[df["date"] == d]
+            if len(day_df) == 0:
+                continue
+            n_bars = len(day_df)
+            raw_features = day_df[RL_FEATURE_COLUMNS].values
+            scaled = tft_scaler.transform(raw_features).astype(np.float32)
+            time_feat = compute_time_features(n_bars)
+            combined = np.concatenate([scaled, time_feat], axis=1)  # (n_bars, 28)
+
+            # 결과: (n_bars, 3) — 각 스텝의 [p_up_1m, p_up_5m, p_up_15m]
+            day_probs = np.full((n_bars, 3), 0.5, dtype=np.float32)
+
+            # lookback 이후부터 배치로 TFT 추론
+            if n_bars > lookback:
+                # 배치 구성: 한번에 추론
+                batch = np.stack([
+                    combined[t - lookback:t]
+                    for t in range(lookback, n_bars)
+                ])  # (n_bars - lookback, lookback, 28)
+                probs = tft_model.predict_direction_probs(batch)  # (n_bars - lookback, 3)
+                day_probs[lookback:] = probs
+
+            aux_list.append(day_probs)
+        return aux_list
+
+    train_aux = compute_aux_for_dates(train_dates)
+    test_aux = compute_aux_for_dates(test_dates)
+
+    # 미러 증강 데이터에 대해서는 중립 확률(0.5) 사용
+    if mirror_aug:
+        n_original = len(train_aux)
+        mirror_aux = [
+            np.full_like(a, 0.5) for a in train_aux
+        ]
+        train_aux.extend(mirror_aux)
+        logger.info(
+            f"TFT aux: {n_original} original + {len(mirror_aux)} mirror (0.5) "
+            f"= {len(train_aux)} train, {len(test_aux)} test days"
+        )
+    else:
+        logger.info(
+            f"TFT aux computed: {len(train_aux)} train, {len(test_aux)} test days"
+        )
+
+    return train_aux, test_aux
+
+
 def _generate_sample_data(n_days: int = 60, bars_per_day: int = 405) -> pd.DataFrame:
     """샘플 데이터 생성 (ClickHouse 미연결 시)"""
     np.random.seed(42)
@@ -276,6 +403,9 @@ def main():
         logger.info("Scaler saved. Exiting (--save-scaler-only).")
         return
 
+    # TFT 보조 피처 사전 계산 (tft_aux.enabled=true인 경우)
+    train_aux, test_aux = precompute_tft_aux(args.config)
+
     if not args.evaluate_only:
         from shared.ml.rl.trainer import RLTrainer
 
@@ -295,6 +425,8 @@ def main():
                 train_prices=train_prices,
                 eval_days=test_days,
                 eval_prices=test_prices,
+                train_aux=train_aux,
+                eval_aux=test_aux,
             )
             models = {args.algo: model}
 

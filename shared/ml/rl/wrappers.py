@@ -50,9 +50,9 @@ class ContinuousActionWrapper(gym.Wrapper):
         self.entry_threshold = entry_threshold
         self.exit_threshold = exit_threshold
 
-    def reset(self, *, seed=None, _options=None):
+    def reset(self, *, seed=None, options=None):
         """Reset environment, compatible with FuturesTradingEnv signature."""
-        return self.env.reset(seed=seed, _options=_options)
+        return self.env.reset(seed=seed, options=options)
 
     def step(self, action: np.ndarray):
         continuous_val = float(np.clip(action[0], -1.0, 1.0))

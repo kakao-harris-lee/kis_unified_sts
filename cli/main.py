@@ -1576,10 +1576,17 @@ def rl_train(algo: str, config: str | None):
     click.echo("-" * 40)
 
     try:
-        from scripts.training.train_rl import load_data_from_clickhouse
+        from scripts.training.train_rl import (
+            load_data_from_clickhouse,
+            precompute_tft_aux,
+        )
         from shared.ml.rl.trainer import RLTrainer
 
         train_days, train_prices, test_days, test_prices = load_data_from_clickhouse(config)
+
+        # TFT 보조 피처 사전 계산 (tft_aux.enabled=true인 경우)
+        train_aux, test_aux = precompute_tft_aux(config)
+
         trainer = RLTrainer(config_path=config)
 
         if algo == "all":
@@ -1597,6 +1604,8 @@ def rl_train(algo: str, config: str | None):
                 train_prices=train_prices,
                 eval_days=test_days,
                 eval_prices=test_prices,
+                train_aux=train_aux,
+                eval_aux=test_aux,
             )
             click.echo(f"Training complete: {algo}")
 
@@ -1638,10 +1647,16 @@ def rl_evaluate(model: str, config: str | None):
     click.echo(f"Evaluating RL Model: {model} ({algo_label})")
 
     try:
-        from scripts.training.train_rl import load_data_from_clickhouse
+        from scripts.training.train_rl import (
+            load_data_from_clickhouse,
+            precompute_tft_aux,
+        )
         from shared.ml.rl.evaluator import RLEvaluator
 
         _, _, test_days, test_prices = load_data_from_clickhouse(config)
+
+        # TFT 보조 피처 (tft_aux.enabled=true인 경우)
+        _, test_aux = precompute_tft_aux(config)
 
         if is_dt:
             from shared.config.loader import ConfigLoader
@@ -1673,9 +1688,14 @@ def rl_evaluate(model: str, config: str | None):
                 from sb3_contrib import MaskablePPO
 
                 model_path = f"models/futures/rl/{model}/best_model.zip"
+                if not Path(model_path).exists():
+                    model_path = f"models/futures/rl/{model}.zip"
                 loaded_model = MaskablePPO.load(model_path)
                 evaluator = RLEvaluator(config_path=config)
-                results = evaluator.evaluate_model(loaded_model, test_days, test_prices)
+                results = evaluator.evaluate_model(
+                    loaded_model, test_days, test_prices,
+                    test_aux=test_aux,
+                )
 
         click.echo("\nEvaluation Results:")
         click.echo("-" * 40)
@@ -1903,6 +1923,142 @@ def rl_tensorboard(logdir: str, port: int):
         sys.exit(1)
     except KeyboardInterrupt:
         click.echo("\nTensorBoard stopped")
+
+
+# =============================================================================
+# TFT Commands
+# =============================================================================
+
+
+@cli.group()
+def tft():
+    """TFT (Temporal Fusion Transformer) 예측 모델 명령
+
+    \b
+    다중 시간 지평 수익률 예측/방향 분류 모델 학습/평가.
+    모드: regression (수익률 회귀) | classification (방향 분류).
+    """
+    pass
+
+
+@tft.command("train")
+@click.option("--config", "-c", default="ml/tft.yaml", help="Config file path")
+@click.option(
+    "--mode", "-m", default=None,
+    type=click.Choice(["regression", "classification"]),
+    help="Override mode from config (regression|classification)",
+)
+def tft_train(config: str, mode: str | None):
+    """TFT 모델 학습
+
+    \b
+    Example:
+        sts tft train
+        sts tft train --mode classification
+        sts tft train --config ml/tft.yaml
+    """
+    from shared.ml.tft.trainer import TFTTrainer
+
+    trainer = TFTTrainer(config_path=config, mode_override=mode)
+    effective_mode = trainer.mode
+
+    click.echo(f"Starting TFT Training ({effective_mode})")
+    click.echo(f"  Config: {config}")
+    click.echo("-" * 40)
+
+    try:
+        from scripts.training.train_rl import load_data_from_clickhouse
+
+        train_days, train_prices, test_days, test_prices = load_data_from_clickhouse(config)
+
+        model = trainer.train(
+            train_features=train_days,
+            train_prices=train_prices,
+            eval_features=test_days,
+            eval_prices=test_prices,
+        )
+        if effective_mode == "classification":
+            save_name = "tft_cls_best"
+        else:
+            save_name = "tft_best"
+        click.echo(f"Training complete. Model saved to {trainer.save_dir / save_name}")
+
+    except ImportError as e:
+        click.echo(f"Error: Required package not installed: {e}", err=True)
+        click.echo("Install with: pip install torch", err=True)
+        sys.exit(1)
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+@tft.command("evaluate")
+@click.option("--model", "-m", default=None, help="Model name (directory under save_dir)")
+@click.option("--config", "-c", default="ml/tft.yaml", help="Config file path")
+@click.option(
+    "--mode", default=None,
+    type=click.Choice(["regression", "classification"]),
+    help="Override mode from config",
+)
+def tft_evaluate(model: str | None, config: str, mode: str | None):
+    """TFT 모델 평가
+
+    \b
+    예측 성능 + 트레이딩 시뮬레이션.
+    regression: MSE, MAE, 방향 정확도, IC, Sharpe.
+    classification: Accuracy, AUC-ROC, F1, Calibration, Sharpe.
+
+    Example:
+        sts tft evaluate
+        sts tft evaluate --model tft_cls_best --mode classification
+    """
+    from shared.config import ConfigLoader
+    from shared.ml.tft.trainer import TFTTrainer
+
+    trainer = TFTTrainer(config_path=config, mode_override=mode)
+    effective_mode = trainer.mode
+
+    # Default model name based on mode
+    if model is None:
+        model = "tft_cls_best" if effective_mode == "classification" else "tft_best"
+
+    cfg = ConfigLoader.load(config)
+    save_dir = Path(cfg.get("training", {}).get("save_dir", "./models/futures/tft/"))
+    model_dir = save_dir / model
+
+    if not (model_dir / "model.pt").exists():
+        click.echo(f"Error: Model not found at {model_dir}/", err=True)
+        sys.exit(1)
+
+    click.echo(f"Evaluating TFT Model ({effective_mode}): {model}")
+    click.echo(f"  Model dir: {model_dir}")
+    click.echo(f"  Config: {config}")
+    click.echo("-" * 40)
+
+    try:
+        from scripts.training.train_rl import load_data_from_clickhouse
+        from shared.ml.tft.model import TFTModel
+
+        _, _, test_days, test_prices = load_data_from_clickhouse(config)
+
+        loaded_model = TFTModel.load(model_dir)
+        results = trainer.evaluate(loaded_model, test_days, test_prices)
+
+        click.echo("\n=== Prediction Metrics ===")
+        for k, v in results["prediction"].items():
+            click.echo(f"  {k}: {v:.4f}" if isinstance(v, float) else f"  {k}: {v}")
+
+        click.echo("\n=== Trading Simulation ===")
+        for k, v in results["trading"].items():
+            click.echo(f"  {k}: {v:.4f}" if isinstance(v, float) else f"  {k}: {v}")
+
+        click.echo("\n=== Naive Baseline ===")
+        for k, v in results["baseline_naive"].items():
+            click.echo(f"  {k}: {v:.4f}" if isinstance(v, float) else f"  {k}: {v}")
+
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
 
 
 # =============================================================================

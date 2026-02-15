@@ -14,7 +14,15 @@ env:
 
   # 상태 공간
   n_market_features: 25          # 기술적 지표 수
+  n_aux_features: 0              # 보조 피처 수 (TFT probs=3, 0이면 비활성)
   n_position_features: 6         # position(3) + time(3)
+
+# === TFT 보조 피처 ===
+tft_aux:
+  enabled: false                   # true면 TFT 방향 확률을 obs에 추가
+  model_path: models/futures/tft/tft_cls_best
+  lookback: 60
+  features: [prob_up_1m, prob_up_5m, prob_up_15m]
 
   # 장 운영시간 (KST)
   market_open: "09:00"
