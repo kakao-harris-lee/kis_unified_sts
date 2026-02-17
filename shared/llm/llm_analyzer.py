@@ -183,84 +183,126 @@ class LLMAnalyzer:
         market_data: dict | None = None,
     ) -> AnalysisResult | None:
         """종목 종합 분석 (Legacy Compatible)"""
-        # 기술적 데이터가 없으면 직접 수집
-        if technical_data is None:
-            df = self._stock_collector.get_stock_history(code, 60)
-            if df is not None and len(df) >= 30:
-                tech = self._tech_analyzer.analyze(df)
-                technical_data = {
-                    "rsi": tech.rsi,
-                    "macd_hist": tech.macd_hist,
-                    "bb_position": tech.bb_position,
-                    "trend": tech.trend,
-                }
+        technical_data = self._collect_technical_data(code, technical_data)
+        backtest_data = self._collect_backtest_data(
+            code, backtest_data, technical_data
+        )
 
-        # 백테스트 데이터가 없으면 직접 수집
-        if backtest_data is None and technical_data:
-            df = self._stock_collector.get_stock_history(code, 60)
-            if df is not None and len(df) >= 30:
-                bt_results = self._backtester.run_all_strategies(df)
-                if bt_results:
-                    best = max(bt_results, key=lambda x: x.total_return)
-                    backtest_data = {
-                        "win_rate": best.win_rate,
-                        "total_return": best.total_return,
-                        "strategy": best.strategy_name,
-                    }
-
-        # LLM 분석 시도
-        if await self.initialize():
-            prompt = self._build_prompt(
-                code, name, technical_data, backtest_data, market_data
-            )
-            system_prompt = (
-                "당신은 전문 퀀트 트레이더입니다. "
-                "주어진 데이터를 분석하여 JSON 형식으로만 응답합니다."
-            )
-            cache_key = LLMPromptCache.build_key(
-                key_prefix=self.prompt_cache.config.key_prefix,
-                provider=self.provider,
-                model=self.model,
-                system_prompt=system_prompt,
-                user_prompt=prompt,
-                extra={"temperature": self.temperature, "max_tokens": self.max_tokens},
-            )
-            try:
-                cached = self.prompt_cache.get(cache_key)
-                if cached:
-                    return self._parse_response(code, name, cached)
-
-                if self.provider == "claude":
-                    response = await self.client.messages.create(
-                        model=self.model,
-                        system=system_prompt,
-                        messages=[{"role": "user", "content": prompt}],
-                        max_tokens=self.max_tokens,
-                        temperature=self.temperature,
-                    )
-                    text_blocks = [
-                        b.text
-                        for b in response.content
-                        if getattr(b, "type", "") == "text"
-                    ]
-                    result_text = "\n".join(text_blocks).strip()
-                else:
-                    response = await self.client.chat.completions.create(
-                        model=self.model,
-                        messages=[
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": prompt},
-                        ],
-                        max_tokens=self.max_tokens,
-                        temperature=self.temperature,
-                    )
-                    result_text = response.choices[0].message.content or ""
-                self.prompt_cache.set(cache_key, result_text)
-                return self._parse_response(code, name, result_text)
-            except Exception as e:
-                logger.warning(f"LLM analysis failed for {name}: {e}")
+        llm_result = await self._run_llm_analysis(
+            code, name, technical_data, backtest_data, market_data
+        )
+        if llm_result is not None:
+            return llm_result
 
         return self._fallback_analysis(code, name, technical_data, backtest_data)
+
+    def _collect_technical_data(
+        self,
+        code: str,
+        technical_data: dict | None,
+    ) -> dict | None:
+        if technical_data is not None:
+            return technical_data
+
+        df = self._stock_collector.get_stock_history(code, 60)
+        if df is None or len(df) < 30:
+            return None
+
+        tech = self._tech_analyzer.analyze(df)
+        return {
+            "rsi": tech.rsi,
+            "macd_hist": tech.macd_hist,
+            "bb_position": tech.bb_position,
+            "trend": tech.trend,
+        }
+
+    def _collect_backtest_data(
+        self,
+        code: str,
+        backtest_data: dict | None,
+        technical_data: dict | None,
+    ) -> dict | None:
+        if backtest_data is not None or not technical_data:
+            return backtest_data
+
+        df = self._stock_collector.get_stock_history(code, 60)
+        if df is None or len(df) < 30:
+            return None
+
+        bt_results = self._backtester.run_all_strategies(df)
+        if not bt_results:
+            return None
+
+        best = max(bt_results, key=lambda x: x.total_return)
+        return {
+            "win_rate": best.win_rate,
+            "total_return": best.total_return,
+            "strategy": best.strategy_name,
+        }
+
+    async def _run_llm_analysis(
+        self,
+        code: str,
+        name: str,
+        technical_data: dict | None,
+        backtest_data: dict | None,
+        market_data: dict | None,
+    ) -> AnalysisResult | None:
+        if not await self.initialize():
+            return None
+
+        prompt = self._build_prompt(
+            code, name, technical_data, backtest_data, market_data
+        )
+        system_prompt = (
+            "당신은 전문 퀀트 트레이더입니다. "
+            "주어진 데이터를 분석하여 JSON 형식으로만 응답합니다."
+        )
+        cache_key = LLMPromptCache.build_key(
+            key_prefix=self.prompt_cache.config.key_prefix,
+            provider=self.provider,
+            model=self.model,
+            system_prompt=system_prompt,
+            user_prompt=prompt,
+            extra={"temperature": self.temperature, "max_tokens": self.max_tokens},
+        )
+
+        try:
+            cached = self.prompt_cache.get(cache_key)
+            if cached:
+                return self._parse_response(code, name, cached)
+
+            if self.provider == "claude":
+                response = await self.client.messages.create(
+                    model=self.model,
+                    system=system_prompt,
+                    messages=[{"role": "user", "content": prompt}],
+                    max_tokens=self.max_tokens,
+                    temperature=self.temperature,
+                )
+                text_blocks = [
+                    b.text
+                    for b in response.content
+                    if getattr(b, "type", "") == "text"
+                ]
+                result_text = "\n".join(text_blocks).strip()
+            else:
+                response = await self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": prompt},
+                    ],
+                    max_tokens=self.max_tokens,
+                    temperature=self.temperature,
+                )
+                result_text = response.choices[0].message.content or ""
+
+            self.prompt_cache.set(cache_key, result_text)
+            return self._parse_response(code, name, result_text)
+        except Exception as e:
+            logger.warning(f"LLM analysis failed for {name}: {e}")
+            return None
 
     async def analyze_multiple(
         self, stocks: list[dict], max_concurrent: int = 3
