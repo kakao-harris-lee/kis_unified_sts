@@ -503,6 +503,7 @@ class TradingOrchestrator:
         self._universe_refresh_interval = 30.0  # seconds
         self._symbol_names: dict[str, str] = {}  # code -> name mapping
         self._symbol_metadata_cache: dict[str, dict[str, Any]] = {}
+        self._prev_day_volume_warned: bool = False
         self._trade_targets_latest_key = os.environ.get(
             "TRADE_TARGETS_LATEST_KEY", "system:trade_targets:latest"
         )
@@ -650,8 +651,8 @@ class TradingOrchestrator:
         try:
             from services.trading.indicator_engine import StreamingIndicatorEngine
 
-            # Read BB/RSI params from strategy entry config if available
-            bb_period, bb_std, rsi_period = 20, 2.0, 14
+            # Read indicator params from strategy entry configs
+            bb_period, bb_std, rsi_period, high_period = 20, 2.0, 14, 5
             if self._strategy_manager:
                 for strategy in self._strategy_manager.strategies.values():
                     entry = getattr(strategy, "entry", None)
@@ -660,16 +661,17 @@ class TradingOrchestrator:
                         bb_period = cfg.get("bb_period", bb_period)
                         bb_std = cfg.get("bb_std", bb_std)
                         rsi_period = cfg.get("rsi_period", rsi_period)
-                        break
+                        high_period = cfg.get("breakout_period", high_period)
 
             self._indicator_engine = StreamingIndicatorEngine(
                 bb_period=bb_period,
                 bb_std=bb_std,
                 rsi_period=rsi_period,
+                high_period=high_period,
             )
             logger.info(
                 f"Indicator engine initialized (bb={bb_period}, "
-                f"std={bb_std}, rsi={rsi_period})"
+                f"std={bb_std}, rsi={rsi_period}, high_n={high_period})"
             )
         except Exception as e:
             logger.warning(f"Indicator engine init failed: {e}")
@@ -968,7 +970,24 @@ class TradingOrchestrator:
                         f"(+{len(added)} -{len(removed)}, "
                         f"retained {len(stable_symbols) - len(added)})"
                     )
-                return True
+
+            # Warn once if opening_volume_surge is loaded but no prev_day_volume in metadata
+            if not self._prev_day_volume_warned and self._strategy_manager:
+                has_ovs = "opening_volume_surge" in self._strategy_manager.strategy_names
+                if has_ovs:
+                    has_pvol = any(
+                        "prev_day_volume" in meta
+                        for meta in self._symbol_metadata_cache.values()
+                    )
+                    if not has_pvol:
+                        logger.warning(
+                            "opening_volume_surge is active but no symbols have "
+                            "prev_day_volume metadata — strategy will produce zero signals. "
+                            "Check screener/pykrx availability."
+                        )
+                        self._prev_day_volume_warned = True
+
+            return True
         except Exception as e:
             logger.warning(f"Universe refresh failed: {e}")
         return False
@@ -1669,6 +1688,14 @@ class TradingOrchestrator:
             # Fetch market data
             symbols = list({p.code for p in positions})
             data = await self._get_market_data_snapshot(symbols)
+
+            # Enrich exit data with streaming indicators (volume_velocity, vwap, etc.)
+            if self._indicator_engine:
+                for symbol in symbols:
+                    if symbol in data and isinstance(data[symbol], dict):
+                        indicators = self._indicator_engine.get_indicators(symbol)
+                        if indicators:
+                            data[symbol] = {**data[symbol], **indicators}
 
             # Check exits
             signals = await self._strategy_manager.check_exits(
