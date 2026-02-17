@@ -109,13 +109,16 @@ class KISRankingClient(AsyncSessionMixin):
     async def get_all_aggressive_sources(self, limit: int = _MAX_KIS_RANKING_ROWS) -> dict[str, Any]:
         """Fetch multiple ranking sources concurrently.
 
-        This is meant for screeners: high volume + strong gainers across KOSPI/KOSDAQ.
+        This is meant for screeners: high volume + strong gainers + losers
+        across KOSPI/KOSDAQ.
         """
         tasks = [
             self.get_ranking(type="volume", market="KOSPI", limit=limit),
             self.get_ranking(type="volume", market="KOSDAQ", limit=limit),
             self.get_ranking(type="gainer", market="KOSPI", limit=limit),
             self.get_ranking(type="gainer", market="KOSDAQ", limit=limit),
+            self.get_ranking(type="gainer", market="KOSPI", limit=limit, direction="down"),
+            self.get_ranking(type="gainer", market="KOSDAQ", limit=limit, direction="down"),
         ]
 
         results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -125,6 +128,8 @@ class KISRankingClient(AsyncSessionMixin):
             "kosdaq_volume": results[1] if not isinstance(results[1], Exception) else [],
             "kospi_gainer": results[2] if not isinstance(results[2], Exception) else [],
             "kosdaq_gainer": results[3] if not isinstance(results[3], Exception) else [],
+            "kospi_loser": results[4] if not isinstance(results[4], Exception) else [],
+            "kosdaq_loser": results[5] if not isinstance(results[5], Exception) else [],
         }
 
     async def _get_volume_rank(self, market: MarketType) -> dict[str, Any]:

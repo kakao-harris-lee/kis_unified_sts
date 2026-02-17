@@ -54,6 +54,12 @@ class ScreenerConfig:
         "UNIVERSE_LATEST_KEY", "system:universe:latest"
     )
 
+    dip_top_n: int = int(os.environ.get("SCREENER_DIP_TOP_N", "20"))
+    dip_min_drop_pct: float = float(os.environ.get("SCREENER_DIP_MIN_DROP_PCT", "-2.0"))
+    dip_latest_key: str = os.environ.get(
+        "DIP_CANDIDATES_LATEST_KEY", "system:dip_candidates:latest"
+    )
+
     telegram_enabled: bool = os.environ.get(
         "SCREENER_TELEGRAM_ENABLED", "false"
     ).lower() == "true"
@@ -128,6 +134,51 @@ def _select_top_codes(
         normalized_scores = {}
 
     return codes, normalized_scores, info_by_code
+
+
+def _select_dip_candidates(
+    sources: dict[str, Any],
+    *,
+    top_n: int,
+    min_drop_pct: float,
+) -> tuple[list[str], dict[str, float], dict[str, dict[str, Any]]]:
+    """Select stocks with significant drops (for mean-reversion strategies).
+
+    Combines KOSPI + KOSDAQ loser rows, filters by minimum drop percentage,
+    and ranks by drop magnitude (most negative first).
+    """
+    loser_rows = list(sources.get("kospi_loser", [])) + list(sources.get("kosdaq_loser", []))
+
+    # Filter by minimum drop and sort by magnitude (most negative first)
+    filtered = [
+        r for r in loser_rows
+        if float(r.get("change_pct", 0) or 0) <= min_drop_pct
+    ]
+    filtered.sort(key=lambda r: float(r.get("change_pct", 0) or 0))
+
+    info_by_code: dict[str, dict[str, Any]] = {}
+    codes: list[str] = []
+
+    for row in filtered[:top_n]:
+        code = str(row.get("code", "")).strip()
+        if not code or code in info_by_code:
+            continue
+        codes.append(code)
+        info_by_code[code] = {
+            "name": str(row.get("name", "")).strip(),
+            "price": row.get("price", 0),
+            "change_pct": row.get("change_pct", 0),
+        }
+
+    # Score: normalize drop magnitude to 0-1 (most dropped = 1.0)
+    if codes:
+        drops = [abs(float(info_by_code[c]["change_pct"])) for c in codes]
+        max_drop = max(drops) or 1.0
+        scores = {c: round(abs(float(info_by_code[c]["change_pct"])) / max_drop, 6) for c in codes}
+    else:
+        scores = {}
+
+    return codes, scores, info_by_code
 
 
 async def run_screener(config: ScreenerConfig) -> None:
@@ -217,6 +268,27 @@ async def run_screener(config: ScreenerConfig) -> None:
 
                     last_codes = codes
                     logger.info(f"Published new universe: {len(codes)} codes")
+
+                # Dip candidates (for mean-reversion strategies)
+                dip_codes, dip_scores, dip_info = _select_dip_candidates(
+                    sources,
+                    top_n=config.dip_top_n,
+                    min_drop_pct=config.dip_min_drop_pct,
+                )
+                if dip_codes:
+                    dip_payload = {
+                        "codes": dip_codes,
+                        "scores": dip_scores,
+                        "names": {c: dip_info[c]["name"] for c in dip_codes if c in dip_info},
+                        "info": dip_info,
+                        "generated_at": datetime.now().isoformat(),
+                    }
+                    redis_client.set(
+                        config.dip_latest_key,
+                        json.dumps(dip_payload, ensure_ascii=False),
+                    )
+                    logger.info(f"Published dip candidates: {len(dip_codes)} codes")
+
             except Exception as e:
                 logger.warning(f"Screener iteration failed: {e}")
 
