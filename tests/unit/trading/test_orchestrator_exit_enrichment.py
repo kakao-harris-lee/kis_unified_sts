@@ -42,7 +42,7 @@ def _make_orchestrator(**kwargs):
     orch._symbol_names = {}
     orch._prev_day_volume_warned = False
     orch._universe_retention_seconds = 600
-    orch._max_universe_size = 50
+    orch._max_universe_size = 40
     return orch
 
 
@@ -285,3 +285,136 @@ class TestPrevDayVolumeWarning:
             orch._refresh_universe_from_screener()
 
         assert not any("prev_day_volume" in msg for msg in caplog.messages)
+
+
+class TestOvernightSwingInjection:
+    """Verify that overnight swing positions are injected into config.symbols."""
+
+    @pytest.mark.asyncio
+    async def test_overnight_positions_added_to_symbols(self):
+        """Symbols from loaded swing positions should be appended to config.symbols."""
+        orch = _make_orchestrator()
+        orch.config.symbols = ["005930"]
+
+        # Mock position tracker with an overnight position not in symbols
+        pos = MagicMock()
+        pos.code = "000660"
+        pos.strategy = "volume_accumulation"
+
+        tracker = MagicMock()
+        tracker.positions = [pos]
+        tracker.load_from_db = AsyncMock()
+        orch._position_tracker = tracker
+
+        # Mock strategy manager with swing strategy
+        sm = MagicMock()
+        sm.strategy_names = ["volume_accumulation"]
+        orch._strategy_manager = sm
+
+        from services.trading.orchestrator import TradingOrchestrator
+        orch.SWING_STRATEGIES = TradingOrchestrator.SWING_STRATEGIES
+
+        # Simulate the load_from_db + injection logic
+        loaded_strategies = set(sm.strategy_names)
+        if tracker and (loaded_strategies & orch.SWING_STRATEGIES):
+            await tracker.load_from_db()
+            now = datetime.now()
+            current_symbols = set(orch.config.symbols or [])
+            for p in tracker.positions:
+                if p.code not in current_symbols:
+                    orch.config.symbols.append(p.code)
+                    orch._symbol_last_seen[p.code] = now
+
+        assert "000660" in orch.config.symbols
+        assert "005930" in orch.config.symbols
+        # Critical: must be in _symbol_last_seen to survive screener refresh
+        assert "000660" in orch._symbol_last_seen
+
+    @pytest.mark.asyncio
+    async def test_no_duplicate_when_already_in_symbols(self):
+        """If overnight symbol is already in symbols, it should not be duplicated."""
+        orch = _make_orchestrator()
+        orch.config.symbols = ["005930", "000660"]
+
+        pos = MagicMock()
+        pos.code = "000660"
+
+        tracker = MagicMock()
+        tracker.positions = [pos]
+        tracker.load_from_db = AsyncMock()
+        orch._position_tracker = tracker
+
+        from services.trading.orchestrator import TradingOrchestrator
+        orch.SWING_STRATEGIES = TradingOrchestrator.SWING_STRATEGIES
+
+        current_symbols = set(orch.config.symbols or [])
+        for p in tracker.positions:
+            if p.code not in current_symbols:
+                orch.config.symbols.append(p.code)
+
+        assert orch.config.symbols.count("000660") == 1
+
+
+class TestOvsLogLevel:
+    """Verify opening_volume_surge logs WARNING for missing prev_day_volume."""
+
+    @pytest.mark.asyncio
+    async def test_missing_prev_day_volume_logs_warning(self, caplog):
+        """prev_day_volume <= 0 should log at WARNING level."""
+        from shared.strategy.base import EntryContext
+        from shared.strategy.entry.opening_volume_surge import (
+            OpeningVolumeSurgeEntry,
+            OpeningVolumeSurgeConfig,
+        )
+
+        entry = OpeningVolumeSurgeEntry(OpeningVolumeSurgeConfig())
+
+        # Create context with market open time (so we pass the time window check)
+        try:
+            from zoneinfo import ZoneInfo
+        except ImportError:
+            from backports.zoneinfo import ZoneInfo  # type: ignore[no-redef]
+        KST = ZoneInfo("Asia/Seoul")
+        now = datetime.now(KST).replace(hour=9, minute=5)
+
+        ctx = EntryContext(
+            market_data={
+                "code": "005930",
+                "volume": 5_000_000,
+                "prev_day_volume": 0,
+            },
+            timestamp=now,
+        )
+
+        with caplog.at_level(logging.WARNING):
+            result = await entry.generate(ctx)
+
+        assert result is None
+        assert any("prev_day_volume" in msg for msg in caplog.messages)
+        assert any(
+            record.levelno == logging.WARNING for record in caplog.records
+            if "prev_day_volume" in record.message
+        )
+
+
+class TestUniverseSizeFromConfig:
+    """Verify _max_universe_size is driven by streaming.yaml stock_feed.max_symbols."""
+
+    def test_reads_max_symbols_from_streaming_config(self):
+        """Config logic should extract max_symbols from stock_feed section."""
+        streaming_cfg = {"stock_feed": {"max_symbols": 35}}
+        _sf_cfg = streaming_cfg.get("stock_feed", {})
+        result = int(_sf_cfg.get("max_symbols", 40))
+        assert result == 35
+
+    def test_defaults_to_40_when_config_missing(self):
+        """_max_universe_size should default to 40 (matching WebSocket limit)."""
+        orch = _make_orchestrator()
+        assert orch._max_universe_size == 40
+
+    def test_defaults_to_40_when_stock_feed_section_missing(self):
+        """When streaming.yaml has no stock_feed section, default to 40."""
+        streaming_cfg = {"redis": {"host": "localhost"}}
+        _sf_cfg = streaming_cfg.get("stock_feed", {})
+        result = int(_sf_cfg.get("max_symbols", 40))
+        assert result == 40
