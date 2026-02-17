@@ -733,11 +733,23 @@ class TradingOrchestrator:
                         rsi_period = cfg.get("rsi_period", rsi_period)
                         high_period = cfg.get("breakout_period", high_period)
 
+            # Read staleness threshold from streaming config
+            try:
+                _ie_cfg = ConfigLoader.load("streaming.yaml").get(
+                    "indicator_engine", {}
+                )
+                staleness_seconds = float(
+                    _ie_cfg.get("staleness_seconds", 180.0)
+                )
+            except Exception:
+                staleness_seconds = 180.0
+
             self._indicator_engine = StreamingIndicatorEngine(
                 bb_period=bb_period,
                 bb_std=bb_std,
                 rsi_period=rsi_period,
                 high_period=high_period,
+                staleness_seconds=staleness_seconds,
             )
             logger.info(
                 f"Indicator engine initialized (bb={bb_period}, "
@@ -1088,6 +1100,12 @@ class TradingOrchestrator:
 
             if self._data_provider:
                 self._data_provider.symbols = list(stable_symbols)
+
+            # Clean up indicator engine state for removed symbols to prevent
+            # stale candle data from contaminating indicators on re-entry.
+            if removed and self._indicator_engine:
+                for code in removed:
+                    self._indicator_engine.remove_symbol(code)
 
             if added or removed:
                 logger.info(
@@ -1654,7 +1672,8 @@ class TradingOrchestrator:
 
         # Try MFI-based classification via MarketClassifier
         if self._indicator_engine:
-            mfi = self._indicator_engine.get_market_mfi()
+            active = set(self.config.symbols) if self.config.symbols else None
+            mfi = self._indicator_engine.get_market_mfi(active)
             if mfi is not None:
                 try:
                     from shared.strategy.market_classifier import MarketClassifier

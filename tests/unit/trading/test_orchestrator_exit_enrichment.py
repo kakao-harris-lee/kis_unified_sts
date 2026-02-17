@@ -418,3 +418,46 @@ class TestUniverseSizeFromConfig:
         _sf_cfg = streaming_cfg.get("stock_feed", {})
         result = int(_sf_cfg.get("max_symbols", 40))
         assert result == 40
+
+
+class TestIndicatorCleanupOnUniverseChange:
+    """Verify indicator engine symbols are cleaned up when universe shrinks."""
+
+    def test_removed_symbols_cleaned_from_indicator_engine(self):
+        """When _apply_universe_changes removes symbols, indicator engine state is cleaned."""
+        orch = _make_orchestrator()
+
+        # Mock indicator engine with remove_symbol
+        mock_engine = MagicMock()
+        orch._indicator_engine = mock_engine
+        orch._data_provider = MagicMock()
+
+        # Start with 3 symbols
+        orch.config.symbols = ["005930", "000660", "035720"]
+
+        # Apply new universe that drops 000660
+        orch._apply_universe_changes({"005930", "035720"})
+
+        # remove_symbol should have been called for 000660
+        mock_engine.remove_symbol.assert_called_once_with("000660")
+
+    def test_no_cleanup_when_no_indicator_engine(self):
+        """When indicator engine is None, no error on symbol removal."""
+        orch = _make_orchestrator()
+        orch._indicator_engine = None
+        orch._data_provider = MagicMock()
+        orch.config.symbols = ["005930", "000660"]
+
+        # Should not raise
+        orch._apply_universe_changes({"005930"})
+
+    def test_no_cleanup_when_universe_unchanged(self):
+        """When universe doesn't change, no remove_symbol calls."""
+        orch = _make_orchestrator()
+        mock_engine = MagicMock()
+        orch._indicator_engine = mock_engine
+        orch.config.symbols = ["005930"]
+
+        orch._apply_universe_changes({"005930"})
+
+        mock_engine.remove_symbol.assert_not_called()

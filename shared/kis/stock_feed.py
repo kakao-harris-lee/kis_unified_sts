@@ -144,6 +144,7 @@ class KISStockPriceFeed:
 
         # Price cache: {symbol: price_dict}
         self._prices: dict[str, dict[str, Any]] = {}
+        self._prices_lock = threading.Lock()
 
         # WebSocket state
         self._ws: Optional[websocket.WebSocketApp] = None
@@ -184,7 +185,8 @@ class KISStockPriceFeed:
         Returns instantly from WebSocket cache. Falls back to REST API
         if no WebSocket data available yet.
         """
-        data = self._prices.get(symbol)
+        with self._prices_lock:
+            data = self._prices.get(symbol)
         if data is not None:
             return data
         if self._fallback:
@@ -249,7 +251,8 @@ class KISStockPriceFeed:
 
         self._connected.clear()
         self._subscribed.clear()
-        self._prices.clear()
+        with self._prices_lock:
+            self._prices.clear()
         logger.info(
             f"[StockPriceFeed] Stopped (processed {self._tick_count} ticks)"
         )
@@ -268,7 +271,8 @@ class KISStockPriceFeed:
             for sym in to_remove:
                 self._send_unsub(sym)
                 self._subscribed.discard(sym)
-                self._prices.pop(sym, None)
+                with self._prices_lock:
+                    self._prices.pop(sym, None)
 
             for sym in to_add:
                 self._send_sub(sym)
@@ -365,7 +369,8 @@ class KISStockPriceFeed:
     def _on_close(self, _ws, code, msg):
         logger.info(f"[StockPriceFeed] Connection closed: {code} {msg}")
         self._connected.clear()
-        self._prices.clear()  # Invalidate stale cache
+        with self._prices_lock:
+            self._prices.clear()  # Invalidate stale cache
 
         if self._running:
             threading.Thread(

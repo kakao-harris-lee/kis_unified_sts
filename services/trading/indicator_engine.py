@@ -53,6 +53,7 @@ class CandleAccumulator:
         self._low: float = 0.0
         self._close: float = 0.0
         self._volume: float = 0.0
+        self.last_tick_ts: datetime | None = None
 
     def on_tick(
         self,
@@ -64,6 +65,7 @@ class CandleAccumulator:
     ) -> Candle | None:
         """Process a tick. Returns a completed candle when the minute boundary changes."""
         ts = timestamp or datetime.now()
+        self.last_tick_ts = ts
         minute = ts.hour * 100 + ts.minute
 
         h = high if high is not None else close
@@ -124,11 +126,13 @@ class StreamingIndicatorEngine:
         high_period: int = 5,
         rvol_short: int = 5,
         rvol_long: int = 20,
+        staleness_seconds: float = 180.0,
     ):
         self.bb_period = bb_period
         self.bb_std = bb_std
         self.rsi_period = rsi_period
         self._candle_maxlen = candle_maxlen
+        self._staleness_seconds = staleness_seconds
         self._accumulators: dict[str, CandleAccumulator] = {}
         self._warm_logged: set[str] = set()
 
@@ -227,6 +231,18 @@ class StreamingIndicatorEngine:
                 f"({len(acc.candles)} candles, {seeded} seeded)"
             )
 
+    def remove_symbol(self, symbol: str) -> None:
+        """Remove a symbol's accumulator and related state.
+
+        Called when a symbol is evicted from the trading universe to prevent
+        stale indicator data from being used on re-entry.
+        """
+        if symbol in self._accumulators:
+            del self._accumulators[symbol]
+        self._warm_logged.discard(symbol)
+        self._vwap_calc.reset(symbol)
+        self._vol_accel_calc.reset(symbol)
+
     def is_warm(self, symbol: str) -> bool:
         """Whether enough candles exist to compute indicators."""
         acc = self._accumulators.get(symbol)
@@ -234,14 +250,30 @@ class StreamingIndicatorEngine:
             return False
         return len(acc.candles) >= self.bb_period
 
-    def get_indicators(self, symbol: str) -> dict[str, float]:
+    def get_indicators(self, symbol: str, now: datetime | None = None) -> dict[str, float]:
         """Compute and return current indicator values.
 
-        Returns empty dict if not enough data.
+        Args:
+            symbol: The symbol to compute indicators for.
+            now: Current timestamp for staleness check. Defaults to datetime.now().
+
+        Returns empty dict if not enough data or data is stale.
         """
         acc = self._accumulators.get(symbol)
         if acc is None or len(acc.candles) < self.bb_period:
             return {}
+
+        # Staleness guard: reject indicators from symbols with no recent ticks
+        if acc.last_tick_ts is not None and self._staleness_seconds > 0:
+            _now = now or datetime.now()
+            age = (_now - acc.last_tick_ts).total_seconds()
+            if age > self._staleness_seconds:
+                logger.warning(
+                    "Indicator data stale for %s (%.0fs since last tick, "
+                    "threshold %.0fs) — returning empty",
+                    symbol, age, self._staleness_seconds,
+                )
+                return {}
 
         candles = list(acc.candles)
         closes = [c.close for c in candles]
@@ -303,13 +335,19 @@ class StreamingIndicatorEngine:
             for c in candles
         ]
 
-    def get_market_mfi(self) -> float | None:
-        """Compute aggregate MFI across all warm symbols.
+    def get_market_mfi(self, active_symbols: set[str] | None = None) -> float | None:
+        """Compute aggregate MFI across warm symbols.
 
-        Returns the median MFI of all warm symbols, or None if insufficient data.
+        Args:
+            active_symbols: If provided, only include these symbols.
+                Otherwise, all accumulators are used.
+
+        Returns the median MFI of warm symbols, or None if insufficient data.
         """
         mfi_values = []
         for symbol, acc in self._accumulators.items():
+            if active_symbols is not None and symbol not in active_symbols:
+                continue
             if len(acc.candles) < 14:
                 continue
             mfi = self._calc_mfi(list(acc.candles))
