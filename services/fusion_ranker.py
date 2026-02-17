@@ -121,7 +121,9 @@ class FusionRanker:
         except Exception:
             return None
 
-    def _extract_realtime(self, payload: dict[str, Any]) -> tuple[list[str], dict[str, float], dict[str, str]]:
+    def _extract_realtime(
+        self, payload: dict[str, Any]
+    ) -> tuple[list[str], dict[str, float], dict[str, str], dict[str, dict[str, Any]]]:
         codes_raw = payload.get("codes", [])
         codes = [str(c).strip() for c in codes_raw if str(c).strip()]
 
@@ -142,7 +144,15 @@ class FusionRanker:
             if isinstance(k, str) and isinstance(v, str)
         } if isinstance(names_raw, dict) else {}
 
-        return codes, scores, names
+        # Pass through per-symbol metadata from screener (e.g. prev_day_volume)
+        metadata_raw = payload.get("metadata", {})
+        metadata: dict[str, dict[str, Any]] = {}
+        if isinstance(metadata_raw, dict):
+            for k, v in metadata_raw.items():
+                if isinstance(k, str) and isinstance(v, dict):
+                    metadata[k] = dict(v)
+
+        return codes, scores, names, metadata
 
     def _extract_llm(
         self, payload: dict[str, Any]
@@ -206,7 +216,9 @@ class FusionRanker:
 
         llm_payload = _parse_json(self.redis.get(self.config.llm_quality_key))
 
-        realtime_codes, realtime_scores, realtime_names = self._extract_realtime(realtime_payload)
+        realtime_codes, realtime_scores, realtime_names, realtime_metadata = (
+            self._extract_realtime(realtime_payload)
+        )
         llm_quality, llm_risk_flags, llm_excluded, llm_names, llm_snapshot_id = (
             self._extract_llm(llm_payload)
         )
@@ -292,7 +304,11 @@ class FusionRanker:
 
         codes = [r[0] for r in rows]
         scores = {r[0]: r[1] for r in rows}
-        metadata = {r[0]: r[2] for r in rows}
+        # Merge screener metadata (e.g. prev_day_volume) under fusion scores
+        metadata = {
+            r[0]: {**realtime_metadata.get(r[0], {}), **r[2]}
+            for r in rows
+        }
         names = {c: realtime_names.get(c, llm_names.get(c, "")) for c in codes}
 
         payload = {
