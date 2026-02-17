@@ -653,63 +653,9 @@ def _build_stock_trading_plan(
     config,
 ) -> StockTradingPlan:
     entry = stock.price
-
-    if best is not None and "변동성" in best.strategy_name:
-        sl_pct, tp_pct = 0.05, 0.08
-    else:
-        sl_pct, tp_pct = 0.07, 0.12
-
-    stop_loss = entry * (1 - sl_pct)
-    take_profit = entry * (1 + tp_pct)
-
-    if best is not None and best.win_rate >= 55:
-        position, confidence = config.stock_max_position, "높음"
-    elif best is not None and best.win_rate >= 48:
-        position, confidence = config.stock_max_position * 0.7, "중간"
-    else:
-        position, confidence = config.stock_max_position * 0.5, "낮음"
-
-    reasons: list[str] = []
-    if screening.get("is_new_listing"):
-        reasons.append("신규 상장 종목")
-    if tech.signal in [Signal.STRONG_BUY, Signal.BUY]:
-        reasons.append(f"기술적 신호: {tech.signal.value}")
-    if tech.rsi < 40:
-        reasons.append(f"RSI 과매도 ({tech.rsi})")
-    if stock.volume_ratio > 2:
-        reasons.append(f"거래량 급증 ({stock.volume_ratio:.1f}배)")
-    if best is not None and best.win_rate > 50:
-        reasons.append(f"백테스트 승률 {best.win_rate}%")
-    if news.get("sentiment") in ["긍정", "매우 긍정"]:
-        reasons.append(f"뉴스 감성: {news.get('sentiment')}")
-
-    momentum_data = screening.get("momentum", {})
-    ret_20d = momentum_data.get("ret_20d")
-    if ret_20d is not None and ret_20d > 3:
-        reasons.append(f"20일 상승률 {ret_20d:.1f}%")
-    high_prox = momentum_data.get("high_proximity")
-    if high_prox is not None and high_prox >= 0.9:
-        reasons.append(f"52주 고점 근접 ({high_prox:.0%})")
-    atr_pct_v = screening.get("atr_pct")
-    if atr_pct_v is not None and atr_pct_v < 0.04:
-        reasons.append(f"변동성 안정 (ATR {atr_pct_v:.1%})")
-    if screening.get("target_available"):
-        target_upside = float(screening.get("target_upside_pct", 0.0))
-        if target_upside >= 10.0:
-            reasons.append(f"KIS 목표가 괴리 +{target_upside:.1f}%")
-        target_opinion = str(screening.get("target_opinion", "")).strip()
-        if target_opinion and any(
-            kw in target_opinion.lower() for kw in ["매수", "buy", "outperform"]
-        ):
-            reasons.append(f"KIS 투자의견: {target_opinion}")
-
-    theme_matched_name = screening.get("theme_matched", "")
-    theme_s_val = float(screening.get("theme_score", 0.0))
-    if theme_matched_name and theme_s_val > 0:
-        reasons.append(f"주도 테마 연관: {theme_matched_name} ({theme_s_val:+.0f})")
-    elif not theme_matched_name and theme_s_val < 0:
-        reasons.append("주도 테마 미연관 (감점)")
-
+    stop_loss, take_profit = _get_plan_price_levels(entry, best)
+    position, confidence = _get_plan_position(best, config)
+    reasons = _build_plan_reasons(stock, tech, best, news, screening)
     key_events = news.get("mk_headlines", news.get("key_events", []))
 
     return StockTradingPlan(
@@ -725,6 +671,102 @@ def _build_stock_trading_plan(
         news_sentiment=news.get("sentiment", "중립"),
         key_events=key_events[:3] if key_events else [],
     )
+
+
+def _get_plan_price_levels(
+    entry: float,
+    best: BacktestResult | None,
+) -> tuple[float, float]:
+    if best is not None and "변동성" in best.strategy_name:
+        sl_pct, tp_pct = 0.05, 0.08
+    else:
+        sl_pct, tp_pct = 0.07, 0.12
+
+    stop_loss = entry * (1 - sl_pct)
+    take_profit = entry * (1 + tp_pct)
+    return stop_loss, take_profit
+
+
+def _get_plan_position(
+    best: BacktestResult | None,
+    config,
+) -> tuple[float, str]:
+    if best is not None and best.win_rate >= 55:
+        return config.stock_max_position, "높음"
+    if best is not None and best.win_rate >= 48:
+        return config.stock_max_position * 0.7, "중간"
+    return config.stock_max_position * 0.5, "낮음"
+
+
+def _build_plan_reasons(
+    stock: StockInfo,
+    tech,
+    best: BacktestResult | None,
+    news: dict[str, Any],
+    screening: dict[str, Any],
+) -> list[str]:
+    reasons: list[str] = []
+    if screening.get("is_new_listing"):
+        reasons.append("신규 상장 종목")
+    if tech.signal in [Signal.STRONG_BUY, Signal.BUY]:
+        reasons.append(f"기술적 신호: {tech.signal.value}")
+    if tech.rsi < 40:
+        reasons.append(f"RSI 과매도 ({tech.rsi})")
+    if stock.volume_ratio > 2:
+        reasons.append(f"거래량 급증 ({stock.volume_ratio:.1f}배)")
+    if best is not None and best.win_rate > 50:
+        reasons.append(f"백테스트 승률 {best.win_rate}%")
+    if news.get("sentiment") in ["긍정", "매우 긍정"]:
+        reasons.append(f"뉴스 감성: {news.get('sentiment')}")
+
+    _append_momentum_reasons(reasons, screening)
+    _append_target_price_reasons(reasons, screening)
+    _append_theme_reasons(reasons, screening)
+
+    return reasons
+
+
+def _append_momentum_reasons(
+    reasons: list[str],
+    screening: dict[str, Any],
+) -> None:
+    momentum_data = screening.get("momentum", {})
+    ret_20d = momentum_data.get("ret_20d")
+    if ret_20d is not None and ret_20d > 3:
+        reasons.append(f"20일 상승률 {ret_20d:.1f}%")
+    high_prox = momentum_data.get("high_proximity")
+    if high_prox is not None and high_prox >= 0.9:
+        reasons.append(f"52주 고점 근접 ({high_prox:.0%})")
+    atr_pct_v = screening.get("atr_pct")
+    if atr_pct_v is not None and atr_pct_v < 0.04:
+        reasons.append(f"변동성 안정 (ATR {atr_pct_v:.1%})")
+
+
+def _append_target_price_reasons(
+    reasons: list[str],
+    screening: dict[str, Any],
+) -> None:
+    if screening.get("target_available"):
+        target_upside = float(screening.get("target_upside_pct", 0.0))
+        if target_upside >= 10.0:
+            reasons.append(f"KIS 목표가 괴리 +{target_upside:.1f}%")
+        target_opinion = str(screening.get("target_opinion", "")).strip()
+        if target_opinion and any(
+            kw in target_opinion.lower() for kw in ["매수", "buy", "outperform"]
+        ):
+            reasons.append(f"KIS 투자의견: {target_opinion}")
+
+
+def _append_theme_reasons(
+    reasons: list[str],
+    screening: dict[str, Any],
+) -> None:
+    theme_matched_name = screening.get("theme_matched", "")
+    theme_s_val = float(screening.get("theme_score", 0.0))
+    if theme_matched_name and theme_s_val > 0:
+        reasons.append(f"주도 테마 연관: {theme_matched_name} ({theme_s_val:+.0f})")
+    elif not theme_matched_name and theme_s_val < 0:
+        reasons.append("주도 테마 미연관 (감점)")
 
 
 def _build_screening_meta(
