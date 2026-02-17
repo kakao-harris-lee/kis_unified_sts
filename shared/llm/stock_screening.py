@@ -259,15 +259,7 @@ def score_theme_relevance(
 # ------------------------------------------------------------------
 
 
-def score_stock_candidate(
-    stock: StockInfo,
-    tech: TechnicalAnalysis,
-    best: BacktestResult | None,
-    news: dict[str, Any],
-    screening: dict[str, Any],
-    config: LLMConfig,
-) -> tuple[float, dict[str, float]]:
-    """Score a stock candidate and return (total_score, breakdown)."""
+def _score_momentum(screening: dict[str, Any], tech: TechnicalAnalysis) -> float:
     momentum = screening.get("momentum", {})
     ret_5d = float(momentum.get("ret_5d", 0.0))
     ret_20d = float(momentum.get("ret_20d", 0.0))
@@ -292,6 +284,10 @@ def score_stock_candidate(
     elif tech.rsi > 65:
         momentum_score -= 4
 
+    return momentum_score
+
+
+def _score_technical(tech: TechnicalAnalysis) -> float:
     signal_map = {
         Signal.STRONG_BUY: 12,
         Signal.BUY: 6,
@@ -299,21 +295,26 @@ def score_stock_candidate(
         Signal.SELL: -6,
         Signal.STRONG_SELL: -12,
     }
-    technical_score = float(signal_map.get(tech.signal, 0))
+    return float(signal_map.get(tech.signal, 0))
 
-    if best is not None:
-        win_rate_score = (best.win_rate - 50) * 0.6
-        total_return = max(min(best.total_return, 30.0), -30.0)
-        return_score = total_return * 0.4
-        backtest_score = win_rate_score + return_score
-        # (#3) 백테스트 거래 수 부족 시 강화된 패널티
-        if best.trade_count < 10:
-            backtest_score *= 0.5
-        elif best.trade_count < 15:
-            backtest_score *= 0.7
-    else:
-        backtest_score = 0.0
 
+def _score_backtest(best: BacktestResult | None) -> float:
+    if best is None:
+        return 0.0
+
+    win_rate_score = (best.win_rate - 50) * 0.6
+    total_return = max(min(best.total_return, 30.0), -30.0)
+    return_score = total_return * 0.4
+    backtest_score = win_rate_score + return_score
+    # (#3) 백테스트 거래 수 부족 시 강화된 패널티
+    if best.trade_count < 10:
+        backtest_score *= 0.5
+    elif best.trade_count < 15:
+        backtest_score *= 0.7
+    return backtest_score
+
+
+def _score_news(news: dict[str, Any], risk_hits: list[str]) -> float:
     sentiment = news.get("sentiment", "중립")
     news_score = 0.0
     if sentiment in ["긍정", "매우 긍정"]:
@@ -326,10 +327,13 @@ def score_stock_candidate(
     if news_count == 0:
         news_score -= 3
 
-    risk_hits = screening.get("risk_keywords", [])
     if risk_hits:
         news_score -= min(len(risk_hits) * 2, 6)
 
+    return news_score
+
+
+def _score_liquidity(stock: StockInfo, config: LLMConfig) -> float:
     liquidity_score = 0.0
     trade_value = float(stock.trade_value or 0.0)
     min_trade_value = float(config.stock_min_trade_value)
@@ -354,11 +358,10 @@ def score_stock_candidate(
     elif stock.volume_ratio >= 1.5:
         liquidity_score += 1
 
-    target_price_score = score_target_price_signal(screening)
+    return liquidity_score
 
-    # 테마/섹터 연관성 점수 (ETFFlowAnalyzer 기반)
-    theme_score = float(screening.get("theme_score", 0.0))
 
+def _score_risk_penalty(screening: dict[str, Any], config: LLMConfig) -> float:
     risk_penalty = 0.0
     atr_pct = float(screening.get("atr_pct", 0.0))
     max_dd = float(screening.get("max_drawdown_pct", 0.0))
@@ -386,6 +389,31 @@ def score_stock_candidate(
         risk_penalty += 6
     elif volatility >= 0.6:
         risk_penalty += 3
+
+    return risk_penalty
+
+
+def score_stock_candidate(
+    stock: StockInfo,
+    tech: TechnicalAnalysis,
+    best: BacktestResult | None,
+    news: dict[str, Any],
+    screening: dict[str, Any],
+    config: LLMConfig,
+) -> tuple[float, dict[str, float]]:
+    """Score a stock candidate and return (total_score, breakdown)."""
+    risk_hits = screening.get("risk_keywords", [])
+    momentum_score = _score_momentum(screening, tech)
+    technical_score = _score_technical(tech)
+    backtest_score = _score_backtest(best)
+    news_score = _score_news(news, risk_hits)
+    liquidity_score = _score_liquidity(stock, config)
+    target_price_score = score_target_price_signal(screening)
+
+    # 테마/섹터 연관성 점수 (ETFFlowAnalyzer 기반)
+    theme_score = float(screening.get("theme_score", 0.0))
+
+    risk_penalty = _score_risk_penalty(screening, config)
 
     weights = {
         "momentum": config.stock_score_weight_momentum,

@@ -354,6 +354,76 @@ def delete_stock_minute_day(db_client, code: str, day: date) -> None:
 # API Fetching
 # =============================================================================
 
+async def _request_stock_minute_page(
+    client: httpx.AsyncClient,
+    url: str,
+    code: str,
+    date_str: str,
+    input_hour: str,
+    max_retries: int,
+    token: "StockKISToken",
+    app_key: str,
+    app_secret: str,
+) -> dict:
+    params = {
+        "FID_COND_MRKT_DIV_CODE": "J",  # 주식
+        "FID_INPUT_ISCD": code,
+        "FID_INPUT_DATE_1": date_str,
+        "FID_INPUT_HOUR_1": input_hour,
+        "FID_PW_DATA_INCU_YN": "Y",  # 과거 데이터 포함
+        "FID_FAKE_TICK_INCU_YN": "N",  # 허봉 포함 여부
+    }
+
+    last_error = None
+    for attempt in range(max_retries):
+        headers = {
+            "Authorization": f"Bearer {token.get()}",
+            "appkey": app_key,
+            "appsecret": app_secret,
+            "tr_id": "FHKST03010230",  # 주식일별분봉조회
+            "content-type": "application/json; charset=utf-8",
+        }
+
+        async with _get_semaphore():
+            try:
+                await _get_rate_limiter().wait()
+                resp = await client.get(url, headers=headers, params=params)
+
+                if resp.status_code >= 500:
+                    last_error = f"http {resp.status_code}"
+                    await asyncio.sleep(0.5 * (attempt + 1))
+                    continue
+
+                if not resp.text or resp.text.strip() == "":
+                    last_error = f"empty response (status {resp.status_code})"
+                    await asyncio.sleep(0.5 * (attempt + 1))
+                    continue
+
+                try:
+                    data = resp.json()
+                except Exception as json_err:
+                    last_error = f"json parse: {json_err}"
+                    await asyncio.sleep(0.5 * (attempt + 1))
+                    continue
+
+                rt_cd = data.get("rt_cd", "")
+                if rt_cd and rt_cd != "0":
+                    msg = data.get("msg1", "Unknown error")
+                    if "초당 거래건수" in msg or "RATE" in msg.upper():
+                        await asyncio.sleep(1.0 * (attempt + 1))
+                        continue
+                    return {"error": msg}
+
+                return data
+
+            except Exception as e:
+                last_error = e
+                logger.warning(f"Fetch error for {code} {date_str}: {e}")
+                await asyncio.sleep(0.5 * (attempt + 1))
+
+    return {"error": str(last_error)}
+
+
 async def fetch_stock_minute_async(
     client: httpx.AsyncClient,
     code: str,
@@ -382,64 +452,6 @@ async def fetch_stock_minute_async(
     # 주식일별분봉조회 API (FHKST03010230)
     # Historical minute data; max 120 rows per call
     url = f"{base_url}/uapi/domestic-stock/v1/quotations/inquire-time-dailychartprice"
-    async def _request(input_hour: str) -> dict:
-        params = {
-            "FID_COND_MRKT_DIV_CODE": "J",  # 주식
-            "FID_INPUT_ISCD": code,
-            "FID_INPUT_DATE_1": date_str,
-            "FID_INPUT_HOUR_1": input_hour,
-            "FID_PW_DATA_INCU_YN": "Y",  # 과거 데이터 포함
-            "FID_FAKE_TICK_INCU_YN": "N",  # 허봉 포함 여부
-        }
-
-        last_error = None
-        for attempt in range(max_retries):
-            headers = {
-                "Authorization": f"Bearer {token.get()}",
-                "appkey": app_key,
-                "appsecret": app_secret,
-                "tr_id": "FHKST03010230",  # 주식일별분봉조회
-                "content-type": "application/json; charset=utf-8",
-            }
-
-            async with _get_semaphore():
-                try:
-                    await _get_rate_limiter().wait()
-                    resp = await client.get(url, headers=headers, params=params)
-
-                    if resp.status_code >= 500:
-                        last_error = f"http {resp.status_code}"
-                        await asyncio.sleep(0.5 * (attempt + 1))
-                        continue
-
-                    if not resp.text or resp.text.strip() == "":
-                        last_error = f"empty response (status {resp.status_code})"
-                        await asyncio.sleep(0.5 * (attempt + 1))
-                        continue
-
-                    try:
-                        data = resp.json()
-                    except Exception as json_err:
-                        last_error = f"json parse: {json_err}"
-                        await asyncio.sleep(0.5 * (attempt + 1))
-                        continue
-
-                    rt_cd = data.get("rt_cd", "")
-                    if rt_cd and rt_cd != "0":
-                        msg = data.get("msg1", "Unknown error")
-                        if "초당 거래건수" in msg or "RATE" in msg.upper():
-                            await asyncio.sleep(1.0 * (attempt + 1))
-                            continue
-                        return {"error": msg}
-
-                    return data
-
-                except Exception as e:
-                    last_error = e
-                    logger.warning(f"Fetch error for {code} {date_str}: {e}")
-                    await asyncio.sleep(0.5 * (attempt + 1))
-
-        return {"error": str(last_error)}
 
     all_rows: list[dict] = []
     seen_times: set[str] = set()
@@ -449,7 +461,17 @@ async def fetch_stock_minute_async(
     base_data: dict | None = None
 
     while True:
-        data = await _request(current_hour)
+        data = await _request_stock_minute_page(
+            client,
+            url,
+            code,
+            date_str,
+            current_hour,
+            max_retries,
+            token,
+            app_key,
+            app_secret,
+        )
         if "error" in data:
             return (code, date_str, {"error": data["error"]})
 

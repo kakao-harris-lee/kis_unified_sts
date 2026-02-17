@@ -294,19 +294,14 @@ async def collect_daily_candles(
         return 0
 
     if verbose:
-        print(f"Stock Daily Candles Collection")
-        print(f"Trading days: {len(trading_days)}")
-        print(f"Date range: {trading_days[0]} ~ {trading_days[-1]}")
+        _log_daily_collection_header(trading_days)
 
     ensure_stock_database()
     ensure_daily_candles_table()
     db_client = get_stock_db_client()
 
     # Select codes
-    if codes:
-        selected_codes = list(dict.fromkeys(codes))
-    else:
-        selected_codes = [s["code"] for s in STOCK_UNIVERSE]
+    selected_codes = _select_daily_codes(codes)
 
     if verbose:
         print(f"Stocks: {len(selected_codes)}")
@@ -314,45 +309,21 @@ async def collect_daily_candles(
     total_rows = 0
 
     async with httpx.AsyncClient(timeout=30.0) as client:
-        # Fetch all codes in parallel
-        coros = [
-            fetch_daily_candles_async(client, code, trading_days[0], trading_days[-1])
-            for code in selected_codes
-        ]
+        batch_rows, succeeded_codes, failed_codes = await _collect_daily_rows(
+            client,
+            selected_codes,
+            trading_days[0],
+            trading_days[-1],
+        )
 
-        results = await asyncio.gather(*coros)
-
-        batch_rows: List[Tuple] = []
-        succeeded_codes: List[str] = []
-        failed_codes: List[str] = []
-
-        for code, data in results:
-            if "error" in data:
-                logger.warning(f"Fetch failed for {code}: {data['error']}")
-                failed_codes.append(code)
-                continue
-
-            rows = parse_daily_ohlcv(code, data)
-            if not rows:
-                logger.warning(f"No data for {code}")
-                failed_codes.append(code)
-                continue
-
-            batch_rows.extend(rows)
-            succeeded_codes.append(code)
-
-        if batch_rows:
-            # Remove existing rows for all succeeded codes in a single mutation
-            try:
-                delete_daily_candles_batch(db_client, succeeded_codes, trading_days[0], trading_days[-1])
-            except Exception as e:
-                logger.warning(f"Failed to delete existing rows: {e}")
-
-            insert_daily_candles_batch(db_client, batch_rows)
-            total_rows = len(batch_rows)
-
-            if verbose:
-                print(f"Inserted {total_rows} rows from {len(succeeded_codes)} stocks into daily_candles")
+        total_rows = _persist_daily_rows(
+            db_client,
+            batch_rows,
+            succeeded_codes,
+            trading_days[0],
+            trading_days[-1],
+            verbose,
+        )
 
         if failed_codes and verbose:
             print(f"Failed: {len(failed_codes)} stocks")
@@ -361,6 +332,80 @@ async def collect_daily_candles(
 
     if verbose:
         print(f"Total: {total_rows} rows collected")
+
+    return total_rows
+
+
+def _select_daily_codes(codes: List[str] | None) -> List[str]:
+    if codes:
+        return list(dict.fromkeys(codes))
+    return [s["code"] for s in STOCK_UNIVERSE]
+
+
+def _log_daily_collection_header(trading_days: List[date]) -> None:
+    print("Stock Daily Candles Collection")
+    print(f"Trading days: {len(trading_days)}")
+    print(f"Date range: {trading_days[0]} ~ {trading_days[-1]}")
+
+
+async def _collect_daily_rows(
+    client: httpx.AsyncClient,
+    selected_codes: List[str],
+    start_date: date,
+    end_date: date,
+) -> Tuple[List[Tuple], List[str], List[str]]:
+    coros = [
+        fetch_daily_candles_async(client, code, start_date, end_date)
+        for code in selected_codes
+    ]
+    results = await asyncio.gather(*coros)
+
+    batch_rows: List[Tuple] = []
+    succeeded_codes: List[str] = []
+    failed_codes: List[str] = []
+
+    for code, data in results:
+        if "error" in data:
+            logger.warning(f"Fetch failed for {code}: {data['error']}")
+            failed_codes.append(code)
+            continue
+
+        rows = parse_daily_ohlcv(code, data)
+        if not rows:
+            logger.warning(f"No data for {code}")
+            failed_codes.append(code)
+            continue
+
+        batch_rows.extend(rows)
+        succeeded_codes.append(code)
+
+    return batch_rows, succeeded_codes, failed_codes
+
+
+def _persist_daily_rows(
+    db_client,
+    batch_rows: List[Tuple],
+    succeeded_codes: List[str],
+    start_date: date,
+    end_date: date,
+    verbose: bool,
+) -> int:
+    if not batch_rows:
+        return 0
+
+    # Remove existing rows for all succeeded codes in a single mutation
+    try:
+        delete_daily_candles_batch(db_client, succeeded_codes, start_date, end_date)
+    except Exception as e:
+        logger.warning(f"Failed to delete existing rows: {e}")
+
+    insert_daily_candles_batch(db_client, batch_rows)
+    total_rows = len(batch_rows)
+
+    if verbose:
+        print(
+            f"Inserted {total_rows} rows from {len(succeeded_codes)} stocks into daily_candles"
+        )
 
     return total_rows
 
