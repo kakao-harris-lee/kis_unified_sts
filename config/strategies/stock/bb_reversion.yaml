@@ -1,10 +1,15 @@
-# BB Reversion Strategy (Mean Reversion)
+# BB Reversion Strategy (Mean Reversion — Swing)
 #
-# quant_moment_sts V35OptimizedStrategy의 Mean Reversion 로직 추출
+# 단기 급락 종목의 평균 회귀를 이용하는 스윙 전략
 #
 # 핵심 아이디어:
 #   볼린저 밴드 하단 터치 + RSI 과매도 → 평균 회귀 기대 매수
 #   시장 상태(MFI/ADX)에 따라 진입 조건 조정
+#   1~5일 보유 (오버나이트 허용, 시그널 기반 청산)
+#
+# 데이터 소스: system:dip_candidates:latest (급락 종목)
+#   - Screener가 KOSPI/KOSDAQ loser 중 -2% 이상 하락 종목 발굴
+#   - Orchestrator가 LLM blacklist 필터 후 bb_reversion에 전달
 #
 # 백테스트 결과 (V35 Optimized, 2019-2024):
 #   - CAGR: 23.91%
@@ -15,7 +20,7 @@ strategy:
   name: bb_reversion
   asset_class: stock
   enabled: true
-  description: "볼린저 밴드 하단 + RSI 과매도 평균 회귀 전략"
+  description: "단기 급락 평균 회귀 스윙 전략 (BB + RSI)"
 
   # ===========================================================================
   # 진입 조건 (Entry)
@@ -80,7 +85,7 @@ strategy:
       signal_cooldown_seconds: 300    # 5분
 
       # 포지션 사이징 힌트 (RiskBasedSizer에서 사용)
-      stop_loss_pct: 1.5              # -1.5% 손절 기준
+      stop_loss_pct: 3.0              # -3% 손절 기준 (스윙)
 
   # ===========================================================================
   # 청산 조건 (Exit)
@@ -88,25 +93,24 @@ strategy:
   exit:
     type: three_stage
     params:
-      # Stage 1: Survival (손절)
-      stop_loss_pct: -0.015            # -1.5% 손절
+      # Stage 1: Survival (손절) — 스윙용 넓은 손절폭
+      stop_loss_pct: -0.03             # -3% 손절 (스윙: 일중 변동 허용)
 
       # Stage 2: Breakeven (본전 확보)
-      breakeven_threshold_pct: 0.015   # +1.5% 도달 시 본전 전환
+      breakeven_threshold_pct: 0.02    # +2% 도달 시 본전 전환
 
       # Stage 3: Maximize (수익 극대화)
-      # SIDEWAYS 시장용 보수적 익절 (작은 수익 빠른 실현)
       maximize_threshold_pct: 0.03     # +3% 도달 시 트레일링 시작
       trailing_stop_pct: -0.03         # 고점 대비 -3% 하락 시 청산
 
       # Overshooting 감지 (급등 시 빠른 익절)
       overshoot_threshold_pct: 0.07    # +7% 이상 급등
-      overshoot_trailing_pct: -0.015   # 급등 시 -1.5%로 축소
+      overshoot_trailing_pct: -0.02    # 급등 시 -2%로 축소 (스윙)
 
-      # 시간 기반 청산
-      time_cut_minutes: 20             # 20분 무익 시 청산
-      eod_close_hour: 15
-      eod_close_minute: 15             # 15:15 강제 청산
+      # 시간 기반 청산 — 스윙 전략이므로 비활성화
+      time_cut_minutes: 9999           # 비활성화 (시그널 기반 청산)
+      eod_close_hour: 23
+      eod_close_minute: 59             # 비활성화 (오버나이트 허용)
 
       # 수수료
       fee_rate: 0.003                  # 0.3% (편도 0.15% × 2)

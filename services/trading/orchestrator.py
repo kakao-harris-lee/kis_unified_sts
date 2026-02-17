@@ -717,12 +717,16 @@ class TradingOrchestrator:
                 self._order_executor = None
 
         # Load swing positions from DB (for swing strategies)
-        if self._position_tracker and self.config.strategy_name in ("volume_accumulation",):
+        if self._position_tracker and self.config.strategy_name in ("volume_accumulation", "bb_reversion"):
             await self._position_tracker.load_from_db()
 
         # Load accumulation candidates from Redis
         self._accumulation_candidates: dict[str, int] = {}
         self._refresh_accumulation_candidates()
+
+        # Load dip candidates from Redis (for bb_reversion)
+        self._dip_candidates: dict[str, dict[str, Any]] = {}
+        self._refresh_dip_candidates()
 
         # Redis state publisher
         try:
@@ -777,6 +781,68 @@ class TradingOrchestrator:
             return True
         except Exception as e:
             logger.debug(f"Accumulation candidates not available: {e}")
+            return False
+
+    DIP_CANDIDATES_REDIS_KEY = "system:dip_candidates:latest"
+    LLM_QUALITY_REDIS_KEY = "system:llm_quality:latest"
+
+    def _refresh_dip_candidates(self) -> bool:
+        """Load dip (sharp-drop) candidates from Redis for mean-reversion strategies.
+
+        Cross-checks with LLM quality scores to exclude structurally broken stocks.
+        """
+        try:
+            from shared.streaming.client import RedisClient
+            redis_client = RedisClient.get_client()
+            raw = redis_client.get(self.DIP_CANDIDATES_REDIS_KEY)
+            if not raw:
+                return False
+
+            payload = json.loads(raw)
+            if not isinstance(payload, dict):
+                return False
+
+            codes = payload.get("codes", [])
+            info = payload.get("info", {})
+            if not isinstance(codes, list):
+                return False
+
+            # Load LLM quality scores for filtering
+            llm_blacklist: set[str] = set()
+            llm_raw = redis_client.get(self.LLM_QUALITY_REDIS_KEY)
+            if llm_raw:
+                try:
+                    llm_payload = json.loads(llm_raw)
+                    for item in llm_payload.get("results", []):
+                        code = item.get("code", "")
+                        score = item.get("score", 0)
+                        recommendation = str(item.get("recommendation", "")).lower()
+                        if recommendation in ("avoid", "sell") or score < 0:
+                            llm_blacklist.add(code)
+                except Exception:
+                    pass
+
+            validated: dict[str, dict[str, Any]] = {}
+            for code in codes:
+                code = str(code).strip()
+                if not code:
+                    continue
+                if code in llm_blacklist:
+                    logger.debug(f"Dip candidate {code} blocked by LLM blacklist")
+                    continue
+                code_info = info.get(code, {})
+                validated[code] = {
+                    "name": code_info.get("name", ""),
+                    "price": code_info.get("price", 0),
+                    "change_pct": code_info.get("change_pct", 0),
+                }
+
+            self._dip_candidates = validated
+            if validated:
+                logger.info(f"Loaded {len(validated)} dip candidates (filtered {len(llm_blacklist)} by LLM)")
+            return bool(validated)
+        except Exception as e:
+            logger.debug(f"Dip candidates not available: {e}")
             return False
 
     def _load_ranked_targets(self, redis) -> tuple[list[str], dict[str, str], dict[str, dict[str, Any]]]:
@@ -911,6 +977,26 @@ class TradingOrchestrator:
             try:
                 old_symbols = set(self.config.symbols)
                 self._refresh_universe_from_screener()
+
+                # Merge dip candidates into universe so bb_reversion can evaluate them
+                self._refresh_dip_candidates()
+                if self._dip_candidates:
+                    dip_codes = set(self._dip_candidates.keys())
+                    missing = dip_codes - set(self.config.symbols)
+                    if missing:
+                        now = datetime.now()
+                        for code in missing:
+                            self._symbol_last_seen[code] = now
+                            dip_info = self._dip_candidates.get(code, {})
+                            meta = {"name": dip_info.get("name", ""), "source": "dip"}
+                            self._symbol_metadata_cache[code] = meta
+                            if dip_info.get("name"):
+                                self._symbol_names[code] = dip_info["name"]
+                        self.config.symbols = list(set(self.config.symbols) | missing)
+                        if self._data_provider:
+                            self._data_provider.symbols = list(self.config.symbols)
+                        logger.info(f"Added {len(missing)} dip candidates to universe")
+
                 new_symbols = set(self.config.symbols) - old_symbols
 
                 # Update WebSocket subscriptions to match new universe
@@ -958,7 +1044,7 @@ class TradingOrchestrator:
         await self._stop_market_data_loop()
 
         # For swing strategies: persist positions instead of closing
-        is_swing = self.config.strategy_name in ("volume_accumulation",)
+        is_swing = self.config.strategy_name in ("volume_accumulation", "bb_reversion")
         if self._position_tracker and self._data_provider:
             if is_swing and self._position_tracker.position_count > 0:
                 await self._position_tracker.save_to_db()
@@ -1456,6 +1542,7 @@ class TradingOrchestrator:
                         "market_state": self._current_regime,
                         "symbol_metadata": meta,
                         "accumulation_candidates": getattr(self, "_accumulation_candidates", {}),
+                        "dip_candidates": getattr(self, "_dip_candidates", {}),
                     },
                 )
                 return await self._strategy_manager.check_entries(context)
