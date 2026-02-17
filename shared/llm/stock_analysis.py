@@ -791,7 +791,24 @@ def _log_screening_summary(
     excluded: dict[str, list[str]],
     markets: list[str],
 ) -> None:
-    _log_screening_summary(stocks, excluded, markets)
+    logger.info(f"Screening Summary for markets: {', '.join(markets)}")
+    logger.info(f" - Initial candidates passed: {len(stocks)}")
+    logger.info(f" - Candidates excluded: {len(excluded)}")
+
+    if excluded:
+        # Tally up exclusion reasons
+        reasons_tally: dict[str, int] = {}
+        for r_list in excluded.values():
+            for r in r_list:
+                key = r.split(":", 1)[0]
+                reasons_tally[key] = reasons_tally.get(key, 0) + 1
+
+        # Log top 5
+        top_reasons = sorted(
+            reasons_tally.items(), key=lambda x: x[1], reverse=True
+        )[:5]
+        reasons_msg = ", ".join([f"{k} ({v})" for k, v in top_reasons])
+        logger.info(f" - Top exclusion reasons: {reasons_msg}")
 
 
 def _update_analysis_results_with_candidate(
