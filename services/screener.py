@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+from shared.collector.prev_day_volume import PrevDayVolumeCache
 from shared.kis import KISAuthConfig
 from shared.kis.ranking_client import KISRankingClient
 from shared.streaming.client import RedisClient
@@ -201,6 +202,13 @@ async def run_screener(config: ScreenerConfig) -> None:
         else:
             logger.warning("Screener telegram enabled but credentials missing")
 
+    # Pre-load previous-day volumes for opening_volume_surge strategy.
+    prev_vol_cache = PrevDayVolumeCache()
+    try:
+        prev_vol_cache.warm_all()
+    except Exception as e:
+        logger.warning("Failed to warm prev-day volume cache: %s", e)
+
     logger.info(
         "Stock screener started "
         f"(interval={config.interval_seconds}s, top_n={config.top_n}, rank_limit={config.rank_limit})"
@@ -220,11 +228,16 @@ async def run_screener(config: ScreenerConfig) -> None:
                 )
 
                 if codes and codes != last_codes:
+                    # Lazy-fill prev-day volumes for any new codes
+                    prev_vol_cache.ensure(codes)
+
                     names = {c: info[c]["name"] for c in codes if c in info}
+                    metadata = prev_vol_cache.build_metadata(codes)
                     payload = {
                         "codes": codes,
                         "scores": scores,
                         "names": names,
+                        "metadata": metadata,
                         "generated_at": datetime.now().isoformat(),
                         "sources": {
                             "counts": {k: len(v) for k, v in sources.items()},
