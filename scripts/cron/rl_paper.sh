@@ -42,7 +42,7 @@ start_trading() {
 
     # Check trading day
     IS_TRADING_DAY=$(python3 -c "
-from shared.utils.market_calendar import is_trading_day
+from shared.collector.historical.calendar import is_trading_day
 from datetime import date
 print('1' if is_trading_day(date.today()) else '0')
 " 2>/dev/null || echo "1")

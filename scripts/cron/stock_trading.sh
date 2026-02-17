@@ -1,17 +1,17 @@
 #!/bin/bash
-# Fusion Ranker - kis_unified_sts
-# Merges real-time screener + LLM quality scores → trade targets.
+# Stock Trading Service - kis_unified_sts
+# Replaces: quant_moment_sts main.py
 #
-# crontab: 55 8 * * 1-5 .../fusion_ranker.sh start
-#          0 16 * * 1-5 .../fusion_ranker.sh stop
+# crontab: 0 9 * * 1-5 /home/deploy/project/kis_unified_sts/scripts/cron/stock_trading.sh start
+#          0 16 * * 1-5 /home/deploy/project/kis_unified_sts/scripts/cron/stock_trading.sh stop
 
 set -e
 
 PROJECT_DIR="/home/deploy/project/kis_unified_sts"
 LOG_DIR="$PROJECT_DIR/logs"
-LOG_FILE="$LOG_DIR/fusion_ranker_$(date +%Y%m%d).log"
+LOG_FILE="$LOG_DIR/stock_trading_$(date +%Y%m%d).log"
 VENV="$PROJECT_DIR/.venv/bin/activate"
-PID_FILE="$PROJECT_DIR/pids/fusion_ranker.pid"
+PID_FILE="$PROJECT_DIR/pids/stock_trading.pid"
 
 mkdir -p "$LOG_DIR"
 mkdir -p "$PROJECT_DIR/pids"
@@ -20,7 +20,8 @@ log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
 }
 
-start_fusion() {
+start_trading() {
+    # Check if already running
     if [ -f "$PID_FILE" ]; then
         OLD_PID=$(cat "$PID_FILE")
         if ps -p "$OLD_PID" > /dev/null 2>&1; then
@@ -31,11 +32,10 @@ start_fusion() {
         fi
     fi
 
-    log "=== Fusion Ranker Start ==="
+    log "=== Stock Trading Start ==="
 
     cd "$PROJECT_DIR"
     source "$VENV"
-    set -a && source .env && set +a
 
     # Check trading day
     IS_TRADING_DAY=$(python3 -c "
@@ -49,43 +49,36 @@ print('1' if is_trading_day(date.today()) else '0')
         exit 0
     fi
 
-    log "Starting fusion ranker..."
+    log "Trading day confirmed. Starting stock trading..."
 
-    nohup python3 -m services.fusion_ranker \
+    # Start trading via CLI (paper trading, daemon mode)
+    nohup sts trade start \
+        --asset stock \
+        --capital 100000000 \
+        --paper \
+        --daemon \
         >> "$LOG_FILE" 2>&1 &
 
     echo $! > "$PID_FILE"
-    log "Fusion ranker started (PID: $!)"
+    log "Stock trading started (PID: $!)"
 }
 
-stop_fusion() {
-    local killed=0
-
+stop_trading() {
     if [ -f "$PID_FILE" ]; then
         PID=$(cat "$PID_FILE")
         if ps -p "$PID" > /dev/null 2>&1; then
-            log "Stopping fusion ranker (PID: $PID)"
+            log "Stopping stock trading (PID: $PID)"
             kill "$PID" 2>/dev/null || true
             sleep 2
             kill -9 "$PID" 2>/dev/null || true
-            killed=1
+            rm -f "$PID_FILE"
+            log "Stock trading stopped"
+        else
+            rm -f "$PID_FILE"
+            log "Process not running, cleaned up PID file"
         fi
-        rm -f "$PID_FILE"
-    fi
-
-    ORPHANS=$(pgrep -f "python3 -m services.fusion_ranker" 2>/dev/null || true)
-    if [ -n "$ORPHANS" ]; then
-        log "Killing orphan fusion ranker processes: $ORPHANS"
-        echo "$ORPHANS" | xargs kill 2>/dev/null || true
-        sleep 2
-        echo "$ORPHANS" | xargs kill -9 2>/dev/null || true
-        killed=1
-    fi
-
-    if [ "$killed" -eq 1 ]; then
-        log "Fusion ranker stopped"
     else
-        log "No fusion ranker process found"
+        log "No PID file found"
     fi
 }
 
@@ -107,15 +100,15 @@ status() {
 
 case "${1:-start}" in
     start)
-        start_fusion
+        start_trading
         ;;
     stop)
-        stop_fusion
+        stop_trading
         ;;
     restart)
-        stop_fusion
+        stop_trading
         sleep 2
-        start_fusion
+        start_trading
         ;;
     status)
         status

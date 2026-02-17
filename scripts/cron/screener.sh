@@ -1,17 +1,17 @@
 #!/bin/bash
-# Fusion Ranker - kis_unified_sts
-# Merges real-time screener + LLM quality scores → trade targets.
+# Stock Universe Screener - kis_unified_sts
+# Polls KIS ranking APIs and publishes top-N symbols to Redis.
 #
-# crontab: 55 8 * * 1-5 .../fusion_ranker.sh start
-#          0 16 * * 1-5 .../fusion_ranker.sh stop
+# crontab: 55 8 * * 1-5 /home/deploy/project/kis_unified_sts/scripts/cron/screener.sh start
+#          0 16 * * 1-5 /home/deploy/project/kis_unified_sts/scripts/cron/screener.sh stop
 
 set -e
 
 PROJECT_DIR="/home/deploy/project/kis_unified_sts"
 LOG_DIR="$PROJECT_DIR/logs"
-LOG_FILE="$LOG_DIR/fusion_ranker_$(date +%Y%m%d).log"
+LOG_FILE="$LOG_DIR/screener_$(date +%Y%m%d).log"
 VENV="$PROJECT_DIR/.venv/bin/activate"
-PID_FILE="$PROJECT_DIR/pids/fusion_ranker.pid"
+PID_FILE="$PROJECT_DIR/pids/screener.pid"
 
 mkdir -p "$LOG_DIR"
 mkdir -p "$PROJECT_DIR/pids"
@@ -20,7 +20,8 @@ log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
 }
 
-start_fusion() {
+start_screener() {
+    # Check if already running
     if [ -f "$PID_FILE" ]; then
         OLD_PID=$(cat "$PID_FILE")
         if ps -p "$OLD_PID" > /dev/null 2>&1; then
@@ -31,10 +32,12 @@ start_fusion() {
         fi
     fi
 
-    log "=== Fusion Ranker Start ==="
+    log "=== Screener Start ==="
 
     cd "$PROJECT_DIR"
     source "$VENV"
+
+    # Load environment variables
     set -a && source .env && set +a
 
     # Check trading day
@@ -49,22 +52,23 @@ print('1' if is_trading_day(date.today()) else '0')
         exit 0
     fi
 
-    log "Starting fusion ranker..."
+    log "Trading day confirmed. Starting screener..."
 
-    nohup python3 -m services.fusion_ranker \
+    nohup python3 -m services.screener \
         >> "$LOG_FILE" 2>&1 &
 
     echo $! > "$PID_FILE"
-    log "Fusion ranker started (PID: $!)"
+    log "Screener started (PID: $!)"
 }
 
-stop_fusion() {
+stop_screener() {
     local killed=0
 
+    # 1) PID 파일 기반 종료
     if [ -f "$PID_FILE" ]; then
         PID=$(cat "$PID_FILE")
         if ps -p "$PID" > /dev/null 2>&1; then
-            log "Stopping fusion ranker (PID: $PID)"
+            log "Stopping screener (PID: $PID)"
             kill "$PID" 2>/dev/null || true
             sleep 2
             kill -9 "$PID" 2>/dev/null || true
@@ -73,9 +77,10 @@ stop_fusion() {
         rm -f "$PID_FILE"
     fi
 
-    ORPHANS=$(pgrep -f "python3 -m services.fusion_ranker" 2>/dev/null || true)
+    # 2) 프로세스명 기반 종료 (좀비 방지)
+    ORPHANS=$(pgrep -f "python3 -m services.screener" 2>/dev/null || true)
     if [ -n "$ORPHANS" ]; then
-        log "Killing orphan fusion ranker processes: $ORPHANS"
+        log "Killing orphan screener processes: $ORPHANS"
         echo "$ORPHANS" | xargs kill 2>/dev/null || true
         sleep 2
         echo "$ORPHANS" | xargs kill -9 2>/dev/null || true
@@ -83,9 +88,9 @@ stop_fusion() {
     fi
 
     if [ "$killed" -eq 1 ]; then
-        log "Fusion ranker stopped"
+        log "Screener stopped"
     else
-        log "No fusion ranker process found"
+        log "No screener process found"
     fi
 }
 
@@ -107,15 +112,15 @@ status() {
 
 case "${1:-start}" in
     start)
-        start_fusion
+        start_screener
         ;;
     stop)
-        stop_fusion
+        stop_screener
         ;;
     restart)
-        stop_fusion
+        stop_screener
         sleep 2
-        start_fusion
+        start_screener
         ;;
     status)
         status
