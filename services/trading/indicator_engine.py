@@ -1,7 +1,8 @@
 """Streaming Indicator Engine for live trading.
 
 Accumulates 1-minute candles from 0.5s price snapshots and computes
-Bollinger Bands and RSI in pure Python (no pandas/polars needed).
+Bollinger Bands, RSI, VWAP, RVOL, and volume velocity/acceleration
+in pure Python (no pandas/polars needed).
 
 Usage:
     engine = StreamingIndicatorEngine(bb_period=20, bb_std=2.0, rsi_period=14)
@@ -11,7 +12,9 @@ Usage:
 
     # Read computed indicators
     indicators = engine.get_indicators("005930")
-    # {"bb_lower": 70500, "bb_upper": 71500, "bb_middle": 71000, "rsi": 35.2}
+    # {"bb_lower": 70500, "bb_upper": 71500, "bb_middle": 71000, "rsi": 35.2,
+    #  "vwap": 71050, "rvol": 2.3, "volume_velocity": 0.15, "volume_acceleration": 0.05,
+    #  "high_5": 71500}
 """
 
 from __future__ import annotations
@@ -21,6 +24,8 @@ import math
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
+
+from shared.indicators.volume import VWAPCalculator, VolumeAccelerationCalculator
 
 logger = logging.getLogger(__name__)
 
@@ -116,6 +121,9 @@ class StreamingIndicatorEngine:
         bb_std: float = 2.0,
         rsi_period: int = 14,
         candle_maxlen: int = 100,
+        high_period: int = 5,
+        rvol_short: int = 5,
+        rvol_long: int = 20,
     ):
         self.bb_period = bb_period
         self.bb_std = bb_std
@@ -123,6 +131,13 @@ class StreamingIndicatorEngine:
         self._candle_maxlen = candle_maxlen
         self._accumulators: dict[str, CandleAccumulator] = {}
         self._warm_logged: set[str] = set()
+
+        # Volume indicators
+        self._high_period = high_period
+        self._rvol_short = rvol_short
+        self._rvol_long = rvol_long
+        self._vwap_calc = VWAPCalculator()
+        self._vol_accel_calc = VolumeAccelerationCalculator()
 
     def on_tick(
         self,
@@ -135,18 +150,41 @@ class StreamingIndicatorEngine:
         if not close:
             return
 
+        close_f = float(close)
+        volume_f = float(price_data.get("volume", 0))
+
+        # Guard against inf/nan/negative values
+        if not math.isfinite(close_f) or close_f <= 0:
+            return
+        if not math.isfinite(volume_f) or volume_f < 0:
+            volume_f = 0.0
+
+        # Resolve timestamp once for all consumers
+        ts = timestamp or datetime.now()
+
         acc = self._accumulators.get(symbol)
         if acc is None:
             acc = CandleAccumulator(maxlen=self._candle_maxlen)
             self._accumulators[symbol] = acc
 
         candle = acc.on_tick(
-            close=float(close),
+            close=close_f,
             high=price_data.get("high"),
             low=price_data.get("low"),
-            volume=float(price_data.get("volume", 0)),
-            timestamp=timestamp,
+            volume=volume_f,
+            timestamp=ts,
         )
+
+        # Feed volume calculators only on candle completion to avoid
+        # double-counting volume from repeated 0.5s polling snapshots.
+        if candle is not None:
+            date_str = ts.strftime("%Y%m%d")
+            self._vwap_calc.add_tick(
+                symbol, candle.close, int(candle.volume), date_str
+            )
+            self._vol_accel_calc.add_tick(
+                symbol, int(candle.volume), ts.timestamp()
+            )
 
         if candle is not None and self.is_warm(symbol) and symbol not in self._warm_logged:
             self._warm_logged.add(symbol)
@@ -211,7 +249,7 @@ class StreamingIndicatorEngine:
         bb_lower, bb_middle, bb_upper = self._calc_bb(closes)
         rsi = self._calc_rsi(closes)
 
-        result = {
+        result: dict[str, float] = {
             "bb_lower": bb_lower,
             "bb_middle": bb_middle,
             "bb_upper": bb_upper,
@@ -222,6 +260,24 @@ class StreamingIndicatorEngine:
         mfi = self._calc_mfi(candles)
         if mfi is not None:
             result["mfi"] = mfi
+
+        # Volume indicators
+        current_close = closes[-1]
+
+        # VWAP
+        vwap_data = self._vwap_calc.calculate(symbol, current_close)
+        result["vwap"] = vwap_data.vwap
+
+        # Volume velocity & acceleration
+        vol_accel = self._vol_accel_calc.calculate(symbol)
+        result["volume_velocity"] = vol_accel.velocity
+        result["volume_acceleration"] = vol_accel.acceleration
+
+        # RVOL (from candle volumes, inline — avoids numpy dependency)
+        result["rvol"] = self._calc_rvol(candles)
+
+        # High over N periods
+        result[f"high_{self._high_period}"] = self._calc_high_n(candles)
 
         return result
 
@@ -319,6 +375,34 @@ class StreamingIndicatorEngine:
 
         rs = avg_gain / avg_loss
         return 100.0 - (100.0 / (1.0 + rs))
+
+    def _calc_rvol(self, candles: list[Candle]) -> float:
+        """RVOL = short-window avg volume / long-window avg volume.
+
+        Intentionally numpy-free (unlike shared.indicators.volume.RVOLCalculator)
+        to keep indicator_engine dependency-light for the hot path.
+        """
+        n = len(candles)
+        sw = min(self._rvol_short, n)
+        lw = min(self._rvol_long, n)
+
+        if lw == 0 or sw == 0:
+            return 1.0
+
+        short_avg = sum(c.volume for c in candles[-sw:]) / sw
+        long_avg = sum(c.volume for c in candles[-lw:]) / lw
+
+        if long_avg == 0:
+            return 1.0
+
+        return short_avg / long_avg
+
+    def _calc_high_n(self, candles: list[Candle]) -> float:
+        """Highest high over the last N candles."""
+        period = min(self._high_period, len(candles))
+        if period == 0:
+            return 0.0
+        return max(c.high for c in candles[-period:])
 
     def _calc_mfi(self, candles: list[Candle], period: int = 14) -> float | None:
         """Money Flow Index (14-period).
