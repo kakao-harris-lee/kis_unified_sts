@@ -175,10 +175,16 @@ class StreamingIndicatorEngine:
             timestamp=ts,
         )
 
-        # Feed volume calculators (reuse resolved ts)
-        date_str = ts.strftime("%Y%m%d")
-        self._vwap_calc.add_tick(symbol, close_f, int(volume_f), date_str)
-        self._vol_accel_calc.add_tick(symbol, int(volume_f), ts.timestamp())
+        # Feed volume calculators only on candle completion to avoid
+        # double-counting volume from repeated 0.5s polling snapshots.
+        if candle is not None:
+            date_str = ts.strftime("%Y%m%d")
+            self._vwap_calc.add_tick(
+                symbol, candle.close, int(candle.volume), date_str
+            )
+            self._vol_accel_calc.add_tick(
+                symbol, int(candle.volume), ts.timestamp()
+            )
 
         if candle is not None and self.is_warm(symbol) and symbol not in self._warm_logged:
             self._warm_logged.add(symbol)
