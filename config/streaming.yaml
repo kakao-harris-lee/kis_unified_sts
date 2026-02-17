@@ -51,6 +51,13 @@ stock_feed:
   reconnect_initial_delay: 1.0   # 재접속 초기 대기 (초)
   reconnect_max_delay: 60.0      # 재접속 최대 대기 (초)
 
+# KIS WebSocket Futures Price Feed (H0IFCNT0) 설정
+futures_feed:
+  max_symbols: 10               # 선물 동시 구독 심볼 수
+  subscription_delay: 0.05      # 구독 간 딜레이 (초)
+  connection_timeout: 10.0      # 초기 연결 타임아웃 (초)
+  shutdown_timeout: 5.0         # 종료 대기 타임아웃 (초)
+
 # KIS REST API Rate Limiter 설정
 rate_limiter:
   default_rate: ${KIS_API_RATE_LIMIT:5}   # 초당 최대 요청 수

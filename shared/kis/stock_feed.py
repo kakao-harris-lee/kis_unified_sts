@@ -169,6 +169,7 @@ class KISStockPriceFeed:
         # Stats
         self._tick_count = 0
         self._dropped_count = 0
+        self._last_tick_ts: float | None = None
 
         # Reconnect state
         self._reconnect_delay = float(feed_cfg.get("reconnect_initial_delay", 1.0))
@@ -291,6 +292,14 @@ class KISStockPriceFeed:
     @property
     def is_connected(self) -> bool:
         return self._connected.is_set()
+
+    def get_last_tick_timestamp(self) -> float | None:
+        return self._last_tick_ts
+
+    def get_staleness_seconds(self) -> float | None:
+        if self._last_tick_ts is None:
+            return None
+        return max(0.0, time.time() - self._last_tick_ts)
 
     @property
     def supports_instant_read(self) -> bool:
@@ -445,8 +454,11 @@ class KISStockPriceFeed:
                 if tr_id == TR_STOCK_TRADE:
                     parsed = _parse_stock_trade(data_str)
                     if parsed:
-                        self._prices[parsed["code"]] = parsed
-                        self._tick_count += 1
+                        with self._prices_lock:
+                            self._prices[parsed["code"]] = parsed
+                            self._tick_count += 1
+                            ts = parsed.get("timestamp")
+                            self._last_tick_ts = ts if ts is not None else time.time()
         else:
             try:
                 data = json.loads(message)

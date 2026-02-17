@@ -79,6 +79,8 @@ class KISClient(AsyncSessionMixin):
         rate_limit = int(os.environ.get("KIS_API_RATE_LIMIT", str(_DEFAULT_RATE_LIMIT)))
         self._rate_limiter = _RateLimiter(max_requests=rate_limit)
         logger.info(f"[KISClient] Rate limiter: {rate_limit} req/s")
+        # KIS client is internally rate-limited; avoid parallel fetches upstream
+        self.supports_parallel = False
 
     async def close(self):
         """Close the session."""

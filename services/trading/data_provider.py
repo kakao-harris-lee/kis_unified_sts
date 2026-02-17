@@ -384,6 +384,23 @@ class MarketDataProvider:
 
         result: dict[str, dict[str, Any]] = {}
 
+        supports_parallel = getattr(source, "supports_parallel", True)
+
+        if not supports_parallel:
+            for symbol in symbols:
+                try:
+                    price_data = await asyncio.wait_for(
+                        source.get_current_price(symbol),
+                        timeout=self.config.fetch_timeout_seconds,
+                    )
+                    if price_data is not None:
+                        result[symbol] = price_data
+                except asyncio.TimeoutError:
+                    logger.warning(f"Timeout fetching {symbol}")
+                except Exception as e:
+                    logger.warning(f"Error fetching {symbol}: {e}")
+            return result
+
         # Batch fetch in groups (respect API rate limits)
         for i in range(0, len(symbols), self.config.batch_size):
             batch = symbols[i : i + self.config.batch_size]

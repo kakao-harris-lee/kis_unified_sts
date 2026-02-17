@@ -67,6 +67,8 @@ class TradingMetrics:
     # 성능 관측
     market_data_staleness_seconds: float = 0.0
     order_queue_depth: int = 0
+    websocket_staleness_stock_seconds: float | None = None
+    websocket_staleness_futures_seconds: float | None = None
 
     # 타임스탬프
     last_trade_time: datetime | None = None
@@ -117,6 +119,10 @@ class TradingMetrics:
                     self.market_data_staleness_seconds, 3
                 ),
                 "order_queue_depth": self.order_queue_depth,
+                "websocket_staleness_seconds": {
+                    "stock": round(self.websocket_staleness_stock_seconds, 3),
+                    "futures": round(self.websocket_staleness_futures_seconds, 3),
+                },
             },
             "timestamps": {
                 "last_trade": (
@@ -206,6 +212,11 @@ class MetricsCollector:
         self.prom_market_data_staleness = Gauge(
             "trading_market_data_staleness_seconds",
             "Market data snapshot staleness in seconds",
+        )
+        self.prom_websocket_staleness = Gauge(
+            "trading_websocket_staleness_seconds",
+            "WebSocket tick staleness in seconds",
+            ["feed"],
         )
         self.prom_market_data_staleness_hist = Histogram(
             "trading_market_data_staleness_seconds_hist",
@@ -319,6 +330,21 @@ class MetricsCollector:
         if HAS_PROMETHEUS:
             self.prom_market_data_staleness.set(staleness_seconds)
             self.prom_market_data_staleness_hist.observe(staleness_seconds)
+
+    def record_websocket_staleness(self, feed: str, staleness_seconds: float | None) -> None:
+        """WebSocket tick staleness 기록 (stock/futures)."""
+        if staleness_seconds is None:
+            return
+
+        if feed == "stock":
+            self.metrics.websocket_staleness_stock_seconds = staleness_seconds
+        elif feed == "futures":
+            self.metrics.websocket_staleness_futures_seconds = staleness_seconds
+        else:
+            return
+
+        if HAS_PROMETHEUS:
+            self.prom_websocket_staleness.labels(feed=feed).set(staleness_seconds)
 
     def record_order_queue_depth(self, depth: int):
         """Order queue depth 기록"""

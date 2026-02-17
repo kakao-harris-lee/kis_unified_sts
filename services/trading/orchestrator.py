@@ -495,6 +495,9 @@ class TradingOrchestrator:
         # WebSocket stock price feed (initialized in _initialize_components)
         self._stock_price_feed: Any | None = None
 
+        # WebSocket futures price feed (initialized in _initialize_components)
+        self._futures_price_feed: Any | None = None
+
         # Redis state publisher (initialized in _initialize_components)
         self._state_publisher: Any | None = None
 
@@ -593,6 +596,7 @@ class TradingOrchestrator:
 
         # WebSocket price feed for stock (replaces REST polling)
         self._stock_price_feed = None
+        self._futures_price_feed = None
         data_source = None
         if self.config.asset_class == "stock" and self._kis_client:
             try:
@@ -606,6 +610,18 @@ class TradingOrchestrator:
                 logger.info("Stock WebSocket price feed initialized")
             except Exception as e:
                 logger.warning(f"Stock WebSocket feed init failed: {e}")
+        elif self.config.asset_class == "futures" and self._kis_client:
+            try:
+                from shared.kis.futures_feed import KISFuturesPriceFeed
+
+                self._futures_price_feed = KISFuturesPriceFeed(
+                    config=kis_config,
+                    fallback_client=self._kis_client,
+                )
+                data_source = self._futures_price_feed
+                logger.info("Futures WebSocket price feed initialized")
+            except Exception as e:
+                logger.warning(f"Futures WebSocket feed init failed: {e}")
 
         # Data provider
         # With WebSocket: cache_ttl can be short (data is push-based, instant)
@@ -676,6 +692,14 @@ class TradingOrchestrator:
         except Exception as e:
             logger.warning(f"Indicator engine init failed: {e}")
             self._indicator_engine = None
+
+        # Hook futures WebSocket ticks directly into indicator engine
+        if self._futures_price_feed and self._indicator_engine:
+            def _on_futures_tick(symbol: str, data: dict[str, Any], ts: datetime) -> None:
+                if self._indicator_engine:
+                    self._indicator_engine.on_tick(symbol, data, ts)
+
+            self._futures_price_feed.set_tick_callback(_on_futures_tick)
 
         # Paper broker (if paper trading)
         if self.config.paper_trading:
@@ -1297,6 +1321,17 @@ class TradingOrchestrator:
             except Exception as e:
                 logger.warning(f"Stock WebSocket feed start failed: {e}")
                 self._stock_price_feed = None
+        if self._futures_price_feed:
+            try:
+                self._futures_price_feed.update_symbols(self.config.symbols)
+                await self._futures_price_feed.start()
+                logger.info(
+                    f"Futures WebSocket feed started, "
+                    f"{self._futures_price_feed.symbol_count} symbols subscribed"
+                )
+            except Exception as e:
+                logger.warning(f"Futures WebSocket feed start failed: {e}")
+                self._futures_price_feed = None
 
         # Pre-warm indicators FIRST (exclusive API access, no rate conflicts)
         if self._indicator_engine and self._kis_client and self.config.symbols:
@@ -1339,6 +1374,11 @@ class TradingOrchestrator:
                 await self._stock_price_feed.stop()
             except Exception as e:
                 logger.warning(f"Stock price feed stop error: {e}")
+        if self._futures_price_feed:
+            try:
+                await self._futures_price_feed.stop()
+            except Exception as e:
+                logger.warning(f"Futures price feed stop error: {e}")
 
         if self._universe_refresh_task:
             self._universe_refresh_task.cancel()
@@ -1405,6 +1445,15 @@ class TradingOrchestrator:
                     staleness = self._get_market_data_staleness_seconds()
                     if staleness is not None:
                         self._metrics.record_market_data_staleness(staleness)
+
+                    if self._stock_price_feed:
+                        ws_staleness = self._stock_price_feed.get_staleness_seconds()
+                        if ws_staleness is not None:
+                            self._metrics.record_websocket_staleness("stock", ws_staleness)
+                    if self._futures_price_feed:
+                        ws_staleness = self._futures_price_feed.get_staleness_seconds()
+                        if ws_staleness is not None:
+                            self._metrics.record_websocket_staleness("futures", ws_staleness)
             except Exception as e:
                 logger.warning(f"Market data refresh failed: {e}")
 
