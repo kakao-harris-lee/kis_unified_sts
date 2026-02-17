@@ -531,7 +531,13 @@ class TradingOrchestrator:
         # the screener top-N, so the indicator engine can warm up.
         self._symbol_last_seen: dict[str, datetime] = {}
         self._universe_retention_seconds = 600.0  # 10 minutes
-        self._max_universe_size = 50
+        # Cap universe to WebSocket max_symbols (streaming.yaml) so every
+        # symbol in the universe actually receives tick data.
+        try:
+            _sf_cfg = ConfigLoader.load("streaming.yaml").get("stock_feed", {})
+            self._max_universe_size = int(_sf_cfg.get("max_symbols", 40))
+        except Exception:
+            self._max_universe_size = 40
         self._llm_training_data_dir = os.environ.get(
             "LLM_TRAINING_DATA_DIR", "output/llm"
         )
@@ -759,6 +765,23 @@ class TradingOrchestrator:
         loaded_strategies = set(self._strategy_manager.strategy_names)
         if self._position_tracker and (loaded_strategies & self.SWING_STRATEGIES):
             await self._position_tracker.load_from_db()
+            # Inject overnight position symbols into config.symbols so they
+            # receive WebSocket ticks and indicator pre-warm at startup.
+            current_symbols = set(self.config.symbols or [])
+            overnight_codes = []
+            now = datetime.now()
+            for pos in self._position_tracker.positions:
+                if pos.code not in current_symbols:
+                    overnight_codes.append(pos.code)
+                    self.config.symbols.append(pos.code)
+                    self._symbol_last_seen[pos.code] = now
+            if overnight_codes:
+                logger.warning(
+                    "Overnight swing positions loaded for symbols not in "
+                    "current screener universe — they will be pre-warmed and "
+                    "tracked but may lack screener scores: %s",
+                    overnight_codes,
+                )
 
         # Load accumulation candidates from Redis
         self._accumulation_candidates: dict[str, int] = {}
@@ -1348,7 +1371,7 @@ class TradingOrchestrator:
 
         # Pre-warm indicators FIRST (exclusive API access, no rate conflicts)
         if self._indicator_engine and self._kis_client and self.config.symbols:
-            await self._prewarm_symbols(self.config.symbols[:20])
+            await self._prewarm_symbols(self.config.symbols)
 
         # Initial price refresh (some may be rate-limited; the data loop will catch up)
         try:

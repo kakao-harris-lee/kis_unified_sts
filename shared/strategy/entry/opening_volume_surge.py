@@ -114,7 +114,7 @@ class OpeningVolumeSurgeEntry(EntrySignalGenerator[OpeningVolumeSurgeConfig]):
         prev_day_volume = int(data.get("prev_day_volume", 0) or 0)
         if prev_day_volume <= 0:
             # Baseline isn't available -> can't apply this strategy safely.
-            logger.debug(
+            logger.warning(
                 "Opening volume surge skipped: missing prev_day_volume (%s)",
                 code,
             )
