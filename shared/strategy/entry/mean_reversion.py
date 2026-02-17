@@ -127,6 +127,12 @@ class MeanReversionEntry(EntrySignalGenerator[MeanReversionConfig]):
         if not code:
             return None
 
+        # Dip candidates gate: only evaluate symbols in dip_candidates list
+        # (populated by Screener loser ranking → Orchestrator LLM filter)
+        dip_candidates = context.metadata.get("dip_candidates", {})
+        if dip_candidates and code not in dip_candidates:
+            return None
+
         # Market cap filter
         market_cap = data.get("market_cap")
         if market_cap is None:

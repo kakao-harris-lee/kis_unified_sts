@@ -717,7 +717,7 @@ class TradingOrchestrator:
                 self._order_executor = None
 
         # Load swing positions from DB (for swing strategies)
-        if self._position_tracker and self.config.strategy_name in ("volume_accumulation",):
+        if self._position_tracker and self.config.strategy_name in ("volume_accumulation", "bb_reversion"):
             await self._position_tracker.load_from_db()
 
         # Load accumulation candidates from Redis
@@ -1044,7 +1044,7 @@ class TradingOrchestrator:
         await self._stop_market_data_loop()
 
         # For swing strategies: persist positions instead of closing
-        is_swing = self.config.strategy_name in ("volume_accumulation",)
+        is_swing = self.config.strategy_name in ("volume_accumulation", "bb_reversion")
         if self._position_tracker and self._data_provider:
             if is_swing and self._position_tracker.position_count > 0:
                 await self._position_tracker.save_to_db()
