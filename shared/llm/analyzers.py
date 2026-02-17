@@ -88,88 +88,140 @@ class StockTechnicalAnalyzer:
 
     def analyze(self, df: pd.DataFrame) -> TechnicalAnalysis:
         """종합 기술적 분석"""
-        prices = df['종가']
+        prices = df["종가"]
+        indicators = self._compute_indicators(prices)
+        trend = self._compute_trend(indicators.ma5, indicators.ma20)
+        signal = self._determine_signal(
+            indicators.rsi,
+            indicators.macd_hist,
+            indicators.bb_position,
+            trend,
+            indicators.last_price,
+            indicators.ma5,
+            indicators.ma20,
+        )
 
+        return self._build_analysis(indicators, trend, signal)
+
+    @dataclass
+    class _IndicatorSet:
+        rsi: float
+        macd: float
+        macd_signal: float
+        macd_hist: float
+        bb_position: float
+        ma5: float
+        ma20: float
+        ma60: float
+        last_price: float
+
+    def _compute_indicators(self, prices: pd.Series) -> "StockTechnicalAnalyzer._IndicatorSet":
         rsi = self.calculate_rsi(prices)
         macd, macd_signal, macd_hist = self.calculate_macd(prices)
         bb_position = self.calculate_bollinger(prices)
         ma5 = self.calculate_ma(prices, 5)
         ma20 = self.calculate_ma(prices, 20)
         ma60 = self.calculate_ma(prices, 60) if len(prices) >= 60 else ma20
+        return StockTechnicalAnalyzer._IndicatorSet(
+            rsi=rsi,
+            macd=macd,
+            macd_signal=macd_signal,
+            macd_hist=macd_hist,
+            bb_position=bb_position,
+            ma5=ma5,
+            ma20=ma20,
+            ma60=ma60,
+            last_price=float(prices.iloc[-1]),
+        )
 
-        # 추세 판단
+    @staticmethod
+    def _compute_trend(ma5: float, ma20: float) -> str:
         if ma5 > ma20 * 1.02:
-            trend = "상승"
-        elif ma5 < ma20 * 0.98:
-            trend = "하락"
-        else:
-            trend = "횡보"
+            return "상승"
+        if ma5 < ma20 * 0.98:
+            return "하락"
+        return "횡보"
 
-        # 신호 결정
-        signal = self._determine_signal(rsi, macd_hist, bb_position, trend, prices.iloc[-1], ma5, ma20)
-
+    @staticmethod
+    def _build_analysis(
+        indicators: "StockTechnicalAnalyzer._IndicatorSet",
+        trend: str,
+        signal: Signal,
+    ) -> TechnicalAnalysis:
         return TechnicalAnalysis(
-            rsi=round(rsi, 2),
-            macd=round(macd, 2),
-            macd_signal=round(macd_signal, 2),
-            macd_hist=round(macd_hist, 2),
-            bb_position=round(bb_position, 2),
-            ma5=round(ma5, 0),
-            ma20=round(ma20, 0),
-            ma60=round(ma60, 0),
+            rsi=round(indicators.rsi, 2),
+            macd=round(indicators.macd, 2),
+            macd_signal=round(indicators.macd_signal, 2),
+            macd_hist=round(indicators.macd_hist, 2),
+            bb_position=round(indicators.bb_position, 2),
+            ma5=round(indicators.ma5, 0),
+            ma20=round(indicators.ma20, 0),
+            ma60=round(indicators.ma60, 0),
             trend=trend,
-            signal=signal
+            signal=signal,
         )
 
     def _determine_signal(self, rsi, macd_hist, bb_pos, trend, price, ma5, ma20) -> Signal:
         """매매 신호 결정"""
         score = 0
+        score += self._score_rsi(rsi)
+        score += self._score_macd(macd_hist)
+        score += self._score_bollinger(bb_pos)
+        score += self._score_trend(trend)
+        score += self._score_moving_average(price, ma5, ma20)
+        return self._signal_from_score(score)
 
-        # RSI
+    @staticmethod
+    def _score_rsi(rsi: float) -> int:
         if rsi < 30:
-            score += 2
-        elif rsi < 40:
-            score += 1
-        elif rsi > 70:
-            score -= 2
-        elif rsi > 60:
-            score -= 1
+            return 2
+        if rsi < 40:
+            return 1
+        if rsi > 70:
+            return -2
+        if rsi > 60:
+            return -1
+        return 0
 
-        # MACD
-        if macd_hist > 0:
-            score += 1
-        else:
-            score -= 1
+    @staticmethod
+    def _score_macd(macd_hist: float) -> int:
+        return 1 if macd_hist > 0 else -1
 
-        # 볼린저 밴드
+    @staticmethod
+    def _score_bollinger(bb_pos: float) -> int:
         if bb_pos < 0.2:
-            score += 1
-        elif bb_pos > 0.8:
-            score -= 1
+            return 1
+        if bb_pos > 0.8:
+            return -1
+        return 0
 
-        # 추세
+    @staticmethod
+    def _score_trend(trend: str) -> int:
         if trend == "상승":
-            score += 1
-        elif trend == "하락":
-            score -= 1
+            return 1
+        if trend == "하락":
+            return -1
+        return 0
 
-        # 이동평균
+    @staticmethod
+    def _score_moving_average(price: float, ma5: float, ma20: float) -> int:
         if price > ma5 > ma20:
-            score += 1
-        elif price < ma5 < ma20:
-            score -= 1
+            return 1
+        if price < ma5 < ma20:
+            return -1
+        return 0
 
-        # 최종 신호 결정
+    @staticmethod
+    def _signal_from_score(score: int) -> Signal:
         if score >= 4:
             return Signal.STRONG_BUY
-        elif score >= 2:
+        if score >= 2:
             return Signal.BUY
-        elif score <= -4:
+        if score <= -4:
             return Signal.STRONG_SELL
-        elif score <= -2:
+        if score <= -2:
             return Signal.SELL
-        else:
-            return Signal.HOLD
+        return Signal.HOLD
 
 
 class FuturesTechnicalAnalyzer:
@@ -186,13 +238,47 @@ class FuturesTechnicalAnalyzer:
         if df is None or len(df) < 2:
             raise DataUnavailableError("futures_technical", "price_data_unavailable")
 
-        index_price = float(df["close"].iloc[-1])
-        index_change = (
-            (float(df["close"].iloc[-1]) / float(df["close"].iloc[-2]) - 1) * 100
-            if len(df) > 1
-            else 0.0
+        index_price, index_change = self._compute_index_metrics(df)
+        ma5, ma20, ma60 = self._compute_moving_averages(df, index_price)
+        rsi = self._compute_rsi(df)
+        macd_hist = self._compute_macd_hist(df)
+        pivot, r1, s1 = self._compute_pivot_points(df)
+        trend_short, trend_mid, trend_long = self._compute_trends(index_price, ma5, ma20, ma60)
+        score = self._compute_score(trend_short, trend_mid, trend_long, rsi, macd_hist)
+        bias = self._bias_from_score(score)
+
+        return self._build_futures_payload(
+            index_price,
+            index_change,
+            ma5,
+            ma20,
+            ma60,
+            rsi,
+            macd_hist,
+            pivot,
+            r1,
+            s1,
+            trend_short,
+            trend_mid,
+            trend_long,
+            score,
+            bias,
         )
 
+    @staticmethod
+    def _compute_index_metrics(df: pd.DataFrame) -> tuple[float, float]:
+        index_price = float(df["close"].iloc[-1])
+        if len(df) > 1:
+            index_change = (float(df["close"].iloc[-1]) / float(df["close"].iloc[-2]) - 1) * 100
+        else:
+            index_change = 0.0
+        return index_price, index_change
+
+    @staticmethod
+    def _compute_moving_averages(
+        df: pd.DataFrame,
+        index_price: float,
+    ) -> tuple[float, float, float]:
         ma5 = df["close"].rolling(5).mean().iloc[-1]
         ma20 = df["close"].rolling(20).mean().iloc[-1]
         ma60 = df["close"].rolling(60).mean().iloc[-1]
@@ -202,8 +288,10 @@ class FuturesTechnicalAnalyzer:
             ma20 = index_price
         if pd.isna(ma60):
             ma60 = index_price
+        return float(ma5), float(ma20), float(ma60)
 
-        # RSI
+    @staticmethod
+    def _compute_rsi(df: pd.DataFrame) -> float:
         delta = df["close"].diff()
         gain = (delta.where(delta > 0, 0)).rolling(14).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
@@ -211,70 +299,104 @@ class FuturesTechnicalAnalyzer:
         rsi = (100 - (100 / (1 + rs))).iloc[-1]
         if pd.isna(rsi):
             rsi = 50.0
+        return float(rsi)
 
-        # MACD
+    @staticmethod
+    def _compute_macd_hist(df: pd.DataFrame) -> float:
         ema12 = df["close"].ewm(span=12).mean()
         ema26 = df["close"].ewm(span=26).mean()
         macd = ema12 - ema26
         signal = macd.ewm(span=9).mean()
-        macd_hist = (macd - signal).iloc[-1]
+        return float((macd - signal).iloc[-1])
 
-        # 피벗 포인트
+    @staticmethod
+    def _compute_pivot_points(df: pd.DataFrame) -> tuple[float, float, float]:
         high = float(df["high"].iloc[-1])
         low = float(df["low"].iloc[-1])
         close = float(df["close"].iloc[-1])
         pivot = (high + low + close) / 3
         r1 = 2 * pivot - low
         s1 = 2 * pivot - high
+        return pivot, r1, s1
 
-        # 추세 판단
+    @staticmethod
+    def _compute_trends(
+        index_price: float,
+        ma5: float,
+        ma20: float,
+        ma60: float,
+    ) -> tuple[str, str, str]:
         trend_short = "상승" if index_price > ma5 else "하락"
         trend_mid = "상승" if ma5 > ma20 else "하락"
         trend_long = "상승" if ma20 > ma60 else "하락"
+        return trend_short, trend_mid, trend_long
 
-        # 점수 계산
+    def _compute_score(
+        self,
+        trend_short: str,
+        trend_mid: str,
+        trend_long: str,
+        rsi: float,
+        macd_hist: float,
+    ) -> float:
         score = 0
-        if trend_short == "상승":
-            score += 10
-        else:
-            score -= 10
-        if trend_mid == "상승":
-            score += 15
-        else:
-            score -= 15
-        if trend_long == "상승":
-            score += 15
-        else:
-            score -= 15
+        score += self._score_trend(trend_short, 10)
+        score += self._score_trend(trend_mid, 15)
+        score += self._score_trend(trend_long, 15)
+        score += self._score_rsi(rsi)
+        score += self._score_macd(macd_hist)
+        return max(-100, min(100, score * 1.2))
 
+    @staticmethod
+    def _score_trend(trend: str, weight: int) -> int:
+        return weight if trend == "상승" else -weight
+
+    @staticmethod
+    def _score_rsi(rsi: float) -> int:
         if rsi < 30:
-            score += 15
-        elif rsi < 40:
-            score += 5
-        elif rsi > 70:
-            score -= 15
-        elif rsi > 60:
-            score -= 5
+            return 15
+        if rsi < 40:
+            return 5
+        if rsi > 70:
+            return -15
+        if rsi > 60:
+            return -5
+        return 0
 
-        if macd_hist > 0:
-            score += 10
-        else:
-            score -= 10
+    @staticmethod
+    def _score_macd(macd_hist: float) -> int:
+        return 10 if macd_hist > 0 else -10
 
-        score = max(-100, min(100, score * 1.2))
-
-        # 바이어스 결정
+    @staticmethod
+    def _bias_from_score(score: float) -> MarketBias:
         if score >= 30:
-            bias = MarketBias.STRONG_BULLISH
-        elif score >= 10:
-            bias = MarketBias.BULLISH
-        elif score <= -30:
-            bias = MarketBias.STRONG_BEARISH
-        elif score <= -10:
-            bias = MarketBias.BEARISH
-        else:
-            bias = MarketBias.NEUTRAL
+            return MarketBias.STRONG_BULLISH
+        if score >= 10:
+            return MarketBias.BULLISH
+        if score <= -30:
+            return MarketBias.STRONG_BEARISH
+        if score <= -10:
+            return MarketBias.BEARISH
+        return MarketBias.NEUTRAL
 
+    @staticmethod
+    def _build_futures_payload(
+        index_price: float,
+        index_change: float,
+        ma5: float,
+        ma20: float,
+        ma60: float,
+        rsi: float,
+        macd_hist: float,
+        pivot: float,
+        r1: float,
+        s1: float,
+        trend_short: str,
+        trend_mid: str,
+        trend_long: str,
+        score: float,
+        bias: MarketBias,
+    ) -> Dict:
         return {
             "index_price": round(index_price, 2),
             "index_change": round(index_change, 2),
@@ -290,7 +412,7 @@ class FuturesTechnicalAnalyzer:
             "trend_mid": trend_mid,
             "trend_long": trend_long,
             "score": round(score, 0),
-            "bias": bias.value
+            "bias": bias.value,
         }
 
     def _build_price_frame(self) -> Optional[pd.DataFrame]:

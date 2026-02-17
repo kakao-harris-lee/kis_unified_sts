@@ -12,8 +12,9 @@ import re
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict, List, Optional, Tuple
 
+import numpy as np
 import pandas as pd
 
 from shared.kis.auth import KISAuthConfig
@@ -375,57 +376,9 @@ JSON만 출력하고 다른 설명은 생략해주세요."""
         backtest: dict | None,
     ) -> AnalysisResult:
         """API 실패 시 규칙 기반 분석"""
-        score = 0
-        reasons = []
-        risks = []
-
-        if technical:
-            rsi = technical.get("rsi", 50)
-            if rsi < 30:
-                score += 20
-                reasons.append(f"RSI 과매도 ({rsi:.1f})")
-            elif rsi > 70:
-                score -= 20
-                risks.append(f"RSI 과매수 ({rsi:.1f})")
-
-            macd_hist = technical.get("macd_hist", 0)
-            if macd_hist > 0:
-                score += 10
-                reasons.append("MACD 상승 신호")
-            elif macd_hist < 0:
-                score -= 10
-                risks.append("MACD 하락 신호")
-
-        if backtest:
-            win_rate = backtest.get("win_rate", 50)
-            total_return = backtest.get("total_return", 0)
-
-            if win_rate >= 55:
-                score += 15
-                reasons.append(f"백테스트 승률 우수 ({win_rate:.1f}%)")
-            elif win_rate < 45:
-                score -= 15
-                risks.append(f"백테스트 승률 저조 ({win_rate:.1f}%)")
-
-            if total_return > 5:
-                score += 10
-                reasons.append(f"백테스트 수익률 양호 ({total_return:+.1f}%)")
-
-        if score >= 40:
-            recommendation = "강력매수"
-        elif score >= 20:
-            recommendation = "매수"
-        elif score <= -40:
-            recommendation = "강력매도"
-        elif score <= -20:
-            recommendation = "매도"
-        else:
-            recommendation = "관망"
-
-        if not reasons:
-            reasons = ["분석 데이터 부족"]
-        if not risks:
-            risks = ["데이터 불충분으로 판단 불확실"]
+        score, reasons, risks = self._fallback_score_components(technical, backtest)
+        recommendation = self._fallback_recommendation(score)
+        reasons, risks = self._fallback_defaults(reasons, risks)
 
         return AnalysisResult(
             code=code,
@@ -440,6 +393,78 @@ JSON만 출력하고 다른 설명은 생략해주세요."""
             position_size=0.1,
             time_horizon="단기(1-3일)",
         )
+
+    def _fallback_score_components(
+        self,
+        technical: Optional[Dict],
+        backtest: Optional[Dict],
+    ) -> tuple[int, List[str], List[str]]:
+        score = 0
+        reasons: List[str] = []
+        risks: List[str] = []
+        if technical:
+            score += self._fallback_score_technical(technical, reasons, risks)
+        if backtest:
+            score += self._fallback_score_backtest(backtest, reasons, risks)
+        return score, reasons, risks
+
+    @staticmethod
+    def _fallback_score_technical(technical: Dict, reasons: List[str], risks: List[str]) -> int:
+        score = 0
+        rsi = technical.get("rsi", 50)
+        if rsi < 30:
+            score += 20
+            reasons.append(f"RSI 과매도 ({rsi:.1f})")
+        elif rsi > 70:
+            score -= 20
+            risks.append(f"RSI 과매수 ({rsi:.1f})")
+
+        macd_hist = technical.get("macd_hist", 0)
+        if macd_hist > 0:
+            score += 10
+            reasons.append("MACD 상승 신호")
+        elif macd_hist < 0:
+            score -= 10
+            risks.append("MACD 하락 신호")
+        return score
+
+    @staticmethod
+    def _fallback_score_backtest(backtest: Dict, reasons: List[str], risks: List[str]) -> int:
+        score = 0
+        win_rate = backtest.get("win_rate", 50)
+        total_return = backtest.get("total_return", 0)
+
+        if win_rate >= 55:
+            score += 15
+            reasons.append(f"백테스트 승률 우수 ({win_rate:.1f}%)")
+        elif win_rate < 45:
+            score -= 15
+            risks.append(f"백테스트 승률 저조 ({win_rate:.1f}%)")
+
+        if total_return > 5:
+            score += 10
+            reasons.append(f"백테스트 수익률 양호 ({total_return:+.1f}%)")
+        return score
+
+    @staticmethod
+    def _fallback_recommendation(score: int) -> str:
+        if score >= 40:
+            return "강력매수"
+        if score >= 20:
+            return "매수"
+        if score <= -40:
+            return "강력매도"
+        if score <= -20:
+            return "매도"
+        return "관망"
+
+    @staticmethod
+    def _fallback_defaults(reasons: List[str], risks: List[str]) -> tuple[List[str], List[str]]:
+        if not reasons:
+            reasons = ["분석 데이터 부족"]
+        if not risks:
+            risks = ["데이터 불충분으로 판단 불확실"]
+        return reasons, risks
 
 
 # ============================================================
@@ -609,6 +634,210 @@ class UnifiedTradingAnalyzer:
         current_price: float,
     ) -> dict[str, Any]:
         return await _llm_scoring.collect_target_price_signal(self, code, current_price)
+
+    def _collect_market_frames(self) -> tuple[list["pd.DataFrame"], list[str]]:
+        market_kospi = self.stock_collector.collect("KOSPI")
+        market_kosdaq = self.stock_collector.collect("KOSDAQ")
+        frames: list["pd.DataFrame"] = []
+        markets: list[str] = []
+        if market_kospi is not None and len(market_kospi) > 0:
+            frames.append(market_kospi)
+            markets.append("KOSPI")
+        if market_kosdaq is not None and len(market_kosdaq) > 0:
+            frames.append(market_kosdaq)
+            markets.append("KOSDAQ")
+        return frames, markets
+
+    def _merge_market_frames(self, frames: list["pd.DataFrame"]) -> Optional["pd.DataFrame"]:
+        if not frames:
+            return None
+        if len(frames) == 1:
+            return frames[0]
+        import pandas as pd
+
+        return pd.concat(frames, axis=0)
+
+    def _prepare_market_df(
+        self,
+        market_df: "pd.DataFrame",
+    ) -> tuple[Optional["pd.DataFrame"], bool, Optional[Dict[str, Any]]]:
+        if market_df is None or len(market_df) == 0:
+            logger.error("Failed to collect market data")
+            return None, False, None
+
+        required_cols = ["종가", "시가", "거래량", "시가총액"]
+        missing_cols = [c for c in required_cols if c not in market_df.columns]
+        if missing_cols:
+            logger.error(f"Market data missing columns: {missing_cols}")
+            error_meta = {"_excluded": {"_error": [f"missing_columns:{','.join(missing_cols)}"]}}
+            return None, False, error_meta
+
+        trade_value_fallback = False
+        if "거래대금" not in market_df.columns:
+            trade_value_fallback = True
+            market_df = market_df.copy()
+            market_df["거래대금"] = market_df["종가"] * market_df["거래량"]
+
+        market_df["거래대금"] = pd.to_numeric(market_df["거래대금"], errors="coerce")
+        market_df["시가총액"] = pd.to_numeric(market_df["시가총액"], errors="coerce")
+        market_df["거래량"] = pd.to_numeric(market_df["거래량"], errors="coerce")
+        market_df = market_df.dropna(subset=["거래대금", "시가총액", "거래량", "종가", "시가"])
+        return market_df, trade_value_fallback, None
+
+    def _filter_market_df(self, market_df: "pd.DataFrame") -> "pd.DataFrame":
+        filtered = market_df[
+            (market_df["종가"] >= self.config.stock_min_price)
+            & (market_df["종가"] <= self.config.stock_max_price)
+            & (market_df["시가총액"] >= self.config.stock_min_market_cap)
+            & (market_df["시가총액"] <= self.config.stock_max_market_cap)
+            & (market_df["거래대금"] >= self.config.stock_min_trade_value)
+        ].copy()
+
+        filtered["거래대금비율"] = (
+            filtered["거래대금"] / filtered["시가총액"].replace(0, np.nan)
+        )
+        filtered = filtered[filtered["거래대금비율"] >= self.config.stock_min_turnover]
+        filtered["등락률"] = (filtered["종가"] - filtered["시가"]) / filtered["시가"] * 100
+        return filtered
+
+    def _build_screened_stocks(
+        self,
+        top_volume: "pd.DataFrame",
+    ) -> tuple[list[StockInfo], Dict[str, List[str]]]:
+        stocks: list[StockInfo] = []
+        excluded: Dict[str, List[str]] = {}
+        for code in top_volume.index:
+            row = top_volume.loc[code]
+            name = self.stock_collector.get_stock_name(code)
+            name_exclusions = self._name_exclusion_reasons(name)
+            if name_exclusions:
+                excluded[code] = name_exclusions
+                continue
+            stocks.append(StockInfo(
+                code=code, name=name,
+                price=row['종가'], change_pct=round(row['등락률'], 2),
+                volume=int(row['거래량']), volume_ratio=1.0,
+                market_cap=row['시가총액'],
+                trade_value=float(row.get("거래대금", 0.0)),
+                turnover=float(row.get("거래대금비율", 0.0)),
+            ))
+        return stocks, excluded
+
+    def _collect_stock_history(
+        self,
+        stock: StockInfo,
+        history_days: int,
+    ) -> tuple[Optional["pd.DataFrame"], Optional[List[str]]]:
+        df = self.stock_collector.get_stock_history(stock.code, history_days)
+        if df is None or len(df) < int(self.config.stock_min_history_days):
+            reason = [f"history_insufficient:{0 if df is None else len(df)}"]
+            return None, reason
+
+        required_hist_cols = ["종가", "고가", "저가", "거래량"]
+        missing_hist_cols = [c for c in required_hist_cols if c not in df.columns]
+        if missing_hist_cols:
+            return None, [f"history_missing:{','.join(missing_hist_cols)}"]
+
+        if "거래대금" not in df.columns:
+            df = df.copy()
+            df["거래대금"] = df["종가"] * df["거래량"]
+        return df, None
+
+    def _compute_liquidity_metrics(
+        self,
+        df: "pd.DataFrame",
+        stock: StockInfo,
+    ) -> tuple[Optional[Dict[str, Any]], Optional[List[str]]]:
+        lookback = max(1, int(self.config.stock_volume_lookback_days))
+        vol_window = df["거래량"].tail(lookback + 1)
+        avg_volume = float(vol_window.iloc[:-1].mean()) if len(vol_window) > 1 else float(vol_window.mean())
+        stock.volume_ratio = round((stock.volume / avg_volume) if avg_volume > 0 else 1.0, 2)
+        if avg_volume < float(self.config.stock_min_avg_volume):
+            return None, [f"min_avg_volume:{int(avg_volume)}"]
+
+        trade_window = df["거래대금"].tail(lookback + 1)
+        avg_trade_value = float(trade_window.iloc[:-1].mean()) if len(trade_window) > 1 else float(trade_window.mean())
+        if avg_trade_value < float(self.config.stock_min_trade_value):
+            return None, [f"min_avg_trade_value:{int(avg_trade_value)}"]
+
+        return {
+            "avg_volume": avg_volume,
+            "avg_trade_value": avg_trade_value,
+        }, None
+
+    def _compute_risk_metrics(self, df: "pd.DataFrame") -> Dict[str, Any]:
+        close = df["종가"].astype(float)
+        returns = close.pct_change()
+        momentum = self._calc_momentum_metrics(close, int(self.config.stock_momentum_lookback_days))
+        consecutive_up = self._calc_consecutive_up(returns)
+        atr_pct = self._calc_atr_pct(df)
+        max_dd = self._calc_max_drawdown(close)
+        volatility = float(returns.std() * np.sqrt(252)) if returns is not None else 0.0
+        return {
+            "momentum": momentum,
+            "consecutive_up": consecutive_up,
+            "atr_pct": atr_pct,
+            "max_drawdown_pct": max_dd,
+            "volatility": volatility,
+        }
+
+    def _collect_external_sources(
+        self,
+        stock: StockInfo,
+    ) -> tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
+        mk_news: Dict[str, Any] = {}
+        try:
+            mk_news = self.mk_news_collector.collect(stock.code)
+            all_news = mk_news.get("market_news", []) + mk_news.get("stock_news", [])
+            mk_news["sentiment"] = self.mk_news_collector.analyze_sentiment(all_news).value
+        except Exception as e:
+            logger.debug(f"MK news failed for {stock.code}: {e}")
+
+        dart_data: Dict[str, Any] = {}
+        try:
+            corp_code = self._dart_corp_mapper.get_corp_code(stock.code)
+            dart_data = (
+                self.dart_collector.collect(corp_code)
+                if corp_code
+                else {"error": "corp_code_not_found"}
+            )
+        except Exception as e:
+            logger.debug(f"DART data failed for {stock.code}: {e}")
+
+        ksd_data: Dict[str, Any] = {}
+        try:
+            ksd_data = self.ksd_collector.collect(stock.code)
+        except Exception as e:
+            logger.debug(f"KSD data failed for {stock.code}: {e}")
+
+        krx_stock_info: Dict[str, Any] = {}
+        try:
+            krx_stock_info = self.krx_collector.get_stock_info(stock.code) or {}
+        except Exception as e:
+            logger.debug(f"KRX stock info failed for {stock.code}: {e}")
+
+        return mk_news, dart_data, ksd_data, krx_stock_info
+
+    def _build_screening_metrics(
+        self,
+        stock: StockInfo,
+        liquidity: Dict[str, Any],
+        risk: Dict[str, Any],
+        risk_hits: List[str],
+    ) -> Dict[str, Any]:
+        return {
+            "avg_volume": round(float(liquidity.get("avg_volume", 0.0)), 2),
+            "avg_trade_value": round(float(liquidity.get("avg_trade_value", 0.0)), 2),
+            "volume_ratio": stock.volume_ratio,
+            "trade_value": round(stock.trade_value, 2),
+            "turnover": round(stock.turnover, 6),
+            "momentum": risk.get("momentum", {}),
+            "consecutive_up": int(risk.get("consecutive_up", 0)),
+            "atr_pct": round(float(risk.get("atr_pct", 0.0)), 4),
+            "max_drawdown_pct": round(float(risk.get("max_drawdown_pct", 0.0)), 4),
+            "volatility": round(float(risk.get("volatility", 0.0)), 4),
+            "risk_keywords": risk_hits,
+        }
 
     def _score_stock_candidate(
         self,
@@ -783,40 +1012,108 @@ class UnifiedTradingAnalyzer:
             label = err.source if not err.detail else f"{err.source}:{err.detail}"
             missing_sources.append(label)
 
-        # 글로벌 시장
-        global_data = None
-        try:
-            global_data = self.futures_global_collector.collect()
-        except DataUnavailableError as e:
-            _record_missing(e)
+        global_data = self._collect_futures_global(_record_missing)
+        events, high_events = self._collect_futures_events(_record_missing)
+        flow_data = self._collect_futures_flow(_record_missing, missing_sources)
+        technical = self._collect_futures_technical(_record_missing)
+        overall_score = self._compute_futures_score(global_data, flow_data, technical, high_events)
+        overall_bias = self._determine_futures_bias(overall_score)
 
-        # 경제 이벤트
-        events: list[Any] = []
-        high_events: list[Any] = []
+        direction, confidence, entry, stop_loss, take_profit, entry_cond = self._build_futures_strategy(
+            overall_score, technical
+        )
+
+        position = "풀" if confidence == "높음" else "하프" if confidence == "중간" else "쿼터"
+        time_horizon = "장중" if high_events else "오버나이트"
+
+        catalysts, risks = self._build_futures_catalysts_and_risks(
+            global_data,
+            flow_data,
+            high_events,
+            technical,
+            missing_sources,
+        )
+
+        plan = self._build_futures_plan(
+            technical,
+            direction,
+            confidence,
+            entry_cond,
+            entry,
+            stop_loss,
+            take_profit,
+            position,
+            time_horizon,
+            risks,
+            catalysts,
+        )
+
+        analysis_data = self._build_futures_analysis_data(
+            overall_score,
+            overall_bias,
+            global_data,
+            flow_data,
+            technical,
+            events,
+            missing_sources,
+        )
+
+        logger.info(f"Futures recommendation: {direction} ({confidence})")
+        return plan, analysis_data
+
+    def _collect_futures_global(
+        self,
+        record_missing,
+    ) -> Optional[Any]:
+        try:
+            return self.futures_global_collector.collect()
+        except DataUnavailableError as e:
+            record_missing(e)
+        return None
+
+    def _collect_futures_events(
+        self,
+        record_missing,
+    ) -> tuple[List[Any], List[Any]]:
         try:
             events = self.futures_event_collector.collect()
             high_events = [e for e in events if e.importance == "높음"]
+            return events, high_events
         except DataUnavailableError as e:
-            _record_missing(e)
+            record_missing(e)
+        return [], []
 
-        # 수급
-        flow_data = None
-        flow_missing: list[str] = []
+    def _collect_futures_flow(
+        self,
+        record_missing,
+        missing_sources: List[str],
+    ) -> Optional[Any]:
         try:
             flow_data, flow_missing = self.futures_flow_collector.collect()
             missing_sources.extend([f"futures_flow:{m}" for m in flow_missing])
+            return flow_data
         except DataUnavailableError as e:
-            _record_missing(e)
+            record_missing(e)
+        return None
 
-        # 기술적 분석
-        technical = None
+    def _collect_futures_technical(
+        self,
+        record_missing,
+    ) -> Optional[Dict[str, Any]]:
         try:
-            technical = self.futures_tech_analyzer.analyze()
+            return self.futures_tech_analyzer.analyze()
         except DataUnavailableError as e:
-            _record_missing(e)
+            record_missing(e)
+        return None
 
-        # 종합 판단
-        score_components: list[tuple[float, float]] = []
+    def _compute_futures_score(
+        self,
+        global_data,
+        flow_data,
+        technical,
+        high_events: List[Any],
+    ) -> float:
+        score_components: List[Tuple[float, float]] = []
         if global_data is not None:
             score_components.append(
                 (global_data.global_score, self.config.futures_weight_global)
@@ -838,79 +1135,91 @@ class UnifiedTradingAnalyzer:
 
         if high_events:
             overall_score *= 0.8
+        return overall_score
 
+    @staticmethod
+    def _determine_futures_bias(overall_score: float) -> MarketBias:
         if overall_score >= 30:
-            overall_bias = MarketBias.STRONG_BULLISH
-        elif overall_score >= 15:
-            overall_bias = MarketBias.BULLISH
-        elif overall_score <= -30:
-            overall_bias = MarketBias.STRONG_BEARISH
-        elif overall_score <= -15:
-            overall_bias = MarketBias.BEARISH
-        else:
-            overall_bias = MarketBias.NEUTRAL
+            return MarketBias.STRONG_BULLISH
+        if overall_score >= 15:
+            return MarketBias.BULLISH
+        if overall_score <= -30:
+            return MarketBias.STRONG_BEARISH
+        if overall_score <= -15:
+            return MarketBias.BEARISH
+        return MarketBias.NEUTRAL
 
-        # 전략 생성
-        insufficient_data = len(score_components) < 2 or technical is None
+    def _build_futures_strategy(
+        self,
+        overall_score: float,
+        technical: Optional[Dict[str, Any]],
+    ) -> tuple[str, str, float, float, float, str]:
+        insufficient_data = technical is None
+        entry = technical["index_price"] if technical else 0.0
         if insufficient_data:
-            direction = "관망"
-            confidence = "낮음"
-            entry = technical["index_price"] if technical else 0.0
-            stop_loss = 0
-            take_profit = 0
-            entry_cond = "데이터 부족으로 관망"
-        elif overall_score >= 25:
-            direction = "롱"
+            return "관망", "낮음", entry, 0, 0, "데이터 부족으로 관망"
+
+        if overall_score >= 25:
             confidence = "높음" if overall_score >= 40 else "중간"
-            entry = technical["index_price"]
             stop_loss = entry - self.config.futures_stop_loss_pt
             take_profit = entry + self.config.futures_take_profit_pt
             entry_cond = f"5일선({technical['ma5']:.2f}) 돌파 또는 시가 진입"
-        elif overall_score <= -25:
-            direction = "숏"
+            return "롱", confidence, entry, stop_loss, take_profit, entry_cond
+
+        if overall_score <= -25:
             confidence = "높음" if overall_score <= -40 else "중간"
-            entry = technical["index_price"]
             stop_loss = entry + self.config.futures_stop_loss_pt
             take_profit = entry - self.config.futures_take_profit_pt
             entry_cond = f"5일선({technical['ma5']:.2f}) 이탈 또는 시가 진입"
-        else:
-            direction = "관망"
-            confidence = "낮음"
-            entry = technical["index_price"] if technical else 0.0
-            stop_loss = 0
-            take_profit = 0
-            entry_cond = "조건 충족 시까지 대기"
+            return "숏", confidence, entry, stop_loss, take_profit, entry_cond
 
-        position = (
-            "풀" if confidence == "높음" else "하프" if confidence == "중간" else "쿼터"
-        )
-        time_horizon = "장중" if high_events else "오버나이트"
+        return "관망", "낮음", entry, 0, 0, "조건 충족 시까지 대기"
 
-        # 촉매/리스크
-        catalysts = []
+    def _build_futures_catalysts_and_risks(
+        self,
+        global_data,
+        flow_data,
+        high_events: List[Any],
+        technical: Optional[Dict[str, Any]],
+        missing_sources: List[str],
+    ) -> tuple[List[str], List[str]]:
+        catalysts: List[str] = []
+        risks: List[str] = []
+
+        self._append_global_catalysts(global_data, catalysts)
+        self._append_flow_catalysts(flow_data, catalysts)
+        self._append_flow_risks(flow_data, risks)
+        self._append_market_risks(global_data, high_events, technical, risks)
+        self._append_missing_source_risks(missing_sources, risks)
+
+        return catalysts, risks
+
+    @staticmethod
+    def _append_global_catalysts(global_data, catalysts: List[str]) -> None:
         if global_data and global_data.sp500_change_pct > 0.5:
             catalysts.append(f"미국 증시 강세 ({global_data.sp500_change_pct:+.1f}%)")
-        if (
-            flow_data
-            and flow_data.foreign_futures_5d is not None
-            and flow_data.foreign_futures_5d > 15000
-        ):
-            catalysts.append(
-                f"외국인 5일 순매수 ({flow_data.foreign_futures_5d:+,.0f})"
-            )
+
+    @staticmethod
+    def _append_flow_catalysts(flow_data, catalysts: List[str]) -> None:
+        if flow_data and flow_data.foreign_futures_5d is not None and flow_data.foreign_futures_5d > 15000:
+            catalysts.append(f"외국인 5일 순매수 ({flow_data.foreign_futures_5d:+,.0f})")
         if flow_data and flow_data.basis is not None and flow_data.basis < -1:
             catalysts.append(f"선물 저평가 (베이시스 {flow_data.basis:.2f}pt)")
-        if flow_data and flow_data.microstructure_score is not None:
-            if flow_data.microstructure_score >= 6:
-                catalysts.append(
-                    f"단기 주문흐름 매수 우위 (점수 {flow_data.microstructure_score:+.1f})"
-                )
-            elif flow_data.microstructure_score <= -6:
-                risks.append(
-                    f"단기 주문흐름 매도 우위 (점수 {flow_data.microstructure_score:+.1f})"
-                )
 
-        risks = []
+    @staticmethod
+    def _append_flow_risks(flow_data, risks: List[str]) -> None:
+        if not flow_data or flow_data.microstructure_score is None:
+            return
+        if flow_data.microstructure_score <= -6:
+            risks.append(f"단기 주문흐름 매도 우위 (점수 {flow_data.microstructure_score:+.1f})")
+
+    @staticmethod
+    def _append_market_risks(
+        global_data,
+        high_events: List[Any],
+        technical: Optional[Dict[str, Any]],
+        risks: List[str],
+    ) -> None:
         if global_data and global_data.vix > 20:
             risks.append(f"VIX {global_data.vix:.1f} 상승")
         if high_events:
@@ -920,30 +1229,52 @@ class UnifiedTradingAnalyzer:
         elif technical and technical["rsi"] < 30:
             risks.append(f"RSI {technical['rsi']:.0f} 과매도")
 
+    @staticmethod
+    def _append_missing_source_risks(missing_sources: List[str], risks: List[str]) -> None:
         if missing_sources:
             risks.append(f"데이터 누락: {', '.join(missing_sources)}")
 
-        plan = None
-        if technical is not None:
-            plan = FuturesTradingPlan(
-                direction=direction,
-                confidence=confidence,
-                entry_condition=entry_cond,
-                entry_price=round(entry, 2),
-                stop_loss=round(stop_loss, 2),
-                take_profit=round(take_profit, 2),
-                position_size=position,
-                time_horizon=time_horizon,
-                key_levels=[
-                    technical["pivot"],
-                    technical["support_1"],
-                    technical["resistance_1"],
-                ],
-                risk_factors=risks,
-                catalysts=catalysts,
-            )
+    def _build_futures_plan(
+        self,
+        technical: Optional[Dict[str, Any]],
+        direction: str,
+        confidence: str,
+        entry_cond: str,
+        entry: float,
+        stop_loss: float,
+        take_profit: float,
+        position: str,
+        time_horizon: str,
+        risks: List[str],
+        catalysts: List[str],
+    ) -> Optional[FuturesTradingPlan]:
+        if technical is None:
+            return None
+        return FuturesTradingPlan(
+            direction=direction,
+            confidence=confidence,
+            entry_condition=entry_cond,
+            entry_price=round(entry, 2),
+            stop_loss=round(stop_loss, 2),
+            take_profit=round(take_profit, 2),
+            position_size=position,
+            time_horizon=time_horizon,
+            key_levels=[technical['pivot'], technical['support_1'], technical['resistance_1']],
+            risk_factors=risks,
+            catalysts=catalysts
+        )
 
-        analysis_data = {
+    @staticmethod
+    def _build_futures_analysis_data(
+        overall_score: float,
+        overall_bias: MarketBias,
+        global_data,
+        flow_data,
+        technical,
+        events: List[Any],
+        missing_sources: List[str],
+    ) -> Dict[str, Any]:
+        return {
             "overall_score": round(overall_score, 1),
             "overall_bias": overall_bias.value,
             "global": asdict(global_data) if global_data else None,
@@ -952,9 +1283,6 @@ class UnifiedTradingAnalyzer:
             "events": [asdict(e) for e in events[:5]] if events else [],
             "missing_sources": missing_sources,
         }
-
-        logger.info(f"Futures recommendation: {direction} ({confidence})")
-        return plan, analysis_data
 
     async def _send_telegram_alerts(
         self,
@@ -1010,7 +1338,6 @@ class UnifiedTradingAnalyzer:
     def generate_detailed_briefing(self, code: str) -> StockDetailedBriefing | None:
         """종목 코드에 대한 상세 브리핑 생성"""
         return _stock_analysis.generate_detailed_briefing(self, code)
-
 
 # ============================================================
 # Convenience Functions

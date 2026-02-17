@@ -106,73 +106,126 @@ class UnifiedMarketAnalyzer:
         Returns:
             MarketAnalysis 결과
         """
-        if verbose:
-            print("\n" + "=" * 70)
-            print("Unified Market Analyzer")
-            print("=" * 70)
-            print(f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-            print(f"Mode: {mode}")
+        self._print_header(mode, verbose)
 
-        # 분석 수행
-        etf_flows = []
-        futures = None
-        options = None
-        bonds = None
-        indices = []
-        technical = {}
+        etf_flows = self._run_etf_flow_analysis(mode, verbose)
+        futures, technical = self._run_futures_analysis(mode, verbose)
+        options = self._run_options_analysis(mode, verbose)
+        bonds = self._run_bond_analysis(mode, verbose)
+        indices = self._run_index_analysis(mode, verbose)
 
-        if mode in ("all", "etf"):
-            if verbose:
-                print("\n[1/5] ETF Flow Analysis...")
-            etf_flows = self.etf_analyzer.analyze()
-            if verbose:
-                print(f"  Analyzed {len(etf_flows)} sectors")
-
-        if mode in ("all", "futures"):
-            if verbose:
-                print("\n[2/5] Futures Analysis...")
-            futures = self.futures_analyzer.analyze()
-            technical = self.technical_analyzer.analyze()
-            if verbose:
-                print(f"  KOSPI200: {futures.close_price:.2f}")
-
-        if mode in ("all", "options"):
-            if verbose:
-                print("\n[3/5] Options Analysis...")
-            options = self.options_analyzer.analyze()
-            if verbose:
-                print(f"  Put/Call Ratio: {options.put_call_ratio:.2f}")
-
-        if mode in ("all", "bonds"):
-            if verbose:
-                print("\n[4/5] Bond Analysis...")
-            bonds = self.bond_analyzer.analyze()
-            if verbose:
-                print(f"  Risk Mode: {bonds.risk_mode.value}")
-
-        if mode in ("all", "indices"):
-            if verbose:
-                print("\n[5/5] Index Analysis...")
-            indices = self.index_analyzer.analyze()
-            if verbose:
-                print(f"  Analyzed {len(indices)} indices")
-
-        # 종합 판단
         overall_signal, risk_mode = self._determine_overall_signal(
             etf_flows, futures, options, bonds
         )
+        sector_rotation = self._build_sector_rotation(etf_flows)
 
-        sector_rotation = {e.sector: e.signal for e in etf_flows}
-
-        # LLM 분석
         if verbose:
             print("\n[LLM] Running AI analysis...")
         llm_summary, llm_strategy, key_points = self._run_llm_analysis(
             etf_flows, futures, options, bonds, indices, technical
         )
 
-        # 결과 생성
-        analysis = MarketAnalysis(
+        analysis = self._build_market_analysis(
+            etf_flows,
+            futures,
+            options,
+            bonds,
+            indices,
+            overall_signal,
+            risk_mode,
+            sector_rotation,
+            llm_summary,
+            llm_strategy,
+            key_points,
+        )
+
+        self._print_footer(verbose, overall_signal, risk_mode, llm_summary)
+        return analysis
+
+    @staticmethod
+    def _print_header(mode: str, verbose: bool) -> None:
+        if not verbose:
+            return
+        print("\n" + "=" * 70)
+        print("Unified Market Analyzer")
+        print("=" * 70)
+        print(f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"Mode: {mode}")
+
+    def _run_etf_flow_analysis(self, mode: str, verbose: bool) -> List[ETFFlowData]:
+        if mode not in ("all", "etf"):
+            return []
+        if verbose:
+            print("\n[1/5] ETF Flow Analysis...")
+        etf_flows = self.etf_analyzer.analyze()
+        if verbose:
+            print(f"  Analyzed {len(etf_flows)} sectors")
+        return etf_flows
+
+    def _run_futures_analysis(
+        self,
+        mode: str,
+        verbose: bool,
+    ) -> tuple[Optional[FuturesData], dict]:
+        if mode not in ("all", "futures"):
+            return None, {}
+        if verbose:
+            print("\n[2/5] Futures Analysis...")
+        futures = self.futures_analyzer.analyze()
+        technical = self.technical_analyzer.analyze()
+        if verbose:
+            print(f"  KOSPI200: {futures.close_price:.2f}")
+        return futures, technical
+
+    def _run_options_analysis(self, mode: str, verbose: bool) -> Optional[OptionsData]:
+        if mode not in ("all", "options"):
+            return None
+        if verbose:
+            print("\n[3/5] Options Analysis...")
+        options = self.options_analyzer.analyze()
+        if verbose:
+            print(f"  Put/Call Ratio: {options.put_call_ratio:.2f}")
+        return options
+
+    def _run_bond_analysis(self, mode: str, verbose: bool) -> Optional[BondData]:
+        if mode not in ("all", "bonds"):
+            return None
+        if verbose:
+            print("\n[4/5] Bond Analysis...")
+        bonds = self.bond_analyzer.analyze()
+        if verbose:
+            print(f"  Risk Mode: {bonds.risk_mode.value}")
+        return bonds
+
+    def _run_index_analysis(self, mode: str, verbose: bool) -> List[IndexData]:
+        if mode not in ("all", "indices"):
+            return []
+        if verbose:
+            print("\n[5/5] Index Analysis...")
+        indices = self.index_analyzer.analyze()
+        if verbose:
+            print(f"  Analyzed {len(indices)} indices")
+        return indices
+
+    @staticmethod
+    def _build_sector_rotation(etf_flows: List[ETFFlowData]) -> dict:
+        return {e.sector: e.signal for e in etf_flows}
+
+    @staticmethod
+    def _build_market_analysis(
+        etf_flows: List[ETFFlowData],
+        futures: Optional[FuturesData],
+        options: Optional[OptionsData],
+        bonds: Optional[BondData],
+        indices: List[IndexData],
+        overall_signal: MarketSignal,
+        risk_mode: RiskMode,
+        sector_rotation: dict,
+        llm_summary: str,
+        llm_strategy: str,
+        key_points: List[str],
+    ) -> MarketAnalysis:
+        return MarketAnalysis(
             date=datetime.now().strftime("%Y-%m-%d"),
             etf_flows=etf_flows,
             futures=futures,
@@ -187,15 +240,21 @@ class UnifiedMarketAnalyzer:
             key_points=key_points,
         )
 
-        if verbose:
-            print("\n" + "=" * 70)
-            print("Analysis Complete")
-            print("=" * 70)
-            print(f"Signal: {overall_signal.value}")
-            print(f"Risk Mode: {risk_mode.value}")
-            print(f"Summary: {llm_summary[:80]}...")
-
-        return analysis
+    @staticmethod
+    def _print_footer(
+        verbose: bool,
+        overall_signal: MarketSignal,
+        risk_mode: RiskMode,
+        llm_summary: str,
+    ) -> None:
+        if not verbose:
+            return
+        print("\n" + "=" * 70)
+        print("Analysis Complete")
+        print("=" * 70)
+        print(f"Signal: {overall_signal.value}")
+        print(f"Risk Mode: {risk_mode.value}")
+        print(f"Summary: {llm_summary[:80]}...")
 
     def _determine_overall_signal(
         self,
@@ -206,58 +265,75 @@ class UnifiedMarketAnalyzer:
     ) -> Tuple[MarketSignal, RiskMode]:
         """종합 시장 신호 판단"""
         score = 0
+        score += self._score_etf_flows(etf_flows)
+        score += self._score_futures(futures)
+        score += self._score_options(options)
+        bond_score, risk_mode = self._score_bonds(bonds)
+        score += bond_score
 
-        # ETF 자금흐름
-        if etf_flows:
-            strong = len([e for e in etf_flows if e.signal in ("강세", "상승")])
-            weak = len([e for e in etf_flows if e.signal in ("약세", "하락")])
-            score += (strong - weak) * 5
-
-        # 선물
-        if futures:
-            if futures.change_rate > 0.5:
-                score += 15
-            elif futures.change_rate > 0:
-                score += 5
-            elif futures.change_rate < -0.5:
-                score -= 15
-            elif futures.change_rate < 0:
-                score -= 5
-
-            if futures.basis > 0.5:
-                score += 5  # 콘탱고
-            elif futures.basis < -0.5:
-                score -= 5  # 백워데이션
-
-        # 옵션 (역행 지표)
-        if options:
-            if options.put_call_ratio > 1.2:
-                score += 10  # 극단적 비관 -> 반등 기대
-            elif options.put_call_ratio < 0.8:
-                score -= 10  # 극단적 낙관 -> 조정 주의
-
-        # 채권
-        risk_mode = RiskMode.NEUTRAL
-        if bonds:
-            risk_mode = bonds.risk_mode
-            if bonds.risk_mode == RiskMode.RISK_ON:
-                score += 10
-            elif bonds.risk_mode == RiskMode.RISK_OFF:
-                score -= 10
-
-        # 종합 신호 결정
-        if score >= 30:
-            signal = MarketSignal.STRONG_BULLISH
-        elif score >= 10:
-            signal = MarketSignal.BULLISH
-        elif score <= -30:
-            signal = MarketSignal.STRONG_BEARISH
-        elif score <= -10:
-            signal = MarketSignal.BEARISH
-        else:
-            signal = MarketSignal.NEUTRAL
-
+        signal = self._score_to_signal(score)
         return signal, risk_mode
+
+    @staticmethod
+    def _score_etf_flows(etf_flows: List[ETFFlowData]) -> int:
+        if not etf_flows:
+            return 0
+        strong = len([e for e in etf_flows if e.signal in ("강세", "상승")])
+        weak = len([e for e in etf_flows if e.signal in ("약세", "하락")])
+        return (strong - weak) * 5
+
+    @staticmethod
+    def _score_futures(futures: Optional[FuturesData]) -> int:
+        if not futures:
+            return 0
+        score = 0
+        if futures.change_rate > 0.5:
+            score += 15
+        elif futures.change_rate > 0:
+            score += 5
+        elif futures.change_rate < -0.5:
+            score -= 15
+        elif futures.change_rate < 0:
+            score -= 5
+
+        if futures.basis > 0.5:
+            score += 5  # 콘탱고
+        elif futures.basis < -0.5:
+            score -= 5  # 백워데이션
+        return score
+
+    @staticmethod
+    def _score_options(options: Optional[OptionsData]) -> int:
+        if not options:
+            return 0
+        if options.put_call_ratio > 1.2:
+            return 10  # 극단적 비관 -> 반등 기대
+        if options.put_call_ratio < 0.8:
+            return -10  # 극단적 낙관 -> 조정 주의
+        return 0
+
+    @staticmethod
+    def _score_bonds(bonds: Optional[BondData]) -> Tuple[int, RiskMode]:
+        if not bonds:
+            return 0, RiskMode.NEUTRAL
+
+        if bonds.risk_mode == RiskMode.RISK_ON:
+            return 10, bonds.risk_mode
+        if bonds.risk_mode == RiskMode.RISK_OFF:
+            return -10, bonds.risk_mode
+        return 0, bonds.risk_mode
+
+    @staticmethod
+    def _score_to_signal(score: int) -> MarketSignal:
+        if score >= 30:
+            return MarketSignal.STRONG_BULLISH
+        if score >= 10:
+            return MarketSignal.BULLISH
+        if score <= -30:
+            return MarketSignal.STRONG_BEARISH
+        if score <= -10:
+            return MarketSignal.BEARISH
+        return MarketSignal.NEUTRAL
 
     def _run_llm_analysis(
         self,
@@ -421,11 +497,24 @@ class UnifiedMarketAnalyzer:
         _indices: List[IndexData],
     ) -> Tuple[str, str, List[str]]:
         """LLM 없이 규칙 기반 분석"""
-        # 강세/약세 섹터
+        strong, weak = self._fallback_sector_lists(etf_flows)
+        summary = self._fallback_summary(strong, weak, options)
+        strategy = self._fallback_strategy(bonds, strong)
+        key_points = self._fallback_key_points(strong, weak, futures, options, bonds)
+        return summary, strategy, key_points
+
+    @staticmethod
+    def _fallback_sector_lists(etf_flows: List[ETFFlowData]) -> tuple[List[str], List[str]]:
         strong = [e.sector for e in etf_flows if e.signal in ("강세", "상승")]
         weak = [e.sector for e in etf_flows if e.signal in ("약세", "하락")]
+        return strong, weak
 
-        # 요약 생성
+    @staticmethod
+    def _fallback_summary(
+        strong: List[str],
+        weak: List[str],
+        options: Optional[OptionsData],
+    ) -> str:
         if len(strong) > len(weak):
             summary = f"시장은 상승 흐름. {', '.join(strong[:2])} 섹터가 강세. "
         elif len(weak) > len(strong):
@@ -436,32 +525,36 @@ class UnifiedMarketAnalyzer:
         if options:
             pcr_text = "비관적" if options.put_call_ratio > 1 else "낙관적"
             summary += f"풋콜비율 {options.put_call_ratio:.2f}로 {pcr_text} 심리."
+        return summary
 
-        # 전략
+    @staticmethod
+    def _fallback_strategy(bonds: Optional[BondData], strong: List[str]) -> str:
         if bonds and bonds.risk_mode == RiskMode.RISK_ON and strong:
-            strategy = f"적극적 매수 전략. {strong[0]} 섹터 ETF 비중 확대 권장."
-        elif bonds and bonds.risk_mode == RiskMode.RISK_OFF:
-            strategy = "방어적 전략. 현금 비중 확대, 채권/금 ETF 고려."
-        else:
-            strategy = "선별적 접근. 강세 섹터 위주 선택적 매수."
+            return f"적극적 매수 전략. {strong[0]} 섹터 ETF 비중 확대 권장."
+        if bonds and bonds.risk_mode == RiskMode.RISK_OFF:
+            return "방어적 전략. 현금 비중 확대, 채권/금 ETF 고려."
+        return "선별적 접근. 강세 섹터 위주 선택적 매수."
 
-        # 핵심 포인트
+    @staticmethod
+    def _fallback_key_points(
+        strong: List[str],
+        weak: List[str],
+        futures: Optional[FuturesData],
+        options: Optional[OptionsData],
+        bonds: Optional[BondData],
+    ) -> List[str]:
         key_points = [
             f"강세 섹터: {', '.join(strong[:3]) if strong else '없음'}",
             f"약세 섹터: {', '.join(weak[:3]) if weak else '없음'}",
         ]
-
         if futures:
             basis_text = "콘탱고" if futures.basis > 0 else "백워데이션"
             key_points.append(f"베이시스: {futures.basis:+.2f}pt ({basis_text})")
-
         if options:
             key_points.append(f"풋콜비율: {options.put_call_ratio:.2f}")
-
         if bonds:
             key_points.append(f"리스크모드: {bonds.risk_mode.value}")
-
-        return summary, strategy, key_points
+        return key_points
 
     def generate_report(self, analysis: MarketAnalysis) -> str:
         """마크다운 리포트 생성"""
