@@ -717,7 +717,8 @@ class TradingOrchestrator:
                 self._order_executor = None
 
         # Load swing positions from DB (for swing strategies)
-        if self._position_tracker and self.config.strategy_name in ("volume_accumulation", "bb_reversion"):
+        loaded_strategies = set(self._strategy_manager.strategy_names)
+        if self._position_tracker and (loaded_strategies & self.SWING_STRATEGIES):
             await self._position_tracker.load_from_db()
 
         # Load accumulation candidates from Redis
@@ -783,6 +784,7 @@ class TradingOrchestrator:
             logger.debug(f"Accumulation candidates not available: {e}")
             return False
 
+    SWING_STRATEGIES = frozenset({"volume_accumulation", "bb_reversion"})
     DIP_CANDIDATES_REDIS_KEY = "system:dip_candidates:latest"
     LLM_QUALITY_REDIS_KEY = "system:llm_quality:latest"
 
@@ -1043,19 +1045,31 @@ class TradingOrchestrator:
 
         await self._stop_market_data_loop()
 
-        # For swing strategies: persist positions instead of closing
-        is_swing = self.config.strategy_name in ("volume_accumulation", "bb_reversion")
+        # Shutdown: close intraday positions, persist swing positions
         if self._position_tracker and self._data_provider:
-            if is_swing and self._position_tracker.position_count > 0:
+            data = await self._data_provider.get_data()
+
+            # 1) Close intraday strategy positions
+            intraday_positions = [
+                pos for pos in self._position_tracker.positions
+                if pos.strategy not in self.SWING_STRATEGIES
+            ]
+            for pos in intraday_positions:
+                price_data = data.get(pos.code, {})
+                if isinstance(price_data, dict):
+                    price = price_data.get("close") or pos.current_price
+                else:
+                    price = price_data or pos.current_price
+                closed = self._position_tracker.close_position(pos.id, price, reason="EOD_CLOSE")
+                if closed:
+                    self.total_pnl += closed.unrealized_pnl
+
+            # 2) Save remaining swing positions to DB
+            if self._position_tracker.position_count > 0:
                 await self._position_tracker.save_to_db()
                 logger.info(
                     f"Swing positions saved ({self._position_tracker.position_count} open)"
                 )
-            else:
-                data = await self._data_provider.get_data()
-                closed = self._position_tracker.close_all(data, reason="EOD_CLOSE")
-                for pos in closed:
-                    self.total_pnl += pos.unrealized_pnl
 
         if self.pipeline:
             await self.pipeline.stop()
