@@ -39,6 +39,10 @@ consumer:
     strategy: strategy_group
     order: order_group
 
+# Indicator Engine 설정
+indicator_engine:
+  staleness_seconds: 180         # 마지막 tick 이후 N초 경과 시 지표를 stale 처리 (3분)
+
 # KIS WebSocket Stock Price Feed (H0STCNT0) 설정
 stock_feed:
   max_symbols: 40               # KIS 제한: 41, 안전 마진으로 40

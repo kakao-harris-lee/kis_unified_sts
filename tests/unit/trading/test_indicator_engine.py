@@ -25,8 +25,9 @@ def _build_warm_engine(symbol: str = "005930") -> StreamingIndicatorEngine:
     """Build an engine with 25 candles (warm for bb_period=20).
 
     Volumes increase linearly (1000, 1010, ..., 1240) so RVOL short > long.
+    staleness_seconds=0 disables the staleness guard (test uses fixed timestamps).
     """
-    engine = StreamingIndicatorEngine(bb_period=20, high_period=5, rvol_short=5, rvol_long=20)
+    engine = StreamingIndicatorEngine(bb_period=20, high_period=5, rvol_short=5, rvol_long=20, staleness_seconds=0)
 
     # Generate 25 candles by ticking across minute boundaries
     base_price = 70000.0
@@ -115,7 +116,7 @@ class TestVolumeIndicators:
 
     def test_custom_high_period_value(self):
         """Verify custom high_period produces correct key AND value."""
-        engine = StreamingIndicatorEngine(bb_period=20, high_period=3)
+        engine = StreamingIndicatorEngine(bb_period=20, high_period=3, staleness_seconds=0)
 
         # Build 25 candles with increasing prices
         for minute in range(25):
@@ -158,7 +159,7 @@ class TestVolumeIndicators:
 
     def test_seed_candles_produces_indicators(self):
         """seed_candles() should allow get_indicators() to work (BB/RSI/RVOL/high_N)."""
-        engine = StreamingIndicatorEngine(bb_period=20, high_period=5, rvol_short=5, rvol_long=20)
+        engine = StreamingIndicatorEngine(bb_period=20, high_period=5, rvol_short=5, rvol_long=20, staleness_seconds=0)
         symbol = "SEED_TEST"
 
         # Seed 25 historical candles
@@ -209,6 +210,159 @@ class TestVolumeIndicators:
         candles = engine.get_recent_candles(symbol)
         assert len(candles) == 1
         assert candles[0]["volume"] == 0.0, "Negative volume should be clamped to 0"
+
+
+class TestIndicatorStaleness:
+    """Verify staleness guard rejects indicators from symbols with no recent ticks."""
+
+    def _build_stale_engine(self, symbol: str = "STALE", staleness: float = 60.0):
+        """Build a warm engine with known tick timestamps for staleness testing."""
+        engine = StreamingIndicatorEngine(bb_period=20, staleness_seconds=staleness)
+        for minute in range(25):
+            engine.on_tick(
+                symbol,
+                {"close": 100 + minute, "high": 110 + minute, "low": 90 + minute, "volume": 500},
+                datetime(2026, 2, 17, 9, minute, 30),
+            )
+        engine.on_tick(
+            symbol,
+            {"close": 125, "high": 135, "low": 115, "volume": 500},
+            datetime(2026, 2, 17, 9, 25, 30),
+        )
+        assert engine.is_warm(symbol)
+        return engine
+
+    def test_stale_indicators_return_empty(self):
+        """get_indicators should return {} when last tick is older than staleness_seconds."""
+        engine = self._build_stale_engine(staleness=60.0)
+
+        # 2 minutes after last tick (> 60s threshold)
+        now = datetime(2026, 2, 17, 9, 27, 31)
+        result = engine.get_indicators("STALE", now=now)
+        assert result == {}, f"Expected empty dict for stale data, got {result}"
+
+    def test_fresh_indicators_returned(self):
+        """get_indicators should return values when last tick is recent."""
+        engine = self._build_stale_engine(staleness=180.0)
+
+        # 10s after last tick (within 180s threshold)
+        now = datetime(2026, 2, 17, 9, 25, 40)
+        result = engine.get_indicators("STALE", now=now)
+        assert "bb_lower" in result
+        assert "rsi" in result
+
+    def test_staleness_disabled_when_zero(self):
+        """staleness_seconds=0 should disable the check entirely."""
+        engine = self._build_stale_engine(staleness=0)
+
+        # 3 hours after last tick — but staleness=0 disables the check
+        now = datetime(2026, 2, 17, 12, 0, 0)
+        result = engine.get_indicators("STALE", now=now)
+        assert "bb_lower" in result
+
+    def test_last_tick_ts_tracked(self):
+        """CandleAccumulator should track last_tick_ts."""
+        engine = StreamingIndicatorEngine()
+        ts = datetime(2026, 2, 17, 9, 5, 30)
+        engine.on_tick("TEST", {"close": 100.0, "volume": 100}, ts)
+
+        acc = engine._accumulators["TEST"]
+        assert acc.last_tick_ts == ts
+
+
+class TestRemoveSymbol:
+    """Verify remove_symbol cleans up all state for evicted symbols."""
+
+    def test_remove_symbol_clears_accumulator(self):
+        engine = _build_warm_engine("005930")
+        assert "005930" in engine._accumulators
+
+        engine.remove_symbol("005930")
+
+        assert "005930" not in engine._accumulators
+        assert "005930" not in engine._warm_logged
+
+    def test_remove_symbol_clears_volume_state(self):
+        engine = _build_warm_engine("005930")
+        # Verify VWAP/VolumeAcceleration have data
+        indicators = engine.get_indicators("005930")
+        assert "vwap" in indicators
+
+        engine.remove_symbol("005930")
+
+        # After removal, getting indicators should return empty
+        assert engine.get_indicators("005930") == {}
+
+    def test_remove_nonexistent_symbol_no_error(self):
+        engine = StreamingIndicatorEngine()
+        engine.remove_symbol("NOPE")  # should not raise
+
+    def test_remove_then_readd_fresh(self):
+        """After removing and re-adding, old stale data should not persist."""
+        engine = _build_warm_engine("005930")
+        old_indicators = engine.get_indicators("005930")
+        assert "bb_lower" in old_indicators
+
+        engine.remove_symbol("005930")
+
+        # Re-add with different prices (staleness=0, so no time issues)
+        for minute in range(25):
+            engine.on_tick(
+                "005930",
+                {"close": 50000 + minute * 200, "high": 50100 + minute * 200,
+                 "low": 49900 + minute * 200, "volume": 2000},
+                datetime(2026, 2, 17, 10, minute, 30),
+            )
+        engine.on_tick(
+            "005930",
+            {"close": 55000, "high": 55100, "low": 54900, "volume": 2000},
+            datetime(2026, 2, 17, 10, 25, 30),
+        )
+
+        new_indicators = engine.get_indicators("005930")
+        assert "bb_lower" in new_indicators
+        # New BB middle should be around 50000-55000, very different from old ~70000-72000
+        assert new_indicators["bb_middle"] < 56000
+
+
+class TestMarketMfiActiveSymbols:
+    """Verify get_market_mfi respects active_symbols filter."""
+
+    def test_mfi_filters_by_active_symbols(self):
+        """Only active symbols should be included in market MFI."""
+        engine = _build_warm_engine("005930")
+
+        # Add another warm symbol
+        for minute in range(25):
+            engine.on_tick(
+                "000660",
+                {"close": 200000 + minute * 100, "high": 200100 + minute * 100,
+                 "low": 199900 + minute * 100, "volume": 3000 + minute * 10},
+                datetime(2026, 2, 17, 9, minute, 30),
+            )
+        engine.on_tick(
+            "000660",
+            {"close": 202500, "high": 202600, "low": 202400, "volume": 3300},
+            datetime(2026, 2, 17, 9, 25, 30),
+        )
+
+        # MFI with all symbols
+        mfi_all = engine.get_market_mfi()
+        assert mfi_all is not None
+
+        # MFI with only one symbol
+        mfi_one = engine.get_market_mfi(active_symbols={"005930"})
+        assert mfi_one is not None
+
+        # MFI with no matching symbols
+        mfi_none = engine.get_market_mfi(active_symbols={"NONEXIST"})
+        assert mfi_none is None
+
+    def test_mfi_none_param_uses_all(self):
+        """active_symbols=None should include all symbols (backward compatible)."""
+        engine = _build_warm_engine("005930")
+        mfi = engine.get_market_mfi(active_symbols=None)
+        assert mfi is not None
 
 
 class TestMomentumDecayEodGuard:
