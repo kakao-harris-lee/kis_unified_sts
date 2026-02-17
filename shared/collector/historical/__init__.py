@@ -24,18 +24,45 @@ Usage:
     await collect_stock_minute_today()
 """
 
-from .backfill import (
-    backfill,
-    collect_today,
-    backfill_kospi200_index,
-    collect_today_kospi200_index,
-    backfill_kospi200f,
-    collect_today_kospi200f,
-    backfill_all,
-    collect_today_all,
-    get_db_client,
-    ensure_database,
-)
+from __future__ import annotations
+
+import logging
+
+logger = logging.getLogger(__name__)
+
+def _missing_clickhouse(*_args, **_kwargs):
+    raise ModuleNotFoundError(
+        "clickhouse_connect is required for historical backfill utilities"
+    )
+
+
+try:
+    from .backfill import (
+        backfill,
+        collect_today,
+        backfill_kospi200_index,
+        collect_today_kospi200_index,
+        backfill_kospi200f,
+        collect_today_kospi200f,
+        backfill_all,
+        collect_today_all,
+        get_db_client,
+        ensure_database,
+    )
+except ModuleNotFoundError as exc:
+    if exc.name != "clickhouse_connect":
+        raise
+    logger.warning("clickhouse_connect missing; backfill utilities disabled")
+    backfill = _missing_clickhouse
+    collect_today = _missing_clickhouse
+    backfill_kospi200_index = _missing_clickhouse
+    collect_today_kospi200_index = _missing_clickhouse
+    backfill_kospi200f = _missing_clickhouse
+    collect_today_kospi200f = _missing_clickhouse
+    backfill_all = _missing_clickhouse
+    collect_today_all = _missing_clickhouse
+    get_db_client = _missing_clickhouse
+    ensure_database = _missing_clickhouse
 from .calendar import (
     is_trading_day,
     is_after_market_close,

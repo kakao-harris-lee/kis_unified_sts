@@ -13,6 +13,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+pytest.importorskip("gymnasium")
+
 from shared.ml.rl.env import (
     Action,
     FuturesTradingEnv,
