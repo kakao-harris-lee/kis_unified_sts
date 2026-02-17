@@ -80,6 +80,7 @@ class MomentumDecayConfig(ConfigMixin):
         no_profit_days: Exit if no profit after N days
         max_hold_days: Maximum holding period (force exit)
         close_before_weekend: Close positions before weekend
+        eod_close_enabled: Enable EOD forced close (False for swing strategies)
         eod_close_hour: End-of-day close hour
         eod_close_minute: End-of-day close minute
         fee_rate: Transaction fee rate (e.g., 0.003 = 0.3%)
@@ -107,6 +108,7 @@ class MomentumDecayConfig(ConfigMixin):
     close_before_weekend: bool = False
 
     # EOD
+    eod_close_enabled: bool = True  # Set false for swing strategies
     eod_close_hour: int = 15
     eod_close_minute: int = 15
 
@@ -314,19 +316,20 @@ class MomentumDecayExit(ExitSignalGenerator[MomentumDecayConfig]):
                 holding_minutes=holding_days * 390,
             )
 
-        # 2. EOD Close
-        close_time = effective_close_time(self.config.eod_close_time)
-        if is_trading_day_kst(now) and to_kst(now).time() >= close_time:
-            return self._create_exit_signal(
-                position=position,
-                current_price=current_price,
-                profit_pct=profit_pct,
-                profit_amount=profit_amount,
-                reason=ExitReason.EOD_CLOSE,
-                priority=1,
-                high_since_entry=high_since_entry,
-                holding_minutes=holding_days * 390,
-            )
+        # 2. EOD Close (skipped for swing strategies with eod_close_enabled=False)
+        if self.config.eod_close_enabled:
+            close_time = effective_close_time(self.config.eod_close_time)
+            if is_trading_day_kst(now) and to_kst(now).time() >= close_time:
+                return self._create_exit_signal(
+                    position=position,
+                    current_price=current_price,
+                    profit_pct=profit_pct,
+                    profit_amount=profit_amount,
+                    reason=ExitReason.EOD_CLOSE,
+                    priority=1,
+                    high_since_entry=high_since_entry,
+                    holding_minutes=holding_days * 390,
+                )
 
         # 3. Max Hold Days
         if holding_days >= self.config.max_hold_days:

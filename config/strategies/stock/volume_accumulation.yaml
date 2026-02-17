@@ -56,6 +56,9 @@ strategy:
       # Hard stop
       stop_loss_pct: -0.03            # -3%
 
+      # EOD close disabled for swing strategy
+      eod_close_enabled: false
+
       # Momentum decay detection
       decay_retracement_pct: 0.015    # 1.5% drop from session high
       decay_volume_threshold: 0.0     # Volume velocity must be negative
