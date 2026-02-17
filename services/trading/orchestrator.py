@@ -507,11 +507,24 @@ class TradingOrchestrator:
         self._symbol_names: dict[str, str] = {}  # code -> name mapping
         self._symbol_metadata_cache: dict[str, dict[str, Any]] = {}
         self._prev_day_volume_warned: bool = False
+
+        # Redis keys namespaced by asset class to prevent collision
+        # Stock uses legacy keys (system:...) for compatibility with Screener
+        # Futures/others use namespaced keys (system:{asset}:...)
+        default_target_key = "system:trade_targets:latest"
+        if config.asset_class != "stock":
+            default_target_key = f"system:{config.asset_class}:trade_targets:latest"
+
         self._trade_targets_latest_key = os.environ.get(
-            "TRADE_TARGETS_LATEST_KEY", "system:trade_targets:latest"
+            "TRADE_TARGETS_LATEST_KEY", default_target_key
         )
+
+        default_universe_key = "system:universe:latest"
+        if config.asset_class != "stock":
+            default_universe_key = f"system:{config.asset_class}:universe:latest"
+
         self._universe_latest_key = os.environ.get(
-            "UNIVERSE_LATEST_KEY", "system:universe:latest"
+            "UNIVERSE_LATEST_KEY", default_universe_key
         )
 
         # Universe stability: retain symbols for a window after they leave
