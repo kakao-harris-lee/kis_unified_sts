@@ -45,7 +45,7 @@ class RedisClient:
         )
 
         client.ping()
-        logger.info(f"Redis 연결 성공: {host}:{port}")
+        logger.debug(f"Redis 연결 성공: {host}:{port}")
         return client
 
     @classmethod

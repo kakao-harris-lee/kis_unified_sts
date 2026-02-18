@@ -74,10 +74,11 @@ class BreakoutEntry(EntrySignalGenerator[BreakoutConfig]):
             volume_confirmed = volume >= (self.config.volume_threshold * volume_ma)
 
         # Check for long breakout
+        vol_ratio = volume / volume_ma if volume_ma else 0.0
         if close > high_n and volume_confirmed:
             logger.info(
                 f"Breakout LONG signal: {code} close={close}, "
-                f"high_{period}={high_n}, volume_ratio={volume/volume_ma:.2f}"
+                f"high_{period}={high_n}, volume_ratio={vol_ratio:.2f}"
             )
             return Signal(
                 code=code,
@@ -94,7 +95,7 @@ class BreakoutEntry(EntrySignalGenerator[BreakoutConfig]):
         if close < low_n and volume_confirmed:
             logger.info(
                 f"Breakout SHORT signal: {code} close={close}, "
-                f"low_{period}={low_n}, volume_ratio={volume/volume_ma:.2f}"
+                f"low_{period}={low_n}, volume_ratio={vol_ratio:.2f}"
             )
             return Signal(
                 code=code,
