@@ -335,13 +335,6 @@ def register_builtin_components() -> None:
     """
     # Entry 전략 등록
     try:
-        from shared.strategy.entry.v35_optimized import V35OptimizedEntry
-
-        EntryRegistry.register_class("v35_optimized", V35OptimizedEntry)
-    except ImportError:
-        logger.debug("V35OptimizedEntry not available")
-
-    try:
         from shared.strategy.entry.stochrsi_trend import StochRSITrendEntry
 
         EntryRegistry.register_class("stochrsi_trend", StochRSITrendEntry)

@@ -1,22 +1,6 @@
 """Test config from_dict methods."""
 
 
-def test_v35_config_from_dict():
-    """Test V35Config.from_dict()."""
-    from shared.strategy.entry.v35_optimized import V35Config
-
-    data = {
-        "bb_period": 30,
-        "rsi_oversold": 25,
-        "unknown_key": "ignored",
-    }
-
-    config = V35Config.from_dict(data)
-
-    assert config.bb_period == 30
-    assert config.rsi_oversold == 25
-    assert config.bb_std == 2.0  # Default value
-
 
 def test_stochrsi_config_from_dict():
     """Test StochRSIConfig.from_dict()."""
@@ -69,9 +53,9 @@ def test_breakout_config_from_dict():
 
 def test_config_from_dict_empty():
     """Test from_dict with empty dict returns defaults."""
-    from shared.strategy.entry.v35_optimized import V35Config
+    from shared.strategy.entry.mean_reversion import MeanReversionConfig
 
-    config = V35Config.from_dict({})
+    config = MeanReversionConfig.from_dict({})
 
     assert config.bb_period == 20
     assert config.rsi_oversold == 30

@@ -292,6 +292,11 @@ class PositionManager:
             position = self.positions.get(pos_id)
             if position and position.code in prices:
                 exit_price = prices[position.code]
+                if not exit_price or exit_price <= 0:
+                    logger.warning(
+                        f"Skipping close for {position.code}: invalid price {exit_price}"
+                    )
+                    continue
                 closed_pos = await self.close_position(pos_id, exit_price, reason)
                 if closed_pos:
                     closed.append(closed_pos)

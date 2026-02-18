@@ -13,9 +13,7 @@ from datetime import datetime
 from typing import Any
 
 from shared.models.signal import Signal, SignalType
-from shared.strategy.entry.v35_optimized import V35Config
-
-from core.indicator_engine import IndicatorEngine
+from core.indicator_engine import IndicatorEngine, _IndicatorDefaults
 
 logger = logging.getLogger(__name__)
 
@@ -33,12 +31,12 @@ class StrategyEngine:
     def __init__(
         self,
         *,
-        v35_config: V35Config | None = None,
+        v35_config: _IndicatorDefaults | None = None,
         config: StrategyEngineConfig | None = None,
         indicator_engine: IndicatorEngine | None = None,
     ):
         self.config = config or StrategyEngineConfig()
-        self.v35 = v35_config or V35Config()
+        self.v35 = v35_config or _IndicatorDefaults()
         self.indicators = indicator_engine or IndicatorEngine(self.v35)
 
     def evaluate_frames(self, frames: dict[str, Any]) -> list[Signal]:

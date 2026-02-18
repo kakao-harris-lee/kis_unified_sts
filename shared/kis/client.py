@@ -38,16 +38,19 @@ _RATE_LIMIT_PENALTY = float(_rl_cfg.get("penalty_seconds", 1.0))
 
 
 class _RateLimiter:
-    """Fixed-interval rate limiter with adaptive backoff for KIS API.
+    """Fixed-interval rate limiter with exponential backoff for KIS API.
 
     Enforces a minimum interval (1/rate) between consecutive requests.
-    On rate limit errors, adds a penalty cooldown to back off.
+    On rate limit errors, applies exponential backoff: base * 2^(consecutive-1),
+    capped at max_penalty_seconds.
     """
 
     def __init__(self, max_requests: int, window_seconds: float = 1.0):
         self._interval = window_seconds / max_requests
         self._last_request = 0.0
         self._penalty_until = 0.0
+        self._consecutive_penalties = 0
+        self._max_penalty = float(_rl_cfg.get("max_penalty_seconds", 30.0))
         self._lock = asyncio.Lock()
 
     async def acquire(self):
@@ -66,8 +69,26 @@ class _RateLimiter:
             self._last_request = time.monotonic()
 
     def penalty(self, seconds: float = _RATE_LIMIT_PENALTY):
-        """Add a cooldown penalty after receiving a rate limit error."""
-        self._penalty_until = time.monotonic() + seconds
+        """Apply exponential backoff penalty on rate limit error.
+
+        Consecutive calls double the penalty each time, capped at max_penalty.
+        A successful acquire after the penalty window resets the counter.
+        """
+        self._consecutive_penalties += 1
+        backoff = min(
+            seconds * (2 ** (self._consecutive_penalties - 1)),
+            self._max_penalty,
+        )
+        self._penalty_until = time.monotonic() + backoff
+        logger.warning(
+            f"Rate limit penalty: {backoff:.1f}s "
+            f"(consecutive={self._consecutive_penalties})"
+        )
+
+    def reset_backoff(self):
+        """Reset consecutive penalty counter after a successful request."""
+        if self._consecutive_penalties > 0:
+            self._consecutive_penalties = 0
 
 
 class KISClient(AsyncSessionMixin):
@@ -147,6 +168,7 @@ class KISClient(AsyncSessionMixin):
                 logger.error(f"KIS Logic Error for {symbol}: {msg}")
                 raise Exception(f"KIS Logic Error: {msg}")
 
+            self._rate_limiter.reset_backoff()
             output = data.get("output", {})
 
             # Map KIS output fields to our standard schema
@@ -201,6 +223,7 @@ class KISClient(AsyncSessionMixin):
                 logger.error(f"KIS Logic Error for {symbol} (Futures): {msg}")
                 raise Exception(f"KIS Logic Error: {msg}")
 
+            self._rate_limiter.reset_backoff()
             output = data.get("output", {})
 
             # Map KIS output fields (Futures)
@@ -274,6 +297,7 @@ class KISClient(AsyncSessionMixin):
                 if data.get("rt_cd") != "0":
                     return []
 
+                self._rate_limiter.reset_backoff()
                 rows = data.get("output2", [])
                 candles: list[dict[str, Any]] = []
                 for row in rows[:count]:
@@ -339,6 +363,7 @@ class KISClient(AsyncSessionMixin):
                 if data.get("rt_cd") != "0":
                     return []
 
+                self._rate_limiter.reset_backoff()
                 rows = data.get("output2", [])
                 candles: list[dict[str, Any]] = []
 
