@@ -76,6 +76,24 @@ class MarketCalendar:
         date(2026, 12, 25), # 성탄절
     ]
 
+    # KRX 2027 Holidays (예상 - 확정 시 업데이트 필요)
+    HOLIDAYS_2027 = [
+        date(2027, 1, 1),   # 신정
+        date(2027, 2, 8),   # 설날 연휴 (2/6 토, 2/7 일 → 평일만)
+        date(2027, 2, 9),   # 설날 대체공휴일
+        date(2027, 3, 1),   # 삼일절
+        date(2027, 5, 5),   # 어린이날
+        date(2027, 5, 13),  # 부처님오신날
+        date(2027, 6, 7),   # 현충일 대체공휴일 (6/6 일요일)
+        date(2027, 8, 16),  # 광복절 대체공휴일 (8/15 일요일)
+        date(2027, 9, 14),  # 추석 연휴
+        date(2027, 9, 15),  # 추석
+        date(2027, 9, 16),  # 추석 연휴
+        date(2027, 10, 4),  # 개천절 대체공휴일 (10/3 일요일)
+        date(2027, 10, 11), # 한글날 대체공휴일 (10/9 토요일)
+        date(2027, 12, 27), # 성탄절 대체공휴일 (12/25 토요일)
+    ]
+
     # Market Hours
     MARKET_OPEN_TIME = time(9, 0)
     MARKET_CLOSE_TIME = time(15, 30)
@@ -87,6 +105,7 @@ class MarketCalendar:
         self._holidays_by_year: Dict[int, List[date]] = {
             2025: self.HOLIDAYS_2025,
             2026: self.HOLIDAYS_2026,
+            2027: self.HOLIDAYS_2027,
         }
         logger.info("MarketCalendar initialized")
 
