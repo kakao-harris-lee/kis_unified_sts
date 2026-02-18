@@ -234,6 +234,7 @@ class StreamingIndicatorEngine:
         self._mtf_accumulators: dict[
             str, dict[int, MultiTimeframeCandleAccumulator]
         ] = {}
+        self._momentum_cache: dict[tuple[str, int], tuple[int, dict[str, Any]]] = {}
 
         # Volume indicators
         self._high_period = high_period
@@ -390,6 +391,9 @@ class StreamingIndicatorEngine:
             del self._accumulators[symbol]
         if symbol in self._mtf_accumulators:
             del self._mtf_accumulators[symbol]
+        self._momentum_cache = {
+            key: value for key, value in self._momentum_cache.items() if key[0] != symbol
+        }
         self._warm_logged.discard(symbol)
         self._vwap_calc.reset(symbol)
         self._vol_accel_calc.reset(symbol)
@@ -582,6 +586,11 @@ class StreamingIndicatorEngine:
         if len(candles) < min_candles:
             return {}
 
+        cache_key = (symbol, timeframe)
+        cached = self._momentum_cache.get(cache_key)
+        if cached and cached[0] == len(candles):
+            return cached[1]
+
         df = pd.DataFrame(candles)
 
         try:
@@ -620,6 +629,7 @@ class StreamingIndicatorEngine:
             "df": df,  # Full DataFrame for divergence detection etc.
         }
 
+        self._momentum_cache[cache_key] = (len(df), result)
         return result
 
     def get_market_mfi(self, active_symbols: set[str] | None = None) -> float | None:

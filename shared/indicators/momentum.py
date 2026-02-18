@@ -374,10 +374,17 @@ class RSICalculator:
             alpha=1.0 / self.config.period, min_periods=self.config.period, adjust=False
         ).mean()
 
-        # When avg_loss=0 (all gains), RS should be inf → RSI=100
-        # When avg_gain=0 (all losses), RS=0 → RSI=0
-        rs = np.where(avg_loss == 0, np.inf, avg_gain / avg_loss)
-        df["rsi"] = 100 - (100 / (1 + pd.Series(rs, index=df.index)))
+        # When avg_loss=0 and avg_gain=0 (flat), RSI=50
+        # When avg_loss=0 and avg_gain>0 (all gains), RSI=100
+        # When avg_gain=0 and avg_loss>0 (all losses), RSI=0
+        zero_loss = avg_loss == 0
+        zero_gain = avg_gain == 0
+        rs = avg_gain / avg_loss.replace(0, np.nan)
+        rsi = 100 - (100 / (1 + rs))
+        rsi = rsi.where(~(zero_loss & zero_gain), 50.0)
+        rsi = rsi.where(~(zero_loss & ~zero_gain), 100.0)
+        rsi = rsi.where(~(zero_gain & ~zero_loss), 0.0)
+        df["rsi"] = rsi
         # Fill initial NaN with neutral 50
         df["rsi"] = df["rsi"].fillna(50.0)
 

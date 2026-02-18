@@ -247,7 +247,7 @@ class TrixGoldenExit(ExitSignalGenerator[TrixGoldenExitConfig]):
         profit_pct = self._calc_profit_pct(position, current_price)
         profit_amount = self._calc_profit_amount(position, current_price)
         high_since_entry = max(position.highest_price, current_price)
-        holding_minutes = int(position.get_hold_duration())
+        holding_minutes = max(0, int(position.get_hold_duration()))
 
         # Get momentum indicators
         momentum = self._get_momentum_data(market_data, position.code)
@@ -259,22 +259,22 @@ class TrixGoldenExit(ExitSignalGenerator[TrixGoldenExitConfig]):
             and len(df) >= self.config.divergence_lookback
             and self._divergence_detector.detect_bearish(df["close"], df["trix"])
         ):
-                logger.warning(
-                    f"[{self.name}] BEARISH DIVERGENCE detected for {position.code}! "
-                    f"Immediate full exit."
-                )
-                return self._create_exit_signal(
-                    position=position,
-                    current_price=current_price,
-                    profit_pct=profit_pct,
-                    profit_amount=profit_amount,
-                    reason=ExitReason.INDICATOR_EXIT,
-                    priority=1,
-                    high_since_entry=high_since_entry,
-                    holding_minutes=holding_minutes,
-                    quantity=position.quantity,  # Full exit
-                    metadata={"trigger": "bearish_divergence"},
-                )
+            logger.warning(
+                f"[{self.name}] BEARISH DIVERGENCE detected for {position.code}! "
+                f"Immediate full exit."
+            )
+            return self._create_exit_signal(
+                position=position,
+                current_price=current_price,
+                profit_pct=profit_pct,
+                profit_amount=profit_amount,
+                reason=ExitReason.INDICATOR_EXIT,
+                priority=1,
+                high_since_entry=high_since_entry,
+                holding_minutes=holding_minutes,
+                quantity=position.quantity,  # Full exit
+                metadata={"trigger": "bearish_divergence"},
+            )
 
         # 2. Hard Stop Loss
         if profit_pct <= self.config.stop_loss_pct:
