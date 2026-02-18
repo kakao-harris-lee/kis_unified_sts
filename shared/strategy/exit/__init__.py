@@ -15,6 +15,10 @@ from shared.strategy.exit.momentum_decay import (
     MomentumDecayExit,
     MomentumDecayConfig,
 )
+from shared.strategy.exit.trix_golden_exit import (
+    TrixGoldenExit,
+    TrixGoldenExitConfig,
+)
 
 __all__ = [
     # Three Stage Exit
@@ -23,4 +27,7 @@ __all__ = [
     # Momentum Decay Exit
     "MomentumDecayExit",
     "MomentumDecayConfig",
+    # TRIX Golden Exit
+    "TrixGoldenExit",
+    "TrixGoldenExitConfig",
 ]

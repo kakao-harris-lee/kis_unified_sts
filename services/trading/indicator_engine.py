@@ -4,6 +4,9 @@ Accumulates 1-minute candles from 0.5s price snapshots and computes
 Bollinger Bands, RSI, VWAP, RVOL, and volume velocity/acceleration
 in pure Python (no pandas/polars needed).
 
+Supports multi-timeframe candle aggregation (e.g., 5-minute) for
+momentum-based strategies (TRIX, CCI, MACD, Stochastic).
+
 Usage:
     engine = StreamingIndicatorEngine(bb_period=20, bb_std=2.0, rsi_period=14)
 
@@ -15,6 +18,10 @@ Usage:
     # {"bb_lower": 70500, "bb_upper": 71500, "bb_middle": 71000, "rsi": 35.2,
     #  "vwap": 71050, "rvol": 2.3, "volume_velocity": 0.15, "volume_acceleration": 0.05,
     #  "high_5": 71500}
+
+    # Multi-timeframe momentum indicators (5-minute)
+    momentum = engine.get_momentum_indicators("005930", timeframe=5)
+    # {"trix": 0.05, "trix_signal": 0.03, "cci": 45.2, ...}
 """
 
 from __future__ import annotations
@@ -24,8 +31,9 @@ import math
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 
-from shared.indicators.volume import VWAPCalculator, VolumeAccelerationCalculator
+from shared.indicators.volume import VolumeAccelerationCalculator, VWAPCalculator
 
 logger = logging.getLogger(__name__)
 
@@ -110,6 +118,88 @@ class CandleAccumulator:
         return None
 
 
+class MultiTimeframeCandleAccumulator:
+    """Aggregates 1-minute candles into higher timeframe candles (e.g., 5-minute).
+
+    Called each time a new 1-minute candle is completed. Accumulates into
+    N-minute candles based on configurable timeframe.
+    """
+
+    def __init__(self, timeframe_minutes: int = 5, maxlen: int = 250):
+        """Initialize multi-timeframe accumulator.
+
+        Args:
+            timeframe_minutes: Target candle timeframe in minutes.
+            maxlen: Maximum number of completed candles to retain.
+        """
+        self.timeframe = timeframe_minutes
+        self.candles: deque[Candle] = deque(maxlen=maxlen)
+        self._buffer: list[Candle] = []
+        self._current_bucket: int | None = None
+
+    def _get_bucket(self, minute: int) -> int:
+        """Compute the time bucket for a given HHMM minute value.
+
+        E.g., with timeframe=5: minute 932 → bucket 930, minute 935 → bucket 935.
+        """
+        hours = minute // 100
+        mins = minute % 100
+        total = hours * 60 + mins
+        bucket_total = (total // self.timeframe) * self.timeframe
+        return (bucket_total // 60) * 100 + (bucket_total % 60)
+
+    def on_1m_candle(self, candle: Candle) -> Candle | None:
+        """Process a completed 1-minute candle.
+
+        Returns a completed N-minute candle when the time bucket changes.
+        """
+        bucket = self._get_bucket(candle.minute)
+
+        if self._current_bucket is None:
+            self._current_bucket = bucket
+            self._buffer.append(candle)
+            return None
+
+        if bucket != self._current_bucket:
+            # Finalize previous bucket
+            completed = self._finalize_buffer()
+
+            # Start new bucket
+            self._current_bucket = bucket
+            self._buffer = [candle]
+
+            return completed
+
+        # Same bucket — accumulate
+        self._buffer.append(candle)
+        return None
+
+    def _finalize_buffer(self) -> Candle | None:
+        """Combine buffered 1-min candles into a single higher-TF candle."""
+        if not self._buffer:
+            return None
+
+        completed = Candle(
+            open=self._buffer[0].open,
+            high=max(c.high for c in self._buffer),
+            low=min(c.low for c in self._buffer),
+            close=self._buffer[-1].close,
+            volume=sum(c.volume for c in self._buffer),
+            minute=self._current_bucket or 0,
+        )
+        self.candles.append(completed)
+        return completed
+
+    def flush(self) -> Candle | None:
+        """Force-finalize any buffered candles (e.g., at session end)."""
+        if not self._buffer:
+            return None
+        completed = self._finalize_buffer()
+        self._buffer = []
+        self._current_bucket = None
+        return completed
+
+
 class StreamingIndicatorEngine:
     """Computes BB and RSI from streaming 1-minute candles.
 
@@ -127,6 +217,8 @@ class StreamingIndicatorEngine:
         rvol_short: int = 5,
         rvol_long: int = 20,
         staleness_seconds: float = 180.0,
+        mtf_timeframes: list[int] | None = None,
+        mtf_maxlen: int = 250,
     ):
         self.bb_period = bb_period
         self.bb_std = bb_std
@@ -135,6 +227,13 @@ class StreamingIndicatorEngine:
         self._staleness_seconds = staleness_seconds
         self._accumulators: dict[str, CandleAccumulator] = {}
         self._warm_logged: set[str] = set()
+
+        # Multi-timeframe accumulators: {symbol: {timeframe: accumulator}}
+        self._mtf_timeframes = mtf_timeframes or []
+        self._mtf_maxlen = mtf_maxlen
+        self._mtf_accumulators: dict[
+            str, dict[int, MultiTimeframeCandleAccumulator]
+        ] = {}
 
         # Volume indicators
         self._high_period = high_period
@@ -183,14 +282,18 @@ class StreamingIndicatorEngine:
         # double-counting volume from repeated 0.5s polling snapshots.
         if candle is not None:
             date_str = ts.strftime("%Y%m%d")
-            self._vwap_calc.add_tick(
-                symbol, candle.close, int(candle.volume), date_str
-            )
-            self._vol_accel_calc.add_tick(
-                symbol, int(candle.volume), ts.timestamp()
-            )
+            self._vwap_calc.add_tick(symbol, candle.close, int(candle.volume), date_str)
+            self._vol_accel_calc.add_tick(symbol, int(candle.volume), ts.timestamp())
 
-        if candle is not None and self.is_warm(symbol) and symbol not in self._warm_logged:
+            # Feed multi-timeframe accumulators
+            if self._mtf_timeframes:
+                self._feed_mtf_candle(symbol, candle)
+
+        if (
+            candle is not None
+            and self.is_warm(symbol)
+            and symbol not in self._warm_logged
+        ):
             self._warm_logged.add(symbol)
             logger.info(
                 f"Indicator engine: {symbol} is now warm "
@@ -231,6 +334,52 @@ class StreamingIndicatorEngine:
                 f"({len(acc.candles)} candles, {seeded} seeded)"
             )
 
+    def seed_mtf_candles(
+        self, symbol: str, candles: list[dict], timeframe: int = 5
+    ) -> None:
+        """Pre-warm multi-timeframe accumulator with historical candle data.
+
+        Each candle dict must have: open, high, low, close, volume.
+        Candles should be in chronological order and already aggregated
+        to the target timeframe.
+        """
+        if timeframe not in self._mtf_timeframes:
+            self._mtf_timeframes.append(timeframe)
+
+        mtf_map = self._mtf_accumulators.get(symbol)
+        if mtf_map is None:
+            mtf_map = {}
+            self._mtf_accumulators[symbol] = mtf_map
+
+        mtf_acc = mtf_map.get(timeframe)
+        if mtf_acc is None:
+            mtf_acc = MultiTimeframeCandleAccumulator(
+                timeframe_minutes=timeframe, maxlen=self._mtf_maxlen
+            )
+            mtf_map[timeframe] = mtf_acc
+
+        seeded = 0
+        for c in candles:
+            try:
+                candle = Candle(
+                    open=float(c["open"]),
+                    high=float(c["high"]),
+                    low=float(c["low"]),
+                    close=float(c["close"]),
+                    volume=float(c.get("volume", 0)),
+                    minute=0,
+                )
+                mtf_acc.candles.append(candle)
+                seeded += 1
+            except (KeyError, ValueError):
+                continue
+
+        if seeded > 0:
+            logger.info(
+                f"Indicator engine: {symbol} {timeframe}m pre-warmed "
+                f"({len(mtf_acc.candles)} candles, {seeded} seeded)"
+            )
+
     def remove_symbol(self, symbol: str) -> None:
         """Remove a symbol's accumulator and related state.
 
@@ -239,6 +388,8 @@ class StreamingIndicatorEngine:
         """
         if symbol in self._accumulators:
             del self._accumulators[symbol]
+        if symbol in self._mtf_accumulators:
+            del self._mtf_accumulators[symbol]
         self._warm_logged.discard(symbol)
         self._vwap_calc.reset(symbol)
         self._vol_accel_calc.reset(symbol)
@@ -250,7 +401,9 @@ class StreamingIndicatorEngine:
             return False
         return len(acc.candles) >= self.bb_period
 
-    def get_indicators(self, symbol: str, now: datetime | None = None) -> dict[str, float]:
+    def get_indicators(
+        self, symbol: str, now: datetime | None = None
+    ) -> dict[str, float]:
         """Compute and return current indicator values.
 
         Args:
@@ -271,7 +424,9 @@ class StreamingIndicatorEngine:
                 logger.warning(
                     "Indicator data stale for %s (%.0fs since last tick, "
                     "threshold %.0fs) — returning empty",
-                    symbol, age, self._staleness_seconds,
+                    symbol,
+                    age,
+                    self._staleness_seconds,
                 )
                 return {}
 
@@ -313,7 +468,9 @@ class StreamingIndicatorEngine:
 
         return result
 
-    def get_recent_candles(self, symbol: str, limit: int = 240) -> list[dict[str, float]]:
+    def get_recent_candles(
+        self, symbol: str, limit: int = 240
+    ) -> list[dict[str, float]]:
         """Return recent completed candles for a symbol.
 
         Used by feature-heavy strategies (e.g., RL) that need OHLCV history.
@@ -334,6 +491,136 @@ class StreamingIndicatorEngine:
             }
             for c in candles
         ]
+
+    def _feed_mtf_candle(self, symbol: str, candle: Candle) -> None:
+        """Feed a completed 1-minute candle to all multi-timeframe accumulators."""
+        mtf_map = self._mtf_accumulators.get(symbol)
+        if mtf_map is None:
+            mtf_map = {}
+            self._mtf_accumulators[symbol] = mtf_map
+
+        for tf in self._mtf_timeframes:
+            mtf_acc = mtf_map.get(tf)
+            if mtf_acc is None:
+                mtf_acc = MultiTimeframeCandleAccumulator(
+                    timeframe_minutes=tf, maxlen=self._mtf_maxlen
+                )
+                mtf_map[tf] = mtf_acc
+            mtf_acc.on_1m_candle(candle)
+
+    def get_mtf_candles(
+        self, symbol: str, timeframe: int = 5, limit: int = 250
+    ) -> list[dict[str, float]]:
+        """Return recent completed candles for a multi-timeframe.
+
+        Args:
+            symbol: Symbol to get candles for.
+            timeframe: Timeframe in minutes.
+            limit: Maximum number of candles to return.
+
+        Returns:
+            List of candle dicts with open, high, low, close, volume.
+        """
+        mtf_map = self._mtf_accumulators.get(symbol)
+        if not mtf_map:
+            return []
+        mtf_acc = mtf_map.get(timeframe)
+        if not mtf_acc:
+            return []
+        candles = list(mtf_acc.candles)
+        if limit > 0:
+            candles = candles[-limit:]
+        return [
+            {
+                "open": c.open,
+                "high": c.high,
+                "low": c.low,
+                "close": c.close,
+                "volume": c.volume,
+            }
+            for c in candles
+        ]
+
+    def get_momentum_indicators(
+        self,
+        symbol: str,
+        timeframe: int = 5,
+        *,
+        trix_n: int = 12,
+        trix_signal: int = 9,
+        cci_period: int = 9,
+        macd_fast: int = 12,
+        macd_slow: int = 26,
+        macd_signal: int = 9,
+        sto_fastk: int = 12,
+        sto_slowk: int = 5,
+        sto_slowd: int = 5,
+        rsi_period: int = 14,
+        min_candles: int = 50,
+    ) -> dict[str, Any]:
+        """Compute momentum indicators from multi-timeframe candles.
+
+        Uses pandas-based calculators from shared.indicators.momentum on
+        the accumulated N-minute candles.
+
+        Args:
+            symbol: Symbol to compute indicators for.
+            timeframe: Candle timeframe in minutes.
+            **params: Indicator parameters forwarded to calculators.
+            min_candles: Minimum candles needed for valid computation.
+
+        Returns:
+            Dict with last-bar values for all momentum indicators,
+            plus 'df' key containing the full DataFrame for strategy use.
+            Empty dict if insufficient data.
+        """
+        import pandas as pd
+
+        from shared.indicators.momentum import calculate_all_momentum
+
+        candles = self.get_mtf_candles(symbol, timeframe, limit=0)
+        if len(candles) < min_candles:
+            return {}
+
+        df = pd.DataFrame(candles)
+
+        try:
+            df = calculate_all_momentum(
+                df,
+                trix_n=trix_n,
+                trix_signal=trix_signal,
+                cci_period=cci_period,
+                macd_fast=macd_fast,
+                macd_slow=macd_slow,
+                macd_signal=macd_signal,
+                sto_fastk=sto_fastk,
+                sto_slowk=sto_slowk,
+                sto_slowd=sto_slowd,
+                rsi_period=rsi_period,
+            )
+        except Exception as e:
+            logger.error(f"Momentum indicator calculation failed for {symbol}: {e}")
+            return {}
+
+        # Extract last-bar values
+        last = df.iloc[-1]
+        result: dict[str, Any] = {
+            "trix": float(last.get("trix", 0)),
+            "trix_signal": float(last.get("trix_signal", 0)),
+            "cci": float(last.get("cci", 0)),
+            "macd_line": float(last.get("macd_line", 0)),
+            "macd_signal": float(last.get("macd_signal", 0)),
+            "macd_oscillator": float(last.get("macd_oscillator", 0)),
+            "sto_k": float(last.get("sto_k", 50)),
+            "sto_d": float(last.get("sto_d", 50)),
+            "obv": float(last.get("obv", 0)),
+            "rsi": float(last.get("rsi", 50)),
+            "timeframe": timeframe,
+            "candle_count": len(df),
+            "df": df,  # Full DataFrame for divergence detection etc.
+        }
+
+        return result
 
     def get_market_mfi(self, active_symbols: set[str] | None = None) -> float | None:
         """Compute aggregate MFI across warm symbols.
@@ -379,7 +666,7 @@ class StreamingIndicatorEngine:
 
     def _calc_bb(self, closes: list[float]) -> tuple[float, float, float]:
         """Bollinger Bands using sample std (ddof=1, matching Polars rolling_std)."""
-        window = closes[-self.bb_period:]
+        window = closes[-self.bb_period :]
         n = len(window)
         mean = sum(window) / n
 
@@ -397,7 +684,7 @@ class StreamingIndicatorEngine:
             return 50.0
 
         # Use the last rsi_period+1 closes to get rsi_period deltas
-        recent = closes[-(self.rsi_period + 1):]
+        recent = closes[-(self.rsi_period + 1) :]
         gains = []
         losses = []
         for i in range(1, len(recent)):
@@ -452,7 +739,7 @@ class StreamingIndicatorEngine:
         if len(candles) < period + 1:
             return None
 
-        recent = candles[-(period + 1):]
+        recent = candles[-(period + 1) :]
         positive_flow = 0.0
         negative_flow = 0.0
 

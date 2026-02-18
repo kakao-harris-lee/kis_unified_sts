@@ -369,6 +369,13 @@ def register_builtin_components() -> None:
     except ImportError:
         logger.debug("VolumeAccumulationBreakoutEntry not available")
 
+    try:
+        from shared.strategy.entry.trix_golden import TrixGoldenEntry
+
+        EntryRegistry.register_class("trix_golden", TrixGoldenEntry)
+    except ImportError:
+        logger.debug("TrixGoldenEntry not available")
+
     # rl_mppo는 @EntryRegistry.register 데코레이터로 자동 등록됨
     # 수동 등록 불필요 (이중 등록 방지)
 
@@ -386,6 +393,13 @@ def register_builtin_components() -> None:
         ExitRegistry.register_class("momentum_decay", MomentumDecayExit)
     except ImportError:
         logger.debug("MomentumDecayExit not available")
+
+    try:
+        from shared.strategy.exit.trix_golden_exit import TrixGoldenExit
+
+        ExitRegistry.register_class("trix_golden_exit", TrixGoldenExit)
+    except ImportError:
+        logger.debug("TrixGoldenExit not available")
 
     # Position Sizer 등록
     try:
