@@ -8,6 +8,7 @@ against yesterday's total.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timedelta
 from typing import Any, Optional
@@ -91,9 +92,17 @@ class PrevDayVolumeCache:
         )
         return loaded
 
+    async def warm_all_async(self) -> int:
+        """Non-blocking version of warm_all() for async contexts."""
+        return await asyncio.to_thread(self.warm_all)
+
     def get(self, code: str) -> int:
         """Return previous-day volume for *code*, or 0 if unknown."""
         return self._volumes.get(code, 0)
+
+    async def ensure_async(self, codes: list[str]) -> int:
+        """Non-blocking version of ensure() for async contexts."""
+        return await asyncio.to_thread(self.ensure, codes)
 
     def ensure(self, codes: list[str]) -> int:
         """Lazy-fill any codes missing from the cache.

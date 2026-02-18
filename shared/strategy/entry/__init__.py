@@ -2,17 +2,12 @@
 
 다양한 진입 전략 구현체.
 
-- V35OptimizedEntry: BB + RSI + MACD 복합 전략
 - StochRSITrendEntry: StochRSI 크로스오버 기반
 - MeanReversionEntry: BB + RSI 평균회귀 전략
 - BreakoutEntry: N-period 돌파 전략
 - VolumeAccumulationBreakoutEntry: 거래량 축적 기반 돌파
 """
 
-from shared.strategy.entry.v35_optimized import (
-    V35Config,
-    V35OptimizedEntry,
-)
 from shared.strategy.entry.stochrsi_trend import (
     StochRSIConfig,
     StochRSITrendEntry,
@@ -31,9 +26,6 @@ from shared.strategy.entry.volume_accumulation import (
 )
 
 __all__ = [
-    # V35 Optimized
-    "V35OptimizedEntry",
-    "V35Config",
     # StochRSI Trend
     "StochRSITrendEntry",
     "StochRSIConfig",

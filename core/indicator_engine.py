@@ -6,9 +6,21 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-from shared.strategy.entry.v35_optimized import V35Config
-
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class _IndicatorDefaults:
+    """Default indicator parameters (replaces removed V35Config)."""
+
+    bb_period: int = 20
+    bb_std: float = 2.0
+    rsi_period: int = 14
+    rsi_oversold: float = 30
+    macd_fast: int = 12
+    macd_slow: int = 26
+    macd_signal: int = 9
+    macd_normalization_factor: float = 1.0
 
 
 def _require_polars():
@@ -38,10 +50,10 @@ class IndicatorEngine:
 
     def __init__(
         self,
-        v35_config: V35Config | None = None,
+        v35_config: _IndicatorDefaults | None = None,
         config: IndicatorEngineConfig | None = None,
     ):
-        self.v35 = v35_config or V35Config()
+        self.v35 = v35_config or _IndicatorDefaults()
         self.config = config or IndicatorEngineConfig()
 
     def add_v35_indicators(self, df: Any):

@@ -205,7 +205,7 @@ async def run_screener(config: ScreenerConfig) -> None:
     # Pre-load previous-day volumes for opening_volume_surge strategy.
     prev_vol_cache = PrevDayVolumeCache()
     try:
-        prev_vol_cache.warm_all()
+        await prev_vol_cache.warm_all_async()
     except Exception as e:
         logger.warning("Failed to warm prev-day volume cache: %s", e)
 
@@ -229,7 +229,7 @@ async def run_screener(config: ScreenerConfig) -> None:
 
                 if codes and codes != last_codes:
                     # Lazy-fill prev-day volumes for any new codes
-                    prev_vol_cache.ensure(codes)
+                    await prev_vol_cache.ensure_async(codes)
 
                     names = {c: info[c]["name"] for c in codes if c in info}
                     metadata = prev_vol_cache.build_metadata(codes)

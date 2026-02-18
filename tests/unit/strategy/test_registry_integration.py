@@ -18,7 +18,6 @@ def test_register_builtin_components():
 
     # Check entry strategies are registered
     entry_strategies = EntryRegistry.list_all()
-    assert "v35_optimized" in entry_strategies
     assert "stochrsi_trend" in entry_strategies
     assert "mean_reversion" in entry_strategies
     assert "breakout" in entry_strategies
@@ -34,11 +33,6 @@ def test_create_entry_from_registry():
 
     EntryRegistry.clear()
     register_builtin_components()
-
-    # Create V35 entry
-    v35 = EntryRegistry.create("v35_optimized", {"bb_period": 20, "rsi_oversold": 30})
-    assert v35 is not None
-    assert v35.name == "v35_optimized"
 
     # Create StochRSI entry
     stochrsi = EntryRegistry.create("stochrsi_trend", {"oversold": 20, "overbought": 80})
@@ -65,8 +59,8 @@ async def test_entry_strategy_generate_signal():
     EntryRegistry.clear()
     register_builtin_components()
 
-    # Create V35 entry and generate signal
-    v35 = EntryRegistry.create("v35_optimized", {"rsi_oversold": 30})
+    # Create mean_reversion entry and generate signal
+    entry = EntryRegistry.create("mean_reversion", {"rsi_oversold": 30})
 
     context = EntryContext(
         market_data={
@@ -74,13 +68,14 @@ async def test_entry_strategy_generate_signal():
             "name": "삼성전자",
             "close": 58000,
             "bb_lower": 58500,
+            "bb_upper": 62000,
+            "bb_middle": 60000,
             "rsi": 25,
-            "macd_hist": 0.5,
         },
         timestamp=datetime.now(),
     )
 
-    signal = await v35.generate(context)
+    signal = await entry.generate(context)
     assert signal is not None
     assert signal.code == "005930"
 
@@ -88,8 +83,6 @@ async def test_entry_strategy_generate_signal():
 def test_import_all_entries_from_module():
     """Test that all entries can be imported from the module."""
     from shared.strategy.entry import (
-        V35OptimizedEntry,
-        V35Config,
         StochRSITrendEntry,
         StochRSIConfig,
         MeanReversionEntry,
@@ -99,8 +92,6 @@ def test_import_all_entries_from_module():
     )
 
     # Verify all classes are importable
-    assert V35OptimizedEntry is not None
-    assert V35Config is not None
     assert StochRSITrendEntry is not None
     assert StochRSIConfig is not None
     assert MeanReversionEntry is not None

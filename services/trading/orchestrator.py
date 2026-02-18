@@ -495,6 +495,9 @@ class TradingOrchestrator:
         # WebSocket stock price feed (initialized in _initialize_components)
         self._stock_price_feed: Any | None = None
 
+        # Fire-and-forget notification tasks (tracked for cleanup)
+        self._pending_notify_tasks: set[asyncio.Task] = set()
+
         # WebSocket futures price feed (initialized in _initialize_components)
         self._futures_price_feed: Any | None = None
 
@@ -1168,12 +1171,14 @@ class TradingOrchestrator:
                 if self._stock_price_feed:
                     self._stock_price_feed.update_symbols(self.config.symbols)
 
-                # Pre-warm new symbols (fire-and-forget to not block refresh)
+                # Pre-warm new symbols (tracked to catch errors)
                 if new_symbols and self._indicator_engine and self._kis_client:
-                    asyncio.create_task(
+                    task = asyncio.create_task(
                         self._prewarm_symbols(list(new_symbols)),
                         name="prewarm_symbols",
                     )
+                    self._pending_notify_tasks.add(task)
+                    task.add_done_callback(self._on_notify_done)
             except Exception as e:
                 logger.warning(f"Universe refresh loop error: {e}")
             await asyncio.sleep(self._universe_refresh_interval)
@@ -1260,6 +1265,11 @@ class TradingOrchestrator:
 
     async def _cleanup_resources(self):
         """Shutdown pipelines and release components."""
+        # Await pending fire-and-forget tasks before teardown
+        if self._pending_notify_tasks:
+            await asyncio.gather(*self._pending_notify_tasks, return_exceptions=True)
+            self._pending_notify_tasks.clear()
+
         if self.pipeline:
             await self.pipeline.stop()
             self.pipeline = None
@@ -2043,14 +2053,14 @@ class TradingOrchestrator:
         )
         amount = price * qty
         entry_label = "숏 진입" if is_short else "롱 진입"
-        asyncio.create_task(self._notify(
+        self._schedule_notify(
             f"🟢 <b>{entry_label}</b>\n"
             f"종목: {name} ({code})\n"
             f"가격: {price:,.0f}원 x {qty}주\n"
             f"금액: {amount:,.0f}원\n"
             f"전략: {strategy}\n"
             f"신뢰도: {confidence:.1%}"
-        ))
+        )
 
     def _collect_indicator_snapshot(self, code, price):
         """Get indicator snapshot at execution time."""
@@ -2207,17 +2217,13 @@ class TradingOrchestrator:
             f"Exit executed: {name} ({code}) @ {price:,.0f} "
             f"(reason={reason}, pnl={pnl_pct:+.2f}%)"
         )
-        # Notify is async, need to ensure we can await it or fire-and-forget
-        # Since _process_filled_exit is async, we can await
-        task = asyncio.create_task(self._notify(
+        self._schedule_notify(
             f"{pnl_emoji} <b>{side_str}</b>\n"
             f"종목: {name} ({code})\n"
             f"가격: {price:,.0f}원 x {qty}주\n"
             f"사유: {reason}\n"
             f"손익: {pnl:+,.0f}원 ({pnl_pct:+.2f}%)"
-        ))
-        # We don't await notify strictly to avoid blocking flow too much, or we could.
-        # The original code awaited.
+        )
 
     def _collect_exit_indicators(self, code, price):
         """Get indicator snapshot at exit."""
@@ -2342,6 +2348,25 @@ class TradingOrchestrator:
                 f.write(json.dumps(row, ensure_ascii=False, default=str) + "\n")
         except Exception as e:
             logger.debug(f"Failed to append training trade event: {e}")
+
+    def _schedule_notify(self, message: str) -> None:
+        """Fire-and-forget notification with task tracking.
+
+        Creates an asyncio task for the notification and tracks it
+        so exceptions are not silently swallowed.
+        """
+        task = asyncio.create_task(self._notify(message), name="notify")
+        self._pending_notify_tasks.add(task)
+        task.add_done_callback(self._on_notify_done)
+
+    def _on_notify_done(self, task: asyncio.Task) -> None:
+        """Callback to clean up completed notify tasks and log errors."""
+        self._pending_notify_tasks.discard(task)
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc:
+            logger.warning(f"Notification task failed: {exc}")
 
     async def _notify(self, message: str):
         """알림 전송"""

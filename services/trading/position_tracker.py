@@ -588,6 +588,12 @@ class PositionTracker:
             else:
                 exit_price = price_data or position.current_price
 
+            if not exit_price or exit_price <= 0:
+                logger.warning(
+                    f"Skipping close for {position.code}: invalid price {exit_price}"
+                )
+                continue
+
             closed_pos = self.close_position(position_id, exit_price, reason)
             if closed_pos:
                 closed.append(closed_pos)

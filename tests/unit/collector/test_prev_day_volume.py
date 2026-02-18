@@ -103,3 +103,33 @@ class TestPrevDayVolumeCache:
         meta = cache.build_metadata(["005930", "000000"])
         assert "005930" in meta
         assert "000000" not in meta
+
+
+class TestPrevDayVolumeCacheAsync:
+    """Test async wrappers for PrevDayVolumeCache."""
+
+    @pytest.mark.asyncio
+    async def test_warm_all_async_delegates(self, mock_ohlcv):
+        cache = PrevDayVolumeCache()
+        mock_stock = _make_mock_stock(mock_ohlcv)
+
+        with patch(f"{MODULE}._get_pykrx_stock", return_value=mock_stock):
+            with patch(f"{MODULE}._last_trading_date_str", return_value="20260216"):
+                loaded = await cache.warm_all_async()
+
+        assert loaded == 6
+        assert cache.get("005930") == 10_000_000
+
+    @pytest.mark.asyncio
+    async def test_ensure_async_delegates(self):
+        cache = PrevDayVolumeCache()
+        cache._date = "20260216"
+
+        single_df = pd.DataFrame({"거래량": [3_000_000]}, index=["123456"])
+        mock_stock = _make_mock_stock(single_df)
+
+        with patch(f"{MODULE}._get_pykrx_stock", return_value=mock_stock):
+            filled = await cache.ensure_async(["123456"])
+
+        assert filled == 1
+        assert cache.get("123456") == 3_000_000
