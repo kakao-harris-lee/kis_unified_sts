@@ -1771,6 +1771,11 @@ class TradingOrchestrator:
                         ohlcv = self._indicator_engine.get_recent_candles(symbol, limit=240)
                         if ohlcv:
                             indicators["ohlcv"] = ohlcv
+                    # Inject multi-timeframe momentum indicators (e.g., 5-min TRIX/CCI/MACD/Stochastic)
+                    if "momentum_5m" in self._strategy_manager.required_indicators:
+                        momentum = self._indicator_engine.get_momentum_indicators(symbol, timeframe=5)
+                        if momentum:
+                            indicators["momentum_5m"] = momentum
                     if indicators:
                         enriched.update(indicators)
 
@@ -1905,6 +1910,12 @@ class TradingOrchestrator:
                         indicators = self._indicator_engine.get_indicators(symbol)
                         if indicators:
                             data[symbol] = {**data[symbol], **indicators}
+                        # Inject momentum indicators for exit strategies that need them
+                        momentum = self._indicator_engine.get_momentum_indicators(
+                            symbol, timeframe=5
+                        )
+                        if momentum:
+                            data[symbol]["momentum_5m"] = momentum
 
             # Check exits
             signals = await self._strategy_manager.check_exits(
@@ -2179,6 +2190,7 @@ class TradingOrchestrator:
             position_id=signal.position_id,
             exit_price=fill_price,
             reason=reason_str,
+            quantity=exit_quantity,
         )
 
         if not closed:

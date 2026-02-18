@@ -24,6 +24,10 @@ from shared.strategy.entry.volume_accumulation import (
     VolumeAccumulationBreakoutEntry,
     VolumeAccumulationConfig,
 )
+from shared.strategy.entry.trix_golden import (
+    TrixGoldenEntry,
+    TrixGoldenConfig,
+)
 
 __all__ = [
     # StochRSI Trend
@@ -38,4 +42,7 @@ __all__ = [
     # Volume Accumulation
     "VolumeAccumulationBreakoutEntry",
     "VolumeAccumulationConfig",
+    # TRIX Golden Signal
+    "TrixGoldenEntry",
+    "TrixGoldenConfig",
 ]

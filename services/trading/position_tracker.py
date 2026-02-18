@@ -37,9 +37,10 @@ import asyncio
 import logging
 import uuid
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Callable, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from shared.models.position import Position, PositionSide, PositionState
 from shared.utils.calc import validate_price
@@ -101,7 +102,9 @@ class PositionTrackerConfig:
                 f"and {MAX_MAX_POSITIONS}, got {self.max_positions}"
             )
 
-        if not (MIN_MAX_POSITIONS <= self.max_positions_per_symbol <= self.max_positions):
+        if not (
+            MIN_MAX_POSITIONS <= self.max_positions_per_symbol <= self.max_positions
+        ):
             raise ValueError(
                 f"max_positions_per_symbol must be between {MIN_MAX_POSITIONS} "
                 f"and max_positions ({self.max_positions}), got {self.max_positions_per_symbol}"
@@ -259,7 +262,9 @@ class PositionTracker:
             maxlen=self.config.max_closed_positions
         )
 
-        logger.info(f"PositionTracker initialized: max_positions={self.config.max_positions}")
+        logger.info(
+            f"PositionTracker initialized: max_positions={self.config.max_positions}"
+        )
 
     @property
     def positions(self) -> list[Position]:
@@ -361,7 +366,7 @@ class PositionTracker:
 
     def add_from_signal(
         self,
-        signal: "Signal",
+        signal: Signal,
         quantity: int,
         side: PositionSide = PositionSide.LONG,
     ) -> Position | None:
@@ -432,7 +437,9 @@ class PositionTracker:
         Returns:
             List of (position, old_state, new_state) for positions that transitioned
         """
-        breakeven_pct = breakeven_threshold or self.config.default_breakeven_threshold_pct
+        breakeven_pct = (
+            breakeven_threshold or self.config.default_breakeven_threshold_pct
+        )
         maximize_pct = maximize_threshold or self.config.default_maximize_threshold_pct
 
         transitions = []
@@ -494,22 +501,47 @@ class PositionTracker:
         position_id: str,
         exit_price: float,
         reason: str,
+        quantity: int | None = None,
     ) -> Position | None:
-        """Close a position
+        """Close a position (full or partial).
 
         Args:
             position_id: Position to close
             exit_price: Exit price
             reason: Exit reason (e.g., "TRAILING_STOP", "STOP_LOSS")
+            quantity: Number of shares to close. None or >= position.quantity
+                      means full close. A value < position.quantity triggers
+                      a partial close (reduces quantity, position stays active).
 
         Returns:
-            Closed position or None if not found
+            Closed position (full close) or a copy with partial close info,
+            or None if not found.
         """
         position = self._positions.get(position_id)
         if not position:
             logger.warning(f"Position not found: {position_id}")
             return None
 
+        # Determine close quantity
+        close_qty = (
+            quantity if quantity is not None and quantity > 0 else position.quantity
+        )
+
+        if close_qty >= position.quantity:
+            # Full close — existing behavior
+            return self._full_close(position, position_id, exit_price, reason)
+        else:
+            # Partial close — reduce quantity, keep position active
+            return self._partial_close(position, close_qty, exit_price, reason)
+
+    def _full_close(
+        self,
+        position: Position,
+        position_id: str,
+        exit_price: float,
+        reason: str,
+    ) -> Position:
+        """Fully close a position — removes from active tracking."""
         # Update position
         position.exit_triggered = True
         position.exit_reason = reason
@@ -563,7 +595,72 @@ class PositionTracker:
 
         return position
 
-    def close_all(self, market_data: dict[str, Any], reason: str = "CLOSE_ALL") -> list[Position]:
+    def _partial_close(
+        self,
+        position: Position,
+        close_qty: int,
+        exit_price: float,
+        reason: str,
+    ) -> Position:
+        """Partially close a position — reduces quantity, keeps position active.
+
+        Creates a synthetic closed-position record for the partial portion
+        and reduces the original position's quantity.
+
+        Args:
+            position: The active position to partially close.
+            close_qty: Number of shares to close.
+            exit_price: Exit price for the partial close.
+            reason: Exit reason.
+
+        Returns:
+            A copy of the position representing the closed portion,
+            with quantity set to close_qty and exit fields populated.
+        """
+        import copy
+
+        # Create a snapshot for the closed portion
+        closed_portion = copy.copy(position)
+        closed_portion.quantity = close_qty
+        closed_portion.exit_triggered = True
+        closed_portion.exit_reason = reason
+        closed_portion.exit_price = exit_price
+        closed_portion.exit_time = datetime.now()
+        closed_portion.current_price = exit_price
+
+        # Reduce the original position's quantity (stays in active tracking)
+        position.quantity -= close_qty
+        position.current_price = exit_price
+
+        # Add partial close to closed history
+        self._closed_positions.append(closed_portion)
+
+        # Record event
+        self._record_event(
+            "partial_closed",
+            position.id,
+            {
+                "code": position.code,
+                "exit_price": exit_price,
+                "reason": reason,
+                "closed_qty": close_qty,
+                "remaining_qty": position.quantity,
+                "profit_rate": closed_portion.profit_rate,
+                "hold_minutes": position.get_hold_duration(),
+            },
+        )
+
+        logger.info(
+            f"Position partially closed: {position.code} @ {exit_price:,.0f} "
+            f"x {close_qty} (reason={reason}, remaining={position.quantity}, "
+            f"profit={closed_portion.profit_pct:+.2f}%)"
+        )
+
+        return closed_portion
+
+    def close_all(
+        self, market_data: dict[str, Any], reason: str = "CLOSE_ALL"
+    ) -> list[Position]:
         """Close all positions
 
         Args:
@@ -664,8 +761,8 @@ class PositionTracker:
             return 0
 
         try:
-            from shared.db.config import ClickHouseConfig
             from shared.db.client import ClickHouseClient
+            from shared.db.config import ClickHouseConfig
 
             ch = ClickHouseClient(ClickHouseConfig())
             database = ch.config.database
@@ -674,23 +771,25 @@ class PositionTracker:
 
             rows = []
             for position in self._positions.values():
-                rows.append((
-                    position.id,
-                    position.code,
-                    position.name,
-                    position.entry_time,
-                    position.entry_price,
-                    position.quantity,
-                    position.strategy,
-                    position.stop_price,
-                    position.highest_price,
-                    position.state.value,
-                    1,  # is_open
-                    None,  # exit_date
-                    None,  # exit_price
-                    None,  # exit_reason
-                    None,  # pnl
-                ))
+                rows.append(
+                    (
+                        position.id,
+                        position.code,
+                        position.name,
+                        position.entry_time,
+                        position.entry_price,
+                        position.quantity,
+                        position.strategy,
+                        position.stop_price,
+                        position.highest_price,
+                        position.state.value,
+                        1,  # is_open
+                        None,  # exit_date
+                        None,  # exit_price
+                        None,  # exit_reason
+                        None,  # pnl
+                    )
+                )
 
             def _sync_save():
                 client = ch.get_sync_client()
@@ -718,8 +817,8 @@ class PositionTracker:
             Number of positions loaded
         """
         try:
-            from shared.db.config import ClickHouseConfig
             from shared.db.client import ClickHouseClient
+            from shared.db.config import ClickHouseConfig
 
             ch = ClickHouseClient(ClickHouseConfig())
             database = ch.config.database
@@ -728,22 +827,30 @@ class PositionTracker:
 
             def _sync_load():
                 client = ch.get_sync_client()
-                return client.execute(
-                    f"""
+                return client.execute(f"""
                     SELECT id, code, name, entry_date, entry_price, quantity,
                            strategy, stop_loss_price, high_since_entry, current_state
                     FROM {database}.swing_positions FINAL
                     WHERE is_open = 1
                     ORDER BY entry_date ASC
-                    """
-                )
+                    """)
 
             result = await asyncio.to_thread(_sync_load)
 
             loaded = 0
             for row in result:
-                pos_id, code, name, entry_time, entry_price, quantity, \
-                    strategy, stop_price, high_since_entry, state_str = row
+                (
+                    pos_id,
+                    code,
+                    name,
+                    entry_time,
+                    entry_price,
+                    quantity,
+                    strategy,
+                    stop_price,
+                    high_since_entry,
+                    state_str,
+                ) = row
 
                 # Skip if already tracked
                 if pos_id in self._positions:

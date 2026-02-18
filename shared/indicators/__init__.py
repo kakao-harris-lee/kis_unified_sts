@@ -41,6 +41,16 @@ from shared.indicators.composite import (
     IndicatorConfig,
     ScoreResult,
 )
+from shared.indicators.momentum import (
+    TRIXCalculator,
+    CCICalculator,
+    MACDCalculator,
+    StochasticCalculator,
+    RSICalculator,
+    OBVDataFrameCalculator,
+    DivergenceDetector,
+    calculate_all_momentum,
+)
 
 __all__ = [
     # Technical
@@ -59,4 +69,13 @@ __all__ = [
     "CompositeScoreCalculator",
     "ScoreResult",
     "IndicatorConfig",
+    # Momentum
+    "TRIXCalculator",
+    "CCICalculator",
+    "MACDCalculator",
+    "StochasticCalculator",
+    "RSICalculator",
+    "OBVDataFrameCalculator",
+    "DivergenceDetector",
+    "calculate_all_momentum",
 ]
