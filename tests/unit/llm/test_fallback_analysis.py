@@ -83,7 +83,7 @@ def test_unified_market_fallback_analysis_builds_summary_and_strategy(tmp_path):
     )
 
     summary, strategy, key_points = analyzer._fallback_analysis(
-        etf_flows, futures, options, bonds, indices=[]
+        etf_flows, futures, options, bonds, []
     )
 
     assert "반도체" in summary
