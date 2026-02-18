@@ -921,17 +921,22 @@ class TradingOrchestrator:
                 return False
 
             # Load LLM quality scores for filtering
+            # LLM payload schema: {excluded: {code: [reasons]}, raw_scores: {code: score}}
             llm_blacklist: set[str] = set()
             llm_raw = redis_client.get(self.LLM_QUALITY_REDIS_KEY)
             if llm_raw:
                 try:
                     llm_payload = json.loads(llm_raw)
-                    for item in llm_payload.get("results", []):
-                        code = item.get("code", "")
-                        score = item.get("score", 0)
-                        recommendation = str(item.get("recommendation", "")).lower()
-                        if recommendation in ("avoid", "sell") or score < 0:
-                            llm_blacklist.add(code)
+                    # Codes explicitly excluded by LLM analysis
+                    excluded = llm_payload.get("excluded", {})
+                    if isinstance(excluded, dict):
+                        llm_blacklist.update(excluded.keys())
+                    # Codes with negative raw scores
+                    raw_scores = llm_payload.get("raw_scores", {})
+                    if isinstance(raw_scores, dict):
+                        for code, score in raw_scores.items():
+                            if isinstance(score, (int, float)) and score < 0:
+                                llm_blacklist.add(code)
                 except Exception:
                     pass
 

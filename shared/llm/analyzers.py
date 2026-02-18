@@ -5,6 +5,7 @@ Stock and Futures technical analysis, backtesting engines.
 """
 import logging
 import os
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 

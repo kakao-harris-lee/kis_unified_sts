@@ -29,7 +29,7 @@ async def test_mean_reversion_buy_signal():
             "bb_middle": 370.0,
             "rsi": 25,  # Oversold
         },
-        timestamp=datetime.now(),
+        timestamp=datetime(2026, 2, 16, 10, 30, 0),
     )
 
     signal = await strategy.generate(context)
@@ -58,7 +58,7 @@ async def test_mean_reversion_sell_signal():
             "bb_middle": 370.0,
             "rsi": 75,  # Overbought
         },
-        timestamp=datetime.now(),
+        timestamp=datetime(2026, 2, 16, 10, 30, 0),
     )
 
     signal = await strategy.generate(context)
@@ -85,7 +85,7 @@ async def test_mean_reversion_no_signal_in_range():
             "bb_middle": 370.0,
             "rsi": 50,  # Neutral RSI
         },
-        timestamp=datetime.now(),
+        timestamp=datetime(2026, 2, 16, 10, 30, 0),
     )
 
     signal = await strategy.generate(context)
@@ -110,7 +110,7 @@ async def test_mean_reversion_no_signal_rsi_not_extreme():
             "bb_middle": 370.0,
             "rsi": 50,  # RSI not confirming
         },
-        timestamp=datetime.now(),
+        timestamp=datetime(2026, 2, 16, 10, 30, 0),
     )
 
     signal = await strategy.generate(context)
