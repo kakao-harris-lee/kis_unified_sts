@@ -293,6 +293,10 @@ class TradingConfig:
     # Per-symbol metadata (e.g. watchlist baseline volumes).
     symbol_metadata: dict[str, dict[str, Any]] = field(default_factory=dict)
 
+    # Paper trading simulation fees (round-trip 기준 0.3% = 편도 0.15%)
+    paper_commission_rate: float = 0.0015  # 편도 수수료 0.15%
+    paper_slippage_rate: float = 0.001  # 슬리피지 0.1%
+
     # Error recovery
     error_retry_delay_seconds: float = 60.0  # Retry delay after errors (default 1 min)
 
@@ -779,6 +783,8 @@ class TradingOrchestrator:
 
                 self._paper_broker = VirtualBroker(
                     initial_balance=self.config.initial_capital,
+                    commission_rate=self.config.paper_commission_rate,
+                    slippage_rate=self.config.paper_slippage_rate,
                 )
                 logger.info("Paper broker (VirtualBroker) initialized")
             except Exception as e:
