@@ -253,9 +253,9 @@ class TrixGoldenEntry(EntrySignalGenerator[TrixGoldenConfig]):
         """Check all 4+1 entry conditions on the latest candle.
 
         Conditions (must all be true):
-            1. TRIX Golden Cross
+            1. TRIX Golden Cross (crossover: was <= signal, now >)
             2. MACD Oscillator > 0
-            3. Stochastic Golden Cross
+            3. Stochastic Bullish State (%K > %D — relaxed from crossover)
             4. CCI < upper threshold
             5. OBV rising (optional)
         """
@@ -272,7 +272,7 @@ class TrixGoldenEntry(EntrySignalGenerator[TrixGoldenConfig]):
                 logger.debug("Missing indicator column: %s", col)
                 return False
 
-        # Condition 1: TRIX Golden Cross
+        # Condition 1: TRIX Golden Cross (primary trigger — must be exact crossover)
         trix_current = df["trix"].iloc[i]
         trix_signal_current = df["trix_signal"].iloc[i]
         trix_prev = df["trix"].iloc[prev]
@@ -289,14 +289,12 @@ class TrixGoldenEntry(EntrySignalGenerator[TrixGoldenConfig]):
         if not cond_macd_pos:
             return False
 
-        # Condition 3: Stochastic Golden Cross
+        # Condition 3: Stochastic Bullish State (%K > %D)
         sto_k_current = df["sto_k"].iloc[i]
         sto_d_current = df["sto_d"].iloc[i]
-        sto_k_prev = df["sto_k"].iloc[prev]
-        sto_d_prev = df["sto_d"].iloc[prev]
 
-        cond_sto_gc = (sto_k_current > sto_d_current) and (sto_k_prev <= sto_d_prev)
-        if not cond_sto_gc:
+        cond_sto_bullish = sto_k_current > sto_d_current
+        if not cond_sto_bullish:
             return False
 
         # Condition 4: CCI < upper threshold

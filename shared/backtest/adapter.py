@@ -40,10 +40,17 @@ class BacktestStrategyAdapter:
         bb_std = entry_params.get("bb_std", 2.0)
         rsi_period = entry_params.get("rsi_period", 14)
 
+        # Detect multi-timeframe requirements from strategy
+        self._required_indicators = set(strategy.required_indicators)
+        mtf_timeframes: list[int] = []
+        if "momentum_5m" in self._required_indicators:
+            mtf_timeframes.append(5)
+
         self._indicator_engine = StreamingIndicatorEngine(
             bb_period=bb_period,
             bb_std=bb_std,
             rsi_period=rsi_period,
+            mtf_timeframes=mtf_timeframes,
         )
         self._loop = asyncio.new_event_loop()
 
@@ -51,14 +58,33 @@ class BacktestStrategyAdapter:
         """Convert a bar dict into a BUY/SELL/HOLD signal."""
         code = str(bar.get("code", "BACKTEST") or "BACKTEST")
 
-        # Feed bar as a completed candle
-        self._indicator_engine.seed_candles(code, [bar])
+        # Feed bar as a completed candle, extracting minute for MTF bucketing
+        timestamp = bar.get("datetime", datetime.now())
+        if isinstance(timestamp, str):
+            timestamp = datetime.fromisoformat(timestamp)
+
+        minute = timestamp.hour * 100 + timestamp.minute
+        self._indicator_engine.seed_candles(code, [bar], minute=minute)
 
         # Need warmup before generating signals
         if not self._indicator_engine.is_warm(code):
             return SignalType.HOLD
 
         indicators = self._indicator_engine.get_indicators(code)
+
+        # Inject momentum_5m if required by strategy
+        if "momentum_5m" in self._required_indicators:
+            momentum = self._indicator_engine.get_momentum_indicators(
+                code, timeframe=5
+            )
+            if momentum:
+                indicators["momentum_5m"] = momentum
+
+        # Inject ohlcv if required by strategy
+        if "ohlcv" in self._required_indicators:
+            ohlcv = self._indicator_engine.get_recent_candles(code, limit=240)
+            if ohlcv:
+                indicators["ohlcv"] = ohlcv
 
         # Derive market_state from MFI so MeanReversionEntry's market_state_filter works
         mfi = indicators.get("mfi")
@@ -71,10 +97,6 @@ class BacktestStrategyAdapter:
                 market_state = "BEAR"
         else:
             market_state = "SIDEWAYS_FLAT"
-
-        timestamp = bar.get("datetime", datetime.now())
-        if isinstance(timestamp, str):
-            timestamp = datetime.fromisoformat(timestamp)
 
         context = EntryContext(
             market_data=bar,

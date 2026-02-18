@@ -301,11 +301,19 @@ class StreamingIndicatorEngine:
                 f"({len(acc.candles)} candles)"
             )
 
-    def seed_candles(self, symbol: str, candles: list[dict]) -> None:
+    def seed_candles(
+        self, symbol: str, candles: list[dict], minute: int | None = None
+    ) -> None:
         """Pre-warm a symbol with historical candle data.
 
         Each candle dict must have: open, high, low, close, volume.
         Candles should be in chronological order.
+
+        Args:
+            symbol: Symbol to seed.
+            candles: List of candle dicts.
+            minute: Optional HHMM minute value for MTF bucketing.
+                    If not provided, uses 0 (no MTF bucket change detection).
         """
         acc = self._accumulators.get(symbol)
         if acc is None:
@@ -315,16 +323,33 @@ class StreamingIndicatorEngine:
         seeded = 0
         for c in candles:
             try:
+                # Derive minute from datetime if available and not explicitly given
+                candle_minute = minute
+                if candle_minute is None:
+                    dt = c.get("datetime")
+                    if dt is not None:
+                        if isinstance(dt, str):
+                            dt = datetime.fromisoformat(dt)
+                        if hasattr(dt, "hour"):
+                            candle_minute = dt.hour * 100 + dt.minute
+                if candle_minute is None:
+                    candle_minute = 0
+
                 candle = Candle(
                     open=float(c["open"]),
                     high=float(c["high"]),
                     low=float(c["low"]),
                     close=float(c["close"]),
                     volume=float(c.get("volume", 0)),
-                    minute=0,
+                    minute=candle_minute,
                 )
                 acc.candles.append(candle)
                 seeded += 1
+
+                # Feed multi-timeframe accumulators if configured
+                if self._mtf_timeframes:
+                    self._feed_mtf_candle(symbol, candle)
+
             except (KeyError, ValueError):
                 continue
 
