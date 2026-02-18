@@ -201,14 +201,14 @@ class TestTrixGoldenEntryGenerate:
         assert signal is None
 
     @pytest.mark.asyncio
-    async def test_no_signal_when_stochastic_no_cross(self):
-        """Stochastic not crossing → no signal."""
+    async def test_no_signal_when_stochastic_bearish(self):
+        """Stochastic bearish state (%K < %D) → no signal."""
         df = _build_golden_df(80)
         df = _force_golden_cross(df)
-        # Break Stochastic golden cross
+        # Break Stochastic bullish state: make %K < %D
         n = len(df)
-        df.loc[n - 2, "sto_k"] = 60.0
-        df.loc[n - 2, "sto_d"] = 50.0  # prev: K > D already
+        df.loc[n - 1, "sto_k"] = 40.0
+        df.loc[n - 1, "sto_d"] = 60.0  # current: K < D → bearish
 
         entry = TrixGoldenEntry(TrixGoldenConfig(min_candles=10))
         ctx = _build_context_with_momentum(df)
