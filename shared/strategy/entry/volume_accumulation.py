@@ -234,10 +234,12 @@ class VolumeAccumulationBreakoutEntry(EntrySignalGenerator[VolumeAccumulationCon
         current_time = timestamp.time()
 
         # Calculate market open time (with buffer)
-        market_open = time(
-            hour=self.config.market_open_hour,
-            minute=self.config.market_open_minute + self.config.skip_market_open_minutes,
-        )
+        open_hour = self.config.market_open_hour
+        open_minute = self.config.market_open_minute + self.config.skip_market_open_minutes
+        if open_minute >= 60:
+            open_hour += open_minute // 60
+            open_minute = open_minute % 60
+        market_open = time(hour=open_hour, minute=open_minute)
 
         # Calculate market close time (with buffer)
         close_hour = self.config.market_close_hour

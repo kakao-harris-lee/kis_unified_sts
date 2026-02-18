@@ -38,7 +38,7 @@ from typing import TYPE_CHECKING, Any, Optional
 
 from shared.config.mixins import ConfigMixin
 from shared.calendar import get_market_calendar
-from shared.models.position import Position
+from shared.models.position import Position, PositionSide
 from shared.models.signal import ExitReason, ExitSignal
 from shared.strategy.base import ExitContext, ExitSignalGenerator
 from shared.strategy.market_data import (
@@ -198,6 +198,42 @@ class MomentumDecayExit(ExitSignalGenerator[MomentumDecayConfig]):
         self.config.validate()
 
     # -------------------------------------------------------------------------
+    # Side-Aware Helpers
+    # -------------------------------------------------------------------------
+
+    @staticmethod
+    def _calc_profit_pct(position: Position, current_price: float) -> float:
+        """Side-aware profit percentage."""
+        if position.side == PositionSide.SHORT:
+            return (position.entry_price - current_price) / position.entry_price
+        return (current_price - position.entry_price) / position.entry_price
+
+    @staticmethod
+    def _calc_profit_amount(position: Position, current_price: float) -> float:
+        """Side-aware profit amount."""
+        if position.side == PositionSide.SHORT:
+            return (position.entry_price - current_price) * position.quantity
+        return (current_price - position.entry_price) * position.quantity
+
+    @staticmethod
+    def _get_extreme_since_entry(position: Position, current_price: float) -> float:
+        """Most favorable price since entry (high for LONG, low for SHORT)."""
+        if position.side == PositionSide.SHORT:
+            return min(
+                position.lowest_price if position.lowest_price < float("inf")
+                else position.entry_price,
+                current_price,
+            )
+        return max(position.highest_price or position.entry_price, current_price)
+
+    @staticmethod
+    def _stop_hit(position: Position, current_price: float, stop_price: float) -> bool:
+        """Check if stop price is hit (direction-aware)."""
+        if position.side == PositionSide.SHORT:
+            return current_price >= stop_price
+        return current_price <= stop_price
+
+    # -------------------------------------------------------------------------
     # Main Interface
     # -------------------------------------------------------------------------
 
@@ -291,14 +327,12 @@ class MomentumDecayExit(ExitSignalGenerator[MomentumDecayConfig]):
         if current_price is None:
             return None
 
-        # Calculate profit
-        profit_pct = (current_price - position.entry_price) / position.entry_price
-        profit_amount = (current_price - position.entry_price) * position.quantity
+        # Calculate profit (side-aware)
+        profit_pct = self._calc_profit_pct(position, current_price)
+        profit_amount = self._calc_profit_amount(position, current_price)
 
-        # Session high
-        high_since_entry = max(
-            position.highest_price or position.entry_price, current_price
-        )
+        # Extreme price since entry (LONG: high, SHORT: low)
+        high_since_entry = self._get_extreme_since_entry(position, current_price)
 
         # Holding period
         holding_days = self._get_holding_days(position, now)
@@ -362,6 +396,7 @@ class MomentumDecayExit(ExitSignalGenerator[MomentumDecayConfig]):
 
         # 5. Momentum Decay
         if self._check_momentum_decay(
+            position=position,
             current_price=current_price,
             high_since_entry=high_since_entry,
             volume_velocity=volume_velocity,
@@ -450,30 +485,35 @@ class MomentumDecayExit(ExitSignalGenerator[MomentumDecayConfig]):
         return max(0, len(trading_days) - 1)
 
     def _is_friday_afternoon(self, now: datetime) -> bool:
-        """Check if current time is Friday afternoon"""
+        """Check if current time is Friday afternoon (KST)"""
+        kst_now = to_kst(now)
         # Friday = 4 (0=Monday, 6=Sunday)
-        is_friday = now.weekday() == 4
+        is_friday = kst_now.weekday() == 4
         # After 14:00
-        is_afternoon = now.hour >= 14
+        is_afternoon = kst_now.hour >= 14
         return is_friday and is_afternoon
 
     def _check_momentum_decay(
         self,
+        position: Position,
         current_price: float,
         high_since_entry: float,
         volume_velocity: float,
     ) -> bool:
-        """Check for momentum decay
+        """Check for momentum decay (side-aware)
 
         Momentum decay detected when:
-        - Price has retraced decay_retracement_pct from session high
+        - Price has retraced decay_retracement_pct from session extreme
         - Volume velocity is negative
         """
-        # Calculate retracement from high
         if high_since_entry <= 0:
             return False
 
-        retracement = (high_since_entry - current_price) / high_since_entry
+        # Retracement from extreme (side-aware)
+        if position.side == PositionSide.SHORT:
+            retracement = (current_price - high_since_entry) / high_since_entry
+        else:
+            retracement = (high_since_entry - current_price) / high_since_entry
 
         # Check both conditions
         price_decay = retracement >= self.config.decay_retracement_pct
@@ -544,15 +584,19 @@ class MomentumDecayExit(ExitSignalGenerator[MomentumDecayConfig]):
             # Not in trailing mode yet
             return None
 
-        # Calculate trailing stop price
-        trailing_stop_price = high_since_entry * (1 - trailing_gap)
-
-        # Compare with position's stop_price (use higher value)
-        if position.stop_price > 0:
-            trailing_stop_price = max(trailing_stop_price, position.stop_price)
+        # Calculate trailing stop price (side-aware)
+        is_short = position.side == PositionSide.SHORT
+        if is_short:
+            trailing_stop_price = high_since_entry * (1 + trailing_gap)
+            if position.stop_price > 0:
+                trailing_stop_price = min(trailing_stop_price, position.stop_price)
+        else:
+            trailing_stop_price = high_since_entry * (1 - trailing_gap)
+            if position.stop_price > 0:
+                trailing_stop_price = max(trailing_stop_price, position.stop_price)
 
         # Check if trailing stop hit
-        if current_price <= trailing_stop_price:
+        if self._stop_hit(position, current_price, trailing_stop_price):
             logger.debug(
                 f"Trailing stop hit: price={current_price:.2f}, "
                 f"stop={trailing_stop_price:.2f}, gap={trailing_gap:.1%}"

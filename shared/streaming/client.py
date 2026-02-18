@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 from typing import Optional
 
 import redis
@@ -23,37 +24,69 @@ class RedisClient:
     """
 
     _instance: Optional[redis.Redis] = None
+    _lock: threading.Lock = threading.Lock()
+
+    @classmethod
+    def _create_client(cls) -> redis.Redis:
+        """Create a new Redis client from environment variables."""
+        host = os.environ.get("REDIS_HOST", "localhost")
+        port = int(os.environ.get("REDIS_PORT", "6379"))
+        password = os.environ.get("REDIS_PASSWORD", None) or None
+        db = int(os.environ.get("REDIS_DB", "1"))
+
+        client = redis.Redis(
+            host=host,
+            port=port,
+            password=password,
+            db=db,
+            decode_responses=True,
+            socket_connect_timeout=5,
+            socket_timeout=5,
+        )
+
+        client.ping()
+        logger.info(f"Redis 연결 성공: {host}:{port}")
+        return client
 
     @classmethod
     def get_client(cls) -> redis.Redis:
-        """Redis 클라이언트 인스턴스 반환"""
-        if cls._instance is None:
-            host = os.environ.get("REDIS_HOST", "localhost")
-            port = int(os.environ.get("REDIS_PORT", "6379"))
-            password = os.environ.get("REDIS_PASSWORD", None) or None
-            db = int(os.environ.get("REDIS_DB", "1"))
+        """Redis 클라이언트 인스턴스 반환 (자동 재연결)"""
+        if cls._instance is not None:
+            try:
+                cls._instance.ping()
+                return cls._instance
+            except (redis.ConnectionError, redis.TimeoutError, OSError):
+                logger.warning("Redis 연결 끊김, 재연결 시도...")
+                try:
+                    cls._instance.close()
+                except Exception:
+                    pass
+                cls._instance = None
 
-            cls._instance = redis.Redis(
-                host=host,
-                port=port,
-                password=password,
-                db=db,
-                decode_responses=True,
-            )
+        with cls._lock:
+            # Double-check after acquiring lock
+            if cls._instance is not None:
+                try:
+                    cls._instance.ping()
+                    return cls._instance
+                except (redis.ConnectionError, redis.TimeoutError, OSError):
+                    try:
+                        cls._instance.close()
+                    except Exception:
+                        pass
+                    cls._instance = None
 
-            # 연결 테스트
-            cls._instance.ping()
-            logger.info(f"Redis 연결 성공: {host}:{port}")
-
-        return cls._instance
+            cls._instance = cls._create_client()
+            return cls._instance
 
     @classmethod
     def close(cls) -> None:
         """연결 종료"""
-        if cls._instance:
-            cls._instance.close()
-            cls._instance = None
-            logger.info("Redis 연결 종료")
+        with cls._lock:
+            if cls._instance:
+                cls._instance.close()
+                cls._instance = None
+                logger.info("Redis 연결 종료")
 
     @classmethod
     def reset(cls) -> None:

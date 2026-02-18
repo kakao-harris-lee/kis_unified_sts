@@ -129,7 +129,9 @@ class OpeningVolumeSurgeEntry(EntrySignalGenerator[OpeningVolumeSurgeConfig]):
         o = float(data.get("open", 0) or 0.0)
         high = float(data.get("high", 0) or 0.0)
         low = float(data.get("low", 0) or 0.0)
-        raw_change_pct = data.get("change_pct") or data.get("change_percent")
+        raw_change_pct = data.get("change_pct")
+        if raw_change_pct is None:
+            raw_change_pct = data.get("change_percent")
         if raw_change_pct is not None:
             change_pct = float(raw_change_pct)
         else:

@@ -37,7 +37,7 @@ from dataclasses import dataclass
 from datetime import datetime, time
 from typing import TYPE_CHECKING, Any, Optional
 
-from shared.models.position import Position, PositionState
+from shared.models.position import Position, PositionSide, PositionState
 from shared.models.signal import ExitReason, ExitSignal
 from shared.strategy.base import ExitContext, ExitSignalGenerator
 from shared.strategy.market_data import get_price_from_snapshot, get_symbol_snapshot
@@ -311,6 +311,42 @@ class ThreeStageExit(ExitSignalGenerator[ThreeStageExitConfig]):
         return signals
 
     # -------------------------------------------------------------------------
+    # Side-Aware Helpers
+    # -------------------------------------------------------------------------
+
+    @staticmethod
+    def _calc_profit_pct(position: Position, current_price: float) -> float:
+        """Side-aware profit percentage (ratio, e.g. 0.05 = +5%)."""
+        if position.side == PositionSide.SHORT:
+            return (position.entry_price - current_price) / position.entry_price
+        return (current_price - position.entry_price) / position.entry_price
+
+    @staticmethod
+    def _calc_profit_amount(position: Position, current_price: float) -> float:
+        """Side-aware profit amount."""
+        if position.side == PositionSide.SHORT:
+            return (position.entry_price - current_price) * position.quantity
+        return (current_price - position.entry_price) * position.quantity
+
+    @staticmethod
+    def _get_extreme_since_entry(position: Position, current_price: float) -> float:
+        """Most favorable price since entry (high for LONG, low for SHORT)."""
+        if position.side == PositionSide.SHORT:
+            return min(
+                position.lowest_price if position.lowest_price < float("inf")
+                else position.entry_price,
+                current_price,
+            )
+        return max(position.highest_price or position.entry_price, current_price)
+
+    @staticmethod
+    def _stop_hit(position: Position, current_price: float, stop_price: float) -> bool:
+        """Check if stop price is hit (direction-aware)."""
+        if position.side == PositionSide.SHORT:
+            return current_price >= stop_price
+        return current_price <= stop_price
+
+    # -------------------------------------------------------------------------
     # Position Check Logic
     # -------------------------------------------------------------------------
 
@@ -334,14 +370,12 @@ class ThreeStageExit(ExitSignalGenerator[ThreeStageExitConfig]):
         if current_price is None:
             return None
 
-        # 손익 계산
-        profit_pct = (current_price - position.entry_price) / position.entry_price
-        profit_amount = (current_price - position.entry_price) * position.quantity
+        # 손익 계산 (side-aware)
+        profit_pct = self._calc_profit_pct(position, current_price)
+        profit_amount = self._calc_profit_amount(position, current_price)
 
-        # 최고가
-        high_since_entry = max(
-            position.highest_price or position.entry_price, current_price
-        )
+        # 최적가 (LONG: 최고가, SHORT: 최저가)
+        high_since_entry = self._get_extreme_since_entry(position, current_price)
 
         # 보유 시간 (분)
         holding_minutes = int(
@@ -431,12 +465,7 @@ class ThreeStageExit(ExitSignalGenerator[ThreeStageExitConfig]):
     def _determine_stage(
         self, position: Position, profit_pct: float
     ) -> PositionState:
-        """현재 수익률에 따른 Stage 결정"""
-        # Position의 state 사용 (이미 관리되고 있다면)
-        if position.state != PositionState.SURVIVAL:
-            return position.state
-
-        # profit_pct 기반 결정
+        """현재 수익률에 따른 Stage 결정 (항상 profit_pct 기준으로 승격)"""
         if profit_pct >= self.config.maximize_threshold_pct:
             return PositionState.MAXIMIZE
         elif profit_pct >= self.config.breakeven_threshold_pct:
@@ -501,8 +530,11 @@ class ThreeStageExit(ExitSignalGenerator[ThreeStageExitConfig]):
 
         # Stage 2: BREAKEVEN - 본전 Stop
         elif stage == PositionState.BREAKEVEN:
-            breakeven_price = position.entry_price * (1 + c.fee_rate)
-            if current_price <= breakeven_price:
+            if position.side == PositionSide.SHORT:
+                breakeven_price = position.entry_price * (1 - c.fee_rate)
+            else:
+                breakeven_price = position.entry_price * (1 + c.fee_rate)
+            if self._stop_hit(position, current_price, breakeven_price):
                 return self._create_exit_signal(
                     position=position,
                     current_price=current_price,
@@ -521,7 +553,7 @@ class ThreeStageExit(ExitSignalGenerator[ThreeStageExitConfig]):
                 position=position,
                 high_since_entry=high_since_entry,
             )
-            if current_price <= trailing_stop_price:
+            if self._stop_hit(position, current_price, trailing_stop_price):
                 return self._create_exit_signal(
                     position=position,
                     current_price=current_price,
@@ -539,18 +571,25 @@ class ThreeStageExit(ExitSignalGenerator[ThreeStageExitConfig]):
     def _calculate_trailing_stop(
         self, position: Position, high_since_entry: float
     ) -> float:
-        """Trailing Stop 가격 계산
+        """Trailing Stop 가격 계산 (side-aware)
 
-        Overshooting 감지: 급등 시 gap 축소
+        Overshooting 감지: 급등/급락 시 gap 축소.
+        LONG: trail below extreme high. SHORT: trail above extreme low.
         """
         c = self.config
+        is_short = position.side == PositionSide.SHORT
 
-        # 현재 수익률 (최고가 기준)
-        gain_from_entry = (
-            high_since_entry - position.entry_price
-        ) / position.entry_price
+        # 수익률 (최적가 기준, side-aware)
+        if is_short:
+            gain_from_entry = (
+                position.entry_price - high_since_entry
+            ) / position.entry_price
+        else:
+            gain_from_entry = (
+                high_since_entry - position.entry_price
+            ) / position.entry_price
 
-        # Overshooting 체크: 급등 시 gap 축소
+        # Overshooting 체크: 급등/급락 시 gap 축소
         if gain_from_entry >= c.overshoot_threshold_pct:
             gap = abs(c.overshoot_trailing_pct)
             logger.debug(
@@ -560,11 +599,16 @@ class ThreeStageExit(ExitSignalGenerator[ThreeStageExitConfig]):
         else:
             gap = abs(c.trailing_stop_pct)
 
-        trailing_stop_price = high_since_entry * (1 - gap)
-
-        # Position의 stop_price와 비교 (더 높은 값 유지)
-        if position.stop_price > 0:
-            trailing_stop_price = max(trailing_stop_price, position.stop_price)
+        if is_short:
+            trailing_stop_price = high_since_entry * (1 + gap)
+            # Position의 stop_price와 비교 (SHORT: 더 낮은 값 유지)
+            if position.stop_price > 0:
+                trailing_stop_price = min(trailing_stop_price, position.stop_price)
+        else:
+            trailing_stop_price = high_since_entry * (1 - gap)
+            # Position의 stop_price와 비교 (LONG: 더 높은 값 유지)
+            if position.stop_price > 0:
+                trailing_stop_price = max(trailing_stop_price, position.stop_price)
 
         return trailing_stop_price
 
@@ -703,7 +747,7 @@ class ThreeStageExit(ExitSignalGenerator[ThreeStageExitConfig]):
             새로운 상태 (전이 발생 시) 또는 None (전이 없음)
         """
         c = self.config
-        profit_pct = (current_price - position.entry_price) / position.entry_price
+        profit_pct = self._calc_profit_pct(position, current_price)
         old_state = position.state
         new_state = None
 
@@ -713,7 +757,10 @@ class ThreeStageExit(ExitSignalGenerator[ThreeStageExitConfig]):
             and profit_pct >= c.breakeven_threshold_pct
         ):
             position.state = PositionState.BREAKEVEN
-            position.stop_price = position.entry_price * (1 + c.fee_rate)
+            if position.side == PositionSide.SHORT:
+                position.stop_price = position.entry_price * (1 - c.fee_rate)
+            else:
+                position.stop_price = position.entry_price * (1 + c.fee_rate)
             new_state = PositionState.BREAKEVEN
 
         # BREAKEVEN → MAXIMIZE
