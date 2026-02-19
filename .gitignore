@@ -44,12 +44,20 @@ scripts/test_model.py
 # KIS API documentation (binary files)
 kis_docs/
 .kis_token_real
+.kis_token_mock
 .serena/
 
-# RL training artifacts
+# RL/ML training artifacts
 models/futures/rl/
+models/futures/tft/
+
+# Data
+data/
 results/
 mlflow.db
+
+# Node.js
+node_modules/
 
 # Screenshots / images (root level)
 *.png
