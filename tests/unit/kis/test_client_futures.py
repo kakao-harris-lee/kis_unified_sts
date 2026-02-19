@@ -27,13 +27,16 @@ async def test_get_futures_current_price(client):
     symbol = "101S6000"
     mock_response = {
         "rt_cd": "0",
-        "output": {
-            "futures_prpr": "350.50",
-            "futures_oprc": "350.00",
-            "futures_hgpr": "351.00",
-            "futures_lwpr": "349.50",
+        "msg_cd": "MCA00000",
+        "msg1": "정상처리 되었습니다.",
+        "output1": {
+            "hts_kor_isnm": "F 202603",
+            "futs_prpr": "350.50",
+            "futs_oprc": "350.00",
+            "futs_hgpr": "351.00",
+            "futs_lwpr": "349.50",
             "acml_vol": "1000",
-            "prdy_ctrt": "0.50"
+            "futs_prdy_ctrt": "0.50"
         }
     }
 
@@ -56,7 +59,7 @@ async def test_get_futures_current_price(client):
         # Verify TR ID and URL
         call_args = mock_get.call_args
         assert "/uapi/domestic-futureoption/v1/quotations/inquire-price" in call_args[0][0]
-        assert call_args[1]["headers"]["tr_id"] == "FHKIF02010100"
+        assert call_args[1]["headers"]["tr_id"] == "FHMIF10000000"
         assert call_args[1]["params"]["FID_COND_MRKT_DIV_CODE"] == "F"
 
 @pytest.mark.asyncio

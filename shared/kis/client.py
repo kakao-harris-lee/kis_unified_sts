@@ -189,9 +189,8 @@ class KISClient(AsyncSessionMixin):
         session = await self._get_session()
         headers = await self.auth_manager.get_auth_headers_async()
 
-        # Add TR ID for Current Price (Futures) - "선물옵션 현재가"
-        # TR ID: FHKIF02010100 (Index Futures)
-        headers["tr_id"] = "FHKIF02010100"
+        # TR ID: FHMIF10000000 (선물옵션 현재가)
+        headers["tr_id"] = "FHMIF10000000"
         headers["custtype"] = "P"
 
         params = {
@@ -224,18 +223,17 @@ class KISClient(AsyncSessionMixin):
                 raise Exception(f"KIS Logic Error: {msg}")
 
             self._rate_limiter.reset_backoff()
-            output = data.get("output", {})
+            # FHMIF10000000 returns output1 (price), output2/3 (index info)
+            output = data.get("output1", {})
 
-            # Map KIS output fields (Futures)
-            # futures_prpr (Current), futures_oprc (Open), futures_hgpr (High), futures_lwpr (Low), acml_vol (Vol)
             return {
                 "code": symbol,
-                "close": float(output.get("n_ft_prpr", output.get("futures_prpr", 0))),
-                "open": float(output.get("n_ft_oprc", output.get("futures_oprc", 0))),
-                "high": float(output.get("n_ft_hgpr", output.get("futures_hgpr", 0))),
-                "low": float(output.get("n_ft_lwpr", output.get("futures_lwpr", 0))),
+                "close": float(output.get("futs_prpr", 0)),
+                "open": float(output.get("futs_oprc", 0)),
+                "high": float(output.get("futs_hgpr", 0)),
+                "low": float(output.get("futs_lwpr", 0)),
                 "volume": int(output.get("acml_vol", 0)),
-                "change": float(output.get("prdy_ctrt", 0)) / 100.0 if output.get("prdy_ctrt") else 0.0,
+                "change": float(output.get("futs_prdy_ctrt", 0)) / 100.0 if output.get("futs_prdy_ctrt") else 0.0,
                 "timestamp": time.time(),
             }
 

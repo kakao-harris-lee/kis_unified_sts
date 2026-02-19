@@ -4,7 +4,7 @@
 strategy:
   name: rl_mppo
   asset_class: futures
-  enabled: false                     # 학습 완료 후 활성화
+  enabled: true
   description: "Maskable PPO RL agent for KOSPI200 futures intraday trading"
 
   entry:
@@ -25,13 +25,13 @@ strategy:
   exit:
     type: three_stage                # 기존 3-Stage Exit 재사용
     params:
-      hard_stop_pct: 1.5
-      breakeven_threshold_pct: 1.0
-      breakeven_buffer_pct: 0.1
-      maximize_threshold_pct: 3.0
-      trailing_stop_pct: 2.0
-      tight_trailing_pct: 1.0
-      tight_trailing_trigger_pct: 5.0
+      hard_stop_pct: -0.015          # -1.5%
+      breakeven_threshold_pct: 0.01  # +1.0%
+      breakeven_buffer_pct: 0.001    # +0.1%
+      maximize_threshold_pct: 0.03   # +3.0%
+      trailing_stop_pct: -0.02       # -2.0% from high
+      tight_trailing_pct: -0.01      # -1.0%
+      tight_trailing_trigger_pct: 0.05  # +5.0%
 
   position:
     type: fixed

@@ -196,6 +196,42 @@ def get_active_codes_for_date(target_date: date) -> List[str]:
     return codes
 
 
+def get_front_month_code(
+    product: str = "kospi200",
+    target_date: date = None,
+    legacy: bool = True,
+) -> str:
+    """
+    Get the front-month (nearest active) futures contract code.
+
+    Uses exact 2nd-Thursday expiry calculation to determine rollover.
+
+    Args:
+        product: "kospi200" for full-size, "mini" for KOSPI200 mini
+        target_date: Date to check (default: today)
+        legacy: Use A-code format (default: True)
+
+    Returns:
+        Front-month futures code (e.g., "A01603" for KOSPI200 Mar 2026)
+    """
+    if target_date is None:
+        target_date = date.today()
+
+    prefix = KOSPI200_LEGACY_PREFIX if product == "kospi200" else KOSPI_MINI_LEGACY_PREFIX
+
+    y, m = target_date.year, target_date.month
+    expiry = get_expiry_date(y, m)
+
+    if target_date > expiry:
+        # Current month's contract expired — roll to next month
+        m += 1
+        if m > 12:
+            m = 1
+            y += 1
+
+    return make_code(y, m, prefix=prefix, legacy=legacy)
+
+
 def get_all_codes_in_range(start: date, end: date) -> List[str]:
     """
     Get all futures codes that were traded during a date range.

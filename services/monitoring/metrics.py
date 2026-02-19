@@ -245,6 +245,25 @@ class MetricsCollector:
             buckets=[10, 50, 100, 250, 500, 1000, 2500, 5000],
         )
 
+    def register_strategies(self, strategy_names: list[str]) -> None:
+        """Pre-initialize Prometheus counters with known strategy names.
+
+        This ensures label_values() in Grafana can discover strategies
+        even before any trades or signals are recorded.
+        """
+        if not HAS_PROMETHEUS:
+            return
+
+        for name in strategy_names:
+            # Initialize with 0 — creates the time series in Prometheus
+            self.prom_trades_total.labels(strategy=name, outcome="win")
+            self.prom_trades_total.labels(strategy=name, outcome="loss")
+            self.prom_signals_total.labels(strategy=name, type="entry")
+            self.prom_signals_total.labels(strategy=name, type="exit")
+            self.prom_signals_total.labels(strategy=name, type="rejected")
+
+        logger.info("Registered %d strategies for Prometheus metrics", len(strategy_names))
+
     def record_trade(
         self,
         pnl: float,

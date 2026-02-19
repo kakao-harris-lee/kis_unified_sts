@@ -393,29 +393,17 @@ class TradingConfig:
             initial_capital=initial_capital,
             order_amount_per_trade=order_amount,
             symbols=symbols,
+            telegram_token=os.getenv("TELEGRAM_FUTURES_BOT_TOKEN", ""),
+            telegram_chat_id=os.getenv("TELEGRAM_FUTURES_CHAT_ID", ""),
         )
 
     @staticmethod
     def _get_futures_default_symbols() -> list[str]:
-        """Get default KOSPI200 mini futures front-month symbol.
+        """Get default KOSPI200 mini futures front-month symbol."""
+        from shared.collector.historical.futures import get_front_month_code
 
-        KIS mini futures code format: A056{month_code}000
-        Month codes: 1=Jan..9=Sep, A=Oct, B=Nov, C=Dec
-        """
-        from datetime import date as _date
-        today = _date.today()
-        y, m = today.year, today.month
-        # Futures expire 2nd Thursday of contract month.
-        # If past ~15th, roll to next month.
-        if today.day >= 15:
-            m += 1
-            if m > 12:
-                m = 1
-                y += 1
-        month_codes = "123456789ABC"
-        mc = month_codes[m - 1]
-        code = f"A056{mc}000"
-        logger.info(f"Futures default symbol: {code} ({y}-{m:02d})")
+        code = get_front_month_code(product="mini")
+        logger.info(f"Futures default symbol (auto-detected): {code}")
         return [code]
 
 
@@ -632,11 +620,14 @@ class TradingOrchestrator:
             if self.config.asset_class == "futures":
                 app_key = os.getenv("KIS_FUTURES_APP_KEY", os.getenv("KIS_APP_KEY", ""))
                 app_secret = os.getenv("KIS_FUTURES_APP_SECRET", os.getenv("KIS_APP_SECRET", ""))
+                # 선물은 항상 실서버 사용 (모의서버는 선물 시세 미지원)
+                is_real = True
             else:
                 app_key = os.getenv("KIS_APP_KEY", "")
                 app_secret = os.getenv("KIS_APP_SECRET", "")
-
-            kis_config = KISAuthConfig(app_key=app_key, app_secret=app_secret, is_real=True)
+                market = os.getenv("KIS_STOCK_MARKET", "real")
+                is_real = market.lower() == "real"
+            kis_config = KISAuthConfig(app_key=app_key, app_secret=app_secret, is_real=is_real)
             self._kis_client = KISClient(kis_config)
             logger.info("KIS Client initialized")
             return kis_config
@@ -717,6 +708,9 @@ class TradingOrchestrator:
             strategy_names=strategy_names,
             config=StrategyManagerConfig(),
         )
+
+        # Pre-register strategy names for Prometheus metric discovery
+        self._metrics.register_strategies(self._strategy_manager.strategy_names)
 
         # Position tracker
         self._position_tracker = PositionTracker(

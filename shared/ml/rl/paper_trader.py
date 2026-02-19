@@ -97,7 +97,15 @@ class RLPaperTrader:
         self.paper_config = full_config.get("paper", {})
         training_config = full_config.get("training", {})
 
-        self.symbol = symbol or self.paper_config.get("symbol", "101S6000")
+        if symbol:
+            self.symbol = symbol
+        elif self.paper_config.get("symbol"):
+            self.symbol = self.paper_config["symbol"]
+        else:
+            from shared.collector.historical.futures import get_front_month_code
+
+            self.symbol = get_front_month_code(product="kospi200")
+            logger.info(f"Auto-detected front month symbol: {self.symbol}")
         self.warmup_bars = self.paper_config.get("warmup_bars", 200)
         self.force_close_time = self.paper_config.get("force_close_time", "15:35")
         self.telegram_enabled = self.paper_config.get("telegram_notify", True)
@@ -216,6 +224,7 @@ class RLPaperTrader:
             from services.monitoring.metrics import MetricsCollector
 
             self._metrics = MetricsCollector()
+            self._metrics.register_strategies(["rl_mppo"])
             self._metrics.start_prometheus_server(port=9092)
             logger.info("Prometheus metrics server started on port 9092")
         except Exception as e:

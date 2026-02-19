@@ -63,7 +63,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "trading_pnl_total",
+          "expr": "trading_pnl_total{job=\"$job\"}",
           "refId": "A"
         }
       ],
@@ -111,7 +111,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "trading_win_rate",
+          "expr": "trading_win_rate{job=\"$job\"}",
           "refId": "A"
         }
       ],
@@ -174,7 +174,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum(rate(trading_market_data_staleness_seconds_hist_bucket[5m])) by (le)",
+          "expr": "sum(rate(trading_market_data_staleness_seconds_hist_bucket{job=\"$job\"}[5m])) by (le)",
           "legendFormat": "{{le}}",
           "refId": "A"
         }
@@ -221,7 +221,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "trading_positions_open",
+          "expr": "trading_positions_open{job=\"$job\"}",
           "refId": "A"
         }
       ],
@@ -267,7 +267,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum(trading_trades_total)",
+          "expr": "sum(trading_trades_total{job=\"$job\"})",
           "refId": "A"
         }
       ],
@@ -338,7 +338,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "trading_pnl_total",
+          "expr": "trading_pnl_total{job=\"$job\"}",
           "legendFormat": "Total PnL",
           "refId": "A"
         }
@@ -419,13 +419,13 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum(rate(trading_trades_total{outcome=\"win\"}[5m])) * 300",
+          "expr": "sum(rate(trading_trades_total{job=\"$job\", outcome=\"win\"}[5m])) * 300",
           "legendFormat": "win",
           "refId": "A"
         },
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum(rate(trading_trades_total{outcome=\"loss\"}[5m])) * 300",
+          "expr": "sum(rate(trading_trades_total{job=\"$job\", outcome=\"loss\"}[5m])) * 300",
           "legendFormat": "loss",
           "refId": "B"
         }
@@ -487,7 +487,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum(trading_trades_total) by (outcome)",
+          "expr": "sum(trading_trades_total{job=\"$job\"}) by (outcome)",
           "legendFormat": "{{outcome}}",
           "refId": "A"
         }
@@ -560,19 +560,19 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "histogram_quantile(0.5, sum(rate(trading_trade_pnl_bucket[5m])) by (le))",
+          "expr": "histogram_quantile(0.5, sum(rate(trading_trade_pnl_bucket{job=\"$job\"}[5m])) by (le))",
           "legendFormat": "P50",
           "refId": "A"
         },
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "histogram_quantile(0.9, sum(rate(trading_trade_pnl_bucket[5m])) by (le))",
+          "expr": "histogram_quantile(0.9, sum(rate(trading_trade_pnl_bucket{job=\"$job\"}[5m])) by (le))",
           "legendFormat": "P90",
           "refId": "B"
         },
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "histogram_quantile(0.99, sum(rate(trading_trade_pnl_bucket[5m])) by (le))",
+          "expr": "histogram_quantile(0.99, sum(rate(trading_trade_pnl_bucket{job=\"$job\"}[5m])) by (le))",
           "legendFormat": "P99",
           "refId": "C"
         }
@@ -621,7 +621,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "trading_market_data_staleness_seconds",
+          "expr": "trading_market_data_staleness_seconds{job=\"$job\"}",
           "refId": "A"
         }
       ],
@@ -669,7 +669,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "trading_order_queue_depth",
+          "expr": "trading_order_queue_depth{job=\"$job\"}",
           "refId": "A"
         }
       ],
@@ -738,19 +738,19 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "histogram_quantile(0.5, sum(rate(trading_market_data_staleness_seconds_hist_bucket[5m])) by (le))",
+          "expr": "histogram_quantile(0.5, sum(rate(trading_market_data_staleness_seconds_hist_bucket{job=\"$job\"}[5m])) by (le))",
           "legendFormat": "P50",
           "refId": "A"
         },
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "histogram_quantile(0.95, sum(rate(trading_market_data_staleness_seconds_hist_bucket[5m])) by (le))",
+          "expr": "histogram_quantile(0.95, sum(rate(trading_market_data_staleness_seconds_hist_bucket{job=\"$job\"}[5m])) by (le))",
           "legendFormat": "P95",
           "refId": "B"
         },
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "histogram_quantile(0.99, sum(rate(trading_market_data_staleness_seconds_hist_bucket[5m])) by (le))",
+          "expr": "histogram_quantile(0.99, sum(rate(trading_market_data_staleness_seconds_hist_bucket{job=\"$job\"}[5m])) by (le))",
           "legendFormat": "P99",
           "refId": "C"
         }
@@ -767,6 +767,33 @@
       {
         "current": {
           "selected": false,
+          "text": "trading-futures",
+          "value": "trading-futures"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "label_values(trading_trades_total, job)",
+        "hide": 0,
+        "includeAll": false,
+        "label": "Asset",
+        "multi": false,
+        "name": "job",
+        "options": [],
+        "query": {
+          "query": "label_values(trading_trades_total, job)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 0,
+        "type": "query"
+      },
+      {
+        "current": {
+          "selected": false,
           "text": "All",
           "value": "$__all"
         },
@@ -774,7 +801,7 @@
           "type": "prometheus",
           "uid": "prometheus"
         },
-        "definition": "label_values(trading_trades_total, strategy)",
+        "definition": "label_values(trading_trades_total{job=\"$job\"}, strategy)",
         "hide": 0,
         "includeAll": true,
         "label": "Strategy",
@@ -782,7 +809,7 @@
         "name": "strategy",
         "options": [],
         "query": {
-          "query": "label_values(trading_trades_total, strategy)",
+          "query": "label_values(trading_trades_total{job=\"$job\"}, strategy)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,

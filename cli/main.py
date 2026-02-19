@@ -1758,7 +1758,7 @@ def rl_slippage(model: str, retrain: bool, config: str):
 
 
 @rl.command("paper")
-@click.option("--model", "-m", default="mppo_final", help="Model name (default: mppo_final)")
+@click.option("--model", "-m", default="mppo_best", help="Model name (default: mppo_best)")
 @click.option("--config", "-c", default="ml/rl_mppo.yaml", help="Config file path")
 @click.option("--symbol", "-s", default=None, help="Futures symbol (default: from config)")
 @click.option(

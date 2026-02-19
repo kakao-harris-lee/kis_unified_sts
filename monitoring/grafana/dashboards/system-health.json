@@ -63,7 +63,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "histogram_quantile(0.95, sum(rate(trading_signal_latency_ms_bucket[5m])) by (le))",
+          "expr": "histogram_quantile(0.95, sum(rate(trading_signal_latency_ms_bucket{job=\"$job\"}[5m])) by (le))",
           "refId": "A"
         }
       ],
@@ -111,7 +111,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "histogram_quantile(0.95, sum(rate(trading_order_latency_ms_bucket[5m])) by (le))",
+          "expr": "histogram_quantile(0.95, sum(rate(trading_order_latency_ms_bucket{job=\"$job\"}[5m])) by (le))",
           "refId": "A"
         }
       ],
@@ -159,7 +159,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum(trading_errors_total)",
+          "expr": "sum(trading_errors_total{job=\"$job\"})",
           "refId": "A"
         }
       ],
@@ -205,7 +205,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "time() - process_start_time_seconds",
+          "expr": "time() - process_start_time_seconds{job=\"$job\"}",
           "refId": "A"
         }
       ],
@@ -276,19 +276,19 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "histogram_quantile(0.5, sum(rate(trading_signal_latency_ms_bucket[1m])) by (le))",
+          "expr": "histogram_quantile(0.5, sum(rate(trading_signal_latency_ms_bucket{job=\"$job\"}[1m])) by (le))",
           "legendFormat": "P50",
           "refId": "A"
         },
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "histogram_quantile(0.95, sum(rate(trading_signal_latency_ms_bucket[1m])) by (le))",
+          "expr": "histogram_quantile(0.95, sum(rate(trading_signal_latency_ms_bucket{job=\"$job\"}[1m])) by (le))",
           "legendFormat": "P95",
           "refId": "B"
         },
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "histogram_quantile(0.99, sum(rate(trading_signal_latency_ms_bucket[1m])) by (le))",
+          "expr": "histogram_quantile(0.99, sum(rate(trading_signal_latency_ms_bucket{job=\"$job\"}[1m])) by (le))",
           "legendFormat": "P99",
           "refId": "C"
         }
@@ -360,19 +360,19 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "histogram_quantile(0.5, sum(rate(trading_order_latency_ms_bucket[1m])) by (le))",
+          "expr": "histogram_quantile(0.5, sum(rate(trading_order_latency_ms_bucket{job=\"$job\"}[1m])) by (le))",
           "legendFormat": "P50",
           "refId": "A"
         },
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "histogram_quantile(0.95, sum(rate(trading_order_latency_ms_bucket[1m])) by (le))",
+          "expr": "histogram_quantile(0.95, sum(rate(trading_order_latency_ms_bucket{job=\"$job\"}[1m])) by (le))",
           "legendFormat": "P95",
           "refId": "B"
         },
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "histogram_quantile(0.99, sum(rate(trading_order_latency_ms_bucket[1m])) by (le))",
+          "expr": "histogram_quantile(0.99, sum(rate(trading_order_latency_ms_bucket{job=\"$job\"}[1m])) by (le))",
           "legendFormat": "P99",
           "refId": "C"
         }
@@ -444,7 +444,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum(rate(trading_errors_total[5m])) by (component) * 300",
+          "expr": "sum(rate(trading_errors_total{job=\"$job\"}[5m])) by (component) * 300",
           "legendFormat": "{{component}}",
           "refId": "A"
         }
@@ -516,13 +516,13 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "process_resident_memory_bytes",
+          "expr": "process_resident_memory_bytes{job=\"$job\"}",
           "legendFormat": "RSS Memory",
           "refId": "A"
         },
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "process_virtual_memory_bytes",
+          "expr": "process_virtual_memory_bytes{job=\"$job\"}",
           "legendFormat": "Virtual Memory",
           "refId": "B"
         }
@@ -535,7 +535,35 @@
   "schemaVersion": 38,
   "tags": ["trading", "health", "system"],
   "templating": {
-    "list": []
+    "list": [
+      {
+        "current": {
+          "selected": false,
+          "text": "trading-futures",
+          "value": "trading-futures"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "label_values(up, job)",
+        "hide": 0,
+        "includeAll": false,
+        "label": "Asset",
+        "multi": false,
+        "name": "job",
+        "options": [],
+        "query": {
+          "query": "label_values(up, job)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 1,
+        "regex": "/trading-.*/",
+        "skipUrlSync": false,
+        "sort": 0,
+        "type": "query"
+      }
+    ]
   },
   "time": {
     "from": "now-1h",
