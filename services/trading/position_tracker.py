@@ -90,6 +90,9 @@ class PositionTrackerConfig:
     max_events: int = 1000
     max_closed_positions: int = 100
 
+    # ClickHouse database name (empty = env default)
+    database: str = ""
+
     def __post_init__(self):
         """Validate configuration values."""
         self._validate()
@@ -163,6 +166,7 @@ class PositionTrackerConfig:
         fee_rate = data.get("default_fee_rate", 0.003)
         max_events = data.get("max_events", 1000)
         max_closed = data.get("max_closed_positions", 100)
+        database = data.get("database", "")
 
         # Type validation
         if not isinstance(max_positions, int):
@@ -190,6 +194,7 @@ class PositionTrackerConfig:
             default_fee_rate=float(fee_rate),
             max_events=int(max_events),
             max_closed_positions=int(max_closed),
+            database=str(database),
         )
 
 
@@ -751,6 +756,21 @@ class PositionTracker:
             "events_count": len(self._events),
         }
 
+    def _get_db_client(self):
+        """Get ClickHouse client and database name for position persistence.
+
+        Returns:
+            Tuple of (ClickHouseClient, database_name)
+        """
+        from shared.db.client import ClickHouseClient
+        from shared.db.config import ClickHouseConfig
+
+        ch = ClickHouseClient(ClickHouseConfig())
+        database = self.config.database if self.config.database else ch.config.database
+        if not database.replace("_", "").isalnum():
+            raise ValueError(f"Invalid database name: {database}")
+        return ch, database
+
     async def save_to_db(self) -> int:
         """Persist all open positions to ClickHouse swing_positions table.
 
@@ -761,13 +781,7 @@ class PositionTracker:
             return 0
 
         try:
-            from shared.db.client import ClickHouseClient
-            from shared.db.config import ClickHouseConfig
-
-            ch = ClickHouseClient(ClickHouseConfig())
-            database = ch.config.database
-            if not database.replace("_", "").isalnum():
-                raise ValueError(f"Invalid database name: {database}")
+            ch, database = self._get_db_client()
 
             rows = []
             for position in self._positions.values():
@@ -788,6 +802,8 @@ class PositionTracker:
                         None,  # exit_price
                         None,  # exit_reason
                         None,  # pnl
+                        position.side.value,
+                        position.fee_rate,
                     )
                 )
 
@@ -797,7 +813,7 @@ class PositionTracker:
                     f"INSERT INTO {database}.swing_positions "
                     "(id, code, name, entry_date, entry_price, quantity, strategy, "
                     "stop_loss_price, high_since_entry, current_state, is_open, "
-                    "exit_date, exit_price, exit_reason, pnl) VALUES",
+                    "exit_date, exit_price, exit_reason, pnl, side, fee_rate) VALUES",
                     rows,
                 )
 
@@ -810,6 +826,69 @@ class PositionTracker:
             logger.error(f"Failed to save swing positions: {e}")
             return 0
 
+    async def save_closed_to_db(self, position: Position) -> bool:
+        """Persist a single closed position to ClickHouse.
+
+        Args:
+            position: Closed position with exit_price/exit_time set.
+
+        Returns:
+            True if saved successfully
+        """
+        if not position.exit_price or not position.exit_time:
+            return False
+
+        try:
+            ch, database = self._get_db_client()
+
+            # Calculate PnL based on side
+            if position.side == PositionSide.LONG:
+                pnl = (position.exit_price - position.entry_price) * position.quantity
+            else:
+                pnl = (position.entry_price - position.exit_price) * position.quantity
+
+            row = (
+                position.id,
+                position.code,
+                position.name,
+                position.entry_time,
+                position.entry_price,
+                position.quantity,
+                position.strategy,
+                position.stop_price,
+                position.highest_price,
+                position.state.value,
+                0,  # is_open = closed
+                position.exit_time,
+                position.exit_price,
+                position.exit_reason,
+                pnl,
+                position.side.value,
+                position.fee_rate,
+            )
+
+            def _sync_save():
+                client = ch.get_sync_client()
+                client.execute(
+                    f"INSERT INTO {database}.swing_positions "
+                    "(id, code, name, entry_date, entry_price, quantity, strategy, "
+                    "stop_loss_price, high_since_entry, current_state, is_open, "
+                    "exit_date, exit_price, exit_reason, pnl, side, fee_rate) VALUES",
+                    [row],
+                )
+
+            await asyncio.to_thread(_sync_save)
+
+            logger.info(
+                f"Persisted closed position: {position.code} "
+                f"(pnl={pnl:+,.0f}, id={position.id[:8]})"
+            )
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to persist closed position {position.id[:8]}: {e}")
+            return False
+
     async def load_from_db(self) -> int:
         """Load open positions from ClickHouse on startup.
 
@@ -817,19 +896,14 @@ class PositionTracker:
             Number of positions loaded
         """
         try:
-            from shared.db.client import ClickHouseClient
-            from shared.db.config import ClickHouseConfig
-
-            ch = ClickHouseClient(ClickHouseConfig())
-            database = ch.config.database
-            if not database.replace("_", "").isalnum():
-                raise ValueError(f"Invalid database name: {database}")
+            ch, database = self._get_db_client()
 
             def _sync_load():
                 client = ch.get_sync_client()
                 return client.execute(f"""
                     SELECT id, code, name, entry_date, entry_price, quantity,
-                           strategy, stop_loss_price, high_since_entry, current_state
+                           strategy, stop_loss_price, high_since_entry, current_state,
+                           side, fee_rate
                     FROM {database}.swing_positions FINAL
                     WHERE is_open = 1
                     ORDER BY entry_date ASC
@@ -850,6 +924,8 @@ class PositionTracker:
                     stop_price,
                     high_since_entry,
                     state_str,
+                    side_str,
+                    fee_rate_val,
                 ) = row
 
                 # Skip if already tracked
@@ -862,11 +938,17 @@ class PositionTracker:
                 except ValueError:
                     state = PositionState.SURVIVAL
 
+                # Parse side
+                try:
+                    side = PositionSide(side_str)
+                except (ValueError, KeyError):
+                    side = PositionSide.LONG
+
                 position = Position(
                     id=pos_id,
                     code=code,
                     name=name,
-                    side=PositionSide.LONG,
+                    side=side,
                     quantity=quantity,
                     entry_price=entry_price,
                     entry_time=entry_time,
@@ -875,7 +957,7 @@ class PositionTracker:
                     lowest_price=entry_price,
                     state=state,
                     strategy=strategy,
-                    fee_rate=self.config.default_fee_rate,
+                    fee_rate=fee_rate_val if fee_rate_val else self.config.default_fee_rate,
                 )
                 position.stop_price = stop_price or 0.0
 
