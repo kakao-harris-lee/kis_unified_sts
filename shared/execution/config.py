@@ -113,9 +113,10 @@ class ExecutionConfig(BaseModel):
     @field_validator("account_no")
     @classmethod
     def validate_account_no(cls, v: str) -> str:
-        """Validate account number format."""
+        """Validate account number format (auto-strips dashes)."""
         if not v:
             return v  # Empty is allowed (for PAPER mode)
+        v = v.replace("-", "")
         if not re.match(r"^\d{10}$", v):
             raise ValueError(
                 f"Account number must be exactly 10 digits, got: {v!r}"
