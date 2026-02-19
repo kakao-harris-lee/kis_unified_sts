@@ -1755,6 +1755,10 @@ class TradingOrchestrator:
                 if not isinstance(symbol_data, dict):
                     return []
 
+                # Skip entry if indicator engine hasn't warmed up for this symbol
+                if self._indicator_engine and not self._indicator_engine.is_warm(symbol):
+                    return []
+
                 # Enrich with watchlist/baseline metadata (if present).
                 meta = (self.config.symbol_metadata or {}).get(symbol, {})
                 enriched = dict(symbol_data)
