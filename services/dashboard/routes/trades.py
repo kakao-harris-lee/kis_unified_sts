@@ -214,11 +214,11 @@ async def get_db_statistics():
         f"SELECT count() as total_trades, "
         f"countIf(pnl > 0) as winning_trades, "
         f"countIf(pnl <= 0) as losing_trades, "
-        f"round(countIf(pnl > 0) / count() * 100, 2) as win_rate, "
-        f"sum(pnl) as total_pnl, "
-        f"round(avg(pnl), 0) as avg_pnl, "
-        f"max(pnl) as max_win, "
-        f"min(pnl) as max_loss "
+        f"if(count() > 0, round(countIf(pnl > 0) / count() * 100, 2), 0) as win_rate, "
+        f"ifNull(sum(pnl), 0) as total_pnl, "
+        f"if(count() > 0, round(avg(pnl), 0), 0) as avg_pnl, "
+        f"ifNull(max(pnl), 0) as max_win, "
+        f"ifNull(min(pnl), 0) as max_loss "
         f"FROM {db}.swing_positions FINAL "
         f"WHERE is_open = 0"
     )
@@ -227,7 +227,7 @@ async def get_db_statistics():
         result = await loop.run_in_executor(None, _query_ch, sql, {})
         rows, columns = result
         col_names = [c[0] for c in columns]
-        if rows:
+        if rows and rows[0][0] > 0:
             return dict(zip(col_names, rows[0]))
         return {
             "total_trades": 0, "winning_trades": 0, "losing_trades": 0,
