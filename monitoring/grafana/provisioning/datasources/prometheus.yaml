@@ -7,7 +7,7 @@ datasources:
   - name: Prometheus
     type: prometheus
     access: proxy
-    url: http://prometheus:9090
+    url: http://localhost:9090
     isDefault: true
     editable: false
     jsonData:
@@ -18,11 +18,12 @@ datasources:
       prometheusVersion: "2.40.0"
 
   - name: ClickHouse
+    uid: clickhouse
     type: grafana-clickhouse-datasource
     access: proxy
     editable: true
     jsonData:
-      host: host.docker.internal
+      host: localhost
       port: 9000
       protocol: native
       defaultDatabase: kospi

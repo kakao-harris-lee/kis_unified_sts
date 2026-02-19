@@ -19,6 +19,9 @@ from starlette.responses import HTMLResponse, Response
 _PAGE_META: dict[str, tuple[str, str]] = {
     "/api/trading/status": ("Trading Status", "Current trading system status"),
     "/api/trading/positions": ("Open Positions", "Currently open positions"),
+    "/api/trades/db/statistics": ("DB Trade Statistics", "ClickHouse trade performance statistics"),
+    "/api/trades/db/open": ("DB Open Positions", "Current open positions from ClickHouse"),
+    "/api/trades/db": ("DB Trade History", "Completed trade records from ClickHouse"),
     "/api/trades/statistics": ("Trade Statistics", "Overall trade performance statistics"),
     "/api/trades/by-strategy": ("Strategy Performance", "Performance grouped by strategy"),
     "/api/trades": ("Trade History", "Completed trade records"),

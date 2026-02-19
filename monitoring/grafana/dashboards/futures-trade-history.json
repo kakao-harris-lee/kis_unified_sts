@@ -1,0 +1,841 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "total_pnl" },
+            "properties": [
+              { "id": "unit", "value": "currencyKRW" },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    { "color": "red", "value": null },
+                    { "color": "green", "value": 0 }
+                  ]
+                }
+              },
+              { "id": "color", "value": { "mode": "thresholds" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "avg_pnl" },
+            "properties": [
+              { "id": "unit", "value": "currencyKRW" },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    { "color": "red", "value": null },
+                    { "color": "green", "value": 0 }
+                  ]
+                }
+              },
+              { "id": "color", "value": { "mode": "thresholds" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "win_rate" },
+            "properties": [
+              { "id": "unit", "value": "percent" },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    { "color": "red", "value": null },
+                    { "color": "yellow", "value": 40 },
+                    { "color": "green", "value": 55 }
+                  ]
+                }
+              },
+              { "id": "color", "value": { "mode": "thresholds" } }
+            ]
+          }
+        ]
+      },
+      "gridPos": { "h": 4, "w": 24, "x": 0, "y": 0 },
+      "id": 1,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "pluginVersion": "10.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "rawSql": "SELECT count() as trades, ifNull(sum(pnl), 0) as total_pnl, if(count() > 0, round(countIf(pnl > 0) / count() * 100, 1), 0) as win_rate, if(count() > 0, round(avg(pnl), 0), 0) as avg_pnl FROM kospi.swing_positions FINAL WHERE is_open = 0",
+          "format": 1,
+          "queryType": "sql",
+          "refId": "A",
+          "meta": {
+            "builderOptions": {
+              "mode": "list",
+              "database": "kospi"
+            }
+          }
+        }
+      ],
+      "title": "Total Stats",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "Cumulative PnL (KRW)",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null }
+            ]
+          },
+          "unit": "currencyKRW"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "id": 2,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "rawSql": "SELECT exit_date as time, sum(pnl) OVER (ORDER BY exit_date) as cum_pnl FROM kospi.swing_positions FINAL WHERE is_open = 0 ORDER BY exit_date",
+          "format": 0,
+          "queryType": "sql",
+          "refId": "A",
+          "meta": {
+            "builderOptions": {
+              "mode": "list",
+              "database": "kospi"
+            }
+          }
+        }
+      ],
+      "title": "Cumulative PnL",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "Win Rate (%)",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "line" }
+          },
+          "mappings": [],
+          "max": 100,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 40 },
+              { "color": "green", "value": 55 }
+            ]
+          },
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "id": 5,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "rawSql": "SELECT exit_date as time, round(countIf(pnl > 0) OVER (ORDER BY exit_date ROWS BETWEEN 9 PRECEDING AND CURRENT ROW) / 10 * 100, 1) as rolling_wr FROM kospi.swing_positions FINAL WHERE is_open = 0 ORDER BY exit_date",
+          "format": 0,
+          "queryType": "sql",
+          "refId": "A",
+          "meta": {
+            "builderOptions": {
+              "mode": "list",
+              "database": "kospi"
+            }
+          }
+        }
+      ],
+      "title": "Win Rate Trend",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
+          "custom": {
+            "axisLabel": "Daily PnL (KRW)",
+            "axisPlacement": "auto",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineWidth": 1,
+            "scaleDistribution": { "type": "linear" }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 0 }
+            ]
+          },
+          "unit": "currencyKRW"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "id": 8,
+      "options": {
+        "barRadius": 0,
+        "barWidth": 0.7,
+        "fullHighlight": false,
+        "groupWidth": 0.7,
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "orientation": "auto",
+        "stacking": "none",
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        },
+        "xTickLabelRotation": -45,
+        "xTickLabelSpacing": 0
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "rawSql": "SELECT toDate(exit_date) as day, sum(pnl) as daily_pnl FROM kospi.swing_positions FINAL WHERE is_open = 0 GROUP BY day ORDER BY day",
+          "format": 1,
+          "queryType": "sql",
+          "refId": "A",
+          "meta": {
+            "builderOptions": {
+              "mode": "list",
+              "database": "kospi"
+            }
+          }
+        }
+      ],
+      "title": "Daily PnL",
+      "type": "barchart"
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "purple"
+          },
+          "custom": {
+            "axisLabel": "Count",
+            "axisPlacement": "auto",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineWidth": 1,
+            "scaleDistribution": { "type": "linear" }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "id": 3,
+      "options": {
+        "barRadius": 0,
+        "barWidth": 0.7,
+        "fullHighlight": false,
+        "groupWidth": 0.7,
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "orientation": "auto",
+        "stacking": "none",
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        },
+        "xTickLabelRotation": -45,
+        "xTickLabelSpacing": 0
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "rawSql": "SELECT floor(pnl / 50000) * 50000 as bucket, count() as cnt FROM kospi.swing_positions FINAL WHERE is_open = 0 GROUP BY bucket ORDER BY bucket",
+          "format": 1,
+          "queryType": "sql",
+          "refId": "A",
+          "meta": {
+            "builderOptions": {
+              "mode": "list",
+              "database": "kospi"
+            }
+          }
+        }
+      ],
+      "title": "PnL Distribution",
+      "type": "barchart"
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": { "type": "auto" },
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "total_pnl" },
+            "properties": [
+              { "id": "unit", "value": "currencyKRW" },
+              { "id": "displayName", "value": "Total PnL" },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background",
+                  "mode": "basic"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    { "color": "red", "value": null },
+                    { "color": "green", "value": 0 }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "avg_pnl" },
+            "properties": [
+              { "id": "unit", "value": "currencyKRW" },
+              { "id": "displayName", "value": "Avg PnL" }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "win_rate" },
+            "properties": [
+              { "id": "unit", "value": "percent" },
+              { "id": "displayName", "value": "Win Rate" }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "trades" },
+            "properties": [
+              { "id": "displayName", "value": "Trades" }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "strategy" },
+            "properties": [
+              { "id": "displayName", "value": "Strategy" }
+            ]
+          }
+        ]
+      },
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 20 },
+      "id": 4,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": ["sum"],
+          "show": false
+        },
+        "showHeader": true,
+        "sortBy": [
+          { "desc": true, "displayName": "Total PnL" }
+        ]
+      },
+      "pluginVersion": "10.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "rawSql": "SELECT strategy, count() as trades, if(count() > 0, round(countIf(pnl > 0) / count() * 100, 1), 0) as win_rate, ifNull(sum(pnl), 0) as total_pnl, if(count() > 0, round(avg(pnl), 0), 0) as avg_pnl FROM kospi.swing_positions FINAL WHERE is_open = 0 GROUP BY strategy ORDER BY total_pnl DESC",
+          "format": 1,
+          "queryType": "sql",
+          "refId": "A",
+          "meta": {
+            "builderOptions": {
+              "mode": "list",
+              "database": "kospi"
+            }
+          }
+        }
+      ],
+      "title": "Strategy Performance",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": { "type": "auto" },
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "entry_price" },
+            "properties": [
+              { "id": "unit", "value": "currencyKRW" },
+              { "id": "displayName", "value": "Entry Price" }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "stop_loss_price" },
+            "properties": [
+              { "id": "unit", "value": "currencyKRW" },
+              { "id": "displayName", "value": "Stop Loss" }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "high_since_entry" },
+            "properties": [
+              { "id": "unit", "value": "currencyKRW" },
+              { "id": "displayName", "value": "High Since Entry" }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "entry_date" },
+            "properties": [
+              { "id": "displayName", "value": "Entry Date" }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "code" },
+            "properties": [
+              { "id": "displayName", "value": "Code" }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "name" },
+            "properties": [
+              { "id": "displayName", "value": "Name" }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "strategy" },
+            "properties": [
+              { "id": "displayName", "value": "Strategy" }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "side" },
+            "properties": [
+              { "id": "displayName", "value": "Side" }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "quantity" },
+            "properties": [
+              { "id": "displayName", "value": "Qty" }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "current_state" },
+            "properties": [
+              { "id": "displayName", "value": "State" }
+            ]
+          }
+        ]
+      },
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 26 },
+      "id": 6,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": ["sum"],
+          "show": false
+        },
+        "showHeader": true
+      },
+      "pluginVersion": "10.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "rawSql": "SELECT code, name, strategy, side, entry_date, entry_price, quantity, current_state, high_since_entry, stop_loss_price FROM kospi.swing_positions FINAL WHERE is_open = 1 ORDER BY entry_date DESC",
+          "format": 1,
+          "queryType": "sql",
+          "refId": "A",
+          "meta": {
+            "builderOptions": {
+              "mode": "list",
+              "database": "kospi"
+            }
+          }
+        }
+      ],
+      "title": "Open Positions",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": { "type": "auto" },
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "pnl" },
+            "properties": [
+              { "id": "unit", "value": "currencyKRW" },
+              { "id": "displayName", "value": "PnL" },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background",
+                  "mode": "basic"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    { "color": "red", "value": null },
+                    { "color": "green", "value": 0 }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "entry_price" },
+            "properties": [
+              { "id": "unit", "value": "currencyKRW" },
+              { "id": "displayName", "value": "Entry Price" }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "exit_price" },
+            "properties": [
+              { "id": "unit", "value": "currencyKRW" },
+              { "id": "displayName", "value": "Exit Price" }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "entry_date" },
+            "properties": [
+              { "id": "displayName", "value": "Entry Date" }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "exit_date" },
+            "properties": [
+              { "id": "displayName", "value": "Exit Date" }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "exit_reason" },
+            "properties": [
+              { "id": "displayName", "value": "Exit Reason" }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "code" },
+            "properties": [
+              { "id": "displayName", "value": "Code" }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "name" },
+            "properties": [
+              { "id": "displayName", "value": "Name" }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "strategy" },
+            "properties": [
+              { "id": "displayName", "value": "Strategy" }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "side" },
+            "properties": [
+              { "id": "displayName", "value": "Side" }
+            ]
+          }
+        ]
+      },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 32 },
+      "id": 7,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": ["sum"],
+          "show": false
+        },
+        "showHeader": true
+      },
+      "pluginVersion": "10.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "rawSql": "SELECT code, name, strategy, side, entry_date, entry_price, exit_date, exit_price, pnl, exit_reason FROM kospi.swing_positions FINAL WHERE is_open = 0 ORDER BY exit_date DESC LIMIT 50",
+          "format": 1,
+          "queryType": "sql",
+          "refId": "A",
+          "meta": {
+            "builderOptions": {
+              "mode": "list",
+              "database": "kospi"
+            }
+          }
+        }
+      ],
+      "title": "Recent Closed Trades",
+      "type": "table"
+    }
+  ],
+  "refresh": "1m",
+  "schemaVersion": 38,
+  "style": "dark",
+  "tags": ["futures", "trading", "history"],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-30d",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "Asia/Seoul",
+  "title": "Futures Trade History",
+  "uid": "futures-trade-history",
+  "version": 1
+}

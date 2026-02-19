@@ -1,4 +1,5 @@
 """Trades endpoints."""
+import asyncio
 import os
 from datetime import datetime
 from typing import List, Optional
@@ -178,3 +179,112 @@ async def get_trades_by_strategy():
         )
 
     return results
+
+
+# ---------------------------------------------------------------------------
+# ClickHouse DB endpoints
+# ---------------------------------------------------------------------------
+
+def _get_ch_database() -> str:
+    return os.environ.get("CLICKHOUSE_STOCK_DATABASE", "market")
+
+
+def _get_ch_client():
+    from clickhouse_driver import Client as SyncClient
+    host = os.environ.get("CLICKHOUSE_HOST", "localhost")
+    port = int(os.environ.get("CLICKHOUSE_PORT", "9000"))
+    user = os.environ.get("CLICKHOUSE_USER", "default")
+    password = os.environ.get("CLICKHOUSE_PASSWORD", "")
+    return SyncClient(host=host, port=port, user=user, password=password)
+
+
+def _query_ch(sql: str, params: dict = None) -> list:
+    client = _get_ch_client()
+    try:
+        return client.execute(sql, params or {}, with_column_types=True)
+    finally:
+        client.disconnect()
+
+
+@router.get("/db/statistics")
+async def get_db_statistics():
+    """Aggregate statistics from ClickHouse swing_positions table."""
+    db = _get_ch_database()
+    sql = (
+        f"SELECT count() as total_trades, "
+        f"countIf(pnl > 0) as winning_trades, "
+        f"countIf(pnl <= 0) as losing_trades, "
+        f"if(count() > 0, round(countIf(pnl > 0) / count() * 100, 2), 0) as win_rate, "
+        f"ifNull(sum(pnl), 0) as total_pnl, "
+        f"if(count() > 0, round(avg(pnl), 0), 0) as avg_pnl, "
+        f"ifNull(max(pnl), 0) as max_win, "
+        f"ifNull(min(pnl), 0) as max_loss "
+        f"FROM {db}.swing_positions FINAL "
+        f"WHERE is_open = 0"
+    )
+    try:
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, _query_ch, sql, {})
+        rows, columns = result
+        col_names = [c[0] for c in columns]
+        if rows and rows[0][0] > 0:
+            return dict(zip(col_names, rows[0]))
+        return {
+            "total_trades": 0, "winning_trades": 0, "losing_trades": 0,
+            "win_rate": 0.0, "total_pnl": 0.0, "avg_pnl": 0.0,
+            "max_win": 0.0, "max_loss": 0.0,
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@router.get("/db/open")
+async def get_db_open_positions():
+    """Open positions from ClickHouse swing_positions table."""
+    db = _get_ch_database()
+    sql = (
+        f"SELECT id, code, name, strategy, side, entry_date, entry_price, "
+        f"quantity, current_state, high_since_entry, stop_loss_price "
+        f"FROM {db}.swing_positions FINAL "
+        f"WHERE is_open = 1 "
+        f"ORDER BY entry_date DESC"
+    )
+    try:
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, _query_ch, sql, {})
+        rows, columns = result
+        col_names = [c[0] for c in columns]
+        return [dict(zip(col_names, row)) for row in rows]
+    except Exception as e:
+        return {"error": str(e), "positions": []}
+
+
+@router.get("/db")
+async def get_db_trades(
+    strategy: Optional[str] = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+):
+    """Recent closed trades from ClickHouse swing_positions table."""
+    db = _get_ch_database()
+    where_clauses = ["is_open = 0"]
+    params: dict = {"limit": limit}
+    if strategy:
+        where_clauses.append("strategy = %(strategy)s")
+        params["strategy"] = strategy
+    where = " AND ".join(where_clauses)
+    sql = (
+        f"SELECT id, code, name, strategy, side, entry_date, entry_price, "
+        f"exit_date, exit_price, quantity, pnl, exit_reason "
+        f"FROM {db}.swing_positions FINAL "
+        f"WHERE {where} "
+        f"ORDER BY exit_date DESC "
+        f"LIMIT %(limit)s"
+    )
+    try:
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, _query_ch, sql, params)
+        rows, columns = result
+        col_names = [c[0] for c in columns]
+        return [dict(zip(col_names, row)) for row in rows]
+    except Exception as e:
+        return {"error": str(e), "trades": []}
