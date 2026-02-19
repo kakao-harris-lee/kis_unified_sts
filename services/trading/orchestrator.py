@@ -818,8 +818,9 @@ class TradingOrchestrator:
                 self._order_executor = None
 
     async def _load_swing_positions(self):
-        """Load swing positions from DB"""
-        if self._position_tracker:
+        """Load swing positions from DB (for swing strategies only)"""
+        loaded_strategies = set(self._strategy_manager.strategy_names)
+        if self._position_tracker and (loaded_strategies & self.SWING_STRATEGIES):
             await self._ensure_db_schema()
             await self._position_tracker.load_from_db()
             # Inject overnight position symbols into config.symbols so they
@@ -1301,7 +1302,6 @@ class TradingOrchestrator:
             )
             if closed:
                 self.total_pnl += closed.unrealized_pnl
-                await self._persist_closed_position(closed)
 
     async def _cleanup_resources(self):
         """Shutdown pipelines and release components."""
@@ -2262,8 +2262,14 @@ class TradingOrchestrator:
             self._state_publisher.publish_signal(signal, "exit", True)
             self._metrics.record_trade(pnl=pnl, win=(pnl >= 0), strategy=getattr(signal, "strategy", "default"))
 
-        # Persist to ClickHouse (fire-and-forget)
-        asyncio.create_task(self._persist_closed_position(closed))
+        # Persist swing positions to ClickHouse (fire-and-forget)
+        strategy = getattr(signal, "strategy", getattr(closed, "strategy", ""))
+        if strategy in self.SWING_STRATEGIES:
+            task = asyncio.create_task(
+                self._persist_closed_position(closed), name="persist_closed"
+            )
+            self._pending_notify_tasks.add(task)
+            task.add_done_callback(self._on_notify_done)
 
     def _log_exit(self, name, code, price, qty, reason, pnl, pnl_pct, is_buy):
         """Log and notify exit."""

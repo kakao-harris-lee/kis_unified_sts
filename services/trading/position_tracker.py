@@ -756,6 +756,13 @@ class PositionTracker:
             "events_count": len(self._events),
         }
 
+    # Shared SQL column list for swing_positions INSERT (DRY)
+    _SWING_INSERT_COLS = (
+        "(id, code, name, entry_date, entry_price, quantity, strategy, "
+        "stop_loss_price, high_since_entry, current_state, is_open, "
+        "exit_date, exit_price, exit_reason, pnl, side, fee_rate)"
+    )
+
     def _get_db_client(self):
         """Get ClickHouse client and database name for position persistence.
 
@@ -811,9 +818,7 @@ class PositionTracker:
                 client = ch.get_sync_client()
                 client.execute(
                     f"INSERT INTO {database}.swing_positions "
-                    "(id, code, name, entry_date, entry_price, quantity, strategy, "
-                    "stop_loss_price, high_since_entry, current_state, is_open, "
-                    "exit_date, exit_price, exit_reason, pnl, side, fee_rate) VALUES",
+                    f"{self._SWING_INSERT_COLS} VALUES",
                     rows,
                 )
 
@@ -871,9 +876,7 @@ class PositionTracker:
                 client = ch.get_sync_client()
                 client.execute(
                     f"INSERT INTO {database}.swing_positions "
-                    "(id, code, name, entry_date, entry_price, quantity, strategy, "
-                    "stop_loss_price, high_since_entry, current_state, is_open, "
-                    "exit_date, exit_price, exit_reason, pnl, side, fee_rate) VALUES",
+                    f"{self._SWING_INSERT_COLS} VALUES",
                     [row],
                 )
 
