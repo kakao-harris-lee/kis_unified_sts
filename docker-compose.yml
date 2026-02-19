@@ -156,6 +156,7 @@ services:
       # 익명 접근 (개발용)
       - GF_AUTH_ANONYMOUS_ENABLED=${GRAFANA_ANONYMOUS:-false}
       - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD:-}
     volumes:
       - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro

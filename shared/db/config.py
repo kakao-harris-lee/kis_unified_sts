@@ -1,5 +1,7 @@
 """ClickHouse configuration."""
+import os
 import re
+
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
@@ -28,6 +30,17 @@ class ClickHouseConfig(BaseModel):
     # Connection pool settings
     pool_size: int = Field(default=5, description="Connection pool size")
     connect_timeout: int = Field(default=10, description="Connection timeout seconds")
+
+    @classmethod
+    def from_env(cls, database: str | None = None) -> "ClickHouseConfig":
+        """Create config from environment variables."""
+        return cls(
+            host=os.environ.get("CLICKHOUSE_HOST", "localhost"),
+            port=int(os.environ.get("CLICKHOUSE_PORT", "9000")),
+            user=os.environ.get("CLICKHOUSE_USER", "default"),
+            password=os.environ.get("CLICKHOUSE_PASSWORD", ""),
+            database=database or os.environ.get("CLICKHOUSE_STOCK_DATABASE", "market"),
+        )
 
     def __str__(self) -> str:
         return f"ClickHouse({self.user}@{self.host}:{self.port}/{self.database})"

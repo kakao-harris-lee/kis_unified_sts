@@ -468,6 +468,7 @@ class TradingOrchestrator:
         self._paper_broker: Any | None = None
         self._kis_client: Any | None = None
         self._order_executor: Any | None = None
+        self._mock_mirror: Any | None = None
 
         # Market regime
         self._current_regime: str | None = None
@@ -788,6 +789,21 @@ class TradingOrchestrator:
                 logger.info("Paper broker (VirtualBroker) initialized")
             except Exception as e:
                 logger.warning(f"Paper broker init failed, using mock execution: {e}")
+
+            # Mock mirror: additionally record paper trades in KIS mock account
+            if os.getenv("MOCK_MIRROR_ENABLED", "").lower() == "true":
+                try:
+                    from shared.execution.mock_mirror import MockAccountMirror
+
+                    self._mock_mirror = MockAccountMirror(asset_class=self.config.asset_class)
+                    ok = await self._mock_mirror.initialize()
+                    if ok:
+                        logger.info("MockAccountMirror initialized — trades will be mirrored")
+                    else:
+                        self._mock_mirror = None
+                except Exception as e:
+                    logger.warning(f"MockAccountMirror init failed (ignored): {e}")
+                    self._mock_mirror = None
         else:
             # KIS execution via shared.execution.OrderExecutor (MOCK/REAL).
             try:
@@ -1320,6 +1336,13 @@ class TradingOrchestrator:
             except Exception as e:
                 logger.warning(f"OrderExecutor cleanup failed: {e}")
             self._order_executor = None
+
+        if self._mock_mirror is not None:
+            try:
+                await self._mock_mirror.cleanup()
+            except Exception as e:
+                logger.warning(f"MockAccountMirror cleanup failed: {e}")
+            self._mock_mirror = None
 
         self._data_provider = None
         self._strategy_manager = None
@@ -2101,6 +2124,16 @@ class TradingOrchestrator:
             self._state_publisher.publish_signal(signal, "entry", True)
             self._metrics.record_signal("entry", strategy=signal.strategy)
 
+        # Mock mirror (fire-and-forget)
+        if self._mock_mirror:
+            side = "SELL" if is_short else "BUY"
+            task = asyncio.create_task(
+                self._mock_mirror.mirror_entry(signal.code, side, quantity, fill_price),
+                name="mock_mirror_entry",
+            )
+            self._pending_notify_tasks.add(task)
+            task.add_done_callback(self._on_notify_done)
+
     def _log_entry(self, name, code, price, qty, strategy, confidence, is_short):
         """Log and notify entry."""
         logger.info(
@@ -2267,6 +2300,16 @@ class TradingOrchestrator:
         if strategy in self.SWING_STRATEGIES:
             task = asyncio.create_task(
                 self._persist_closed_position(closed), name="persist_closed"
+            )
+            self._pending_notify_tasks.add(task)
+            task.add_done_callback(self._on_notify_done)
+
+        # Mock mirror (fire-and-forget)
+        if self._mock_mirror:
+            side = "BUY" if close_is_buy else "SELL"
+            task = asyncio.create_task(
+                self._mock_mirror.mirror_exit(signal.code, side, exit_quantity, fill_price),
+                name="mock_mirror_exit",
             )
             self._pending_notify_tasks.add(task)
             task.add_done_callback(self._on_notify_done)
