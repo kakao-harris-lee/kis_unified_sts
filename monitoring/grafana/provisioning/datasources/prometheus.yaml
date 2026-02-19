@@ -18,6 +18,7 @@ datasources:
       prometheusVersion: "2.40.0"
 
   - name: ClickHouse
+    uid: clickhouse
     type: grafana-clickhouse-datasource
     access: proxy
     editable: true
