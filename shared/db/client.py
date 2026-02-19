@@ -73,6 +73,8 @@ SCHEMAS = {
             exit_price Nullable(Float64),
             exit_reason Nullable(String),
             pnl Nullable(Float64),
+            side String DEFAULT 'long',
+            fee_rate Float64 DEFAULT 0.003,
             updated_at DateTime DEFAULT now()
         ) ENGINE = ReplacingMergeTree(updated_at)
         ORDER BY (code, entry_date, id)

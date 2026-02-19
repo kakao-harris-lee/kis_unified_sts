@@ -712,9 +712,14 @@ class TradingOrchestrator:
         # Pre-register strategy names for Prometheus metric discovery
         self._metrics.register_strategies(self._strategy_manager.strategy_names)
 
-        # Position tracker
+        # Position tracker (route to asset-specific ClickHouse database)
+        try:
+            from shared.config.secrets import SecretsManager
+            db_name = SecretsManager.clickhouse_database(self.config.asset_class)
+        except Exception:
+            db_name = ""
         self._position_tracker = PositionTracker(
-            config=PositionTrackerConfig(max_positions=10)
+            config=PositionTrackerConfig(max_positions=10, database=db_name)
         )
 
     def _init_indicator_engine(self):
@@ -813,9 +818,10 @@ class TradingOrchestrator:
                 self._order_executor = None
 
     async def _load_swing_positions(self):
-        """Load swing positions from DB (for swing strategies)"""
+        """Load swing positions from DB (for swing strategies only)"""
         loaded_strategies = set(self._strategy_manager.strategy_names)
         if self._position_tracker and (loaded_strategies & self.SWING_STRATEGIES):
+            await self._ensure_db_schema()
             await self._position_tracker.load_from_db()
             # Inject overnight position symbols into config.symbols so they
             # receive WebSocket ticks and indicator pre-warm at startup.
@@ -860,6 +866,40 @@ class TradingOrchestrator:
             f"{len(self._strategy_manager.strategies)} strategies, "
             f"{len(self.config.symbols)} symbols"
         )
+
+    async def _ensure_db_schema(self):
+        """Ensure ClickHouse swing_positions table exists."""
+        try:
+            from shared.db.client import ClickHouseClient, SCHEMAS, SyncClient
+
+            ch, database = self._position_tracker._get_db_client()
+
+            def _sync_init():
+                # Create database if needed
+                temp_client = SyncClient(
+                    host=ch.config.host,
+                    port=ch.config.port,
+                    user=ch.config.user,
+                    password=ch.config.password,
+                )
+                temp_client.execute(f"CREATE DATABASE IF NOT EXISTS {database}")
+                temp_client.disconnect()
+
+                # Create swing_positions table
+                client = ch.get_sync_client()
+                schema = SCHEMAS["swing_positions"]
+                client.execute(schema.format(database=database))
+
+            await asyncio.to_thread(_sync_init)
+        except Exception as e:
+            logger.warning(f"Failed to ensure DB schema: {e}")
+
+    async def _persist_closed_position(self, closed):
+        """Persist a closed position to ClickHouse (fire-and-forget safe)."""
+        try:
+            await self._position_tracker.save_closed_to_db(closed)
+        except Exception as e:
+            logger.warning(f"Failed to persist closed position {getattr(closed, 'id', '?')[:8]}: {e}")
 
     ACCUMULATION_REDIS_KEY = "system:accumulation:latest"
 
@@ -2200,14 +2240,12 @@ class TradingOrchestrator:
         if not closed:
             return
 
-        # self.total_pnl += closed.unrealized_pnl # Use realized pnl logic if available, usually handled in tracker
-        # Note: position.unrealized_pnl might be updated on close? assuming yes.
-        # But tracker usually returns a ClosedPosition object.
-
-        self.total_pnl += closed.realized_pnl # assuming realized_pnl is on closed position
+        # Position.current_price is set to exit_price on close,
+        # so unrealized_pnl effectively equals realized PnL.
+        self.total_pnl += closed.unrealized_pnl
 
         name = getattr(closed, "name", "") or self._symbol_names.get(signal.code, "")
-        pnl = closed.realized_pnl
+        pnl = closed.unrealized_pnl
         pnl_pct = closed.profit_pct
 
         self._log_exit(name, signal.code, fill_price, exit_quantity, reason_str, pnl, pnl_pct, close_is_buy)
@@ -2223,6 +2261,15 @@ class TradingOrchestrator:
             self._state_publisher.publish_position_closed(closed)
             self._state_publisher.publish_signal(signal, "exit", True)
             self._metrics.record_trade(pnl=pnl, win=(pnl >= 0), strategy=getattr(signal, "strategy", "default"))
+
+        # Persist swing positions to ClickHouse (fire-and-forget)
+        strategy = getattr(signal, "strategy", getattr(closed, "strategy", ""))
+        if strategy in self.SWING_STRATEGIES:
+            task = asyncio.create_task(
+                self._persist_closed_position(closed), name="persist_closed"
+            )
+            self._pending_notify_tasks.add(task)
+            task.add_done_callback(self._on_notify_done)
 
     def _log_exit(self, name, code, price, qty, reason, pnl, pnl_pct, is_buy):
         """Log and notify exit."""
