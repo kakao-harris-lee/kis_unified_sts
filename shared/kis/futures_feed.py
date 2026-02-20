@@ -55,11 +55,9 @@ class KISFuturesPriceFeed:
     def __init__(
         self,
         config: KISAuthConfig,
-        fallback_client: Any = None,
         tick_callback: Callable[[str, dict[str, Any], datetime], None] | None = None,
     ) -> None:
         self._config = config
-        self._fallback = fallback_client
         self._adapter = KISWebSocketAdapter(config)
 
         feed_cfg = _load_futures_feed_config()

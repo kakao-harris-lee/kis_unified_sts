@@ -13,7 +13,7 @@ Limitations:
 - get_minute_bars() still requires REST API (prewarm only)
 
 Usage:
-    feed = KISStockPriceFeed(config, fallback_client=kis_client)
+    feed = KISStockPriceFeed(config)
     await feed.start()
     feed.update_symbols(["005930", "000660"])
     price = await feed.get_current_price("005930")
@@ -120,16 +120,12 @@ class KISStockPriceFeed:
     def __init__(
         self,
         config: KISAuthConfig,
-        fallback_client: Any = None,
     ):
         """
         Args:
             config: KIS authentication config (same as REST client).
-            fallback_client: Optional REST client for symbols without
-                WebSocket data (must have get_current_price method).
         """
         self._config = config
-        self._fallback = fallback_client
         self._ws_url = self.WS_URL_REAL if config.is_real else self.WS_URL_MOCK
 
         # Load feed config from streaming.yaml
