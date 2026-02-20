@@ -297,6 +297,9 @@ class TradingConfig:
     paper_commission_rate: float = 0.0015  # 편도 수수료 0.15%
     paper_slippage_rate: float = 0.001  # 슬리피지 0.1%
 
+    # Position recovery
+    swing_recovery_max_age_days: int = 7  # Max age for swing position recovery from Redis
+
     # Error recovery
     error_retry_delay_seconds: float = 60.0  # Retry delay after errors (default 1 min)
 
@@ -885,7 +888,7 @@ class TradingOrchestrator:
             return 0
 
         today = datetime.now().date()
-        max_age_days = 7
+        max_age_days = self.config.swing_recovery_max_age_days
         recovered = 0
         stale = 0
 

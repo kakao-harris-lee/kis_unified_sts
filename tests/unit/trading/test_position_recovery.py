@@ -175,6 +175,7 @@ class TestRecoverPositionsFromRedis:
         orch.config = MagicMock()
         orch.config.asset_class = "stock"
         orch.config.symbols = ["005930", "000660"]
+        orch.config.swing_recovery_max_age_days = 7
         orch._symbol_last_seen = {}
         orch.SWING_STRATEGIES = TradingOrchestrator.SWING_STRATEGIES
         # Bind the real method
