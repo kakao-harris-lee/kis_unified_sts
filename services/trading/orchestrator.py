@@ -1660,7 +1660,7 @@ class TradingOrchestrator:
                     await self._update_market_snapshot(data)
                     self._feed_indicators(data)
                     self._log_indicator_diagnostics(tick_count, diag_interval, data)
-                    self._record_market_metrics()
+                self._record_market_metrics()
 
             except Exception as e:
                 logger.warning(f"Market data refresh failed: {e}")
