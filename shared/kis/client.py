@@ -390,3 +390,168 @@ class KISClient(AsyncSessionMixin):
         except Exception as e:
             logger.debug(f"Failed to fetch futures bars for {symbol}: {e}")
             return []
+
+    # ------------------------------------------------------------------
+    # Balance Inquiry (잔고조회) — for broker position verification
+    # ------------------------------------------------------------------
+
+    async def get_stock_balance(self, account_no: str = "") -> list[dict[str, Any]]:
+        """주식 잔고조회 (TTTC8434R / VTTC8434R).
+
+        Returns list of dicts with: code, name, side, quantity, avg_price,
+        current_price, unrealized_pnl.
+        """
+        if not account_no:
+            account_no = os.getenv(
+                "KIS_STOCK_ACCOUNT_NO", os.getenv("KIS_ACCOUNT_NO", "")
+            )
+        if not account_no or len(account_no) < 10:
+            logger.warning("Stock account number not configured; skipping balance inquiry")
+            return []
+
+        await self._rate_limiter.acquire()
+        session = await self._get_session()
+        headers = await self.auth_manager.get_auth_headers_async()
+
+        tr_id = "TTTC8434R" if self.config.is_real else "VTTC8434R"
+        headers["tr_id"] = tr_id
+        headers["custtype"] = "P"
+
+        params = {
+            "CANO": account_no[:8],
+            "ACNT_PRDT_CD": account_no[8:10],
+            "AFHR_FLPR_YN": "N",
+            "OFL_YN": "",
+            "INQR_DVSN": "02",
+            "UNPR_DVSN": "01",
+            "FUND_STTL_ICLD_YN": "N",
+            "FNCG_AMT_AUTO_RDPT_YN": "N",
+            "PRCS_DVSN": "01",
+            "CTX_AREA_FK100": "",
+            "CTX_AREA_NK100": "",
+        }
+
+        path = "/uapi/domestic-stock/v1/trading/inquire-balance"
+        url = f"{self.config.base_url}{path}"
+        timeout_seconds = getattr(
+            self.config, "request_timeout_seconds", _DEFAULT_REQUEST_TIMEOUT
+        )
+        request_timeout = aiohttp.ClientTimeout(total=float(timeout_seconds))
+
+        try:
+            async with session.get(
+                url, headers=headers, params=params, timeout=request_timeout
+            ) as response:
+                if response.status != 200:
+                    text = await response.text()
+                    if "EGW00201" in text:
+                        self._rate_limiter.penalty()
+                    logger.error(f"Stock balance inquiry failed ({response.status}): {text}")
+                    return []
+
+                data = await response.json()
+                if data.get("rt_cd") != "0":
+                    logger.error(f"Stock balance inquiry error: {data.get('msg1', '')}")
+                    return []
+
+                self._rate_limiter.reset_backoff()
+                positions = []
+                for item in data.get("output1", []):
+                    qty = int(item.get("hldg_qty", 0))
+                    if qty <= 0:
+                        continue
+                    positions.append({
+                        "code": item.get("pdno", ""),
+                        "name": item.get("prdt_name", ""),
+                        "side": "long",
+                        "quantity": qty,
+                        "avg_price": float(item.get("pchs_avg_pric", 0)),
+                        "current_price": float(item.get("prpr", 0)),
+                        "unrealized_pnl": float(item.get("evlu_pfls_amt", 0)),
+                    })
+                return positions
+
+        except Exception as e:
+            logger.warning(f"Stock balance inquiry exception: {e}")
+            return []
+
+    async def get_futures_balance(self, account_no: str = "") -> list[dict[str, Any]]:
+        """선물옵션 잔고조회 (CTFO6118R).
+
+        NOTE: 모의서버는 선물 잔고조회 미지원. is_real=True 필수.
+
+        Returns list of dicts with: code, name, side, quantity, avg_price,
+        current_price, unrealized_pnl.
+        """
+        if not self.config.is_real:
+            logger.debug("Futures balance inquiry not supported on mock server")
+            return []
+
+        if not account_no:
+            account_no = os.getenv(
+                "KIS_FUTURES_ACCOUNT_NO", os.getenv("KIS_ACCOUNT_NO", "")
+            )
+        if not account_no or len(account_no) < 10:
+            logger.warning("Futures account number not configured; skipping balance inquiry")
+            return []
+
+        await self._rate_limiter.acquire()
+        session = await self._get_session()
+        headers = await self.auth_manager.get_auth_headers_async()
+
+        headers["tr_id"] = "CTFO6118R"
+        headers["custtype"] = "P"
+
+        params = {
+            "CANO": account_no[:8],
+            "ACNT_PRDT_CD": account_no[8:10],
+            "SORT_SQN": "DS",
+            "CTX_AREA_FK200": "",
+            "CTX_AREA_NK200": "",
+        }
+
+        path = "/uapi/domestic-futureoption/v1/trading/inquire-balance"
+        url = f"{self.config.base_url}{path}"
+        timeout_seconds = getattr(
+            self.config, "request_timeout_seconds", _DEFAULT_REQUEST_TIMEOUT
+        )
+        request_timeout = aiohttp.ClientTimeout(total=float(timeout_seconds))
+
+        try:
+            async with session.get(
+                url, headers=headers, params=params, timeout=request_timeout
+            ) as response:
+                if response.status != 200:
+                    text = await response.text()
+                    if "EGW00201" in text:
+                        self._rate_limiter.penalty()
+                    logger.error(f"Futures balance inquiry failed ({response.status}): {text}")
+                    return []
+
+                data = await response.json()
+                if data.get("rt_cd") != "0":
+                    logger.error(f"Futures balance inquiry error: {data.get('msg1', '')}")
+                    return []
+
+                self._rate_limiter.reset_backoff()
+                positions = []
+                for item in data.get("output1", []):
+                    qty = int(item.get("cblc_qty", 0))
+                    if qty <= 0:
+                        continue
+                    # sll_buy_dvsn_cd: 01=매도(short), 02=매수(long)
+                    side = "short" if item.get("sll_buy_dvsn_cd") == "01" else "long"
+                    positions.append({
+                        "code": item.get("pdno", ""),
+                        "name": item.get("prdt_name", ""),
+                        "side": side,
+                        "quantity": qty,
+                        "avg_price": float(item.get("pchs_avg_pric", 0)),
+                        "current_price": float(item.get("prpr", item.get("now_pric2", 0))),
+                        "unrealized_pnl": float(item.get("evlu_pfls_amt", 0)),
+                    })
+                return positions
+
+        except Exception as e:
+            logger.warning(f"Futures balance inquiry exception: {e}")
+            return []
