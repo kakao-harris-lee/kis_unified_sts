@@ -423,6 +423,18 @@ class StreamingIndicatorEngine:
         self._vwap_calc.reset(symbol)
         self._vol_accel_calc.reset(symbol)
 
+    def cleanup_orphans(self, active_symbols: set[str]) -> int:
+        """Remove accumulators for symbols not in the active set.
+
+        Prevents unbounded growth of ``_accumulators`` when symbols are
+        evicted from the trading universe but their accumulators linger
+        (e.g. from stale prewarm tasks or dip-candidate churn).
+        """
+        orphans = [s for s in self._accumulators if s not in active_symbols]
+        for s in orphans:
+            self.remove_symbol(s)
+        return len(orphans)
+
     def is_warm(self, symbol: str) -> bool:
         """Whether enough candles exist to compute indicators."""
         acc = self._accumulators.get(symbol)

@@ -490,6 +490,7 @@ class TradingOrchestrator:
 
         # Fire-and-forget notification tasks (tracked for cleanup)
         self._pending_notify_tasks: set[asyncio.Task] = set()
+        self._prewarm_task: asyncio.Task | None = None
 
         # WebSocket futures price feed (initialized in _initialize_components)
         self._futures_price_feed: Any | None = None
@@ -526,7 +527,7 @@ class TradingOrchestrator:
         # Universe stability: retain symbols for a window after they leave
         # the screener top-N, so the indicator engine can warm up.
         self._symbol_last_seen: dict[str, datetime] = {}
-        self._universe_retention_seconds = 600.0  # 10 minutes
+        self._universe_retention_seconds = 1500.0  # 25 min (> 20min warmup)
         # Cap universe to WebSocket max_symbols (streaming.yaml) so every
         # symbol in the universe actually receives tick data.
         try:
@@ -1131,14 +1132,21 @@ class TradingOrchestrator:
             del self._symbol_last_seen[code]
             self._symbol_metadata_cache.pop(code, None)
 
-        # Cap size
+        # Cap size — protect warm symbols from eviction
         if len(stable_symbols) > self._max_universe_size:
+            warm_set: set[str] = set()
+            if self._indicator_engine:
+                warm_set = {
+                    s for s in stable_symbols if self._indicator_engine.is_warm(s)
+                }
+            non_warm = stable_symbols - warm_set
             by_recency = sorted(
-                stable_symbols,
+                non_warm,
                 key=lambda c: self._symbol_last_seen.get(c, datetime.min),
                 reverse=True,
             )
-            stable_symbols = set(by_recency[: self._max_universe_size])
+            remaining_slots = self._max_universe_size - len(warm_set)
+            stable_symbols = warm_set | set(by_recency[: max(0, remaining_slots)])
 
         return stable_symbols
 
@@ -1170,6 +1178,14 @@ class TradingOrchestrator:
             if removed and self._indicator_engine:
                 for code in removed:
                     self._indicator_engine.remove_symbol(code)
+
+            # Safety net: clean up orphan accumulators not in the new universe.
+            # Prevents unbounded growth from stale prewarm tasks or dip churn.
+            if self._indicator_engine:
+                current_set = set(self.config.symbols)
+                orphans = self._indicator_engine.cleanup_orphans(current_set)
+                if orphans:
+                    logger.info(f"Cleaned up {orphans} orphan accumulators")
 
             if added or removed:
                 logger.info(
@@ -1227,12 +1243,17 @@ class TradingOrchestrator:
                 if self._stock_price_feed:
                     self._stock_price_feed.update_symbols(self.config.symbols)
 
-                # Pre-warm new symbols (tracked to catch errors)
+                # Pre-warm new symbols (tracked to catch errors).
+                # Cancel any previous prewarm task to prevent stale tasks
+                # from creating accumulators for already-evicted symbols.
                 if new_symbols and self._indicator_engine and self._kis_client:
+                    if self._prewarm_task and not self._prewarm_task.done():
+                        self._prewarm_task.cancel()
                     task = asyncio.create_task(
                         self._prewarm_symbols(list(new_symbols)),
                         name="prewarm_symbols",
                     )
+                    self._prewarm_task = task
                     self._pending_notify_tasks.add(task)
                     task.add_done_callback(self._on_notify_done)
             except Exception as e:
@@ -1244,6 +1265,9 @@ class TradingOrchestrator:
         logger.info(f"Prewarm starting for {len(symbols)} symbols")
         for symbol in symbols:
             if self._indicator_engine.is_warm(symbol):
+                continue
+            # Skip if symbol was evicted during prewarm
+            if symbol not in set(self.config.symbols):
                 continue
             try:
                 candles = await asyncio.wait_for(
