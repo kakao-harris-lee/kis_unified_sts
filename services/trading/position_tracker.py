@@ -385,6 +385,45 @@ class PositionTracker:
             side=side,
         )
 
+    def add_recovered_position(self, position: Position) -> bool:
+        """Add a position recovered from Redis (preserves original ID and state).
+
+        Returns:
+            True if added successfully, False if duplicate ID.
+        """
+        if position.id in self._positions:
+            logger.warning(f"Duplicate position ID on recovery: {position.id[:8]}")
+            return False
+
+        self._positions[position.id] = position
+
+        # Update indices
+        if position.code not in self._by_symbol:
+            self._by_symbol[position.code] = []
+        self._by_symbol[position.code].append(position.id)
+
+        if position.strategy not in self._by_strategy:
+            self._by_strategy[position.strategy] = []
+        self._by_strategy[position.strategy].append(position.id)
+
+        self._record_event(
+            "recovered",
+            position.id,
+            {
+                "code": position.code,
+                "entry_price": position.entry_price,
+                "quantity": position.quantity,
+                "strategy": position.strategy,
+                "state": position.state.value,
+            },
+        )
+
+        logger.info(
+            f"Position recovered: {position.code} @ {position.entry_price:,.0f} x {position.quantity} "
+            f"(strategy={position.strategy}, state={position.state.value}, id={position.id[:8]})"
+        )
+        return True
+
     def get_position(self, position_id: str) -> Position | None:
         """Get position by ID"""
         return self._positions.get(position_id)

@@ -236,6 +236,10 @@ class TradingStatePublisher:
             "entry_time": pos.entry_time.isoformat() if isinstance(pos.entry_time, datetime) else str(pos.entry_time),
             "strategy": getattr(pos, "strategy", ""),
             "state": pos.state.value if hasattr(pos.state, "value") else str(pos.state),
+            "highest_price": getattr(pos, "highest_price", pos.entry_price),
+            "lowest_price": getattr(pos, "lowest_price", pos.entry_price),
+            "fee_rate": getattr(pos, "fee_rate", 0.0),
+            "stop_price": getattr(pos, "stop_price", None),
         }
 
     @staticmethod
@@ -353,3 +357,12 @@ class TradingStateReader:
             return r.llen(_key(_KEY_SIGNALS, self._asset))
         except Exception:
             return 0
+
+    def remove_position(self, position_id: str) -> None:
+        """Remove a single position from Redis positions HASH."""
+        try:
+            r = _get_redis()
+            key = _key(_KEY_POSITIONS, self._asset)
+            r.hdel(key, position_id)
+        except Exception:
+            logger.debug("Failed to remove position from Redis", exc_info=True)

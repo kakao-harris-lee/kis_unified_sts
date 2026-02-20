@@ -42,7 +42,7 @@ from services.trading.data_provider import MarketDataProvider, DataProviderConfi
 from services.trading.position_tracker import PositionTracker, PositionTrackerConfig
 from services.trading.strategy_manager import StrategyManager, StrategyManagerConfig
 from services.monitoring.metrics import get_metrics_collector
-from shared.models.position import PositionSide
+from shared.models.position import Position, PositionSide, PositionState
 from shared.models.signal import Signal, ExitSignal
 from shared.config.loader import ConfigLoader
 from shared.strategy.base import EntryContext
@@ -833,28 +833,10 @@ class TradingOrchestrator:
                 self._order_executor = None
 
     async def _load_swing_positions(self):
-        """Load swing positions from DB (for swing strategies only)"""
-        loaded_strategies = set(self._strategy_manager.strategy_names)
-        if self._position_tracker and (loaded_strategies & self.SWING_STRATEGIES):
-            await self._ensure_db_schema()
-            await self._position_tracker.load_from_db()
-            # Inject overnight position symbols into config.symbols so they
-            # receive WebSocket ticks and indicator pre-warm at startup.
-            current_symbols = set(self.config.symbols or [])
-            overnight_codes = []
-            now = datetime.now()
-            for pos in self._position_tracker.positions:
-                if pos.code not in current_symbols:
-                    overnight_codes.append(pos.code)
-                    self.config.symbols.append(pos.code)
-                    self._symbol_last_seen[pos.code] = now
-            if overnight_codes:
-                logger.warning(
-                    "Overnight swing positions loaded for symbols not in "
-                    "current screener universe — they will be pre-warmed and "
-                    "tracked but may lack screener scores: %s",
-                    overnight_codes,
-                )
+        """Recover open positions from Redis and initialize state publishers."""
+        # --- Position recovery from Redis ---
+        if self._position_tracker:
+            await self._recover_positions_from_redis()
 
         # Load accumulation candidates from Redis
         self._accumulation_candidates: dict[str, int] = {}
@@ -881,6 +863,111 @@ class TradingOrchestrator:
             f"{len(self._strategy_manager.strategies)} strategies, "
             f"{len(self.config.symbols)} symbols"
         )
+
+    async def _recover_positions_from_redis(self) -> int:
+        """Recover open positions from Redis on startup.
+
+        Applies strategy-based freshness filter:
+        - Swing strategies (SWING_STRATEGIES): recover up to 7 days
+        - Intraday strategies: recover same-day only
+        Stale positions are removed from Redis with logging.
+        """
+        try:
+            from shared.streaming.trading_state import TradingStateReader
+            reader = TradingStateReader(self.config.asset_class)
+        except Exception as e:
+            logger.warning(f"Cannot initialize TradingStateReader for recovery: {e}")
+            return 0
+
+        positions = reader.get_positions()
+        if not positions:
+            logger.info("No positions to recover from Redis")
+            return 0
+
+        today = datetime.now().date()
+        max_age_days = 7
+        recovered = 0
+        stale = 0
+
+        for pos_data in positions:
+            pos_id = pos_data.get("id", "")
+            strategy = pos_data.get("strategy", "")
+
+            # Parse entry_time
+            try:
+                entry_time_str = pos_data.get("entry_time", "")
+                entry_time = datetime.fromisoformat(entry_time_str)
+            except (ValueError, TypeError):
+                logger.warning(f"Invalid entry_time in Redis position: {pos_id[:8]}")
+                reader.remove_position(pos_id)
+                stale += 1
+                continue
+
+            # Freshness filter
+            age_days = (today - entry_time.date()).days
+            if strategy in self.SWING_STRATEGIES:
+                if age_days > max_age_days:
+                    logger.debug(f"Stale swing position: {pos_data.get('code')} (age={age_days}d)")
+                    reader.remove_position(pos_id)
+                    stale += 1
+                    continue
+            else:
+                # Intraday strategies: same-day only
+                if entry_time.date() != today:
+                    logger.debug(f"Stale intraday position: {pos_data.get('code')} (age={age_days}d)")
+                    reader.remove_position(pos_id)
+                    stale += 1
+                    continue
+
+            # Reconstruct Position
+            try:
+                side_str = pos_data.get("side", "long")
+                side = PositionSide(side_str)
+                entry_price = float(pos_data["entry_price"])
+                current_price = float(pos_data.get("current_price", entry_price))
+
+                position = Position(
+                    id=pos_id,
+                    code=pos_data["code"],
+                    name=pos_data.get("name", ""),
+                    side=side,
+                    quantity=int(pos_data["quantity"]),
+                    entry_price=entry_price,
+                    entry_time=entry_time,
+                    current_price=current_price,
+                    highest_price=float(pos_data.get("highest_price", max(entry_price, current_price))),
+                    lowest_price=float(pos_data.get("lowest_price", min(entry_price, current_price))),
+                    state=PositionState(pos_data.get("state", "survival").lower()),
+                    strategy=strategy,
+                    fee_rate=float(pos_data.get("fee_rate", 0.003)),
+                )
+
+                stop_price = pos_data.get("stop_price")
+                if stop_price is not None:
+                    position.stop_price = float(stop_price)
+            except (KeyError, ValueError, TypeError) as e:
+                logger.warning(f"Failed to reconstruct position {pos_id[:8]}: {e}")
+                reader.remove_position(pos_id)
+                stale += 1
+                continue
+
+            if self._position_tracker.add_recovered_position(position):
+                recovered += 1
+                # Ensure symbol receives WebSocket ticks
+                current_symbols = set(self.config.symbols or [])
+                if position.code not in current_symbols:
+                    if self.config.symbols is None:
+                        self.config.symbols = []
+                    self.config.symbols.append(position.code)
+                    self._symbol_last_seen[position.code] = datetime.now()
+
+        if stale > 0:
+            logger.info(f"Cleaned {stale} stale positions from Redis")
+        if recovered > 0:
+            logger.info(
+                f"Recovered {recovered} positions from Redis ({self.config.asset_class})"
+            )
+        return recovered
 
     async def _ensure_db_schema(self):
         """Ensure ClickHouse swing_positions table exists."""
@@ -1318,11 +1405,13 @@ class TradingOrchestrator:
                 data = await self._data_provider.get_data()
                 await self._close_intraday_positions(data)
 
-                # Save remaining swing positions to DB
-                if self._position_tracker.position_count > 0:
-                    await self._position_tracker.save_to_db()
+                # Flush remaining open positions to Redis for recovery
+                if self._position_tracker.position_count > 0 and self._state_publisher:
+                    self._state_publisher.publish_positions_update(
+                        list(self._position_tracker.positions), throttle=0,
+                    )
                     logger.info(
-                        f"Swing positions saved ({self._position_tracker.position_count} open)"
+                        f"Positions flushed to Redis ({self._position_tracker.position_count} open)"
                     )
             except Exception as e:
                 logger.error(f"Error during position shutdown: {e}")
