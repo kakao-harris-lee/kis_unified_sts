@@ -227,6 +227,26 @@ class MetricsCollector:
             "trading_order_queue_depth",
             "Number of queued order tasks waiting for execution capacity",
         )
+        self.prom_universe_size = Gauge(
+            "trading_universe_size",
+            "Number of symbols in trading universe",
+        )
+        self.prom_warm_symbols = Gauge(
+            "trading_warm_symbols",
+            "Number of symbols with warm indicators",
+        )
+        self.prom_tracked_accumulators = Gauge(
+            "trading_tracked_accumulators",
+            "Total indicator accumulators",
+        )
+        self.prom_data_symbols_fetched = Gauge(
+            "trading_data_symbols_fetched",
+            "Symbols with valid market data in last fetch",
+        )
+        self.prom_signal_evaluations = Counter(
+            "trading_signal_evaluations_total",
+            "Total signal evaluation cycles",
+        )
 
         # Histograms
         self.prom_trade_pnl = Histogram(
@@ -370,6 +390,25 @@ class MetricsCollector:
         self.metrics.order_queue_depth = depth
         if HAS_PROMETHEUS:
             self.prom_order_queue_depth.set(depth)
+
+    def record_universe_health(
+        self, universe_size: int, warm_symbols: int, tracked: int
+    ) -> None:
+        """Universe/indicator health 기록"""
+        if HAS_PROMETHEUS:
+            self.prom_universe_size.set(universe_size)
+            self.prom_warm_symbols.set(warm_symbols)
+            self.prom_tracked_accumulators.set(tracked)
+
+    def record_data_fetch(self, symbols_fetched: int) -> None:
+        """Valid market data symbol count 기록"""
+        if HAS_PROMETHEUS:
+            self.prom_data_symbols_fetched.set(symbols_fetched)
+
+    def record_signal_evaluation(self) -> None:
+        """Signal evaluation cycle 기록"""
+        if HAS_PROMETHEUS:
+            self.prom_signal_evaluations.inc()
 
     def get_metrics(self) -> TradingMetrics:
         """메트릭 조회"""

@@ -1130,21 +1130,31 @@ class TradingOrchestrator:
             del self._symbol_last_seen[code]
             self._symbol_metadata_cache.pop(code, None)
 
-        # Cap size — protect warm symbols from eviction
+        # Cap size — protect warm and near-warm symbols from eviction.
+        # Near-warm symbols (>=50% warmup progress) have accumulated significant
+        # candle data; evicting them wastes minutes of indicator warmup.
         if len(stable_symbols) > self._max_universe_size:
             warm_set: set[str] = set()
+            warming_set: set[str] = set()
             if self._indicator_engine:
-                warm_set = {
-                    s for s in stable_symbols if self._indicator_engine.is_warm(s)
-                }
-            non_warm = stable_symbols - warm_set
+                for s in stable_symbols:
+                    if self._indicator_engine.is_warm(s):
+                        warm_set.add(s)
+                    elif self._indicator_engine.warmup_progress(s) >= 0.5:
+                        warming_set.add(s)
+            protected = warm_set | warming_set
+            cold = stable_symbols - protected
             by_recency = sorted(
-                non_warm,
+                cold,
                 key=lambda c: self._symbol_last_seen.get(c, datetime.min),
                 reverse=True,
             )
-            remaining_slots = self._max_universe_size - len(warm_set)
-            stable_symbols = warm_set | set(by_recency[: max(0, remaining_slots)])
+            remaining_slots = self._max_universe_size - len(protected)
+            if remaining_slots >= 0:
+                stable_symbols = protected | set(by_recency[: remaining_slots])
+            else:
+                # More protected than max — keep all protected, drop nothing
+                stable_symbols = protected
 
         return stable_symbols
 
@@ -1186,10 +1196,21 @@ class TradingOrchestrator:
                     logger.info(f"Cleaned up {orphans} orphan accumulators")
 
             if added or removed:
+                warm_n = sum(
+                    1 for s in stable_symbols
+                    if self._indicator_engine and self._indicator_engine.is_warm(s)
+                )
+                warming_n = sum(
+                    1 for s in stable_symbols
+                    if self._indicator_engine
+                    and not self._indicator_engine.is_warm(s)
+                    and self._indicator_engine.warmup_progress(s) >= 0.5
+                )
                 logger.info(
                     f"Universe refreshed: {len(stable_symbols)} symbols "
                     f"(+{len(added)} -{len(removed)}, "
-                    f"retained {len(stable_symbols) - len(added)})"
+                    f"retained {len(stable_symbols) - len(added)}, "
+                    f"warm {warm_n}, warming {warming_n})"
                 )
 
     def _check_strategy_warnings(self):
@@ -1714,6 +1735,17 @@ class TradingOrchestrator:
             if ws_staleness is not None:
                 self._metrics.record_websocket_staleness("futures", ws_staleness)
 
+        # Universe / indicator health
+        if self._indicator_engine:
+            stats = self._indicator_engine.get_stats()
+            self._metrics.record_universe_health(
+                universe_size=len(self.config.symbols) if self.config.symbols else 0,
+                warm_symbols=stats["warm_symbols"],
+                tracked=stats["total_symbols"],
+            )
+        if self._market_data_snapshot:
+            self._metrics.record_data_fetch(len(self._market_data_snapshot))
+
     async def _get_market_data_snapshot(
         self, symbols: list[str] | None = None
     ) -> dict[str, dict[str, Any]]:
@@ -1831,6 +1863,8 @@ class TradingOrchestrator:
             data = await self._get_market_data_snapshot()
             if not data:
                 return []
+
+            self._metrics.record_signal_evaluation()
 
             now = datetime.now()
 

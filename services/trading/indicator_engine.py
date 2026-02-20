@@ -442,6 +442,13 @@ class StreamingIndicatorEngine:
             return False
         return len(acc.candles) >= self.bb_period
 
+    def warmup_progress(self, symbol: str) -> float:
+        """Return warmup progress as a ratio in [0.0, 1.0]."""
+        acc = self._accumulators.get(symbol)
+        if acc is None or self.bb_period == 0:
+            return 0.0
+        return min(len(acc.candles) / self.bb_period, 1.0)
+
     def get_indicators(
         self, symbol: str, now: datetime | None = None
     ) -> dict[str, float]:
