@@ -859,6 +859,9 @@ class TradingOrchestrator:
         if self._position_tracker:
             await self._recover_positions_from_redis()
 
+        # --- Broker position verification ---
+        await self._verify_positions_with_broker()
+
         # Load accumulation candidates from Redis
         self._accumulation_candidates: dict[str, int] = {}
         self._refresh_accumulation_candidates()
@@ -989,6 +992,147 @@ class TradingOrchestrator:
                 f"Recovered {recovered} positions from Redis ({self.config.asset_class})"
             )
         return recovered
+
+    async def _verify_positions_with_broker(self) -> None:
+        """Redis 복구 포지션과 브로커 실제 잔고 비교.
+
+        Paper 모드에서도 실행 (모의투자 서버 잔고 확인).
+        단, 선물 모의서버는 잔고조회 미지원이므로 건너뛴다.
+        """
+        # Load broker_verification config
+        try:
+            from shared.config.loader import ConfigLoader
+            exec_cfg = ConfigLoader.load("execution.yaml")
+            bv_cfg = exec_cfg.get("broker_verification", {})
+        except Exception:
+            bv_cfg = {}
+
+        if not bv_cfg.get("enabled", True):
+            return
+
+        if not self._kis_client:
+            logger.debug("KIS client not available; skipping broker verification")
+            return
+
+        # Futures mock server doesn't support balance inquiry
+        if self.config.asset_class == "futures" and not self._kis_client.config.is_real:
+            logger.debug("Futures mock server: skipping broker verification")
+            return
+
+        try:
+            if self.config.asset_class == "stock":
+                broker_positions = await self._kis_client.get_stock_balance()
+            else:
+                broker_positions = await self._kis_client.get_futures_balance()
+        except Exception as e:
+            logger.warning(f"Broker balance inquiry failed: {e}")
+            return
+
+        if not broker_positions and not self._position_tracker.positions:
+            logger.info("Broker verification: no positions on either side")
+            return
+
+        redis_by_code: dict[str, Position] = {}
+        for pos in self._position_tracker.positions:
+            redis_by_code[pos.code] = pos
+
+        broker_by_code: dict[str, dict] = {}
+        for bp in broker_positions:
+            broker_by_code[bp["code"]] = bp
+
+        redis_codes = set(redis_by_code)
+        broker_codes = set(broker_by_code)
+        matched = redis_codes & broker_codes
+        redis_only = redis_codes - broker_codes
+        broker_only = broker_codes - redis_codes
+
+        reconcile_qty = bv_cfg.get("reconcile_quantity", True)
+        notify = bv_cfg.get("notify_on_mismatch", True)
+        auto_track = bv_cfg.get("auto_track_external", False)
+        alerts: list[str] = []
+
+        # 1. Matched — verify quantity and side
+        for code in matched:
+            rp = redis_by_code[code]
+            bp = broker_by_code[code]
+            broker_side = PositionSide(bp["side"])
+
+            if rp.side != broker_side:
+                msg = (
+                    f"[{code}] SIDE MISMATCH: Redis={rp.side.value}, "
+                    f"Broker={broker_side.value}"
+                )
+                logger.error(msg)
+                alerts.append(msg)
+
+            if rp.quantity != bp["quantity"]:
+                msg = (
+                    f"[{code}] Quantity mismatch: "
+                    f"Redis={rp.quantity}, Broker={bp['quantity']}"
+                )
+                logger.warning(msg)
+                if reconcile_qty:
+                    rp.quantity = bp["quantity"]
+                    logger.info(f"[{code}] Quantity reconciled to broker value: {bp['quantity']}")
+                else:
+                    alerts.append(msg)
+
+        # 2. Redis-only — position may have been closed externally
+        for code in redis_only:
+            rp = redis_by_code[code]
+            msg = (
+                f"[{code}] Redis-only position (not in broker). "
+                f"qty={rp.quantity}, entry={rp.entry_price:,.0f}"
+            )
+            logger.warning(msg)
+            alerts.append(msg)
+
+        # 3. Broker-only — external position not tracked by system
+        for code in broker_only:
+            bp = broker_by_code[code]
+            msg = (
+                f"[{code}] Broker-only position (not in Redis). "
+                f"qty={bp['quantity']}, avg_price={bp['avg_price']:,.0f}"
+            )
+            logger.warning(msg)
+            if auto_track:
+                try:
+                    new_pos = Position(
+                        id=f"broker_{code}_{datetime.now().strftime('%H%M%S')}",
+                        code=code,
+                        name=bp.get("name", ""),
+                        side=PositionSide(bp["side"]),
+                        quantity=bp["quantity"],
+                        entry_price=bp["avg_price"],
+                        current_price=bp.get("current_price", bp["avg_price"]),
+                        strategy="external",
+                    )
+                    if self._position_tracker.add_recovered_position(new_pos):
+                        logger.info(f"[{code}] Auto-tracked broker position")
+                        if code not in (self.config.symbols or []):
+                            if self.config.symbols is None:
+                                self.config.symbols = []
+                            self.config.symbols.append(code)
+                except Exception as e:
+                    logger.warning(f"[{code}] Failed to auto-track: {e}")
+            else:
+                alerts.append(msg)
+
+        # Summary
+        total = len(matched) + len(redis_only) + len(broker_only)
+        if total > 0:
+            logger.info(
+                f"Broker verification: {len(matched)} matched, "
+                f"{len(redis_only)} Redis-only, {len(broker_only)} broker-only"
+            )
+
+        # Telegram alert for mismatches
+        if alerts and notify:
+            alert_text = (
+                f"⚠️ Broker Position Verification ({self.config.asset_class})\n\n"
+                + "\n".join(alerts)
+            )
+            await self._notify(alert_text)
 
     async def _ensure_db_schema(self):
         """Ensure ClickHouse swing_positions table exists."""
