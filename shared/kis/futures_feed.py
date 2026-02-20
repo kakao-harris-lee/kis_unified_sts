@@ -162,10 +162,12 @@ class KISFuturesPriceFeed:
         low_price = float(tick.low_price) if tick.low_price is not None else price
 
         volume = None
+        volume_is_cumulative = True
         if tick.cumulative_volume is not None:
             volume = int(tick.cumulative_volume)
         elif tick.tick_volume is not None:
             volume = int(tick.tick_volume)
+            volume_is_cumulative = False
 
         change = None
         if open_price:
@@ -181,6 +183,8 @@ class KISFuturesPriceFeed:
         }
         if volume is not None:
             payload["volume"] = volume
+            if not volume_is_cumulative:
+                payload["volume_is_cumulative"] = False
         if change is not None:
             payload["change"] = change
 

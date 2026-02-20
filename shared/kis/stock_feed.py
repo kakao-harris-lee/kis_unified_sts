@@ -28,7 +28,8 @@ import logging
 import queue
 import threading
 import time
-from typing import Any, Optional
+from datetime import datetime
+from typing import Any, Callable, Optional
 
 import websocket
 from Crypto.Cipher import AES
@@ -120,12 +121,15 @@ class KISStockPriceFeed:
     def __init__(
         self,
         config: KISAuthConfig,
+        tick_callback: Callable[[str, dict[str, Any], datetime], None] | None = None,
     ):
         """
         Args:
             config: KIS authentication config (same as REST client).
+            tick_callback: Optional per-tick callback (symbol, data, timestamp).
         """
         self._config = config
+        self._tick_callback = tick_callback
         self._ws_url = self.WS_URL_REAL if config.is_real else self.WS_URL_MOCK
 
         # Load feed config from streaming.yaml
@@ -172,6 +176,11 @@ class KISStockPriceFeed:
         self._reconnect_delay = float(feed_cfg.get("reconnect_initial_delay", 1.0))
         self._max_reconnect_delay = float(feed_cfg.get("reconnect_max_delay", 60.0))
         self._initial_reconnect_delay = self._reconnect_delay
+
+    def set_tick_callback(
+        self, callback: Callable[[str, dict[str, Any], datetime], None] | None
+    ) -> None:
+        self._tick_callback = callback
 
     # ----- MarketDataSource protocol -----
 
@@ -458,6 +467,18 @@ class KISStockPriceFeed:
                             self._tick_count += 1
                             ts = parsed.get("timestamp")
                             self._last_tick_ts = ts if ts is not None else time.time()
+                        # Per-tick callback (outside lock to prevent deadlock)
+                        if self._tick_callback:
+                            try:
+                                tick_ts = datetime.fromtimestamp(
+                                    parsed.get("timestamp", time.time())
+                                )
+                            except (OSError, ValueError, TypeError):
+                                tick_ts = datetime.now()
+                            try:
+                                self._tick_callback(parsed["code"], parsed, tick_ts)
+                            except Exception as e:
+                                logger.debug(f"[StockPriceFeed] Tick callback error: {e}")
         else:
             try:
                 data = json.loads(message)
