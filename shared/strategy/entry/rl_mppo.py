@@ -48,6 +48,7 @@ class RLMPPOConfig:
     device: str = "auto"
     scaler_path: str = ""
     min_confidence: float = 0.6
+    backtest_min_confidence: float = 0.35
     skip_market_open_minutes: int = 5
     skip_market_close_minutes: int = 10
 
@@ -154,10 +155,15 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
         confidence = get_action_confidence(
             model, obs, action, action_masks, self._device
         )
-        if confidence < self.config.min_confidence:
+        threshold = (
+            self.config.backtest_min_confidence
+            if context.metadata.get("is_backtest")
+            else self.config.min_confidence
+        )
+        if confidence < threshold:
             logger.debug(
                 f"RL action {action} confidence {confidence:.3f} "
-                f"below threshold {self.config.min_confidence}"
+                f"below threshold {threshold}"
             )
             return None
 

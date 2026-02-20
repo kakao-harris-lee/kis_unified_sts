@@ -250,6 +250,13 @@ class BacktestStrategyAdapter:
         # Strategy name for conditional enrichment
         self._strategy_name = strategy.name
 
+        # Position state for RL strategies (synced from BacktestEngine)
+        self._current_position: dict[str, Any] | None = None
+
+    def set_position(self, position: dict[str, Any] | None) -> None:
+        """BacktestEngine → adapter position sync for RL context."""
+        self._current_position = position
+
     def on_bar(self, bar: dict[str, Any]) -> SignalType:
         """Convert a bar dict into a BUY/SELL/HOLD signal."""
         code = str(bar.get("code", "BACKTEST") or "BACKTEST")
@@ -305,7 +312,7 @@ class BacktestStrategyAdapter:
             market_state = "SIDEWAYS_FLAT"
 
         # Build metadata
-        metadata: dict[str, Any] = {"market_state": market_state}
+        metadata: dict[str, Any] = {"market_state": market_state, "is_backtest": True}
 
         # Inject accumulation_candidates for volume_accumulation strategy
         if self._strategy_name == "volume_accumulation":
@@ -315,10 +322,34 @@ class BacktestStrategyAdapter:
             score = self._enricher.compute_accumulation_score(str(raw_code))
             metadata["accumulation_candidates"] = {raw_code: score}
 
+        # Build position list for RL action masks + observation
+        current_positions = []
+        if self._current_position:
+            from shared.models.position import Position as ModelPosition
+            from shared.models.position import PositionSide
+
+            pos = self._current_position
+            current_positions = [
+                ModelPosition(
+                    id=f"bt_{code}",
+                    code=code,
+                    name=code,
+                    strategy=self.name,
+                    side=(
+                        PositionSide.LONG
+                        if pos["side"] == "BUY"
+                        else PositionSide.SHORT
+                    ),
+                    entry_price=pos["entry_price"],
+                    quantity=pos["quantity"],
+                    current_price=float(bar.get("close", 0) or 0),
+                )
+            ]
+
         context = EntryContext(
             market_data=bar,
             indicators=indicators,
-            current_positions=[],
+            current_positions=current_positions,
             timestamp=timestamp,
             metadata=metadata,
         )

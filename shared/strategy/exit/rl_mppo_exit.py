@@ -50,6 +50,7 @@ class RLMPPOExitConfig:
     device: str = "auto"
     scaler_path: str = ""
     min_exit_confidence: float = 0.5  # entry(0.6)보다 낮음 — 청산은 더 적극적
+    backtest_min_exit_confidence: float = 0.3
     # 안전장치
     hard_stop_pct: float = -0.03  # -3%
     eod_close_hour: int = 15
@@ -154,9 +155,15 @@ class RLMPPOExit(ExitSignalGenerator[RLMPPOExitConfig]):
 
         confidence = get_action_confidence(model, obs, action, masks, self._device)
 
+        exit_threshold = (
+            self.config.backtest_min_exit_confidence
+            if context.metadata.get("is_backtest")
+            else self.config.min_exit_confidence
+        )
+
         # LONG_EXIT for long position
         if action == 1 and position.side == PositionSide.LONG:
-            if confidence >= self.config.min_exit_confidence:
+            if confidence >= exit_threshold:
                 return (
                     True,
                     self._make_signal(
@@ -172,12 +179,12 @@ class RLMPPOExit(ExitSignalGenerator[RLMPPOExitConfig]):
             else:
                 logger.debug(
                     f"RL LONG_EXIT confidence {confidence:.3f} "
-                    f"below threshold {self.config.min_exit_confidence}"
+                    f"below threshold {exit_threshold}"
                 )
 
         # SHORT_EXIT for short position
         if action == 3 and position.side == PositionSide.SHORT:
-            if confidence >= self.config.min_exit_confidence:
+            if confidence >= exit_threshold:
                 return (
                     True,
                     self._make_signal(
@@ -193,7 +200,7 @@ class RLMPPOExit(ExitSignalGenerator[RLMPPOExitConfig]):
             else:
                 logger.debug(
                     f"RL SHORT_EXIT confidence {confidence:.3f} "
-                    f"below threshold {self.config.min_exit_confidence}"
+                    f"below threshold {exit_threshold}"
                 )
 
         return (False, None)  # HOLD

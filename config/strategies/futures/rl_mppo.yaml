@@ -19,6 +19,7 @@ strategy:
 
       # 진입 필터
       min_confidence: 0.6            # action probability 최소값
+      backtest_min_confidence: 0.35  # 백테스트 시 낮은 threshold (모델 confidence ~0.48)
       skip_market_open_minutes: 5    # 장 시작 후 관망
       skip_market_close_minutes: 10  # 장 마감 전 신규 진입 금지
 
@@ -29,6 +30,7 @@ strategy:
       deterministic: true
       device: auto
       min_exit_confidence: 0.5       # 청산은 진입(0.6)보다 적극적
+      backtest_min_exit_confidence: 0.3  # 백테스트 시 낮은 threshold
       # 안전장치
       hard_stop_pct: -0.03           # -3% (모델 학습 시 허용 범위)
       eod_close_hour: 15

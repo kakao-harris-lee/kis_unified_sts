@@ -224,7 +224,26 @@ class BacktestEngine:
         if risk.max_daily_trades > 0 and self._daily_trades >= risk.max_daily_trades:
             return
 
-        # 3. 전략 시그널 생성
+        # 3. Sync position state to adapter (for RL strategies)
+        if hasattr(self.strategy, "set_position"):
+            if self.positions:
+                pos = next(iter(self.positions.values()))
+                if pos.side == "BUY":
+                    unrealized_pnl = (current_price - pos.entry_price) * pos.quantity
+                else:
+                    unrealized_pnl = (pos.entry_price - current_price) * pos.quantity
+                self.strategy.set_position(
+                    {
+                        "side": pos.side,
+                        "entry_price": pos.entry_price,
+                        "quantity": pos.quantity,
+                        "unrealized_pnl": unrealized_pnl,
+                    }
+                )
+            else:
+                self.strategy.set_position(None)
+
+        # 전략 시그널 생성
         signal = self.strategy.on_bar(bar)
 
         # 4. 시그널 처리
@@ -336,21 +355,30 @@ class BacktestEngine:
             return
 
         # 포지션 크기 계산
-        position_value = self.capital * (self.config.position_size_pct / 100)
-        quantity = int(position_value / price)
-
-        if quantity < 1:
-            return
-
-        # 비용 계산
         cost = self.config.cost
-        commission = price * quantity * cost.commission_rate
-        slippage = price * quantity * cost.slippage_rate
 
-        total_cost = price * quantity + commission + slippage
+        if self.config.point_value > 1:
+            # 선물: 계약 수 기반 (max_positions = 최대 계약 수)
+            quantity = self.config.max_positions
+            # 선물 증거금은 notional의 일부이므로 capital 차감은 진입가 * 수량만 적용
+            commission = price * quantity * cost.commission_rate
+            slippage = price * quantity * cost.slippage_rate
+            total_cost = price * quantity + commission + slippage
+        else:
+            # 주식: 자본 대비 % 기반
+            position_value = self.capital * (self.config.position_size_pct / 100)
+            effective_price = price * (1 + cost.commission_rate + cost.slippage_rate)
+            quantity = int(position_value / effective_price)
 
-        if total_cost > self.capital:
-            return
+            if quantity < 1:
+                return
+
+            commission = price * quantity * cost.commission_rate
+            slippage = price * quantity * cost.slippage_rate
+            total_cost = price * quantity + commission + slippage
+
+            if total_cost > self.capital:
+                return
 
         # 포지션 생성
         atr_value = float(bar.get("atr", 0)) if bar else 0.0
