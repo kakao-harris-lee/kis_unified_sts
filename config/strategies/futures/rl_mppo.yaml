@@ -25,6 +25,7 @@ strategy:
   exit:
     type: three_stage                # 기존 3-Stage Exit 재사용
     params:
+      enable_bear_exit: false         # RL이 양방향 거래 — BEAR에서 short 유지
       hard_stop_pct: -0.015          # -1.5%
       breakeven_threshold_pct: 0.01  # +1.0%
       breakeven_buffer_pct: 0.001    # +0.1%
