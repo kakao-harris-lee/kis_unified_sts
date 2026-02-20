@@ -1842,8 +1842,13 @@ class TradingOrchestrator:
             self._market_data_updated_at = datetime.now()
 
     def _feed_indicators(self, data):
-        """Feed ticks to indicator engine."""
+        """Feed ticks to indicator engine.
+
+        Skipped for futures — WebSocket callback feeds indicators directly.
+        """
         if not self._indicator_engine:
+            return
+        if self._futures_price_feed:
             return
         now_ts = datetime.now()
         for sym, sym_data in data.items():
@@ -1871,8 +1876,8 @@ class TradingOrchestrator:
 
     def _record_market_metrics(self):
         """Record staleness metrics."""
-        # Only report REST staleness when snapshot is actively populated;
-        # futures uses WebSocket-only feed so snapshot stays empty.
+        # Report REST-sourced staleness. For futures the snapshot is populated
+        # from WebSocket cache, so this metric reflects WebSocket freshness.
         if self._market_data_snapshot:
             staleness = self._get_market_data_staleness_seconds()
             if staleness is not None:
