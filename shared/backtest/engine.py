@@ -50,6 +50,9 @@ class ExitReason(Enum):
     TIME_LIMIT = "time_limit"
     FORCE_CLOSE = "force_close"
     END_OF_DATA = "end_of_data"
+    RL_EXIT = "rl_exit"
+    EOD_CLOSE = "eod_close"
+    STRATEGY_EXIT = "strategy_exit"
 
 
 class StrategyProtocol(Protocol):
@@ -268,8 +271,21 @@ class BacktestEngine:
                     bar=bar,
                 )
         else:
-            # 포지션 있음 → 반대 시그널 시 청산
+            # 포지션 있음 → exit 전략 체크 → 반대 시그널 시 청산
             for pos_code, pos in list(self.positions.items()):
+                # Exit strategy check (RL exit, momentum decay, etc.)
+                if hasattr(self.strategy, "check_exit"):
+                    should_exit, exit_reason = self.strategy.check_exit(bar)
+                    if should_exit and exit_reason:
+                        self._close_position(
+                            code=pos_code,
+                            exit_price=current_price,
+                            exit_time=timestamp,
+                            reason=exit_reason,
+                        )
+                        continue
+
+                # 반대 시그널 시 청산
                 should_close = (pos.side == "BUY" and signal == SignalType.SELL) or (
                     pos.side == "SELL" and signal == SignalType.BUY
                 )
