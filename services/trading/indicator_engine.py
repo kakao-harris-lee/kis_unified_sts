@@ -212,7 +212,7 @@ class StreamingIndicatorEngine:
         bb_period: int = 20,
         bb_std: float = 2.0,
         rsi_period: int = 14,
-        candle_maxlen: int = 100,
+        candle_maxlen: int = 240,
         high_period: int = 5,
         rvol_short: int = 5,
         rvol_long: int = 20,
