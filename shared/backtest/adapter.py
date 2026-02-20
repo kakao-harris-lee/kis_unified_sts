@@ -20,8 +20,9 @@ from datetime import datetime
 from typing import Any
 
 from services.trading.indicator_engine import StreamingIndicatorEngine
-from shared.backtest.engine import SignalType
-from shared.strategy.base import EntryContext, TradingStrategy
+from shared.backtest.engine import ExitReason, SignalType
+from shared.models.position import Position as ModelPosition, PositionSide
+from shared.strategy.base import EntryContext, ExitContext, TradingStrategy
 
 logger = logging.getLogger(__name__)
 
@@ -257,6 +258,67 @@ class BacktestStrategyAdapter:
         """BacktestEngine → adapter position sync for RL context."""
         self._current_position = position
 
+    def check_exit(self, bar: dict[str, Any]) -> tuple[bool, ExitReason | None]:
+        """Check exit strategy for current position.
+
+        Returns (should_exit, exit_reason) using the strategy's check_exit().
+        Indicators are already cached from the preceding on_bar() call.
+        """
+        if not self._current_position:
+            return (False, None)
+
+        code = str(bar.get("code", "BACKTEST") or "BACKTEST")
+        timestamp = bar.get("datetime", datetime.now())
+        if isinstance(timestamp, str):
+            timestamp = datetime.fromisoformat(timestamp)
+
+        # Use cached indicators (seeded during on_bar)
+        indicators = self._indicator_engine.get_indicators(code)
+
+        if "ohlcv" in self._required_indicators:
+            ohlcv = self._indicator_engine.get_recent_candles(code, limit=240)
+            if ohlcv:
+                indicators["ohlcv"] = ohlcv
+
+        # Build Position model from engine's position dict
+        pos = self._current_position
+        position = ModelPosition(
+            id=f"bt_{code}",
+            code=code,
+            name=code,
+            strategy=self.name,
+            side=PositionSide.LONG if pos["side"] == "BUY" else PositionSide.SHORT,
+            entry_price=pos["entry_price"],
+            quantity=pos["quantity"],
+            current_price=float(bar.get("close", 0) or 0),
+        )
+
+        context = ExitContext(
+            position=position,
+            market_data=bar,
+            indicators=indicators,
+            timestamp=timestamp,
+            metadata={"is_backtest": True},
+        )
+
+        try:
+            should_exit, exit_signal = self._loop.run_until_complete(
+                self._strategy.check_exit(context)
+            )
+        except Exception:
+            logger.debug("Exit strategy error", exc_info=True)
+            return (False, None)
+
+        if should_exit and exit_signal:
+            # Map shared.models.signal.ExitReason → backtest ExitReason
+            reason_value = exit_signal.reason.value
+            try:
+                return (True, ExitReason(reason_value))
+            except ValueError:
+                return (True, ExitReason.STRATEGY_EXIT)
+
+        return (False, None)
+
     def on_bar(self, bar: dict[str, Any]) -> SignalType:
         """Convert a bar dict into a BUY/SELL/HOLD signal."""
         code = str(bar.get("code", "BACKTEST") or "BACKTEST")
@@ -325,9 +387,6 @@ class BacktestStrategyAdapter:
         # Build position list for RL action masks + observation
         current_positions = []
         if self._current_position:
-            from shared.models.position import Position as ModelPosition
-            from shared.models.position import PositionSide
-
             pos = self._current_position
             current_positions = [
                 ModelPosition(
