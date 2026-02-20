@@ -275,6 +275,19 @@ class BacktestEngine:
             for pos_code, pos in list(self.positions.items()):
                 # Exit strategy check (RL exit, momentum decay, etc.)
                 if hasattr(self.strategy, "check_exit"):
+                    # Sync this specific position to adapter
+                    if pos.side == "BUY":
+                        unrealized = (current_price - pos.entry_price) * pos.quantity
+                    else:
+                        unrealized = (pos.entry_price - current_price) * pos.quantity
+                    self.strategy.set_position(
+                        {
+                            "side": pos.side,
+                            "entry_price": pos.entry_price,
+                            "quantity": pos.quantity,
+                            "unrealized_pnl": unrealized,
+                        }
+                    )
                     should_exit, exit_reason = self.strategy.check_exit(bar)
                     if should_exit and exit_reason:
                         self._close_position(
