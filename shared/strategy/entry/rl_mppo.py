@@ -320,7 +320,29 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
                 )
             calc = RLFeatureCalculator()
             feat_df = calc.calculate(df)
-            feat_df = feat_df.dropna(subset=RL_FEATURE_COLUMNS)
+
+            # Forward-fill NaN from long-window features (e.g., sma_ratio_120
+            # needs 120 candles but only ~20 available at warmup).
+            for col in RL_FEATURE_COLUMNS:
+                if col in feat_df.columns:
+                    feat_df[col] = feat_df[col].ffill()
+
+            # Fill remaining NaN with neutral defaults — much better than 0.0
+            # which the scaler would interpret as extreme negative values.
+            neutral = {
+                col: (
+                    1.0
+                    if "ratio" in col
+                    else 50.0
+                    if col in ("rsi", "stoch_k", "stoch_d")
+                    else 0.5
+                    if col == "bb_position"
+                    else 0.0
+                )
+                for col in RL_FEATURE_COLUMNS
+            }
+            feat_df = feat_df.fillna(neutral)
+
             if feat_df.empty:
                 return {}
             latest = feat_df.iloc[-1]
