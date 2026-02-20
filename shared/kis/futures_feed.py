@@ -150,9 +150,7 @@ class KISFuturesPriceFeed:
             cached = self._prices.get(symbol)
         if cached is not None:
             return cached
-        if self._fallback:
-            return await self._fallback.get_current_price(symbol)
-        raise KeyError(f"No WebSocket data for {symbol}")
+        return {}
 
     def _on_tick(self, tick: TickData) -> None:
         if tick.current_price is None:

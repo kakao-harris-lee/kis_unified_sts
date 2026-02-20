@@ -652,7 +652,6 @@ class TradingOrchestrator:
                 from shared.kis.stock_feed import KISStockPriceFeed
                 self._stock_price_feed = KISStockPriceFeed(
                     config=kis_config,
-                    fallback_client=self._kis_client,
                 )
                 data_source = self._stock_price_feed
                 logger.info("Stock WebSocket price feed initialized")
@@ -663,7 +662,6 @@ class TradingOrchestrator:
                 from shared.kis.futures_feed import KISFuturesPriceFeed
                 self._futures_price_feed = KISFuturesPriceFeed(
                     config=kis_config,
-                    fallback_client=self._kis_client,
                 )
                 data_source = self._futures_price_feed
                 logger.info("Futures WebSocket price feed initialized")

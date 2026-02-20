@@ -393,7 +393,7 @@ class MarketDataProvider:
                         source.get_current_price(symbol),
                         timeout=self.config.fetch_timeout_seconds,
                     )
-                    if price_data is not None:
+                    if price_data:
                         result[symbol] = price_data
                 except asyncio.TimeoutError:
                     logger.warning(f"Timeout fetching {symbol}")
@@ -444,7 +444,7 @@ class MarketDataProvider:
                     logger.error(f"Batch fetch error: {item}", exc_info=True)
                     continue
                 symbol, data = item
-                if data is not None:
+                if data:
                     result[symbol] = data
 
             # Pause between batches to avoid sustained rate limiting

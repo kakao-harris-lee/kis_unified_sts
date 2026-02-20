@@ -182,16 +182,14 @@ class KISStockPriceFeed:
     async def get_current_price(self, symbol: str) -> dict[str, Any]:
         """Get latest price for symbol.
 
-        Returns instantly from WebSocket cache. Falls back to REST API
-        if no WebSocket data available yet.
+        Returns instantly from WebSocket cache. Returns empty dict if no
+        data is available yet (no REST fallback to avoid rate-limit pressure).
         """
         with self._prices_lock:
             data = self._prices.get(symbol)
         if data is not None:
             return data
-        if self._fallback:
-            return await self._fallback.get_current_price(symbol)
-        raise KeyError(f"No WebSocket data for {symbol}")
+        return {}
 
     # ----- Lifecycle -----
 
