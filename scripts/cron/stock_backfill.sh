@@ -1,6 +1,6 @@
 #!/bin/bash
 # 매일 장 마감 후 주식 분봉 데이터 수집
-# crontab: 35 15 * * 1-5 /home/deploy/project/kis_unified_sts/scripts/cron/stock_backfill.sh
+# crontab: 50 15 * * 1-5 /home/deploy/project/kis_unified_sts/scripts/cron/stock_backfill.sh
 #
 # 사용법:
 #   ./scripts/cron/stock_backfill.sh          # 오늘 데이터만 (기본)

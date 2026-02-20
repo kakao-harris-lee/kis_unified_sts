@@ -1369,9 +1369,55 @@ class TradingOrchestrator:
                 logger.warning(f"Universe refresh loop error: {e}")
             await asyncio.sleep(self._universe_refresh_interval)
 
+    async def _fetch_candles_from_clickhouse(
+        self, symbol: str, limit: int = 25
+    ) -> list[dict]:
+        """Fetch recent candles from ClickHouse for pre-market warmup.
+
+        Uses the existing ClickHouseClient singleton to query minute_candles.
+        Runs synchronous DB call in executor to avoid blocking the event loop.
+        """
+        try:
+            from shared.db.client import ClickHouseClient
+
+            ch = ClickHouseClient()
+            # Query last N candles (across any date) sorted newest first,
+            # then reverse to chronological order for seed_candles.
+            loop = asyncio.get_event_loop()
+            rows = await loop.run_in_executor(
+                None,
+                lambda: ch.get_sync_client().execute(
+                    f"SELECT code, datetime, open, high, low, close, volume, value "
+                    f"FROM {ch.config.database}.minute_candles "
+                    f"WHERE code = %(code)s "
+                    f"ORDER BY datetime DESC LIMIT %(limit)s",
+                    {"code": symbol, "limit": limit},
+                ),
+            )
+            candles = []
+            for row in reversed(rows):  # oldest first
+                candles.append({
+                    "datetime": row[1],
+                    "open": float(row[2]),
+                    "high": float(row[3]),
+                    "low": float(row[4]),
+                    "close": float(row[5]),
+                    "volume": int(row[6]),
+                })
+            return candles
+        except Exception as e:
+            logger.debug(f"ClickHouse prewarm failed for {symbol}: {e}")
+            return []
+
     async def _prewarm_symbols(self, symbols: list[str]) -> None:
-        """Fetch recent 1-min bars from KIS and seed the indicator engine."""
+        """Seed indicator engine with historical candles.
+
+        Tries ClickHouse first (no rate limit, works pre-market),
+        falls back to KIS REST API.
+        """
         logger.info(f"Prewarm starting for {len(symbols)} symbols")
+        ch_hits = 0
+        kis_hits = 0
         for symbol in symbols:
             if self._indicator_engine.is_warm(symbol):
                 continue
@@ -1379,19 +1425,30 @@ class TradingOrchestrator:
             if symbol not in set(self.config.symbols):
                 continue
             try:
-                candles = await asyncio.wait_for(
-                    self._kis_client.get_minute_bars(symbol, count=25),
-                    timeout=5.0,
-                )
+                # ClickHouse first (no rate limit, faster)
+                candles = await self._fetch_candles_from_clickhouse(symbol, limit=25)
+                if candles:
+                    ch_hits += 1
+                else:
+                    # Fallback to KIS REST
+                    candles = await asyncio.wait_for(
+                        self._kis_client.get_minute_bars(symbol, count=25),
+                        timeout=5.0,
+                    )
+                    if candles:
+                        kis_hits += 1
+                    await asyncio.sleep(0.3)  # rate-limit protection
                 if candles:
                     self._indicator_engine.seed_candles(symbol, candles)
                     logger.info(f"Prewarm {symbol}: {len(candles)} candles seeded")
                 else:
                     logger.debug(f"Prewarm {symbol}: no candles returned")
-                await asyncio.sleep(0.3)  # rate-limit protection
             except (asyncio.TimeoutError, Exception) as e:
                 logger.warning(f"Prewarm failed for {symbol}: {e}")
-        logger.info("Prewarm complete")
+        logger.info(
+            f"Prewarm complete: {ch_hits} from ClickHouse, "
+            f"{kis_hits} from KIS REST"
+        )
 
     async def stop(self):
         """거래 종료"""

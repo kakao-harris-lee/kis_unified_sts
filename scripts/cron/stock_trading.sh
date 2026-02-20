@@ -2,7 +2,7 @@
 # Stock Trading Service - kis_unified_sts
 # Replaces: quant_moment_sts main.py
 #
-# crontab: 0 9 * * 1-5 /home/deploy/project/kis_unified_sts/scripts/cron/stock_trading.sh start
+# crontab: 55 8 * * 1-5 /home/deploy/project/kis_unified_sts/scripts/cron/stock_trading.sh start
 #          0 16 * * 1-5 /home/deploy/project/kis_unified_sts/scripts/cron/stock_trading.sh stop
 
 set -e
