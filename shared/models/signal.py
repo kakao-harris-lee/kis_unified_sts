@@ -45,6 +45,9 @@ class ExitReason(Enum):
     MOMENTUM_DECAY = "momentum_decay"  # 모멘텀 소진 청산
     VWAP_BREAKDOWN = "vwap_breakdown"  # VWAP 이탈 청산
 
+    # RL model-based
+    RL_EXIT = "rl_exit"  # RL 모델 청산 시그널
+
     # Manual
     MANUAL_CLOSE = "manual_close"  # 수동 청산
     FORCE_CLOSE = "force_close"  # 강제 청산
