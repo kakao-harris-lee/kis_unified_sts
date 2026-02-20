@@ -10,16 +10,23 @@ Usage:
 from __future__ import annotations
 
 import logging
-import os
 from dataclasses import dataclass
 from datetime import datetime
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 from zoneinfo import ZoneInfo
 
 from shared.ml.base import get_device
 from shared.strategy.base import EntryContext, EntrySignalGenerator
 from shared.strategy.registry import EntryRegistry
+from shared.strategy.rl_model_helpers import (
+    build_rl_observation,
+    derive_features_from_ohlcv,
+    get_action_confidence,
+    get_rl_env_config,
+    load_rl_model,
+    load_rl_scaler,
+    parse_hhmm,
+)
 
 if TYPE_CHECKING:
     from shared.models.signal import Signal
@@ -50,7 +57,6 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
     """학습된 M-PPO 모델 기반 진입 시그널 생성기
 
     학습된 Maskable PPO 모델을 로드하여 EntrySignalGenerator 인터페이스로 래핑.
-    DLTrendEntry와 동일한 패턴으로 구현.
 
     행동 매핑:
         0 (LONG_ENTRY) → Signal(BUY)
@@ -145,7 +151,9 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
             return None
 
         # action probability → confidence
-        confidence = self._get_action_confidence(model, obs, action, action_masks)
+        confidence = get_action_confidence(
+            model, obs, action, action_masks, self._device
+        )
         if confidence < self.config.min_confidence:
             logger.debug(
                 f"RL action {action} confidence {confidence:.3f} "
@@ -194,78 +202,35 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
 
         return None
 
+    def _load_model(self) -> Any:
+        """학습된 모델 로드 (lazy loading, 모듈 캐시 사용)"""
+        if self._model is not None:
+            return self._model
+        self._model = load_rl_model(self.config.model_path, self._device)
+        return self._model
+
+    def _load_scaler(self) -> Any:
+        """Load scaler used in RL training (lazy, 모듈 캐시 사용)."""
+        if self._scaler is not None:
+            return self._scaler
+        self._scaler = load_rl_scaler(self.config.scaler_path, self.config.model_path)
+        return self._scaler
+
     def _get_env_config(self):
         """RL 환경 설정 로드 (lazy)"""
         if self._env_config is None:
-            from shared.ml.rl.env import RLEnvConfig
-            self._env_config = RLEnvConfig.from_yaml()
+            self._env_config = get_rl_env_config()
         return self._env_config
-
-    def _load_model(self) -> Any:
-        """학습된 모델 로드 (lazy loading)"""
-        if self._model is not None:
-            return self._model
-
-        model_override = os.getenv("RL_MPPO_MODEL_PATH", "").strip()
-        model_path = Path(model_override or self.config.model_path)
-        if not model_path.exists():
-            logger.error(f"RL model not found: {model_path}")
-            return None
-
-        try:
-            from sb3_contrib import MaskablePPO
-
-            self._model = MaskablePPO.load(
-                str(model_path),
-                device=self._device,
-            )
-            logger.info(f"RL model loaded: {model_path} (device={self._device})")
-            return self._model
-        except Exception as e:
-            logger.error(f"Failed to load RL model: {e}")
-            return None
 
     def _build_observation(self, context: EntryContext) -> Any:
         """EntryContext → RL 관측값 변환
 
         시장 피처 (25개) + 포지션 피처 (3개) + 시간 피처 (3개) = 31차원
         """
-        import numpy as np
-
-        indicators = context.indicators
-        market_data = context.market_data
         env_cfg = self._get_env_config()
 
-        # 시장 피처 (25개) - indicators/market_data/ohlcv fallback
-        from shared.ml.rl.features import RL_FEATURE_COLUMNS
-
-        derived = self._derive_features_from_ohlcv(context)
-        market_features = []
-        missing_features = []
-        for col in RL_FEATURE_COLUMNS:
-            val = indicators.get(col, market_data.get(col, derived.get(col)))
-            if val is None:
-                missing_features.append(col)
-                market_features.append(0.0)
-            else:
-                market_features.append(float(val))
-
-        if missing_features:
-            logger.warning(
-                f"Missing {len(missing_features)} RL features (filled with 0.0): "
-                    f"{missing_features[:5]}{'...' if len(missing_features) > 5 else ''}"
-                )
-
-        scaler = self._load_scaler()
-        market_array = np.array(market_features, dtype=np.float32).reshape(1, -1)
-        if scaler is not None:
-            try:
-                market_array = scaler.transform(market_array)
-            except Exception as e:
-                logger.warning(f"RL scaler transform failed; using raw features: {e}")
-
-        # 포지션 피처 (3개)
-        position = 0.0
+        # 포지션 피처
+        position_side = 0.0
         contracts = 0.0
         unrealized_pnl = 0.0
 
@@ -274,82 +239,26 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
             side = getattr(pos, "side", None)
             side_val = getattr(side, "value", side)
             if str(side_val).lower() == "long":
-                position = 1.0
+                position_side = 1.0
             elif str(side_val).lower() == "short":
-                position = -1.0
+                position_side = -1.0
             contracts = getattr(pos, "quantity", 0) / max(env_cfg.max_contracts, 1)
             unrealized_pnl = getattr(pos, "unrealized_pnl", 0.0) / env_cfg.initial_balance
 
-        market_open = self._parse_hhmm(env_cfg.market_open, default_hour=9, default_minute=0)
-        market_close = self._parse_hhmm(env_cfg.market_close, default_hour=15, default_minute=45)
-        now = context.timestamp.astimezone(KST) if context.timestamp.tzinfo else context.timestamp.replace(tzinfo=KST)
-        start_dt = now.replace(hour=market_open[0], minute=market_open[1], second=0, microsecond=0)
-        end_dt = now.replace(hour=market_close[0], minute=market_close[1], second=0, microsecond=0)
-        total_minutes = max(1.0, (end_dt - start_dt).total_seconds() / 60.0)
-        elapsed = (now - start_dt).total_seconds() / 60.0
-        progress = max(0.0, min(1.0, elapsed / total_minutes))
-        time_features = [progress, float(np.sin(2 * np.pi * progress)), float(np.cos(2 * np.pi * progress))]
+        derived = derive_features_from_ohlcv(context.indicators, context.market_data)
+        scaler = self._load_scaler()
 
-        obs = np.array(
-            market_array[0].tolist() + [position, contracts, unrealized_pnl] + time_features,
-            dtype=np.float32,
+        return build_rl_observation(
+            market_data=context.market_data,
+            indicators=context.indicators,
+            position_side=position_side,
+            contracts=contracts,
+            unrealized_pnl=unrealized_pnl,
+            timestamp=context.timestamp,
+            scaler=scaler,
+            env_config=env_cfg,
+            ohlcv_derived=derived,
         )
-
-        return obs
-
-    def _derive_features_from_ohlcv(self, context: EntryContext) -> dict[str, float]:
-        """Derive RL feature columns from historical OHLCV if available."""
-        ohlcv = context.indicators.get("ohlcv") or context.market_data.get("ohlcv")
-        if not isinstance(ohlcv, list) or not ohlcv:
-            return {}
-        try:
-            import pandas as pd
-
-            from shared.ml.rl.features import RL_FEATURE_COLUMNS, RLFeatureCalculator
-
-            df = pd.DataFrame(ohlcv)
-            needed = {"open", "high", "low", "close", "volume"}
-            if not needed.issubset(df.columns):
-                return {}
-            if "datetime" not in df.columns:
-                # FeatureCalculator requires chronological datetime.
-                df["datetime"] = pd.date_range(
-                    end=pd.Timestamp.now(),
-                    periods=len(df),
-                    freq="1min",
-                )
-            calc = RLFeatureCalculator()
-            feat_df = calc.calculate(df)
-
-            # Forward-fill NaN from long-window features (e.g., sma_ratio_120
-            # needs 120 candles but only ~20 available at warmup).
-            for col in RL_FEATURE_COLUMNS:
-                if col in feat_df.columns:
-                    feat_df[col] = feat_df[col].ffill()
-
-            # Fill remaining NaN with neutral defaults — much better than 0.0
-            # which the scaler would interpret as extreme negative values.
-            neutral = {
-                col: (
-                    1.0
-                    if "ratio" in col
-                    else 50.0
-                    if col in ("rsi", "stoch_k", "stoch_d")
-                    else 0.5
-                    if col == "bb_position"
-                    else 0.0
-                )
-                for col in RL_FEATURE_COLUMNS
-            }
-            feat_df = feat_df.fillna(neutral)
-
-            if feat_df.empty:
-                return {}
-            latest = feat_df.iloc[-1]
-            return {col: float(latest[col]) for col in RL_FEATURE_COLUMNS}
-        except Exception as e:
-            logger.debug(f"Failed to derive RL features from ohlcv: {e}")
-            return {}
 
     def _build_action_masks(self, context: EntryContext) -> Any:
         """포지션 기반 행동 마스크 생성"""
@@ -372,66 +281,6 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
                 masks[3] = True  # SHORT_EXIT
 
         return masks
-
-    def _get_action_confidence(
-        self, model: Any, obs: Any, action: int, action_masks: Any
-    ) -> float:
-        """행동의 확률(confidence) 추출"""
-        try:
-            import numpy as np
-            import torch
-
-            obs_tensor = torch.as_tensor(obs).float().unsqueeze(0).to(self._device)
-            with torch.no_grad():
-                dist = model.policy.get_distribution(obs_tensor)
-                probs = dist.distribution.probs.cpu().numpy()[0]
-                mask = np.asarray(action_masks, dtype=bool)
-                if mask.shape == probs.shape and mask.any():
-                    probs = probs * mask
-                    total = float(probs.sum())
-                    if total > 0:
-                        probs = probs / total
-                if action < 0 or action >= len(probs):
-                    return 0.0
-                return float(probs[action])
-        except Exception as e:
-            logger.debug(f"Failed to get action confidence: {e}")
-            return 1.0  # 확률 추출 실패 시 기본값
-
-    def _load_scaler(self) -> Any:
-        """Load scaler used in RL training (lazy)."""
-        if self._scaler is not None:
-            return self._scaler
-        scaler_path = self.config.scaler_path.strip() if self.config.scaler_path else ""
-        if not scaler_path:
-            model_override = os.getenv("RL_MPPO_MODEL_PATH", "").strip()
-            model_path = Path(model_override or self.config.model_path).resolve()
-            scaler_path = str(model_path.parent.parent / "scaler.joblib")
-        path = Path(scaler_path)
-        if not path.exists():
-            logger.warning(f"RL scaler not found: {path} (using raw features)")
-            return None
-        try:
-            import joblib
-
-            self._scaler = joblib.load(path)
-            return self._scaler
-        except Exception as e:
-            logger.warning(f"Failed to load RL scaler: {e}")
-            return None
-
-    @staticmethod
-    def _parse_hhmm(value: str, default_hour: int, default_minute: int) -> tuple[int, int]:
-        """Parse 'HH:MM' string safely."""
-        try:
-            hh, mm = value.split(":", 1)
-            h = int(hh)
-            m = int(mm)
-            if 0 <= h <= 23 and 0 <= m <= 59:
-                return h, m
-        except Exception:
-            pass
-        return default_hour, default_minute
 
     def _is_trading_time(self, timestamp: datetime) -> bool:
         """거래 가능 시간 확인

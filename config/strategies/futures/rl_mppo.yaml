@@ -1,5 +1,5 @@
 # RL M-PPO 전략 설정 (선물 전용)
-# 학습된 M-PPO 모델을 EntrySignalGenerator로 래핑
+# 학습된 M-PPO 모델을 Entry + Exit SignalGenerator로 래핑
 
 strategy:
   name: rl_mppo
@@ -23,15 +23,16 @@ strategy:
       skip_market_close_minutes: 10  # 장 마감 전 신규 진입 금지
 
   exit:
-    type: three_stage                # 기존 3-Stage Exit 재사용
+    type: rl_mppo_exit               # RL 학습된 청산 정책
     params:
-      hard_stop_pct: -0.015          # -1.5%
-      breakeven_threshold_pct: 0.01  # +1.0%
-      breakeven_buffer_pct: 0.001    # +0.1%
-      maximize_threshold_pct: 0.03   # +3.0%
-      trailing_stop_pct: -0.02       # -2.0% from high
-      tight_trailing_pct: -0.01      # -1.0%
-      tight_trailing_trigger_pct: 0.05  # +5.0%
+      model_path: "models/futures/rl/mppo_best/best_model.zip"
+      deterministic: true
+      device: auto
+      min_exit_confidence: 0.5       # 청산은 진입(0.6)보다 적극적
+      # 안전장치
+      hard_stop_pct: -0.03           # -3% (모델 학습 시 허용 범위)
+      eod_close_hour: 15
+      eod_close_minute: 15
 
   position:
     type: fixed

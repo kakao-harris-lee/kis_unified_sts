@@ -2007,8 +2007,13 @@ class TradingOrchestrator:
         if not self._position_tracker:
             return []
 
-        # Skip entries in BEAR market (covers both old "BEAR" and new MarketState values)
-        if self._current_regime and "BEAR" in self._current_regime:
+        # Skip entries in BEAR market for long-only strategies (stocks).
+        # Futures (bidirectional) can profit from short entries in BEAR.
+        if (
+            self._current_regime
+            and "BEAR" in self._current_regime
+            and self.config.asset_class != "futures"
+        ):
             return []
 
         # Check position limit

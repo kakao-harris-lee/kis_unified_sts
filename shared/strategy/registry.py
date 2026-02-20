@@ -399,6 +399,13 @@ def register_builtin_components() -> None:
         logger.debug("MomentumDecayExit not available")
 
     try:
+        from shared.strategy.exit.rl_mppo_exit import RLMPPOExit
+
+        ExitRegistry.register_class("rl_mppo_exit", RLMPPOExit)
+    except ImportError:
+        logger.debug("RLMPPOExit not available")
+
+    try:
         from shared.strategy.exit.trix_golden_exit import TrixGoldenExit
 
         ExitRegistry.register_class("trix_golden_exit", TrixGoldenExit)

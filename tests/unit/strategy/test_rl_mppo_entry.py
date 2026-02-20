@@ -10,6 +10,7 @@ import pytest
 
 from shared.strategy.base import EntryContext
 from shared.strategy.entry.rl_mppo import RLMPPOConfig, RLMPPOEntry
+from shared.strategy.rl_model_helpers import derive_features_from_ohlcv
 
 
 def test_build_observation_has_expected_shape():
@@ -31,14 +32,17 @@ def test_build_observation_has_expected_shape():
 
 
 @pytest.mark.asyncio
-async def test_generate_short_signal_sets_signal_direction():
+async def test_generate_short_signal_sets_signal_direction(monkeypatch):
     strategy = RLMPPOEntry(RLMPPOConfig(min_confidence=0.5))
     strategy._is_trading_time = lambda _ts: True
     strategy._load_model = lambda: SimpleNamespace(
         predict=lambda *_args, **_kwargs: (2, None)
     )
     strategy._build_observation = lambda _ctx: np.zeros(31, dtype=np.float32)
-    strategy._get_action_confidence = lambda *_args, **_kwargs: 0.9
+    monkeypatch.setattr(
+        "shared.strategy.entry.rl_mppo.get_action_confidence",
+        lambda *_args, **_kwargs: 0.9,
+    )
 
     context = EntryContext(
         market_data={
@@ -58,7 +62,6 @@ async def test_generate_short_signal_sets_signal_direction():
 
 
 def test_derive_features_from_ohlcv():
-    strategy = RLMPPOEntry(RLMPPOConfig())
     bars = []
     price = 100.0
     for _ in range(150):
@@ -72,12 +75,8 @@ def test_derive_features_from_ohlcv():
                 "volume": 1000,
             }
         )
-    context = EntryContext(
-        market_data={"ohlcv": bars, "close": price},
-        indicators={},
-        current_positions=[],
-        timestamp=datetime(2026, 2, 12, 11, 0, 0),
-    )
-    derived = strategy._derive_features_from_ohlcv(context)
+    indicators = {}
+    market_data = {"ohlcv": bars, "close": price}
+    derived = derive_features_from_ohlcv(indicators, market_data)
     assert "rsi" in derived
     assert "macd" in derived
