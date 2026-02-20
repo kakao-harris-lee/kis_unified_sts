@@ -1722,9 +1722,12 @@ class TradingOrchestrator:
 
     def _record_market_metrics(self):
         """Record staleness metrics."""
-        staleness = self._get_market_data_staleness_seconds()
-        if staleness is not None:
-            self._metrics.record_market_data_staleness(staleness)
+        # Only report REST staleness when snapshot is actively populated;
+        # futures uses WebSocket-only feed so snapshot stays empty.
+        if self._market_data_snapshot:
+            staleness = self._get_market_data_staleness_seconds()
+            if staleness is not None:
+                self._metrics.record_market_data_staleness(staleness)
 
         if self._stock_price_feed:
             ws_staleness = self._stock_price_feed.get_staleness_seconds()
