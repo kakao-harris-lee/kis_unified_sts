@@ -31,6 +31,7 @@
   - 진입/청산 방향은 `signal_direction` 기준으로 처리한다.
   - 선물 paper/live 모두 숏 진입 및 숏 청산(BUY to cover)을 지원해야 한다.
   - RL 입력은 학습 스펙과 동일해야 한다(31차원 obs, scaler 적용, code->dict market_data + OHLCV 기반 피처 복원).
+  - 선물 청산은 **학습된 RL 정책**(`rl_mppo_exit`)을 사용한다. 규칙 기반 `three_stage`는 주식 전용이다.
 
 #### 주식 (Stock)
 
@@ -82,17 +83,21 @@ if pnl_pct >= self.config.exit.breakeven_threshold:
 |---------|------|------|
 | `TradingOrchestrator` | 트레이딩 전체 수명주기 및 메인 루프 관리 | `services/trading/orchestrator.py` |
 | `StrategyManager` | 다중 전략 관리, 진입/청산 시그널 집계 | `services/trading/strategy_manager.py` |
-| `MarketDataProvider` | 시장 데이터 수집/제공 | `services/trading/data_provider.py` |
-| `IndicatorEngine` | 지표 계산/캐싱 | `services/trading/indicator_engine.py` |
-| `PositionTracker` | 포지션 추적 | `services/trading/position_tracker.py` |
+| `MarketDataProvider` | 시장 데이터 수집/제공 (WebSocket 전용, REST polling 제거됨) | `services/trading/data_provider.py` |
+| `IndicatorEngine` | 지표 계산/캐싱 (VWAP, RVOL, volume 가속도 포함) | `services/trading/indicator_engine.py` |
+| `PositionTracker` | 포지션 추적 + Redis 기반 재시작 복구 | `services/trading/position_tracker.py` |
 | `HolidayCache` | 장 휴일/거래일 캐시 | `services/trading/holiday_cache.py` |
-| `TradingPipeline` | 데이터 파이프라인 | `services/trading/pipeline.py` |
+| `TradingPipeline` | 데이터 파이프라인 + Pre-market ClickHouse warmup | `services/trading/pipeline.py` |
 
 #### RL 선물 운용 규칙
 
 - `sts rl paper` 기본 엔진은 `orchestrator`다. 레거시 엔진은 `--engine legacy`로만 사용한다.
 - `rl_mppo` 전략의 모델 경로 오버라이드는 `RL_MPPO_MODEL_PATH` 환경변수를 사용한다.
 - 오케스트레이터는 RL 전략에 대해 `IndicatorEngine`의 최근 분봉(OHLCV)을 주입하여 피처 계산을 보조한다.
+- **진입/청산 모두 RL 모델**: entry(`RLMPPOEntry`) + exit(`RLMPPOExit`)가 동일 모델의 5개 액션(LONG_ENTRY=0, LONG_EXIT=1, SHORT_ENTRY=2, SHORT_EXIT=3, HOLD=4)을 사용한다.
+- **공유 헬퍼**: `shared/strategy/rl_model_helpers.py` — 모델 캐시, obs 빌더, confidence 계산을 entry/exit이 공유. 모듈 레벨 캐시로 ~50MB 메모리 절약.
+- **선물 BEAR regime 면제**: 양방향(long/short) 거래이므로 BEAR regime blocking이 적용되지 않는다.
+- **RL 청산 안전장치**: hard stop(-3%) + EOD close(15:15)가 모델 예측보다 우선한다.
 
 ---
 
@@ -110,7 +115,7 @@ kis-unified-trading/
 │   ├── strategies/                  # 전략별 설정
 │   │   ├── stock/                   # bb_reversion, opening_volume_surge, volume_accumulation
 │   │   └── futures/                 # bb_reversion_15m (WF backup), rl_mppo
-│   ├── exit/                        # 청산: three_stage (momentum_decay는 전략 내 params 사용)
+│   ├── exit/                        # 청산: three_stage (주식), rl_mppo_exit (선물)
 │   ├── kis/                         # KIS API 인증
 │   └── ml/                          # ML 모델: rl_mppo
 │
@@ -119,8 +124,9 @@ kis-unified-trading/
 │   ├── strategy/                    # 전략 프레임워크
 │   │   ├── base.py                  # ABC 정의
 │   │   ├── registry.py              # 레지스트리 + StrategyFactory
+│   │   ├── rl_model_helpers.py      # RL entry/exit 공유 로직 (모델 캐시, obs 빌더)
 │   │   ├── entry/                   # 진입 전략 7개
-│   │   ├── exit/                    # 청산 전략 2개
+│   │   ├── exit/                    # 청산 전략 4개 (three_stage, momentum_decay, rl_mppo_exit, trix_golden_exit)
 │   │   └── position/sizers.py       # 포지션 사이저
 │   ├── backtest/                    # 백테스트 엔진 + MLflow + Optuna
 │   ├── models/                      # Signal, Position, ExitReason 등
@@ -169,16 +175,18 @@ kis-unified-trading/
 | `breakout` | `BreakoutEntry` | 브레이크아웃 |
 | `opening_volume_surge` | `OpeningVolumeSurgeEntry` | 장 초반 거래량 폭증 |
 | `stochrsi_trend` | `StochRSITrendEntry` | StochRSI 추세 |
-| `v35_optimized` | `V35OptimizedEntry` | 최적화된 v35 전략 |
 | `volume_accumulation` | `VolumeAccumulationBreakoutEntry` | 거래량 축적 기반 돌파 |
-| `rl_mppo` | `RLMPPOEntry` | 강화학습 기반 |
+| `trix_golden` | `TrixGoldenEntry` | TRIX 5분봉 황금신호 |
+| `rl_mppo` | `RLMPPOEntry` | RL Maskable PPO 진입 (선물) |
 
 ### 등록된 청산 전략
 
 | 등록명 | 클래스 | 설명 |
 |--------|--------|------|
-| `three_stage` | `ThreeStageExit` | SURVIVAL→BREAKEVEN→MAXIMIZE 상태 머신 |
+| `three_stage` | `ThreeStageExit` | SURVIVAL→BREAKEVEN→MAXIMIZE 상태 머신 (주식) |
 | `momentum_decay` | `MomentumDecayExit` | 모멘텀 소진 기반 스윙 청산 |
+| `rl_mppo_exit` | `RLMPPOExit` | RL 학습된 청산 정책 (선물) — hard stop + EOD 안전장치 |
+| `trix_golden_exit` | `TrixGoldenExit` | TRIX 5분봉 황금신호 청산 |
 
 ### 설정 파일 구조
 
@@ -214,6 +222,12 @@ strategy:
 
 `shared/strategy/market_classifier.py` — MFI/ADX 기반 시장 상태 분류기.
 `ThreeStageExit` 및 오케스트레이터에서 사용.
+
+### 데이터 피드 아키텍처
+
+- **WebSocket 전용**: REST polling 제거됨. 주식(`H0STCNT0`), 선물(`H0IFASP0`) 모두 WebSocket으로 실시간 수신.
+- **Pre-market ClickHouse warmup**: 장 시작 전 ClickHouse에서 최근 분봉을 로드하여 지표 웜업 시간 단축.
+- **Redis 기반 포지션 복구**: 프로세스 재시작 시 `trading:{asset}:positions` Redis 키에서 오픈 포지션을 복원.
 
 ### 3-Stage Exit 상태 머신
 
@@ -324,7 +338,6 @@ sts mlflow list
 sts collect start -s 005930
 sts backfill today
 sts stock-backfill run --days 7
-sts websocket start
 
 # 트레이딩/모의
 sts trade start --strategy bb_reversion --asset stock --paper

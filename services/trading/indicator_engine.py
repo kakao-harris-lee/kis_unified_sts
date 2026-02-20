@@ -243,6 +243,11 @@ class StreamingIndicatorEngine:
         self._vwap_calc = VWAPCalculator()
         self._vol_accel_calc = VolumeAccelerationCalculator()
 
+        # Cumulative volume → delta conversion
+        # WebSocket feeds (H0STCNT0, H0IFCNT0) send cumulative daily volume.
+        # We track the last cumulative value per symbol to compute per-tick deltas.
+        self._last_cumulative_volume: dict[str, float] = {}
+
     def on_tick(
         self,
         symbol: str,
@@ -255,13 +260,28 @@ class StreamingIndicatorEngine:
             return
 
         close_f = float(close)
-        volume_f = float(price_data.get("volume", 0))
+        raw_volume = float(price_data.get("volume", 0))
 
         # Guard against inf/nan/negative values
         if not math.isfinite(close_f) or close_f <= 0:
             return
-        if not math.isfinite(volume_f) or volume_f < 0:
-            volume_f = 0.0
+        if not math.isfinite(raw_volume) or raw_volume < 0:
+            raw_volume = 0.0
+
+        # Cumulative → delta volume conversion.
+        # WebSocket feeds send cumulative daily volume (ACML_VOL).
+        # CandleAccumulator expects per-tick deltas to sum into candles.
+        # Skip conversion if volume is already per-tick (e.g. futures tick_volume fallback).
+        if price_data.get("volume_is_cumulative") is False:
+            delta_volume = raw_volume
+        else:
+            prev_cum = self._last_cumulative_volume.get(symbol, 0.0)
+            if raw_volume >= prev_cum:
+                delta_volume = raw_volume - prev_cum
+            else:
+                # Volume decreased: new trading day or data reset
+                delta_volume = raw_volume
+            self._last_cumulative_volume[symbol] = raw_volume
 
         # Resolve timestamp once for all consumers
         ts = timestamp or datetime.now()
@@ -275,7 +295,7 @@ class StreamingIndicatorEngine:
             close=close_f,
             high=price_data.get("high"),
             low=price_data.get("low"),
-            volume=volume_f,
+            volume=delta_volume,
             timestamp=ts,
         )
 
@@ -353,6 +373,10 @@ class StreamingIndicatorEngine:
             except (KeyError, ValueError):
                 continue
 
+        # Clear cumulative volume baseline so first real tick after seeding
+        # establishes a fresh baseline (avoids stale prev_cum from before seed).
+        self._last_cumulative_volume.pop(symbol, None)
+
         if seeded > 0 and self.is_warm(symbol) and symbol not in self._warm_logged:
             self._warm_logged.add(symbol)
             logger.info(
@@ -406,6 +430,16 @@ class StreamingIndicatorEngine:
                 f"({len(mtf_acc.candles)} candles, {seeded} seeded)"
             )
 
+    def set_volume_baseline(self, symbol: str, cumulative_volume: float) -> None:
+        """Pre-set cumulative volume baseline for a symbol.
+
+        Call this before the first real on_tick() to prevent the first tick's
+        full cumulative volume from inflating the first candle.  Typical usage:
+        the orchestrator calls this when a symbol is added mid-session.
+        """
+        if cumulative_volume >= 0:
+            self._last_cumulative_volume[symbol] = cumulative_volume
+
     def remove_symbol(self, symbol: str) -> None:
         """Remove a symbol's accumulator and related state.
 
@@ -422,6 +456,7 @@ class StreamingIndicatorEngine:
         self._warm_logged.discard(symbol)
         self._vwap_calc.reset(symbol)
         self._vol_accel_calc.reset(symbol)
+        self._last_cumulative_volume.pop(symbol, None)
 
     def cleanup_orphans(self, active_symbols: set[str]) -> int:
         """Remove accumulators for symbols not in the active set.

@@ -772,9 +772,27 @@ class TradingOrchestrator:
         if self._futures_price_feed and self._indicator_engine:
             def _on_futures_tick(symbol: str, data: dict[str, Any], ts: datetime) -> None:
                 if self._indicator_engine:
+                    # Initialize baseline for new symbols (same logic as _feed_indicators)
+                    if symbol not in self._indicator_engine._last_cumulative_volume:
+                        if data.get("volume_is_cumulative") is not False:
+                            raw_vol = float(data.get("volume", 0))
+                            if raw_vol > 0:
+                                self._indicator_engine.set_volume_baseline(symbol, raw_vol)
                     self._indicator_engine.on_tick(symbol, data, ts)
 
             self._futures_price_feed.set_tick_callback(_on_futures_tick)
+
+        # Hook stock WebSocket ticks directly into indicator engine
+        if self._stock_price_feed and self._indicator_engine:
+            def _on_stock_tick(symbol: str, data: dict[str, Any], ts: datetime) -> None:
+                if self._indicator_engine:
+                    if symbol not in self._indicator_engine._last_cumulative_volume:
+                        raw_vol = float(data.get("volume", 0))
+                        if raw_vol > 0:
+                            self._indicator_engine.set_volume_baseline(symbol, raw_vol)
+                    self._indicator_engine.on_tick(symbol, data, ts)
+
+            self._stock_price_feed.set_tick_callback(_on_stock_tick)
 
     async def _init_execution_layer(self):
         """Initialize Execution Layer (Paper or Real)"""
@@ -1844,15 +1862,21 @@ class TradingOrchestrator:
     def _feed_indicators(self, data):
         """Feed ticks to indicator engine.
 
-        Skipped for futures — WebSocket callback feeds indicators directly.
+        No-op when WebSocket callback feeds indicators directly
+        (stock and futures both use per-tick callbacks now).
         """
         if not self._indicator_engine:
             return
-        if self._futures_price_feed:
+        if self._stock_price_feed or self._futures_price_feed:
             return
+        # Fallback: non-WebSocket data sources (if any future use)
         now_ts = datetime.now()
         for sym, sym_data in data.items():
             if isinstance(sym_data, dict):
+                if sym not in self._indicator_engine._last_cumulative_volume:
+                    raw_vol = float(sym_data.get("volume", 0))
+                    if raw_vol > 0:
+                        self._indicator_engine.set_volume_baseline(sym, raw_vol)
                 self._indicator_engine.on_tick(sym, sym_data, now_ts)
 
     def _log_indicator_diagnostics(self, tick_count, diag_interval, data):
