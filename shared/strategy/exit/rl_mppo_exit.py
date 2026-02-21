@@ -273,12 +273,12 @@ class RLMPPOExit(ExitSignalGenerator[RLMPPOExitConfig]):
 
         contracts = position.quantity / max(env_cfg.max_contracts, 1)
 
-        # unrealized PnL 계산
+        # unrealized PnL 계산 — contract_multiplier 포함 (학습 환경과 일치)
         price = position.current_price if position.current_price > 0 else position.entry_price
         if position.side == PositionSide.LONG:
-            unrealized_pnl = (price - position.entry_price) * position.quantity
+            unrealized_pnl = (price - position.entry_price) * env_cfg.contract_multiplier * position.quantity
         else:
-            unrealized_pnl = (position.entry_price - price) * position.quantity
+            unrealized_pnl = (position.entry_price - price) * env_cfg.contract_multiplier * position.quantity
         unrealized_pnl_norm = unrealized_pnl / env_cfg.initial_balance
 
         # market_data에서 지표 추출 (orchestrator가 indicators를 merge해줌)

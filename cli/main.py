@@ -184,10 +184,22 @@ def backtest_run(
     click.echo(f"Data range: {df['datetime'].min()} ~ {df['datetime'].max()}")
 
     # 백테스트 설정
+    bt_override = strategy_config.get("strategy", {}).get("backtest", {})
+    bt_capital = bt_override.get("initial_capital", capital)
+
     if asset == "stock":
-        config = BacktestConfig.stock(initial_capital=capital)
+        config = BacktestConfig.stock(initial_capital=bt_capital)
     else:
-        config = BacktestConfig.futures(initial_capital=capital)
+        config = BacktestConfig.futures(
+            initial_capital=bt_capital,
+            point_value=bt_override.get("point_value", 50_000),
+        )
+
+    # 전략 YAML의 backtest.risk로 리스크 설정 오버라이드
+    if "risk" in bt_override:
+        from shared.backtest.config import RiskConfig
+
+        config.risk = RiskConfig.from_dict(bt_override["risk"])
 
     # 전략 생성
     try:

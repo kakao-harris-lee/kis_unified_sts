@@ -200,7 +200,7 @@ class BacktestEngine:
         total_equity = self._calculate_total_equity(current_price)
         self.equity_curve.append((timestamp, total_equity))
 
-        # 1. 기존 포지션 리스크 체크
+        # 1. 기존 포지션: 메타데이터 업데이트 + 전략 청산 + 리스크 안전장치
         for pos_code in list(self.positions.keys()):
             pos = self.positions[pos_code]
             pos.bars_held += 1
@@ -211,7 +211,31 @@ class BacktestEngine:
             if current_price < pos.lowest_price or pos.lowest_price == 0:
                 pos.lowest_price = current_price
 
-            # 리스크 체크
+            # 1a. Exit strategy check FIRST (RL exit, eod_close, etc.)
+            if hasattr(self.strategy, "check_exit"):
+                if pos.side == "BUY":
+                    unrealized = (current_price - pos.entry_price) * pos.quantity
+                else:
+                    unrealized = (pos.entry_price - current_price) * pos.quantity
+                self.strategy.set_position(
+                    {
+                        "side": pos.side,
+                        "entry_price": pos.entry_price,
+                        "quantity": pos.quantity,
+                        "unrealized_pnl": unrealized,
+                    }
+                )
+                should_exit, exit_reason = self.strategy.check_exit(bar)
+                if should_exit and exit_reason:
+                    self._close_position(
+                        code=pos_code,
+                        exit_price=current_price,
+                        exit_time=timestamp,
+                        reason=exit_reason,
+                    )
+                    continue
+
+            # 1b. Engine risk check (safety net: force_close, trailing stop, etc.)
             exit_reason = self._check_risk(pos, current_price, timestamp)
             if exit_reason:
                 self._close_position(
@@ -227,7 +251,7 @@ class BacktestEngine:
         if risk.max_daily_trades > 0 and self._daily_trades >= risk.max_daily_trades:
             return
 
-        # 3. Sync position state to adapter (for RL strategies)
+        # 3. Sync position state to adapter for entry signal generation
         if hasattr(self.strategy, "set_position"):
             if self.positions:
                 pos = next(iter(self.positions.values()))
@@ -271,34 +295,8 @@ class BacktestEngine:
                     bar=bar,
                 )
         else:
-            # 포지션 있음 → exit 전략 체크 → 반대 시그널 시 청산
+            # 포지션 있음 → 반대 시그널 시 청산
             for pos_code, pos in list(self.positions.items()):
-                # Exit strategy check (RL exit, momentum decay, etc.)
-                if hasattr(self.strategy, "check_exit"):
-                    # Sync this specific position to adapter
-                    if pos.side == "BUY":
-                        unrealized = (current_price - pos.entry_price) * pos.quantity
-                    else:
-                        unrealized = (pos.entry_price - current_price) * pos.quantity
-                    self.strategy.set_position(
-                        {
-                            "side": pos.side,
-                            "entry_price": pos.entry_price,
-                            "quantity": pos.quantity,
-                            "unrealized_pnl": unrealized,
-                        }
-                    )
-                    should_exit, exit_reason = self.strategy.check_exit(bar)
-                    if should_exit and exit_reason:
-                        self._close_position(
-                            code=pos_code,
-                            exit_price=current_price,
-                            exit_time=timestamp,
-                            reason=exit_reason,
-                        )
-                        continue
-
-                # 반대 시그널 시 청산
                 should_close = (pos.side == "BUY" and signal == SignalType.SELL) or (
                     pos.side == "SELL" and signal == SignalType.BUY
                 )
@@ -385,14 +383,12 @@ class BacktestEngine:
 
         # 포지션 크기 계산
         cost = self.config.cost
+        pv = self.config.point_value  # 주식=1, 선물=250_000
 
-        if self.config.point_value > 1:
-            # 선물: 계약 수 기반 (max_positions = 최대 계약 수)
-            quantity = self.config.max_positions
-            # 선물 증거금은 notional의 일부이므로 capital 차감은 진입가 * 수량만 적용
-            commission = price * quantity * cost.commission_rate
-            slippage = price * quantity * cost.slippage_rate
-            total_cost = price * quantity + commission + slippage
+        if pv > 1:
+            # 선물: 1계약 고정 (RL은 max_contracts=1)
+            # 마진 기반이므로 capital 차감 없이 PnL만 추적
+            quantity = 1
         else:
             # 주식: 자본 대비 % 기반
             position_value = self.capital * (self.config.position_size_pct / 100)
@@ -425,13 +421,16 @@ class BacktestEngine:
         )
 
         self.positions[code] = position
-        self.capital -= total_cost
+        if pv <= 1:
+            # 주식: 매수 대금 차감
+            self.capital -= total_cost
+        # 선물: capital 차감 없음 (마진 기반, PnL만 추적)
         self._daily_trades += 1
 
         if self.config.verbose:
             logger.info(
                 f"[{timestamp}] OPEN {side}: {name} "
-                f"@ {price:,.0f} x {quantity} (cost: {total_cost:,.0f})"
+                f"@ {price:,.0f} x {quantity}"
             )
 
     def _close_position(
@@ -449,32 +448,45 @@ class BacktestEngine:
 
         # 비용 계산
         cost = self.config.cost
-        revenue = exit_price * pos.quantity
-        commission = revenue * cost.commission_rate
-        slippage = revenue * cost.slippage_rate
+        pv = self.config.point_value  # 주식=1, 선물=250_000
 
-        # 매도세 (주식만)
-        tax = 0.0
-        if pos.side == "BUY" and cost.tax_rate > 0:
-            tax = revenue * cost.tax_rate
+        if pv > 1:
+            # 선물: PnL 기반 자본 추적
+            notional = exit_price * pos.quantity * pv
+            commission = notional * cost.commission_rate
+            slippage = notional * cost.slippage_rate
+            trade_costs = commission + slippage
 
-        total_cost = commission + slippage + tax
-        net_revenue = revenue - total_cost
-
-        # PnL 계산
-        if pos.side == "BUY":
-            pnl = net_revenue - (pos.entry_price * pos.quantity)
+            if pos.side == "BUY":
+                pnl = (exit_price - pos.entry_price) * pos.quantity * pv - trade_costs
+            else:
+                pnl = (pos.entry_price - exit_price) * pos.quantity * pv - trade_costs
             pnl_pct = (exit_price - pos.entry_price) / pos.entry_price * 100
+            if pos.side == "SELL":
+                pnl_pct = -pnl_pct
+
+            self.capital += pnl
         else:
-            # SHORT
-            pnl = (pos.entry_price * pos.quantity) - net_revenue
-            pnl_pct = (pos.entry_price - exit_price) / pos.entry_price * 100
+            # 주식: 매도 대금 기반 자본 추적
+            revenue = exit_price * pos.quantity
+            commission = revenue * cost.commission_rate
+            slippage = revenue * cost.slippage_rate
 
-        # 포인트 가치 적용 (선물용)
-        pnl = pnl * self.config.point_value
+            tax = 0.0
+            if pos.side == "BUY" and cost.tax_rate > 0:
+                tax = revenue * cost.tax_rate
 
-        # 자본 업데이트
-        self.capital += net_revenue
+            total_cost = commission + slippage + tax
+            net_revenue = revenue - total_cost
+
+            if pos.side == "BUY":
+                pnl = net_revenue - (pos.entry_price * pos.quantity)
+                pnl_pct = (exit_price - pos.entry_price) / pos.entry_price * 100
+            else:
+                pnl = (pos.entry_price * pos.quantity) - net_revenue
+                pnl_pct = (pos.entry_price - exit_price) / pos.entry_price * 100
+
+            self.capital += net_revenue
 
         # 일별 PnL 누적
         self._current_day_pnl += pnl
@@ -496,7 +508,7 @@ class BacktestEngine:
             quantity=pos.quantity,
             pnl=pnl,
             pnl_pct=pnl_pct,
-            commission=commission + tax,
+            commission=commission + (tax if pv <= 1 else 0),
             exit_reason=reason_name,
         )
 
@@ -514,14 +526,22 @@ class BacktestEngine:
     def _calculate_total_equity(self, current_price: float) -> float:
         """총 자산 계산"""
         equity = self.capital
+        pv = self.config.point_value  # 주식=1, 선물=250_000
 
         for pos in self.positions.values():
-            if pos.side == "BUY":
-                equity += current_price * pos.quantity
+            if pv > 1:
+                # 선물: 미실현 PnL만 추가 (capital에 notional 미포함)
+                if pos.side == "BUY":
+                    equity += (current_price - pos.entry_price) * pos.quantity * pv
+                else:
+                    equity += (pos.entry_price - current_price) * pos.quantity * pv
             else:
-                # SHORT: 진입 시 자본에서 빠져나간 금액 + 미실현 손익
-                unrealized_pnl = (pos.entry_price - current_price) * pos.quantity
-                equity += pos.entry_price * pos.quantity + unrealized_pnl
+                # 주식: 보유 주식 시가 반영
+                if pos.side == "BUY":
+                    equity += current_price * pos.quantity
+                else:
+                    unrealized_pnl = (pos.entry_price - current_price) * pos.quantity
+                    equity += pos.entry_price * pos.quantity + unrealized_pnl
 
         return equity
 
