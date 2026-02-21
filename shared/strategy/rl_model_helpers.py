@@ -145,6 +145,8 @@ def build_rl_observation(
     if scaler is not None:
         try:
             market_array = scaler.transform(market_array)
+            # Clip to prevent extreme out-of-distribution values
+            market_array = np.clip(market_array, -5.0, 5.0)
         except Exception as e:
             logger.warning(f"RL scaler transform failed; using raw features: {e}")
 

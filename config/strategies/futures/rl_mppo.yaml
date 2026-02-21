@@ -21,7 +21,7 @@ strategy:
       min_confidence: 0.6            # action probability 최소값
       backtest_min_confidence: 0.35  # 백테스트 시 낮은 threshold (모델 confidence ~0.48)
       skip_market_open_minutes: 5    # 장 시작 후 관망
-      skip_market_close_minutes: 10  # 장 마감 전 신규 진입 금지
+      skip_market_close_minutes: 30  # 15:45-30=15:15 — EOD close와 일치
 
   exit:
     type: rl_mppo_exit               # RL 학습된 청산 정책
