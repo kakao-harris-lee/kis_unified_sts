@@ -249,7 +249,9 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
             elif str(side_val).lower() == "short":
                 position_side = -1.0
             contracts = getattr(pos, "quantity", 0) / max(env_cfg.max_contracts, 1)
-            unrealized_pnl = getattr(pos, "unrealized_pnl", 0.0) / env_cfg.initial_balance
+            # Position.unrealized_pnl lacks contract_multiplier; match training env
+            raw_pnl = getattr(pos, "unrealized_pnl", 0.0)
+            unrealized_pnl = (raw_pnl * env_cfg.contract_multiplier) / env_cfg.initial_balance
 
         derived = derive_features_from_ohlcv(context.indicators, context.market_data)
         scaler = self._load_scaler()

@@ -41,3 +41,12 @@ strategy:
     params:
       contracts: 1
       max_contracts: 1
+
+  # 백테스트 설정 — 학습 환경과 일치시킴
+  backtest:
+    initial_capital: 100_000_000   # 학습 env.initial_balance와 동일
+    point_value: 250_000           # KOSPI200 선물 계약 승수
+    risk:
+      stop_loss_pct: 999.0         # 비활성 — RL이 자체 exit 정책 사용
+      take_profit_pct: 999.0       # 비활성 — RL이 자체 exit 정책 사용
+      force_close_time: "15:15"    # EOD 안전장치 (rl_mppo_exit과 동일)
