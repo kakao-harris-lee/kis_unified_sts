@@ -189,6 +189,12 @@ class BacktestEngine:
 
         # 일자 변경 체크
         if self._last_date and timestamp.date() != self._last_date.date():
+            # 일 경계 포지션 강제 청산 (RL intraday 전략 — 학습 환경과 동일)
+            if self.config.risk.close_on_day_change and self.positions:
+                for pos_code in list(self.positions.keys()):
+                    self._close_position(
+                        pos_code, current_price, timestamp, ExitReason.FORCE_CLOSE
+                    )
             if self._current_day_pnl != 0:
                 self.daily_returns.append(self._current_day_pnl)
             self._current_day_pnl = 0.0
