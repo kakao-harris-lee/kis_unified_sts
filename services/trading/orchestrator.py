@@ -2221,9 +2221,16 @@ class TradingOrchestrator:
                 if self._indicator_engine:
                     indicators = self._indicator_engine.get_indicators(symbol)
                     if "ohlcv" in self._strategy_manager.required_indicators:
-                        ohlcv = self._indicator_engine.get_recent_candles(symbol, limit=240)
-                        if ohlcv:
-                            indicators["ohlcv"] = ohlcv
+                        # Pre-compute RL features (pure Python, ~0.5ms) to avoid
+                        # per-bar DataFrame allocation in derive_features_from_ohlcv (~20ms)
+                        rl_feats = self._indicator_engine.get_rl_features(symbol)
+                        if rl_feats:
+                            indicators.update(rl_feats)
+                        else:
+                            # Fallback: provide raw OHLCV for derive_features_from_ohlcv
+                            ohlcv = self._indicator_engine.get_recent_candles(symbol, limit=240)
+                            if ohlcv:
+                                indicators["ohlcv"] = ohlcv
                     # Inject multi-timeframe momentum indicators (e.g., 5-min TRIX/CCI/MACD/Stochastic)
                     if "momentum_5m" in self._strategy_manager.required_indicators:
                         momentum = self._indicator_engine.get_momentum_indicators(symbol, timeframe=5)
@@ -2363,6 +2370,10 @@ class TradingOrchestrator:
                         indicators = self._indicator_engine.get_indicators(symbol)
                         if indicators:
                             data[symbol] = {**data[symbol], **indicators}
+                        # Pre-compute RL features for exit path
+                        rl_feats = self._indicator_engine.get_rl_features(symbol)
+                        if rl_feats:
+                            data[symbol].update(rl_feats)
                         # Inject momentum indicators for exit strategies that need them
                         momentum = self._indicator_engine.get_momentum_indicators(
                             symbol, timeframe=5
