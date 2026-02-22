@@ -1532,9 +1532,12 @@ class TradingOrchestrator:
             await asyncio.sleep(self._universe_refresh_interval)
 
     async def _fetch_candles_from_clickhouse(
-        self, symbol: str, limit: int = 25
+        self, symbol: str, limit: int = 120
     ) -> list[dict]:
         """Fetch recent candles from ClickHouse for pre-market warmup.
+
+        limit=120 covers all indicator warmup needs:
+        SMA(120), BB(20), RSI(14), MACD(26+9), Stochastic(14).
 
         Uses the existing ClickHouseClient singleton to query minute_candles.
         Runs synchronous DB call in executor to avoid blocking the event loop.
@@ -1588,13 +1591,13 @@ class TradingOrchestrator:
                 continue
             try:
                 # ClickHouse first (no rate limit, faster)
-                candles = await self._fetch_candles_from_clickhouse(symbol, limit=25)
+                candles = await self._fetch_candles_from_clickhouse(symbol, limit=120)
                 if candles:
                     ch_hits += 1
                 else:
                     # Fallback to KIS REST
                     candles = await asyncio.wait_for(
-                        self._kis_client.get_minute_bars(symbol, count=25),
+                        self._kis_client.get_minute_bars(symbol, count=120),
                         timeout=5.0,
                     )
                     if candles:

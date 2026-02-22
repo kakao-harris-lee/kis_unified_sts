@@ -584,23 +584,20 @@ class StreamingIndicatorEngine:
             (cur_close - closes[-2]) / closes[-2] if n >= 2 and closes[-2] != 0 else 0.0
         )
 
-        # 2-4. ma_ratio_5, 10, 20
+        # 2-4. ma_ratio_5, 10, 20 (reference: close / ma, no epsilon)
         for w in (5, 10, 20):
             if n >= w:
                 sma = sum(closes[-w:]) / w
-                result[f"ma_ratio_{w}"] = cur_close / sma if sma != 0 else 1.0
+                result[f"ma_ratio_{w}"] = cur_close / (sma + 1e-10)
             else:
                 result[f"ma_ratio_{w}"] = 1.0
 
         # 5. rsi (reuse existing method)
         result["rsi"] = self._calc_rsi(closes)
 
-        # 6. bb_position
+        # 6. bb_position (reference: / (bb_upper - bb_lower + 1e-10))
         bb_lower, bb_middle, bb_upper = self._calc_bb(closes)
-        bb_range = bb_upper - bb_lower
-        result["bb_position"] = (
-            (cur_close - bb_lower) / bb_range if bb_range > 1e-10 else 0.5
-        )
+        result["bb_position"] = (cur_close - bb_lower) / (bb_upper - bb_lower + 1e-10)
 
         # 7. volume_ratio
         if n >= 20:
@@ -624,10 +621,8 @@ class StreamingIndicatorEngine:
         else:
             result["volatility"] = 0.0
 
-        # 9. hl_range
-        result["hl_range"] = (
-            (cur_high - cur_low) / cur_close if cur_close > 0 else 0.0
-        )
+        # 9. hl_range (reference: (high - low) / close, no epsilon)
+        result["hl_range"] = (cur_high - cur_low) / (cur_close + 1e-10)
 
         # 10. candle_body
         hl_diff = cur_high - cur_low
