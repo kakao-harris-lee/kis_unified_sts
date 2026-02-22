@@ -157,6 +157,10 @@ class BacktestEngine:
         logger.info(f"Starting backtest: {len(data)} bars")
         logger.info(f"Period: {start_date} ~ {end_date}")
 
+        # Pre-compute RL features for entire dataset (vectorized, ~2s vs ~59min)
+        if hasattr(self.strategy, "precompute_rl_features"):
+            self.strategy.precompute_rl_features(data)
+
         # 메인 루프
         for idx, row in data.iterrows():
             bar = row.to_dict()

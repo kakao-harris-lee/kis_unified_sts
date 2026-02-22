@@ -19,6 +19,8 @@ from collections import defaultdict, deque
 from datetime import datetime
 from typing import Any
 
+import pandas as pd
+
 from services.trading.indicator_engine import StreamingIndicatorEngine
 from shared.backtest.engine import ExitReason, SignalType
 from shared.models.position import Position as ModelPosition, PositionSide
@@ -254,6 +256,52 @@ class BacktestStrategyAdapter:
         # Position state for RL strategies (synced from BacktestEngine)
         self._current_position: dict[str, Any] | None = None
 
+        # Pre-computed RL features (populated by precompute_rl_features)
+        self._precomputed_rl_features: list[dict[str, float]] | None = None
+        self._bar_index: int = 0
+
+    def precompute_rl_features(self, data: pd.DataFrame) -> None:
+        """Vectorized RL feature pre-computation for entire backtest dataset.
+
+        Computes all 25 RL features in one pass using RLFeatureCalculator,
+        replacing per-bar derive_features_from_ohlcv() calls (~18ms each).
+        Features are injected into indicators dict during on_bar()/check_exit(),
+        taking priority in build_rl_observation()'s lookup chain.
+        """
+        from shared.ml.rl.features import RL_FEATURE_COLUMNS, RLFeatureCalculator
+
+        calculator = RLFeatureCalculator()
+        features_df = calculator.calculate(data)
+
+        # Forward-fill NaN from warmup period, then fill remaining with neutral
+        for col in RL_FEATURE_COLUMNS:
+            if col in features_df.columns:
+                features_df[col] = features_df[col].ffill()
+
+        neutral = {
+            col: (
+                1.0
+                if "ratio" in col
+                else 50.0
+                if col in ("rsi", "stoch_k", "stoch_d")
+                else 0.5
+                if col == "bb_position"
+                else 0.0
+            )
+            for col in RL_FEATURE_COLUMNS
+        }
+        features_df = features_df.fillna(neutral)
+
+        # Extract only RL feature columns as list of dicts
+        self._precomputed_rl_features = (
+            features_df[RL_FEATURE_COLUMNS].to_dict("records")
+        )
+        self._bar_index = 0
+        logger.info(
+            f"Pre-computed {len(self._precomputed_rl_features)} bars "
+            f"of RL features ({len(RL_FEATURE_COLUMNS)} features each)"
+        )
+
     def set_position(self, position: dict[str, Any] | None) -> None:
         """BacktestEngine → adapter position sync for RL context."""
         self._current_position = position
@@ -275,7 +323,12 @@ class BacktestStrategyAdapter:
         # Use cached indicators (seeded during on_bar)
         indicators = self._indicator_engine.get_indicators(code)
 
-        if "ohlcv" in self._required_indicators:
+        # Inject pre-computed RL features (one-bar lag: exit sees same bar as on_bar)
+        if self._precomputed_rl_features is not None:
+            idx = max(0, self._bar_index - 1)
+            if idx < len(self._precomputed_rl_features):
+                indicators.update(self._precomputed_rl_features[idx])
+        elif "ohlcv" in self._required_indicators:
             ohlcv = self._indicator_engine.get_recent_candles(code, limit=240)
             if ohlcv:
                 indicators["ohlcv"] = ohlcv
@@ -355,8 +408,12 @@ class BacktestStrategyAdapter:
             if momentum:
                 indicators["momentum_5m"] = momentum
 
-        # Inject ohlcv if required by strategy
-        if "ohlcv" in self._required_indicators:
+        # Inject pre-computed RL features or fallback to per-bar OHLCV derivation
+        if self._precomputed_rl_features is not None:
+            if self._bar_index < len(self._precomputed_rl_features):
+                indicators.update(self._precomputed_rl_features[self._bar_index])
+            self._bar_index += 1
+        elif "ohlcv" in self._required_indicators:
             ohlcv = self._indicator_engine.get_recent_candles(code, limit=240)
             if ohlcv:
                 indicators["ohlcv"] = ohlcv
