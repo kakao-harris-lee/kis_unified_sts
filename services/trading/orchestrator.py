@@ -1532,9 +1532,12 @@ class TradingOrchestrator:
             await asyncio.sleep(self._universe_refresh_interval)
 
     async def _fetch_candles_from_clickhouse(
-        self, symbol: str, limit: int = 25
+        self, symbol: str, limit: int = 120
     ) -> list[dict]:
         """Fetch recent candles from ClickHouse for pre-market warmup.
+
+        limit=120 covers all indicator warmup needs:
+        SMA(120), BB(20), RSI(14), MACD(26+9), Stochastic(14).
 
         Uses the existing ClickHouseClient singleton to query minute_candles.
         Runs synchronous DB call in executor to avoid blocking the event loop.
@@ -1588,13 +1591,13 @@ class TradingOrchestrator:
                 continue
             try:
                 # ClickHouse first (no rate limit, faster)
-                candles = await self._fetch_candles_from_clickhouse(symbol, limit=25)
+                candles = await self._fetch_candles_from_clickhouse(symbol, limit=120)
                 if candles:
                     ch_hits += 1
                 else:
                     # Fallback to KIS REST
                     candles = await asyncio.wait_for(
-                        self._kis_client.get_minute_bars(symbol, count=25),
+                        self._kis_client.get_minute_bars(symbol, count=120),
                         timeout=5.0,
                     )
                     if candles:
@@ -2221,9 +2224,16 @@ class TradingOrchestrator:
                 if self._indicator_engine:
                     indicators = self._indicator_engine.get_indicators(symbol)
                     if "ohlcv" in self._strategy_manager.required_indicators:
-                        ohlcv = self._indicator_engine.get_recent_candles(symbol, limit=240)
-                        if ohlcv:
-                            indicators["ohlcv"] = ohlcv
+                        # Pre-compute RL features (pure Python, ~0.5ms) to avoid
+                        # per-bar DataFrame allocation in derive_features_from_ohlcv (~20ms)
+                        rl_feats = self._indicator_engine.get_rl_features(symbol)
+                        if rl_feats:
+                            indicators.update(rl_feats)
+                        else:
+                            # Fallback: provide raw OHLCV for derive_features_from_ohlcv
+                            ohlcv = self._indicator_engine.get_recent_candles(symbol, limit=240)
+                            if ohlcv:
+                                indicators["ohlcv"] = ohlcv
                     # Inject multi-timeframe momentum indicators (e.g., 5-min TRIX/CCI/MACD/Stochastic)
                     if "momentum_5m" in self._strategy_manager.required_indicators:
                         momentum = self._indicator_engine.get_momentum_indicators(symbol, timeframe=5)
@@ -2363,6 +2373,10 @@ class TradingOrchestrator:
                         indicators = self._indicator_engine.get_indicators(symbol)
                         if indicators:
                             data[symbol] = {**data[symbol], **indicators}
+                        # Pre-compute RL features for exit path
+                        rl_feats = self._indicator_engine.get_rl_features(symbol)
+                        if rl_feats:
+                            data[symbol].update(rl_feats)
                         # Inject momentum indicators for exit strategies that need them
                         momentum = self._indicator_engine.get_momentum_indicators(
                             symbol, timeframe=5

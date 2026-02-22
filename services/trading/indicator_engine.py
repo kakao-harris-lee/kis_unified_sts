@@ -551,6 +551,127 @@ class StreamingIndicatorEngine:
 
         return result
 
+    def get_rl_features(self, symbol: str) -> dict[str, float]:
+        """Compute all 25 RL features from stored candle history (pure Python).
+
+        Replaces per-bar derive_features_from_ohlcv() (~20ms DataFrame allocation)
+        with O(n) pure-Python computation over the candle deque (~0.5ms).
+
+        Returns empty dict if insufficient candles (<26 for MACD slow period).
+        """
+        acc = self._accumulators.get(symbol)
+        if acc is None or len(acc.candles) < 26:
+            return {}
+
+        candles = list(acc.candles)
+        n = len(candles)
+        closes = [c.close for c in candles]
+        highs = [c.high for c in candles]
+        lows = [c.low for c in candles]
+        opens = [c.open for c in candles]
+        volumes = [c.volume for c in candles]
+
+        cur_close = closes[-1]
+        cur_high = highs[-1]
+        cur_low = lows[-1]
+        cur_open = opens[-1]
+        cur_vol = volumes[-1]
+
+        result: dict[str, float] = {}
+
+        # 1. returns
+        result["returns"] = (
+            (cur_close - closes[-2]) / closes[-2] if n >= 2 and closes[-2] != 0 else 0.0
+        )
+
+        # 2-4. ma_ratio_5, 10, 20 (reference: close / ma, no epsilon)
+        for w in (5, 10, 20):
+            if n >= w:
+                sma = sum(closes[-w:]) / w
+                result[f"ma_ratio_{w}"] = cur_close / (sma + 1e-10)
+            else:
+                result[f"ma_ratio_{w}"] = 1.0
+
+        # 5. rsi (reuse existing method)
+        result["rsi"] = self._calc_rsi(closes)
+
+        # 6. bb_position (reference: / (bb_upper - bb_lower + 1e-10))
+        bb_lower, bb_middle, bb_upper = self._calc_bb(closes)
+        result["bb_position"] = (cur_close - bb_lower) / (bb_upper - bb_lower + 1e-10)
+
+        # 7. volume_ratio
+        if n >= 20:
+            vol_avg = sum(volumes[-20:]) / 20
+            result["volume_ratio"] = cur_vol / (vol_avg + 1)
+        else:
+            result["volume_ratio"] = 1.0
+
+        # 8. volatility (rolling std of returns, 20 period)
+        if n >= 21:
+            rets = []
+            for i in range(max(1, n - 20), n):
+                if closes[i - 1] != 0:
+                    rets.append((closes[i] - closes[i - 1]) / closes[i - 1])
+            if len(rets) >= 2:
+                mean_r = sum(rets) / len(rets)
+                var = sum((r - mean_r) ** 2 for r in rets) / (len(rets) - 1)
+                result["volatility"] = math.sqrt(var)
+            else:
+                result["volatility"] = 0.0
+        else:
+            result["volatility"] = 0.0
+
+        # 9. hl_range (reference: (high - low) / close, no epsilon)
+        result["hl_range"] = (cur_high - cur_low) / (cur_close + 1e-10)
+
+        # 10. candle_body
+        hl_diff = cur_high - cur_low
+        result["candle_body"] = (cur_close - cur_open) / (hl_diff + 1e-10)
+
+        # 11-13. MACD (EMA 12/26, signal 9)
+        ema12 = self._ema_series(closes, 12)
+        ema26 = self._ema_series(closes, 26)
+        macd_series = [f - s for f, s in zip(ema12, ema26)]
+        macd_sig = self._ema_series(macd_series, 9)
+        result["macd"] = macd_series[-1]
+        result["macd_signal"] = macd_sig[-1]
+        result["macd_hist"] = macd_series[-1] - macd_sig[-1]
+
+        # 14-15. sma_ratio_60, 120
+        for w in (60, 120):
+            if n >= w:
+                sma = sum(closes[-w:]) / w
+                result[f"sma_ratio_{w}"] = cur_close / (sma + 1e-10)
+            else:
+                result[f"sma_ratio_{w}"] = 1.0
+
+        # 16-18. ema_ratio_5, 10, 20
+        for w in (5, 10, 20):
+            ema_val = self._ema_last(closes, w)
+            result[f"ema_ratio_{w}"] = cur_close / (ema_val + 1e-10)
+
+        # 19-21. BB extended
+        result["bb_upper_dist"] = (bb_upper - cur_close) / (cur_close + 1e-10)
+        result["bb_lower_dist"] = (cur_close - bb_lower) / (cur_close + 1e-10)
+        result["bb_width"] = (bb_upper - bb_lower) / (bb_middle + 1e-10)
+
+        # 22. atr (normalized by close)
+        result["atr"] = self._calc_atr_normalized(candles)
+
+        # 23-24. stochastic
+        stoch_k, stoch_d = self._calc_stochastic(candles)
+        result["stoch_k"] = stoch_k
+        result["stoch_d"] = stoch_d
+
+        # 25. price_change_5
+        result["price_change_5"] = (
+            (cur_close - closes[-6]) / closes[-6]
+            if n >= 6 and closes[-6] != 0
+            else 0.0
+        )
+
+        return result
+
     def get_recent_candles(
         self, symbol: str, limit: int = 240
     ) -> list[dict[str, float]]:
@@ -817,6 +938,59 @@ class StreamingIndicatorEngine:
         if period == 0:
             return 0.0
         return max(c.high for c in candles[-period:])
+
+    @staticmethod
+    def _ema_series(values: list[float], span: int) -> list[float]:
+        """EMA series matching pandas ewm(span=span, adjust=False)."""
+        alpha = 2.0 / (span + 1)
+        result = [values[0]]
+        for v in values[1:]:
+            result.append(alpha * v + (1 - alpha) * result[-1])
+        return result
+
+    @staticmethod
+    def _ema_last(values: list[float], span: int) -> float:
+        """Last EMA value only (avoids list allocation)."""
+        alpha = 2.0 / (span + 1)
+        ema = values[0]
+        for v in values[1:]:
+            ema = alpha * v + (1 - alpha) * ema
+        return ema
+
+    @staticmethod
+    def _calc_atr_normalized(candles: list[Candle], period: int = 14) -> float:
+        """ATR / close (normalized, matching RLFeatureCalculator)."""
+        n = len(candles)
+        if n < period + 1:
+            return 0.0
+        trs: list[float] = []
+        for i in range(1, n):
+            h, lo, pc = candles[i].high, candles[i].low, candles[i - 1].close
+            trs.append(max(h - lo, abs(h - pc), abs(lo - pc)))
+        atr = sum(trs[-period:]) / period
+        close = candles[-1].close
+        return atr / (close + 1e-10)
+
+    @staticmethod
+    def _calc_stochastic(
+        candles: list[Candle], period: int = 14, smooth: int = 3
+    ) -> tuple[float, float]:
+        """Stochastic K and D (matching RLFeatureCalculator)."""
+        n = len(candles)
+        if n < period:
+            return 50.0, 50.0
+        # Compute K for recent bars (enough for D smoothing)
+        start = max(period - 1, n - smooth - 2)
+        k_vals: list[float] = []
+        for i in range(start, n):
+            ws = i - period + 1
+            low_min = min(candles[j].low for j in range(ws, i + 1))
+            high_max = max(candles[j].high for j in range(ws, i + 1))
+            denom = high_max - low_min
+            k_vals.append(100 * (candles[i].close - low_min) / (denom + 1e-10))
+        stoch_k = k_vals[-1]
+        stoch_d = sum(k_vals[-smooth:]) / min(smooth, len(k_vals))
+        return stoch_k, stoch_d
 
     def _calc_mfi(self, candles: list[Candle], period: int = 14) -> float | None:
         """Money Flow Index (14-period).

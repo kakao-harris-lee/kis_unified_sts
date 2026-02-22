@@ -23,6 +23,9 @@ KST = ZoneInfo("Asia/Seoul")
 _model_cache: dict[str, Any] = {}  # key: resolved model path
 _scaler_cache: dict[str, Any] = {}  # key: scaler path
 _env_config_cache: Any = None
+# Scaled market features cache — avoids duplicate scaler.transform() within same bar
+_scaled_market_cache: dict[int, Any] = {}  # key: hash of raw market features
+_scaled_market_cache_size: int = 4  # keep last N entries
 
 
 def load_rl_model(model_path: str, device: Any) -> Any | None:
@@ -141,14 +144,23 @@ def build_rl_observation(
             f"{missing_features[:5]}{'...' if len(missing_features) > 5 else ''}"
         )
 
-    market_array = np.array(market_features, dtype=np.float32).reshape(1, -1)
-    if scaler is not None:
-        try:
-            market_array = scaler.transform(market_array)
-            # Clip to prevent extreme out-of-distribution values
-            market_array = np.clip(market_array, -5.0, 5.0)
-        except Exception as e:
-            logger.warning(f"RL scaler transform failed; using raw features: {e}")
+    # Cache scaled market features — Entry/Exit share same market state per bar
+    cache_key = hash(tuple(market_features))
+    if cache_key in _scaled_market_cache:
+        market_array = _scaled_market_cache[cache_key]
+    else:
+        market_array = np.array(market_features, dtype=np.float32).reshape(1, -1)
+        if scaler is not None:
+            try:
+                market_array = scaler.transform(market_array)
+                market_array = np.clip(market_array, -5.0, 5.0)
+            except Exception as e:
+                logger.warning(f"RL scaler transform failed; using raw features: {e}")
+        # Evict oldest entries if cache is full
+        if len(_scaled_market_cache) >= _scaled_market_cache_size:
+            oldest = next(iter(_scaled_market_cache))
+            del _scaled_market_cache[oldest]
+        _scaled_market_cache[cache_key] = market_array
 
     # 시간 피처
     market_open = parse_hhmm(env_config.market_open, default_hour=9, default_minute=0)
@@ -187,14 +199,24 @@ def build_rl_observation(
 def derive_features_from_ohlcv(
     indicators: dict[str, Any], market_data: dict[str, Any]
 ) -> dict[str, float]:
-    """OHLCV에서 RL 피처 유도 (fallback)."""
+    """OHLCV에서 RL 피처 유도 (fallback).
+
+    IndicatorEngine이 이미 RL 피처를 계산하여 indicators에 주입한 경우
+    비용이 큰 DataFrame 생성을 건너뛴다.
+    """
+    from shared.ml.rl.features import RL_FEATURE_COLUMNS
+
+    # Short-circuit: IndicatorEngine이 이미 피처를 주입했으면 skip
+    if all(indicators.get(col) is not None for col in RL_FEATURE_COLUMNS):
+        return {}
+
     ohlcv = indicators.get("ohlcv") or market_data.get("ohlcv")
     if not isinstance(ohlcv, list) or not ohlcv:
         return {}
     try:
         import pandas as pd
 
-        from shared.ml.rl.features import RL_FEATURE_COLUMNS, RLFeatureCalculator
+        from shared.ml.rl.features import RLFeatureCalculator
 
         df = pd.DataFrame(ohlcv)
         needed = {"open", "high", "low", "close", "volume"}
