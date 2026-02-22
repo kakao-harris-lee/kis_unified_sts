@@ -161,6 +161,10 @@ class BacktestEngine:
         if hasattr(self.strategy, "precompute_rl_features"):
             self.strategy.precompute_rl_features(data)
 
+        # Pre-scan data for daily volume totals (enables prev_day_volume from day 2)
+        if hasattr(self.strategy, "prescan_data"):
+            self.strategy.prescan_data(data)
+
         # 메인 루프
         for idx, row in data.iterrows():
             bar = row.to_dict()

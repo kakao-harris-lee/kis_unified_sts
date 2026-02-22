@@ -48,6 +48,9 @@ class _MarketDataEnricher:
         self._breakout_period = breakout_period
         self._rvol_avg_days = rvol_avg_days
 
+        # Pre-scanned daily volume lookup: code → {date_str → prev_day_total}
+        self._prev_day_volume_map: dict[str, dict[str, float]] = {}
+
         # Per-symbol tracking
         self._current_date: dict[str, str] = {}
         self._daily_volume: dict[str, float] = {}  # current day accumulation
@@ -68,6 +71,38 @@ class _MarketDataEnricher:
 
         # Bar-level volume for RVOL (relative volume per bar)
         self._all_bar_volumes: dict[str, deque] = defaultdict(lambda: deque(maxlen=500))
+
+    def prescan(self, data: pd.DataFrame) -> None:
+        """Pre-scan backtest data to compute daily volume totals.
+
+        Builds lookup: code → {date_str: previous_day_total_volume}
+        so that prev_day_volume is available from Day 2 bar 1.
+        """
+        if "datetime" not in data.columns or "volume" not in data.columns:
+            return
+
+        df = data.copy()
+        df["_date"] = pd.to_datetime(df["datetime"]).dt.strftime("%Y-%m-%d")
+
+        if "code" not in df.columns:
+            df["_code"] = "BACKTEST"
+        else:
+            df["_code"] = df["code"].astype(str).fillna("BACKTEST")
+
+        daily_vol = df.groupby(["_code", "_date"])["volume"].sum()
+
+        for code in daily_vol.index.get_level_values(0).unique():
+            code_data = daily_vol.loc[code]
+            dates = list(code_data.index)
+            vols = list(code_data.values)
+            lookup: dict[str, float] = {}
+            for i in range(1, len(dates)):
+                lookup[dates[i]] = float(vols[i - 1])
+            if lookup:
+                self._prev_day_volume_map[code] = lookup
+
+        total = sum(len(v) for v in self._prev_day_volume_map.values())
+        logger.info(f"Prescan: built prev_day_volume map for {total} date entries")
 
     def enrich(self, bar: dict[str, Any], timestamp: datetime) -> dict[str, Any]:
         """Add derived metrics to the bar dict (mutates and returns it)."""
@@ -124,6 +159,8 @@ class _MarketDataEnricher:
 
         # prev_day_volume (for opening_volume_surge)
         pdv = self._prev_day_volume.get(code, 0)
+        if pdv == 0 and self._prev_day_volume_map:
+            pdv = self._prev_day_volume_map.get(code, {}).get(date_str, 0)
         bar["prev_day_volume"] = int(pdv)
 
         # Cumulative intraday volume (override bar's per-minute volume)
@@ -260,6 +297,10 @@ class BacktestStrategyAdapter:
         self._precomputed_rl_features: list[dict[str, float]] | None = None
         self._bar_index: int = 0
 
+    def prescan_data(self, data: pd.DataFrame) -> None:
+        """Pre-scan backtest data so enricher has prev_day_volume from day 2."""
+        self._enricher.prescan(data)
+
     def precompute_rl_features(self, data: pd.DataFrame) -> None:
         """Vectorized RL feature pre-computation for entire backtest dataset.
 
@@ -322,6 +363,15 @@ class BacktestStrategyAdapter:
 
         # Use cached indicators (seeded during on_bar)
         indicators = self._indicator_engine.get_indicators(code)
+
+        # Inject momentum_5m if required (mirrors on_bar injection)
+        if "momentum_5m" in self._required_indicators:
+            momentum = self._indicator_engine.get_momentum_indicators(
+                code, timeframe=5
+            )
+            if momentum:
+                indicators["momentum_5m"] = momentum
+                bar["momentum_5m"] = momentum
 
         # Inject pre-computed RL features (one-bar lag: exit sees same bar as on_bar)
         if self._precomputed_rl_features is not None:
