@@ -52,7 +52,9 @@ output:
     assert cfg.stock_llm_scoring_temperature == 0.1
 
 
-def test_llm_config_from_yaml_supports_claude_provider(tmp_path):
+def test_llm_config_from_yaml_supports_claude_provider(tmp_path, monkeypatch):
+    for var in ("LLM_PROVIDER", "LLM_MODEL", "LLM_MAX_TOKENS", "LLM_TEMPERATURE"):
+        monkeypatch.delenv(var, raising=False)
     cfg_path = tmp_path / "llm.yaml"
     cfg_path.write_text(
         """
