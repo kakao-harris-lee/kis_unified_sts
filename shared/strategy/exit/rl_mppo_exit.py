@@ -116,8 +116,8 @@ class RLMPPOExit(ExitSignalGenerator[RLMPPOExitConfig]):
                 ),
             )
 
-        # 2. 안전장치: EOD close
-        if self._is_eod(now):
+        # 2. 안전장치: EOD close (백테스트에서는 학습 환경이 자체 EOD 처리)
+        if not context.metadata.get("is_backtest") and self._is_eod(now):
             return (
                 True,
                 self._make_signal(

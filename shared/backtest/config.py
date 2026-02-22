@@ -65,6 +65,9 @@ class RiskConfig:
     use_atr_stop: bool = False
     atr_stop_multiplier: float = 2.0
 
+    # 일 경계 포지션 처리
+    close_on_day_change: bool = False  # 일자 변경 시 포지션 강제 청산 (RL intraday 전략)
+
     # 일별 리스크 한도
     max_daily_loss: float = 0.0  # 0 = 제한 없음
     max_daily_trades: int = 0  # 0 = 제한 없음
@@ -79,6 +82,7 @@ class RiskConfig:
             trailing_stop_distance_pct=data.get("trailing_stop_distance_pct", 1.5),
             max_hold_bars=data.get("max_hold_bars", 0),
             force_close_time=data.get("force_close_time"),
+            close_on_day_change=data.get("close_on_day_change", False),
             use_atr_stop=data.get("use_atr_stop", False),
             atr_stop_multiplier=data.get("atr_stop_multiplier", 2.0),
             max_daily_loss=data.get("max_daily_loss", 0.0),

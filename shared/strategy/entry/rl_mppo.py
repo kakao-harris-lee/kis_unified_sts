@@ -122,8 +122,10 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
         """
         from shared.models.signal import Signal, SignalType
 
-        # 시간 필터
-        if not self._is_trading_time(context.timestamp):
+        # 시간 필터 (백테스트에서는 학습 환경과 동일하게 시간 필터 생략)
+        if not context.metadata.get("is_backtest") and not self._is_trading_time(
+            context.timestamp
+        ):
             return None
 
         # 모델 로드 (lazy)
