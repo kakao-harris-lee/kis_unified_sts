@@ -58,7 +58,7 @@ class AccumulationCandidate:
 
 def _get_redis_client():
     """Get Redis client for publishing results."""
-    redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/2")
+    redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/1")
     return redis.Redis.from_url(redis_url, decode_responses=True)
 
 

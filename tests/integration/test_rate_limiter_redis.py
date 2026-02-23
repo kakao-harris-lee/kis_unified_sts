@@ -20,7 +20,7 @@ def redis_available():
     try:
         import redis
         r = redis.Redis.from_url(
-            os.getenv("REDIS_URL", "redis://localhost:6379"),
+            os.getenv("REDIS_URL", "redis://localhost:6379/1"),
             socket_timeout=1,
         )
         r.ping()
@@ -32,7 +32,7 @@ def redis_available():
 @pytest.fixture
 def redis_url():
     """Get Redis URL from environment or use default."""
-    return os.getenv("REDIS_URL", "redis://localhost:6379")
+    return os.getenv("REDIS_URL", "redis://localhost:6379/1")
 
 
 @pytest.fixture

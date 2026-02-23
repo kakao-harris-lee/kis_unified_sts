@@ -11,7 +11,7 @@ Features:
 
 Usage:
     limiter = RedisRateLimiter(
-        redis_url="redis://localhost:6379",
+        redis_url="redis://localhost:6379/1",
         key_prefix="stock",
         requests_per_second=20.0,
     )
