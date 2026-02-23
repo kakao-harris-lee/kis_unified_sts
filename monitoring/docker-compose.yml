@@ -49,7 +49,30 @@ services:
     ports:
       - "9121:9121"
     environment:
-      - REDIS_ADDR=host.docker.internal:6379
+      - REDIS_ADDR=${MONITORING_REDIS_ADDR:-host.docker.internal:6379}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  stream-exporter:
+    build:
+      context: ..
+      dockerfile: Dockerfile.stream_exporter
+    container_name: sts-stream-exporter
+    restart: unless-stopped
+    command: ["python", "/app/services/monitoring/stream_exporter.py"]
+    ports:
+      - "9093:9093"
+    environment:
+      - REDIS_HOST=${STREAM_EXPORTER_REDIS_HOST:-host.docker.internal}
+      - REDIS_PORT=${STREAM_EXPORTER_REDIS_PORT:-6379}
+      - REDIS_DB=${STREAM_EXPORTER_REDIS_DB:-1}
+      - REDIS_PASSWORD=${STREAM_EXPORTER_REDIS_PASSWORD:-}
+      - STREAM_EXPORTER_PORT=9093
+      - STREAM_EXPORTER_STREAMS=market:ticks,raw_data
+      - STREAM_EXPORTER_READ_COUNT=200
+      - STREAM_EXPORTER_BLOCK_MS=1000
+      - STREAM_EXPORTER_SYMBOL_TTL_SECONDS=1800
+      - STREAM_EXPORTER_MAX_SYMBOLS_PER_ASSET=60
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
