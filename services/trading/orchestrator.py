@@ -303,6 +303,9 @@ class TradingConfig:
     # Error recovery
     error_retry_delay_seconds: float = 60.0  # Retry delay after errors (default 1 min)
 
+    # Candle cache persistence interval (seconds)
+    candle_cache_save_interval: float = 60.0
+
     def __post_init__(self):
         """Validate configuration values."""
         self._validate()
@@ -2409,8 +2412,8 @@ class TradingOrchestrator:
                 self._state_publisher._last_status_publish = now
                 self._state_publisher.publish_status(self.get_status())
 
-            # Save candle cache every 60s for crash recovery
-            if now - self._last_candle_cache_save >= 60.0:
+            # Save candle cache periodically for crash recovery
+            if now - self._last_candle_cache_save >= self.config.candle_cache_save_interval:
                 self._last_candle_cache_save = now
                 try:
                     self._save_candle_cache_to_redis()
