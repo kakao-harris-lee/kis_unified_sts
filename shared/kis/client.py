@@ -43,7 +43,13 @@ class _RateLimiter:
     Enforces a minimum interval (1/rate) between consecutive requests.
     On rate limit errors, applies exponential backoff: base * 2^(consecutive-1),
     capped at max_penalty_seconds.
+
+    Auto-resets after max_consecutive penalties to prevent death spirals where
+    the server keeps rejecting requests even after the penalty window.
     """
+
+    _MAX_CONSECUTIVE = int(_rl_cfg.get("max_consecutive_penalties", 10))
+    _COOLDOWN_SECONDS = float(_rl_cfg.get("cooldown_seconds", 300.0))
 
     def __init__(self, max_requests: int, window_seconds: float = 1.0):
         self._interval = window_seconds / max_requests
@@ -52,6 +58,15 @@ class _RateLimiter:
         self._consecutive_penalties = 0
         self._max_penalty = float(_rl_cfg.get("max_penalty_seconds", 30.0))
         self._lock = asyncio.Lock()
+
+    @property
+    def is_penalized(self) -> bool:
+        """True if currently in a penalty or cooldown period."""
+        return time.monotonic() < self._penalty_until
+
+    @property
+    def consecutive_penalties(self) -> int:
+        return self._consecutive_penalties
 
     async def acquire(self):
         """Wait until the next request slot is available."""
@@ -72,9 +87,21 @@ class _RateLimiter:
         """Apply exponential backoff penalty on rate limit error.
 
         Consecutive calls double the penalty each time, capped at max_penalty.
-        A successful acquire after the penalty window resets the counter.
+        After max_consecutive penalties, enters a longer cooldown period and
+        resets the counter to break infinite penalty loops.
         """
         self._consecutive_penalties += 1
+
+        if self._consecutive_penalties >= self._MAX_CONSECUTIVE:
+            # Break the death spiral: long cooldown then reset
+            self._penalty_until = time.monotonic() + self._COOLDOWN_SECONDS
+            logger.warning(
+                f"Rate limit: {self._consecutive_penalties} consecutive penalties, "
+                f"entering {self._COOLDOWN_SECONDS:.0f}s cooldown"
+            )
+            self._consecutive_penalties = 0
+            return
+
         backoff = min(
             seconds * (2 ** (self._consecutive_penalties - 1)),
             self._max_penalty,
@@ -102,6 +129,11 @@ class KISClient(AsyncSessionMixin):
         logger.info(f"[KISClient] Rate limiter: {rate_limit} req/s")
         # KIS client is internally rate-limited; avoid parallel fetches upstream
         self.supports_parallel = False
+
+    @property
+    def is_rate_limited(self) -> bool:
+        """True if the rate limiter is currently in a penalty period."""
+        return self._rate_limiter.is_penalized
 
     async def close(self):
         """Close the session."""

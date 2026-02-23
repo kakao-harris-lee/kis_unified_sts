@@ -1594,6 +1594,10 @@ class TradingOrchestrator:
                 candles = await self._fetch_candles_from_clickhouse(symbol, limit=120)
                 if candles:
                     ch_hits += 1
+                elif self._kis_client.is_rate_limited:
+                    # Skip KIS REST when rate limiter is in penalty/cooldown
+                    logger.debug(f"Prewarm {symbol}: skipping KIS REST (rate limited)")
+                    continue
                 else:
                     # Fallback to KIS REST
                     candles = await asyncio.wait_for(
