@@ -1615,11 +1615,30 @@ class TradingOrchestrator:
             f"{kis_hits} from KIS REST"
         )
 
-    async def stop(self):
-        """거래 종료"""
+    async def stop(self, timeout: float = 10.0):
+        """거래 종료 (타임아웃 포함)"""
         if self.state == TradingState.STOPPED:
             return
 
+        try:
+            await asyncio.wait_for(self._stop_impl(), timeout=timeout)
+        except asyncio.TimeoutError:
+            logger.error(
+                f"Graceful shutdown timed out after {timeout}s, forcing..."
+            )
+            # Force Redis flush as last resort
+            if self._position_tracker and self._state_publisher:
+                try:
+                    self._state_publisher.publish_positions_update(
+                        list(self._position_tracker.positions), throttle=0,
+                    )
+                except Exception:
+                    pass
+            self.state = TradingState.STOPPED
+            self._running = False
+
+    async def _stop_impl(self):
+        """Internal stop implementation."""
         logger.info("Stopping trading...")
 
         await self._stop_market_data_loop()
@@ -2324,6 +2343,11 @@ class TradingOrchestrator:
                         f"Position state: {position.code} "
                         f"{old_state.value} → {new_state.value}"
                     )
+
+                # Immediate flush for state transitions (no throttle)
+                if self._state_publisher:
+                    changed = [p for p, _, _ in transitions]
+                    self._state_publisher.publish_positions_update(changed, throttle=0)
 
             # Publish position updates to Redis (throttled to 2s)
             if self._state_publisher and positions:

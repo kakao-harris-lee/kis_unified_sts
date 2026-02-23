@@ -1052,18 +1052,41 @@ def trade_start(
         click.echo("\nPress Ctrl+C to stop trading")
 
         async def run():
-            if daemon:
-                await orchestrator.run()
-            else:
-                await orchestrator.run_session()
+            import signal
 
-        asyncio.run(run())
+            loop = asyncio.get_running_loop()
+            shutdown_requested = False
+
+            def _request_shutdown():
+                nonlocal shutdown_requested
+                if shutdown_requested:
+                    return
+                shutdown_requested = True
+                logging.getLogger("cli.main").info(
+                    "Shutdown signal received, stopping gracefully..."
+                )
+                asyncio.ensure_future(orchestrator.stop())
+
+            for sig in (signal.SIGTERM, signal.SIGINT):
+                loop.add_signal_handler(sig, _request_shutdown)
+
+            try:
+                if daemon:
+                    await orchestrator.run()
+                else:
+                    await orchestrator.run_session()
+            finally:
+                if not shutdown_requested:
+                    await orchestrator.stop()
+
+        try:
+            asyncio.run(run())
+        except KeyboardInterrupt:
+            pass  # Signal handler already initiated shutdown
 
     except ImportError as e:
         click.echo(f"Error: Required module not installed: {e}", err=True)
         sys.exit(1)
-    except KeyboardInterrupt:
-        click.echo("\nTrading stopped")
 
 
 @trade.command("status")
@@ -1659,17 +1682,40 @@ def rl_paper(model: str, config: str, symbol: str, engine: str, no_daemon: bool)
         orchestrator = TradingOrchestrator(trading_config)
 
         async def _run():
-            if no_daemon:
-                await orchestrator.run_session()
-            else:
-                await orchestrator.run()
+            import signal
 
-        asyncio.run(_run())
+            loop = asyncio.get_running_loop()
+            shutdown_requested = False
+
+            def _request_shutdown():
+                nonlocal shutdown_requested
+                if shutdown_requested:
+                    return
+                shutdown_requested = True
+                logging.getLogger("cli.main").info(
+                    "Shutdown signal received, stopping gracefully..."
+                )
+                asyncio.ensure_future(orchestrator.stop())
+
+            for sig in (signal.SIGTERM, signal.SIGINT):
+                loop.add_signal_handler(sig, _request_shutdown)
+
+            try:
+                if no_daemon:
+                    await orchestrator.run_session()
+                else:
+                    await orchestrator.run()
+            finally:
+                if not shutdown_requested:
+                    await orchestrator.stop()
+
+        try:
+            asyncio.run(_run())
+        except KeyboardInterrupt:
+            pass  # Signal handler already initiated shutdown
     except FileNotFoundError as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
-    except KeyboardInterrupt:
-        click.echo("\nPaper trading stopped")
     except Exception as e:
         click.echo(f"Error: {e}", err=True)
         import traceback

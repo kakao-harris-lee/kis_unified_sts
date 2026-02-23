@@ -79,8 +79,13 @@ stop_trading() {
         if ps -p "$PID" > /dev/null 2>&1; then
             log "Stopping futures trading (PID: $PID)"
             kill "$PID" 2>/dev/null || true
-            sleep 2
-            kill -9 "$PID" 2>/dev/null || true
+            sleep 5
+            if kill -0 "$PID" 2>/dev/null; then
+                kill -9 "$PID" 2>/dev/null || true
+                log "Force killed (SIGKILL)"
+            else
+                log "Graceful shutdown completed"
+            fi
             rm -f "$PID_FILE"
             log "Futures trading stopped"
         else
