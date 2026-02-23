@@ -228,6 +228,9 @@ strategy:
 - **WebSocket 전용**: REST polling 제거됨. 주식(`H0STCNT0`), 선물(`H0IFASP0`) 모두 WebSocket으로 실시간 수신.
 - **Pre-market ClickHouse warmup**: 장 시작 전 ClickHouse에서 최근 분봉을 로드하여 지표 웜업 시간 단축.
 - **Redis 기반 포지션 복구**: 프로세스 재시작 시 `trading:{asset}:positions` Redis 키에서 오픈 포지션을 복원.
+- **Redis DB 1 전용**: DB 0은 다른 프로젝트가 사용. 모든 Redis 접속은 DB 1을 명시해야 한다.
+- **Graceful shutdown**: CLI에서 SIGTERM/SIGINT → `orchestrator.stop(timeout=10s)` → Redis force flush. Cron은 SIGTERM → 5초 대기 → `kill -0` 확인 → SIGKILL.
+- **KIS Rate Limiter**: `_RateLimiter`는 EGW00201 시 exponential backoff (cap 30s). 10회 consecutive 후 5분 cooldown auto-reset으로 death spiral 방지.
 
 ### 3-Stage Exit 상태 머신
 
