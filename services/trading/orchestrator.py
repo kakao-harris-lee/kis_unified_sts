@@ -541,6 +541,7 @@ class TradingOrchestrator:
         self._llm_training_data_dir = os.environ.get(
             "LLM_TRAINING_DATA_DIR", "output/llm"
         )
+        self._last_candle_cache_save: float = 0.0
 
         logger.info(
             f"TradingOrchestrator initialized: "
@@ -1539,23 +1540,41 @@ class TradingOrchestrator:
         limit=120 covers all indicator warmup needs:
         SMA(120), BB(20), RSI(14), MACD(26+9), Stochastic(14).
 
-        Uses the existing ClickHouseClient singleton to query minute_candles.
-        Runs synchronous DB call in executor to avoid blocking the event loop.
+        Stock data is in `market.minute_candles` (from stock_backfill.sh).
+        Futures have no usable minute candle table in ClickHouse.
         """
-        try:
-            from shared.db.client import ClickHouseClient
+        # Futures: no minute candle data in ClickHouse
+        if self.config.asset_class == "futures":
+            return []
 
-            ch = ClickHouseClient()
-            # Query last N candles (across any date) sorted newest first,
-            # then reverse to chronological order for seed_candles.
+        try:
+            from clickhouse_driver import Client as CHSyncClient
+
+            ch_host = os.getenv("CLICKHOUSE_HOST", "localhost")
+            ch_port = int(
+                os.getenv(
+                    "CLICKHOUSE_NATIVE_PORT",
+                    os.getenv("CLICKHOUSE_PORT", "9000"),
+                )
+            )
+            ch_user = os.getenv("CLICKHOUSE_USER", "default")
+            ch_pw = os.getenv("CLICKHOUSE_PASSWORD", "")
+            ch_db = os.getenv("CLICKHOUSE_STOCK_DATABASE", "market")
+
             loop = asyncio.get_event_loop()
             rows = await loop.run_in_executor(
                 None,
-                lambda: ch.get_sync_client().execute(
-                    f"SELECT code, datetime, open, high, low, close, volume, value "
-                    f"FROM {ch.config.database}.minute_candles "
-                    f"WHERE code = %(code)s "
-                    f"ORDER BY datetime DESC LIMIT %(limit)s",
+                lambda: CHSyncClient(
+                    host=ch_host,
+                    port=ch_port,
+                    user=ch_user,
+                    password=ch_pw,
+                    database=ch_db,
+                ).execute(
+                    "SELECT code, datetime, open, high, low, close, volume "
+                    "FROM minute_candles "
+                    "WHERE code = %(code)s "
+                    "ORDER BY datetime DESC LIMIT %(limit)s",
                     {"code": symbol, "limit": limit},
                 ),
             )
@@ -1577,10 +1596,13 @@ class TradingOrchestrator:
     async def _prewarm_symbols(self, symbols: list[str]) -> None:
         """Seed indicator engine with historical candles.
 
-        Tries ClickHouse first (no rate limit, works pre-market),
-        falls back to KIS REST API.
+        Priority: Redis candle cache → ClickHouse → KIS REST API.
         """
         logger.info(f"Prewarm starting for {len(symbols)} symbols")
+
+        # 1st priority: Redis candle cache (instant, works for all assets)
+        redis_hits = await self._load_candle_cache_from_redis()
+
         ch_hits = 0
         kis_hits = 0
         for symbol in symbols:
@@ -1615,9 +1637,56 @@ class TradingOrchestrator:
             except (asyncio.TimeoutError, Exception) as e:
                 logger.warning(f"Prewarm failed for {symbol}: {e}")
         logger.info(
-            f"Prewarm complete: {ch_hits} from ClickHouse, "
-            f"{kis_hits} from KIS REST"
+            f"Prewarm complete: {redis_hits} from Redis, "
+            f"{ch_hits} from ClickHouse, {kis_hits} from KIS REST"
         )
+
+    def _save_candle_cache_to_redis(self) -> None:
+        """Serialize indicator engine candles to Redis for restart recovery."""
+        if not self._state_publisher or not self._indicator_engine:
+            return
+        candle_data: dict[str, list[dict]] = {}
+        for symbol, acc in self._indicator_engine._accumulators.items():
+            if not acc.candles:
+                continue
+            candle_data[symbol] = [
+                {
+                    "open": c.open,
+                    "high": c.high,
+                    "low": c.low,
+                    "close": c.close,
+                    "volume": c.volume,
+                    "minute": c.minute,
+                }
+                for c in acc.candles
+            ]
+        if candle_data:
+            self._state_publisher.publish_candle_cache(candle_data)
+            logger.info(
+                f"Candle cache saved: {len(candle_data)} symbols, "
+                f"{sum(len(v) for v in candle_data.values())} total candles"
+            )
+
+    async def _load_candle_cache_from_redis(self) -> int:
+        """Load cached candles from Redis to pre-warm indicators."""
+        try:
+            from shared.streaming.trading_state import TradingStateReader
+
+            reader = TradingStateReader(self.config.asset_class)
+            cache = reader.get_candle_cache()
+            if not cache:
+                return 0
+            loaded = 0
+            for symbol, candles in cache.items():
+                if self._indicator_engine.is_warm(symbol):
+                    continue
+                self._indicator_engine.seed_candles(symbol, candles)
+                loaded += 1
+            logger.info(f"Candle cache loaded: {loaded} symbols from Redis")
+            return loaded
+        except Exception as e:
+            logger.warning(f"Candle cache load failed: {e}")
+            return 0
 
     async def stop(self, timeout: float = 10.0):
         """거래 종료 (타임아웃 포함)"""
@@ -1663,6 +1732,12 @@ class TradingOrchestrator:
                     )
             except Exception as e:
                 logger.error(f"Error during position shutdown: {e}")
+
+        # Save candle cache for fast restart recovery
+        try:
+            self._save_candle_cache_to_redis()
+        except Exception as e:
+            logger.warning(f"Candle cache save on shutdown failed: {e}")
 
         await self._cleanup_resources()
 
@@ -2333,6 +2408,14 @@ class TradingOrchestrator:
             if now - self._state_publisher._last_status_publish >= 5.0:
                 self._state_publisher._last_status_publish = now
                 self._state_publisher.publish_status(self.get_status())
+
+            # Save candle cache every 60s for crash recovery
+            if now - self._last_candle_cache_save >= 60.0:
+                self._last_candle_cache_save = now
+                try:
+                    self._save_candle_cache_to_redis()
+                except Exception:
+                    pass
 
         positions = self._position_tracker.positions
         if not positions:

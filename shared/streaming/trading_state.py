@@ -30,6 +30,7 @@ _KEY_STATUS = "trading:{asset}:status"
 _KEY_POSITIONS = "trading:{asset}:positions"
 _KEY_TRADES = "trading:{asset}:trades"
 _KEY_SIGNALS = "trading:{asset}:signals"
+_KEY_CANDLE_CACHE = "trading:{asset}:candle_cache"
 
 MAX_TRADES = 500
 MAX_SIGNALS = 200
@@ -219,6 +220,25 @@ class TradingStatePublisher:
         except Exception:
             logger.debug("Failed to clear trading state", exc_info=True)
 
+    def publish_candle_cache(self, candle_data: dict[str, list[dict]]) -> None:
+        """Persist indicator candles to Redis for fast restart recovery.
+
+        Args:
+            candle_data: {symbol: [{open, high, low, close, volume, minute}, ...]}
+        """
+        try:
+            r = _get_redis()
+            key = _key(_KEY_CANDLE_CACHE, self._asset)
+            pipe = r.pipeline(transaction=False)
+            pipe.delete(key)
+            mapping = {sym: json.dumps(candles) for sym, candles in candle_data.items()}
+            if mapping:
+                pipe.hset(key, mapping=mapping)
+                pipe.expire(key, STATUS_TTL_SECONDS)  # 24h TTL
+            pipe.execute()
+        except Exception:
+            logger.debug("Failed to publish candle cache", exc_info=True)
+
     # -- Serialization helpers ------------------------------------------------
 
     @staticmethod
@@ -366,3 +386,16 @@ class TradingStateReader:
             r.hdel(key, position_id)
         except Exception:
             logger.debug("Failed to remove position from Redis", exc_info=True)
+
+    def get_candle_cache(self) -> dict[str, list[dict]]:
+        """Load cached candles from Redis for indicator prewarm."""
+        try:
+            r = _get_redis()
+            key = _key(_KEY_CANDLE_CACHE, self._asset)
+            raw = r.hgetall(key)
+            if not raw:
+                return {}
+            return {sym: json.loads(candles) for sym, candles in raw.items()}
+        except Exception:
+            logger.debug("Failed to read candle cache from Redis", exc_info=True)
+            return {}
