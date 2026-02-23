@@ -1,7 +1,7 @@
 # Broker Position Verification — Design Document
 
 **Date**: 2026-02-21
-**Status**: Draft
+**Status**: Deferred (실거래 전환 시 구현 예정)
 **Author**: Claude (brainstorming session)
 **Depends on**: [2026-02-20-position-recovery-design.md](2026-02-20-position-recovery-design.md)
 

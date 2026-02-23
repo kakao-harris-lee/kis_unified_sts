@@ -1,5 +1,7 @@
 # Phase 2: Trading Engines Migration Plan
 
+**Status**: Implemented (2026-01-20)
+
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Migrate Arbitrage Engine (Mode A), Trend Engine (Mode B), and Feature Processor from kospi_mini_sts.

@@ -1,7 +1,7 @@
 # KIS API Rate Limiter Design
 
 **Date**: 2026-01-22
-**Status**: Approved
+**Status**: Implemented (2026-01-22)
 
 ## Problem Statement
 

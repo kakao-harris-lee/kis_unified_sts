@@ -1,5 +1,7 @@
 # Opening Volume Surge — prev_day_volume 데이터 파이프라인
 
+**Status**: Implemented (2026-02-17)
+
 ## Problem
 
 `opening_volume_surge` 전략은 `prev_day_volume`(전일 거래량)이 필수 트리거인데,

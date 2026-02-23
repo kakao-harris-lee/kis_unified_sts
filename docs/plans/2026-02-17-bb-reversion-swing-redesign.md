@@ -1,5 +1,7 @@
 # BB Reversion Swing Redesign
 
+**Status**: Implemented (2026-02-17)
+
 ## Problem
 
 BB reversion targets short-term sharp drops and expects mean reversion over 1-5 days (swing). The current implementation treats it as intraday:
