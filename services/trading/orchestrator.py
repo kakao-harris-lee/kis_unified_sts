@@ -2326,6 +2326,14 @@ class TradingOrchestrator:
         if not self._position_tracker or not self._data_provider:
             return None
 
+        # Always publish status periodically, even with no positions
+        if self._state_publisher:
+            import time as _time_mod
+            now = _time_mod.monotonic()
+            if now - self._state_publisher._last_status_publish >= 5.0:
+                self._state_publisher._last_status_publish = now
+                self._state_publisher.publish_status(self.get_status())
+
         positions = self._position_tracker.positions
         if not positions:
             return None
@@ -2356,14 +2364,6 @@ class TradingOrchestrator:
             # Publish position updates to Redis (throttled to 2s)
             if self._state_publisher and positions:
                 self._state_publisher.publish_positions_update(positions, throttle=2.0)
-
-            # Publish status periodically (throttled to 5s)
-            if self._state_publisher:
-                import time as _time_mod
-                now = _time_mod.monotonic()
-                if now - self._state_publisher._last_status_publish >= 5.0:
-                    self._state_publisher._last_status_publish = now
-                    self._state_publisher.publish_status(self.get_status())
 
             return {
                 "positions_updated": len(positions),
