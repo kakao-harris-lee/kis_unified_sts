@@ -140,9 +140,11 @@ position_sizing:
   default_win_rate: 0.45           # 초기 추정 승률 (MPPO Phase 4: 45.1%)
   default_wl_ratio: 1.83           # 초기 추정 손익비 (MPPO Phase 4: 1.83)
 
-# === Paper Trading ===
+# === Paper Trading (legacy paper_trader.py 전용) ===
+# 오케스트레이터 경로(sts rl paper)는 이 설정을 사용하지 않음.
+# 심볼은 get_front_month_code(product="mini")로 매 시작 시 자동 감지.
 paper:
-  symbol: "A01603"                # KOSPI200 선물 3월물 (101S6000 만료)
+  symbol: "A01603"                # legacy 전용 — 오케스트레이터는 자동 감지
   warmup_bars: 200             # ClickHouse에서 로드할 과거 분봉 수
   force_close_time: "15:35"    # 강제 청산 시각 (KST)
   telegram_notify: true        # 텔레그램 알림 활성화
