@@ -74,6 +74,7 @@ class KISFuturesPriceFeed:
         self._symbols: list[str] = []
         self._running = False
         self._thread: Optional[threading.Thread] = None
+        self._first_tick_logged = False
 
     @property
     def supports_instant_read(self) -> bool:
@@ -191,6 +192,12 @@ class KISFuturesPriceFeed:
         with self._prices_lock:
             self._prices[tick.symbol] = payload
             self._last_tick_ts = tick.timestamp
+            if not self._first_tick_logged:
+                self._first_tick_logged = True
+                logger.info(
+                    f"[FuturesPriceFeed] First tick: symbol={tick.symbol} "
+                    f"price={price} keys={list(self._prices.keys())}"
+                )
 
         if self._tick_callback:
             try:

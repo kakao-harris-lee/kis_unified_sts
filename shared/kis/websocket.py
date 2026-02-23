@@ -150,9 +150,12 @@ def parse_futures_orderbook(
     if len(fields) < 42:
         return None
 
+    # field[0] = 종목코드: use actual symbol from data body
+    actual_symbol = fields[0].strip() or symbol
+
     try:
         return TickData(
-            symbol=symbol,
+            symbol=actual_symbol,
             timestamp=timestamp,
             # 매수호가 (bid) L1-L5
             bid_price_1=_safe_float(fields, 22, 0.0),
@@ -203,9 +206,12 @@ def parse_futures_trade(
     if len(fields) < 19:
         return None
 
+    # field[0] = 종목코드: use actual symbol from data body
+    actual_symbol = fields[0].strip() or symbol
+
     try:
         return TickData(
-            symbol=symbol,
+            symbol=actual_symbol,
             timestamp=timestamp,
             # 최우선 호가 (체결 시점에는 없음)
             bid_price_1=0.0,
