@@ -216,7 +216,7 @@ def publish_llm_quality_snapshot(
             analyzer, snapshot_id, stock_plans, stock_analysis
         )
         redis = RedisClient.get_client()
-        redis.set(key, json.dumps(payload, ensure_ascii=False))
+        redis.set(key, json.dumps(payload, ensure_ascii=False), ex=86400)
         logger.info(
             f"Published LLM quality snapshot: {len(payload.get('codes', []))} symbols"
         )

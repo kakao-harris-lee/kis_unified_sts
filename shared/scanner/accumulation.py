@@ -502,7 +502,7 @@ class AccumulationScanner:
 
         def _sync_publish():
             redis_client = _get_redis_client()
-            redis_client.set(self.REDIS_KEY, json.dumps(data))
+            redis_client.set(self.REDIS_KEY, json.dumps(data), ex=172800)
 
         await asyncio.to_thread(_sync_publish)
         logger.info(f"Published {len(candidates)} candidates to Redis key: {self.REDIS_KEY}")

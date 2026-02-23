@@ -244,7 +244,7 @@ async def run_screener(config: ScreenerConfig) -> None:
                         },
                     }
                     publisher.publish(payload)
-                    redis_client.set(config.universe_latest_key, json.dumps(payload, ensure_ascii=False))
+                    redis_client.set(config.universe_latest_key, json.dumps(payload, ensure_ascii=False), ex=86400)
 
                     current_set = set(codes)
                     now = time.time()
@@ -299,6 +299,7 @@ async def run_screener(config: ScreenerConfig) -> None:
                     redis_client.set(
                         config.dip_latest_key,
                         json.dumps(dip_payload, ensure_ascii=False),
+                        ex=86400,
                     )
                     logger.info(f"Published dip candidates: {len(dip_codes)} codes")
 

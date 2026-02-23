@@ -90,7 +90,10 @@ class TradingStatePublisher:
             r = _get_redis()
             key = _key(_KEY_POSITIONS, self._asset)
             data = self._serialize_position(position)
-            r.hset(key, position.id, json.dumps(data))
+            pipe = r.pipeline(transaction=False)
+            pipe.hset(key, position.id, json.dumps(data))
+            pipe.expire(key, STATUS_TTL_SECONDS)
+            pipe.execute()
         except Exception:
             logger.debug("Failed to publish position open", exc_info=True)
 
@@ -103,8 +106,10 @@ class TradingStatePublisher:
             data = self._serialize_closed_position(position)
             pipe = r.pipeline(transaction=False)
             pipe.hdel(pos_key, position.id)
+            pipe.expire(pos_key, STATUS_TTL_SECONDS)
             pipe.lpush(trades_key, json.dumps(data))
             pipe.ltrim(trades_key, 0, MAX_TRADES - 1)
+            pipe.expire(trades_key, STATUS_TTL_SECONDS)
             pipe.execute()
         except Exception:
             logger.debug("Failed to publish position close", exc_info=True)
@@ -122,6 +127,7 @@ class TradingStatePublisher:
             for pos in positions:
                 data = self._serialize_position(pos)
                 pipe.hset(key, pos.id, json.dumps(data))
+            pipe.expire(key, STATUS_TTL_SECONDS)
             pipe.execute()
         except Exception:
             logger.debug("Failed to publish positions update", exc_info=True)
@@ -159,6 +165,7 @@ class TradingStatePublisher:
             pipe = r.pipeline(transaction=False)
             pipe.lpush(key, json.dumps(data))
             pipe.ltrim(key, 0, MAX_SIGNALS - 1)
+            pipe.expire(key, STATUS_TTL_SECONDS)
             pipe.execute()
         except Exception:
             logger.debug("Failed to publish signal", exc_info=True)
@@ -170,7 +177,10 @@ class TradingStatePublisher:
         try:
             r = _get_redis()
             key = _key(_KEY_POSITIONS, self._asset)
-            r.hset(key, position_id, json.dumps(data))
+            pipe = r.pipeline(transaction=False)
+            pipe.hset(key, position_id, json.dumps(data))
+            pipe.expire(key, STATUS_TTL_SECONDS)
+            pipe.execute()
         except Exception:
             logger.debug("Failed to publish raw position", exc_info=True)
 
@@ -191,6 +201,7 @@ class TradingStatePublisher:
             pipe = r.pipeline(transaction=False)
             pipe.lpush(key, json.dumps(data))
             pipe.ltrim(key, 0, MAX_TRADES - 1)
+            pipe.expire(key, STATUS_TTL_SECONDS)
             pipe.execute()
         except Exception:
             logger.debug("Failed to publish raw trade", exc_info=True)
@@ -203,6 +214,7 @@ class TradingStatePublisher:
             pipe = r.pipeline(transaction=False)
             pipe.lpush(key, json.dumps(data))
             pipe.ltrim(key, 0, MAX_SIGNALS - 1)
+            pipe.expire(key, STATUS_TTL_SECONDS)
             pipe.execute()
         except Exception:
             logger.debug("Failed to publish raw signal", exc_info=True)

@@ -83,6 +83,7 @@ class StreamPublisher:
                 processed[k] = str(v) if v is not None else ""
 
         msg_id = self.client.xadd(self.stream, processed, maxlen=self.maxlen)
+        self.client.expire(self.stream, 86400)  # 24h TTL, renewed on each publish
 
         self._publish_count += 1
         logger.debug(

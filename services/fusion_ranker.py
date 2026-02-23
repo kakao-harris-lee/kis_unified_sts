@@ -328,7 +328,7 @@ class FusionRanker:
             return False
 
         self.publisher.publish(payload)
-        self.redis.set(self.config.output_key, json.dumps(payload, ensure_ascii=False))
+        self.redis.set(self.config.output_key, json.dumps(payload, ensure_ascii=False), ex=86400)
         self._last_payload_fingerprint = fingerprint
         logger.info(f"Published fused trade targets: {len(codes)}")
         return True
