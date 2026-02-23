@@ -1,7 +1,7 @@
 # Position Recovery Robustness Improvements
 
 **Date**: 2026-02-22
-**Status**: Draft
+**Status**: Implemented (2026-02-23, commit 6b320cd)
 **Depends on**: [2026-02-20-position-recovery-design.md](2026-02-20-position-recovery-design.md) (Phase 1, implemented)
 
 ---
