@@ -61,7 +61,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum(trading_signals_total{job=\"$job\", type=\"entry\"})",
+          "expr": "sum(trading_signals_total{job=~\"$job\", type=\"entry\"})",
           "refId": "A"
         }
       ],
@@ -107,7 +107,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum(trading_signals_total{job=\"$job\", type=\"exit\"})",
+          "expr": "sum(trading_signals_total{job=~\"$job\", type=\"exit\"})",
           "refId": "A"
         }
       ],
@@ -153,7 +153,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum(trading_signals_total{job=\"$job\", type=\"rejected\"})",
+          "expr": "sum(trading_signals_total{job=~\"$job\", type=\"rejected\"})",
           "refId": "A"
         }
       ],
@@ -199,7 +199,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "1 - (sum(trading_signals_total{job=\"$job\", type=\"rejected\"}) / sum(trading_signals_total{job=\"$job\"}))",
+          "expr": "1 - (sum(trading_signals_total{job=~\"$job\", type=\"rejected\"}) / sum(trading_signals_total{job=~\"$job\"}))",
           "refId": "A"
         }
       ],
@@ -283,19 +283,19 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum(rate(trading_signals_total{job=\"$job\", type=\"entry\"}[$__rate_interval])) by (type) * $__rate_interval",
+          "expr": "sum(increase(trading_signals_total{job=~\"$job\", type=\"entry\"}[$__rate_interval])) by (type)",
           "legendFormat": "entry",
           "refId": "A"
         },
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum(rate(trading_signals_total{job=\"$job\", type=\"exit\"}[$__rate_interval])) by (type) * $__rate_interval",
+          "expr": "sum(increase(trading_signals_total{job=~\"$job\", type=\"exit\"}[$__rate_interval])) by (type)",
           "legendFormat": "exit",
           "refId": "B"
         },
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum(rate(trading_signals_total{job=\"$job\", type=\"rejected\"}[$__rate_interval])) by (type) * $__rate_interval",
+          "expr": "sum(increase(trading_signals_total{job=~\"$job\", type=\"rejected\"}[$__rate_interval])) by (type)",
           "legendFormat": "rejected",
           "refId": "C"
         }
@@ -367,7 +367,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum(rate(trading_signals_total{job=\"$job\"}[$__rate_interval])) by (strategy) * $__rate_interval",
+          "expr": "sum(increase(trading_signals_total{job=~\"$job\"}[$__rate_interval])) by (strategy)",
           "legendFormat": "{{strategy}}",
           "refId": "A"
         }
@@ -421,7 +421,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum(increase(trading_signal_latency_ms_bucket{job=\"$job\"}[5m])) by (le)",
+          "expr": "sum(increase(trading_signal_latency_ms_bucket{job=~\"$job\"}[5m])) by (le)",
           "format": "heatmap",
           "legendFormat": "{{le}}",
           "refId": "A"
@@ -476,7 +476,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum(trading_signals_total{job=\"$job\"}) by (type)",
+          "expr": "sum(trading_signals_total{job=~\"$job\"}) by (type)",
           "legendFormat": "{{type}}",
           "refId": "A"
         }
@@ -530,7 +530,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum(trading_signals_total{job=\"$job\"}) by (strategy)",
+          "expr": "sum(trading_signals_total{job=~\"$job\"}) by (strategy)",
           "legendFormat": "{{strategy}}",
           "refId": "A"
         }
@@ -546,9 +546,9 @@
     "list": [
       {
         "current": {
-          "selected": false,
-          "text": "trading-futures",
-          "value": "trading-futures"
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
         },
         "datasource": {
           "type": "prometheus",
@@ -556,9 +556,9 @@
         },
         "definition": "label_values(trading_signals_total, job)",
         "hide": 0,
-        "includeAll": false,
+        "includeAll": true,
         "label": "Asset",
-        "multi": false,
+        "multi": true,
         "name": "job",
         "options": [],
         "query": {
@@ -581,7 +581,7 @@
           "type": "prometheus",
           "uid": "prometheus"
         },
-        "definition": "label_values(trading_signals_total{job=\"$job\"}, strategy)",
+        "definition": "label_values(trading_signals_total{job=~\"$job\"}, strategy)",
         "hide": 0,
         "includeAll": true,
         "label": "Strategy",
@@ -589,7 +589,7 @@
         "name": "strategy",
         "options": [],
         "query": {
-          "query": "label_values(trading_signals_total{job=\"$job\"}, strategy)",
+          "query": "label_values(trading_signals_total{job=~\"$job\"}, strategy)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
