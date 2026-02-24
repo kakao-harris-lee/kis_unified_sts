@@ -72,10 +72,6 @@ def build_adapter_from_params(params: dict):
         if k in entry_params:
             entry_params[k] = v
 
-    # 백테스트에서 market_state_filter 비활성화 (MFI/ADX 데이터 없음)
-    if "market_state_filter" in entry_params:
-        entry_params["market_state_filter"]["enabled"] = False
-
     # exit params 업데이트
     exit_params = strategy_cfg["exit"]["params"]
     for k, v in params.items():

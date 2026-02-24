@@ -468,17 +468,16 @@ class BacktestStrategyAdapter:
             if ohlcv:
                 indicators["ohlcv"] = ohlcv
 
-        # Derive market_state from MFI so MeanReversionEntry's market_state_filter works
+        # Derive market_state from MFI using MarketClassifier (matches live orchestrator)
         mfi = indicators.get("mfi")
         if mfi is not None:
-            if mfi >= 43:
-                market_state = "SIDEWAYS_FLAT"
-            elif mfi >= 41:
-                market_state = "SIDEWAYS_DOWN"
-            else:
-                market_state = "BEAR"
+            from shared.strategy.market_classifier import MarketClassifier
+
+            classifier = MarketClassifier()
+            state = classifier.classify(mfi=mfi, adx=0.0)
+            market_state = state.value
         else:
-            market_state = "SIDEWAYS_FLAT"
+            market_state = "UNKNOWN"
 
         # Build metadata
         metadata: dict[str, Any] = {"market_state": market_state, "is_backtest": True}

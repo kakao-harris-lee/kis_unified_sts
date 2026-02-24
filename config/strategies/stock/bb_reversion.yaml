@@ -57,12 +57,14 @@ strategy:
         enabled: true
         # MFI/ADX 기반 시장 분류
         allowed_states:
-          - SIDEWAYS_FLAT     # MFI 43-57, 보통 Mean Reversion
+          - SIDEWAYS_FLAT     # MFI 43-45, 보통 Mean Reversion
           - SIDEWAYS_DOWN     # MFI 41-43, 보수적 Mean Reversion
+          - SIDEWAYS_UP       # MFI 45-49, 약한 상승 횡보 (MR 유효)
         blocked_states:
-          - BEAR              # MFI < 41, 진입 금지
-          - BEAR_STRONG
-          - BEAR_MODERATE
+          - BEAR_MODERATE     # MFI 34-41, 하락 추세
+          - BEAR_STRONG       # MFI < 34, 강한 하락
+          - BULL_STRONG       # MFI >= 57, 강한 추세 (MR 부적합)
+          - BULL_MODERATE     # MFI 55-57, 보통 상승 추세
 
       # -----------------------------------------------------------------
       # 시가총액 필터
