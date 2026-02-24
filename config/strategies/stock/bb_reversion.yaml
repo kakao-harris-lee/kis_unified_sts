@@ -39,7 +39,7 @@ strategy:
       # RSI 설정
       # -----------------------------------------------------------------
       rsi_period: 14          # RSI 기간
-      rsi_oversold: 30        # 과매도 기준 (더 극단적 과매도만)
+      rsi_oversold: 35        # 과매도 기준
       rsi_deep_oversold: 25   # 깊은 과매도 (SIDEWAYS_DOWN, 보수적)
       allow_short: false      # 현물 기준 숏 비활성화
 
@@ -89,11 +89,11 @@ strategy:
       # -----------------------------------------------------------------
       # Phase 1: 진입 품질 필터
       # -----------------------------------------------------------------
-      vwap_filter: true               # 세션 VWAP 이하에서만 진입
-      adx_filter: true                # ADX > 25 추세장 차단
+      vwap_filter: false              # VWAP 필터 비활성화
+      adx_filter: false               # ADX 필터 비활성화
       adx_max_threshold: 25.0
       percent_b_filter: true          # %B < 0.0 (밴드 이하만 진입)
-      percent_b_threshold: 0.0
+      percent_b_threshold: 0.1
 
       # 포지션 사이징 힌트 (RiskBasedSizer에서 사용)
       stop_loss_pct: 3.0              # -3% 손절 기준 (스윙)
