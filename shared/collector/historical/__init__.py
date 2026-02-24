@@ -30,6 +30,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+
 def _missing_clickhouse(*_args, **_kwargs):
     raise ModuleNotFoundError(
         "clickhouse_connect is required for historical backfill utilities"
@@ -75,15 +76,27 @@ from .futures import (
     parse_code,
     KOSPI200F_FRONT_CODE,
 )
-from .stock import (
-    STOCK_UNIVERSE,
-    collect_stock_minute_today,
-    backfill_stock_minute,
-    get_stock_codes_from_db,
-    get_stock_collection_status,
-    get_stock_db_client,
-    ensure_stock_database,
-)
+try:
+    from .stock import (
+        STOCK_UNIVERSE,
+        collect_stock_minute_today,
+        backfill_stock_minute,
+        get_stock_codes_from_db,
+        get_stock_collection_status,
+        get_stock_db_client,
+        ensure_stock_database,
+    )
+except ModuleNotFoundError as exc:
+    if exc.name != "clickhouse_connect":
+        raise
+    logger.warning("clickhouse_connect missing; stock backfill utilities disabled")
+    STOCK_UNIVERSE = []
+    collect_stock_minute_today = _missing_clickhouse
+    backfill_stock_minute = _missing_clickhouse
+    get_stock_codes_from_db = _missing_clickhouse
+    get_stock_collection_status = _missing_clickhouse
+    get_stock_db_client = _missing_clickhouse
+    ensure_stock_database = _missing_clickhouse
 
 __all__ = [
     # Futures backfill functions
