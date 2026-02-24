@@ -274,6 +274,19 @@ strategy:
 
 ## ⚠️ 개발 규칙
 
+### 0. 브랜치 워크플로우 필수
+
+**main 브랜치에 직접 커밋 금지.** 모든 작업은 feature branch를 생성한 후 진행하고, PR을 통해 main에 머지한다.
+
+```bash
+# 작업 시작
+git checkout -b feat/작업-설명
+
+# 작업 완료 후
+git push -u origin feat/작업-설명
+gh pr create --title "..." --body "..."
+```
+
 ### 1. 하드코딩 금지
 
 모든 임계값, 기간, 비율은 YAML config에서 로드. 코드에 매직넘버 절대 금지.
