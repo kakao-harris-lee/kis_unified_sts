@@ -102,7 +102,7 @@ class MeanReversionExit(ExitSignalGenerator[MeanReversionExitConfig]):
         super().__init__(config)
 
     def _validate_config(self):
-        pass
+        self.config.validate()
 
     @property
     def name(self) -> str:
@@ -127,9 +127,12 @@ class MeanReversionExit(ExitSignalGenerator[MeanReversionExitConfig]):
         signals = []
         now = now_kst()
         for position in positions:
+            # Extract per-symbol snapshot (contains merged indicators from orchestrator)
+            snapshot = get_symbol_snapshot(market_data, position.code)
             context = ExitContext(
                 position=position,
-                market_data=market_data,
+                market_data=snapshot,
+                indicators=snapshot,  # orchestrator merges indicators into snapshot
                 timestamp=now,
                 market_state=market_state,
             )
@@ -238,7 +241,11 @@ class MeanReversionExit(ExitSignalGenerator[MeanReversionExitConfig]):
 
         # 5. BB middle band target reached
         if self.config.target_bb_middle:
-            bb_middle = float(indicators.get("bb_middle", 0) or 0)
+            bb_middle = float(
+                indicators.get("bb_middle", 0)
+                or market_data.get("bb_middle", 0)
+                or 0
+            )
             if bb_middle > 0 and position.side == PositionSide.LONG:
                 if current_price >= bb_middle:
                     return self._create_exit_signal(
@@ -272,9 +279,10 @@ class MeanReversionExit(ExitSignalGenerator[MeanReversionExitConfig]):
         if atr <= 0:
             return 0.0
 
-        # Detect normalized ATR (ratio form, typically < 0.1)
-        # and convert to absolute using current close
-        if atr < 1.0:
+        # Detect normalized ATR (ratio form, typically 0.001~0.05)
+        # KRX stocks have min tick 1 KRW, so absolute ATR is always >= 1.
+        # Use 0.5 threshold to safely distinguish normalized from absolute.
+        if atr < 0.5:
             close = float(
                 market_data.get("close", 0)
                 or indicators.get("close", 0)
