@@ -44,6 +44,10 @@ class ExitReason(Enum):
     INDICATOR_EXIT = "indicator_exit"  # 지표 기반 청산 (예: StochRSI)
     MOMENTUM_DECAY = "momentum_decay"  # 모멘텀 소진 청산
     VWAP_BREAKDOWN = "vwap_breakdown"  # VWAP 이탈 청산
+    TARGET_REACHED = "target_reached"  # 목표가 도달 (BB middle 등)
+
+    # Generic
+    STRATEGY_EXIT = "strategy_exit"  # 전략 기반 청산
 
     # RL model-based
     RL_EXIT = "rl_exit"  # RL 모델 청산 시그널

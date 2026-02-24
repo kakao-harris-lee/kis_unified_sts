@@ -531,6 +531,11 @@ class StreamingIndicatorEngine:
         if mfi is not None:
             result["mfi"] = mfi
 
+        # ADX (Average Directional Index)
+        adx = self._calc_adx(candles)
+        if adx is not None:
+            result["adx"] = adx
+
         # Volume indicators
         current_close = closes[-1]
 
@@ -1021,3 +1026,73 @@ class StreamingIndicatorEngine:
 
         money_ratio = positive_flow / negative_flow
         return 100.0 - (100.0 / (1.0 + money_ratio))
+
+    @staticmethod
+    def _calc_adx(candles: list[Candle], period: int = 14) -> float | None:
+        """ADX (Average Directional Index) using Wilder smoothing.
+
+        Returns None if insufficient data (need period*2 + 1 candles).
+        """
+        n = len(candles)
+        if n < period + 1:
+            return None
+
+        # Compute True Range, +DM, -DM
+        tr_list: list[float] = []
+        plus_dm_list: list[float] = []
+        minus_dm_list: list[float] = []
+
+        for i in range(1, n):
+            h = candles[i].high
+            lo = candles[i].low
+            pc = candles[i - 1].close
+            ph = candles[i - 1].high
+            pl = candles[i - 1].low
+
+            tr = max(h - lo, abs(h - pc), abs(lo - pc))
+            up_move = h - ph
+            down_move = pl - lo
+
+            plus_dm = up_move if (up_move > down_move and up_move > 0) else 0.0
+            minus_dm = down_move if (down_move > up_move and down_move > 0) else 0.0
+
+            tr_list.append(tr)
+            plus_dm_list.append(plus_dm)
+            minus_dm_list.append(minus_dm)
+
+        if len(tr_list) < period:
+            return None
+
+        # Wilder smoothing: first value = SMA, then EMA-like
+        atr = sum(tr_list[:period]) / period
+        plus_di_smooth = sum(plus_dm_list[:period]) / period
+        minus_di_smooth = sum(minus_dm_list[:period]) / period
+
+        dx_values: list[float] = []
+
+        for i in range(period, len(tr_list)):
+            atr = (atr * (period - 1) + tr_list[i]) / period
+            plus_di_smooth = (plus_di_smooth * (period - 1) + plus_dm_list[i]) / period
+            minus_di_smooth = (minus_di_smooth * (period - 1) + minus_dm_list[i]) / period
+
+            if atr > 0:
+                plus_di = 100 * plus_di_smooth / atr
+                minus_di = 100 * minus_di_smooth / atr
+            else:
+                plus_di = 0.0
+                minus_di = 0.0
+
+            di_sum = plus_di + minus_di
+            if di_sum > 0:
+                dx_values.append(100 * abs(plus_di - minus_di) / di_sum)
+
+        if len(dx_values) < period:
+            # Not enough DX values; return simple average if we have any
+            return sum(dx_values) / len(dx_values) if dx_values else None
+
+        # ADX = Wilder-smoothed DX
+        adx = sum(dx_values[:period]) / period
+        for dx in dx_values[period:]:
+            adx = (adx * (period - 1) + dx) / period
+
+        return adx

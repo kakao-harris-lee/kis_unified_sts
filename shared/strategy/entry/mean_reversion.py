@@ -59,6 +59,15 @@ class MeanReversionConfig(ConfigMixin):
     # Cooldown
     signal_cooldown_seconds: int = 0
 
+    # --- Phase 1 quality filters ---
+    vwap_filter: bool = False  # close < vwap 필터
+    adx_filter: bool = False  # ADX < threshold 필터
+    adx_max_threshold: float = 25.0  # ADX 상한 (추세장 차단)
+    bbw_filter: bool = False  # BB Bandwidth 최소 필터
+    bbw_min_threshold: float = 0.01  # BBW 최소값 (1% bandwidth)
+    percent_b_filter: bool = False  # %B 깊이 필터
+    percent_b_threshold: float = 0.0  # %B < threshold (0.0 = 밴드 이하)
+
     # Risk hint for sizing
     stop_loss_pct: float = 1.5
     # Confidence calculation parameters
@@ -103,6 +112,10 @@ class MeanReversionEntry(EntrySignalGenerator[MeanReversionConfig]):
         indicators = ["bb_lower", "bb_upper", "bb_middle", "rsi"]
         if self.config.volume_confirm:
             indicators.extend(["volume", "volume_ma"])
+        if self.config.vwap_filter:
+            indicators.append("vwap")
+        if self.config.adx_filter:
+            indicators.append("adx")
         return indicators
 
     async def generate(self, context: EntryContext) -> Optional[Signal]:
@@ -212,6 +225,37 @@ class MeanReversionEntry(EntrySignalGenerator[MeanReversionConfig]):
                 return None
             if volume < (self.config.volume_threshold * volume_ma):
                 return None
+
+        bb_middle = _get_value("bb_middle", 0)
+
+        # --- Phase 1 quality filters ---
+
+        # 1) VWAP 필터: 세션 평균가 이하에서만 진입
+        if self.config.vwap_filter:
+            vwap = _get_value("vwap", 0)
+            if vwap > 0 and close >= vwap:
+                return None
+
+        # 2) ADX 필터: 추세 강도 높으면 MR 부적합
+        if self.config.adx_filter:
+            adx = _get_value("adx", 0)
+            if adx > self.config.adx_max_threshold:
+                return None
+
+        # 3) BB Bandwidth 필터: 밴드 좁으면 (squeeze) 진입 안함
+        if self.config.bbw_filter:
+            if bb_middle > 0:
+                bbw = (bb_upper - bb_lower) / bb_middle
+                if bbw < self.config.bbw_min_threshold:
+                    return None
+
+        # 4) %B 깊이 필터: 밴드 스침이 아닌 의미있는 침투 요구
+        if self.config.percent_b_filter:
+            bb_width = bb_upper - bb_lower
+            if bb_width > 0:
+                percent_b = (close - bb_lower) / bb_width
+                if percent_b > self.config.percent_b_threshold:
+                    return None
 
         # Determine oversold threshold based on regime
         oversold_threshold = self.config.rsi_oversold

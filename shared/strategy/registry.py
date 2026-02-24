@@ -412,6 +412,13 @@ def register_builtin_components() -> None:
     except ImportError:
         logger.debug("TrixGoldenExit not available")
 
+    try:
+        from shared.strategy.exit.mean_reversion_exit import MeanReversionExit
+
+        ExitRegistry.register_class("mean_reversion_exit", MeanReversionExit)
+    except ImportError:
+        logger.debug("MeanReversionExit not available")
+
     # Position Sizer 등록
     try:
         from shared.strategy.position import FixedSizer, RiskBasedSizer

@@ -33,14 +33,14 @@ strategy:
       # -----------------------------------------------------------------
       bb_period: 20           # BB 이동평균 기간
       bb_std: 2.0             # BB 표준편차 배수
-      bb_touch_buffer: 1.01   # 하단 터치 버퍼 (price <= bb_lower * 1.01)
+      bb_touch_buffer: 1.00   # 하단 터치 버퍼 (정확한 밴드 터치 요구)
 
       # -----------------------------------------------------------------
       # RSI 설정
       # -----------------------------------------------------------------
       rsi_period: 14          # RSI 기간
-      rsi_oversold: 38        # 과매도 기준 (SIDEWAYS_FLAT)
-      rsi_deep_oversold: 35   # 깊은 과매도 (SIDEWAYS_DOWN, 보수적)
+      rsi_oversold: 30        # 과매도 기준 (더 극단적 과매도만)
+      rsi_deep_oversold: 25   # 깊은 과매도 (SIDEWAYS_DOWN, 보수적)
       allow_short: false      # 현물 기준 숏 비활성화
 
       # -----------------------------------------------------------------
@@ -86,6 +86,15 @@ strategy:
       # -----------------------------------------------------------------
       signal_cooldown_seconds: 300    # 5분
 
+      # -----------------------------------------------------------------
+      # Phase 1: 진입 품질 필터
+      # -----------------------------------------------------------------
+      vwap_filter: true               # 세션 VWAP 이하에서만 진입
+      adx_filter: true                # ADX > 25 추세장 차단
+      adx_max_threshold: 25.0
+      percent_b_filter: true          # %B < 0.0 (밴드 이하만 진입)
+      percent_b_threshold: 0.0
+
       # 포지션 사이징 힌트 (RiskBasedSizer에서 사용)
       stop_loss_pct: 3.0              # -3% 손절 기준 (스윙)
 
@@ -93,24 +102,19 @@ strategy:
   # 청산 조건 (Exit)
   # ===========================================================================
   exit:
-    type: three_stage
+    type: mean_reversion_exit
     params:
-      # Stage 1: Survival (손절) — 스윙용 넓은 손절폭
-      stop_loss_pct: -0.03             # -3% 손절 (스윙: 일중 변동 허용)
+      # ATR 기반 동적 손절
+      atr_stop_multiplier: 2.0         # Entry - 2.0×ATR
+      max_stop_loss_pct: -0.03         # ATR stop cap (최대 -3%)
 
-      # Stage 2: Breakeven (본전 확보)
-      breakeven_threshold_pct: 0.02    # +2% 도달 시 본전 전환
+      # Primary target: BB middle band (20-SMA)
+      target_bb_middle: true
 
-      # Stage 3: Maximize (수익 극대화)
-      maximize_threshold_pct: 0.03     # +3% 도달 시 트레일링 시작
-      trailing_stop_pct: -0.03         # 고점 대비 -3% 하락 시 청산
+      # 시간 기반 청산 (수익 없이 2시간 초과)
+      time_cut_minutes: 120
 
-      # Overshooting 감지 (급등 시 빠른 익절)
-      overshoot_threshold_pct: 0.07    # +7% 이상 급등
-      overshoot_trailing_pct: -0.02    # 급등 시 -2%로 축소 (스윙)
-
-      # 시간 기반 청산 — 스윙 전략이므로 비활성화
-      time_cut_minutes: 9999           # 비활성화 (시그널 기반 청산)
+      # EOD — 스윙 전략이므로 비활성화
       eod_close_hour: 23
       eod_close_minute: 59             # 비활성화 (오버나이트 허용)
 
