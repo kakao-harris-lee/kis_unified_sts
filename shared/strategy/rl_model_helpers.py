@@ -260,6 +260,18 @@ def get_action_confidence(
     model: Any, obs: Any, action: int, action_masks: Any, device: Any
 ) -> float:
     """액션의 확률(confidence) 추출."""
+    probs = get_action_probabilities(model, obs, action_masks, device)
+    if not probs:
+        return 1.0
+    if action not in probs:
+        return 0.0
+    return float(probs[action])
+
+
+def get_action_probabilities(
+    model: Any, obs: Any, action_masks: Any, device: Any
+) -> dict[int, float]:
+    """행동 확률 벡터 추출 (마스크 적용 후 정규화)."""
     try:
         import numpy as np
         import torch
@@ -274,12 +286,10 @@ def get_action_confidence(
                 total = float(probs.sum())
                 if total > 0:
                     probs = probs / total
-            if action < 0 or action >= len(probs):
-                return 0.0
-            return float(probs[action])
+            return {idx: float(p) for idx, p in enumerate(probs)}
     except Exception as e:
-        logger.debug(f"Failed to get action confidence: {e}")
-        return 1.0
+        logger.debug(f"Failed to get action probabilities: {e}")
+        return {}
 
 
 def parse_hhmm(

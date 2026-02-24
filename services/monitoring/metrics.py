@@ -243,6 +243,11 @@ class MetricsCollector:
             "trading_data_symbols_fetched",
             "Symbols with valid market data in last fetch",
         )
+        self.prom_rl_entry_action_probability = Gauge(
+            "trading_rl_entry_action_probability",
+            "RL entry action probability (masked and normalized)",
+            ["strategy", "action"],
+        )
         self.prom_signal_evaluations = Counter(
             "trading_signal_evaluations_total",
             "Total signal evaluation cycles",
@@ -337,6 +342,28 @@ class MetricsCollector:
             self.prom_signals_total.labels(strategy=strategy, type=signal_type).inc()
             if latency_ms > 0:
                 self.prom_signal_latency.observe(latency_ms)
+
+    def record_rl_entry_action_probabilities(
+        self,
+        *,
+        strategy: str,
+        long_prob: float,
+        short_prob: float,
+        hold_prob: float,
+    ) -> None:
+        """RL entry 행동 확률 기록 (long/short/hold)."""
+        if not HAS_PROMETHEUS:
+            return
+
+        self.prom_rl_entry_action_probability.labels(
+            strategy=strategy, action="long"
+        ).set(max(0.0, min(1.0, float(long_prob))))
+        self.prom_rl_entry_action_probability.labels(
+            strategy=strategy, action="short"
+        ).set(max(0.0, min(1.0, float(short_prob))))
+        self.prom_rl_entry_action_probability.labels(
+            strategy=strategy, action="hold"
+        ).set(max(0.0, min(1.0, float(hold_prob))))
 
     def record_order_latency(self, latency_ms: float):
         """주문 레이턴시 기록"""

@@ -61,6 +61,79 @@ async def test_generate_short_signal_sets_signal_direction(monkeypatch):
     assert signal.metadata.get("direction") == "short"
 
 
+@pytest.mark.asyncio
+async def test_generate_overrides_hold_to_entry_when_gap_small(monkeypatch):
+    strategy = RLMPPOEntry(
+        RLMPPOConfig(
+            min_confidence=0.3,
+            enable_hold_override=True,
+            hold_override_max_gap=0.1,
+            hold_override_min_entry_prob=0.33,
+        )
+    )
+    strategy._is_trading_time = lambda _ts: True
+    strategy._load_model = lambda: SimpleNamespace(
+        predict=lambda *_args, **_kwargs: (4, None)
+    )
+    strategy._build_observation = lambda _ctx: np.zeros(31, dtype=np.float32)
+    monkeypatch.setattr(
+        "shared.strategy.entry.rl_mppo.get_action_probabilities",
+        lambda *_args, **_kwargs: {0: 0.40, 2: 0.15, 4: 0.45},
+    )
+
+    context = EntryContext(
+        market_data={
+            "code": "A01603",
+            "name": "KOSPI200 Futures",
+            "close": 101.5,
+        },
+        indicators={},
+        current_positions=[],
+        timestamp=datetime(2026, 2, 12, 10, 5, 0),
+    )
+
+    signal = await strategy.generate(context)
+    assert signal is not None
+    assert signal.metadata.get("signal_direction") == "long"
+    assert signal.metadata.get("rl_override_reason") == "hold_override"
+    assert signal.confidence == pytest.approx(0.40)
+
+
+@pytest.mark.asyncio
+async def test_generate_keeps_hold_when_gap_large(monkeypatch):
+    strategy = RLMPPOEntry(
+        RLMPPOConfig(
+            min_confidence=0.3,
+            enable_hold_override=True,
+            hold_override_max_gap=0.05,
+            hold_override_min_entry_prob=0.33,
+        )
+    )
+    strategy._is_trading_time = lambda _ts: True
+    strategy._load_model = lambda: SimpleNamespace(
+        predict=lambda *_args, **_kwargs: (4, None)
+    )
+    strategy._build_observation = lambda _ctx: np.zeros(31, dtype=np.float32)
+    monkeypatch.setattr(
+        "shared.strategy.entry.rl_mppo.get_action_probabilities",
+        lambda *_args, **_kwargs: {0: 0.34, 2: 0.20, 4: 0.46},
+    )
+
+    context = EntryContext(
+        market_data={
+            "code": "A01603",
+            "name": "KOSPI200 Futures",
+            "close": 101.5,
+        },
+        indicators={},
+        current_positions=[],
+        timestamp=datetime(2026, 2, 12, 10, 5, 0),
+    )
+
+    signal = await strategy.generate(context)
+    assert signal is None
+
+
 def test_derive_features_from_ohlcv():
     bars = []
     price = 100.0

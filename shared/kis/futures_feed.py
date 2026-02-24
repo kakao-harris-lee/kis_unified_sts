@@ -159,8 +159,14 @@ class KISFuturesPriceFeed:
             return
 
         open_price = float(tick.open_price) if tick.open_price is not None else price
-        high_price = float(tick.high_price) if tick.high_price is not None else price
-        low_price = float(tick.low_price) if tick.low_price is not None else price
+        # H0IFCNT0 high/low는 일중 고저일 수 있어 분봉 고저에 직접 쓰지 않는다.
+        # 분봉 고저는 CandleAccumulator가 tick close로 누적 계산한다.
+        day_high_price = (
+            float(tick.high_price) if tick.high_price is not None else price
+        )
+        day_low_price = (
+            float(tick.low_price) if tick.low_price is not None else price
+        )
 
         volume = None
         volume_is_cumulative = True
@@ -178,8 +184,10 @@ class KISFuturesPriceFeed:
             "code": tick.symbol,
             "close": price,
             "open": open_price,
-            "high": high_price,
-            "low": low_price,
+            "high": price,
+            "low": price,
+            "day_high": day_high_price,
+            "day_low": day_low_price,
             "timestamp": tick.timestamp,
         }
         if volume is not None:

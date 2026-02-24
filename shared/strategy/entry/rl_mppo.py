@@ -19,6 +19,7 @@ from shared.ml.base import get_device
 from shared.strategy.base import EntryContext, EntrySignalGenerator
 from shared.strategy.registry import EntryRegistry
 from shared.strategy.rl_model_helpers import (
+    get_action_probabilities,
     build_rl_observation,
     derive_features_from_ohlcv,
     get_action_confidence,
@@ -51,6 +52,11 @@ class RLMPPOConfig:
     backtest_min_confidence: float = 0.35
     skip_market_open_minutes: int = 5
     skip_market_close_minutes: int = 10
+    enable_hold_override: bool = True
+    hold_override_max_gap: float = 0.12
+    hold_override_min_entry_prob: float = 0.33
+    hold_override_min_confidence: float = 0.35
+    backtest_hold_override_min_confidence: float = 0.30
 
 
 @EntryRegistry.register("rl_mppo")
@@ -78,6 +84,18 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
         """설정 유효성 검증"""
         assert 0.0 <= self.config.min_confidence <= 1.0, (
             "min_confidence must be between 0.0 and 1.0"
+        )
+        assert 0.0 <= self.config.hold_override_max_gap <= 1.0, (
+            "hold_override_max_gap must be between 0.0 and 1.0"
+        )
+        assert 0.0 <= self.config.hold_override_min_entry_prob <= 1.0, (
+            "hold_override_min_entry_prob must be between 0.0 and 1.0"
+        )
+        assert 0.0 <= self.config.hold_override_min_confidence <= 1.0, (
+            "hold_override_min_confidence must be between 0.0 and 1.0"
+        )
+        assert 0.0 <= self.config.backtest_hold_override_min_confidence <= 1.0, (
+            "backtest_hold_override_min_confidence must be between 0.0 and 1.0"
         )
         assert self.config.skip_market_open_minutes >= 0, (
             "skip_market_open_minutes must be non-negative"
@@ -153,15 +171,38 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
             logger.warning(f"RL model prediction failed: {e}")
             return None
 
-        # action probability → confidence
-        confidence = get_action_confidence(
-            model, obs, action, action_masks, self._device
+        # action probabilities (masked+normalized)
+        action_probs = get_action_probabilities(model, obs, action_masks, self._device)
+        confidence = action_probs.get(
+            action,
+            get_action_confidence(model, obs, action, action_masks, self._device),
         )
-        threshold = (
-            self.config.backtest_min_confidence
-            if context.metadata.get("is_backtest")
-            else self.config.min_confidence
-        )
+
+        long_prob = action_probs.get(0, 0.0)
+        short_prob = action_probs.get(2, 0.0)
+        hold_prob = action_probs.get(4, 0.0)
+        self._record_action_probabilities(long_prob, short_prob, hold_prob)
+
+        override_reason = ""
+        if action == 4:  # HOLD
+            override_action = self._maybe_override_hold(action_probs)
+            if override_action is not None:
+                action = override_action
+                confidence = action_probs.get(action, confidence)
+                override_reason = "hold_override"
+
+        if override_reason:
+            threshold = (
+                self.config.backtest_hold_override_min_confidence
+                if context.metadata.get("is_backtest")
+                else self.config.hold_override_min_confidence
+            )
+        else:
+            threshold = (
+                self.config.backtest_min_confidence
+                if context.metadata.get("is_backtest")
+                else self.config.min_confidence
+            )
         if confidence < threshold:
             logger.debug(
                 f"RL action {action} confidence {confidence:.3f} "
@@ -189,6 +230,10 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
                     "direction": "long",
                     "rl_action": action,
                     "rl_confidence": confidence,
+                    "rl_long_prob": long_prob,
+                    "rl_short_prob": short_prob,
+                    "rl_hold_prob": hold_prob,
+                    "rl_override_reason": override_reason,
                 },
             )
         elif action == 2:  # SHORT_ENTRY
@@ -205,10 +250,59 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
                     "direction": "short",
                     "rl_action": action,
                     "rl_confidence": confidence,
+                    "rl_long_prob": long_prob,
+                    "rl_short_prob": short_prob,
+                    "rl_hold_prob": hold_prob,
+                    "rl_override_reason": override_reason,
                 },
             )
 
         return None
+
+    def _maybe_override_hold(self, action_probs: dict[int, float]) -> int | None:
+        """HOLD가 근소 우세인 경우 진입 액션으로 오버라이드."""
+        if not self.config.enable_hold_override:
+            return None
+
+        hold_prob = float(action_probs.get(4, 0.0))
+        long_prob = float(action_probs.get(0, 0.0))
+        short_prob = float(action_probs.get(2, 0.0))
+
+        best_action, best_prob = (
+            (0, long_prob) if long_prob >= short_prob else (2, short_prob)
+        )
+        if best_prob < self.config.hold_override_min_entry_prob:
+            return None
+
+        gap = hold_prob - best_prob
+        if gap > self.config.hold_override_max_gap:
+            return None
+
+        logger.debug(
+            "RL hold override: hold=%.3f best_entry=%.3f action=%s gap=%.3f",
+            hold_prob,
+            best_prob,
+            best_action,
+            gap,
+        )
+        return best_action
+
+    def _record_action_probabilities(
+        self, long_prob: float, short_prob: float, hold_prob: float
+    ) -> None:
+        """Emit Prometheus metrics for RL action probabilities."""
+        try:
+            from services.monitoring.metrics import get_metrics_collector
+
+            get_metrics_collector().record_rl_entry_action_probabilities(
+                strategy=self.name,
+                long_prob=long_prob,
+                short_prob=short_prob,
+                hold_prob=hold_prob,
+            )
+        except Exception:
+            # Metrics should never break trading logic.
+            pass
 
     def _load_model(self) -> Any:
         """학습된 모델 로드 (lazy loading, 모듈 캐시 사용)"""
