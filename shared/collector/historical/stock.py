@@ -575,7 +575,7 @@ def load_collection_state() -> Dict:
                 return json.load(f)
         except Exception as e:
             logger.warning(f"Failed to load state file: {e}")
-    return {"date": None, "failed": [], "success": []}
+    return {"completed_days": {}, "last_run": None}
 
 
 def save_collection_state(state: Dict):
@@ -583,7 +583,7 @@ def save_collection_state(state: Dict):
     STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
     try:
         with open(STATE_FILE, 'w') as f:
-            json.dump(state, f, indent=2)
+            json.dump(state, f, indent=2, default=str)
     except Exception as e:
         logger.error(f"Failed to save state file: {e}")
 
@@ -717,21 +717,22 @@ async def collect_stock_minute_today(verbose: bool = True) -> int:
 async def backfill_stock_minute(
     days: int = 30,
     codes: List[str] = None,
-    verbose: bool = True
+    verbose: bool = True,
+    resume: bool = True,
 ) -> int:
     """
     Backfill stock minute data for specified days.
 
     Args:
-        days: Number of days to backfill (max 30 for minute data)
+        days: Number of days to backfill (max 180)
         codes: Specific codes to backfill (None = all universe)
         verbose: Print progress
+        resume: Skip already-collected days (for long backfills)
 
     Returns:
         Total rows collected
     """
-    # KIS API limits minute data to 30 days
-    days = min(days, 30)
+    days = min(days, 180)
 
     end_date = date.today()
     start_date = end_date - timedelta(days=days)
@@ -741,22 +742,40 @@ async def backfill_stock_minute(
             print("No trading days in range")
         return 0
 
-    if verbose:
-        print(f"Stock Minute Backfill")
-        print(f"Trading days: {len(trading_days)}")
-        print(f"Date range: {trading_days[0]} ~ {trading_days[-1]}")
-
-    ensure_stock_database()
-    db_client = get_stock_db_client()
-
     # Select codes
     if codes:
         selected_codes = list(dict.fromkeys(codes))
     else:
         selected_codes = [s["code"] for s in STOCK_UNIVERSE]
 
+    # Resume: load state and skip completed days
+    state = load_collection_state() if resume else {"completed_days": {}}
+    completed = state.get("completed_days", {})
+    codes_key = ",".join(sorted(selected_codes))
+
+    if resume:
+        original_count = len(trading_days)
+        trading_days = [
+            d for d in trading_days
+            if f"{d.isoformat()}:{codes_key}" not in completed
+        ]
+        skipped = original_count - len(trading_days)
+        if skipped > 0 and verbose:
+            print(f"Resuming: skipping {skipped} already-collected days")
+
+    if not trading_days:
+        if verbose:
+            print("All days already collected (use --no-resume to force re-collect)")
+        return 0
+
     if verbose:
+        print(f"Stock Minute Backfill")
+        print(f"Trading days: {len(trading_days)}")
+        print(f"Date range: {trading_days[0]} ~ {trading_days[-1]}")
         print(f"Stocks: {len(selected_codes)}")
+
+    ensure_stock_database()
+    db_client = get_stock_db_client()
 
     total_rows = 0
 
@@ -769,6 +788,17 @@ async def backfill_stock_minute(
 
             rows = await collect_stock_batch(client, db_client, tasks)
             total_rows += rows
+
+            # Mark day as completed and save state
+            if resume and rows > 0:
+                completed[f"{day.isoformat()}:{codes_key}"] = True
+                state["completed_days"] = completed
+                state["last_run"] = datetime.now().isoformat()
+                save_collection_state(state)
+
+            # Throttle between days for long backfills
+            if len(trading_days) > 30:
+                await asyncio.sleep(1.0)
 
     db_client.close()
 
@@ -803,46 +833,116 @@ def get_stock_codes_from_db(days: Optional[int] = None) -> List[str]:
         db_client.close()
 
 
-def get_stock_collection_status(days: int = 30) -> Dict[str, Any]:
-    """Get stock minute collection status."""
+def get_stock_collection_status(days: int = 30) -> Dict:
+    """Get collection status with per-stock detail."""
     try:
         db_client = get_stock_db_client()
 
-        start_date = date.today() - timedelta(days=days)
-        end_date = date.today()
-
-        query = f"""
+        start_date = (date.today() - timedelta(days=days)).isoformat()
+        result = db_client.query(f"""
             SELECT
-                count(*) as total_rows,
+                count(*) as rows,
                 count(DISTINCT toDate(datetime)) as days_collected,
+                count(DISTINCT code) as unique_codes,
                 min(datetime) as min_datetime,
-                max(datetime) as max_datetime,
-                count(DISTINCT code) as unique_codes
+                max(datetime) as max_datetime
             FROM minute_candles
-            WHERE toDate(datetime) >= '{start_date}'
-            AND toDate(datetime) <= '{end_date}'
-        """
+            WHERE datetime >= '{start_date}'
+        """)
 
-        result = db_client.query(query)
-        row = result.first_row if result.result_rows else None
+        row = result.result_rows[0] if result.result_rows else (0, 0, 0, None, None)
+
+        per_stock = db_client.query(f"""
+            SELECT
+                code,
+                count(*) as bars,
+                count(DISTINCT toDate(datetime)) as trading_days,
+                min(datetime) as earliest,
+                max(datetime) as latest
+            FROM minute_candles
+            WHERE datetime >= '{start_date}'
+            GROUP BY code
+            ORDER BY bars DESC
+        """)
+
+        stocks_detail = []
+        for sr in per_stock.result_rows:
+            stocks_detail.append({
+                "code": sr[0],
+                "bars": sr[1],
+                "trading_days": sr[2],
+                "earliest": str(sr[3]) if sr[3] else None,
+                "latest": str(sr[4]) if sr[4] else None,
+            })
 
         db_client.close()
 
-        if row:
-            return {
-                "table": "minute_candles",
-                "rows": row[0],
-                "days_collected": row[1],
-                "min_datetime": str(row[2]) if row[2] else None,
-                "max_datetime": str(row[3]) if row[3] else None,
-                "unique_codes": row[4],
-            }
-
-        return {"table": "minute_candles", "rows": 0}
-
+        return {
+            "table": "minute_candles",
+            "rows": row[0],
+            "days_collected": row[1],
+            "unique_codes": row[2],
+            "min_datetime": str(row[3]) if row[3] else None,
+            "max_datetime": str(row[4]) if row[4] else None,
+            "stocks": stocks_detail,
+        }
     except Exception as e:
-        logger.error(f"Failed to get status: {e}")
         return {"error": str(e)}
+
+
+def load_stock_minute_from_clickhouse(
+    code: str,
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> "pd.DataFrame":
+    """
+    Load stock minute data from ClickHouse as a DataFrame suitable for BacktestEngine.
+
+    Args:
+        code: Stock code (e.g., '005930')
+        start_date: Start date filter (inclusive). None = no lower bound.
+        end_date: End date filter (inclusive). None = no upper bound.
+
+    Returns:
+        DataFrame with columns: code, datetime, open, high, low, close, volume
+        Sorted by datetime ascending.
+
+    Raises:
+        ValueError: If no data found for the given code/date range.
+    """
+    import pandas as pd
+
+    db_client = get_stock_db_client()
+
+    conditions = [f"code = '{code}'"]
+    if start_date:
+        conditions.append(f"datetime >= '{start_date.isoformat()}'")
+    if end_date:
+        conditions.append(f"datetime <= '{end_date.isoformat()} 23:59:59'")
+
+    where = " AND ".join(conditions)
+    query = f"""
+        SELECT code, datetime, open, high, low, close, volume
+        FROM minute_candles
+        WHERE {where}
+        ORDER BY datetime ASC
+    """
+
+    result = db_client.query(query)
+    db_client.close()
+
+    if not result.result_rows:
+        raise ValueError(f"No data found for {code} in ClickHouse (range: {start_date} ~ {end_date})")
+
+    df = pd.DataFrame(
+        result.result_rows,
+        columns=["code", "datetime", "open", "high", "low", "close", "volume"],
+    )
+
+    # Ensure datetime is pandas Timestamp (ClickHouse returns Python datetime)
+    df["datetime"] = pd.to_datetime(df["datetime"])
+
+    return df
 
 
 # =============================================================================
@@ -857,4 +957,5 @@ __all__ = [
     "get_stock_collection_status",
     "get_stock_db_client",
     "ensure_stock_database",
+    "load_stock_minute_from_clickhouse",
 ]

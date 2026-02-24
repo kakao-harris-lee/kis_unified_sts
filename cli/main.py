@@ -66,6 +66,142 @@ def backtest():
     pass
 
 
+def _run_tier_backtest(
+    strategy: str,
+    asset: str,
+    tier: str,
+    start,
+    end,
+    capital: float,
+    track: bool,
+    experiment: str | None,
+):
+    """Run backtest across multiple stocks by tier, print summary table."""
+    from shared.backtest import BacktestConfig, BacktestEngine
+    from shared.backtest.adapter import BacktestStrategyAdapter
+    from shared.backtest.config import RiskConfig
+    from shared.collector.historical.stock import (
+        STOCK_UNIVERSE,
+        load_stock_minute_from_clickhouse,
+    )
+    from shared.config.loader import ConfigLoader
+    from shared.strategy.registry import StrategyFactory, register_builtin_components
+
+    register_builtin_components()
+
+    if tier == "all":
+        stocks = STOCK_UNIVERSE
+    else:
+        stocks = [s for s in STOCK_UNIVERSE if s["tier"] == tier]
+
+    click.echo(f"Tier backtest: {strategy} ({asset}) — {len(stocks)} stocks ({tier})")
+    click.echo("=" * 80)
+
+    strategy_config = ConfigLoader.load_strategy(asset, strategy)
+    bt_override = strategy_config.get("strategy", {}).get("backtest", {})
+    bt_capital = bt_override.get("initial_capital", capital)
+
+    start_d = start.date() if start else None
+    end_d = end.date() if end else None
+
+    results = []
+
+    for stock in stocks:
+        code = stock["code"]
+        name = stock["name"]
+        stock_tier = stock["tier"]
+
+        try:
+            df = load_stock_minute_from_clickhouse(code, start_d, end_d)
+        except ValueError:
+            click.echo(f"  {code} {name}: No data — skipped")
+            results.append({
+                "code": code, "name": name, "tier": stock_tier,
+                "trades": 0, "return_pct": 0, "win_rate": 0,
+                "sharpe": 0, "mdd": 0, "status": "NO_DATA",
+            })
+            continue
+
+        config = BacktestConfig.stock(initial_capital=bt_capital)
+        if "risk" in bt_override:
+            config.risk = RiskConfig.from_dict(bt_override["risk"])
+
+        trading_strategy = StrategyFactory.create(strategy_config)
+        adapted = BacktestStrategyAdapter(trading_strategy, strategy_config)
+        engine = BacktestEngine(adapted, config)
+
+        result = engine.run(df)
+
+        click.echo(
+            f"  {code} {name}: "
+            f"trades={result.total_trades} "
+            f"return={result.total_return_pct:+.2f}% "
+            f"WR={result.win_rate:.0f}% "
+            f"Sharpe={result.sharpe_ratio:.2f}"
+        )
+
+        results.append({
+            "code": code, "name": name, "tier": stock_tier,
+            "trades": result.total_trades,
+            "return_pct": result.total_return_pct,
+            "win_rate": result.win_rate,
+            "sharpe": result.sharpe_ratio,
+            "mdd": result.max_drawdown_pct,
+            "status": "OK",
+        })
+
+    # Summary table
+    click.echo("\n" + "=" * 80)
+    click.echo("Summary Table")
+    click.echo("=" * 80)
+    click.echo(f"{'Code':<8} {'Name':<12} {'Tier':<7} {'Trades':>6} {'Return%':>9} {'WR%':>5} {'Sharpe':>7} {'MDD%':>7}")
+    click.echo("-" * 80)
+
+    for r in results:
+        if r["status"] == "NO_DATA":
+            click.echo(f"{r['code']:<8} {r['name']:<12} {r['tier']:<7} {'—':>6} {'—':>9} {'—':>5} {'—':>7} {'—':>7}")
+        else:
+            click.echo(
+                f"{r['code']:<8} {r['name']:<12} {r['tier']:<7} "
+                f"{r['trades']:>6} {r['return_pct']:>+8.2f}% "
+                f"{r['win_rate']:>4.0f}% {r['sharpe']:>7.2f} "
+                f"{r['mdd']:>6.2f}%"
+            )
+
+    # Tier aggregates
+    click.echo("\n" + "-" * 80)
+    click.echo("Tier Aggregates")
+    click.echo("-" * 80)
+
+    for t_label, t_key in [("Top (대형주)", "top"), ("Mid (중형주)", "mid"), ("Bottom (소형주)", "bottom")]:
+        tier_results = [r for r in results if r["tier"] == t_key and r["status"] == "OK"]
+        if not tier_results:
+            continue
+        avg_ret = sum(r["return_pct"] for r in tier_results) / len(tier_results)
+        avg_wr = sum(r["win_rate"] for r in tier_results) / len(tier_results)
+        avg_sharpe = sum(r["sharpe"] for r in tier_results) / len(tier_results)
+        total_trades = sum(r["trades"] for r in tier_results)
+        click.echo(
+            f"  {t_label:<18} stocks={len(tier_results)} "
+            f"trades={total_trades} "
+            f"avg_return={avg_ret:+.2f}% "
+            f"avg_WR={avg_wr:.0f}% "
+            f"avg_Sharpe={avg_sharpe:.2f}"
+        )
+
+    ok_results = [r for r in results if r["status"] == "OK"]
+    if ok_results:
+        avg_ret = sum(r["return_pct"] for r in ok_results) / len(ok_results)
+        avg_sharpe = sum(r["sharpe"] for r in ok_results) / len(ok_results)
+        total_trades = sum(r["trades"] for r in ok_results)
+        click.echo(
+            f"\n  Overall: stocks={len(ok_results)} "
+            f"trades={total_trades} "
+            f"avg_return={avg_ret:+.2f}% "
+            f"avg_Sharpe={avg_sharpe:.2f}"
+        )
+
+
 @backtest.command("run")
 @click.option(
     "--strategy",
@@ -104,6 +240,17 @@ def backtest():
     help="Path to data file (CSV)",
 )
 @click.option(
+    "--symbol",
+    default=None,
+    help="Stock code to load from ClickHouse (e.g., 005930)",
+)
+@click.option(
+    "--tier",
+    default=None,
+    type=click.Choice(["top", "mid", "bottom", "all"]),
+    help="Run backtest across tier stocks from ClickHouse (top/mid/bottom/all)",
+)
+@click.option(
     "--track/--no-track",
     default=True,
     help="Track with MLflow (default: True)",
@@ -121,6 +268,8 @@ def backtest_run(
     end,
     capital: float,
     data: str | None,
+    symbol: str | None,
+    tier: str | None,
     track: bool,
     experiment: str | None,
 ):
@@ -166,13 +315,38 @@ def backtest_run(
     if data:
         try:
             df = validate_csv_file(data)
-            click.echo(f"Loaded data: {len(df)} rows")
+            click.echo(f"Loaded data from CSV: {len(df)} rows")
         except ValidationError as e:
             click.echo(f"Error: {e}", err=True)
             sys.exit(1)
+    elif symbol:
+        from shared.collector.historical.stock import load_stock_minute_from_clickhouse
+
+        try:
+            start_d = start.date() if start else None
+            end_d = end.date() if end else None
+            df = load_stock_minute_from_clickhouse(symbol, start_d, end_d)
+            click.echo(f"Loaded {symbol} from ClickHouse: {len(df)} rows")
+        except ValueError as e:
+            click.echo(f"Error: {e}", err=True)
+            sys.exit(1)
+    elif tier:
+        _run_tier_backtest(
+            strategy=strategy,
+            asset=asset,
+            tier=tier,
+            start=start,
+            end=end,
+            capital=capital,
+            track=track,
+            experiment=experiment,
+        )
+        return
     else:
-        click.echo("Error: Data file required (use --data option)", err=True)
-        click.echo("Hint: Create sample data or download from data source")
+        click.echo("Error: Data source required. Use --data, --symbol, or --tier", err=True)
+        click.echo("  --data <path>     Load from CSV file")
+        click.echo("  --symbol <code>   Load from ClickHouse (e.g., --symbol 005930)")
+        click.echo("  --tier <tier>     Run across tier stocks (top/mid/bottom/all)")
         sys.exit(1)
 
     # 날짜 필터링
@@ -739,7 +913,7 @@ def stock_backfill_today():
     "-d",
     default=7,
     type=int,
-    help="Number of days to backfill (max 30, default: 7)",
+    help="Number of days to backfill (max 180, default: 7)",
 )
 @click.option(
     "--codes",
@@ -747,13 +921,20 @@ def stock_backfill_today():
     multiple=True,
     help="Specific stock codes to backfill (default: all universe)",
 )
-def stock_backfill_run(days: int, codes: tuple):
+@click.option(
+    "--no-resume",
+    is_flag=True,
+    default=False,
+    help="Force re-collect all days (ignore saved state)",
+)
+def stock_backfill_run(days: int, codes: tuple, no_resume: bool):
     """주식 분봉 데이터 백필 실행
 
     \b
     Example:
         sts stock-backfill run --days 7
         sts stock-backfill run --days 30 -c 005930 -c 000660
+        sts stock-backfill run --days 180 --no-resume
     """
     import asyncio
 
@@ -762,7 +943,7 @@ def stock_backfill_run(days: int, codes: tuple):
     click.echo(f"Starting stock minute backfill for {days} days...")
 
     codes_list = list(codes) if codes else None
-    asyncio.run(backfill_stock_minute(days=days, codes=codes_list))
+    asyncio.run(backfill_stock_minute(days=days, codes=codes_list, resume=not no_resume))
 
     click.echo("Backfill complete!")
 
@@ -844,12 +1025,22 @@ def stock_backfill_status(days: int):
         click.echo(f"Error: {status['error']}", err=True)
         return
 
-    click.echo(f"📊 {status['table']}:")
+    click.echo(f"Table: {status['table']}")
     click.echo(f"   Rows: {status.get('rows', 0):,}")
     click.echo(f"   Days Collected: {status.get('days_collected', 0)}")
     click.echo(f"   Unique Codes: {status.get('unique_codes', 0)}")
     if status.get("min_datetime"):
         click.echo(f"   Range: {status['min_datetime']} ~ {status['max_datetime']}")
+
+    stocks = status.get("stocks", [])
+    if stocks:
+        click.echo(f"\n{'Code':<8} {'Bars':>8} {'Days':>5} {'Earliest':<20} {'Latest':<20}")
+        click.echo("-" * 65)
+        for s in stocks:
+            click.echo(
+                f"{s['code']:<8} {s['bars']:>8,} {s['trading_days']:>5} "
+                f"{s.get('earliest', '-'):<20} {s.get('latest', '-'):<20}"
+            )
 
 
 @stock_backfill.command("universe")
