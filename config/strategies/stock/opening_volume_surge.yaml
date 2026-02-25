@@ -1,34 +1,33 @@
-# Opening Volume Surge Strategy (Stocks)
+# Opening Volume Surge Strategy (Stocks — 중소형주 타겟)
 #
 # Use case:
-#   - First 30 minutes after open: if today's cumulative volume >= yesterday's total volume,
-#     and price action is strong (up + near high), enter quickly.
-#   - Exit:
-#     - Hard stop: -5%
-#     - Profit protection: early trailing stop to preserve gains
+#   - 장 시작 후 60분 내 거래량 급증 + 가격 강세 종목 진입
+#   - 대형주는 30분 내 전일 거래량 100% 달성 불가 (통상 15~30%)
+#   - 중소형주: 유동성 적어 상대적 급증 빈번 → volume_multiplier 0.3 (30%)
 #
 # Requirements:
 #   - Provide `prev_day_volume` in per-symbol metadata (e.g. from after-close watchlist).
 #
+
 strategy:
   name: opening_volume_surge
   asset_class: stock
   enabled: true
-  description: "09:00~09:30 거래량 폭증 종목 단기 진입 + 수익 보전 트레일링"
+  description: "장 초반 거래량 폭증 종목 단기 진입 (중소형주 타겟)"
 
   entry:
     type: opening_volume_surge
     params:
-      only_first_minutes: 30
+      only_first_minutes: 60          # 30 → 60 (관찰 시간 확장)
       market_open_hour: 9
       market_open_minute: 0
-      volume_multiplier: 1.0
-      min_change_pct: 1.0
+      volume_multiplier: 0.3          # 1.0 → 0.3 (60분에 전일의 30%)
+      min_change_pct: 0.5             # 1.0 → 0.5 (중소형주 변동폭 반영)
       require_above_open: true
-      min_range_position: 0.7
+      min_range_position: 0.6         # 0.7 → 0.6 (약간 완화)
       min_day_range_pct: 0.5
-      change_input_unit: "ratio"          # ratio | percent | auto
-      change_auto_threshold_pct: 1.0      # only used if auto
+      change_input_unit: "ratio"
+      change_auto_threshold_pct: 1.0
       stop_loss_pct: 5.0
 
   exit:
