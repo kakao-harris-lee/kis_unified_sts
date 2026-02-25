@@ -1,6 +1,6 @@
 """모멘텀 지표 계산기
 
-TRIX, CCI, MACD, Stochastic Oscillator 등 모멘텀 지표 계산.
+TRIX, CCI, MACD, Stochastic Oscillator, Williams %R 등 모멘텀 지표 계산.
 모든 계산은 numpy/pandas로 직접 구현 (TA-Lib 비의존).
 
 Usage:
@@ -328,6 +328,59 @@ class StochasticCalculator:
 
 
 # =============================================================================
+# Williams %R Calculator
+# =============================================================================
+
+
+@dataclass
+class WilliamsRConfig:
+    """Williams %R configuration.
+
+    Attributes:
+        period: Lookback period for highest high / lowest low (default: 14).
+    """
+
+    period: int = 14
+
+
+class WilliamsRCalculator:
+    """Williams %R 계산기.
+
+    Formula:
+        %R = ((Highest High(n) - Close) / (Highest High(n) - Lowest Low(n))) * -100
+        Range: -100 ~ 0
+        Oversold: < -80, Overbought: > -20
+    """
+
+    def __init__(self, period: int = 14):
+        self.config = WilliamsRConfig(period=period)
+
+    def calculate(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Calculate Williams %R.
+
+        Adds 'williams_r' column.
+
+        Args:
+            df: DataFrame with 'high', 'low', 'close' columns.
+
+        Returns:
+            DataFrame with added williams_r column.
+        """
+        n = self.config.period
+        highest_high = df["high"].rolling(window=n, min_periods=1).max()
+        lowest_low = df["low"].rolling(window=n, min_periods=1).min()
+
+        denominator = highest_high - lowest_low
+        df["williams_r"] = np.where(
+            denominator != 0,
+            ((highest_high - df["close"]) / denominator) * -100,
+            -50.0,  # Neutral when range is zero
+        )
+
+        return df
+
+
+# =============================================================================
 # RSI Calculator (for exit strategy — TRIX peak-out detection)
 # =============================================================================
 
@@ -540,13 +593,14 @@ def calculate_all_momentum(
     sto_slowk: int = 5,
     sto_slowd: int = 5,
     rsi_period: int = 14,
+    williams_r_period: int = 14,
     include_obv: bool = True,
     include_rsi: bool = True,
 ) -> pd.DataFrame:
     """Calculate all momentum indicators in one call.
 
     Adds: trix, trix_signal, cci, macd_line, macd_signal, macd_oscillator,
-          sto_k, sto_d, obv (optional), rsi (optional).
+          sto_k, sto_d, williams_r, obv (optional), rsi (optional).
 
     Args:
         df: DataFrame with 'open', 'high', 'low', 'close', 'volume' columns.
@@ -563,6 +617,7 @@ def calculate_all_momentum(
     df = StochasticCalculator(
         fastk_period=sto_fastk, slowk_period=sto_slowk, slowd_period=sto_slowd
     ).calculate(df)
+    df = WilliamsRCalculator(period=williams_r_period).calculate(df)
 
     if include_obv:
         df = OBVDataFrameCalculator().calculate(df)
