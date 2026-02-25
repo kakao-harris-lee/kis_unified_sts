@@ -51,6 +51,13 @@ from shared.indicators.momentum import (
     DivergenceDetector,
     calculate_all_momentum,
 )
+from shared.indicators.contracts import (
+    IndicatorContract,
+    IndicatorKind,
+    IndicatorRequest,
+    Timeframe,
+)
+from shared.indicators.resolver import StreamingIndicatorResolver
 
 __all__ = [
     # Technical
@@ -78,4 +85,10 @@ __all__ = [
     "OBVDataFrameCalculator",
     "DivergenceDetector",
     "calculate_all_momentum",
+    # Contracts / resolver
+    "IndicatorKind",
+    "Timeframe",
+    "IndicatorRequest",
+    "IndicatorContract",
+    "StreamingIndicatorResolver",
 ]

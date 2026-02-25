@@ -488,8 +488,9 @@ class TradingOrchestrator:
         self._metrics = get_metrics_collector()
         self._order_executor = order_executor
 
-        # Streaming indicator engine (initialized in _initialize_components)
+        # Streaming indicator engine + indicator resolver (initialized in _initialize_components)
         self._indicator_engine: Any | None = None
+        self._indicator_resolver: Any | None = None
 
         # WebSocket stock price feed (initialized in _initialize_components)
         self._stock_price_feed: Any | None = None
@@ -768,8 +769,10 @@ class TradingOrchestrator:
 
     def _init_indicator_engine(self):
         """Initialize Streaming Indicator Engine"""
+        self._indicator_resolver = None
         try:
             from services.trading.indicator_engine import StreamingIndicatorEngine
+            from shared.indicators.resolver import StreamingIndicatorResolver
 
             # Read indicator params from strategy entry configs
             bb_period, bb_std, rsi_period, high_period = 20, 2.0, 14, 5
@@ -801,13 +804,25 @@ class TradingOrchestrator:
                 high_period=high_period,
                 staleness_seconds=staleness_seconds,
             )
+            required_keys = (
+                tuple(self._strategy_manager.required_indicators)
+                if self._strategy_manager
+                else tuple()
+            )
+            self._indicator_resolver = StreamingIndicatorResolver(
+                engine=self._indicator_engine,
+                required_keys=required_keys,
+            )
             logger.info(
                 f"Indicator engine initialized (bb={bb_period}, "
-                f"std={bb_std}, rsi={rsi_period}, high_n={high_period})"
+                f"std={bb_std}, rsi={rsi_period}, high_n={high_period}, "
+                f"required={len(required_keys)}, "
+                f"momentum_tf={list(self._indicator_resolver.timeframes)})"
             )
         except Exception as e:
             logger.warning(f"Indicator engine init failed: {e}")
             self._indicator_engine = None
+            self._indicator_resolver = None
 
         # Hook futures WebSocket ticks into indicator engine and monitoring stream.
         if self._futures_price_feed:
@@ -1880,6 +1895,8 @@ class TradingOrchestrator:
         self._data_provider = None
         self._strategy_manager = None
         self._position_tracker = None
+        self._indicator_engine = None
+        self._indicator_resolver = None
 
 
     async def pause(self):
@@ -2413,26 +2430,24 @@ class TradingOrchestrator:
                     enriched["name"] = meta["name"]
                 enriched.update(meta)
 
-                # Inject streaming indicators (BB, RSI)
+                # Inject streaming indicators (BB/RSI/RL/momentum)
                 indicators: dict[str, Any] = {}
                 if self._indicator_engine:
-                    indicators = self._indicator_engine.get_indicators(symbol)
-                    if "ohlcv" in self._strategy_manager.required_indicators:
-                        # Pre-compute RL features (pure Python, ~0.5ms) to avoid
-                        # per-bar DataFrame allocation in derive_features_from_ohlcv (~20ms)
-                        rl_feats = self._indicator_engine.get_rl_features(symbol)
-                        if rl_feats:
-                            indicators.update(rl_feats)
-                        else:
-                            # Fallback: provide raw OHLCV for derive_features_from_ohlcv
-                            ohlcv = self._indicator_engine.get_recent_candles(symbol, limit=240)
-                            if ohlcv:
-                                indicators["ohlcv"] = ohlcv
-                    # Inject multi-timeframe momentum indicators (e.g., 5-min TRIX/CCI/MACD/Stochastic)
-                    if "momentum_5m" in self._strategy_manager.required_indicators:
-                        momentum = self._indicator_engine.get_momentum_indicators(symbol, timeframe=5)
-                        if momentum:
-                            indicators["momentum_5m"] = momentum
+                    resolver = getattr(self, "_indicator_resolver", None)
+                    if resolver:
+                        indicators = resolver.collect_entry_indicators(symbol)
+                    else:
+                        # Backward-safe fallback (resolve from required keys without hardcoded timeframes).
+                        try:
+                            from shared.indicators.resolver import StreamingIndicatorResolver
+
+                            fallback_resolver = StreamingIndicatorResolver(
+                                engine=self._indicator_engine,
+                                required_keys=tuple(self._strategy_manager.required_indicators),
+                            )
+                            indicators = fallback_resolver.collect_entry_indicators(symbol)
+                        except Exception:
+                            indicators = self._indicator_engine.get_indicators(symbol)
                     if indicators:
                         enriched.update(indicators)
 
@@ -2573,23 +2588,27 @@ class TradingOrchestrator:
             symbols = list({p.code for p in positions})
             data = await self._get_market_data_snapshot(symbols)
 
-            # Enrich exit data with streaming indicators (volume_velocity, vwap, etc.)
+            # Enrich exit data with streaming indicators (volume_velocity, vwap, RL, momentum)
             if self._indicator_engine:
+                resolver = getattr(self, "_indicator_resolver", None)
                 for symbol in symbols:
                     if symbol in data and isinstance(data[symbol], dict):
-                        indicators = self._indicator_engine.get_indicators(symbol)
+                        if resolver:
+                            indicators = resolver.collect_exit_indicators(symbol)
+                        else:
+                            # Backward-safe fallback (resolve from required keys without hardcoded timeframes).
+                            try:
+                                from shared.indicators.resolver import StreamingIndicatorResolver
+
+                                fallback_resolver = StreamingIndicatorResolver(
+                                    engine=self._indicator_engine,
+                                    required_keys=tuple(self._strategy_manager.required_indicators),
+                                )
+                                indicators = fallback_resolver.collect_exit_indicators(symbol)
+                            except Exception:
+                                indicators = self._indicator_engine.get_indicators(symbol)
                         if indicators:
                             data[symbol] = {**data[symbol], **indicators}
-                        # Pre-compute RL features for exit path
-                        rl_feats = self._indicator_engine.get_rl_features(symbol)
-                        if rl_feats:
-                            data[symbol].update(rl_feats)
-                        # Inject momentum indicators for exit strategies that need them
-                        momentum = self._indicator_engine.get_momentum_indicators(
-                            symbol, timeframe=5
-                        )
-                        if momentum:
-                            data[symbol]["momentum_5m"] = momentum
 
             # Check exits
             signals = await self._strategy_manager.check_exits(
