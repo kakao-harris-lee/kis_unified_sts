@@ -1,6 +1,7 @@
 """Test strategy registry integration."""
-import pytest
 from datetime import datetime
+
+import pytest
 
 
 def test_register_builtin_components():
@@ -62,6 +63,7 @@ async def test_entry_strategy_generate_signal():
     # Create mean_reversion entry and generate signal
     entry = EntryRegistry.create("mean_reversion", {"rsi_oversold": 30})
 
+    # Use a fixed in-session timestamp to avoid timezone/time-of-day flakiness in CI.
     context = EntryContext(
         market_data={
             "code": "005930",
@@ -72,7 +74,7 @@ async def test_entry_strategy_generate_signal():
             "bb_middle": 60000,
             "rsi": 25,
         },
-        timestamp=datetime.now(),
+        timestamp=datetime(2026, 2, 24, 10, 0, 0),
     )
 
     signal = await entry.generate(context)
