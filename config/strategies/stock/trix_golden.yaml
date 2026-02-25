@@ -1,8 +1,8 @@
 strategy:
   name: trix_golden
   asset_class: stock
-  enabled: false  # 2026-02-25 비활성화: WR 9%, Sharpe -7.49 — 개선 리서치 필요
-  description: "TRIX 5분봉 황금신호 - 추세추종 + 모멘텀 가속 포착"
+  enabled: true
+  description: "TRIX 5분봉 황금신호 v2 - 모멘텀 가속 포착 + 비상관 필터"
 
   entry:
     type: trix_golden
@@ -11,22 +11,48 @@ strategy:
       trix_n: 12
       trix_signal: 9
 
-      # CCI (Commodity Channel Index)
-      cci_period: 9
-      cci_upper: 200.0
+      # v2: acceleration mode (TRIX 음수→양전환 가속 감지)
+      trix_entry_mode: "acceleration"
+      trix_min_negative_bars: 3
 
-      # MACD (Moving Average Convergence Divergence)
+      # CCI range (양의 모멘텀 + 과열 안 된 구간)
+      cci_period: 9
+      cci_lower: 0.0
+      cci_upper: 300.0
+
+      # MACD (crossover 모드에서만 사용)
       macd_fast: 12
       macd_slow: 26
       macd_signal: 9
 
-      # Stochastic Oscillator (Slow)
+      # Stochastic (crossover 모드에서만 사용)
       sto_fastk: 12
       sto_slowk: 5
       sto_slowd: 5
 
-      # Filters
-      obv_filter: true
+      # v2: 비상관 필터 (MACD/Stoch 대체)
+      use_uncorrelated_filters: true
+      require_above_sma: true
+      sma_period: 20
+      rvol_filter: false
+      rvol_threshold: 1.2
+
+      # 변동성 필터 (고변동 종목 차단)
+      max_atr_pct: 0.008    # ATR% > 0.8% 차단 (극단적 고변동만 제외)
+      atr_period: 14
+
+      # OBV filter (optional)
+      obv_filter: false
+
+      # Market state filter (추세 추종 → BULL/SIDEWAYS_UP만 허용)
+      market_state_filter:
+        enabled: true
+        allowed_states:
+          - BULL
+          - SIDEWAYS_UP
+        blocked_states: []
+
+      # General
       stop_loss_pct: 3.0
       min_candles: 50
       timeframe_minutes: 5
@@ -42,14 +68,26 @@ strategy:
       # Cooldown (5 minutes between signals per symbol)
       signal_cooldown_seconds: 300
 
+      # 시그널 빈도 제한 (TRIX 과진동 종목 자동 차단)
+      max_signals_per_day: 3
+
   exit:
     type: trix_golden_exit
     params:
       # Stop loss
       stop_loss_pct: -0.03  # -3%
 
-      # Partial exit (50% on first signal)
+      # v2: 분할청산 비활성화 (승자를 일찍 자르지 않음)
+      partial_exit_enabled: false
       partial_exit_ratio: 0.5
+
+      # v2: 최소 보유 시간 (stop loss/EOD 제외)
+      min_hold_minutes: 30
+
+      # v2: Trailing stop
+      trailing_stop_enabled: true
+      trailing_activation_pct: 0.01   # +1% 도달 시 trailing 시작
+      trailing_stop_pct: -0.015       # -1.5% trailing (고점 대비)
 
       # Indicator params (should match entry)
       trix_n: 12

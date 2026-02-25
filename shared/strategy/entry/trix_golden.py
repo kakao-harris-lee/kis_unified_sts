@@ -1,17 +1,13 @@
 """TRIX Golden Signal Entry Strategy.
 
-5분봉 기준 TRIX 지표를 핵심으로 CCI, MACD, Stochastic을 결합한
-'황금신호' 포착 진입 전략.
+5분봉 기준 TRIX 지표를 핵심으로 한 추세 추종 진입 전략.
 
-Entry Conditions (ALL must be true simultaneously):
-    1. TRIX Golden Cross: TRIX > TRIX_SIGNAL (was <= previously)
-    2. MACD Oscillator > 0: Positive momentum
-    3. Stochastic Golden Cross: %K > %D (was <= previously)
-    4. CCI < upper threshold: Momentum from non-extreme zone
-    5. OBV Filter: Volume confirmation (OBV rising)
+Two entry modes:
+    - "crossover" (legacy): TRIX > TRIX_SIGNAL crossover + MACD/Stoch/CCI/OBV
+    - "acceleration" (v2): TRIX 음수→양전환 가속 감지 + 비상관 필터(SMA/CCI/RVOL)
 
 Usage:
-    config = TrixGoldenConfig(trix_n=12, trix_signal=9, cci_period=9)
+    config = TrixGoldenConfig(trix_entry_mode="acceleration")
     strategy = TrixGoldenEntry(config)
     signal = await strategy.generate(context)
 """
@@ -19,8 +15,9 @@ Usage:
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, time, timedelta
+from typing import Any
 
 import pandas as pd
 
@@ -33,55 +30,59 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class TrixGoldenConfig(ConfigMixin):
-    """TRIX Golden Signal 진입 전략 설정.
-
-    Attributes:
-        trix_n: TRIX EMA period (default: 12).
-        trix_signal: TRIX signal line period (default: 9).
-        cci_period: CCI calculation period (default: 9).
-        cci_upper: CCI upper threshold — entry only when CCI < this (default: 200).
-        macd_fast: MACD fast EMA period (default: 12).
-        macd_slow: MACD slow EMA period (default: 26).
-        macd_signal: MACD signal line period (default: 9).
-        sto_fastk: Stochastic raw %K period (default: 12).
-        sto_slowk: Stochastic %K smoothing (default: 5).
-        sto_slowd: Stochastic %D smoothing (default: 5).
-        obv_filter: Require OBV to be rising (default: True).
-        stop_loss_pct: Stop loss percentage for signal metadata (default: 3.0).
-        min_candles: Minimum candles for indicator calculation (default: 50).
-        timeframe_minutes: Candle timeframe in minutes (default: 5).
-        market_open_hour: Market open hour (default: 9).
-        market_open_minute: Market open minute (default: 0).
-        market_close_hour: Market close hour (default: 15).
-        market_close_minute: Market close minute (default: 15).
-        skip_market_open_minutes: Skip N minutes after market open (default: 30).
-        skip_market_close_minutes: Skip N minutes before close (default: 15).
-        signal_cooldown_seconds: Min seconds between signals for same symbol (default: 300).
-    """
+    """TRIX Golden Signal 진입 전략 설정."""
 
     # TRIX parameters
     trix_n: int = 12
     trix_signal: int = 9
 
+    # TRIX entry mode: "crossover" (legacy) | "acceleration" (v2)
+    trix_entry_mode: str = "acceleration"
+    # acceleration mode: TRIX가 최근 N바 이내에 음수였다가 양전환 + 상승 중
+    trix_min_negative_bars: int = 3
+
     # CCI parameters
     cci_period: int = 9
-    cci_upper: float = 200.0
+    cci_upper: float = 300.0
+    cci_lower: float = 0.0  # CCI 하한 (양의 모멘텀 확인)
 
-    # MACD parameters
+    # MACD parameters (crossover 모드에서만 사용)
     macd_fast: int = 12
     macd_slow: int = 26
     macd_signal: int = 9
 
-    # Stochastic parameters
+    # Stochastic parameters (crossover 모드에서만 사용)
     sto_fastk: int = 12
     sto_slowk: int = 5
     sto_slowd: int = 5
 
-    # Filters
+    # Filters (crossover 모드)
     obv_filter: bool = True
     stop_loss_pct: float = 3.0
     min_candles: int = 50
     timeframe_minutes: int = 5
+
+    # 비상관 필터 (acceleration 모드)
+    use_uncorrelated_filters: bool = True
+    require_above_sma: bool = True
+    sma_period: int = 20
+    rvol_filter: bool = False
+    rvol_threshold: float = 1.2
+
+    # 변동성 필터 (고변동 종목 차단)
+    max_atr_pct: float = 0.0  # ATR% 상한 (0 = 비활성). 예: 0.008 = ATR이 종가의 0.8% 초과 시 차단
+    atr_period: int = 14
+    max_return_vol: float = 0.0  # 수익률 변동성 상한 (0 = 비활성). 예: 0.008 = 5분봉 수익률 std > 0.8% 차단
+    return_vol_period: int = 60  # rolling window (5분봉 60개 = ~5시간)
+
+    # Market state filter
+    market_state_filter: dict[str, Any] = field(
+        default_factory=lambda: {
+            "enabled": False,
+            "allowed_states": [],
+            "blocked_states": [],
+        }
+    )
 
     # Time filters
     market_open_hour: int = 9
@@ -94,12 +95,17 @@ class TrixGoldenConfig(ConfigMixin):
     # Cooldown
     signal_cooldown_seconds: int = 300
 
+    # 시그널 빈도 제한 (TRIX 과진동 종목 자동 차단)
+    max_signals_per_day: int = 3  # 당일 종목당 최대 시그널 수 (0 = 무제한)
+
 
 class TrixGoldenEntry(EntrySignalGenerator[TrixGoldenConfig]):
     """TRIX 5분봉 황금신호 진입 전략.
 
-    4가지 모멘텀 지표(TRIX, MACD, Stochastic, CCI)의 동시 충족 +
-    OBV 거래량 필터를 통한 추세 추종 진입.
+    v2 (acceleration 모드): TRIX 음수→양전환 가속 감지 + 비상관 필터로
+    모멘텀 소진이 아닌 새 모멘텀 시작 시점 포착.
+
+    v1 (crossover 모드): 기존 TRIX/MACD/Stoch/CCI 4중 동시 충족.
     """
 
     CONFIG_CLASS = TrixGoldenConfig
@@ -107,20 +113,18 @@ class TrixGoldenEntry(EntrySignalGenerator[TrixGoldenConfig]):
     def __init__(self, config: TrixGoldenConfig):
         super().__init__(config)
         self._last_signal_at: dict[str, datetime] = {}
+        self._daily_signal_count: dict[str, int] = {}  # "code:date" → count
+
 
     def _validate_config(self) -> None:
         """설정 유효성 검증."""
         assert self.config.trix_n > 0, "trix_n must be positive"
         assert self.config.trix_signal > 0, "trix_signal must be positive"
+        assert self.config.trix_entry_mode in (
+            "crossover",
+            "acceleration",
+        ), f"Invalid trix_entry_mode: {self.config.trix_entry_mode}"
         assert self.config.cci_period > 0, "cci_period must be positive"
-        assert self.config.macd_fast > 0, "macd_fast must be positive"
-        assert (
-            self.config.macd_slow > self.config.macd_fast
-        ), "macd_slow must be > macd_fast"
-        assert self.config.macd_signal > 0, "macd_signal must be positive"
-        assert self.config.sto_fastk > 0, "sto_fastk must be positive"
-        assert self.config.sto_slowk > 0, "sto_slowk must be positive"
-        assert self.config.sto_slowd > 0, "sto_slowd must be positive"
         assert self.config.min_candles > 0, "min_candles must be positive"
         assert self.config.stop_loss_pct > 0, "stop_loss_pct must be positive"
         assert (
@@ -136,11 +140,7 @@ class TrixGoldenEntry(EntrySignalGenerator[TrixGoldenConfig]):
         return ["momentum_5m"]
 
     async def generate(self, context: EntryContext) -> Signal | None:
-        """Generate TRIX Golden Signal entry.
-
-        Requires 'momentum_5m' in context.indicators, which contains
-        a 'df' key with the full DataFrame of momentum indicators.
-        """
+        """Generate TRIX Golden Signal entry."""
         data = context.market_data or {}
         indicators = context.indicators or {}
 
@@ -162,6 +162,34 @@ class TrixGoldenEntry(EntrySignalGenerator[TrixGoldenConfig]):
                 if elapsed < self.config.signal_cooldown_seconds:
                     return None
 
+        # Daily signal frequency limit (과진동 종목 자동 차단)
+        if self.config.max_signals_per_day > 0:
+            day_key = f"{code}:{now.strftime('%Y-%m-%d')}"
+            if self._daily_signal_count.get(day_key, 0) >= self.config.max_signals_per_day:
+                return None
+
+        # Market state filter
+        market_state = context.metadata.get("market_state")
+        if market_state is None:
+            market_state = indicators.get("market_state")
+        if market_state is None:
+            market_state = data.get("market_state")
+
+        state_name = str(market_state).upper() if market_state is not None else None
+        filter_cfg = self.config.market_state_filter or {}
+        if filter_cfg.get("enabled", False):
+            allowed_states = [s.upper() for s in filter_cfg.get("allowed_states", [])]
+            blocked_states = [s.upper() for s in filter_cfg.get("blocked_states", [])]
+
+            if state_name is None:
+                logger.debug("Market state missing for %s; skipping", code)
+                return None
+
+            if blocked_states and state_name in blocked_states:
+                return None
+            if allowed_states and state_name not in allowed_states:
+                return None
+
         # Get momentum indicators (computed by IndicatorEngine on 5-min candles)
         momentum = indicators.get("momentum_5m") or data.get("momentum_5m")
         if not momentum or not isinstance(momentum, dict):
@@ -178,25 +206,30 @@ class TrixGoldenEntry(EntrySignalGenerator[TrixGoldenConfig]):
             )
             return None
 
-        # Check entry conditions on the latest completed candle
-        if not self._check_all_conditions(df):
+        # Check entry conditions based on mode
+        if not self._check_all_conditions(df, data):
             return None
 
         close = float(data.get("close", 0) or df["close"].iloc[-1])
-
-        # Calculate confidence
         confidence = self._calculate_confidence(df)
 
         logger.info(
-            f"TRIX Golden LONG signal: {code} close={close}, "
-            f"trix={df['trix'].iloc[-1]:.4f}, "
-            f"macd_osc={df['macd_oscillator'].iloc[-1]:.4f}, "
-            f"sto_k={df['sto_k'].iloc[-1]:.1f}, "
-            f"cci={df['cci'].iloc[-1]:.1f}, "
-            f"confidence={confidence:.2f}"
+            "TRIX Golden LONG signal: %s close=%s, mode=%s, "
+            "trix=%.4f, cci=%.1f, confidence=%.2f",
+            code,
+            close,
+            self.config.trix_entry_mode,
+            df["trix"].iloc[-1],
+            df["cci"].iloc[-1],
+            confidence,
         )
 
         self._last_signal_at[code] = now
+
+        # Track daily signal count
+        if self.config.max_signals_per_day > 0:
+            day_key = f"{code}:{now.strftime('%Y-%m-%d')}"
+            self._daily_signal_count[day_key] = self._daily_signal_count.get(day_key, 0) + 1
 
         return Signal(
             code=code,
@@ -209,10 +242,9 @@ class TrixGoldenEntry(EntrySignalGenerator[TrixGoldenConfig]):
             metadata={
                 "signal_direction": "long",
                 "stop_loss_pct": float(self.config.stop_loss_pct),
+                "entry_mode": self.config.trix_entry_mode,
                 "trix": float(df["trix"].iloc[-1]),
                 "trix_signal": float(df["trix_signal"].iloc[-1]),
-                "macd_oscillator": float(df["macd_oscillator"].iloc[-1]),
-                "sto_k": float(df["sto_k"].iloc[-1]),
                 "cci": float(df["cci"].iloc[-1]),
             },
         )
@@ -249,104 +281,179 @@ class TrixGoldenEntry(EntrySignalGenerator[TrixGoldenConfig]):
 
         return True
 
-    def _check_all_conditions(self, df: pd.DataFrame) -> bool:
-        """Check all 4+1 entry conditions on the latest candle.
+    def _check_all_conditions(
+        self, df: pd.DataFrame, market_data: dict[str, Any]
+    ) -> bool:
+        """Check entry conditions based on configured mode."""
+        if self.config.trix_entry_mode == "acceleration":
+            return self._check_acceleration_conditions(df, market_data)
+        return self._check_crossover_conditions(df)
 
-        Conditions (must all be true):
-            1. TRIX Golden Cross (crossover: was <= signal, now >)
-            2. MACD Oscillator > 0
-            3. Stochastic Bullish State (%K > %D — relaxed from crossover)
-            4. CCI < upper threshold
-            5. OBV rising (optional)
+    def _check_acceleration_conditions(
+        self, df: pd.DataFrame, market_data: dict[str, Any]
+    ) -> bool:
+        """Acceleration mode: TRIX 음수→양전환 가속 + 비상관 필터.
+
+        TRIX condition: TRIX > 0 AND rising AND was negative within last N bars.
+        This catches NEW momentum starts, not exhausted crossovers.
         """
+        n_bars = self.config.trix_min_negative_bars
+        if len(df) < max(2, n_bars + 2):
+            return False
+
+        # Required columns
+        if "trix" not in df.columns or "cci" not in df.columns:
+            return False
+
+        trix_current = float(df["trix"].iloc[-1])
+        trix_prev = float(df["trix"].iloc[-2])
+
+        # TRIX > 0 and rising
+        if trix_current <= 0 or trix_current <= trix_prev:
+            return False
+
+        # Was negative within last N+1 bars (excluding current)
+        lookback = df["trix"].iloc[-(n_bars + 1) : -1]
+        if not (lookback < 0).any():
+            return False
+
+        # CCI range filter: lower < CCI < upper
+        cci_val = float(df["cci"].iloc[-1])
+        if cci_val < self.config.cci_lower or cci_val > self.config.cci_upper:
+            return False
+
+        # ATR% volatility filter (고변동 종목 차단)
+        if self.config.max_atr_pct > 0 and len(df) >= self.config.atr_period + 1:
+            atr_pct = self._calc_atr_pct(df, self.config.atr_period)
+            if atr_pct > self.config.max_atr_pct:
+                return False
+
+        # 수익률 변동성 필터 (rolling std of returns)
+        if self.config.max_return_vol > 0 and len(df) >= self.config.return_vol_period + 1:
+            returns = df["close"].pct_change()
+            vol = returns.rolling(self.config.return_vol_period).std().iloc[-1]
+            if not pd.isna(vol) and vol > self.config.max_return_vol:
+                return False
+
+        # Uncorrelated filters
+        if self.config.use_uncorrelated_filters:
+            # Price > SMA (trend confirmation)
+            if self.config.require_above_sma:
+                close = float(df["close"].iloc[-1])
+                sma = df["close"].rolling(self.config.sma_period).mean()
+                if pd.isna(sma.iloc[-1]) or close <= float(sma.iloc[-1]):
+                    return False
+
+            # RVOL filter (volume confirmation)
+            if self.config.rvol_filter:
+                rvol = market_data.get("rvol")
+                if rvol is None and "volume" in df.columns:
+                    vol_ma = (
+                        df["volume"]
+                        .rolling(self.config.sma_period)
+                        .mean()
+                        .iloc[-1]
+                    )
+                    if vol_ma > 0:
+                        rvol = float(df["volume"].iloc[-1]) / float(vol_ma)
+                if rvol is not None and float(rvol) < self.config.rvol_threshold:
+                    return False
+
+        # OBV filter (optional, kept for both modes)
+        if self.config.obv_filter and "obv" in df.columns and len(df) >= 2:
+            if df["obv"].iloc[-1] <= df["obv"].iloc[-2]:
+                return False
+
+        return True
+
+    def _check_crossover_conditions(self, df: pd.DataFrame) -> bool:
+        """Legacy crossover mode: TRIX crossover + MACD/Stoch/CCI/OBV."""
         if len(df) < 2:
             return False
 
-        i = -1  # Latest candle
-        prev = -2  # Previous candle
-
-        # Required columns check
         required = ["trix", "trix_signal", "macd_oscillator", "sto_k", "sto_d", "cci"]
         for col in required:
             if col not in df.columns:
                 logger.debug("Missing indicator column: %s", col)
                 return False
 
-        # Condition 1: TRIX Golden Cross (primary trigger — must be exact crossover)
-        trix_current = df["trix"].iloc[i]
-        trix_signal_current = df["trix_signal"].iloc[i]
-        trix_prev = df["trix"].iloc[prev]
-        trix_signal_prev = df["trix_signal"].iloc[prev]
+        # TRIX Golden Cross
+        trix_current = df["trix"].iloc[-1]
+        trix_signal_current = df["trix_signal"].iloc[-1]
+        trix_prev = df["trix"].iloc[-2]
+        trix_signal_prev = df["trix_signal"].iloc[-2]
 
-        cond_trix_gc = (trix_current > trix_signal_current) and (
-            trix_prev <= trix_signal_prev
-        )
-        if not cond_trix_gc:
+        if not (
+            trix_current > trix_signal_current and trix_prev <= trix_signal_prev
+        ):
             return False
 
-        # Condition 2: MACD Oscillator > 0
-        cond_macd_pos = df["macd_oscillator"].iloc[i] > 0
-        if not cond_macd_pos:
+        # MACD Oscillator > 0
+        if df["macd_oscillator"].iloc[-1] <= 0:
             return False
 
-        # Condition 3: Stochastic Bullish State (%K > %D)
-        sto_k_current = df["sto_k"].iloc[i]
-        sto_d_current = df["sto_d"].iloc[i]
-
-        cond_sto_bullish = sto_k_current > sto_d_current
-        if not cond_sto_bullish:
+        # Stochastic %K > %D
+        if df["sto_k"].iloc[-1] <= df["sto_d"].iloc[-1]:
             return False
 
-        # Condition 4: CCI < upper threshold
-        cond_cci = df["cci"].iloc[i] < self.config.cci_upper
-        if not cond_cci:
+        # CCI range
+        cci_val = float(df["cci"].iloc[-1])
+        if cci_val < self.config.cci_lower or cci_val > self.config.cci_upper:
             return False
 
-        # Condition 5: OBV rising (optional)
-        if self.config.obv_filter and "obv" in df.columns and len(df) >= 2:
-            cond_obv = df["obv"].iloc[i] > df["obv"].iloc[prev]
-            if not cond_obv:
+        # OBV rising (optional)
+        if self.config.obv_filter and "obv" in df.columns:
+            if df["obv"].iloc[-1] <= df["obv"].iloc[-2]:
                 return False
 
         return True
 
     def _calculate_confidence(self, df: pd.DataFrame) -> float:
-        """Calculate signal confidence based on indicator strength.
-
-        Components:
-            - TRIX-Signal spread: How far above signal (wider = stronger)
-            - MACD Oscillator magnitude: Larger positive = more momentum
-            - Stochastic %K position: Mid-range (30-70) is ideal zone
-            - CCI distance from extreme: Further from 200 = healthier
-        """
+        """Calculate signal confidence based on indicator strength."""
         i = -1
         scores: list[float] = []
 
         # TRIX strength: spread normalized
         trix_spread = df["trix"].iloc[i] - df["trix_signal"].iloc[i]
-        trix_score = min(
-            1.0, max(0.0, abs(trix_spread) * 20)
-        )  # Scale ~0.05 spread to 1.0
+        trix_score = min(1.0, max(0.0, abs(trix_spread) * 20))
         scores.append(trix_score)
 
-        # MACD momentum
-        macd_osc = df["macd_oscillator"].iloc[i]
-        macd_score = min(1.0, max(0.0, macd_osc * 5))  # Scale ~0.2 to 1.0
-        scores.append(macd_score)
+        # TRIX acceleration (positive delta)
+        if len(df) >= 2:
+            trix_delta = float(df["trix"].iloc[i]) - float(df["trix"].iloc[i - 1])
+            accel_score = min(1.0, max(0.0, trix_delta * 30))
+            scores.append(accel_score)
 
-        # Stochastic position (best in 30-70 zone)
-        sto_k = df["sto_k"].iloc[i]
-        if 30 <= sto_k <= 70:
-            sto_score = 0.8
-        elif 20 <= sto_k <= 80:
-            sto_score = 0.6
-        else:
-            sto_score = 0.4
-        scores.append(sto_score)
-
-        # CCI health (lower absolute value = more room to run)
+        # CCI health (moderate CCI = more room to run)
         cci = abs(df["cci"].iloc[i])
         cci_score = max(0.2, min(1.0, 1.0 - cci / 300))
         scores.append(cci_score)
 
-        return sum(scores) / len(scores)
+        # Price vs SMA (if available)
+        if "close" in df.columns and len(df) >= self.config.sma_period:
+            close = float(df["close"].iloc[i])
+            sma = float(
+                df["close"].rolling(self.config.sma_period).mean().iloc[i]
+            )
+            if sma > 0:
+                sma_dist = (close - sma) / sma
+                sma_score = min(1.0, max(0.0, 0.5 + sma_dist * 10))
+                scores.append(sma_score)
+
+        return sum(scores) / len(scores) if scores else 0.5
+
+    @staticmethod
+    def _calc_atr_pct(df: pd.DataFrame, period: int) -> float:
+        """Calculate ATR as percentage of current close (ATR%)."""
+        high = df["high"]
+        low = df["low"]
+        prev_close = df["close"].shift(1)
+        tr = pd.concat(
+            [high - low, (high - prev_close).abs(), (low - prev_close).abs()],
+            axis=1,
+        ).max(axis=1)
+        atr = tr.rolling(period).mean().iloc[-1]
+        close = float(df["close"].iloc[-1])
+        if close <= 0 or pd.isna(atr):
+            return 0.0
+        return float(atr) / close

@@ -139,8 +139,15 @@ class TestTrixGoldenConfig:
         config = TrixGoldenConfig()
         assert config.trix_n == 12
         assert config.trix_signal == 9
-        assert config.cci_upper == 200.0
+        assert config.cci_upper == 300.0
+        assert config.cci_lower == 0.0
         assert config.stop_loss_pct == 3.0
+        assert config.trix_entry_mode == "acceleration"
+        assert config.use_uncorrelated_filters is True
+
+    def test_legacy_defaults(self):
+        config = TrixGoldenConfig(trix_entry_mode="crossover", cci_upper=200.0)
+        assert config.cci_upper == 200.0
 
 
 class TestTrixGoldenEntryInit:
@@ -149,20 +156,33 @@ class TestTrixGoldenEntryInit:
         assert entry.name == "trix_golden"
         assert "momentum_5m" in entry.required_indicators
 
-    def test_validate_config_bad_macd(self):
-        """macd_slow must be > macd_fast."""
+    def test_validate_config_bad_mode(self):
+        """Invalid entry mode raises assertion."""
         with pytest.raises(AssertionError):
-            TrixGoldenEntry(TrixGoldenConfig(macd_fast=26, macd_slow=12))
+            TrixGoldenEntry(TrixGoldenConfig(trix_entry_mode="invalid"))
+
+
+def _crossover_config(**kwargs) -> TrixGoldenConfig:
+    """Create a config in legacy crossover mode for backward-compat tests."""
+    defaults = dict(
+        trix_entry_mode="crossover",
+        use_uncorrelated_filters=False,
+        cci_upper=200.0,
+        cci_lower=-999.0,
+        min_candles=10,
+    )
+    defaults.update(kwargs)
+    return TrixGoldenConfig(**defaults)
 
 
 class TestTrixGoldenEntryGenerate:
     @pytest.mark.asyncio
     async def test_golden_signal_fires(self):
-        """All 5 conditions met → signal generated."""
+        """All 5 conditions met (crossover mode) → signal generated."""
         df = _build_golden_df(80)
         df = _force_golden_cross(df)
 
-        entry = TrixGoldenEntry(TrixGoldenConfig(min_candles=10))
+        entry = TrixGoldenEntry(_crossover_config())
         ctx = _build_context_with_momentum(df)
         signal = await entry.generate(ctx)
 
@@ -175,85 +195,150 @@ class TestTrixGoldenEntryGenerate:
 
     @pytest.mark.asyncio
     async def test_no_signal_when_trix_no_cross(self):
-        """TRIX not crossing signal → no signal."""
+        """TRIX not crossing signal → no signal (crossover mode)."""
         df = _build_golden_df(80)
         df = _force_golden_cross(df)
-        # Break TRIX golden cross: make prev bar also above signal
         n = len(df)
         df.loc[n - 2, "trix"] = 0.05
-        df.loc[n - 2, "trix_signal"] = 0.02  # prev: already above
+        df.loc[n - 2, "trix_signal"] = 0.02
 
-        entry = TrixGoldenEntry(TrixGoldenConfig(min_candles=10))
+        entry = TrixGoldenEntry(_crossover_config())
         ctx = _build_context_with_momentum(df)
         signal = await entry.generate(ctx)
         assert signal is None
 
     @pytest.mark.asyncio
     async def test_no_signal_when_macd_negative(self):
-        """MACD oscillator negative → no signal."""
+        """MACD oscillator negative → no signal (crossover mode)."""
         df = _build_golden_df(80)
         df = _force_golden_cross(df)
         df.loc[len(df) - 1, "macd_oscillator"] = -0.1
 
-        entry = TrixGoldenEntry(TrixGoldenConfig(min_candles=10))
+        entry = TrixGoldenEntry(_crossover_config())
         ctx = _build_context_with_momentum(df)
         signal = await entry.generate(ctx)
         assert signal is None
 
     @pytest.mark.asyncio
     async def test_no_signal_when_stochastic_bearish(self):
-        """Stochastic bearish state (%K < %D) → no signal."""
+        """Stochastic bearish state (%K < %D) → no signal (crossover mode)."""
         df = _build_golden_df(80)
         df = _force_golden_cross(df)
-        # Break Stochastic bullish state: make %K < %D
         n = len(df)
         df.loc[n - 1, "sto_k"] = 40.0
-        df.loc[n - 1, "sto_d"] = 60.0  # current: K < D → bearish
+        df.loc[n - 1, "sto_d"] = 60.0
 
-        entry = TrixGoldenEntry(TrixGoldenConfig(min_candles=10))
+        entry = TrixGoldenEntry(_crossover_config())
         ctx = _build_context_with_momentum(df)
         signal = await entry.generate(ctx)
         assert signal is None
 
     @pytest.mark.asyncio
     async def test_no_signal_when_cci_high(self):
-        """CCI >= upper threshold → no signal."""
+        """CCI >= upper threshold → no signal (crossover mode)."""
         df = _build_golden_df(80)
         df = _force_golden_cross(df)
         df.loc[len(df) - 1, "cci"] = 250.0
 
-        entry = TrixGoldenEntry(TrixGoldenConfig(min_candles=10))
+        entry = TrixGoldenEntry(_crossover_config())
         ctx = _build_context_with_momentum(df)
         signal = await entry.generate(ctx)
         assert signal is None
 
     @pytest.mark.asyncio
     async def test_no_signal_when_obv_falling(self):
-        """OBV not rising with obv_filter=True → no signal."""
-        df = _build_golden_df(80)
-        df = _force_golden_cross(df)
-        n = len(df)
-        df.loc[n - 1, "obv"] = 90000  # < prev bar
-        df.loc[n - 2, "obv"] = 100000
-
-        entry = TrixGoldenEntry(TrixGoldenConfig(min_candles=10, obv_filter=True))
-        ctx = _build_context_with_momentum(df)
-        signal = await entry.generate(ctx)
-        assert signal is None
-
-    @pytest.mark.asyncio
-    async def test_signal_fires_without_obv_filter(self):
-        """OBV falling but obv_filter=False → signal still fires."""
+        """OBV not rising with obv_filter=True → no signal (crossover mode)."""
         df = _build_golden_df(80)
         df = _force_golden_cross(df)
         n = len(df)
         df.loc[n - 1, "obv"] = 90000
         df.loc[n - 2, "obv"] = 100000
 
-        entry = TrixGoldenEntry(TrixGoldenConfig(min_candles=10, obv_filter=False))
+        entry = TrixGoldenEntry(_crossover_config(obv_filter=True))
+        ctx = _build_context_with_momentum(df)
+        signal = await entry.generate(ctx)
+        assert signal is None
+
+    @pytest.mark.asyncio
+    async def test_signal_fires_without_obv_filter(self):
+        """OBV falling but obv_filter=False → signal still fires (crossover mode)."""
+        df = _build_golden_df(80)
+        df = _force_golden_cross(df)
+        n = len(df)
+        df.loc[n - 1, "obv"] = 90000
+        df.loc[n - 2, "obv"] = 100000
+
+        entry = TrixGoldenEntry(_crossover_config(obv_filter=False))
         ctx = _build_context_with_momentum(df)
         signal = await entry.generate(ctx)
         assert signal is not None
+
+
+class TestTrixGoldenAccelerationMode:
+    """Tests for the v2 acceleration entry mode."""
+
+    def _build_acceleration_df(self, n: int = 80) -> pd.DataFrame:
+        """Build a DataFrame that satisfies acceleration conditions."""
+        closes = [100.0] * n
+        # Gentle uptrend at the end
+        for i in range(n - 10, n):
+            closes[i] = 100.0 + (i - (n - 10)) * 0.5
+
+        df = _make_ohlcv(closes)
+        df = calculate_all_momentum(df)
+
+        # Force acceleration conditions:
+        # - TRIX > 0 and rising at last bar
+        # - TRIX was negative within last N bars
+        # - CCI in range [0, 300]
+        # - close > SMA20
+        nn = len(df)
+        for j in range(nn - 5, nn - 1):
+            df.loc[j, "trix"] = -0.01  # negative in recent bars
+        df.loc[nn - 2, "trix"] = 0.001  # prev: barely positive
+        df.loc[nn - 1, "trix"] = 0.01  # current: positive and rising
+        df.loc[nn - 1, "trix_signal"] = 0.005
+        df.loc[nn - 1, "cci"] = 50.0  # within [0, 300]
+        return df
+
+    @pytest.mark.asyncio
+    async def test_acceleration_signal_fires(self):
+        """Acceleration conditions met → signal generated."""
+        df = self._build_acceleration_df(80)
+        config = TrixGoldenConfig(
+            min_candles=10,
+            obv_filter=False,
+            require_above_sma=False,  # Skip SMA check for simplicity
+        )
+        entry = TrixGoldenEntry(config)
+        ctx = _build_context_with_momentum(df)
+        signal = await entry.generate(ctx)
+        assert signal is not None
+        assert signal.metadata["entry_mode"] == "acceleration"
+
+    @pytest.mark.asyncio
+    async def test_no_signal_when_trix_not_rising(self):
+        """TRIX not rising → no signal in acceleration mode."""
+        df = self._build_acceleration_df(80)
+        n = len(df)
+        df.loc[n - 1, "trix"] = 0.005  # Less than prev (0.001→0.005 is rising,
+        df.loc[n - 2, "trix"] = 0.01   # but here prev=0.01 > cur=0.005 → not rising)
+        config = TrixGoldenConfig(min_candles=10, obv_filter=False, require_above_sma=False)
+        entry = TrixGoldenEntry(config)
+        ctx = _build_context_with_momentum(df)
+        signal = await entry.generate(ctx)
+        assert signal is None
+
+    @pytest.mark.asyncio
+    async def test_no_signal_when_cci_below_lower(self):
+        """CCI below cci_lower → no signal."""
+        df = self._build_acceleration_df(80)
+        df.loc[len(df) - 1, "cci"] = -50.0  # Below cci_lower=0
+        config = TrixGoldenConfig(min_candles=10, obv_filter=False, require_above_sma=False)
+        entry = TrixGoldenEntry(config)
+        ctx = _build_context_with_momentum(df)
+        signal = await entry.generate(ctx)
+        assert signal is None
 
 
 class TestTrixGoldenEntryTimeFilter:
@@ -263,9 +348,8 @@ class TestTrixGoldenEntryTimeFilter:
         df = _build_golden_df(80)
         df = _force_golden_cross(df)
         entry = TrixGoldenEntry(
-            TrixGoldenConfig(min_candles=10, skip_market_open_minutes=30)
+            _crossover_config(skip_market_open_minutes=30)
         )
-        # 09:15 — within 30 min of 09:00 open
         ts = datetime(2026, 3, 15, 9, 15, 0)
         ctx = _build_context_with_momentum(df, timestamp=ts)
         assert await entry.generate(ctx) is None
@@ -276,9 +360,8 @@ class TestTrixGoldenEntryTimeFilter:
         df = _build_golden_df(80)
         df = _force_golden_cross(df)
         entry = TrixGoldenEntry(
-            TrixGoldenConfig(min_candles=10, skip_market_close_minutes=15)
+            _crossover_config(skip_market_close_minutes=15)
         )
-        # 15:05 — within 15 min before 15:15 close
         ts = datetime(2026, 3, 15, 15, 5, 0)
         ctx = _build_context_with_momentum(df, timestamp=ts)
         assert await entry.generate(ctx) is None
@@ -291,7 +374,7 @@ class TestTrixGoldenEntryCooldown:
         df = _build_golden_df(80)
         df = _force_golden_cross(df)
         entry = TrixGoldenEntry(
-            TrixGoldenConfig(min_candles=10, signal_cooldown_seconds=300)
+            _crossover_config(signal_cooldown_seconds=300)
         )
 
         ts1 = datetime(2026, 3, 15, 10, 30, 0)
@@ -311,7 +394,7 @@ class TestTrixGoldenEntryCooldown:
         df = _build_golden_df(80)
         df = _force_golden_cross(df)
         entry = TrixGoldenEntry(
-            TrixGoldenConfig(min_candles=10, signal_cooldown_seconds=60)
+            _crossover_config(signal_cooldown_seconds=60)
         )
 
         ts1 = datetime(2026, 3, 15, 10, 30, 0)
