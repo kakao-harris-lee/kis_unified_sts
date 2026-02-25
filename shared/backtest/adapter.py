@@ -23,6 +23,8 @@ import pandas as pd
 
 from services.trading.indicator_engine import StreamingIndicatorEngine
 from shared.backtest.engine import ExitReason, SignalType
+from shared.indicators.contracts import IndicatorContract
+from shared.indicators.resolver import StreamingIndicatorResolver
 from shared.models.position import Position as ModelPosition, PositionSide
 from shared.strategy.base import EntryContext, ExitContext, TradingStrategy
 
@@ -270,17 +272,27 @@ class BacktestStrategyAdapter:
         rsi_period = entry_params.get("rsi_period", 14)
         breakout_period = entry_params.get("breakout_period", 5)
 
-        # Detect multi-timeframe requirements from strategy
-        self._required_indicators = set(strategy.required_indicators)
-        mtf_timeframes: list[int] = []
-        if "momentum_5m" in self._required_indicators:
-            mtf_timeframes.append(5)
+        # Detect multi-timeframe requirements from strategy using normalized contract.
+        self._indicator_contract = IndicatorContract.from_required_keys(
+            strategy.required_indicators
+        )
+        mtf_timeframes = sorted(
+            {
+                req.timeframe.minutes
+                for req in self._indicator_contract.momentum_requests
+                if req.timeframe is not None
+            }
+        )
 
         self._indicator_engine = StreamingIndicatorEngine(
             bb_period=bb_period,
             bb_std=bb_std,
             rsi_period=rsi_period,
             mtf_timeframes=mtf_timeframes,
+        )
+        self._indicator_resolver = StreamingIndicatorResolver(
+            engine=self._indicator_engine,
+            required_keys=self._indicator_contract.required_keys,
         )
         self._loop = asyncio.new_event_loop()
 
@@ -361,27 +373,17 @@ class BacktestStrategyAdapter:
         if isinstance(timestamp, str):
             timestamp = datetime.fromisoformat(timestamp)
 
-        # Use cached indicators (seeded during on_bar)
-        indicators = self._indicator_engine.get_indicators(code)
-
-        # Inject momentum_5m if required (mirrors on_bar injection)
-        if "momentum_5m" in self._required_indicators:
-            momentum = self._indicator_engine.get_momentum_indicators(
-                code, timeframe=5
-            )
-            if momentum:
-                indicators["momentum_5m"] = momentum
-                bar["momentum_5m"] = momentum
+        # Use resolver so exit path follows the same indicator contract as live.
+        indicators = self._indicator_resolver.collect_exit_indicators(code)
+        for key, value in indicators.items():
+            if key.startswith("momentum_"):
+                bar[key] = value
 
         # Inject pre-computed RL features (one-bar lag: exit sees same bar as on_bar)
         if self._precomputed_rl_features is not None:
             idx = max(0, self._bar_index - 1)
             if idx < len(self._precomputed_rl_features):
                 indicators.update(self._precomputed_rl_features[idx])
-        elif "ohlcv" in self._required_indicators:
-            ohlcv = self._indicator_engine.get_recent_candles(code, limit=240)
-            if ohlcv:
-                indicators["ohlcv"] = ohlcv
 
         # Build Position model from engine's position dict
         pos = self._current_position
@@ -448,25 +450,13 @@ class BacktestStrategyAdapter:
         if not self._indicator_engine.is_warm(code):
             return SignalType.HOLD
 
-        indicators = self._indicator_engine.get_indicators(code)
+        indicators = self._indicator_resolver.collect_entry_indicators(code)
 
-        # Inject momentum_5m if required by strategy
-        if "momentum_5m" in self._required_indicators:
-            momentum = self._indicator_engine.get_momentum_indicators(
-                code, timeframe=5
-            )
-            if momentum:
-                indicators["momentum_5m"] = momentum
-
-        # Inject pre-computed RL features or fallback to per-bar OHLCV derivation
+        # Inject pre-computed RL features (preferred for backtest throughput).
         if self._precomputed_rl_features is not None:
             if self._bar_index < len(self._precomputed_rl_features):
                 indicators.update(self._precomputed_rl_features[self._bar_index])
             self._bar_index += 1
-        elif "ohlcv" in self._required_indicators:
-            ohlcv = self._indicator_engine.get_recent_candles(code, limit=240)
-            if ohlcv:
-                indicators["ohlcv"] = ohlcv
 
         # Derive market_state from MFI using MarketClassifier (matches live orchestrator)
         mfi = indicators.get("mfi")

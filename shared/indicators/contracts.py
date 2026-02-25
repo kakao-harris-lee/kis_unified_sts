@@ -1,0 +1,128 @@
+"""Indicator request contracts for multi-timeframe composition.
+
+This module provides a small typed layer that normalizes legacy indicator
+strings (e.g. ``momentum_5m``) into explicit request objects.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from enum import Enum
+
+
+class IndicatorKind(str, Enum):
+    """High-level indicator families."""
+
+    BASE = "base"
+    MOMENTUM = "momentum"
+    OHLCV = "ohlcv"
+
+
+@dataclass(frozen=True)
+class Timeframe:
+    """Normalized timeframe representation.
+
+    Values are stored in minutes for simple ordering and conversion.
+    """
+
+    minutes: int
+
+    @classmethod
+    def from_token(cls, token: str) -> Timeframe:
+        text = token.strip().lower()
+        if not text:
+            raise ValueError("timeframe token is empty")
+        if text.endswith("m"):
+            return cls(minutes=int(text[:-1]))
+        if text.endswith("h"):
+            return cls(minutes=int(text[:-1]) * 60)
+        if text.endswith("d"):
+            return cls(minutes=int(text[:-1]) * 1440)
+        raise ValueError(f"unsupported timeframe token: {token!r}")
+
+    def to_token(self) -> str:
+        if self.minutes % 1440 == 0:
+            return f"{self.minutes // 1440}d"
+        if self.minutes % 60 == 0:
+            return f"{self.minutes // 60}h"
+        return f"{self.minutes}m"
+
+
+@dataclass(frozen=True)
+class IndicatorRequest:
+    """A concrete indicator request."""
+
+    kind: IndicatorKind
+    name: str
+    timeframe: Timeframe | None = None
+    source_key: str = ""
+
+    @property
+    def key(self) -> str:
+        if self.timeframe is None:
+            return self.name
+        return f"{self.name}_{self.timeframe.to_token()}"
+
+
+@dataclass(frozen=True)
+class IndicatorContract:
+    """Normalized view of required indicators."""
+
+    required_keys: tuple[str, ...]
+    requests: tuple[IndicatorRequest, ...]
+
+    @property
+    def needs_ohlcv(self) -> bool:
+        return any(req.kind == IndicatorKind.OHLCV for req in self.requests)
+
+    @property
+    def momentum_requests(self) -> tuple[IndicatorRequest, ...]:
+        return tuple(req for req in self.requests if req.kind == IndicatorKind.MOMENTUM)
+
+    @classmethod
+    def from_required_keys(cls, keys: list[str] | tuple[str, ...]) -> IndicatorContract:
+        requests: list[IndicatorRequest] = []
+        for raw in keys:
+            key = str(raw or "").strip()
+            if not key:
+                continue
+            if key == "ohlcv":
+                requests.append(
+                    IndicatorRequest(
+                        kind=IndicatorKind.OHLCV,
+                        name="ohlcv",
+                        source_key=key,
+                    )
+                )
+                continue
+            if key.startswith("momentum_"):
+                token = key[len("momentum_") :]
+                try:
+                    tf = Timeframe.from_token(token)
+                except ValueError:
+                    # Keep malformed keys as base indicators for backward safety.
+                    requests.append(
+                        IndicatorRequest(
+                            kind=IndicatorKind.BASE,
+                            name=key,
+                            source_key=key,
+                        )
+                    )
+                    continue
+                requests.append(
+                    IndicatorRequest(
+                        kind=IndicatorKind.MOMENTUM,
+                        name="momentum",
+                        timeframe=tf,
+                        source_key=key,
+                    )
+                )
+                continue
+            requests.append(
+                IndicatorRequest(
+                    kind=IndicatorKind.BASE,
+                    name=key,
+                    source_key=key,
+                )
+            )
+        return cls(required_keys=tuple(keys), requests=tuple(requests))
