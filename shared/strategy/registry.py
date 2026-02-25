@@ -377,6 +377,13 @@ def register_builtin_components() -> None:
         logger.debug("TrixGoldenEntry not available")
 
     try:
+        from shared.strategy.entry.williams_r import WilliamsREntry
+
+        EntryRegistry.register_class("williams_r", WilliamsREntry)
+    except ImportError:
+        logger.debug("WilliamsREntry not available")
+
+    try:
         from shared.strategy.entry.rl_mppo import RLMPPOEntry
 
         EntryRegistry.register_class("rl_mppo", RLMPPOEntry)
@@ -411,6 +418,13 @@ def register_builtin_components() -> None:
         ExitRegistry.register_class("trix_golden_exit", TrixGoldenExit)
     except ImportError:
         logger.debug("TrixGoldenExit not available")
+
+    try:
+        from shared.strategy.exit.williams_r_exit import WilliamsRExit
+
+        ExitRegistry.register_class("williams_r_exit", WilliamsRExit)
+    except ImportError:
+        logger.debug("WilliamsRExit not available")
 
     try:
         from shared.strategy.exit.mean_reversion_exit import MeanReversionExit

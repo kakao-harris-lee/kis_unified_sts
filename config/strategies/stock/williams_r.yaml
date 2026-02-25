@@ -1,0 +1,98 @@
+# Williams %R Strategy (Oversold Reversal)
+#
+# Williams %R 과매도 반전 감지 기반 모멘텀 전략
+#
+# 핵심 아이디어:
+#   Williams %R이 -80 이하(과매도)에서 반전 상승할 때 매수
+#   추세 필터(close > 20-SMA)와 거래량 확인으로 false signal 감소
+#   과매수 구간(-20 이상) 도달 시 청산
+#
+# 기존 bb_reversion과의 차이:
+#   - bb_reversion: 볼린저 밴드 + RSI 기반 평균회귀
+#   - williams_r: 모멘텀 반전 감지 특화 (과매도→반전 크로스)
+
+strategy:
+  name: williams_r
+  asset_class: stock
+  enabled: true
+  description: "Williams %R 과매도 반전 모멘텀 전략"
+
+  # ===========================================================================
+  # 진입 조건 (Entry)
+  # ===========================================================================
+  entry:
+    type: williams_r
+    params:
+      # Williams %R 설정
+      williams_r_period: 14
+      oversold_threshold: -80.0
+      reversal_threshold: -80.0
+
+      # 추세 필터: close > BB middle (20-SMA)
+      trend_filter: true
+
+      # 거래량 확인
+      volume_confirm: true
+      volume_threshold: 1.0
+
+      # 숏 진입 비활성화 (현물)
+      allow_short: false
+
+      # 손절 기준
+      stop_loss_pct: 3.0
+
+      # 시간 필터
+      skip_market_open_minutes: 30
+      skip_market_close_minutes: 15
+      market_open_hour: 9
+      market_open_minute: 0
+      market_close_hour: 15
+      market_close_minute: 15
+
+      # 동일 종목 재진입 방지 (5분)
+      signal_cooldown_seconds: 300
+
+      # Confidence 계산 파라미터
+      confidence_reversal_scale: 50.0
+      confidence_trend_scale: 10.0
+
+  # ===========================================================================
+  # 청산 조건 (Exit)
+  # ===========================================================================
+  exit:
+    type: williams_r_exit
+    params:
+      # Williams %R 과매수 청산
+      overbought_threshold: -20.0
+
+      # Hard stop (-3%)
+      max_stop_loss_pct: -0.03
+
+      # 시간 손절 (2시간 내 미수익 시)
+      time_cut_minutes: 120
+
+      # EOD 청산
+      eod_close_hour: 15
+      eod_close_minute: 15
+
+      # 기본 confidence
+      default_exit_confidence: 0.8
+
+  # ===========================================================================
+  # 포지션 사이징 (Position Sizing)
+  # ===========================================================================
+  position:
+    type: fixed
+    params:
+      order_amount_per_stock: 1000000  # 100만원
+      max_positions: 5
+
+  # ===========================================================================
+  # 지표 설정 (Indicators)
+  # ===========================================================================
+  indicators:
+    bollinger_bands:
+      period: 20
+      std_dev: 2.0
+    momentum:
+      williams_r_period: 14

@@ -785,6 +785,7 @@ class StreamingIndicatorEngine:
         sto_slowk: int = 5,
         sto_slowd: int = 5,
         rsi_period: int = 14,
+        williams_r_period: int = 14,
         min_candles: int = 50,
     ) -> dict[str, Any]:
         """Compute momentum indicators from multi-timeframe candles.
@@ -831,6 +832,7 @@ class StreamingIndicatorEngine:
                 sto_slowk=sto_slowk,
                 sto_slowd=sto_slowd,
                 rsi_period=rsi_period,
+                williams_r_period=williams_r_period,
             )
         except Exception as e:
             logger.error(f"Momentum indicator calculation failed for {symbol}: {e}")
@@ -849,6 +851,7 @@ class StreamingIndicatorEngine:
             "sto_d": float(last.get("sto_d", 50)),
             "obv": float(last.get("obv", 0)),
             "rsi": float(last.get("rsi", 50)),
+            "williams_r": float(last.get("williams_r", -50)),
             "timeframe": timeframe,
             "candle_count": len(df),
             "df": df,  # Full DataFrame for divergence detection etc.
