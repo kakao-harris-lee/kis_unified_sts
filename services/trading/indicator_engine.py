@@ -243,6 +243,13 @@ class StreamingIndicatorEngine:
         self._vwap_calc = VWAPCalculator()
         self._vol_accel_calc = VolumeAccelerationCalculator()
 
+        # Daily high tracking for multi-day breakout detection (high_N).
+        # Stores per-symbol deque of previous session highs (not including today).
+        # On day change, current day's high is pushed to the deque.
+        self._daily_highs: dict[str, deque] = {}  # symbol -> deque of daily highs
+        self._intraday_high: dict[str, float] = {}  # symbol -> current session high
+        self._current_date: dict[str, str] = {}  # symbol -> current date string
+
         # Cumulative volume → delta conversion
         # WebSocket feeds (H0STCNT0, H0IFCNT0) send cumulative daily volume.
         # We track the last cumulative value per symbol to compute per-tick deltas.
@@ -306,6 +313,9 @@ class StreamingIndicatorEngine:
             self._vwap_calc.add_tick(symbol, candle.close, int(candle.volume), date_str)
             self._vol_accel_calc.add_tick(symbol, int(candle.volume), ts.timestamp())
 
+            # Track daily highs for multi-day breakout (high_N)
+            self._update_daily_high(symbol, candle.high, date_str)
+
             # Feed multi-timeframe accumulators
             if self._mtf_timeframes:
                 self._feed_mtf_candle(symbol, candle)
@@ -365,6 +375,16 @@ class StreamingIndicatorEngine:
                 )
                 acc.candles.append(candle)
                 seeded += 1
+
+                # Track daily highs for multi-day breakout detection
+                dt = c.get("datetime")
+                if dt is not None:
+                    if isinstance(dt, str):
+                        dt = datetime.fromisoformat(dt)
+                    if hasattr(dt, "strftime"):
+                        self._update_daily_high(
+                            symbol, candle.high, dt.strftime("%Y%m%d")
+                        )
 
                 # Feed multi-timeframe accumulators if configured
                 if self._mtf_timeframes:
@@ -551,8 +571,8 @@ class StreamingIndicatorEngine:
         # RVOL (from candle volumes, inline — avoids numpy dependency)
         result["rvol"] = self._calc_rvol(candles)
 
-        # High over N periods
-        result[f"high_{self._high_period}"] = self._calc_high_n(candles)
+        # High over N previous trading days (for breakout detection)
+        result[f"high_{self._high_period}"] = self._calc_high_n(symbol, candles)
 
         return result
 
@@ -937,8 +957,39 @@ class StreamingIndicatorEngine:
 
         return short_avg / long_avg
 
-    def _calc_high_n(self, candles: list[Candle]) -> float:
-        """Highest high over the last N candles."""
+    def _update_daily_high(self, symbol: str, high: float, date_str: str) -> None:
+        """Track intraday high and roll over on day change."""
+        prev_date = self._current_date.get(symbol)
+
+        if prev_date and prev_date != date_str:
+            # Day changed — push previous day's high to daily_highs deque
+            prev_high = self._intraday_high.get(symbol, 0.0)
+            if prev_high > 0:
+                if symbol not in self._daily_highs:
+                    self._daily_highs[symbol] = deque(maxlen=30)
+                self._daily_highs[symbol].append(prev_high)
+            # Reset intraday high for the new day
+            self._intraday_high[symbol] = high
+        else:
+            # Same day — update intraday high
+            self._intraday_high[symbol] = max(
+                self._intraday_high.get(symbol, 0.0), high
+            )
+
+        self._current_date[symbol] = date_str
+
+    def _calc_high_n(self, symbol: str, candles: list[Candle]) -> float:
+        """Highest high over the last N trading days (excluding today).
+
+        Uses daily session highs tracked by _update_daily_high().
+        Falls back to intraday candle high if insufficient daily history.
+        """
+        daily = self._daily_highs.get(symbol)
+        if daily and len(daily) > 0:
+            period = min(self._high_period, len(daily))
+            return max(list(daily)[-period:])
+
+        # Fallback: use intraday candle highs (e.g. during first day)
         period = min(self._high_period, len(candles))
         if period == 0:
             return 0.0
