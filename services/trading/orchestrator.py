@@ -727,11 +727,15 @@ class TradingOrchestrator:
             self._tick_stream_publisher = TickStreamPublisher(cfg)
             logger.info(
                 "Tick stream publisher enabled "
-                "(stock_stream=%s, futures_stream=%s, stock_interval=%.2fs, futures_interval=%.2fs)",
+                "(async=%s, stock_stream=%s, futures_stream=%s, "
+                "stock_interval=%.2fs, futures_interval=%.2fs, queue=%d, batch=%d)",
+                cfg.async_publish,
                 cfg.stock_stream,
                 cfg.futures_stream,
                 cfg.stock_min_interval_seconds,
                 cfg.futures_min_interval_seconds,
+                cfg.queue_maxsize,
+                cfg.flush_batch_size,
             )
         except Exception as e:
             self._tick_stream_publisher = None
@@ -1847,6 +1851,13 @@ class TradingOrchestrator:
         if self._pending_notify_tasks:
             await asyncio.gather(*self._pending_notify_tasks, return_exceptions=True)
             self._pending_notify_tasks.clear()
+
+        if self._tick_stream_publisher is not None:
+            try:
+                self._tick_stream_publisher.close()
+            except Exception as e:
+                logger.warning(f"TickStreamPublisher cleanup failed: {e}")
+            self._tick_stream_publisher = None
 
         if self.pipeline:
             await self.pipeline.stop()
@@ -3120,6 +3131,11 @@ class TradingOrchestrator:
         data_stats = (
             self._data_provider.get_cache_stats() if self._data_provider else {}
         )
+        tick_stream_stats = (
+            self._tick_stream_publisher.get_stats()
+            if self._tick_stream_publisher
+            else {}
+        )
 
         return {
             "state": self.state.value,
@@ -3140,6 +3156,7 @@ class TradingOrchestrator:
             "positions": position_stats,
             "strategies": strategy_info,
             "data_provider": data_stats,
+            "tick_stream_publisher": tick_stream_stats,
             "pipeline": pipeline_status,
         }
 

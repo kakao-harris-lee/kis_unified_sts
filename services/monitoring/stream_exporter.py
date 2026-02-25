@@ -94,7 +94,9 @@ class ExporterConfig:
     port: int = int(os.getenv("STREAM_EXPORTER_PORT", "9093"))
     streams: tuple[str, ...] = tuple(
         s.strip()
-        for s in os.getenv("STREAM_EXPORTER_STREAMS", "market:ticks,raw_data").split(",")
+        for s in os.getenv("STREAM_EXPORTER_STREAMS", "market:ticks,raw_data").split(
+            ","
+        )
         if s.strip()
     )
     read_count: int = int(os.getenv("STREAM_EXPORTER_READ_COUNT", "200"))
@@ -247,12 +249,16 @@ class StreamExporter:
                 logger.error("Stream exporter loop error: %s", e, exc_info=True)
                 time.sleep(1.0)
 
-    def _process_events(self, events: list[tuple[str, list[tuple[str, dict[str, str]]]]], now: float) -> None:
+    def _process_events(
+        self, events: list[tuple[str, list[tuple[str, dict[str, str]]]]], now: float
+    ) -> None:
         for stream_name, messages in events:
             for message_id, raw_fields in messages:
                 self.offsets[stream_name] = message_id
                 msg_ts = _parse_msg_id_ms(message_id) or now
-                self.last_message_timestamp_seconds.labels(stream=stream_name).set(msg_ts)
+                self.last_message_timestamp_seconds.labels(stream=stream_name).set(
+                    msg_ts
+                )
                 self._process_one(stream_name, message_id, raw_fields, now, msg_ts)
 
     def _process_one(
@@ -275,7 +281,9 @@ class StreamExporter:
             self.parse_errors_total.labels(stream=stream_name).inc()
             return
 
-        asset = detect_asset(symbol, stream_name)
+        asset = str(payload.get("asset") or "").strip().lower()
+        if asset not in {"stock", "futures"}:
+            asset = detect_asset(symbol, stream_name)
         if not self._accept_symbol(asset, symbol):
             return
 
@@ -356,7 +364,9 @@ class StreamExporter:
         if delta_vol > 0:
             state.volume += delta_vol
 
-    def _extract_volume_delta(self, key: tuple[str, str], payload: dict[str, Any]) -> float:
+    def _extract_volume_delta(
+        self, key: tuple[str, str], payload: dict[str, Any]
+    ) -> float:
         """Estimate per-tick volume delta with cumulative fallback support."""
         volume_is_cumulative = _parse_bool(payload.get("volume_is_cumulative"))
         cumulative_volume = _parse_float(payload.get("cumulative_volume"))
