@@ -2433,8 +2433,9 @@ class TradingOrchestrator:
                 # Inject streaming indicators (BB/RSI/RL/momentum)
                 indicators: dict[str, Any] = {}
                 if self._indicator_engine:
-                    if self._indicator_resolver:
-                        indicators = self._indicator_resolver.collect_entry_indicators(symbol)
+                    resolver = getattr(self, "_indicator_resolver", None)
+                    if resolver:
+                        indicators = resolver.collect_entry_indicators(symbol)
                     else:
                         # Backward-safe fallback (resolve from required keys without hardcoded timeframes).
                         try:
@@ -2589,10 +2590,11 @@ class TradingOrchestrator:
 
             # Enrich exit data with streaming indicators (volume_velocity, vwap, RL, momentum)
             if self._indicator_engine:
+                resolver = getattr(self, "_indicator_resolver", None)
                 for symbol in symbols:
                     if symbol in data and isinstance(data[symbol], dict):
-                        if self._indicator_resolver:
-                            indicators = self._indicator_resolver.collect_exit_indicators(symbol)
+                        if resolver:
+                            indicators = resolver.collect_exit_indicators(symbol)
                         else:
                             # Backward-safe fallback (resolve from required keys without hardcoded timeframes).
                             try:
