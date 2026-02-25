@@ -78,6 +78,9 @@ class TrixGoldenExitConfig(ConfigMixin):
     eod_close_hour: int = 15
     eod_close_minute: int = 15
 
+    # Exit signal confidence
+    default_exit_confidence: float = 0.8  # 청산 시그널 기본 confidence
+
     def validate(self) -> None:
         """Validate configuration."""
         if self.stop_loss_pct >= 0:
@@ -625,7 +628,7 @@ class TrixGoldenExit(ExitSignalGenerator[TrixGoldenExitConfig]):
             entry_price=position.entry_price,
             profit_amount=profit_amount,
             profit_pct=profit_pct,
-            confidence=0.8,
+            confidence=self.config.default_exit_confidence,
             priority=priority,
             timestamp=datetime.now(),
             stage=position.state.value if position.state else "",

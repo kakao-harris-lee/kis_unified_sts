@@ -98,6 +98,13 @@ class TrixGoldenConfig(ConfigMixin):
     # 시그널 빈도 제한 (TRIX 과진동 종목 자동 차단)
     max_signals_per_day: int = 3  # 당일 종목당 최대 시그널 수 (0 = 무제한)
 
+    # Confidence scoring params
+    trix_spread_scale: float = 20.0  # TRIX spread → score 정규화 계수
+    trix_accel_scale: float = 30.0  # TRIX acceleration → score 정규화 계수
+    cci_norm_range: float = 300.0  # CCI score 정규화 범위
+    sma_dist_base: float = 0.5  # SMA distance score 기본값
+    sma_dist_scale: float = 10.0  # SMA distance → score 정규화 계수
+
 
 class TrixGoldenEntry(EntrySignalGenerator[TrixGoldenConfig]):
     """TRIX 5분봉 황금신호 진입 전략.
@@ -415,18 +422,18 @@ class TrixGoldenEntry(EntrySignalGenerator[TrixGoldenConfig]):
 
         # TRIX strength: spread normalized
         trix_spread = df["trix"].iloc[i] - df["trix_signal"].iloc[i]
-        trix_score = min(1.0, max(0.0, abs(trix_spread) * 20))
+        trix_score = min(1.0, max(0.0, abs(trix_spread) * self.config.trix_spread_scale))
         scores.append(trix_score)
 
         # TRIX acceleration (positive delta)
         if len(df) >= 2:
             trix_delta = float(df["trix"].iloc[i]) - float(df["trix"].iloc[i - 1])
-            accel_score = min(1.0, max(0.0, trix_delta * 30))
+            accel_score = min(1.0, max(0.0, trix_delta * self.config.trix_accel_scale))
             scores.append(accel_score)
 
         # CCI health (moderate CCI = more room to run)
         cci = abs(df["cci"].iloc[i])
-        cci_score = max(0.2, min(1.0, 1.0 - cci / 300))
+        cci_score = max(0.2, min(1.0, 1.0 - cci / self.config.cci_norm_range))
         scores.append(cci_score)
 
         # Price vs SMA (if available)
@@ -437,7 +444,10 @@ class TrixGoldenEntry(EntrySignalGenerator[TrixGoldenConfig]):
             )
             if sma > 0:
                 sma_dist = (close - sma) / sma
-                sma_score = min(1.0, max(0.0, 0.5 + sma_dist * 10))
+                sma_score = min(
+                    1.0,
+                    max(0.0, self.config.sma_dist_base + sma_dist * self.config.sma_dist_scale),
+                )
                 scores.append(sma_score)
 
         return sum(scores) / len(scores) if scores else 0.5

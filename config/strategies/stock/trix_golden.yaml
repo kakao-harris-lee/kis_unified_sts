@@ -71,6 +71,13 @@ strategy:
       # 시그널 빈도 제한 (TRIX 과진동 종목 자동 차단)
       max_signals_per_day: 3
 
+      # Confidence scoring 정규화 계수
+      trix_spread_scale: 20.0
+      trix_accel_scale: 30.0
+      cci_norm_range: 300.0
+      sma_dist_base: 0.5
+      sma_dist_scale: 10.0
+
   exit:
     type: trix_golden_exit
     params:
@@ -103,6 +110,9 @@ strategy:
 
       # Timeframe
       timeframe_minutes: 5
+
+      # Exit signal confidence
+      default_exit_confidence: 0.8
 
       # EOD close
       eod_close_enabled: true
