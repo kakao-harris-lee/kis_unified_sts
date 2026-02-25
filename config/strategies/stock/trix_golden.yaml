@@ -1,7 +1,7 @@
 strategy:
   name: trix_golden
   asset_class: stock
-  enabled: true
+  enabled: false
   description: "TRIX 5분봉 황금신호 v2 - 모멘텀 가속 포착 + 비상관 필터"
 
   entry:
