@@ -501,6 +501,9 @@ class TradingOrchestrator:
         # WebSocket futures price feed (initialized in _initialize_components)
         self._futures_price_feed: Any | None = None
 
+        # Optional tick mirroring to Redis streams for monitoring exporter
+        self._tick_stream_publisher: Any | None = None
+
         # Redis state publisher (initialized in _initialize_components)
         self._state_publisher: Any | None = None
 
@@ -608,16 +611,19 @@ class TradingOrchestrator:
         # 3. Initialize Data Provider
         self._init_data_provider(data_source)
 
-        # 4. Initialize Strategy Infra
+        # 4. Initialize optional tick stream publisher (monitoring only)
+        self._init_tick_stream_publisher()
+
+        # 5. Initialize Strategy Infra
         self._init_strategy_infrastructure()
 
-        # 5. Initialize Indicator Engine
+        # 6. Initialize Indicator Engine + feed callbacks
         self._init_indicator_engine()
 
-        # 6. Initialize Execution Layer
+        # 7. Initialize Execution Layer
         await self._init_execution_layer()
 
-        # 7. Load Swing Positions
+        # 8. Load Swing Positions
         await self._load_swing_positions()
 
     def _init_kis_client(self):
@@ -704,6 +710,33 @@ class TradingOrchestrator:
             data_source=data_source,
         )
 
+    def _init_tick_stream_publisher(self) -> None:
+        """Initialize optional Redis tick mirroring for monitoring."""
+        try:
+            from services.monitoring.tick_stream_publisher import (
+                TickStreamPublisher,
+                TickStreamPublisherConfig,
+            )
+
+            cfg = TickStreamPublisherConfig.from_env()
+            if not cfg.enabled:
+                self._tick_stream_publisher = None
+                logger.info("Tick stream publisher disabled by env")
+                return
+
+            self._tick_stream_publisher = TickStreamPublisher(cfg)
+            logger.info(
+                "Tick stream publisher enabled "
+                "(stock_stream=%s, futures_stream=%s, stock_interval=%.2fs, futures_interval=%.2fs)",
+                cfg.stock_stream,
+                cfg.futures_stream,
+                cfg.stock_min_interval_seconds,
+                cfg.futures_min_interval_seconds,
+            )
+        except Exception as e:
+            self._tick_stream_publisher = None
+            logger.warning(f"Tick stream publisher init failed: {e}")
+
     def _init_strategy_infrastructure(self):
         """Initialize Strategy Manager and Position Tracker"""
         # Strategy manager
@@ -772,8 +805,9 @@ class TradingOrchestrator:
             logger.warning(f"Indicator engine init failed: {e}")
             self._indicator_engine = None
 
-        # Hook futures WebSocket ticks directly into indicator engine
-        if self._futures_price_feed and self._indicator_engine:
+        # Hook futures WebSocket ticks into indicator engine and monitoring stream.
+        if self._futures_price_feed:
+
             def _on_futures_tick(symbol: str, data: dict[str, Any], ts: datetime) -> None:
                 if self._indicator_engine:
                     # Initialize baseline for new symbols (same logic as _feed_indicators)
@@ -784,10 +818,14 @@ class TradingOrchestrator:
                                 self._indicator_engine.set_volume_baseline(symbol, raw_vol)
                     self._indicator_engine.on_tick(symbol, data, ts)
 
+                if self._tick_stream_publisher:
+                    self._tick_stream_publisher.publish("futures", symbol, data)
+
             self._futures_price_feed.set_tick_callback(_on_futures_tick)
 
-        # Hook stock WebSocket ticks directly into indicator engine
-        if self._stock_price_feed and self._indicator_engine:
+        # Hook stock WebSocket ticks into indicator engine and monitoring stream.
+        if self._stock_price_feed:
+
             def _on_stock_tick(symbol: str, data: dict[str, Any], ts: datetime) -> None:
                 if self._indicator_engine:
                     if symbol not in self._indicator_engine._last_cumulative_volume:
@@ -795,6 +833,9 @@ class TradingOrchestrator:
                         if raw_vol > 0:
                             self._indicator_engine.set_volume_baseline(symbol, raw_vol)
                     self._indicator_engine.on_tick(symbol, data, ts)
+
+                if self._tick_stream_publisher:
+                    self._tick_stream_publisher.publish("stock", symbol, data)
 
             self._stock_price_feed.set_tick_callback(_on_stock_tick)
 

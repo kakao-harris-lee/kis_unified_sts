@@ -50,6 +50,6 @@ scrape_configs:
   # Redis Stream Exporter (stream -> Prometheus bridge)
   - job_name: 'stream-exporter'
     static_configs:
-      - targets: ['stream-exporter:9093']
+      - targets: ['host.docker.internal:9093']
     scrape_interval: 2s
     scrape_timeout: 2s
