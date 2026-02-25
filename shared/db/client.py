@@ -80,6 +80,31 @@ SCHEMAS = {
         ORDER BY (code, entry_date, id)
         COMMENT 'Swing position state for multi-day strategies (volume_accumulation)'
     """,
+    "rl_trades": """
+        CREATE TABLE IF NOT EXISTS {database}.rl_trades (
+            id String,
+            asset_class LowCardinality(String),
+            code String,
+            name String,
+            side LowCardinality(String),
+            strategy LowCardinality(String),
+            entry_date DateTime,
+            entry_price Float64,
+            exit_date DateTime,
+            exit_price Float64,
+            quantity Int32,
+            pnl Float64,
+            pnl_pct Float64,
+            hold_seconds UInt32,
+            exit_reason String,
+            metadata_json String,
+            created_at DateTime DEFAULT now()
+        ) ENGINE = MergeTree()
+        PARTITION BY toYYYYMM(exit_date)
+        ORDER BY (asset_class, strategy, exit_date, id)
+        TTL exit_date + INTERVAL 180 DAY
+        COMMENT 'Closed RL trade records for performance analytics'
+    """,
     "tick_data": """
         CREATE TABLE IF NOT EXISTS {database}.tick_data (
             code String,

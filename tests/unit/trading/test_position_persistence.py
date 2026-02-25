@@ -223,6 +223,54 @@ class TestSaveToDbWithSideAndFeeRate:
         assert row[16] == 0.005  # fee_rate
 
 
+class TestSaveRlTradeToDb:
+    """Test save_rl_trade_to_db method."""
+
+    @pytest.mark.asyncio
+    async def test_saves_rl_trade(self):
+        tracker = PositionTracker(config=PositionTrackerConfig(database="testdb"))
+
+        mock_client = MagicMock()
+        mock_ch = MagicMock()
+        mock_ch.get_sync_client.return_value = mock_client
+
+        with patch.object(tracker, "_get_db_client", return_value=(mock_ch, "testdb")):
+            pos = _make_position(
+                id="rl-pos-001",
+                code="A01603",
+                name="KOSPI200선물",
+                entry_price=350.0,
+                exit_price=345.0,
+                quantity=1,
+                side=PositionSide.SHORT,
+                strategy="rl_mppo",
+            )
+            pos.metadata = {"snapshot_id": "snap-1", "model_version": "mppo-v3"}
+            result = await tracker.save_rl_trade_to_db(pos, asset_class="futures")
+
+        assert result is True
+        call_args = mock_client.execute.call_args
+        sql = call_args[0][0]
+        rows = call_args[0][1]
+
+        assert "testdb.rl_trades" in sql
+        assert len(rows) == 1
+        row = rows[0]
+        assert row[1] == "futures"  # asset_class
+        assert row[5] == "rl_mppo"  # strategy
+        assert row[11] == 5.0  # pnl = (350 - 345) * 1
+        assert row[12] > 0.0  # pnl_pct
+        assert row[13] > 0  # hold_seconds
+        assert "model_version" in row[15]  # metadata_json
+
+    @pytest.mark.asyncio
+    async def test_skips_rl_trade_if_not_closed(self):
+        tracker = PositionTracker(config=PositionTrackerConfig(database="testdb"))
+        pos = _make_position(strategy="rl_mppo")
+        result = await tracker.save_rl_trade_to_db(pos, asset_class="futures")
+        assert result is False
+
+
 class TestLoadFromDbSideAndFeeRate:
     """Test load_from_db parses side and fee_rate."""
 

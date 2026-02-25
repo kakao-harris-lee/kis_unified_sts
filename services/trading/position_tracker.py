@@ -34,6 +34,7 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import uuid
 from collections import deque
@@ -801,6 +802,35 @@ class PositionTracker:
         "stop_loss_price, high_since_entry, current_state, is_open, "
         "exit_date, exit_price, exit_reason, pnl, side, fee_rate)"
     )
+    _RL_TRADE_INSERT_COLS = (
+        "(id, asset_class, code, name, side, strategy, entry_date, entry_price, "
+        "exit_date, exit_price, quantity, pnl, pnl_pct, hold_seconds, exit_reason, metadata_json)"
+    )
+    _RL_TRADES_SCHEMA_TEMPLATE = """
+        CREATE TABLE IF NOT EXISTS {database}.rl_trades (
+            id String,
+            asset_class LowCardinality(String),
+            code String,
+            name String,
+            side LowCardinality(String),
+            strategy LowCardinality(String),
+            entry_date DateTime,
+            entry_price Float64,
+            exit_date DateTime,
+            exit_price Float64,
+            quantity Int32,
+            pnl Float64,
+            pnl_pct Float64,
+            hold_seconds UInt32,
+            exit_reason String,
+            metadata_json String,
+            created_at DateTime DEFAULT now()
+        ) ENGINE = MergeTree()
+        PARTITION BY toYYYYMM(exit_date)
+        ORDER BY (asset_class, strategy, exit_date, id)
+        TTL exit_date + INTERVAL 180 DAY
+        COMMENT 'Closed RL trade records for performance analytics'
+    """
 
     def _get_db_client(self):
         """Get ClickHouse client and database name for position persistence.
@@ -885,11 +915,7 @@ class PositionTracker:
         try:
             ch, database = self._get_db_client()
 
-            # Calculate PnL based on side
-            if position.side == PositionSide.LONG:
-                pnl = (position.exit_price - position.entry_price) * position.quantity
-            else:
-                pnl = (position.entry_price - position.exit_price) * position.quantity
+            pnl = self._calc_realized_pnl(position)
 
             row = (
                 position.id,
@@ -930,6 +956,73 @@ class PositionTracker:
         except Exception as e:
             logger.error(f"Failed to persist closed position {position.id[:8]}: {e}")
             return False
+
+    async def save_rl_trade_to_db(self, position: Position, asset_class: str) -> bool:
+        """Persist a closed RL trade to ClickHouse rl_trades table."""
+        if not position.exit_price or not position.exit_time:
+            return False
+
+        try:
+            ch, database = self._get_db_client()
+
+            pnl = self._calc_realized_pnl(position)
+            hold_seconds = 0
+            if position.entry_time and position.exit_time:
+                hold_seconds = max(
+                    0, int((position.exit_time - position.entry_time).total_seconds())
+                )
+
+            metadata = position.metadata if isinstance(position.metadata, dict) else {}
+            metadata_json = json.dumps(metadata, ensure_ascii=False, default=str)
+
+            row = (
+                position.id,
+                str(asset_class or "unknown"),
+                position.code,
+                position.name,
+                position.side.value,
+                position.strategy,
+                position.entry_time,
+                position.entry_price,
+                position.exit_time,
+                position.exit_price,
+                position.quantity,
+                pnl,
+                position.profit_pct,
+                hold_seconds,
+                position.exit_reason or "",
+                metadata_json,
+            )
+
+            def _sync_save():
+                client = ch.get_sync_client()
+                client.execute(self._RL_TRADES_SCHEMA_TEMPLATE.format(database=database))
+                client.execute(
+                    f"INSERT INTO {database}.rl_trades "
+                    f"{self._RL_TRADE_INSERT_COLS} VALUES",
+                    [row],
+                )
+
+            await asyncio.to_thread(_sync_save)
+
+            logger.info(
+                f"Persisted RL trade: {position.code} "
+                f"(strategy={position.strategy}, pnl={pnl:+,.0f}, id={position.id[:8]})"
+            )
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to persist RL trade {position.id[:8]}: {e}")
+            return False
+
+    @staticmethod
+    def _calc_realized_pnl(position: Position) -> float:
+        """Calculate side-aware realized PnL for a closed position."""
+        if not position.exit_price:
+            return 0.0
+        if position.side == PositionSide.LONG:
+            return (position.exit_price - position.entry_price) * position.quantity
+        return (position.entry_price - position.exit_price) * position.quantity
 
     async def load_from_db(self) -> int:
         """Load open positions from ClickHouse on startup.

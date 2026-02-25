@@ -116,7 +116,7 @@
             "type": "grafana-clickhouse-datasource",
             "uid": "clickhouse"
           },
-          "rawSql": "SELECT count() as trades, ifNull(sum(pnl), 0) as total_pnl, if(count() > 0, round(countIf(pnl > 0) / count() * 100, 1), 0) as win_rate, if(count() > 0, round(avg(pnl), 0), 0) as avg_pnl FROM kospi.swing_positions FINAL WHERE is_open = 0",
+          "rawSql": "SELECT count() as trades, ifNull(sum(pnl), 0) as total_pnl, if(count() > 0, round(countIf(pnl > 0) / count() * 100, 1), 0) as win_rate, if(count() > 0, round(avg(pnl), 0), 0) as avg_pnl FROM kospi.rl_trades WHERE asset_class = 'futures'",
           "format": 1,
           "queryType": "sql",
           "refId": "A",
@@ -193,7 +193,7 @@
             "type": "grafana-clickhouse-datasource",
             "uid": "clickhouse"
           },
-          "rawSql": "SELECT exit_date as time, sum(pnl) OVER (ORDER BY exit_date) as cum_pnl FROM kospi.swing_positions FINAL WHERE is_open = 0 ORDER BY exit_date",
+          "rawSql": "SELECT exit_date as time, sum(pnl) OVER (ORDER BY exit_date) as cum_pnl FROM kospi.rl_trades WHERE asset_class = 'futures' ORDER BY exit_date",
           "format": 0,
           "queryType": "sql",
           "refId": "A",
@@ -274,7 +274,7 @@
             "type": "grafana-clickhouse-datasource",
             "uid": "clickhouse"
           },
-          "rawSql": "SELECT exit_date as time, round(countIf(pnl > 0) OVER (ORDER BY exit_date ROWS BETWEEN 9 PRECEDING AND CURRENT ROW) / 10 * 100, 1) as rolling_wr FROM kospi.swing_positions FINAL WHERE is_open = 0 ORDER BY exit_date",
+          "rawSql": "SELECT exit_date as time, round(countIf(pnl > 0) OVER (ORDER BY exit_date ROWS BETWEEN 9 PRECEDING AND CURRENT ROW) / 10 * 100, 1) as rolling_wr FROM kospi.rl_trades WHERE asset_class = 'futures' ORDER BY exit_date",
           "format": 0,
           "queryType": "sql",
           "refId": "A",
@@ -353,7 +353,7 @@
             "type": "grafana-clickhouse-datasource",
             "uid": "clickhouse"
           },
-          "rawSql": "SELECT toDate(exit_date) as day, sum(pnl) as daily_pnl FROM kospi.swing_positions FINAL WHERE is_open = 0 GROUP BY day ORDER BY day",
+          "rawSql": "SELECT toDate(exit_date) as day, sum(pnl) as daily_pnl FROM kospi.rl_trades WHERE asset_class = 'futures' GROUP BY day ORDER BY day",
           "format": 1,
           "queryType": "sql",
           "refId": "A",
@@ -430,7 +430,7 @@
             "type": "grafana-clickhouse-datasource",
             "uid": "clickhouse"
           },
-          "rawSql": "SELECT floor(pnl / 50000) * 50000 as bucket, count() as cnt FROM kospi.swing_positions FINAL WHERE is_open = 0 GROUP BY bucket ORDER BY bucket",
+          "rawSql": "SELECT floor(pnl / 50000) * 50000 as bucket, count() as cnt FROM kospi.rl_trades WHERE asset_class = 'futures' GROUP BY bucket ORDER BY bucket",
           "format": 1,
           "queryType": "sql",
           "refId": "A",
@@ -543,7 +543,7 @@
             "type": "grafana-clickhouse-datasource",
             "uid": "clickhouse"
           },
-          "rawSql": "SELECT strategy, count() as trades, if(count() > 0, round(countIf(pnl > 0) / count() * 100, 1), 0) as win_rate, ifNull(sum(pnl), 0) as total_pnl, if(count() > 0, round(avg(pnl), 0), 0) as avg_pnl FROM kospi.swing_positions FINAL WHERE is_open = 0 GROUP BY strategy ORDER BY total_pnl DESC",
+          "rawSql": "SELECT strategy, count() as trades, if(count() > 0, round(countIf(pnl > 0) / count() * 100, 1), 0) as win_rate, ifNull(sum(pnl), 0) as total_pnl, if(count() > 0, round(avg(pnl), 0), 0) as avg_pnl FROM kospi.rl_trades WHERE asset_class = 'futures' GROUP BY strategy ORDER BY total_pnl DESC",
           "format": 1,
           "queryType": "sql",
           "refId": "A",
@@ -806,7 +806,7 @@
             "type": "grafana-clickhouse-datasource",
             "uid": "clickhouse"
           },
-          "rawSql": "SELECT code, name, strategy, side, entry_date, entry_price, exit_date, exit_price, pnl, exit_reason FROM kospi.swing_positions FINAL WHERE is_open = 0 ORDER BY exit_date DESC LIMIT 50",
+          "rawSql": "SELECT code, name, strategy, side, entry_date, entry_price, exit_date, exit_price, pnl, exit_reason FROM kospi.rl_trades WHERE asset_class = 'futures' ORDER BY exit_date DESC LIMIT 50",
           "format": 1,
           "queryType": "sql",
           "refId": "A",

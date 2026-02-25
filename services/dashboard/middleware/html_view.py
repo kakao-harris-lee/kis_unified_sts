@@ -22,6 +22,8 @@ _PAGE_META: dict[str, tuple[str, str]] = {
     "/api/trades/db/statistics": ("DB Trade Statistics", "ClickHouse trade performance statistics"),
     "/api/trades/db/open": ("DB Open Positions", "Current open positions from ClickHouse"),
     "/api/trades/db": ("DB Trade History", "Completed trade records from ClickHouse"),
+    "/api/trades/db/rl/statistics": ("RL DB Statistics", "ClickHouse RL trade performance statistics"),
+    "/api/trades/db/rl": ("RL DB Trade History", "RL closed trade records from ClickHouse"),
     "/api/trades/statistics": ("Trade Statistics", "Overall trade performance statistics"),
     "/api/trades/by-strategy": ("Strategy Performance", "Performance grouped by strategy"),
     "/api/trades": ("Trade History", "Completed trade records"),

@@ -1182,9 +1182,12 @@ class TradingOrchestrator:
             await self._notify(alert_text)
 
     async def _ensure_db_schema(self):
-        """Ensure ClickHouse swing_positions table exists."""
+        """Ensure ClickHouse persistence tables exist."""
         try:
-            from shared.db.client import ClickHouseClient, SCHEMAS, SyncClient
+            from shared.db.client import SCHEMAS, SyncClient
+
+            if not self._position_tracker:
+                return
 
             ch, database = self._position_tracker._get_db_client()
 
@@ -1199,19 +1202,30 @@ class TradingOrchestrator:
                 temp_client.execute(f"CREATE DATABASE IF NOT EXISTS {database}")
                 temp_client.disconnect()
 
-                # Create swing_positions table
+                # Create persistence tables used by orchestrator.
                 client = ch.get_sync_client()
-                schema = SCHEMAS["swing_positions"]
-                client.execute(schema.format(database=database))
+                for table_name in ("swing_positions", "rl_trades"):
+                    schema = SCHEMAS.get(table_name)
+                    if schema:
+                        client.execute(schema.format(database=database))
 
             await asyncio.to_thread(_sync_init)
         except Exception as e:
             logger.warning(f"Failed to ensure DB schema: {e}")
 
-    async def _persist_closed_position(self, closed):
+    async def _persist_closed_position(self, closed, strategy: str):
         """Persist a closed position to ClickHouse (fire-and-forget safe)."""
         try:
-            await self._position_tracker.save_closed_to_db(closed)
+            if not self._position_tracker:
+                return
+            strategy = str(strategy or "")
+            if strategy in self.SWING_STRATEGIES:
+                await self._position_tracker.save_closed_to_db(closed)
+                return
+            if strategy.startswith("rl_"):
+                await self._position_tracker.save_rl_trade_to_db(
+                    closed, self.config.asset_class
+                )
         except Exception as e:
             logger.warning(f"Failed to persist closed position {getattr(closed, 'id', '?')[:8]}: {e}")
 
@@ -2873,11 +2887,11 @@ class TradingOrchestrator:
             self._state_publisher.publish_signal(signal, "exit", True)
             self._metrics.record_trade(pnl=pnl, win=(pnl >= 0), strategy=getattr(signal, "strategy", "default"))
 
-        # Persist swing positions to ClickHouse (fire-and-forget)
+        # Persist selected strategy trades to ClickHouse (fire-and-forget)
         strategy = getattr(signal, "strategy", getattr(closed, "strategy", ""))
-        if strategy in self.SWING_STRATEGIES:
+        if strategy in self.SWING_STRATEGIES or strategy.startswith("rl_"):
             task = asyncio.create_task(
-                self._persist_closed_position(closed), name="persist_closed"
+                self._persist_closed_position(closed, strategy), name="persist_closed"
             )
             self._pending_notify_tasks.add(task)
             task.add_done_callback(self._on_notify_done)

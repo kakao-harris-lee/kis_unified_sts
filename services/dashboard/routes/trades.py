@@ -199,6 +199,19 @@ def _query_ch(sql: str, params: dict | None = None) -> tuple[list, list]:
         client.disconnect()
 
 
+def _empty_db_stats() -> dict[str, float]:
+    return {
+        "total_trades": 0,
+        "winning_trades": 0,
+        "losing_trades": 0,
+        "win_rate": 0.0,
+        "total_pnl": 0.0,
+        "avg_pnl": 0.0,
+        "max_win": 0.0,
+        "max_loss": 0.0,
+    }
+
+
 @router.get("/db/statistics")
 async def get_db_statistics():
     """Aggregate statistics from ClickHouse swing_positions table."""
@@ -223,11 +236,7 @@ async def get_db_statistics():
         col_names = [c[0] for c in columns]
         if rows and rows[0][0] > 0:
             return dict(zip(col_names, rows[0]))
-        return {
-            "total_trades": 0, "winning_trades": 0, "losing_trades": 0,
-            "win_rate": 0.0, "total_pnl": 0.0, "avg_pnl": 0.0,
-            "max_win": 0.0, "max_loss": 0.0,
-        }
+        return _empty_db_stats()
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"ClickHouse unavailable: {e}")
 
@@ -274,6 +283,97 @@ async def get_db_trades(
         f"exit_date, exit_price, quantity, pnl, exit_reason "
         f"FROM {db}.swing_positions FINAL "
         f"WHERE {where} "
+        f"ORDER BY exit_date DESC "
+        f"LIMIT %(limit)s"
+    )
+    try:
+        loop = asyncio.get_running_loop()
+        rows, columns = await loop.run_in_executor(None, _query_ch, sql, params)
+        col_names = [c[0] for c in columns]
+        return [dict(zip(col_names, row)) for row in rows]
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"ClickHouse unavailable: {e}")
+
+
+@router.get("/db/rl/statistics")
+async def get_db_rl_statistics(
+    asset_class: str = Query("futures"),
+    strategy: Optional[str] = Query(None),
+):
+    """Aggregate statistics from ClickHouse rl_trades table."""
+    from shared.db.config import ClickHouseConfig
+
+    asset_class = str(asset_class or "").strip().lower() or "futures"
+    if asset_class not in {"stock", "futures", "all"}:
+        raise HTTPException(status_code=400, detail="asset_class must be stock, futures, or all")
+
+    db = ClickHouseConfig.from_env().database
+    where_clauses = []
+    params: dict = {}
+    if asset_class != "all":
+        where_clauses.append("asset_class = %(asset_class)s")
+        params["asset_class"] = asset_class
+    if strategy:
+        where_clauses.append("strategy = %(strategy)s")
+        params["strategy"] = strategy
+
+    where_sql = f" WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+    sql = (
+        f"SELECT count() as total_trades, "
+        f"countIf(pnl > 0) as winning_trades, "
+        f"countIf(pnl <= 0) as losing_trades, "
+        f"if(count() > 0, round(countIf(pnl > 0) / count() * 100, 2), 0) as win_rate, "
+        f"ifNull(sum(pnl), 0) as total_pnl, "
+        f"if(count() > 0, round(avg(pnl), 2), 0) as avg_pnl, "
+        f"ifNull(max(pnl), 0) as max_win, "
+        f"ifNull(min(pnl), 0) as max_loss "
+        f"FROM {db}.rl_trades "
+        f"{where_sql}"
+    )
+    try:
+        loop = asyncio.get_running_loop()
+        rows, columns = await loop.run_in_executor(None, _query_ch, sql, params)
+        col_names = [c[0] for c in columns]
+        if rows and rows[0][0] > 0:
+            return dict(zip(col_names, rows[0]))
+        return _empty_db_stats()
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"ClickHouse unavailable: {e}")
+
+
+@router.get("/db/rl")
+async def get_db_rl_trades(
+    asset_class: str = Query("futures"),
+    strategy: Optional[str] = Query(None),
+    code: Optional[str] = Query(None),
+    limit: int = Query(100, ge=1, le=500),
+):
+    """Recent RL closed trades from ClickHouse rl_trades table."""
+    from shared.db.config import ClickHouseConfig
+
+    asset_class = str(asset_class or "").strip().lower() or "futures"
+    if asset_class not in {"stock", "futures", "all"}:
+        raise HTTPException(status_code=400, detail="asset_class must be stock, futures, or all")
+
+    db = ClickHouseConfig.from_env().database
+    where_clauses = []
+    params: dict = {"limit": limit}
+    if asset_class != "all":
+        where_clauses.append("asset_class = %(asset_class)s")
+        params["asset_class"] = asset_class
+    if strategy:
+        where_clauses.append("strategy = %(strategy)s")
+        params["strategy"] = strategy
+    if code:
+        where_clauses.append("code = %(code)s")
+        params["code"] = code
+
+    where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+    sql = (
+        f"SELECT id, asset_class, code, name, strategy, side, entry_date, entry_price, "
+        f"exit_date, exit_price, quantity, pnl, pnl_pct, hold_seconds, exit_reason "
+        f"FROM {db}.rl_trades "
+        f"{where_sql} "
         f"ORDER BY exit_date DESC "
         f"LIMIT %(limit)s"
     )
