@@ -927,6 +927,8 @@ class TradingOrchestrator:
         if not self.config.symbols and self.config.asset_class == "stock":
             self._refresh_universe_from_screener()
 
+        self._sync_open_positions_metric()
+
         logger.info(
             f"Components initialized: "
             f"{len(self._strategy_manager.strategies)} strategies, "
@@ -1817,6 +1819,7 @@ class TradingOrchestrator:
             )
             if closed:
                 self.total_pnl += closed.unrealized_pnl
+        self._sync_open_positions_metric()
 
     async def _cleanup_resources(self):
         """Shutdown pipelines and release components."""
@@ -2215,6 +2218,24 @@ class TradingOrchestrator:
             )
         if self._market_data_snapshot:
             self._metrics.record_data_fetch(len(self._market_data_snapshot))
+
+        self._sync_open_positions_metric()
+
+    def _sync_open_positions_metric(self) -> None:
+        """Synchronize open position gauge with current tracker state."""
+        open_positions = 0
+        if self._position_tracker:
+            count = getattr(self._position_tracker, "position_count", None)
+            if isinstance(count, int):
+                open_positions = count
+            else:
+                positions = getattr(self._position_tracker, "positions", None)
+                if positions is not None:
+                    try:
+                        open_positions = len(positions)
+                    except TypeError:
+                        open_positions = 0
+        self._metrics.record_position_change(max(0, open_positions))
 
     async def _get_market_data_snapshot(
         self, symbols: list[str] | None = None
@@ -2663,6 +2684,7 @@ class TradingOrchestrator:
             return
 
         self.total_trades += 1
+        self._sync_open_positions_metric()
         name = signal.name or self._symbol_names.get(signal.code, "")
 
         self._log_entry(name, signal.code, fill_price, quantity, signal.strategy, signal.confidence, is_short)
@@ -2831,6 +2853,7 @@ class TradingOrchestrator:
         # Position.current_price is set to exit_price on close,
         # so unrealized_pnl effectively equals realized PnL.
         self.total_pnl += closed.unrealized_pnl
+        self._sync_open_positions_metric()
 
         name = getattr(closed, "name", "") or self._symbol_names.get(signal.code, "")
         pnl = closed.unrealized_pnl

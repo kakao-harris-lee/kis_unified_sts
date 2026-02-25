@@ -204,6 +204,24 @@ class TestTradingOrchestrator:
         metrics = orch.get_metrics()
         assert metrics == {}
 
+    def test_record_market_metrics_syncs_open_positions(self):
+        """시장 메트릭 기록 시 open positions gauge 동기화."""
+        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+
+        config = TradingConfig.futures(strategy_name="rl_mppo")
+        orch = TradingOrchestrator(config)
+        orch._metrics = MagicMock()
+        orch._position_tracker = MagicMock()
+        orch._position_tracker.position_count = 1
+        orch._indicator_engine = None
+        orch._stock_price_feed = None
+        orch._futures_price_feed = None
+        orch._market_data_snapshot = {}
+
+        orch._record_market_metrics()
+
+        orch._metrics.record_position_change.assert_called_once_with(1)
+
     @pytest.mark.asyncio
     async def test_execute_entry_short_direction_uses_sell_and_short_side(self):
         """숏 진입 신호는 SELL 주문 + SHORT 포지션으로 처리."""
