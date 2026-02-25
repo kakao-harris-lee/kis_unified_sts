@@ -98,6 +98,7 @@ if pnl_pct >= self.config.exit.breakeven_threshold:
 - **공유 헬퍼**: `shared/strategy/rl_model_helpers.py` — 모델 캐시, obs 빌더, confidence 계산을 entry/exit이 공유. 모듈 레벨 캐시로 ~50MB 메모리 절약.
 - **선물 BEAR regime 면제**: 양방향(long/short) 거래이므로 BEAR regime blocking이 적용되지 않는다.
 - **RL 청산 안전장치**: hard stop(-3%) + EOD close(15:15)가 모델 예측보다 우선한다.
+- **데이터 정책(고정)**: RL 학습/평가는 `kospi200f_1m`의 `101S6000`(KOSPI200 선물 연결선물) 기준으로 수행하고, 실거래 종목은 KOSPI200 mini 근월물(`A05xxx`, 자동 감지)로 운용한다.
 
 ---
 

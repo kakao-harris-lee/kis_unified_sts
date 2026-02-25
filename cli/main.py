@@ -1798,7 +1798,12 @@ def rl_slippage(model: str, retrain: bool, config: str):
 @rl.command("paper")
 @click.option("--model", "-m", default="mppo_best", help="Model name (default: mppo_best)")
 @click.option("--config", "-c", default="ml/rl_mppo.yaml", help="Config file path")
-@click.option("--symbol", "-s", default=None, help="Futures symbol (default: from config)")
+@click.option(
+    "--symbol",
+    "-s",
+    default=None,
+    help="Futures symbol override (default: auto-detected KOSPI200 mini front-month)",
+)
 @click.option(
     "--engine",
     type=click.Choice(["orchestrator", "legacy"], case_sensitive=False),
@@ -1820,7 +1825,7 @@ def rl_paper(model: str, config: str, symbol: str, engine: str, no_daemon: bool)
         sts rl paper                          # 기본 (mppo_final)
         sts rl paper --model mppo_best        # 특정 모델
         sts rl paper --no-daemon              # 단일 세션
-        sts rl paper --symbol 101S6000        # 종목 지정
+        sts rl paper --symbol A05603          # 종목 지정 (mini 월물 코드)
     """
     import asyncio
 
@@ -1833,8 +1838,6 @@ def rl_paper(model: str, config: str, symbol: str, engine: str, no_daemon: bool)
     click.echo(f"  Mode: {'single session' if no_daemon else 'daemon'}")
 
     try:
-        from shared.config.loader import ConfigLoader
-
         if engine == "legacy":
             from shared.ml.rl.paper_trader import run_paper_trader
 
@@ -1854,16 +1857,9 @@ def rl_paper(model: str, config: str, symbol: str, engine: str, no_daemon: bool)
             model_path = f"models/futures/rl/{model}/best_model.zip"
         os.environ["RL_MPPO_MODEL_PATH"] = model_path
 
+        # Orchestrator path: do NOT read paper.symbol from YAML.
+        # Default symbol must be auto-detected mini front-month.
         symbols = [symbol] if symbol else None
-        if not symbols:
-            try:
-                cfg_data = ConfigLoader.load(config)
-                paper_cfg = cfg_data.get("paper", {})
-                cfg_symbol = paper_cfg.get("symbol")
-                if isinstance(cfg_symbol, str) and cfg_symbol:
-                    symbols = [cfg_symbol]
-            except Exception:
-                pass
 
         trading_config = TradingConfig.futures(
             strategy_name="rl_mppo",

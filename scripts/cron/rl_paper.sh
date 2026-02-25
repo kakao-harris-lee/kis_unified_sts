@@ -12,12 +12,17 @@ LOG_DIR="$PROJECT_DIR/logs"
 LOG_FILE="$LOG_DIR/rl_paper_$(date +%Y%m%d).log"
 VENV="$PROJECT_DIR/.venv/bin/activate"
 PID_FILE="$PROJECT_DIR/pids/rl_paper.pid"
+PROC_PATTERN="/home/deploy/project/kis_unified_sts/.venv/bin/sts rl paper --no-daemon"
 
 mkdir -p "$LOG_DIR"
 mkdir -p "$PROJECT_DIR/pids"
 
 log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
+}
+
+detect_running_pid() {
+    pgrep -f "$PROC_PATTERN" 2>/dev/null | head -n 1 || true
 }
 
 start_trading() {
@@ -30,6 +35,14 @@ start_trading() {
         else
             rm -f "$PID_FILE"
         fi
+    fi
+
+    # Fallback: detect live process even when PID file is missing/stale.
+    DETECTED_PID=$(detect_running_pid)
+    if [ -n "$DETECTED_PID" ]; then
+        echo "$DETECTED_PID" > "$PID_FILE"
+        log "Already running (PID: $DETECTED_PID, recovered without PID file)"
+        exit 0
     fi
 
     log "=== RL Paper Trading Start ==="
@@ -54,17 +67,34 @@ print('1' if is_trading_day(date.today()) else '0')
 
     log "Trading day confirmed. Starting RL paper trading..."
 
-    # Start RL paper trading (single session, stops at force_close_time 15:35)
-    nohup sts rl paper --no-daemon \
-        >> "$LOG_FILE" 2>&1 &
+    # Start RL paper trading in a detached session.
+    # setsid avoids parent shell/session cleanup side effects and keeps PID stable.
+    setsid bash -c 'exec sts rl paper --no-daemon' \
+        >> "$LOG_FILE" 2>&1 < /dev/null &
 
-    echo $! > "$PID_FILE"
-    log "RL paper trading started (PID: $!)"
+    PID=$!
+    echo "$PID" > "$PID_FILE"
+
+    # Early liveness check to avoid stale PID files on immediate startup failure.
+    sleep 2
+    if ps -p "$PID" > /dev/null 2>&1; then
+        log "RL paper trading started (PID: $PID)"
+    else
+        rm -f "$PID_FILE"
+        log "Failed to start RL paper trading (process exited early)"
+        exit 1
+    fi
 }
 
 stop_trading() {
+    PID=""
     if [ -f "$PID_FILE" ]; then
         PID=$(cat "$PID_FILE")
+    else
+        PID=$(detect_running_pid)
+    fi
+
+    if [ -n "$PID" ]; then
         if ps -p "$PID" > /dev/null 2>&1; then
             log "Stopping RL paper trading (PID: $PID)"
             kill "$PID" 2>/dev/null || true
@@ -97,6 +127,12 @@ status() {
             exit 1
         fi
     else
+        PID=$(detect_running_pid)
+        if [ -n "$PID" ]; then
+            echo "$PID" > "$PID_FILE"
+            echo "Running (PID: $PID, recovered)"
+            exit 0
+        fi
         echo "Not running"
         exit 1
     fi

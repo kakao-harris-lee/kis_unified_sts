@@ -727,11 +727,15 @@ class TradingOrchestrator:
             self._tick_stream_publisher = TickStreamPublisher(cfg)
             logger.info(
                 "Tick stream publisher enabled "
-                "(stock_stream=%s, futures_stream=%s, stock_interval=%.2fs, futures_interval=%.2fs)",
+                "(async=%s, stock_stream=%s, futures_stream=%s, "
+                "stock_interval=%.2fs, futures_interval=%.2fs, queue=%d, batch=%d)",
+                cfg.async_publish,
                 cfg.stock_stream,
                 cfg.futures_stream,
                 cfg.stock_min_interval_seconds,
                 cfg.futures_min_interval_seconds,
+                cfg.queue_maxsize,
+                cfg.flush_batch_size,
             )
         except Exception as e:
             self._tick_stream_publisher = None
@@ -1043,8 +1047,8 @@ class TradingOrchestrator:
     async def _verify_positions_with_broker(self) -> None:
         """Redis 복구 포지션과 브로커 실제 잔고 비교.
 
-        Paper 모드에서도 실행 (모의투자 서버 잔고 확인).
-        단, 선물 모의서버는 잔고조회 미지원이므로 건너뛴다.
+        기본적으로 실행하되, futures paper 모드에서는 건너뛴다.
+        (선물 paper는 VirtualBroker 상태가 기준이며 브로커 잔고조회 노이즈 방지)
         """
         # Load broker_verification config
         try:
@@ -1059,6 +1063,12 @@ class TradingOrchestrator:
 
         if not self._kis_client:
             logger.debug("KIS client not available; skipping broker verification")
+            return
+
+        # Futures paper trading uses VirtualBroker state as source-of-truth.
+        # Skip broker inquiry to avoid account-mapping noise and startup latency.
+        if self.config.asset_class == "futures" and self.config.paper_trading:
+            logger.info("Futures paper mode: skipping broker verification")
             return
 
         # Futures mock server doesn't support balance inquiry
@@ -1841,6 +1851,13 @@ class TradingOrchestrator:
         if self._pending_notify_tasks:
             await asyncio.gather(*self._pending_notify_tasks, return_exceptions=True)
             self._pending_notify_tasks.clear()
+
+        if self._tick_stream_publisher is not None:
+            try:
+                self._tick_stream_publisher.close()
+            except Exception as e:
+                logger.warning(f"TickStreamPublisher cleanup failed: {e}")
+            self._tick_stream_publisher = None
 
         if self.pipeline:
             await self.pipeline.stop()
@@ -3114,6 +3131,11 @@ class TradingOrchestrator:
         data_stats = (
             self._data_provider.get_cache_stats() if self._data_provider else {}
         )
+        tick_stream_stats = (
+            self._tick_stream_publisher.get_stats()
+            if self._tick_stream_publisher
+            else {}
+        )
 
         return {
             "state": self.state.value,
@@ -3134,6 +3156,7 @@ class TradingOrchestrator:
             "positions": position_stats,
             "strategies": strategy_info,
             "data_provider": data_stats,
+            "tick_stream_publisher": tick_stream_stats,
             "pipeline": pipeline_status,
         }
 

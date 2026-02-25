@@ -104,7 +104,7 @@ class RLPaperTrader:
         else:
             from shared.collector.historical.futures import get_front_month_code
 
-            self.symbol = get_front_month_code(product="kospi200")
+            self.symbol = get_front_month_code(product="mini")
             logger.info(f"Auto-detected front month symbol: {self.symbol}")
         self.warmup_bars = self.paper_config.get("warmup_bars", 200)
         self.force_close_time = self.paper_config.get("force_close_time", "15:35")
