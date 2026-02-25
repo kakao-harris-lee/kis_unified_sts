@@ -85,7 +85,7 @@ position_sizing:
 
 # === Paper Trading ===
 paper:
-  symbol: "A01603"
+  symbol: ""                      # 비우면 mini 근월물 자동 감지
   warmup_bars: 200
   force_close_time: "15:35"
   telegram_notify: true

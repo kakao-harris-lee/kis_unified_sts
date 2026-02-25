@@ -1043,8 +1043,8 @@ class TradingOrchestrator:
     async def _verify_positions_with_broker(self) -> None:
         """Redis 복구 포지션과 브로커 실제 잔고 비교.
 
-        Paper 모드에서도 실행 (모의투자 서버 잔고 확인).
-        단, 선물 모의서버는 잔고조회 미지원이므로 건너뛴다.
+        기본적으로 실행하되, futures paper 모드에서는 건너뛴다.
+        (선물 paper는 VirtualBroker 상태가 기준이며 브로커 잔고조회 노이즈 방지)
         """
         # Load broker_verification config
         try:
@@ -1059,6 +1059,12 @@ class TradingOrchestrator:
 
         if not self._kis_client:
             logger.debug("KIS client not available; skipping broker verification")
+            return
+
+        # Futures paper trading uses VirtualBroker state as source-of-truth.
+        # Skip broker inquiry to avoid account-mapping noise and startup latency.
+        if self.config.asset_class == "futures" and self.config.paper_trading:
+            logger.info("Futures paper mode: skipping broker verification")
             return
 
         # Futures mock server doesn't support balance inquiry

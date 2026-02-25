@@ -313,6 +313,31 @@ class TestTradingOrchestrator:
         assert submit_kwargs["side"] == PaperOrderSide.BUY
         assert submit_kwargs["quantity"] == 2
 
+    @pytest.mark.asyncio
+    async def test_verify_positions_skips_futures_paper_broker_check(self, monkeypatch):
+        """선물 paper 모드에서는 브로커 잔고검증 API를 호출하지 않는다."""
+        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from shared.config.loader import ConfigLoader
+
+        config = TradingConfig.futures(strategy_name="rl_mppo")
+        config.paper_trading = True
+        orch = TradingOrchestrator(config)
+
+        orch._kis_client = MagicMock()
+        orch._kis_client.config = MagicMock()
+        orch._kis_client.config.is_real = True
+        orch._kis_client.get_futures_balance = AsyncMock(return_value=[])
+
+        monkeypatch.setattr(
+            ConfigLoader,
+            "load",
+            staticmethod(lambda *_args, **_kwargs: {"broker_verification": {"enabled": True}}),
+        )
+
+        await orch._verify_positions_with_broker()
+
+        orch._kis_client.get_futures_balance.assert_not_called()
+
 
 class TestDefaultHolidayLoader:
     """default_holiday_loader 함수 테스트"""

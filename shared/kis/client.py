@@ -139,6 +139,11 @@ class KISClient(AsyncSessionMixin):
         """Close the session."""
         await self._close_session()
 
+    @staticmethod
+    def _normalize_account_no(account_no: str) -> str:
+        """Normalize account number to digits-only 10-char format."""
+        return "".join(ch for ch in (account_no or "") if ch.isdigit())
+
 
     def _is_futures(self, symbol: str) -> bool:
         """Check if symbol is a futures code (KOSPI 200 / Mini)."""
@@ -437,7 +442,8 @@ class KISClient(AsyncSessionMixin):
             account_no = os.getenv(
                 "KIS_STOCK_ACCOUNT_NO", os.getenv("KIS_ACCOUNT_NO", "")
             )
-        if not account_no or len(account_no) < 10:
+        account_no = self._normalize_account_no(account_no)
+        if len(account_no) != 10:
             logger.warning("Stock account number not configured; skipping balance inquiry")
             return []
 
@@ -523,7 +529,8 @@ class KISClient(AsyncSessionMixin):
             account_no = os.getenv(
                 "KIS_FUTURES_ACCOUNT_NO", os.getenv("KIS_ACCOUNT_NO", "")
             )
-        if not account_no or len(account_no) < 10:
+        account_no = self._normalize_account_no(account_no)
+        if len(account_no) != 10:
             logger.warning("Futures account number not configured; skipping balance inquiry")
             return []
 

@@ -1,4 +1,4 @@
-
+import os
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from shared.kis.client import KISClient, KISAuthConfig
@@ -106,3 +106,54 @@ async def test_get_futures_minute_bars(client):
         call_args = mock_get.call_args
         assert "/uapi/domestic-futureoption/v1/quotations/inquire-time-fuopchartprice" in call_args[0][0]
         assert call_args[1]["headers"]["tr_id"] == "FHKIF03020200"
+
+
+@pytest.mark.asyncio
+async def test_get_futures_balance_normalizes_hyphenated_account(mock_auth_manager):
+    config = KISAuthConfig(app_key="test", app_secret="test", is_real=True)
+    client = KISClient(config)
+
+    with (
+        patch("aiohttp.ClientSession.get") as mock_get,
+        patch.dict(os.environ, {"KIS_FUTURES_ACCOUNT_NO": "12345678-01"}, clear=False),
+    ):
+        mock_resp_obj = AsyncMock()
+        mock_resp_obj.status = 200
+        mock_resp_obj.json.return_value = {"rt_cd": "0", "output1": []}
+        mock_get.return_value.__aenter__.return_value = mock_resp_obj
+
+        client._session = MagicMock()
+        client._session.get = mock_get
+
+        positions = await client.get_futures_balance()
+        assert positions == []
+
+        call_args = mock_get.call_args
+        assert call_args[1]["headers"]["tr_id"] == "CTFO6118R"
+        assert call_args[1]["params"]["CANO"] == "12345678"
+        assert call_args[1]["params"]["ACNT_PRDT_CD"] == "01"
+
+
+@pytest.mark.asyncio
+async def test_get_stock_balance_normalizes_hyphenated_account(mock_auth_manager):
+    config = KISAuthConfig(app_key="test", app_secret="test", is_real=True)
+    client = KISClient(config)
+
+    with (
+        patch("aiohttp.ClientSession.get") as mock_get,
+        patch.dict(os.environ, {"KIS_STOCK_ACCOUNT_NO": "87654321-01"}, clear=False),
+    ):
+        mock_resp_obj = AsyncMock()
+        mock_resp_obj.status = 200
+        mock_resp_obj.json.return_value = {"rt_cd": "0", "output1": []}
+        mock_get.return_value.__aenter__.return_value = mock_resp_obj
+
+        client._session = MagicMock()
+        client._session.get = mock_get
+
+        positions = await client.get_stock_balance()
+        assert positions == []
+
+        call_args = mock_get.call_args
+        assert call_args[1]["params"]["CANO"] == "87654321"
+        assert call_args[1]["params"]["ACNT_PRDT_CD"] == "01"
