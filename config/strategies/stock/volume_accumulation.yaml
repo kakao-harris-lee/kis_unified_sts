@@ -20,14 +20,14 @@ strategy:
     params:
       # Breakout detection
       breakout_period: 5              # N-day high for breakout
-      breakout_buffer_pct: 0.3        # Must exceed high by 0.3%
+      breakout_buffer_pct: 0.1        # Must exceed high by 0.1%
 
       # Volume confirmation
-      rvol_threshold: 2.0             # Minimum RVOL for entry (2x average)
-      require_volume_acceleration: true
+      rvol_threshold: 1.5             # Minimum RVOL for entry (1.5x average)
+      require_volume_acceleration: false
 
       # VWAP
-      require_above_vwap: true
+      require_above_vwap: false
 
       # Accumulation candidate filter (from overnight scan)
       min_accumulation_score: 60
@@ -54,7 +54,7 @@ strategy:
     type: momentum_decay
     params:
       # Hard stop
-      stop_loss_pct: -0.03            # -3%
+      stop_loss_pct: -0.02            # -2%
 
       # EOD close disabled for swing strategy
       eod_close_enabled: false
