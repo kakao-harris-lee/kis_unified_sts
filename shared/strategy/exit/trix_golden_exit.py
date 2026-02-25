@@ -1,18 +1,18 @@
 """TRIX Golden Signal Exit Strategy.
 
-5분봉 TRIX 지표 기반 청산 전략. 분할청산(50%/100%) 지원.
+5분봉 TRIX 지표 기반 청산 전략. 분할청산(50%/100%) 지원 + trailing stop.
 
 Exit Triggers (Priority Order):
-    1. Bearish Divergence: 즉시 전량 청산 (최우선)
-    2. Stop Loss: 진입가 대비 -N% 또는 스윙 저점 이탈
-    3. Partial Exit (50%): TRIX peak-out 또는 RSI 과매수 이탈
-    4. Full Exit (100%):
-       - TRIX Dead Cross (TRIX < Signal)
-       - TRIX 0선 하향 돌파
-       - 잔여 수량 전량 청산
+    1. Hard Stop Loss: 진입가 대비 -N% (min_hold 무시)
+    2. EOD Close: 장 마감 (min_hold 무시)
+    3. min_hold 체크 (아래 조건은 최소 N분 보유 후)
+    4. Trailing Stop: +activation% 도달 후 -trailing% 이탈
+    5. Bearish Divergence: 즉시 전량 청산
+    6. TRIX Dead Cross / 0-line: 전량 청산
+    7. Partial Exit (비활성화 가능): TRIX peak-out / RSI 과매수 이탈
 
 Usage:
-    config = TrixGoldenExitConfig(stop_loss_pct=-0.03, partial_exit_ratio=0.5)
+    config = TrixGoldenExitConfig(min_hold_minutes=60, trailing_stop_enabled=True)
     strategy = TrixGoldenExit(config)
     should_exit, signal = await strategy.should_exit(context)
 """
@@ -41,28 +41,22 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class TrixGoldenExitConfig(ConfigMixin):
-    """TRIX Golden Signal Exit 설정.
-
-    Attributes:
-        stop_loss_pct: Hard stop loss (negative pct, e.g., -0.03 = -3%).
-        partial_exit_ratio: Ratio for 1st partial exit (default: 0.5 = 50%).
-        trix_n: TRIX EMA period (match entry config).
-        trix_signal: TRIX signal line period.
-        rsi_overbought: RSI level triggering partial exit (default: 70).
-        divergence_lookback: Bars to check for divergence (default: 20).
-        use_swing_low_stop: Use swing low for dynamic stop loss (default: True).
-        swing_lookback: Bars to find swing low (default: 10).
-        timeframe_minutes: Candle timeframe (default: 5).
-        eod_close_enabled: Force close at end of day (default: True).
-        eod_close_hour: EOD close hour (default: 15).
-        eod_close_minute: EOD close minute (default: 15).
-    """
+    """TRIX Golden Signal Exit 설정."""
 
     # Stop loss
     stop_loss_pct: float = -0.03  # -3%
 
     # Partial exit
     partial_exit_ratio: float = 0.5
+    partial_exit_enabled: bool = False  # v2: 분할청산 비활성화 (승자를 일찍 자르지 않음)
+
+    # Minimum hold time (stop loss와 EOD 제외)
+    min_hold_minutes: int = 60  # 60분 최소 보유 (60분 WR 56.2% 근거)
+
+    # Trailing stop
+    trailing_stop_enabled: bool = True
+    trailing_activation_pct: float = 0.02  # +2% 도달 시 trailing 시작
+    trailing_stop_pct: float = -0.015  # -1.5% trailing (고점 대비)
 
     # Indicator params (should match entry)
     trix_n: int = 12
@@ -84,6 +78,9 @@ class TrixGoldenExitConfig(ConfigMixin):
     eod_close_hour: int = 15
     eod_close_minute: int = 15
 
+    # Exit signal confidence
+    default_exit_confidence: float = 0.8  # 청산 시그널 기본 confidence
+
     def validate(self) -> None:
         """Validate configuration."""
         if self.stop_loss_pct >= 0:
@@ -94,18 +91,23 @@ class TrixGoldenExitConfig(ConfigMixin):
             raise ValueError("divergence_lookback must be at least 5")
         if self.swing_lookback < 3:
             raise ValueError("swing_lookback must be at least 3")
+        if self.trailing_stop_pct >= 0:
+            raise ValueError("trailing_stop_pct must be negative")
+        if self.trailing_activation_pct <= 0:
+            raise ValueError("trailing_activation_pct must be positive")
+        if self.min_hold_minutes < 0:
+            raise ValueError("min_hold_minutes must be >= 0")
 
 
 class TrixGoldenExit(ExitSignalGenerator[TrixGoldenExitConfig]):
     """TRIX Golden Signal Exit Strategy.
 
-    Implements indicator-based exit with partial exit support:
-    - 1st exit (50%): On TRIX peak-out or RSI overbought exit
-    - 2nd exit (100%): On TRIX dead cross, 0-line cross, or divergence
+    v2: min_hold + trailing stop으로 승자를 오래 보유.
+    v1: 분할청산(50%/100%) + TRIX peak-out/dead cross.
     """
 
     NAME = "TRIX_GOLDEN_EXIT"
-    VERSION = "1.0"
+    VERSION = "2.0"
     CONFIG_CLASS = TrixGoldenExitConfig
 
     def __init__(self, config: TrixGoldenExitConfig):
@@ -117,16 +119,23 @@ class TrixGoldenExit(ExitSignalGenerator[TrixGoldenExitConfig]):
         self._trix_peak: dict[str, float] = {}
         # Track RSI was overbought for exit-on-leave
         self._rsi_was_overbought: dict[str, bool] = {}
+        # Track trailing stop activation (highest profit pct seen)
+        self._trailing_high: dict[str, float] = {}
 
         self._divergence_detector = DivergenceDetector(
             lookback=config.divergence_lookback
         )
 
         logger.info(
-            f"{self.name} ({self.version}) initialized: "
-            f"stop_loss={config.stop_loss_pct:.1%}, "
-            f"partial_ratio={config.partial_exit_ratio:.0%}, "
-            f"rsi_overbought={config.rsi_overbought}"
+            "%s (%s) initialized: stop_loss=%.1f%%, min_hold=%dm, "
+            "trailing=%s (act=%.1f%%, stop=%.1f%%)",
+            self.name,
+            self.version,
+            config.stop_loss_pct * 100,
+            config.min_hold_minutes,
+            config.trailing_stop_enabled,
+            config.trailing_activation_pct * 100,
+            config.trailing_stop_pct * 100,
         )
 
     @property
@@ -182,8 +191,10 @@ class TrixGoldenExit(ExitSignalGenerator[TrixGoldenExitConfig]):
 
         if signals:
             logger.info(
-                f"[{self.name}] {len(signals)}/{len(positions)} positions "
-                f"triggered exit signals"
+                "[%s] %d/%d positions triggered exit signals",
+                self.name,
+                len(signals),
+                len(positions),
             )
 
         return signals
@@ -226,13 +237,14 @@ class TrixGoldenExit(ExitSignalGenerator[TrixGoldenExitConfig]):
     ) -> ExitSignal | None:
         """Check individual position for exit conditions.
 
-        Priority:
-            1. Bearish Divergence → full exit (highest priority)
-            2. Hard Stop Loss → full exit
-            3. Swing Low Stop → full exit
-            4. EOD Close → full exit
-            5. Partial Exit (50%) → TRIX peak-out or RSI overbought exit
-            6. Full Exit → TRIX dead cross or 0-line cross
+        Priority (v2):
+            1. Hard Stop Loss → full exit (min_hold 무시)
+            2. EOD Close → full exit (min_hold 무시)
+            3. min_hold 체크 (아래는 최소 보유 시간 이후)
+            4. Trailing Stop → full exit
+            5. Bearish Divergence → full exit
+            6. TRIX Dead Cross / 0-line → full exit
+            7. Partial Exit (optional) → TRIX peak-out or RSI exit
         """
         # Get current price
         snapshot = get_symbol_snapshot(market_data, position.code)
@@ -249,34 +261,18 @@ class TrixGoldenExit(ExitSignalGenerator[TrixGoldenExitConfig]):
         high_since_entry = max(position.highest_price, current_price)
         holding_minutes = max(0, int(position.get_hold_duration()))
 
+        pid = position.id
+
+        # Update trailing high
+        current_high = self._trailing_high.get(pid, 0.0)
+        if profit_pct > current_high:
+            self._trailing_high[pid] = profit_pct
+
         # Get momentum indicators
         momentum = self._get_momentum_data(market_data, position.code)
         df = momentum.get("df") if momentum else None
 
-        # 1. Bearish Divergence (highest priority — 명세: "조건식과 관계없이 즉시 청산")
-        if (
-            df is not None
-            and len(df) >= self.config.divergence_lookback
-            and self._divergence_detector.detect_bearish(df["close"], df["trix"])
-        ):
-            logger.warning(
-                f"[{self.name}] BEARISH DIVERGENCE detected for {position.code}! "
-                f"Immediate full exit."
-            )
-            return self._create_exit_signal(
-                position=position,
-                current_price=current_price,
-                profit_pct=profit_pct,
-                profit_amount=profit_amount,
-                reason=ExitReason.INDICATOR_EXIT,
-                priority=1,
-                high_since_entry=high_since_entry,
-                holding_minutes=holding_minutes,
-                quantity=position.quantity,  # Full exit
-                metadata={"trigger": "bearish_divergence"},
-            )
-
-        # 2. Hard Stop Loss
+        # --- Priority 1: Hard Stop Loss (always, ignores min_hold) ---
         if profit_pct <= self.config.stop_loss_pct:
             return self._create_exit_signal(
                 position=position,
@@ -287,28 +283,11 @@ class TrixGoldenExit(ExitSignalGenerator[TrixGoldenExitConfig]):
                 priority=1,
                 high_since_entry=high_since_entry,
                 holding_minutes=holding_minutes,
-                quantity=position.quantity,  # Full exit
+                quantity=position.quantity,
                 metadata={"trigger": "hard_stop"},
             )
 
-        # 3. Swing Low Stop
-        if self.config.use_swing_low_stop and df is not None:
-            swing_low = self._find_swing_low(df, self.config.swing_lookback)
-            if swing_low is not None and current_price < swing_low:
-                return self._create_exit_signal(
-                    position=position,
-                    current_price=current_price,
-                    profit_pct=profit_pct,
-                    profit_amount=profit_amount,
-                    reason=ExitReason.STOP_LOSS,
-                    priority=1,
-                    high_since_entry=high_since_entry,
-                    holding_minutes=holding_minutes,
-                    quantity=position.quantity,  # Full exit
-                    metadata={"trigger": "swing_low_stop", "swing_low": swing_low},
-                )
-
-        # 4. EOD Close
+        # --- Priority 2: EOD Close (always, ignores min_hold) ---
         if self.config.eod_close_enabled:
             eod_time = time(self.config.eod_close_hour, self.config.eod_close_minute)
             if now.time() >= eod_time:
@@ -321,18 +300,109 @@ class TrixGoldenExit(ExitSignalGenerator[TrixGoldenExitConfig]):
                     priority=2,
                     high_since_entry=high_since_entry,
                     holding_minutes=holding_minutes,
-                    quantity=position.quantity,  # Full exit
+                    quantity=position.quantity,
                     metadata={"trigger": "eod_close"},
                 )
+
+        # --- min_hold check: 아래 조건은 최소 보유 시간 이후만 ---
+        if holding_minutes < self.config.min_hold_minutes:
+            # Still update tracking state
+            if df is not None and len(df) >= 2:
+                self._update_tracking(pid, df)
+            return None
+
+        # --- Priority 3: Swing Low Stop ---
+        if self.config.use_swing_low_stop and df is not None:
+            swing_low = self._find_swing_low(df, self.config.swing_lookback)
+            if swing_low is not None and current_price < swing_low:
+                return self._create_exit_signal(
+                    position=position,
+                    current_price=current_price,
+                    profit_pct=profit_pct,
+                    profit_amount=profit_amount,
+                    reason=ExitReason.STOP_LOSS,
+                    priority=1,
+                    high_since_entry=high_since_entry,
+                    holding_minutes=holding_minutes,
+                    quantity=position.quantity,
+                    metadata={"trigger": "swing_low_stop", "swing_low": swing_low},
+                )
+
+        # --- Priority 4: Trailing Stop ---
+        if self.config.trailing_stop_enabled:
+            peak_profit = self._trailing_high.get(pid, 0.0)
+            if peak_profit >= self.config.trailing_activation_pct:
+                drawdown = profit_pct - peak_profit
+                if drawdown <= self.config.trailing_stop_pct:
+                    logger.info(
+                        "[%s] Trailing stop for %s: peak=%.2f%%, "
+                        "current=%.2f%%, drawdown=%.2f%%",
+                        self.name,
+                        position.code,
+                        peak_profit * 100,
+                        profit_pct * 100,
+                        drawdown * 100,
+                    )
+                    return self._create_exit_signal(
+                        position=position,
+                        current_price=current_price,
+                        profit_pct=profit_pct,
+                        profit_amount=profit_amount,
+                        reason=ExitReason.TRAILING_STOP,
+                        priority=2,
+                        high_since_entry=high_since_entry,
+                        holding_minutes=holding_minutes,
+                        quantity=position.quantity,
+                        metadata={
+                            "trigger": "trailing_stop",
+                            "peak_profit_pct": peak_profit,
+                        },
+                    )
 
         # Need momentum data for indicator-based exits below
         if df is None or len(df) < 2:
             return None
 
-        pid = position.id
+        # --- Priority 5: Bearish Divergence ---
+        if (
+            len(df) >= self.config.divergence_lookback
+            and self._divergence_detector.detect_bearish(df["close"], df["trix"])
+        ):
+            logger.warning(
+                "[%s] BEARISH DIVERGENCE detected for %s! Full exit.",
+                self.name,
+                position.code,
+            )
+            return self._create_exit_signal(
+                position=position,
+                current_price=current_price,
+                profit_pct=profit_pct,
+                profit_amount=profit_amount,
+                reason=ExitReason.INDICATOR_EXIT,
+                priority=1,
+                high_since_entry=high_since_entry,
+                holding_minutes=holding_minutes,
+                quantity=position.quantity,
+                metadata={"trigger": "bearish_divergence"},
+            )
 
-        # 5. Partial Exit (50%) — TRIX peak-out or RSI overbought exit
-        if not self._partial_exited.get(pid, False):
+        # --- Priority 6: TRIX Dead Cross / 0-line cross ---
+        full_signal = self._check_full_exit(
+            position,
+            df,
+            current_price,
+            profit_pct,
+            profit_amount,
+            high_since_entry,
+            holding_minutes,
+        )
+        if full_signal:
+            return full_signal
+
+        # --- Priority 7: Partial Exit (optional) ---
+        if self.config.partial_exit_enabled and not self._partial_exited.get(
+            pid, False
+        ):
             partial_signal = self._check_partial_exit(
                 position,
                 df,
@@ -345,19 +415,6 @@ class TrixGoldenExit(ExitSignalGenerator[TrixGoldenExitConfig]):
             if partial_signal:
                 self._partial_exited[pid] = True
                 return partial_signal
-
-        # 6. Full Exit — TRIX Dead Cross or 0-line cross
-        full_signal = self._check_full_exit(
-            position,
-            df,
-            current_price,
-            profit_pct,
-            profit_amount,
-            high_since_entry,
-            holding_minutes,
-        )
-        if full_signal:
-            return full_signal
 
         # Update tracking state
         self._update_tracking(pid, df)
@@ -374,12 +431,7 @@ class TrixGoldenExit(ExitSignalGenerator[TrixGoldenExitConfig]):
         high_since_entry: float,
         holding_minutes: int,
     ) -> ExitSignal | None:
-        """Check for partial (50%) exit conditions.
-
-        Triggers:
-            - TRIX peak-out: TRIX formed a peak and is declining
-            - RSI overbought exit: Was overbought, now leaving
-        """
+        """Check for partial (50%) exit conditions."""
         pid = position.id
         partial_qty = max(1, int(position.quantity * self.config.partial_exit_ratio))
 
@@ -394,8 +446,11 @@ class TrixGoldenExit(ExitSignalGenerator[TrixGoldenExitConfig]):
 
         if trix_peak > trix_current and trix_current < trix_prev and trix_prev > 0:
             logger.info(
-                f"[{self.name}] TRIX peak-out for {position.code}: "
-                f"peak={trix_peak:.4f}, current={trix_current:.4f}"
+                "[%s] TRIX peak-out for %s: peak=%.4f, current=%.4f",
+                self.name,
+                position.code,
+                trix_peak,
+                trix_current,
             )
             return self._create_exit_signal(
                 position=position,
@@ -415,8 +470,10 @@ class TrixGoldenExit(ExitSignalGenerator[TrixGoldenExitConfig]):
             rsi_current = float(df["rsi"].iloc[-1])
             if rsi_current < self.config.rsi_overbought:
                 logger.info(
-                    f"[{self.name}] RSI overbought exit for {position.code}: "
-                    f"rsi={rsi_current:.1f} (was overbought)"
+                    "[%s] RSI overbought exit for %s: rsi=%.1f (was overbought)",
+                    self.name,
+                    position.code,
+                    rsi_current,
                 )
                 return self._create_exit_signal(
                     position=position,
@@ -443,12 +500,7 @@ class TrixGoldenExit(ExitSignalGenerator[TrixGoldenExitConfig]):
         high_since_entry: float,
         holding_minutes: int,
     ) -> ExitSignal | None:
-        """Check for full exit conditions.
-
-        Triggers:
-            - TRIX Dead Cross: TRIX < Signal (was >= previously)
-            - TRIX 0-line cross: TRIX < 0 (was >= 0 previously)
-        """
+        """Check for full exit conditions (TRIX dead cross / 0-line)."""
         trix_current = float(df["trix"].iloc[-1])
         trix_signal_current = float(df["trix_signal"].iloc[-1])
         trix_prev = float(df["trix"].iloc[-2])
@@ -457,8 +509,11 @@ class TrixGoldenExit(ExitSignalGenerator[TrixGoldenExitConfig]):
         # TRIX Dead Cross
         if trix_current < trix_signal_current and trix_prev >= trix_signal_prev:
             logger.info(
-                f"[{self.name}] TRIX dead cross for {position.code}: "
-                f"trix={trix_current:.4f}, signal={trix_signal_current:.4f}"
+                "[%s] TRIX dead cross for %s: trix=%.4f, signal=%.4f",
+                self.name,
+                position.code,
+                trix_current,
+                trix_signal_current,
             )
             return self._create_exit_signal(
                 position=position,
@@ -469,15 +524,17 @@ class TrixGoldenExit(ExitSignalGenerator[TrixGoldenExitConfig]):
                 priority=2,
                 high_since_entry=high_since_entry,
                 holding_minutes=holding_minutes,
-                quantity=position.quantity,  # Remaining full exit
+                quantity=position.quantity,
                 metadata={"trigger": "trix_dead_cross"},
             )
 
         # TRIX 0-line downward cross
         if trix_current < 0 and trix_prev >= 0:
             logger.info(
-                f"[{self.name}] TRIX 0-line break for {position.code}: "
-                f"trix={trix_current:.4f}"
+                "[%s] TRIX 0-line break for %s: trix=%.4f",
+                self.name,
+                position.code,
+                trix_current,
             )
             return self._create_exit_signal(
                 position=position,
@@ -488,7 +545,7 @@ class TrixGoldenExit(ExitSignalGenerator[TrixGoldenExitConfig]):
                 priority=2,
                 high_since_entry=high_since_entry,
                 holding_minutes=holding_minutes,
-                quantity=position.quantity,  # Remaining full exit
+                quantity=position.quantity,
                 metadata={"trigger": "trix_zero_cross"},
             )
 
@@ -521,14 +578,9 @@ class TrixGoldenExit(ExitSignalGenerator[TrixGoldenExitConfig]):
 
     @staticmethod
     def _find_swing_low(df: pd.DataFrame, lookback: int) -> float | None:
-        """Find the swing low (lowest low) over the last N bars before the signal bar.
-
-        Returns the lowest low price in the lookback window, or None if
-        insufficient data.
-        """
+        """Find the swing low (lowest low) over the last N bars before the signal bar."""
         if len(df) < lookback + 1:
             return None
-        # Swing low is the min low of the bars before current
         lows = df["low"].iloc[-(lookback + 1) : -1]
         if lows.empty:
             return None
@@ -576,7 +628,7 @@ class TrixGoldenExit(ExitSignalGenerator[TrixGoldenExitConfig]):
             entry_price=position.entry_price,
             profit_amount=profit_amount,
             profit_pct=profit_pct,
-            confidence=0.8,
+            confidence=self.config.default_exit_confidence,
             priority=priority,
             timestamp=datetime.now(),
             stage=position.state.value if position.state else "",
@@ -591,3 +643,4 @@ class TrixGoldenExit(ExitSignalGenerator[TrixGoldenExitConfig]):
         self._partial_exited.pop(position_id, None)
         self._trix_peak.pop(position_id, None)
         self._rsi_was_overbought.pop(position_id, None)
+        self._trailing_high.pop(position_id, None)

@@ -174,7 +174,12 @@ class TestPartialExit:
     @pytest.mark.asyncio
     async def test_trix_peak_out_partial(self):
         """TRIX peak-out triggers partial (50%) exit."""
-        config = TrixGoldenExitConfig(partial_exit_ratio=0.5, use_swing_low_stop=False)
+        config = TrixGoldenExitConfig(
+            partial_exit_ratio=0.5,
+            partial_exit_enabled=True,
+            min_hold_minutes=0,
+            use_swing_low_stop=False,
+        )
         exit_strategy = TrixGoldenExit(config)
         position = _make_position(entry_price=100.0, quantity=100, pid="pos-partial")
 
@@ -223,7 +228,12 @@ class TestPartialExit:
     @pytest.mark.asyncio
     async def test_partial_exit_only_in_profit(self):
         """Partial exit only triggers when position is in profit."""
-        config = TrixGoldenExitConfig(partial_exit_ratio=0.5, use_swing_low_stop=False)
+        config = TrixGoldenExitConfig(
+            partial_exit_ratio=0.5,
+            partial_exit_enabled=True,
+            min_hold_minutes=0,
+            use_swing_low_stop=False,
+        )
         exit_strategy = TrixGoldenExit(config)
         position = _make_position(entry_price=100.0, quantity=100, pid="pos-loss")
 
@@ -254,7 +264,12 @@ class TestPartialExit:
     @pytest.mark.asyncio
     async def test_no_second_partial(self):
         """After partial exit, no second partial (goes to full exit check)."""
-        config = TrixGoldenExitConfig(partial_exit_ratio=0.5, use_swing_low_stop=False)
+        config = TrixGoldenExitConfig(
+            partial_exit_ratio=0.5,
+            partial_exit_enabled=True,
+            min_hold_minutes=0,
+            use_swing_low_stop=False,
+        )
         exit_strategy = TrixGoldenExit(config)
         pid = "pos-already-partial"
         exit_strategy._partial_exited[pid] = True  # Already done
@@ -290,7 +305,9 @@ class TestFullExit:
     @pytest.mark.asyncio
     async def test_trix_dead_cross_full_exit(self):
         """TRIX dead cross → full exit."""
-        exit_strategy = TrixGoldenExit(TrixGoldenExitConfig(use_swing_low_stop=False))
+        exit_strategy = TrixGoldenExit(
+            TrixGoldenExitConfig(use_swing_low_stop=False, min_hold_minutes=0)
+        )
         exit_strategy._partial_exited["pos-dc"] = True  # Skip partial
         position = _make_position(entry_price=100.0, quantity=50, pid="pos-dc")
 
@@ -320,7 +337,9 @@ class TestFullExit:
     @pytest.mark.asyncio
     async def test_trix_zero_line_cross_full_exit(self):
         """TRIX crosses below 0 → full exit."""
-        exit_strategy = TrixGoldenExit(TrixGoldenExitConfig(use_swing_low_stop=False))
+        exit_strategy = TrixGoldenExit(
+            TrixGoldenExitConfig(use_swing_low_stop=False, min_hold_minutes=0)
+        )
         exit_strategy._partial_exited["pos-zc"] = True
         position = _make_position(entry_price=100.0, quantity=50, pid="pos-zc")
 
@@ -417,8 +436,8 @@ class TestEODClose:
 class TestBearishDivergence:
     @pytest.mark.asyncio
     async def test_divergence_triggers_full_exit(self):
-        """Bearish divergence → immediate full exit (highest priority)."""
-        config = TrixGoldenExitConfig(divergence_lookback=20)
+        """Bearish divergence → immediate full exit (after min_hold)."""
+        config = TrixGoldenExitConfig(divergence_lookback=20, min_hold_minutes=0)
         exit_strategy = TrixGoldenExit(config)
         position = _make_position(entry_price=100.0, quantity=100)
 
