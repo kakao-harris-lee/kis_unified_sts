@@ -302,6 +302,13 @@ class BacktestStrategyAdapter:
         # Strategy name for conditional enrichment
         self._strategy_name = strategy.name
 
+        # Backtest toggle: RL precompute can drift from live indicator path.
+        self._use_precomputed_rl_features = bool(
+            strategy_config.get("strategy", {})
+            .get("backtest", {})
+            .get("use_precomputed_rl_features", False)
+        )
+
         # Position state for RL strategies (synced from BacktestEngine)
         self._current_position: dict[str, Any] | None = None
 
@@ -321,6 +328,14 @@ class BacktestStrategyAdapter:
         Features are injected into indicators dict during on_bar()/check_exit(),
         taking priority in build_rl_observation()'s lookup chain.
         """
+        if not self._use_precomputed_rl_features:
+            self._precomputed_rl_features = None
+            self._bar_index = 0
+            logger.info(
+                "Skipping RL feature precompute (backtest.use_precomputed_rl_features=false)"
+            )
+            return
+
         from shared.ml.rl.features import RL_FEATURE_COLUMNS, RLFeatureCalculator
 
         calculator = RLFeatureCalculator()
@@ -453,15 +468,11 @@ class BacktestStrategyAdapter:
         indicators = self._indicator_resolver.collect_entry_indicators(code)
 
         # Inject pre-computed RL features (preferred for backtest throughput).
-        # Prefix conflicting keys with "rl_" to avoid overwriting base indicators
-        # (e.g. RL "atr" is normalized, base "atr" is raw).
+        # RL observation builder reads canonical feature names only, so
+        # pre-computed values must overwrite base indicator keys.
         if self._precomputed_rl_features is not None:
             if self._bar_index < len(self._precomputed_rl_features):
-                for k, v in self._precomputed_rl_features[self._bar_index].items():
-                    if k in indicators:
-                        indicators[f"rl_{k}"] = v
-                    else:
-                        indicators[k] = v
+                indicators.update(self._precomputed_rl_features[self._bar_index])
             self._bar_index += 1
 
         # Derive market_state from MFI using MarketClassifier (matches live orchestrator)

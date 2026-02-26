@@ -75,6 +75,7 @@ def _run_tier_backtest(
     capital: float,
     track: bool,
     experiment: str | None,
+    is_daily: bool = False,
 ):
     """Run backtest across multiple stocks by tier, print summary table."""
     from shared.backtest import BacktestConfig, BacktestEngine
@@ -87,6 +88,12 @@ def _run_tier_backtest(
     from shared.config.loader import ConfigLoader
     from shared.strategy.registry import StrategyFactory, register_builtin_components
 
+    if is_daily:
+        from shared.backtest.daily_adapter import (
+            DailyBacktestAdapter,
+            load_stock_daily_from_clickhouse,
+        )
+
     register_builtin_components()
 
     if tier == "all":
@@ -94,7 +101,8 @@ def _run_tier_backtest(
     else:
         stocks = [s for s in STOCK_UNIVERSE if s["tier"] == tier]
 
-    click.echo(f"Tier backtest: {strategy} ({asset}) — {len(stocks)} stocks ({tier})")
+    tf_label = "daily" if is_daily else "minute"
+    click.echo(f"Tier backtest: {strategy} ({asset}, {tf_label}) — {len(stocks)} stocks ({tier})")
     click.echo("=" * 80)
 
     strategy_config = ConfigLoader.load_strategy(asset, strategy)
@@ -112,7 +120,10 @@ def _run_tier_backtest(
         stock_tier = stock["tier"]
 
         try:
-            df = load_stock_minute_from_clickhouse(code, start_d, end_d)
+            if is_daily:
+                df = load_stock_daily_from_clickhouse(code, start_d, end_d)
+            else:
+                df = load_stock_minute_from_clickhouse(code, start_d, end_d)
         except ValueError:
             click.echo(f"  {code} {name}: No data — skipped")
             results.append({
@@ -127,7 +138,10 @@ def _run_tier_backtest(
             config.risk = RiskConfig.from_dict(bt_override["risk"])
 
         trading_strategy = StrategyFactory.create(strategy_config)
-        adapted = BacktestStrategyAdapter(trading_strategy, strategy_config)
+        if is_daily:
+            adapted = DailyBacktestAdapter(trading_strategy, strategy_config)
+        else:
+            adapted = BacktestStrategyAdapter(trading_strategy, strategy_config)
         engine = BacktestEngine(adapted, config)
 
         result = engine.run(df)
@@ -311,22 +325,42 @@ def backtest_run(
 
     click.echo(f"Loaded strategy config: {strategy_config['strategy']['name']}")
 
+    # Detect timeframe from strategy config
+    timeframe = strategy_config.get("strategy", {}).get("timeframe", "minute")
+    is_daily = timeframe == "daily"
+
+    if is_daily:
+        click.echo(f"Timeframe: daily (swing strategy)")
+
     # 데이터 로드 및 검증
     if data:
         try:
-            df = validate_csv_file(data)
+            csv_validation_kwargs = {}
+            if asset == "futures":
+                # Futures RL backtest guardrails: reject malformed timeline and
+                # heavily synthetic zero-volume datasets.
+                csv_validation_kwargs = {
+                    "reject_duplicate_datetime": True,
+                    "require_monotonic_datetime": True,
+                    "max_zero_volume_ratio": 0.95,
+                    "max_zero_volume_price_move_ratio": 0.20,
+                }
+            df = validate_csv_file(data, **csv_validation_kwargs)
             click.echo(f"Loaded data from CSV: {len(df)} rows")
         except ValidationError as e:
             click.echo(f"Error: {e}", err=True)
             sys.exit(1)
     elif symbol:
-        from shared.collector.historical.stock import load_stock_minute_from_clickhouse
-
         try:
             start_d = start.date() if start else None
             end_d = end.date() if end else None
-            df = load_stock_minute_from_clickhouse(symbol, start_d, end_d)
-            click.echo(f"Loaded {symbol} from ClickHouse: {len(df)} rows")
+            if is_daily:
+                from shared.backtest.daily_adapter import load_stock_daily_from_clickhouse
+                df = load_stock_daily_from_clickhouse(symbol, start_d, end_d)
+            else:
+                from shared.collector.historical.stock import load_stock_minute_from_clickhouse
+                df = load_stock_minute_from_clickhouse(symbol, start_d, end_d)
+            click.echo(f"Loaded {symbol} from ClickHouse: {len(df)} rows ({timeframe})")
         except ValueError as e:
             click.echo(f"Error: {e}", err=True)
             sys.exit(1)
@@ -340,6 +374,7 @@ def backtest_run(
             capital=capital,
             track=track,
             experiment=experiment,
+            is_daily=is_daily,
         )
         return
     else:
@@ -383,7 +418,11 @@ def backtest_run(
         sys.exit(1)
 
     # 어댑터로 감싸기 (TradingStrategy → StrategyProtocol)
-    adapted = BacktestStrategyAdapter(trading_strategy, strategy_config)
+    if is_daily:
+        from shared.backtest.daily_adapter import DailyBacktestAdapter
+        adapted = DailyBacktestAdapter(trading_strategy, strategy_config)
+    else:
+        adapted = BacktestStrategyAdapter(trading_strategy, strategy_config)
 
     # 백테스트 실행
     engine = BacktestEngine(adapted, config)
@@ -792,7 +831,20 @@ def backfill_today(all_products: bool, mini: bool, index: bool, futures: bool):
     default=False,
     help="Backfill KOSPI200 full-size futures (default: False)",
 )
-def backfill_run(days: int, all_products: bool, mini: bool, index: bool, futures: bool):
+@click.option(
+    "--no-resume",
+    is_flag=True,
+    default=False,
+    help="Force re-collect all selected products/days (ignore saved state)",
+)
+def backfill_run(
+    days: int,
+    all_products: bool,
+    mini: bool,
+    index: bool,
+    futures: bool,
+    no_resume: bool,
+):
     """과거 데이터 백필 실행
 
     \b
@@ -800,6 +852,7 @@ def backfill_run(days: int, all_products: bool, mini: bool, index: bool, futures
         sts backfill run --days 30
         sts backfill run --days 180 --all
         sts backfill run --days 90 --index --futures
+        sts backfill run --days 30 --futures --no-resume
     """
     import asyncio
 
@@ -811,19 +864,20 @@ def backfill_run(days: int, all_products: bool, mini: bool, index: bool, futures
     )
 
     click.echo(f"Starting backfill for {days} days...")
+    resume = not no_resume
 
     if all_products:
-        asyncio.run(backfill_all(days=days))
+        asyncio.run(backfill_all(days=days, resume=resume))
     else:
         if mini:
             click.echo("Backfilling Mini KOSPI200 futures...")
-            asyncio.run(do_backfill(days=days))
+            asyncio.run(do_backfill(days=days, resume=resume))
         if index:
             click.echo("Backfilling KOSPI200 index...")
-            asyncio.run(backfill_kospi200_index(days=days))
+            asyncio.run(backfill_kospi200_index(days=days, resume=resume))
         if futures:
             click.echo("Backfilling KOSPI200 futures...")
-            asyncio.run(backfill_kospi200f(days=days))
+            asyncio.run(backfill_kospi200f(days=days, resume=resume))
 
     click.echo("Backfill complete!")
 
@@ -1620,7 +1674,10 @@ def rl_train(algo: str, config: str | None):
         )
         from shared.ml.rl.trainer import RLTrainer
 
-        train_days, train_prices, test_days, test_prices = load_data_from_clickhouse(config)
+        train_days, train_prices, test_days, test_prices = load_data_from_clickhouse(
+            config,
+            persist_scaler=True,
+        )
 
         # TFT 보조 피처 사전 계산 (tft_aux.enabled=true인 경우)
         train_aux, test_aux = precompute_tft_aux(config)

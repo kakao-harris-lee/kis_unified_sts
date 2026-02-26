@@ -563,6 +563,8 @@ class TradingOrchestrator:
         # Daily watchlist for static universe mode (populated from DailyScanner)
         self._daily_watchlist: dict[str, Any] = {}  # {strategies: {name: [codes]}, codes: [...]}
         self._daily_watchlist_key = "system:daily_watchlist:latest"
+        # Daily indicators from pre-market scanner (SMA, RSI, ATR for daily_pullback)
+        self._daily_indicators: dict[str, dict[str, float]] = {}
 
         self._llm_training_data_dir = os.environ.get(
             "LLM_TRAINING_DATA_DIR", "output/llm"
@@ -1079,6 +1081,9 @@ class TradingOrchestrator:
         self._dip_candidates: dict[str, dict[str, Any]] = {}
         self._refresh_dip_candidates()
 
+        # Load daily indicators from Redis (for daily_pullback + chandelier_exit)
+        self._refresh_daily_indicators()
+
         # Redis state publisher
         try:
             from shared.streaming.trading_state import TradingStatePublisher
@@ -1436,7 +1441,7 @@ class TradingOrchestrator:
             logger.debug(f"Accumulation candidates not available: {e}")
             return False
 
-    SWING_STRATEGIES = frozenset({"volume_accumulation", "bb_reversion"})
+    SWING_STRATEGIES = frozenset({"volume_accumulation", "bb_reversion", "daily_pullback"})
     DIP_CANDIDATES_REDIS_KEY = "system:dip_candidates:latest"
     LLM_QUALITY_REDIS_KEY = "system:llm_quality:latest"
 
@@ -1502,6 +1507,36 @@ class TradingOrchestrator:
             return bool(validated)
         except Exception as e:
             logger.debug(f"Dip candidates not available: {e}")
+            return False
+
+    DAILY_INDICATORS_REDIS_KEY = "system:daily_indicators:latest"
+
+    def _refresh_daily_indicators(self) -> bool:
+        """Load pre-computed daily indicators from Redis (published by daily_indicator_scanner).
+
+        Used by daily_pullback entry and chandelier_exit strategies.
+        """
+        try:
+            from shared.streaming.client import RedisClient
+            redis_client = RedisClient.get_client()
+            raw = redis_client.get(self.DAILY_INDICATORS_REDIS_KEY)
+            if not raw:
+                return False
+
+            payload = json.loads(raw)
+            if not isinstance(payload, dict):
+                return False
+
+            indicators = payload.get("indicators", {})
+            if not isinstance(indicators, dict):
+                return False
+
+            self._daily_indicators = indicators
+            if indicators:
+                logger.info(f"Loaded daily indicators for {len(indicators)} symbols")
+            return True
+        except Exception as e:
+            logger.debug(f"Daily indicators not available: {e}")
             return False
 
     def _load_ranked_targets(self, redis) -> tuple[list[str], dict[str, str], dict[str, dict[str, Any]]]:
@@ -2601,6 +2636,9 @@ class TradingOrchestrator:
             regime = self._classify_market(data)
             self._current_regime = regime
 
+            # Periodic refresh of daily indicators (for daily_pullback)
+            self._refresh_daily_indicators()
+
             logger.debug(f"Market regime: {regime}")
 
             return {
@@ -2735,6 +2773,12 @@ class TradingOrchestrator:
                             indicators = self._indicator_engine.get_indicators(symbol)
                     if indicators:
                         enriched.update(indicators)
+
+                # Inject daily indicators (for daily_pullback strategy)
+                daily_ind = getattr(self, "_daily_indicators", {}).get(symbol, {})
+                if daily_ind:
+                    enriched.update(daily_ind)
+                    indicators.update(daily_ind)
 
                 context = EntryContext(
                     market_data=enriched,
@@ -2896,6 +2940,13 @@ class TradingOrchestrator:
                                 indicators = self._indicator_engine.get_indicators(symbol)
                         if indicators:
                             data[symbol] = {**data[symbol], **indicators}
+
+            # Inject daily indicators for exit (chandelier_exit needs daily ATR/HH)
+            for symbol in symbols:
+                if symbol in data and isinstance(data[symbol], dict):
+                    daily_ind = getattr(self, "_daily_indicators", {}).get(symbol, {})
+                    if daily_ind:
+                        data[symbol] = {**data[symbol], **daily_ind}
 
             # Check exits
             signals = await self._strategy_manager.check_exits(

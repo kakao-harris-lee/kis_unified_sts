@@ -106,6 +106,12 @@ data:
   train_ratio: 0.8                  # 80% train, 20% test
   min_bars_per_day: 300             # 최소 바 수 (불완전 일자 제외)
   mirror_augmentation: true         # 가격 미러링 증강 (LONG/SHORT 균형 학습)
+  quality:
+    enabled: true
+    reject_duplicate_datetime: true
+    require_monotonic_datetime: true
+    max_zero_volume_ratio: 0.95
+    max_zero_volume_price_move_ratio: 0.20
 
 # === 학습 관리 ===
 training:
