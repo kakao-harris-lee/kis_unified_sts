@@ -108,3 +108,9 @@ def test_kis_api_config_fields():
     assert config.tr_code_buy_real == "TTTC0802U"
     assert config.tr_code_sell_mock == "VTTC0801U"
     assert config.tr_code_sell_real == "TTTC0801U"
+
+    # Futures TR defaults
+    assert config.futures_tr_code_order_day_real == "TTTO1101U"
+    assert config.futures_tr_code_cancel_day_real == "TTTO1103U"
+    assert config.futures_tr_code_inquire_day_real == "TTTO5201R"
+    assert config.futures_fill_check_enabled is True

@@ -53,9 +53,13 @@ class VirtualBroker:
         quantity: int,
         price: float,
         order_type: OrderType = OrderType.MARKET,
+        market_price: float | None = None,
     ) -> VirtualOrder:
         """Submit and execute order."""
         order_id = f"VO-{uuid.uuid4().hex[:8].upper()}"
+
+        if order_type == OrderType.LIMIT and price <= 0:
+            raise ValueError("Limit order requires positive price")
 
         order = VirtualOrder(
             order_id=order_id,
@@ -70,6 +74,8 @@ class VirtualBroker:
         # Simulate execution for market orders
         if order_type == OrderType.MARKET:
             await self._execute_market_order(order, price)
+        elif order_type == OrderType.LIMIT:
+            await self._execute_limit_order(order, market_price)
 
         self.orders.append(order)
         return order
@@ -107,6 +113,59 @@ class VirtualBroker:
 
         logger.info(
             f"Order filled: {order.side.value} {order.symbol} "
+            f"x{order.quantity} @ {fill_price:.2f}"
+        )
+
+        if self.on_fill:
+            await self.on_fill(order)
+
+    async def _execute_limit_order(
+        self,
+        order: VirtualOrder,
+        market_price: float | None,
+    ) -> None:
+        """Execute marketable limit orders.
+
+        If current market_price does not cross the limit price, the order
+        stays open (filled=False).
+        """
+        if order.price is None:
+            return
+        if market_price is None or market_price <= 0:
+            return
+
+        is_marketable = (
+            (order.side == OrderSide.BUY and market_price <= order.price)
+            or (order.side == OrderSide.SELL and market_price >= order.price)
+        )
+        if not is_marketable:
+            return
+
+        if order.side == OrderSide.BUY:
+            fill_price = min(order.price, market_price)
+            estimated_commission = fill_price * order.quantity * self.commission_rate
+            required_balance = fill_price * order.quantity + estimated_commission
+            if self.balance < required_balance:
+                raise InsufficientBalanceError(
+                    f"Insufficient balance: need {required_balance:.2f}, have {self.balance:.2f}"
+                )
+        else:
+            fill_price = max(order.price, market_price)
+
+        order.filled = True
+        order.fill_price = fill_price
+        order.fill_time = datetime.now()
+
+        commission = fill_price * order.quantity * self.commission_rate
+        if order.side == OrderSide.BUY:
+            self.balance -= (fill_price * order.quantity + commission)
+        else:
+            self.balance += (fill_price * order.quantity - commission)
+
+        await self._update_position(order, fill_price, commission)
+
+        logger.info(
+            f"Limit order filled: {order.side.value} {order.symbol} "
             f"x{order.quantity} @ {fill_price:.2f}"
         )
 

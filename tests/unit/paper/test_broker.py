@@ -41,3 +41,43 @@ async def test_broker_position_tracking():
 
     position = broker.get_position("005930")
     assert position.quantity == 5
+
+
+@pytest.mark.asyncio
+async def test_limit_order_fills_when_marketable():
+    """Buy limit should fill when market_price crosses limit."""
+    from shared.paper.broker import VirtualBroker
+    from shared.paper.models import OrderSide, OrderType
+
+    broker = VirtualBroker(initial_balance=1000000)
+    order = await broker.submit_order(
+        symbol="A05603",
+        side=OrderSide.BUY,
+        quantity=1,
+        price=330.50,
+        order_type=OrderType.LIMIT,
+        market_price=330.48,
+    )
+
+    assert order.filled is True
+    assert order.fill_price == pytest.approx(330.48)
+
+
+@pytest.mark.asyncio
+async def test_limit_order_stays_open_when_not_marketable():
+    """Buy limit should remain unfilled when market stays above limit."""
+    from shared.paper.broker import VirtualBroker
+    from shared.paper.models import OrderSide, OrderType
+
+    broker = VirtualBroker(initial_balance=1000000)
+    order = await broker.submit_order(
+        symbol="A05603",
+        side=OrderSide.BUY,
+        quantity=1,
+        price=330.50,
+        order_type=OrderType.LIMIT,
+        market_price=330.60,
+    )
+
+    assert order.filled is False
+    assert broker.get_position("A05603") is None
