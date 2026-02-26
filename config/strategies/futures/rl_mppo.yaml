@@ -26,6 +26,10 @@ strategy:
       skip_market_open_minutes: 5    # 장 시작 후 관망
       skip_market_close_minutes: 30  # 15:45-30=15:15 — EOD close와 일치
       paper_skip_market_close_minutes: 0
+      day_session_enabled: true
+      day_market_open: "09:00"
+      day_market_close: "15:45"
+      night_session_enabled: false
       enable_hold_override: true     # HOLD 근소 우세 시 진입 액션 허용
       hold_override_max_gap: 0.12    # hold_prob - best_entry_prob <= 0.12
       hold_override_min_entry_prob: 0.33  # 진입 후보 최소 확률
