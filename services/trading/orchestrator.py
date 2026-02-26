@@ -306,6 +306,9 @@ class TradingConfig:
     # Candle cache persistence interval (seconds)
     candle_cache_save_interval: float = 60.0
 
+    # Universe mode: "dynamic" (screener-driven, default) or "static" (daily watchlist)
+    universe_mode: str = "dynamic"
+
     def __post_init__(self):
         """Validate configuration values."""
         self._validate()
@@ -315,6 +318,11 @@ class TradingConfig:
         if self.asset_class not in ("stock", "futures"):
             raise ValueError(
                 f"asset_class must be 'stock' or 'futures', got {self.asset_class}"
+            )
+
+        if self.universe_mode not in ("dynamic", "static"):
+            raise ValueError(
+                f"universe_mode must be 'dynamic' or 'static', got {self.universe_mode}"
             )
 
         if not (MIN_INITIAL_CAPITAL <= self.initial_capital <= MAX_INITIAL_CAPITAL):
@@ -501,6 +509,13 @@ class TradingOrchestrator:
 
         # WebSocket futures price feed (initialized in _initialize_components)
         self._futures_price_feed: Any | None = None
+        self._futures_slippage_controller: Any | None = None
+        self._futures_slippage_aux_symbols: list[str] = []
+        self._entry_slippage_stats: dict[str, float] = {
+            "count": 0.0,
+            "adverse_ticks_sum": 0.0,
+            "avg_adverse_ticks": 0.0,
+        }
 
         # Optional tick mirroring to Redis streams for monitoring exporter
         self._tick_stream_publisher: Any | None = None
@@ -545,6 +560,10 @@ class TradingOrchestrator:
             self._max_universe_size = int(_sf_cfg.get("max_symbols", 40))
         except Exception:
             self._max_universe_size = 40
+        # Daily watchlist for static universe mode (populated from DailyScanner)
+        self._daily_watchlist: dict[str, Any] = {}  # {strategies: {name: [codes]}, codes: [...]}
+        self._daily_watchlist_key = "system:daily_watchlist:latest"
+
         self._llm_training_data_dir = os.environ.get(
             "LLM_TRAINING_DATA_DIR", "output/llm"
         )
@@ -606,26 +625,73 @@ class TradingOrchestrator:
         # 1. Initialize KIS Client & Config
         kis_config = self._init_kis_client()
 
-        # 2. Initialize Price Feeds (WebSocket)
+        # 2. Initialize futures slippage controller (if enabled)
+        self._init_futures_slippage_controller()
+
+        # 3. Initialize Price Feeds (WebSocket)
         data_source = self._init_price_feeds(kis_config)
 
-        # 3. Initialize Data Provider
+        # 4. Initialize Data Provider
         self._init_data_provider(data_source)
 
-        # 4. Initialize optional tick stream publisher (monitoring only)
+        # 5. Initialize optional tick stream publisher (monitoring only)
         self._init_tick_stream_publisher()
 
-        # 5. Initialize Strategy Infra
+        # 6. Initialize Strategy Infra
         self._init_strategy_infrastructure()
 
-        # 6. Initialize Indicator Engine + feed callbacks
+        # 7. Initialize Indicator Engine + feed callbacks
         self._init_indicator_engine()
 
-        # 7. Initialize Execution Layer
+        # 8. Initialize Execution Layer
         await self._init_execution_layer()
 
-        # 8. Load Swing Positions
+        # 9. Load Swing Positions
         await self._load_swing_positions()
+
+    def _init_futures_slippage_controller(self) -> None:
+        """Initialize futures slippage controller from YAML config."""
+        self._futures_slippage_controller = None
+        self._futures_slippage_aux_symbols = []
+
+        if self.config.asset_class != "futures":
+            return
+
+        try:
+            exec_cfg = ConfigLoader.load("execution.yaml")
+            raw = exec_cfg.get("futures_slippage_control", {})
+        except Exception as e:
+            logger.warning(f"Failed to load futures slippage config: {e}")
+            raw = {}
+
+        try:
+            from shared.execution.slippage_control import (
+                FuturesSlippageController,
+                SlippageControlConfig,
+            )
+
+            cfg = SlippageControlConfig.from_dict(raw)
+            if not cfg.enabled:
+                logger.info("Futures slippage control disabled")
+                return
+
+            self._futures_slippage_controller = FuturesSlippageController(cfg)
+            if cfg.cross_asset_enabled and cfg.cross_asset_symbol:
+                if cfg.cross_asset_symbol not in (self.config.symbols or []):
+                    self._futures_slippage_aux_symbols = [cfg.cross_asset_symbol]
+
+            logger.info(
+                "Futures slippage control enabled: spread<=%st, depth>=%.1fx, "
+                "retry=%s, cross_asset=%s",
+                cfg.max_spread_ticks,
+                cfg.min_depth_multiplier,
+                cfg.retry_policy.value,
+                cfg.cross_asset_symbol if cfg.cross_asset_enabled else "off",
+            )
+        except Exception as e:
+            logger.warning(f"Futures slippage controller init failed: {e}")
+            self._futures_slippage_controller = None
+            self._futures_slippage_aux_symbols = []
 
     def _init_kis_client(self):
         """Initialize KIS REST API Client"""
@@ -837,6 +903,16 @@ class TradingOrchestrator:
                                 self._indicator_engine.set_volume_baseline(symbol, raw_vol)
                     self._indicator_engine.on_tick(symbol, data, ts)
 
+                if self._futures_slippage_controller:
+                    try:
+                        price = float(data.get("close", 0.0) or 0.0)
+                        if price > 0:
+                            self._futures_slippage_controller.register_trade_tick(
+                                symbol, price, timestamp=ts
+                            )
+                    except Exception:
+                        pass
+
                 if self._tick_stream_publisher:
                     self._tick_stream_publisher.publish("futures", symbol, data)
 
@@ -898,6 +974,43 @@ class TradingOrchestrator:
                 if mode not in ("MOCK", "REAL"):
                     raise ValueError(f"execution_mode must be MOCK or REAL for live execution, got {mode!r}")
 
+                try:
+                    raw_exec_cfg = ConfigLoader.load("execution.yaml").get("execution", {})
+                except Exception:
+                    raw_exec_cfg = {}
+
+                exec_kwargs: dict[str, Any] = {}
+                if isinstance(raw_exec_cfg, dict):
+                    if "max_retries" in raw_exec_cfg:
+                        exec_kwargs["max_retries"] = raw_exec_cfg["max_retries"]
+                    if "retry_delay" in raw_exec_cfg:
+                        exec_kwargs["retry_delay"] = raw_exec_cfg["retry_delay"]
+                    if "order_request_timeout_seconds" in raw_exec_cfg:
+                        exec_kwargs["order_request_timeout_seconds"] = raw_exec_cfg[
+                            "order_request_timeout_seconds"
+                        ]
+                    # Backward compatibility: execution.yaml used orders_per_second key.
+                    if "orders_per_second" in raw_exec_cfg:
+                        exec_kwargs["requests_per_second"] = raw_exec_cfg["orders_per_second"]
+                    elif "requests_per_second" in raw_exec_cfg:
+                        exec_kwargs["requests_per_second"] = raw_exec_cfg["requests_per_second"]
+                    if "futures_fill_check_enabled" in raw_exec_cfg:
+                        exec_kwargs["futures_fill_check_enabled"] = raw_exec_cfg[
+                            "futures_fill_check_enabled"
+                        ]
+                    if "futures_fill_check_poll_interval_seconds" in raw_exec_cfg:
+                        exec_kwargs["futures_fill_check_poll_interval_seconds"] = raw_exec_cfg[
+                            "futures_fill_check_poll_interval_seconds"
+                        ]
+                    if "futures_fill_check_timeout_seconds" in raw_exec_cfg:
+                        exec_kwargs["futures_fill_check_timeout_seconds"] = raw_exec_cfg[
+                            "futures_fill_check_timeout_seconds"
+                        ]
+                    if "futures_auto_cancel_unfilled" in raw_exec_cfg:
+                        exec_kwargs["futures_auto_cancel_unfilled"] = raw_exec_cfg[
+                            "futures_auto_cancel_unfilled"
+                        ]
+
                 exec_cfg = ExecutionConfig(
                     trading_mode=mode,
                     account_no=(
@@ -907,6 +1020,7 @@ class TradingOrchestrator:
                     ),
                     redis_url=os.getenv("REDIS_URL", ""),
                     rate_limit_key=self.config.asset_class,
+                    **exec_kwargs,
                 )
 
                 auth_manager = getattr(self._kis_client, "auth_manager", None) if self._kis_client else None
@@ -1436,6 +1550,60 @@ class TradingOrchestrator:
             logger.warning(f"Universe refresh failed: {e}")
         return False
 
+    def _load_static_watchlist(self) -> bool:
+        """Load static universe from daily watchlist (Redis).
+
+        In static mode, the universe is fixed for the trading day based on
+        the DailyScanner's pre-market analysis of daily candles.
+        """
+        try:
+            from shared.streaming.client import RedisClient
+            redis = RedisClient.get_client()
+            raw = redis.get(self._daily_watchlist_key)
+            if not raw:
+                logger.warning(
+                    "Static watchlist not found in Redis "
+                    f"(key={self._daily_watchlist_key}). "
+                    "Falling back to dynamic screener mode."
+                )
+                return False
+
+            payload = json.loads(raw)
+            strategies = payload.get("strategies", {})
+            all_codes: set[str] = set()
+            for strat_codes in strategies.values():
+                if isinstance(strat_codes, list):
+                    all_codes.update(str(c).strip() for c in strat_codes if str(c).strip())
+
+            if not all_codes:
+                logger.warning("Static watchlist is empty, falling back to dynamic mode.")
+                return False
+
+            # Store full watchlist for injection into entry context
+            self._daily_watchlist = payload
+
+            # Set universe
+            now = datetime.now()
+            for code in all_codes:
+                self._symbol_last_seen[code] = now
+            self.config.symbols = list(all_codes)
+
+            if self._data_provider:
+                self._data_provider.symbols = list(all_codes)
+
+            if self._stock_price_feed:
+                self._stock_price_feed.update_symbols(list(all_codes))
+
+            logger.info(
+                f"Static watchlist loaded: {len(all_codes)} symbols "
+                f"(strategies: {', '.join(f'{k}={len(v)}' for k, v in strategies.items())})"
+            )
+            return True
+
+        except Exception as e:
+            logger.warning(f"Failed to load static watchlist: {e}")
+            return False
+
     def _update_symbol_cache(self, codes, names, metadata):
         """Update last-seen timestamps and metadata cache."""
         now = datetime.now()
@@ -1569,7 +1737,13 @@ class TradingOrchestrator:
                     self._prev_day_volume_warned = True
 
     async def _universe_refresh_loop(self) -> None:
-        """Periodically refresh symbols from screener."""
+        """Periodically refresh symbols from screener or static watchlist."""
+        # Static mode: load daily watchlist once, then idle
+        if self.config.universe_mode == "static":
+            await self._static_universe_refresh()
+            return
+
+        # Dynamic mode: original screener-driven refresh
         while self._market_data_running:
             try:
                 old_symbols = set(self.config.symbols)
@@ -1616,6 +1790,39 @@ class TradingOrchestrator:
             except Exception as e:
                 logger.warning(f"Universe refresh loop error: {e}")
             await asyncio.sleep(self._universe_refresh_interval)
+
+    async def _static_universe_refresh(self) -> None:
+        """Load static watchlist once and prewarm all symbols.
+
+        Falls back to dynamic screener mode if the watchlist is unavailable.
+        """
+        loaded = self._load_static_watchlist()
+        if not loaded:
+            logger.info("Static watchlist unavailable, switching to dynamic mode.")
+            self.config.universe_mode = "dynamic"
+            # Re-enter loop in dynamic mode
+            while self._market_data_running:
+                try:
+                    self._refresh_universe_from_screener()
+                except Exception as e:
+                    logger.warning(f"Dynamic fallback refresh error: {e}")
+                await asyncio.sleep(self._universe_refresh_interval)
+            return
+
+        # Pre-warm all watchlist symbols
+        if self.config.symbols and self._indicator_engine and self._kis_client:
+            task = asyncio.create_task(
+                self._prewarm_symbols(list(self.config.symbols)),
+                name="prewarm_static_symbols",
+            )
+            self._prewarm_task = task
+            self._pending_notify_tasks.add(task)
+            task.add_done_callback(self._on_notify_done)
+
+        # In static mode, keep loop alive but sleep long (no refresh needed).
+        # This allows graceful cancellation on shutdown.
+        while self._market_data_running:
+            await asyncio.sleep(300)  # 5-minute heartbeat
 
     async def _fetch_candles_from_clickhouse(
         self, symbol: str, limit: int = 120
@@ -2079,11 +2286,16 @@ class TradingOrchestrator:
                 self._stock_price_feed = None
         if self._futures_price_feed:
             try:
-                self._futures_price_feed.update_symbols(self.config.symbols)
+                feed_symbols = list(self.config.symbols or [])
+                self._futures_price_feed.update_symbols(
+                    feed_symbols,
+                    auxiliary_symbols=self._futures_slippage_aux_symbols,
+                )
                 await self._futures_price_feed.start()
                 logger.info(
                     f"Futures WebSocket feed started, "
-                    f"{self._futures_price_feed.symbol_count} symbols subscribed"
+                    f"{self._futures_price_feed.symbol_count} symbols subscribed "
+                    f"(trade={len(feed_symbols)}, aux={len(self._futures_slippage_aux_symbols)})"
                 )
             except Exception as e:
                 logger.warning(f"Futures WebSocket feed start failed: {e}")
@@ -2295,6 +2507,48 @@ class TradingOrchestrator:
             return {symbol: snapshot[symbol] for symbol in symbols if symbol in snapshot}
         return snapshot
 
+    async def _get_quote_payload(self, symbol: str) -> dict[str, Any]:
+        """Get best-effort real-time payload for a symbol."""
+        snapshot = await self._get_market_data_snapshot([symbol])
+        payload = snapshot.get(symbol, {})
+        if payload and payload.get("bid_price_1") and payload.get("ask_price_1"):
+            return payload
+
+        if self._futures_price_feed and hasattr(self._futures_price_feed, "get_orderbook_snapshot"):
+            try:
+                ob = self._futures_price_feed.get_orderbook_snapshot(symbol)
+                if ob:
+                    merged = dict(payload)
+                    merged.update(ob)
+                    return merged
+            except Exception:
+                pass
+        return payload
+
+    @staticmethod
+    def _serialize_state_transitions(transitions: list[Any]) -> list[dict[str, Any]]:
+        result: list[dict[str, Any]] = []
+        for item in transitions:
+            state = getattr(item, "state", None)
+            at = getattr(item, "at", None)
+            reason = getattr(item, "reason", "")
+            result.append(
+                {
+                    "state": getattr(state, "value", str(state)),
+                    "at": at.isoformat() if isinstance(at, datetime) else str(at),
+                    "reason": reason,
+                }
+            )
+        return result
+
+    def _update_entry_slippage_stats(self, adverse_ticks: float) -> None:
+        stats = self._entry_slippage_stats
+        count = int(stats.get("count", 0.0)) + 1
+        total = float(stats.get("adverse_ticks_sum", 0.0)) + adverse_ticks
+        stats["count"] = float(count)
+        stats["adverse_ticks_sum"] = total
+        stats["avg_adverse_ticks"] = total / count if count > 0 else 0.0
+
     # -------------------------------------------------------------------------
     # Pipeline Handlers
     # -------------------------------------------------------------------------
@@ -2462,6 +2716,7 @@ class TradingOrchestrator:
                         "symbol_metadata": meta,
                         "accumulation_candidates": getattr(self, "_accumulation_candidates", {}),
                         "dip_candidates": getattr(self, "_dip_candidates", {}),
+                        "daily_watchlist": self._daily_watchlist,
                     },
                 )
                 return await self._strategy_manager.check_entries(context)
@@ -2667,51 +2922,292 @@ class TradingOrchestrator:
                 direction = self._get_signal_direction(signal)
                 is_short = direction == "short"
 
-                is_filled, fill_price = await self._submit_entry_order(
-                    signal.code, is_short, quantity, signal.price
+                is_filled, fill_price, execution_meta = await self._submit_entry_order(
+                    signal.code, is_short, quantity, signal.price, signal=signal
                 )
+                execution_meta = execution_meta or {}
+                filled_qty = int(execution_meta.get("filled_qty", quantity) or 0)
 
-                if is_filled:
-                    await self._process_filled_entry(signal, fill_price, quantity, is_short, direction)
+                if is_filled and filled_qty > 0:
+                    await self._process_filled_entry(
+                        signal,
+                        fill_price,
+                        filled_qty,
+                        is_short,
+                        direction,
+                        execution_meta=execution_meta,
+                    )
+                elif is_filled:
+                    logger.warning(
+                        "Entry fill acknowledged but filled quantity is zero: %s",
+                        signal.code,
+                    )
+                elif execution_meta.get("blocked_reason"):
+                    logger.info(
+                        "Entry blocked by execution guard: %s %s",
+                        signal.code,
+                        execution_meta.get("blocked_reason"),
+                    )
 
             except Exception as e:
                 logger.error(f"Entry execution failed for {signal.code}: {e}", exc_info=True)
 
-    async def _submit_entry_order(self, code: str, is_short: bool, quantity: int, price: float) -> tuple[bool, float]:
+    async def _submit_entry_order(
+        self,
+        code: str,
+        is_short: bool,
+        quantity: int,
+        price: float,
+        signal: Signal | None = None,
+    ) -> tuple[bool, float, dict[str, Any]]:
         """Submit entry order to broker."""
+        if (
+            self.config.asset_class == "futures"
+            and self._futures_slippage_controller is not None
+            and signal is not None
+        ):
+            return await self._submit_futures_entry_with_slippage_control(
+                signal=signal,
+                is_short=is_short,
+                quantity=quantity,
+            )
+
+        is_filled, fill_price, filled_qty = await self._place_entry_order(
+            code=code,
+            is_short=is_short,
+            quantity=quantity,
+            order_type="market",
+            limit_price=None,
+            market_price=price,
+        )
+        return (
+            is_filled,
+            fill_price,
+            {
+                "mode": "default_market",
+                "submit_price": price,
+                "filled_qty": int(filled_qty),
+                "blocked_reason": "",
+                "transitions": [],
+            },
+        )
+
+    async def _submit_futures_entry_with_slippage_control(
+        self,
+        *,
+        signal: Signal,
+        is_short: bool,
+        quantity: int,
+    ) -> tuple[bool, float, dict[str, Any]]:
+        controller = self._futures_slippage_controller
+        if controller is None:
+            return False, 0.0, {"mode": "slippage_guard", "blocked_reason": "controller_missing"}
+
+        is_buy = not is_short
+        code = signal.code
+        signal_price = float(signal.price)
+        signal_ts = signal.timestamp if isinstance(signal.timestamp, datetime) else datetime.now()
+
+        quote_payload = await self._get_quote_payload(code)
+        cross_payload: dict[str, Any] | None = None
+        cross_symbol = ""
+        if controller.config.cross_asset_enabled:
+            cross_symbol = controller.config.cross_asset_symbol
+            cross_payload = await self._get_quote_payload(cross_symbol)
+
+        decision = controller.evaluate_entry(
+            symbol=code,
+            is_buy=is_buy,
+            quantity=quantity,
+            signal_price=signal_price,
+            signal_timestamp=signal_ts,
+            quote_payload=quote_payload,
+            cross_asset_payload=cross_payload,
+            now=datetime.now(),
+        )
+        execution_meta: dict[str, Any] = {
+            "mode": "slippage_guard",
+            "signal_price": signal_price,
+            "requested_qty": int(quantity),
+            "cross_asset_symbol": cross_symbol,
+            "blocked_reason": "",
+            "state": decision.state.value,
+            "transitions": self._serialize_state_transitions(decision.transitions),
+            "submit_price": decision.target_price,
+        }
+
+        if getattr(decision.action, "value", "") == "block":
+            execution_meta["blocked_reason"] = decision.reason
+            return False, 0.0, execution_meta
+
+        # Passive entry: limit at opposite best quote.
+        passive_price = float(decision.target_price or signal_price)
+        latest_quote = await self._get_quote_payload(code)
+        current_touch_price = float(latest_quote.get("ask_price_1" if is_buy else "bid_price_1", passive_price))
+        is_filled, fill_price, filled_qty = await self._place_entry_order(
+            code=code,
+            is_short=is_short,
+            quantity=quantity,
+            order_type="limit",
+            limit_price=passive_price,
+            market_price=current_touch_price,
+        )
+        execution_meta["submit_price"] = passive_price
+        execution_meta["filled_qty"] = int(filled_qty)
+        if is_filled:
+            execution_meta["state"] = "filled"
+            if 0 < int(filled_qty) < int(quantity):
+                execution_meta["execution_path"] = "passive_limit_partial"
+                execution_meta["partial_fill"] = True
+            else:
+                execution_meta["execution_path"] = "passive_limit"
+            return True, fill_price, execution_meta
+
+        # Passive order timed out (paper mode unfilled). Evaluate retry/cancel.
+        wait_seconds = max(0.05, float(controller.config.passive_timeout_seconds))
+        # Live futures path already waits in OrderExecutor (fill inquiry + cancel),
+        # so only enforce local delay for paper/mock fallback paths.
+        should_wait = self.config.paper_trading or self._order_executor is None
+        if should_wait:
+            await asyncio.sleep(wait_seconds)
+
+        retry_payload = await self._get_quote_payload(code)
+        retry_decision = controller.evaluate_retry(
+            symbol=code,
+            is_buy=is_buy,
+            signal_price=signal_price,
+            quote_payload=retry_payload,
+            now=datetime.now(),
+        )
+        execution_meta["transitions"] += self._serialize_state_transitions(
+            retry_decision.transitions
+        )
+
+        if getattr(retry_decision.action, "value", "") != "retry_market":
+            execution_meta["blocked_reason"] = retry_decision.reason
+            execution_meta["state"] = retry_decision.state.value
+            return False, 0.0, execution_meta
+
+        retry_market_price = float(retry_decision.target_price or signal_price)
+        filled_retry, fill_retry, retry_filled_qty = await self._place_entry_order(
+            code=code,
+            is_short=is_short,
+            quantity=quantity,
+            order_type="market",
+            limit_price=None,
+            market_price=retry_market_price,
+        )
+        execution_meta["filled_qty"] = int(retry_filled_qty)
+        execution_meta["submit_price"] = retry_market_price
+        execution_meta["state"] = retry_decision.state.value
+        execution_meta["execution_path"] = "retry_market_once"
+        if filled_retry:
+            execution_meta["state"] = "filled"
+            if 0 < int(retry_filled_qty) < int(quantity):
+                execution_meta["execution_path"] = "retry_market_partial"
+                execution_meta["partial_fill"] = True
+            return True, fill_retry, execution_meta
+
+        execution_meta["blocked_reason"] = "retry_unfilled"
+        execution_meta["state"] = "cancelled"
+        return False, 0.0, execution_meta
+
+    async def _place_entry_order(
+        self,
+        *,
+        code: str,
+        is_short: bool,
+        quantity: int,
+        order_type: str,
+        limit_price: float | None,
+        market_price: float,
+    ) -> tuple[bool, float, int]:
         if self.config.paper_trading and self._paper_broker:
             try:
                 from shared.paper import OrderSide as PaperOrderSide
+                from shared.paper import OrderType as PaperOrderType
             except ImportError:
-                return False, 0.0
+                return False, 0.0, 0
+
+            side = PaperOrderSide.SELL if is_short else PaperOrderSide.BUY
+            if order_type == "limit":
+                order = await self._paper_broker.submit_order(
+                    symbol=code,
+                    side=side,
+                    quantity=quantity,
+                    price=float(limit_price or market_price),
+                    order_type=PaperOrderType.LIMIT,
+                    market_price=market_price,
+                )
+                is_filled = bool(getattr(order, "filled", False))
+                fill_price = float(getattr(order, "fill_price", 0.0) or 0.0)
+                return is_filled, fill_price, (quantity if is_filled else 0)
 
             order = await self._paper_broker.submit_order(
                 symbol=code,
-                side=PaperOrderSide.SELL if is_short else PaperOrderSide.BUY,
+                side=side,
                 quantity=quantity,
-                price=price,
+                price=market_price,
+                order_type=PaperOrderType.MARKET,
             )
             is_filled = bool(getattr(order, "filled", True))
-            fill_price = float(getattr(order, "fill_price", price) or price)
-            return is_filled, fill_price
+            fill_price = float(getattr(order, "fill_price", market_price) or market_price)
+            return is_filled, fill_price, (quantity if is_filled else 0)
 
-        elif self._order_executor is not None:
+        if self._order_executor is not None:
             from shared.execution.models import OrderRequest, OrderSide, OrderType
+
+            side = OrderSide.SELL if is_short else OrderSide.BUY
+            req_type = OrderType.LIMIT if order_type == "limit" else OrderType.MARKET
+            req_price = float(limit_price) if (req_type == OrderType.LIMIT and limit_price) else None
+
             resp = await self._order_executor.execute_order(
                 OrderRequest(
                     code=code,
-                    side=OrderSide.SELL if is_short else OrderSide.BUY,
-                    order_type=OrderType.MARKET,
+                    side=side,
+                    order_type=req_type,
                     quantity=quantity,
-                    price=None,
+                    price=req_price,
                 )
             )
-            return bool(resp.success), float(resp.filled_price or price)
-        else:
-            return True, price
+            fallback_price = float(limit_price or market_price)
+            filled_qty = int(getattr(resp, "filled_qty", 0) or 0)
+            filled_price = float(getattr(resp, "filled_price", 0.0) or 0.0)
 
-    async def _process_filled_entry(self, signal, fill_price, quantity, is_short, direction):
+            # Partial fills must be tracked even when broker final status is
+            # timeout/cancel to avoid orphan live positions.
+            if filled_qty > 0:
+                return True, float(filled_price or fallback_price), max(0, filled_qty)
+
+            if bool(resp.success):
+                if req_type == OrderType.MARKET:
+                    return True, float(filled_price or fallback_price), quantity
+                if self.config.asset_class != "futures":
+                    return True, float(filled_price or fallback_price), quantity
+                if filled_price > 0:
+                    return True, float(filled_price), quantity
+
+            return False, 0.0, 0
+
+        return True, float(limit_price or market_price), quantity
+
+    async def _process_filled_entry(
+        self,
+        signal,
+        fill_price,
+        quantity,
+        is_short,
+        direction,
+        execution_meta: dict[str, Any] | None = None,
+    ):
         """Handle post-entry logic."""
+        exec_meta = self._finalize_entry_execution_meta(
+            signal=signal,
+            fill_price=fill_price,
+            is_short=is_short,
+            execution_meta=execution_meta or {},
+        )
+
         symbol_meta = (self.config.symbol_metadata or {}).get(signal.code, {})
         position = self._position_tracker.add_position(
             code=signal.code,
@@ -2727,6 +3223,7 @@ class TradingOrchestrator:
                 "risk_flags": symbol_meta.get("risk_flags", []),
                 "entry_signal_confidence": signal.confidence,
                 "signal_direction": direction,
+                "execution": exec_meta,
             },
         )
 
@@ -2737,13 +3234,30 @@ class TradingOrchestrator:
         self._sync_open_positions_metric()
         name = signal.name or self._symbol_names.get(signal.code, "")
 
-        self._log_entry(name, signal.code, fill_price, quantity, signal.strategy, signal.confidence, is_short)
+        self._log_entry(
+            name,
+            signal.code,
+            fill_price,
+            quantity,
+            signal.strategy,
+            signal.confidence,
+            is_short,
+            execution_meta=exec_meta,
+        )
 
         # Collect snapshot
         indicators = self._collect_indicator_snapshot(signal.code, fill_price)
 
         # Telemetry
-        self._record_entry_telemetry(position, signal, fill_price, quantity, name, indicators)
+        self._record_entry_telemetry(
+            position,
+            signal,
+            fill_price,
+            quantity,
+            name,
+            indicators,
+            execution_meta=exec_meta,
+        )
 
         # Publish
         if self._state_publisher:
@@ -2761,13 +3275,87 @@ class TradingOrchestrator:
             self._pending_notify_tasks.add(task)
             task.add_done_callback(self._on_notify_done)
 
-    def _log_entry(self, name, code, price, qty, strategy, confidence, is_short):
+    def _finalize_entry_execution_meta(
+        self,
+        *,
+        signal: Signal,
+        fill_price: float,
+        is_short: bool,
+        execution_meta: dict[str, Any],
+    ) -> dict[str, Any]:
+        meta = dict(execution_meta)
+        signal_price = float(signal.price)
+        submit_price = float(meta.get("submit_price", signal_price) or signal_price)
+
+        meta["signal_price"] = signal_price
+        meta["submit_price"] = submit_price
+        meta["fill_price"] = float(fill_price)
+
+        try:
+            from shared.execution.slippage_control import compute_adverse_slippage_ticks
+
+            tick_size = 0.02
+            if (
+                self._futures_slippage_controller is not None
+                and getattr(self._futures_slippage_controller, "config", None) is not None
+            ):
+                tick_size = float(self._futures_slippage_controller.config.tick_size)
+
+            slippage_ticks = compute_adverse_slippage_ticks(
+                signal_price=signal_price,
+                fill_price=float(fill_price),
+                is_buy=(not is_short),
+                tick_size=tick_size,
+            )
+            meta["slippage_ticks"] = float(slippage_ticks)
+            meta["slippage_tick_size"] = tick_size
+
+            self._update_entry_slippage_stats(max(0.0, float(slippage_ticks)))
+            logger.info(
+                "Entry execution prices: code=%s signal=%.2f submit=%.2f fill=%.2f "
+                "slippage=%.2ft",
+                signal.code,
+                signal_price,
+                submit_price,
+                float(fill_price),
+                float(slippage_ticks),
+            )
+        except ImportError:
+            logger.debug("slippage_control not available, skipping slippage telemetry")
+
+        return meta
+
+    def _log_entry(
+        self,
+        name,
+        code,
+        price,
+        qty,
+        strategy,
+        confidence,
+        is_short,
+        execution_meta: dict[str, Any] | None = None,
+    ):
         """Log and notify entry."""
-        logger.info(
-            f"Entry executed: {name} ({code}) @ {price:,.0f} x {qty}"
-        )
+        if execution_meta:
+            logger.info(
+                "Entry executed: %s (%s) @ %.2f x %s [mode=%s, slippage=%+.2ft]",
+                name,
+                code,
+                float(price),
+                qty,
+                execution_meta.get("mode", "default"),
+                float(execution_meta.get("slippage_ticks", 0.0)),
+            )
+        else:
+            logger.info(f"Entry executed: {name} ({code}) @ {price:,.0f} x {qty}")
         amount = price * qty
         entry_label = "숏 진입" if is_short else "롱 진입"
+        slippage_line = ""
+        if execution_meta and execution_meta.get("slippage_ticks") is not None:
+            slippage_line = (
+                f"\n슬리피지: {float(execution_meta.get('slippage_ticks', 0.0)):+.2f}틱"
+            )
         self._schedule_notify(
             f"🟢 <b>{entry_label}</b>\n"
             f"종목: {name} ({code})\n"
@@ -2775,6 +3363,7 @@ class TradingOrchestrator:
             f"금액: {amount:,.0f}원\n"
             f"전략: {strategy}\n"
             f"신뢰도: {confidence:.1%}"
+            f"{slippage_line}"
         )
 
     def _collect_indicator_snapshot(self, code, price):
@@ -2795,7 +3384,16 @@ class TradingOrchestrator:
                     snapshot["bb_position"] = (price - bl) / (bu - bl)
         return snapshot
 
-    def _record_entry_telemetry(self, position, signal, price, qty, name, indicators):
+    def _record_entry_telemetry(
+        self,
+        position,
+        signal,
+        price,
+        qty,
+        name,
+        indicators,
+        execution_meta: dict[str, Any] | None = None,
+    ):
         """Append entry event to training data."""
         self._append_training_trade_event(
             {
@@ -2812,6 +3410,7 @@ class TradingOrchestrator:
                 "indicators": indicators,
                 "regime": self._current_regime,
                 "metadata": position.metadata,
+                "execution": execution_meta or {},
             }
         )
 
@@ -3170,6 +3769,10 @@ class TradingOrchestrator:
                 "session_count": self.session_count,
                 "total_trades": self.total_trades,
                 "total_pnl": self.total_pnl,
+                "entry_slippage_count": int(self._entry_slippage_stats.get("count", 0.0)),
+                "entry_avg_adverse_ticks": float(
+                    self._entry_slippage_stats.get("avg_adverse_ticks", 0.0)
+                ),
                 "start_time": self.start_time.isoformat() if self.start_time else None,
             },
             "positions": position_stats,

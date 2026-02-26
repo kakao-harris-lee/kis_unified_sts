@@ -265,6 +265,337 @@ class TestTradingOrchestrator:
         assert str(add_kwargs["side"].value) == "short"
 
     @pytest.mark.asyncio
+    async def test_submit_entry_order_blocks_when_spread_wide(self):
+        """선물 슬리피지 가드: 스프레드 과도 시 진입 차단."""
+        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from shared.execution.slippage_control import (
+            FuturesSlippageController,
+            SlippageControlConfig,
+        )
+        from shared.models.signal import Signal
+
+        config = TradingConfig.futures(strategy_name="rl_mppo")
+        config.paper_trading = True
+        orch = TradingOrchestrator(config)
+        orch._futures_slippage_controller = FuturesSlippageController(
+            SlippageControlConfig.from_dict(
+                {
+                    "enabled": True,
+                    "max_spread_ticks": 1,
+                    "tick_size": 0.02,
+                    "min_depth_multiplier": 1.0,
+                    "cross_asset": {"enabled": False},
+                }
+            )
+        )
+        orch._get_quote_payload = AsyncMock(
+            return_value={
+                "bid_price_1": 330.40,
+                "ask_price_1": 330.50,  # 5 ticks
+                "bid_qty_1": 10.0,
+                "ask_qty_1": 10.0,
+                "close": 330.45,
+                "timestamp": 1700000000.0,
+            }
+        )
+
+        signal = Signal(
+            code="A05603",
+            strategy="rl_mppo",
+            price=330.45,
+            confidence=0.7,
+        )
+
+        filled, fill_price, meta = await orch._submit_entry_order(
+            code=signal.code,
+            is_short=False,
+            quantity=1,
+            price=signal.price,
+            signal=signal,
+        )
+
+        assert filled is False
+        assert fill_price == 0.0
+        assert "wide_spread" in meta["blocked_reason"]
+
+    @pytest.mark.asyncio
+    async def test_submit_entry_order_uses_passive_path_when_filters_pass(self):
+        """선물 슬리피지 가드: 필터 통과 시 패시브 지정가 경로 사용."""
+        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from shared.execution.slippage_control import (
+            FuturesSlippageController,
+            SlippageControlConfig,
+        )
+        from shared.models.signal import Signal
+
+        config = TradingConfig.futures(strategy_name="rl_mppo")
+        config.paper_trading = True
+        orch = TradingOrchestrator(config)
+        orch._futures_slippage_controller = FuturesSlippageController(
+            SlippageControlConfig.from_dict(
+                {
+                    "enabled": True,
+                    "max_spread_ticks": 1,
+                    "tick_size": 0.02,
+                    "min_depth_multiplier": 1.0,
+                    "cross_asset": {"enabled": False},
+                    "passive_timeout_seconds": 0.1,
+                }
+            )
+        )
+        orch._get_quote_payload = AsyncMock(
+            return_value={
+                "bid_price_1": 330.48,
+                "ask_price_1": 330.50,
+                "bid_qty_1": 20.0,
+                "ask_qty_1": 20.0,
+                "close": 330.49,
+                "timestamp": 1700000000.0,
+            }
+        )
+        orch._place_entry_order = AsyncMock(return_value=(True, 330.50, 1))
+
+        signal = Signal(
+            code="A05603",
+            strategy="rl_mppo",
+            price=330.50,
+            confidence=0.8,
+        )
+
+        filled, fill_price, meta = await orch._submit_entry_order(
+            code=signal.code,
+            is_short=False,
+            quantity=1,
+            price=signal.price,
+            signal=signal,
+        )
+
+        assert filled is True
+        assert fill_price == 330.50
+        assert meta["execution_path"] == "passive_limit"
+
+    @pytest.mark.asyncio
+    async def test_submit_entry_order_retries_market_once_after_passive_timeout(self):
+        """선물 슬리피지 가드: 패시브 미체결 후 market_once 재시도."""
+        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from shared.execution.slippage_control import (
+            FuturesSlippageController,
+            SlippageControlConfig,
+        )
+        from shared.models.signal import Signal
+
+        config = TradingConfig.futures(strategy_name="rl_mppo")
+        config.paper_trading = True
+        orch = TradingOrchestrator(config)
+        orch._futures_slippage_controller = FuturesSlippageController(
+            SlippageControlConfig.from_dict(
+                {
+                    "enabled": True,
+                    "tick_size": 0.02,
+                    "max_spread_ticks": 1,
+                    "min_depth_multiplier": 1.0,
+                    "passive_timeout_seconds": 0.01,
+                    "retry_policy": "market_once",
+                    "cross_asset": {"enabled": False},
+                }
+            )
+        )
+        orch._get_quote_payload = AsyncMock(
+            return_value={
+                "bid_price_1": 330.48,
+                "ask_price_1": 330.50,
+                "bid_qty_1": 20.0,
+                "ask_qty_1": 20.0,
+                "close": 330.49,
+                "timestamp": 1700000000.0,
+            }
+        )
+        orch._place_entry_order = AsyncMock(
+            side_effect=[
+                (False, 0.0, 0),  # passive limit not filled
+                (True, 330.50, 1),  # market retry filled
+            ]
+        )
+
+        signal = Signal(
+            code="A05603",
+            strategy="rl_mppo",
+            price=330.49,
+            confidence=0.8,
+        )
+
+        filled, fill_price, meta = await orch._submit_entry_order(
+            code=signal.code,
+            is_short=False,
+            quantity=1,
+            price=signal.price,
+            signal=signal,
+        )
+
+        assert filled is True
+        assert fill_price == 330.50
+        assert meta["execution_path"] == "retry_market_once"
+        assert orch._place_entry_order.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_submit_entry_order_does_not_retry_on_partial_fill_signal(self):
+        """부분체결 감지 시 재시도 없이 부분 수량만 반영한다."""
+        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from shared.execution.slippage_control import (
+            FuturesSlippageController,
+            SlippageControlConfig,
+        )
+        from shared.models.signal import Signal
+
+        config = TradingConfig.futures(strategy_name="rl_mppo")
+        config.paper_trading = True
+        orch = TradingOrchestrator(config)
+        orch._futures_slippage_controller = FuturesSlippageController(
+            SlippageControlConfig.from_dict(
+                {
+                    "enabled": True,
+                    "tick_size": 0.02,
+                    "max_spread_ticks": 1,
+                    "min_depth_multiplier": 1.0,
+                    "passive_timeout_seconds": 0.01,
+                    "retry_policy": "market_once",
+                    "cross_asset": {"enabled": False},
+                }
+            )
+        )
+        orch._get_quote_payload = AsyncMock(
+            return_value={
+                "bid_price_1": 330.48,
+                "ask_price_1": 330.50,
+                "bid_qty_1": 20.0,
+                "ask_qty_1": 20.0,
+                "close": 330.49,
+                "timestamp": 1700000000.0,
+            }
+        )
+        orch._place_entry_order = AsyncMock(
+            return_value=(True, 330.50, 1)  # partial-fill signal from executor
+        )
+
+        signal = Signal(
+            code="A05603",
+            strategy="rl_mppo",
+            price=330.49,
+            confidence=0.8,
+        )
+
+        filled, fill_price, meta = await orch._submit_entry_order(
+            code=signal.code,
+            is_short=False,
+            quantity=2,
+            price=signal.price,
+            signal=signal,
+        )
+
+        assert filled is True
+        assert fill_price == 330.50
+        assert meta["execution_path"] == "passive_limit_partial"
+        assert meta["partial_fill"] is True
+        assert orch._place_entry_order.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_execute_entry_uses_actual_filled_quantity(self):
+        """부분체결 시 요청수량이 아니라 실체결수량으로 포지션을 연다."""
+        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from shared.models.signal import Signal
+
+        config = TradingConfig.futures(strategy_name="rl_mppo")
+        config.paper_trading = True
+        orch = TradingOrchestrator(config)
+
+        orch._position_tracker = MagicMock()
+        orch._position_tracker.can_open_position.return_value = True
+        orch._calculate_quantity = MagicMock(return_value=2)
+        orch._submit_entry_order = AsyncMock(
+            return_value=(
+                True,
+                330.50,
+                {"mode": "slippage_guard", "filled_qty": 1, "execution_path": "passive_limit_partial"},
+            )
+        )
+        orch._process_filled_entry = AsyncMock()
+
+        signal = Signal(
+            code="A05603",
+            strategy="rl_mppo",
+            price=330.49,
+            confidence=0.8,
+        )
+
+        await orch._execute_entry(signal)
+
+        assert orch._process_filled_entry.await_count == 1
+        call = orch._process_filled_entry.await_args
+        assert call.args[2] == 1
+
+    @pytest.mark.asyncio
+    async def test_place_entry_order_futures_limit_needs_fill_confirmation(self):
+        """선물 지정가의 접수성공(success=True)만으로 체결 처리하지 않는다."""
+        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from shared.execution.models import OrderResponse
+
+        config = TradingConfig.futures(strategy_name="rl_mppo")
+        config.paper_trading = False
+        orch = TradingOrchestrator(config)
+
+        orch._order_executor = MagicMock()
+        orch._order_executor.execute_order = AsyncMock(
+            return_value=OrderResponse(success=True, order_no="00001234", message="accepted")
+        )
+
+        filled, fill_price, filled_qty = await orch._place_entry_order(
+            code="A05603",
+            is_short=False,
+            quantity=2,
+            order_type="limit",
+            limit_price=330.50,
+            market_price=330.50,
+        )
+
+        assert filled is False
+        assert fill_price == 0.0
+        assert filled_qty == 0
+
+    @pytest.mark.asyncio
+    async def test_place_entry_order_tracks_partial_fill_even_on_cancel(self):
+        """타임아웃 후 취소 응답(success=False)이어도 부분체결 수량은 반영한다."""
+        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from shared.execution.models import OrderResponse
+
+        config = TradingConfig.futures(strategy_name="rl_mppo")
+        config.paper_trading = False
+        orch = TradingOrchestrator(config)
+
+        orch._order_executor = MagicMock()
+        orch._order_executor.execute_order = AsyncMock(
+            return_value=OrderResponse(
+                success=False,
+                order_no="00001234",
+                message="timeout_cancelled",
+                filled_qty=1,
+                filled_price=330.52,
+            )
+        )
+
+        filled, fill_price, filled_qty = await orch._place_entry_order(
+            code="A05603",
+            is_short=False,
+            quantity=2,
+            order_type="limit",
+            limit_price=330.50,
+            market_price=330.50,
+        )
+
+        assert filled is True
+        assert fill_price == 330.52
+        assert filled_qty == 1
+
+    @pytest.mark.asyncio
     async def test_execute_exit_short_position_uses_buy(self):
         """숏 포지션 청산은 BUY 주문으로 처리."""
         from services.trading.orchestrator import TradingOrchestrator, TradingConfig
@@ -535,3 +866,97 @@ class TestMarketClassification:
         assert hasattr(TradingOrchestrator, "MARKET_BEAR_THRESHOLD")
         assert TradingOrchestrator.MARKET_BULL_THRESHOLD == 0.02
         assert TradingOrchestrator.MARKET_BEAR_THRESHOLD == -0.02
+
+
+class TestStaticUniverse:
+    """Static universe mode tests"""
+
+    def test_universe_mode_default(self):
+        """Default universe_mode is 'dynamic'"""
+        from services.trading.orchestrator import TradingConfig
+
+        config = TradingConfig.stock()
+        assert config.universe_mode == "dynamic"
+
+    def test_universe_mode_static(self):
+        """Can set universe_mode to 'static'"""
+        from services.trading.orchestrator import TradingConfig
+
+        config = TradingConfig(asset_class="stock", universe_mode="static")
+        assert config.universe_mode == "static"
+
+    def test_universe_mode_invalid(self):
+        """Invalid universe_mode raises ValueError"""
+        from services.trading.orchestrator import TradingConfig
+
+        with pytest.raises(ValueError, match="universe_mode"):
+            TradingConfig(asset_class="stock", universe_mode="invalid")
+
+    def test_daily_watchlist_init(self):
+        """Orchestrator initializes _daily_watchlist as empty dict"""
+        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+
+        config = TradingConfig.stock()
+        orch = TradingOrchestrator(config)
+        assert orch._daily_watchlist == {}
+        assert orch._daily_watchlist_key == "system:daily_watchlist:latest"
+
+    def test_load_static_watchlist_success(self, monkeypatch):
+        """_load_static_watchlist loads symbols from Redis"""
+        import json
+        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        import shared.streaming.client
+
+        config = TradingConfig(asset_class="stock", universe_mode="static")
+        orch = TradingOrchestrator(config)
+
+        watchlist_data = {
+            "strategies": {
+                "trend_pullback": ["005930", "000660"],
+                "momentum_breakout": ["035720"],
+            },
+            "scanned_at": "2026-02-26T08:30:00",
+        }
+        mock_redis = MagicMock()
+        mock_redis.get.return_value = json.dumps(watchlist_data)
+
+        monkeypatch.setattr(shared.streaming.client.RedisClient, "get_client", staticmethod(lambda: mock_redis))
+
+        result = orch._load_static_watchlist()
+        assert result is True
+        assert set(orch.config.symbols) == {"005930", "000660", "035720"}
+        assert orch._daily_watchlist == watchlist_data
+        assert "strategies" in orch._daily_watchlist
+
+    def test_load_static_watchlist_no_data(self, monkeypatch):
+        """_load_static_watchlist returns False when Redis key missing"""
+        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+
+        config = TradingConfig(asset_class="stock", universe_mode="static")
+        orch = TradingOrchestrator(config)
+
+        mock_redis = MagicMock()
+        mock_redis.get.return_value = None
+
+        import shared.streaming.client
+        monkeypatch.setattr(shared.streaming.client.RedisClient, "get_client", lambda: mock_redis)
+
+        result = orch._load_static_watchlist()
+        assert result is False
+
+    def test_load_static_watchlist_empty_strategies(self, monkeypatch):
+        """_load_static_watchlist returns False when strategies are empty"""
+        import json
+        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+
+        config = TradingConfig(asset_class="stock", universe_mode="static")
+        orch = TradingOrchestrator(config)
+
+        mock_redis = MagicMock()
+        mock_redis.get.return_value = json.dumps({"strategies": {}})
+
+        import shared.streaming.client
+        monkeypatch.setattr(shared.streaming.client.RedisClient, "get_client", lambda: mock_redis)
+
+        result = orch._load_static_watchlist()
+        assert result is False

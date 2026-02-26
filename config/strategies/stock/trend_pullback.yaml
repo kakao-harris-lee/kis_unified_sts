@@ -1,0 +1,42 @@
+strategy:
+  name: trend_pullback
+  asset_class: stock
+  enabled: true
+  description: "멀티 타임프레임 추세 추종 눌림목 전략"
+  entry:
+    type: trend_pullback
+    params:
+      bb_period: 20
+      bb_std: 2.0
+      bb_touch_buffer: 1.005
+      rsi_oversold: 35.0
+      williams_r_oversold: -80.0
+      williams_r_reversal: -70.0
+      volume_threshold: 1.0
+      min_atr_cost_ratio: 2.0
+      round_trip_cost: 0.005
+      skip_market_open_minutes: 30
+      skip_market_close_minutes: 15
+      signal_cooldown_seconds: 300
+      stop_atr_multiplier: 2.5
+      stop_fallback_cost_multiplier: 3.0
+  exit:
+    type: atr_dynamic
+    params:
+      atr_period: 14
+      stop_atr_multiplier: 2.5
+      trail_activation_atr: 1.0
+      trail_atr_multiplier: 2.0
+      eod_close_enabled: false
+      default_exit_confidence: 0.85
+  position:
+    type: fixed
+    params:
+      order_amount_per_stock: 1000000
+      max_positions: 5
+  indicators:
+    bollinger_bands:
+      period: 20
+      std_dev: 2.0
+    momentum:
+      williams_r_period: 14

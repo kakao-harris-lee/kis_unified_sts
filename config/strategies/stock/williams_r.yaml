@@ -21,7 +21,7 @@
 strategy:
   name: williams_r
   asset_class: stock
-  enabled: true
+  enabled: false  # Absorbed into trend_pullback (2026-02-26 redesign)
   description: "Williams %R 과매도 반전 모멘텀 전략"
 
   # ===========================================================================

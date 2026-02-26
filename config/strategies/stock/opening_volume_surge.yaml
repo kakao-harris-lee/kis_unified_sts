@@ -12,7 +12,7 @@
 strategy:
   name: opening_volume_surge
   asset_class: stock
-  enabled: true
+  enabled: false  # Disabled — no daily context, cost-disadvantaged (2026-02-26 redesign)
   description: "장 초반 거래량 폭증 종목 단기 진입 (중소형주 타겟)"
 
   entry:

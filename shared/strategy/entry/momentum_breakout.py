@@ -1,0 +1,299 @@
+"""Momentum Breakout Entry Strategy.
+
+멀티 타임프레임 모멘텀 돌파 전략:
+- 일간 고점 돌파(N-day high breakout) + RVOL + 거래량 확인
+- 사전 스크리닝된 종목(daily_watchlist)에서만 발동
+- 누적 점수(accumulation_score)로 confidence 보정
+
+Entry Conditions:
+1. code in daily_watchlist["strategies"]["momentum_breakout"]
+2. close > high_5 * (1 + breakout_buffer_pct / 100)
+3. rvol >= rvol_threshold
+4. volume >= volume_ma * volume_threshold
+5. ATR/close >= round_trip_cost * min_atr_cost_ratio  (minimum edge filter)
+6. Time: after skip_market_open_minutes, before market close buffer
+7. Cooldown: signal_cooldown_seconds per symbol
+"""
+
+import logging
+from dataclasses import dataclass
+from datetime import datetime, time, timedelta
+from typing import Dict, Optional
+
+from shared.config.mixins import ConfigMixin
+from shared.models.signal import Signal, SignalType
+from shared.strategy.base import EntryContext, EntrySignalGenerator
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class MomentumBreakoutConfig(ConfigMixin):
+    """Momentum Breakout 진입 전략 설정."""
+
+    # Breakout detection
+    daily_high_period: int = 20
+    breakout_buffer_pct: float = 0.1  # close must exceed high_5 by 0.1%
+
+    # Volume confirmation
+    rvol_threshold: float = 1.5
+    volume_threshold: float = 1.0  # current volume >= volume_ma * threshold
+
+    # Accumulation score filter (from overnight scan)
+    accumulation_score_min: int = 60
+
+    # Minimum edge filter (ATR/close >= round_trip_cost * min_atr_cost_ratio)
+    min_atr_cost_ratio: float = 2.0
+    round_trip_cost: float = 0.005  # 0.5% round trip (commission + slippage)
+
+    # Stop-loss ATR multiplier (used in entry signal metadata)
+    stop_atr_multiplier: float = 1.5
+
+    # Time filters
+    skip_market_open_minutes: int = 30
+    skip_market_close_minutes: int = 15
+    market_open_hour: int = 9
+    market_open_minute: int = 0
+    market_close_hour: int = 15
+    market_close_minute: int = 15
+
+    # Cooldown
+    signal_cooldown_seconds: int = 600  # 10 minutes
+
+    # Signal properties
+    allow_short: bool = False
+    confidence_base: float = 0.65
+
+    def validate(self) -> None:
+        assert self.daily_high_period > 0, "daily_high_period must be positive"
+        assert self.breakout_buffer_pct >= 0, "breakout_buffer_pct must be non-negative"
+        assert self.rvol_threshold > 0, "rvol_threshold must be positive"
+        assert self.volume_threshold >= 0, "volume_threshold must be non-negative"
+        assert 0 <= self.accumulation_score_min <= 100, "accumulation_score_min must be 0-100"
+        assert self.min_atr_cost_ratio > 0, "min_atr_cost_ratio must be positive"
+        assert self.round_trip_cost >= 0, "round_trip_cost must be non-negative"
+        assert self.signal_cooldown_seconds >= 0, "signal_cooldown_seconds must be >= 0"
+        assert self.skip_market_open_minutes >= 0, "skip_market_open_minutes must be >= 0"
+        assert self.skip_market_close_minutes >= 0, "skip_market_close_minutes must be >= 0"
+        assert 0.0 < self.confidence_base <= 1.0, "confidence_base must be in (0, 1]"
+
+
+class MomentumBreakoutEntry(EntrySignalGenerator[MomentumBreakoutConfig]):
+    """Momentum Breakout 진입 전략.
+
+    Entry conditions (ALL must be true):
+    1. Stock in daily_watchlist["strategies"]["momentum_breakout"] list
+    2. Price: close > high_5 * (1 + breakout_buffer_pct / 100)
+    3. ATR edge: ATR / close >= round_trip_cost * min_atr_cost_ratio
+    4. RVOL >= rvol_threshold
+    5. Volume >= volume_ma * volume_threshold
+    6. Time: outside open/close buffer windows
+    7. Cooldown: signal_cooldown_seconds elapsed since last signal
+
+    Optional confidence boost:
+    - accumulation_candidates score available for this code → +0.1 bonus
+    """
+
+    CONFIG_CLASS = MomentumBreakoutConfig
+
+    def __init__(self, config: MomentumBreakoutConfig):
+        super().__init__(config)
+        self._last_signal_time: Dict[str, datetime] = {}
+
+    def _validate_config(self):
+        self.config.validate()
+
+    @property
+    def name(self) -> str:
+        return "momentum_breakout"
+
+    @property
+    def required_indicators(self) -> list[str]:
+        return ["close", "high_5", "rvol", "volume", "volume_ma", "atr"]
+
+    async def generate(self, context: EntryContext) -> Optional[Signal]:
+        """Generate entry signal based on momentum breakout conditions."""
+        data = context.market_data or {}
+        indicators = context.indicators or {}
+
+        def _get(key: str, default: float = 0.0) -> float:
+            """Prefer indicators dict, fall back to market_data."""
+            if key in indicators:
+                val = indicators[key]
+            else:
+                val = data.get(key, default)
+            try:
+                return float(val) if val is not None else default
+            except (TypeError, ValueError):
+                return default
+
+        code = str(data.get("code", "") or "")
+        name_str = str(data.get("name", "") or "")
+        close = _get("close", 0.0)
+
+        if not code or close <= 0:
+            return None
+
+        # --- Layer 1: daily watchlist gate ---
+        # In static mode, only symbols approved by DailyScanner pass.
+        # In dynamic mode (daily_watchlist empty), bypass the check.
+        daily_watchlist = context.metadata.get("daily_watchlist", {})
+        if daily_watchlist:
+            strategies_watchlist = daily_watchlist.get("strategies", {})
+            momentum_list = strategies_watchlist.get("momentum_breakout", [])
+            if code not in momentum_list:
+                return None
+
+        now = context.timestamp
+
+        # --- Time filters ---
+        open_dt = datetime.combine(
+            now.date(),
+            time(self.config.market_open_hour, self.config.market_open_minute),
+            tzinfo=now.tzinfo,
+        )
+        close_dt = datetime.combine(
+            now.date(),
+            time(self.config.market_close_hour, self.config.market_close_minute),
+            tzinfo=now.tzinfo,
+        )
+
+        if now < open_dt:
+            return None
+        if self.config.skip_market_open_minutes > 0:
+            if now < open_dt + timedelta(minutes=self.config.skip_market_open_minutes):
+                logger.debug(f"{code}: Skipping market open window")
+                return None
+        if self.config.skip_market_close_minutes > 0:
+            if now >= close_dt - timedelta(minutes=self.config.skip_market_close_minutes):
+                logger.debug(f"{code}: Skipping market close window")
+                return None
+
+        # --- Cooldown ---
+        if self.config.signal_cooldown_seconds > 0:
+            last_time = self._last_signal_time.get(code)
+            if last_time and (now - last_time).total_seconds() < self.config.signal_cooldown_seconds:
+                logger.debug(
+                    f"{code}: Cooldown active "
+                    f"({(now - last_time).total_seconds():.0f}s / {self.config.signal_cooldown_seconds}s)"
+                )
+                return None
+
+        # --- Minimum edge filter: ATR / close >= round_trip_cost * min_atr_cost_ratio ---
+        atr = _get("atr", 0.0)
+        if atr <= 0 or close <= 0:
+            logger.debug(f"{code}: Invalid ATR ({atr}) or close ({close})")
+            return None
+
+        min_edge = self.config.round_trip_cost * self.config.min_atr_cost_ratio
+        if (atr / close) < min_edge:
+            logger.debug(
+                f"{code}: Minimum edge filter failed — ATR/close={atr/close:.4f} < {min_edge:.4f}"
+            )
+            return None
+
+        # --- Breakout trigger: close > high_5 * (1 + breakout_buffer_pct / 100) ---
+        high_5 = _get("high_5", 0.0)
+        if high_5 <= 0:
+            logger.debug(f"{code}: high_5 not available or zero")
+            return None
+
+        breakout_threshold = high_5 * (1.0 + self.config.breakout_buffer_pct / 100.0)
+        if close <= breakout_threshold:
+            logger.debug(
+                f"{code}: No breakout — close={close:.2f} <= threshold={breakout_threshold:.2f}"
+            )
+            return None
+
+        # --- RVOL confirm ---
+        rvol = _get("rvol", 0.0)
+        if rvol < self.config.rvol_threshold:
+            logger.debug(
+                f"{code}: RVOL {rvol:.2f} below threshold {self.config.rvol_threshold}"
+            )
+            return None
+
+        # --- Volume confirm ---
+        volume = _get("volume", 0.0)
+        volume_ma = _get("volume_ma", 0.0)
+        if volume_ma > 0 and volume < volume_ma * self.config.volume_threshold:
+            logger.debug(
+                f"{code}: Volume {volume:.0f} below threshold "
+                f"{volume_ma * self.config.volume_threshold:.0f}"
+            )
+            return None
+
+        # --- Confidence calculation ---
+        confidence = self._calculate_confidence(
+            close=close,
+            high_5=high_5,
+            rvol=rvol,
+            code=code,
+            accumulation_candidates=context.metadata.get("accumulation_candidates", {}),
+        )
+
+        # --- Record signal time ---
+        self._last_signal_time[code] = now
+
+        # --- Compute stop loss price ---
+        stop_loss_price = close - atr * self.config.stop_atr_multiplier
+        breakout_pct = ((close - high_5) / high_5) * 100.0
+
+        logger.info(
+            f"MomentumBreakout LONG signal: {code} ({name_str}) "
+            f"close={close:.2f}, high_5={high_5:.2f}, "
+            f"breakout={breakout_pct:.2f}%, rvol={rvol:.2f}, "
+            f"atr={atr:.2f}, confidence={confidence:.2%}"
+        )
+
+        return Signal(
+            code=code,
+            name=name_str,
+            signal_type=SignalType.ENTRY,
+            price=close,
+            timestamp=now,
+            strategy="momentum_breakout",
+            confidence=confidence,
+            metadata={
+                "signal_direction": "long",
+                "stop_loss": stop_loss_price,
+                "atr": atr,
+                "rvol": rvol,
+                "high_5": high_5,
+                "breakout_pct": breakout_pct,
+            },
+        )
+
+    def _calculate_confidence(
+        self,
+        close: float,
+        high_5: float,
+        rvol: float,
+        code: str,
+        accumulation_candidates: dict,
+    ) -> float:
+        """Compute confidence in [0, 1].
+
+        Base confidence is config.confidence_base.
+        Bonuses:
+        - RVOL above threshold: up to +0.15 (scales with extra RVOL above threshold)
+        - Accumulation score available and >= min: +0.10 flat bonus
+        """
+        confidence = self.config.confidence_base
+
+        # RVOL bonus: scale linearly, cap at +0.15 for rvol = threshold + 3
+        extra_rvol = max(0.0, rvol - self.config.rvol_threshold)
+        rvol_bonus = min(0.15, extra_rvol / 3.0 * 0.15)
+        confidence += rvol_bonus
+
+        # Accumulation score bonus
+        if code in accumulation_candidates:
+            score = accumulation_candidates[code]
+            try:
+                score_val = int(score)
+            except (TypeError, ValueError):
+                score_val = 0
+            if score_val >= self.config.accumulation_score_min:
+                confidence += 0.10
+
+        return max(0.0, min(1.0, confidence))
