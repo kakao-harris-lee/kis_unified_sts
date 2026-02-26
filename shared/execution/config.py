@@ -34,6 +34,28 @@ class ExecutionConfig(BaseModel):
         description="Timeout for order requests (seconds)"
     )
 
+    # Futures fill monitoring/cancel (live-safe execution)
+    futures_fill_check_enabled: bool = Field(
+        default=True,
+        description="Enable futures fill inquiry loop after order submission"
+    )
+    futures_fill_check_poll_interval_seconds: float = Field(
+        default=0.2,
+        ge=0.05,
+        le=5.0,
+        description="Polling interval for futures fill inquiry (seconds)"
+    )
+    futures_fill_check_timeout_seconds: float = Field(
+        default=1.0,
+        ge=0.1,
+        le=30.0,
+        description="Timeout waiting for futures fill before cancel (seconds)"
+    )
+    futures_auto_cancel_unfilled: bool = Field(
+        default=True,
+        description="Cancel unfilled futures order when timeout is reached"
+    )
+
     # Rate limiting (Redis-based distributed limiter)
     redis_url: str = Field(
         default="",
@@ -149,3 +171,34 @@ class ExecutionConfig(BaseModel):
     tr_code_buy_real: str = Field(default="TTTC0802U", description="TR code for real buy order")
     tr_code_sell_mock: str = Field(default="VTTC0801U", description="TR code for mock sell order")
     tr_code_sell_real: str = Field(default="TTTC0801U", description="TR code for real sell order")
+
+    # Futures order TR IDs (KIS [국내선물옵션] 주문/계좌 기준)
+    futures_tr_code_order_day_mock: str = Field(
+        default="VTTO1101U", description="Futures day order TR code for mock"
+    )
+    futures_tr_code_order_day_real: str = Field(
+        default="TTTO1101U", description="Futures day order TR code for real"
+    )
+    futures_tr_code_order_night_real: str = Field(
+        default="STTN1101U", description="Futures night order TR code for real"
+    )
+
+    futures_tr_code_cancel_day_mock: str = Field(
+        default="VTTO1103U", description="Futures day cancel TR code for mock"
+    )
+    futures_tr_code_cancel_day_real: str = Field(
+        default="TTTO1103U", description="Futures day cancel TR code for real"
+    )
+    futures_tr_code_cancel_night_real: str = Field(
+        default="STTN1103U", description="Futures night cancel TR code for real"
+    )
+
+    futures_tr_code_inquire_day_mock: str = Field(
+        default="VTTO5201R", description="Futures day fill inquiry TR code for mock"
+    )
+    futures_tr_code_inquire_day_real: str = Field(
+        default="TTTO5201R", description="Futures day fill inquiry TR code for real"
+    )
+    futures_tr_code_inquire_night_real: str = Field(
+        default="STTN5201R", description="Futures night fill inquiry TR code for real"
+    )

@@ -64,11 +64,22 @@ SYMBOL_PATTERN = re.compile(r'^[0-9A-Za-z]{5,10}$')
 
 # Field indices for H0IFASP0 (orderbook)
 ORDERBOOK_FIELDS = {
-    'bid_price': [22, 23, 24, 25, 26],  # L1-L5
-    'bid_qty': [32, 33, 34, 35, 36],
+    # KIS H0IFASP0 (38 fields observed):
+    #  - ask_price L1-L5: 2-6
+    #  - bid_price L1-L5: 7-11
+    #  - ask_qty   L1-L5: 12-16
+    #  - bid_qty   L1-L5: 17-21
+    'bid_price': [7, 8, 9, 10, 11],  # L1-L5
+    'bid_qty': [17, 18, 19, 20, 21],
     'ask_price': [2, 3, 4, 5, 6],
     'ask_qty': [12, 13, 14, 15, 16],
 }
+ORDERBOOK_MIN_FIELDS = max(
+    max(ORDERBOOK_FIELDS["bid_price"]),
+    max(ORDERBOOK_FIELDS["bid_qty"]),
+    max(ORDERBOOK_FIELDS["ask_price"]),
+    max(ORDERBOOK_FIELDS["ask_qty"]),
+) + 1
 
 # Field indices for H0IFCNT0 (trade)
 # [0]=종목코드, [1]=체결시간, [2]=전일대비, [3]=부호, [4]=대비율
@@ -147,38 +158,47 @@ def parse_futures_orderbook(
         TickData or None if parsing fails
     """
     fields = data.split("^")
-    if len(fields) < 42:
+    if len(fields) < ORDERBOOK_MIN_FIELDS:
+        logger.debug(
+            "[KIS WS] Orderbook parse skipped: insufficient fields (%d < %d)",
+            len(fields),
+            ORDERBOOK_MIN_FIELDS,
+        )
         return None
 
     # field[0] = 종목코드: use actual symbol from data body
     actual_symbol = fields[0].strip() or symbol
 
     try:
+        bid_price = ORDERBOOK_FIELDS["bid_price"]
+        bid_qty = ORDERBOOK_FIELDS["bid_qty"]
+        ask_price = ORDERBOOK_FIELDS["ask_price"]
+        ask_qty = ORDERBOOK_FIELDS["ask_qty"]
         return TickData(
             symbol=actual_symbol,
             timestamp=timestamp,
             # 매수호가 (bid) L1-L5
-            bid_price_1=_safe_float(fields, 22, 0.0),
-            bid_qty_1=_safe_float(fields, 32, 0.0),
-            bid_price_2=_safe_float(fields, 23),
-            bid_qty_2=_safe_float(fields, 33),
-            bid_price_3=_safe_float(fields, 24),
-            bid_qty_3=_safe_float(fields, 34),
-            bid_price_4=_safe_float(fields, 25),
-            bid_qty_4=_safe_float(fields, 35),
-            bid_price_5=_safe_float(fields, 26),
-            bid_qty_5=_safe_float(fields, 36),
+            bid_price_1=_safe_float(fields, bid_price[0], 0.0),
+            bid_qty_1=_safe_float(fields, bid_qty[0], 0.0),
+            bid_price_2=_safe_float(fields, bid_price[1]),
+            bid_qty_2=_safe_float(fields, bid_qty[1]),
+            bid_price_3=_safe_float(fields, bid_price[2]),
+            bid_qty_3=_safe_float(fields, bid_qty[2]),
+            bid_price_4=_safe_float(fields, bid_price[3]),
+            bid_qty_4=_safe_float(fields, bid_qty[3]),
+            bid_price_5=_safe_float(fields, bid_price[4]),
+            bid_qty_5=_safe_float(fields, bid_qty[4]),
             # 매도호가 (ask) L1-L5
-            ask_price_1=_safe_float(fields, 2, 0.0),
-            ask_qty_1=_safe_float(fields, 12, 0.0),
-            ask_price_2=_safe_float(fields, 3),
-            ask_qty_2=_safe_float(fields, 13),
-            ask_price_3=_safe_float(fields, 4),
-            ask_qty_3=_safe_float(fields, 14),
-            ask_price_4=_safe_float(fields, 5),
-            ask_qty_4=_safe_float(fields, 15),
-            ask_price_5=_safe_float(fields, 6),
-            ask_qty_5=_safe_float(fields, 16),
+            ask_price_1=_safe_float(fields, ask_price[0], 0.0),
+            ask_qty_1=_safe_float(fields, ask_qty[0], 0.0),
+            ask_price_2=_safe_float(fields, ask_price[1]),
+            ask_qty_2=_safe_float(fields, ask_qty[1]),
+            ask_price_3=_safe_float(fields, ask_price[2]),
+            ask_qty_3=_safe_float(fields, ask_qty[2]),
+            ask_price_4=_safe_float(fields, ask_price[3]),
+            ask_qty_4=_safe_float(fields, ask_qty[3]),
+            ask_price_5=_safe_float(fields, ask_price[4]),
+            ask_qty_5=_safe_float(fields, ask_qty[4]),
         )
     except Exception as e:
         logger.warning(f"[KIS WS] Failed to parse orderbook: {e}")

@@ -35,7 +35,13 @@ class StreamingIndicatorResolver:
         if self.contract.needs_ohlcv:
             rl_feats = self.engine.get_rl_features(symbol)
             if rl_feats:
-                result.update(rl_feats)
+                # Prefix RL features to avoid overwriting base indicators
+                # (e.g. RL "atr" is normalized, base "atr" is raw)
+                for k, v in rl_feats.items():
+                    if k in result:
+                        result[f"rl_{k}"] = v
+                    else:
+                        result[k] = v
             else:
                 ohlcv = self.engine.get_recent_candles(symbol, limit=240)
                 if ohlcv:
@@ -62,7 +68,11 @@ class StreamingIndicatorResolver:
         if "ohlcv" not in result:
             rl_feats = self.engine.get_rl_features(symbol)
             if rl_feats:
-                result.update(rl_feats)
+                for k, v in rl_feats.items():
+                    if k in result:
+                        result[f"rl_{k}"] = v
+                    else:
+                        result[k] = v
         return result
 
     @property

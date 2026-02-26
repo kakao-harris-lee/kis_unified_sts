@@ -1799,6 +1799,12 @@ def rl_slippage(model: str, retrain: bool, config: str):
 @click.option("--model", "-m", default="mppo_best", help="Model name (default: mppo_best)")
 @click.option("--config", "-c", default="ml/rl_mppo.yaml", help="Config file path")
 @click.option(
+    "--strategy",
+    default="rl_mppo",
+    show_default=True,
+    help="Futures strategy profile name",
+)
+@click.option(
     "--symbol",
     "-s",
     default=None,
@@ -1812,7 +1818,14 @@ def rl_slippage(model: str, retrain: bool, config: str):
     help="Execution engine path",
 )
 @click.option("--no-daemon", is_flag=True, help="Run single session (foreground, no loop)")
-def rl_paper(model: str, config: str, symbol: str, engine: str, no_daemon: bool):
+def rl_paper(
+    model: str,
+    config: str,
+    strategy: str,
+    symbol: str,
+    engine: str,
+    no_daemon: bool,
+):
     """RL Paper Trading 실행
 
     \b
@@ -1822,8 +1835,9 @@ def rl_paper(model: str, config: str, symbol: str, engine: str, no_daemon: bool)
 
     \b
     Example:
-        sts rl paper                          # 기본 (mppo_final)
+        sts rl paper                          # 기본 (asym_long_strict profile)
         sts rl paper --model mppo_best        # 특정 모델
+        sts rl paper --strategy rl_mppo       # 기존 기본 프로필로 실행
         sts rl paper --no-daemon              # 단일 세션
         sts rl paper --symbol A05603          # 종목 지정 (mini 월물 코드)
     """
@@ -1832,6 +1846,7 @@ def rl_paper(model: str, config: str, symbol: str, engine: str, no_daemon: bool)
     click.echo("RL Paper Trading")
     click.echo(f"  Model: {model}")
     click.echo(f"  Config: {config}")
+    click.echo(f"  Strategy: {strategy}")
     if symbol:
         click.echo(f"  Symbol: {symbol}")
     click.echo(f"  Engine: {engine}")
@@ -1862,7 +1877,7 @@ def rl_paper(model: str, config: str, symbol: str, engine: str, no_daemon: bool)
         symbols = [symbol] if symbol else None
 
         trading_config = TradingConfig.futures(
-            strategy_name="rl_mppo",
+            strategy_name=strategy,
             symbols=symbols,
         )
         trading_config.paper_trading = True

@@ -453,9 +453,15 @@ class BacktestStrategyAdapter:
         indicators = self._indicator_resolver.collect_entry_indicators(code)
 
         # Inject pre-computed RL features (preferred for backtest throughput).
+        # Prefix conflicting keys with "rl_" to avoid overwriting base indicators
+        # (e.g. RL "atr" is normalized, base "atr" is raw).
         if self._precomputed_rl_features is not None:
             if self._bar_index < len(self._precomputed_rl_features):
-                indicators.update(self._precomputed_rl_features[self._bar_index])
+                for k, v in self._precomputed_rl_features[self._bar_index].items():
+                    if k in indicators:
+                        indicators[f"rl_{k}"] = v
+                    else:
+                        indicators[k] = v
             self._bar_index += 1
 
         # Derive market_state from MFI using MarketClassifier (matches live orchestrator)

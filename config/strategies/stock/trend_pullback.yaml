@@ -8,12 +8,12 @@ strategy:
     params:
       bb_period: 20
       bb_std: 2.0
-      bb_touch_buffer: 1.005
-      rsi_oversold: 35.0
+      bb_touch_buffer: 1.015
+      rsi_oversold: 45.0
       williams_r_oversold: -80.0
-      williams_r_reversal: -70.0
+      williams_r_reversal: -65.0
       volume_threshold: 1.0
-      min_atr_cost_ratio: 2.0
+      min_atr_cost_ratio: 0.01
       round_trip_cost: 0.005
       skip_market_open_minutes: 30
       skip_market_close_minutes: 15

@@ -62,6 +62,76 @@ async def test_generate_short_signal_sets_signal_direction(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_generate_skips_time_filter_in_backtest_by_default(monkeypatch):
+    strategy = RLMPPOEntry(RLMPPOConfig(min_confidence=0.5))
+    strategy._is_trading_time = lambda _ts: False
+    strategy._load_model = lambda: SimpleNamespace(
+        predict=lambda *_args, **_kwargs: (0, None)
+    )
+    strategy._build_observation = lambda _ctx: np.zeros(31, dtype=np.float32)
+    monkeypatch.setattr(
+        "shared.strategy.entry.rl_mppo.get_action_confidence",
+        lambda *_args, **_kwargs: 0.9,
+    )
+
+    context = EntryContext(
+        market_data={"code": "A01603", "name": "KOSPI200 Futures", "close": 101.5},
+        indicators={},
+        current_positions=[],
+        timestamp=datetime(2026, 2, 12, 3, 0, 0),
+        metadata={"is_backtest": True},
+    )
+
+    signal = await strategy.generate(context)
+    assert signal is not None
+
+
+@pytest.mark.asyncio
+async def test_generate_applies_time_filter_when_enabled_in_backtest(monkeypatch):
+    strategy = RLMPPOEntry(
+        RLMPPOConfig(min_confidence=0.5, apply_time_filter_in_backtest=True)
+    )
+    strategy._is_trading_time = lambda _ts: False
+    strategy._load_model = lambda: SimpleNamespace(
+        predict=lambda *_args, **_kwargs: (0, None)
+    )
+    strategy._build_observation = lambda _ctx: np.zeros(31, dtype=np.float32)
+    monkeypatch.setattr(
+        "shared.strategy.entry.rl_mppo.get_action_confidence",
+        lambda *_args, **_kwargs: 0.9,
+    )
+
+    context = EntryContext(
+        market_data={"code": "A01603", "name": "KOSPI200 Futures", "close": 101.5},
+        indicators={},
+        current_positions=[],
+        timestamp=datetime(2026, 2, 12, 3, 0, 0),
+        metadata={"is_backtest": True},
+    )
+
+    signal = await strategy.generate(context)
+    assert signal is None
+
+
+def test_is_trading_time_with_night_session():
+    strategy = RLMPPOEntry(
+        RLMPPOConfig(
+            day_session_enabled=False,
+            night_session_enabled=True,
+            night_market_open="18:00",
+            night_market_close="05:00",
+            skip_market_open_minutes=5,
+            skip_market_close_minutes=30,
+        )
+    )
+
+    assert strategy._is_trading_time(datetime(2026, 2, 12, 18, 4, 0)) is False
+    assert strategy._is_trading_time(datetime(2026, 2, 12, 18, 5, 0)) is True
+    assert strategy._is_trading_time(datetime(2026, 2, 13, 4, 29, 0)) is True
+    assert strategy._is_trading_time(datetime(2026, 2, 13, 4, 31, 0)) is False
+
+
+@pytest.mark.asyncio
 async def test_generate_overrides_hold_to_entry_when_gap_small(monkeypatch):
     strategy = RLMPPOEntry(
         RLMPPOConfig(
@@ -78,7 +148,7 @@ async def test_generate_overrides_hold_to_entry_when_gap_small(monkeypatch):
     strategy._build_observation = lambda _ctx: np.zeros(31, dtype=np.float32)
     monkeypatch.setattr(
         "shared.strategy.entry.rl_mppo.get_action_probabilities",
-        lambda *_args, **_kwargs: {0: 0.40, 2: 0.15, 4: 0.45},
+        lambda *_args, **_kwargs: {0: 0.40, 2: 0.40, 4: 0.20},
     )
 
     context = EntryContext(
@@ -132,6 +202,151 @@ async def test_generate_keeps_hold_when_gap_large(monkeypatch):
 
     signal = await strategy.generate(context)
     assert signal is None
+
+
+@pytest.mark.asyncio
+async def test_generate_adaptive_threshold_blocks_in_high_volatility(monkeypatch):
+    strategy = RLMPPOEntry(
+        RLMPPOConfig(
+            backtest_min_confidence=0.35,
+            adaptive_confidence_enabled=True,
+            adaptive_confidence_metric="atr_ratio",
+            adaptive_confidence_trigger=0.001,
+            adaptive_confidence_backtest_boost=0.10,
+        )
+    )
+    strategy._load_model = lambda: SimpleNamespace(
+        predict=lambda *_args, **_kwargs: (0, None)
+    )
+    strategy._build_observation = lambda _ctx: np.zeros(31, dtype=np.float32)
+    monkeypatch.setattr(
+        "shared.strategy.entry.rl_mppo.get_action_probabilities",
+        lambda *_args, **_kwargs: {0: 0.40, 2: 0.10, 4: 0.50},
+    )
+
+    context = EntryContext(
+        market_data={"code": "A01603", "name": "KOSPI200 Futures", "close": 1000.0},
+        indicators={"atr": 2.0},  # atr_ratio=0.002 (high vol)
+        current_positions=[],
+        timestamp=datetime(2026, 2, 12, 10, 5, 0),
+        metadata={"is_backtest": True},
+    )
+
+    signal = await strategy.generate(context)
+    assert signal is None
+
+
+@pytest.mark.asyncio
+async def test_generate_adaptive_threshold_keeps_base_in_normal_volatility(monkeypatch):
+    strategy = RLMPPOEntry(
+        RLMPPOConfig(
+            backtest_min_confidence=0.35,
+            adaptive_confidence_enabled=True,
+            adaptive_confidence_metric="atr_ratio",
+            adaptive_confidence_trigger=0.001,
+            adaptive_confidence_backtest_boost=0.10,
+        )
+    )
+    strategy._load_model = lambda: SimpleNamespace(
+        predict=lambda *_args, **_kwargs: (0, None)
+    )
+    strategy._build_observation = lambda _ctx: np.zeros(31, dtype=np.float32)
+    monkeypatch.setattr(
+        "shared.strategy.entry.rl_mppo.get_action_probabilities",
+        lambda *_args, **_kwargs: {0: 0.40, 2: 0.10, 4: 0.50},
+    )
+
+    context = EntryContext(
+        market_data={"code": "A01603", "name": "KOSPI200 Futures", "close": 1000.0},
+        indicators={"atr": 0.5},  # atr_ratio=0.0005 (normal vol)
+        current_positions=[],
+        timestamp=datetime(2026, 2, 12, 10, 5, 0),
+        metadata={"is_backtest": True},
+    )
+
+    signal = await strategy.generate(context)
+    assert signal is not None
+    assert signal.metadata.get("rl_threshold") == pytest.approx(0.35)
+    assert str(signal.metadata.get("rl_threshold_reason", "")).startswith("adaptive_normal:")
+
+
+@pytest.mark.asyncio
+async def test_generate_applies_directional_base_threshold(monkeypatch):
+    strategy = RLMPPOEntry(
+        RLMPPOConfig(
+            backtest_min_confidence=0.35,
+            backtest_long_min_confidence=0.45,
+            backtest_short_min_confidence=0.30,
+        )
+    )
+    strategy._load_model = lambda: SimpleNamespace(
+        predict=lambda *_args, **_kwargs: (0, None)
+    )
+    strategy._build_observation = lambda _ctx: np.zeros(31, dtype=np.float32)
+    monkeypatch.setattr(
+        "shared.strategy.entry.rl_mppo.get_action_probabilities",
+        lambda *_args, **_kwargs: {0: 0.40, 2: 0.40, 4: 0.20},
+    )
+
+    context = EntryContext(
+        market_data={"code": "A01603", "name": "KOSPI200 Futures", "close": 1000.0},
+        indicators={},
+        current_positions=[],
+        timestamp=datetime(2026, 2, 12, 10, 5, 0),
+        metadata={"is_backtest": True},
+    )
+
+    long_signal = await strategy.generate(context)
+    assert long_signal is None
+
+    strategy._load_model = lambda: SimpleNamespace(
+        predict=lambda *_args, **_kwargs: (2, None)
+    )
+    short_signal = await strategy.generate(context)
+    assert short_signal is not None
+    assert short_signal.metadata.get("signal_direction") == "short"
+    assert short_signal.metadata.get("rl_threshold") == pytest.approx(0.30)
+
+
+@pytest.mark.asyncio
+async def test_generate_applies_directional_adaptive_boost(monkeypatch):
+    strategy = RLMPPOEntry(
+        RLMPPOConfig(
+            backtest_min_confidence=0.35,
+            adaptive_confidence_enabled=True,
+            adaptive_confidence_metric="atr_ratio",
+            adaptive_confidence_trigger=0.001,
+            adaptive_confidence_backtest_boost=0.02,
+            adaptive_confidence_backtest_boost_long=0.10,
+            adaptive_confidence_backtest_boost_short=0.01,
+        )
+    )
+    strategy._build_observation = lambda _ctx: np.zeros(31, dtype=np.float32)
+    monkeypatch.setattr(
+        "shared.strategy.entry.rl_mppo.get_action_probabilities",
+        lambda *_args, **_kwargs: {0: 0.42, 2: 0.42, 4: 0.16},
+    )
+
+    context = EntryContext(
+        market_data={"code": "A01603", "name": "KOSPI200 Futures", "close": 1000.0},
+        indicators={"atr": 2.0},  # atr_ratio=0.002 => high-vol branch
+        current_positions=[],
+        timestamp=datetime(2026, 2, 12, 10, 5, 0),
+        metadata={"is_backtest": True},
+    )
+
+    strategy._load_model = lambda: SimpleNamespace(
+        predict=lambda *_args, **_kwargs: (0, None)
+    )
+    long_signal = await strategy.generate(context)
+    assert long_signal is None
+
+    strategy._load_model = lambda: SimpleNamespace(
+        predict=lambda *_args, **_kwargs: (2, None)
+    )
+    short_signal = await strategy.generate(context)
+    assert short_signal is not None
+    assert short_signal.metadata.get("rl_threshold") == pytest.approx(0.36)
 
 
 def test_derive_features_from_ohlcv():

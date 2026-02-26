@@ -4,6 +4,13 @@ execution:
   retry_delay: 1.0
   orders_per_second: 5.0
   account_no: ${KIS_ACCOUNT_NO:}
+  order_request_timeout_seconds: 5.0
+
+  # Futures live execution safety: fill inquiry + timeout cancel
+  futures_fill_check_enabled: true
+  futures_fill_check_poll_interval_seconds: 0.2
+  futures_fill_check_timeout_seconds: 1.0
+  futures_auto_cancel_unfilled: true
 
 # 브로커 잔고 검증 — 시작 시 Redis 포지션과 실제 브로커 잔고 비교
 broker_verification:
@@ -11,3 +18,40 @@ broker_verification:
   auto_track_external: false     # 외부(HTS/MTS) 포지션 자동 추적 여부
   reconcile_quantity: true       # 수량 불일치 시 브로커 기준 보정
   notify_on_mismatch: true       # 불일치 시 Telegram 알림
+
+# KOSPI200 Mini 실시간 진입 슬리피지 제어 (선물 전용)
+futures_slippage_control:
+  enabled: true
+  tick_size: 0.02
+
+  # Rule 1: 유동성/스프레드 필터
+  max_spread_ticks: 1
+  min_depth_multiplier: 3.0
+
+  # Rule 2: 지정가 후 TIF 관리
+  passive_timeout_seconds: 0.7
+  retry_policy: market_once        # market_once | abort
+  max_price_deviation_ticks: 2
+  max_signal_age_seconds: 2.0
+
+  # Rule 3: 변동성 필터
+  volatility:
+    window_ticks: 20
+    spike_multiplier: 2.5
+    cooldown_seconds: 2.0
+
+  # Rule 3 (Cross-Asset): 대형선물 호가 상태 참조
+  cross_asset:
+    enabled: true
+    reference_symbol: "101S6000"   # KOSPI200 선물 근월 연결코드
+    max_spread_ticks: 2
+
+  # Rule 4: 시간대 필터 (포함 범위)
+  blocked_time_windows:
+    - start: "09:00"
+      end: "09:05"
+    - start: "15:40"
+      end: "15:45"
+
+  # 주요 경제지표 발표 등 수동 블랙아웃 구간
+  event_time_windows: []

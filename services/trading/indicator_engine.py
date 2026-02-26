@@ -574,6 +574,17 @@ class StreamingIndicatorEngine:
         # High over N previous trading days (for breakout detection)
         result[f"high_{self._high_period}"] = self._calc_high_n(symbol, candles)
 
+        # Raw ATR (non-normalized) for edge filters and stop-loss calculations
+        result["atr"] = self._calc_atr_raw(candles)
+
+        # Volume moving average (20-period SMA of candle volumes)
+        volumes = [c.volume for c in candles]
+        vol_window = min(self.bb_period, len(volumes))
+        if vol_window > 0:
+            result["volume_ma"] = sum(volumes[-vol_window:]) / vol_window
+        else:
+            result["volume_ma"] = 0.0
+
         return result
 
     def get_rl_features(self, symbol: str) -> dict[str, float]:
@@ -1015,6 +1026,18 @@ class StreamingIndicatorEngine:
         for v in values[1:]:
             ema = alpha * v + (1 - alpha) * ema
         return ema
+
+    @staticmethod
+    def _calc_atr_raw(candles: list[Candle], period: int = 14) -> float:
+        """Raw ATR value (non-normalized) for edge filters and stop-loss."""
+        n = len(candles)
+        if n < period + 1:
+            return 0.0
+        trs: list[float] = []
+        for i in range(1, n):
+            h, lo, pc = candles[i].high, candles[i].low, candles[i - 1].close
+            trs.append(max(h - lo, abs(h - pc), abs(lo - pc)))
+        return sum(trs[-period:]) / period
 
     @staticmethod
     def _calc_atr_normalized(candles: list[Candle], period: int = 14) -> float:

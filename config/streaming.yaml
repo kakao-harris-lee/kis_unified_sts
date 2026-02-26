@@ -61,6 +61,8 @@ futures_feed:
   subscription_delay: 0.05      # 구독 간 딜레이 (초)
   connection_timeout: 10.0      # 초기 연결 타임아웃 (초)
   shutdown_timeout: 5.0         # 종료 대기 타임아웃 (초)
+  orderbook_stale_threshold_seconds: 3.0    # trade-only 지속 시 호가 stale 판단 임계값
+  orderbook_missing_warn_interval_seconds: 30.0  # 호가 누락 경고 최소 간격
 
 # KIS REST API Rate Limiter 설정
 rate_limiter:
