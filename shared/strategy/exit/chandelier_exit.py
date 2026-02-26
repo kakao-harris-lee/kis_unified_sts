@@ -191,12 +191,19 @@ class ChandelierExit(ExitSignalGenerator[ChandelierExitConfig]):
     ) -> list[ExitSignal]:
         """Scan multiple positions for exit signals."""
         signals = []
+        now = datetime.now()
         for position in positions:
+            # Extract per-symbol data from symbol-keyed market_data dict
+            symbol_data = market_data.get(position.code, {})
+            if isinstance(symbol_data, dict):
+                per_symbol = symbol_data
+            else:
+                per_symbol = {"close": symbol_data} if symbol_data else {}
             context = ExitContext(
                 position=position,
-                market_data=market_data,
-                indicators=market_data,
-                timestamp=datetime.now(),
+                market_data=per_symbol,
+                indicators=per_symbol,
+                timestamp=now,
                 market_state=market_state,
             )
             should_exit, signal = await self.should_exit(context)

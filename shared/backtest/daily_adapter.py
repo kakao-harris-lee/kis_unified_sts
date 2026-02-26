@@ -261,7 +261,7 @@ def load_stock_daily_from_clickhouse(
         host=os.getenv("CLICKHOUSE_HOST", "localhost"),
         port=int(os.getenv("CLICKHOUSE_PORT", "8123")),
         username=os.getenv("CLICKHOUSE_USER", "default"),
-        password=os.getenv("CLICKHOUSE_PASSWORD", "@1tidh6ls6ls"),
+        password=os.getenv("CLICKHOUSE_PASSWORD", ""),
     )
 
     conditions = [f"code = '{code}'"]
