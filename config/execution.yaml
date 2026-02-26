@@ -55,3 +55,18 @@ futures_slippage_control:
 
   # 주요 경제지표 발표 등 수동 블랙아웃 구간
   event_time_windows: []
+
+  # Paper 전용 완화 오버라이드 (live에는 적용되지 않음)
+  # 목적: 강한 신호 구간에서 진입 시도 수를 늘려 실험 가능성 확보
+  paper_override:
+    enabled: true
+    max_spread_ticks: 3
+    min_depth_multiplier: 1.5
+    max_price_deviation_ticks: 4
+    max_signal_age_seconds: 3.0
+    blocked_time_windows: []
+    volatility:
+      spike_multiplier: 3.5
+      cooldown_seconds: 0.6
+    cross_asset:
+      max_spread_ticks: 4
