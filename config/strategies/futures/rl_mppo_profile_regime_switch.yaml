@@ -26,7 +26,7 @@ strategy:
 
       # Volatility regime switch: tighten threshold when ATR is elevated.
       adaptive_confidence_enabled: true
-      adaptive_confidence_metric: atr
+      adaptive_confidence_metric: atr_ratio
       adaptive_confidence_trigger: 0.0008
       adaptive_confidence_backtest_boost: 0.05
       adaptive_confidence_live_boost: 0.05

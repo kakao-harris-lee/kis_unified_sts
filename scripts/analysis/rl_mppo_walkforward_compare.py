@@ -167,7 +167,7 @@ def _build_windows(
 def _make_backtest_config(strategy_cfg: dict[str, Any]) -> BacktestConfig:
     bt_override = strategy_cfg.get("strategy", {}).get("backtest", {})
     initial_capital = float(bt_override.get("initial_capital", 100_000_000))
-    point_value = float(bt_override.get("point_value", 50_000))
+    point_value = float(bt_override.get("point_value", 250_000))
     config = BacktestConfig.futures(
         initial_capital=initial_capital,
         point_value=point_value,

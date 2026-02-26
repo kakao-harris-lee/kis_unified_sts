@@ -25,7 +25,7 @@ strategy:
       backtest_hold_override_min_confidence: 0.30
 
       adaptive_confidence_enabled: true
-      adaptive_confidence_metric: atr
+      adaptive_confidence_metric: atr_ratio
       adaptive_confidence_trigger: 0.0005
       adaptive_confidence_backtest_boost: 0.10
       adaptive_confidence_live_boost: 0.10

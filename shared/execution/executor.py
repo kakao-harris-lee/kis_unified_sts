@@ -232,7 +232,9 @@ class OrderExecutor:
 
         is_mock = mode == TradingMode.MOCK.value
         if self._is_futures_order(order):
-            return await self._send_kis_futures_order(order, is_mock=is_mock)
+            if is_mock:
+                logger.warning("KIS mock server does not support futures; routing to real server")
+            return await self._send_kis_futures_order(order, is_mock=False)
         return await self._send_kis_stock_order(order, is_mock=is_mock)
 
     async def _simulate_order(self, order: OrderRequest) -> OrderResponse:

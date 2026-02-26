@@ -1800,7 +1800,7 @@ def rl_slippage(model: str, retrain: bool, config: str):
 @click.option("--config", "-c", default="ml/rl_mppo.yaml", help="Config file path")
 @click.option(
     "--strategy",
-    default="rl_mppo_profile_asym_long_strict",
+    default="rl_mppo",
     show_default=True,
     help="Futures strategy profile name",
 )

@@ -22,7 +22,7 @@ strategy:
 
       skip_market_open_minutes: 5
       skip_market_close_minutes: 30
-      apply_time_filter_in_backtest: true
+      apply_time_filter_in_backtest: false
       day_session_enabled: true
       day_market_open: "09:00"
       day_market_close: "15:45"
