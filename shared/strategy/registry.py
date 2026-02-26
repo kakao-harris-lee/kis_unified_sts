@@ -468,6 +468,20 @@ def register_builtin_components() -> None:
     except ImportError:
         logger.debug("ChandelierExit not available")
 
+    try:
+        from shared.strategy.entry.vr_composite import VRCompositeEntry
+
+        EntryRegistry.register_class("vr_composite", VRCompositeEntry)
+    except ImportError:
+        logger.debug("VRCompositeEntry not available")
+
+    try:
+        from shared.strategy.exit.vr_composite_exit import VRCompositeExit
+
+        ExitRegistry.register_class("vr_composite_exit", VRCompositeExit)
+    except ImportError:
+        logger.debug("VRCompositeExit not available")
+
     # Position Sizer 등록
     try:
         from shared.strategy.position import FixedSizer, RiskBasedSizer
