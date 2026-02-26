@@ -9,7 +9,7 @@
 strategy:
   name: volume_accumulation
   asset_class: stock
-  enabled: true
+  enabled: false  # Absorbed into momentum_breakout (2026-02-26 redesign)
   description: "Volume accumulation breakout with momentum decay exit (swing)"
 
   # ===========================================================================

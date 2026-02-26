@@ -384,6 +384,20 @@ def register_builtin_components() -> None:
         logger.debug("WilliamsREntry not available")
 
     try:
+        from shared.strategy.entry.trend_pullback import TrendPullbackEntry
+
+        EntryRegistry.register_class("trend_pullback", TrendPullbackEntry)
+    except ImportError:
+        logger.debug("TrendPullbackEntry not available")
+
+    try:
+        from shared.strategy.entry.momentum_breakout import MomentumBreakoutEntry
+
+        EntryRegistry.register_class("momentum_breakout", MomentumBreakoutEntry)
+    except ImportError:
+        logger.debug("MomentumBreakoutEntry not available")
+
+    try:
         from shared.strategy.entry.rl_mppo import RLMPPOEntry
 
         EntryRegistry.register_class("rl_mppo", RLMPPOEntry)
@@ -432,6 +446,13 @@ def register_builtin_components() -> None:
         ExitRegistry.register_class("mean_reversion_exit", MeanReversionExit)
     except ImportError:
         logger.debug("MeanReversionExit not available")
+
+    try:
+        from shared.strategy.exit.atr_dynamic import ATRDynamicExit
+
+        ExitRegistry.register_class("atr_dynamic", ATRDynamicExit)
+    except ImportError:
+        logger.debug("ATRDynamicExit not available")
 
     # Position Sizer 등록
     try:

@@ -1,0 +1,36 @@
+strategy:
+  name: momentum_breakout
+  asset_class: stock
+  enabled: true
+  description: "멀티 타임프레임 모멘텀 돌파 전략"
+
+  entry:
+    type: momentum_breakout
+    params:
+      breakout_buffer_pct: 0.1
+      rvol_threshold: 1.5
+      accumulation_score_min: 60
+      volume_threshold: 1.0
+      min_atr_cost_ratio: 2.0
+      round_trip_cost: 0.005
+      skip_market_open_minutes: 30
+      skip_market_close_minutes: 15
+      signal_cooldown_seconds: 600
+
+  exit:
+    type: atr_dynamic
+    params:
+      atr_period: 14
+      stop_atr_multiplier: 1.5
+      trail_activation_atr: 0.5
+      trail_atr_multiplier: 1.5
+      momentum_decay_exit: true
+      max_hold_days: 5
+      eod_close_enabled: false
+      default_exit_confidence: 0.85
+
+  position:
+    type: fixed
+    params:
+      order_amount_per_stock: 1000000
+      max_positions: 5

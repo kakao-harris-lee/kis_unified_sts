@@ -1,0 +1,25 @@
+# Daily Scanner Configuration
+# Controls universe filtering for trend_pullback and momentum_breakout watchlists.
+
+# Trend-pullback filter
+tp_sma_period: 20
+tp_rsi_period: 14
+tp_rsi_max: 45.0
+tp_trend_deviation_pct: 5.0
+tp_min_volume_20d: 500000
+
+# Momentum-breakout filter
+mb_high_period: 20
+mb_proximity_pct: 5.0
+mb_volume_trend_ratio: 1.2
+mb_max_extension_pct: 15.0
+
+# Minimum-edge filter
+me_atr_period: 14
+me_round_trip_cost: 0.005
+me_min_atr_cost_ratio: 2.0
+
+# Redis publish
+max_watchlist_size: 40
+redis_key: "system:daily_watchlist:latest"
+redis_ttl_seconds: 86400
