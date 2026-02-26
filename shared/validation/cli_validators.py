@@ -31,6 +31,10 @@ def validate_csv_file(
     path: str,
     max_size_mb: float = MAX_CSV_SIZE_MB,
     max_rows: int = MAX_CSV_ROWS,
+    reject_duplicate_datetime: bool = False,
+    require_monotonic_datetime: bool = False,
+    max_zero_volume_ratio: float | None = None,
+    max_zero_volume_price_move_ratio: float | None = None,
 ) -> pd.DataFrame:
     """Validate CSV file before processing.
 
@@ -93,6 +97,17 @@ def validate_csv_file(
     except Exception as e:
         raise ValidationError(f"Failed to parse 'datetime' column: {e}")
 
+    # Datetime integrity checks
+    if reject_duplicate_datetime:
+        duplicate_count = int(df["datetime"].duplicated().sum())
+        if duplicate_count > 0:
+            raise ValidationError(
+                f"'datetime' contains duplicated rows: {duplicate_count}"
+            )
+
+    if require_monotonic_datetime and not df["datetime"].is_monotonic_increasing:
+        raise ValidationError("'datetime' must be strictly monotonic increasing")
+
     # Validate numeric columns
     numeric_columns = ["open", "high", "low", "close", "volume"]
     for col in numeric_columns:
@@ -110,6 +125,39 @@ def validate_csv_file(
         if col in df.columns:
             if (df[col] < 0).any():
                 raise ValidationError(f"Column '{col}' contains negative values")
+
+    # Optional volume quality gate (useful for futures RL datasets)
+    if max_zero_volume_ratio is not None and "volume" in df.columns:
+        if not 0.0 <= max_zero_volume_ratio <= 1.0:
+            raise ValidationError(
+                f"max_zero_volume_ratio must be in [0,1], got {max_zero_volume_ratio}"
+            )
+        zero_volume_ratio = float((df["volume"] == 0).mean())
+        if zero_volume_ratio > max_zero_volume_ratio:
+            raise ValidationError(
+                f"Zero-volume ratio too high: {zero_volume_ratio:.4f} > "
+                f"{max_zero_volume_ratio:.4f}"
+            )
+
+    # Optional phantom-bar gate:
+    # bars with zero volume while close price still changes.
+    if (
+        max_zero_volume_price_move_ratio is not None
+        and "volume" in df.columns
+        and "close" in df.columns
+    ):
+        if not 0.0 <= max_zero_volume_price_move_ratio <= 1.0:
+            raise ValidationError(
+                "max_zero_volume_price_move_ratio must be in [0,1], "
+                f"got {max_zero_volume_price_move_ratio}"
+            )
+        close_diff = df["close"].diff().abs().fillna(0)
+        phantom_ratio = float(((df["volume"] == 0) & (close_diff > 0)).mean())
+        if phantom_ratio > max_zero_volume_price_move_ratio:
+            raise ValidationError(
+                "Zero-volume moving-price ratio too high: "
+                f"{phantom_ratio:.4f} > {max_zero_volume_price_move_ratio:.4f}"
+            )
 
     logger.info(f"CSV validated: {len(df)} rows, {len(df.columns)} columns")
     return df

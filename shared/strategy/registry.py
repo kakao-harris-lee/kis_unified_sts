@@ -398,6 +398,13 @@ def register_builtin_components() -> None:
         logger.debug("MomentumBreakoutEntry not available")
 
     try:
+        from shared.strategy.entry.daily_pullback import DailyPullbackEntry
+
+        EntryRegistry.register_class("daily_pullback", DailyPullbackEntry)
+    except ImportError:
+        logger.debug("DailyPullbackEntry not available")
+
+    try:
         from shared.strategy.entry.rl_mppo import RLMPPOEntry
 
         EntryRegistry.register_class("rl_mppo", RLMPPOEntry)
@@ -453,6 +460,13 @@ def register_builtin_components() -> None:
         ExitRegistry.register_class("atr_dynamic", ATRDynamicExit)
     except ImportError:
         logger.debug("ATRDynamicExit not available")
+
+    try:
+        from shared.strategy.exit.chandelier_exit import ChandelierExit
+
+        ExitRegistry.register_class("chandelier_exit", ChandelierExit)
+    except ImportError:
+        logger.debug("ChandelierExit not available")
 
     # Position Sizer 등록
     try:

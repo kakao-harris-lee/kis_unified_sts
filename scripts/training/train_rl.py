@@ -38,8 +38,59 @@ from shared.ml.rl.features import RLFeatureCalculator, RL_FEATURE_COLUMNS
 logger = logging.getLogger(__name__)
 
 
+def _validate_ohlcv_quality(
+    df: pd.DataFrame,
+    *,
+    symbol: str,
+    table: str,
+    max_zero_volume_ratio: float = 0.95,
+    max_zero_volume_price_move_ratio: float = 0.20,
+    reject_duplicate_datetime: bool = True,
+    require_monotonic_datetime: bool = True,
+) -> None:
+    """Validate OHLCV integrity for RL training/evaluation inputs."""
+    if df.empty:
+        raise ValueError(f"Empty dataset: {table} ({symbol})")
+
+    if "datetime" not in df.columns:
+        raise ValueError("Missing required column: datetime")
+
+    if reject_duplicate_datetime:
+        duplicate_count = int(df["datetime"].duplicated().sum())
+        if duplicate_count > 0:
+            raise ValueError(
+                f"Data quality check failed ({table}/{symbol}): "
+                f"duplicated datetime rows={duplicate_count}"
+            )
+
+    if require_monotonic_datetime and not df["datetime"].is_monotonic_increasing:
+        raise ValueError(
+            f"Data quality check failed ({table}/{symbol}): "
+            "datetime is not monotonic increasing"
+        )
+
+    if "volume" in df.columns:
+        zero_volume_ratio = float((df["volume"] == 0).mean())
+        if zero_volume_ratio > max_zero_volume_ratio:
+            raise ValueError(
+                f"Data quality check failed ({table}/{symbol}): "
+                f"zero-volume ratio={zero_volume_ratio:.4f} > {max_zero_volume_ratio:.4f}"
+            )
+
+        if "close" in df.columns:
+            close_diff = df["close"].diff().abs().fillna(0)
+            phantom_ratio = float(((df["volume"] == 0) & (close_diff > 0)).mean())
+            if phantom_ratio > max_zero_volume_price_move_ratio:
+                raise ValueError(
+                    f"Data quality check failed ({table}/{symbol}): "
+                    "zero-volume moving-price ratio="
+                    f"{phantom_ratio:.4f} > {max_zero_volume_price_move_ratio:.4f}"
+                )
+
+
 def load_data_from_clickhouse(
     config_path: str = "ml/rl_mppo.yaml",
+    persist_scaler: bool = False,
 ) -> tuple[list[np.ndarray], list[np.ndarray], list[np.ndarray], list[np.ndarray]]:
     """ClickHouse에서 1분봉 데이터 로드 및 일별 분할
 
@@ -55,6 +106,18 @@ def load_data_from_clickhouse(
     table = data_cfg.get("table", "kospi200f_1m")
     train_ratio = float(data_cfg.get("train_ratio", 0.8))
     min_bars = data_cfg.get("min_bars_per_day", 300)
+    quality_cfg = data_cfg.get("quality", {}) or {}
+    quality_enabled = bool(quality_cfg.get("enabled", True))
+    max_zero_volume_ratio = float(quality_cfg.get("max_zero_volume_ratio", 0.95))
+    max_zero_volume_price_move_ratio = float(
+        quality_cfg.get("max_zero_volume_price_move_ratio", 0.20)
+    )
+    reject_duplicate_datetime = bool(
+        quality_cfg.get("reject_duplicate_datetime", True)
+    )
+    require_monotonic_datetime = bool(
+        quality_cfg.get("require_monotonic_datetime", True)
+    )
 
     logger.info(
         f"Loading data: {database}.{table}, symbol={symbol}, "
@@ -89,6 +152,16 @@ def load_data_from_clickhouse(
     if df.empty:
         logger.warning("No data loaded. Using sample data.")
         df = _generate_sample_data()
+    elif quality_enabled:
+        _validate_ohlcv_quality(
+            df,
+            symbol=symbol,
+            table=f"{database}.{table}",
+            max_zero_volume_ratio=max_zero_volume_ratio,
+            max_zero_volume_price_move_ratio=max_zero_volume_price_move_ratio,
+            reject_duplicate_datetime=reject_duplicate_datetime,
+            require_monotonic_datetime=require_monotonic_datetime,
+        )
 
     # 가격 미러링 증강 설정
     mirror_aug = data_cfg.get("mirror_augmentation", True)
@@ -154,14 +227,15 @@ def load_data_from_clickhouse(
     train_all = pd.concat([df[df["date"] == d][RL_FEATURE_COLUMNS] for d in train_dates])
     scaler.fit(train_all.values)
 
-    # scaler 저장 (paper trading 추론 시 재사용)
-    save_dir = Path(ConfigLoader.load(config_path).get("training", {}).get(
-        "save_dir", "./models/futures/rl/"
-    ))
-    save_dir.mkdir(parents=True, exist_ok=True)
-    scaler_path = save_dir / "scaler.joblib"
-    joblib.dump(scaler, scaler_path)
-    logger.info(f"Scaler saved to {scaler_path}")
+    # scaler 저장 (학습 시에만; 평가/분석 실행에서 덮어쓰기 방지)
+    if persist_scaler:
+        save_dir = Path(ConfigLoader.load(config_path).get("training", {}).get(
+            "save_dir", "./models/futures/rl/"
+        ))
+        save_dir.mkdir(parents=True, exist_ok=True)
+        scaler_path = save_dir / "scaler.joblib"
+        joblib.dump(scaler, scaler_path)
+        logger.info(f"Scaler saved to {scaler_path}")
 
     def split_days(date_list, source_df):
         days = []
@@ -394,9 +468,11 @@ def main():
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
 
-    # 데이터 로드 (scaler 저장은 load_data_from_clickhouse 내부에서 수행)
+    # 데이터 로드 (학습 시에만 scaler 저장)
+    persist_scaler = bool(args.save_scaler_only or not args.evaluate_only)
     train_days, train_prices, test_days, test_prices = load_data_from_clickhouse(
-        args.config
+        args.config,
+        persist_scaler=persist_scaler,
     )
 
     if args.save_scaler_only:

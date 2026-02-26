@@ -1,0 +1,51 @@
+strategy:
+  name: daily_pullback
+  asset_class: stock
+  enabled: true
+  timeframe: daily
+  description: "일봉 눌림목 진입 + Chandelier Exit 스윙 전략"
+
+  entry:
+    type: daily_pullback
+    params:
+      sma_long_period: 200
+      sma_short_period: 20
+      sma_mid_period: 60
+      rsi_period: 5
+      rsi_oversold: 45.0
+      require_mid_trend: true
+      mid_trend_lookback: 5
+      stop_loss_pct: 7.0
+      signal_cooldown_days: 5
+      confidence_base: 0.6
+
+  exit:
+    type: chandelier_exit
+    params:
+      atr_period: 22
+      atr_multiplier: 3.0
+      lookback_period: 22
+      hard_stop_pct: -0.07
+      max_hold_days: 60
+      default_exit_confidence: 0.85
+
+  position:
+    type: fixed
+    params:
+      order_amount_per_stock: 2000000
+      max_positions: 5
+
+  paper:
+    enabled: true
+    check_interval: 60  # 1분 간격 체크 (일봉 전략이므로 느리게)
+
+  backtest:
+    initial_capital: 100000000
+    risk:
+      stop_loss_pct: 7.0
+      take_profit_pct: 50.0
+      trailing_stop_enabled: false
+      max_hold_bars: 0
+      max_daily_trades: 3
+      force_close_time: ""
+      close_on_day_change: false

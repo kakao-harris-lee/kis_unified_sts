@@ -63,6 +63,7 @@ strategy:
   backtest:
     initial_capital: 100_000_000   # 학습 env.initial_balance와 동일
     point_value: 250_000           # KOSPI200 선물 계약 승수
+    use_precomputed_rl_features: false  # 실시간 indicator 경로와 정합성 우선
     risk:
       stop_loss_pct: 999.0         # 비활성 — RL이 자체 exit 정책 사용
       take_profit_pct: 999.0       # 비활성 — RL이 자체 exit 정책 사용
