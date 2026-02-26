@@ -11,7 +11,7 @@ strategy:
       rvol_threshold: 1.5
       accumulation_score_min: 60
       volume_threshold: 1.0
-      min_atr_cost_ratio: 2.0
+      min_atr_cost_ratio: 0.01
       round_trip_cost: 0.005
       skip_market_open_minutes: 30
       skip_market_close_minutes: 15
