@@ -3283,42 +3283,45 @@ class TradingOrchestrator:
         is_short: bool,
         execution_meta: dict[str, Any],
     ) -> dict[str, Any]:
-        from shared.execution.slippage_control import compute_adverse_slippage_ticks
-
         meta = dict(execution_meta)
         signal_price = float(signal.price)
         submit_price = float(meta.get("submit_price", signal_price) or signal_price)
 
-        tick_size = 0.02
-        if (
-            self._futures_slippage_controller is not None
-            and getattr(self._futures_slippage_controller, "config", None) is not None
-        ):
-            tick_size = float(self._futures_slippage_controller.config.tick_size)
-
-        slippage_ticks = compute_adverse_slippage_ticks(
-            signal_price=signal_price,
-            fill_price=float(fill_price),
-            is_buy=(not is_short),
-            tick_size=tick_size,
-        )
-
         meta["signal_price"] = signal_price
         meta["submit_price"] = submit_price
         meta["fill_price"] = float(fill_price)
-        meta["slippage_ticks"] = float(slippage_ticks)
-        meta["slippage_tick_size"] = tick_size
 
-        self._update_entry_slippage_stats(max(0.0, float(slippage_ticks)))
-        logger.info(
-            "Entry execution prices: code=%s signal=%.2f submit=%.2f fill=%.2f "
-            "slippage=%.2ft",
-            signal.code,
-            signal_price,
-            submit_price,
-            float(fill_price),
-            float(slippage_ticks),
-        )
+        try:
+            from shared.execution.slippage_control import compute_adverse_slippage_ticks
+
+            tick_size = 0.02
+            if (
+                self._futures_slippage_controller is not None
+                and getattr(self._futures_slippage_controller, "config", None) is not None
+            ):
+                tick_size = float(self._futures_slippage_controller.config.tick_size)
+
+            slippage_ticks = compute_adverse_slippage_ticks(
+                signal_price=signal_price,
+                fill_price=float(fill_price),
+                is_buy=(not is_short),
+                tick_size=tick_size,
+            )
+            meta["slippage_ticks"] = float(slippage_ticks)
+            meta["slippage_tick_size"] = tick_size
+
+            self._update_entry_slippage_stats(max(0.0, float(slippage_ticks)))
+            logger.info(
+                "Entry execution prices: code=%s signal=%.2f submit=%.2f fill=%.2f "
+                "slippage=%.2ft",
+                signal.code,
+                signal_price,
+                submit_price,
+                float(fill_price),
+                float(slippage_ticks),
+            )
+        except ImportError:
+            logger.debug("slippage_control not available, skipping slippage telemetry")
 
         return meta
 

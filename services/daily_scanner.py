@@ -463,7 +463,7 @@ class DailyScanner:
             redis = RedisClient.get_client()
             payload = {
                 "timestamp": date.today().isoformat(),
-                "watchlists": result,
+                "strategies": result,
                 "counts": {k: len(v) for k, v in result.items()},
             }
             redis.set(

@@ -351,3 +351,27 @@ def test_config_from_dict():
     assert cfg.rvol_threshold == 2.0
     # unchanged defaults
     assert cfg.daily_high_period == 20
+
+
+@pytest.mark.asyncio
+async def test_bypasses_watchlist_in_dynamic_mode(entry):
+    """In dynamic mode (empty daily_watchlist), watchlist gate is bypassed."""
+    now = datetime(2026, 2, 26, 10, 30, tzinfo=KST)
+    ctx = EntryContext(
+        market_data={
+            "code": "005930",
+            "name": "삼성전자",
+            "close": 50100.0,
+            "high_5": 49900.0,
+            "rvol": 2.0,
+            "volume": 150000.0,
+            "volume_ma": 100000.0,
+            "atr": 600.0,
+        },
+        indicators={},
+        timestamp=now,
+        metadata={"daily_watchlist": {}},  # empty = dynamic mode
+    )
+    signal = await entry.generate(ctx)
+    assert signal is not None
+    assert signal.code == "005930"

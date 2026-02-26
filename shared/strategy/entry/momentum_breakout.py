@@ -46,6 +46,9 @@ class MomentumBreakoutConfig(ConfigMixin):
     min_atr_cost_ratio: float = 2.0
     round_trip_cost: float = 0.005  # 0.5% round trip (commission + slippage)
 
+    # Stop-loss ATR multiplier (used in entry signal metadata)
+    stop_atr_multiplier: float = 1.5
+
     # Time filters
     skip_market_open_minutes: int = 30
     skip_market_close_minutes: int = 15
@@ -132,11 +135,14 @@ class MomentumBreakoutEntry(EntrySignalGenerator[MomentumBreakoutConfig]):
             return None
 
         # --- Layer 1: daily watchlist gate ---
+        # In static mode, only symbols approved by DailyScanner pass.
+        # In dynamic mode (daily_watchlist empty), bypass the check.
         daily_watchlist = context.metadata.get("daily_watchlist", {})
-        strategies_watchlist = daily_watchlist.get("strategies", {})
-        momentum_list = strategies_watchlist.get("momentum_breakout", [])
-        if code not in momentum_list:
-            return None
+        if daily_watchlist:
+            strategies_watchlist = daily_watchlist.get("strategies", {})
+            momentum_list = strategies_watchlist.get("momentum_breakout", [])
+            if code not in momentum_list:
+                return None
 
         now = context.timestamp
 
@@ -230,7 +236,7 @@ class MomentumBreakoutEntry(EntrySignalGenerator[MomentumBreakoutConfig]):
         self._last_signal_time[code] = now
 
         # --- Compute stop loss price ---
-        stop_loss_price = close - atr * 1.5
+        stop_loss_price = close - atr * self.config.stop_atr_multiplier
         breakout_pct = ((close - high_5) / high_5) * 100.0
 
         logger.info(

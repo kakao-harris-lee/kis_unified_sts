@@ -49,6 +49,10 @@ class TrendPullbackConfig(ConfigMixin):
     min_atr_cost_ratio: float = 2.0
     round_trip_cost: float = 0.005  # 0.5% round-trip cost
 
+    # Stop-loss ATR multiplier (used in entry signal metadata)
+    stop_atr_multiplier: float = 2.5
+    stop_fallback_cost_multiplier: float = 3.0
+
     # Time filters
     skip_market_open_minutes: int = 30
     skip_market_close_minutes: int = 15
@@ -213,7 +217,11 @@ class TrendPullbackEntry(EntrySignalGenerator[TrendPullbackConfig]):
             return None
 
         # --- Calculate stop loss and confidence ---
-        stop_loss = close - atr * 2.5 if atr > 0 else close * (1 - self.config.round_trip_cost * 3)
+        stop_loss = (
+            close - atr * self.config.stop_atr_multiplier
+            if atr > 0
+            else close * (1 - self.config.round_trip_cost * self.config.stop_fallback_cost_multiplier)
+        )
         confidence = self._calculate_confidence(close, bb_lower, rsi, trigger_type)
 
         logger.info(

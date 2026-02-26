@@ -16,6 +16,7 @@ strategy:
       skip_market_open_minutes: 30
       skip_market_close_minutes: 15
       signal_cooldown_seconds: 600
+      stop_atr_multiplier: 1.5
 
   exit:
     type: atr_dynamic
