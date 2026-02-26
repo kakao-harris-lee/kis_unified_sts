@@ -30,7 +30,7 @@ strategy:
       day_session_enabled: true
       day_market_open: "09:00"
       day_market_close: "15:45"
-      night_session_enabled: true
+      night_session_enabled: false
       night_market_open: "18:00"
       night_market_close: "05:00"
 
