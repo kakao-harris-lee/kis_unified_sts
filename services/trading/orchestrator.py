@@ -649,6 +649,18 @@ class TradingOrchestrator:
         # 9. Load Swing Positions
         await self._load_swing_positions()
 
+    @staticmethod
+    def _deep_merge_config_dict(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+        """Recursively merge two config dictionaries without mutating inputs."""
+        merged: dict[str, Any] = dict(base)
+        for key, value in override.items():
+            current = merged.get(key)
+            if isinstance(current, dict) and isinstance(value, dict):
+                merged[key] = TradingOrchestrator._deep_merge_config_dict(current, value)
+            else:
+                merged[key] = value
+        return merged
+
     def _init_futures_slippage_controller(self) -> None:
         """Initialize futures slippage controller from YAML config."""
         self._futures_slippage_controller = None
@@ -660,6 +672,22 @@ class TradingOrchestrator:
         try:
             exec_cfg = ConfigLoader.load("execution.yaml")
             raw = exec_cfg.get("futures_slippage_control", {})
+            if not isinstance(raw, dict):
+                raw = {}
+            else:
+                raw = dict(raw)
+
+            paper_override = raw.pop("paper_override", None)
+            if self.config.paper_trading and isinstance(paper_override, dict):
+                if bool(paper_override.get("enabled", False)):
+                    override_payload = {
+                        k: v for k, v in paper_override.items() if k != "enabled"
+                    }
+                    raw = self._deep_merge_config_dict(raw, override_payload)
+                    logger.info(
+                        "Applied paper override for futures slippage control: %s",
+                        ",".join(sorted(override_payload.keys())),
+                    )
         except Exception as e:
             logger.warning(f"Failed to load futures slippage config: {e}")
             raw = {}
@@ -681,10 +709,13 @@ class TradingOrchestrator:
                     self._futures_slippage_aux_symbols = [cfg.cross_asset_symbol]
 
             logger.info(
-                "Futures slippage control enabled: spread<=%st, depth>=%.1fx, "
-                "retry=%s, cross_asset=%s",
+                "Futures slippage control enabled (%s): spread<=%st, depth>=%.1fx, "
+                "deviation<=%st, cooldown=%.2fs, retry=%s, cross_asset=%s",
+                "paper" if self.config.paper_trading else "live",
                 cfg.max_spread_ticks,
                 cfg.min_depth_multiplier,
+                cfg.max_price_deviation_ticks,
+                cfg.volatility_cooldown_seconds,
                 cfg.retry_policy.value,
                 cfg.cross_asset_symbol if cfg.cross_asset_enabled else "off",
             )
@@ -2711,6 +2742,7 @@ class TradingOrchestrator:
                     current_positions=self._position_tracker.positions,
                     timestamp=now,
                     metadata={
+                        "paper_trading": self.config.paper_trading,
                         "regime": self._current_regime,
                         "market_state": self._current_regime,
                         "symbol_metadata": meta,

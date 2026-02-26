@@ -20,13 +20,21 @@ strategy:
       # 진입 필터
       min_confidence: 0.6            # action probability 최소값
       backtest_min_confidence: 0.35  # 백테스트 시 낮은 threshold (모델 confidence ~0.48)
+      paper_min_confidence: 0.40
+      paper_long_min_confidence: 0.42
+      paper_short_min_confidence: 0.42
       skip_market_open_minutes: 5    # 장 시작 후 관망
       skip_market_close_minutes: 30  # 15:45-30=15:15 — EOD close와 일치
+      paper_skip_market_close_minutes: 0
       enable_hold_override: true     # HOLD 근소 우세 시 진입 액션 허용
       hold_override_max_gap: 0.12    # hold_prob - best_entry_prob <= 0.12
       hold_override_min_entry_prob: 0.33  # 진입 후보 최소 확률
       hold_override_min_confidence: 0.35  # 오버라이드 시 적용할 최소 확률
       backtest_hold_override_min_confidence: 0.30
+      paper_enable_hold_override: true
+      paper_hold_override_max_gap: 0.35
+      paper_hold_override_min_entry_prob: 0.20
+      paper_hold_override_min_confidence: 0.25
 
   exit:
     type: rl_mppo_exit               # RL 학습된 청산 정책

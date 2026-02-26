@@ -65,6 +65,10 @@ class RLMPPOConfig:
     night_market_close: str = "05:00"
     night_skip_market_open_minutes: int | None = None
     night_skip_market_close_minutes: int | None = None
+    paper_skip_market_open_minutes: int | None = None
+    paper_skip_market_close_minutes: int | None = None
+    paper_night_skip_market_open_minutes: int | None = None
+    paper_night_skip_market_close_minutes: int | None = None
     enable_hold_override: bool = True
     hold_override_max_gap: float = 0.12
     hold_override_min_entry_prob: float = 0.33
@@ -82,6 +86,14 @@ class RLMPPOConfig:
     adaptive_hold_confidence_backtest_boost: float = 0.0
     adaptive_hold_confidence_live_boost: float = 0.0
     adaptive_confidence_cap: float = 0.95
+    # Paper-session only overrides (no effect on backtest/live).
+    paper_min_confidence: float | None = None
+    paper_long_min_confidence: float | None = None
+    paper_short_min_confidence: float | None = None
+    paper_enable_hold_override: bool | None = None
+    paper_hold_override_max_gap: float | None = None
+    paper_hold_override_min_entry_prob: float | None = None
+    paper_hold_override_min_confidence: float | None = None
 
 
 @EntryRegistry.register("rl_mppo")
@@ -115,6 +127,18 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
             ("short_min_confidence", self.config.short_min_confidence),
             ("backtest_long_min_confidence", self.config.backtest_long_min_confidence),
             ("backtest_short_min_confidence", self.config.backtest_short_min_confidence),
+            ("paper_min_confidence", self.config.paper_min_confidence),
+            ("paper_long_min_confidence", self.config.paper_long_min_confidence),
+            ("paper_short_min_confidence", self.config.paper_short_min_confidence),
+            ("paper_hold_override_max_gap", self.config.paper_hold_override_max_gap),
+            (
+                "paper_hold_override_min_entry_prob",
+                self.config.paper_hold_override_min_entry_prob,
+            ),
+            (
+                "paper_hold_override_min_confidence",
+                self.config.paper_hold_override_min_confidence,
+            ),
         ):
             if value is None:
                 continue
@@ -187,6 +211,22 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
             assert self.config.night_skip_market_close_minutes >= 0, (
                 "night_skip_market_close_minutes must be non-negative"
             )
+        if self.config.paper_skip_market_open_minutes is not None:
+            assert self.config.paper_skip_market_open_minutes >= 0, (
+                "paper_skip_market_open_minutes must be non-negative"
+            )
+        if self.config.paper_skip_market_close_minutes is not None:
+            assert self.config.paper_skip_market_close_minutes >= 0, (
+                "paper_skip_market_close_minutes must be non-negative"
+            )
+        if self.config.paper_night_skip_market_open_minutes is not None:
+            assert self.config.paper_night_skip_market_open_minutes >= 0, (
+                "paper_night_skip_market_open_minutes must be non-negative"
+            )
+        if self.config.paper_night_skip_market_close_minutes is not None:
+            assert self.config.paper_night_skip_market_close_minutes >= 0, (
+                "paper_night_skip_market_close_minutes must be non-negative"
+            )
 
     @property
     def name(self) -> str:
@@ -226,8 +266,9 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
 
         # 시간 필터 (기본: 실시간만 적용, 옵션으로 백테스트에도 적용 가능)
         is_backtest = bool(context.metadata.get("is_backtest"))
+        is_paper = bool(context.metadata.get("paper_trading")) and not is_backtest
         enforce_time_filter = (not is_backtest) or self.config.apply_time_filter_in_backtest
-        if enforce_time_filter and not self._is_trading_time(context.timestamp):
+        if enforce_time_filter and not self._is_trading_time(context.timestamp, is_paper=is_paper):
             return None
 
         # 모델 로드 (lazy)
@@ -269,7 +310,7 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
 
         override_reason = ""
         if action == 4:  # HOLD
-            override_action = self._maybe_override_hold(action_probs)
+            override_action = self._maybe_override_hold(action_probs, is_paper=is_paper)
             if override_action is not None:
                 action = override_action
                 confidence = action_probs.get(action, confidence)
@@ -277,6 +318,7 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
 
         base_threshold = self._resolve_base_threshold(
             is_backtest=is_backtest,
+            is_paper=is_paper,
             override_reason=override_reason,
             action=action,
         )
@@ -346,10 +388,26 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
 
         return None
 
-    def _maybe_override_hold(self, action_probs: dict[int, float]) -> int | None:
+    def _maybe_override_hold(self, action_probs: dict[int, float], *, is_paper: bool) -> int | None:
         """HOLD가 근소 우세인 경우 진입 액션으로 오버라이드."""
-        if not self.config.enable_hold_override:
+        enable_override = (
+            self.config.paper_enable_hold_override
+            if is_paper and self.config.paper_enable_hold_override is not None
+            else self.config.enable_hold_override
+        )
+        if not enable_override:
             return None
+
+        max_gap = (
+            self.config.paper_hold_override_max_gap
+            if is_paper and self.config.paper_hold_override_max_gap is not None
+            else self.config.hold_override_max_gap
+        )
+        min_entry_prob = (
+            self.config.paper_hold_override_min_entry_prob
+            if is_paper and self.config.paper_hold_override_min_entry_prob is not None
+            else self.config.hold_override_min_entry_prob
+        )
 
         hold_prob = float(action_probs.get(4, 0.0))
         long_prob = float(action_probs.get(0, 0.0))
@@ -358,11 +416,11 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
         best_action, best_prob = (
             (0, long_prob) if long_prob >= short_prob else (2, short_prob)
         )
-        if best_prob < self.config.hold_override_min_entry_prob:
+        if best_prob < min_entry_prob:
             return None
 
         gap = hold_prob - best_prob
-        if gap > self.config.hold_override_max_gap:
+        if gap > max_gap:
             return None
 
         logger.debug(
@@ -395,15 +453,25 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
         self,
         *,
         is_backtest: bool,
+        is_paper: bool,
         override_reason: str,
         action: int,
     ) -> float:
         if override_reason:
+            if is_paper and self.config.paper_hold_override_min_confidence is not None:
+                return float(self.config.paper_hold_override_min_confidence)
             return (
                 self.config.backtest_hold_override_min_confidence
                 if is_backtest
                 else self.config.hold_override_min_confidence
             )
+        if is_paper:
+            if action == 0 and self.config.paper_long_min_confidence is not None:
+                return float(self.config.paper_long_min_confidence)
+            if action == 2 and self.config.paper_short_min_confidence is not None:
+                return float(self.config.paper_short_min_confidence)
+            if self.config.paper_min_confidence is not None:
+                return float(self.config.paper_min_confidence)
         if action == 0:
             directional = (
                 self.config.backtest_long_min_confidence
@@ -600,7 +668,7 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
 
         return masks
 
-    def _is_trading_time(self, timestamp: datetime) -> bool:
+    def _is_trading_time(self, timestamp: datetime, *, is_paper: bool = False) -> bool:
         """거래 가능 시간 확인
 
         주/야간 세션별로 장 시작 후 skip_open, 장 마감 전 skip_close를 적용한다.
@@ -609,6 +677,16 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
             timestamp = timestamp.replace(tzinfo=KST)
 
         current_minute = timestamp.hour * 60 + timestamp.minute
+        day_skip_open = (
+            int(self.config.paper_skip_market_open_minutes)
+            if is_paper and self.config.paper_skip_market_open_minutes is not None
+            else int(self.config.skip_market_open_minutes)
+        )
+        day_skip_close = (
+            int(self.config.paper_skip_market_close_minutes)
+            if is_paper and self.config.paper_skip_market_close_minutes is not None
+            else int(self.config.skip_market_close_minutes)
+        )
         sessions: list[tuple[time, time, int, int]] = []
         if self.config.day_session_enabled:
             sessions.append(
@@ -619,12 +697,30 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
                     self._parse_session_time(
                         self.config.day_market_close, default_hour=15, default_minute=45
                     ),
-                    int(self.config.skip_market_open_minutes),
-                    int(self.config.skip_market_close_minutes),
+                    day_skip_open,
+                    day_skip_close,
                 )
             )
 
         if self.config.night_session_enabled:
+            night_skip_open = (
+                int(self.config.paper_night_skip_market_open_minutes)
+                if is_paper and self.config.paper_night_skip_market_open_minutes is not None
+                else int(
+                    self.config.night_skip_market_open_minutes
+                    if self.config.night_skip_market_open_minutes is not None
+                    else self.config.skip_market_open_minutes
+                )
+            )
+            night_skip_close = (
+                int(self.config.paper_night_skip_market_close_minutes)
+                if is_paper and self.config.paper_night_skip_market_close_minutes is not None
+                else int(
+                    self.config.night_skip_market_close_minutes
+                    if self.config.night_skip_market_close_minutes is not None
+                    else self.config.skip_market_close_minutes
+                )
+            )
             sessions.append(
                 (
                     self._parse_session_time(
@@ -633,16 +729,8 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
                     self._parse_session_time(
                         self.config.night_market_close, default_hour=5, default_minute=0
                     ),
-                    int(
-                        self.config.night_skip_market_open_minutes
-                        if self.config.night_skip_market_open_minutes is not None
-                        else self.config.skip_market_open_minutes
-                    ),
-                    int(
-                        self.config.night_skip_market_close_minutes
-                        if self.config.night_skip_market_close_minutes is not None
-                        else self.config.skip_market_close_minutes
-                    ),
+                    night_skip_open,
+                    night_skip_close,
                 )
             )
 

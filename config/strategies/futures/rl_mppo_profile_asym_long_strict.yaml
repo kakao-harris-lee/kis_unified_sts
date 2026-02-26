@@ -19,9 +19,13 @@ strategy:
       short_min_confidence: 0.60
       backtest_long_min_confidence: 0.45
       backtest_short_min_confidence: 0.40
+      paper_min_confidence: 0.40
+      paper_long_min_confidence: 0.42
+      paper_short_min_confidence: 0.42
 
       skip_market_open_minutes: 5
       skip_market_close_minutes: 30
+      paper_skip_market_close_minutes: 0
       apply_time_filter_in_backtest: false
       day_session_enabled: true
       day_market_open: "09:00"
@@ -35,6 +39,10 @@ strategy:
       hold_override_min_entry_prob: 0.33
       hold_override_min_confidence: 0.35
       backtest_hold_override_min_confidence: 0.30
+      paper_enable_hold_override: true
+      paper_hold_override_max_gap: 0.35
+      paper_hold_override_min_entry_prob: 0.20
+      paper_hold_override_min_confidence: 0.25
 
   exit:
     type: rl_mppo_exit
