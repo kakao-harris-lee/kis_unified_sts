@@ -1,6 +1,8 @@
 """Unit tests for WebSocket parsing functions."""
 import time
 from shared.kis.websocket import (
+    ORDERBOOK_FIELDS,
+    ORDERBOOK_MIN_FIELDS,
     parse_futures_orderbook,
     parse_futures_trade,
     _safe_float,
@@ -85,13 +87,13 @@ class TestParseFuturesOrderbook:
 
     def test_short_fields_returns_none(self):
         """Test insufficient fields returns None."""
-        data = "^".join([""] * 10)  # Only 10 fields, need 42
+        data = "^".join([""] * 10)  # Only 10 fields, need ORDERBOOK_MIN_FIELDS
         result = parse_futures_orderbook("101V01", data, time.time())
         assert result is None
 
     def test_empty_fields(self):
         """Test all empty fields."""
-        data = "^".join([""] * 42)
+        data = "^".join([""] * ORDERBOOK_MIN_FIELDS)
         result = parse_futures_orderbook("101V01", data, time.time())
 
         assert result is not None
@@ -101,8 +103,8 @@ class TestParseFuturesOrderbook:
 
     def test_invalid_float_in_field(self):
         """Test handling of invalid float in field."""
-        fields = [""] * 42
-        fields[22] = "invalid_price"  # bid_price_1
+        fields = [""] * ORDERBOOK_MIN_FIELDS
+        fields[ORDERBOOK_FIELDS["bid_price"][0]] = "invalid_price"  # bid_price_1
         data = "^".join(fields)
 
         result = parse_futures_orderbook("101V01", data, time.time())
@@ -112,7 +114,7 @@ class TestParseFuturesOrderbook:
     def test_timestamp_preserved(self):
         """Test timestamp is preserved in result."""
         ts = 1234567890.123
-        result = parse_futures_orderbook("101V01", "^".join([""] * 42), ts)
+        result = parse_futures_orderbook("101V01", "^".join([""] * ORDERBOOK_MIN_FIELDS), ts)
         assert result.timestamp == ts
 
 
@@ -168,8 +170,14 @@ class TestEdgeCases:
     """Edge case tests for parsing functions."""
 
     def test_exact_minimum_fields_orderbook(self):
-        """Test exactly 42 fields for orderbook."""
-        data = "^".join(["1"] * 42)
+        """Test exactly minimum required fields for orderbook."""
+        data = "^".join(["1"] * ORDERBOOK_MIN_FIELDS)
+        result = parse_futures_orderbook("101V01", data, time.time())
+        assert result is not None
+
+    def test_37_fields_orderbook_is_valid(self):
+        """Current parser should accept 37-field messages (uses up to index 36)."""
+        data = "^".join(["1"] * 37)
         result = parse_futures_orderbook("101V01", data, time.time())
         assert result is not None
 
@@ -188,8 +196,8 @@ class TestEdgeCases:
 
     def test_scientific_notation(self):
         """Test scientific notation is handled."""
-        fields = [""] * 42
-        fields[22] = "3.3045e2"  # 330.45 in scientific notation
+        fields = [""] * ORDERBOOK_MIN_FIELDS
+        fields[ORDERBOOK_FIELDS["bid_price"][0]] = "3.3045e2"  # 330.45 in scientific notation
         data = "^".join(fields)
 
         result = parse_futures_orderbook("101V01", data, time.time())

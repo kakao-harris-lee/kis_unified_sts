@@ -65,16 +65,27 @@ class KISFuturesPriceFeed:
         self._subscription_delay = _require_float(feed_cfg, "subscription_delay")
         self._connection_timeout = _require_float(feed_cfg, "connection_timeout")
         self._shutdown_timeout = _require_float(feed_cfg, "shutdown_timeout")
+        self._orderbook_stale_threshold = float(
+            feed_cfg.get("orderbook_stale_threshold_seconds", 3.0)
+        )
+        self._orderbook_missing_warn_interval = float(
+            feed_cfg.get("orderbook_missing_warn_interval_seconds", 30.0)
+        )
 
         self._prices: dict[str, dict[str, Any]] = {}
+        self._orderbooks: dict[str, dict[str, Any]] = {}
         self._prices_lock = threading.Lock()
         self._tick_callback = tick_callback
         self._last_tick_ts: float | None = None
+        self._last_orderbook_ts: dict[str, float] = {}
+        self._last_orderbook_warn_ts: dict[str, float] = {}
 
         self._symbols: list[str] = []
+        self._auxiliary_symbols: list[str] = []
         self._running = False
         self._thread: Optional[threading.Thread] = None
         self._first_tick_logged = False
+        self._first_orderbook_logged = False
 
     @property
     def supports_instant_read(self) -> bool:
@@ -92,10 +103,24 @@ class KISFuturesPriceFeed:
             return None
         return max(0.0, time.time() - self._last_tick_ts)
 
-    def update_symbols(self, symbols: list[str]) -> None:
+    def update_symbols(
+        self,
+        symbols: list[str],
+        auxiliary_symbols: list[str] | None = None,
+    ) -> None:
         if not symbols:
             raise ValueError("At least one futures symbol required")
-        self._symbols = list(symbols[: self._max_symbols])
+        merged: list[str] = []
+        for symbol in symbols:
+            if symbol and symbol not in merged:
+                merged.append(symbol)
+        extras = auxiliary_symbols or []
+        for symbol in extras:
+            if symbol and symbol not in merged:
+                merged.append(symbol)
+
+        self._symbols = merged[: self._max_symbols]
+        self._auxiliary_symbols = [symbol for symbol in self._symbols if symbol not in symbols]
         if self._running:
             logger.warning("Futures feed update_symbols while running is not supported")
 
@@ -142,70 +167,138 @@ class KISFuturesPriceFeed:
             self._thread.join(timeout=self._shutdown_timeout)
         with self._prices_lock:
             self._prices.clear()
+            self._orderbooks.clear()
+            self._last_orderbook_ts.clear()
+            self._last_orderbook_warn_ts.clear()
         logger.info("[FuturesPriceFeed] Stopped")
 
     async def get_current_price(self, symbol: str) -> dict[str, Any]:
         with self._prices_lock:
             cached = self._prices.get(symbol)
         if cached is not None:
-            return cached
+            return dict(cached)
+        return {}
+
+    def get_orderbook_snapshot(self, symbol: str) -> dict[str, Any]:
+        with self._prices_lock:
+            cached = self._orderbooks.get(symbol)
+            if cached is not None:
+                return dict(cached)
+            fallback = self._prices.get(symbol, {})
+        if fallback:
+            keys = {
+                "code",
+                "timestamp",
+                "bid_price_1",
+                "bid_qty_1",
+                "ask_price_1",
+                "ask_qty_1",
+            }
+            return {k: v for k, v in fallback.items() if k in keys}
         return {}
 
     def _on_tick(self, tick: TickData) -> None:
-        if tick.current_price is None:
-            return
-        price = float(tick.current_price)
-        if price <= 0:
-            return
-
-        open_price = float(tick.open_price) if tick.open_price is not None else price
-        # H0IFCNT0 high/low는 일중 고저일 수 있어 분봉 고저에 직접 쓰지 않는다.
-        # 분봉 고저는 CandleAccumulator가 tick close로 누적 계산한다.
-        day_high_price = (
-            float(tick.high_price) if tick.high_price is not None else price
+        has_orderbook = (
+            tick.bid_price_1 is not None
+            and tick.ask_price_1 is not None
+            and float(tick.bid_price_1) > 0
+            and float(tick.ask_price_1) > 0
         )
-        day_low_price = (
-            float(tick.low_price) if tick.low_price is not None else price
+        trade_price = (
+            float(tick.current_price)
+            if tick.current_price is not None and float(tick.current_price) > 0
+            else 0.0
         )
 
-        volume = None
-        volume_is_cumulative = True
-        if tick.cumulative_volume is not None:
-            volume = int(tick.cumulative_volume)
-        elif tick.tick_volume is not None:
-            volume = int(tick.tick_volume)
-            volume_is_cumulative = False
+        orderbook_payload: dict[str, Any] = {}
+        if has_orderbook:
+            spread = float(tick.ask_price_1) - float(tick.bid_price_1)
+            orderbook_payload = {
+                "code": tick.symbol,
+                "bid_price_1": float(tick.bid_price_1),
+                "bid_qty_1": float(tick.bid_qty_1 or 0.0),
+                "ask_price_1": float(tick.ask_price_1),
+                "ask_qty_1": float(tick.ask_qty_1 or 0.0),
+                "spread": spread,
+                "timestamp": tick.timestamp,
+            }
 
-        change = None
-        if open_price:
-            change = (price - open_price) / open_price
+        payload: dict[str, Any] | None = None
+        if trade_price > 0:
+            open_price = float(tick.open_price) if tick.open_price is not None else trade_price
+            day_high_price = (
+                float(tick.high_price) if tick.high_price is not None else trade_price
+            )
+            day_low_price = (
+                float(tick.low_price) if tick.low_price is not None else trade_price
+            )
 
-        payload: dict[str, Any] = {
-            "code": tick.symbol,
-            "close": price,
-            "open": open_price,
-            "high": price,
-            "low": price,
-            "day_high": day_high_price,
-            "day_low": day_low_price,
-            "timestamp": tick.timestamp,
-        }
-        if volume is not None:
-            payload["volume"] = volume
-            if not volume_is_cumulative:
-                payload["volume_is_cumulative"] = False
-        if change is not None:
-            payload["change"] = change
+            volume = None
+            volume_is_cumulative = True
+            if tick.cumulative_volume is not None:
+                volume = int(tick.cumulative_volume)
+            elif tick.tick_volume is not None:
+                volume = int(tick.tick_volume)
+                volume_is_cumulative = False
+
+            change = None
+            if open_price:
+                change = (trade_price - open_price) / open_price
+
+            payload = {
+                "code": tick.symbol,
+                "close": trade_price,
+                "open": open_price,
+                "high": trade_price,
+                "low": trade_price,
+                "day_high": day_high_price,
+                "day_low": day_low_price,
+                "timestamp": tick.timestamp,
+            }
+            if volume is not None:
+                payload["volume"] = volume
+                if not volume_is_cumulative:
+                    payload["volume_is_cumulative"] = False
+            if change is not None:
+                payload["change"] = change
 
         with self._prices_lock:
-            self._prices[tick.symbol] = payload
+            if has_orderbook:
+                self._orderbooks[tick.symbol] = orderbook_payload
+                self._last_orderbook_ts[tick.symbol] = tick.timestamp
+                merged = dict(self._prices.get(tick.symbol, {}))
+                merged.update(orderbook_payload)
+                self._prices[tick.symbol] = merged
+
+            if payload is not None:
+                merged = dict(self._orderbooks.get(tick.symbol, {}))
+                merged.update(payload)
+                self._prices[tick.symbol] = merged
+
             self._last_tick_ts = tick.timestamp
-            if not self._first_tick_logged:
+
+            if not self._first_tick_logged and payload is not None:
                 self._first_tick_logged = True
                 logger.info(
-                    f"[FuturesPriceFeed] First tick: symbol={tick.symbol} "
-                    f"price={price} keys={list(self._prices.keys())}"
+                    f"[FuturesPriceFeed] First trade tick: symbol={tick.symbol} "
+                    f"price={trade_price} symbols={list(self._prices.keys())}"
                 )
+            if not self._first_orderbook_logged and has_orderbook:
+                self._first_orderbook_logged = True
+                logger.info(
+                    f"[FuturesPriceFeed] First orderbook tick: symbol={tick.symbol} "
+                    f"bid={tick.bid_price_1} ask={tick.ask_price_1}"
+                )
+
+        if payload is None:
+            return
+
+        if not has_orderbook:
+            self._log_orderbook_staleness(
+                symbol=tick.symbol,
+                trade_price=trade_price,
+                ts=tick.timestamp,
+            )
 
         if self._tick_callback:
             try:
@@ -216,3 +309,27 @@ class KISFuturesPriceFeed:
                 self._tick_callback(tick.symbol, payload, ts)
             except Exception as e:
                 logger.debug(f"[FuturesPriceFeed] Tick callback error: {e}")
+
+    def _log_orderbook_staleness(self, *, symbol: str, trade_price: float, ts: float) -> None:
+        if self._orderbook_stale_threshold <= 0:
+            return
+        with self._prices_lock:
+            last_orderbook_ts = self._last_orderbook_ts.get(symbol)
+            last_warn_ts = self._last_orderbook_warn_ts.get(symbol, 0.0)
+        if ts - last_warn_ts < self._orderbook_missing_warn_interval:
+            return
+        if last_orderbook_ts is None:
+            age_label = "never"
+        else:
+            age = max(0.0, ts - last_orderbook_ts)
+            if age < self._orderbook_stale_threshold:
+                return
+            age_label = f"{age:.1f}s"
+        with self._prices_lock:
+            self._last_orderbook_warn_ts[symbol] = ts
+        logger.warning(
+            "[FuturesPriceFeed] Orderbook stale/missing: symbol=%s age=%s trade_price=%.2f",
+            symbol,
+            age_label,
+            trade_price,
+        )

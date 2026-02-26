@@ -18,39 +18,39 @@ def mock_config():
 def sample_orderbook_data():
     """Sample H0IFASP0 (orderbook) message data.
 
-    42+ fields separated by ^
+    38 fields separated by ^
     Field layout:
         0-1: symbol, time
-        2-11: ask prices 1-10
-        12-21: ask quantities 1-10
-        22-31: bid prices 1-10
-        32-41: bid quantities 1-10
+        2-6: ask prices 1-5
+        7-11: bid prices 1-5
+        12-16: ask quantities 1-5
+        17-21: bid quantities 1-5
     """
-    fields = [""] * 42
+    fields = [""] * 38
     # Ask prices (fields 2-6)
     fields[2] = "330.50"  # ask_price_1
     fields[3] = "330.55"  # ask_price_2
     fields[4] = "330.60"  # ask_price_3
     fields[5] = "330.65"  # ask_price_4
     fields[6] = "330.70"  # ask_price_5
+    # Bid prices (fields 7-11)
+    fields[7] = "330.45"  # bid_price_1
+    fields[8] = "330.40"  # bid_price_2
+    fields[9] = "330.35"  # bid_price_3
+    fields[10] = "330.30"  # bid_price_4
+    fields[11] = "330.25"  # bid_price_5
     # Ask quantities (fields 12-16)
     fields[12] = "100"  # ask_qty_1
     fields[13] = "150"  # ask_qty_2
     fields[14] = "200"  # ask_qty_3
     fields[15] = "250"  # ask_qty_4
     fields[16] = "300"  # ask_qty_5
-    # Bid prices (fields 22-26)
-    fields[22] = "330.45"  # bid_price_1
-    fields[23] = "330.40"  # bid_price_2
-    fields[24] = "330.35"  # bid_price_3
-    fields[25] = "330.30"  # bid_price_4
-    fields[26] = "330.25"  # bid_price_5
-    # Bid quantities (fields 32-36)
-    fields[32] = "120"  # bid_qty_1
-    fields[33] = "180"  # bid_qty_2
-    fields[34] = "220"  # bid_qty_3
-    fields[35] = "280"  # bid_qty_4
-    fields[36] = "320"  # bid_qty_5
+    # Bid quantities (fields 17-21)
+    fields[17] = "120"  # bid_qty_1
+    fields[18] = "180"  # bid_qty_2
+    fields[19] = "220"  # bid_qty_3
+    fields[20] = "280"  # bid_qty_4
+    fields[21] = "320"  # bid_qty_5
 
     return "^".join(fields)
 

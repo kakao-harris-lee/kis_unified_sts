@@ -11,18 +11,18 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime
-from typing import TYPE_CHECKING, Any, Optional
+from datetime import datetime, time
+from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
 from shared.ml.base import get_device
 from shared.strategy.base import EntryContext, EntrySignalGenerator
 from shared.strategy.registry import EntryRegistry
 from shared.strategy.rl_model_helpers import (
-    get_action_probabilities,
     build_rl_observation,
     derive_features_from_ohlcv,
     get_action_confidence,
+    get_action_probabilities,
     get_rl_env_config,
     load_rl_model,
     load_rl_scaler,
@@ -50,13 +50,38 @@ class RLMPPOConfig:
     scaler_path: str = ""
     min_confidence: float = 0.6
     backtest_min_confidence: float = 0.35
+    long_min_confidence: float | None = None
+    short_min_confidence: float | None = None
+    backtest_long_min_confidence: float | None = None
+    backtest_short_min_confidence: float | None = None
     skip_market_open_minutes: int = 5
     skip_market_close_minutes: int = 10
+    apply_time_filter_in_backtest: bool = False
+    day_session_enabled: bool = True
+    day_market_open: str = "09:00"
+    day_market_close: str = "15:45"
+    night_session_enabled: bool = False
+    night_market_open: str = "18:00"
+    night_market_close: str = "05:00"
+    night_skip_market_open_minutes: int | None = None
+    night_skip_market_close_minutes: int | None = None
     enable_hold_override: bool = True
     hold_override_max_gap: float = 0.12
     hold_override_min_entry_prob: float = 0.33
     hold_override_min_confidence: float = 0.35
     backtest_hold_override_min_confidence: float = 0.30
+    adaptive_confidence_enabled: bool = False
+    adaptive_confidence_metric: str = "atr_ratio"  # atr_ratio | atr | bb_width
+    adaptive_confidence_trigger: float = 0.0
+    adaptive_confidence_backtest_boost: float = 0.0
+    adaptive_confidence_live_boost: float = 0.0
+    adaptive_confidence_backtest_boost_long: float | None = None
+    adaptive_confidence_backtest_boost_short: float | None = None
+    adaptive_confidence_live_boost_long: float | None = None
+    adaptive_confidence_live_boost_short: float | None = None
+    adaptive_hold_confidence_backtest_boost: float = 0.0
+    adaptive_hold_confidence_live_boost: float = 0.0
+    adaptive_confidence_cap: float = 0.95
 
 
 @EntryRegistry.register("rl_mppo")
@@ -85,6 +110,15 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
         assert 0.0 <= self.config.min_confidence <= 1.0, (
             "min_confidence must be between 0.0 and 1.0"
         )
+        for key, value in (
+            ("long_min_confidence", self.config.long_min_confidence),
+            ("short_min_confidence", self.config.short_min_confidence),
+            ("backtest_long_min_confidence", self.config.backtest_long_min_confidence),
+            ("backtest_short_min_confidence", self.config.backtest_short_min_confidence),
+        ):
+            if value is None:
+                continue
+            assert 0.0 <= value <= 1.0, f"{key} must be between 0.0 and 1.0"
         assert 0.0 <= self.config.hold_override_max_gap <= 1.0, (
             "hold_override_max_gap must be between 0.0 and 1.0"
         )
@@ -97,12 +131,62 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
         assert 0.0 <= self.config.backtest_hold_override_min_confidence <= 1.0, (
             "backtest_hold_override_min_confidence must be between 0.0 and 1.0"
         )
+        assert self.config.adaptive_confidence_metric in {"atr_ratio", "atr", "bb_width"}, (
+            "adaptive_confidence_metric must be one of atr_ratio/atr/bb_width"
+        )
+        assert self.config.adaptive_confidence_trigger >= 0.0, (
+            "adaptive_confidence_trigger must be non-negative"
+        )
+        assert 0.0 <= self.config.adaptive_confidence_backtest_boost <= 1.0, (
+            "adaptive_confidence_backtest_boost must be between 0.0 and 1.0"
+        )
+        assert 0.0 <= self.config.adaptive_confidence_live_boost <= 1.0, (
+            "adaptive_confidence_live_boost must be between 0.0 and 1.0"
+        )
+        for key, value in (
+            (
+                "adaptive_confidence_backtest_boost_long",
+                self.config.adaptive_confidence_backtest_boost_long,
+            ),
+            (
+                "adaptive_confidence_backtest_boost_short",
+                self.config.adaptive_confidence_backtest_boost_short,
+            ),
+            (
+                "adaptive_confidence_live_boost_long",
+                self.config.adaptive_confidence_live_boost_long,
+            ),
+            (
+                "adaptive_confidence_live_boost_short",
+                self.config.adaptive_confidence_live_boost_short,
+            ),
+        ):
+            if value is None:
+                continue
+            assert 0.0 <= value <= 1.0, f"{key} must be between 0.0 and 1.0"
+        assert 0.0 <= self.config.adaptive_hold_confidence_backtest_boost <= 1.0, (
+            "adaptive_hold_confidence_backtest_boost must be between 0.0 and 1.0"
+        )
+        assert 0.0 <= self.config.adaptive_hold_confidence_live_boost <= 1.0, (
+            "adaptive_hold_confidence_live_boost must be between 0.0 and 1.0"
+        )
+        assert 0.0 <= self.config.adaptive_confidence_cap <= 1.0, (
+            "adaptive_confidence_cap must be between 0.0 and 1.0"
+        )
         assert self.config.skip_market_open_minutes >= 0, (
             "skip_market_open_minutes must be non-negative"
         )
         assert self.config.skip_market_close_minutes >= 0, (
             "skip_market_close_minutes must be non-negative"
         )
+        if self.config.night_skip_market_open_minutes is not None:
+            assert self.config.night_skip_market_open_minutes >= 0, (
+                "night_skip_market_open_minutes must be non-negative"
+            )
+        if self.config.night_skip_market_close_minutes is not None:
+            assert self.config.night_skip_market_close_minutes >= 0, (
+                "night_skip_market_close_minutes must be non-negative"
+            )
 
     @property
     def name(self) -> str:
@@ -126,7 +210,7 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
             "ohlcv",
         ]
 
-    async def generate(self, context: EntryContext) -> Optional["Signal"]:
+    async def generate(self, context: EntryContext) -> Signal | None:
         """진입 시그널 생성
 
         학습된 M-PPO 모델의 predict로 행동을 결정하고,
@@ -140,10 +224,10 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
         """
         from shared.models.signal import Signal, SignalType
 
-        # 시간 필터 (백테스트에서는 학습 환경과 동일하게 시간 필터 생략)
-        if not context.metadata.get("is_backtest") and not self._is_trading_time(
-            context.timestamp
-        ):
+        # 시간 필터 (기본: 실시간만 적용, 옵션으로 백테스트에도 적용 가능)
+        is_backtest = bool(context.metadata.get("is_backtest"))
+        enforce_time_filter = (not is_backtest) or self.config.apply_time_filter_in_backtest
+        if enforce_time_filter and not self._is_trading_time(context.timestamp):
             return None
 
         # 모델 로드 (lazy)
@@ -191,24 +275,37 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
                 confidence = action_probs.get(action, confidence)
                 override_reason = "hold_override"
 
-        if override_reason:
-            threshold = (
-                self.config.backtest_hold_override_min_confidence
-                if context.metadata.get("is_backtest")
-                else self.config.hold_override_min_confidence
-            )
-        else:
-            threshold = (
-                self.config.backtest_min_confidence
-                if context.metadata.get("is_backtest")
-                else self.config.min_confidence
-            )
+        base_threshold = self._resolve_base_threshold(
+            is_backtest=is_backtest,
+            override_reason=override_reason,
+            action=action,
+        )
+        threshold, threshold_reason, regime_metric = self._resolve_effective_threshold(
+            context=context,
+            is_backtest=is_backtest,
+            override_reason=override_reason,
+            base_threshold=base_threshold,
+            action=action,
+        )
         if confidence < threshold:
             logger.debug(
                 f"RL action {action} confidence {confidence:.3f} "
-                f"below threshold {threshold}"
+                f"below threshold {threshold:.3f} ({threshold_reason})"
             )
             return None
+
+        meta_common = {
+            "rl_action": action,
+            "rl_confidence": confidence,
+            "rl_long_prob": long_prob,
+            "rl_short_prob": short_prob,
+            "rl_hold_prob": hold_prob,
+            "rl_override_reason": override_reason,
+            "rl_threshold": threshold,
+            "rl_threshold_base": base_threshold,
+            "rl_threshold_reason": threshold_reason,
+            "rl_regime_metric": regime_metric,
+        }
 
         # 행동 → Signal 변환
         price = float(context.market_data.get("close", 0.0) or 0.0)
@@ -228,12 +325,7 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
                 metadata={
                     "signal_direction": "long",
                     "direction": "long",
-                    "rl_action": action,
-                    "rl_confidence": confidence,
-                    "rl_long_prob": long_prob,
-                    "rl_short_prob": short_prob,
-                    "rl_hold_prob": hold_prob,
-                    "rl_override_reason": override_reason,
+                    **meta_common,
                 },
             )
         elif action == 2:  # SHORT_ENTRY
@@ -248,12 +340,7 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
                 metadata={
                     "signal_direction": "short",
                     "direction": "short",
-                    "rl_action": action,
-                    "rl_confidence": confidence,
-                    "rl_long_prob": long_prob,
-                    "rl_short_prob": short_prob,
-                    "rl_hold_prob": hold_prob,
-                    "rl_override_reason": override_reason,
+                    **meta_common,
                 },
             )
 
@@ -303,6 +390,133 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
         except Exception:
             # Metrics should never break trading logic.
             pass
+
+    def _resolve_base_threshold(
+        self,
+        *,
+        is_backtest: bool,
+        override_reason: str,
+        action: int,
+    ) -> float:
+        if override_reason:
+            return (
+                self.config.backtest_hold_override_min_confidence
+                if is_backtest
+                else self.config.hold_override_min_confidence
+            )
+        if action == 0:
+            directional = (
+                self.config.backtest_long_min_confidence
+                if is_backtest
+                else self.config.long_min_confidence
+            )
+            if directional is not None:
+                return float(directional)
+        elif action == 2:
+            directional = (
+                self.config.backtest_short_min_confidence
+                if is_backtest
+                else self.config.short_min_confidence
+            )
+            if directional is not None:
+                return float(directional)
+        return float(self.config.backtest_min_confidence if is_backtest else self.config.min_confidence)
+
+    def _resolve_effective_threshold(
+        self,
+        *,
+        context: EntryContext,
+        is_backtest: bool,
+        override_reason: str,
+        base_threshold: float,
+        action: int,
+    ) -> tuple[float, str, float | None]:
+        if not self.config.adaptive_confidence_enabled:
+            return base_threshold, "adaptive_disabled", None
+
+        trigger = float(self.config.adaptive_confidence_trigger)
+        if trigger <= 0:
+            return base_threshold, "adaptive_no_trigger", None
+
+        regime_metric = self._extract_regime_metric(context)
+        if regime_metric is None:
+            return base_threshold, "adaptive_metric_unavailable", None
+
+        if regime_metric < trigger:
+            return base_threshold, f"adaptive_normal:{regime_metric:.6f}", regime_metric
+
+        if override_reason:
+            boost = (
+                self.config.adaptive_hold_confidence_backtest_boost
+                if is_backtest
+                else self.config.adaptive_hold_confidence_live_boost
+            )
+        else:
+            boost = self._resolve_directional_adaptive_boost(
+                action=action,
+                is_backtest=is_backtest,
+            )
+
+        effective = min(
+            float(self.config.adaptive_confidence_cap),
+            float(base_threshold) + max(0.0, float(boost)),
+        )
+        return effective, f"adaptive_high_vol:{regime_metric:.6f}", regime_metric
+
+    def _resolve_directional_adaptive_boost(self, *, action: int, is_backtest: bool) -> float:
+        if action == 0:
+            directional = (
+                self.config.adaptive_confidence_backtest_boost_long
+                if is_backtest
+                else self.config.adaptive_confidence_live_boost_long
+            )
+            if directional is not None:
+                return float(directional)
+        elif action == 2:
+            directional = (
+                self.config.adaptive_confidence_backtest_boost_short
+                if is_backtest
+                else self.config.adaptive_confidence_live_boost_short
+            )
+            if directional is not None:
+                return float(directional)
+        return float(
+            self.config.adaptive_confidence_backtest_boost
+            if is_backtest
+            else self.config.adaptive_confidence_live_boost
+        )
+
+    def _extract_regime_metric(self, context: EntryContext) -> float | None:
+        metric = str(self.config.adaptive_confidence_metric).strip().lower()
+        if metric == "atr_ratio":
+            atr = self._as_positive_float(
+                context.indicators.get("atr", context.market_data.get("atr"))
+            )
+            price = self._as_positive_float(
+                context.market_data.get("close", context.indicators.get("close"))
+            )
+            if atr is None or price is None or price <= 0:
+                return None
+            return atr / price
+        if metric == "atr":
+            return self._as_positive_float(
+                context.indicators.get("atr", context.market_data.get("atr"))
+            )
+        if metric == "bb_width":
+            return self._as_positive_float(
+                context.indicators.get("bb_width", context.market_data.get("bb_width"))
+            )
+        return None
+
+    @staticmethod
+    def _as_positive_float(value: Any) -> float | None:
+        if value is None:
+            return None
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            return None
+        return parsed if parsed > 0 else None
 
     def _load_model(self) -> Any:
         """학습된 모델 로드 (lazy loading, 모듈 캐시 사용)"""
@@ -389,25 +603,83 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
     def _is_trading_time(self, timestamp: datetime) -> bool:
         """거래 가능 시간 확인
 
-        장 시작 후 skip_market_open_minutes, 장 마감 전 skip_market_close_minutes 제외
+        주/야간 세션별로 장 시작 후 skip_open, 장 마감 전 skip_close를 적용한다.
         """
         if timestamp.tzinfo is None:
             timestamp = timestamp.replace(tzinfo=KST)
 
-        t = timestamp.time()
-        from datetime import time
+        current_minute = timestamp.hour * 60 + timestamp.minute
+        sessions: list[tuple[time, time, int, int]] = []
+        if self.config.day_session_enabled:
+            sessions.append(
+                (
+                    self._parse_session_time(
+                        self.config.day_market_open, default_hour=9, default_minute=0
+                    ),
+                    self._parse_session_time(
+                        self.config.day_market_close, default_hour=15, default_minute=45
+                    ),
+                    int(self.config.skip_market_open_minutes),
+                    int(self.config.skip_market_close_minutes),
+                )
+            )
 
-        # 장 시작: 09:00 + skip
-        open_hour, open_min = 9, 0 + self.config.skip_market_open_minutes
-        if open_min >= 60:
-            open_hour += open_min // 60
-            open_min = open_min % 60
-        market_start = time(open_hour, open_min)
+        if self.config.night_session_enabled:
+            sessions.append(
+                (
+                    self._parse_session_time(
+                        self.config.night_market_open, default_hour=18, default_minute=0
+                    ),
+                    self._parse_session_time(
+                        self.config.night_market_close, default_hour=5, default_minute=0
+                    ),
+                    int(
+                        self.config.night_skip_market_open_minutes
+                        if self.config.night_skip_market_open_minutes is not None
+                        else self.config.skip_market_open_minutes
+                    ),
+                    int(
+                        self.config.night_skip_market_close_minutes
+                        if self.config.night_skip_market_close_minutes is not None
+                        else self.config.skip_market_close_minutes
+                    ),
+                )
+            )
 
-        # 장 마감: 15:45 - skip
-        close_total = 15 * 60 + 45 - self.config.skip_market_close_minutes
-        close_hour = close_total // 60
-        close_min = close_total % 60
-        market_end = time(close_hour, close_min)
+        for session_open, session_close, skip_open, skip_close in sessions:
+            if self._is_within_session(
+                current_minute=current_minute,
+                session_open=session_open,
+                session_close=session_close,
+                skip_open=max(0, skip_open),
+                skip_close=max(0, skip_close),
+            ):
+                return True
+        return False
 
-        return market_start <= t <= market_end
+    @staticmethod
+    def _parse_session_time(value: str, *, default_hour: int, default_minute: int) -> time:
+        hour, minute = parse_hhmm(value, default_hour=default_hour, default_minute=default_minute)
+        return time(hour=hour, minute=minute)
+
+    @staticmethod
+    def _is_within_session(
+        *,
+        current_minute: int,
+        session_open: time,
+        session_close: time,
+        skip_open: int,
+        skip_close: int,
+    ) -> bool:
+        open_minute = session_open.hour * 60 + session_open.minute
+        close_minute = session_close.hour * 60 + session_close.minute
+
+        start_minute = (open_minute + skip_open) % 1440
+        end_minute = (close_minute - skip_close) % 1440
+        span = (end_minute - start_minute) % 1440
+        if span <= 0:
+            return False
+
+        if start_minute <= end_minute:
+            return start_minute <= current_minute <= end_minute
+        return current_minute >= start_minute or current_minute <= end_minute
