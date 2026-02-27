@@ -17,6 +17,7 @@ import logging
 import os
 import sys
 from datetime import datetime
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -146,7 +147,7 @@ def compute_indicators(
     if sma_200 is None:
         return None
 
-    result = {
+    result: dict[str, Any] = {
         "daily_sma_200": sma_200,
         "daily_sma_20": sma_20,
         "daily_sma_60": sma_60,
@@ -157,7 +158,12 @@ def compute_indicators(
         "daily_close": daily_close,
     }
 
-    # Remove None values
+    # Include raw daily series for VR composite strategy (most recent 80 bars)
+    series_len = min(len(df), 80)
+    result["daily_closes"] = close.iloc[-series_len:].tolist()
+    result["daily_volumes"] = df["volume"].astype(int).iloc[-series_len:].tolist()
+
+    # Remove None scalar values (keep lists)
     return {k: v for k, v in result.items() if v is not None}
 
 
