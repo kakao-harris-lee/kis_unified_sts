@@ -30,7 +30,7 @@ from shared.indicators.volume_ratio import (
     VolumeRatioCalculator,
 )
 from shared.models.signal import ExitReason, ExitSignal
-from shared.strategy.base import ExitContext, ExitSignalGenerator
+from shared.strategy.base import ExitContext, ExitSignalGenerator, get_series_from_context
 
 logger = logging.getLogger(__name__)
 
@@ -134,7 +134,7 @@ class VRCompositeExit(ExitSignalGenerator[VRCompositeExitConfig]):
                 ExitSignal(
                     code=code,
                     reason=ExitReason.STOP_LOSS,
-                    strategy="vr_composite_exit",
+                    strategy=self.name,
                     current_price=close,
                     exit_price=close,
                     entry_price=entry_price,
@@ -164,7 +164,7 @@ class VRCompositeExit(ExitSignalGenerator[VRCompositeExitConfig]):
                 ExitSignal(
                     code=code,
                     reason=ExitReason.TIME_CUT,
-                    strategy="vr_composite_exit",
+                    strategy=self.name,
                     current_price=close,
                     exit_price=close,
                     entry_price=entry_price,
@@ -177,8 +177,8 @@ class VRCompositeExit(ExitSignalGenerator[VRCompositeExitConfig]):
             )
 
         # --- VR/RSI/MA 기반 청산 신호 ---
-        closes = self._get_series(indicators, data, self.config.daily_closes_key)
-        volumes = self._get_series(indicators, data, self.config.daily_volumes_key)
+        closes = get_series_from_context(indicators, data, self.config.daily_closes_key)
+        volumes = get_series_from_context(indicators, data, self.config.daily_volumes_key)
 
         if closes is None or volumes is None:
             return (False, None)
@@ -296,7 +296,7 @@ class VRCompositeExit(ExitSignalGenerator[VRCompositeExitConfig]):
             ExitSignal(
                 code=code,
                 reason=exit_reason,
-                strategy="vr_composite_exit",
+                strategy=self.name,
                 current_price=close,
                 exit_price=close,
                 entry_price=entry_price,
@@ -338,15 +338,3 @@ class VRCompositeExit(ExitSignalGenerator[VRCompositeExitConfig]):
 
         return exit_signals
 
-    @staticmethod
-    def _get_series(
-        indicators: dict[str, Any],
-        data: dict[str, Any],
-        key: str,
-    ) -> Optional[list]:
-        """indicators 또는 data에서 시계열 데이터를 추출"""
-        for source in (indicators, data):
-            val = source.get(key)
-            if val is not None and hasattr(val, "__len__") and len(val) > 0:
-                return list(val)
-        return None

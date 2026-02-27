@@ -57,6 +57,28 @@ class ExitContext:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
+def get_series_from_context(
+    indicators: dict[str, Any],
+    data: dict[str, Any],
+    key: str,
+) -> Optional[list]:
+    """indicators 또는 data에서 시계열 데이터를 추출.
+
+    Args:
+        indicators: 지표 dict
+        data: 시장 데이터 dict
+        key: 데이터 키
+
+    Returns:
+        list or None
+    """
+    for source in (indicators, data):
+        val = source.get(key)
+        if val is not None and hasattr(val, "__len__") and len(val) > 0:
+            return list(val)
+    return None
+
+
 class EntrySignalGenerator(ABC, Generic[TConfig]):
     """진입 시그널 생성기 추상 클래스
 

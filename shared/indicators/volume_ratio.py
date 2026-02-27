@@ -77,27 +77,24 @@ class VRZoneInfo:
     max_value: float
 
 
-# VR 구간 정의 (오름차순으로 판별)
-VR_ZONE_DEFINITIONS: list[VRZoneInfo] = [
-    VRZoneInfo(VRZone.EXTREME_BOTTOM, "극단적 바닥", VRSignal.STRONG_BUY, 0.0, 40.0),
-    VRZoneInfo(VRZone.BOTTOM, "바닥권", VRSignal.STRONG_BUY, 40.0, 60.0),
-    VRZoneInfo(VRZone.DEPRESSION, "침체권", VRSignal.BUY, 60.0, 75.0),
-    VRZoneInfo(VRZone.MODERATE_LOW, "보통~침체", VRSignal.NEUTRAL, 75.0, 100.0),
-    VRZoneInfo(VRZone.NORMAL, "보통", VRSignal.NEUTRAL, 100.0, 150.0),
-    VRZoneInfo(VRZone.MODERATE_HIGH, "보통~과열", VRSignal.NEUTRAL, 150.0, 300.0),
-    VRZoneInfo(VRZone.OVERHEAT, "과열권", VRSignal.SELL, 300.0, 400.0),
-    VRZoneInfo(
-        VRZone.EXTREME_OVERHEAT,
-        "극단적 과열",
-        VRSignal.STRONG_SELL,
-        400.0,
-        float("inf"),
-    ),
-]
-
-# RSI 구간 상수
-RSI_OVERBOUGHT = 70.0
-RSI_OVERSOLD = 30.0
+def _default_zone_definitions() -> list[VRZoneInfo]:
+    """기본 VR 구간 정의 (오름차순으로 판별)"""
+    return [
+        VRZoneInfo(VRZone.EXTREME_BOTTOM, "극단적 바닥", VRSignal.STRONG_BUY, 0.0, 40.0),
+        VRZoneInfo(VRZone.BOTTOM, "바닥권", VRSignal.STRONG_BUY, 40.0, 60.0),
+        VRZoneInfo(VRZone.DEPRESSION, "침체권", VRSignal.BUY, 60.0, 75.0),
+        VRZoneInfo(VRZone.MODERATE_LOW, "보통~침체", VRSignal.NEUTRAL, 75.0, 100.0),
+        VRZoneInfo(VRZone.NORMAL, "보통", VRSignal.NEUTRAL, 100.0, 150.0),
+        VRZoneInfo(VRZone.MODERATE_HIGH, "보통~과열", VRSignal.NEUTRAL, 150.0, 300.0),
+        VRZoneInfo(VRZone.OVERHEAT, "과열권", VRSignal.SELL, 300.0, 400.0),
+        VRZoneInfo(
+            VRZone.EXTREME_OVERHEAT,
+            "극단적 과열",
+            VRSignal.STRONG_SELL,
+            400.0,
+            float("inf"),
+        ),
+    ]
 
 
 class VolumeRatioCalculator:
@@ -108,12 +105,18 @@ class VolumeRatioCalculator:
 
     Args:
         period: VR 계산 기간 (기본 20 거래일)
+        zone_definitions: VR 구간 정의 (None이면 기본값 사용)
     """
 
-    def __init__(self, period: int = 20):
+    def __init__(
+        self,
+        period: int = 20,
+        zone_definitions: list[VRZoneInfo] | None = None,
+    ):
         if period < 2:
             raise ValueError("VR period must be >= 2")
         self.period = period
+        self.zone_definitions = zone_definitions or _default_zone_definitions()
 
     def calculate(
         self,
@@ -175,8 +178,7 @@ class VolumeRatioCalculator:
 
         return vr_values
 
-    @staticmethod
-    def get_zone(vr_value: Optional[float]) -> Optional[VRZoneInfo]:
+    def get_zone(self, vr_value: Optional[float]) -> Optional[VRZoneInfo]:
         """VR 값의 구간을 판별한다.
 
         Args:
@@ -188,12 +190,12 @@ class VolumeRatioCalculator:
         if vr_value is None:
             return None
 
-        for zone_info in VR_ZONE_DEFINITIONS:
+        for zone_info in self.zone_definitions:
             if zone_info.min_value <= vr_value < zone_info.max_value:
                 return zone_info
 
         # 음수 등 예외 상황
-        return VR_ZONE_DEFINITIONS[0]
+        return self.zone_definitions[0]
 
     @staticmethod
     def get_ma_trend(

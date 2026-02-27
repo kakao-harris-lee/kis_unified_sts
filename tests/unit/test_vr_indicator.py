@@ -2,7 +2,7 @@
 
 테스트 대상:
   - VolumeRatioCalculator.calculate() - VR 계산
-  - VolumeRatioCalculator.get_zone() - VR 구간 판별
+  - self.calc.get_zone() - VR 구간 판별
   - VolumeRatioCalculator.get_ma_trend() - MA 추세 판별
   - VolumeRatioCalculator.calculate_sma() - SMA 계산
   - VolumeRatioCalculator.calculate_rsi() - RSI 계산
@@ -152,47 +152,50 @@ class TestVolumeRatioCalculator:
 class TestVRZone:
     """VR 구간 판별 테스트"""
 
+    def setup_method(self):
+        self.calc = VolumeRatioCalculator(period=20)
+
     def test_extreme_bottom(self):
-        zone = VolumeRatioCalculator.get_zone(30.0)
+        zone = self.calc.get_zone(30.0)
         assert zone is not None
         assert zone.zone == VRZone.EXTREME_BOTTOM
         assert zone.signal == VRSignal.STRONG_BUY
 
     def test_bottom(self):
-        zone = VolumeRatioCalculator.get_zone(50.0)
+        zone = self.calc.get_zone(50.0)
         assert zone is not None
         assert zone.zone == VRZone.BOTTOM
         assert zone.signal == VRSignal.STRONG_BUY
 
     def test_depression(self):
-        zone = VolumeRatioCalculator.get_zone(70.0)
+        zone = self.calc.get_zone(70.0)
         assert zone is not None
         assert zone.zone == VRZone.DEPRESSION
         assert zone.signal == VRSignal.BUY
 
     def test_normal(self):
-        zone = VolumeRatioCalculator.get_zone(120.0)
+        zone = self.calc.get_zone(120.0)
         assert zone is not None
         assert zone.zone == VRZone.NORMAL
         assert zone.signal == VRSignal.NEUTRAL
 
     def test_overheat(self):
-        zone = VolumeRatioCalculator.get_zone(350.0)
+        zone = self.calc.get_zone(350.0)
         assert zone is not None
         assert zone.zone == VRZone.OVERHEAT
         assert zone.signal == VRSignal.SELL
 
     def test_extreme_overheat(self):
-        zone = VolumeRatioCalculator.get_zone(500.0)
+        zone = self.calc.get_zone(500.0)
         assert zone is not None
         assert zone.zone == VRZone.EXTREME_OVERHEAT
         assert zone.signal == VRSignal.STRONG_SELL
 
     def test_none_input(self):
-        assert VolumeRatioCalculator.get_zone(None) is None
+        assert self.calc.get_zone(None) is None
 
     def test_zero(self):
-        zone = VolumeRatioCalculator.get_zone(0.0)
+        zone = self.calc.get_zone(0.0)
         assert zone is not None
         assert zone.zone == VRZone.EXTREME_BOTTOM
 

@@ -19,7 +19,7 @@ VR, RSI, MA 값이 포함되어야 한다.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Optional
 
@@ -30,7 +30,7 @@ from shared.indicators.volume_ratio import (
     VRZone,
 )
 from shared.models.signal import Signal, SignalType
-from shared.strategy.base import EntryContext, EntrySignalGenerator
+from shared.strategy.base import EntryContext, EntrySignalGenerator, get_series_from_context
 
 logger = logging.getLogger(__name__)
 
@@ -75,14 +75,15 @@ class VRCompositeConfig(ConfigMixin):
     # Cooldown (일 단위)
     signal_cooldown_days: int = 3
 
+    # RSI 과매수 기준 (경고용)
+    rsi_overbought: float = 70.0
+
     # 경고 표시
     show_warnings: bool = True
 
     # 사용할 일봉 데이터 키 (indicators dict 내)
     daily_closes_key: str = "daily_closes"
     daily_volumes_key: str = "daily_volumes"
-    daily_highs_key: str = "daily_highs"
-    daily_lows_key: str = "daily_lows"
 
 
 class VRCompositeEntry(EntrySignalGenerator[VRCompositeConfig]):
@@ -147,8 +148,8 @@ class VRCompositeEntry(EntrySignalGenerator[VRCompositeConfig]):
                 return None
 
         # --- 일봉 데이터 추출 ---
-        closes = self._get_series(indicators, data, self.config.daily_closes_key)
-        volumes = self._get_series(indicators, data, self.config.daily_volumes_key)
+        closes = get_series_from_context(indicators, data, self.config.daily_closes_key)
+        volumes = get_series_from_context(indicators, data, self.config.daily_volumes_key)
 
         if closes is None or volumes is None:
             logger.debug("VRComposite: 일봉 데이터 없음 (%s)", code)
@@ -190,7 +191,7 @@ class VRCompositeEntry(EntrySignalGenerator[VRCompositeConfig]):
 
         close = closes[-1]
         ma_trend = VolumeRatioCalculator.get_ma_trend(close, ma5, ma20, ma60)
-        vr_zone = VolumeRatioCalculator.get_zone(vr)
+        vr_zone = self._vr_calc.get_zone(vr)
         vr_zone_name = vr_zone.zone.value if vr_zone else "unknown"
 
         # --- 복합 신호 판단 (우선순위순) ---
@@ -327,9 +328,9 @@ class VRCompositeEntry(EntrySignalGenerator[VRCompositeConfig]):
             )
 
         # VR-RSI 다이버전스: VR은 매수 시그널인데 RSI는 70 이상
-        vr_zone = VolumeRatioCalculator.get_zone(vr)
+        vr_zone = self._vr_calc.get_zone(vr)
         if vr_zone and vr_zone.zone in (VRZone.DEPRESSION, VRZone.BOTTOM, VRZone.EXTREME_BOTTOM):
-            if rsi >= RSI_OVERBOUGHT:
+            if rsi >= self.config.rsi_overbought:
                 warnings.append("⚠️ VR과 RSI 신호 불일치. 신호 신뢰도 하락.")
 
         # 거래량 급감
@@ -343,19 +344,3 @@ class VRCompositeEntry(EntrySignalGenerator[VRCompositeConfig]):
 
         return warnings
 
-    @staticmethod
-    def _get_series(
-        indicators: dict[str, Any],
-        data: dict[str, Any],
-        key: str,
-    ) -> Optional[list]:
-        """indicators 또는 data에서 시계열 데이터를 추출"""
-        for source in (indicators, data):
-            val = source.get(key)
-            if val is not None and hasattr(val, "__len__") and len(val) > 0:
-                return list(val)
-        return None
-
-
-# RSI 과매수 기준 (모듈 레벨 상수)
-RSI_OVERBOUGHT = 70.0

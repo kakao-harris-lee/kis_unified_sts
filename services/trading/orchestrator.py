@@ -563,8 +563,8 @@ class TradingOrchestrator:
         # Daily watchlist for static universe mode (populated from DailyScanner)
         self._daily_watchlist: dict[str, Any] = {}  # {strategies: {name: [codes]}, codes: [...]}
         self._daily_watchlist_key = "system:daily_watchlist:latest"
-        # Daily indicators from pre-market scanner (SMA, RSI, ATR for daily_pullback)
-        self._daily_indicators: dict[str, dict[str, float]] = {}
+        # Daily indicators from pre-market scanner (scalars + series for daily strategies)
+        self._daily_indicators: dict[str, dict[str, Any]] = {}
 
         self._llm_training_data_dir = os.environ.get(
             "LLM_TRAINING_DATA_DIR", "output/llm"
@@ -1441,7 +1441,7 @@ class TradingOrchestrator:
             logger.debug(f"Accumulation candidates not available: {e}")
             return False
 
-    SWING_STRATEGIES = frozenset({"volume_accumulation", "bb_reversion", "daily_pullback"})
+    SWING_STRATEGIES = frozenset({"volume_accumulation", "bb_reversion", "daily_pullback", "vr_composite"})
     DIP_CANDIDATES_REDIS_KEY = "system:dip_candidates:latest"
     LLM_QUALITY_REDIS_KEY = "system:llm_quality:latest"
 
