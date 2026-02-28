@@ -20,6 +20,7 @@ Usage:
 from __future__ import annotations
 
 import logging
+import re
 import threading
 import time
 from dataclasses import dataclass, field
@@ -190,6 +191,11 @@ class MetricsCollector:
             "Total number of signals",
             ["strategy", "type"],
         )
+        self.prom_entry_blocks_total = Counter(
+            "trading_entry_blocks_total",
+            "Total entry blocks by execution guard reason",
+            ["strategy", "reason"],
+        )
         self.prom_errors_total = Counter(
             "trading_errors_total",
             "Total number of errors",
@@ -342,6 +348,25 @@ class MetricsCollector:
             self.prom_signals_total.labels(strategy=strategy, type=signal_type).inc()
             if latency_ms > 0:
                 self.prom_signal_latency.observe(latency_ms)
+
+    def record_entry_block(
+        self,
+        *,
+        strategy: str = "default",
+        reason: str = "unknown",
+    ) -> None:
+        """실행 가드 진입 차단 사유 기록."""
+        if not HAS_PROMETHEUS:
+            return
+
+        normalized = str(reason or "unknown").strip().lower()
+        if ":" in normalized:
+            normalized = normalized.split(":", 1)[0]
+        normalized = re.sub(r"[^a-z0-9_]+", "_", normalized).strip("_") or "unknown"
+        self.prom_entry_blocks_total.labels(
+            strategy=strategy,
+            reason=normalized,
+        ).inc()
 
     def record_rl_entry_action_probabilities(
         self,

@@ -9,6 +9,7 @@ This script replays cached 1-minute candles and ranks candidate values for:
 Usage:
   python scripts/analysis/tune_rl_preopen.py --asset futures --mode long_bias
   python scripts/analysis/tune_rl_preopen.py --asset futures --write-profiles
+  python scripts/analysis/tune_rl_preopen.py --evaluation-mode paper --tune-target paper
 """
 
 from __future__ import annotations
@@ -172,6 +173,7 @@ async def _replay_symbol(
     entry: RLMPPOEntry,
     lookahead: int,
     warmup: int,
+    evaluation_mode: str,
 ) -> list[dict[str, float | str]]:
     outcomes: list[dict[str, float | str]] = []
     engine = StreamingIndicatorEngine(
@@ -207,7 +209,10 @@ async def _replay_symbol(
             indicators=indicators,
             current_positions=[],
             timestamp=candle["datetime"],
-            metadata={},  # live threshold path
+            metadata={
+                "paper_trading": evaluation_mode == "paper",
+                "is_backtest": evaluation_mode == "backtest",
+            },
         )
         signal = await entry.generate(context)
         if signal is None:
@@ -274,7 +279,32 @@ def _build_metrics(
     params: dict[str, Any],
     outcomes: list[dict[str, float | str]],
     mode: str,
+    tune_target: str,
 ) -> dict[str, Any]:
+    use_paper_params = tune_target in {"paper", "both"}
+    tuned_gap = float(
+        params.get(
+            "paper_hold_override_max_gap" if use_paper_params else "hold_override_max_gap",
+            params["hold_override_max_gap"],
+        )
+    )
+    tuned_min_entry_prob = float(
+        params.get(
+            "paper_hold_override_min_entry_prob"
+            if use_paper_params
+            else "hold_override_min_entry_prob",
+            params["hold_override_min_entry_prob"],
+        )
+    )
+    tuned_min_conf = float(
+        params.get(
+            "paper_hold_override_min_confidence"
+            if use_paper_params
+            else "hold_override_min_confidence",
+            params["hold_override_min_confidence"],
+        )
+    )
+
     long_outcomes = [o for o in outcomes if o["direction"] == "long"]
     short_outcomes = [o for o in outcomes if o["direction"] == "short"]
 
@@ -289,9 +319,9 @@ def _build_metrics(
     )
 
     metrics: dict[str, Any] = {
-        "hold_override_max_gap": float(params["hold_override_max_gap"]),
-        "hold_override_min_entry_prob": float(params["hold_override_min_entry_prob"]),
-        "hold_override_min_confidence": float(params["hold_override_min_confidence"]),
+        "hold_override_max_gap": tuned_gap,
+        "hold_override_min_entry_prob": tuned_min_entry_prob,
+        "hold_override_min_confidence": tuned_min_conf,
         "signals": len(outcomes),
         "long_signals": len(long_outcomes),
         "short_signals": len(short_outcomes),
@@ -312,6 +342,8 @@ async def _evaluate_candidate(
     lookahead: int,
     warmup: int,
     mode: str,
+    evaluation_mode: str,
+    tune_target: str,
 ) -> dict[str, Any]:
     entry = RLMPPOEntry(RLMPPOConfig(**entry_params))
     outcomes: list[dict[str, float | str]] = []
@@ -322,9 +354,15 @@ async def _evaluate_candidate(
             entry=entry,
             lookahead=lookahead,
             warmup=warmup,
+            evaluation_mode=evaluation_mode,
         )
         outcomes.extend(symbol_outcomes)
-    return _build_metrics(entry_params, outcomes, mode=mode)
+    return _build_metrics(
+        entry_params,
+        outcomes,
+        mode=mode,
+        tune_target=tune_target,
+    )
 
 
 async def _run_grid_search(
@@ -333,6 +371,8 @@ async def _run_grid_search(
     lookahead: int,
     warmup: int,
     mode: str,
+    evaluation_mode: str,
+    tune_target: str,
     max_gap_grid: list[float],
     min_entry_prob_grid: list[float],
     min_conf_grid: list[float],
@@ -343,9 +383,15 @@ async def _run_grid_search(
     results: list[dict[str, Any]] = []
     for idx, (max_gap, min_entry_prob, min_conf) in enumerate(combos, start=1):
         entry_params = deepcopy(base_entry)
-        entry_params["hold_override_max_gap"] = max_gap
-        entry_params["hold_override_min_entry_prob"] = min_entry_prob
-        entry_params["hold_override_min_confidence"] = min_conf
+        if tune_target in {"base", "both"}:
+            entry_params["hold_override_max_gap"] = max_gap
+            entry_params["hold_override_min_entry_prob"] = min_entry_prob
+            entry_params["hold_override_min_confidence"] = min_conf
+        if tune_target in {"paper", "both"}:
+            entry_params["paper_enable_hold_override"] = True
+            entry_params["paper_hold_override_max_gap"] = max_gap
+            entry_params["paper_hold_override_min_entry_prob"] = min_entry_prob
+            entry_params["paper_hold_override_min_confidence"] = min_conf
 
         metrics = await _evaluate_candidate(
             entry_params=entry_params,
@@ -353,6 +399,8 @@ async def _run_grid_search(
             lookahead=lookahead,
             warmup=warmup,
             mode=mode,
+            evaluation_mode=evaluation_mode,
+            tune_target=tune_target,
         )
         results.append(metrics)
         logger.info(
@@ -419,6 +467,7 @@ def _write_profiles(
     asset: str,
     profile_prefix: str,
     mode: str,
+    tune_target: str,
     best_rows: list[dict[str, Any]],
 ) -> list[Path]:
     if len(best_rows) < 2:
@@ -436,17 +485,29 @@ def _write_profiles(
             f"RL M-PPO tuned profile {profile_name[-1].upper()} ({mode})"
         )
         entry_params = strategy_cfg.setdefault("entry", {}).setdefault("params", {})
-        entry_params["hold_override_max_gap"] = float(row["hold_override_max_gap"])
-        entry_params["hold_override_min_entry_prob"] = float(
-            row["hold_override_min_entry_prob"]
-        )
-        entry_params["hold_override_min_confidence"] = float(
-            row["hold_override_min_confidence"]
-        )
-        entry_params["backtest_hold_override_min_confidence"] = round(
-            max(0.0, min(1.0, float(row["hold_override_min_confidence"]) - 0.05)),
-            3,
-        )
+        if tune_target in {"base", "both"}:
+            entry_params["hold_override_max_gap"] = float(row["hold_override_max_gap"])
+            entry_params["hold_override_min_entry_prob"] = float(
+                row["hold_override_min_entry_prob"]
+            )
+            entry_params["hold_override_min_confidence"] = float(
+                row["hold_override_min_confidence"]
+            )
+            entry_params["backtest_hold_override_min_confidence"] = round(
+                max(0.0, min(1.0, float(row["hold_override_min_confidence"]) - 0.05)),
+                3,
+            )
+        if tune_target in {"paper", "both"}:
+            entry_params["paper_enable_hold_override"] = True
+            entry_params["paper_hold_override_max_gap"] = float(
+                row["hold_override_max_gap"]
+            )
+            entry_params["paper_hold_override_min_entry_prob"] = float(
+                row["hold_override_min_entry_prob"]
+            )
+            entry_params["paper_hold_override_min_confidence"] = float(
+                row["hold_override_min_confidence"]
+            )
 
         path = (
             REPO_ROOT
@@ -526,6 +587,8 @@ async def _async_main(args: argparse.Namespace) -> int:
         lookahead=args.lookahead,
         warmup=args.warmup,
         mode=args.mode,
+        evaluation_mode=args.evaluation_mode,
+        tune_target=args.tune_target,
         max_gap_grid=max_gap_grid,
         min_entry_prob_grid=min_entry_prob_grid,
         min_conf_grid=min_conf_grid,
@@ -538,6 +601,8 @@ async def _async_main(args: argparse.Namespace) -> int:
         "asset": args.asset,
         "base_strategy": args.base_strategy,
         "mode": args.mode,
+        "evaluation_mode": args.evaluation_mode,
+        "tune_target": args.tune_target,
         "symbols": sorted(candle_cache.keys()),
         "lookahead": args.lookahead,
         "warmup": args.warmup,
@@ -566,6 +631,7 @@ async def _async_main(args: argparse.Namespace) -> int:
             asset=args.asset,
             profile_prefix=args.profile_prefix,
             mode=args.mode,
+            tune_target=args.tune_target,
             best_rows=results,
         )
         if profile_paths:
@@ -618,6 +684,18 @@ def main() -> int:
         choices=["long_bias", "balanced"],
         default="long_bias",
         help="Scoring mode",
+    )
+    parser.add_argument(
+        "--evaluation-mode",
+        choices=["live", "paper", "backtest"],
+        default="live",
+        help="Threshold path used during replay context",
+    )
+    parser.add_argument(
+        "--tune-target",
+        choices=["base", "paper", "both"],
+        default="base",
+        help="Which hold-override fields to tune/write",
     )
     parser.add_argument(
         "--max-gap-grid",

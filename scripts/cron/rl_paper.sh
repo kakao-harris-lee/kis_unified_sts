@@ -1,6 +1,7 @@
 #!/bin/bash
 # RL Paper Trading Service - kis_unified_sts
-# MaskablePPO 모델 실시간 paper trading (KIS WebSocket + DataEngine)
+# 기본 동작: RL profile matrix paper trading (장중 후보 비교)
+# fallback: single profile rl paper 실행
 #
 # crontab: 55 8 * * 1-5 /home/deploy/project/kis_unified_sts/scripts/cron/rl_paper.sh start
 #          40 15 * * 1-5 /home/deploy/project/kis_unified_sts/scripts/cron/rl_paper.sh stop
@@ -12,7 +13,9 @@ LOG_DIR="$PROJECT_DIR/logs"
 LOG_FILE="$LOG_DIR/rl_paper_$(date +%Y%m%d).log"
 VENV="$PROJECT_DIR/.venv/bin/activate"
 PID_FILE="$PROJECT_DIR/pids/rl_paper.pid"
-PROC_PATTERN="/home/deploy/project/kis_unified_sts/.venv/bin/sts rl paper --no-daemon"
+MATRIX_RUN_DIR_FILE="$PROJECT_DIR/pids/rl_paper_matrix_run_dir.txt"
+PROC_PATTERN_STS="/home/deploy/project/kis_unified_sts/.venv/bin/sts rl paper --no-daemon"
+PROC_PATTERN_MATRIX="/home/deploy/project/kis_unified_sts/.venv/bin/python scripts/analysis/rl_paper_profile_matrix.py"
 
 mkdir -p "$LOG_DIR"
 mkdir -p "$PROJECT_DIR/pids"
@@ -22,7 +25,41 @@ log() {
 }
 
 detect_running_pid() {
-    pgrep -f "$PROC_PATTERN" 2>/dev/null | head -n 1 || true
+    pgrep -f "$PROC_PATTERN_MATRIX" 2>/dev/null | head -n 1 || \
+        pgrep -f "$PROC_PATTERN_STS" 2>/dev/null | head -n 1 || true
+}
+
+run_matrix_post_analysis() {
+    if [ ! -f "$MATRIX_RUN_DIR_FILE" ]; then
+        return
+    fi
+
+    RUN_DIR=$(cat "$MATRIX_RUN_DIR_FILE" 2>/dev/null || true)
+    rm -f "$MATRIX_RUN_DIR_FILE"
+
+    if [ -z "$RUN_DIR" ] || [ ! -d "$RUN_DIR" ]; then
+        log "Matrix run directory not found. Skip post-market summary."
+        return
+    fi
+
+    LOGS=$(ls -1 "$RUN_DIR"/*.log 2>/dev/null | paste -sd, - || true)
+    if [ -z "$LOGS" ]; then
+        log "No matrix logs found in $RUN_DIR. Skip post-market summary."
+        return
+    fi
+
+    log "Generating post-market matrix summary from $RUN_DIR"
+    if "$PROJECT_DIR/.venv/bin/python" "$PROJECT_DIR/scripts/analysis/rl_paper_profile_matrix.py" \
+        --analyze-only \
+        --logs "$LOGS" \
+        --output-dir "$RUN_DIR" >> "$LOG_FILE" 2>&1; then
+        SUMMARY_CSV=$(ls -1t "$RUN_DIR"/paper_profile_matrix_summary_*.csv 2>/dev/null | head -n 1 || true)
+        SUMMARY_JSON=$(ls -1t "$RUN_DIR"/paper_profile_matrix_summary_*.json 2>/dev/null | head -n 1 || true)
+        [ -n "$SUMMARY_CSV" ] && log "Matrix summary CSV: $SUMMARY_CSV"
+        [ -n "$SUMMARY_JSON" ] && log "Matrix summary JSON: $SUMMARY_JSON"
+    else
+        log "Post-market matrix summary generation failed"
+    fi
 }
 
 start_trading() {
@@ -67,10 +104,48 @@ print('1' if is_trading_day(date.today()) else '0')
 
     log "Trading day confirmed. Starting RL paper trading..."
 
-    # Start RL paper trading in a detached session.
-    # setsid avoids parent shell/session cleanup side effects and keeps PID stable.
-    setsid bash -c 'exec sts rl paper --no-daemon' \
-        >> "$LOG_FILE" 2>&1 < /dev/null &
+    # Matrix mode defaults to enabled.
+    RL_PAPER_MATRIX_ENABLED=${RL_PAPER_MATRIX_ENABLED:-1}
+    RL_PAPER_MATRIX_MODEL=${RL_PAPER_MATRIX_MODEL:-mppo_best}
+    RL_PAPER_MATRIX_PROFILES=${RL_PAPER_MATRIX_PROFILES:-"rl_mppo,rl_mppo_profile_asym_long_strict,rl_mppo_profile_uptrend_spike_guard,rl_mppo_tune_a,rl_mppo_tune_b"}
+    if [ -z "${RL_PAPER_MATRIX_DURATION_MINUTES:-}" ]; then
+        PROFILE_COUNT=$(echo "$RL_PAPER_MATRIX_PROFILES" | awk -F',' '{print NF}')
+        NOW_MINUTES=$((10#$(date +%H) * 60 + 10#$(date +%M)))
+        # cron stop is 15:40; reserve ~5 minutes for shutdown/summary.
+        TARGET_END_MINUTES=$((15 * 60 + 35))
+        REMAIN_MINUTES=$((TARGET_END_MINUTES - NOW_MINUTES))
+        if [ "$PROFILE_COUNT" -gt 0 ] && [ "$REMAIN_MINUTES" -gt "$PROFILE_COUNT" ]; then
+            RL_PAPER_MATRIX_DURATION_MINUTES=$((REMAIN_MINUTES / PROFILE_COUNT))
+            if [ "$RL_PAPER_MATRIX_DURATION_MINUTES" -lt 20 ]; then
+                RL_PAPER_MATRIX_DURATION_MINUTES=20
+            fi
+        else
+            RL_PAPER_MATRIX_DURATION_MINUTES=75
+        fi
+    fi
+    RL_PAPER_MATRIX_COOLDOWN_SECONDS=${RL_PAPER_MATRIX_COOLDOWN_SECONDS:-8}
+    MATRIX_RUN_DIR="$PROJECT_DIR/output/paper_matrix/$(date +%Y%m%d)_session"
+
+    if [ "$RL_PAPER_MATRIX_ENABLED" = "1" ]; then
+        mkdir -p "$MATRIX_RUN_DIR"
+        echo "$MATRIX_RUN_DIR" > "$MATRIX_RUN_DIR_FILE"
+        log "Matrix mode ON: profiles=$RL_PAPER_MATRIX_PROFILES, duration=${RL_PAPER_MATRIX_DURATION_MINUTES}m, model=$RL_PAPER_MATRIX_MODEL"
+
+        # Start matrix runner in detached session.
+        setsid bash -c "exec '$PROJECT_DIR/.venv/bin/python' '$PROJECT_DIR/scripts/analysis/rl_paper_profile_matrix.py' \
+            --profiles '$RL_PAPER_MATRIX_PROFILES' \
+            --model '$RL_PAPER_MATRIX_MODEL' \
+            --duration-minutes '$RL_PAPER_MATRIX_DURATION_MINUTES' \
+            --cooldown-seconds '$RL_PAPER_MATRIX_COOLDOWN_SECONDS' \
+            --output-dir '$PROJECT_DIR/output/paper_matrix' \
+            --run-dir '$MATRIX_RUN_DIR'" >> "$LOG_FILE" 2>&1 < /dev/null &
+    else
+        rm -f "$MATRIX_RUN_DIR_FILE"
+        log "Matrix mode OFF: fallback to single rl paper process"
+        # Start RL paper trading in a detached session.
+        setsid bash -c 'exec sts rl paper --no-daemon' \
+            >> "$LOG_FILE" 2>&1 < /dev/null &
+    fi
 
     PID=$!
     echo "$PID" > "$PID_FILE"
@@ -81,6 +156,9 @@ print('1' if is_trading_day(date.today()) else '0')
         log "RL paper trading started (PID: $PID)"
     else
         rm -f "$PID_FILE"
+        if [ "$RL_PAPER_MATRIX_ENABLED" = "1" ]; then
+            rm -f "$MATRIX_RUN_DIR_FILE"
+        fi
         log "Failed to start RL paper trading (process exited early)"
         exit 1
     fi
@@ -106,13 +184,16 @@ stop_trading() {
                 log "Graceful shutdown completed"
             fi
             rm -f "$PID_FILE"
+            run_matrix_post_analysis
             log "RL paper trading stopped"
         else
             rm -f "$PID_FILE"
             log "Process not running, cleaned up PID file"
+            run_matrix_post_analysis
         fi
     else
         log "No PID file found"
+        run_matrix_post_analysis
     fi
 }
 

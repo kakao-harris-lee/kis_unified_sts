@@ -3026,10 +3026,20 @@ class TradingOrchestrator:
                         signal.code,
                     )
                 elif execution_meta.get("blocked_reason"):
+                    blocked_reason = str(execution_meta.get("blocked_reason") or "unknown")
+                    if self._metrics:
+                        self._metrics.record_signal(
+                            "rejected",
+                            strategy=signal.strategy,
+                        )
+                        self._metrics.record_entry_block(
+                            strategy=signal.strategy,
+                            reason=blocked_reason,
+                        )
                     logger.info(
                         "Entry blocked by execution guard: %s %s",
                         signal.code,
-                        execution_meta.get("blocked_reason"),
+                        blocked_reason,
                     )
 
             except Exception as e:
