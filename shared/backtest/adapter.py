@@ -58,6 +58,9 @@ class _MarketDataEnricher:
         self._daily_volume: dict[str, float] = {}  # current day accumulation
         self._prev_day_volume: dict[str, float] = {}
         self._prev_day_close: dict[str, float] = {}
+        # Reference close for change_pct — set once at day change, stable intraday.
+        # Matches KIS WebSocket PRDY_CTRT (전일 종가 대비 등락률).
+        self._change_ref_close: dict[str, float] = {}
 
         # Rolling daily stats for multi-day indicators
         self._daily_closes: dict[str, deque] = defaultdict(lambda: deque(maxlen=20))
@@ -125,10 +128,9 @@ class _MarketDataEnricher:
             if prev_date is not None:
                 # Save previous day's stats
                 self._prev_day_volume[code] = self._daily_volume.get(code, 0)
-                self._prev_day_close[code] = close  # will be overwritten below
-                # Record previous day's close/high/volume for rolling
-                # (prev_day_close is set from last bar of previous day,
-                #  but we approximate with current day's open)
+                # Lock reference close for change_pct (prev day's last close,
+                # already tracked by line 220's per-bar update).
+                self._change_ref_close[code] = self._prev_day_close.get(code, 0)
                 day_vol = self._daily_volume.get(code, 0)
                 if day_vol > 0:
                     self._daily_volumes[code].append(day_vol)
@@ -156,6 +158,7 @@ class _MarketDataEnricher:
         # On first day we won't have it, so use open
         if code not in self._prev_day_close and prev_date is None:
             self._prev_day_close[code] = float(bar.get("open", close) or close)
+            self._change_ref_close[code] = self._prev_day_close[code]
 
         # ── Enrich bar ──
 
@@ -168,10 +171,11 @@ class _MarketDataEnricher:
         # Cumulative intraday volume (override bar's per-minute volume)
         bar["volume"] = int(self._daily_volume[code])
 
-        # change_pct (for opening_volume_surge)
-        pdc = self._prev_day_close.get(code, 0)
-        if pdc > 0:
-            bar["change_pct"] = (close - pdc) / pdc * 100.0
+        # change_pct: relative to previous day's close (matches KIS PRDY_CTRT).
+        # Uses _change_ref_close which is locked at day change and stable intraday.
+        ref_close = self._change_ref_close.get(code, 0)
+        if ref_close > 0:
+            bar["change_pct"] = (close - ref_close) / ref_close * 100.0
         else:
             bar["change_pct"] = 0.0
 
