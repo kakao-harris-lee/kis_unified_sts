@@ -7,26 +7,26 @@ strategy:
   entry:
     type: momentum_breakout
     params:
-      breakout_buffer_pct: 0.1
-      rvol_threshold: 1.5
-      accumulation_score_min: 60
+      breakout_buffer_pct: 0.08      # Optuna best: 적절한 돌파 기준
+      rvol_threshold: 1.9            # Optuna best: 높은 거래량 품질 (importance 79%)
+      accumulation_score_min: 40     # Optuna best: 스크리너 필터 약간 완화
       volume_threshold: 1.0
       min_atr_cost_ratio: 0.01
       round_trip_cost: 0.005
       skip_market_open_minutes: 30
       skip_market_close_minutes: 15
-      signal_cooldown_seconds: 600
-      stop_atr_multiplier: 1.5
+      signal_cooldown_seconds: 300   # 600→300: 빠른 재진입
+      stop_atr_multiplier: 2.0      # 1.5→2.0: 상승장 변동성 허용
 
   exit:
     type: atr_dynamic
     params:
       atr_period: 14
-      stop_atr_multiplier: 1.5
-      trail_activation_atr: 0.5
-      trail_atr_multiplier: 1.5
+      stop_atr_multiplier: 2.0      # 1.5→2.0: 넓은 손절
+      trail_activation_atr: 2.0     # Optuna best: 충분한 수익 후 트레일링 시작
+      trail_atr_multiplier: 1.5     # Optuna best: 적절한 트레일링 폭
       momentum_decay_exit: true
-      max_hold_days: 5
+      max_hold_days: 8              # Optuna best: 보유 기간 확대
       eod_close_enabled: false
       default_exit_confidence: 0.85
 

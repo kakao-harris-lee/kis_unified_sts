@@ -8,8 +8,8 @@ strategy:
     params:
       bb_period: 20
       bb_std: 2.0
-      bb_touch_buffer: 1.015
-      rsi_oversold: 45.0
+      bb_touch_buffer: 1.01           # Optuna best: BB 하단 근접 기준
+      rsi_oversold: 34.0             # Optuna best: RSI 품질 필터 (importance 69%)
       williams_r_oversold: -80.0
       williams_r_reversal: -65.0
       volume_threshold: 1.0
@@ -17,16 +17,16 @@ strategy:
       round_trip_cost: 0.005
       skip_market_open_minutes: 30
       skip_market_close_minutes: 15
-      signal_cooldown_seconds: 300
-      stop_atr_multiplier: 2.5
-      stop_fallback_cost_multiplier: 3.0
+      signal_cooldown_seconds: 120   # Optuna best: 더 빠른 재진입
+      stop_atr_multiplier: 3.0      # 2.5→3.0: 상승장 변동성 허용
+      stop_fallback_cost_multiplier: 3.5  # 3.0→3.5: proportional
   exit:
     type: atr_dynamic
     params:
       atr_period: 14
-      stop_atr_multiplier: 2.5
-      trail_activation_atr: 1.0
-      trail_atr_multiplier: 2.0
+      stop_atr_multiplier: 3.5      # Optuna best: 넓은 손절 허용
+      trail_activation_atr: 1.0     # Optuna best: 빠른 트레일링 활성
+      trail_atr_multiplier: 2.0     # Optuna best: 넓은 트레일링 폭
       eod_close_enabled: false
       default_exit_confidence: 0.85
   position:
