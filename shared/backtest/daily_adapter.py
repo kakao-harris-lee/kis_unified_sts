@@ -65,6 +65,21 @@ class DailyBacktestAdapter:
         self._precomputed: list[dict[str, float]] = []
         self._bar_index: int = 0
 
+        # Raw daily series for strategies that compute their own indicators (e.g. VR composite)
+        self._raw_closes: list[float] = []
+        self._raw_volumes: list[int] = []
+        self._series_window: int = entry_params.get("vr_period", 0) + entry_params.get("ma_long", 0) + 10
+        if self._series_window < 80:
+            self._series_window = 80
+
+        # Warmup indicator key: strategy-dependent
+        # daily_pullback needs sma_200; vr_composite computes its own indicators
+        self._warmup_key = "sma_200" if self._sma_long >= 100 else None
+        self._warmup_bars = max(
+            self._sma_long,
+            entry_params.get("vr_period", 20) + entry_params.get("ma_long", 60),
+        )
+
         # Position state (synced from BacktestEngine)
         self._current_position: dict[str, Any] | None = None
         self._entry_bar_index: int | None = None
@@ -104,7 +119,11 @@ class DailyBacktestAdapter:
         self._precomputed = df[indicator_cols].to_dict("records")
         self._bar_index = 0
 
-        warmup = self._sma_long  # Longest indicator period
+        # Store raw series for strategies that need rolling windows (VR composite)
+        self._raw_closes = df["close"].astype(float).tolist()
+        self._raw_volumes = df["volume"].astype(int).tolist()
+
+        warmup = self._warmup_bars
         valid_count = sum(1 for r in self._precomputed if not np.isnan(r.get("sma_200", float("nan"))))
         logger.info(
             f"DailyBacktestAdapter: pre-computed {len(self._precomputed)} bars, "
@@ -144,10 +163,17 @@ class DailyBacktestAdapter:
             timestamp = datetime.fromisoformat(timestamp)
 
         # Get pre-computed indicators
-        indicators = {}
+        indicators: dict[str, Any] = {}
         idx = max(0, self._bar_index - 1)  # Exit sees same bar's indicators
         if idx < len(self._precomputed):
             indicators = {k: v for k, v in self._precomputed[idx].items() if not np.isnan(v)}
+
+        # Include rolling daily series for exit (VR composite exit needs them)
+        bar_end = idx + 1
+        bar_start = max(0, bar_end - self._series_window)
+        if bar_end <= len(self._raw_closes):
+            indicators["daily_closes"] = self._raw_closes[bar_start:bar_end]
+            indicators["daily_volumes"] = self._raw_volumes[bar_start:bar_end]
 
         # Calculate holding days
         if self._entry_bar_index is not None:
@@ -209,10 +235,20 @@ class DailyBacktestAdapter:
                 k: v for k, v in self._precomputed[self._bar_index].items()
                 if not np.isnan(v)
             }
+
+        # Include rolling daily series (for VR composite and similar strategies)
+        bar_end = self._bar_index + 1
+        bar_start = max(0, bar_end - self._series_window)
+        if bar_end <= len(self._raw_closes):
+            indicators["daily_closes"] = self._raw_closes[bar_start:bar_end]
+            indicators["daily_volumes"] = self._raw_volumes[bar_start:bar_end]
+
         self._bar_index += 1
 
-        # Skip if warmup not complete (need SMA200)
-        if "sma_200" not in indicators:
+        # Skip if warmup not complete
+        if self._warmup_key and self._warmup_key not in indicators:
+            return SignalType.HOLD
+        if not self._warmup_key and self._bar_index < self._warmup_bars:
             return SignalType.HOLD
 
         context = EntryContext(
