@@ -49,6 +49,7 @@ try:
         collect_today_all,
         get_db_client,
         ensure_database,
+        load_futures_minute_from_clickhouse,
     )
 except ModuleNotFoundError as exc:
     if exc.name != "clickhouse_connect":
@@ -64,6 +65,7 @@ except ModuleNotFoundError as exc:
     collect_today_all = _missing_clickhouse
     get_db_client = _missing_clickhouse
     ensure_database = _missing_clickhouse
+    load_futures_minute_from_clickhouse = _missing_clickhouse
 from .calendar import (
     is_trading_day,
     is_after_market_close,
@@ -110,6 +112,7 @@ __all__ = [
     "collect_today_all",
     "get_db_client",
     "ensure_database",
+    "load_futures_minute_from_clickhouse",
     # Stock backfill functions
     "STOCK_UNIVERSE",
     "collect_stock_minute_today",

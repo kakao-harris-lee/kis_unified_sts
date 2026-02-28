@@ -204,6 +204,30 @@ class TestTradingOrchestrator:
         metrics = orch.get_metrics()
         assert metrics == {}
 
+    def test_create_pipeline_applies_pipeline_yaml(self, monkeypatch):
+        """pipeline.yaml의 스테이지 간격이 TradingPipeline에 반영된다."""
+        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from services.trading.pipeline import PipelineStage
+        from shared.config.loader import ConfigLoader
+
+        config = TradingConfig.stock()
+        orch = TradingOrchestrator(config)
+
+        monkeypatch.setattr(
+            ConfigLoader,
+            "load",
+            staticmethod(
+                lambda path, *_args, **_kwargs: (
+                    {"pipeline": {"intervals": {"entry": 0.25}}}
+                    if path == "pipeline.yaml"
+                    else {}
+                )
+            ),
+        )
+
+        pipeline = orch._create_pipeline()
+        assert pipeline.intervals[PipelineStage.ENTRY] == 0.25
+
     def test_record_market_metrics_syncs_open_positions(self):
         """시장 메트릭 기록 시 open positions gauge 동기화."""
         from services.trading.orchestrator import TradingOrchestrator, TradingConfig

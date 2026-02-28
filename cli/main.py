@@ -12,7 +12,9 @@ from __future__ import annotations
 import logging
 import os
 import sys
+from datetime import timedelta
 from pathlib import Path
+from uuid import uuid4
 
 import click
 from dotenv import load_dotenv
@@ -357,6 +359,11 @@ def backtest_run(
             if is_daily:
                 from shared.backtest.daily_adapter import load_stock_daily_from_clickhouse
                 df = load_stock_daily_from_clickhouse(symbol, start_d, end_d)
+            elif asset == "futures":
+                from shared.collector.historical import (
+                    load_futures_minute_from_clickhouse,
+                )
+                df = load_futures_minute_from_clickhouse(symbol, start_d, end_d)
             else:
                 from shared.collector.historical.stock import load_stock_minute_from_clickhouse
                 df = load_stock_minute_from_clickhouse(symbol, start_d, end_d)
@@ -388,7 +395,17 @@ def backtest_run(
     if start:
         df = df[df["datetime"] >= start]
     if end:
-        df = df[df["datetime"] <= end]
+        # Click option is parsed as 00:00:00 for YYYY-MM-DD inputs.
+        # Treat plain-date end as inclusive for the whole day.
+        end_filter = end
+        if (
+            end.hour == 0
+            and end.minute == 0
+            and end.second == 0
+            and end.microsecond == 0
+        ):
+            end_filter = end + timedelta(days=1) - timedelta(microseconds=1)
+        df = df[df["datetime"] <= end_filter]
 
     click.echo(f"Data range: {df['datetime'].min()} ~ {df['datetime'].max()}")
 
@@ -1640,10 +1657,154 @@ def rl():
         sts rl train --algo mppo
         sts rl train --algo all
         sts rl evaluate --model mppo_best
+        sts rl pipeline
         sts rl slippage --model mppo_best
         sts rl tensorboard
     """
     pass
+
+
+def _write_temp_rl_config(
+    base_config_path: str,
+    *,
+    database: str,
+    table: str,
+    symbol: str,
+) -> tuple[str, Path]:
+    """Write a temporary RL config overriding data source fields."""
+    import copy
+
+    import yaml
+
+    from shared.config.loader import ConfigLoader
+
+    base_cfg = ConfigLoader.load(base_config_path, use_cache=False)
+    cfg = copy.deepcopy(base_cfg)
+    data_cfg = cfg.setdefault("data", {})
+    data_cfg["source"] = "clickhouse"
+    data_cfg["database"] = database
+    data_cfg["table"] = table
+    data_cfg["symbol"] = symbol
+    # Do not silently fall back to synthetic samples in production pipeline.
+    data_cfg["allow_sample_fallback"] = False
+
+    rel_path = f"ml/.tmp_rl_pipeline_{uuid4().hex}.yaml"
+    abs_path = ConfigLoader.get_config_dir() / rel_path
+    abs_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(abs_path, "w", encoding="utf-8") as f:
+        yaml.safe_dump(cfg, f, sort_keys=False, allow_unicode=True)
+    ConfigLoader.clear_cache()
+    return rel_path, abs_path
+
+
+def _select_default_mini_symbol(database: str, table: str) -> str:
+    """Pick the densest A05* symbol from ClickHouse as mini validation symbol."""
+    from clickhouse_driver import Client as CHSyncClient
+
+    client = CHSyncClient(
+        host=os.getenv("CLICKHOUSE_HOST", "localhost"),
+        port=int(os.getenv("CLICKHOUSE_NATIVE_PORT", "9000")),
+        user=os.getenv("CLICKHOUSE_USER", "default"),
+        password=os.getenv("CLICKHOUSE_PASSWORD", ""),
+    )
+    rows = client.execute(
+        f"""
+        SELECT code, count() AS c
+        FROM {database}.{table}
+        WHERE code LIKE 'A05%'
+        GROUP BY code
+        ORDER BY c DESC
+        LIMIT 1
+        """
+    )
+    if not rows:
+        raise ValueError(f"No mini symbols found in {database}.{table}")
+    return str(rows[0][0])
+
+
+def _resolve_trained_model_path(config_path: str, algo: str = "mppo") -> Path:
+    """Resolve trained model path, preferring best model for inference."""
+    import shutil
+
+    from shared.config.loader import ConfigLoader
+
+    cfg = ConfigLoader.load(config_path)
+    save_dir = Path(cfg.get("training", {}).get("save_dir", "./models/futures/rl/"))
+    best = save_dir / f"{algo}_best" / "best_model.zip"
+    final_zip = Path(str(save_dir / f"{algo}_final") + ".zip")
+
+    if best.exists():
+        return best
+    if final_zip.exists():
+        best.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(final_zip, best)
+        return best
+    raise FileNotFoundError(
+        f"Trained model not found. expected one of: {best} or {final_zip}"
+    )
+
+
+def _evaluate_maskableppo_with_config(
+    *,
+    model_path: Path,
+    config_path: str,
+) -> dict:
+    """Run evaluation with a specific data config."""
+    from sb3_contrib import MaskablePPO
+
+    from scripts.training.train_rl import load_data_from_clickhouse, precompute_tft_aux
+    from shared.ml.rl.evaluator import RLEvaluator
+
+    _, _, test_days, test_prices = load_data_from_clickhouse(config_path)
+    _, test_aux = precompute_tft_aux(config_path)
+    model = MaskablePPO.load(str(model_path))
+    evaluator = RLEvaluator(config_path=config_path)
+    return evaluator.evaluate_model(
+        model,
+        test_days,
+        test_prices,
+        test_aux=test_aux,
+    )
+
+
+def _run_futures_backtest_with_table(
+    *,
+    strategy: str,
+    symbol: str,
+    table: str,
+    start,
+    end,
+    track: bool,
+    experiment: str | None,
+    capital: float = 100_000_000,
+) -> None:
+    """Run existing backtest command logic with temporary futures table override."""
+    prev_table = os.getenv("FUTURES_CANDLE_TABLE")
+    os.environ["FUTURES_CANDLE_TABLE"] = table
+    runner = getattr(backtest_run, "callback", backtest_run)
+    try:
+        runner(
+            strategy=strategy,
+            asset="futures",
+            start=start,
+            end=end,
+            capital=capital,
+            data=None,
+            symbol=symbol,
+            tier=None,
+            track=track,
+            experiment=experiment,
+        )
+    except SystemExit as e:
+        if e.code not in (0, None):
+            raise RuntimeError(
+                f"Backtest failed for {symbol} ({table}) with exit code {e.code}"
+            ) from e
+    finally:
+        if prev_table is None:
+            os.environ.pop("FUTURES_CANDLE_TABLE", None)
+        else:
+            os.environ["FUTURES_CANDLE_TABLE"] = prev_table
 
 
 @rl.command("train")
@@ -1804,6 +1965,178 @@ def rl_evaluate(model: str, config: str | None):
     except Exception as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
+
+
+@rl.command("pipeline")
+@click.option("--config", "-c", default="ml/rl_mppo.yaml", help="Base RL config path")
+@click.option(
+    "--strategy",
+    default="rl_mppo",
+    show_default=True,
+    help="Backtest strategy profile",
+)
+@click.option("--database", default="kospi", show_default=True, help="ClickHouse database")
+@click.option(
+    "--kospi-table",
+    default="kospi200f_1m",
+    show_default=True,
+    help="KOSPI200 table for train/validate/backtest",
+)
+@click.option(
+    "--kospi-symbol",
+    default="101S6000",
+    show_default=True,
+    help="KOSPI200 symbol for train/validate/backtest",
+)
+@click.option(
+    "--mini-table",
+    default="kospi_mini_1m",
+    show_default=True,
+    help="KOSPI mini table for validation/backtest",
+)
+@click.option(
+    "--mini-symbol",
+    default="",
+    help="KOSPI mini symbol for validation/backtest (default: densest A05* auto-pick)",
+)
+@click.option("--start", type=click.DateTime(formats=["%Y-%m-%d"]), help="Backtest start date")
+@click.option("--end", type=click.DateTime(formats=["%Y-%m-%d"]), help="Backtest end date")
+@click.option("--track/--no-track", default=False, show_default=True, help="Track backtest with MLflow")
+@click.option("--experiment", default=None, help="MLflow experiment name for backtests")
+@click.option("--skip-train", is_flag=True, help="Skip training stage")
+@click.option("--skip-eval", is_flag=True, help="Skip validation stage")
+@click.option("--skip-backtest", is_flag=True, help="Skip backtest stage")
+def rl_pipeline(
+    config: str,
+    strategy: str,
+    database: str,
+    kospi_table: str,
+    kospi_symbol: str,
+    mini_table: str,
+    mini_symbol: str,
+    start,
+    end,
+    track: bool,
+    experiment: str | None,
+    skip_train: bool,
+    skip_eval: bool,
+    skip_backtest: bool,
+):
+    """KOSPI200 RL 파이프라인: train -> validate(KOSPI200+mini) -> backtest."""
+    from scripts.training.train_rl import load_data_from_clickhouse, precompute_tft_aux
+    from shared.ml.rl.trainer import RLTrainer
+
+    temp_config_paths: list[Path] = []
+    mini_symbol_selected = mini_symbol.strip()
+    if not mini_symbol_selected:
+        mini_symbol_selected = _select_default_mini_symbol(database, mini_table)
+
+    click.echo("RL KOSPI Pipeline")
+    click.echo(f"  Base config: {config}")
+    click.echo(f"  Train data: {database}.{kospi_table} ({kospi_symbol})")
+    click.echo(
+        f"  Validate data: {database}.{kospi_table} ({kospi_symbol}) + "
+        f"{database}.{mini_table} ({mini_symbol_selected})"
+    )
+    click.echo(f"  Backtest strategy: {strategy}")
+    click.echo("-" * 50)
+
+    try:
+        train_cfg_rel, train_cfg_abs = _write_temp_rl_config(
+            config,
+            database=database,
+            table=kospi_table,
+            symbol=kospi_symbol,
+        )
+        temp_config_paths.append(train_cfg_abs)
+
+        if not skip_train:
+            click.echo("[1/3] Training on KOSPI200 data...")
+            train_days, train_prices, test_days, test_prices = load_data_from_clickhouse(
+                train_cfg_rel,
+                persist_scaler=True,
+            )
+            train_aux, test_aux = precompute_tft_aux(train_cfg_rel)
+
+            trainer = RLTrainer(config_path=train_cfg_rel)
+            trainer.train(
+                algo="mppo",
+                train_days=train_days,
+                train_prices=train_prices,
+                eval_days=test_days,
+                eval_prices=test_prices,
+                train_aux=train_aux,
+                eval_aux=test_aux,
+            )
+            click.echo("  Training complete.")
+        else:
+            click.echo("[1/3] Training skipped (--skip-train)")
+
+        model_path = _resolve_trained_model_path(train_cfg_rel, algo="mppo")
+        click.echo(f"  Model for inference: {model_path}")
+
+        if not skip_eval:
+            click.echo("[2/3] Validation on KOSPI200 + KOSPI mini...")
+            eval_targets = [
+                ("KOSPI200", kospi_table, kospi_symbol),
+                ("KOSPI Mini", mini_table, mini_symbol_selected),
+            ]
+            for label, table, symbol in eval_targets:
+                eval_cfg_rel, eval_cfg_abs = _write_temp_rl_config(
+                    config,
+                    database=database,
+                    table=table,
+                    symbol=symbol,
+                )
+                temp_config_paths.append(eval_cfg_abs)
+                results = _evaluate_maskableppo_with_config(
+                    model_path=model_path,
+                    config_path=eval_cfg_rel,
+                )
+                click.echo(f"  [{label}]")
+                for key, value in results.items():
+                    if key == "daily_returns":
+                        continue
+                    click.echo(f"    {key}: {value}")
+        else:
+            click.echo("[2/3] Validation skipped (--skip-eval)")
+
+        if not skip_backtest:
+            click.echo("[3/3] Backtest on KOSPI200 + KOSPI mini...")
+            _run_futures_backtest_with_table(
+                strategy=strategy,
+                symbol=kospi_symbol,
+                table=kospi_table,
+                start=start,
+                end=end,
+                track=track,
+                experiment=experiment,
+            )
+            _run_futures_backtest_with_table(
+                strategy=strategy,
+                symbol=mini_symbol_selected,
+                table=mini_table,
+                start=start,
+                end=end,
+                track=track,
+                experiment=experiment,
+            )
+            click.echo("  Backtest complete.")
+        else:
+            click.echo("[3/3] Backtest skipped (--skip-backtest)")
+
+        click.echo("Pipeline complete.")
+
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+    finally:
+        for path in temp_config_paths:
+            try:
+                if path.exists():
+                    path.unlink()
+            except OSError:
+                pass
 
 
 @rl.command("slippage")

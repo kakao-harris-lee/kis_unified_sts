@@ -17,6 +17,11 @@ KIS Unified Trading Platform은 한국투자증권 API를 활용한 알고리즘
 - **모의투자 (Paper Trading)**: 가상 브로커를 통한 전략 검증
 - **모니터링**: Prometheus 메트릭, Grafana 대시보드, Telegram 알림
 
+### 운영 런북 (Runbooks)
+
+- 선물 RL 데이터 신뢰 구간/모델 교체 기준:
+  [docs/futures_rl_data_trust_runbook.md](docs/futures_rl_data_trust_runbook.md)
+
 ## 빠른 시작 (Quick Start)
 
 ### 요구 사항 (Requirements)

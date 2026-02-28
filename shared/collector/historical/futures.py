@@ -217,18 +217,41 @@ def get_front_month_code(
     if target_date is None:
         target_date = date.today()
 
-    prefix = KOSPI200_LEGACY_PREFIX if product == "kospi200" else KOSPI_MINI_LEGACY_PREFIX
+    if product not in {"kospi200", "mini"}:
+        raise ValueError(f"Unsupported product: {product}")
 
+    if product == "kospi200":
+        # Full-size KOSPI200 futures are quarterly contracts (Mar/Jun/Sep/Dec).
+        quarterly_months = [3, 6, 9, 12]
+        y = target_date.year
+        m = next((qm for qm in quarterly_months if qm >= target_date.month), None)
+        if m is None:
+            # After December, next listed contract is next year's March.
+            y += 1
+            m = quarterly_months[0]
+
+        expiry = get_expiry_date(y, m)
+        if target_date > expiry:
+            idx = quarterly_months.index(m) + 1
+            if idx >= len(quarterly_months):
+                y += 1
+                m = quarterly_months[0]
+            else:
+                m = quarterly_months[idx]
+
+        prefix = KOSPI200_LEGACY_PREFIX if legacy else KOSPI200_PREFIX
+        return make_code(y, m, prefix=prefix, legacy=legacy)
+
+    # Mini futures are monthly contracts.
     y, m = target_date.year, target_date.month
     expiry = get_expiry_date(y, m)
-
     if target_date > expiry:
-        # Current month's contract expired — roll to next month
         m += 1
         if m > 12:
             m = 1
             y += 1
 
+    prefix = KOSPI_MINI_LEGACY_PREFIX if legacy else KOSPI_MINI_PREFIX
     return make_code(y, m, prefix=prefix, legacy=legacy)
 
 

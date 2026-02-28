@@ -2284,6 +2284,24 @@ class TradingOrchestrator:
 
         await self.stop()
 
+    def _load_pipeline_config(self) -> "PipelineConfig | None":
+        """Load pipeline configuration from pipeline.yaml.
+
+        Returns ``None`` on any parse/validation failure so TradingPipeline falls
+        back to its built-in defaults.
+        """
+        try:
+            from shared.config.schema import PipelineConfig
+
+            raw = ConfigLoader.load("pipeline.yaml")
+            raw_pipeline = raw.get("pipeline", raw) if isinstance(raw, dict) else raw
+            if not isinstance(raw_pipeline, dict):
+                raise ValueError("pipeline config must be a mapping")
+            return PipelineConfig.model_validate(raw_pipeline)
+        except Exception as e:
+            logger.warning(f"Failed to load pipeline config (using defaults): {e}")
+            return None
+
     def _create_pipeline(self) -> TradingPipeline:
         """파이프라인 생성 with real handlers"""
         return TradingPipeline(
@@ -2291,6 +2309,7 @@ class TradingOrchestrator:
             entry_handler=self._handle_entry,
             monitoring_handler=self._handle_monitoring,
             exit_handler=self._handle_exit,
+            config=self._load_pipeline_config(),
         )
 
     def _get_symbol_lock(self, symbol: str) -> asyncio.Lock:

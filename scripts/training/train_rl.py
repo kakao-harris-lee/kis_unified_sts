@@ -104,6 +104,9 @@ def load_data_from_clickhouse(
     symbol = data_cfg.get("symbol", "101S6000")
     database = data_cfg.get("database", "kospi")
     table = data_cfg.get("table", "kospi200f_1m")
+    start_date = data_cfg.get("start_date")
+    end_date = data_cfg.get("end_date")
+    allow_sample_fallback = bool(data_cfg.get("allow_sample_fallback", True))
     train_ratio = float(data_cfg.get("train_ratio", 0.8))
     min_bars = data_cfg.get("min_bars_per_day", 300)
     quality_cfg = data_cfg.get("quality", {}) or {}
@@ -121,7 +124,7 @@ def load_data_from_clickhouse(
 
     logger.info(
         f"Loading data: {database}.{table}, symbol={symbol}, "
-        f"train_ratio={train_ratio}"
+        f"train_ratio={train_ratio}, start={start_date}, end={end_date}"
     )
 
     try:
@@ -136,20 +139,38 @@ def load_data_from_clickhouse(
             password=os.getenv("CLICKHOUSE_PASSWORD", ""),
         )
 
+        where = ["code = %(symbol)s"]
+        params: dict[str, object] = {"symbol": symbol}
+        if start_date:
+            where.append("datetime >= %(start_dt)s")
+            params["start_dt"] = pd.to_datetime(start_date).to_pydatetime()
+        if end_date:
+            where.append("datetime <= %(end_dt)s")
+            params["end_dt"] = pd.to_datetime(end_date).to_pydatetime()
+
         query = f"""
             SELECT datetime, open, high, low, close, volume
             FROM {database}.{table}
-            WHERE code = %(symbol)s
+            WHERE {' AND '.join(where)}
             ORDER BY datetime
         """
-        rows = client.execute(query, {"symbol": symbol})
+        rows = client.execute(query, params)
         df = pd.DataFrame(rows, columns=["datetime", "open", "high", "low", "close", "volume"])
 
     except Exception as e:
+        if not allow_sample_fallback:
+            raise RuntimeError(
+                f"ClickHouse load failed for {database}.{table} ({symbol}): {e}"
+            ) from e
         logger.warning(f"ClickHouse not available: {e}. Using sample data.")
         df = _generate_sample_data()
 
     if df.empty:
+        if not allow_sample_fallback:
+            raise ValueError(
+                f"No data loaded from {database}.{table} ({symbol}) "
+                f"for range {start_date} ~ {end_date}"
+            )
         logger.warning("No data loaded. Using sample data.")
         df = _generate_sample_data()
     elif quality_enabled:
@@ -311,6 +332,9 @@ def precompute_tft_aux(
     symbol = data_cfg.get("symbol", "101S6000")
     database = data_cfg.get("database", "kospi")
     table = data_cfg.get("table", "kospi200f_1m")
+    start_date = data_cfg.get("start_date")
+    end_date = data_cfg.get("end_date")
+    allow_sample_fallback = bool(data_cfg.get("allow_sample_fallback", True))
     train_ratio = float(data_cfg.get("train_ratio", 0.8))
     min_bars = data_cfg.get("min_bars_per_day", 300)
     mirror_aug = data_cfg.get("mirror_augmentation", True)
@@ -325,14 +349,33 @@ def precompute_tft_aux(
         password=os.getenv("CLICKHOUSE_PASSWORD", ""),
     )
 
+    where = ["code = %(symbol)s"]
+    params: dict[str, object] = {"symbol": symbol}
+    if start_date:
+        where.append("datetime >= %(start_dt)s")
+        params["start_dt"] = pd.to_datetime(start_date).to_pydatetime()
+    if end_date:
+        where.append("datetime <= %(end_dt)s")
+        params["end_dt"] = pd.to_datetime(end_date).to_pydatetime()
+
     query = f"""
         SELECT datetime, open, high, low, close, volume
         FROM {database}.{table}
-        WHERE code = %(symbol)s
+        WHERE {' AND '.join(where)}
         ORDER BY datetime
     """
-    rows = client.execute(query, {"symbol": symbol})
-    df = pd.DataFrame(rows, columns=["datetime", "open", "high", "low", "close", "volume"])
+    rows = client.execute(query, params)
+    df = pd.DataFrame(
+        rows, columns=["datetime", "open", "high", "low", "close", "volume"]
+    )
+    if df.empty and not allow_sample_fallback:
+        raise ValueError(
+            f"No data loaded from {database}.{table} ({symbol}) "
+            f"for range {start_date} ~ {end_date}"
+        )
+    if df.empty:
+        logger.warning("No data loaded for TFT aux. Using sample data.")
+        df = _generate_sample_data()
 
     # 피처 계산
     calc = RLFeatureCalculator()

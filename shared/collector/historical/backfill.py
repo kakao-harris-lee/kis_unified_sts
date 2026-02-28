@@ -17,6 +17,7 @@ Historical Data Backfill Module
 import os
 import asyncio
 import logging
+import re
 from datetime import date, datetime, timedelta
 from typing import List, Tuple, Set, Dict, Any, Optional
 
@@ -221,7 +222,8 @@ async def fetch_minute_async(
     client: httpx.AsyncClient,
     code: str,
     date_str: str,
-    max_retries: int = 3
+    max_retries: int = 3,
+    max_pages: int = 20,
 ) -> Tuple[str, str, dict]:
     """
     Fetch minute data asynchronously with rate limiting and retry.
@@ -231,6 +233,7 @@ async def fetch_minute_async(
         code: Futures code (e.g., 'A05601')
         date_str: Date string in YYYYMMDD format
         max_retries: Maximum retry attempts
+        max_pages: Maximum pagination pages per request date
 
     Returns:
         Tuple of (code, date, response_data)
@@ -242,15 +245,19 @@ async def fetch_minute_async(
     base_url = "https://openapi.koreainvestment.com:9443"
 
     url = f"{base_url}/uapi/domestic-futureoption/v1/quotations/inquire-time-fuopchartprice"
+    hour_cls_code = str(os.getenv("KIS_FUTURES_HOUR_CLS_CODE", "60"))
     params = {
         "FID_COND_MRKT_DIV_CODE": "F",
         "FID_INPUT_ISCD": code,
-        "FID_HOUR_CLS_CODE": "1",
+        "FID_HOUR_CLS_CODE": hour_cls_code,
         "FID_PW_DATA_INCU_YN": "Y",
         "FID_FAKE_TICK_INCU_YN": "N",
         "FID_INPUT_DATE_1": date_str,
         "FID_INPUT_HOUR_1": "",
     }
+
+    # Guard misconfiguration to avoid infinite/expensive loops.
+    max_pages = max(1, int(max_pages))
 
     last_error = None
     for attempt in range(max_retries):
@@ -264,6 +271,7 @@ async def fetch_minute_async(
 
         async with _get_semaphore():
             try:
+                # First page.
                 await _get_rate_limiter().wait()
                 resp = await client.get(url, headers=headers, params=params)
 
@@ -279,6 +287,61 @@ async def fetch_minute_async(
                     msg = data.get("msg1", "Unknown error")
                     return (code, date_str, {"error": msg})
 
+                output2 = data.get("output2", [])
+                if not isinstance(output2, list):
+                    output2 = []
+
+                # Paginate backward by FID_INPUT_HOUR_1. KIS responses overlap at
+                # page boundaries (next page often starts with prior page's last row).
+                merged_rows: list[dict[str, Any]] = []
+                for item in output2:
+                    if isinstance(item, dict):
+                        merged_rows.append(item)
+
+                cursor_hour = ""
+                if merged_rows:
+                    cursor_hour = str(merged_rows[-1].get("stck_cntg_hour", "") or "")
+
+                pages_fetched = 1
+                while cursor_hour and pages_fetched < max_pages:
+                    page_params = dict(params)
+                    page_params["FID_INPUT_HOUR_1"] = cursor_hour
+                    await _get_rate_limiter().wait()
+                    page_resp = await client.get(url, headers=headers, params=page_params)
+
+                    if not page_resp.text or page_resp.text.strip() == "":
+                        break
+
+                    try:
+                        page_data = page_resp.json()
+                    except Exception:
+                        break
+
+                    if page_data.get("rt_cd") != "0":
+                        break
+
+                    page_rows_raw = page_data.get("output2", [])
+                    if not isinstance(page_rows_raw, list):
+                        break
+
+                    page_rows = [row for row in page_rows_raw if isinstance(row, dict)]
+                    if not page_rows:
+                        break
+
+                    # Drop overlapped first row if identical to previous page tail.
+                    if merged_rows and page_rows and page_rows[0] == merged_rows[-1]:
+                        page_rows = page_rows[1:]
+                    if not page_rows:
+                        break
+
+                    merged_rows.extend(page_rows)
+                    next_hour = str(page_rows[-1].get("stck_cntg_hour", "") or "")
+                    if not next_hour or next_hour == cursor_hour:
+                        break
+                    cursor_hour = next_hour
+                    pages_fetched += 1
+
+                data["output2"] = merged_rows
                 return (code, date_str, data)
 
             except (httpx.RemoteProtocolError, httpx.ReadTimeout, httpx.ConnectError) as e:
@@ -394,11 +457,11 @@ def parse_ohlcv(code: str, date_str: str, data: dict) -> List[Tuple]:
     Returns:
         List of tuples (code, datetime, open, high, low, close, volume)
     """
-    rows = []
+    tick_rows: List[Tuple[datetime, float, float, float, float, int]] = []
     output = data.get("output2", []) or data.get("output1", []) or data.get("output", [])
 
     if not output:
-        return rows
+        return []
 
     for item in output:
         # Skip non-dict items (API may return strings for invalid contracts)
@@ -441,14 +504,42 @@ def parse_ohlcv(code: str, date_str: str, data: dict) -> List[Tuple]:
             )
             v = _first_present(item, ["cntg_vol", "acml_vol", "volume"], 0)
 
-            rows.append((
-                code, dt,
-                float(o or 0), float(h or 0), float(l or 0), float(c or 0),
-                int(v or 0),
-            ))
+            tick_rows.append(
+                (
+                    dt,
+                    float(o or 0),
+                    float(h or 0),
+                    float(l or 0),
+                    float(c or 0),
+                    int(v or 0),
+                )
+            )
         except (ValueError, TypeError):
             continue
 
+    if not tick_rows:
+        return []
+
+    # Normalize raw ticks/seconds to 1-minute OHLCV bars.
+    tick_rows.sort(key=lambda row: row[0])
+    minute_bars: Dict[datetime, List[float | int]] = {}
+    for dt, o, h, l, c, v in tick_rows:
+        minute_dt = dt.replace(second=0, microsecond=0)
+        if minute_dt not in minute_bars:
+            minute_bars[minute_dt] = [o, h, l, c, int(v)]
+            continue
+
+        bar = minute_bars[minute_dt]
+        # open: keep first
+        bar[1] = max(float(bar[1]), h)  # high
+        bar[2] = min(float(bar[2]), l)  # low
+        bar[3] = c  # close: last tick in minute
+        bar[4] = int(bar[4]) + int(v)  # volume sum
+
+    rows: List[Tuple] = []
+    for minute_dt in sorted(minute_bars.keys()):
+        o, h, l, c, v = minute_bars[minute_dt]
+        rows.append((code, minute_dt, float(o), float(h), float(l), float(c), int(v)))
     return rows
 
 
@@ -589,6 +680,74 @@ def get_data_status(days: int = 30) -> Dict[str, Any]:
     return status
 
 
+def load_futures_minute_from_clickhouse(
+    code: str,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    table_name: str | None = None,
+) -> "pd.DataFrame":
+    """Load futures minute candles from ClickHouse for backtest.
+
+    Args:
+        code: Futures symbol (e.g., ``101S6000`` or ``A05603``).
+        start_date: Inclusive lower bound (KST date).
+        end_date: Inclusive upper bound (KST date).
+        table_name: Optional table override. Defaults to ``FUTURES_CANDLE_TABLE``
+            environment variable, then ``kospi200f_1m``.
+
+    Returns:
+        DataFrame columns: ``code, datetime, open, high, low, close, volume``.
+
+    Raises:
+        ValueError: when no rows are found or table name is invalid.
+    """
+    import pandas as pd
+
+    config = _get_clickhouse_config()
+    table = table_name or os.getenv("FUTURES_CANDLE_TABLE", "kospi200f_1m")
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", table or ""):
+        raise ValueError(f"Invalid futures table name: {table!r}")
+
+    db_client = get_db_client()
+    conditions = ["code = %(code)s"]
+    params: Dict[str, Any] = {"code": code}
+    if start_date:
+        conditions.append("datetime >= %(start)s")
+        params["start"] = start_date
+    if end_date:
+        conditions.append("datetime <= %(end)s")
+        params["end"] = datetime.combine(end_date, datetime.max.time())
+
+    where = " AND ".join(conditions)
+    query = f"""
+        SELECT code, datetime, open, high, low, close, volume
+        FROM {config['database']}.{table}
+        WHERE {where}
+        ORDER BY datetime ASC
+    """
+
+    try:
+        result = db_client.query(query, parameters=params)
+    finally:
+        db_client.close()
+
+    if not result.result_rows:
+        raise ValueError(
+            f"No futures data found for {code} in {config['database']}.{table} "
+            f"(range: {start_date} ~ {end_date})"
+        )
+
+    df = pd.DataFrame(
+        result.result_rows,
+        columns=["code", "datetime", "open", "high", "low", "close", "volume"],
+    )
+    dt = pd.to_datetime(df["datetime"])
+    if getattr(dt.dt, "tz", None) is not None:
+        dt = dt.dt.tz_localize(None)
+    df["datetime"] = dt
+    return df
+
+
 # =============================================================================
 # Backfill Functions
 # =============================================================================
@@ -608,8 +767,9 @@ async def collect_batch(
     if not tasks:
         return 0
 
+    max_pages = max(1, int(os.getenv("KIS_FUTURES_MAX_PAGES", "20")))
     coros = [
-        fetch_minute_async(client, code, dt.strftime("%Y%m%d"))
+        fetch_minute_async(client, code, dt.strftime("%Y%m%d"), max_pages=max_pages)
         for code, dt in tasks
     ]
 
@@ -664,7 +824,7 @@ async def collect_index_batch(
     return len(all_rows)
 
 
-async def backfill(days: int = 365, verbose: bool = True):
+async def backfill(days: int = 365, verbose: bool = True, resume: bool = True):
     """
     Run backfill for the past N days.
 
@@ -686,11 +846,14 @@ async def backfill(days: int = 365, verbose: bool = True):
     db_client = get_db_client()
     ensure_table(db_client)
 
-    try:
-        collected = get_collected_pairs_in_range(db_client, start, end)
-    except Exception as e:
-        logger.warning(f"Failed to get collected pairs (proceeding with empty set): {e}")
-        collected = set()
+    collected: Set[Tuple[str, date]] = set()
+    if resume:
+        try:
+            collected = get_collected_pairs_in_range(db_client, start, end)
+        except Exception as e:
+            logger.warning(
+                f"Failed to get collected pairs (proceeding with empty set): {e}"
+            )
 
     total_rows = 0
     total_tasks = 0
@@ -753,7 +916,11 @@ async def collect_today(verbose: bool = True):
 # KOSPI 200 Index Backfill
 # =============================================================================
 
-async def backfill_kospi200_index(days: int = 365, verbose: bool = True):
+async def backfill_kospi200_index(
+    days: int = 365,
+    verbose: bool = True,
+    resume: bool = True,
+):
     """
     Run backfill for KOSPI 200 Index for the past N days.
     """
@@ -771,19 +938,22 @@ async def backfill_kospi200_index(days: int = 365, verbose: bool = True):
     db_client = get_db_client()
     ensure_kospi200_index_table(db_client)
 
-    try:
-        result = db_client.query(
-            """
-            SELECT DISTINCT toDate(datetime) as dt
-            FROM kospi200_index_1m
-            WHERE dt >= %(start)s AND dt <= %(end)s
-            """,
-            parameters={"start": start, "end": end},
-        )
-        collected_dates = {row[0] for row in result.result_rows}
-    except Exception as e:
-        logger.warning(f"Failed to get collected dates (proceeding with empty set): {e}")
-        collected_dates = set()
+    collected_dates: Set[date] = set()
+    if resume:
+        try:
+            result = db_client.query(
+                """
+                SELECT DISTINCT toDate(datetime) as dt
+                FROM kospi200_index_1m
+                WHERE dt >= %(start)s AND dt <= %(end)s
+                """,
+                parameters={"start": start, "end": end},
+            )
+            collected_dates = {row[0] for row in result.result_rows}
+        except Exception as e:
+            logger.warning(
+                f"Failed to get collected dates (proceeding with empty set): {e}"
+            )
 
     total_rows = 0
     trading_days_iter = list(reversed(trading_days))
@@ -869,7 +1039,11 @@ def _get_kospi200f_codes_for_date(target_date: date) -> List[str]:
     return codes[:4]  # Return up to 4 nearest contracts
 
 
-async def backfill_kospi200f(days: int = 365, verbose: bool = True):
+async def backfill_kospi200f(
+    days: int = 365,
+    verbose: bool = True,
+    resume: bool = True,
+):
     """
     Run backfill for KOSPI 200 Futures (full-size) for the past N days.
 
@@ -894,11 +1068,19 @@ async def backfill_kospi200f(days: int = 365, verbose: bool = True):
     ensure_kospi200f_table(db_client)
 
     # Check what we already have
-    try:
-        collected = get_collected_pairs_in_range(db_client, start, end, table_name="kospi200f_1m")
-    except Exception as e:
-        logger.warning(f"Failed to get collected pairs (proceeding with empty set): {e}")
-        collected = set()
+    collected: Set[Tuple[str, date]] = set()
+    if resume:
+        try:
+            collected = get_collected_pairs_in_range(
+                db_client,
+                start,
+                end,
+                table_name="kospi200f_1m",
+            )
+        except Exception as e:
+            logger.warning(
+                f"Failed to get collected pairs (proceeding with empty set): {e}"
+            )
 
     total_rows = 0
     total_tasks = 0
@@ -959,21 +1141,25 @@ async def collect_today_kospi200f(verbose: bool = True):
     return rows
 
 
-async def backfill_all(days: int = 365, verbose: bool = True):
+async def backfill_all(
+    days: int = 365,
+    verbose: bool = True,
+    resume: bool = True,
+):
     """
     Backfill all data types: Mini Futures, KOSPI 200 Index, and KOSPI 200 Futures.
     """
     if verbose:
         print("=== Backfilling Mini Futures ===")
-    await backfill(days=days, verbose=verbose)
+    await backfill(days=days, verbose=verbose, resume=resume)
 
     if verbose:
         print("\n=== Backfilling KOSPI 200 Index ===")
-    await backfill_kospi200_index(days=days, verbose=verbose)
+    await backfill_kospi200_index(days=days, verbose=verbose, resume=resume)
 
     if verbose:
         print("\n=== Backfilling KOSPI 200 Futures ===")
-    await backfill_kospi200f(days=days, verbose=verbose)
+    await backfill_kospi200f(days=days, verbose=verbose, resume=resume)
 
 
 async def collect_today_all(verbose: bool = True):

@@ -26,19 +26,19 @@ class TestGetFrontMonthCode:
         code = get_front_month_code(product="kospi200", target_date=expiry)
         assert code == "A01603"
 
-    def test_after_expiry_rolls_to_next_month(self):
-        """After expiry, should roll to next month's contract."""
+    def test_after_expiry_rolls_to_next_quarter(self):
+        """After expiry, should roll to next quarterly contract."""
         expiry = get_expiry_date(2026, 3)
         day_after = date(expiry.year, expiry.month, expiry.day + 1)
         code = get_front_month_code(product="kospi200", target_date=day_after)
-        assert code == "A01604"
+        assert code == "A01606"
 
-    def test_december_rollover_to_january(self):
-        """After December expiry, should roll to January of next year."""
+    def test_december_rollover_to_next_year_march(self):
+        """After December expiry, should roll to March of next year."""
         expiry = get_expiry_date(2026, 12)
         day_after = date(expiry.year, expiry.month, expiry.day + 1)
         code = get_front_month_code(product="kospi200", target_date=day_after)
-        assert code == "A01701"
+        assert code == "A01703"
 
     def test_mini_product_uses_correct_prefix(self):
         """Mini KOSPI200 uses A05 prefix instead of A01."""
@@ -63,7 +63,7 @@ class TestGetFrontMonthCode:
         assert code == "A01603"
 
     def test_mid_month_after_expiry(self):
-        """A date mid-month but after 2nd Thursday rolls to next month."""
+        """A date mid-month but after 2nd Thursday rolls to next quarter."""
         # March 2026: 2nd Thursday is Mar 12. Mar 15 is after expiry.
         code = get_front_month_code(product="kospi200", target_date=date(2026, 3, 15))
-        assert code == "A01604"
+        assert code == "A01606"
