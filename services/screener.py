@@ -395,8 +395,12 @@ async def _apply_trend_confirmation(
             confirmed.append(code)
             info_by_code.setdefault(code, {})["trend_confirmation"] = dict(result)
 
-    if confirmed:
-        return confirmed, diagnostics
+    # Only scanned slice is filterable; keep unscanned tail as-is so
+    # trend_confirm_max_scan_codes does not implicitly cap universe size.
+    unscanned = codes[max_scan:]
+    filtered = confirmed + unscanned
+    if filtered:
+        return filtered, diagnostics
     if config.trend_confirm_fail_open:
         logger.warning(
             "Trend confirmation rejected all %s scanned codes; fail-open keeps original universe",

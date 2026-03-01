@@ -133,3 +133,35 @@ async def test_apply_trend_confirmation_filters_unconfirmed_codes():
     assert diagnostics["000001"]["passed"] is True
     assert diagnostics["000002"]["passed"] is False
 
+
+@pytest.mark.asyncio
+async def test_apply_trend_confirmation_keeps_unscanned_codes():
+    bars_pass = [
+        {"open": 100.0, "high": 100.8, "low": 99.8, "close": 100.5, "volume": 1000},
+        {"open": 100.5, "high": 101.2, "low": 100.3, "close": 101.0, "volume": 1000},
+        {"open": 101.0, "high": 101.8, "low": 100.9, "close": 101.6, "volume": 1000},
+    ]
+    bars_fail = [
+        {"open": 100.0, "high": 100.3, "low": 99.5, "close": 99.9, "volume": 1000},
+        {"open": 99.9, "high": 100.0, "low": 99.3, "close": 99.5, "volume": 1000},
+        {"open": 99.5, "high": 99.7, "low": 99.0, "close": 99.2, "volume": 1000},
+    ]
+    client = _DummyKISClient({"000001": bars_pass, "000002": bars_fail})
+    config = replace(
+        ScreenerConfig(),
+        trend_confirm_enabled=True,
+        trend_confirm_max_scan_codes=2,
+        trend_confirm_bar_count=3,
+        trend_confirm_fail_open=False,
+    )
+    filtered, diagnostics = await _apply_trend_confirmation(
+        codes=["000001", "000002", "000003"],
+        info_by_code={},
+        config=config,
+        kis_client=client,  # type: ignore[arg-type]
+        cache={},
+    )
+    assert filtered == ["000001", "000003"]
+    assert diagnostics["000001"]["passed"] is True
+    assert diagnostics["000002"]["passed"] is False
+    assert "000003" not in diagnostics
