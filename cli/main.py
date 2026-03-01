@@ -392,8 +392,24 @@ def backtest_run(
         sys.exit(1)
 
     # 날짜 필터링
+    def _normalize_filter_datetime(value):
+        """Align filter timestamp tz-awareness to df['datetime'] before comparison."""
+        try:
+            import pandas as pd
+
+            series_tz = df["datetime"].dt.tz
+            ts = pd.Timestamp(value)
+            if series_tz is not None and ts.tzinfo is None:
+                return ts.tz_localize(series_tz)
+            if series_tz is None and ts.tzinfo is not None:
+                return ts.tz_localize(None)
+            return ts
+        except Exception:
+            return value
+
     if start:
-        df = df[df["datetime"] >= start]
+        start_filter = _normalize_filter_datetime(start)
+        df = df[df["datetime"] >= start_filter]
     if end:
         # Click option is parsed as 00:00:00 for YYYY-MM-DD inputs.
         # Treat plain-date end as inclusive for the whole day.
@@ -405,6 +421,7 @@ def backtest_run(
             and end.microsecond == 0
         ):
             end_filter = end + timedelta(days=1) - timedelta(microseconds=1)
+        end_filter = _normalize_filter_datetime(end_filter)
         df = df[df["datetime"] <= end_filter]
 
     click.echo(f"Data range: {df['datetime'].min()} ~ {df['datetime'].max()}")
