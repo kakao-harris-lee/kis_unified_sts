@@ -40,6 +40,11 @@ start_screener() {
     # Load environment variables
     set -a && source .env && set +a
 
+    # Aggressive trend-confirm tuning (Option 2):
+    # keep more candidates while still applying anti-fakeout checks.
+    export SCREENER_TREND_CONFIRM_MIN_RETURN_PCT=0.25
+    export SCREENER_TREND_CONFIRM_MAX_PULLBACK_PCT=0.60
+
     # Check trading day
     IS_TRADING_DAY=$(python3 -c "
 from shared.collector.historical.calendar import is_trading_day
@@ -53,6 +58,7 @@ print('1' if is_trading_day(date.today()) else '0')
     fi
 
     log "Trading day confirmed. Starting screener..."
+    log "Trend confirm tuning: min_return=${SCREENER_TREND_CONFIRM_MIN_RETURN_PCT}, max_pullback=${SCREENER_TREND_CONFIRM_MAX_PULLBACK_PCT}"
 
     nohup python3 -m services.screener \
         >> "$LOG_FILE" 2>&1 &
