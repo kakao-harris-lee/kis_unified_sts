@@ -16,6 +16,17 @@ Environment variables:
   - `SCREENER_NOTIFY_INTERVAL_SECONDS` (default: 1800)
   - `UNIVERSE_STREAM` (default: system:universe)
   - `UNIVERSE_LATEST_KEY` (default: system:universe:latest)
+  - `SCREENER_TREND_CONFIRM_ENABLED` (default: true)
+  - `SCREENER_TREND_CONFIRM_MIN_MINUTES_AFTER_OPEN` (default: 7)
+  - `SCREENER_TREND_CONFIRM_MAX_SCAN_CODES` (default: 20)
+  - `SCREENER_TREND_CONFIRM_BAR_COUNT` (default: 8)
+  - `SCREENER_TREND_CONFIRM_MIN_RETURN_PCT` (default: 0.35)
+  - `SCREENER_TREND_CONFIRM_MIN_POSITIVE_RATIO` (default: 0.57)
+  - `SCREENER_TREND_CONFIRM_MIN_RISING_LOWS_RATIO` (default: 0.50)
+  - `SCREENER_TREND_CONFIRM_MAX_PULLBACK_PCT` (default: 0.45)
+  - `SCREENER_TREND_CONFIRM_MAX_SINGLE_BAR_VOLUME_SHARE` (default: 0.55)
+  - `SCREENER_TREND_CONFIRM_CACHE_SECONDS` (default: 90)
+  - `SCREENER_TREND_CONFIRM_FAIL_OPEN` (default: true)
 """
 
 from __future__ import annotations
@@ -26,17 +37,24 @@ import logging
 import os
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:
+    from backports.zoneinfo import ZoneInfo
+
+from services.monitoring.notifier import TelegramConfig, TelegramNotifier
 from shared.collector.prev_day_volume import PrevDayVolumeCache
 from shared.kis import KISAuthConfig
+from shared.kis.client import KISClient
 from shared.kis.ranking_client import KISRankingClient
 from shared.streaming.client import RedisClient
 from shared.streaming.publisher import StreamPublisher
-from services.monitoring.notifier import TelegramConfig, TelegramNotifier
 
 logger = logging.getLogger(__name__)
+KST = ZoneInfo("Asia/Seoul")
 
 
 @dataclass(frozen=True)
@@ -63,6 +81,40 @@ class ScreenerConfig:
 
     telegram_enabled: bool = os.environ.get(
         "SCREENER_TELEGRAM_ENABLED", "false"
+    ).lower() == "true"
+
+    trend_confirm_enabled: bool = os.environ.get(
+        "SCREENER_TREND_CONFIRM_ENABLED", "true"
+    ).lower() == "true"
+    trend_confirm_min_minutes_after_open: int = int(
+        os.environ.get("SCREENER_TREND_CONFIRM_MIN_MINUTES_AFTER_OPEN", "7")
+    )
+    trend_confirm_max_scan_codes: int = int(
+        os.environ.get("SCREENER_TREND_CONFIRM_MAX_SCAN_CODES", "20")
+    )
+    trend_confirm_bar_count: int = int(
+        os.environ.get("SCREENER_TREND_CONFIRM_BAR_COUNT", "8")
+    )
+    trend_confirm_min_return_pct: float = float(
+        os.environ.get("SCREENER_TREND_CONFIRM_MIN_RETURN_PCT", "0.35")
+    )
+    trend_confirm_min_positive_ratio: float = float(
+        os.environ.get("SCREENER_TREND_CONFIRM_MIN_POSITIVE_RATIO", "0.57")
+    )
+    trend_confirm_min_rising_lows_ratio: float = float(
+        os.environ.get("SCREENER_TREND_CONFIRM_MIN_RISING_LOWS_RATIO", "0.50")
+    )
+    trend_confirm_max_pullback_pct: float = float(
+        os.environ.get("SCREENER_TREND_CONFIRM_MAX_PULLBACK_PCT", "0.45")
+    )
+    trend_confirm_max_single_bar_volume_share: float = float(
+        os.environ.get("SCREENER_TREND_CONFIRM_MAX_SINGLE_BAR_VOLUME_SHARE", "0.55")
+    )
+    trend_confirm_cache_seconds: float = float(
+        os.environ.get("SCREENER_TREND_CONFIRM_CACHE_SECONDS", "90")
+    )
+    trend_confirm_fail_open: bool = os.environ.get(
+        "SCREENER_TREND_CONFIRM_FAIL_OPEN", "true"
     ).lower() == "true"
 
 
@@ -182,10 +234,184 @@ def _select_dip_candidates(
     return codes, scores, info_by_code
 
 
+def _normalize_scores_for_codes(
+    scores: dict[str, float],
+    codes: list[str],
+) -> dict[str, float]:
+    """Re-normalize scores for filtered code list."""
+    if not codes:
+        return {}
+    selected = {c: float(scores.get(c, 0.0) or 0.0) for c in codes}
+    max_score = max(selected.values()) if selected else 0.0
+    if max_score <= 0:
+        return dict.fromkeys(codes, 0.0)
+    return {c: round(selected[c] / max_score, 6) for c in codes}
+
+
+def _in_trend_confirmation_window(now_kst: datetime, min_minutes_after_open: int) -> bool:
+    """Return True only after market open cool-down and before close."""
+    market_open = now_kst.replace(hour=9, minute=0, second=0, microsecond=0)
+    market_close = now_kst.replace(hour=15, minute=20, second=0, microsecond=0)
+    if now_kst < market_open + timedelta(minutes=max(0, min_minutes_after_open)):
+        return False
+    return now_kst <= market_close
+
+
+def _evaluate_bull_trend_profile(
+    bars: list[dict[str, Any]],
+    *,
+    min_return_pct: float,
+    min_positive_ratio: float,
+    min_rising_lows_ratio: float,
+    max_pullback_pct: float,
+    max_single_bar_volume_share_limit: float,
+) -> dict[str, Any]:
+    """Evaluate whether minute bars show persistent bullish trend.
+
+    This filters out early-session fake moves:
+    - one-shot volume spike without continuation
+    - fast pump followed by deep pullback
+    - weak follow-through below VWAP
+    """
+    cleaned: list[dict[str, float]] = []
+    for b in bars:
+        try:
+            o = float(b.get("open", 0) or 0)
+            h = float(b.get("high", 0) or 0)
+            low_px = float(b.get("low", 0) or 0)
+            c = float(b.get("close", 0) or 0)
+            v = float(b.get("volume", 0) or 0)
+        except (TypeError, ValueError):
+            continue
+        if o <= 0 or h <= 0 or low_px <= 0 or c <= 0:
+            continue
+        cleaned.append(
+            {"open": o, "high": h, "low": low_px, "close": c, "volume": max(0.0, v)}
+        )
+
+    bars_count = len(cleaned)
+    if bars_count < 3:
+        return {
+            "passed": False,
+            "reason": "insufficient_bars",
+            "bars": bars_count,
+        }
+
+    first_open = cleaned[0]["open"]
+    last_close = cleaned[-1]["close"]
+    return_pct = (last_close - first_open) / first_open * 100.0
+
+    positive_count = sum(1 for b in cleaned if b["close"] > b["open"])
+    positive_ratio = positive_count / bars_count
+
+    rising_lows = sum(
+        1 for i in range(1, bars_count) if cleaned[i]["low"] >= cleaned[i - 1]["low"]
+    )
+    rising_lows_ratio = rising_lows / max(1, bars_count - 1)
+
+    session_high = max(b["high"] for b in cleaned)
+    pullback_pct = (session_high - last_close) / session_high * 100.0
+
+    total_volume = sum(b["volume"] for b in cleaned)
+    max_single_bar_volume_share = 0.0
+    if total_volume > 0:
+        max_single_bar_volume_share = max(
+            b["volume"] / total_volume for b in cleaned
+        )
+
+    vwap = last_close
+    if total_volume > 0:
+        vwap = sum(b["close"] * b["volume"] for b in cleaned) / total_volume
+    vwap_gap_pct = (last_close - vwap) / vwap * 100.0 if vwap > 0 else 0.0
+
+    if return_pct < min_return_pct:
+        reason = "insufficient_return"
+    elif positive_ratio < min_positive_ratio:
+        reason = "insufficient_positive_candles"
+    elif rising_lows_ratio < min_rising_lows_ratio:
+        reason = "weak_low_trend"
+    elif pullback_pct > max_pullback_pct:
+        reason = "deep_pullback"
+    elif max_single_bar_volume_share > max_single_bar_volume_share_limit:
+        reason = "single_bar_volume_spike"
+    elif last_close < vwap:
+        reason = "below_vwap"
+    else:
+        reason = "confirmed"
+
+    passed = reason == "confirmed"
+    return {
+        "passed": passed,
+        "reason": reason,
+        "bars": bars_count,
+        "return_pct": round(return_pct, 4),
+        "positive_ratio": round(positive_ratio, 4),
+        "rising_lows_ratio": round(rising_lows_ratio, 4),
+        "pullback_pct": round(pullback_pct, 4),
+        "max_single_bar_volume_share": round(max_single_bar_volume_share, 4),
+        "vwap_gap_pct": round(vwap_gap_pct, 4),
+    }
+
+
+async def _apply_trend_confirmation(
+    *,
+    codes: list[str],
+    info_by_code: dict[str, dict[str, Any]],
+    config: ScreenerConfig,
+    kis_client: KISClient | None,
+    cache: dict[str, tuple[float, dict[str, Any]]],
+) -> tuple[list[str], dict[str, dict[str, Any]]]:
+    """Filter ranked candidates by minute-bar trend confirmation."""
+    if not codes or not config.trend_confirm_enabled or kis_client is None:
+        return codes, {}
+
+    max_scan = max(1, min(config.trend_confirm_max_scan_codes, len(codes)))
+    to_scan = codes[:max_scan]
+    diagnostics: dict[str, dict[str, Any]] = {}
+    confirmed: list[str] = []
+    now_ts = time.time()
+
+    for code in to_scan:
+        cached = cache.get(code)
+        if cached and cached[0] > now_ts:
+            result = dict(cached[1])
+        else:
+            bars = await kis_client.get_minute_bars(code, count=config.trend_confirm_bar_count)
+            result = _evaluate_bull_trend_profile(
+                bars,
+                min_return_pct=config.trend_confirm_min_return_pct,
+                min_positive_ratio=config.trend_confirm_min_positive_ratio,
+                min_rising_lows_ratio=config.trend_confirm_min_rising_lows_ratio,
+                max_pullback_pct=config.trend_confirm_max_pullback_pct,
+                max_single_bar_volume_share_limit=config.trend_confirm_max_single_bar_volume_share,
+            )
+            cache[code] = (
+                now_ts + max(1.0, config.trend_confirm_cache_seconds),
+                dict(result),
+            )
+
+        diagnostics[code] = result
+        if bool(result.get("passed")):
+            confirmed.append(code)
+            info_by_code.setdefault(code, {})["trend_confirmation"] = dict(result)
+
+    if confirmed:
+        return confirmed, diagnostics
+    if config.trend_confirm_fail_open:
+        logger.warning(
+            "Trend confirmation rejected all %s scanned codes; fail-open keeps original universe",
+            len(to_scan),
+        )
+        return codes, diagnostics
+    return [], diagnostics
+
+
 async def run_screener(config: ScreenerConfig) -> None:
     kis_is_real = os.environ.get("KIS_IS_REAL", "true").lower() == "true"
     kis_config = KISAuthConfig(is_real=kis_is_real)
     ranking = KISRankingClient(kis_config)
+    trend_kis_client = KISClient(kis_config) if config.trend_confirm_enabled else None
+    trend_confirm_cache: dict[str, tuple[float, dict[str, Any]]] = {}
 
     redis_client = RedisClient.get_client()
     publisher = StreamPublisher(config.universe_stream)
@@ -211,7 +437,8 @@ async def run_screener(config: ScreenerConfig) -> None:
 
     logger.info(
         "Stock screener started "
-        f"(interval={config.interval_seconds}s, top_n={config.top_n}, rank_limit={config.rank_limit})"
+        f"(interval={config.interval_seconds}s, top_n={config.top_n}, "
+        f"rank_limit={config.rank_limit}, trend_confirm={config.trend_confirm_enabled})"
     )
 
     try:
@@ -226,6 +453,27 @@ async def run_screener(config: ScreenerConfig) -> None:
                     weight_trade_value=config.weight_trade_value,
                     weight_gainer=config.weight_gainer,
                 )
+                trend_diagnostics: dict[str, dict[str, Any]] = {}
+                if codes and config.trend_confirm_enabled and trend_kis_client is not None:
+                    now_kst = datetime.now(tz=KST)
+                    if _in_trend_confirmation_window(
+                        now_kst, config.trend_confirm_min_minutes_after_open
+                    ):
+                        filtered_codes, trend_diagnostics = await _apply_trend_confirmation(
+                            codes=codes,
+                            info_by_code=info,
+                            config=config,
+                            kis_client=trend_kis_client,
+                            cache=trend_confirm_cache,
+                        )
+                        if filtered_codes != codes:
+                            logger.info(
+                                "Trend confirmation filtered candidates: %s -> %s",
+                                len(codes),
+                                len(filtered_codes),
+                            )
+                        codes = filtered_codes[: config.top_n]
+                        scores = _normalize_scores_for_codes(scores, codes)
 
                 if codes and codes != last_codes:
                     # Lazy-fill prev-day volumes for any new codes
@@ -233,6 +481,23 @@ async def run_screener(config: ScreenerConfig) -> None:
 
                     names = {c: info[c]["name"] for c in codes if c in info}
                     metadata = prev_vol_cache.build_metadata(codes)
+                    for code in codes:
+                        diag = trend_diagnostics.get(code)
+                        if not diag:
+                            continue
+                        code_meta = metadata.setdefault(code, {})
+                        code_meta["trend_confirmed"] = bool(diag.get("passed", False))
+                        code_meta["trend_reason"] = str(diag.get("reason", ""))
+                        code_meta["trend_return_pct"] = float(diag.get("return_pct", 0.0))
+                        code_meta["trend_pullback_pct"] = float(
+                            diag.get("pullback_pct", 0.0)
+                        )
+                        code_meta["trend_vwap_gap_pct"] = float(
+                            diag.get("vwap_gap_pct", 0.0)
+                        )
+                        code_meta["trend_single_bar_volume_share"] = float(
+                            diag.get("max_single_bar_volume_share", 0.0)
+                        )
                     payload = {
                         "codes": codes,
                         "scores": scores,
@@ -311,6 +576,8 @@ async def run_screener(config: ScreenerConfig) -> None:
             await asyncio.sleep(sleep_for)
     finally:
         await ranking.close()
+        if trend_kis_client:
+            await trend_kis_client.close()
         if notifier:
             await notifier.close()
 
