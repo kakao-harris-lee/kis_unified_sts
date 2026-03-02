@@ -38,28 +38,18 @@ class KRXOpenAPIClient:
         """
         self.config = config or LLMConfig.from_env()
         self.session = requests.Session()
-        self.session.headers.update({
-            "AUTH_KEY": self.config.krx_api_key,
-            "Content-Type": "application/json",
-        })
         self._calendar = MarketCalendar()
 
     def _request(self, endpoint: str, params: Optional[dict] = None) -> list:
-        """
-        API 요청 수행
-
-        Args:
-            endpoint: API 엔드포인트
-            params: 쿼리 파라미터
-
-        Returns:
-            API 응답 데이터 (리스트)
-        """
+        """API 요청 수행 — AUTH_KEY를 query param으로 전송 (openkrx 표준)."""
         url = f"{self.config.krx_base_url}/{endpoint}"
+        request_params = {"AUTH_KEY": self.config.krx_api_key}
+        if params:
+            request_params.update(params)
 
         try:
             response = self.session.get(
-                url, params=params, timeout=self.config.krx_timeout
+                url, params=request_params, timeout=self.config.krx_timeout
             )
             response.raise_for_status()
 
@@ -68,7 +58,7 @@ class KRXOpenAPIClient:
             # KRX API returns error status in JSON body
             if isinstance(data, dict) and data.get("respCode") in ("401", "403"):
                 logger.warning(
-                    "KRX API auth failed (%s): %s — API 키 갱신 필요",
+                    "KRX API auth failed (%s): %s",
                     endpoint, data.get("respMsg", ""),
                 )
                 return []
@@ -159,7 +149,7 @@ class KRXOpenAPIClient:
             base_date = self._get_last_trading_date()
 
         params = {"basDd": base_date}
-        return self._request("etp/etf_dd_trd", params)
+        return self._request("etp/etf_bydd_trd", params)
 
     def get_etf_by_sector(self, base_date: Optional[str] = None) -> List[ETFData]:
         """섹터별 ETF 데이터 조회"""
@@ -209,7 +199,7 @@ class KRXOpenAPIClient:
             base_date = self._get_last_trading_date()
 
         params = {"basDd": base_date}
-        return self._request("drv/fut_dd_trd", params)
+        return self._request("drv/fut_bydd_trd", params)
 
     def get_kospi200_futures(self, base_date: Optional[str] = None) -> List[FuturesData]:
         """KOSPI200 선물 데이터 조회"""
@@ -248,7 +238,7 @@ class KRXOpenAPIClient:
             base_date = self._get_last_trading_date()
 
         params = {"basDd": base_date}
-        return self._request("drv/opt_dd_trd", params)
+        return self._request("drv/opt_bydd_trd", params)
 
     def get_kospi200_options(self, base_date: Optional[str] = None) -> OptionsData:
         """KOSPI200 옵션 데이터 조회 (풋콜비율)"""
