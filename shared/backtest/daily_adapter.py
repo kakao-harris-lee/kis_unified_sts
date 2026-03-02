@@ -90,6 +90,7 @@ class DailyBacktestAdapter:
         """Build metadata payload aligned with live orchestrator context."""
         return {
             "market_state": market_state,
+            "regime": market_state,
             "is_backtest": True,
             "symbol_metadata": resolve_symbol_metadata(self._backtest_metadata, code),
             "daily_watchlist": self._backtest_metadata.get("daily_watchlist", {}),

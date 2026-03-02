@@ -484,7 +484,7 @@ def test_trend_mode_config_defaults():
     """Trend mode config fields have correct defaults."""
     cfg = MomentumBreakoutConfig()
     assert cfg.trend_mode_enabled is False
-    assert cfg.trend_mode_regimes == ["BULL", "SIDEWAYS_UP"]
+    assert cfg.trend_mode_regimes == ["BULL", "BULL_STRONG", "BULL_MODERATE", "SIDEWAYS_UP"]
     assert cfg.trend_rvol_threshold == 1.0
     assert cfg.trend_breakout_buffer_pct == 0.0
     assert cfg.trend_signal_cooldown_seconds == 60

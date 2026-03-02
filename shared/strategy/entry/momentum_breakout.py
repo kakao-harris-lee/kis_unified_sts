@@ -70,7 +70,7 @@ class MomentumBreakoutConfig(ConfigMixin):
 
     # Trend mode (activated when regime matches trend_mode_regimes)
     trend_mode_enabled: bool = False
-    trend_mode_regimes: list[str] = field(default_factory=lambda: ["BULL", "SIDEWAYS_UP"])
+    trend_mode_regimes: list[str] = field(default_factory=lambda: ["BULL", "BULL_STRONG", "BULL_MODERATE", "SIDEWAYS_UP"])
     trend_rvol_threshold: float = 1.0
     trend_breakout_buffer_pct: float = 0.0
     trend_signal_cooldown_seconds: int = 60

@@ -876,6 +876,7 @@ class TradingOrchestrator:
 
             # Read indicator params from strategy entry configs
             bb_period, bb_std, rsi_period, high_period = 20, 2.0, 14, 5
+            ema_periods_set: set[int] = set()
             if self._strategy_manager:
                 for strategy in self._strategy_manager.strategies.values():
                     entry = getattr(strategy, "entry", None)
@@ -885,6 +886,12 @@ class TradingOrchestrator:
                         bb_std = cfg.get("bb_std", bb_std)
                         rsi_period = cfg.get("rsi_period", rsi_period)
                         high_period = cfg.get("breakout_period", high_period)
+                        # Collect EMA periods from trend mode config
+                        for ema_key in ("trend_ema_fast", "trend_ema_mid", "trend_ema_slow"):
+                            val = cfg.get(ema_key)
+                            if val is not None:
+                                ema_periods_set.add(int(val))
+            ema_periods = sorted(ema_periods_set) if ema_periods_set else [5, 20, 60]
 
             # Read staleness threshold from streaming config
             try:
@@ -903,6 +910,7 @@ class TradingOrchestrator:
                 rsi_period=rsi_period,
                 high_period=high_period,
                 staleness_seconds=staleness_seconds,
+                ema_periods=ema_periods,
             )
             required_keys = (
                 tuple(self._strategy_manager.required_indicators)
@@ -3322,6 +3330,25 @@ class TradingOrchestrator:
         )
 
         symbol_meta = (self.config.symbol_metadata or {}).get(signal.code, {})
+        pos_metadata = {
+            "snapshot_id": str(symbol_meta.get("llm_snapshot_id", "")),
+            "llm_quality": symbol_meta.get("llm_quality"),
+            "realtime_score": symbol_meta.get("realtime_score"),
+            "risk_flags": symbol_meta.get("risk_flags", []),
+            "entry_signal_confidence": signal.confidence,
+            "signal_direction": direction,
+            "execution": exec_meta,
+        }
+        # Forward exit parameter overrides from signal.metadata (e.g. trend mode)
+        signal_meta = getattr(signal, "metadata", None) or {}
+        for key in (
+            "exit_stop_atr_multiplier",
+            "exit_trail_activation_atr",
+            "exit_trail_atr_multiplier",
+            "exit_max_hold_days",
+        ):
+            if key in signal_meta:
+                pos_metadata[key] = signal_meta[key]
         position = self._position_tracker.add_position(
             code=signal.code,
             name=signal.name,
@@ -3329,15 +3356,7 @@ class TradingOrchestrator:
             quantity=quantity,
             strategy=signal.strategy,
             side=PositionSide.SHORT if is_short else PositionSide.LONG,
-            metadata={
-                "snapshot_id": str(symbol_meta.get("llm_snapshot_id", "")),
-                "llm_quality": symbol_meta.get("llm_quality"),
-                "realtime_score": symbol_meta.get("realtime_score"),
-                "risk_flags": symbol_meta.get("risk_flags", []),
-                "entry_signal_confidence": signal.confidence,
-                "signal_direction": direction,
-                "execution": exec_meta,
-            },
+            metadata=pos_metadata,
         )
 
         if not position:

@@ -219,6 +219,7 @@ class StreamingIndicatorEngine:
         staleness_seconds: float = 180.0,
         mtf_timeframes: list[int] | None = None,
         mtf_maxlen: int = 250,
+        ema_periods: list[int] | None = None,
     ):
         self.bb_period = bb_period
         self.bb_std = bb_std
@@ -227,6 +228,7 @@ class StreamingIndicatorEngine:
         self._staleness_seconds = staleness_seconds
         self._accumulators: dict[str, CandleAccumulator] = {}
         self._warm_logged: set[str] = set()
+        self._ema_periods: list[int] = ema_periods or [5, 20, 60]
 
         # Multi-timeframe accumulators: {symbol: {timeframe: accumulator}}
         self._mtf_timeframes = mtf_timeframes or []
@@ -585,19 +587,26 @@ class StreamingIndicatorEngine:
         else:
             result["volume_ma"] = 0.0
 
-        # EMA absolute values for trend mode (5, 20, 60)
-        result["ema_5"] = self._ema_last(closes, 5)
-        result["ema_20"] = self._ema_last(closes, 20)
+        # EMA absolute values for trend mode (configurable periods)
         n = len(closes)
-        if n >= 60:
-            result["ema_60"] = self._ema_last(closes, 60)
+        for period in self._ema_periods:
+            key = f"ema_{period}"
+            if n >= period:
+                result[key] = self._ema_last(closes, period)
+            else:
+                result[key] = 0.0
+        # EMA alignment: fastest > middle > slowest (confirmed uptrend)
+        if len(self._ema_periods) >= 3:
+            sorted_periods = sorted(self._ema_periods)
+            fast_key = f"ema_{sorted_periods[0]}"
+            mid_key = f"ema_{sorted_periods[1]}"
+            slow_key = f"ema_{sorted_periods[2]}"
+            result["ema_aligned"] = (
+                result[slow_key] > 0
+                and result[fast_key] > result[mid_key] > result[slow_key]
+            )
         else:
-            result["ema_60"] = 0.0
-        # EMA alignment: EMA5 > EMA20 > EMA60 (confirmed uptrend)
-        result["ema_aligned"] = (
-            result["ema_60"] > 0
-            and result["ema_5"] > result["ema_20"] > result["ema_60"]
-        )
+            result["ema_aligned"] = False
 
         return result
 

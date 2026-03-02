@@ -346,6 +346,7 @@ class BacktestStrategyAdapter:
 
         metadata: dict[str, Any] = {
             "market_state": market_state,
+            "regime": market_state,
             "is_backtest": True,
             "symbol_metadata": symbol_meta,
             "daily_watchlist": self._backtest_metadata.get("daily_watchlist", {}),

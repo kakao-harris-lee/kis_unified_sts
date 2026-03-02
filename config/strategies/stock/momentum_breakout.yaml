@@ -22,7 +22,7 @@ strategy:
       stop_atr_multiplier: 2.2
       # Trend mode (activated when regime in BULL/SIDEWAYS_UP)
       trend_mode_enabled: true
-      trend_mode_regimes: ["BULL", "SIDEWAYS_UP"]
+      trend_mode_regimes: ["BULL", "BULL_STRONG", "BULL_MODERATE", "SIDEWAYS_UP"]
       trend_rvol_threshold: 1.0
       trend_breakout_buffer_pct: 0.0
       trend_signal_cooldown_seconds: 60
