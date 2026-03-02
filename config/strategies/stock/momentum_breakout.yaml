@@ -20,6 +20,24 @@ strategy:
       skip_market_close_minutes: 10
       signal_cooldown_seconds: 120   # 신호 밀집 구간 재진입 허용
       stop_atr_multiplier: 2.2
+      # Trend mode (activated when regime in BULL/SIDEWAYS_UP)
+      trend_mode_enabled: true
+      trend_mode_regimes: ["BULL", "SIDEWAYS_UP"]
+      trend_rvol_threshold: 1.0
+      trend_breakout_buffer_pct: 0.0
+      trend_signal_cooldown_seconds: 60
+      # EMA pullback trigger
+      trend_ema_pullback_enabled: true
+      trend_ema_fast: 5
+      trend_ema_mid: 20
+      trend_ema_slow: 60
+      trend_ema_touch_buffer_atr: 1.0
+      trend_rsi_min: 40.0
+      # Exit overrides for trend mode positions
+      trend_exit_stop_atr_multiplier: 2.5
+      trend_exit_trail_activation_atr: 1.5
+      trend_exit_trail_atr_multiplier: 2.5
+      trend_exit_max_hold_days: 15
 
   exit:
     type: atr_dynamic
