@@ -17,7 +17,7 @@ Entry Conditions:
 """
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, time, timedelta
 from typing import Dict, Optional
 
@@ -67,6 +67,25 @@ class MomentumBreakoutConfig(ConfigMixin):
     # Signal properties
     allow_short: bool = False
     confidence_base: float = 0.65
+
+    # Trend mode (activated when regime matches trend_mode_regimes)
+    trend_mode_enabled: bool = False
+    trend_mode_regimes: list[str] = field(default_factory=lambda: ["BULL", "SIDEWAYS_UP"])
+    trend_rvol_threshold: float = 1.0
+    trend_breakout_buffer_pct: float = 0.0
+    trend_signal_cooldown_seconds: int = 60
+    # EMA pullback trigger (trend_mode only)
+    trend_ema_pullback_enabled: bool = True
+    trend_ema_fast: int = 5
+    trend_ema_mid: int = 20
+    trend_ema_slow: int = 60
+    trend_ema_touch_buffer_atr: float = 1.0
+    trend_rsi_min: float = 40.0
+    # Trend mode exit overrides
+    trend_exit_stop_atr_multiplier: float = 2.5
+    trend_exit_trail_activation_atr: float = 1.5
+    trend_exit_trail_atr_multiplier: float = 2.5
+    trend_exit_max_hold_days: int = 15
 
     def validate(self) -> None:
         assert self.daily_high_period > 0, "daily_high_period must be positive"

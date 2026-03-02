@@ -474,3 +474,36 @@ async def test_bypasses_watchlist_in_dynamic_mode(entry):
     signal = await entry.generate(ctx)
     assert signal is not None
     assert signal.code == "005930"
+
+
+# ---------------------------------------------------------------------------
+# Trend mode config
+# ---------------------------------------------------------------------------
+
+def test_trend_mode_config_defaults():
+    """Trend mode config fields have correct defaults."""
+    cfg = MomentumBreakoutConfig()
+    assert cfg.trend_mode_enabled is False
+    assert cfg.trend_mode_regimes == ["BULL", "SIDEWAYS_UP"]
+    assert cfg.trend_rvol_threshold == 1.0
+    assert cfg.trend_breakout_buffer_pct == 0.0
+    assert cfg.trend_signal_cooldown_seconds == 60
+    assert cfg.trend_ema_pullback_enabled is True
+    assert cfg.trend_ema_fast == 5
+    assert cfg.trend_ema_mid == 20
+    assert cfg.trend_ema_slow == 60
+    assert cfg.trend_ema_touch_buffer_atr == 1.0
+    assert cfg.trend_rsi_min == 40.0
+    assert cfg.trend_exit_stop_atr_multiplier == 2.5
+    assert cfg.trend_exit_trail_activation_atr == 1.5
+    assert cfg.trend_exit_trail_atr_multiplier == 2.5
+    assert cfg.trend_exit_max_hold_days == 15
+
+def test_trend_mode_config_from_dict():
+    """Trend mode fields load correctly from dict."""
+    raw = {"params": {"trend_mode_enabled": True, "trend_rvol_threshold": 1.2, "trend_exit_max_hold_days": 20}}
+    cfg = MomentumBreakoutConfig.from_dict(raw)
+    assert cfg.trend_mode_enabled is True
+    assert cfg.trend_rvol_threshold == 1.2
+    assert cfg.trend_exit_max_hold_days == 20
+    assert cfg.trend_ema_pullback_enabled is True
