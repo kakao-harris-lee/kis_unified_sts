@@ -585,6 +585,20 @@ class StreamingIndicatorEngine:
         else:
             result["volume_ma"] = 0.0
 
+        # EMA absolute values for trend mode (5, 20, 60)
+        result["ema_5"] = self._ema_last(closes, 5)
+        result["ema_20"] = self._ema_last(closes, 20)
+        n = len(closes)
+        if n >= 60:
+            result["ema_60"] = self._ema_last(closes, 60)
+        else:
+            result["ema_60"] = 0.0
+        # EMA alignment: EMA5 > EMA20 > EMA60 (confirmed uptrend)
+        result["ema_aligned"] = (
+            result["ema_60"] > 0
+            and result["ema_5"] > result["ema_20"] > result["ema_60"]
+        )
+
         return result
 
     def get_rl_features(self, symbol: str) -> dict[str, float]:
