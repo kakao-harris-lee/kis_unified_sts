@@ -6,12 +6,15 @@ KRX Open API를 통해 시장 데이터를 수집하는 클라이언트.
 """
 
 import json
+import logging
 from datetime import datetime, timedelta
 from typing import List, Optional
 
 import requests
 
 from shared.calendar import MarketCalendar
+
+logger = logging.getLogger(__name__)
 
 from .config import LLMConfig
 from .data_classes import (
@@ -62,6 +65,14 @@ class KRXOpenAPIClient:
 
             data = response.json()
 
+            # KRX API returns error status in JSON body
+            if isinstance(data, dict) and data.get("respCode") in ("401", "403"):
+                logger.warning(
+                    "KRX API auth failed (%s): %s — API 키 갱신 필요",
+                    endpoint, data.get("respMsg", ""),
+                )
+                return []
+
             if "OutBlock_1" in data:
                 return data["OutBlock_1"]
             elif "output" in data:
@@ -70,10 +81,10 @@ class KRXOpenAPIClient:
                 return data
 
         except requests.exceptions.RequestException as e:
-            print(f"API 요청 실패 ({endpoint}): {e}")
+            logger.debug("KRX API 요청 실패 (%s): %s", endpoint, e)
             return []
         except json.JSONDecodeError as e:
-            print(f"JSON 파싱 실패: {e}")
+            logger.debug("KRX API JSON 파싱 실패: %s", e)
             return []
 
     # ============================================================

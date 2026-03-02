@@ -103,7 +103,7 @@ class LLMConfig:
 
     # KRX Open API 설정
     krx_api_key: str = ""
-    krx_base_url: str = "http://data.krx.co.kr/svc/apis"
+    krx_base_url: str = "https://data-dbg.krx.co.kr/svc/apis"
     krx_timeout: int = 30
     krx_analysis_days: int = 20
 
@@ -425,7 +425,7 @@ class LLMConfig:
             futures_tick_symbol=futures_config.get("tick_symbol", ""),
             # KRX API 설정
             krx_api_key=os.environ.get("KRX_API_KEY", krx_config.get("api_key", "")),
-            krx_base_url=krx_config.get("base_url", "http://data.krx.co.kr/svc/apis"),
+            krx_base_url=krx_config.get("base_url", "https://data-dbg.krx.co.kr/svc/apis"),
             krx_timeout=krx_config.get("timeout_seconds", 30),
             krx_analysis_days=krx_config.get("analysis_days", 20),
             sector_etfs=krx_config.get("sector_etfs", default_sector_etfs),
