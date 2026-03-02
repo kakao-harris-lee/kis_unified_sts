@@ -8,6 +8,7 @@
 Entry Conditions:
 1. code in daily_watchlist["strategies"]["momentum_breakout"]
 2. close > high_5 * (1 + breakout_buffer_pct / 100)
+   OR (optional) intrabar high breakout with close reclaim
 3. rvol >= rvol_threshold
 4. volume >= volume_ma * volume_threshold
 5. ATR/close >= round_trip_cost * min_atr_cost_ratio  (minimum edge filter)
@@ -34,6 +35,9 @@ class MomentumBreakoutConfig(ConfigMixin):
     # Breakout detection
     daily_high_period: int = 20
     breakout_buffer_pct: float = 0.1  # close must exceed high_5 by 0.1%
+    intrabar_breakout_enabled: bool = False
+    intrabar_reclaim_pct: float = 0.05  # allow close to dip below high_5 by this %
+    intrabar_min_rvol: float = 1.8
 
     # Volume confirmation
     rvol_threshold: float = 1.5
@@ -67,6 +71,8 @@ class MomentumBreakoutConfig(ConfigMixin):
     def validate(self) -> None:
         assert self.daily_high_period > 0, "daily_high_period must be positive"
         assert self.breakout_buffer_pct >= 0, "breakout_buffer_pct must be non-negative"
+        assert self.intrabar_reclaim_pct >= 0, "intrabar_reclaim_pct must be non-negative"
+        assert self.intrabar_min_rvol > 0, "intrabar_min_rvol must be positive"
         assert self.rvol_threshold > 0, "rvol_threshold must be positive"
         assert self.volume_threshold >= 0, "volume_threshold must be non-negative"
         assert 0 <= self.accumulation_score_min <= 100, "accumulation_score_min must be 0-100"
@@ -83,7 +89,7 @@ class MomentumBreakoutEntry(EntrySignalGenerator[MomentumBreakoutConfig]):
 
     Entry conditions (ALL must be true):
     1. Stock in daily_watchlist["strategies"]["momentum_breakout"] list
-    2. Price: close > high_5 * (1 + breakout_buffer_pct / 100)
+    2. Price: close breakout OR (optional) intrabar breakout + reclaim
     3. ATR edge: ATR / close >= round_trip_cost * min_atr_cost_ratio
     4. RVOL >= rvol_threshold
     5. Volume >= volume_ma * volume_threshold
@@ -192,24 +198,47 @@ class MomentumBreakoutEntry(EntrySignalGenerator[MomentumBreakoutConfig]):
             )
             return None
 
-        # --- Breakout trigger: close > high_5 * (1 + breakout_buffer_pct / 100) ---
+        # --- Breakout trigger: close breakout OR intrabar breakout + reclaim ---
         high_5 = _get("high_5", 0.0)
         if high_5 <= 0:
             logger.debug(f"{code}: high_5 not available or zero")
             return None
 
         breakout_threshold = high_5 * (1.0 + self.config.breakout_buffer_pct / 100.0)
-        if close <= breakout_threshold:
+        close_breakout = close > breakout_threshold
+
+        intrabar_breakout = False
+        intrabar_reclaim_floor = high_5
+        high_price = _get("high", close)
+        if (
+            not close_breakout
+            and self.config.intrabar_breakout_enabled
+            and high_price > breakout_threshold
+        ):
+            intrabar_reclaim_floor = high_5 * (
+                1.0 - self.config.intrabar_reclaim_pct / 100.0
+            )
+            if close >= intrabar_reclaim_floor:
+                intrabar_breakout = True
+
+        if not close_breakout and not intrabar_breakout:
             logger.debug(
-                f"{code}: No breakout — close={close:.2f} <= threshold={breakout_threshold:.2f}"
+                f"{code}: No breakout — close={close:.2f}, high={high_price:.2f}, "
+                f"threshold={breakout_threshold:.2f}"
             )
             return None
 
+        breakout_type = "close" if close_breakout else "intrabar_reclaim"
+
         # --- RVOL confirm ---
         rvol = _get("rvol", 0.0)
-        if rvol < self.config.rvol_threshold:
+        required_rvol = self.config.rvol_threshold
+        if intrabar_breakout:
+            required_rvol = max(required_rvol, self.config.intrabar_min_rvol)
+
+        if rvol < required_rvol:
             logger.debug(
-                f"{code}: RVOL {rvol:.2f} below threshold {self.config.rvol_threshold}"
+                f"{code}: RVOL {rvol:.2f} below threshold {required_rvol:.2f}"
             )
             return None
 
@@ -242,7 +271,7 @@ class MomentumBreakoutEntry(EntrySignalGenerator[MomentumBreakoutConfig]):
         logger.info(
             f"MomentumBreakout LONG signal: {code} ({name_str}) "
             f"close={close:.2f}, high_5={high_5:.2f}, "
-            f"breakout={breakout_pct:.2f}%, rvol={rvol:.2f}, "
+            f"breakout={breakout_pct:.2f}% ({breakout_type}), rvol={rvol:.2f}, "
             f"atr={atr:.2f}, confidence={confidence:.2%}"
         )
 
@@ -261,6 +290,10 @@ class MomentumBreakoutEntry(EntrySignalGenerator[MomentumBreakoutConfig]):
                 "rvol": rvol,
                 "high_5": high_5,
                 "breakout_pct": breakout_pct,
+                "breakout_type": breakout_type,
+                "breakout_threshold": breakout_threshold,
+                "intrabar_high": high_price,
+                "intrabar_reclaim_floor": intrabar_reclaim_floor,
             },
         )
 

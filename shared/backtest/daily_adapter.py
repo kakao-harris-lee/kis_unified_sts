@@ -21,6 +21,7 @@ import numpy as np
 import pandas as pd
 
 from shared.backtest.engine import ExitReason, SignalType
+from shared.backtest.metadata import load_backtest_metadata, resolve_symbol_metadata
 from shared.models.position import Position as ModelPosition, PositionSide
 from shared.strategy.base import EntryContext, ExitContext, TradingStrategy
 
@@ -38,6 +39,7 @@ class DailyBacktestAdapter:
         self.name = strategy.name
         self._strategy = strategy
         self._loop = asyncio.new_event_loop()
+        self._backtest_metadata = load_backtest_metadata(strategy_config)
 
         entry_params = (
             strategy_config.get("strategy", {})
@@ -83,6 +85,19 @@ class DailyBacktestAdapter:
         # Position state (synced from BacktestEngine)
         self._current_position: dict[str, Any] | None = None
         self._entry_bar_index: int | None = None
+
+    def _context_metadata(self, code: str, market_state: str = "UNKNOWN") -> dict[str, Any]:
+        """Build metadata payload aligned with live orchestrator context."""
+        return {
+            "market_state": market_state,
+            "is_backtest": True,
+            "symbol_metadata": resolve_symbol_metadata(self._backtest_metadata, code),
+            "daily_watchlist": self._backtest_metadata.get("daily_watchlist", {}),
+            "dip_candidates": self._backtest_metadata.get("dip_candidates", {}),
+            "accumulation_candidates": self._backtest_metadata.get(
+                "accumulation_candidates", {}
+            ),
+        }
 
     def prescan_data(self, data: pd.DataFrame) -> None:
         """Pre-compute all indicators for the entire daily DataFrame.
@@ -161,6 +176,9 @@ class DailyBacktestAdapter:
         timestamp = bar.get("datetime", datetime.now())
         if isinstance(timestamp, str):
             timestamp = datetime.fromisoformat(timestamp)
+        symbol_meta = resolve_symbol_metadata(self._backtest_metadata, code)
+        if symbol_meta:
+            bar.update(symbol_meta)
 
         # Get pre-computed indicators
         indicators: dict[str, Any] = {}
@@ -184,15 +202,24 @@ class DailyBacktestAdapter:
 
         # Build Position model
         pos = self._current_position
+        entry_time = pos.get("entry_time", timestamp)
+        if isinstance(entry_time, str):
+            entry_time = datetime.fromisoformat(entry_time)
+        entry_price = float(pos["entry_price"])
+        highest_price = float(pos.get("highest_price", entry_price) or entry_price)
+        lowest_price = float(pos.get("lowest_price", entry_price) or entry_price)
         position = ModelPosition(
             id=f"bt_{code}",
             code=code,
             name=code,
             strategy=self.name,
             side=PositionSide.LONG if pos["side"] == "BUY" else PositionSide.SHORT,
-            entry_price=pos["entry_price"],
+            entry_price=entry_price,
             quantity=pos["quantity"],
+            entry_time=entry_time,
             current_price=float(bar.get("close", 0) or 0),
+            highest_price=highest_price,
+            lowest_price=lowest_price,
         )
 
         context = ExitContext(
@@ -200,7 +227,7 @@ class DailyBacktestAdapter:
             market_data=bar,
             indicators=indicators,
             timestamp=timestamp,
-            metadata={"is_backtest": True},
+            metadata=self._context_metadata(code),
         )
 
         try:
@@ -227,6 +254,9 @@ class DailyBacktestAdapter:
         timestamp = bar.get("datetime", datetime.now())
         if isinstance(timestamp, str):
             timestamp = datetime.fromisoformat(timestamp)
+        symbol_meta = resolve_symbol_metadata(self._backtest_metadata, code)
+        if symbol_meta:
+            bar.update(symbol_meta)
 
         # Get pre-computed indicators for this bar
         indicators: dict[str, Any] = {}
@@ -256,7 +286,7 @@ class DailyBacktestAdapter:
             indicators=indicators,
             current_positions=[],
             timestamp=timestamp,
-            metadata={"is_backtest": True},
+            metadata=self._context_metadata(code),
         )
 
         try:

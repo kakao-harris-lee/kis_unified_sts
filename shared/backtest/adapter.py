@@ -23,6 +23,7 @@ import pandas as pd
 
 from services.trading.indicator_engine import StreamingIndicatorEngine
 from shared.backtest.engine import ExitReason, SignalType
+from shared.backtest.metadata import load_backtest_metadata, resolve_symbol_metadata
 from shared.indicators.contracts import IndicatorContract
 from shared.indicators.resolver import StreamingIndicatorResolver
 from shared.models.position import Position as ModelPosition, PositionSide
@@ -265,6 +266,7 @@ class BacktestStrategyAdapter:
     def __init__(self, strategy: TradingStrategy, strategy_config: dict):
         self.name = strategy.name
         self._strategy = strategy
+        self._backtest_metadata = load_backtest_metadata(strategy_config)
 
         entry_params = (
             strategy_config.get("strategy", {})
@@ -319,6 +321,52 @@ class BacktestStrategyAdapter:
         # Pre-computed RL features (populated by precompute_rl_features)
         self._precomputed_rl_features: list[dict[str, float]] | None = None
         self._bar_index: int = 0
+
+    def _context_metadata(
+        self,
+        market_state: str = "UNKNOWN",
+        code: str = "",
+        raw_code: Any = None,
+    ) -> dict[str, Any]:
+        """Build metadata payload aligned with live orchestrator context."""
+        symbol_meta = resolve_symbol_metadata(self._backtest_metadata, code)
+        accumulation_candidates = dict(
+            self._backtest_metadata.get("accumulation_candidates", {})
+        )
+        str_code = str(raw_code if raw_code is not None else code)
+        if str_code in accumulation_candidates and raw_code is not None:
+            try:
+                accumulation_candidates.setdefault(
+                    raw_code,
+                    accumulation_candidates[str_code],
+                )
+            except TypeError:
+                # Non-hashable raw key (unexpected) — keep string key path.
+                pass
+
+        metadata: dict[str, Any] = {
+            "market_state": market_state,
+            "is_backtest": True,
+            "symbol_metadata": symbol_meta,
+            "daily_watchlist": self._backtest_metadata.get("daily_watchlist", {}),
+            "dip_candidates": self._backtest_metadata.get("dip_candidates", {}),
+            "accumulation_candidates": accumulation_candidates,
+        }
+
+        # Preserve existing synthetic fallback for volume_accumulation if no candidates
+        # were provided in backtest metadata.
+        if (
+            self._strategy_name == "volume_accumulation"
+            and not metadata["accumulation_candidates"]
+        ):
+            source_code = raw_code if raw_code is not None else code
+            score = self._enricher.compute_accumulation_score(str(source_code))
+            metadata["accumulation_candidates"] = {
+                source_code: score,
+                str(source_code): score,
+            }
+
+        return metadata
 
     def prescan_data(self, data: pd.DataFrame) -> None:
         """Pre-scan backtest data so enricher has prev_day_volume from day 2."""
@@ -406,23 +454,36 @@ class BacktestStrategyAdapter:
 
         # Build Position model from engine's position dict
         pos = self._current_position
+        entry_time = pos.get("entry_time", timestamp)
+        if isinstance(entry_time, str):
+            entry_time = datetime.fromisoformat(entry_time)
+        entry_price = float(pos["entry_price"])
+        highest_price = float(pos.get("highest_price", entry_price) or entry_price)
+        lowest_price = float(pos.get("lowest_price", entry_price) or entry_price)
         position = ModelPosition(
             id=f"bt_{code}",
             code=code,
             name=code,
             strategy=self.name,
             side=PositionSide.LONG if pos["side"] == "BUY" else PositionSide.SHORT,
-            entry_price=pos["entry_price"],
+            entry_price=entry_price,
             quantity=pos["quantity"],
+            entry_time=entry_time,
             current_price=float(bar.get("close", 0) or 0),
+            highest_price=highest_price,
+            lowest_price=lowest_price,
         )
+
+        symbol_meta = resolve_symbol_metadata(self._backtest_metadata, code)
+        if symbol_meta:
+            bar.update(symbol_meta)
 
         context = ExitContext(
             position=position,
             market_data=bar,
             indicators=indicators,
             timestamp=timestamp,
-            metadata={"is_backtest": True},
+            metadata=self._context_metadata(code=code, raw_code=bar.get("code")),
         )
 
         try:
@@ -460,6 +521,11 @@ class BacktestStrategyAdapter:
         # Keep original per-bar volume for indicator engine.
         original_volume = bar.get("volume", 0)
         self._enricher.enrich(bar, timestamp)
+
+        symbol_meta = resolve_symbol_metadata(self._backtest_metadata, code)
+        if symbol_meta:
+            bar.update(symbol_meta)
+
         bar_for_engine = dict(bar)
         bar_for_engine["volume"] = original_volume  # restore per-bar volume
 
@@ -490,16 +556,11 @@ class BacktestStrategyAdapter:
         else:
             market_state = "UNKNOWN"
 
-        # Build metadata
-        metadata: dict[str, Any] = {"market_state": market_state, "is_backtest": True}
-
-        # Inject accumulation_candidates for volume_accumulation strategy
-        if self._strategy_name == "volume_accumulation":
-            # Use the raw code value from bar (may be int or str) as dict key,
-            # since the strategy reads code = data.get("code") with the same type.
-            raw_code = bar.get("code", code)
-            score = self._enricher.compute_accumulation_score(str(raw_code))
-            metadata["accumulation_candidates"] = {raw_code: score}
+        metadata = self._context_metadata(
+            market_state=market_state,
+            code=code,
+            raw_code=bar.get("code"),
+        )
 
         # Build position list for RL action masks + observation
         current_positions = []

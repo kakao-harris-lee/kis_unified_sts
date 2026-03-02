@@ -34,6 +34,7 @@ def entry(config):
 def _make_context(
     code="005930",
     close=50000.0,
+    high=None,
     high_5=49900.0,
     rvol=2.0,
     volume=150000.0,
@@ -51,12 +52,15 @@ def _make_context(
     metadata = {"daily_watchlist": watchlist}
     if accumulation_candidates is not None:
         metadata["accumulation_candidates"] = accumulation_candidates
+    if high is None:
+        high = close
 
     return EntryContext(
         market_data={
             "code": code,
             "name": "삼성전자",
             "close": close,
+            "high": high,
             "high_5": high_5,
             "rvol": rvol,
             "volume": volume,
@@ -112,6 +116,7 @@ async def test_rejects_no_breakout(entry):
     """Returns None when close <= breakout threshold."""
     ctx = _make_context(
         close=49900.0,   # exactly at high_5, no breakout
+        high=49900.0,
         high_5=49900.0,
     )
     signal = await entry.generate(ctx)
@@ -300,6 +305,97 @@ async def test_low_accumulation_score_no_boost(entry):
 
 
 # ---------------------------------------------------------------------------
+# Intrabar breakout path
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_intrabar_breakout_with_reclaim_generates_signal():
+    """Signal generated when high breaks out and close reclaims near high_5."""
+    cfg = MomentumBreakoutConfig(
+        breakout_buffer_pct=0.1,
+        intrabar_breakout_enabled=True,
+        intrabar_reclaim_pct=0.05,
+        intrabar_min_rvol=1.8,
+        rvol_threshold=1.5,
+        volume_threshold=1.0,
+        min_atr_cost_ratio=2.0,
+        round_trip_cost=0.005,
+        skip_market_open_minutes=30,
+        skip_market_close_minutes=15,
+        signal_cooldown_seconds=600,
+    )
+    entry = MomentumBreakoutEntry(cfg)
+    # threshold=49949.9, close below threshold, high above threshold.
+    # reclaim floor=49900*(1-0.0005)=49875.05; close=49920 passes.
+    ctx = _make_context(
+        close=49920.0,
+        high=50020.0,
+        high_5=49900.0,
+        rvol=2.0,
+    )
+    signal = await entry.generate(ctx)
+    assert signal is not None
+    assert signal.metadata["breakout_type"] == "intrabar_reclaim"
+
+
+@pytest.mark.asyncio
+async def test_intrabar_breakout_rejects_without_reclaim():
+    """No signal when intrabar breakout occurs but close fails reclaim floor."""
+    cfg = MomentumBreakoutConfig(
+        breakout_buffer_pct=0.1,
+        intrabar_breakout_enabled=True,
+        intrabar_reclaim_pct=0.05,
+        intrabar_min_rvol=1.8,
+        rvol_threshold=1.5,
+        volume_threshold=1.0,
+        min_atr_cost_ratio=2.0,
+        round_trip_cost=0.005,
+        skip_market_open_minutes=30,
+        skip_market_close_minutes=15,
+        signal_cooldown_seconds=600,
+    )
+    entry = MomentumBreakoutEntry(cfg)
+    # reclaim floor=49875.05; close=49850 fails.
+    ctx = _make_context(
+        close=49850.0,
+        high=50020.0,
+        high_5=49900.0,
+        rvol=2.0,
+    )
+    signal = await entry.generate(ctx)
+    assert signal is None
+
+
+@pytest.mark.asyncio
+async def test_intrabar_breakout_respects_intrabar_rvol_threshold():
+    """Intrabar breakout requires intrabar_min_rvol when enabled."""
+    cfg = MomentumBreakoutConfig(
+        breakout_buffer_pct=0.1,
+        intrabar_breakout_enabled=True,
+        intrabar_reclaim_pct=0.05,
+        intrabar_min_rvol=2.2,
+        rvol_threshold=1.5,
+        volume_threshold=1.0,
+        min_atr_cost_ratio=2.0,
+        round_trip_cost=0.005,
+        skip_market_open_minutes=30,
+        skip_market_close_minutes=15,
+        signal_cooldown_seconds=600,
+    )
+    entry = MomentumBreakoutEntry(cfg)
+    # rvol passes base (1.5) but fails intrabar_min_rvol (2.2).
+    ctx = _make_context(
+        close=49920.0,
+        high=50020.0,
+        high_5=49900.0,
+        rvol=2.0,
+    )
+    signal = await entry.generate(ctx)
+    assert signal is None
+
+
+# ---------------------------------------------------------------------------
 # Config defaults and metadata
 # ---------------------------------------------------------------------------
 
@@ -309,6 +405,9 @@ def test_config_defaults():
     cfg = MomentumBreakoutConfig()
     assert cfg.daily_high_period == 20
     assert cfg.breakout_buffer_pct == 0.1
+    assert cfg.intrabar_breakout_enabled is False
+    assert cfg.intrabar_reclaim_pct == 0.05
+    assert cfg.intrabar_min_rvol == 1.8
     assert cfg.rvol_threshold == 1.5
     assert cfg.accumulation_score_min == 60
     assert cfg.volume_threshold == 1.0

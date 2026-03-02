@@ -45,14 +45,22 @@ class ExitReason(Enum):
 
     SIGNAL = "signal"
     STOP_LOSS = "stop_loss"
+    BREAKEVEN_STOP = "breakeven_stop"
     TAKE_PROFIT = "take_profit"
     TRAILING_STOP = "trailing_stop"
     TIME_LIMIT = "time_limit"
+    TIME_CUT = "time_cut"
     FORCE_CLOSE = "force_close"
     END_OF_DATA = "end_of_data"
+    BEAR_EXIT = "bear_exit"
+    INDICATOR_EXIT = "indicator_exit"
+    MOMENTUM_DECAY = "momentum_decay"
+    VWAP_BREAKDOWN = "vwap_breakdown"
+    TARGET_REACHED = "target_reached"
     RL_EXIT = "rl_exit"
     EOD_CLOSE = "eod_close"
     STRATEGY_EXIT = "strategy_exit"
+    MANUAL_CLOSE = "manual_close"
 
 
 class StrategyProtocol(Protocol):
@@ -122,6 +130,7 @@ class BacktestEngine:
         """상태 초기화"""
         self.capital = self.config.initial_capital
         self.positions: dict[str, Position] = {}
+        self._last_price_by_code: dict[str, float] = {}
         self.trades: list[BacktestTrade] = []
         self.equity_curve: list[tuple[datetime, float]] = []
         self.exit_reasons: dict[str, int] = {}
@@ -148,8 +157,9 @@ class BacktestEngine:
 
         self._reset()
 
-        # 데이터 정렬
-        data = data.sort_values("datetime").reset_index(drop=True)
+        # 데이터 정렬 (멀티심볼 백테스트는 datetime, code 순으로 고정)
+        sort_cols = ["datetime"] + (["code"] if "code" in data.columns else [])
+        data = data.sort_values(sort_cols).reset_index(drop=True)
 
         start_date = data["datetime"].iloc[0]
         end_date = data["datetime"].iloc[-1]
@@ -166,7 +176,7 @@ class BacktestEngine:
             self.strategy.prescan_data(data)
 
         # 메인 루프
-        for idx, row in data.iterrows():
+        for _, row in data.iterrows():
             bar = row.to_dict()
             self._process_bar(bar)
 
@@ -174,9 +184,10 @@ class BacktestEngine:
         if self.positions:
             last_bar = data.iloc[-1].to_dict()
             for code in list(self.positions.keys()):
+                last_price = self._last_price_by_code.get(code, float(last_bar["close"]))
                 self._close_position(
                     code=code,
-                    exit_price=last_bar["close"],
+                    exit_price=last_price,
                     exit_time=last_bar["datetime"],
                     reason=ExitReason.END_OF_DATA,
                 )
@@ -192,8 +203,9 @@ class BacktestEngine:
         """바 데이터 처리"""
         timestamp = bar["datetime"]
         current_price = bar["close"]
-        code = bar.get("code", "DEFAULT")
+        code = str(bar.get("code", "DEFAULT") or "DEFAULT")
         name = bar.get("name", code)
+        self._last_price_by_code[code] = float(current_price)
 
         # 일자 변경 체크
         if self._last_date and timestamp.date() != self._last_date.date():
@@ -201,7 +213,10 @@ class BacktestEngine:
             if self.config.risk.close_on_day_change and self.positions:
                 for pos_code in list(self.positions.keys()):
                     self._close_position(
-                        pos_code, current_price, timestamp, ExitReason.FORCE_CLOSE
+                        pos_code,
+                        self._last_price_by_code.get(pos_code, float(current_price)),
+                        timestamp,
+                        ExitReason.FORCE_CLOSE,
                     )
             if self._current_day_pnl != 0:
                 self.daily_returns.append(self._current_day_pnl)
@@ -211,54 +226,58 @@ class BacktestEngine:
         self._last_date = timestamp
 
         # 자산 곡선 기록
-        total_equity = self._calculate_total_equity(current_price)
+        total_equity = self._calculate_total_equity()
         self.equity_curve.append((timestamp, total_equity))
 
-        # 1. 기존 포지션: 메타데이터 업데이트 + 전략 청산 + 리스크 안전장치
-        for pos_code in list(self.positions.keys()):
-            pos = self.positions[pos_code]
-            pos.bars_held += 1
+        # 1. 현재 심볼 기존 포지션: 메타데이터 업데이트 + 전략 청산 + 리스크 안전장치
+        current_pos = self.positions.get(code)
+        if current_pos:
+            current_pos.bars_held += 1
 
-            # 최고/최저가 업데이트
-            if current_price > pos.highest_price:
-                pos.highest_price = current_price
-            if current_price < pos.lowest_price or pos.lowest_price == 0:
-                pos.lowest_price = current_price
+            if current_price > current_pos.highest_price:
+                current_pos.highest_price = current_price
+            if current_price < current_pos.lowest_price or current_pos.lowest_price == 0:
+                current_pos.lowest_price = current_price
 
             # 1a. Exit strategy check FIRST (RL exit, eod_close, etc.)
             if hasattr(self.strategy, "check_exit"):
-                if pos.side == "BUY":
-                    unrealized = (current_price - pos.entry_price) * pos.quantity
+                if current_pos.side == "BUY":
+                    unrealized = (current_price - current_pos.entry_price) * current_pos.quantity
                 else:
-                    unrealized = (pos.entry_price - current_price) * pos.quantity
+                    unrealized = (current_pos.entry_price - current_price) * current_pos.quantity
                 self.strategy.set_position(
                     {
-                        "side": pos.side,
-                        "entry_price": pos.entry_price,
-                        "quantity": pos.quantity,
+                        "code": current_pos.code,
+                        "side": current_pos.side,
+                        "entry_price": current_pos.entry_price,
+                        "quantity": current_pos.quantity,
                         "unrealized_pnl": unrealized,
+                        "highest_price": current_pos.highest_price,
+                        "lowest_price": current_pos.lowest_price,
+                        "entry_time": current_pos.entry_time,
                     }
                 )
                 should_exit, exit_reason = self.strategy.check_exit(bar)
                 if should_exit and exit_reason:
                     self._close_position(
-                        code=pos_code,
+                        code=code,
                         exit_price=current_price,
                         exit_time=timestamp,
                         reason=exit_reason,
                     )
-                    continue
+                    current_pos = None
 
             # 1b. Engine risk check (safety net: force_close, trailing stop, etc.)
-            exit_reason = self._check_risk(pos, current_price, timestamp)
-            if exit_reason:
-                self._close_position(
-                    code=pos_code,
-                    exit_price=current_price,
-                    exit_time=timestamp,
-                    reason=exit_reason,
-                )
-                continue
+            if current_pos:
+                exit_reason = self._check_risk(current_pos, current_price, timestamp)
+                if exit_reason:
+                    self._close_position(
+                        code=code,
+                        exit_price=current_price,
+                        exit_time=timestamp,
+                        reason=exit_reason,
+                    )
+                    current_pos = None
 
         # 2. 일별 거래 한도 체크
         risk = self.config.risk
@@ -267,18 +286,21 @@ class BacktestEngine:
 
         # 3. Sync position state to adapter for entry signal generation
         if hasattr(self.strategy, "set_position"):
-            if self.positions:
-                pos = next(iter(self.positions.values()))
-                if pos.side == "BUY":
-                    unrealized_pnl = (current_price - pos.entry_price) * pos.quantity
+            if current_pos:
+                if current_pos.side == "BUY":
+                    unrealized_pnl = (current_price - current_pos.entry_price) * current_pos.quantity
                 else:
-                    unrealized_pnl = (pos.entry_price - current_price) * pos.quantity
+                    unrealized_pnl = (current_pos.entry_price - current_price) * current_pos.quantity
                 self.strategy.set_position(
                     {
-                        "side": pos.side,
-                        "entry_price": pos.entry_price,
-                        "quantity": pos.quantity,
+                        "code": current_pos.code,
+                        "side": current_pos.side,
+                        "entry_price": current_pos.entry_price,
+                        "quantity": current_pos.quantity,
                         "unrealized_pnl": unrealized_pnl,
+                        "highest_price": current_pos.highest_price,
+                        "lowest_price": current_pos.lowest_price,
+                        "entry_time": current_pos.entry_time,
                     }
                 )
             else:
@@ -288,8 +310,8 @@ class BacktestEngine:
         signal = self.strategy.on_bar(bar)
 
         # 4. 시그널 처리
-        if not self.positions:
-            # 포지션 없음 → 진입
+        if code not in self.positions:
+            # 현재 심볼 포지션 없음 → 진입
             if signal == SignalType.BUY:
                 self._open_position(
                     code=code,
@@ -309,18 +331,18 @@ class BacktestEngine:
                     bar=bar,
                 )
         else:
-            # 포지션 있음 → 반대 시그널 시 청산
-            for pos_code, pos in list(self.positions.items()):
-                should_close = (pos.side == "BUY" and signal == SignalType.SELL) or (
-                    pos.side == "SELL" and signal == SignalType.BUY
+            # 현재 심볼 포지션 있음 → 반대 시그널 시 청산
+            pos = self.positions[code]
+            should_close = (pos.side == "BUY" and signal == SignalType.SELL) or (
+                pos.side == "SELL" and signal == SignalType.BUY
+            )
+            if should_close:
+                self._close_position(
+                    code=code,
+                    exit_price=current_price,
+                    exit_time=timestamp,
+                    reason=ExitReason.SIGNAL,
                 )
-                if should_close:
-                    self._close_position(
-                        code=pos_code,
-                        exit_price=current_price,
-                        exit_time=timestamp,
-                        reason=ExitReason.SIGNAL,
-                    )
 
     def _check_risk(
         self, pos: Position, current_price: float, timestamp: datetime
@@ -404,8 +426,11 @@ class BacktestEngine:
             # 마진 기반이므로 capital 차감 없이 PnL만 추적
             quantity = 1
         else:
-            # 주식: 자본 대비 % 기반
-            position_value = self.capital * (self.config.position_size_pct / 100)
+            # 주식: 고정 금액(order_amount_per_stock) 우선, 없으면 자본 대비 % 사용
+            if self.config.order_amount_per_stock and self.config.order_amount_per_stock > 0:
+                position_value = min(self.capital, float(self.config.order_amount_per_stock))
+            else:
+                position_value = self.capital * (self.config.position_size_pct / 100)
             effective_price = price * (1 + cost.commission_rate + cost.slippage_rate)
             quantity = int(position_value / effective_price)
 
@@ -537,24 +562,25 @@ class BacktestEngine:
                 f"@ {exit_price:,.0f} PnL: {pnl:+,.0f} ({pnl_pct:+.2f}%)"
             )
 
-    def _calculate_total_equity(self, current_price: float) -> float:
+    def _calculate_total_equity(self) -> float:
         """총 자산 계산"""
         equity = self.capital
         pv = self.config.point_value  # 주식=1, 선물=250_000
 
         for pos in self.positions.values():
+            mark_price = self._last_price_by_code.get(pos.code, pos.entry_price)
             if pv > 1:
                 # 선물: 미실현 PnL만 추가 (capital에 notional 미포함)
                 if pos.side == "BUY":
-                    equity += (current_price - pos.entry_price) * pos.quantity * pv
+                    equity += (mark_price - pos.entry_price) * pos.quantity * pv
                 else:
-                    equity += (pos.entry_price - current_price) * pos.quantity * pv
+                    equity += (pos.entry_price - mark_price) * pos.quantity * pv
             else:
                 # 주식: 보유 주식 시가 반영
                 if pos.side == "BUY":
-                    equity += current_price * pos.quantity
+                    equity += mark_price * pos.quantity
                 else:
-                    unrealized_pnl = (pos.entry_price - current_price) * pos.quantity
+                    unrealized_pnl = (pos.entry_price - mark_price) * pos.quantity
                     equity += pos.entry_price * pos.quantity + unrealized_pnl
 
         return equity
