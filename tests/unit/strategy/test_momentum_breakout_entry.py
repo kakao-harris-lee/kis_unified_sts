@@ -507,3 +507,125 @@ def test_trend_mode_config_from_dict():
     assert cfg.trend_rvol_threshold == 1.2
     assert cfg.trend_exit_max_hold_days == 20
     assert cfg.trend_ema_pullback_enabled is True
+
+
+# ---------------------------------------------------------------------------
+# Trend mode entry logic
+# ---------------------------------------------------------------------------
+
+def _make_trend_context(
+    code="005930",
+    close=50000.0,
+    high=None,
+    high_5=49900.0,
+    rvol=1.2,
+    volume=150000.0,
+    volume_ma=100000.0,
+    atr=600.0,
+    rsi=50.0,
+    ema_5=50100.0,
+    ema_20=49800.0,
+    ema_60=49500.0,
+    ema_aligned=True,
+    regime="BULL",
+    hour=10,
+    minute=30,
+    watchlist_codes=("005930",),
+) -> EntryContext:
+    now = datetime(2026, 2, 26, hour, minute, tzinfo=KST)
+    watchlist = {"strategies": {"momentum_breakout": list(watchlist_codes)}}
+    if high is None:
+        high = close
+    return EntryContext(
+        market_data={"code": code, "name": "삼성전자", "close": close, "high": high,
+                      "high_5": high_5, "rvol": rvol, "volume": volume,
+                      "volume_ma": volume_ma, "atr": atr},
+        indicators={"rsi": rsi, "ema_5": ema_5, "ema_20": ema_20,
+                     "ema_60": ema_60, "ema_aligned": ema_aligned},
+        timestamp=now,
+        metadata={"daily_watchlist": watchlist, "regime": regime},
+    )
+
+
+@pytest.fixture
+def trend_entry():
+    cfg = MomentumBreakoutConfig(
+        breakout_buffer_pct=0.1, rvol_threshold=1.5, volume_threshold=1.0,
+        min_atr_cost_ratio=0.01, round_trip_cost=0.005,
+        skip_market_open_minutes=30, skip_market_close_minutes=15,
+        signal_cooldown_seconds=120, confidence_base=0.65,
+        trend_mode_enabled=True, trend_rvol_threshold=1.0,
+        trend_breakout_buffer_pct=0.0, trend_signal_cooldown_seconds=60,
+        trend_ema_pullback_enabled=True, trend_ema_touch_buffer_atr=1.0,
+        trend_rsi_min=40.0,
+    )
+    return MomentumBreakoutEntry(cfg)
+
+
+@pytest.mark.asyncio
+async def test_trend_mode_ema_pullback_generates_signal(trend_entry):
+    """EMA pullback generates signal in BULL regime without breakout."""
+    ctx = _make_trend_context(
+        close=49950.0, high_5=50500.0, rvol=1.2, atr=600.0, rsi=50.0,
+        ema_5=49900.0, ema_20=49600.0, ema_60=49200.0,
+        ema_aligned=True, regime="BULL",
+    )
+    signal = await trend_entry.generate(ctx)
+    assert signal is not None
+    assert signal.metadata["trend_mode"] is True
+    assert signal.metadata["trigger"] == "ema_pullback"
+
+
+@pytest.mark.asyncio
+async def test_trend_mode_relaxed_breakout(trend_entry):
+    """Breakout with lower RVOL (1.2) succeeds in BULL regime."""
+    ctx = _make_trend_context(
+        close=50000.0, high_5=49900.0, rvol=1.2, regime="BULL",
+    )
+    signal = await trend_entry.generate(ctx)
+    assert signal is not None
+    assert signal.metadata["trend_mode"] is True
+
+
+@pytest.mark.asyncio
+async def test_trend_mode_inactive_in_bear(trend_entry):
+    """Trend mode does not activate in BEAR regime."""
+    ctx = _make_trend_context(close=50000.0, high_5=49900.0, rvol=1.2, regime="BEAR")
+    signal = await trend_entry.generate(ctx)
+    assert signal is None
+
+
+@pytest.mark.asyncio
+async def test_trend_mode_ema_pullback_requires_alignment(trend_entry):
+    """EMA pullback requires ema_aligned=True."""
+    ctx = _make_trend_context(
+        close=49950.0, high_5=50500.0, rvol=1.2, atr=600.0, rsi=50.0,
+        ema_5=49900.0, ema_20=49600.0, ema_60=49200.0,
+        ema_aligned=False, regime="BULL",
+    )
+    signal = await trend_entry.generate(ctx)
+    assert signal is None
+
+
+@pytest.mark.asyncio
+async def test_trend_mode_ema_pullback_requires_rsi(trend_entry):
+    """EMA pullback requires RSI > trend_rsi_min (40)."""
+    ctx = _make_trend_context(
+        close=49950.0, high_5=50500.0, rvol=1.2, atr=600.0, rsi=35.0,
+        ema_5=49900.0, ema_20=49600.0, ema_60=49200.0,
+        ema_aligned=True, regime="BULL",
+    )
+    signal = await trend_entry.generate(ctx)
+    assert signal is None
+
+
+@pytest.mark.asyncio
+async def test_trend_mode_exit_overrides_in_metadata(trend_entry):
+    """Trend mode signal includes exit parameter overrides."""
+    ctx = _make_trend_context(close=50000.0, high_5=49900.0, rvol=1.2, regime="BULL")
+    signal = await trend_entry.generate(ctx)
+    assert signal is not None
+    assert signal.metadata["exit_stop_atr_multiplier"] == 2.5
+    assert signal.metadata["exit_trail_activation_atr"] == 1.5
+    assert signal.metadata["exit_trail_atr_multiplier"] == 2.5
+    assert signal.metadata["exit_max_hold_days"] == 15
