@@ -110,6 +110,18 @@ def _run_tier_backtest(
     strategy_config = ConfigLoader.load_strategy(asset, strategy)
     bt_override = strategy_config.get("strategy", {}).get("backtest", {})
     bt_capital = bt_override.get("initial_capital", capital)
+    position_params = (
+        strategy_config.get("strategy", {})
+        .get("position", {})
+        .get("params", {})
+    )
+    bt_position_size_pct = float(bt_override.get("position_size_pct", 10.0) or 10.0)
+    max_positions = int(position_params.get("max_positions", 5) or 5)
+    order_amount_per_stock = float(
+        position_params.get("order_amount_per_stock", 0) or 0
+    )
+    if order_amount_per_stock <= 0:
+        order_amount_per_stock = None
 
     start_d = start.date() if start else None
     end_d = end.date() if end else None
@@ -135,7 +147,12 @@ def _run_tier_backtest(
             })
             continue
 
-        config = BacktestConfig.stock(initial_capital=bt_capital)
+        config = BacktestConfig.stock(
+            initial_capital=bt_capital,
+            position_size_pct=bt_position_size_pct,
+            order_amount_per_stock=order_amount_per_stock,
+            max_positions=max_positions,
+        )
         if "risk" in bt_override:
             config.risk = RiskConfig.from_dict(bt_override["risk"])
 
@@ -429,9 +446,26 @@ def backtest_run(
     # 백테스트 설정
     bt_override = strategy_config.get("strategy", {}).get("backtest", {})
     bt_capital = bt_override.get("initial_capital", capital)
+    position_params = (
+        strategy_config.get("strategy", {})
+        .get("position", {})
+        .get("params", {})
+    )
+    bt_position_size_pct = float(bt_override.get("position_size_pct", 10.0) or 10.0)
+    max_positions = int(position_params.get("max_positions", 5) or 5)
+    order_amount_per_stock = float(
+        position_params.get("order_amount_per_stock", 0) or 0
+    )
+    if order_amount_per_stock <= 0:
+        order_amount_per_stock = None
 
     if asset == "stock":
-        config = BacktestConfig.stock(initial_capital=bt_capital)
+        config = BacktestConfig.stock(
+            initial_capital=bt_capital,
+            position_size_pct=bt_position_size_pct,
+            order_amount_per_stock=order_amount_per_stock,
+            max_positions=max_positions,
+        )
     else:
         config = BacktestConfig.futures(
             initial_capital=bt_capital,

@@ -612,7 +612,8 @@ class TradingOrchestrator:
         # Publish initial status + start Prometheus
         if self._state_publisher:
             self._state_publisher.publish_status(self.get_status())
-        prom_port = 9092 if self.config.asset_class == "futures" else 9091
+        default_prom_port = 9092 if self.config.asset_class == "futures" else 9091
+        prom_port = int(os.getenv("PROMETHEUS_PORT", str(default_prom_port)))
         self._metrics.start_prometheus_server(port=prom_port)
 
         await self._notify(

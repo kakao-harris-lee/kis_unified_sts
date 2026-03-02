@@ -1,7 +1,7 @@
 # Opening Volume Surge Strategy (Stocks — 중소형주 타겟)
 #
 # Use case:
-#   - 장 시작 후 60분 내 거래량 급증 + 가격 강세 종목 진입
+#   - 장중 거래량 급증 + 가격 강세 종목 진입
 #   - 대형주는 30분 내 전일 거래량 100% 달성 불가 (통상 15~30%)
 #   - 중소형주: 유동성 적어 상대적 급증 빈번 → volume_multiplier 0.3 (30%)
 #
@@ -13,19 +13,32 @@ strategy:
   name: opening_volume_surge
   asset_class: stock
   enabled: false  # Disabled — no daily context, cost-disadvantaged (2026-02-26 redesign)
-  description: "장 초반 거래량 폭증 종목 단기 진입 (중소형주 타겟)"
+  description: "장중 거래량 급증 + 가격 강세 종목 단기 진입 (중소형주 타겟)"
 
   entry:
     type: opening_volume_surge
     params:
-      only_first_minutes: 60          # 30 → 60 (관찰 시간 확장)
+      only_first_minutes: 0           # 0 = 시간 상한 비활성 (장중 전체 허용)
       market_open_hour: 9
       market_open_minute: 0
       volume_multiplier: 0.3          # 1.0 → 0.3 (60분에 전일의 30%)
+      volume_gate_mode: "either"      # cumulative 또는 rvol 중 하나 충족
+      min_rvol: 1.8                   # 단기 거래량 급증(RVOL) 트리거
       min_change_pct: 0.5             # 1.0 → 0.5 (중소형주 변동폭 반영)
       require_above_open: true
       min_range_position: 0.6         # 0.7 → 0.6 (약간 완화)
       min_day_range_pct: 0.5
+      min_return_1m_pct: 0.0          # 0이면 비활성
+      rvol_spike_threshold: 0.0       # 0이면 비활성
+      spike_lookback_minutes: 0       # 0이면 비활성
+      min_spike_hits: 0               # 0이면 비활성
+      entry_cutoff_hour: -1           # -1이면 장중 상한 비활성
+      entry_cutoff_minute: 0
+      min_signal_score: -1.0          # 음수면 score 필터 비활성
+      score_weight_vol_ratio: 0.45
+      score_weight_rvol: 0.35
+      score_weight_change_pct: 0.15
+      score_weight_range_pos: 0.05
       change_input_unit: "ratio"
       change_auto_threshold_pct: 1.0
       stop_loss_pct: 5.0

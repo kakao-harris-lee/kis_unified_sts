@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time as _time
 from datetime import datetime
 from typing import Any
@@ -38,7 +39,12 @@ STATUS_TTL_SECONDS = 86400  # 24h — auto-expire if orchestrator dies
 
 
 def _key(template: str, asset: str) -> str:
-    return template.format(asset=asset)
+    base = template.format(asset=asset)
+    suffix = os.getenv("TRADING_STATE_KEY_SUFFIX", "").strip()
+    if not suffix:
+        return base
+    safe_suffix = "".join(ch for ch in suffix if ch.isalnum() or ch in ("_", "-", ":"))
+    return f"{base}:{safe_suffix}" if safe_suffix else base
 
 
 def _get_redis() -> redis.Redis:

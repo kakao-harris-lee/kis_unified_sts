@@ -97,6 +97,7 @@ class BacktestConfig:
     Attributes:
         initial_capital: 초기 자본
         position_size_pct: 포지션 크기 (자본 대비 %)
+        order_amount_per_stock: 종목당 고정 주문 금액 (주식 전용, 우선 적용)
         max_positions: 최대 동시 포지션 수
         point_value: 1포인트 가치 (선물용)
         cost: 비용 설정
@@ -106,6 +107,7 @@ class BacktestConfig:
 
     initial_capital: float = 10_000_000
     position_size_pct: float = 10.0  # 자본의 10%
+    order_amount_per_stock: float | None = None
     max_positions: int = 5
     point_value: float = 1.0  # 주식은 1.0, 선물은 50000 등
 
@@ -119,12 +121,14 @@ class BacktestConfig:
         cls,
         initial_capital: float = 10_000_000,
         position_size_pct: float = 10.0,
+        order_amount_per_stock: float | None = None,
         max_positions: int = 5,
     ) -> BacktestConfig:
         """주식용 설정"""
         return cls(
             initial_capital=initial_capital,
             position_size_pct=position_size_pct,
+            order_amount_per_stock=order_amount_per_stock,
             max_positions=max_positions,
             point_value=1.0,
             cost=CostConfig.stock(),
@@ -151,6 +155,7 @@ class BacktestConfig:
         return cls(
             initial_capital=data.get("initial_capital", 10_000_000),
             position_size_pct=data.get("position_size_pct", 10.0),
+            order_amount_per_stock=data.get("order_amount_per_stock"),
             max_positions=data.get("max_positions", 5),
             point_value=data.get("point_value", 1.0),
             cost=CostConfig.from_dict(data.get("cost", {})),
@@ -163,6 +168,7 @@ class BacktestConfig:
         return {
             "initial_capital": self.initial_capital,
             "position_size_pct": self.position_size_pct,
+            "order_amount_per_stock": self.order_amount_per_stock or 0.0,
             "max_positions": self.max_positions,
             "point_value": self.point_value,
             "commission_rate": self.cost.commission_rate,

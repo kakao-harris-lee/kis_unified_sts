@@ -72,16 +72,19 @@ async def main():
 
     mode = (os.getenv("TRADING_MODE", "PAPER") or "PAPER").upper()
     paper_trading = mode == "PAPER"
+    strategy = os.getenv("OVS_STRATEGY", "opening_volume_surge_score_1p8").strip()
+    if not strategy:
+        strategy = "opening_volume_surge_score_1p8"
 
     capital = float(os.getenv("TRADING_CAPITAL", "10000000"))
 
     logger.info(
-        f"Starting opening volume surge trading: mode={mode} paper={paper_trading} "
-        f"symbols={len(symbols)} capital={capital:,.0f}"
+        f"Starting opening volume surge trading: strategy={strategy} "
+        f"mode={mode} paper={paper_trading} symbols={len(symbols)} capital={capital:,.0f}"
     )
 
     await run_stock_trading(
-        strategy="opening_volume_surge",
+        strategy=strategy,
         symbols=symbols,
         capital=capital,
         paper_trading=paper_trading,
@@ -93,4 +96,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-

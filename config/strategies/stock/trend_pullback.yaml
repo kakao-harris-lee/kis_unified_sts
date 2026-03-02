@@ -40,3 +40,13 @@ strategy:
       std_dev: 2.0
     momentum:
       williams_r_period: 14
+  backtest:
+    # Keep engine risk as safety net only; let atr_dynamic exit drive liquidation.
+    risk:
+      stop_loss_pct: 99.0
+      take_profit_pct: 999.0
+      trailing_stop_enabled: false
+      max_hold_bars: 0
+      force_close_time: ""
+      close_on_day_change: false
+      max_daily_trades: 0

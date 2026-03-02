@@ -1,0 +1,64 @@
+# Opening Volume Surge (Paper A/B Profile B)
+#
+# 목표:
+#   - 진입 수/품질 균형을 맞춘 combo_balanced 프로필
+#   - 장후반 신규진입 제한 + 짧은 모멘텀/스파이크 지속성 확인
+
+strategy:
+  name: opening_volume_surge_combo_balanced
+  asset_class: stock
+  enabled: false
+  description: "OVS profile B: balanced filter (score+spike+cutoff)"
+
+  entry:
+    type: opening_volume_surge
+    params:
+      only_first_minutes: 0
+      market_open_hour: 9
+      market_open_minute: 0
+      volume_multiplier: 0.3
+      volume_gate_mode: "either"
+      min_rvol: 1.8
+      min_change_pct: 0.5
+      require_above_open: true
+      min_range_position: 0.65
+      min_day_range_pct: 0.5
+      min_return_1m_pct: 0.1
+      rvol_spike_threshold: 2.0
+      spike_lookback_minutes: 5
+      min_spike_hits: 4
+      entry_cutoff_hour: 15
+      entry_cutoff_minute: 0
+      min_signal_score: 1.5
+      score_weight_vol_ratio: 0.45
+      score_weight_rvol: 0.35
+      score_weight_change_pct: 0.15
+      score_weight_range_pos: 0.05
+      change_input_unit: "ratio"
+      change_auto_threshold_pct: 1.0
+      stop_loss_pct: 5.0
+
+  exit:
+    type: three_stage
+    params:
+      stop_loss_pct: -0.05
+      breakeven_threshold_pct: 0.005
+      maximize_threshold_pct: 0.01
+      trailing_stop_pct: -0.015
+      overshoot_threshold_pct: 0.05
+      overshoot_trailing_pct: -0.01
+      time_cut_minutes: 60
+      eod_close_hour: 15
+      eod_close_minute: 15
+      fee_rate: 0.003
+      enable_bear_exit: true
+
+  position:
+    type: risk_based
+    params:
+      max_position_pct: 10.0
+      max_positions: 5
+      risk_per_trade_pct: 1.0
+      stop_loss_pct: 5.0
+      min_quantity: 1
+      max_quantity: 100000
