@@ -630,93 +630,48 @@ class MKStockNewsCollector(DataCollector):
         return data
 
     def _get_market_news(self) -> List[Dict]:
-        """시장 뉴스"""
+        """시장 뉴스 — ul.news_list > li.news_node > a 구조 (2026-03~)"""
         news_list = []
         try:
-            url = f"{self.BASE_URL}/news/"
-            response = self.session.get(url, timeout=10)
+            url = f"{self.BASE_URL}/news"
+            response = self.session.get(url, timeout=10, allow_redirects=True)
             if response.status_code == 200:
                 soup = BeautifulSoup(response.text, 'html.parser')
-                articles = soup.find_all('div', class_='news_item')[:10]
-                for article in articles:
-                    title_elem = article.find('a')
-                    if title_elem:
-                        news_list.append({
-                            "title": title_elem.get_text(strip=True),
-                            "link": title_elem.get('href', ''),
-                            "source": "매일경제"
-                        })
+                for li in soup.select("ul.news_list li.news_node")[:10]:
+                    a = li.find("a", href=True)
+                    if a:
+                        title = a.get_text(strip=True)
+                        href = a["href"]
+                        if title and "/news/view/" in href:
+                            news_list.append({
+                                "title": title,
+                                "link": f"{self.BASE_URL}{href}" if href.startswith("/") else href,
+                                "source": "매일경제",
+                            })
         except Exception as e:
             logger.debug(f"MK market news failed: {e}")
         return news_list
 
     def _get_stock_news(self, code: str) -> List[Dict]:
-        """종목별 뉴스"""
-        news_list = []
+        """종목별 뉴스 — MK 종목 페이지 폐기, Naver Finance로 fallback"""
+        news_list: List[Dict] = []
         try:
-            url = f"{self.BASE_URL}/quote/{code}/"
-            response = self.session.get(url, timeout=10)
-            if response.status_code == 200:
-                soup = BeautifulSoup(response.text, 'html.parser')
-                news_section = soup.find('div', class_='news_list')
-                if news_section:
-                    articles = news_section.find_all('li')[:5]
-                    for article in articles:
-                        title_elem = article.find('a')
-                        if title_elem:
-                            news_list.append({
-                                "title": title_elem.get_text(strip=True),
-                                "link": title_elem.get('href', ''),
-                                "code": code,
-                                "source": "매일경제"
-                            })
+            naver = NaverFinanceNewsCollector()
+            naver_news = naver._get_stock_news(code)
+            for item in naver_news[:5]:
+                item["source"] = "네이버금융(MK fallback)"
+                news_list.append(item)
         except Exception as e:
-            logger.debug(f"MK stock news failed for {code}: {e}")
+            logger.debug(f"MK stock news fallback failed for {code}: {e}")
         return news_list
 
     def _get_analysis_news(self) -> List[Dict]:
-        """증권사 분석"""
-        news_list = []
-        try:
-            url = f"{self.BASE_URL}/news/view_all.php?sc=30600002"
-            response = self.session.get(url, timeout=10)
-            if response.status_code == 200:
-                soup = BeautifulSoup(response.text, 'html.parser')
-                articles = soup.find_all('div', class_='list_news')[:5]
-                for article in articles:
-                    title_elem = article.find('a')
-                    if title_elem:
-                        news_list.append({
-                            "title": title_elem.get_text(strip=True),
-                            "link": title_elem.get('href', ''),
-                            "type": "analysis",
-                            "source": "매일경제"
-                        })
-        except Exception as e:
-            logger.debug(f"MK analysis news failed: {e}")
-        return news_list
+        """증권사 분석 — MK 분석 페이지 폐기, 시장 뉴스에서 추출"""
+        return []
 
     def _get_theme_news(self) -> List[Dict]:
-        """테마 뉴스"""
-        news_list = []
-        try:
-            url = f"{self.BASE_URL}/news/view_all.php?sc=30600004"
-            response = self.session.get(url, timeout=10)
-            if response.status_code == 200:
-                soup = BeautifulSoup(response.text, 'html.parser')
-                articles = soup.find_all('div', class_='list_news')[:5]
-                for article in articles:
-                    title_elem = article.find('a')
-                    if title_elem:
-                        news_list.append({
-                            "title": title_elem.get_text(strip=True),
-                            "link": title_elem.get('href', ''),
-                            "type": "theme",
-                            "source": "매일경제"
-                        })
-        except Exception as e:
-            logger.debug(f"MK theme news failed: {e}")
-        return news_list
+        """테마 뉴스 — MK 테마 페이지 폐기, 시장 뉴스에서 추출"""
+        return []
 
     def analyze_sentiment(self, news_list: List[Dict]) -> NewsSentiment:
         """뉴스 감성 분석 (키워드 기반)"""

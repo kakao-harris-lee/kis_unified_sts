@@ -6,12 +6,15 @@ KRX Open API를 통해 시장 데이터를 수집하는 클라이언트.
 """
 
 import json
+import logging
 from datetime import datetime, timedelta
 from typing import List, Optional
 
 import requests
 
 from shared.calendar import MarketCalendar
+
+logger = logging.getLogger(__name__)
 
 from .config import LLMConfig
 from .data_classes import (
@@ -35,32 +38,30 @@ class KRXOpenAPIClient:
         """
         self.config = config or LLMConfig.from_env()
         self.session = requests.Session()
-        self.session.headers.update({
-            "AUTH_KEY": self.config.krx_api_key,
-            "Content-Type": "application/json",
-        })
         self._calendar = MarketCalendar()
 
     def _request(self, endpoint: str, params: Optional[dict] = None) -> list:
-        """
-        API 요청 수행
-
-        Args:
-            endpoint: API 엔드포인트
-            params: 쿼리 파라미터
-
-        Returns:
-            API 응답 데이터 (리스트)
-        """
+        """API 요청 수행 — AUTH_KEY를 query param으로 전송 (openkrx 표준)."""
         url = f"{self.config.krx_base_url}/{endpoint}"
+        request_params = {"AUTH_KEY": self.config.krx_api_key}
+        if params:
+            request_params.update(params)
 
         try:
             response = self.session.get(
-                url, params=params, timeout=self.config.krx_timeout
+                url, params=request_params, timeout=self.config.krx_timeout
             )
             response.raise_for_status()
 
             data = response.json()
+
+            # KRX API returns error status in JSON body
+            if isinstance(data, dict) and data.get("respCode") in ("401", "403"):
+                logger.warning(
+                    "KRX API auth failed (%s): %s",
+                    endpoint, data.get("respMsg", ""),
+                )
+                return []
 
             if "OutBlock_1" in data:
                 return data["OutBlock_1"]
@@ -70,10 +71,10 @@ class KRXOpenAPIClient:
                 return data
 
         except requests.exceptions.RequestException as e:
-            print(f"API 요청 실패 ({endpoint}): {e}")
+            logger.debug("KRX API 요청 실패 (%s): %s", endpoint, e)
             return []
         except json.JSONDecodeError as e:
-            print(f"JSON 파싱 실패: {e}")
+            logger.debug("KRX API JSON 파싱 실패: %s", e)
             return []
 
     # ============================================================
@@ -148,7 +149,7 @@ class KRXOpenAPIClient:
             base_date = self._get_last_trading_date()
 
         params = {"basDd": base_date}
-        return self._request("etp/etf_dd_trd", params)
+        return self._request("etp/etf_bydd_trd", params)
 
     def get_etf_by_sector(self, base_date: Optional[str] = None) -> List[ETFData]:
         """섹터별 ETF 데이터 조회"""
@@ -198,7 +199,7 @@ class KRXOpenAPIClient:
             base_date = self._get_last_trading_date()
 
         params = {"basDd": base_date}
-        return self._request("drv/fut_dd_trd", params)
+        return self._request("drv/fut_bydd_trd", params)
 
     def get_kospi200_futures(self, base_date: Optional[str] = None) -> List[FuturesData]:
         """KOSPI200 선물 데이터 조회"""
@@ -237,7 +238,7 @@ class KRXOpenAPIClient:
             base_date = self._get_last_trading_date()
 
         params = {"basDd": base_date}
-        return self._request("drv/opt_dd_trd", params)
+        return self._request("drv/opt_bydd_trd", params)
 
     def get_kospi200_options(self, base_date: Optional[str] = None) -> OptionsData:
         """KOSPI200 옵션 데이터 조회 (풋콜비율)"""
