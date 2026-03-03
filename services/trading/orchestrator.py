@@ -1076,7 +1076,12 @@ class TradingOrchestrator:
     async def _load_swing_positions(self):
         """Recover open positions from Redis and initialize state publishers."""
         # --- Position recovery from Redis ---
-        if self._position_tracker:
+        recovery_disabled = str(
+            os.getenv("STS_DISABLE_POSITION_RECOVERY", "")
+        ).strip().lower() in {"1", "true", "yes", "on"}
+        if recovery_disabled:
+            logger.info("Position recovery disabled by env (STS_DISABLE_POSITION_RECOVERY)")
+        elif self._position_tracker:
             await self._recover_positions_from_redis()
 
         # --- Broker position verification ---
@@ -1175,10 +1180,11 @@ class TradingOrchestrator:
                 entry_price = float(pos_data["entry_price"])
                 current_price = float(pos_data.get("current_price", entry_price))
 
+                pos_code = pos_data["code"]
                 position = Position(
                     id=pos_id,
-                    code=pos_data["code"],
-                    name=pos_data.get("name", ""),
+                    code=pos_code,
+                    name=pos_data.get("name", "") or self._symbol_names.get(pos_code, pos_code),
                     side=side,
                     quantity=int(pos_data["quantity"]),
                     entry_price=entry_price,
@@ -2140,6 +2146,8 @@ class TradingOrchestrator:
             )
             if closed:
                 self.total_pnl += closed.unrealized_pnl
+                if self._state_publisher:
+                    self._state_publisher.publish_position_closed(closed)
         self._sync_open_positions_metric()
 
     async def _cleanup_resources(self):
@@ -3351,7 +3359,7 @@ class TradingOrchestrator:
                 pos_metadata[key] = signal_meta[key]
         position = self._position_tracker.add_position(
             code=signal.code,
-            name=signal.name,
+            name=signal.name or self._symbol_names.get(signal.code, signal.code),
             entry_price=fill_price,
             quantity=quantity,
             strategy=signal.strategy,

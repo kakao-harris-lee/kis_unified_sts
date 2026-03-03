@@ -541,7 +541,8 @@ def _make_trend_context(
                       "high_5": high_5, "rvol": rvol, "volume": volume,
                       "volume_ma": volume_ma, "atr": atr},
         indicators={"rsi": rsi, "ema_5": ema_5, "ema_20": ema_20,
-                     "ema_60": ema_60, "ema_aligned": ema_aligned},
+                     "ema_60": ema_60, "ema_aligned": ema_aligned,
+                     "ema_daily_aligned": ema_aligned},
         timestamp=now,
         metadata={"daily_watchlist": watchlist, "regime": regime},
     )

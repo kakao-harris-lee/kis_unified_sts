@@ -355,11 +355,16 @@ class MomentumBreakoutEntry(EntrySignalGenerator[MomentumBreakoutConfig]):
         """Check EMA pullback trigger conditions.
 
         Conditions:
-        1. ema_aligned = True (EMA5 > EMA20 > EMA60)
+        0. ema_daily_aligned = True (daily EMA5d > EMA10d > EMA20d, multi-day uptrend)
+        1. ema_aligned = True (EMA5 > EMA20 > EMA60, intraday alignment)
         2. close near EMA20: |close - ema_20| <= ATR * ema_touch_buffer_atr
         3. close > ema_5 (bounce confirmed)
         4. RSI > trend_rsi_min
         """
+        # Daily-scale trend gate: only enter pullbacks in sustained uptrends
+        if not indicators.get("ema_daily_aligned", False):
+            return False
+
         ema_aligned = indicators.get("ema_aligned", False)
         if not ema_aligned:
             return False
