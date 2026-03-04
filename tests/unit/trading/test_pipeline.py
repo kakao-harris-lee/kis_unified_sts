@@ -125,7 +125,7 @@ class TestTradingPipeline:
         pipeline = TradingPipeline()
 
         # 기본 인터벌 확인
-        assert pipeline.intervals[PipelineStage.REGIME] == 300.0
+        assert pipeline.intervals[PipelineStage.REGIME] == 60.0
         assert pipeline.intervals[PipelineStage.ENTRY] == 1.0
         assert pipeline._retry_config["max_retries"] == 2
 

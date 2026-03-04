@@ -214,7 +214,7 @@ class TradingPipeline:
         else:
             # 기본값 (하위 호환성)
             self.intervals = {
-                PipelineStage.REGIME: 300.0,
+                PipelineStage.REGIME: 60.0,
                 PipelineStage.ENTRY: 1.0,
                 PipelineStage.MONITORING: 0.1,
                 PipelineStage.EXIT: 0.5,

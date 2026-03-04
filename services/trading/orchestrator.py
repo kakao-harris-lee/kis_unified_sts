@@ -487,6 +487,9 @@ class TradingOrchestrator:
         # Market regime
         self._current_regime: str | None = None
 
+        # Adaptive position sizing (initialized in _init_components)
+        self._adaptive_sizing: Any | None = None
+
         # Market data loop state
         self._market_data_task: asyncio.Task | None = None
         self._market_data_running = False
@@ -863,9 +866,34 @@ class TradingOrchestrator:
             db_name = SecretsManager.clickhouse_database(self.config.asset_class)
         except Exception:
             db_name = ""
+        # Derive global max_positions from sum of per-strategy limits
+        global_max = 10
+        if self._strategy_manager:
+            strategy_limits = []
+            for strategy in self._strategy_manager.strategies.values():
+                sizer_config = getattr(strategy.position_sizer, "config", None)
+                limit = getattr(sizer_config, "max_positions", 5)
+                strategy_limits.append(limit)
+            if strategy_limits:
+                global_max = sum(strategy_limits)
         self._position_tracker = PositionTracker(
-            config=PositionTrackerConfig(max_positions=10, database=db_name)
+            config=PositionTrackerConfig(max_positions=global_max, database=db_name)
         )
+
+        # Adaptive position sizing based on strategy win rate
+        try:
+            from shared.config.loader import ConfigLoader
+            from shared.strategy.adaptive_sizing import (
+                AdaptiveSizingConfig,
+                AdaptiveSizingManager,
+            )
+
+            sizing_raw = ConfigLoader.load("execution.yaml").get("adaptive_sizing", {})
+            sizing_config = AdaptiveSizingConfig.from_dict(sizing_raw)
+            self._adaptive_sizing = AdaptiveSizingManager(sizing_config, self.config.asset_class)
+            self._adaptive_sizing.refresh()
+        except Exception as e:
+            logger.warning(f"Adaptive sizing init failed: {e}")
 
     def _init_indicator_engine(self):
         """Initialize Streaming Indicator Engine"""
@@ -1717,6 +1745,13 @@ class TradingOrchestrator:
             del self._symbol_last_seen[code]
             self._symbol_metadata_cache.pop(code, None)
 
+        # Always include symbols with open positions — they must stay in
+        # the WebSocket subscription to receive price ticks for exit evaluation.
+        position_codes: set[str] = set()
+        if self._position_tracker:
+            position_codes = {p.code for p in self._position_tracker.positions}
+            stable_symbols |= position_codes
+
         # Cap size — protect warm and near-warm symbols from eviction.
         # Near-warm symbols (>=50% warmup progress) have accumulated significant
         # candle data; evicting them wastes minutes of indicator warmup.
@@ -1729,7 +1764,7 @@ class TradingOrchestrator:
                         warm_set.add(s)
                     elif self._indicator_engine.warmup_progress(s) >= 0.5:
                         warming_set.add(s)
-            protected = warm_set | warming_set
+            protected = warm_set | warming_set | position_codes
             cold = stable_symbols - protected
             by_recency = sorted(
                 cold,
@@ -2675,6 +2710,13 @@ class TradingOrchestrator:
             # Periodic refresh of daily indicators (for daily_pullback)
             self._refresh_daily_indicators()
 
+            # Refresh adaptive sizing multipliers
+            if self._adaptive_sizing:
+                try:
+                    self._adaptive_sizing.refresh()
+                except Exception as e:
+                    logger.debug(f"Adaptive sizing refresh failed: {e}")
+
             logger.debug(f"Market regime: {regime}")
 
             return {
@@ -2748,14 +2790,13 @@ class TradingOrchestrator:
         if not self._position_tracker:
             return []
 
-        # Skip entries in BEAR market for long-only strategies (stocks).
+        # Skip entries when regime is unknown or BEAR for long-only strategies (stocks).
         # Futures (bidirectional) can profit from short entries in BEAR.
-        if (
-            self._current_regime
-            and "BEAR" in self._current_regime
-            and self.config.asset_class != "futures"
-        ):
-            return []
+        if self.config.asset_class != "futures":
+            if not self._current_regime:
+                return []
+            if "BEAR" in self._current_regime:
+                return []
 
         # Check position limit
         if not self._position_tracker.can_open_position():
@@ -3032,10 +3073,28 @@ class TradingOrchestrator:
 
         # Per-symbol lock to prevent race conditions on the same symbol
         async with self._get_symbol_lock(signal.code):
-            # Re-check position limit under lock
+            # Re-check global position limit under lock
             if not self._position_tracker.can_open_position(signal.code):
                 logger.debug(f"Position limit reached, skipping entry for {signal.code}")
                 return
+
+            # Per-strategy position limit check
+            strategy_name = signal.strategy
+            if self._strategy_manager and strategy_name:
+                strategy = self._strategy_manager.strategies.get(strategy_name)
+                if strategy:
+                    sizer_config = getattr(strategy.position_sizer, "config", None)
+                    strategy_max = getattr(sizer_config, "max_positions", None)
+                    if strategy_max is not None:
+                        current_count = len(
+                            self._position_tracker.get_positions_by_strategy(strategy_name)
+                        )
+                        if current_count >= strategy_max:
+                            logger.info(
+                                f"Strategy {strategy_name} position limit reached "
+                                f"({current_count}/{strategy_max}), skipping {signal.code}"
+                            )
+                            return
 
             try:
                 direction = self._get_signal_direction(signal)
@@ -3783,12 +3842,34 @@ class TradingOrchestrator:
             try:
                 strategy = self._strategy_manager.strategies[signal.strategy]
                 balance = self._get_account_balance()
-                qty = strategy.calculate_position_size(
-                    signal=signal,
-                    account_balance=balance,
-                    current_positions=self._position_tracker.positions if self._position_tracker else [],
-                )
+
+                # Apply adaptive sizing multiplier (temporarily scale fixed_amount)
+                multiplier = 1.0
+                original_amount = None
+                sizer_cfg = getattr(strategy.position_sizer, "config", None)
+                if self._adaptive_sizing and sizer_cfg and hasattr(sizer_cfg, "fixed_amount"):
+                    multiplier = self._adaptive_sizing.get_multiplier(signal.strategy)
+                    if multiplier != 1.0:
+                        original_amount = sizer_cfg.fixed_amount
+                        sizer_cfg.fixed_amount = original_amount * multiplier
+
+                try:
+                    qty = strategy.calculate_position_size(
+                        signal=signal,
+                        account_balance=balance,
+                        current_positions=self._position_tracker.positions if self._position_tracker else [],
+                    )
+                finally:
+                    # Restore original amount
+                    if original_amount is not None:
+                        sizer_cfg.fixed_amount = original_amount
+
                 if qty > 0:
+                    if multiplier != 1.0:
+                        logger.info(
+                            f"Adaptive sizing: {signal.strategy} {signal.code} "
+                            f"qty={qty} (x{multiplier:.2f})"
+                        )
                     return min(qty, MAX_ORDER_QUANTITY)
             except Exception as e:
                 logger.warning(f"Strategy sizer failed for {signal.code}: {e}")
