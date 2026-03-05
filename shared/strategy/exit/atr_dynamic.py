@@ -185,6 +185,9 @@ class ATRDynamicExit(ExitSignalGenerator[ATRDynamicExitConfig]):
 
         # 0. Safety net: percentage-based hard stop (ATR-independent).
         #    Catches positions when indicator data is stale/unavailable.
+        #    Runs before ATR stop (step 1) — keep max_loss_pct >= typical ATR stop
+        #    to avoid shadowing the ATR-based stop. Per-position overrides from
+        #    metadata can tighten this, which is intentional for trend mode.
         if max_loss > 0 and profit_pct <= -max_loss / 100:
             logger.warning(
                 "[%s] max_loss_pct safety stop triggered for %s: "

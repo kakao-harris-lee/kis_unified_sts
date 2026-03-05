@@ -220,6 +220,7 @@ class StreamingIndicatorEngine:
         mtf_timeframes: list[int] | None = None,
         mtf_maxlen: int = 250,
         ema_periods: list[int] | None = None,
+        daily_ema_periods: list[int] | None = None,
     ):
         self.bb_period = bb_period
         self.bb_std = bb_std
@@ -257,7 +258,7 @@ class StreamingIndicatorEngine:
         # On day change, previous day's last close is pushed to the deque.
         self._daily_closes: dict[str, deque] = {}  # symbol -> deque of daily closes
         self._intraday_last_close: dict[str, float] = {}  # symbol -> current session last close
-        self._daily_ema_periods = [5, 10, 20]  # daily EMA periods for trend detection
+        self._daily_ema_periods: list[int] = daily_ema_periods or [5, 10, 20]
 
         # Cumulative volume → delta conversion
         # WebSocket feeds (H0STCNT0, H0IFCNT0) send cumulative daily volume.
@@ -323,6 +324,9 @@ class StreamingIndicatorEngine:
             self._vol_accel_calc.add_tick(symbol, int(candle.volume), ts.timestamp())
 
             # Track daily highs for multi-day breakout (high_N)
+            # NOTE: _update_daily_high must be called before _update_daily_close
+            # because both use self._current_date for day-change detection,
+            # and _update_daily_high is responsible for updating it.
             self._update_daily_high(symbol, candle.high, date_str)
 
             # Track daily closes for daily-scale EMA trend filter
