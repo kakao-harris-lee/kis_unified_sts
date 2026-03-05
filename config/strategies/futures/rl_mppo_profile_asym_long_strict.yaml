@@ -25,7 +25,8 @@ strategy:
 
       skip_market_open_minutes: 5
       skip_market_close_minutes: 30
-      paper_skip_market_close_minutes: 0
+      paper_skip_market_close_minutes: 30
+      paper_eod_hard_block_minutes: 10
       apply_time_filter_in_backtest: false
       day_session_enabled: true
       day_market_open: "09:00"
@@ -43,6 +44,24 @@ strategy:
       paper_hold_override_max_gap: 0.35
       paper_hold_override_min_entry_prob: 0.20
       paper_hold_override_min_confidence: 0.25
+
+      # Risk-off short bias
+      risk_off_long_block_enabled: true
+      risk_off_change_threshold: -0.02
+      risk_off_regime_block_enabled: true
+      risk_off_short_min_confidence: 0.42
+      risk_off_backtest_short_min_confidence: 0.35
+      risk_off_paper_short_min_confidence: 0.40
+      risk_off_hold_override_prefer_short: true
+      risk_off_hold_override_max_long_advantage: 0.20
+      risk_off_flip_long_to_short_enabled: true
+      risk_off_flip_min_short_prob: 0.30
+      risk_off_regime_keywords:
+        - "BEAR"
+        - "RISK_OFF"
+        - "STRONG_BEARISH"
+        - "BEARISH"
+        - "SIDEWAYS_DOWN"
 
   exit:
     type: rl_mppo_exit

@@ -14,8 +14,8 @@ LOG_FILE="$LOG_DIR/rl_paper_$(date +%Y%m%d).log"
 VENV="$PROJECT_DIR/.venv/bin/activate"
 PID_FILE="$PROJECT_DIR/pids/rl_paper.pid"
 MATRIX_RUN_DIR_FILE="$PROJECT_DIR/pids/rl_paper_matrix_run_dir.txt"
-PROC_PATTERN_STS="/home/deploy/project/kis_unified_sts/.venv/bin/sts rl paper --no-daemon"
-PROC_PATTERN_MATRIX="/home/deploy/project/kis_unified_sts/.venv/bin/python scripts/analysis/rl_paper_profile_matrix.py"
+PROC_PATTERN_STS="/home/deploy/project/kis_unified_sts/.venv/bin/sts rl paper"
+PROC_PATTERN_MATRIX="/home/deploy/project/kis_unified_sts/.venv/bin/python /home/deploy/project/kis_unified_sts/scripts/analysis/rl_paper_profile_matrix.py"
 
 mkdir -p "$LOG_DIR"
 mkdir -p "$PROJECT_DIR/pids"
@@ -29,7 +29,28 @@ detect_running_pid() {
         pgrep -f "$PROC_PATTERN_STS" 2>/dev/null | head -n 1 || true
 }
 
+get_process_group_id() {
+    local pid="$1"
+    ps -o pgid= -p "$pid" 2>/dev/null | tr -d '[:space:]'
+}
+
+cleanup_orphan_children() {
+    # Matrix parent가 먼저 종료되어도 timeout/sts 자식이 남는 경우가 있어 정리한다.
+    pkill -TERM -f "$PROC_PATTERN_STS" 2>/dev/null || true
+    pkill -TERM -f "timeout --signal=TERM --kill-after .* $PROJECT_DIR/.venv/bin/sts rl paper" 2>/dev/null || true
+    sleep 1
+    pkill -KILL -f "$PROC_PATTERN_STS" 2>/dev/null || true
+    pkill -KILL -f "timeout --signal=TERM --kill-after .* $PROJECT_DIR/.venv/bin/sts rl paper" 2>/dev/null || true
+}
+
 run_matrix_post_analysis() {
+    # Ensure DB/Redis credentials are available for post-analysis scripts.
+    if [ -f "$PROJECT_DIR/.env" ]; then
+        set -a
+        source "$PROJECT_DIR/.env"
+        set +a
+    fi
+
     if [ ! -f "$MATRIX_RUN_DIR_FILE" ]; then
         return
     fi
@@ -59,6 +80,20 @@ run_matrix_post_analysis() {
         [ -n "$SUMMARY_JSON" ] && log "Matrix summary JSON: $SUMMARY_JSON"
     else
         log "Post-market matrix summary generation failed"
+    fi
+
+    log "Generating futures session health report from $RUN_DIR"
+    if "$PROJECT_DIR/.venv/bin/python" "$PROJECT_DIR/scripts/analysis/futures_session_health_report.py" \
+        --date "$(date +%F)" \
+        --run-dir "$RUN_DIR" \
+        --notify-on-issues \
+        --output-dir "$RUN_DIR" >> "$LOG_FILE" 2>&1; then
+        HEALTH_JSON=$(ls -1t "$RUN_DIR"/futures_session_health_*.json 2>/dev/null | head -n 1 || true)
+        HEALTH_MD=$(ls -1t "$RUN_DIR"/futures_session_health_*.md 2>/dev/null | head -n 1 || true)
+        [ -n "$HEALTH_JSON" ] && log "Futures health JSON: $HEALTH_JSON"
+        [ -n "$HEALTH_MD" ] && log "Futures health MD: $HEALTH_MD"
+    else
+        log "Futures session health report generation failed"
     fi
 }
 
@@ -104,10 +139,15 @@ print('1' if is_trading_day(date.today()) else '0')
 
     log "Trading day confirmed. Starting RL paper trading..."
 
+    # Force futures metrics endpoint to match Prometheus scrape target.
+    # Prevent inherited shell env (e.g. PROMETHEUS_PORT=8080) from hiding RL metrics.
+    export PROMETHEUS_PORT="${RL_PAPER_PROMETHEUS_PORT:-9092}"
+    log "Prometheus metrics port: $PROMETHEUS_PORT"
+
     # Matrix mode defaults to enabled.
     RL_PAPER_MATRIX_ENABLED=${RL_PAPER_MATRIX_ENABLED:-1}
     RL_PAPER_MATRIX_MODEL=${RL_PAPER_MATRIX_MODEL:-mppo_best}
-    RL_PAPER_MATRIX_PROFILES=${RL_PAPER_MATRIX_PROFILES:-"rl_mppo,rl_mppo_profile_asym_long_strict,rl_mppo_profile_uptrend_spike_guard,rl_mppo_tune_a,rl_mppo_tune_b"}
+    RL_PAPER_MATRIX_PROFILES=${RL_PAPER_MATRIX_PROFILES:-"rl_mppo_spread6,rl_mppo_spread7,rl_mppo_spread8,rl_mppo_profile_asym_long_strict,rl_mppo_profile_uptrend_spike_guard"}
     if [ -z "${RL_PAPER_MATRIX_DURATION_MINUTES:-}" ]; then
         PROFILE_COUNT=$(echo "$RL_PAPER_MATRIX_PROFILES" | awk -F',' '{print NF}')
         NOW_MINUTES=$((10#$(date +%H) * 60 + 10#$(date +%M)))
@@ -168,30 +208,52 @@ stop_trading() {
     PID=""
     if [ -f "$PID_FILE" ]; then
         PID=$(cat "$PID_FILE")
+        if ! ps -p "$PID" > /dev/null 2>&1; then
+            rm -f "$PID_FILE"
+            PID=$(detect_running_pid)
+        fi
     else
         PID=$(detect_running_pid)
     fi
 
     if [ -n "$PID" ]; then
         if ps -p "$PID" > /dev/null 2>&1; then
-            log "Stopping RL paper trading (PID: $PID)"
-            kill "$PID" 2>/dev/null || true
-            sleep 5
-            if kill -0 "$PID" 2>/dev/null; then
-                kill -9 "$PID" 2>/dev/null || true
-                log "Force killed (SIGKILL)"
+            PGID=$(get_process_group_id "$PID")
+            if [ -n "$PGID" ]; then
+                log "Stopping RL paper trading (PID: $PID, PGID: $PGID)"
+                kill -TERM -- "-$PGID" 2>/dev/null || true
             else
-                log "Graceful shutdown completed"
+                log "Stopping RL paper trading (PID: $PID)"
+                kill "$PID" 2>/dev/null || true
             fi
+            sleep 5
+            if [ -n "${PGID:-}" ]; then
+                if pgrep -g "$PGID" > /dev/null 2>&1; then
+                    kill -KILL -- "-$PGID" 2>/dev/null || true
+                    log "Force killed process group (SIGKILL, PGID: $PGID)"
+                else
+                    log "Graceful shutdown completed"
+                fi
+            else
+                if kill -0 "$PID" 2>/dev/null; then
+                    kill -9 "$PID" 2>/dev/null || true
+                    log "Force killed (SIGKILL)"
+                else
+                    log "Graceful shutdown completed"
+                fi
+            fi
+            cleanup_orphan_children
             rm -f "$PID_FILE"
             run_matrix_post_analysis
             log "RL paper trading stopped"
         else
             rm -f "$PID_FILE"
+            cleanup_orphan_children
             log "Process not running, cleaned up PID file"
             run_matrix_post_analysis
         fi
     else
+        cleanup_orphan_children
         log "No PID file found"
         run_matrix_post_analysis
     fi
@@ -204,6 +266,12 @@ status() {
             echo "Running (PID: $PID)"
             exit 0
         else
+            PID=$(detect_running_pid)
+            if [ -n "$PID" ]; then
+                echo "$PID" > "$PID_FILE"
+                echo "Running (PID: $PID, recovered from stale PID file)"
+                exit 0
+            fi
             echo "Not running (stale PID file)"
             exit 1
         fi

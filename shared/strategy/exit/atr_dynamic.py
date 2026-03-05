@@ -59,6 +59,11 @@ class ATRDynamicExitConfig(ConfigMixin):
     # Max hold days (0 = disabled)
     max_hold_days: int = 0
 
+    # Percentage-based hard stop fallback (safety net when ATR is unavailable).
+    # Triggers when loss exceeds this percentage regardless of ATR data.
+    # 0 = disabled (not recommended).
+    max_loss_pct: float = 5.0
+
     # EOD close
     eod_close_enabled: bool = False
     eod_close_hour: int = 15
@@ -84,6 +89,8 @@ class ATRDynamicExitConfig(ConfigMixin):
             raise ValueError("max_hold_days must be non-negative")
         if not (0.0 < self.default_exit_confidence <= 1.0):
             raise ValueError("default_exit_confidence must be in (0, 1]")
+        if self.max_loss_pct < 0:
+            raise ValueError("max_loss_pct must be non-negative")
 
 
 class ATRDynamicExit(ExitSignalGenerator[ATRDynamicExitConfig]):
@@ -174,6 +181,31 @@ class ATRDynamicExit(ExitSignalGenerator[ATRDynamicExitConfig]):
         trail_act = pos_meta.get("exit_trail_activation_atr", self.config.trail_activation_atr)
         trail_mult = pos_meta.get("exit_trail_atr_multiplier", self.config.trail_atr_multiplier)
         max_hold = pos_meta.get("exit_max_hold_days", self.config.max_hold_days)
+        max_loss = pos_meta.get("exit_max_loss_pct", self.config.max_loss_pct)
+
+        # 0. Safety net: percentage-based hard stop (ATR-independent).
+        #    Catches positions when indicator data is stale/unavailable.
+        if max_loss > 0 and profit_pct <= -max_loss / 100:
+            logger.warning(
+                "[%s] max_loss_pct safety stop triggered for %s: "
+                "profit=%.2f%%, limit=-%.1f%%, atr=%.4f",
+                self.name, position.code, profit_pct * 100, max_loss, atr,
+            )
+            return self._create_exit_signal(
+                position=position,
+                current_price=current_price,
+                profit_pct=profit_pct,
+                profit_amount=profit_amount,
+                reason=ExitReason.STOP_LOSS,
+                priority=0,
+                high_since_entry=high_since_entry,
+                holding_minutes=holding_minutes,
+                metadata={
+                    "stop_type": "max_loss_pct_safety",
+                    "max_loss_pct": max_loss,
+                    "atr": atr,
+                },
+            )
 
         # 1. Hard stop: loss > ATR × stop_multiplier
         if atr > 0 and position.entry_price > 0:

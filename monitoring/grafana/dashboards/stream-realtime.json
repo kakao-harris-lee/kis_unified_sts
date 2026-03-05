@@ -231,7 +231,7 @@
             "uid": "prometheus"
           },
           "expr": "redis_stream_bar_1m_close_krw{asset=\"stock\",symbol=\"$stock_symbol\"}",
-          "legendFormat": "{{symbol}} close",
+          "legendFormat": "{{name}} close",
           "refId": "A"
         }
       ],
@@ -273,7 +273,7 @@
             "uid": "prometheus"
           },
           "expr": "redis_stream_bar_1m_volume{asset=\"stock\",symbol=\"$stock_symbol\"}",
-          "legendFormat": "{{symbol}} vol",
+          "legendFormat": "{{name}} vol",
           "refId": "A"
         }
       ],
@@ -385,19 +385,19 @@
           "type": "prometheus",
           "uid": "prometheus"
         },
-        "definition": "label_values(redis_stream_last_price_krw{asset=\"stock\"}, symbol)",
+        "definition": "query_result(redis_stream_last_tick_timestamp_seconds{asset=\"stock\"} > (time() - 120))",
         "hide": 0,
         "includeAll": false,
-        "label": "Stock Symbol",
+        "label": "Stock Name",
         "multi": false,
         "name": "stock_symbol",
         "options": [],
         "query": {
-          "query": "label_values(redis_stream_last_price_krw{asset=\"stock\"}, symbol)",
+          "query": "query_result(redis_stream_last_tick_timestamp_seconds{asset=\"stock\"} > (time() - 120))",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
-        "regex": "",
+        "regex": "/name=\"(?<text>[^\"]+)\",symbol=\"(?<value>[^\"]+)\"/",
         "skipUrlSync": false,
         "sort": 1,
         "type": "query"

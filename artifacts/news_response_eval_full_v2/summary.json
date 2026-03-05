@@ -1,0 +1,94 @@
+{
+  "rows": 100,
+  "selected_rows": 21,
+  "data_available_rows": 3,
+  "sentiment_counts": {
+    "중립": 100
+  },
+  "horizons": {
+    "5": {
+      "coverage_all": 3,
+      "coverage_selected": 0,
+      "coverage_unselected": 3,
+      "avg_return_all_pct": -1.042129095792384,
+      "avg_return_selected_pct": null,
+      "avg_return_unselected_pct": -1.042129095792384,
+      "median_return_selected_pct": null,
+      "directional_accuracy_all": null,
+      "directional_accuracy_selected": null,
+      "snapshot_ab_mean_diff_pct": null,
+      "snapshot_ab_win_rate": null,
+      "by_sentiment": {
+        "중립": {
+          "count": 3,
+          "avg_return_pct": -1.042129095792384,
+          "selected_avg_return_pct": null,
+          "selected_count": 0
+        }
+      }
+    },
+    "15": {
+      "coverage_all": 3,
+      "coverage_selected": 0,
+      "coverage_unselected": 3,
+      "avg_return_all_pct": -1.4074392406541438,
+      "avg_return_selected_pct": null,
+      "avg_return_unselected_pct": -1.4074392406541438,
+      "median_return_selected_pct": null,
+      "directional_accuracy_all": null,
+      "directional_accuracy_selected": null,
+      "snapshot_ab_mean_diff_pct": null,
+      "snapshot_ab_win_rate": null,
+      "by_sentiment": {
+        "중립": {
+          "count": 3,
+          "avg_return_pct": -1.4074392406541438,
+          "selected_avg_return_pct": null,
+          "selected_count": 0
+        }
+      }
+    },
+    "30": {
+      "coverage_all": 3,
+      "coverage_selected": 0,
+      "coverage_unselected": 3,
+      "avg_return_all_pct": -2.053197137466204,
+      "avg_return_selected_pct": null,
+      "avg_return_unselected_pct": -2.053197137466204,
+      "median_return_selected_pct": null,
+      "directional_accuracy_all": null,
+      "directional_accuracy_selected": null,
+      "snapshot_ab_mean_diff_pct": null,
+      "snapshot_ab_win_rate": null,
+      "by_sentiment": {
+        "중립": {
+          "count": 3,
+          "avg_return_pct": -2.053197137466204,
+          "selected_avg_return_pct": null,
+          "selected_count": 0
+        }
+      }
+    },
+    "60": {
+      "coverage_all": 3,
+      "coverage_selected": 0,
+      "coverage_unselected": 3,
+      "avg_return_all_pct": -2.3615856549934775,
+      "avg_return_selected_pct": null,
+      "avg_return_unselected_pct": -2.3615856549934775,
+      "median_return_selected_pct": null,
+      "directional_accuracy_all": null,
+      "directional_accuracy_selected": null,
+      "snapshot_ab_mean_diff_pct": null,
+      "snapshot_ab_win_rate": null,
+      "by_sentiment": {
+        "중립": {
+          "count": 3,
+          "avg_return_pct": -2.3615856549934775,
+          "selected_avg_return_pct": null,
+          "selected_count": 0
+        }
+      }
+    }
+  }
+}

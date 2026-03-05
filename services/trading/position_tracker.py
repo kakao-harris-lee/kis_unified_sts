@@ -841,8 +841,9 @@ class PositionTracker:
         from shared.db.client import ClickHouseClient
         from shared.db.config import ClickHouseConfig
 
-        ch = ClickHouseClient(ClickHouseConfig())
-        database = self.config.database if self.config.database else ch.config.database
+        cfg = ClickHouseConfig.from_env(database=self.config.database or None)
+        ch = ClickHouseClient(cfg)
+        database = self.config.database if self.config.database else cfg.database
         if not database.replace("_", "").isalnum():
             raise ValueError(f"Invalid database name: {database}")
         return ch, database

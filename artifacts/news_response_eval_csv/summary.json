@@ -1,0 +1,66 @@
+{
+  "rows": 165,
+  "selected_rows": 165,
+  "data_available_rows": 2,
+  "sentiment_counts": {
+    "중립": 165
+  },
+  "horizons": {
+    "5": {
+      "coverage_all": 0,
+      "coverage_selected": 0,
+      "coverage_unselected": 0,
+      "avg_return_all_pct": null,
+      "avg_return_selected_pct": null,
+      "avg_return_unselected_pct": null,
+      "median_return_selected_pct": null,
+      "directional_accuracy_all": null,
+      "directional_accuracy_selected": null,
+      "snapshot_ab_mean_diff_pct": null,
+      "snapshot_ab_win_rate": null,
+      "by_sentiment": {}
+    },
+    "15": {
+      "coverage_all": 0,
+      "coverage_selected": 0,
+      "coverage_unselected": 0,
+      "avg_return_all_pct": null,
+      "avg_return_selected_pct": null,
+      "avg_return_unselected_pct": null,
+      "median_return_selected_pct": null,
+      "directional_accuracy_all": null,
+      "directional_accuracy_selected": null,
+      "snapshot_ab_mean_diff_pct": null,
+      "snapshot_ab_win_rate": null,
+      "by_sentiment": {}
+    },
+    "30": {
+      "coverage_all": 0,
+      "coverage_selected": 0,
+      "coverage_unselected": 0,
+      "avg_return_all_pct": null,
+      "avg_return_selected_pct": null,
+      "avg_return_unselected_pct": null,
+      "median_return_selected_pct": null,
+      "directional_accuracy_all": null,
+      "directional_accuracy_selected": null,
+      "snapshot_ab_mean_diff_pct": null,
+      "snapshot_ab_win_rate": null,
+      "by_sentiment": {}
+    },
+    "60": {
+      "coverage_all": 0,
+      "coverage_selected": 0,
+      "coverage_unselected": 0,
+      "avg_return_all_pct": null,
+      "avg_return_selected_pct": null,
+      "avg_return_unselected_pct": null,
+      "median_return_selected_pct": null,
+      "directional_accuracy_all": null,
+      "directional_accuracy_selected": null,
+      "snapshot_ab_mean_diff_pct": null,
+      "snapshot_ab_win_rate": null,
+      "by_sentiment": {}
+    }
+  }
+}

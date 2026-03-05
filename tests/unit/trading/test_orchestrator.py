@@ -945,6 +945,7 @@ class TestStaticUniverse:
         mock_redis.get.return_value = json.dumps(watchlist_data)
 
         monkeypatch.setattr(shared.streaming.client.RedisClient, "get_client", staticmethod(lambda: mock_redis))
+        monkeypatch.setattr(TradingOrchestrator, "_hydrate_missing_symbol_names", lambda *_: None)
 
         result = orch._load_static_watchlist()
         assert result is True
@@ -964,6 +965,7 @@ class TestStaticUniverse:
 
         import shared.streaming.client
         monkeypatch.setattr(shared.streaming.client.RedisClient, "get_client", lambda: mock_redis)
+        monkeypatch.setattr(TradingOrchestrator, "_hydrate_missing_symbol_names", lambda *_: None)
 
         result = orch._load_static_watchlist()
         assert result is False
@@ -981,6 +983,30 @@ class TestStaticUniverse:
 
         import shared.streaming.client
         monkeypatch.setattr(shared.streaming.client.RedisClient, "get_client", lambda: mock_redis)
+        monkeypatch.setattr(TradingOrchestrator, "_hydrate_missing_symbol_names", lambda *_: None)
 
         result = orch._load_static_watchlist()
         assert result is False
+
+    def test_hydrate_missing_symbol_names_uses_krx_open_api_map(self, monkeypatch):
+        """Missing stock names are hydrated from KRX Open API map."""
+        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+
+        config = TradingConfig(asset_class="stock")
+        orch = TradingOrchestrator(config)
+
+        monkeypatch.setattr(
+            orch,
+            "_load_krx_open_api_symbol_names",
+            lambda: {
+                "005930": "삼성전자",
+                "000660": "SK하이닉스",
+            },
+        )
+
+        orch._hydrate_missing_symbol_names({"005930", "000660", "035720"})
+
+        assert orch._symbol_names["005930"] == "삼성전자"
+        assert orch._symbol_names["000660"] == "SK하이닉스"
+        assert "035720" in orch._symbol_name_lookup_attempted
+        assert orch._symbol_metadata_cache["005930"]["name"] == "삼성전자"

@@ -70,6 +70,24 @@ def _parse_msg_id_ms(message_id: str) -> float | None:
         return None
 
 
+def _extract_symbol_name(payload: dict[str, Any], symbol: str) -> str:
+    for key in (
+        "name",
+        "stock_name",
+        "symbol_name",
+        "item_name",
+        "prdt_name",
+        "hts_kor_isnm",
+    ):
+        value = payload.get(key)
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return symbol
+
+
 def detect_asset(symbol: str, stream_name: str) -> str:
     """Best-effort asset classifier with low-cost heuristics."""
     sym = symbol.strip()
@@ -134,6 +152,7 @@ class StreamExporter:
         self._bars: dict[tuple[str, str], MinuteBarState] = {}
         self._last_seen: dict[tuple[str, str], float] = {}
         self._last_cumulative_volume: dict[tuple[str, str], float] = {}
+        self._symbol_names: dict[tuple[str, str], str] = {}
         self._symbol_set: dict[str, set[str]] = {"stock": set(), "futures": set()}
         self._last_housekeeping = 0.0
 
@@ -178,37 +197,42 @@ class StreamExporter:
         self.last_price_krw = Gauge(
             "redis_stream_last_price_krw",
             "Latest traded price from Redis stream",
-            ["asset", "symbol"],
+            ["asset", "symbol", "name"],
+        )
+        self.last_tick_timestamp_seconds = Gauge(
+            "redis_stream_last_tick_timestamp_seconds",
+            "Last tick event timestamp (epoch seconds) by symbol",
+            ["asset", "symbol", "name"],
         )
         self.bar_1m_open_krw = Gauge(
             "redis_stream_bar_1m_open_krw",
             "1-minute bar open price from Redis stream aggregation",
-            ["asset", "symbol"],
+            ["asset", "symbol", "name"],
         )
         self.bar_1m_high_krw = Gauge(
             "redis_stream_bar_1m_high_krw",
             "1-minute bar high price from Redis stream aggregation",
-            ["asset", "symbol"],
+            ["asset", "symbol", "name"],
         )
         self.bar_1m_low_krw = Gauge(
             "redis_stream_bar_1m_low_krw",
             "1-minute bar low price from Redis stream aggregation",
-            ["asset", "symbol"],
+            ["asset", "symbol", "name"],
         )
         self.bar_1m_close_krw = Gauge(
             "redis_stream_bar_1m_close_krw",
             "1-minute bar close price from Redis stream aggregation",
-            ["asset", "symbol"],
+            ["asset", "symbol", "name"],
         )
         self.bar_1m_volume = Gauge(
             "redis_stream_bar_1m_volume",
             "1-minute bar volume from Redis stream aggregation",
-            ["asset", "symbol"],
+            ["asset", "symbol", "name"],
         )
         self.bar_1m_timestamp_seconds = Gauge(
             "redis_stream_bar_1m_timestamp_seconds",
             "Timestamp (epoch seconds) of the latest emitted 1-minute bar",
-            ["asset", "symbol"],
+            ["asset", "symbol", "name"],
         )
 
     def run_forever(self) -> None:
@@ -293,17 +317,28 @@ class StreamExporter:
             or _parse_float(payload.get("close"))
             or _parse_float(payload.get("price"))
         )
+        symbol_name = _extract_symbol_name(payload, symbol)
+        self._sync_symbol_name(asset, symbol, symbol_name)
 
         self.messages_total.labels(stream=stream_name, asset=asset).inc()
         self.last_message_age_seconds.labels(stream=stream_name, asset=asset).set(
             max(0.0, now - event_ts)
         )
         self._last_seen[(asset, symbol)] = now
+        self.last_tick_timestamp_seconds.labels(
+            asset=asset,
+            symbol=symbol,
+            name=self._symbol_names[(asset, symbol)],
+        ).set(event_ts)
 
         if price is None or price <= 0:
             return
 
-        self.last_price_krw.labels(asset=asset, symbol=symbol).set(price)
+        self.last_price_krw.labels(
+            asset=asset,
+            symbol=symbol,
+            name=self._symbol_names[(asset, symbol)],
+        ).set(price)
         self._update_bar(asset, symbol, price, payload, event_ts)
 
     def _accept_symbol(self, asset: str, symbol: str) -> bool:
@@ -398,12 +433,25 @@ class StreamExporter:
         if state.published:
             return
         asset, symbol = key
-        self.bar_1m_open_krw.labels(asset=asset, symbol=symbol).set(state.open)
-        self.bar_1m_high_krw.labels(asset=asset, symbol=symbol).set(state.high)
-        self.bar_1m_low_krw.labels(asset=asset, symbol=symbol).set(state.low)
-        self.bar_1m_close_krw.labels(asset=asset, symbol=symbol).set(state.close)
-        self.bar_1m_volume.labels(asset=asset, symbol=symbol).set(state.volume)
-        self.bar_1m_timestamp_seconds.labels(asset=asset, symbol=symbol).set(
+        symbol_name = self._symbol_names.get((asset, symbol), symbol)
+        self.bar_1m_open_krw.labels(asset=asset, symbol=symbol, name=symbol_name).set(
+            state.open
+        )
+        self.bar_1m_high_krw.labels(asset=asset, symbol=symbol, name=symbol_name).set(
+            state.high
+        )
+        self.bar_1m_low_krw.labels(asset=asset, symbol=symbol, name=symbol_name).set(
+            state.low
+        )
+        self.bar_1m_close_krw.labels(
+            asset=asset, symbol=symbol, name=symbol_name
+        ).set(state.close)
+        self.bar_1m_volume.labels(asset=asset, symbol=symbol, name=symbol_name).set(
+            state.volume
+        )
+        self.bar_1m_timestamp_seconds.labels(
+            asset=asset, symbol=symbol, name=symbol_name
+        ).set(
             float(state.minute_epoch)
         )
         state.published = True
@@ -436,21 +484,38 @@ class StreamExporter:
             self._symbol_set[asset].discard(symbol)
             self.symbol_dropped_total.labels(asset=asset, reason="ttl").inc()
             self._remove_symbol_labels(asset, symbol)
+            self._symbol_names.pop(key, None)
 
         for asset in ("stock", "futures"):
             self.active_symbols.labels(asset=asset).set(len(self._symbol_set[asset]))
 
-    def _remove_symbol_labels(self, asset: str, symbol: str) -> None:
-        try:
-            self.last_price_krw.remove(asset, symbol)
-            self.bar_1m_open_krw.remove(asset, symbol)
-            self.bar_1m_high_krw.remove(asset, symbol)
-            self.bar_1m_low_krw.remove(asset, symbol)
-            self.bar_1m_close_krw.remove(asset, symbol)
-            self.bar_1m_volume.remove(asset, symbol)
-            self.bar_1m_timestamp_seconds.remove(asset, symbol)
-        except KeyError:
-            pass
+    def _sync_symbol_name(self, asset: str, symbol: str, symbol_name: str) -> None:
+        key = (asset, symbol)
+        current = self._symbol_names.get(key)
+        if current == symbol_name:
+            return
+        if current is not None:
+            self._remove_symbol_labels(asset, symbol, current)
+        self._symbol_names[key] = symbol_name
+
+    def _remove_symbol_labels(
+        self, asset: str, symbol: str, symbol_name: str | None = None
+    ) -> None:
+        label_name = symbol_name or self._symbol_names.get((asset, symbol), symbol)
+        for metric in (
+            self.last_price_krw,
+            self.last_tick_timestamp_seconds,
+            self.bar_1m_open_krw,
+            self.bar_1m_high_krw,
+            self.bar_1m_low_krw,
+            self.bar_1m_close_krw,
+            self.bar_1m_volume,
+            self.bar_1m_timestamp_seconds,
+        ):
+            try:
+                metric.remove(asset, symbol, label_name)
+            except KeyError:
+                continue
 
 
 def _setup_logging() -> None:

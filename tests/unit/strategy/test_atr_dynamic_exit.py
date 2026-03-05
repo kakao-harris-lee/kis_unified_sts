@@ -121,7 +121,7 @@ def test_config_validation_invalid_confidence():
 
 def test_hard_stop_triggers():
     """Loss exceeds ATR × stop_multiplier → STOP_LOSS."""
-    config = ATRDynamicExitConfig(stop_atr_multiplier=2.5)
+    config = ATRDynamicExitConfig(stop_atr_multiplier=2.5, max_loss_pct=0)
     exit_strategy = _make_exit(config)
 
     entry_price = 10000.0
@@ -141,6 +141,28 @@ def test_hard_stop_triggers():
     assert signal.priority == 1
     assert signal.metadata["stop_type"] == "atr_hard_stop"
     assert signal.confidence == config.default_exit_confidence
+
+
+def test_max_loss_pct_safety_stop():
+    """Loss exceeds max_loss_pct → STOP_LOSS with priority 0 (safety net)."""
+    config = ATRDynamicExitConfig(max_loss_pct=5.0)
+    exit_strategy = _make_exit(config)
+
+    entry_price = 10000.0
+    # -6% loss → exceeds 5% max_loss_pct
+    current_price = entry_price * 0.94
+
+    pos = _make_position(entry_price=entry_price, current_price=current_price)
+    # No ATR data — simulates stale indicator scenario
+    snapshot = _make_snapshot(close=current_price, atr=0)
+    now = datetime(2026, 2, 26, 10, 0, 0, tzinfo=KST)
+
+    signal = exit_strategy._check_position(pos, snapshot, now)
+
+    assert signal is not None
+    assert signal.reason == ExitReason.STOP_LOSS
+    assert signal.priority == 0
+    assert signal.metadata["stop_type"] == "max_loss_pct_safety"
 
 
 def test_hard_stop_not_reached():
@@ -527,18 +549,34 @@ def test_no_exit_normal_conditions():
     assert signal is None
 
 
-def test_no_exit_when_no_atr():
-    """Missing ATR → hard stop and trailing stop skipped → no exit."""
+def test_no_exit_when_no_atr_within_safety():
+    """Missing ATR but loss within max_loss_pct → no exit."""
     exit_strategy = _make_exit()
 
-    pos = _make_position(entry_price=10000.0, current_price=9000.0)
-    snapshot = {"close": 9000.0}  # no ATR key
+    pos = _make_position(entry_price=10000.0, current_price=9600.0)
+    snapshot = {"close": 9600.0}  # no ATR key, -4% loss (within 5% safety)
     now = datetime(2026, 2, 26, 10, 0, 0, tzinfo=KST)
 
     signal = exit_strategy._check_position(pos, snapshot, now)
 
-    # Without ATR, hard stop can't trigger; no other conditions active
+    # Without ATR, hard stop can't trigger; loss within safety threshold
     assert signal is None
+
+
+def test_no_atr_safety_stop_triggers():
+    """Missing ATR with loss exceeding max_loss_pct → safety stop."""
+    exit_strategy = _make_exit()
+
+    pos = _make_position(entry_price=10000.0, current_price=9000.0)
+    snapshot = {"close": 9000.0}  # no ATR key, -10% loss
+    now = datetime(2026, 2, 26, 10, 0, 0, tzinfo=KST)
+
+    signal = exit_strategy._check_position(pos, snapshot, now)
+
+    # Safety net catches positions when ATR is unavailable
+    assert signal is not None
+    assert signal.reason == ExitReason.STOP_LOSS
+    assert signal.metadata["stop_type"] == "max_loss_pct_safety"
 
 
 def test_no_exit_missing_price():
