@@ -128,16 +128,7 @@ def _load_sector_theme_data(
     sector_classifications: dict[str, str] = {}
     sector_rotation: dict[str, str] = {}
     try:
-        from pykrx import stock as pykrx_stock
-
         from .market_analyzers import ETFFlowAnalyzer
-
-        date_str = analyzer.stock_collector._get_last_trading_date()
-        for mkt in markets:
-            sec_df = pykrx_stock.get_market_sector_classifications(date_str, mkt)
-            if sec_df is not None and len(sec_df) > 0:
-                for code_idx, row in sec_df.iterrows():
-                    sector_classifications[str(code_idx)] = str(row.get("업종명", ""))
 
         etf_flows = ETFFlowAnalyzer(analyzer.config).analyze()
         sector_rotation = {e.sector: e.signal for e in etf_flows}
@@ -230,11 +221,21 @@ def _collect_mk_news(
     intraday: bool,
 ) -> dict[str, Any]:
     mk_news: dict[str, Any] = {}
-    if intraday:
-        return mk_news
     try:
         mk_news = analyzer.mk_news_collector.collect(stock.code)
-        all_news = mk_news.get("market_news", []) + mk_news.get("stock_news", [])
+        if intraday:
+            # Intraday mode keeps only per-symbol headlines for lower latency and
+            # to avoid repeatedly scoring the same market headlines each symbol.
+            stock_news = mk_news.get("stock_news", [])
+            mk_news = {
+                "market_news": [],
+                "stock_news": stock_news,
+                "analysis": [],
+                "theme_news": [],
+            }
+            all_news = stock_news
+        else:
+            all_news = mk_news.get("market_news", []) + mk_news.get("stock_news", [])
         mk_news["sentiment"] = (
             analyzer.mk_news_collector.analyze_sentiment(all_news).value
         )
@@ -318,7 +319,16 @@ def _build_news_payload(
     intraday: bool,
 ) -> dict[str, Any]:
     if intraday:
-        return {"sentiment": "중립", "news_count": 0}
+        mk_news_count = len(mk_news.get("market_news", [])) + len(
+            mk_news.get("stock_news", [])
+        )
+        payload: dict[str, Any] = {
+            "sentiment": mk_news.get("sentiment", "중립"),
+            "news_count": mk_news_count,
+        }
+        if mk_news.get("stock_news"):
+            payload["mk_headlines"] = [n.get("title") for n in mk_news["stock_news"][:3]]
+        return payload
 
     news = analyzer.stock_news_analyzer.analyze(stock.code, stock.name)
     if mk_news.get("sentiment"):

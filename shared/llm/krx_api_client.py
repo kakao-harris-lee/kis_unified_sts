@@ -7,9 +7,10 @@ KRX Open API를 통해 시장 데이터를 수집하는 클라이언트.
 
 import json
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
 from typing import List, Optional
 
+import pandas as pd
 import requests
 
 from shared.calendar import MarketCalendar
@@ -308,15 +309,89 @@ class KRXOpenAPIClient:
         return results
 
     # ============================================================
+    # 개별종목 일별시세 (OHLCV + 시가총액)
+    # ============================================================
+
+    # KRX API 필드 → pykrx 호환 한글 컬럼 매핑
+    _STOCK_DAILY_COLUMN_MAP = {
+        "TDD_OPNPRC": "시가",
+        "TDD_HGPRC": "고가",
+        "TDD_LWPRC": "저가",
+        "TDD_CLSPRC": "종가",
+        "ACC_TRDVOL": "거래량",
+        "ACC_TRDVAL": "거래대금",
+        "MKTCAP": "시가총액",
+        "FLUC_RT": "등락률",
+    }
+
+    def get_stock_daily(
+        self, market: str = "KOSPI", base_date: str | None = None
+    ) -> list[dict]:
+        """개별종목 일별시세 (OHLCV + 시가총액).
+
+        Args:
+            market: "KOSPI" 또는 "KOSDAQ"
+            base_date: 기준일 (YYYYMMDD). None이면 최근 거래일 자동 감지.
+
+        Returns:
+            종목별 시세 딕셔너리 리스트.
+        """
+        if base_date is None:
+            base_date = self._get_last_trading_date()
+
+        endpoint = "sto/stk_bydd_trd" if market == "KOSPI" else "sto/ksq_bydd_trd"
+        params = {"basDd": base_date}
+        return self._request(endpoint, params)
+
+    def get_stock_daily_as_dataframe(
+        self, market: str = "KOSPI", base_date: str | None = None
+    ) -> pd.DataFrame:
+        """pykrx 호환 DataFrame 반환 (index=종목코드, 한글 컬럼명).
+
+        pykrx ``get_market_ohlcv`` + ``get_market_cap`` 대체.
+        """
+        raw = self.get_stock_daily(market, base_date)
+        if not raw:
+            return pd.DataFrame()
+
+        rows: list[dict] = []
+        for item in raw:
+            code = item.get("ISU_CD", "")
+            if not code:
+                continue
+            row: dict = {"종목코드": code, "종목명": item.get("ISU_NM", "")}
+            for api_field, col_name in self._STOCK_DAILY_COLUMN_MAP.items():
+                row[col_name] = self._parse_number(item.get(api_field, 0))
+            rows.append(row)
+
+        if not rows:
+            return pd.DataFrame()
+
+        df = pd.DataFrame(rows)
+        # 정수형 컬럼 변환
+        int_cols = ["시가", "고가", "저가", "종가", "거래량"]
+        for col in int_cols:
+            if col in df.columns:
+                df[col] = df[col].astype("int64")
+        df["시가총액"] = df["시가총액"].astype("int64")
+        df["거래대금"] = df["거래대금"].astype("int64")
+        df = df.set_index("종목코드")
+        return df
+
+    # ============================================================
     # 유틸리티
     # ============================================================
 
+    # KRX Open API publishes daily data ~1-2 hours after market close.
+    # Use 18:00 as cutoff instead of 15:30 to avoid requesting unpublished data.
+    _KRX_DATA_AVAILABLE_TIME = time(18, 0)
+
     def _get_last_trading_date(self) -> str:
-        """최근 거래일 (휴장일/공휴일 반영, 장마감 전에는 전일 사용)."""
+        """최근 거래일 (휴장일/공휴일 반영, KRX 데이터 게시 시간 고려)."""
         now = datetime.now()
         today = now.date()
 
-        if now.time() < self._calendar.MARKET_CLOSE_TIME:
+        if now.time() < self._KRX_DATA_AVAILABLE_TIME:
             target = self._calendar.get_previous_market_day(today)
             return target.strftime("%Y%m%d")
 

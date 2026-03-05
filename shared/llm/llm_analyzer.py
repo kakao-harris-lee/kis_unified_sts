@@ -589,7 +589,7 @@ class UnifiedTradingAnalyzer:
         self.config = config or LLMConfig.load(config_path)
 
         # Stock analyzers
-        self.stock_collector = StockDataCollector()
+        self.stock_collector = StockDataCollector(self.config)
         self.stock_tech_analyzer = StockTechnicalAnalyzer()
         self.stock_backtester = StockBacktester()
         self.stock_news_analyzer = StockNewsAnalyzer()

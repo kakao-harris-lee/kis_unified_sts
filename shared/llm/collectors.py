@@ -2,7 +2,8 @@
 Korean Financial Data Collectors
 
 Data Sources:
-- pykrx: 주식 시세 (기본)
+- KRX Open API (data-dbg.krx.co.kr): 주식 일별시세 OHLCV+시가총액 (기본)
+- pykrx: 개별종목 히스토리 (날짜 범위 조회, fallback)
 - KRX (data.krx.co.kr): 거래소 공식 데이터, 투자자별 동향
 - SEIBRO (seibro.or.kr): 증권정보, 배당, 주주현황
 - DART (dart.fss.or.kr): 공시정보, 재무제표
@@ -77,56 +78,57 @@ class DataCollector(ABC):
 
 
 class StockDataCollector(DataCollector):
-    """주식 시세 데이터 수집 (pykrx 기반)"""
+    """주식 시세 데이터 수집 (KRX Open API 기반)"""
 
-    # 장 시작 시간 (09:00)
-    MARKET_OPEN_HOUR = 9
     SUPPORTED_MARKETS = ("KOSPI", "KOSDAQ")
 
-    def __init__(self):
+    def __init__(self, config: Optional[LLMConfig] = None):
         super().__init__()
+        self._config = config or LLMConfig.from_env()
+        self._krx_client = KRXOpenAPIClient(self._config)
         self._calendar = MarketCalendar()
+        # 종목명 캐시 (daily 데이터에서 수집)
+        self._name_cache: Dict[str, str] = {}
 
     def _get_last_trading_date(self) -> str:
-        """가장 최근 거래일 반환 (휴장일/공휴일 반영)."""
-        now = datetime.now()
-        today = now.date()
-
-        # 장 시작 전에는 전일(최근 거래일) 데이터 사용
-        if now.time() < self._calendar.MARKET_OPEN_TIME:
-            target = self._calendar.get_previous_market_day(today)
-            logger.info(
-                f"Pre-market hours ({now.strftime('%H:%M')}), "
-                f"using previous market day {target}"
-            )
-            return target.strftime("%Y%m%d")
-
-        # 장중/장마감 이후: 오늘이 거래일이면 오늘, 아니면 직전 거래일
-        if self._calendar.is_market_day(today):
-            return today.strftime("%Y%m%d")
-
-        target = self._calendar.get_previous_market_day(today)
-        logger.info(f"Non-trading day {today}, using previous market day {target}")
-        return target.strftime("%Y%m%d")
+        """가장 최근 거래일 반환 (KRX API 데이터 게시 시간 고려)."""
+        return self._krx_client._get_last_trading_date()
 
     def collect(self, market: str = "KOSPI") -> Optional[pd.DataFrame]:
-        """전체 시장 데이터 수집 (단일 시장)"""
+        """전체 시장 데이터 수집 (단일 시장)
+
+        KRX Open API 오류에 대비해 최대 3영업일까지 fallback 시도.
+        """
         try:
-            from pykrx import stock
             self._validate_market(market)
 
             target_date = self._get_last_trading_date()
-            logger.info(f"Collecting market data for {target_date} ({market})")
+            logger.info(f"Collecting market data for {target_date} ({market}) via KRX Open API")
 
-            df = self._fetch_market_ohlcv(stock, target_date, market)
-            if len(df) == 0:
-                prev_date = self._previous_date(target_date)
-                logger.info(f"No data for {target_date}, trying {prev_date}")
-                df = self._fetch_market_ohlcv(stock, prev_date, market)
+            # 최대 3일 전까지 fallback 시도
+            df = pd.DataFrame()
+            attempt_date = target_date
+            for attempt in range(3):
+                try:
+                    df = self._krx_client.get_stock_daily_as_dataframe(market, attempt_date)
+                except Exception as e:
+                    logger.warning(f"KRX API fetch failed for {attempt_date} ({market}): {e}")
+                    df = pd.DataFrame()
+                if len(df) > 0:
+                    break
+                prev = self._previous_date(attempt_date)
+                logger.info(f"No data for {attempt_date}, trying {prev} (attempt {attempt + 2}/3)")
+                attempt_date = prev
 
             if len(df) > 0:
-                df = self._merge_market_cap(stock, df, target_date, market)
+                # 종목명 캐시 업데이트
+                if "종목명" in df.columns:
+                    for code, row in df.iterrows():
+                        self._name_cache[str(code)] = str(row["종목명"])
                 self._attach_market_column(df, market)
+                logger.info(f"Collected {len(df)} stocks for {market} (date={attempt_date})")
+            else:
+                logger.error(f"Market data collection exhausted for {market} (tried 3 dates)")
 
             return df
         except Exception as e:
@@ -138,36 +140,15 @@ class StockDataCollector(DataCollector):
             raise ValueError(f"Unsupported market: {market} (supported={self.SUPPORTED_MARKETS})")
 
     @staticmethod
-    def _fetch_market_ohlcv(stock_module: Any, date: str, market: str) -> pd.DataFrame:
-        return stock_module.get_market_ohlcv(date, market=market)
-
-    @staticmethod
     def _previous_date(target_date: str) -> str:
         return (datetime.strptime(target_date, "%Y%m%d") - timedelta(days=1)).strftime("%Y%m%d")
-
-    def _merge_market_cap(
-        self,
-        stock_module: Any,
-        df: pd.DataFrame,
-        target_date: str,
-        market: str,
-    ) -> pd.DataFrame:
-        cap_df = stock_module.get_market_cap(target_date, market=market)
-        if len(cap_df) == 0:
-            prev_date = self._previous_date(target_date)
-            cap_df = stock_module.get_market_cap(prev_date, market=market)
-        if len(cap_df) == 0:
-            return df
-        if "시가총액" in df.columns:
-            df = df.drop(columns=["시가총액"])
-        return df.join(cap_df[["시가총액"]], how="left")
 
     @staticmethod
     def _attach_market_column(df: pd.DataFrame, market: str) -> None:
         df["시장"] = market
 
     def get_stock_history(self, code: str, days: int = 60) -> Optional[pd.DataFrame]:
-        """개별 종목 히스토리 수집"""
+        """개별 종목 히스토리 수집 (pykrx — 날짜 범위 조회는 KRX API 미지원)"""
         try:
             from pykrx import stock
 
@@ -184,12 +165,18 @@ class StockDataCollector(DataCollector):
             return None
 
     def get_stock_name(self, code: str) -> str:
-        """종목명 조회"""
+        """종목명 조회 (daily 데이터 캐시 우선, fallback pykrx)"""
+        if code in self._name_cache:
+            return self._name_cache[code]
         try:
             from pykrx import stock
-            return stock.get_market_ticker_name(code) or code
-        except:
-            return code
+            name = stock.get_market_ticker_name(code)
+            if name:
+                self._name_cache[code] = name
+                return name
+        except Exception:
+            pass
+        return code
 
 
 class KRXDataCollector(DataCollector):
@@ -424,9 +411,13 @@ class DARTDataCollector(DataCollector):
         """최근 공시 목록"""
         try:
             url = f"{self.BASE_URL}/list.json"
+            end_de = datetime.now().strftime("%Y%m%d")
+            bgn_de = (datetime.now() - timedelta(days=90)).strftime("%Y%m%d")
             params = {
                 "crtfc_key": self.api_key,
                 "corp_code": corp_code,
+                "bgn_de": bgn_de,
+                "end_de": end_de,
                 "page_count": 10,
             }
             response = self.session.get(url, params=params, timeout=10)
@@ -618,6 +609,9 @@ class MKStockNewsCollector(DataCollector):
         self.session.headers.update({
             'Referer': 'https://stock.mk.co.kr/',
         })
+        self._market_news_cache: List[Dict] = []
+        self._market_news_cached_at: float = 0.0
+        self._market_news_ttl_seconds: float = 60.0
 
     def collect(self, code: str = None) -> Dict:
         """MK 뉴스 데이터 수집"""
@@ -631,6 +625,13 @@ class MKStockNewsCollector(DataCollector):
 
     def _get_market_news(self) -> List[Dict]:
         """시장 뉴스 — ul.news_list > li.news_node > a 구조 (2026-03~)"""
+        now_ts = time.time()
+        if (
+            self._market_news_cache
+            and (now_ts - self._market_news_cached_at) < self._market_news_ttl_seconds
+        ):
+            return [dict(item) for item in self._market_news_cache]
+
         news_list = []
         try:
             url = f"{self.BASE_URL}/news"
@@ -648,8 +649,12 @@ class MKStockNewsCollector(DataCollector):
                                 "link": f"{self.BASE_URL}{href}" if href.startswith("/") else href,
                                 "source": "매일경제",
                             })
+                self._market_news_cache = news_list
+                self._market_news_cached_at = now_ts
         except Exception as e:
             logger.debug(f"MK market news failed: {e}")
+            if self._market_news_cache:
+                return [dict(item) for item in self._market_news_cache]
         return news_list
 
     def _get_stock_news(self, code: str) -> List[Dict]:
