@@ -59,6 +59,7 @@ def cleanup_redis(state_reader):
         import redis
         r = redis.Redis(host="localhost", port=6379, db=1, decode_responses=True)
         r.delete("trading:stock:positions")
+        r.delete("trading:futures:positions")
     except Exception:
         pass
 
@@ -69,6 +70,7 @@ def cleanup_redis(state_reader):
         import redis
         r = redis.Redis(host="localhost", port=6379, db=1, decode_responses=True)
         r.delete("trading:stock:positions")
+        r.delete("trading:futures:positions")
     except Exception:
         pass
 
@@ -270,12 +272,19 @@ async def test_state_transition_during_shutdown():
     Edge case: Position transitions from SURVIVAL to BREAKEVEN while
     shutdown is in progress. Verify immediate flush happens and state
     is preserved in Redis.
+
+    Key requirements tested:
+    - State transition is detected (SURVIVAL → BREAKEVEN)
+    - Immediate Redis flush triggered with throttle=0
+    - State persists correctly through shutdown
+    - All position fields preserved (not just state)
     """
     from services.trading.orchestrator import TradingOrchestrator, TradingConfig
 
     config = TradingConfig.stock(
         strategy_name="bb_reversion",
         symbols=["005930"],
+        initial_capital=10_000_000,
     )
 
     with patch("services.trading.orchestrator.MarketDataProvider") as MockProvider:
@@ -289,37 +298,84 @@ async def test_state_transition_during_shutdown():
         pos = create_test_position(
             pos_id="edge-001",
             code="005930",
+            name="Samsung Electronics",
             entry_price=70000.0,
+            quantity=10,
             state=PositionState.SURVIVAL,
+            strategy="bb_reversion",
         )
         orchestrator._position_tracker.add_recovered_position(pos)
 
+        # Verify initial state
+        initial_pos = orchestrator._position_tracker.get_position("edge-001")
+        assert initial_pos.state == PositionState.SURVIVAL, "Initial state should be SURVIVAL"
+
         # Trigger state transition (SURVIVAL -> BREAKEVEN)
-        orchestrator._position_tracker.update_price("005930", 71500.0)  # +2.14%
+        # Price increase: 70000 -> 71500 = +2.14% (exceeds 2% breakeven threshold)
+        orchestrator._position_tracker.update_price("005930", 71500.0)
         transitions = orchestrator._position_tracker.update_states()
 
-        # Immediate flush on state transition
+        # Verify transition was detected
+        assert len(transitions) > 0, "State transition should be detected"
+        assert transitions[0].position_id == "edge-001"
+        assert transitions[0].old_state == PositionState.SURVIVAL
+        assert transitions[0].new_state == PositionState.BREAKEVEN
+
+        # Verify state changed in tracker
+        updated_pos = orchestrator._position_tracker.get_position("edge-001")
+        assert updated_pos.state == PositionState.BREAKEVEN, "State should transition to BREAKEVEN"
+
+        # Immediate flush on state transition with throttle=0
+        # This simulates the orchestrator's immediate flush behavior
         if orchestrator._state_publisher and transitions:
             orchestrator._state_publisher.publish_positions_update(
                 list(orchestrator._position_tracker.positions),
-                throttle=0,
+                throttle=0,  # CRITICAL: immediate flush, no throttling
             )
 
-        # Verify state in Redis
+        # Verify state was flushed to Redis
         reader = TradingStateReader(asset="stock")
         redis_positions = reader.get_positions()
 
-        assert len(redis_positions) == 1
-        assert redis_positions[0]["id"] == "edge-001"
-        assert redis_positions[0]["state"] == "breakeven"
+        assert len(redis_positions) == 1, f"Expected 1 position in Redis, got {len(redis_positions)}"
+        redis_pos = redis_positions[0]
 
-        # Shutdown
+        # Verify all critical fields in Redis
+        assert redis_pos["id"] == "edge-001"
+        assert redis_pos["code"] == "005930"
+        assert redis_pos["name"] == "Samsung Electronics"
+        assert redis_pos["state"] == "breakeven", f"Redis state should be 'breakeven', got {redis_pos['state']}"
+        assert redis_pos["entry_price"] == 70000.0
+        assert redis_pos["quantity"] == 10
+        assert redis_pos["strategy"] == "bb_reversion"
+
+        # Simulate shutdown
         await orchestrator.stop(timeout=10.0)
 
         # Verify state persisted after shutdown
         redis_positions_after = reader.get_positions()
-        assert len(redis_positions_after) == 1
-        assert redis_positions_after[0]["state"] == "breakeven"
+        assert len(redis_positions_after) == 1, "Position should persist after shutdown"
+
+        redis_pos_after = redis_positions_after[0]
+        assert redis_pos_after["id"] == "edge-001"
+        assert redis_pos_after["state"] == "breakeven", "State should remain 'breakeven' after shutdown"
+        assert redis_pos_after["code"] == "005930"
+        assert redis_pos_after["entry_price"] == 70000.0
+
+        # Verify recovery simulation - create new orchestrator
+        orchestrator2 = TradingOrchestrator(config)
+        await orchestrator2._initialize_tracker()
+
+        recovered_count = await orchestrator2._recover_positions_from_redis()
+        assert recovered_count == 1, f"Expected to recover 1 position, got {recovered_count}"
+
+        # Verify recovered position has correct state
+        recovered_pos = orchestrator2._position_tracker.get_position("edge-001")
+        assert recovered_pos is not None, "Position should be recovered"
+        assert recovered_pos.state == PositionState.BREAKEVEN, "Recovered state should be BREAKEVEN"
+        assert recovered_pos.code == "005930"
+        assert recovered_pos.entry_price == 70000.0
+        assert recovered_pos.quantity == 10
 
 
 # -- Test: Redis connection failure during shutdown --
