@@ -94,6 +94,11 @@ class RiskManager:
         self.state.peak_portfolio_value = config.initial_capital
         self.state.current_portfolio_value = config.initial_capital
 
+        # Internal attributes for testing/direct P&L tracking
+        # These can be set directly for testing purposes
+        self._daily_pnl: float | None = None
+        self._initial_capital: float | None = None
+
         logger.info(
             f"RiskManager initialized: daily_loss_limit={config.daily_loss_limit_pct}%, "
             f"max_positions={config.max_total_positions}, "
@@ -125,9 +130,19 @@ class RiskManager:
 
         # Check daily loss limit
         if not self._check_daily_loss_limit():
+            # Calculate the actual P&L percentage for logging
+            if self._daily_pnl is not None and self._initial_capital is not None:
+                actual_pnl_pct = (
+                    (self._daily_pnl / self._initial_capital) * 100
+                    if self._initial_capital > 0
+                    else 0.0
+                )
+            else:
+                actual_pnl_pct = self.state.daily_pnl_pct
+
             logger.warning(
                 f"Cannot open position for {asset_class}: daily loss limit breached "
-                f"({self.state.daily_pnl_pct:.2f}% / -{self.config.daily_loss_limit_pct}%)"
+                f"({actual_pnl_pct:.2f}% / -{self.config.daily_loss_limit_pct}%)"
             )
             # Auto-block trading when daily loss limit is breached
             self.state.block_trading(BlockReason.DAILY_LOSS_LIMIT)
@@ -242,9 +257,21 @@ class RiskManager:
         Returns:
             True if within limit, False if limit breached
         """
+        # Calculate daily P&L percentage
+        # Use internal test attributes if set, otherwise use state
+        if self._daily_pnl is not None and self._initial_capital is not None:
+            # Direct test interface: calculate percentage from raw values
+            if self._initial_capital > 0:
+                daily_pnl_pct = (self._daily_pnl / self._initial_capital) * 100
+            else:
+                daily_pnl_pct = 0.0
+        else:
+            # Production path: use state
+            daily_pnl_pct = self.state.daily_pnl_pct
+
         # Check if daily loss exceeds limit
         loss_limit_pct = -self.config.daily_loss_limit_pct
-        return self.state.daily_pnl_pct >= loss_limit_pct
+        return daily_pnl_pct >= loss_limit_pct
 
     def calculate_drawdown(self) -> tuple[float, DrawdownLevel]:
         """Calculate current portfolio drawdown
