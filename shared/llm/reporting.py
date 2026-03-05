@@ -76,7 +76,7 @@ async def send_telegram_alerts(
 ☐ 09:00 - 장 시작
 ☐ 15:30 - 결과 기록
 ━━━━━━━━━━━━━━━━━━━━
-⚠️ <i>투자의 책임은 본인에게 있습니다</i>
+
 """
         await analyzer.notifier.send_message(checklist)
 
