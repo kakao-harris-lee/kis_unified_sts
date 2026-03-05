@@ -442,3 +442,79 @@ class RiskManager:
             logger.info(f"Sent risk alert: {alert_type}")
         except Exception as e:
             logger.error(f"Failed to send risk alert via Telegram: {e}")
+
+    async def save_to_redis(self) -> None:
+        """Save risk state to Redis for persistence
+
+        Persists current risk state and portfolio metrics to Redis DB 1.
+        Uses JSON encoding with the key pattern: risk:portfolio:state
+
+        Raises:
+            No exceptions raised - errors are logged but do not propagate
+        """
+        try:
+            import json
+
+            from shared.streaming.client import RedisClient
+
+            # Get Redis client singleton (connected to DB 1)
+            redis_client = RedisClient.get_client()
+
+            # Serialize state to dict
+            state_data = self._serialize_state()
+
+            # Store in Redis as JSON string
+            key = "risk:portfolio:state"
+            redis_client.set(key, json.dumps(state_data))
+
+            logger.debug(
+                f"Risk state saved to Redis: daily_pnl={self.state.daily_pnl:.2f}, "
+                f"positions={self.metrics.total_positions}, "
+                f"is_blocked={self.state.is_blocked}"
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to save risk state to Redis: {e}", exc_info=True)
+
+    async def load_from_redis(self) -> bool:
+        """Load risk state from Redis on restart
+
+        Recovers persisted risk state and portfolio metrics from Redis DB 1.
+        Uses JSON decoding from the key pattern: risk:portfolio:state
+
+        Returns:
+            True if state was successfully loaded, False if no state found or error occurred
+
+        Raises:
+            No exceptions raised - errors are logged but do not propagate
+        """
+        try:
+            import json
+
+            from shared.streaming.client import RedisClient
+
+            # Get Redis client singleton (connected to DB 1)
+            redis_client = RedisClient.get_client()
+
+            # Load from Redis
+            key = "risk:portfolio:state"
+            raw_data = redis_client.get(key)
+
+            if not raw_data:
+                logger.info("No risk state found in Redis (fresh start)")
+                return False
+
+            # Deserialize state from JSON
+            state_data = json.loads(raw_data)
+            self._deserialize_state(state_data)
+
+            logger.info(
+                f"Risk state loaded from Redis: daily_pnl={self.state.daily_pnl:.2f}, "
+                f"positions={self.metrics.total_positions}, "
+                f"is_blocked={self.state.is_blocked}"
+            )
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to load risk state from Redis: {e}", exc_info=True)
+            return False
