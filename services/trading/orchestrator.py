@@ -482,6 +482,7 @@ class TradingOrchestrator:
         self._strategy_manager: StrategyManager | None = None
         self._position_tracker: PositionTracker | None = None
         self._risk_manager: RiskManager | None = None
+        self._risk_block_alert_sent: bool = False  # Track if risk block alert has been sent
         self._paper_broker: Any | None = None
         self._kis_client: Any | None = None
         self._order_executor: Any | None = None
@@ -3231,6 +3232,56 @@ class TradingOrchestrator:
             # Re-check global position limit under lock
             if not self._position_tracker.can_open_position(signal.code):
                 logger.debug(f"Position limit reached, skipping entry for {signal.code}")
+                return
+
+            # Risk management check - portfolio-level limits
+            if self._risk_manager and not self._risk_manager.can_open_position(self.config.asset_class):
+                logger.warning(
+                    f"Risk manager blocked entry for {signal.code} "
+                    f"(asset_class={self.config.asset_class})"
+                )
+
+                # Send Telegram alert on first block (avoid spam)
+                if not self._risk_block_alert_sent:
+                    self._risk_block_alert_sent = True
+                    try:
+                        from services.monitoring.notifier import TelegramConfig, TelegramNotifier
+
+                        config = TelegramConfig.from_env()
+                        if config and config.bot_token and config.chat_id:
+                            notifier = TelegramNotifier(config)
+                            try:
+                                # Get current risk state for alert message
+                                risk_state = self._risk_manager.get_risk_state()
+                                portfolio_metrics = self._risk_manager.get_portfolio_metrics()
+
+                                alert_message = (
+                                    f"<b>포지션 진입 차단</b>\n"
+                                    f"종목: {signal.code}\n"
+                                    f"자산군: {self.config.asset_class}\n"
+                                    f"\n"
+                                    f"<b>포트폴리오 현황:</b>\n"
+                                    f"총 포지션: {portfolio_metrics.total_positions}/{self._risk_manager.config.max_total_positions}\n"
+                                    f"일일 손익: {risk_state.daily_pnl_pct:.2f}%\n"
+                                )
+
+                                # Add block reason
+                                if risk_state.is_blocked:
+                                    alert_message += f"차단 사유: {risk_state.block_reason.name}\n"
+
+                                await self._risk_manager.send_alert(
+                                    notifier,
+                                    "POSITION_ENTRY_BLOCKED",
+                                    alert_message,
+                                    is_critical=True
+                                )
+                            finally:
+                                await notifier.close()
+                    except ImportError:
+                        logger.debug("TelegramNotifier not available for risk alert")
+                    except Exception as e:
+                        logger.error(f"Failed to send risk block alert: {e}")
+
                 return
 
             # Per-strategy position limit check
