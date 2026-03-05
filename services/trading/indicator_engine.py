@@ -219,6 +219,8 @@ class StreamingIndicatorEngine:
         staleness_seconds: float = 180.0,
         mtf_timeframes: list[int] | None = None,
         mtf_maxlen: int = 250,
+        ema_periods: list[int] | None = None,
+        daily_ema_periods: list[int] | None = None,
     ):
         self.bb_period = bb_period
         self.bb_std = bb_std
@@ -227,6 +229,7 @@ class StreamingIndicatorEngine:
         self._staleness_seconds = staleness_seconds
         self._accumulators: dict[str, CandleAccumulator] = {}
         self._warm_logged: set[str] = set()
+        self._ema_periods: list[int] = ema_periods or [5, 20, 60]
 
         # Multi-timeframe accumulators: {symbol: {timeframe: accumulator}}
         self._mtf_timeframes = mtf_timeframes or []
@@ -249,6 +252,13 @@ class StreamingIndicatorEngine:
         self._daily_highs: dict[str, deque] = {}  # symbol -> deque of daily highs
         self._intraday_high: dict[str, float] = {}  # symbol -> current session high
         self._current_date: dict[str, str] = {}  # symbol -> current date string
+
+        # Daily close tracking for daily-scale EMA trend filter.
+        # Stores per-symbol deque of previous session closes.
+        # On day change, previous day's last close is pushed to the deque.
+        self._daily_closes: dict[str, deque] = {}  # symbol -> deque of daily closes
+        self._intraday_last_close: dict[str, float] = {}  # symbol -> current session last close
+        self._daily_ema_periods: list[int] = daily_ema_periods or [5, 10, 20]
 
         # Cumulative volume → delta conversion
         # WebSocket feeds (H0STCNT0, H0IFCNT0) send cumulative daily volume.
@@ -314,7 +324,13 @@ class StreamingIndicatorEngine:
             self._vol_accel_calc.add_tick(symbol, int(candle.volume), ts.timestamp())
 
             # Track daily highs for multi-day breakout (high_N)
+            # NOTE: _update_daily_high must be called before _update_daily_close
+            # because both use self._current_date for day-change detection,
+            # and _update_daily_high is responsible for updating it.
             self._update_daily_high(symbol, candle.high, date_str)
+
+            # Track daily closes for daily-scale EMA trend filter
+            self._update_daily_close(symbol, candle.close, date_str)
 
             # Feed multi-timeframe accumulators
             if self._mtf_timeframes:
@@ -376,15 +392,15 @@ class StreamingIndicatorEngine:
                 acc.candles.append(candle)
                 seeded += 1
 
-                # Track daily highs for multi-day breakout detection
+                # Track daily highs and closes for multi-day breakout & EMA
                 dt = c.get("datetime")
                 if dt is not None:
                     if isinstance(dt, str):
                         dt = datetime.fromisoformat(dt)
                     if hasattr(dt, "strftime"):
-                        self._update_daily_high(
-                            symbol, candle.high, dt.strftime("%Y%m%d")
-                        )
+                        ds = dt.strftime("%Y%m%d")
+                        self._update_daily_high(symbol, candle.high, ds)
+                        self._update_daily_close(symbol, candle.close, ds)
 
                 # Feed multi-timeframe accumulators if configured
                 if self._mtf_timeframes:
@@ -584,6 +600,30 @@ class StreamingIndicatorEngine:
             result["volume_ma"] = sum(volumes[-vol_window:]) / vol_window
         else:
             result["volume_ma"] = 0.0
+
+        # EMA absolute values for trend mode (configurable periods)
+        n = len(closes)
+        for period in self._ema_periods:
+            key = f"ema_{period}"
+            if n >= period:
+                result[key] = self._ema_last(closes, period)
+            else:
+                result[key] = 0.0
+        # EMA alignment: fastest > middle > slowest (confirmed uptrend, intraday)
+        if len(self._ema_periods) >= 3:
+            sorted_periods = sorted(self._ema_periods)
+            fast_key = f"ema_{sorted_periods[0]}"
+            mid_key = f"ema_{sorted_periods[1]}"
+            slow_key = f"ema_{sorted_periods[2]}"
+            result["ema_aligned"] = (
+                result[slow_key] > 0
+                and result[fast_key] > result[mid_key] > result[slow_key]
+            )
+        else:
+            result["ema_aligned"] = False
+
+        # Daily EMA alignment: EMA(5d) > EMA(10d) > EMA(20d) — multi-day uptrend
+        result["ema_daily_aligned"] = self._calc_daily_ema_aligned(symbol)
 
         return result
 
@@ -991,6 +1031,63 @@ class StreamingIndicatorEngine:
             )
 
         self._current_date[symbol] = date_str
+
+    def _update_daily_close(
+        self, symbol: str, close: float, date_str: str
+    ) -> None:
+        """Track daily closes for daily-scale EMA trend filter.
+
+        On day change, pushes the previous day's last close to the deque.
+        Always updates the current intraday last close.
+        """
+        prev_date = self._current_date.get(symbol)
+
+        if prev_date and prev_date != date_str:
+            # Day changed — push previous day's close
+            prev_close = self._intraday_last_close.get(symbol, 0.0)
+            if prev_close > 0:
+                if symbol not in self._daily_closes:
+                    self._daily_closes[symbol] = deque(maxlen=60)
+                self._daily_closes[symbol].append(prev_close)
+
+        # Always update current intraday close (last seen)
+        self._intraday_last_close[symbol] = close
+
+    def _calc_daily_ema_aligned(self, symbol: str) -> bool:
+        """Check if daily EMA(5) > EMA(10) > EMA(20) — multi-day uptrend.
+
+        Uses daily close prices tracked by _update_daily_close().
+        Includes today's last close for responsiveness.
+        Returns False if insufficient daily data.
+        """
+        daily = self._daily_closes.get(symbol)
+        if not daily:
+            return False
+
+        # Build closes: historical daily + today's running close
+        closes = list(daily)
+        today_close = self._intraday_last_close.get(symbol, 0.0)
+        if today_close > 0:
+            closes.append(today_close)
+
+        max_period = max(self._daily_ema_periods)
+        if len(closes) < max_period:
+            return False
+
+        # Compute EMA for each period
+        ema_values: dict[int, float] = {}
+        for period in self._daily_ema_periods:
+            alpha = 2.0 / (period + 1)
+            ema_val = closes[0]
+            for price in closes[1:]:
+                ema_val = alpha * price + (1 - alpha) * ema_val
+            ema_values[period] = ema_val
+
+        sorted_periods = sorted(self._daily_ema_periods)
+        fast = ema_values[sorted_periods[0]]
+        mid = ema_values[sorted_periods[1]]
+        slow = ema_values[sorted_periods[2]]
+        return slow > 0 and fast > mid > slow
 
     def _calc_high_n(self, symbol: str, candles: list[Candle]) -> float:
         """Highest high over the last N trading days (excluding today).

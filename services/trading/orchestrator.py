@@ -487,6 +487,9 @@ class TradingOrchestrator:
         # Market regime
         self._current_regime: str | None = None
 
+        # Adaptive position sizing (initialized in _init_components)
+        self._adaptive_sizing: Any | None = None
+
         # Market data loop state
         self._market_data_task: asyncio.Task | None = None
         self._market_data_running = False
@@ -527,6 +530,11 @@ class TradingOrchestrator:
         self._universe_refresh_task: asyncio.Task | None = None
         self._universe_refresh_interval = 30.0  # seconds
         self._symbol_names: dict[str, str] = {}  # code -> name mapping
+        self._symbol_name_lookup_attempted: set[str] = set()
+        self._krx_symbol_name_cache: dict[str, str] = {}
+        self._krx_symbol_name_cache_date: str = ""
+        self._krx_open_api_client: Any | None = None
+        self._krx_name_hydration_warned: bool = False
         self._symbol_metadata_cache: dict[str, dict[str, Any]] = {}
         self._prev_day_volume_warned: bool = False
 
@@ -863,9 +871,34 @@ class TradingOrchestrator:
             db_name = SecretsManager.clickhouse_database(self.config.asset_class)
         except Exception:
             db_name = ""
+        # Derive global max_positions from sum of per-strategy limits
+        global_max = 10
+        if self._strategy_manager:
+            strategy_limits = []
+            for strategy in self._strategy_manager.strategies.values():
+                sizer_config = getattr(strategy.position_sizer, "config", None)
+                limit = getattr(sizer_config, "max_positions", 5)
+                strategy_limits.append(limit)
+            if strategy_limits:
+                global_max = sum(strategy_limits)
         self._position_tracker = PositionTracker(
-            config=PositionTrackerConfig(max_positions=10, database=db_name)
+            config=PositionTrackerConfig(max_positions=global_max, database=db_name)
         )
+
+        # Adaptive position sizing based on strategy win rate
+        try:
+            from shared.config.loader import ConfigLoader
+            from shared.strategy.adaptive_sizing import (
+                AdaptiveSizingConfig,
+                AdaptiveSizingManager,
+            )
+
+            sizing_raw = ConfigLoader.load("execution.yaml").get("adaptive_sizing", {})
+            sizing_config = AdaptiveSizingConfig.from_dict(sizing_raw)
+            self._adaptive_sizing = AdaptiveSizingManager(sizing_config, self.config.asset_class)
+            self._adaptive_sizing.refresh()
+        except Exception as e:
+            logger.warning(f"Adaptive sizing init failed: {e}")
 
     def _init_indicator_engine(self):
         """Initialize Streaming Indicator Engine"""
@@ -876,6 +909,7 @@ class TradingOrchestrator:
 
             # Read indicator params from strategy entry configs
             bb_period, bb_std, rsi_period, high_period = 20, 2.0, 14, 5
+            ema_periods_set: set[int] = set()
             if self._strategy_manager:
                 for strategy in self._strategy_manager.strategies.values():
                     entry = getattr(strategy, "entry", None)
@@ -885,6 +919,12 @@ class TradingOrchestrator:
                         bb_std = cfg.get("bb_std", bb_std)
                         rsi_period = cfg.get("rsi_period", rsi_period)
                         high_period = cfg.get("breakout_period", high_period)
+                        # Collect EMA periods from trend mode config
+                        for ema_key in ("trend_ema_fast", "trend_ema_mid", "trend_ema_slow"):
+                            val = cfg.get(ema_key)
+                            if val is not None:
+                                ema_periods_set.add(int(val))
+            ema_periods = sorted(ema_periods_set) if ema_periods_set else [5, 20, 60]
 
             # Read staleness threshold from streaming config
             try:
@@ -903,6 +943,7 @@ class TradingOrchestrator:
                 rsi_period=rsi_period,
                 high_period=high_period,
                 staleness_seconds=staleness_seconds,
+                ema_periods=ema_periods,
             )
             required_keys = (
                 tuple(self._strategy_manager.required_indicators)
@@ -948,7 +989,14 @@ class TradingOrchestrator:
                         pass
 
                 if self._tick_stream_publisher:
-                    self._tick_stream_publisher.publish("futures", symbol, data)
+                    monitor_data = dict(data)
+                    if not str(monitor_data.get("name", "")).strip():
+                        fallback_name = self._symbol_names.get(symbol, "")
+                        if fallback_name:
+                            monitor_data["name"] = fallback_name
+                    self._tick_stream_publisher.publish(
+                        "futures", symbol, monitor_data
+                    )
 
             self._futures_price_feed.set_tick_callback(_on_futures_tick)
 
@@ -964,7 +1012,12 @@ class TradingOrchestrator:
                     self._indicator_engine.on_tick(symbol, data, ts)
 
                 if self._tick_stream_publisher:
-                    self._tick_stream_publisher.publish("stock", symbol, data)
+                    monitor_data = dict(data)
+                    if not str(monitor_data.get("name", "")).strip():
+                        fallback_name = self._symbol_names.get(symbol, "")
+                        if fallback_name:
+                            monitor_data["name"] = fallback_name
+                    self._tick_stream_publisher.publish("stock", symbol, monitor_data)
 
             self._stock_price_feed.set_tick_callback(_on_stock_tick)
 
@@ -1068,7 +1121,12 @@ class TradingOrchestrator:
     async def _load_swing_positions(self):
         """Recover open positions from Redis and initialize state publishers."""
         # --- Position recovery from Redis ---
-        if self._position_tracker:
+        recovery_disabled = str(
+            os.getenv("STS_DISABLE_POSITION_RECOVERY", "")
+        ).strip().lower() in {"1", "true", "yes", "on"}
+        if recovery_disabled:
+            logger.info("Position recovery disabled by env (STS_DISABLE_POSITION_RECOVERY)")
+        elif self._position_tracker:
             await self._recover_positions_from_redis()
 
         # --- Broker position verification ---
@@ -1167,10 +1225,11 @@ class TradingOrchestrator:
                 entry_price = float(pos_data["entry_price"])
                 current_price = float(pos_data.get("current_price", entry_price))
 
+                pos_code = pos_data["code"]
                 position = Position(
                     id=pos_id,
-                    code=pos_data["code"],
-                    name=pos_data.get("name", ""),
+                    code=pos_code,
+                    name=pos_data.get("name", "") or self._symbol_names.get(pos_code, pos_code),
                     side=side,
                     quantity=int(pos_data["quantity"]),
                     entry_price=entry_price,
@@ -1637,6 +1696,7 @@ class TradingOrchestrator:
 
             payload = json.loads(raw)
             strategies = payload.get("strategies", {})
+            symbol_metadata = payload.get("symbol_metadata", {})
             all_codes: set[str] = set()
             for strat_codes in strategies.values():
                 if isinstance(strat_codes, list):
@@ -1648,6 +1708,21 @@ class TradingOrchestrator:
 
             # Store full watchlist for injection into entry context
             self._daily_watchlist = payload
+
+            if isinstance(symbol_metadata, dict):
+                for code in all_codes:
+                    raw_meta = symbol_metadata.get(code, {})
+                    if not isinstance(raw_meta, dict):
+                        continue
+                    meta = dict(raw_meta)
+                    name = str(meta.get("name", "")).strip()
+                    if name:
+                        self._symbol_names[code] = name
+                    if meta:
+                        self._symbol_metadata_cache[code] = meta
+
+            # Best-effort name hydration for static watchlists that only provide codes.
+            self._hydrate_missing_symbol_names(all_codes)
 
             # Set universe
             now = datetime.now()
@@ -1671,6 +1746,104 @@ class TradingOrchestrator:
             logger.warning(f"Failed to load static watchlist: {e}")
             return False
 
+    def _hydrate_missing_symbol_names(self, codes: list[str] | set[str]) -> None:
+        """Fill missing stock names using KRX Open API as a best-effort fallback."""
+        if self.config.asset_class != "stock":
+            return
+
+        pending = []
+        for raw_code in codes:
+            code = str(raw_code).strip()
+            if not code:
+                continue
+            if code in self._symbol_names:
+                continue
+            if code in self._symbol_name_lookup_attempted:
+                continue
+            pending.append(code)
+
+        if not pending:
+            return
+
+        krx_name_map = self._load_krx_open_api_symbol_names()
+        if not krx_name_map:
+            if not self._krx_name_hydration_warned:
+                logger.warning(
+                    "KRX Open API symbol-name hydration unavailable; "
+                    "stock names may remain as raw codes"
+                )
+                self._krx_name_hydration_warned = True
+            return
+
+        resolved = 0
+        for code in pending:
+            name = str(krx_name_map.get(code, "")).strip()
+            self._symbol_name_lookup_attempted.add(code)
+            if not name or name == code:
+                continue
+            self._symbol_names[code] = name
+            meta = dict(self._symbol_metadata_cache.get(code, {}))
+            meta["name"] = name
+            self._symbol_metadata_cache[code] = meta
+            resolved += 1
+
+        if resolved > 0:
+            logger.info(
+                "Hydrated missing stock names: resolved=%d pending=%d",
+                resolved,
+                len(pending),
+            )
+
+    def _load_krx_open_api_symbol_names(self) -> dict[str, str]:
+        """Load full stock code→name map from KRX Open API daily snapshots."""
+        if self.config.asset_class != "stock":
+            return {}
+
+        api_key = str(os.environ.get("KRX_API_KEY", "")).strip()
+        if not api_key:
+            return {}
+
+        try:
+            if self._krx_open_api_client is None:
+                from shared.llm.config import LLMConfig
+                from shared.llm.krx_api_client import KRXOpenAPIClient
+
+                llm_cfg = LLMConfig.from_env()
+                if not llm_cfg.krx_api_key:
+                    llm_cfg.krx_api_key = api_key
+                self._krx_open_api_client = KRXOpenAPIClient(llm_cfg)
+
+            client = self._krx_open_api_client
+            target_date = client._get_last_trading_date()
+            if (
+                self._krx_symbol_name_cache
+                and self._krx_symbol_name_cache_date == target_date
+            ):
+                return self._krx_symbol_name_cache
+
+            names: dict[str, str] = {}
+            for market in ("KOSPI", "KOSDAQ"):
+                rows = client.get_stock_daily(market=market, base_date=target_date)
+                for item in rows:
+                    code = str(item.get("ISU_CD", "")).strip()
+                    name = str(item.get("ISU_NM", "")).strip()
+                    if code and name:
+                        names[code] = name
+
+            if names:
+                self._krx_symbol_name_cache = names
+                self._krx_symbol_name_cache_date = target_date
+                logger.info(
+                    "Loaded KRX Open API symbol-name map: date=%s symbols=%d",
+                    target_date,
+                    len(names),
+                )
+
+            return self._krx_symbol_name_cache
+        except Exception as e:
+            logger.warning("KRX Open API symbol-name map load failed: %s", e)
+            return self._krx_symbol_name_cache
+
     def _update_symbol_cache(self, codes, names, metadata):
         """Update last-seen timestamps and metadata cache."""
         now = datetime.now()
@@ -1683,6 +1856,7 @@ class TradingOrchestrator:
             if code_meta:
                 self._symbol_metadata_cache[code] = code_meta
         self._symbol_names.update(names)
+        self._hydrate_missing_symbol_names(set(codes))
 
     def _get_stable_universe(self) -> set[str]:
         """Filter expired symbols and enforce max universe size."""
@@ -1703,6 +1877,13 @@ class TradingOrchestrator:
             del self._symbol_last_seen[code]
             self._symbol_metadata_cache.pop(code, None)
 
+        # Always include symbols with open positions — they must stay in
+        # the WebSocket subscription to receive price ticks for exit evaluation.
+        position_codes: set[str] = set()
+        if self._position_tracker:
+            position_codes = {p.code for p in self._position_tracker.positions}
+            stable_symbols |= position_codes
+
         # Cap size — protect warm and near-warm symbols from eviction.
         # Near-warm symbols (>=50% warmup progress) have accumulated significant
         # candle data; evicting them wastes minutes of indicator warmup.
@@ -1715,7 +1896,7 @@ class TradingOrchestrator:
                         warm_set.add(s)
                     elif self._indicator_engine.warmup_progress(s) >= 0.5:
                         warming_set.add(s)
-            protected = warm_set | warming_set
+            protected = warm_set | warming_set | position_codes
             cold = stable_symbols - protected
             by_recency = sorted(
                 cold,
@@ -1799,7 +1980,7 @@ class TradingOrchestrator:
                     logger.warning(
                         "opening_volume_surge is active but no symbols have "
                         "prev_day_volume metadata — strategy will produce zero signals. "
-                        "Check screener/pykrx availability."
+                        "Check screener metadata pipeline / KRX Open API availability."
                     )
                     self._prev_day_volume_warned = True
 
@@ -2132,6 +2313,8 @@ class TradingOrchestrator:
             )
             if closed:
                 self.total_pnl += closed.unrealized_pnl
+                if self._state_publisher:
+                    self._state_publisher.publish_position_closed(closed)
         self._sync_open_positions_metric()
 
     async def _cleanup_resources(self):
@@ -2659,6 +2842,13 @@ class TradingOrchestrator:
             # Periodic refresh of daily indicators (for daily_pullback)
             self._refresh_daily_indicators()
 
+            # Refresh adaptive sizing multipliers
+            if self._adaptive_sizing:
+                try:
+                    self._adaptive_sizing.refresh()
+                except Exception as e:
+                    logger.debug(f"Adaptive sizing refresh failed: {e}")
+
             logger.debug(f"Market regime: {regime}")
 
             return {
@@ -2732,14 +2922,13 @@ class TradingOrchestrator:
         if not self._position_tracker:
             return []
 
-        # Skip entries in BEAR market for long-only strategies (stocks).
+        # Skip entries when regime is unknown or BEAR for long-only strategies (stocks).
         # Futures (bidirectional) can profit from short entries in BEAR.
-        if (
-            self._current_regime
-            and "BEAR" in self._current_regime
-            and self.config.asset_class != "futures"
-        ):
-            return []
+        if self.config.asset_class != "futures":
+            if not self._current_regime:
+                return []
+            if "BEAR" in self._current_regime:
+                return []
 
         # Check position limit
         if not self._position_tracker.can_open_position():
@@ -2881,6 +3070,9 @@ class TradingOrchestrator:
 
         positions = self._position_tracker.positions
         if not positions:
+            # Publish empty snapshot so stale Redis positions are cleared.
+            if self._state_publisher:
+                self._state_publisher.publish_positions_update([], throttle=2.0)
             return None
 
         try:
@@ -2903,8 +3095,7 @@ class TradingOrchestrator:
 
                 # Immediate flush for state transitions (no throttle)
                 if self._state_publisher:
-                    changed = [p for p, _, _ in transitions]
-                    self._state_publisher.publish_positions_update(changed, throttle=0)
+                    self._state_publisher.publish_positions_update(positions, throttle=0)
 
             # Publish position updates to Redis (throttled to 2s)
             if self._state_publisher and positions:
@@ -3016,10 +3207,28 @@ class TradingOrchestrator:
 
         # Per-symbol lock to prevent race conditions on the same symbol
         async with self._get_symbol_lock(signal.code):
-            # Re-check position limit under lock
+            # Re-check global position limit under lock
             if not self._position_tracker.can_open_position(signal.code):
                 logger.debug(f"Position limit reached, skipping entry for {signal.code}")
                 return
+
+            # Per-strategy position limit check
+            strategy_name = signal.strategy
+            if self._strategy_manager and strategy_name:
+                strategy = self._strategy_manager.strategies.get(strategy_name)
+                if strategy:
+                    sizer_config = getattr(strategy.position_sizer, "config", None)
+                    strategy_max = getattr(sizer_config, "max_positions", None)
+                    if strategy_max is not None:
+                        current_count = len(
+                            self._position_tracker.get_positions_by_strategy(strategy_name)
+                        )
+                        if current_count >= strategy_max:
+                            logger.info(
+                                f"Strategy {strategy_name} position limit reached "
+                                f"({current_count}/{strategy_max}), skipping {signal.code}"
+                            )
+                            return
 
             try:
                 direction = self._get_signal_direction(signal)
@@ -3322,22 +3531,33 @@ class TradingOrchestrator:
         )
 
         symbol_meta = (self.config.symbol_metadata or {}).get(signal.code, {})
+        pos_metadata = {
+            "snapshot_id": str(symbol_meta.get("llm_snapshot_id", "")),
+            "llm_quality": symbol_meta.get("llm_quality"),
+            "realtime_score": symbol_meta.get("realtime_score"),
+            "risk_flags": symbol_meta.get("risk_flags", []),
+            "entry_signal_confidence": signal.confidence,
+            "signal_direction": direction,
+            "execution": exec_meta,
+        }
+        # Forward exit parameter overrides from signal.metadata (e.g. trend mode)
+        signal_meta = getattr(signal, "metadata", None) or {}
+        for key in (
+            "exit_stop_atr_multiplier",
+            "exit_trail_activation_atr",
+            "exit_trail_atr_multiplier",
+            "exit_max_hold_days",
+        ):
+            if key in signal_meta:
+                pos_metadata[key] = signal_meta[key]
         position = self._position_tracker.add_position(
             code=signal.code,
-            name=signal.name,
+            name=signal.name or self._symbol_names.get(signal.code, signal.code),
             entry_price=fill_price,
             quantity=quantity,
             strategy=signal.strategy,
             side=PositionSide.SHORT if is_short else PositionSide.LONG,
-            metadata={
-                "snapshot_id": str(symbol_meta.get("llm_snapshot_id", "")),
-                "llm_quality": symbol_meta.get("llm_quality"),
-                "realtime_score": symbol_meta.get("realtime_score"),
-                "risk_flags": symbol_meta.get("risk_flags", []),
-                "entry_signal_confidence": signal.confidence,
-                "signal_direction": direction,
-                "execution": exec_meta,
-            },
+            metadata=pos_metadata,
         )
 
         if not position:
@@ -3756,12 +3976,34 @@ class TradingOrchestrator:
             try:
                 strategy = self._strategy_manager.strategies[signal.strategy]
                 balance = self._get_account_balance()
-                qty = strategy.calculate_position_size(
-                    signal=signal,
-                    account_balance=balance,
-                    current_positions=self._position_tracker.positions if self._position_tracker else [],
-                )
+
+                # Apply adaptive sizing multiplier (temporarily scale fixed_amount)
+                multiplier = 1.0
+                original_amount = None
+                sizer_cfg = getattr(strategy.position_sizer, "config", None)
+                if self._adaptive_sizing and sizer_cfg and hasattr(sizer_cfg, "fixed_amount"):
+                    multiplier = self._adaptive_sizing.get_multiplier(signal.strategy)
+                    if multiplier != 1.0:
+                        original_amount = sizer_cfg.fixed_amount
+                        sizer_cfg.fixed_amount = original_amount * multiplier
+
+                try:
+                    qty = strategy.calculate_position_size(
+                        signal=signal,
+                        account_balance=balance,
+                        current_positions=self._position_tracker.positions if self._position_tracker else [],
+                    )
+                finally:
+                    # Restore original amount
+                    if original_amount is not None:
+                        sizer_cfg.fixed_amount = original_amount
+
                 if qty > 0:
+                    if multiplier != 1.0:
+                        logger.info(
+                            f"Adaptive sizing: {signal.strategy} {signal.code} "
+                            f"qty={qty} (x{multiplier:.2f})"
+                        )
                     return min(qty, MAX_ORDER_QUANTITY)
             except Exception as e:
                 logger.warning(f"Strategy sizer failed for {signal.code}: {e}")

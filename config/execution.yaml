@@ -12,6 +12,20 @@ execution:
   futures_fill_check_timeout_seconds: 1.0
   futures_auto_cancel_unfilled: true
 
+# 전략별 승률 기반 투자금액 동적 조정
+adaptive_sizing:
+  enabled: true
+  min_trades: 5              # 최소 거래 수 (미달 시 1.0x)
+  lookback_trades: 30        # 최근 N거래 기준
+  max_multiplier: 2.0
+  min_multiplier: 0.5
+  tiers:                     # [min_wr, max_wr, multiplier]
+    - [0.0,  0.30, 0.5]     # 0~30%: 절반
+    - [0.30, 0.45, 0.75]    # 30~45%: 축소
+    - [0.45, 0.55, 1.0]     # 45~55%: 기본
+    - [0.55, 0.65, 1.3]     # 55~65%: 확대
+    - [0.65, 1.0,  1.8]     # 65%+: 대폭 확대
+
 # 브로커 잔고 검증 — 시작 시 Redis 포지션과 실제 브로커 잔고 비교
 broker_verification:
   enabled: true                  # 검증 활성화
@@ -60,13 +74,14 @@ futures_slippage_control:
   # 목적: 강한 신호 구간에서 진입 시도 수를 늘려 실험 가능성 확보
   paper_override:
     enabled: true
-    max_spread_ticks: 3
-    min_depth_multiplier: 1.5
-    max_price_deviation_ticks: 4
-    max_signal_age_seconds: 3.0
+    max_spread_ticks: ${FUTURES_PAPER_MAX_SPREAD_TICKS:6}
+    min_depth_multiplier: ${FUTURES_PAPER_MIN_DEPTH_MULTIPLIER:1.0}
+    max_price_deviation_ticks: ${FUTURES_PAPER_MAX_PRICE_DEVIATION_TICKS:6}
+    max_signal_age_seconds: ${FUTURES_PAPER_MAX_SIGNAL_AGE_SECONDS:3.5}
     blocked_time_windows: []
     volatility:
-      spike_multiplier: 3.5
-      cooldown_seconds: 0.6
+      spike_multiplier: ${FUTURES_PAPER_VOL_SPIKE_MULTIPLIER:4.0}
+      cooldown_seconds: ${FUTURES_PAPER_VOL_COOLDOWN_SECONDS:0.5}
     cross_asset:
-      max_spread_ticks: 4
+      enabled: ${FUTURES_PAPER_CROSS_ASSET_ENABLED:false}
+      max_spread_ticks: ${FUTURES_PAPER_CROSS_ASSET_MAX_SPREAD_TICKS:6}

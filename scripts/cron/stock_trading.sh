@@ -11,6 +11,7 @@ PROJECT_DIR="/home/deploy/project/kis_unified_sts"
 LOG_DIR="$PROJECT_DIR/logs"
 LOG_FILE="$LOG_DIR/stock_trading_$(date +%Y%m%d).log"
 VENV="$PROJECT_DIR/.venv/bin/activate"
+STS_BIN="$PROJECT_DIR/.venv/bin/sts"
 PID_FILE="$PROJECT_DIR/pids/stock_trading.pid"
 
 mkdir -p "$LOG_DIR"
@@ -36,6 +37,13 @@ start_trading() {
 
     cd "$PROJECT_DIR"
     source "$VENV"
+    if [ ! -x "$STS_BIN" ]; then
+        log "sts binary not found: $STS_BIN"
+        exit 1
+    fi
+
+    # Load environment variables
+    set -a && source .env && set +a
 
     # Check trading day
     IS_TRADING_DAY=$(python3 -c "
@@ -51,16 +59,31 @@ print('1' if is_trading_day(date.today()) else '0')
 
     log "Trading day confirmed. Starting stock trading..."
 
-    # Start trading via CLI (paper trading, daemon mode)
-    nohup sts trade start \
+    # Force stock metrics endpoint to match Prometheus scrape target.
+    # Prevent inherited shell env (e.g. PROMETHEUS_PORT=8080) from breaking scrape.
+    export PROMETHEUS_PORT="${STOCK_TRADING_PROMETHEUS_PORT:-9091}"
+    log "Prometheus metrics port: $PROMETHEUS_PORT"
+
+    # Start trading via fully detached session.
+    setsid bash -c "exec '$STS_BIN' trade start \
         --asset stock \
         --capital 100000000 \
         --paper \
-        --daemon \
-        >> "$LOG_FILE" 2>&1 &
+        --daemon" \
+        >> "$LOG_FILE" 2>&1 < /dev/null &
 
-    echo $! > "$PID_FILE"
-    log "Stock trading started (PID: $!)"
+    PID=$!
+    echo "$PID" > "$PID_FILE"
+
+    # Early liveness check to avoid stale PID files on immediate startup failure.
+    sleep 2
+    if ps -p "$PID" > /dev/null 2>&1; then
+        log "Stock trading started (PID: $PID)"
+    else
+        rm -f "$PID_FILE"
+        log "Failed to start stock trading (process exited early)"
+        exit 1
+    fi
 }
 
 stop_trading() {

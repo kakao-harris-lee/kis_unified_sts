@@ -97,7 +97,7 @@ output:
 krx_api:
   # KRX Open API 설정
   # API Key는 환경변수 KRX_API_KEY로 설정
-  base_url: "http://data.krx.co.kr/svc/apis"
+  base_url: "https://data-dbg.krx.co.kr/svc/apis"
   timeout_seconds: 30
   analysis_days: 20
 

@@ -59,6 +59,11 @@ class ATRDynamicExitConfig(ConfigMixin):
     # Max hold days (0 = disabled)
     max_hold_days: int = 0
 
+    # Percentage-based hard stop fallback (safety net when ATR is unavailable).
+    # Triggers when loss exceeds this percentage regardless of ATR data.
+    # 0 = disabled (not recommended).
+    max_loss_pct: float = 5.0
+
     # EOD close
     eod_close_enabled: bool = False
     eod_close_hour: int = 15
@@ -84,6 +89,8 @@ class ATRDynamicExitConfig(ConfigMixin):
             raise ValueError("max_hold_days must be non-negative")
         if not (0.0 < self.default_exit_confidence <= 1.0):
             raise ValueError("default_exit_confidence must be in (0, 1]")
+        if self.max_loss_pct < 0:
+            raise ValueError("max_loss_pct must be non-negative")
 
 
 class ATRDynamicExit(ExitSignalGenerator[ATRDynamicExitConfig]):
@@ -168,9 +175,44 @@ class ATRDynamicExit(ExitSignalGenerator[ATRDynamicExitConfig]):
         )
         high_since_entry = self._get_extreme_since_entry(position, current_price)
 
+        # Read per-position exit parameter overrides (from trend mode entry signal)
+        pos_meta = position.metadata or {}
+        stop_mult = pos_meta.get("exit_stop_atr_multiplier", self.config.stop_atr_multiplier)
+        trail_act = pos_meta.get("exit_trail_activation_atr", self.config.trail_activation_atr)
+        trail_mult = pos_meta.get("exit_trail_atr_multiplier", self.config.trail_atr_multiplier)
+        max_hold = pos_meta.get("exit_max_hold_days", self.config.max_hold_days)
+        max_loss = pos_meta.get("exit_max_loss_pct", self.config.max_loss_pct)
+
+        # 0. Safety net: percentage-based hard stop (ATR-independent).
+        #    Catches positions when indicator data is stale/unavailable.
+        #    Runs before ATR stop (step 1) — keep max_loss_pct >= typical ATR stop
+        #    to avoid shadowing the ATR-based stop. Per-position overrides from
+        #    metadata can tighten this, which is intentional for trend mode.
+        if max_loss > 0 and profit_pct <= -max_loss / 100:
+            logger.warning(
+                "[%s] max_loss_pct safety stop triggered for %s: "
+                "profit=%.2f%%, limit=-%.1f%%, atr=%.4f",
+                self.name, position.code, profit_pct * 100, max_loss, atr,
+            )
+            return self._create_exit_signal(
+                position=position,
+                current_price=current_price,
+                profit_pct=profit_pct,
+                profit_amount=profit_amount,
+                reason=ExitReason.STOP_LOSS,
+                priority=0,
+                high_since_entry=high_since_entry,
+                holding_minutes=holding_minutes,
+                metadata={
+                    "stop_type": "max_loss_pct_safety",
+                    "max_loss_pct": max_loss,
+                    "atr": atr,
+                },
+            )
+
         # 1. Hard stop: loss > ATR × stop_multiplier
         if atr > 0 and position.entry_price > 0:
-            stop_distance = atr * self.config.stop_atr_multiplier
+            stop_distance = atr * stop_mult
             stop_pct = -stop_distance / position.entry_price
             if profit_pct <= stop_pct:
                 return self._create_exit_signal(
@@ -186,7 +228,7 @@ class ATRDynamicExit(ExitSignalGenerator[ATRDynamicExitConfig]):
                         "stop_type": "atr_hard_stop",
                         "atr": atr,
                         "stop_pct": stop_pct,
-                        "stop_atr_multiplier": self.config.stop_atr_multiplier,
+                        "stop_atr_multiplier": stop_mult,
                     },
                 )
 
@@ -208,8 +250,8 @@ class ATRDynamicExit(ExitSignalGenerator[ATRDynamicExitConfig]):
         # 3. Trailing stop: if position ever reached trail_activation_atr × ATR profit
         #    (check peak/trough reached, not current profit — position may have retraced)
         if atr > 0 and position.entry_price > 0:
-            trail_activation_distance = atr * self.config.trail_activation_atr
-            trail_distance = atr * self.config.trail_atr_multiplier
+            trail_activation_distance = atr * trail_act
+            trail_distance = atr * trail_mult
 
             if position.side == PositionSide.LONG:
                 # Activation: best price ever achieved >= entry + trail_activation_distance
@@ -230,7 +272,7 @@ class ATRDynamicExit(ExitSignalGenerator[ATRDynamicExitConfig]):
                                 "trail_stop_price": trail_stop_price,
                                 "high_since_entry": high_since_entry,
                                 "atr": atr,
-                                "trail_atr_multiplier": self.config.trail_atr_multiplier,
+                                "trail_atr_multiplier": trail_mult,
                             },
                         )
             else:  # SHORT
@@ -252,7 +294,7 @@ class ATRDynamicExit(ExitSignalGenerator[ATRDynamicExitConfig]):
                                 "trail_stop_price": trail_stop_price,
                                 "high_since_entry": high_since_entry,
                                 "atr": atr,
-                                "trail_atr_multiplier": self.config.trail_atr_multiplier,
+                                "trail_atr_multiplier": trail_mult,
                             },
                         )
 
@@ -278,9 +320,9 @@ class ATRDynamicExit(ExitSignalGenerator[ATRDynamicExitConfig]):
                 )
 
         # 5. Max hold days (if > 0)
-        if self.config.max_hold_days > 0:
+        if max_hold > 0:
             holding_days = holding_minutes / (60 * 24)
-            if holding_days >= self.config.max_hold_days:
+            if holding_days >= max_hold:
                 return self._create_exit_signal(
                     position=position,
                     current_price=current_price,
@@ -292,7 +334,7 @@ class ATRDynamicExit(ExitSignalGenerator[ATRDynamicExitConfig]):
                     holding_minutes=holding_minutes,
                     metadata={
                         "holding_days": holding_days,
-                        "max_hold_days": self.config.max_hold_days,
+                        "max_hold_days": max_hold,
                     },
                 )
 

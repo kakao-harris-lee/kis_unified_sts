@@ -917,7 +917,7 @@
           "type": "prometheus",
           "uid": "prometheus"
         },
-        "definition": "label_values(trading_trades_total, job)",
+        "definition": "label_values(up{job=~\"trading-(stock|futures)\"}, job)",
         "hide": 0,
         "includeAll": false,
         "label": "Asset",
@@ -925,7 +925,7 @@
         "name": "job",
         "options": [],
         "query": {
-          "query": "label_values(trading_trades_total, job)",
+          "query": "label_values(up{job=~\"trading-(stock|futures)\"}, job)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
@@ -971,6 +971,6 @@
   "timezone": "Asia/Seoul",
   "title": "Trading Overview",
   "uid": "trading-overview",
-  "version": 1,
+  "version": 2,
   "weekStart": ""
 }

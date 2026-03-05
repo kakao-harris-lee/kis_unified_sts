@@ -85,7 +85,7 @@ def _build_stock_report(reader) -> str | None:
         lines.append("")
         lines.append(f"<b>\U0001f4c8 \ubcf4\uc720 \ud3ec\uc9c0\uc158 ({len(positions)}\uac74)</b>")
         for i, pos in enumerate(positions, 1):
-            name = pos.get("name", pos.get("code", "?"))
+            name = pos.get("name") or pos.get("code", "?")
             code = pos.get("code", "")
             entry_p = float(pos.get("entry_price", 0))
             cur_p = float(pos.get("current_price", 0))
@@ -107,7 +107,7 @@ def _build_stock_report(reader) -> str | None:
         lines.append("")
         lines.append(f"<b>\U0001f4c9 \uccad\uc0b0 \uac70\ub798 ({len(today_trades)}\uac74)</b>")
         for i, t in enumerate(today_trades, 1):
-            name = t.get("name", t.get("symbol", "?"))
+            name = t.get("name") or t.get("symbol", "?")
             symbol = t.get("symbol", "")
             entry_p = float(t.get("entry_price", 0))
             exit_p = float(t.get("exit_price", 0))
@@ -161,7 +161,7 @@ def _build_futures_report(reader) -> str | None:
     positions = reader.get_positions()
     if positions:
         for pos in positions:
-            name = pos.get("name", pos.get("code", "?"))
+            name = pos.get("name") or pos.get("code", "?")
             side = pos.get("side", "")
             entry_p = float(pos.get("entry_price", 0))
             cur_p = float(pos.get("current_price", 0))

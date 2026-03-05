@@ -10,7 +10,7 @@ Usage:
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, time
 from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
@@ -69,6 +69,11 @@ class RLMPPOConfig:
     paper_skip_market_close_minutes: int | None = None
     paper_night_skip_market_open_minutes: int | None = None
     paper_night_skip_market_close_minutes: int | None = None
+    # Hard safety gate: block entries when remaining time to session close is too short.
+    eod_hard_block_minutes: int = 10
+    night_eod_hard_block_minutes: int | None = None
+    paper_eod_hard_block_minutes: int | None = None
+    paper_night_eod_hard_block_minutes: int | None = None
     enable_hold_override: bool = True
     hold_override_max_gap: float = 0.12
     hold_override_min_entry_prob: float = 0.33
@@ -94,6 +99,25 @@ class RLMPPOConfig:
     paper_hold_override_max_gap: float | None = None
     paper_hold_override_min_entry_prob: float | None = None
     paper_hold_override_min_confidence: float | None = None
+    risk_off_long_block_enabled: bool = True
+    risk_off_change_threshold: float = -0.02
+    risk_off_regime_block_enabled: bool = True
+    risk_off_short_min_confidence: float | None = None
+    risk_off_backtest_short_min_confidence: float | None = None
+    risk_off_paper_short_min_confidence: float | None = None
+    risk_off_hold_override_prefer_short: bool = True
+    risk_off_hold_override_max_long_advantage: float = 0.05
+    risk_off_flip_long_to_short_enabled: bool = False
+    risk_off_flip_min_short_prob: float = 0.30
+    risk_off_regime_keywords: list[str] = field(
+        default_factory=lambda: [
+            "BEAR",
+            "RISK_OFF",
+            "STRONG_BEARISH",
+            "BEARISH",
+            "SIDEWAYS_DOWN",
+        ]
+    )
 
 
 @EntryRegistry.register("rl_mppo")
@@ -138,6 +162,22 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
             (
                 "paper_hold_override_min_confidence",
                 self.config.paper_hold_override_min_confidence,
+            ),
+            (
+                "risk_off_short_min_confidence",
+                self.config.risk_off_short_min_confidence,
+            ),
+            (
+                "risk_off_backtest_short_min_confidence",
+                self.config.risk_off_backtest_short_min_confidence,
+            ),
+            (
+                "risk_off_paper_short_min_confidence",
+                self.config.risk_off_paper_short_min_confidence,
+            ),
+            (
+                "risk_off_flip_min_short_prob",
+                self.config.risk_off_flip_min_short_prob,
             ),
         ):
             if value is None:
@@ -227,6 +267,32 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
             assert self.config.paper_night_skip_market_close_minutes >= 0, (
                 "paper_night_skip_market_close_minutes must be non-negative"
             )
+        assert self.config.eod_hard_block_minutes >= 0, (
+            "eod_hard_block_minutes must be non-negative"
+        )
+        if self.config.night_eod_hard_block_minutes is not None:
+            assert self.config.night_eod_hard_block_minutes >= 0, (
+                "night_eod_hard_block_minutes must be non-negative"
+            )
+        if self.config.paper_eod_hard_block_minutes is not None:
+            assert self.config.paper_eod_hard_block_minutes >= 0, (
+                "paper_eod_hard_block_minutes must be non-negative"
+            )
+        if self.config.paper_night_eod_hard_block_minutes is not None:
+            assert self.config.paper_night_eod_hard_block_minutes >= 0, (
+                "paper_night_eod_hard_block_minutes must be non-negative"
+            )
+        assert self.config.risk_off_change_threshold <= 0.0, (
+            "risk_off_change_threshold must be <= 0.0"
+        )
+        assert 0.0 <= self.config.risk_off_hold_override_max_long_advantage <= 1.0, (
+            "risk_off_hold_override_max_long_advantage must be between 0.0 and 1.0"
+        )
+        if self.config.risk_off_regime_keywords:
+            assert all(
+                isinstance(item, str) and item.strip()
+                for item in self.config.risk_off_regime_keywords
+            ), "risk_off_regime_keywords must contain non-empty strings"
 
     @property
     def name(self) -> str:
@@ -307,20 +373,36 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
         short_prob = action_probs.get(2, 0.0)
         hold_prob = action_probs.get(4, 0.0)
         self._record_action_probabilities(long_prob, short_prob, hold_prob)
+        risk_off, risk_off_reason = self._detect_risk_off_context(context)
 
         override_reason = ""
         if action == 4:  # HOLD
-            override_action = self._maybe_override_hold(action_probs, is_paper=is_paper)
+            override_action = self._maybe_override_hold(
+                action_probs,
+                is_paper=is_paper,
+                risk_off=risk_off,
+            )
             if override_action is not None:
                 action = override_action
                 confidence = action_probs.get(action, confidence)
                 override_reason = "hold_override"
+
+        if (
+            risk_off
+            and action == 0
+            and self.config.risk_off_flip_long_to_short_enabled
+            and short_prob >= float(self.config.risk_off_flip_min_short_prob)
+        ):
+            action = 2
+            confidence = short_prob
+            override_reason = "risk_off_flip_to_short"
 
         base_threshold = self._resolve_base_threshold(
             is_backtest=is_backtest,
             is_paper=is_paper,
             override_reason=override_reason,
             action=action,
+            risk_off=risk_off,
         )
         threshold, threshold_reason, regime_metric = self._resolve_effective_threshold(
             context=context,
@@ -329,6 +411,14 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
             base_threshold=base_threshold,
             action=action,
         )
+        if self.config.risk_off_long_block_enabled and risk_off and action == 0:
+            logger.info(
+                "RL long entry blocked in risk-off context: code=%s reason=%s",
+                context.market_data.get("code", ""),
+                risk_off_reason,
+            )
+            return None
+
         if confidence < threshold:
             logger.debug(
                 f"RL action {action} confidence {confidence:.3f} "
@@ -347,6 +437,8 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
             "rl_threshold_base": base_threshold,
             "rl_threshold_reason": threshold_reason,
             "rl_regime_metric": regime_metric,
+            "rl_risk_off": risk_off,
+            "rl_risk_off_reason": risk_off_reason,
         }
 
         # 행동 → Signal 변환
@@ -388,7 +480,87 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
 
         return None
 
-    def _maybe_override_hold(self, action_probs: dict[int, float], *, is_paper: bool) -> int | None:
+    def _detect_risk_off_context(self, context: EntryContext) -> tuple[bool, str]:
+        reasons: list[str] = []
+
+        if self.config.risk_off_regime_block_enabled:
+            regime_matches = self._match_risk_off_regime(context)
+            if regime_matches:
+                reasons.append(f"regime:{regime_matches}")
+
+        day_change = self._extract_day_change_ratio(context.market_data)
+        if (
+            day_change is not None
+            and day_change <= float(self.config.risk_off_change_threshold)
+        ):
+            reasons.append(f"day_change:{day_change:.4f}")
+
+        if reasons:
+            return True, ";".join(reasons)
+        return False, ""
+
+    def _match_risk_off_regime(self, context: EntryContext) -> str:
+        keywords = [k.upper().strip() for k in self.config.risk_off_regime_keywords if k.strip()]
+        if not keywords:
+            return ""
+
+        candidates: list[str] = []
+        for value in (
+            context.metadata.get("regime"),
+            context.metadata.get("market_state"),
+            context.market_data.get("regime"),
+            context.market_data.get("market_state"),
+        ):
+            if isinstance(value, str) and value.strip():
+                candidates.append(value.strip().upper())
+
+        if not candidates:
+            return ""
+
+        for candidate in candidates:
+            for keyword in keywords:
+                if keyword in candidate:
+                    return candidate
+        return ""
+
+    def _extract_day_change_ratio(self, market_data: dict[str, Any]) -> float | None:
+        open_price = self._as_positive_float(
+            market_data.get("open", market_data.get("day_open"))
+        )
+        close_price = self._as_positive_float(market_data.get("close"))
+        if open_price is not None and close_price is not None and open_price > 0:
+            return (close_price - open_price) / open_price
+
+        for key in ("change_rate", "day_change_rate", "change_pct", "change_percent"):
+            parsed = self._parse_ratio(market_data.get(key))
+            if parsed is not None:
+                return parsed
+
+        change = market_data.get("change")
+        parsed_change = self._parse_ratio(change)
+        if parsed_change is not None and abs(parsed_change) <= 1.0:
+            return parsed_change
+        return None
+
+    @staticmethod
+    def _parse_ratio(value: Any) -> float | None:
+        if value is None:
+            return None
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            return None
+        if abs(parsed) > 1.0:
+            return parsed / 100.0
+        return parsed
+
+    def _maybe_override_hold(
+        self,
+        action_probs: dict[int, float],
+        *,
+        is_paper: bool,
+        risk_off: bool,
+    ) -> int | None:
         """HOLD가 근소 우세인 경우 진입 액션으로 오버라이드."""
         enable_override = (
             self.config.paper_enable_hold_override
@@ -416,6 +588,14 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
         best_action, best_prob = (
             (0, long_prob) if long_prob >= short_prob else (2, short_prob)
         )
+        if (
+            risk_off
+            and self.config.risk_off_hold_override_prefer_short
+            and short_prob >= min_entry_prob
+        ):
+            long_advantage = long_prob - short_prob
+            if long_advantage <= float(self.config.risk_off_hold_override_max_long_advantage):
+                best_action, best_prob = 2, short_prob
         if best_prob < min_entry_prob:
             return None
 
@@ -456,7 +636,22 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
         is_paper: bool,
         override_reason: str,
         action: int,
+        risk_off: bool,
     ) -> float:
+        if risk_off and action == 2:
+            if (
+                is_paper
+                and self.config.risk_off_paper_short_min_confidence is not None
+            ):
+                return float(self.config.risk_off_paper_short_min_confidence)
+            if (
+                is_backtest
+                and self.config.risk_off_backtest_short_min_confidence is not None
+            ):
+                return float(self.config.risk_off_backtest_short_min_confidence)
+            if self.config.risk_off_short_min_confidence is not None:
+                return float(self.config.risk_off_short_min_confidence)
+
         if override_reason:
             if is_paper and self.config.paper_hold_override_min_confidence is not None:
                 return float(self.config.paper_hold_override_min_confidence)
@@ -687,7 +882,12 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
             if is_paper and self.config.paper_skip_market_close_minutes is not None
             else int(self.config.skip_market_close_minutes)
         )
-        sessions: list[tuple[time, time, int, int]] = []
+        day_hard_close_block = (
+            int(self.config.paper_eod_hard_block_minutes)
+            if is_paper and self.config.paper_eod_hard_block_minutes is not None
+            else int(self.config.eod_hard_block_minutes)
+        )
+        sessions: list[tuple[time, time, int, int, int]] = []
         if self.config.day_session_enabled:
             sessions.append(
                 (
@@ -699,6 +899,7 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
                     ),
                     day_skip_open,
                     day_skip_close,
+                    day_hard_close_block,
                 )
             )
 
@@ -721,6 +922,20 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
                     else self.config.skip_market_close_minutes
                 )
             )
+            night_hard_close_block = (
+                int(self.config.paper_night_eod_hard_block_minutes)
+                if is_paper
+                and self.config.paper_night_eod_hard_block_minutes is not None
+                else int(
+                    self.config.night_eod_hard_block_minutes
+                    if self.config.night_eod_hard_block_minutes is not None
+                    else (
+                        self.config.paper_eod_hard_block_minutes
+                        if is_paper and self.config.paper_eod_hard_block_minutes is not None
+                        else self.config.eod_hard_block_minutes
+                    )
+                )
+            )
             sessions.append(
                 (
                     self._parse_session_time(
@@ -731,16 +946,18 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
                     ),
                     night_skip_open,
                     night_skip_close,
+                    night_hard_close_block,
                 )
             )
 
-        for session_open, session_close, skip_open, skip_close in sessions:
+        for session_open, session_close, skip_open, skip_close, hard_close_block in sessions:
             if self._is_within_session(
                 current_minute=current_minute,
                 session_open=session_open,
                 session_close=session_close,
                 skip_open=max(0, skip_open),
                 skip_close=max(0, skip_close),
+                hard_close_block=max(0, hard_close_block),
             ):
                 return True
         return False
@@ -758,9 +975,24 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
         session_close: time,
         skip_open: int,
         skip_close: int,
+        hard_close_block: int = 0,
     ) -> bool:
         open_minute = session_open.hour * 60 + session_open.minute
         close_minute = session_close.hour * 60 + session_close.minute
+
+        # Raw session membership check (without skip windows).
+        if open_minute <= close_minute:
+            in_raw_session = open_minute <= current_minute <= close_minute
+        else:
+            in_raw_session = current_minute >= open_minute or current_minute <= close_minute
+        if not in_raw_session:
+            return False
+
+        # Hard block near session close: block when remaining minutes <= threshold.
+        if hard_close_block > 0:
+            remaining_to_close = (close_minute - current_minute) % 1440
+            if remaining_to_close <= hard_close_block:
+                return False
 
         start_minute = (open_minute + skip_open) % 1440
         end_minute = (close_minute - skip_close) % 1440

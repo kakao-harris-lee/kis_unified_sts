@@ -17,7 +17,7 @@ Entry Conditions:
 """
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, time, timedelta
 from typing import Dict, Optional
 
@@ -68,6 +68,25 @@ class MomentumBreakoutConfig(ConfigMixin):
     allow_short: bool = False
     confidence_base: float = 0.65
 
+    # Trend mode (activated when regime matches trend_mode_regimes)
+    trend_mode_enabled: bool = False
+    trend_mode_regimes: list[str] = field(default_factory=lambda: ["BULL", "BULL_STRONG", "BULL_MODERATE", "SIDEWAYS_UP"])
+    trend_rvol_threshold: float = 1.0
+    trend_breakout_buffer_pct: float = 0.0
+    trend_signal_cooldown_seconds: int = 60
+    # EMA pullback trigger (trend_mode only)
+    trend_ema_pullback_enabled: bool = True
+    trend_ema_fast: int = 5
+    trend_ema_mid: int = 20
+    trend_ema_slow: int = 60
+    trend_ema_touch_buffer_atr: float = 1.0
+    trend_rsi_min: float = 40.0
+    # Trend mode exit overrides
+    trend_exit_stop_atr_multiplier: float = 2.5
+    trend_exit_trail_activation_atr: float = 1.5
+    trend_exit_trail_atr_multiplier: float = 2.5
+    trend_exit_max_hold_days: int = 15
+
     def validate(self) -> None:
         assert self.daily_high_period > 0, "daily_high_period must be positive"
         assert self.breakout_buffer_pct >= 0, "breakout_buffer_pct must be non-negative"
@@ -115,7 +134,8 @@ class MomentumBreakoutEntry(EntrySignalGenerator[MomentumBreakoutConfig]):
 
     @property
     def required_indicators(self) -> list[str]:
-        return ["close", "high_5", "rvol", "volume", "volume_ma", "atr"]
+        return ["close", "high_5", "rvol", "volume", "volume_ma", "atr",
+                "ema_5", "ema_20", "ema_60", "ema_aligned", "rsi"]
 
     async def generate(self, context: EntryContext) -> Optional[Signal]:
         """Generate entry signal based on momentum breakout conditions."""
@@ -152,6 +172,17 @@ class MomentumBreakoutEntry(EntrySignalGenerator[MomentumBreakoutConfig]):
 
         now = context.timestamp
 
+        # --- Detect trend mode ---
+        is_trend_mode = (
+            self.config.trend_mode_enabled
+            and context.metadata.get("regime") in self.config.trend_mode_regimes
+        )
+
+        # --- Compute effective parameters ---
+        effective_rvol = self.config.trend_rvol_threshold if is_trend_mode else self.config.rvol_threshold
+        effective_buffer = self.config.trend_breakout_buffer_pct if is_trend_mode else self.config.breakout_buffer_pct
+        effective_cooldown = self.config.trend_signal_cooldown_seconds if is_trend_mode else self.config.signal_cooldown_seconds
+
         # --- Time filters ---
         open_dt = datetime.combine(
             now.date(),
@@ -176,12 +207,12 @@ class MomentumBreakoutEntry(EntrySignalGenerator[MomentumBreakoutConfig]):
                 return None
 
         # --- Cooldown ---
-        if self.config.signal_cooldown_seconds > 0:
+        if effective_cooldown > 0:
             last_time = self._last_signal_time.get(code)
-            if last_time and (now - last_time).total_seconds() < self.config.signal_cooldown_seconds:
+            if last_time and (now - last_time).total_seconds() < effective_cooldown:
                 logger.debug(
                     f"{code}: Cooldown active "
-                    f"({(now - last_time).total_seconds():.0f}s / {self.config.signal_cooldown_seconds}s)"
+                    f"({(now - last_time).total_seconds():.0f}s / {effective_cooldown}s)"
                 )
                 return None
 
@@ -204,7 +235,7 @@ class MomentumBreakoutEntry(EntrySignalGenerator[MomentumBreakoutConfig]):
             logger.debug(f"{code}: high_5 not available or zero")
             return None
 
-        breakout_threshold = high_5 * (1.0 + self.config.breakout_buffer_pct / 100.0)
+        breakout_threshold = high_5 * (1.0 + effective_buffer / 100.0)
         close_breakout = close > breakout_threshold
 
         intrabar_breakout = False
@@ -221,26 +252,36 @@ class MomentumBreakoutEntry(EntrySignalGenerator[MomentumBreakoutConfig]):
             if close >= intrabar_reclaim_floor:
                 intrabar_breakout = True
 
-        if not close_breakout and not intrabar_breakout:
-            logger.debug(
-                f"{code}: No breakout — close={close:.2f}, high={high_price:.2f}, "
-                f"threshold={breakout_threshold:.2f}"
-            )
-            return None
-
-        breakout_type = "close" if close_breakout else "intrabar_reclaim"
-
         # --- RVOL confirm ---
         rvol = _get("rvol", 0.0)
-        required_rvol = self.config.rvol_threshold
+        required_rvol = effective_rvol
         if intrabar_breakout:
             required_rvol = max(required_rvol, self.config.intrabar_min_rvol)
 
-        if rvol < required_rvol:
-            logger.debug(
-                f"{code}: RVOL {rvol:.2f} below threshold {required_rvol:.2f}"
-            )
-            return None
+        trigger_type: Optional[str] = None
+
+        if not close_breakout and not intrabar_breakout:
+            # No breakout — try EMA pullback in trend mode
+            if (
+                is_trend_mode
+                and self.config.trend_ema_pullback_enabled
+            ):
+                if rvol >= effective_rvol and self._check_ema_pullback(close, atr, indicators):
+                    trigger_type = "ema_pullback"
+
+            if trigger_type is None:
+                logger.debug(
+                    f"{code}: No breakout — close={close:.2f}, high={high_price:.2f}, "
+                    f"threshold={breakout_threshold:.2f}"
+                )
+                return None
+        else:
+            if rvol < required_rvol:
+                logger.debug(
+                    f"{code}: RVOL {rvol:.2f} below threshold {required_rvol:.2f}"
+                )
+                return None
+            trigger_type = "close" if close_breakout else "intrabar_reclaim"
 
         # --- Volume confirm ---
         volume = _get("volume", 0.0)
@@ -271,9 +312,31 @@ class MomentumBreakoutEntry(EntrySignalGenerator[MomentumBreakoutConfig]):
         logger.info(
             f"MomentumBreakout LONG signal: {code} ({name_str}) "
             f"close={close:.2f}, high_5={high_5:.2f}, "
-            f"breakout={breakout_pct:.2f}% ({breakout_type}), rvol={rvol:.2f}, "
-            f"atr={atr:.2f}, confidence={confidence:.2%}"
+            f"breakout={breakout_pct:.2f}% ({trigger_type}), rvol={rvol:.2f}, "
+            f"atr={atr:.2f}, confidence={confidence:.2%}, trend_mode={is_trend_mode}"
         )
+
+        metadata = {
+            "signal_direction": "long",
+            "stop_loss": stop_loss_price,
+            "atr": atr,
+            "rvol": rvol,
+            "high_5": high_5,
+            "breakout_pct": breakout_pct if trigger_type != "ema_pullback" else 0.0,
+            "breakout_type": trigger_type,
+            "trigger": trigger_type,
+            "trend_mode": is_trend_mode,
+            "breakout_threshold": breakout_threshold,
+            "intrabar_high": high_price,
+            "intrabar_reclaim_floor": intrabar_reclaim_floor if trigger_type != "ema_pullback" else 0.0,
+        }
+        if is_trend_mode:
+            metadata.update({
+                "exit_stop_atr_multiplier": self.config.trend_exit_stop_atr_multiplier,
+                "exit_trail_activation_atr": self.config.trend_exit_trail_activation_atr,
+                "exit_trail_atr_multiplier": self.config.trend_exit_trail_atr_multiplier,
+                "exit_max_hold_days": self.config.trend_exit_max_hold_days,
+            })
 
         return Signal(
             code=code,
@@ -283,19 +346,48 @@ class MomentumBreakoutEntry(EntrySignalGenerator[MomentumBreakoutConfig]):
             timestamp=now,
             strategy="momentum_breakout",
             confidence=confidence,
-            metadata={
-                "signal_direction": "long",
-                "stop_loss": stop_loss_price,
-                "atr": atr,
-                "rvol": rvol,
-                "high_5": high_5,
-                "breakout_pct": breakout_pct,
-                "breakout_type": breakout_type,
-                "breakout_threshold": breakout_threshold,
-                "intrabar_high": high_price,
-                "intrabar_reclaim_floor": intrabar_reclaim_floor,
-            },
+            metadata=metadata,
         )
+
+    def _check_ema_pullback(
+        self, close: float, atr: float, indicators: dict
+    ) -> bool:
+        """Check EMA pullback trigger conditions.
+
+        Conditions:
+        0. ema_daily_aligned = True (daily EMA5d > EMA10d > EMA20d, multi-day uptrend)
+        1. ema_aligned = True (EMA5 > EMA20 > EMA60, intraday alignment)
+        2. close near EMA20: |close - ema_20| <= ATR * ema_touch_buffer_atr
+        3. close > ema_5 (bounce confirmed)
+        4. RSI > trend_rsi_min
+        """
+        # Daily-scale trend gate: only enter pullbacks in sustained uptrends
+        if not indicators.get("ema_daily_aligned", False):
+            return False
+
+        ema_aligned = indicators.get("ema_aligned", False)
+        if not ema_aligned:
+            return False
+
+        ema_mid = float(indicators.get(f"ema_{self.config.trend_ema_mid}", 0) or 0)
+        ema_fast = float(indicators.get(f"ema_{self.config.trend_ema_fast}", 0) or 0)
+        if ema_mid <= 0 or ema_fast <= 0:
+            return False
+
+        # Pullback location: close near EMA20
+        if atr > 0 and abs(close - ema_mid) > atr * self.config.trend_ema_touch_buffer_atr:
+            return False
+
+        # Bounce confirmation: close > EMA fast
+        if close <= ema_fast:
+            return False
+
+        # RSI health check
+        rsi = float(indicators.get("rsi", 50) or 50)
+        if rsi < self.config.trend_rsi_min:
+            return False
+
+        return True
 
     def _calculate_confidence(
         self,

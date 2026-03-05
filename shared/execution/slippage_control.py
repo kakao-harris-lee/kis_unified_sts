@@ -164,7 +164,7 @@ class SlippageControlConfig:
             retry_policy_raw = RetryPolicy.MARKET_ONCE.value
 
         return cls(
-            enabled=bool(data.get("enabled", False)),
+            enabled=_to_bool(data.get("enabled", False)),
             tick_size=float(data.get("tick_size", 0.02)),
             max_spread_ticks=int(data.get("max_spread_ticks", 1)),
             min_depth_multiplier=float(data.get("min_depth_multiplier", 3.0)),
@@ -175,7 +175,7 @@ class SlippageControlConfig:
             volatility_window_ticks=int(volatility.get("window_ticks", 20)),
             volatility_spike_multiplier=float(volatility.get("spike_multiplier", 2.5)),
             volatility_cooldown_seconds=float(volatility.get("cooldown_seconds", 2.0)),
-            cross_asset_enabled=bool(cross_asset.get("enabled", True)),
+            cross_asset_enabled=_to_bool(cross_asset.get("enabled", True), default=True),
             cross_asset_symbol=str(cross_asset.get("reference_symbol", "101S6000")),
             cross_asset_max_spread_ticks=int(cross_asset.get("max_spread_ticks", 2)),
             blocked_time_windows=blocked,
@@ -505,6 +505,22 @@ def _to_float(value: Any) -> float:
         return float(value)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _to_bool(value: Any, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "t", "yes", "y", "on"}:
+            return True
+        if normalized in {"0", "false", "f", "no", "n", "off", ""}:
+            return False
+    return default
 
 
 def _parse_hhmm(value: str) -> time:

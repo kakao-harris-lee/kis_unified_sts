@@ -34,9 +34,18 @@ class ClickHouseConfig(BaseModel):
     @classmethod
     def from_env(cls, database: str | None = None) -> "ClickHouseConfig":
         """Create config from environment variables."""
+        http_port = int(os.environ.get("CLICKHOUSE_PORT", "8123"))
+        raw_native_port = os.environ.get("CLICKHOUSE_NATIVE_PORT")
+        if raw_native_port:
+            native_port = int(raw_native_port)
+        else:
+            # In this repo, CLICKHOUSE_PORT is often used as HTTP port (8123).
+            # Keep native protocol default on 9000 unless an explicit native port is provided.
+            native_port = 9000 if http_port == 8123 else http_port
         return cls(
             host=os.environ.get("CLICKHOUSE_HOST", "localhost"),
-            port=int(os.environ.get("CLICKHOUSE_PORT", "9000")),
+            port=native_port,
+            http_port=http_port,
             user=os.environ.get("CLICKHOUSE_USER", "default"),
             password=os.environ.get("CLICKHOUSE_PASSWORD", ""),
             database=database or os.environ.get("CLICKHOUSE_STOCK_DATABASE", "market"),

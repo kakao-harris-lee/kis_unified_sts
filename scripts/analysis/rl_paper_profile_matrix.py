@@ -31,10 +31,43 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 PROFILE_RE = re.compile(r"Strategy:\s+([A-Za-z0-9_\-]+)")
+MATRIX_PROFILE_RE = re.compile(r"^\[matrix\]\s+profile=(.+)$")
 ENTRY_SIGNALS_RE = re.compile(r"Entry signals:\s*(\d+)")
 BLOCK_RE = re.compile(r"Entry blocked by execution guard:\s+\S+\s+([^\s]+)")
 SLIPPAGE_RE = re.compile(r"slippage=([+-]?\d+(?:\.\d+)?)t")
 EXIT_PNL_RE = re.compile(r"Exit executed: .*pnl=([+-]?\d+(?:\.\d+)?)%")
+
+# Matrix presets for paper slippage guard tuning.
+# label -> strategy + env overrides
+PROFILE_PRESETS: dict[str, dict[str, Any]] = {
+    "rl_mppo_spread6": {
+        "strategy": "rl_mppo",
+        "env": {
+            "FUTURES_PAPER_MAX_SPREAD_TICKS": "6",
+            "FUTURES_PAPER_MIN_DEPTH_MULTIPLIER": "1.0",
+            "FUTURES_PAPER_MAX_PRICE_DEVIATION_TICKS": "6",
+            "FUTURES_PAPER_CROSS_ASSET_ENABLED": "false",
+        },
+    },
+    "rl_mppo_spread7": {
+        "strategy": "rl_mppo",
+        "env": {
+            "FUTURES_PAPER_MAX_SPREAD_TICKS": "7",
+            "FUTURES_PAPER_MIN_DEPTH_MULTIPLIER": "1.0",
+            "FUTURES_PAPER_MAX_PRICE_DEVIATION_TICKS": "7",
+            "FUTURES_PAPER_CROSS_ASSET_ENABLED": "false",
+        },
+    },
+    "rl_mppo_spread8": {
+        "strategy": "rl_mppo",
+        "env": {
+            "FUTURES_PAPER_MAX_SPREAD_TICKS": "8",
+            "FUTURES_PAPER_MIN_DEPTH_MULTIPLIER": "1.0",
+            "FUTURES_PAPER_MAX_PRICE_DEVIATION_TICKS": "8",
+            "FUTURES_PAPER_CROSS_ASSET_ENABLED": "false",
+        },
+    },
+}
 
 
 def _parse_profiles(raw: str) -> list[str]:
@@ -42,6 +75,20 @@ def _parse_profiles(raw: str) -> list[str]:
     if not profiles:
         raise ValueError("No profiles provided")
     return profiles
+
+
+def _resolve_profile(token: str) -> tuple[str, str, dict[str, str]]:
+    preset = PROFILE_PRESETS.get(token)
+    if not preset:
+        return token, token, {}
+    strategy = str(preset.get("strategy", token)).strip() or token
+    env_payload = preset.get("env", {})
+    env_overrides = (
+        {str(k): str(v) for k, v in env_payload.items()}
+        if isinstance(env_payload, dict)
+        else {}
+    )
+    return token, strategy, env_overrides
 
 
 def _infer_profile(log_path: Path) -> str:
@@ -52,6 +99,11 @@ def _infer_profile(log_path: Path) -> str:
                 line = fp.readline()
                 if not line:
                     break
+                matrix_matched = MATRIX_PROFILE_RE.search(line.strip())
+                if matrix_matched:
+                    value = matrix_matched.group(1).strip()
+                    if value:
+                        return value
                 matched = PROFILE_RE.search(line)
                 if matched:
                     return matched.group(1).strip()
@@ -208,10 +260,12 @@ def _print_rank(rows: list[dict[str, Any]]) -> None:
 
 def _run_profile(
     *,
-    profile: str,
+    profile_label: str,
+    strategy: str,
     model: str,
     duration_minutes: int,
     log_path: Path,
+    env_overrides: dict[str, str],
     dry_run: bool,
 ) -> int:
     sts_bin = REPO_ROOT / ".venv/bin/sts"
@@ -219,9 +273,14 @@ def _run_profile(
         raise FileNotFoundError(f"sts binary not found: {sts_bin}")
 
     duration_seconds = int(duration_minutes * 60)
+    # Guard against graceful-shutdown hangs: send TERM at duration, then
+    # force-kill if process does not exit within the grace period.
+    kill_after_seconds = max(20, min(90, int(duration_minutes * 10)))
     cmd = [
         "timeout",
         "--signal=TERM",
+        "--kill-after",
+        f"{kill_after_seconds}s",
         f"{duration_seconds}s",
         str(sts_bin),
         "rl",
@@ -229,7 +288,7 @@ def _run_profile(
         "--model",
         model,
         "--strategy",
-        profile,
+        strategy,
         "--no-daemon",
     ]
 
@@ -238,13 +297,19 @@ def _run_profile(
         return 0
 
     env = os.environ.copy()
-    env["RL_PAPER_MATRIX_PROFILE"] = profile
+    env["RL_PAPER_MATRIX_PROFILE"] = profile_label
+    # Isolate profile evaluation from previous session carry-over.
+    env["STS_DISABLE_POSITION_RECOVERY"] = "1"
+    env.update(env_overrides)
 
     with log_path.open("w", encoding="utf-8") as fp:
         fp.write(f"[matrix] started_at={datetime.now().isoformat()}\n")
-        fp.write(f"[matrix] profile={profile}\n")
+        fp.write(f"[matrix] profile={profile_label}\n")
+        fp.write(f"[matrix] strategy={strategy}\n")
         fp.write(f"[matrix] model={model}\n")
         fp.write(f"[matrix] duration_minutes={duration_minutes}\n")
+        if env_overrides:
+            fp.write(f"[matrix] env_overrides={json.dumps(env_overrides, ensure_ascii=False)}\n")
         fp.write(f"[matrix] command={' '.join(cmd)}\n")
         fp.flush()
 
@@ -270,11 +335,11 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--profiles",
         default=(
-            "rl_mppo,"
+            "rl_mppo_spread6,"
+            "rl_mppo_spread7,"
+            "rl_mppo_spread8,"
             "rl_mppo_profile_asym_long_strict,"
-            "rl_mppo_profile_uptrend_spike_guard,"
-            "rl_mppo_tune_a,"
-            "rl_mppo_tune_b"
+            "rl_mppo_profile_uptrend_spike_guard"
         ),
         help="Comma-separated strategy profile names",
     )
@@ -339,17 +404,23 @@ def main() -> int:
         run_dir.mkdir(parents=True, exist_ok=True)
         print(f"Run directory: {run_dir}")
 
-        for idx, profile in enumerate(profiles, start=1):
-            log_path = run_dir / f"{idx:02d}_{profile}.log"
-            print(f"[{idx}/{len(profiles)}] running {profile} ({args.duration_minutes}m)")
+        for idx, profile_token in enumerate(profiles, start=1):
+            profile_label, strategy, env_overrides = _resolve_profile(profile_token)
+            log_path = run_dir / f"{idx:02d}_{profile_label}.log"
+            print(
+                f"[{idx}/{len(profiles)}] running {profile_label} "
+                f"(strategy={strategy}, {args.duration_minutes}m)"
+            )
             code = _run_profile(
-                profile=profile,
+                profile_label=profile_label,
+                strategy=strategy,
                 model=args.model,
                 duration_minutes=args.duration_minutes,
                 log_path=log_path,
+                env_overrides=env_overrides,
                 dry_run=bool(args.dry_run),
             )
-            log_entries.append((profile, log_path))
+            log_entries.append((profile_label, log_path))
             timed_out = (code == 124)
             print(
                 f"  exit_code={code}"

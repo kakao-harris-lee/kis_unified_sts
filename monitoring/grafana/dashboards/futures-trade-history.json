@@ -29,85 +29,30 @@
       },
       "fieldConfig": {
         "defaults": {
-          "color": {
-            "mode": "thresholds"
+          "custom": {
+            "align": "left",
+            "cellOptions": { "type": "auto" },
+            "inspect": false
           },
           "mappings": [],
           "thresholds": {
             "mode": "absolute",
-            "steps": [
-              { "color": "green", "value": null }
-            ]
+            "steps": [{ "color": "green", "value": null }]
           }
         },
-        "overrides": [
-          {
-            "matcher": { "id": "byName", "options": "total_pnl" },
-            "properties": [
-              { "id": "unit", "value": "currencyKRW" },
-              {
-                "id": "thresholds",
-                "value": {
-                  "mode": "absolute",
-                  "steps": [
-                    { "color": "red", "value": null },
-                    { "color": "green", "value": 0 }
-                  ]
-                }
-              },
-              { "id": "color", "value": { "mode": "thresholds" } }
-            ]
-          },
-          {
-            "matcher": { "id": "byName", "options": "avg_pnl" },
-            "properties": [
-              { "id": "unit", "value": "currencyKRW" },
-              {
-                "id": "thresholds",
-                "value": {
-                  "mode": "absolute",
-                  "steps": [
-                    { "color": "red", "value": null },
-                    { "color": "green", "value": 0 }
-                  ]
-                }
-              },
-              { "id": "color", "value": { "mode": "thresholds" } }
-            ]
-          },
-          {
-            "matcher": { "id": "byName", "options": "win_rate" },
-            "properties": [
-              { "id": "unit", "value": "percent" },
-              {
-                "id": "thresholds",
-                "value": {
-                  "mode": "absolute",
-                  "steps": [
-                    { "color": "red", "value": null },
-                    { "color": "yellow", "value": 40 },
-                    { "color": "green", "value": 55 }
-                  ]
-                }
-              },
-              { "id": "color", "value": { "mode": "thresholds" } }
-            ]
-          }
-        ]
+        "overrides": []
       },
-      "gridPos": { "h": 4, "w": 24, "x": 0, "y": 0 },
+      "gridPos": { "h": 5, "w": 24, "x": 0, "y": 0 },
       "id": 1,
       "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "center",
-        "orientation": "horizontal",
-        "reduceOptions": {
-          "calcs": ["lastNotNull"],
+        "cellHeight": "sm",
+        "showHeader": false,
+        "footer": {
+          "show": false,
+          "reducer": ["sum"],
           "fields": "",
-          "values": false
-        },
-        "textMode": "auto"
+          "countRows": false
+        }
       },
       "pluginVersion": "10.0.0",
       "targets": [
@@ -116,7 +61,7 @@
             "type": "grafana-clickhouse-datasource",
             "uid": "clickhouse"
           },
-          "rawSql": "SELECT count() as trades, ifNull(sum(pnl), 0) as total_pnl, if(count() > 0, round(countIf(pnl > 0) / count() * 100, 1), 0) as win_rate, if(count() > 0, round(avg(pnl), 0), 0) as avg_pnl FROM kospi.rl_trades WHERE asset_class = 'futures'",
+          "rawSql": "WITH\n  (SELECT count() FROM kospi.rl_trades WHERE asset_class = 'futures') AS trades,\n  (SELECT round(ifNull(sum(pnl), 0), 1) FROM kospi.rl_trades WHERE asset_class = 'futures') AS total_pnl,\n  (SELECT round(if(count() > 0, countIf(pnl > 0) / count() * 100, 0), 1) FROM kospi.rl_trades WHERE asset_class = 'futures') AS win_rate,\n  (SELECT round(if(count() > 0, avg(pnl), 0), 0) FROM kospi.rl_trades WHERE asset_class = 'futures') AS avg_pnl\nSELECT line\nFROM (\n  SELECT 1 AS ord, concat('Trades : ', toString(trades)) AS line\n  UNION ALL\n  SELECT 2 AS ord, concat('Total pnl : ', toString(total_pnl)) AS line\n  UNION ALL\n  SELECT 3 AS ord, concat('win_rate : ', toString(win_rate), '%') AS line\n  UNION ALL\n  SELECT 4 AS ord, concat('avg_pnl : ', toString(avg_pnl)) AS line\n)\nORDER BY ord",
           "format": 1,
           "queryType": "sql",
           "refId": "A",
@@ -129,7 +74,7 @@
         }
       ],
       "title": "Total Stats",
-      "type": "stat"
+      "type": "table"
     },
     {
       "datasource": {

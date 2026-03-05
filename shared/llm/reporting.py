@@ -68,6 +68,10 @@ async def send_telegram_alerts(
 
             for plan in stock_plans[:3]:
                 await analyzer.notifier.send_message(plan.to_telegram_message())
+        else:
+            await analyzer.notifier.send_message(
+                "⚠️ <b>주식 추천 없음</b>\n시장 데이터 수집 실패 또는 조건 충족 종목 없음",
+            )
 
         checklist = """
 📋 <b>체크리스트</b>
@@ -298,6 +302,9 @@ def _build_training_rows_for_analysis(
         )
         technical = data.get("technical", {})
         news = data.get("news", {})
+        news_headlines = news.get("mk_headlines", news.get("key_events", []))
+        if not isinstance(news_headlines, list):
+            news_headlines = []
         plan = plan_map.get(code)
 
         rows.append(
@@ -322,6 +329,8 @@ def _build_training_rows_for_analysis(
                     "score_breakdown": score_breakdown,
                     "technical_signal": technical.get("signal"),
                     "news_sentiment": news.get("sentiment"),
+                    "news_count": news.get("news_count", 0),
+                    "news_headlines": news_headlines[:3],
                     "risk_keywords": metrics.get("risk_keywords", []),
                 },
                 "labels": _empty_training_labels(),

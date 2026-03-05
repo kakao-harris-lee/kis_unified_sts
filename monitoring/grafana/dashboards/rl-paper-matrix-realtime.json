@@ -216,7 +216,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum(increase(trading_entry_blocks_total{job=~\"$job\",strategy=~\"$strategy\",reason=~\"$reason\"}[$__rate_interval])) by (reason)",
+          "expr": "sum(increase(trading_entry_blocks_total{job=~\"$job\",strategy=~\"$strategy\",reason=~\"$reason\"}[$__rate_interval])) by (reason) or vector(0)",
           "legendFormat": "{{reason}}",
           "refId": "A"
         }
@@ -260,19 +260,19 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "max(trading_rl_entry_action_probability{job=~\"$job\",strategy=~\"$strategy\",action=\"long\"})",
+          "expr": "max(trading_rl_entry_action_probability{job=~\"$job\",strategy=~\"$strategy\",action=\"long\"}) or vector(0)",
           "legendFormat": "long",
           "refId": "A"
         },
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "max(trading_rl_entry_action_probability{job=~\"$job\",strategy=~\"$strategy\",action=\"short\"})",
+          "expr": "max(trading_rl_entry_action_probability{job=~\"$job\",strategy=~\"$strategy\",action=\"short\"}) or vector(0)",
           "legendFormat": "short",
           "refId": "B"
         },
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "max(trading_rl_entry_action_probability{job=~\"$job\",strategy=~\"$strategy\",action=\"hold\"})",
+          "expr": "max(trading_rl_entry_action_probability{job=~\"$job\",strategy=~\"$strategy\",action=\"hold\"}) or vector(0)",
           "legendFormat": "hold",
           "refId": "C"
         }
@@ -340,7 +340,7 @@
           "type": "prometheus",
           "uid": "prometheus"
         },
-        "definition": "label_values(trading_signals_total, job)",
+        "definition": "label_values(up{job=~\"trading-(stock|futures)\"}, job)",
         "hide": 0,
         "includeAll": false,
         "label": "Job",
@@ -348,7 +348,7 @@
         "name": "job",
         "options": [],
         "query": {
-          "query": "label_values(trading_signals_total, job)",
+          "query": "label_values(up{job=~\"trading-(stock|futures)\"}, job)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
@@ -367,7 +367,7 @@
           "type": "prometheus",
           "uid": "prometheus"
         },
-        "definition": "label_values(trading_signals_total{job=~\"$job\"}, strategy)",
+        "definition": "label_values({__name__=~\"trading_signals_total|trading_trades_total\",job=~\"$job\"}, strategy)",
         "hide": 0,
         "includeAll": true,
         "label": "Strategy",
@@ -375,7 +375,7 @@
         "name": "strategy",
         "options": [],
         "query": {
-          "query": "label_values(trading_signals_total{job=~\"$job\"}, strategy)",
+          "query": "label_values({__name__=~\"trading_signals_total|trading_trades_total\",job=~\"$job\"}, strategy)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
@@ -421,6 +421,6 @@
   "timezone": "Asia/Seoul",
   "title": "RL Paper Matrix Realtime",
   "uid": "rl-paper-matrix-realtime",
-  "version": 1,
+  "version": 2,
   "weekStart": ""
 }

@@ -16,7 +16,8 @@ strategy:
       paper_short_min_confidence: 0.48
       skip_market_open_minutes: 5
       skip_market_close_minutes: 30
-      paper_skip_market_close_minutes: 0
+      paper_skip_market_close_minutes: 30
+      paper_eod_hard_block_minutes: 10
       day_session_enabled: true
       day_market_open: 09:00
       day_market_close: '15:45'

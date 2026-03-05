@@ -83,6 +83,32 @@ def test_publish_stock_tick_to_market_stream():
     assert client.expire_calls == [("market:ticks", 86400)]
 
 
+def test_publish_includes_symbol_name_when_present():
+    client = _FakeRedis()
+    cfg = TickStreamPublisherConfig(
+        enabled=True,
+        async_publish=False,
+        stock_stream="market:ticks",
+        futures_stream="raw_data",
+        stream_maxlen=10000,
+        stock_min_interval_seconds=0.0,
+        futures_min_interval_seconds=0.0,
+        stream_ttl_seconds=86400,
+        ttl_refresh_interval_seconds=60.0,
+    )
+    publisher = TickStreamPublisher(cfg, client=client)
+
+    publisher.publish(
+        "stock",
+        "005930",
+        {"close": 71500.0, "timestamp": 1771982309.0, "name": "SamsungElec"},
+    )
+
+    assert len(client.xadd_calls) == 1
+    call = client.xadd_calls[0]
+    assert call["fields"]["name"] == "SamsungElec"
+
+
 def test_publish_respects_per_symbol_interval(monkeypatch):
     client = _FakeRedis()
     cfg = TickStreamPublisherConfig(

@@ -91,7 +91,7 @@ class CircuitBreakerStageConfig(BaseModel):
 class PipelineIntervalsConfig(BaseModel):
     """파이프라인 스테이지별 인터벌 설정"""
 
-    regime: float = Field(default=300.0, description="Regime 스테이지 간격 (초)")
+    regime: float = Field(default=60.0, description="Regime 스테이지 간격 (초)")
     entry: float = Field(default=1.0, description="Entry 스테이지 간격 (초)")
     monitoring: float = Field(default=0.1, description="Monitoring 스테이지 간격 (초)")
     exit: float = Field(default=0.5, description="Exit 스테이지 간격 (초)")

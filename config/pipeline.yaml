@@ -4,7 +4,7 @@
 pipeline:
   # 스테이지별 실행 간격 (초)
   intervals:
-    regime: 300      # 5분 - 시장 상태 분석
+    regime: 60       # 1분 - 시장 상태 분석 (장 초반 빠른 감지 필요)
     entry: 1         # 1초 - 진입 신호 탐색
     monitoring: 0.1  # 100ms - 포지션 모니터링
     exit: 0.5        # 500ms - 청산 조건 확인

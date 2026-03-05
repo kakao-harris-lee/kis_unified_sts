@@ -48,6 +48,24 @@ def _parse_bool(value: Any) -> bool | None:
     return None
 
 
+def _extract_symbol_name(payload: dict[str, Any]) -> str:
+    for key in (
+        "name",
+        "stock_name",
+        "symbol_name",
+        "item_name",
+        "prdt_name",
+        "hts_kor_isnm",
+    ):
+        value = payload.get(key)
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return ""
+
+
 @dataclass(frozen=True)
 class TickStreamPublisherConfig:
     enabled: bool = True
@@ -242,6 +260,9 @@ class TickStreamPublisher:
             "close": str(price),
             "timestamp": str(event_ts),
         }
+        symbol_name = _extract_symbol_name(payload)
+        if symbol_name:
+            fields["name"] = symbol_name
 
         for key in ("open", "high", "low"):
             value = _parse_float(payload.get(key))

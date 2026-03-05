@@ -121,7 +121,11 @@ class TradingStatePublisher:
             logger.debug("Failed to publish position close", exc_info=True)
 
     def publish_positions_update(self, positions: list[Any], throttle: float = 2.0) -> None:
-        """Bulk-update all position prices (throttled)."""
+        """Publish a full open-position snapshot (throttled).
+
+        Replaces the entire positions hash to prevent stale position IDs
+        from lingering across restarts or profile runs.
+        """
         now = _time.monotonic()
         if now - self._last_position_publish < throttle:
             return
@@ -130,9 +134,13 @@ class TradingStatePublisher:
             r = _get_redis()
             key = _key(_KEY_POSITIONS, self._asset)
             pipe = r.pipeline(transaction=False)
+            pipe.delete(key)
+            mapping: dict[str, str] = {}
             for pos in positions:
                 data = self._serialize_position(pos)
-                pipe.hset(key, pos.id, json.dumps(data))
+                mapping[str(pos.id)] = json.dumps(data)
+            if mapping:
+                pipe.hset(key, mapping=mapping)
             pipe.expire(key, STATUS_TTL_SECONDS)
             pipe.execute()
         except Exception:

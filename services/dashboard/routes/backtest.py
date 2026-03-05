@@ -88,6 +88,8 @@ class BacktestListResponse(BaseModel):
 
 # In-memory backtest storage
 _backtest_store: dict[str, BacktestResult] = {}
+_stock_name_cache: dict[str, str] = {}
+_stock_name_cache_warmed: bool = False
 
 
 def _parse_date_range(start_date: str, end_date: str) -> tuple[datetime, datetime]:
@@ -208,14 +210,32 @@ def _set_korean_font() -> str | None:
 
 
 def _resolve_stock_name(code: str) -> str:
-    try:
-        from pykrx import stock
+    if code in _stock_name_cache:
+        return _stock_name_cache[code]
 
-        name = stock.get_market_ticker_name(code)
-        if name:
-            return name
-    except Exception:
-        pass
+    global _stock_name_cache_warmed
+    if not _stock_name_cache_warmed:
+        _stock_name_cache_warmed = True
+        try:
+            from shared.llm.config import LLMConfig
+            from shared.llm.krx_api_client import KRXOpenAPIClient
+
+            cfg = LLMConfig.from_env()
+            client = KRXOpenAPIClient(cfg)
+            base_date = client._get_last_trading_date()
+            for market in ("KOSPI", "KOSDAQ"):
+                df = client.get_stock_daily_as_dataframe(market, base_date)
+                if df.empty or "종목명" not in df.columns:
+                    continue
+                for stock_code, row in df.iterrows():
+                    name = str(row.get("종목명", "")).strip()
+                    if name:
+                        _stock_name_cache[str(stock_code)] = name
+        except Exception:
+            pass
+
+    if code in _stock_name_cache:
+        return _stock_name_cache[code]
 
     try:
         from shared.collector.historical.stock import STOCK_UNIVERSE
