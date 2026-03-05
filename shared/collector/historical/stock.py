@@ -817,20 +817,21 @@ def get_stock_codes_from_db(days: Optional[int] = None) -> List[str]:
     try:
         if days:
             start_date = date.today() - timedelta(days=days)
-            query = f"""
+            query = """
                 SELECT DISTINCT code
                 FROM minute_candles
-                WHERE toDate(datetime) >= '{start_date}'
+                WHERE toDate(datetime) >= {start:Date}
                 ORDER BY code
             """
+            result = db_client.query(query, parameters={"start": start_date})
         else:
             query = """
                 SELECT DISTINCT code
                 FROM minute_candles
                 ORDER BY code
             """
+            result = db_client.query(query)
 
-        result = db_client.query(query)
         return [row[0] for row in result.result_rows]
     finally:
         db_client.close()
