@@ -386,12 +386,20 @@ async def test_state_transition_during_shutdown():
 async def test_redis_failure_during_shutdown():
     """Test orchestrator handles Redis connection failure gracefully during shutdown.
 
-    Verify:
-    1. orchestrator.stop() doesn't hang on Redis failures
-    2. Timeout mechanism works correctly
-    3. No exceptions propagate to caller
+    Key requirements tested:
+    - orchestrator.stop() doesn't hang on Redis failures
+    - Timeout mechanism works correctly (completes within expected time)
+    - No exceptions propagate to caller (graceful error handling)
+    - Shutdown completes even when Redis flush fails
+    - Orchestrator transitions to STOPPED state despite errors
+    - Positions remain in tracker memory (not lost due to Redis failure)
+
+    Edge cases covered:
+    - ConnectionError during Redis publish
+    - Graceful degradation: shutdown succeeds even if persistence fails
+    - Timeout enforcement: prevents indefinite hangs
     """
-    from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+    from services.trading.orchestrator import TradingOrchestrator, TradingConfig, TradingState
 
     config = TradingConfig.stock(strategy_name="bb_reversion", symbols=["005930"])
 
@@ -402,28 +410,88 @@ async def test_redis_failure_during_shutdown():
         orchestrator = TradingOrchestrator(config)
         await orchestrator._initialize_tracker()
 
-        # Add test position
-        pos = create_test_position(pos_id="redis-fail-001", code="005930")
-        orchestrator._position_tracker.add_recovered_position(pos)
+        # Add multiple test positions to verify they remain in tracker
+        positions = [
+            create_test_position(
+                pos_id="redis-fail-001",
+                code="005930",
+                name="Samsung Electronics",
+                entry_price=70000.0,
+                quantity=10,
+                state=PositionState.SURVIVAL,
+            ),
+            create_test_position(
+                pos_id="redis-fail-002",
+                code="000660",
+                name="SK Hynix",
+                entry_price=120000.0,
+                quantity=5,
+                state=PositionState.BREAKEVEN,
+            ),
+        ]
 
-        # Mock Redis to raise exception on publish
+        for pos in positions:
+            orchestrator._position_tracker.add_recovered_position(pos)
+
+        # Verify positions in tracker before shutdown
+        assert orchestrator._position_tracker.position_count == 2, "Should have 2 positions before shutdown"
+
+        # Mock Redis to raise ConnectionError on publish
+        # This simulates network failure during shutdown flush
         if orchestrator._state_publisher:
             original_publish = orchestrator._state_publisher.publish_positions_update
 
             def failing_publish(*args, **kwargs):
-                raise ConnectionError("Simulated Redis connection failure")
+                """Simulate Redis connection failure."""
+                raise ConnectionError("Simulated Redis connection failure during shutdown")
 
             orchestrator._state_publisher.publish_positions_update = failing_publish
 
+        # Verify initial state before shutdown
+        assert orchestrator.state == TradingState.IDLE, f"Expected IDLE state, got {orchestrator.state}"
+
         # Stop should complete without hanging (within timeout)
-        # This should not raise an exception
+        # CRITICAL: This should NOT raise an exception despite Redis failure
         start_time = asyncio.get_event_loop().time()
-        await orchestrator.stop(timeout=2.0)
+
+        # Use try-except to verify no exception is raised
+        exception_raised = None
+        try:
+            await orchestrator.stop(timeout=2.0)
+        except Exception as e:
+            exception_raised = e
+
         elapsed = asyncio.get_event_loop().time() - start_time
 
+        # Verify no exception propagated to caller
+        assert exception_raised is None, f"Shutdown should not raise exception, got: {exception_raised}"
+
         # Verify shutdown completed quickly (not waiting full timeout)
-        assert elapsed < 3.0, f"Shutdown took {elapsed}s, expected < 3s"
-        assert orchestrator.state.name == "STOPPED"
+        # Should complete within timeout + small buffer (0.5s)
+        assert elapsed < 2.5, f"Shutdown took {elapsed:.2f}s, expected < 2.5s"
+
+        # Verify orchestrator transitioned to STOPPED state
+        assert orchestrator.state == TradingState.STOPPED, f"Expected STOPPED state, got {orchestrator.state}"
+
+        # Verify positions still in tracker memory (not lost despite Redis failure)
+        # This ensures graceful degradation: Redis failure doesn't corrupt internal state
+        assert orchestrator._position_tracker.position_count == 2, "Positions should remain in tracker despite Redis failure"
+
+        # Verify specific positions still accessible
+        pos1 = orchestrator._position_tracker.get_position("redis-fail-001")
+        pos2 = orchestrator._position_tracker.get_position("redis-fail-002")
+
+        assert pos1 is not None, "Position 1 should still exist in tracker"
+        assert pos1.code == "005930", "Position 1 code should be preserved"
+        assert pos1.state == PositionState.SURVIVAL, "Position 1 state should be preserved"
+
+        assert pos2 is not None, "Position 2 should still exist in tracker"
+        assert pos2.code == "000660", "Position 2 code should be preserved"
+        assert pos2.state == PositionState.BREAKEVEN, "Position 2 state should be preserved"
+
+        # Verify orchestrator is truly stopped (main loop not running)
+        # This would fail if shutdown didn't complete properly
+        assert orchestrator._should_stop is True, "Shutdown flag should be set"
 
 
 # -- Test: 100% position recovery accuracy --
