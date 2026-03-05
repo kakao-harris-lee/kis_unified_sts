@@ -2228,6 +2228,64 @@ class TradingOrchestrator:
             logger.warning(f"Candle cache load failed: {e}")
             return 0
 
+    async def _flush_positions_with_retry(self, max_retries: int = 3) -> bool:
+        """Flush positions to Redis with retry on connection errors.
+
+        Implements exponential backoff (100ms, 200ms, 400ms) to handle
+        transient Redis connection failures during shutdown.
+
+        Args:
+            max_retries: Maximum number of retry attempts (default: 3)
+
+        Returns:
+            True if flush succeeded, False otherwise
+
+        Note:
+            This is critical for position safety during abnormal terminations.
+            Retries prevent position data loss from transient network errors.
+        """
+        if not self._position_tracker or not self._state_publisher:
+            return False
+
+        positions = list(self._position_tracker.positions)
+        if not positions:
+            return True  # Nothing to flush
+
+        backoff_delays = [0.1, 0.2, 0.4]  # 100ms, 200ms, 400ms
+
+        for attempt in range(max_retries):
+            try:
+                self._state_publisher.publish_positions_update(
+                    positions, throttle=0
+                )
+                if attempt > 0:
+                    logger.info(
+                        f"Redis flush succeeded on attempt {attempt + 1}/{max_retries}"
+                    )
+                return True
+
+            except (ConnectionError, TimeoutError, OSError) as e:
+                # Transient network/connection errors - retry with backoff
+                if attempt < max_retries - 1:
+                    delay = backoff_delays[attempt]
+                    logger.warning(
+                        f"Redis flush failed (attempt {attempt + 1}/{max_retries}): {e}. "
+                        f"Retrying in {delay*1000:.0f}ms..."
+                    )
+                    await asyncio.sleep(delay)
+                else:
+                    logger.error(
+                        f"Redis flush failed after {max_retries} attempts: {e}"
+                    )
+                    return False
+
+            except Exception as e:
+                # Non-retryable errors (e.g., serialization errors)
+                logger.error(f"Redis flush failed with non-retryable error: {e}")
+                return False
+
+        return False
+
     async def stop(self, timeout: float = 4.0):
         """거래 종료 (타임아웃 포함)
 
@@ -2244,7 +2302,7 @@ class TradingOrchestrator:
             During shutdown, the orchestrator must:
             - Stop market data loop
             - Close intraday positions (can involve API calls)
-            - Flush positions to Redis (immediate, throttle=0)
+            - Flush positions to Redis (immediate, throttle=0, with retry)
             - Save candle cache to Redis
             - Cleanup resources
             - Publish final status
@@ -2262,14 +2320,8 @@ class TradingOrchestrator:
             logger.error(
                 f"Graceful shutdown timed out after {timeout}s, forcing..."
             )
-            # Force Redis flush as last resort
-            if self._position_tracker and self._state_publisher:
-                try:
-                    self._state_publisher.publish_positions_update(
-                        list(self._position_tracker.positions), throttle=0,
-                    )
-                except Exception:
-                    pass
+            # Force Redis flush as last resort with retry
+            await self._flush_positions_with_retry(max_retries=3)
             self.state = TradingState.STOPPED
             self._running = False
 
@@ -2285,14 +2337,17 @@ class TradingOrchestrator:
                 data = await self._data_provider.get_data()
                 await self._close_intraday_positions(data)
 
-                # Flush remaining open positions to Redis for recovery
-                if self._position_tracker.position_count > 0 and self._state_publisher:
-                    self._state_publisher.publish_positions_update(
-                        list(self._position_tracker.positions), throttle=0,
-                    )
-                    logger.info(
-                        f"Positions flushed to Redis ({self._position_tracker.position_count} open)"
-                    )
+                # Flush remaining open positions to Redis for recovery (with retry)
+                if self._position_tracker.position_count > 0:
+                    success = await self._flush_positions_with_retry(max_retries=3)
+                    if success:
+                        logger.info(
+                            f"Positions flushed to Redis ({self._position_tracker.position_count} open)"
+                        )
+                    else:
+                        logger.error(
+                            f"Failed to flush {self._position_tracker.position_count} positions to Redis after retries"
+                        )
             except Exception as e:
                 logger.error(f"Error during position shutdown: {e}")
 

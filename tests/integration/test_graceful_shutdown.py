@@ -623,3 +623,106 @@ async def test_full_position_recovery():
 
             if orig_pos.stop_price is not None:
                 assert recovered.stop_price == orig_pos.stop_price
+
+
+# -- Test: Redis retry on flush --
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_redis_retry_on_flush():
+    """Test Redis flush retries on transient connection errors.
+
+    Key requirements tested:
+    - Redis flush retries up to 3 times on connection errors
+    - Exponential backoff is used (100ms, 200ms, 400ms)
+    - Position is eventually persisted after retry
+    - Recovery succeeds after transient failure is resolved
+    - Backoff delays are enforced (not immediate retries)
+
+    Edge cases covered:
+    - Transient connection errors (2 failures, then success)
+    - Proper backoff timing between retries
+    - Successful recovery after temporary Redis unavailability
+    """
+    from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+    import time
+
+    config = TradingConfig.stock(strategy_name="bb_reversion", symbols=["005930"])
+
+    with patch("services.trading.orchestrator.MarketDataProvider") as MockProvider:
+        mock_provider = AsyncMock()
+        MockProvider.return_value = mock_provider
+
+        orchestrator = TradingOrchestrator(config)
+        await orchestrator._initialize_tracker()
+
+        # Add test position
+        position = create_test_position(
+            pos_id="retry-001",
+            code="005930",
+            name="Samsung Electronics",
+            entry_price=70000.0,
+            quantity=10,
+            state=PositionState.SURVIVAL,
+        )
+        orchestrator._position_tracker.add_recovered_position(position)
+
+        # Track retry attempts and timing
+        retry_attempts = []
+        retry_times = []
+
+        if orchestrator._state_publisher:
+            original_publish = orchestrator._state_publisher.publish_positions_update
+
+            def failing_then_success(*args, **kwargs):
+                """Fail first 2 times, then succeed."""
+                retry_attempts.append(len(retry_attempts) + 1)
+                retry_times.append(time.time())
+
+                if len(retry_attempts) < 3:
+                    # First 2 attempts fail with ConnectionError
+                    raise ConnectionError(f"Simulated transient Redis failure (attempt {len(retry_attempts)})")
+                else:
+                    # Third attempt succeeds
+                    return original_publish(*args, **kwargs)
+
+            orchestrator._state_publisher.publish_positions_update = failing_then_success
+
+        # Stop should eventually succeed after retries
+        start_time = time.time()
+        await orchestrator.stop(timeout=4.0)
+        elapsed = time.time() - start_time
+
+        # Verify 3 retry attempts were made (2 failures + 1 success)
+        assert len(retry_attempts) == 3, f"Expected 3 retry attempts, got {len(retry_attempts)}"
+
+        # Verify exponential backoff delays were enforced
+        # Expected delays: ~100ms, ~200ms between attempts
+        if len(retry_times) >= 3:
+            delay1 = retry_times[1] - retry_times[0]
+            delay2 = retry_times[2] - retry_times[1]
+
+            # Allow ±50ms tolerance for timing variations
+            assert delay1 >= 0.05, f"First backoff too short: {delay1*1000:.1f}ms (expected ~100ms)"
+            assert delay1 <= 0.25, f"First backoff too long: {delay1*1000:.1f}ms (expected ~100ms)"
+
+            assert delay2 >= 0.15, f"Second backoff too short: {delay2*1000:.1f}ms (expected ~200ms)"
+            assert delay2 <= 0.35, f"Second backoff too long: {delay2*1000:.1f}ms (expected ~200ms)"
+
+        # Verify total shutdown time includes retry delays
+        # Expected: ~300ms total retry delays + normal shutdown overhead
+        assert elapsed >= 0.2, f"Shutdown too fast: {elapsed:.2f}s (should include retry delays)"
+        assert elapsed <= 2.0, f"Shutdown too slow: {elapsed:.2f}s (should not hit timeout)"
+
+        # Verify position was eventually persisted and recoverable
+        orchestrator2 = TradingOrchestrator(config)
+        await orchestrator2._initialize_tracker()
+        recovered_count = await orchestrator2._recover_positions_from_redis()
+
+        assert recovered_count == 1, "Position should be recovered after retry"
+
+        recovered = orchestrator2._position_tracker.get_position("retry-001")
+        assert recovered is not None, "Position should exist after recovery"
+        assert recovered.code == "005930", "Position code should match"
+        assert recovered.state == PositionState.SURVIVAL, "Position state should match"
