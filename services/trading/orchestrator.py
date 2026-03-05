@@ -483,6 +483,7 @@ class TradingOrchestrator:
         self._position_tracker: PositionTracker | None = None
         self._risk_manager: RiskManager | None = None
         self._risk_block_alert_sent: bool = False  # Track if risk block alert has been sent
+        self._last_risk_save_time: float = 0.0  # Track last Redis save time for risk state
         self._paper_broker: Any | None = None
         self._kis_client: Any | None = None
         self._order_executor: Any | None = None
@@ -2670,6 +2671,10 @@ class TradingOrchestrator:
                     await self._update_market_snapshot(data)
                     self._feed_indicators(data)
                     self._log_indicator_diagnostics(tick_count, diag_interval, data)
+
+                # Update risk manager with current positions
+                await self._update_risk_state(tick_count, diag_interval)
+
                 self._record_market_metrics()
 
             except Exception as e:
@@ -2740,6 +2745,75 @@ class TradingOrchestrator:
                 f"{warm_count} warm, "
                 f"sample {sample_sym}={sample_candles} candles"
             )
+
+    async def _update_risk_state(self, tick_count: int, diag_interval: int):
+        """Update risk manager with current positions and save periodically to Redis.
+
+        Args:
+            tick_count: Current tick counter
+            diag_interval: Diagnostic logging interval
+        """
+        if not self._risk_manager or not self._position_tracker:
+            return
+
+        try:
+            # Update portfolio metrics from current positions
+            positions_by_asset = {self.config.asset_class: list(self._position_tracker.positions)}
+            self._risk_manager.update_positions(positions_by_asset)
+
+            # Periodic save to Redis (every 60 seconds)
+            current_time = time.monotonic()
+            if current_time - self._last_risk_save_time >= 60.0:
+                await self._risk_manager.save_to_redis()
+                self._last_risk_save_time = current_time
+
+                # Log risk state on save
+                if tick_count % diag_interval == 0:
+                    state = self._risk_manager.get_risk_state()
+                    metrics = self._risk_manager.get_portfolio_metrics()
+                    logger.info(
+                        f"Risk state: positions={metrics.total_positions}, "
+                        f"daily_pnl={state.daily_pnl_pct:.2f}%, "
+                        f"drawdown={state.drawdown_pct:.2f}% ({state.drawdown_level.value}), "
+                        f"blocked={state.is_blocked}"
+                    )
+
+            # Check for drawdown alerts and send if threshold crossed
+            state = self._risk_manager.get_risk_state()
+            if state.drawdown_level in (state.drawdown_level.DANGER, state.drawdown_level.CRITICAL):
+                # Only alert once per level
+                alert_key = f"drawdown_{state.drawdown_level.value}"
+                if alert_key not in state.alerts_sent:
+                    try:
+                        # Import TelegramNotifier dynamically
+                        from shared.notification.telegram import TelegramNotifier
+
+                        notifier = TelegramNotifier(
+                            self.config.asset_class,
+                            token=self.config.telegram_token,
+                            chat_id=self.config.telegram_chat_id,
+                        )
+                        metrics = self._risk_manager.get_portfolio_metrics()
+                        message = (
+                            f"<b>포트폴리오 드로다운 경고</b>\n\n"
+                            f"레벨: {state.drawdown_level.value.upper()}\n"
+                            f"현재 드로다운: {state.drawdown_pct:.2f}%\n"
+                            f"포지션 수: {metrics.total_positions}\n"
+                            f"일간 손익: {state.daily_pnl_pct:.2f}%\n"
+                            f"총 노출: {metrics.total_exposure_pct:.1f}%"
+                        )
+                        await self._risk_manager.send_alert(
+                            notifier,
+                            alert_type=f"DRAWDOWN_{state.drawdown_level.value.upper()}",
+                            message=message,
+                            is_critical=True,
+                        )
+                        state.alerts_sent.add(alert_key)
+                    except Exception as e:
+                        logger.warning(f"Failed to send drawdown alert: {e}")
+
+        except Exception as e:
+            logger.error(f"Risk state update failed: {e}", exc_info=True)
 
     def _record_market_metrics(self):
         """Record staleness metrics."""
