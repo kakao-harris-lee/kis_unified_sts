@@ -345,9 +345,12 @@ def delete_stock_minute_day(db_client, code: str, day: date) -> None:
     if not str(code).isalnum():
         raise ValueError(f"Invalid code: {code}")
     day_str = day.strftime("%Y-%m-%d")
-    db_client.command(
-        f"ALTER TABLE minute_candles DELETE WHERE code = '{code}' AND toDate(datetime) = '{day_str}'"
-    )
+    query = """
+        ALTER TABLE minute_candles
+        DELETE WHERE code = %(code)s AND toDate(datetime) = %(day)s
+    """
+    params = {"code": code, "day": day_str}
+    db_client.query(query, parameters=params)
 
 
 # =============================================================================
