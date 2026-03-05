@@ -48,7 +48,7 @@ Usage:
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, date
 from typing import TYPE_CHECKING, Any, Optional
 
 from shared.risk.config import RiskConfig
@@ -103,6 +103,7 @@ class RiskManager:
         self._initial_capital: float | None = None
         self._peak_portfolio_value: float | None = None
         self._current_portfolio_value: float | None = None
+        self._last_reset_date: date = date.today()
 
         logger.info(
             f"RiskManager initialized: daily_loss_limit={config.daily_loss_limit_pct}%, "
@@ -361,6 +362,29 @@ class RiskManager:
             if self.state.block_reason == BlockReason.DAILY_LOSS_LIMIT:
                 logger.info("Auto-unblocking trading after daily reset")
                 self.state.unblock_trading()
+
+    def _check_and_reset_daily(self):
+        """Check if date has changed and reset daily metrics if needed
+
+        Called automatically to detect day transitions and reset daily P&L tracking.
+        Compares current date with last reset date and resets if different.
+        """
+        today = date.today()
+
+        # Check if we've crossed into a new day
+        if today != self._last_reset_date:
+            logger.info(
+                f"Day transition detected: {self._last_reset_date} -> {today}, resetting daily metrics"
+            )
+
+            # Reset internal test attributes
+            self._daily_pnl = 0.0
+
+            # Reset state via existing reset_daily method
+            self.reset_daily()
+
+            # Update last reset date
+            self._last_reset_date = today
 
     def block_trading(self, reason: BlockReason):
         """Manually block new position entries
