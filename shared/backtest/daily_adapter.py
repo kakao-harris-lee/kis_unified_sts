@@ -331,11 +331,16 @@ def load_stock_daily_from_clickhouse(
         password=os.getenv("CLICKHOUSE_PASSWORD", ""),
     )
 
-    conditions = [f"code = '{code}'"]
+    # Build parameterized query to prevent SQL injection
+    conditions = ["code = {code:String}"]
+    parameters = {"code": code}
+
     if start_date:
-        conditions.append(f"date >= '{start_date}'")
+        conditions.append("date >= {start:Date}")
+        parameters["start"] = start_date
     if end_date:
-        conditions.append(f"date <= '{end_date}'")
+        conditions.append("date <= {end:Date}")
+        parameters["end"] = end_date
 
     where = " AND ".join(conditions)
     query = f"""
@@ -345,7 +350,7 @@ def load_stock_daily_from_clickhouse(
         ORDER BY date ASC
     """
 
-    result = client.query(query)
+    result = client.query(query, parameters=parameters)
     if not result.result_rows:
         raise ValueError(f"No daily data found for {code}")
 
