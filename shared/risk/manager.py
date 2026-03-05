@@ -48,7 +48,8 @@ Usage:
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from datetime import datetime
+from typing import TYPE_CHECKING, Any, Optional
 
 from shared.risk.config import RiskConfig
 from shared.risk.models import (
@@ -60,6 +61,7 @@ from shared.risk.models import (
 
 if TYPE_CHECKING:
     from shared.models.position import Position
+    from shared.notification.telegram import TelegramNotifier
 
 logger = logging.getLogger(__name__)
 
@@ -379,3 +381,35 @@ class RiskManager:
 
         logger.info("RiskManager restored from persisted state")
         return manager
+
+    async def send_alert(
+        self,
+        notifier: Optional[TelegramNotifier],
+        alert_type: str,
+        message: str,
+        is_critical: bool = True,
+    ):
+        """Send risk alert via Telegram
+
+        Args:
+            notifier: TelegramNotifier instance (None disables alerts)
+            alert_type: Type of alert (e.g., 'DAILY_LOSS_LIMIT', 'DRAWDOWN', 'POSITION_LIMIT')
+            message: Alert message content
+            is_critical: Whether this is a critical alert (bypasses time restrictions)
+        """
+        if notifier is None:
+            logger.debug(f"Telegram notifier not configured, skipping alert: {alert_type}")
+            return
+
+        # Format alert message with header
+        formatted_msg = (
+            f"🚨 <b>RISK ALERT - {alert_type}</b>\n"
+            f"시간: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+            f"\n{message}"
+        )
+
+        try:
+            await notifier.send_message(formatted_msg, is_critical=is_critical)
+            logger.info(f"Sent risk alert: {alert_type}")
+        except Exception as e:
+            logger.error(f"Failed to send risk alert via Telegram: {e}")
