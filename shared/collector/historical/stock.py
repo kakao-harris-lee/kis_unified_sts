@@ -842,8 +842,8 @@ def get_stock_collection_status(days: int = 30) -> Dict:
     try:
         db_client = get_stock_db_client()
 
-        start_date = (date.today() - timedelta(days=days)).isoformat()
-        result = db_client.query(f"""
+        start_date = date.today() - timedelta(days=days)
+        result = db_client.query("""
             SELECT
                 count(*) as rows,
                 count(DISTINCT toDate(datetime)) as days_collected,
@@ -851,12 +851,12 @@ def get_stock_collection_status(days: int = 30) -> Dict:
                 min(datetime) as min_datetime,
                 max(datetime) as max_datetime
             FROM minute_candles
-            WHERE datetime >= '{start_date}'
-        """)
+            WHERE datetime >= {start:Date}
+        """, parameters={"start": start_date})
 
         row = result.result_rows[0] if result.result_rows else (0, 0, 0, None, None)
 
-        per_stock = db_client.query(f"""
+        per_stock = db_client.query("""
             SELECT
                 code,
                 count(*) as bars,
@@ -864,10 +864,10 @@ def get_stock_collection_status(days: int = 30) -> Dict:
                 min(datetime) as earliest,
                 max(datetime) as latest
             FROM minute_candles
-            WHERE datetime >= '{start_date}'
+            WHERE datetime >= {start:Date}
             GROUP BY code
             ORDER BY bars DESC
-        """)
+        """, parameters={"start": start_date})
 
         stocks_detail = []
         for sr in per_stock.result_rows:
