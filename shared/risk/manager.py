@@ -110,6 +110,35 @@ class RiskManager:
             f"initial_capital={config.initial_capital:,} KRW"
         )
 
+    def _serialize_state(self) -> dict[str, Any]:
+        """Serialize risk state to dict for Redis persistence
+
+        Returns:
+            Dict containing serialized risk state and portfolio metrics
+        """
+        return {
+            "state": self.state.to_dict(),
+            "metrics": self.metrics.to_dict(),
+        }
+
+    def _deserialize_state(self, data: dict[str, Any]) -> None:
+        """Deserialize risk state from Redis data
+
+        Args:
+            data: Serialized state dict from Redis
+        """
+        if "state" in data:
+            self.state = RiskState.from_dict(data["state"])
+
+        if "metrics" in data:
+            self.metrics = PortfolioMetrics.from_dict(data["metrics"])
+
+        logger.debug(
+            f"Risk state deserialized: daily_pnl={self.state.daily_pnl:.2f}, "
+            f"positions={self.metrics.total_positions}, "
+            f"is_blocked={self.state.is_blocked}"
+        )
+
     def can_open_position(self, asset_class: str) -> bool:
         """Check if a new position can be opened for the given asset class
 
