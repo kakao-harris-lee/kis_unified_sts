@@ -2228,8 +2228,31 @@ class TradingOrchestrator:
             logger.warning(f"Candle cache load failed: {e}")
             return 0
 
-    async def stop(self, timeout: float = 10.0):
-        """거래 종료 (타임아웃 포함)"""
+    async def stop(self, timeout: float = 4.0):
+        """거래 종료 (타임아웃 포함)
+
+        Args:
+            timeout: Maximum time in seconds to wait for graceful shutdown.
+                     Default is 4.0s to ensure completion before cron SIGKILL.
+
+        Note:
+            Cron scripts (rl_paper.sh, stock_trading.sh, futures_trading.sh)
+            send SIGTERM, wait 5 seconds, then send SIGKILL. The orchestrator
+            timeout MUST be < 5s to complete gracefully before forced termination.
+            Using 4.0s provides a 1-second safety margin.
+
+            During shutdown, the orchestrator must:
+            - Stop market data loop
+            - Close intraday positions (can involve API calls)
+            - Flush positions to Redis (immediate, throttle=0)
+            - Save candle cache to Redis
+            - Cleanup resources
+            - Publish final status
+            - Send notifications
+
+            If graceful shutdown exceeds the timeout, a force flush to Redis
+            is attempted as a last resort to prevent position data loss.
+        """
         if self.state == TradingState.STOPPED:
             return
 
