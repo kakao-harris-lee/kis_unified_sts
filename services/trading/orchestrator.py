@@ -47,6 +47,8 @@ from shared.models.signal import Signal, ExitSignal
 from shared.config.loader import ConfigLoader
 from shared.strategy.base import EntryContext
 from shared.utils.calc import calc_order_quantity
+from shared.risk.manager import RiskManager
+from shared.risk.config import RiskConfig
 
 try:
     # Optional: only used when paper_trading=True
@@ -479,6 +481,7 @@ class TradingOrchestrator:
         self._data_provider: MarketDataProvider | None = None
         self._strategy_manager: StrategyManager | None = None
         self._position_tracker: PositionTracker | None = None
+        self._risk_manager: RiskManager | None = None
         self._paper_broker: Any | None = None
         self._kis_client: Any | None = None
         self._order_executor: Any | None = None
@@ -884,6 +887,24 @@ class TradingOrchestrator:
         self._position_tracker = PositionTracker(
             config=PositionTrackerConfig(max_positions=global_max, database=db_name)
         )
+
+        # Risk manager (portfolio-level cross-asset risk management)
+        try:
+            risk_config_data = ConfigLoader.load("risk_management.yaml")
+            risk_params = risk_config_data.get("risk_management", {})
+            # Use orchestrator's initial capital if not specified in risk config
+            if "initial_capital" not in risk_params:
+                risk_params["initial_capital"] = self.config.initial_capital
+            risk_config = RiskConfig.from_dict(risk_params)
+            self._risk_manager = RiskManager(risk_config)
+            logger.info(
+                "Risk manager initialized: daily_loss_limit=%.1f%%, max_positions=%d",
+                risk_config.daily_loss_limit_pct,
+                risk_config.max_total_positions,
+            )
+        except Exception as e:
+            logger.warning(f"Risk manager init failed: {e}, continuing without risk management")
+            self._risk_manager = None
 
         # Adaptive position sizing based on strategy win rate
         try:
