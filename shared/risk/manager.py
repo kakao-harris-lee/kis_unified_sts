@@ -41,7 +41,8 @@ Usage:
     print(f"Portfolio value: {metrics.portfolio_value}")
 
     # Calculate drawdown
-    drawdown_pct, alert_level = manager.calculate_drawdown()
+    drawdown_pct = manager.calculate_drawdown()
+    alert_level = manager.get_risk_state().drawdown_level
 """
 
 from __future__ import annotations
@@ -98,6 +99,8 @@ class RiskManager:
         # These can be set directly for testing purposes
         self._daily_pnl: float | None = None
         self._initial_capital: float | None = None
+        self._peak_portfolio_value: float | None = None
+        self._current_portfolio_value: float | None = None
 
         logger.info(
             f"RiskManager initialized: daily_loss_limit={config.daily_loss_limit_pct}%, "
@@ -273,13 +276,43 @@ class RiskManager:
         loss_limit_pct = -self.config.daily_loss_limit_pct
         return daily_pnl_pct >= loss_limit_pct
 
-    def calculate_drawdown(self) -> tuple[float, DrawdownLevel]:
+    def calculate_drawdown(self) -> float:
         """Calculate current portfolio drawdown
 
+        Calculates drawdown from peak portfolio value and updates state with
+        alert level based on configured thresholds.
+
+        For testing, can use _peak_portfolio_value and _current_portfolio_value
+        attributes directly. Otherwise uses state values.
+
         Returns:
-            Tuple of (drawdown_pct, alert_level)
+            Drawdown percentage (e.g., 9.09 for 9.09% drawdown)
         """
-        return self.state.drawdown_pct, self.state.drawdown_level
+        # Use test attributes if set, otherwise use state values
+        if self._peak_portfolio_value is not None and self._current_portfolio_value is not None:
+            peak = self._peak_portfolio_value
+            current = self._current_portfolio_value
+        else:
+            peak = self.state.peak_portfolio_value
+            current = self.state.current_portfolio_value
+
+        # Calculate drawdown percentage
+        if peak > 0:
+            drawdown_pct = ((peak - current) / peak) * 100
+        else:
+            drawdown_pct = 0.0
+
+        # Update state with calculated drawdown
+        self.state.drawdown_pct = drawdown_pct
+
+        # Update drawdown level based on thresholds
+        if self.config.drawdown.enabled:
+            thresholds = self.config.drawdown.thresholds
+            self.state.update_drawdown_level(
+                thresholds.warning, thresholds.danger, thresholds.critical
+            )
+
+        return drawdown_pct
 
     def reset_daily(self):
         """Reset daily tracking metrics
