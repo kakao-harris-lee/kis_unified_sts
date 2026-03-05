@@ -1152,6 +1152,19 @@ class TradingOrchestrator:
         elif self._position_tracker:
             await self._recover_positions_from_redis()
 
+        # --- Risk state recovery from Redis ---
+        if self._risk_manager:
+            recovered = await self._risk_manager.load_from_redis()
+            if recovered:
+                logger.info(
+                    f"Risk state recovered: "
+                    f"daily_pnl={self._risk_manager.state.daily_pnl:.2f}, "
+                    f"positions={self._risk_manager.metrics.total_positions}, "
+                    f"blocked={self._risk_manager.state.is_blocked}"
+                )
+            else:
+                logger.info("No risk state to recover (fresh start)")
+
         # --- Broker position verification ---
         await self._verify_positions_with_broker()
 
