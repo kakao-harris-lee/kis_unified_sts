@@ -914,11 +914,14 @@ def load_stock_minute_from_clickhouse(
 
     db_client = get_stock_db_client()
 
-    conditions = [f"code = '{code}'"]
+    conditions = ["code = %(code)s"]
+    params: Dict[str, Any] = {"code": code}
     if start_date:
-        conditions.append(f"datetime >= '{start_date.isoformat()}'")
+        conditions.append("datetime >= %(start)s")
+        params["start"] = start_date
     if end_date:
-        conditions.append(f"datetime <= '{end_date.isoformat()} 23:59:59'")
+        conditions.append("datetime <= %(end)s")
+        params["end"] = datetime.combine(end_date, datetime.max.time())
 
     where = " AND ".join(conditions)
     query = f"""
@@ -928,7 +931,7 @@ def load_stock_minute_from_clickhouse(
         ORDER BY datetime ASC
     """
 
-    result = db_client.query(query)
+    result = db_client.query(query, parameters=params)
     db_client.close()
 
     if not result.result_rows:
