@@ -265,7 +265,7 @@ def _get_semaphore() -> asyncio.Semaphore:
 # Database Operations
 # =============================================================================
 
-def get_stock_db_client():
+def get_stock_db_client() -> clickhouse_connect.driver.client.Client:
     """Get ClickHouse client for stock database."""
     config = _get_clickhouse_config()
     return clickhouse_connect.get_client(
@@ -277,7 +277,7 @@ def get_stock_db_client():
     )
 
 
-def ensure_stock_database():
+def ensure_stock_database() -> None:
     """Ensure stock database and tables exist."""
     config = _get_clickhouse_config()
     client = clickhouse_connect.get_client(
@@ -325,7 +325,7 @@ def ensure_stock_database():
     logger.debug("Stock database schema ensured")
 
 
-def insert_stock_minute_batch(db_client, rows: List[Tuple], table_name: str = "minute_candles"):
+def insert_stock_minute_batch(db_client, rows: List[Tuple], table_name: str = "minute_candles") -> int:
     """Insert stock minute data batch."""
     if not rows:
         return 0
@@ -581,7 +581,7 @@ def load_collection_state() -> Dict:
     return {"completed_days": {}, "last_run": None}
 
 
-def save_collection_state(state: Dict):
+def save_collection_state(state: Dict) -> None:
     """Save collection state to file."""
     STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
     try:
