@@ -16,7 +16,7 @@ import pytest
 
 from shared.models.position import Position, PositionSide, PositionState
 from services.trading.position_tracker import PositionTracker, PositionTrackerConfig
-from shared.streaming.trading_state import TradingStateWriter, TradingStateReader
+from shared.streaming.trading_state import TradingStatePublisher, TradingStateReader
 
 
 # -- Fixtures --
@@ -41,14 +41,14 @@ def position_tracker(tracker_config):
 
 @pytest.fixture
 def state_writer():
-    """Create TradingStateWriter for stock."""
-    return TradingStateWriter(asset="stock")
+    """Create TradingStatePublisher for stock."""
+    return TradingStatePublisher(asset_class="stock")
 
 
 @pytest.fixture
 def state_reader():
     """Create TradingStateReader for stock."""
-    return TradingStateReader(asset="stock")
+    return TradingStateReader(asset_class="stock")
 
 
 @pytest.fixture(autouse=True)
@@ -137,8 +137,10 @@ async def test_sigterm_during_trading():
 
         orchestrator = TradingOrchestrator(config)
 
-        # Initialize tracker
-        await orchestrator._initialize_tracker()
+        # Initialize tracker and state publisher
+        orchestrator._init_strategy_infrastructure()
+        from shared.streaming.trading_state import TradingStatePublisher
+        orchestrator._state_publisher = TradingStatePublisher(asset_class="stock")
 
         # Add test positions manually
         positions = [
@@ -176,8 +178,10 @@ async def test_sigterm_during_trading():
 
         # Step 2: Simulate state transitions
         # Update prices to trigger state transitions
-        orchestrator._position_tracker.update_price("005930", 71500.0)  # +2.14% -> BREAKEVEN
-        orchestrator._position_tracker.update_price("000660", 126500.0)  # +5.42% -> MAXIMIZE
+        orchestrator._position_tracker.update_prices({
+            "005930": 71500.0,  # +2.14% -> BREAKEVEN
+            "000660": 126500.0,  # +5.42% -> MAXIMIZE
+        })
 
         # Force state update
         transitions = orchestrator._position_tracker.update_states()
@@ -196,7 +200,7 @@ async def test_sigterm_during_trading():
             )
 
         # Step 4: Verify positions in Redis
-        reader = TradingStateReader(asset="stock")
+        reader = TradingStateReader(asset_class="stock")
         redis_positions = reader.get_positions()
 
         assert len(redis_positions) == 3, f"Expected 3 positions in Redis, got {len(redis_positions)}"
@@ -228,7 +232,7 @@ async def test_sigterm_during_trading():
 
         # Step 6: Simulate restart - create new orchestrator and recover positions
         orchestrator2 = TradingOrchestrator(config)
-        await orchestrator2._initialize_tracker()
+        orchestrator2._init_strategy_infrastructure()
 
         # Recovery happens in _recover_positions_from_redis (called during start)
         # We'll call it directly here for testing
@@ -292,7 +296,9 @@ async def test_state_transition_during_shutdown():
         MockProvider.return_value = mock_provider
 
         orchestrator = TradingOrchestrator(config)
-        await orchestrator._initialize_tracker()
+        orchestrator._init_strategy_infrastructure()
+        from shared.streaming.trading_state import TradingStatePublisher
+        orchestrator._state_publisher = TradingStatePublisher(asset_class="stock")
 
         # Add position in SURVIVAL state
         pos = create_test_position(
@@ -312,7 +318,7 @@ async def test_state_transition_during_shutdown():
 
         # Trigger state transition (SURVIVAL -> BREAKEVEN)
         # Price increase: 70000 -> 71500 = +2.14% (exceeds 2% breakeven threshold)
-        orchestrator._position_tracker.update_price("005930", 71500.0)
+        orchestrator._position_tracker.update_prices({"005930": 71500.0})
         transitions = orchestrator._position_tracker.update_states()
 
         # Verify transition was detected
@@ -334,7 +340,7 @@ async def test_state_transition_during_shutdown():
             )
 
         # Verify state was flushed to Redis
-        reader = TradingStateReader(asset="stock")
+        reader = TradingStateReader(asset_class="stock")
         redis_positions = reader.get_positions()
 
         assert len(redis_positions) == 1, f"Expected 1 position in Redis, got {len(redis_positions)}"
@@ -364,7 +370,7 @@ async def test_state_transition_during_shutdown():
 
         # Verify recovery simulation - create new orchestrator
         orchestrator2 = TradingOrchestrator(config)
-        await orchestrator2._initialize_tracker()
+        orchestrator2._init_strategy_infrastructure()
 
         recovered_count = await orchestrator2._recover_positions_from_redis()
         assert recovered_count == 1, f"Expected to recover 1 position, got {recovered_count}"
@@ -408,7 +414,9 @@ async def test_redis_failure_during_shutdown():
         MockProvider.return_value = mock_provider
 
         orchestrator = TradingOrchestrator(config)
-        await orchestrator._initialize_tracker()
+        orchestrator._init_strategy_infrastructure()
+        from shared.streaming.trading_state import TradingStatePublisher
+        orchestrator._state_publisher = TradingStatePublisher(asset_class="stock")
 
         # Add multiple test positions to verify they remain in tracker
         positions = [
@@ -518,7 +526,9 @@ async def test_full_position_recovery():
         MockProvider.return_value = mock_provider
 
         orchestrator = TradingOrchestrator(config)
-        await orchestrator._initialize_tracker()
+        orchestrator._init_strategy_infrastructure()
+        from shared.streaming.trading_state import TradingStatePublisher
+        orchestrator._state_publisher = TradingStatePublisher(asset_class="futures")
 
         # Create diverse position set
         positions = [
@@ -592,7 +602,7 @@ async def test_full_position_recovery():
 
         # Create new orchestrator and recover
         orchestrator2 = TradingOrchestrator(config)
-        await orchestrator2._initialize_tracker()
+        orchestrator2._init_strategy_infrastructure()
         recovered_count = await orchestrator2._recover_positions_from_redis()
 
         assert recovered_count == 3
@@ -655,7 +665,9 @@ async def test_redis_retry_on_flush():
         MockProvider.return_value = mock_provider
 
         orchestrator = TradingOrchestrator(config)
-        await orchestrator._initialize_tracker()
+        orchestrator._init_strategy_infrastructure()
+        from shared.streaming.trading_state import TradingStatePublisher
+        orchestrator._state_publisher = TradingStatePublisher(asset_class="stock")
 
         # Add test position
         position = create_test_position(
@@ -717,7 +729,7 @@ async def test_redis_retry_on_flush():
 
         # Verify position was eventually persisted and recoverable
         orchestrator2 = TradingOrchestrator(config)
-        await orchestrator2._initialize_tracker()
+        orchestrator2._init_strategy_infrastructure()
         recovered_count = await orchestrator2._recover_positions_from_redis()
 
         assert recovered_count == 1, "Position should be recovered after retry"
