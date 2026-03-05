@@ -28,6 +28,8 @@ services:
     image: grafana/grafana:10.2.0
     container_name: sts-grafana
     restart: unless-stopped
+    env_file:
+      - ../.env
     ports:
       - "3000:3000"
     volumes:
@@ -38,7 +40,6 @@ services:
       - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
       - GF_INSTALL_PLUGINS=grafana-clickhouse-datasource
-      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD}
     extra_hosts:
       - "host.docker.internal:host-gateway"
 

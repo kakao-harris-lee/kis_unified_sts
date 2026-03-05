@@ -7,7 +7,7 @@ Goal:
   - Add lightweight "attention" via news headline count + keyword sentiment.
 
 This module is intentionally conservative about external calls:
-  - Universe collection uses pykrx (single call per market).
+  - Universe collection uses KRX Open API (single call per market).
   - News scraping runs only on a small shortlist.
 """
 

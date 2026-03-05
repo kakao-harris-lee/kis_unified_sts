@@ -77,7 +77,6 @@ dependencies = [
     "openai>=1.0",
     "anthropic>=0.39",
     "python-telegram-bot>=20.0",
-    "pykrx>=1.2.4",
     "beautifulsoup4>=4.12",
 ]
 

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -70,37 +71,97 @@ def _build_trade_outcome_map(events: list[dict[str, Any]]) -> dict[tuple[str, st
     return out
 
 
+def _safe_ident(value: str, fallback: str) -> str:
+    value = str(value).strip()
+    if value and value.replace("_", "").isalnum():
+        return value
+    return fallback
+
+
+def _load_daily_closes_from_clickhouse(
+    code: str,
+    start_date: datetime,
+    end_date: datetime,
+) -> list[tuple[datetime, float]]:
+    try:
+        from clickhouse_driver import Client as ClickHouseDriver
+    except Exception:
+        return []
+
+    database = _safe_ident(
+        os.getenv("CLICKHOUSE_STOCK_DATABASE", os.getenv("CLICKHOUSE_DATABASE", "market")),
+        "market",
+    )
+    table = _safe_ident(os.getenv("CLICKHOUSE_DAILY_CANDLES_TABLE", "daily_candles"), "daily_candles")
+    host = os.getenv("CLICKHOUSE_HOST", "localhost")
+    port = int(os.getenv("CLICKHOUSE_NATIVE_PORT", os.getenv("CLICKHOUSE_PORT", "9000")))
+    user = os.getenv("CLICKHOUSE_USER", "default")
+    password = os.getenv("CLICKHOUSE_PASSWORD", "")
+
+    query = f"""
+        SELECT date, close
+        FROM {database}.{table}
+        WHERE code = %(code)s
+          AND date >= %(start)s
+          AND date <= %(end)s
+        ORDER BY date ASC
+    """
+
+    try:
+        client = ClickHouseDriver(
+            host=host,
+            port=port,
+            user=user,
+            password=password,
+            database=database,
+            connect_timeout=10,
+        )
+        try:
+            rows = client.execute(
+                query,
+                {
+                    "code": str(code),
+                    "start": start_date.date(),
+                    "end": end_date.date(),
+                },
+            )
+        finally:
+            client.disconnect()
+    except Exception:
+        return []
+
+    closes: list[tuple[datetime, float]] = []
+    for dt, close in rows:
+        if close is None:
+            continue
+        try:
+            if isinstance(dt, datetime):
+                ts = dt
+            else:
+                ts = datetime.combine(dt, datetime.min.time())
+            closes.append((ts, float(close)))
+        except Exception:
+            continue
+    return closes
+
+
 def _fetch_forward_returns(code: str, base_date: datetime, horizons: list[int]) -> dict[int, float | None]:
-    try:
-        from pykrx import stock
-    except Exception:
+    start = base_date - timedelta(days=10)
+    end = base_date + timedelta(days=max(horizons) * 3 + 10)
+    closes = _load_daily_closes_from_clickhouse(code, start, end)
+    if not closes:
         return {h: None for h in horizons}
 
-    start = (base_date - timedelta(days=10)).strftime("%Y%m%d")
-    end = (base_date + timedelta(days=max(horizons) * 3 + 10)).strftime("%Y%m%d")
-    try:
-        df = stock.get_market_ohlcv_by_date(start, end, code)
-    except Exception:
-        return {h: None for h in horizons}
-    if df is None or len(df) == 0:
-        return {h: None for h in horizons}
-
-    close_col = "종가"
-    if close_col not in df.columns:
-        return {h: None for h in horizons}
-
-    dfi = df.sort_index()
-    closes = dfi[close_col].astype(float)
     base_idx = None
-    for i, idx in enumerate(dfi.index):
-        if idx.date() <= base_date.date():
+    for i, (ts, _) in enumerate(closes):
+        if ts.date() <= base_date.date():
             base_idx = i
         else:
             break
     if base_idx is None:
         return {h: None for h in horizons}
 
-    base_price = float(closes.iloc[base_idx])
+    base_price = float(closes[base_idx][1])
     if base_price <= 0:
         return {h: None for h in horizons}
 
@@ -110,7 +171,7 @@ def _fetch_forward_returns(code: str, base_date: datetime, horizons: list[int]) 
         if target_idx >= len(closes):
             out[h] = None
             continue
-        target = float(closes.iloc[target_idx])
+        target = float(closes[target_idx][1])
         out[h] = ((target / base_price) - 1.0) * 100.0
     return out
 

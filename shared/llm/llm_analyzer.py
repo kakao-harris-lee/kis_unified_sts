@@ -562,7 +562,7 @@ class UnifiedTradingAnalyzer:
     """통합 트레이딩 분석기 (주식 + 선물)
 
     데이터 소스:
-    - pykrx: 주식 시세 (기본)
+    - KRX Open API + KIS API: 주식 시세/히스토리
     - KRX (data.krx.co.kr): 거래소 공식 데이터, 투자자별 동향
     - SEIBRO (seibro.or.kr): 증권정보, 배당, 주주현황
     - DART (dart.fss.or.kr): 공시정보, 재무제표

@@ -530,6 +530,11 @@ class TradingOrchestrator:
         self._universe_refresh_task: asyncio.Task | None = None
         self._universe_refresh_interval = 30.0  # seconds
         self._symbol_names: dict[str, str] = {}  # code -> name mapping
+        self._symbol_name_lookup_attempted: set[str] = set()
+        self._krx_symbol_name_cache: dict[str, str] = {}
+        self._krx_symbol_name_cache_date: str = ""
+        self._krx_open_api_client: Any | None = None
+        self._krx_name_hydration_warned: bool = False
         self._symbol_metadata_cache: dict[str, dict[str, Any]] = {}
         self._prev_day_volume_warned: bool = False
 
@@ -984,7 +989,14 @@ class TradingOrchestrator:
                         pass
 
                 if self._tick_stream_publisher:
-                    self._tick_stream_publisher.publish("futures", symbol, data)
+                    monitor_data = dict(data)
+                    if not str(monitor_data.get("name", "")).strip():
+                        fallback_name = self._symbol_names.get(symbol, "")
+                        if fallback_name:
+                            monitor_data["name"] = fallback_name
+                    self._tick_stream_publisher.publish(
+                        "futures", symbol, monitor_data
+                    )
 
             self._futures_price_feed.set_tick_callback(_on_futures_tick)
 
@@ -1000,7 +1012,12 @@ class TradingOrchestrator:
                     self._indicator_engine.on_tick(symbol, data, ts)
 
                 if self._tick_stream_publisher:
-                    self._tick_stream_publisher.publish("stock", symbol, data)
+                    monitor_data = dict(data)
+                    if not str(monitor_data.get("name", "")).strip():
+                        fallback_name = self._symbol_names.get(symbol, "")
+                        if fallback_name:
+                            monitor_data["name"] = fallback_name
+                    self._tick_stream_publisher.publish("stock", symbol, monitor_data)
 
             self._stock_price_feed.set_tick_callback(_on_stock_tick)
 
@@ -1679,6 +1696,7 @@ class TradingOrchestrator:
 
             payload = json.loads(raw)
             strategies = payload.get("strategies", {})
+            symbol_metadata = payload.get("symbol_metadata", {})
             all_codes: set[str] = set()
             for strat_codes in strategies.values():
                 if isinstance(strat_codes, list):
@@ -1690,6 +1708,21 @@ class TradingOrchestrator:
 
             # Store full watchlist for injection into entry context
             self._daily_watchlist = payload
+
+            if isinstance(symbol_metadata, dict):
+                for code in all_codes:
+                    raw_meta = symbol_metadata.get(code, {})
+                    if not isinstance(raw_meta, dict):
+                        continue
+                    meta = dict(raw_meta)
+                    name = str(meta.get("name", "")).strip()
+                    if name:
+                        self._symbol_names[code] = name
+                    if meta:
+                        self._symbol_metadata_cache[code] = meta
+
+            # Best-effort name hydration for static watchlists that only provide codes.
+            self._hydrate_missing_symbol_names(all_codes)
 
             # Set universe
             now = datetime.now()
@@ -1713,6 +1746,104 @@ class TradingOrchestrator:
             logger.warning(f"Failed to load static watchlist: {e}")
             return False
 
+    def _hydrate_missing_symbol_names(self, codes: list[str] | set[str]) -> None:
+        """Fill missing stock names using KRX Open API as a best-effort fallback."""
+        if self.config.asset_class != "stock":
+            return
+
+        pending = []
+        for raw_code in codes:
+            code = str(raw_code).strip()
+            if not code:
+                continue
+            if code in self._symbol_names:
+                continue
+            if code in self._symbol_name_lookup_attempted:
+                continue
+            pending.append(code)
+
+        if not pending:
+            return
+
+        krx_name_map = self._load_krx_open_api_symbol_names()
+        if not krx_name_map:
+            if not self._krx_name_hydration_warned:
+                logger.warning(
+                    "KRX Open API symbol-name hydration unavailable; "
+                    "stock names may remain as raw codes"
+                )
+                self._krx_name_hydration_warned = True
+            return
+
+        resolved = 0
+        for code in pending:
+            name = str(krx_name_map.get(code, "")).strip()
+            self._symbol_name_lookup_attempted.add(code)
+            if not name or name == code:
+                continue
+            self._symbol_names[code] = name
+            meta = dict(self._symbol_metadata_cache.get(code, {}))
+            meta["name"] = name
+            self._symbol_metadata_cache[code] = meta
+            resolved += 1
+
+        if resolved > 0:
+            logger.info(
+                "Hydrated missing stock names: resolved=%d pending=%d",
+                resolved,
+                len(pending),
+            )
+
+    def _load_krx_open_api_symbol_names(self) -> dict[str, str]:
+        """Load full stock code→name map from KRX Open API daily snapshots."""
+        if self.config.asset_class != "stock":
+            return {}
+
+        api_key = str(os.environ.get("KRX_API_KEY", "")).strip()
+        if not api_key:
+            return {}
+
+        try:
+            if self._krx_open_api_client is None:
+                from shared.llm.config import LLMConfig
+                from shared.llm.krx_api_client import KRXOpenAPIClient
+
+                llm_cfg = LLMConfig.from_env()
+                if not llm_cfg.krx_api_key:
+                    llm_cfg.krx_api_key = api_key
+                self._krx_open_api_client = KRXOpenAPIClient(llm_cfg)
+
+            client = self._krx_open_api_client
+            target_date = client._get_last_trading_date()
+            if (
+                self._krx_symbol_name_cache
+                and self._krx_symbol_name_cache_date == target_date
+            ):
+                return self._krx_symbol_name_cache
+
+            names: dict[str, str] = {}
+            for market in ("KOSPI", "KOSDAQ"):
+                rows = client.get_stock_daily(market=market, base_date=target_date)
+                for item in rows:
+                    code = str(item.get("ISU_CD", "")).strip()
+                    name = str(item.get("ISU_NM", "")).strip()
+                    if code and name:
+                        names[code] = name
+
+            if names:
+                self._krx_symbol_name_cache = names
+                self._krx_symbol_name_cache_date = target_date
+                logger.info(
+                    "Loaded KRX Open API symbol-name map: date=%s symbols=%d",
+                    target_date,
+                    len(names),
+                )
+
+            return self._krx_symbol_name_cache
+        except Exception as e:
+            logger.warning("KRX Open API symbol-name map load failed: %s", e)
+            return self._krx_symbol_name_cache
+
     def _update_symbol_cache(self, codes, names, metadata):
         """Update last-seen timestamps and metadata cache."""
         now = datetime.now()
@@ -1725,6 +1856,7 @@ class TradingOrchestrator:
             if code_meta:
                 self._symbol_metadata_cache[code] = code_meta
         self._symbol_names.update(names)
+        self._hydrate_missing_symbol_names(set(codes))
 
     def _get_stable_universe(self) -> set[str]:
         """Filter expired symbols and enforce max universe size."""
@@ -1848,7 +1980,7 @@ class TradingOrchestrator:
                     logger.warning(
                         "opening_volume_surge is active but no symbols have "
                         "prev_day_volume metadata — strategy will produce zero signals. "
-                        "Check screener/pykrx availability."
+                        "Check screener metadata pipeline / KRX Open API availability."
                     )
                     self._prev_day_volume_warned = True
 
@@ -2938,6 +3070,9 @@ class TradingOrchestrator:
 
         positions = self._position_tracker.positions
         if not positions:
+            # Publish empty snapshot so stale Redis positions are cleared.
+            if self._state_publisher:
+                self._state_publisher.publish_positions_update([], throttle=2.0)
             return None
 
         try:
@@ -2960,8 +3095,7 @@ class TradingOrchestrator:
 
                 # Immediate flush for state transitions (no throttle)
                 if self._state_publisher:
-                    changed = [p for p, _, _ in transitions]
-                    self._state_publisher.publish_positions_update(changed, throttle=0)
+                    self._state_publisher.publish_positions_update(positions, throttle=0)
 
             # Publish position updates to Redis (throttled to 2s)
             if self._state_publisher and positions:
