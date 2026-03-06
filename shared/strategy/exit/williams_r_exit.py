@@ -21,7 +21,7 @@ from typing import Any, Optional
 from shared.config.mixins import ConfigMixin
 from shared.models.position import Position, PositionSide, PositionState
 from shared.models.signal import ExitReason, ExitSignal
-from shared.strategy.base import ExitContext, ExitSignalGenerator
+from shared.strategy.base import ExitContext, ExitSignalGenerator, MarketStateProtocol
 from shared.strategy.market_data import get_price_from_snapshot, get_symbol_snapshot
 from shared.strategy.market_time import (
     effective_close_time,
@@ -97,7 +97,7 @@ class WilliamsRExit(ExitSignalGenerator[WilliamsRExitConfig]):
         self,
         positions: list[Position],
         market_data: dict[str, Any],
-        market_state: Optional[Any] = None,
+        market_state: Optional[MarketStateProtocol] = None,
     ) -> list[ExitSignal]:
         """Scan multiple positions for exit signals."""
         if not positions:
