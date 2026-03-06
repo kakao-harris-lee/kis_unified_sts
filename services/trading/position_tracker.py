@@ -929,20 +929,18 @@ class PositionTracker:
             return 0
 
     async def save_closed_to_db(self, position: Position) -> bool:
-        """Persist a single closed position to ClickHouse.
+        """Accumulate closed position for batch insertion to ClickHouse.
 
         Args:
             position: Closed position with exit_price/exit_time set.
 
         Returns:
-            True if saved successfully
+            True if accumulated successfully
         """
         if not position.exit_price or not position.exit_time:
             return False
 
         try:
-            ch, database = self._get_db_client()
-
             pnl = self._calc_realized_pnl(position)
 
             row = (
@@ -965,24 +963,23 @@ class PositionTracker:
                 position.fee_rate,
             )
 
-            def _sync_save():
-                client = ch.get_sync_client()
-                client.execute(
-                    f"INSERT INTO {database}.swing_positions "
-                    f"{self._SWING_INSERT_COLS} VALUES",
-                    [row],
-                )
-
-            await asyncio.to_thread(_sync_save)
+            async with self._batch_lock:
+                self._pending_swing_positions.append(row)
+                batch_size = len(self._pending_swing_positions)
 
             logger.info(
-                f"Persisted closed position: {position.code} "
-                f"(pnl={pnl:+,.0f}, id={position.id[:8]})"
+                f"Accumulated closed position: {position.code} "
+                f"(pnl={pnl:+,.0f}, id={position.id[:8]}, batch={batch_size}/{self.config.batch_size})"
             )
+
+            # Flush if batch threshold reached
+            if batch_size >= self.config.batch_size:
+                await self._flush_swing_positions_batch()
+
             return True
 
         except Exception as e:
-            logger.error(f"Failed to persist closed position {position.id[:8]}: {e}")
+            logger.error(f"Failed to accumulate closed position {position.id[:8]}: {e}")
             return False
 
     async def save_rl_trade_to_db(self, position: Position, asset_class: str) -> bool:
