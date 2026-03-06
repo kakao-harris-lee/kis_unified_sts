@@ -3373,11 +3373,12 @@ class TradingOrchestrator:
                             data[symbol] = {**data[symbol], **indicators}
 
             # Inject daily indicators for exit (chandelier_exit needs daily ATR/HH)
+            # Use pre-computed enriched metadata cache (includes daily_indicators + symbol_metadata)
             for symbol in symbols:
                 if symbol in data and isinstance(data[symbol], dict):
-                    daily_ind = getattr(self, "_daily_indicators", {}).get(symbol, {})
-                    if daily_ind:
-                        data[symbol] = {**data[symbol], **daily_ind}
+                    cached_meta = self._enriched_metadata_cache.get(symbol, {})
+                    if cached_meta:
+                        data[symbol] = {**data[symbol], **cached_meta}
 
             # Check exits
             signals = await self._strategy_manager.check_exits(
