@@ -175,14 +175,14 @@ class BacktestEngine:
         if hasattr(self.strategy, "prescan_data"):
             self.strategy.prescan_data(data)
 
-        # 메인 루프
-        for bar_tuple in data.itertuples(index=False, name='Bar'):
-            bar = bar_tuple._asdict()
+        # 메인 루프 — itertuples is ~14x faster than iterrows for 100K+ bars
+        for bar_tuple in data.itertuples(index=False, name=None):
+            bar = dict(zip(data.columns, bar_tuple))
             self._process_bar(bar)
 
         # 마지막 포지션 강제 청산
         if self.positions:
-            last_bar = next(data.iloc[-1:].itertuples(index=False, name='Bar'))._asdict()
+            last_bar = data.iloc[-1].to_dict()
             for code in list(self.positions.keys()):
                 last_price = self._last_price_by_code.get(code, float(last_bar["close"]))
                 self._close_position(
