@@ -12,6 +12,11 @@ execution:
   futures_fill_check_timeout_seconds: 1.0
   futures_auto_cancel_unfilled: true
 
+# Position tracker batch insert settings
+position_tracker:
+  batch_size: 50                  # Number of closed positions to batch before flush
+  flush_interval_seconds: 5.0     # Max seconds to wait before auto-flush (0 = disabled)
+
 # 전략별 승률 기반 투자금액 동적 조정
 adaptive_sizing:
   enabled: true

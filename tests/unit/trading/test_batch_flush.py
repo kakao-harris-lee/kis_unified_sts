@@ -396,7 +396,8 @@ class TestTimerBasedFlush:
             tracker, "flush_pending_positions", side_effect=mock_flush
         ) as mock:
             # Wait for multiple flush attempts
-            await asyncio.sleep(0.35)
+            # First flush at 0.1s raises error, then 1s retry delay, then second flush at ~1.1s
+            await asyncio.sleep(1.5)
 
             # Should have called flush multiple times despite first error
             assert mock.call_count >= 2

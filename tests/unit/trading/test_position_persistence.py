@@ -181,15 +181,30 @@ class TestSaveClosedToDb:
 
     @pytest.mark.asyncio
     async def test_handles_db_error(self):
+        """DB errors are surfaced during flush, not during accumulation.
+
+        save_closed_to_db batches positions in memory and always returns True
+        for valid positions. The flush step handles the actual DB write and
+        returns 0 on error while re-enqueuing the rows.
+        """
         tracker = PositionTracker(config=PositionTrackerConfig(database="testdb"))
 
+        pos = _make_position(exit_price=72000)
+        result = await tracker.save_closed_to_db(pos)
+
+        # Accumulation succeeds regardless of DB state
+        assert result is True
+        assert len(tracker._pending_swing_positions) == 1
+
+        # Flush fails gracefully and re-enqueues the rows
         with patch.object(
             tracker, "_get_db_client", side_effect=Exception("connection refused")
         ):
-            pos = _make_position(exit_price=72000)
-            result = await tracker.save_closed_to_db(pos)
+            flushed, _ = await tracker.flush_pending_positions()
 
-        assert result is False
+        assert flushed == 0
+        # Row re-enqueued for retry
+        assert len(tracker._pending_swing_positions) == 1
 
 
 class TestSaveToDbWithSideAndFeeRate:

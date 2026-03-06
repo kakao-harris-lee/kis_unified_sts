@@ -153,9 +153,9 @@ class PositionTrackerConfig:
         if self.batch_size < 1:
             raise ValueError(f"batch_size must be >= 1, got {self.batch_size}")
 
-        if self.flush_interval_seconds <= 0:
+        if self.flush_interval_seconds < 0:
             raise ValueError(
-                f"flush_interval_seconds must be > 0, got {self.flush_interval_seconds}"
+                f"flush_interval_seconds must be >= 0, got {self.flush_interval_seconds}"
             )
 
     @classmethod
@@ -291,8 +291,8 @@ class PositionTracker:
         )
 
         # Batch accumulators for DB inserts
-        self._pending_swing_positions: list[dict[str, Any]] = []
-        self._pending_rl_trades: list[dict[str, Any]] = []
+        self._pending_swing_positions: list[tuple[Any, ...]] = []
+        self._pending_rl_trades: list[tuple[Any, ...]] = []
         self._batch_lock: asyncio.Lock = asyncio.Lock()
 
         # Auto-flush background task
@@ -1110,42 +1110,73 @@ class PositionTracker:
             logger.error(f"Failed to accumulate RL trade {position.id[:8]}: {e}")
             return False
 
+    async def _flush_batch(
+        self,
+        pending_list: list[tuple[Any, ...]],
+        table_name: str,
+        insert_cols: str,
+        label: str,
+        pre_execute_sql: str | None = None,
+    ) -> tuple[int, list[tuple[Any, ...]]]:
+        """Generic batch flush: copy+clear under lock, then I/O outside lock.
+
+        On failure the rows are re-enqueued so no data is lost.
+
+        Args:
+            pending_list: The accumulator list (e.g. _pending_swing_positions).
+            table_name: Target ClickHouse table (without database prefix).
+            insert_cols: Column spec string for the INSERT statement.
+            label: Human-readable label for log messages.
+            pre_execute_sql: Optional SQL to run before the INSERT (e.g. schema ensure).
+
+        Returns:
+            Tuple of (rows_flushed, remaining_pending_list). The caller must
+            reassign the pending list reference if rows were re-enqueued.
+        """
+        # Acquire lock only to snapshot + clear the buffer
+        async with self._batch_lock:
+            if not pending_list:
+                return 0, pending_list
+            rows = pending_list.copy()
+            pending_list.clear()
+
+        # Perform blocking I/O *outside* the lock
+        try:
+            ch, database = self._get_db_client()
+
+            def _sync_flush():
+                client = ch.get_sync_client()
+                if pre_execute_sql:
+                    client.execute(pre_execute_sql.format(database=database))
+                client.execute(
+                    f"INSERT INTO {database}.{table_name} {insert_cols} VALUES",
+                    rows,
+                )
+
+            await asyncio.to_thread(_sync_flush)
+            logger.info(f"Flushed {len(rows)} {label} batch to DB")
+            return len(rows), pending_list
+
+        except Exception as e:
+            # Re-enqueue rows so they are retried on the next flush
+            async with self._batch_lock:
+                pending_list.extend(rows)
+            logger.error(f"Failed to flush {label} batch: {e}")
+            return 0, pending_list
+
     async def _flush_swing_positions_batch(self) -> int:
         """Flush accumulated swing positions batch to ClickHouse.
 
         Returns:
             Number of positions flushed
         """
-        async with self._batch_lock:
-            if not self._pending_swing_positions:
-                return 0
-
-            try:
-                ch, database = self._get_db_client()
-
-                # Copy batch for insertion
-                rows = self._pending_swing_positions.copy()
-                count = len(rows)
-
-                def _sync_flush():
-                    client = ch.get_sync_client()
-                    client.execute(
-                        f"INSERT INTO {database}.swing_positions "
-                        f"{self._SWING_INSERT_COLS} VALUES",
-                        rows,
-                    )
-
-                await asyncio.to_thread(_sync_flush)
-
-                # Clear batch after successful insert
-                self._pending_swing_positions.clear()
-
-                logger.info(f"Flushed {count} swing positions batch to DB")
-                return count
-
-            except Exception as e:
-                logger.error(f"Failed to flush swing positions batch: {e}")
-                return 0
+        count, self._pending_swing_positions = await self._flush_batch(
+            self._pending_swing_positions,
+            table_name="swing_positions",
+            insert_cols=self._SWING_INSERT_COLS,
+            label="swing positions",
+        )
+        return count
 
     async def _flush_rl_trades_batch(self) -> int:
         """Flush accumulated RL trades batch to ClickHouse.
@@ -1153,39 +1184,14 @@ class PositionTracker:
         Returns:
             Number of trades flushed
         """
-        async with self._batch_lock:
-            if not self._pending_rl_trades:
-                return 0
-
-            try:
-                ch, database = self._get_db_client()
-
-                # Copy batch for insertion
-                rows = self._pending_rl_trades.copy()
-                count = len(rows)
-
-                def _sync_flush():
-                    client = ch.get_sync_client()
-                    # Ensure table exists
-                    client.execute(self._RL_TRADES_SCHEMA_TEMPLATE.format(database=database))
-                    # Insert batch
-                    client.execute(
-                        f"INSERT INTO {database}.rl_trades "
-                        f"{self._RL_TRADE_INSERT_COLS} VALUES",
-                        rows,
-                    )
-
-                await asyncio.to_thread(_sync_flush)
-
-                # Clear batch after successful insert
-                self._pending_rl_trades.clear()
-
-                logger.info(f"Flushed {count} RL trades batch to DB")
-                return count
-
-            except Exception as e:
-                logger.error(f"Failed to flush RL trades batch: {e}")
-                return 0
+        count, self._pending_rl_trades = await self._flush_batch(
+            self._pending_rl_trades,
+            table_name="rl_trades",
+            insert_cols=self._RL_TRADE_INSERT_COLS,
+            label="RL trades",
+            pre_execute_sql=self._RL_TRADES_SCHEMA_TEMPLATE,
+        )
+        return count
 
     async def flush_pending_positions(self) -> tuple[int, int]:
         """Flush all pending batches to database.
@@ -1213,10 +1219,19 @@ class PositionTracker:
         based on the configured flush_interval_seconds. The task runs
         indefinitely with robust error handling.
 
-        The task is only started if flush_interval_seconds > 0.
+        The task is only started if flush_interval_seconds > 0 and a running
+        event loop is available. In sync contexts (tests, CLI), the task
+        creation is deferred — callers can invoke this again once an event
+        loop is running.
         """
         if self.config.flush_interval_seconds <= 0:
             logger.debug("Auto-flush disabled (flush_interval_seconds <= 0)")
+            return
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            logger.debug("No running event loop; auto-flush task deferred")
             return
 
         async def _auto_flush_loop():
@@ -1244,7 +1259,7 @@ class PositionTracker:
                     await asyncio.sleep(1)  # Brief delay before retry
 
         # Create and store the task
-        self._auto_flush_task = asyncio.create_task(_auto_flush_loop())
+        self._auto_flush_task = loop.create_task(_auto_flush_loop())
         logger.info("Auto-flush task created")
 
     async def stop_auto_flush(self) -> None:

@@ -881,8 +881,19 @@ class TradingOrchestrator:
                 strategy_limits.append(limit)
             if strategy_limits:
                 global_max = sum(strategy_limits)
+        # Load batch insert settings from YAML config
+        try:
+            from shared.config.loader import ConfigLoader
+            pt_cfg = ConfigLoader.load("execution.yaml").get("position_tracker", {})
+        except Exception:
+            pt_cfg = {}
         self._position_tracker = PositionTracker(
-            config=PositionTrackerConfig(max_positions=global_max, database=db_name)
+            config=PositionTrackerConfig(
+                max_positions=global_max,
+                database=db_name,
+                batch_size=int(pt_cfg.get("batch_size", 50)),
+                flush_interval_seconds=float(pt_cfg.get("flush_interval_seconds", 5.0)),
+            )
         )
 
         # Adaptive position sizing based on strategy win rate
