@@ -1,6 +1,7 @@
 """Tests for config mixins."""
 import pytest
 from dataclasses import dataclass
+from unittest.mock import patch
 
 from shared.config.mixins import ConfigMixin
 
@@ -327,3 +328,74 @@ class TestConfigMixinValidation:
             "max_value": 50,
         })
         assert config3.min_value == config3.max_value
+
+
+class TestConfigMixinFromYaml:
+    """Tests for ConfigMixin.from_yaml()."""
+
+    def test_from_yaml_flat(self):
+        """from_yaml loads top-level keys and filters to known fields."""
+        mock_data = {"name": "yaml_test", "count": 42, "unknown": "ignored"}
+        with patch("shared.config.loader.ConfigLoader.load", return_value=mock_data):
+            config = SampleConfig.from_yaml("dummy.yaml")
+
+        assert config.name == "yaml_test"
+        assert config.count == 42
+        assert config.enabled is True  # default
+
+    def test_from_yaml_with_section(self):
+        """from_yaml extracts a single YAML section."""
+        mock_data = {
+            "env": {"name": "from_section", "count": 7},
+            "other": {"name": "wrong"},
+        }
+        with patch("shared.config.loader.ConfigLoader.load", return_value=mock_data):
+            config = SampleConfig.from_yaml("dummy.yaml", section="env")
+
+        assert config.name == "from_section"
+        assert config.count == 7
+
+    def test_from_yaml_with_sections_merge(self):
+        """from_yaml merges multiple YAML sections (later overrides earlier)."""
+
+        @dataclass
+        class MergedConfig(ConfigMixin):
+            a: int = 0
+            b: int = 0
+            c: int = 0
+
+        mock_data = {
+            "first": {"a": 1, "b": 2},
+            "second": {"b": 20, "c": 30},
+        }
+        with patch("shared.config.loader.ConfigLoader.load", return_value=mock_data):
+            config = MergedConfig.from_yaml(
+                "dummy.yaml", sections=["first", "second"]
+            )
+
+        assert config.a == 1   # from first
+        assert config.b == 20  # overridden by second
+        assert config.c == 30  # from second
+
+    def test_from_yaml_missing_section_returns_defaults(self):
+        """Missing section key yields empty dict — all defaults."""
+        mock_data = {"other": {"name": "not_this"}}
+        with patch("shared.config.loader.ConfigLoader.load", return_value=mock_data):
+            config = SampleConfig.from_yaml("dummy.yaml", section="missing")
+
+        assert config.name == "default"
+        assert config.count == 10
+
+    def test_from_yaml_section_and_sections_mutual_exclusion(self):
+        """Passing both section and sections raises ValueError."""
+        with pytest.raises(ValueError, match="Cannot specify both"):
+            SampleConfig.from_yaml(
+                "dummy.yaml", section="x", sections=["a", "b"]
+            )
+
+    def test_from_yaml_runs_validation(self):
+        """from_yaml triggers validate() on the created instance."""
+        mock_data = {"threshold": 1.5}
+        with patch("shared.config.loader.ConfigLoader.load", return_value=mock_data):
+            with pytest.raises(ValueError, match="threshold must be between"):
+                ValidatedConfig.from_yaml("dummy.yaml")

@@ -1,6 +1,6 @@
 """Configuration mixins for reducing code duplication.
 
-Provides reusable from_dict() implementations for dataclass configs.
+Provides reusable from_dict() and from_yaml() implementations for dataclass configs.
 
 Usage:
     from dataclasses import dataclass
@@ -11,8 +11,17 @@ Usage:
         field1: str = "default"
         field2: int = 10
 
-    # Now can create from dict:
+    # Create from dict:
     config = MyConfig.from_dict({"field1": "value", "unknown": "ignored"})
+
+    # Create from YAML (loads via ConfigLoader):
+    config = MyConfig.from_yaml("my_service.yaml")
+
+    # Extract a specific section:
+    config = MyConfig.from_yaml("ml/rl_mppo.yaml", section="env")
+
+    # Merge multiple sections (fields matched by name):
+    config = MyConfig.from_yaml("ml/rl_mppo.yaml", sections=["env", "reward"])
 
 Validation:
     @dataclass
@@ -36,14 +45,58 @@ T = TypeVar("T", bound="ConfigMixin")
 
 
 class ConfigMixin:
-    """Mixin providing from_dict() for dataclasses.
+    """Mixin providing from_dict() and from_yaml() for dataclasses.
 
     Supports:
     - Automatic field filtering (ignores unknown keys)
     - Optional "params" key unwrapping for nested YAML configs
+    - YAML loading via ConfigLoader with section extraction
     - Type-safe creation
     - Optional validation via validate() hook
     """
+
+    @classmethod
+    def from_yaml(
+        cls: type[T],
+        path: str,
+        *,
+        section: str | None = None,
+        sections: list[str] | None = None,
+    ) -> T:
+        """Load config from a YAML file via ConfigLoader.
+
+        Args:
+            path: YAML file path relative to config/ directory
+                (e.g. "daily_scanner.yaml", "ml/rl_mppo.yaml").
+            section: Extract a single top-level section key before
+                passing to from_dict(). Mutually exclusive with sections.
+            sections: Merge multiple top-level section keys into a single
+                dict (later sections override earlier ones). Useful when
+                dataclass fields span multiple YAML sections.
+
+        Returns:
+            New validated config instance.
+
+        Raises:
+            ValueError: If both section and sections are provided.
+            shared.config.loader.ConfigNotFoundError: If YAML file not found.
+        """
+        if section and sections:
+            raise ValueError("Cannot specify both 'section' and 'sections'")
+
+        from shared.config.loader import ConfigLoader
+
+        raw = ConfigLoader.load(path)
+
+        if section:
+            raw = raw.get(section, {})
+        elif sections:
+            merged: dict[str, Any] = {}
+            for key in sections:
+                merged.update(raw.get(key, {}))
+            raw = merged
+
+        return cls.from_dict(raw)
 
     @classmethod
     def from_dict(cls: type[T], data: dict[str, Any], *, validate: bool = True) -> T:

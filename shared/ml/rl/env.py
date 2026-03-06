@@ -27,7 +27,7 @@ import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
 
-from shared.config import ConfigLoader
+from shared.config.mixins import ConfigMixin
 
 logger = logging.getLogger(__name__)
 
@@ -51,10 +51,11 @@ class PositionSide(IntEnum):
 
 
 @dataclass
-class RLEnvConfig:
+class RLEnvConfig(ConfigMixin):
     """환경 설정 - config/ml/rl_mppo.yaml에서 로드
 
     모든 값은 YAML config에서 로드. 하드코딩 금지.
+    Fields span two YAML sections: ``env`` and ``reward``.
     """
 
     # 환경
@@ -89,18 +90,7 @@ class RLEnvConfig:
     @classmethod
     def from_yaml(cls, path: str = "ml/rl_mppo.yaml") -> RLEnvConfig:
         """YAML 설정 파일에서 환경 설정 로드"""
-        data = ConfigLoader.load(path)
-        env_cfg = data.get("env", {})
-        reward_cfg = data.get("reward", {})
-
-        merged = {}
-        for f in cls.__dataclass_fields__:
-            if f in env_cfg:
-                merged[f] = env_cfg[f]
-            elif f in reward_cfg:
-                merged[f] = reward_cfg[f]
-
-        return cls(**merged)
+        return super().from_yaml(path, sections=["env", "reward"])
 
 
 class FuturesTradingEnv(gym.Env):

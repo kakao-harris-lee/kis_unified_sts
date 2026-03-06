@@ -9,7 +9,7 @@ Publishes results to Redis key ``system:daily_watchlist:latest``.
 Usage::
 
     from services.daily_scanner import DailyScanner, DailyScannerConfig
-    config = DailyScannerConfig.from_yaml()
+    config = DailyScannerConfig.from_yaml("daily_scanner.yaml")
     scanner = DailyScanner(config)
     result = scanner.scan_and_publish(codes)
 """
@@ -22,7 +22,6 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Optional
 
-from shared.config.loader import ConfigLoader
 from shared.config.mixins import ConfigMixin
 from shared.db.client import get_clickhouse_client
 from shared.db.config import ClickHouseConfig
@@ -80,12 +79,6 @@ class DailyScannerConfig(ConfigMixin):
     max_watchlist_size: int = 40
     redis_key: str = "system:daily_watchlist:latest"
     redis_ttl_seconds: int = 86400
-
-    @classmethod
-    def from_yaml(cls) -> "DailyScannerConfig":
-        """Load configuration from config/daily_scanner.yaml."""
-        raw = ConfigLoader.load("daily_scanner.yaml")
-        return cls.from_dict(raw)
 
 
 # ---------------------------------------------------------------------------
