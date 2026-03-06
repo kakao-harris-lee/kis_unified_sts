@@ -24,8 +24,8 @@ const queryClient = new QueryClient({
 
 function App() {
   return (
-    <ErrorBoundary>
-      <QueryClientProvider client={queryClient}>
+    <QueryClientProvider client={queryClient}>
+      <ErrorBoundary onReset={() => queryClient.clear()}>
         <BrowserRouter>
           <div className="min-h-screen bg-gray-900 text-white">
             <nav className="bg-gray-800 border-b border-gray-700">
@@ -83,8 +83,8 @@ function App() {
             </main>
           </div>
         </BrowserRouter>
-      </QueryClientProvider>
-    </ErrorBoundary>
+      </ErrorBoundary>
+    </QueryClientProvider>
   );
 }
 

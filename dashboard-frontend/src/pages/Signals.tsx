@@ -1,8 +1,9 @@
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
 import { signalsApi } from '../api/client';
 import TableSkeleton from '../components/TableSkeleton';
 import RefreshIndicator from '../components/RefreshIndicator';
+import ErrorMessage from '../components/ErrorMessage';
+import useQueryWithError from '../hooks/useQueryWithError';
 
 interface Signal {
   id: string;
@@ -24,8 +25,8 @@ function Signals() {
   const [strategyFilter, setStrategyFilter] = useState<string>('');
   const [sideFilter, setSideFilter] = useState<string>('');
 
-  const { data, isLoading, isError, error, isRefetching, dataUpdatedAt } =
-    useQuery<SignalsResponse>({
+  const { data, isLoading, errorMessage, refetch, isRefetching, dataUpdatedAt } =
+    useQueryWithError<SignalsResponse>({
       queryKey: ['signals', strategyFilter, sideFilter],
       queryFn: () =>
         signalsApi
@@ -85,32 +86,8 @@ function Signals() {
       {/* Signals Table */}
       {isLoading ? (
         <TableSkeleton rows={10} columns={7} />
-      ) : isError ? (
-        <div className="bg-gray-800 rounded-lg p-8 border border-red-900/50">
-          <div className="flex items-start space-x-3">
-            <svg
-              className="w-6 h-6 text-red-400 flex-shrink-0 mt-0.5"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-              />
-            </svg>
-            <div>
-              <h3 className="text-lg font-medium text-red-400 mb-1">
-                Failed to load signals
-              </h3>
-              <p className="text-sm text-gray-400">
-                {error instanceof Error ? error.message : 'Unknown error occurred'}
-              </p>
-            </div>
-          </div>
-        </div>
+      ) : errorMessage ? (
+        <ErrorMessage message={errorMessage} onRetry={() => refetch()} />
       ) : data?.signals.length === 0 ? (
         <div className="bg-gray-800 rounded-lg p-8 text-center text-gray-400">
           No signals found

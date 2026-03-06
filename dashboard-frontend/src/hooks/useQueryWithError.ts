@@ -68,11 +68,10 @@ export type UseQueryWithErrorResult<TData> = UseQueryResult<TData> & {
  */
 export function useQueryWithError<
   TQueryFnData = unknown,
-  TError = Error,
   TData = TQueryFnData,
   TQueryKey extends readonly unknown[] = readonly unknown[]
 >(
-  options: UseQueryOptions<TQueryFnData, TError, TData, TQueryKey>
+  options: UseQueryOptions<TQueryFnData, Error, TData, TQueryKey>
 ): UseQueryWithErrorResult<TData> {
   const queryResult = useQuery(options);
 
@@ -83,7 +82,7 @@ export function useQueryWithError<
   return {
     ...queryResult,
     errorMessage,
-  } as UseQueryWithErrorResult<TData>;
+  };
 }
 
 export default useQueryWithError;

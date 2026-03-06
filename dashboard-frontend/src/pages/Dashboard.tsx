@@ -135,23 +135,17 @@ function Dashboard() {
             value={status?.is_running ? 'Running' : 'Stopped'}
             status={status?.is_running ? 'success' : 'warning'}
             loading={statusLoading}
-            error={statusError ?? undefined}
-            onRetry={() => refetchStatus()}
           />
           <StatusCard
             title="Market Status"
             value={status?.market_status || 'Unknown'}
             status={status?.market_status === 'open' ? 'success' : 'neutral'}
             loading={statusLoading}
-            error={statusError ?? undefined}
-            onRetry={() => refetchStatus()}
           />
           <StatusCard
             title="Active Strategies"
             value={String(status?.active_strategies?.length || 0)}
             loading={statusLoading}
-            error={statusError ?? undefined}
-            onRetry={() => refetchStatus()}
           />
           <StatusCard
             title="Last Update"
@@ -161,8 +155,6 @@ function Dashboard() {
                 : '-'
             }
             loading={statusLoading}
-            error={statusError ?? undefined}
-            onRetry={() => refetchStatus()}
           />
         </div>
       </div>
@@ -189,32 +181,24 @@ function Dashboard() {
             title="Total Trades"
             value={stats?.total_trades || 0}
             loading={statsLoading}
-            error={statsError ?? undefined}
-            onRetry={() => refetchStats()}
           />
           <StatCard
             title="Win Rate"
             value={`${((stats?.win_rate || 0) * 100).toFixed(1)}%`}
             loading={statsLoading}
             highlight={!!(stats?.win_rate && stats.win_rate > 0.5)}
-            error={statsError ?? undefined}
-            onRetry={() => refetchStats()}
           />
           <StatCard
             title="Total P&L"
             value={`${(stats?.total_pnl || 0).toFixed(2)}%`}
             loading={statsLoading}
             highlight={!!(stats?.total_pnl && stats.total_pnl > 0)}
-            error={statsError ?? undefined}
-            onRetry={() => refetchStats()}
           />
           <StatCard
             title="Profit Factor"
             value={(stats?.profit_factor || 0).toFixed(2)}
             loading={statsLoading}
             highlight={!!(stats?.profit_factor && stats.profit_factor > 1)}
-            error={statsError ?? undefined}
-            onRetry={() => refetchStats()}
           />
         </div>
       </div>
