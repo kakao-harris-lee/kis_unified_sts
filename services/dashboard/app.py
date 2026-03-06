@@ -61,8 +61,13 @@ def create_app(
     if api_key is None:
         api_key = os.environ.get("DASHBOARD_API_KEY")
 
-    # Enable authentication by default if API key is available
-    if require_auth is None:
+    # Check if dev mode is enabled (disables authentication)
+    dev_mode = os.environ.get("DASHBOARD_DEV_MODE", "").lower() == "true"
+    if dev_mode:
+        logger.info("Dev mode enabled - authentication disabled")
+        require_auth = False
+    elif require_auth is None:
+        # Enable authentication by default if API key is available
         require_auth = bool(api_key)
 
     app = FastAPI(
