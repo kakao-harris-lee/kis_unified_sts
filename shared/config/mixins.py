@@ -30,6 +30,7 @@ Validation:
 from __future__ import annotations
 
 import dataclasses
+import warnings
 from typing import Any, TypeVar
 
 T = TypeVar("T", bound="ConfigMixin")
@@ -76,6 +77,15 @@ class ConfigMixin:
             # Skip validation:
             config = MyConfig.from_dict(data, validate=False)
         """
+        # Emit deprecation warning
+        warnings.warn(
+            f"{cls.__name__}.from_dict() is deprecated. "
+            "Use ServiceConfigBase for new service configurations. "
+            "See shared/config/base.py for migration guidance.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
         # Unwrap "params" key if present (common in strategy YAML configs)
         if "params" in data and isinstance(data["params"], dict):
             data = data["params"]
