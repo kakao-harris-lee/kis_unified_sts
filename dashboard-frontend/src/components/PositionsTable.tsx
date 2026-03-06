@@ -1,17 +1,23 @@
 import { Position } from '../pages/Positions';
+import TableSkeleton from './TableSkeleton';
 
 interface PositionsTableProps {
   positions: Position[];
   loading?: boolean;
+  error?: string | null;
 }
 
-function PositionsTable({ positions, loading }: PositionsTableProps) {
-  if (loading) {
+function PositionsTable({ positions, loading, error }: PositionsTableProps) {
+  if (error) {
     return (
-      <div className="bg-gray-800 rounded-lg p-8 text-center">
-        <div className="animate-pulse text-gray-400">Loading positions...</div>
+      <div className="bg-gray-800 rounded-lg p-8 text-center border border-red-800">
+        <div className="text-red-400">{error}</div>
       </div>
     );
+  }
+
+  if (loading) {
+    return <TableSkeleton rows={5} columns={8} />;
   }
 
   if (positions.length === 0) {

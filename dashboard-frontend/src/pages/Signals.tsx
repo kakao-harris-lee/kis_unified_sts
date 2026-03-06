@@ -1,6 +1,9 @@
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
 import { signalsApi } from '../api/client';
+import TableSkeleton from '../components/TableSkeleton';
+import RefreshIndicator from '../components/RefreshIndicator';
+import ErrorMessage from '../components/ErrorMessage';
+import useQueryWithError from '../hooks/useQueryWithError';
 
 interface Signal {
   id: string;
@@ -22,23 +25,33 @@ function Signals() {
   const [strategyFilter, setStrategyFilter] = useState<string>('');
   const [sideFilter, setSideFilter] = useState<string>('');
 
-  const { data, isLoading } = useQuery<SignalsResponse>({
-    queryKey: ['signals', strategyFilter, sideFilter],
-    queryFn: () =>
-      signalsApi
-        .getSignals({
-          strategy: strategyFilter || undefined,
-          side: sideFilter || undefined,
-          limit: 50,
-        })
-        .then((r) => r.data),
-  });
+  const { data, isLoading, errorMessage, refetch, isRefetching, dataUpdatedAt } =
+    useQueryWithError<SignalsResponse>({
+      queryKey: ['signals', strategyFilter, sideFilter],
+      queryFn: () =>
+        signalsApi
+          .getSignals({
+            strategy: strategyFilter || undefined,
+            side: sideFilter || undefined,
+            limit: 50,
+          })
+          .then((r) => r.data),
+      refetchInterval: 5000,
+    });
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Trading Signals</h1>
-        <div className="text-sm text-gray-400">{data?.total || 0} signal(s)</div>
+        <div className="flex items-center gap-4">
+          <div className="text-sm text-gray-400">{data?.total || 0} signal(s)</div>
+          <RefreshIndicator
+            lastUpdated={dataUpdatedAt}
+            isRefreshing={isRefetching}
+            showStaleWarning={true}
+            staleThresholdSeconds={30}
+          />
+        </div>
       </div>
 
       {/* Filters */}
@@ -72,9 +85,9 @@ function Signals() {
 
       {/* Signals Table */}
       {isLoading ? (
-        <div className="bg-gray-800 rounded-lg p-8 text-center">
-          <div className="animate-pulse text-gray-400">Loading signals...</div>
-        </div>
+        <TableSkeleton rows={10} columns={7} />
+      ) : errorMessage ? (
+        <ErrorMessage message={errorMessage} onRetry={() => refetch()} />
       ) : data?.signals.length === 0 ? (
         <div className="bg-gray-800 rounded-lg p-8 text-center text-gray-400">
           No signals found
