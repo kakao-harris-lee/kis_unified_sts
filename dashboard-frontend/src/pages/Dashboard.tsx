@@ -104,19 +104,19 @@ function Dashboard() {
             title="Win Rate"
             value={`${((stats?.win_rate || 0) * 100).toFixed(1)}%`}
             loading={statsLoading}
-            highlight={stats?.win_rate && stats.win_rate > 0.5}
+            highlight={!!(stats?.win_rate && stats.win_rate > 0.5)}
           />
           <StatCard
             title="Total P&L"
             value={`${(stats?.total_pnl || 0).toFixed(2)}%`}
             loading={statsLoading}
-            highlight={stats?.total_pnl && stats.total_pnl > 0}
+            highlight={!!(stats?.total_pnl && stats.total_pnl > 0)}
           />
           <StatCard
             title="Profit Factor"
             value={(stats?.profit_factor || 0).toFixed(2)}
             loading={statsLoading}
-            highlight={stats?.profit_factor && stats.profit_factor > 1}
+            highlight={!!(stats?.profit_factor && stats.profit_factor > 1)}
           />
         </div>
       </div>
