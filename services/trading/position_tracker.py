@@ -1080,6 +1080,46 @@ class PositionTracker:
                 logger.error(f"Failed to flush swing positions batch: {e}")
                 return 0
 
+    async def _flush_rl_trades_batch(self) -> int:
+        """Flush accumulated RL trades batch to ClickHouse.
+
+        Returns:
+            Number of trades flushed
+        """
+        async with self._batch_lock:
+            if not self._pending_rl_trades:
+                return 0
+
+            try:
+                ch, database = self._get_db_client()
+
+                # Copy batch for insertion
+                rows = self._pending_rl_trades.copy()
+                count = len(rows)
+
+                def _sync_flush():
+                    client = ch.get_sync_client()
+                    # Ensure table exists
+                    client.execute(self._RL_TRADES_SCHEMA_TEMPLATE.format(database=database))
+                    # Insert batch
+                    client.execute(
+                        f"INSERT INTO {database}.rl_trades "
+                        f"{self._RL_TRADE_INSERT_COLS} VALUES",
+                        rows,
+                    )
+
+                await asyncio.to_thread(_sync_flush)
+
+                # Clear batch after successful insert
+                self._pending_rl_trades.clear()
+
+                logger.info(f"Flushed {count} RL trades batch to DB")
+                return count
+
+            except Exception as e:
+                logger.error(f"Failed to flush RL trades batch: {e}")
+                return 0
+
     @staticmethod
     def _calc_realized_pnl(position: Position) -> float:
         """Calculate side-aware realized PnL for a closed position."""
