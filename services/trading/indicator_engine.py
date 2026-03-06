@@ -872,15 +872,26 @@ class StreamingIndicatorEngine:
 
         from shared.indicators.momentum import calculate_all_momentum
 
-        candles = self.get_mtf_candles(symbol, timeframe, limit=0)
-        if len(candles) < min_candles:
+        # Check candle count directly from accumulator to avoid expensive dict conversion
+        mtf_map = self._mtf_accumulators.get(symbol)
+        if not mtf_map:
+            return {}
+        mtf_acc = mtf_map.get(timeframe)
+        if not mtf_acc:
             return {}
 
+        candle_count = len(mtf_acc.candles)
+        if candle_count < min_candles:
+            return {}
+
+        # Check cache before expensive dict conversion and DataFrame construction
         cache_key = (symbol, timeframe)
         cached = self._momentum_cache.get(cache_key)
-        if cached and cached[0] == len(candles):
+        if cached and cached[0] == candle_count:
             return cached[1]
 
+        # Cache miss: convert candles to dicts for DataFrame construction
+        candles = self.get_mtf_candles(symbol, timeframe, limit=0)
         df = pd.DataFrame(candles)
 
         try:
