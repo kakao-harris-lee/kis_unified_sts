@@ -367,12 +367,11 @@
     }
   },
   "qa_signoff": null,
-  "status": "human_review",
-  "planStatus": "review",
-  "xstateState": "human_review",
-  "executionPhase": "complete",
-  "updated_at": "2026-03-06T22:55:02.164Z",
+  "status": "in_progress",
+  "planStatus": "in_progress",
+  "xstateState": "coding",
+  "executionPhase": "coding",
+  "updated_at": "2026-03-06T02:37:31.323Z",
   "last_updated": "2026-03-06T02:36:51.868831+00:00",
-  "recoveryNote": "Task recovered from stuck state at 2026-03-06T00:14:02.185Z",
-  "reviewReason": "completed"
+  "recoveryNote": "Task recovered from stuck state at 2026-03-06T00:14:02.185Z"
 }
