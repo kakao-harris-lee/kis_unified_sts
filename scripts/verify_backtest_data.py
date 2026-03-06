@@ -69,12 +69,12 @@ def check_data_availability(client, symbols: list[str], min_months: int = 6) -> 
                 count() as row_count,
                 dateDiff('day', min(datetime), max(datetime)) as days_span
             FROM {database}.{table}
-            WHERE code = '{code}'
+            WHERE code = {{code:String}}
             GROUP BY code
         """
 
         try:
-            result = client.query(query)
+            result = client.query(query, parameters={"code": code})
 
             if not result.result_rows:
                 results["symbols_missing"].append(code)
