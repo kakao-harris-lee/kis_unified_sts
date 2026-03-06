@@ -37,6 +37,97 @@ KIS Unified Trading Platform 배포 가이드
 - 한국투자증권 API 접속을 위한 인터넷 연결
 - 포트: 8000 (API), 8001 (Dashboard), 3000 (Grafana), 9090 (Prometheus)
 
+### 보안 구성
+
+KIS Unified Trading Platform은 기본적으로 보안을 우선시하는 구성을 사용합니다.
+
+#### 서비스 바인딩 (Localhost-Only)
+
+모든 민감한 서비스는 **127.0.0.1** (localhost)에만 바인딩되어 외부 네트워크 접근을 차단합니다:
+
+| 서비스 | 포트 바인딩 | 설명 |
+|--------|-------------|------|
+| Redis | `127.0.0.1:6379:6379` | 캐시/메시지 큐 - 인증 필수 |
+| Prometheus | `127.0.0.1:9090:9090` | 메트릭 수집 |
+| Grafana | `127.0.0.1:3000:3000` | 모니터링 대시보드 |
+| Stream Exporter | `127.0.0.1:9093:9093` | 스트리밍 메트릭 |
+
+**⚠️ 중요:** `0.0.0.0`로 바인딩하면 모든 네트워크 인터페이스에 노출되어 보안 위험이 발생합니다.
+
+#### Redis 인증
+
+Redis는 비밀번호 인증을 **필수**로 요구합니다:
+
+```bash
+# .env 파일에 강력한 비밀번호 설정 (최소 16자)
+REDIS_PASSWORD=your_strong_password_here
+
+# 개발 환경에서도 비밀번호 사용 권장
+# 빈 비밀번호는 보안 위험!
+```
+
+**비밀번호 생성 예시:**
+
+```bash
+# 32자 랜덤 비밀번호 생성
+openssl rand -base64 24
+```
+
+#### Grafana 인증
+
+Grafana는 기본 `admin/admin` 계정을 사용합니다:
+
+```bash
+# .env 파일에서 반드시 변경
+GRAFANA_ADMIN_USER=admin
+GRAFANA_ADMIN_PASSWORD=strong_password_here  # 기본값 'admin' 절대 사용 금지!
+```
+
+**⚠️ 주의:**
+- 프로덕션 환경에서 기본 비밀번호(`admin`) 사용 시 즉시 대시보드 침해 가능
+- 최초 로그인 후 즉시 비밀번호 변경 필요
+
+#### Prometheus 관리 API
+
+보안을 위해 Prometheus 관리 API는 **비활성화**되어 있습니다:
+
+- `--web.enable-admin-api` 플래그 제거됨
+- 인증 없이 데이터 삭제/스냅샷 생성하는 위험 방지
+- 메트릭 조회 기능은 정상 작동
+
+#### 개발 모드 보안
+
+`docker-compose.dev.yml` 사용 시:
+
+- Grafana 익명 접근: **Viewer** 역할 (읽기 전용)
+- Redis 비밀번호: 개발 환경에서도 설정 권장
+- 모든 서비스 여전히 localhost 바인딩 유지
+
+#### 프로덕션 보안 체크리스트
+
+프로덕션 배포 전 반드시 확인:
+
+- [ ] `REDIS_PASSWORD` 설정 (최소 16자, 영문+숫자+특수문자)
+- [ ] `GRAFANA_ADMIN_PASSWORD` 변경 (기본 'admin' 사용 금지)
+- [ ] `API_KEY` 설정 (API 인증용)
+- [ ] `.env` 파일 권한 `chmod 600 .env`
+- [ ] `.env` 파일 Git 커밋 절대 금지 (`.gitignore` 확인)
+- [ ] 모든 서비스 포트가 `127.0.0.1`에 바인딩 확인
+- [ ] 방화벽 설정 (필요한 포트만 개방)
+- [ ] SSL/TLS 인증서 설정 (리버스 프록시 사용 시)
+
+**보안 설정 검증:**
+
+```bash
+# Docker Compose 구성 확인
+docker compose config | grep -E '(127.0.0.1|requirepass|enable-admin-api)'
+
+# 기대 결과:
+# - 모든 포트에 127.0.0.1 바인딩 확인
+# - Redis에 --requirepass 플래그 확인
+# - enable-admin-api 플래그 없음 확인
+```
+
 ---
 
 ## 로컬 개발 환경
