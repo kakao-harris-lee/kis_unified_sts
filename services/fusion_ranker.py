@@ -14,10 +14,15 @@ from __future__ import annotations
 import json
 import logging
 import time
-from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
+from pydantic import Field
+
+if TYPE_CHECKING:
+    from typing import Self
+
+from shared.config.base import ServiceConfigBase
 from shared.config.loader import ConfigLoader
 from shared.streaming.client import RedisClient
 from shared.streaming.publisher import StreamPublisher
@@ -25,62 +30,165 @@ from shared.streaming.publisher import StreamPublisher
 logger = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True)
-class FusionRankerConfig:
-    realtime_key: str = "system:universe:latest"
-    llm_quality_key: str = "system:llm_quality:latest"
-    output_key: str = "system:trade_targets:latest"
-    output_stream: str = "system:trade_targets"
+class FusionRankerConfig(ServiceConfigBase):
+    """Fusion ranker configuration.
 
-    interval_seconds: float = 15.0
-    top_n: int = 30
+    Combines real-time screener universe with LLM quality snapshots
+    to produce ranked trade targets.
+    """
 
-    weight_realtime: float = 0.55
-    weight_llm: float = 0.35
-    weight_recency: float = 0.10
+    _default_config_file: ClassVar[str] = "fusion_ranker.yaml"
 
-    fresh_window_seconds: float = 600.0
-    stale_seconds: float = 1800.0
-    llm_stale_seconds: float = 43200.0
-    llm_risk_penalty_per_hit: float = 0.08
-    llm_final_bonus: float = 0.12
-    min_llm_quality: float = 0.0
-    block_negative: bool = True
+    # Redis keys
+    realtime_key: str = Field(
+        default="system:universe:latest",
+        description="Redis key for real-time screener universe",
+    )
+    llm_quality_key: str = Field(
+        default="system:llm_quality:latest",
+        description="Redis key for LLM quality snapshot",
+    )
+    output_key: str = Field(
+        default="system:trade_targets:latest",
+        description="Redis key for fused trade targets",
+    )
+    output_stream: str = Field(
+        default="system:trade_targets",
+        description="Redis stream for fused trade targets",
+    )
+
+    # Ranking parameters
+    interval_seconds: float = Field(
+        default=15.0,
+        description="Fusion cycle interval in seconds",
+    )
+    top_n: int = Field(
+        default=30,
+        description="Number of top targets to publish",
+    )
+
+    # Fusion weights
+    weight_realtime: float = Field(
+        default=0.55,
+        description="Weight for real-time screener score",
+    )
+    weight_llm: float = Field(
+        default=0.35,
+        description="Weight for LLM quality score",
+    )
+    weight_recency: float = Field(
+        default=0.10,
+        description="Weight for recency component",
+    )
+
+    # Staleness parameters
+    fresh_window_seconds: float = Field(
+        default=600.0,
+        description="Fresh window for recency scoring (seconds)",
+    )
+    stale_seconds: float = Field(
+        default=1800.0,
+        description="Staleness threshold for real-time data (seconds)",
+    )
+    llm_stale_seconds: float = Field(
+        default=43200.0,
+        description="Staleness threshold for LLM data (seconds)",
+    )
+
+    # LLM adjustments
+    llm_risk_penalty_per_hit: float = Field(
+        default=0.08,
+        description="Penalty per LLM risk flag",
+    )
+    llm_final_bonus: float = Field(
+        default=0.12,
+        description="Bonus for LLM final picks",
+    )
+    min_llm_quality: float = Field(
+        default=0.0,
+        description="Minimum LLM quality threshold",
+    )
+    block_negative: bool = Field(
+        default=True,
+        description="Block symbols with negative LLM signals",
+    )
 
     @classmethod
-    def from_yaml(cls) -> "FusionRankerConfig":
-        """Load configuration from config/fusion_ranker.yaml."""
-        raw = ConfigLoader.load("fusion_ranker.yaml")
+    def from_yaml(
+        cls,
+        path: str | None = None,
+        section: str | None = None,
+        *,
+        apply_env_overrides: bool = False,
+        env_prefix: str | None = None,
+    ) -> Self:
+        """Load configuration from YAML file.
+
+        This override handles the nested YAML structure (redis_keys, ranking,
+        weights, staleness, llm_adjustments) and flattens it to match the
+        flat field structure of this config class.
+
+        Args:
+            path: YAML file path (relative to config directory).
+                  If None, uses _default_config_file.
+            section: Not used for this config (YAML has custom structure)
+            apply_env_overrides: If True, apply environment variable overrides
+            env_prefix: Environment variable prefix for overrides
+
+        Returns:
+            Config instance with values from YAML
+        """
+        # Determine config file path
+        if path is None:
+            path = cls._default_config_file
+
+        # Load YAML via ConfigLoader
+        raw = ConfigLoader.load(path)
+
+        # Extract nested sections
         keys = raw.get("redis_keys", {})
         ranking = raw.get("ranking", {})
         weights = raw.get("weights", {})
         staleness = raw.get("staleness", {})
         llm_adj = raw.get("llm_adjustments", {})
 
-        return cls(
-            realtime_key=keys.get("realtime", cls.realtime_key),
-            llm_quality_key=keys.get("llm_quality", cls.llm_quality_key),
-            output_key=keys.get("output", cls.output_key),
-            output_stream=keys.get("output_stream", cls.output_stream),
-            interval_seconds=float(ranking.get("interval_seconds", cls.interval_seconds)),
-            top_n=int(ranking.get("top_n", cls.top_n)),
-            weight_realtime=float(weights.get("realtime", cls.weight_realtime)),
-            weight_llm=float(weights.get("llm", cls.weight_llm)),
-            weight_recency=float(weights.get("recency", cls.weight_recency)),
-            fresh_window_seconds=float(
-                staleness.get("fresh_window_seconds", cls.fresh_window_seconds)
-            ),
-            stale_seconds=float(staleness.get("stale_seconds", cls.stale_seconds)),
-            llm_stale_seconds=float(
-                staleness.get("llm_stale_seconds", cls.llm_stale_seconds)
-            ),
-            llm_risk_penalty_per_hit=float(
-                llm_adj.get("risk_penalty_per_hit", cls.llm_risk_penalty_per_hit)
-            ),
-            llm_final_bonus=float(llm_adj.get("final_bonus", cls.llm_final_bonus)),
-            min_llm_quality=float(llm_adj.get("min_quality", cls.min_llm_quality)),
-            block_negative=bool(llm_adj.get("block_negative", cls.block_negative)),
-        )
+        # Build flat config dict
+        config_data = {
+            # Redis keys
+            "realtime_key": keys.get("realtime"),
+            "llm_quality_key": keys.get("llm_quality"),
+            "output_key": keys.get("output"),
+            "output_stream": keys.get("output_stream"),
+            # Ranking
+            "interval_seconds": ranking.get("interval_seconds"),
+            "top_n": ranking.get("top_n"),
+            # Weights
+            "weight_realtime": weights.get("realtime"),
+            "weight_llm": weights.get("llm"),
+            "weight_recency": weights.get("recency"),
+            # Staleness
+            "fresh_window_seconds": staleness.get("fresh_window_seconds"),
+            "stale_seconds": staleness.get("stale_seconds"),
+            "llm_stale_seconds": staleness.get("llm_stale_seconds"),
+            # LLM adjustments
+            "llm_risk_penalty_per_hit": llm_adj.get("risk_penalty_per_hit"),
+            "llm_final_bonus": llm_adj.get("final_bonus"),
+            "min_llm_quality": llm_adj.get("min_quality"),
+            "block_negative": llm_adj.get("block_negative"),
+        }
+
+        # Remove None values to use defaults
+        config_data = {k: v for k, v in config_data.items() if v is not None}
+
+        # Apply environment variable overrides if requested
+        if apply_env_overrides:
+            prefix = env_prefix if env_prefix is not None else cls._env_prefix
+            if prefix:
+                env_overrides = cls._extract_env_vars(prefix)
+                config_data.update(env_overrides)
+
+        # Create and validate config instance
+        return cls(**config_data)
 
 
 def _parse_json(raw: str | None) -> dict[str, Any]:
