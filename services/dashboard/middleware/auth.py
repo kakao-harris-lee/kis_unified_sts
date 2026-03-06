@@ -81,7 +81,8 @@ class APIKeyMiddleware:
             # We attempt a best-effort receive with a short timeout to avoid deadlock.
             try:
                 await asyncio.wait_for(receive(), timeout=0.2)
-            except Exception:
+            except (asyncio.TimeoutError, OSError, RuntimeError):
+                # Timeout or connection errors are expected during WebSocket close
                 pass
 
             await send({"type": "websocket.close", "code": 4001, "reason": "Unauthorized"})

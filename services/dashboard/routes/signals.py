@@ -6,6 +6,8 @@ from typing import List, Optional
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
+from shared.exceptions import InfrastructureError, ValidationError
+
 router = APIRouter(prefix="/api/signals", tags=["signals"])
 
 
@@ -50,7 +52,8 @@ def _load_signals() -> list[dict]:
     try:
         reader = _get_reader()
         return reader.get_signals(start=0, count=200)
-    except Exception:
+    except InfrastructureError:
+        # Redis unavailable - return empty list
         return []
 
 
@@ -67,7 +70,8 @@ def _to_signal_response(s: dict) -> Optional[SignalResponse]:
             timestamp=datetime.fromisoformat(s["timestamp"]) if "timestamp" in s else datetime.now(),
             executed=bool(s.get("executed", False)),
         )
-    except Exception:
+    except (ValueError, TypeError, KeyError):
+        # Invalid signal data - skip this record
         return None
 
 

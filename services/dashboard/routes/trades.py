@@ -7,6 +7,8 @@ from typing import List, Optional
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
+from shared.exceptions import InfrastructureError, ValidationError
+
 router = APIRouter(prefix="/api/trades", tags=["trades"])
 
 
@@ -70,7 +72,8 @@ def _load_trades() -> list[dict]:
     try:
         reader = _get_reader()
         return reader.get_trades(start=0, count=500)
-    except Exception:
+    except InfrastructureError:
+        # Redis unavailable - return empty list
         return []
 
 
@@ -89,7 +92,8 @@ def _to_trade_response(t: dict) -> Optional[TradeResponse]:
             entry_time=datetime.fromisoformat(t["entry_time"]) if "entry_time" in t else datetime.now(),
             exit_time=datetime.fromisoformat(t["exit_time"]) if "exit_time" in t else datetime.now(),
         )
-    except Exception:
+    except (ValueError, TypeError, KeyError):
+        # Invalid trade data - skip this record
         return None
 
 
@@ -254,7 +258,7 @@ async def get_db_rl_statistics(
         if rows and rows[0][0] > 0:
             return dict(zip(col_names, rows[0]))
         return _empty_db_stats()
-    except Exception as e:
+    except InfrastructureError as e:
         raise HTTPException(status_code=503, detail=f"ClickHouse unavailable: {e}")
 
 
@@ -299,5 +303,5 @@ async def get_db_rl_trades(
         rows, columns = await loop.run_in_executor(None, _query_ch, sql, params)
         col_names = [c[0] for c in columns]
         return [dict(zip(col_names, row)) for row in rows]
-    except Exception as e:
+    except InfrastructureError as e:
         raise HTTPException(status_code=503, detail=f"ClickHouse unavailable: {e}")

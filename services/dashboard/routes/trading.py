@@ -6,6 +6,8 @@ from typing import List
 from fastapi import APIRouter
 from pydantic import BaseModel
 
+from shared.exceptions import InfrastructureError, ValidationError
+
 router = APIRouter(prefix="/api/trading", tags=["trading"])
 
 
@@ -48,7 +50,8 @@ async def get_trading_status():
     try:
         reader = _get_reader()
         status = reader.get_status()
-    except Exception:
+    except InfrastructureError:
+        # Redis unavailable - return default status
         status = {}
 
     if not status:
@@ -70,17 +73,20 @@ async def get_trading_status():
     if isinstance(config, str):
         try:
             config = __import__("json").loads(config)
-        except Exception:
+        except (ValueError, TypeError):
+            # Invalid JSON - use empty dict
             config = {}
     if isinstance(stats, str):
         try:
             stats = __import__("json").loads(stats)
-        except Exception:
+        except (ValueError, TypeError):
+            # Invalid JSON - use empty dict
             stats = {}
     if isinstance(positions, str):
         try:
             positions = __import__("json").loads(positions)
-        except Exception:
+        except (ValueError, TypeError):
+            # Invalid JSON - use empty dict
             positions = {}
 
     strategies = [config.get("strategy", "")] if config.get("strategy") else []
@@ -89,7 +95,8 @@ async def get_trading_status():
     if isinstance(strats_info, str):
         try:
             strats_info = __import__("json").loads(strats_info)
-        except Exception:
+        except (ValueError, TypeError):
+            # Invalid JSON - use empty dict
             strats_info = {}
     if isinstance(strats_info, dict) and strats_info.get("strategies"):
         strategies = strats_info["strategies"]
@@ -112,7 +119,8 @@ async def get_positions():
     try:
         reader = _get_reader()
         positions = reader.get_positions()
-    except Exception:
+    except InfrastructureError:
+        # Redis unavailable - return empty list
         positions = []
 
     result = []
@@ -130,7 +138,8 @@ async def get_positions():
                 entry_time=datetime.fromisoformat(p["entry_time"]) if "entry_time" in p else datetime.now(),
                 strategy=p.get("strategy", ""),
             ))
-        except Exception:
+        except (ValueError, TypeError, KeyError):
+            # Invalid position data - skip this record
             continue
     return result
 
