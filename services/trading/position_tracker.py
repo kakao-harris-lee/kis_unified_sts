@@ -1187,6 +1187,34 @@ class PositionTracker:
         self._auto_flush_task = asyncio.create_task(_auto_flush_loop())
         logger.info("Auto-flush task created")
 
+    async def stop_auto_flush(self) -> None:
+        """Stop the auto-flush background task and flush remaining positions.
+
+        Gracefully cancels the auto-flush task if it's running, waits for it
+        to complete, then performs one final flush to ensure all pending
+        positions are written to the database.
+
+        This method is safe to call multiple times or if the task was never started.
+        """
+        if self._auto_flush_task is not None and not self._auto_flush_task.done():
+            logger.info("Stopping auto-flush task...")
+            self._auto_flush_task.cancel()
+
+            try:
+                await self._auto_flush_task
+            except asyncio.CancelledError:
+                logger.debug("Auto-flush task cancelled successfully")
+            except Exception as e:
+                logger.warning(f"Error while stopping auto-flush task: {e}")
+
+        # Final flush to ensure all pending positions are written
+        swing_count, rl_count = await self.flush_pending_positions()
+        if swing_count > 0 or rl_count > 0:
+            logger.info(
+                f"Final flush on shutdown: {swing_count} swing positions, "
+                f"{rl_count} RL trades"
+            )
+
     @staticmethod
     def _calc_realized_pnl(position: Position) -> float:
         """Calculate side-aware realized PnL for a closed position."""
