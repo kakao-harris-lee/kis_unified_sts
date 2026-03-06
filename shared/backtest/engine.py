@@ -175,9 +175,9 @@ class BacktestEngine:
         if hasattr(self.strategy, "prescan_data"):
             self.strategy.prescan_data(data)
 
-        # 메인 루프
-        for _, row in data.iterrows():
-            bar = row.to_dict()
+        # 메인 루프 — itertuples is ~14x faster than iterrows for 100K+ bars
+        for bar_tuple in data.itertuples(index=False, name=None):
+            bar = dict(zip(data.columns, bar_tuple))
             self._process_bar(bar)
 
         # 마지막 포지션 강제 청산
