@@ -2229,29 +2229,13 @@ class TradingOrchestrator:
             return 0
 
     async def _flush_positions_with_retry(self, max_retries: int = 3) -> bool:
-        """Flush positions to Redis with retry on connection errors.
-
-        Implements exponential backoff (100ms, 200ms, 400ms) to handle
-        transient Redis connection failures during shutdown.
-
-        Args:
-            max_retries: Maximum number of retry attempts (default: 3)
-
-        Returns:
-            True if flush succeeded, False otherwise
-
-        Note:
-            This is critical for position safety during abnormal terminations.
-            Retries prevent position data loss from transient network errors.
-        """
+        """Flush positions to Redis with exponential backoff (100ms base, 1s cap)."""
         if not self._position_tracker or not self._state_publisher:
             return False
 
         positions = list(self._position_tracker.positions)
         if not positions:
             return True  # Nothing to flush
-
-        backoff_delays = [0.1, 0.2, 0.4]  # 100ms, 200ms, 400ms
 
         for attempt in range(max_retries):
             try:
@@ -2267,7 +2251,7 @@ class TradingOrchestrator:
             except (ConnectionError, TimeoutError, OSError) as e:
                 # Transient network/connection errors - retry with backoff
                 if attempt < max_retries - 1:
-                    delay = backoff_delays[attempt]
+                    delay = min(0.1 * (2 ** attempt), 1.0)
                     logger.warning(
                         f"Redis flush failed (attempt {attempt + 1}/{max_retries}): {e}. "
                         f"Retrying in {delay*1000:.0f}ms..."
@@ -2286,30 +2270,13 @@ class TradingOrchestrator:
 
         return False
 
-    async def stop(self, timeout: float = 4.0):
+    async def stop(self, timeout: float = 10.0):
         """거래 종료 (타임아웃 포함)
 
         Args:
             timeout: Maximum time in seconds to wait for graceful shutdown.
-                     Default is 4.0s to ensure completion before cron SIGKILL.
-
-        Note:
-            Cron scripts (rl_paper.sh, stock_trading.sh, futures_trading.sh)
-            send SIGTERM, wait 5 seconds, then send SIGKILL. The orchestrator
-            timeout MUST be < 5s to complete gracefully before forced termination.
-            Using 4.0s provides a 1-second safety margin.
-
-            During shutdown, the orchestrator must:
-            - Stop market data loop
-            - Close intraday positions (can involve API calls)
-            - Flush positions to Redis (immediate, throttle=0, with retry)
-            - Save candle cache to Redis
-            - Cleanup resources
-            - Publish final status
-            - Send notifications
-
-            If graceful shutdown exceeds the timeout, a force flush to Redis
-            is attempted as a last resort to prevent position data loss.
+                     Cron scripts wait 5s before SIGKILL, so pass timeout=4.0
+                     when called from cron contexts for a 1s safety margin.
         """
         if self.state == TradingState.STOPPED:
             return
