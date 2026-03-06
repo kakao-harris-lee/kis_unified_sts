@@ -94,6 +94,10 @@ class PositionTrackerConfig:
     # ClickHouse database name (empty = env default)
     database: str = ""
 
+    # Batch insert configuration
+    batch_size: int = 50  # Number of closed positions to batch before flush
+    flush_interval_seconds: float = 5.0  # Max seconds to wait before flush
+
     def __post_init__(self):
         """Validate configuration values."""
         self._validate()
@@ -146,6 +150,14 @@ class PositionTrackerConfig:
                 f"max_closed_positions must be >= 1, got {self.max_closed_positions}"
             )
 
+        if self.batch_size < 1:
+            raise ValueError(f"batch_size must be >= 1, got {self.batch_size}")
+
+        if self.flush_interval_seconds < 0:
+            raise ValueError(
+                f"flush_interval_seconds must be >= 0, got {self.flush_interval_seconds}"
+            )
+
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> PositionTrackerConfig:
         """Create config from dict with validation.
@@ -168,6 +180,8 @@ class PositionTrackerConfig:
         max_events = data.get("max_events", 1000)
         max_closed = data.get("max_closed_positions", 100)
         database = data.get("database", "")
+        batch_size = data.get("batch_size", 50)
+        flush_interval = data.get("flush_interval_seconds", 5.0)
 
         # Type validation
         if not isinstance(max_positions, int):
@@ -186,6 +200,12 @@ class PositionTrackerConfig:
             )
         if not isinstance(fee_rate, (int, float)):
             raise TypeError(f"default_fee_rate must be numeric, got {type(fee_rate)}")
+        if not isinstance(batch_size, int):
+            raise TypeError(f"batch_size must be int, got {type(batch_size)}")
+        if not isinstance(flush_interval, (int, float)):
+            raise TypeError(
+                f"flush_interval_seconds must be numeric, got {type(flush_interval)}"
+            )
 
         return cls(
             max_positions=int(max_positions),
@@ -196,6 +216,8 @@ class PositionTrackerConfig:
             max_events=int(max_events),
             max_closed_positions=int(max_closed),
             database=str(database),
+            batch_size=int(batch_size),
+            flush_interval_seconds=float(flush_interval),
         )
 
 
@@ -268,9 +290,20 @@ class PositionTracker:
             maxlen=self.config.max_closed_positions
         )
 
+        # Batch accumulators for DB inserts
+        self._pending_swing_positions: list[tuple[Any, ...]] = []
+        self._pending_rl_trades: list[tuple[Any, ...]] = []
+        self._batch_lock: asyncio.Lock = asyncio.Lock()
+
+        # Auto-flush background task
+        self._auto_flush_task: asyncio.Task | None = None
+
         logger.info(
             f"PositionTracker initialized: max_positions={self.config.max_positions}"
         )
+
+        # Start auto-flush task if configured
+        self._start_auto_flush_task()
 
     @property
     def positions(self) -> list[Position]:
@@ -902,20 +935,48 @@ class PositionTracker:
             return 0
 
     async def save_closed_to_db(self, position: Position) -> bool:
-        """Persist a single closed position to ClickHouse.
+        """Accumulate closed position for batch insertion to ClickHouse.
+
+        This method uses a batching strategy to optimize database performance by
+        accumulating closed positions and flushing them in bulk. Individual row
+        inserts create excessive parts in ClickHouse MergeTree tables, triggering
+        frequent background merges that degrade read performance.
+
+        Batching Behavior:
+            - Positions are accumulated in an in-memory buffer (_pending_swing_positions)
+            - Not immediately written to the database
+            - Batched inserts reduce ClickHouse connection overhead and write amplification
+
+        Flush Triggers (positions are written to DB when):
+            1. Batch size threshold reached (config.batch_size, default 50)
+            2. Timer-based auto-flush (every config.flush_interval_seconds, default 5s)
+            3. Manual flush via flush_pending_positions()
+            4. Graceful shutdown via stop_auto_flush()
+
+        For critical scenarios requiring immediate persistence (e.g., testing),
+        call flush_pending_positions() immediately after this method.
 
         Args:
             position: Closed position with exit_price/exit_time set.
 
         Returns:
-            True if saved successfully
+            True if accumulated successfully, False if position validation fails
+            or accumulation errors occur.
+
+        Example:
+            ```python
+            # Normal usage - automatic batching
+            await tracker.save_closed_to_db(position)
+
+            # Force immediate flush (e.g., for testing or critical trades)
+            await tracker.save_closed_to_db(position)
+            await tracker.flush_pending_positions()
+            ```
         """
         if not position.exit_price or not position.exit_time:
             return False
 
         try:
-            ch, database = self._get_db_client()
-
             pnl = self._calc_realized_pnl(position)
 
             row = (
@@ -938,34 +999,69 @@ class PositionTracker:
                 position.fee_rate,
             )
 
-            def _sync_save():
-                client = ch.get_sync_client()
-                client.execute(
-                    f"INSERT INTO {database}.swing_positions "
-                    f"{self._SWING_INSERT_COLS} VALUES",
-                    [row],
-                )
-
-            await asyncio.to_thread(_sync_save)
+            async with self._batch_lock:
+                self._pending_swing_positions.append(row)
+                batch_size = len(self._pending_swing_positions)
 
             logger.info(
-                f"Persisted closed position: {position.code} "
-                f"(pnl={pnl:+,.0f}, id={position.id[:8]})"
+                f"Accumulated closed position: {position.code} "
+                f"(pnl={pnl:+,.0f}, id={position.id[:8]}, batch={batch_size}/{self.config.batch_size})"
             )
+
+            # Flush if batch threshold reached
+            if batch_size >= self.config.batch_size:
+                await self._flush_swing_positions_batch()
+
             return True
 
         except Exception as e:
-            logger.error(f"Failed to persist closed position {position.id[:8]}: {e}")
+            logger.error(f"Failed to accumulate closed position {position.id[:8]}: {e}")
             return False
 
     async def save_rl_trade_to_db(self, position: Position, asset_class: str) -> bool:
-        """Persist a closed RL trade to ClickHouse rl_trades table."""
+        """Accumulate closed RL trade for batch insertion to ClickHouse.
+
+        This method uses a batching strategy to optimize database performance by
+        accumulating closed RL trades and flushing them in bulk. During backtesting
+        with Optuna, hundreds of positions may close per trial, making batching
+        critical to avoid overwhelming ClickHouse with individual inserts.
+
+        Batching Behavior:
+            - Trades are accumulated in an in-memory buffer (_pending_rl_trades)
+            - Not immediately written to the database
+            - Batched inserts reduce ClickHouse connection overhead and write amplification
+
+        Flush Triggers (trades are written to DB when):
+            1. Batch size threshold reached (config.batch_size, default 50)
+            2. Timer-based auto-flush (every config.flush_interval_seconds, default 5s)
+            3. Manual flush via flush_pending_positions()
+            4. Graceful shutdown via stop_auto_flush()
+
+        For critical scenarios requiring immediate persistence (e.g., testing),
+        call flush_pending_positions() immediately after this method.
+
+        Args:
+            position: Closed position with exit_price/exit_time set.
+            asset_class: Asset class of the trade (e.g., 'futures', 'stock')
+
+        Returns:
+            True if accumulated successfully, False if position validation fails
+            or accumulation errors occur.
+
+        Example:
+            ```python
+            # Normal usage - automatic batching
+            await tracker.save_rl_trade_to_db(position, "futures")
+
+            # Force immediate flush (e.g., for testing or critical trades)
+            await tracker.save_rl_trade_to_db(position, "futures")
+            await tracker.flush_pending_positions()
+            ```
+        """
         if not position.exit_price or not position.exit_time:
             return False
 
         try:
-            ch, database = self._get_db_client()
-
             pnl = self._calc_realized_pnl(position)
             hold_seconds = 0
             if position.entry_time and position.exit_time:
@@ -995,26 +1091,204 @@ class PositionTracker:
                 metadata_json,
             )
 
-            def _sync_save():
-                client = ch.get_sync_client()
-                client.execute(self._RL_TRADES_SCHEMA_TEMPLATE.format(database=database))
-                client.execute(
-                    f"INSERT INTO {database}.rl_trades "
-                    f"{self._RL_TRADE_INSERT_COLS} VALUES",
-                    [row],
-                )
-
-            await asyncio.to_thread(_sync_save)
+            async with self._batch_lock:
+                self._pending_rl_trades.append(row)
+                batch_size = len(self._pending_rl_trades)
 
             logger.info(
-                f"Persisted RL trade: {position.code} "
-                f"(strategy={position.strategy}, pnl={pnl:+,.0f}, id={position.id[:8]})"
+                f"Accumulated RL trade: {position.code} "
+                f"(strategy={position.strategy}, pnl={pnl:+,.0f}, id={position.id[:8]}, batch={batch_size}/{self.config.batch_size})"
             )
+
+            # Flush if batch threshold reached
+            if batch_size >= self.config.batch_size:
+                await self._flush_rl_trades_batch()
+
             return True
 
         except Exception as e:
-            logger.error(f"Failed to persist RL trade {position.id[:8]}: {e}")
+            logger.error(f"Failed to accumulate RL trade {position.id[:8]}: {e}")
             return False
+
+    async def _flush_batch(
+        self,
+        pending_list: list[tuple[Any, ...]],
+        table_name: str,
+        insert_cols: str,
+        label: str,
+        pre_execute_sql: str | None = None,
+    ) -> tuple[int, list[tuple[Any, ...]]]:
+        """Generic batch flush: copy+clear under lock, then I/O outside lock.
+
+        On failure the rows are re-enqueued so no data is lost.
+
+        Args:
+            pending_list: The accumulator list (e.g. _pending_swing_positions).
+            table_name: Target ClickHouse table (without database prefix).
+            insert_cols: Column spec string for the INSERT statement.
+            label: Human-readable label for log messages.
+            pre_execute_sql: Optional SQL to run before the INSERT (e.g. schema ensure).
+
+        Returns:
+            Tuple of (rows_flushed, remaining_pending_list). The caller must
+            reassign the pending list reference if rows were re-enqueued.
+        """
+        # Acquire lock only to snapshot + clear the buffer
+        async with self._batch_lock:
+            if not pending_list:
+                return 0, pending_list
+            rows = pending_list.copy()
+            pending_list.clear()
+
+        # Perform blocking I/O *outside* the lock
+        try:
+            ch, database = self._get_db_client()
+
+            def _sync_flush():
+                client = ch.get_sync_client()
+                if pre_execute_sql:
+                    client.execute(pre_execute_sql.format(database=database))
+                client.execute(
+                    f"INSERT INTO {database}.{table_name} {insert_cols} VALUES",
+                    rows,
+                )
+
+            await asyncio.to_thread(_sync_flush)
+            logger.info(f"Flushed {len(rows)} {label} batch to DB")
+            return len(rows), pending_list
+
+        except Exception as e:
+            # Re-enqueue rows so they are retried on the next flush
+            async with self._batch_lock:
+                pending_list.extend(rows)
+            logger.error(f"Failed to flush {label} batch: {e}")
+            return 0, pending_list
+
+    async def _flush_swing_positions_batch(self) -> int:
+        """Flush accumulated swing positions batch to ClickHouse.
+
+        Returns:
+            Number of positions flushed
+        """
+        count, self._pending_swing_positions = await self._flush_batch(
+            self._pending_swing_positions,
+            table_name="swing_positions",
+            insert_cols=self._SWING_INSERT_COLS,
+            label="swing positions",
+        )
+        return count
+
+    async def _flush_rl_trades_batch(self) -> int:
+        """Flush accumulated RL trades batch to ClickHouse.
+
+        Returns:
+            Number of trades flushed
+        """
+        count, self._pending_rl_trades = await self._flush_batch(
+            self._pending_rl_trades,
+            table_name="rl_trades",
+            insert_cols=self._RL_TRADE_INSERT_COLS,
+            label="RL trades",
+            pre_execute_sql=self._RL_TRADES_SCHEMA_TEMPLATE,
+        )
+        return count
+
+    async def flush_pending_positions(self) -> tuple[int, int]:
+        """Flush all pending batches to database.
+
+        This method is safe to call even if batches are empty.
+        Typically called during graceful shutdown or manual flush triggers.
+
+        Returns:
+            Tuple of (swing_positions_flushed, rl_trades_flushed)
+        """
+        swing_count = await self._flush_swing_positions_batch()
+        rl_count = await self._flush_rl_trades_batch()
+
+        if swing_count > 0 or rl_count > 0:
+            logger.info(
+                f"Manual flush completed: {swing_count} swing positions, {rl_count} RL trades"
+            )
+
+        return swing_count, rl_count
+
+    def _start_auto_flush_task(self) -> None:
+        """Start background timer-based flush task.
+
+        Creates an asyncio task that periodically flushes pending positions
+        based on the configured flush_interval_seconds. The task runs
+        indefinitely with robust error handling.
+
+        The task is only started if flush_interval_seconds > 0 and a running
+        event loop is available. In sync contexts (tests, CLI), the task
+        creation is deferred — callers can invoke this again once an event
+        loop is running.
+        """
+        if self.config.flush_interval_seconds <= 0:
+            logger.debug("Auto-flush disabled (flush_interval_seconds <= 0)")
+            return
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            logger.debug("No running event loop; auto-flush task deferred")
+            return
+
+        async def _auto_flush_loop():
+            """Background task that periodically flushes pending positions."""
+            logger.info(
+                f"Auto-flush task started (interval={self.config.flush_interval_seconds}s)"
+            )
+            while True:
+                try:
+                    await asyncio.sleep(self.config.flush_interval_seconds)
+                    swing_count, rl_count = await self.flush_pending_positions()
+
+                    # Only log if we actually flushed something
+                    if swing_count > 0 or rl_count > 0:
+                        logger.info(
+                            f"Auto-flush triggered: {swing_count} swing positions, "
+                            f"{rl_count} RL trades"
+                        )
+                except asyncio.CancelledError:
+                    logger.info("Auto-flush task cancelled")
+                    break
+                except Exception as e:
+                    logger.error(f"Error in auto-flush task: {e}", exc_info=True)
+                    # Continue loop despite errors for robustness
+                    await asyncio.sleep(1)  # Brief delay before retry
+
+        # Create and store the task
+        self._auto_flush_task = loop.create_task(_auto_flush_loop())
+        logger.info("Auto-flush task created")
+
+    async def stop_auto_flush(self) -> None:
+        """Stop the auto-flush background task and flush remaining positions.
+
+        Gracefully cancels the auto-flush task if it's running, waits for it
+        to complete, then performs one final flush to ensure all pending
+        positions are written to the database.
+
+        This method is safe to call multiple times or if the task was never started.
+        """
+        if self._auto_flush_task is not None and not self._auto_flush_task.done():
+            logger.info("Stopping auto-flush task...")
+            self._auto_flush_task.cancel()
+
+            try:
+                await self._auto_flush_task
+            except asyncio.CancelledError:
+                logger.debug("Auto-flush task cancelled successfully")
+            except Exception as e:
+                logger.warning(f"Error while stopping auto-flush task: {e}")
+
+        # Final flush to ensure all pending positions are written
+        swing_count, rl_count = await self.flush_pending_positions()
+        if swing_count > 0 or rl_count > 0:
+            logger.info(
+                f"Final flush on shutdown: {swing_count} swing positions, "
+                f"{rl_count} RL trades"
+            )
 
     @staticmethod
     def _calc_realized_pnl(position: Position) -> float:

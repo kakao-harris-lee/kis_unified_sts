@@ -135,6 +135,8 @@ class TestSaveClosedToDb:
                 side=PositionSide.LONG,
             )
             result = await tracker.save_closed_to_db(pos)
+            # Explicitly flush the batch to trigger the database write
+            await tracker.flush_pending_positions()
 
         assert result is True
         # Verify INSERT was called
@@ -169,6 +171,8 @@ class TestSaveClosedToDb:
                 strategy="rl_mppo",
             )
             result = await tracker.save_closed_to_db(pos)
+            # Explicitly flush the batch to trigger the database write
+            await tracker.flush_pending_positions()
 
         assert result is True
         row = mock_client.execute.call_args[0][1][0]
@@ -177,15 +181,30 @@ class TestSaveClosedToDb:
 
     @pytest.mark.asyncio
     async def test_handles_db_error(self):
+        """DB errors are surfaced during flush, not during accumulation.
+
+        save_closed_to_db batches positions in memory and always returns True
+        for valid positions. The flush step handles the actual DB write and
+        returns 0 on error while re-enqueuing the rows.
+        """
         tracker = PositionTracker(config=PositionTrackerConfig(database="testdb"))
 
+        pos = _make_position(exit_price=72000)
+        result = await tracker.save_closed_to_db(pos)
+
+        # Accumulation succeeds regardless of DB state
+        assert result is True
+        assert len(tracker._pending_swing_positions) == 1
+
+        # Flush fails gracefully and re-enqueues the rows
         with patch.object(
             tracker, "_get_db_client", side_effect=Exception("connection refused")
         ):
-            pos = _make_position(exit_price=72000)
-            result = await tracker.save_closed_to_db(pos)
+            flushed, _ = await tracker.flush_pending_positions()
 
-        assert result is False
+        assert flushed == 0
+        # Row re-enqueued for retry
+        assert len(tracker._pending_swing_positions) == 1
 
 
 class TestSaveToDbWithSideAndFeeRate:
@@ -247,6 +266,8 @@ class TestSaveRlTradeToDb:
             )
             pos.metadata = {"snapshot_id": "snap-1", "model_version": "mppo-v3"}
             result = await tracker.save_rl_trade_to_db(pos, asset_class="futures")
+            # Explicitly flush the batch to trigger the database write
+            await tracker.flush_pending_positions()
 
         assert result is True
         call_args = mock_client.execute.call_args
