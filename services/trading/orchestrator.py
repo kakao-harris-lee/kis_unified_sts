@@ -1685,6 +1685,20 @@ class TradingOrchestrator:
             f"(metadata={len(metadata_symbols)}, daily={len(daily_symbols)})"
         )
 
+    def _invalidate_enriched_metadata_cache(self):
+        """Invalidate and rebuild enriched metadata cache.
+
+        Called whenever symbol_metadata or _daily_indicators are updated to ensure
+        the pre-merged cache stays synchronized. This triggers a full cache rebuild
+        by calling _build_enriched_metadata_cache().
+
+        Usage:
+            - After _apply_universe_changes() updates symbol_metadata
+            - After _refresh_daily_indicators() updates _daily_indicators
+        """
+        logger.debug("Invalidating enriched metadata cache")
+        self._build_enriched_metadata_cache()
+
     def _load_ranked_targets(self, redis) -> tuple[list[str], dict[str, str], dict[str, dict[str, Any]]]:
         """Load ranked symbols from fusion targets first, then screener fallback."""
         keys = [
