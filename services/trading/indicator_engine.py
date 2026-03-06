@@ -239,6 +239,9 @@ class StreamingIndicatorEngine:
         ] = {}
         self._momentum_cache: dict[tuple[str, int], tuple[int, dict[str, Any]]] = {}
 
+        # Cache for get_indicators(): {symbol: (candle_count, indicators_dict)}
+        self._indicator_cache: dict[str, tuple[int, dict[str, float]]] = {}
+
         # Volume indicators
         self._high_period = high_period
         self._rvol_short = rvol_short
@@ -489,6 +492,7 @@ class StreamingIndicatorEngine:
         self._momentum_cache = {
             key: value for key, value in self._momentum_cache.items() if key[0] != symbol
         }
+        self._indicator_cache.pop(symbol, None)
         self._warm_logged.discard(symbol)
         self._vwap_calc.reset(symbol)
         self._vol_accel_calc.reset(symbol)
@@ -548,6 +552,12 @@ class StreamingIndicatorEngine:
                     self._staleness_seconds,
                 )
                 return {}
+
+        # Check cache: return cached result if candle count hasn't changed
+        candle_count = len(acc.candles)
+        cached = self._indicator_cache.get(symbol)
+        if cached and cached[0] == candle_count:
+            return cached[1].copy()
 
         candles = list(acc.candles)
         closes = [c.close for c in candles]
@@ -624,6 +634,9 @@ class StreamingIndicatorEngine:
 
         # Daily EMA alignment: EMA(5d) > EMA(10d) > EMA(20d) — multi-day uptrend
         result["ema_daily_aligned"] = self._calc_daily_ema_aligned(symbol)
+
+        # Update cache
+        self._indicator_cache[symbol] = (candle_count, result)
 
         return result
 
