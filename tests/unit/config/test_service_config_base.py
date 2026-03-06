@@ -6,7 +6,7 @@ from pathlib import Path
 from pydantic import Field
 
 from shared.config.base import ServiceConfigBase
-from shared.config.exceptions import ConfigNotFoundError
+from shared.config import ConfigNotFoundError
 
 
 class SimpleConfig(ServiceConfigBase):
@@ -572,3 +572,99 @@ threshold: 0.6
         # Modifying one shouldn't affect the other
         config1.name = "modified"
         assert config2.name == "config2"
+
+
+class TestServiceConfigBaseFromYAMLSections:
+    """Tests for from_yaml(sections=...) multi-section merge."""
+
+    def test_sections_merge_two_sections(self, monkeypatch):
+        monkeypatch.setattr(
+            "shared.config.base.ConfigLoader.load",
+            lambda path, **kw: {
+                "env": {"name": "from_env_section", "threshold": 0.8},
+                "reward": {"max_items": 50, "enabled": False},
+            },
+        )
+        config = SimpleConfig.from_yaml("fake.yaml", sections=["env", "reward"])
+
+        assert config.name == "from_env_section"
+        assert config.threshold == 0.8
+        assert config.max_items == 50
+        assert config.enabled is False
+
+    def test_sections_later_overrides_earlier(self, monkeypatch):
+        monkeypatch.setattr(
+            "shared.config.base.ConfigLoader.load",
+            lambda path, **kw: {
+                "first": {"name": "from_first", "threshold": 0.3},
+                "second": {"name": "from_second", "threshold": 0.9},
+            },
+        )
+        config = SimpleConfig.from_yaml("fake.yaml", sections=["first", "second"])
+
+        assert config.name == "from_second"
+        assert config.threshold == 0.9
+
+    def test_sections_missing_section_treated_as_empty(self, monkeypatch):
+        monkeypatch.setattr(
+            "shared.config.base.ConfigLoader.load",
+            lambda path, **kw: {
+                "env": {"name": "only_env", "threshold": 0.7},
+            },
+        )
+        config = SimpleConfig.from_yaml("fake.yaml", sections=["env", "nonexistent"])
+
+        assert config.name == "only_env"
+        assert config.threshold == 0.7
+        assert config.enabled is True  # default
+
+    def test_sections_empty_list_uses_defaults(self, monkeypatch):
+        monkeypatch.setattr(
+            "shared.config.base.ConfigLoader.load",
+            lambda path, **kw: {"env": {"name": "ignored"}},
+        )
+        config = SimpleConfig.from_yaml("fake.yaml", sections=[])
+
+        assert config.name == "default"
+        assert config.threshold == 0.5
+
+    def test_sections_mutually_exclusive_with_section(self):
+        with pytest.raises(ValueError, match="Cannot specify both"):
+            SimpleConfig.from_yaml(
+                "fake.yaml", section="env", sections=["env", "reward"]
+            )
+
+    def test_sections_with_env_overrides(self, monkeypatch):
+        monkeypatch.setattr(
+            "shared.config.base.ConfigLoader.load",
+            lambda path, **kw: {
+                "env": {"name": "from_yaml", "threshold": 0.5},
+                "reward": {"max_items": 20},
+            },
+        )
+        monkeypatch.setenv("MY_THRESHOLD", "0.99")
+
+        config = SimpleConfig.from_yaml(
+            "fake.yaml",
+            sections=["env", "reward"],
+            apply_env_overrides=True,
+            env_prefix="MY_",
+        )
+
+        assert config.name == "from_yaml"
+        assert config.threshold == 0.99  # env override
+        assert config.max_items == 20  # from reward section
+
+    def test_sections_non_dict_section_skipped(self, monkeypatch):
+        monkeypatch.setattr(
+            "shared.config.base.ConfigLoader.load",
+            lambda path, **kw: {
+                "env": {"name": "valid_section"},
+                "scalar_section": "just_a_string",
+            },
+        )
+        config = SimpleConfig.from_yaml(
+            "fake.yaml", sections=["env", "scalar_section"]
+        )
+
+        assert config.name == "valid_section"
