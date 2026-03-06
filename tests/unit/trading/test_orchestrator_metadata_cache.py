@@ -37,6 +37,8 @@ def _make_orchestrator(**kwargs):
     orch.total_pnl = 0.0
     orch._symbol_metadata_cache = {}
     orch._enriched_metadata_cache = {}
+    orch._cached_symbol_meta = {}
+    orch._cached_daily_indicators = {}
     orch._symbol_last_seen = {}
     orch._symbol_names = {}
     orch._daily_indicators = {}
@@ -432,7 +434,7 @@ class TestCacheUsageInHotPath:
         """_handle_entry should use enriched metadata cache, not raw lookups."""
         orch = _make_orchestrator()
 
-        # Setup enriched cache
+        # Setup enriched cache + separated caches
         orch._enriched_metadata_cache = {
             "005930": {
                 "code": "005930",
@@ -441,11 +443,20 @@ class TestCacheUsageInHotPath:
                 "prev_day_volume": 15_000_000,
             }
         }
+        orch._cached_symbol_meta = {
+            "005930": {"name": "삼성전자"},
+        }
+        orch._cached_daily_indicators = {
+            "005930": {"atr": 2500, "prev_day_volume": 15_000_000},
+        }
 
         # Mock market data
         orch._market_data_snapshot = {
             "005930": {"close": 71000, "volume": 50000},
         }
+
+        # Mock data provider (required: _handle_entry returns [] if None)
+        orch._data_provider = MagicMock()
 
         # Mock indicator engine (warm)
         orch._indicator_engine = MagicMock()
@@ -459,40 +470,47 @@ class TestCacheUsageInHotPath:
         orch._strategy_manager = MagicMock()
         orch._strategy_manager.check_entries = AsyncMock(return_value=[])
         orch._strategy_manager.strategy_names = ["bb_reversion"]
+        orch._strategy_manager.required_indicators = set()
 
         # Mock position tracker
         orch._position_tracker = MagicMock()
         orch._position_tracker.has_position.return_value = False
+        orch._position_tracker.can_open_position.return_value = True
+        orch._position_tracker.positions = []
+
+        # Mock metrics
+        orch._metrics = MagicMock()
+        orch._daily_watchlist = {}
 
         orch.config.symbols = ["005930"]
 
         await orch._handle_entry()
 
-        # Verify check_entries was called
+        # Verify check_entries was called (receives EntryContext positional arg)
         assert orch._strategy_manager.check_entries.called
 
-        # Get the enriched data that was passed
+        # Verify the EntryContext has enriched market_data
         call_args = orch._strategy_manager.check_entries.call_args
-        enriched_data = call_args.kwargs.get("enriched_data", {})
+        context = call_args.args[0] if call_args.args else call_args.kwargs.get("context")
+        assert context.market_data.get("name") == "삼성전자"
+        assert context.market_data.get("close") == 71000
 
-        # Should contain cached metadata
-        symbol_data = enriched_data.get("005930", {})
-        assert symbol_data.get("name") == "삼성전자"
-        assert symbol_data.get("atr") == 2500
-        assert symbol_data.get("prev_day_volume") == 15_000_000
+        # Verify indicators dict has daily indicators but NOT symbol metadata
+        assert context.indicators.get("atr") == 2500
+        assert "name" not in context.indicators
+        assert "sector" not in context.indicators
+
+        # Verify metadata['symbol_metadata'] has pure symbol metadata
+        assert context.metadata["symbol_metadata"].get("name") == "삼성전자"
 
     @pytest.mark.asyncio
     async def test_exit_uses_enriched_cache(self):
-        """_handle_exit should use enriched metadata cache."""
+        """_handle_exit should use daily indicators cache for exit data."""
         orch = _make_orchestrator()
 
-        # Setup enriched cache
-        orch._enriched_metadata_cache = {
-            "005930": {
-                "code": "005930",
-                "name": "삼성전자",
-                "atr": 2500,
-            }
+        # Setup separated caches (exit path uses _cached_daily_indicators)
+        orch._cached_daily_indicators = {
+            "005930": {"atr": 2500},
         }
 
         # Mock position
@@ -501,6 +519,9 @@ class TestCacheUsageInHotPath:
 
         orch._position_tracker = MagicMock()
         orch._position_tracker.positions = [pos]
+
+        # Mock data provider (required: _handle_exit returns [] if None)
+        orch._data_provider = MagicMock()
 
         # Mock market data
         orch._market_data_snapshot = {
@@ -514,6 +535,7 @@ class TestCacheUsageInHotPath:
         # Mock strategy manager
         orch._strategy_manager = MagicMock()
         orch._strategy_manager.check_exits = AsyncMock(return_value=[])
+        orch._strategy_manager.required_indicators = set()
 
         await orch._handle_exit()
 
@@ -521,22 +543,28 @@ class TestCacheUsageInHotPath:
         call_args = orch._strategy_manager.check_exits.call_args
         market_data = call_args.kwargs["market_data"]
 
-        # Enriched cache data should be merged
+        # Daily indicators should be merged into exit data
         symbol_data = market_data["005930"]
         assert symbol_data["atr"] == 2500
-        assert symbol_data["name"] == "삼성전자"
+        # Symbol metadata should NOT be in exit data
+        assert "name" not in symbol_data
 
     @pytest.mark.asyncio
     async def test_entry_handles_missing_cache_entry(self):
         """Entry handler should gracefully handle symbols not in enriched cache."""
         orch = _make_orchestrator()
 
-        # Empty cache
+        # Empty caches
         orch._enriched_metadata_cache = {}
+        orch._cached_symbol_meta = {}
+        orch._cached_daily_indicators = {}
 
         orch._market_data_snapshot = {
             "005930": {"close": 71000},
         }
+
+        # Mock data provider (required: _handle_entry returns [] if None)
+        orch._data_provider = MagicMock()
 
         orch._indicator_engine = MagicMock()
         orch._indicator_engine.is_warm.return_value = True
@@ -545,9 +573,15 @@ class TestCacheUsageInHotPath:
         orch._strategy_manager = MagicMock()
         orch._strategy_manager.check_entries = AsyncMock(return_value=[])
         orch._strategy_manager.strategy_names = ["bb_reversion"]
+        orch._strategy_manager.required_indicators = set()
 
         orch._position_tracker = MagicMock()
         orch._position_tracker.has_position.return_value = False
+        orch._position_tracker.can_open_position.return_value = True
+        orch._position_tracker.positions = []
+
+        orch._metrics = MagicMock()
+        orch._daily_watchlist = {}
 
         orch.config.symbols = ["005930"]
 
