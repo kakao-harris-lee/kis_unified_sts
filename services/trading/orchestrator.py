@@ -3177,13 +3177,12 @@ class TradingOrchestrator:
                 if self._indicator_engine and not self._indicator_engine.is_warm(symbol):
                     return []
 
-                # Enrich with watchlist/baseline metadata (if present).
-                meta = (self.config.symbol_metadata or {}).get(symbol, {})
-                enriched = dict(symbol_data)
-                enriched["code"] = symbol
-                if meta.get("name"):
-                    enriched["name"] = meta["name"]
-                enriched.update(meta)
+                # Use pre-computed enriched metadata cache (includes symbol_metadata + daily_indicators)
+                cached_meta = self._enriched_metadata_cache.get(symbol, {})
+                enriched = {**symbol_data, **cached_meta, "code": symbol}
+
+                # Preserve metadata for context (used by strategies)
+                meta = cached_meta  # Already contains merged symbol_metadata + daily_indicators
 
                 # Inject streaming indicators (BB/RSI/RL/momentum)
                 indicators: dict[str, Any] = {}
@@ -3206,11 +3205,9 @@ class TradingOrchestrator:
                     if indicators:
                         enriched.update(indicators)
 
-                # Inject daily indicators (for daily_pullback strategy)
-                daily_ind = getattr(self, "_daily_indicators", {}).get(symbol, {})
-                if daily_ind:
-                    enriched.update(daily_ind)
-                    indicators.update(daily_ind)
+                # Daily indicators are already merged in cached_meta, also add to indicators dict
+                if cached_meta:
+                    indicators.update(cached_meta)
 
                 context = EntryContext(
                     market_data=enriched,
