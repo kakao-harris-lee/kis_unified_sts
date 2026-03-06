@@ -941,7 +941,6 @@ class TradingOrchestrator:
         self._indicator_resolver = None
         try:
             from services.trading.indicator_engine import StreamingIndicatorEngine
-            from shared.indicators.resolver import StreamingIndicatorResolver
 
             # Read indicator params from strategy entry configs
             bb_period, bb_std, rsi_period, high_period = 20, 2.0, 14, 5
@@ -981,24 +980,33 @@ class TradingOrchestrator:
                 staleness_seconds=staleness_seconds,
                 ema_periods=ema_periods,
             )
+            logger.info(
+                f"Indicator engine initialized (bb={bb_period}, "
+                f"std={bb_std}, rsi={rsi_period}, high_n={high_period})"
+            )
+        except Exception as e:
+            logger.warning(f"Indicator engine init failed: {e}")
+            self._indicator_engine = None
+
+        # Always instantiate resolver (even if engine is None) to avoid hot path fallback
+        try:
+            from shared.indicators.resolver import StreamingIndicatorResolver
+
             required_keys = (
                 tuple(self._strategy_manager.required_indicators)
                 if self._strategy_manager
                 else tuple()
             )
             self._indicator_resolver = StreamingIndicatorResolver(
-                engine=self._indicator_engine,
+                engine=self._indicator_engine,  # Can be None
                 required_keys=required_keys,
             )
             logger.info(
-                f"Indicator engine initialized (bb={bb_period}, "
-                f"std={bb_std}, rsi={rsi_period}, high_n={high_period}, "
-                f"required={len(required_keys)}, "
+                f"Indicator resolver initialized (required={len(required_keys)}, "
                 f"momentum_tf={list(self._indicator_resolver.timeframes)})"
             )
         except Exception as e:
-            logger.warning(f"Indicator engine init failed: {e}")
-            self._indicator_engine = None
+            logger.warning(f"Indicator resolver init failed: {e}")
             self._indicator_resolver = None
 
         # Hook futures WebSocket ticks into indicator engine and monitoring stream.
