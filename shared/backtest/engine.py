@@ -176,8 +176,8 @@ class BacktestEngine:
             self.strategy.prescan_data(data)
 
         # 메인 루프
-        for _, row in data.iterrows():
-            bar = row.to_dict()
+        for bar_tuple in data.itertuples(index=False, name='Bar'):
+            bar = bar_tuple._asdict()
             self._process_bar(bar)
 
         # 마지막 포지션 강제 청산
