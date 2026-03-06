@@ -40,7 +40,7 @@ from shared.config.mixins import ConfigMixin
 from shared.calendar import get_market_calendar
 from shared.models.position import Position, PositionSide
 from shared.models.signal import ExitReason, ExitSignal
-from shared.strategy.base import ExitContext, ExitSignalGenerator
+from shared.strategy.base import ExitContext, ExitSignalGenerator, MarketStateProtocol
 from shared.strategy.market_data import (
     get_numeric_field,
     get_price_from_snapshot,
@@ -261,7 +261,7 @@ class MomentumDecayExit(ExitSignalGenerator[MomentumDecayConfig]):
         self,
         positions: list[Position],
         market_data: dict[str, Any],
-        market_state: Optional[Any] = None,
+        market_state: Optional[MarketStateProtocol] = None,
     ) -> list[ExitSignal]:
         """Scan multiple positions for exit signals
 
@@ -305,7 +305,7 @@ class MomentumDecayExit(ExitSignalGenerator[MomentumDecayConfig]):
         self,
         position: Position,
         market_data: dict[str, Any],
-        market_state: Optional[Any],
+        market_state: Optional[MarketStateProtocol],
         now: datetime,
     ) -> Optional[ExitSignal]:
         """Check individual position for exit conditions
