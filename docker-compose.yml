@@ -76,7 +76,7 @@ services:
       - REDIS_HOST=host.docker.internal
       - REDIS_PORT=6379
       - REDIS_DB=1
-      - REDIS_PASSWORD=
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-changeme}
       # Trading
       - TRADING_ASSET_CLASS=stock
       # ClickHouse
@@ -112,12 +112,14 @@ services:
     container_name: kis-redis
     restart: unless-stopped
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-changeme}
     volumes:
       - redis-data:/data
-    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru --requirepass ${REDIS_PASSWORD:-changeme}
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "sh", "-c", "redis-cli -a $${REDIS_PASSWORD:-changeme} ping || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -194,7 +196,7 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - REDIS_DB=1
-      - REDIS_PASSWORD=
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-changeme}
       - STREAM_EXPORTER_PORT=9093
       - STREAM_EXPORTER_STREAMS=market:ticks,raw_data
       - STREAM_EXPORTER_READ_COUNT=200
