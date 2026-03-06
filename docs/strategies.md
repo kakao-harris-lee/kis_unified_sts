@@ -52,7 +52,94 @@ strategy:
 
 ## 진입 전략 (Entry Strategies)
 
-### BB Lower Reentry
+### Trend Pullback (신규 - 검증 중)
+
+**상태:** 백테스트 및 페이퍼 트레이딩 검증 중
+**검증 문서:** [STOCK_STRATEGY_VALIDATION_SUMMARY.md](STOCK_STRATEGY_VALIDATION_SUMMARY.md)
+
+일봉 추세 필터와 분봉 풀백 시그널을 결합한 다중 시간프레임 전략
+
+```yaml
+entry:
+  type: trend_pullback
+  params:
+    # Daily context filter
+    daily_sma_period: 20
+
+    # Intraday entry triggers
+    bb_period: 20
+    bb_std: 2.0
+    rsi_period: 14
+    rsi_threshold: 34
+    williams_period: 14
+    williams_reversal_threshold: -20.0
+
+    # Risk management
+    minimum_edge_pct: 0.8
+    atr_period: 14
+    initial_stop_atr_multiplier: 3.5
+
+    # Time filters
+    skip_first_minutes: 30
+    skip_last_minutes: 15
+    signal_cooldown_seconds: 120
+```
+
+**진입 조건:**
+1. 일봉 SMA(20) 위에서만 진입 (상승 추세)
+2. 분봉 볼린저 밴드 하단 터치 + RSI < 34, 또는
+3. Williams %R 반전 시그널 (-20 이상 반등)
+4. 최소 기대 수익률 0.8% 이상
+5. 장 시작 30분, 마감 15분 제외
+6. 시그널 간 120초 쿨다운
+
+### Momentum Breakout (신규 - 검증 중)
+
+**상태:** 백테스트 및 페이퍼 트레이딩 검증 중
+**검증 문서:** [STOCK_STRATEGY_VALIDATION_SUMMARY.md](STOCK_STRATEGY_VALIDATION_SUMMARY.md)
+
+일봉 고가 근접과 거래량 트렌드를 활용한 모멘텀 돌파 전략
+
+```yaml
+entry:
+  type: momentum_breakout
+  params:
+    # Breakout detection
+    breakout_lookback_bars: 20
+    breakout_confirmation_bars: 2
+
+    # Volume filters
+    rvol_threshold: 1.6
+    accumulation_score_threshold: 40
+
+    # Trend mode (BULL regime)
+    trend_mode_enabled: true
+    trend_ema_fast: 5
+    trend_ema_mid: 20
+    trend_ema_slow: 60
+    trend_pullback_threshold_pct: 0.3
+
+    # Risk management
+    minimum_edge_pct: 1.0
+    atr_period: 14
+    initial_stop_atr_multiplier: 2.0
+
+    # Time filters
+    skip_first_minutes: 10
+    skip_last_minutes: 10
+    signal_cooldown_seconds: 120
+```
+
+**진입 조건:**
+1. 가격 돌파 감지 (최근 20봉 고가 돌파)
+2. RVOL > 1.6 (평균 대비 1.6배 이상 거래량)
+3. 거래량 누적 점수 ≥ 40
+4. **BULL regime 시:** 완화된 조건 + EMA(5/20/60) 풀백 진입
+5. 최소 기대 수익률 1.0% 이상
+6. 장 시작 10분, 마감 10분 제외
+7. 시그널 간 120초 쿨다운
+
+### BB Lower Reentry (레거시)
 
 볼린저 밴드 하단 이탈 후 복귀 시 진입
 
@@ -135,6 +222,53 @@ entry:
 ---
 
 ## 청산 전략 (Exit Strategies)
+
+### ATR Dynamic Exit (신규)
+
+**상태:** 활성 (trend_pullback, momentum_breakout 전용)
+
+ATR 기반 동적 스탑로스 및 트레일링 스탑
+
+```yaml
+exit:
+  type: atr_dynamic
+  params:
+    atr_period: 14
+    initial_stop_atr_multiplier: 2.0
+    trailing_activation_atr_multiplier: 2.0
+    trailing_distance_atr_multiplier: 1.5
+```
+
+**동작 원리:**
+
+```
+초기 보호 (Initial Stop)
+├── 진입 즉시 ATR 기반 스탑 설정
+├── 예: 2.0x ATR = 진입가 - (ATR × 2.0)
+└── 목표: 큰 손실 방지
+
+트레일링 활성화 (Trailing Activation)
+├── 조건: 수익이 2.0x ATR 도달
+├── 동작: 트레일링 스탑 시작
+└── 목표: 수익 보호하며 추세 추종
+
+트레일링 스탑 (Trailing Stop)
+├── 거리: 최고가 - (ATR × 1.5)
+├── 동작: 가격 상승 시 스탑 레벨 상승
+└── 목표: 수익 극대화
+```
+
+**전략별 파라미터:**
+
+**trend_pullback:**
+- Initial Stop: 3.5x ATR (보수적)
+- Trailing Activation: 2.0x ATR
+- Trailing Distance: 2.0x ATR
+
+**momentum_breakout:**
+- Initial Stop: 2.0x ATR (공격적)
+- Trailing Activation: 2.0x ATR
+- Trailing Distance: 1.5x ATR (타이트)
 
 ### Three Stage Exit
 
@@ -431,3 +565,44 @@ position:
 ```
 
 이렇게 설정하면 최대 손실이 5% (5개 x 1%)로 제한됩니다.
+
+---
+
+## 주식 전략 검증 현황 (Stock Strategy Validation Status)
+
+### 신규 전략 (2026-03 검증 중)
+
+**Task 007:** Stock Strategy Redesign - trend_pullback & momentum_breakout
+
+두 개의 새로운 주식 전략이 현재 백테스트 및 페이퍼 트레이딩 검증 단계에 있습니다:
+
+1. **trend_pullback** - 일봉 필터 + 분봉 풀백 진입
+2. **momentum_breakout** - 거래량 트렌드 + 돌파 진입
+
+**검증 상태 및 결과:** [STOCK_STRATEGY_VALIDATION_SUMMARY.md](STOCK_STRATEGY_VALIDATION_SUMMARY.md)
+
+**목표:**
+- Sharpe Ratio > 1.0 (0.5% 비용 반영 후)
+- 백테스트 6개월+ 데이터
+- 페이퍼 트레이딩 20일+ 양성 수익
+
+### 레거시 전략 (비활성화)
+
+다음 4개 전략은 음의 샤프 비율로 인해 **비활성화** 상태입니다:
+
+| 전략 | 설정 파일 | 상태 | 사유 |
+|------|----------|------|------|
+| bb_reversion | `config/strategies/stock/bb_reversion.yaml` | `enabled: false` | trend_pullback로 흡수 |
+| opening_volume_surge | `config/strategies/stock/opening_volume_surge.yaml` | `enabled: false` | 일봉 컨텍스트 부재 |
+| volume_accumulation | `config/strategies/stock/volume_accumulation.yaml` | `enabled: false` | momentum_breakout로 흡수 |
+| williams_r | `config/strategies/stock/williams_r.yaml` | `enabled: false` | 성능 부진 |
+
+**참고:** 레거시 전략 코드는 참고용으로 유지되지만, 운영 환경에서는 사용되지 않습니다.
+
+---
+
+## 관련 문서 (Related Documentation)
+
+- [주식 전략 검증 요약](STOCK_STRATEGY_VALIDATION_SUMMARY.md) - 백테스트 및 페이퍼 트레이딩 결과
+- [백테스트 성능 리뷰](BACKTEST_PERFORMANCE_REVIEW.md) - 상세 백테스트 분석
+- [페이퍼 트레이딩 모니터링 가이드](PAPER_TRADING_MONITORING_GUIDE.md) - 20일 검증 절차
