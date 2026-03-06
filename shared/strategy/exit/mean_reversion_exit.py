@@ -24,7 +24,7 @@ from typing import Any, Optional
 from shared.config.mixins import ConfigMixin
 from shared.models.position import Position, PositionSide, PositionState
 from shared.models.signal import ExitReason, ExitSignal
-from shared.strategy.base import ExitContext, ExitSignalGenerator
+from shared.strategy.base import ExitContext, ExitSignalGenerator, MarketStateProtocol
 from shared.strategy.market_data import get_price_from_snapshot, get_symbol_snapshot
 from shared.strategy.market_time import (
     effective_close_time,
@@ -118,7 +118,7 @@ class MeanReversionExit(ExitSignalGenerator[MeanReversionExitConfig]):
         self,
         positions: list[Position],
         market_data: dict[str, Any],
-        market_state: Optional[Any] = None,
+        market_state: Optional[MarketStateProtocol] = None,
     ) -> list[ExitSignal]:
         """여러 포지션에 대해 청산 시그널 스캔."""
         if not positions:
@@ -329,7 +329,7 @@ class MeanReversionExit(ExitSignalGenerator[MeanReversionExitConfig]):
         return max(position.highest_price or position.entry_price, current_price)
 
     @staticmethod
-    def _is_bear_market(market_state: Any) -> bool:
+    def _is_bear_market(market_state: Optional[MarketStateProtocol]) -> bool:
         if market_state is None:
             return False
         if hasattr(market_state, "regime"):
