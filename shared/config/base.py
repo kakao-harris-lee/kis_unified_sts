@@ -86,6 +86,7 @@ class ServiceConfigBase(BaseModel):
         path: str | None = None,
         section: str | None = None,
         *,
+        sections: list[str] | None = None,
         apply_env_overrides: bool = False,
         env_prefix: str | None = None,
     ) -> Self:
@@ -98,6 +99,11 @@ class ServiceConfigBase(BaseModel):
                      If None, uses cls._default_section.
                      If section is specified and exists, extracts that key.
                      Otherwise, uses the entire YAML as config dict.
+                     Mutually exclusive with sections.
+            sections: Merge multiple top-level section keys into a single
+                      dict (later sections override earlier ones). Useful when
+                      config fields span multiple YAML sections.
+                      Mutually exclusive with section.
             apply_env_overrides: If True, apply environment variable overrides
                                  after loading from YAML (default: False)
             env_prefix: Environment variable prefix for overrides
@@ -107,6 +113,7 @@ class ServiceConfigBase(BaseModel):
             Config instance with values from YAML (and optionally env vars)
 
         Raises:
+            ValueError: If both section and sections are provided.
             ConfigNotFoundError: If config file not found
             ConfigValidationError: If validation fails
 
@@ -120,6 +127,9 @@ class ServiceConfigBase(BaseModel):
             # Load specific section
             config = MyConfig.from_yaml("services.yaml", section="my_service")
 
+            # Merge multiple sections
+            config = MyConfig.from_yaml("ml/rl.yaml", sections=["env", "reward"])
+
             # Load with env var overrides
             config = MyConfig.from_yaml(
                 "my_service.yaml",
@@ -127,6 +137,9 @@ class ServiceConfigBase(BaseModel):
                 env_prefix="MY_SERVICE_"
             )
         """
+        if section is not None and sections is not None:
+            raise ValueError("Cannot specify both 'section' and 'sections'")
+
         # Determine config file path
         if path is None:
             path = cls._default_config_file
@@ -139,22 +152,31 @@ class ServiceConfigBase(BaseModel):
         # Load YAML via ConfigLoader
         raw_data = ConfigLoader.load(path)
 
-        # Extract section if specified
-        if section is not None:
-            section_key = section
-        elif cls._default_section is not None:
-            section_key = cls._default_section
+        # Multi-section merge: combine multiple top-level keys
+        if sections is not None:
+            config_data: dict[str, Any] = {}
+            if isinstance(raw_data, dict):
+                for key in sections:
+                    section_data = raw_data.get(key, {})
+                    if isinstance(section_data, dict):
+                        config_data.update(section_data)
         else:
-            section_key = None
-
-        if section_key is not None:
-            if isinstance(raw_data, dict) and section_key in raw_data:
-                config_data = raw_data[section_key]
+            # Single-section extraction
+            if section is not None:
+                section_key = section
+            elif cls._default_section is not None:
+                section_key = cls._default_section
             else:
-                # Section not found or data is not a dict - use raw data
+                section_key = None
+
+            if section_key is not None:
+                if isinstance(raw_data, dict) and section_key in raw_data:
+                    config_data = raw_data[section_key]
+                else:
+                    # Section not found or data is not a dict - use raw data
+                    config_data = raw_data
+            else:
                 config_data = raw_data
-        else:
-            config_data = raw_data
 
         # Ensure we have a dict
         if not isinstance(config_data, dict):

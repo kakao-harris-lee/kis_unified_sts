@@ -19,15 +19,15 @@ sb3-contrib ActionMasker와 호환되는 action_masks() 메서드 포함.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
 from enum import IntEnum
-from typing import Any
+from typing import Any, ClassVar
 
 import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
+from pydantic import Field
 
-from shared.config import ConfigLoader
+from shared.config.base import ServiceConfigBase
 
 logger = logging.getLogger(__name__)
 
@@ -50,57 +50,48 @@ class PositionSide(IntEnum):
     SHORT = -1
 
 
-@dataclass
-class RLEnvConfig:
+class RLEnvConfig(ServiceConfigBase):
     """환경 설정 - config/ml/rl_mppo.yaml에서 로드
 
     모든 값은 YAML config에서 로드. 하드코딩 금지.
+    Fields span two YAML sections: ``env`` and ``reward``.
     """
 
+    _default_config_file: ClassVar[str] = "ml/rl_mppo.yaml"
+
     # 환경
-    initial_balance: float = 10_000_000
-    commission_rate: float = 0.00003
-    tick_size: float = 0.05
-    tick_value: int = 250_000
-    contract_multiplier: int = 250_000
-    max_contracts: int = 1
-    slippage: float = 0.0
-    margin_rate: float = 0.15  # 증거금률 (선물 위탁증거금 ~15%)
+    initial_balance: float = Field(default=10_000_000)
+    commission_rate: float = Field(default=0.00003)
+    tick_size: float = Field(default=0.05)
+    tick_value: int = Field(default=250_000)
+    contract_multiplier: int = Field(default=250_000)
+    max_contracts: int = Field(default=1)
+    slippage: float = Field(default=0.0)
+    margin_rate: float = Field(default=0.15)  # 증거금률 (선물 위탁증거금 ~15%)
 
     # 상태 공간
-    n_market_features: int = 25
-    n_aux_features: int = 0  # TFT 보조 피처 (0이면 비활성)
-    n_position_features: int = 6  # position(3) + time(3)
+    n_market_features: int = Field(default=25)
+    n_aux_features: int = Field(default=0)  # TFT 보조 피처 (0이면 비활성)
+    n_position_features: int = Field(default=6)  # position(3) + time(3)
 
     # 장 운영시간
-    market_open: str = "09:00"
-    market_close: str = "15:45"
+    market_open: str = Field(default="09:00")
+    market_close: str = Field(default="15:45")
 
     # 보상함수 가중치
-    w_profit: float = 5.0
-    w_cost: float = 2.0
-    w_risk: float = 0.3
-    w_mtm: float = 0.0
-    inaction_penalty: float = 0.0
-    reward_scale: float = 100.0
-    max_loss: float = -5_000_000
-    loss_penalty_coeff: float = 2.0
+    w_profit: float = Field(default=5.0)
+    w_cost: float = Field(default=2.0)
+    w_risk: float = Field(default=0.3)
+    w_mtm: float = Field(default=0.0)
+    inaction_penalty: float = Field(default=0.0)
+    reward_scale: float = Field(default=100.0)
+    max_loss: float = Field(default=-5_000_000)
+    loss_penalty_coeff: float = Field(default=2.0)
 
     @classmethod
     def from_yaml(cls, path: str = "ml/rl_mppo.yaml") -> RLEnvConfig:
         """YAML 설정 파일에서 환경 설정 로드"""
-        data = ConfigLoader.load(path)
-        env_cfg = data.get("env", {})
-        reward_cfg = data.get("reward", {})
-
-        merged = {}
-        for f in cls.__dataclass_fields__:
-            if f in env_cfg:
-                merged[f] = env_cfg[f]
-            elif f in reward_cfg:
-                merged[f] = reward_cfg[f]
-
-        return cls(**merged)
+        return super().from_yaml(path, sections=["env", "reward"])
 
 
 class FuturesTradingEnv(gym.Env):
