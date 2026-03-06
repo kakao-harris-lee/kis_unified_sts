@@ -542,6 +542,7 @@ class TradingOrchestrator:
         self._krx_open_api_client: Any | None = None
         self._krx_name_hydration_warned: bool = False
         self._symbol_metadata_cache: dict[str, dict[str, Any]] = {}
+        self._enriched_metadata_cache: dict[str, dict[str, Any]] = {}
         self._prev_day_volume_warned: bool = False
 
         # Redis keys namespaced by asset class to prevent collision
@@ -1646,6 +1647,43 @@ class TradingOrchestrator:
         except Exception as e:
             logger.debug(f"Daily indicators not available: {e}")
             return False
+
+    def _build_enriched_metadata_cache(self):
+        """Build pre-merged metadata cache to avoid repeated dict operations in hot path.
+
+        Merges symbol_metadata + daily_indicators per symbol into _enriched_metadata_cache.
+        This cache is rebuilt whenever symbol_metadata or _daily_indicators change.
+
+        Pattern follows MarketDataCache from services/trading/data_provider.py.
+        """
+        self._enriched_metadata_cache.clear()
+
+        # Get all symbols from both metadata sources
+        metadata_symbols = set((self.config.symbol_metadata or {}).keys())
+        daily_symbols = set(self._daily_indicators.keys())
+        all_symbols = metadata_symbols | daily_symbols
+
+        for symbol in all_symbols:
+            # Start with symbol_metadata (static watchlist metadata)
+            meta = (self.config.symbol_metadata or {}).get(symbol, {})
+            enriched = dict(meta) if meta else {}
+
+            # Ensure code is always present
+            enriched["code"] = symbol
+
+            # Merge daily indicators (pre-market scanner data)
+            daily_ind = self._daily_indicators.get(symbol, {})
+            if daily_ind:
+                enriched.update(daily_ind)
+
+            # Store in cache
+            if enriched:
+                self._enriched_metadata_cache[symbol] = enriched
+
+        logger.debug(
+            f"Built enriched metadata cache: {len(self._enriched_metadata_cache)} symbols "
+            f"(metadata={len(metadata_symbols)}, daily={len(daily_symbols)})"
+        )
 
     def _load_ranked_targets(self, redis) -> tuple[list[str], dict[str, str], dict[str, dict[str, Any]]]:
         """Load ranked symbols from fusion targets first, then screener fallback."""
