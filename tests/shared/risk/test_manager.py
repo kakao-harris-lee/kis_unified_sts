@@ -496,7 +496,7 @@ class TestRedisPersistence:
         manager.update_positions(sample_positions)
 
         # Mock Redis client
-        with patch('shared.risk.manager.RedisClient') as mock_redis_class:
+        with patch('shared.streaming.client.RedisClient') as mock_redis_class:
             mock_client = MagicMock()
             mock_redis_class.get_client.return_value = mock_client
 
@@ -511,7 +511,7 @@ class TestRedisPersistence:
     @pytest.mark.asyncio
     async def test_save_to_redis_error_handling(self, manager):
         """Test save error handling doesn't raise"""
-        with patch('shared.risk.manager.RedisClient') as mock_redis_class:
+        with patch('shared.streaming.client.RedisClient') as mock_redis_class:
             mock_redis_class.get_client.side_effect = Exception("Redis error")
 
             # Should not raise
@@ -536,7 +536,7 @@ class TestRedisPersistence:
             },
         }
 
-        with patch('shared.risk.manager.RedisClient') as mock_redis_class:
+        with patch('shared.streaming.client.RedisClient') as mock_redis_class:
             mock_client = MagicMock()
             mock_client.get.return_value = json.dumps(state_data)
             mock_redis_class.get_client.return_value = mock_client
@@ -550,7 +550,7 @@ class TestRedisPersistence:
     @pytest.mark.asyncio
     async def test_load_from_redis_no_data(self, manager):
         """Test load when no data exists in Redis"""
-        with patch('shared.risk.manager.RedisClient') as mock_redis_class:
+        with patch('shared.streaming.client.RedisClient') as mock_redis_class:
             mock_client = MagicMock()
             mock_client.get.return_value = None
             mock_redis_class.get_client.return_value = mock_client
@@ -562,7 +562,7 @@ class TestRedisPersistence:
     @pytest.mark.asyncio
     async def test_load_from_redis_error_handling(self, manager):
         """Test load error handling doesn't raise"""
-        with patch('shared.risk.manager.RedisClient') as mock_redis_class:
+        with patch('shared.streaming.client.RedisClient') as mock_redis_class:
             mock_redis_class.get_client.side_effect = Exception("Redis error")
 
             result = await manager.load_from_redis()

@@ -49,6 +49,7 @@ from shared.strategy.base import EntryContext
 from shared.utils.calc import calc_order_quantity
 from shared.risk.manager import RiskManager
 from shared.risk.config import RiskConfig
+from shared.risk.models import DrawdownLevel
 
 try:
     # Optional: only used when paper_trading=True
@@ -2793,21 +2794,15 @@ class TradingOrchestrator:
 
             # Check for drawdown alerts and send if threshold crossed
             state = self._risk_manager.get_risk_state()
-            if state.drawdown_level in (state.drawdown_level.DANGER, state.drawdown_level.CRITICAL):
+            if state.drawdown_level in (DrawdownLevel.DANGER, DrawdownLevel.CRITICAL):
                 # Only alert once per level
                 alert_key = f"drawdown_{state.drawdown_level.value}"
                 if alert_key not in state.alerts_sent:
                     try:
-                        # Import TelegramNotifier dynamically
-                        from shared.notification.telegram import TelegramNotifier
-
-                        notifier = TelegramNotifier(
-                            self.config.asset_class,
-                            token=self.config.telegram_token,
-                            chat_id=self.config.telegram_chat_id,
-                        )
                         metrics = self._risk_manager.get_portfolio_metrics()
                         message = (
+                            f"🚨 RISK ALERT - DRAWDOWN_{state.drawdown_level.value.upper()}\n"
+                            f"시간: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
                             f"<b>포트폴리오 드로다운 경고</b>\n\n"
                             f"레벨: {state.drawdown_level.value.upper()}\n"
                             f"현재 드로다운: {state.drawdown_pct:.2f}%\n"
@@ -2815,12 +2810,7 @@ class TradingOrchestrator:
                             f"일간 손익: {state.daily_pnl_pct:.2f}%\n"
                             f"총 노출: {metrics.total_exposure_pct:.1f}%"
                         )
-                        await self._risk_manager.send_alert(
-                            notifier,
-                            alert_type=f"DRAWDOWN_{state.drawdown_level.value.upper()}",
-                            message=message,
-                            is_critical=True,
-                        )
+                        await self._notify(message)
                         state.alerts_sent.add(alert_key)
                     except Exception as e:
                         logger.warning(f"Failed to send drawdown alert: {e}")
@@ -3332,40 +3322,19 @@ class TradingOrchestrator:
                 if not self._risk_block_alert_sent:
                     self._risk_block_alert_sent = True
                     try:
-                        from services.monitoring.notifier import TelegramConfig, TelegramNotifier
-
-                        config = TelegramConfig.from_env()
-                        if config and config.bot_token and config.chat_id:
-                            notifier = TelegramNotifier(config)
-                            try:
-                                # Get current risk state for alert message
-                                risk_state = self._risk_manager.get_risk_state()
-                                portfolio_metrics = self._risk_manager.get_portfolio_metrics()
-
-                                alert_message = (
-                                    f"<b>포지션 진입 차단</b>\n"
-                                    f"종목: {signal.code}\n"
-                                    f"자산군: {self.config.asset_class}\n"
-                                    f"\n"
-                                    f"<b>포트폴리오 현황:</b>\n"
-                                    f"총 포지션: {portfolio_metrics.total_positions}/{self._risk_manager.config.max_total_positions}\n"
-                                    f"일일 손익: {risk_state.daily_pnl_pct:.2f}%\n"
-                                )
-
-                                # Add block reason
-                                if risk_state.is_blocked:
-                                    alert_message += f"차단 사유: {risk_state.block_reason.name}\n"
-
-                                await self._risk_manager.send_alert(
-                                    notifier,
-                                    "POSITION_ENTRY_BLOCKED",
-                                    alert_message,
-                                    is_critical=True
-                                )
-                            finally:
-                                await notifier.close()
-                    except ImportError:
-                        logger.debug("TelegramNotifier not available for risk alert")
+                        risk_state = self._risk_manager.get_risk_state()
+                        portfolio_metrics = self._risk_manager.get_portfolio_metrics()
+                        alert_message = (
+                            f"🚨 RISK ALERT - POSITION_ENTRY_BLOCKED\n"
+                            f"종목: {signal.code}\n"
+                            f"자산군: {self.config.asset_class}\n\n"
+                            f"<b>포트폴리오 현황:</b>\n"
+                            f"총 포지션: {portfolio_metrics.total_positions}/{self._risk_manager.config.max_total_positions}\n"
+                            f"일일 손익: {risk_state.daily_pnl_pct:.2f}%\n"
+                        )
+                        if risk_state.is_blocked:
+                            alert_message += f"차단 사유: {risk_state.block_reason.name}\n"
+                        await self._notify(alert_message)
                     except Exception as e:
                         logger.error(f"Failed to send risk block alert: {e}")
 

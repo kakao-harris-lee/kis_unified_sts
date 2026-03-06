@@ -203,9 +203,9 @@ class RiskManager:
                 )
                 return False
 
-        except ValueError as e:
-            logger.warning(f"Asset limits not configured for {asset_class}: {e}")
-            # Allow if limits not configured (fail open)
+        except ValueError:
+            # No per-asset limits configured — skip this check.
+            # Portfolio-level max_total_positions still applies above.
             pass
 
         # Check critical drawdown
@@ -327,6 +327,13 @@ class RiskManager:
         else:
             peak = self.state.peak_portfolio_value
             current = self.state.current_portfolio_value
+
+        # Update peak if current value exceeds it (new high-water mark)
+        if current > peak:
+            peak = current
+            self.state.peak_portfolio_value = current
+            if self._peak_portfolio_value is not None:
+                self._peak_portfolio_value = current
 
         # Calculate drawdown percentage
         if peak > 0:

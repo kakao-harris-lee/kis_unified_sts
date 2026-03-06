@@ -139,39 +139,3 @@ risk_management:
     db: 1
 
 
-# =============================================================================
-# Environment-Specific Overrides
-# =============================================================================
-
-development:
-  risk_management:
-    # Looser limits for development/testing
-    daily_loss_limit_pct: 10.0
-    max_total_positions: 50
-
-    drawdown:
-      thresholds:
-        warning: 5.0
-        danger: 10.0
-        critical: 15.0
-
-    notifications:
-      enabled: false  # Don't spam Telegram during development
-
-    monitoring:
-      save_interval_seconds: 10  # More frequent saves for debugging
-
-staging:
-  risk_management:
-    # Moderate limits for staging
-    daily_loss_limit_pct: 7.0
-    max_total_positions: 30
-
-    notifications:
-      events:
-        daily_loss_limit_breached: true
-        drawdown_threshold_crossed: true
-        trading_blocked: true
-        # Reduce noise in staging
-        position_limit_reached: false
-        exposure_limit_approached: false
