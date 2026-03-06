@@ -29,6 +29,8 @@ from datetime import datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Annotated, Any, Callable
 
+from shared.api.error_sanitizer import sanitize_error_message
+
 logger = logging.getLogger(__name__)
 
 # Optional imports
@@ -389,10 +391,11 @@ def _create_session_runner(orchestrator: "TradingOrchestrator") -> Callable:
 
             # Update orchestrator state to reflect failure
             orchestrator.state = TradingState.ERROR
-            orchestrator.last_error = str(e)
+            orchestrator.last_error = sanitize_error_message(e)
             orchestrator.last_error_time = datetime.now()
 
             # Send notification if notifier available
+            # Internal alerts get the full error for on-call debugging
             if hasattr(orchestrator, '_notify') and callable(orchestrator._notify):
                 try:
                     await orchestrator._notify(
@@ -604,8 +607,8 @@ async def list_strategies(asset_class: AssetClass | None = None):
             ]
         }
     except Exception as e:
-        logger.error(f"Failed to load strategies: {e}")
-        return {"strategies": [], "error": str(e)}
+        logger.error(f"Failed to load strategies: {e}", exc_info=True)
+        return {"strategies": [], "error": sanitize_error_message(e)}
 
 
 @router.get(
@@ -636,7 +639,8 @@ async def get_strategy(
             status_code=404, detail=f"Strategy not found: {asset_class.value}/{name}"
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Failed to load strategy {asset_class.value}/{name}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=sanitize_error_message(e))
 
 
 # =============================================================================
@@ -712,7 +716,7 @@ async def run_backtest(
         raise
     except Exception as e:
         logger.error(f"Backtest failed: {e}", exc_info=True)
-        return {"success": False, "message": str(e), "run_id": None, "result": None}
+        return {"success": False, "message": sanitize_error_message(e), "run_id": None, "result": None}
 
 
 @router.get(
@@ -737,7 +741,8 @@ async def get_backtest_results(experiment: str | None = None, limit: int = 10):
     except ImportError:
         return {"runs": [], "error": "MLflow not installed"}
     except Exception as e:
-        return {"runs": [], "error": str(e)}
+        logger.error(f"Failed to get backtest results: {e}", exc_info=True)
+        return {"runs": [], "error": sanitize_error_message(e)}
 
 
 # =============================================================================

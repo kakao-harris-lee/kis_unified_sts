@@ -1,4 +1,6 @@
 """FastAPI dashboard application."""
+from __future__ import annotations
+
 import logging
 import os
 from datetime import datetime
@@ -8,18 +10,9 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 
+from shared.api.cors import get_cors_config, load_api_config
+
 logger = logging.getLogger(__name__)
-
-# Allowed CORS origins
-ALLOWED_ORIGINS = [
-    "http://localhost:3000",
-    "http://localhost:5173",  # Vite dev server
-    "http://127.0.0.1:3000",
-    "http://127.0.0.1:5173",
-]
-
-def _is_dev_mode() -> bool:
-    return os.getenv("DASHBOARD_DEV_MODE", "false").lower() == "true"
 
 # OpenAPI tags for documentation organization
 OPENAPI_TAGS = [
@@ -72,14 +65,17 @@ def create_app(
         openapi_tags=OPENAPI_TAGS,
     )
 
-    # CORS middleware - configure allowed origins based on environment
-    cors_origins = ["*"] if _is_dev_mode() else ALLOWED_ORIGINS
+    # Load CORS configuration (never uses wildcard origins)
+    api_config = load_api_config()
+    cors_config = get_cors_config(api_config)
+
+    # CORS middleware - secure configuration without wildcard origins
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=cors_origins,
-        allow_credentials=True,
-        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-        allow_headers=["Authorization", "Content-Type", "X-API-Key"],
+        allow_origins=cors_config["allow_origins"],
+        allow_credentials=cors_config["allow_credentials"],
+        allow_methods=cors_config["allow_methods"],
+        allow_headers=cors_config["allow_headers"],
     )
 
     # Rate limiting middleware (add first so it runs before auth)

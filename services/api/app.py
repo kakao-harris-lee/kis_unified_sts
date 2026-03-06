@@ -25,6 +25,9 @@ import os
 from contextlib import asynccontextmanager
 from typing import Any
 
+from shared.api.cors import get_cors_config, load_api_config
+from shared.api.error_sanitizer import sanitize_error_message
+
 logger = logging.getLogger(__name__)
 
 # Optional FastAPI import
@@ -50,87 +53,6 @@ except ImportError:
     Limiter = None
 
 
-# Allowed HTTP methods - explicit list for security
-CORS_ALLOWED_METHODS = ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"]
-
-# Allowed headers - explicit list for security
-CORS_ALLOWED_HEADERS = [
-    "Content-Type",
-    "Authorization",
-    "X-API-Key",
-    "X-Request-ID",
-    "Accept",
-    "Accept-Language",
-]
-
-
-def _load_api_config() -> dict[str, Any]:
-    """API 설정 파일 로드
-
-    Returns:
-        API 설정 딕셔너리
-    """
-    try:
-        from shared.config.loader import ConfigLoader
-
-        config = ConfigLoader.load("api.yaml")
-
-        # 환경에 따른 오버라이드
-        env = os.getenv("ENVIRONMENT", "production")
-        if env == "development" and "development" in config:
-            # 개발 환경 설정 병합
-            dev_config = config["development"].get("api", {})
-            api_config = config.get("api", {})
-            _deep_merge(api_config, dev_config)
-            return api_config
-
-        return config.get("api", {})
-    except Exception as e:
-        logger.warning(f"Failed to load api.yaml, using defaults: {e}")
-        return {}
-
-
-def _deep_merge(base: dict, override: dict) -> dict:
-    """딕셔너리 깊은 병합"""
-    for key, value in override.items():
-        if key in base and isinstance(base[key], dict) and isinstance(value, dict):
-            _deep_merge(base[key], value)
-        else:
-            base[key] = value
-    return base
-
-
-def _get_cors_config(api_config: dict) -> dict:
-    """CORS 설정 추출
-
-    환경변수 ENVIRONMENT=development 면 개발 모드 CORS 적용.
-    Always uses explicit methods and headers for security.
-    Config can override defaults if needed.
-    """
-    env = os.getenv("ENVIRONMENT", "production")
-    cors = api_config.get("cors", {})
-
-    if env == "development":
-        # 개발 환경: localhost 허용, with config override capability
-        return {
-            "allow_origins": cors.get("allowed_origins", [
-                "http://localhost:3000",
-                "http://localhost:8080",
-            ]),
-            "allow_credentials": True,
-            "allow_methods": cors.get("allowed_methods", CORS_ALLOWED_METHODS),
-            "allow_headers": cors.get("allowed_headers", CORS_ALLOWED_HEADERS),
-        }
-
-    # 프로덕션: 명시적 도메인만 허용
-    return {
-        "allow_origins": cors.get("allowed_origins", []),
-        "allow_credentials": cors.get("allow_credentials", True),
-        "allow_methods": cors.get("allowed_methods", CORS_ALLOWED_METHODS),
-        "allow_headers": cors.get("allowed_headers", CORS_ALLOWED_HEADERS),
-    }
-
-
 def create_app(
     title: str | None = None,
     version: str | None = None,
@@ -152,7 +74,7 @@ def create_app(
         )
 
     # 설정 로드
-    api_config = _load_api_config()
+    api_config = load_api_config()
 
     # 파라미터 오버라이드 또는 config 사용
     _title = title or api_config.get("title", "KIS Unified Trading System")
@@ -221,7 +143,7 @@ def create_app(
     )
 
     # CORS 설정
-    cors_config = _get_cors_config(api_config)
+    cors_config = get_cors_config(api_config)
     if cors_config.get("allow_origins"):
         app.add_middleware(
             CORSMiddleware,
@@ -261,16 +183,18 @@ def create_app(
         logger.error(f"Unhandled exception: {exc}", exc_info=error_config.get("log_stacktrace", True))
 
         if expose_details:
-            # 개발 모드: 상세 정보 포함
+            # 개발 모드: 상세 정보 포함 (sanitized)
+            sanitized_message = sanitize_error_message(exc, include_type=True, use_generic=False)
             return JSONResponse(
                 status_code=500,
-                content={"detail": str(exc), "type": type(exc).__name__},
+                content={"detail": sanitized_message},
             )
         else:
             # 프로덕션: 일반 메시지만
+            sanitized_message = sanitize_error_message(exc, use_generic=True)
             return JSONResponse(
                 status_code=500,
-                content={"detail": "Internal server error"},
+                content={"detail": sanitized_message},
             )
 
     # 라우터 등록

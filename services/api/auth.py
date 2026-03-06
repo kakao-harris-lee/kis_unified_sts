@@ -174,12 +174,25 @@ def print_auth_status():
 
 if __name__ == "__main__":
     # 새 API Key 생성 유틸리티
+    import stat
     import sys
 
     if len(sys.argv) > 1 and sys.argv[1] == "generate":
         new_key = generate_api_key()
-        print(f"Generated API Key: {new_key}")
-        print(f"\nAdd to .env file:")
-        print(f"API_KEY={new_key}")
+
+        # Write to a secure file — atomic creation with 0o600 permissions
+        # (avoids TOCTOU race between open() and chmod())
+        key_file = ".api_key.secret"
+        fd = os.open(key_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
+            f.write(new_key)
+
+        masked = f"{new_key[:4]}...{new_key[-4:]}"
+        print(f"Generated new authentication key: {masked}")
+        print(f"\nKey saved to: {key_file} (with secure 600 permissions)")
+        print(f"\nTo use this key:")
+        print(f"1. Copy to your .env file: API_KEY=$(cat {key_file})")
+        print(f"2. Or export: export API_KEY=$(cat {key_file})")
+        print(f"3. Delete {key_file} after copying to your secure location")
     else:
         print_auth_status()

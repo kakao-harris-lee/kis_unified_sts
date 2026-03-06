@@ -94,6 +94,56 @@ class TestAPIKeyGeneration:
         keys = [generate_api_key() for _ in range(10)]
         assert len(set(keys)) == 10  # 모두 유니크
 
+    def test_generate_api_key_secure_storage(self):
+        """API Key가 plaintext로 출력되지 않고 보안 파일에 저장됨"""
+        import stat
+        import subprocess
+        import tempfile
+        from pathlib import Path
+
+        # 임시 디렉토리에서 테스트 실행
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Find the project root (where pyproject.toml lives)
+            project_root = Path(__file__).resolve().parents[3]
+
+            # auth.py 스크립트 실행 — cwd is tmpdir for file output,
+            # but PYTHONPATH includes project root for imports
+            env = {"PYTHONPATH": str(project_root), "PATH": os.environ.get("PATH", "")}
+            result = subprocess.run(
+                ["python", "-m", "services.api.auth", "generate"],
+                capture_output=True,
+                text=True,
+                cwd=tmpdir,
+                env=env,
+            )
+
+            # stdout에 plaintext key가 없는지 확인
+            output = result.stdout
+            assert "..." in output  # 마스킹된 키만 출력됨
+
+            # 생성된 파일 확인
+            key_file = Path(tmpdir) / ".api_key.secret"
+            assert key_file.exists(), "API key file should be created"
+
+            # 파일 권한 확인 (600: owner read/write only)
+            file_stat = key_file.stat()
+            file_mode = stat.S_IMODE(file_stat.st_mode)
+            expected_mode = stat.S_IRUSR | stat.S_IWUSR  # 0o600
+            assert file_mode == expected_mode, (
+                f"File permissions should be 600, got {oct(file_mode)}"
+            )
+
+            # 파일 내용이 유효한 키인지 확인
+            key_content = key_file.read_text().strip()
+            assert len(key_content) >= 32, "Key should be at least 32 characters"
+            assert key_content not in output, "Plaintext key should not be in stdout"
+
+            # 마스킹된 버전만 출력에 포함되어야 함
+            masked_prefix = key_content[:4]
+            masked_suffix = key_content[-4:]
+            assert masked_prefix in output, "Masked prefix should be in output"
+            assert masked_suffix in output, "Masked suffix should be in output"
+
 
 @pytest.mark.asyncio
 class TestFastAPIIntegration:
