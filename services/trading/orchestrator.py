@@ -2075,6 +2075,9 @@ class TradingOrchestrator:
                     f"warm {warm_n}, warming {warming_n})"
                 )
 
+        # Invalidate enriched metadata cache after universe changes
+        self._invalidate_enriched_metadata_cache()
+
     def _check_strategy_warnings(self):
         """Warn if strategy prerequisites (like prev_day_volume) are missing."""
         if not self._prev_day_volume_warned and self._strategy_manager:
