@@ -22,7 +22,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import datetime, time
-from typing import Any
+from typing import Any, Optional
 
 import pandas as pd
 
@@ -30,7 +30,7 @@ from shared.config.mixins import ConfigMixin
 from shared.indicators.momentum import DivergenceDetector
 from shared.models.position import Position, PositionSide
 from shared.models.signal import ExitReason, ExitSignal
-from shared.strategy.base import ExitContext, ExitSignalGenerator
+from shared.strategy.base import ExitContext, ExitSignalGenerator, MarketStateProtocol
 from shared.strategy.market_data import (
     get_price_from_snapshot,
     get_symbol_snapshot,
@@ -170,7 +170,7 @@ class TrixGoldenExit(ExitSignalGenerator[TrixGoldenExitConfig]):
         self,
         positions: list[Position],
         market_data: dict[str, Any],
-        market_state: Any | None = None,
+        market_state: Optional[MarketStateProtocol] = None,
     ) -> list[ExitSignal]:
         """Scan multiple positions for exit signals."""
         if not positions:
@@ -232,7 +232,7 @@ class TrixGoldenExit(ExitSignalGenerator[TrixGoldenExitConfig]):
         self,
         position: Position,
         market_data: dict[str, Any],
-        market_state: Any | None,  # noqa: ARG002
+        market_state: Optional[MarketStateProtocol],  # noqa: ARG002
         now: datetime,
     ) -> ExitSignal | None:
         """Check individual position for exit conditions.
