@@ -94,6 +94,10 @@ class PositionTrackerConfig:
     # ClickHouse database name (empty = env default)
     database: str = ""
 
+    # Batch insert configuration
+    batch_size: int = 50  # Number of closed positions to batch before flush
+    flush_interval_seconds: float = 5.0  # Max seconds to wait before flush
+
     def __post_init__(self):
         """Validate configuration values."""
         self._validate()
@@ -146,6 +150,14 @@ class PositionTrackerConfig:
                 f"max_closed_positions must be >= 1, got {self.max_closed_positions}"
             )
 
+        if self.batch_size < 1:
+            raise ValueError(f"batch_size must be >= 1, got {self.batch_size}")
+
+        if self.flush_interval_seconds <= 0:
+            raise ValueError(
+                f"flush_interval_seconds must be > 0, got {self.flush_interval_seconds}"
+            )
+
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> PositionTrackerConfig:
         """Create config from dict with validation.
@@ -168,6 +180,8 @@ class PositionTrackerConfig:
         max_events = data.get("max_events", 1000)
         max_closed = data.get("max_closed_positions", 100)
         database = data.get("database", "")
+        batch_size = data.get("batch_size", 50)
+        flush_interval = data.get("flush_interval_seconds", 5.0)
 
         # Type validation
         if not isinstance(max_positions, int):
@@ -186,6 +200,12 @@ class PositionTrackerConfig:
             )
         if not isinstance(fee_rate, (int, float)):
             raise TypeError(f"default_fee_rate must be numeric, got {type(fee_rate)}")
+        if not isinstance(batch_size, int):
+            raise TypeError(f"batch_size must be int, got {type(batch_size)}")
+        if not isinstance(flush_interval, (int, float)):
+            raise TypeError(
+                f"flush_interval_seconds must be numeric, got {type(flush_interval)}"
+            )
 
         return cls(
             max_positions=int(max_positions),
@@ -196,6 +216,8 @@ class PositionTrackerConfig:
             max_events=int(max_events),
             max_closed_positions=int(max_closed),
             database=str(database),
+            batch_size=int(batch_size),
+            flush_interval_seconds=float(flush_interval),
         )
 
 
