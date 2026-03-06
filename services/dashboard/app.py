@@ -1,8 +1,10 @@
 """FastAPI dashboard application."""
+from __future__ import annotations
+
 import logging
 import os
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -10,16 +12,95 @@ from fastapi.responses import HTMLResponse
 
 logger = logging.getLogger(__name__)
 
-# Allowed CORS origins
-ALLOWED_ORIGINS = [
-    "http://localhost:3000",
-    "http://localhost:5173",  # Vite dev server
-    "http://127.0.0.1:3000",
-    "http://127.0.0.1:5173",
+# Allowed HTTP methods - explicit list for security
+CORS_ALLOWED_METHODS = ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+
+# Allowed headers - explicit list for security
+CORS_ALLOWED_HEADERS = [
+    "Content-Type",
+    "Authorization",
+    "X-API-Key",
+    "X-Request-ID",
+    "Accept",
+    "Accept-Language",
 ]
 
-def _is_dev_mode() -> bool:
-    return os.getenv("DASHBOARD_DEV_MODE", "false").lower() == "true"
+
+def _load_api_config() -> dict[str, Any]:
+    """Load API configuration from YAML file.
+
+    Returns:
+        API configuration dictionary
+    """
+    try:
+        from shared.config.loader import ConfigLoader
+
+        config = ConfigLoader.load("api.yaml")
+
+        # Environment-based override
+        env = os.getenv("ENVIRONMENT", "production")
+        if env == "development" and "development" in config:
+            # Merge development environment settings
+            dev_config = config["development"].get("api", {})
+            api_config = config.get("api", {})
+            _deep_merge(api_config, dev_config)
+            return api_config
+
+        return config.get("api", {})
+    except Exception as e:
+        logger.warning(f"Failed to load api.yaml, using defaults: {e}")
+        return {}
+
+
+def _deep_merge(base: dict, override: dict) -> dict:
+    """Deep merge dictionaries."""
+    for key, value in override.items():
+        if key in base and isinstance(base[key], dict) and isinstance(value, dict):
+            _deep_merge(base[key], value)
+        else:
+            base[key] = value
+    return base
+
+
+def _get_cors_config(api_config: dict) -> dict:
+    """Extract CORS configuration.
+
+    Uses ENVIRONMENT env var for dev mode detection.
+    Always uses explicit methods and headers for security.
+    Config can override defaults if needed.
+
+    Args:
+        api_config: API configuration dictionary
+
+    Returns:
+        CORS configuration dictionary
+    """
+    env = os.getenv("ENVIRONMENT", "production")
+    cors = api_config.get("cors", {})
+
+    if env == "development":
+        # Development: allow localhost origins with explicit list
+        return {
+            "allow_origins": cors.get("allowed_origins", [
+                "http://localhost:3000",
+                "http://localhost:5173",  # Vite dev server
+                "http://localhost:8080",
+                "http://127.0.0.1:3000",
+                "http://127.0.0.1:5173",
+                "http://127.0.0.1:8080",
+            ]),
+            "allow_credentials": True,
+            "allow_methods": cors.get("allowed_methods", CORS_ALLOWED_METHODS),
+            "allow_headers": cors.get("allowed_headers", CORS_ALLOWED_HEADERS),
+        }
+
+    # Production: explicit domains only
+    return {
+        "allow_origins": cors.get("allowed_origins", []),
+        "allow_credentials": cors.get("allow_credentials", True),
+        "allow_methods": cors.get("allowed_methods", CORS_ALLOWED_METHODS),
+        "allow_headers": cors.get("allowed_headers", CORS_ALLOWED_HEADERS),
+    }
 
 # OpenAPI tags for documentation organization
 OPENAPI_TAGS = [
@@ -72,14 +153,17 @@ def create_app(
         openapi_tags=OPENAPI_TAGS,
     )
 
-    # CORS middleware - configure allowed origins based on environment
-    cors_origins = ["*"] if _is_dev_mode() else ALLOWED_ORIGINS
+    # Load CORS configuration (never uses wildcard origins)
+    api_config = _load_api_config()
+    cors_config = _get_cors_config(api_config)
+
+    # CORS middleware - secure configuration without wildcard origins
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=cors_origins,
-        allow_credentials=True,
-        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-        allow_headers=["Authorization", "Content-Type", "X-API-Key"],
+        allow_origins=cors_config["allow_origins"],
+        allow_credentials=cors_config["allow_credentials"],
+        allow_methods=cors_config["allow_methods"],
+        allow_headers=cors_config["allow_headers"],
     )
 
     # Rate limiting middleware (add first so it runs before auth)
