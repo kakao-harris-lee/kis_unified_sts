@@ -25,7 +25,7 @@ _scaler_cache: dict[str, Any] = {}  # key: scaler path
 _env_config_cache: Any = None
 # Scaled market features cache — avoids duplicate scaler.transform() within same bar
 _scaled_market_cache: dict[int, Any] = {}  # key: hash of raw market features
-_scaled_market_cache_size: int = 4  # keep last N entries
+_scaled_market_cache_size: int = 120  # keep last N entries
 
 
 def load_rl_model(model_path: str, device: Any) -> Any | None:
