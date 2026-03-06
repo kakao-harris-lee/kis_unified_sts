@@ -37,6 +37,8 @@ Usage:
     raise BusinessLogicError("Insufficient balance for order")
 """
 
+from typing import Any
+
 
 class TradingSystemError(Exception):
     """Base exception for all trading system errors.
@@ -206,6 +208,16 @@ class ConnectionTimeoutError(NetworkError):
         host: The host that failed to connect
         port: The port number (if applicable)
         timeout: The timeout value in seconds
+
+    Example:
+        try:
+            await asyncio.wait_for(connect(host, port), timeout=30.0)
+        except asyncio.TimeoutError:
+            raise ConnectionTimeoutError(
+                host="api.kis.com",
+                port=443,
+                timeout=30.0
+            )
     """
 
     def __init__(self, host: str, timeout: float, port: int | None = None):
@@ -226,6 +238,14 @@ class WebSocketDisconnectError(NetworkError):
         url: The WebSocket URL that disconnected
         code: The WebSocket close code (if available)
         reason: Human-readable disconnect reason
+
+    Example:
+        async def on_close(code, reason):
+            raise WebSocketDisconnectError(
+                url="wss://api.kis.com/stream",
+                code=1006,
+                reason="Connection reset by peer"
+            )
     """
 
     def __init__(self, url: str, code: int | None = None, reason: str = ""):
@@ -250,9 +270,17 @@ class DataValidationError(ValidationError):
         field: The field that failed validation
         value: The invalid value
         constraint: The validation constraint that was violated
+
+    Example:
+        if price < 0:
+            raise DataValidationError(
+                field="price",
+                value=price,
+                constraint="must be non-negative"
+            )
     """
 
-    def __init__(self, field: str, value: any = None, constraint: str = ""):
+    def __init__(self, field: str, value: Any = None, constraint: str = ""):
         self.field = field
         self.value = value
         self.constraint = constraint
@@ -271,9 +299,18 @@ class TypeConversionError(ValidationError):
         value: The value that failed to convert
         target_type: The type we attempted to convert to
         source_type: The original type of the value
+
+    Example:
+        try:
+            quantity = int(user_input)
+        except ValueError as e:
+            raise TypeConversionError(
+                value=user_input,
+                target_type="int"
+            ) from e
     """
 
-    def __init__(self, value: any, target_type: str, source_type: str = ""):
+    def __init__(self, value: Any, target_type: str, source_type: str = ""):
         self.value = value
         self.target_type = target_type
         self.source_type = source_type or type(value).__name__
@@ -292,6 +329,14 @@ class KISRateLimitError(APIError):
         endpoint: The API endpoint that was rate limited
         retry_after: Suggested wait time before retry (seconds)
         message: Additional error message from API
+
+    Example:
+        if response.error_code == "EGW00201":
+            raise KISRateLimitError(
+                endpoint="/uapi/domestic-stock/v1/order",
+                retry_after=1.0,
+                message="초당 거래건수를 초과하였습니다"
+            )
     """
 
     def __init__(
@@ -394,9 +439,17 @@ class InvalidConfigError(ConfigurationError):
         config_key: The configuration key that is invalid
         value: The invalid value
         reason: Why the configuration is invalid
+
+    Example:
+        if timeout < 0:
+            raise InvalidConfigError(
+                config_key="api.timeout",
+                value=timeout,
+                reason="timeout must be positive"
+            )
     """
 
-    def __init__(self, config_key: str, value: any = None, reason: str = ""):
+    def __init__(self, config_key: str, value: Any = None, reason: str = ""):
         self.config_key = config_key
         self.value = value
         self.reason = reason
@@ -414,6 +467,14 @@ class MissingConfigError(ConfigurationError):
     Attributes:
         config_key: The configuration key that is missing
         config_file: The configuration file that should contain it
+
+    Example:
+        api_key = config.get("kis.api_key")
+        if not api_key:
+            raise MissingConfigError(
+                config_key="kis.api_key",
+                config_file="config/api.yaml"
+            )
     """
 
     def __init__(self, config_key: str, config_file: str = ""):
@@ -435,6 +496,15 @@ class InsufficientBalanceError(BusinessLogicError):
         required: The required balance amount
         available: The available balance amount
         symbol: The trading symbol (if applicable)
+
+    Example:
+        order_cost = price * quantity
+        if balance < order_cost:
+            raise InsufficientBalanceError(
+                required=order_cost,
+                available=balance,
+                symbol="005930"
+            )
     """
 
     def __init__(
