@@ -20,9 +20,13 @@ import asyncio
 import logging
 import os
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
 from enum import Enum
 from string import Template
+from typing import Any
+
+from pydantic import Field
+
+from shared.config.base import ServiceConfigBase
 
 logger = logging.getLogger(__name__)
 
@@ -97,8 +101,7 @@ class NotificationTemplates:
 # =============================================================================
 
 
-@dataclass
-class TelegramConfig:
+class TelegramConfig(ServiceConfigBase):
     """Telegram 설정
 
     Attributes:
@@ -108,24 +111,53 @@ class TelegramConfig:
         disable_notification: 알림음 비활성화
     """
 
-    token: str = field(repr=False)  # 로깅에서 숨김
-    chat_id: str = field(repr=False)  # 로깅에서 숨김
-    parse_mode: str = "HTML"
-    disable_notification: bool = False
+    token: str = Field(default="", repr=False, description="Telegram bot token")
+    chat_id: str = Field(default="", repr=False, description="Telegram chat ID")
+    parse_mode: str = Field(default="HTML", description="Message parse mode (HTML or Markdown)")
+    disable_notification: bool = Field(default=False, description="Disable notification sound")
+
+    # Default env prefix for ServiceConfigBase
+    _env_prefix = "TELEGRAM_"
 
     @classmethod
-    def from_env(cls) -> "TelegramConfig":
-        """환경변수에서 설정 로드"""
-        token = os.getenv("TELEGRAM_BOT_TOKEN", "")
-        chat_id = os.getenv("TELEGRAM_CHAT_ID", "")
+    def from_env(cls, env_prefix: str | None = None, **overrides: Any) -> "TelegramConfig":
+        """환경변수에서 설정 로드
 
-        if not token or not chat_id:
+        Handles non-standard env var names:
+        - TELEGRAM_BOT_TOKEN → token
+        - TELEGRAM_CHAT_ID → chat_id
+        """
+        # Custom env var mapping for Telegram (non-standard naming)
+        env_data = {}
+
+        # Map TELEGRAM_BOT_TOKEN to token
+        token = os.getenv("TELEGRAM_BOT_TOKEN", "")
+        if token:
+            env_data["token"] = token
+
+        # Map TELEGRAM_CHAT_ID to chat_id
+        chat_id = os.getenv("TELEGRAM_CHAT_ID", "")
+        if chat_id:
+            env_data["chat_id"] = chat_id
+
+        # Standard prefix-based mapping for other fields
+        for field_name in ("parse_mode", "disable_notification"):
+            env_key = f"TELEGRAM_{field_name.upper()}"
+            env_value = os.getenv(env_key)
+            if env_value is not None:
+                env_data[field_name] = env_value
+
+        # Apply overrides
+        env_data.update(overrides)
+
+        # Log warning if not configured
+        if not env_data.get("token") or not env_data.get("chat_id"):
             logger.warning(
                 "Telegram credentials not configured. "
                 "Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID environment variables."
             )
 
-        return cls(token=token, chat_id=chat_id)
+        return cls(**env_data)
 
     @property
     def is_configured(self) -> bool:

@@ -15,6 +15,9 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Any
 
+from pydantic import ConfigDict, Field
+
+from shared.config.base import ServiceConfigBase
 from shared.streaming.client import RedisClient
 
 logger = logging.getLogger(__name__)
@@ -66,57 +69,97 @@ def _extract_symbol_name(payload: dict[str, Any]) -> str:
     return ""
 
 
-@dataclass(frozen=True)
-class TickStreamPublisherConfig:
-    enabled: bool = True
-    async_publish: bool = True
-    stock_stream: str = "market:ticks"
-    futures_stream: str = "raw_data"
-    stream_maxlen: int = 10000
-    stock_min_interval_seconds: float = 1.0
-    futures_min_interval_seconds: float = 0.2
-    stream_ttl_seconds: int = 86400
-    ttl_refresh_interval_seconds: float = 60.0
-    queue_maxsize: int = 5000
-    flush_batch_size: int = 200
-    worker_wait_seconds: float = 0.2
+class TickStreamPublisherConfig(ServiceConfigBase):
+    """Configuration for tick stream publisher.
+
+    Attributes:
+        enabled: Enable tick stream publishing
+        async_publish: Use async worker thread for publishing
+        stock_stream: Redis stream name for stock ticks
+        futures_stream: Redis stream name for futures ticks
+        stream_maxlen: Maximum stream length (MAXLEN)
+        stock_min_interval_seconds: Minimum interval between stock tick publishes
+        futures_min_interval_seconds: Minimum interval between futures tick publishes
+        stream_ttl_seconds: Stream TTL in seconds
+        ttl_refresh_interval_seconds: Interval to refresh stream TTL
+        queue_maxsize: Maximum queue size for async publishing
+        flush_batch_size: Batch size for flushing queue
+        worker_wait_seconds: Worker thread wait timeout
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    enabled: bool = Field(default=True, description="Enable tick stream publishing")
+    async_publish: bool = Field(default=True, description="Use async worker thread")
+    stock_stream: str = Field(default="market:ticks", description="Redis stream for stock ticks")
+    futures_stream: str = Field(default="raw_data", description="Redis stream for futures ticks")
+    stream_maxlen: int = Field(default=10000, description="Maximum stream length")
+    stock_min_interval_seconds: float = Field(default=1.0, description="Min interval for stock ticks (seconds)")
+    futures_min_interval_seconds: float = Field(default=0.2, description="Min interval for futures ticks (seconds)")
+    stream_ttl_seconds: int = Field(default=86400, description="Stream TTL (seconds)")
+    ttl_refresh_interval_seconds: float = Field(default=60.0, description="TTL refresh interval (seconds)")
+    queue_maxsize: int = Field(default=5000, description="Maximum queue size")
+    flush_batch_size: int = Field(default=200, description="Batch size for queue flush")
+    worker_wait_seconds: float = Field(default=0.2, description="Worker thread wait timeout (seconds)")
+
+    # Default env prefix (though we override from_env for custom mapping)
+    _env_prefix = "MONITOR_TICK_STREAM_"
 
     @classmethod
-    def from_env(cls) -> TickStreamPublisherConfig:
-        return cls(
-            enabled=os.getenv("MONITOR_TICK_STREAM_ENABLED", "true").lower() == "true",
-            async_publish=os.getenv("MONITOR_TICK_STREAM_ASYNC", "true").lower()
-            == "true",
-            stock_stream=os.getenv("MONITOR_STOCK_TICK_STREAM", "market:ticks").strip()
-            or "market:ticks",
-            futures_stream=os.getenv("MONITOR_FUTURES_TICK_STREAM", "raw_data").strip()
-            or "raw_data",
-            stream_maxlen=int(os.getenv("MONITOR_TICK_STREAM_MAXLEN", "10000")),
-            stock_min_interval_seconds=float(
-                os.getenv("MONITOR_STOCK_TICK_MIN_INTERVAL_SECONDS", "1.0")
-            ),
-            futures_min_interval_seconds=float(
-                os.getenv("MONITOR_FUTURES_TICK_MIN_INTERVAL_SECONDS", "0.2")
-            ),
-            stream_ttl_seconds=int(
-                os.getenv("MONITOR_TICK_STREAM_TTL_SECONDS", "86400")
-            ),
-            ttl_refresh_interval_seconds=float(
-                os.getenv("MONITOR_TICK_STREAM_TTL_REFRESH_SECONDS", "60")
-            ),
-            queue_maxsize=max(
-                100,
-                int(os.getenv("MONITOR_TICK_STREAM_QUEUE_MAXSIZE", "5000")),
-            ),
-            flush_batch_size=max(
-                1,
-                int(os.getenv("MONITOR_TICK_STREAM_FLUSH_BATCH_SIZE", "200")),
-            ),
-            worker_wait_seconds=max(
-                0.01,
-                float(os.getenv("MONITOR_TICK_STREAM_WORKER_WAIT_SECONDS", "0.2")),
-            ),
-        )
+    def from_env(cls, env_prefix: str | None = None, **overrides: Any) -> "TickStreamPublisherConfig":
+        """Load configuration from environment variables.
+
+        Handles non-standard env var names with mixed prefixes:
+        - MONITOR_TICK_STREAM_* for most fields
+        - MONITOR_STOCK_TICK_* for stock-specific fields
+        - MONITOR_FUTURES_TICK_* for futures-specific fields
+        """
+        env_data = {}
+
+        # Standard MONITOR_TICK_STREAM_* fields
+        enabled = os.getenv("MONITOR_TICK_STREAM_ENABLED", "true").lower() == "true"
+        env_data["enabled"] = enabled
+
+        async_pub = os.getenv("MONITOR_TICK_STREAM_ASYNC", "true").lower() == "true"
+        env_data["async_publish"] = async_pub
+
+        # Non-standard prefix fields
+        stock_stream = os.getenv("MONITOR_STOCK_TICK_STREAM", "market:ticks").strip() or "market:ticks"
+        env_data["stock_stream"] = stock_stream
+
+        futures_stream = os.getenv("MONITOR_FUTURES_TICK_STREAM", "raw_data").strip() or "raw_data"
+        env_data["futures_stream"] = futures_stream
+
+        # Numeric fields with validation
+        stream_maxlen = int(os.getenv("MONITOR_TICK_STREAM_MAXLEN", "10000"))
+        env_data["stream_maxlen"] = stream_maxlen
+
+        stock_min_interval = float(os.getenv("MONITOR_STOCK_TICK_MIN_INTERVAL_SECONDS", "1.0"))
+        env_data["stock_min_interval_seconds"] = stock_min_interval
+
+        futures_min_interval = float(os.getenv("MONITOR_FUTURES_TICK_MIN_INTERVAL_SECONDS", "0.2"))
+        env_data["futures_min_interval_seconds"] = futures_min_interval
+
+        stream_ttl = int(os.getenv("MONITOR_TICK_STREAM_TTL_SECONDS", "86400"))
+        env_data["stream_ttl_seconds"] = stream_ttl
+
+        ttl_refresh = float(os.getenv("MONITOR_TICK_STREAM_TTL_REFRESH_SECONDS", "60"))
+        env_data["ttl_refresh_interval_seconds"] = ttl_refresh
+
+        # Queue fields with min/max constraints
+        queue_maxsize = max(100, int(os.getenv("MONITOR_TICK_STREAM_QUEUE_MAXSIZE", "5000")))
+        env_data["queue_maxsize"] = queue_maxsize
+
+        flush_batch = max(1, int(os.getenv("MONITOR_TICK_STREAM_FLUSH_BATCH_SIZE", "200")))
+        env_data["flush_batch_size"] = flush_batch
+
+        worker_wait = max(0.01, float(os.getenv("MONITOR_TICK_STREAM_WORKER_WAIT_SECONDS", "0.2")))
+        env_data["worker_wait_seconds"] = worker_wait
+
+        # Apply overrides
+        env_data.update(overrides)
+
+        return cls(**env_data)
 
 
 @dataclass(frozen=True)
