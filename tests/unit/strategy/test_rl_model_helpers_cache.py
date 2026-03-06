@@ -6,7 +6,6 @@ from datetime import datetime
 from unittest.mock import MagicMock
 
 import numpy as np
-import pytest
 
 from shared.strategy import rl_model_helpers
 
@@ -380,11 +379,12 @@ def test_cache_key_collision_resistance():
     timestamp = datetime(2026, 3, 6, 10, 0, 0)
 
     # Create two feature sets that should hash differently
+    # Use actual RL_FEATURE_COLUMNS names so the features differ in the obs vector
     market_data_1 = {"close": 100.0}
-    indicators_1 = {"bb_middle": 100.0, "rsi": 50.0}
+    indicators_1 = {"returns": 0.01, "rsi": 50.0}
 
     market_data_2 = {"close": 100.0}
-    indicators_2 = {"bb_middle": 100.1, "rsi": 50.0}  # Slightly different
+    indicators_2 = {"returns": 0.05, "rsi": 60.0}  # Different RL feature values
 
     obs1 = rl_model_helpers.build_rl_observation(
         market_data=market_data_1,

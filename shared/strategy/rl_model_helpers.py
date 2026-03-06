@@ -35,12 +35,6 @@ _scaled_market_cache_size: int = 120  # keep last N entries
 _time_feature_cache: dict[int, list[float]] = {}  # key: timestamp rounded to minute
 _time_feature_cache_size: int = 120  # keep last N entries
 
-# TEMPORARY: Cache performance counters for verification
-_market_cache_hits: int = 0
-_market_cache_misses: int = 0
-_time_cache_hits: int = 0
-_time_cache_misses: int = 0
-
 
 def load_rl_model(model_path: str, device: Any) -> Any | None:
     """MaskablePPO 모델 로드 (캐시).
@@ -140,8 +134,8 @@ def build_rl_observation(
         ohlcv_derived: OHLCV에서 유도된 피처 dict (optional fallback)
 
     Cache Behavior:
-        - Market features: hash 기반 캐싱 (120 entries, LRU eviction)
-        - Time features: 분 단위 timestamp 기반 캐싱 (120 entries, LRU eviction)
+        - Market features: hash 기반 캐싱 (120 entries, FIFO eviction)
+        - Time features: 분 단위 timestamp 기반 캐싱 (120 entries, FIFO eviction)
     """
     import numpy as np
 
@@ -166,13 +160,10 @@ def build_rl_observation(
         )
 
     # Cache scaled market features — Entry/Exit share same market state per bar
-    global _market_cache_hits, _market_cache_misses
     cache_key = hash(tuple(market_features))
     if cache_key in _scaled_market_cache:
         market_array = _scaled_market_cache[cache_key]
-        _market_cache_hits += 1
     else:
-        _market_cache_misses += 1
         market_array = np.array(market_features, dtype=np.float32).reshape(1, -1)
         if scaler is not None:
             try:
@@ -197,13 +188,10 @@ def build_rl_observation(
         else timestamp.replace(tzinfo=KST)
     )
     # Cache time features — Entry/Exit share same time state per minute
-    global _time_cache_hits, _time_cache_misses
     time_cache_key = int(now.replace(second=0, microsecond=0).timestamp())
     if time_cache_key in _time_feature_cache:
         time_features = _time_feature_cache[time_cache_key]
-        _time_cache_hits += 1
     else:
-        _time_cache_misses += 1
         start_dt = now.replace(
             hour=market_open[0], minute=market_open[1], second=0, microsecond=0
         )
@@ -342,33 +330,3 @@ def parse_hhmm(
     except Exception:
         pass
     return default_hour, default_minute
-
-
-# TEMPORARY: Cache performance statistics helpers
-def get_cache_stats() -> dict[str, Any]:
-    """Get current cache hit/miss statistics."""
-    market_total = _market_cache_hits + _market_cache_misses
-    time_total = _time_cache_hits + _time_cache_misses
-    return {
-        "market_cache_hits": _market_cache_hits,
-        "market_cache_misses": _market_cache_misses,
-        "market_hit_rate": (
-            _market_cache_hits / market_total * 100 if market_total > 0 else 0.0
-        ),
-        "time_cache_hits": _time_cache_hits,
-        "time_cache_misses": _time_cache_misses,
-        "time_hit_rate": (
-            _time_cache_hits / time_total * 100 if time_total > 0 else 0.0
-        ),
-        "market_cache_size": len(_scaled_market_cache),
-        "time_cache_size": len(_time_feature_cache),
-    }
-
-
-def reset_cache_stats() -> None:
-    """Reset cache statistics counters."""
-    global _market_cache_hits, _market_cache_misses, _time_cache_hits, _time_cache_misses
-    _market_cache_hits = 0
-    _market_cache_misses = 0
-    _time_cache_hits = 0
-    _time_cache_misses = 0
