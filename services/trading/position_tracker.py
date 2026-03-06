@@ -1120,6 +1120,25 @@ class PositionTracker:
                 logger.error(f"Failed to flush RL trades batch: {e}")
                 return 0
 
+    async def flush_pending_positions(self) -> tuple[int, int]:
+        """Flush all pending batches to database.
+
+        This method is safe to call even if batches are empty.
+        Typically called during graceful shutdown or manual flush triggers.
+
+        Returns:
+            Tuple of (swing_positions_flushed, rl_trades_flushed)
+        """
+        swing_count = await self._flush_swing_positions_batch()
+        rl_count = await self._flush_rl_trades_batch()
+
+        if swing_count > 0 or rl_count > 0:
+            logger.info(
+                f"Manual flush completed: {swing_count} swing positions, {rl_count} RL trades"
+            )
+
+        return swing_count, rl_count
+
     @staticmethod
     def _calc_realized_pnl(position: Position) -> float:
         """Calculate side-aware realized PnL for a closed position."""
