@@ -2318,6 +2318,14 @@ class TradingOrchestrator:
             except Exception as e:
                 logger.error(f"Error during position shutdown: {e}")
 
+        # Stop auto-flush task and flush any pending batched positions to DB
+        if self._position_tracker:
+            try:
+                await self._position_tracker.stop_auto_flush()
+                logger.info("Position tracker auto-flush stopped and final batch flushed")
+            except Exception as e:
+                logger.error(f"Error stopping position tracker auto-flush: {e}")
+
         # Save candle cache for fast restart recovery
         try:
             self._save_candle_cache_to_redis()
