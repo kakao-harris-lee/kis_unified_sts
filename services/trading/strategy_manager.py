@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
+from shared.exceptions import ConfigurationError, TradingSystemError
 from shared.models.position import Position
 from shared.models.signal import ExitSignal, Signal
 from shared.strategy.base import EntryContext, ExitContext, TradingStrategy
@@ -212,7 +213,7 @@ class StrategyManager:
                     strategy = StrategyFactory.create_from_file(self.asset_class, name)
                     self.strategies[strategy.name] = strategy
                     logger.info(f"Loaded strategy: {strategy.name}")
-                except Exception as e:
+                except (ConfigurationError, ValueError, TypeError, KeyError) as e:
                     logger.error(f"Failed to load strategy '{name}': {e}")
         else:
             # Load all enabled strategies
@@ -224,7 +225,7 @@ class StrategyManager:
                 for strategy in strategies:
                     self.strategies[strategy.name] = strategy
                     logger.info(f"Loaded strategy: {strategy.name}")
-            except Exception as e:
+            except (ConfigurationError, ValueError, TypeError, KeyError) as e:
                 logger.error(f"Failed to load strategies: {e}")
 
     def add_strategy(self, strategy: TradingStrategy):
@@ -311,7 +312,7 @@ class StrategyManager:
                 signal.metadata.setdefault("entry_component", signal.strategy)
             signal.strategy = strategy.name
             return signal
-        except Exception as e:
+        except TradingSystemError as e:
             logger.error(f"Entry check failed for {strategy.name}: {e}", exc_info=True)
             return None
 
@@ -427,7 +428,7 @@ class StrategyManager:
 
             return signals
 
-        except Exception as e:
+        except TradingSystemError as e:
             logger.error(f"Exit check failed for {strategy.name}: {e}", exc_info=True)
             return []
 
