@@ -182,7 +182,7 @@ class BacktestEngine:
 
         # 마지막 포지션 강제 청산
         if self.positions:
-            last_bar = data.iloc[-1].to_dict()
+            last_bar = next(data.iloc[-1:].itertuples(index=False, name='Bar'))._asdict()
             for code in list(self.positions.keys()):
                 last_price = self._last_price_by_code.get(code, float(last_bar["close"]))
                 self._close_position(
