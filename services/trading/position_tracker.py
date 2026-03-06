@@ -1117,26 +1117,26 @@ class PositionTracker:
         insert_cols: str,
         label: str,
         pre_execute_sql: str | None = None,
-    ) -> tuple[int, list[tuple[Any, ...]]]:
+    ) -> int:
         """Generic batch flush: copy+clear under lock, then I/O outside lock.
 
-        On failure the rows are re-enqueued so no data is lost.
+        On failure the rows are re-enqueued into pending_list so no data is lost.
 
         Args:
             pending_list: The accumulator list (e.g. _pending_swing_positions).
+                Mutated in place: cleared on success, rows re-appended on failure.
             table_name: Target ClickHouse table (without database prefix).
             insert_cols: Column spec string for the INSERT statement.
             label: Human-readable label for log messages.
             pre_execute_sql: Optional SQL to run before the INSERT (e.g. schema ensure).
 
         Returns:
-            Tuple of (rows_flushed, remaining_pending_list). The caller must
-            reassign the pending list reference if rows were re-enqueued.
+            Number of rows flushed (0 if empty or on error).
         """
         # Acquire lock only to snapshot + clear the buffer
         async with self._batch_lock:
             if not pending_list:
-                return 0, pending_list
+                return 0
             rows = pending_list.copy()
             pending_list.clear()
 
@@ -1155,14 +1155,14 @@ class PositionTracker:
 
             await asyncio.to_thread(_sync_flush)
             logger.info(f"Flushed {len(rows)} {label} batch to DB")
-            return len(rows), pending_list
+            return len(rows)
 
         except Exception as e:
             # Re-enqueue rows so they are retried on the next flush
             async with self._batch_lock:
                 pending_list.extend(rows)
             logger.error(f"Failed to flush {label} batch: {e}")
-            return 0, pending_list
+            return 0
 
     async def _flush_swing_positions_batch(self) -> int:
         """Flush accumulated swing positions batch to ClickHouse.
@@ -1170,13 +1170,12 @@ class PositionTracker:
         Returns:
             Number of positions flushed
         """
-        count, self._pending_swing_positions = await self._flush_batch(
+        return await self._flush_batch(
             self._pending_swing_positions,
             table_name="swing_positions",
             insert_cols=self._SWING_INSERT_COLS,
             label="swing positions",
         )
-        return count
 
     async def _flush_rl_trades_batch(self) -> int:
         """Flush accumulated RL trades batch to ClickHouse.
@@ -1184,14 +1183,13 @@ class PositionTracker:
         Returns:
             Number of trades flushed
         """
-        count, self._pending_rl_trades = await self._flush_batch(
+        return await self._flush_batch(
             self._pending_rl_trades,
             table_name="rl_trades",
             insert_cols=self._RL_TRADE_INSERT_COLS,
             label="RL trades",
             pre_execute_sql=self._RL_TRADES_SCHEMA_TEMPLATE,
         )
-        return count
 
     async def flush_pending_positions(self) -> tuple[int, int]:
         """Flush all pending batches to database.

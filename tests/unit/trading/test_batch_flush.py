@@ -568,11 +568,12 @@ class TestBatchFlushThreadSafety:
                 await tracker.save_closed_to_db(pos)
 
             # Call flush concurrently (should be safe)
-            flush1 = tracker.flush_pending_positions()
-            flush2 = tracker.flush_pending_positions()
-
-            swing1, rl1 = await flush1
-            swing2, rl2 = await flush2
+            results = await asyncio.gather(
+                tracker.flush_pending_positions(),
+                tracker.flush_pending_positions(),
+            )
+            swing1, rl1 = results[0]
+            swing2, rl2 = results[1]
 
         # One should flush 5, the other 0 (batch already empty)
         total_flushed = swing1 + swing2

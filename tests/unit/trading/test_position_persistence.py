@@ -86,12 +86,13 @@ class TestGetDbClient:
     @patch("shared.db.client.ClickHouseClient")
     @patch("shared.db.config.ClickHouseConfig")
     def test_falls_back_to_ch_database(self, MockConfig, MockCH):
-        """When config.database is empty, use ClickHouseClient's database."""
+        """When config.database is empty, use ClickHouseConfig's database."""
         tracker = PositionTracker(config=PositionTrackerConfig(database=""))
 
-        mock_instance = MagicMock()
-        mock_instance.config.database = "kospi"
-        MockCH.return_value = mock_instance
+        # cfg = ClickHouseConfig.from_env(...) → cfg.database should return "kospi"
+        mock_cfg = MagicMock()
+        mock_cfg.database = "kospi"
+        MockConfig.from_env.return_value = mock_cfg
 
         ch, db = tracker._get_db_client()
         assert db == "kospi"
