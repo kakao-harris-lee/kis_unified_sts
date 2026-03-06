@@ -25,6 +25,8 @@ import os
 from contextlib import asynccontextmanager
 from typing import Any
 
+from shared.api.error_sanitizer import sanitize_error_message
+
 logger = logging.getLogger(__name__)
 
 # Optional FastAPI import
@@ -261,16 +263,18 @@ def create_app(
         logger.error(f"Unhandled exception: {exc}", exc_info=error_config.get("log_stacktrace", True))
 
         if expose_details:
-            # 개발 모드: 상세 정보 포함
+            # 개발 모드: 상세 정보 포함 (sanitized)
+            sanitized_message = sanitize_error_message(exc, include_type=True, use_generic=False)
             return JSONResponse(
                 status_code=500,
-                content={"detail": str(exc), "type": type(exc).__name__},
+                content={"detail": sanitized_message},
             )
         else:
             # 프로덕션: 일반 메시지만
+            sanitized_message = sanitize_error_message(exc, use_generic=True)
             return JSONResponse(
                 status_code=500,
-                content={"detail": "Internal server error"},
+                content={"detail": sanitized_message},
             )
 
     # 라우터 등록
