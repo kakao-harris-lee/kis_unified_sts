@@ -1371,8 +1371,16 @@ def trade_start(
             shutdown_requested = False
 
             def _request_shutdown():
+                """Handle SIGTERM/SIGINT with guard against concurrent signals.
+
+                No lock needed: asyncio signal handlers are executed sequentially
+                on the event loop (single-threaded), preventing race conditions.
+                """
                 nonlocal shutdown_requested
                 if shutdown_requested:
+                    logging.getLogger("cli.main").debug(
+                        "Duplicate shutdown signal ignored (shutdown already in progress)"
+                    )
                     return
                 shutdown_requested = True
                 logging.getLogger("cli.main").info(
@@ -2331,8 +2339,16 @@ def rl_paper(
             shutdown_requested = False
 
             def _request_shutdown():
+                """Handle SIGTERM/SIGINT with guard against concurrent signals.
+
+                No lock needed: asyncio signal handlers are executed sequentially
+                on the event loop (single-threaded), preventing race conditions.
+                """
                 nonlocal shutdown_requested
                 if shutdown_requested:
+                    logging.getLogger("cli.main").debug(
+                        "Duplicate shutdown signal ignored (shutdown already in progress)"
+                    )
                     return
                 shutdown_requested = True
                 logging.getLogger("cli.main").info(

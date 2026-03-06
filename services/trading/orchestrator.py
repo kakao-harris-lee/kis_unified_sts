@@ -2228,8 +2228,56 @@ class TradingOrchestrator:
             logger.warning(f"Candle cache load failed: {e}")
             return 0
 
+    async def _flush_positions_with_retry(self, max_retries: int = 3) -> bool:
+        """Flush positions to Redis with exponential backoff (100ms base, 1s cap)."""
+        if not self._position_tracker or not self._state_publisher:
+            return False
+
+        positions = list(self._position_tracker.positions)
+        if not positions:
+            return True  # Nothing to flush
+
+        for attempt in range(max_retries):
+            try:
+                self._state_publisher.publish_positions_update(
+                    positions, throttle=0
+                )
+                if attempt > 0:
+                    logger.info(
+                        f"Redis flush succeeded on attempt {attempt + 1}/{max_retries}"
+                    )
+                return True
+
+            except (ConnectionError, TimeoutError, OSError) as e:
+                # Transient network/connection errors - retry with backoff
+                if attempt < max_retries - 1:
+                    delay = min(0.1 * (2 ** attempt), 1.0)
+                    logger.warning(
+                        f"Redis flush failed (attempt {attempt + 1}/{max_retries}): {e}. "
+                        f"Retrying in {delay*1000:.0f}ms..."
+                    )
+                    await asyncio.sleep(delay)
+                else:
+                    logger.error(
+                        f"Redis flush failed after {max_retries} attempts: {e}"
+                    )
+                    return False
+
+            except Exception as e:
+                # Non-retryable errors (e.g., serialization errors)
+                logger.error(f"Redis flush failed with non-retryable error: {e}")
+                return False
+
+        return False
+
     async def stop(self, timeout: float = 10.0):
-        """거래 종료 (타임아웃 포함)"""
+        """거래 종료 (타임아웃 포함)
+
+        Args:
+            timeout: Maximum time in seconds to wait for graceful shutdown.
+                     Cron scripts wait 5s before SIGKILL, so pass timeout=4.0
+                     when called from cron contexts for a 1s safety margin.
+        """
         if self.state == TradingState.STOPPED:
             return
 
@@ -2239,14 +2287,8 @@ class TradingOrchestrator:
             logger.error(
                 f"Graceful shutdown timed out after {timeout}s, forcing..."
             )
-            # Force Redis flush as last resort
-            if self._position_tracker and self._state_publisher:
-                try:
-                    self._state_publisher.publish_positions_update(
-                        list(self._position_tracker.positions), throttle=0,
-                    )
-                except Exception:
-                    pass
+            # Force Redis flush as last resort with retry
+            await self._flush_positions_with_retry(max_retries=3)
             self.state = TradingState.STOPPED
             self._running = False
 
@@ -2262,14 +2304,17 @@ class TradingOrchestrator:
                 data = await self._data_provider.get_data()
                 await self._close_intraday_positions(data)
 
-                # Flush remaining open positions to Redis for recovery
-                if self._position_tracker.position_count > 0 and self._state_publisher:
-                    self._state_publisher.publish_positions_update(
-                        list(self._position_tracker.positions), throttle=0,
-                    )
-                    logger.info(
-                        f"Positions flushed to Redis ({self._position_tracker.position_count} open)"
-                    )
+                # Flush remaining open positions to Redis for recovery (with retry)
+                if self._position_tracker.position_count > 0:
+                    success = await self._flush_positions_with_retry(max_retries=3)
+                    if success:
+                        logger.info(
+                            f"Positions flushed to Redis ({self._position_tracker.position_count} open)"
+                        )
+                    else:
+                        logger.error(
+                            f"Failed to flush {self._position_tracker.position_count} positions to Redis after retries"
+                        )
             except Exception as e:
                 logger.error(f"Error during position shutdown: {e}")
 
