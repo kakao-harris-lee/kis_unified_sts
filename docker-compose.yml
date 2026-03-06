@@ -152,12 +152,14 @@ services:
   # =============================================================================
   # Grafana (대시보드)
   # =============================================================================
+  # SECURITY WARNING: Default admin/admin credentials are insecure!
+  # Set GRAFANA_ADMIN_PASSWORD to a strong password (16+ chars) in production.
   grafana:
     image: grafana/grafana:10.2.0
     container_name: kis-grafana
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
