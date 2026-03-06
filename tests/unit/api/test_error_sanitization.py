@@ -14,7 +14,7 @@ class TestSanitizeErrorMessage:
         exc = ValueError("Config error in /etc/app/config.yaml")
         result = sanitize_error_message(exc)
         assert "/etc/app/config.yaml" not in result
-        assert "FILE" in result
+        assert "[REDACTED]" in result
 
     def test_sanitize_windows_file_path(self):
         """Windows 파일 경로 제거"""
@@ -23,7 +23,7 @@ class TestSanitizeErrorMessage:
         exc = ValueError("Config error in C:\\Users\\app\\config.yaml")
         result = sanitize_error_message(exc)
         assert "C:\\Users\\app\\config.yaml" not in result
-        assert "FILE" in result
+        assert "[REDACTED]" in result
 
     def test_sanitize_database_connection_string(self):
         """DB 연결 문자열 제거"""
@@ -32,7 +32,7 @@ class TestSanitizeErrorMessage:
         exc = ConnectionError("Failed to connect to postgresql://user:pass@localhost:5432/db")
         result = sanitize_error_message(exc)
         assert "postgresql://user:pass@localhost:5432/db" not in result
-        assert "DB_CONNECTION" in result
+        assert "[REDACTED]" in result
 
     def test_sanitize_sql_query(self):
         """SQL 쿼리 제거"""
@@ -41,7 +41,7 @@ class TestSanitizeErrorMessage:
         exc = RuntimeError("Query failed: SELECT * FROM users WHERE id=1")
         result = sanitize_error_message(exc)
         assert "SELECT * FROM users" not in result
-        assert "SQL_QUERY" in result
+        assert "[REDACTED]" in result
 
     def test_sanitize_ip_address(self):
         """IP 주소 및 포트 제거"""
@@ -50,7 +50,7 @@ class TestSanitizeErrorMessage:
         exc = ConnectionError("Failed to connect to 192.168.1.100:8080")
         result = sanitize_error_message(exc)
         assert "192.168.1.100:8080" not in result
-        assert "HOST" in result
+        assert "[REDACTED]" in result
 
     def test_sanitize_api_key(self):
         """API 키 제거"""
@@ -59,7 +59,7 @@ class TestSanitizeErrorMessage:
         exc = ValueError("Invalid api_key: sk-1234567890abcdefghijklmn")
         result = sanitize_error_message(exc)
         assert "sk-1234567890abcdefghijklmn" not in result
-        assert "CREDENTIAL" in result
+        assert "[REDACTED]" in result
 
     def test_sanitize_python_object_reference(self):
         """Python 객체 참조 제거"""
@@ -68,7 +68,7 @@ class TestSanitizeErrorMessage:
         exc = TypeError("Cannot serialize <MyClass object at 0x7f8b8c0d1e50>")
         result = sanitize_error_message(exc)
         assert "0x7f8b8c0d1e50" not in result
-        assert "OBJECT" in result
+        assert "[REDACTED]" in result
 
     def test_include_type_parameter(self):
         """include_type=True 시 예외 타입 포함"""
@@ -163,7 +163,7 @@ class TestSanitizeErrorDict:
         exc = RuntimeError("Failed to load /etc/config.yaml")
         result = sanitize_error_dict(exc)
         assert "/etc/config.yaml" not in result["error"]
-        assert "FILE" in result["error"]
+        assert "[REDACTED]" in result["error"]
 
 
 class TestErrorCategories:
@@ -258,8 +258,7 @@ class TestHelperFunctions:
         result = _sanitize_message(message)
         assert "/etc/config.yaml" not in result
         assert "192.168.1.1:5432" not in result
-        assert "FILE" in result
-        assert "HOST" in result
+        assert "[REDACTED]" in result
 
     def test_get_generic_message_by_instance(self):
         """인스턴스 체크로 일반 메시지 결정"""
@@ -283,11 +282,12 @@ class TestEdgeCases:
         """Sanitization 실패 시 폴백"""
         from shared.api.error_sanitizer import sanitize_error_message
 
-        # Create a mock that raises during str() conversion
-        mock_exc = MagicMock(spec=Exception)
-        mock_exc.__str__.side_effect = RuntimeError("str() failed")
-        mock_exc.__class__.__name__ = "MockException"
+        # Create an exception subclass that raises during str()
+        class BadStrException(Exception):
+            def __str__(self):
+                raise RuntimeError("str() failed")
 
+        mock_exc = BadStrException()
         result = sanitize_error_message(mock_exc)
         assert result == "An error occurred while processing your request"
 
@@ -341,7 +341,7 @@ class TestSensitivePatternRemoval:
         result = sanitize_error_message(exc)
         assert "host=localhost" not in result
         assert "database=mydb" not in result
-        assert "DB_PARAM" in result
+        assert "[REDACTED]" in result
 
     def test_remove_function_signatures(self):
         """함수 시그니처 제거"""
@@ -349,8 +349,9 @@ class TestSensitivePatternRemoval:
 
         exc = TypeError("my.module.submodule.function(arg1, arg2) failed")
         result = sanitize_error_message(exc)
-        # Function signature should be replaced
-        assert "my.module.submodule" not in result or "function()" in result
+        # Function signature should be replaced with [REDACTED]
+        assert "my.module.submodule.function(arg1, arg2)" not in result
+        assert "[REDACTED]" in result
 
     def test_preserve_safe_content(self):
         """안전한 콘텐츠는 보존"""
@@ -381,7 +382,7 @@ class TestGlobalExceptionHandler:
         dev_result = sanitize_error_message(exc, include_type=True, use_generic=False)
         assert "ValueError:" in dev_result
         assert "/etc/app/config.yaml" not in dev_result
-        assert "FILE" in dev_result
+        assert "[REDACTED]" in dev_result
 
     async def test_handler_production_mode(self):
         """프로덕션 모드: 일반 메시지만"""
@@ -394,7 +395,7 @@ class TestGlobalExceptionHandler:
         prod_result = sanitize_error_message(exc, use_generic=True)
         assert prod_result == "Invalid input value"
         assert "/etc/app/config.yaml" not in prod_result
-        assert "FILE" not in prod_result
+        assert "[REDACTED]" not in prod_result
 
     async def test_handler_sanitizes_all_exceptions(self):
         """모든 예외 타입 sanitize"""
@@ -454,9 +455,9 @@ class TestSecurityValidation:
 
         # Should sanitize but keep structure
         assert "RuntimeError:" in result
-        assert "password='secret123'" not in result or "CREDENTIAL" in result
+        assert "password='secret123'" not in result
         assert "/home/user/app/db.py" not in result
-        assert "FILE" in result or "SQL_QUERY" in result
+        assert "[REDACTED]" in result
 
     def test_no_stack_trace_leakage(self):
         """스택 트레이스 정보 유출 없음"""

@@ -180,11 +180,12 @@ if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "generate":
         new_key = generate_api_key()
 
-        # Write to a secure file instead of printing plaintext
+        # Write to a secure file — atomic creation with 0o600 permissions
+        # (avoids TOCTOU race between open() and chmod())
         key_file = ".api_key.secret"
-        with open(key_file, "w") as f:
+        fd = os.open(key_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
             f.write(new_key)
-        os.chmod(key_file, stat.S_IRUSR | stat.S_IWUSR)  # 600 permissions
 
         masked = f"{new_key[:4]}...{new_key[-4:]}"
         print(f"Generated new authentication key: {masked}")

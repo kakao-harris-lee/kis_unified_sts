@@ -72,3 +72,7 @@ node_modules/
 .worktrees/
 .security-key
 logs/security/
+
+# Secrets
+.api_key.secret
+*.secret

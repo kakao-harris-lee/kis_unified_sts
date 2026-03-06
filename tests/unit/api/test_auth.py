@@ -103,12 +103,18 @@ class TestAPIKeyGeneration:
 
         # 임시 디렉토리에서 테스트 실행
         with tempfile.TemporaryDirectory() as tmpdir:
-            # auth.py 스크립트 실행
+            # Find the project root (where pyproject.toml lives)
+            project_root = Path(__file__).resolve().parents[3]
+
+            # auth.py 스크립트 실행 — cwd is tmpdir for file output,
+            # but PYTHONPATH includes project root for imports
+            env = {"PYTHONPATH": str(project_root), "PATH": os.environ.get("PATH", "")}
             result = subprocess.run(
                 ["python", "-m", "services.api.auth", "generate"],
                 capture_output=True,
                 text=True,
                 cwd=tmpdir,
+                env=env,
             )
 
             # stdout에 plaintext key가 없는지 확인

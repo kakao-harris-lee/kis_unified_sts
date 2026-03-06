@@ -395,11 +395,12 @@ def _create_session_runner(orchestrator: "TradingOrchestrator") -> Callable:
             orchestrator.last_error_time = datetime.now()
 
             # Send notification if notifier available
+            # Internal alerts get the full error for on-call debugging
             if hasattr(orchestrator, '_notify') and callable(orchestrator._notify):
                 try:
                     await orchestrator._notify(
                         f"⚠️ Trading Session Failed\n"
-                        f"Error: {sanitize_error_message(e)}"
+                        f"Error: {e}"
                     )
                 except Exception as notify_error:
                     logger.error(f"Failed to send error notification: {notify_error}")
