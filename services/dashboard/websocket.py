@@ -6,6 +6,8 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import WebSocket, WebSocketDisconnect
 
+from shared.exceptions import NetworkError
+
 logger = logging.getLogger(__name__)
 
 
@@ -107,7 +109,8 @@ class WebSocketManager:
         """Send a message to a specific connection."""
         try:
             await websocket.send_json(message)
-        except Exception as e:
+        except (WebSocketDisconnect, RuntimeError, OSError) as e:
+            # WebSocket send can fail due to disconnection or network errors
             logger.error(f"Error sending message: {e}")
             self.disconnect(websocket)
 
@@ -117,7 +120,8 @@ class WebSocketManager:
         for connection in self.active_connections:
             try:
                 await connection.send_json(message)
-            except Exception:
+            except (WebSocketDisconnect, RuntimeError, OSError):
+                # WebSocket send can fail due to disconnection or network errors
                 disconnected.append(connection)
 
         # Clean up disconnected
@@ -133,7 +137,8 @@ class WebSocketManager:
         for connection in self._subscriptions[channel]:
             try:
                 await connection.send_json(message)
-            except Exception:
+            except (WebSocketDisconnect, RuntimeError, OSError):
+                # WebSocket send can fail due to disconnection or network errors
                 disconnected.append(connection)
 
         # Clean up disconnected
@@ -198,6 +203,8 @@ async def websocket_endpoint(websocket: WebSocket):
 
     except WebSocketDisconnect:
         ws_manager.disconnect(websocket)
-    except Exception as e:
+    except (ValueError, KeyError, RuntimeError) as e:
+        # ValueError/KeyError: malformed JSON or missing required fields
+        # RuntimeError: WebSocket state errors
         logger.error(f"WebSocket error: {e}")
         ws_manager.disconnect(websocket)
