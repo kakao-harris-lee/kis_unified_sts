@@ -97,3 +97,50 @@ class TestCORSSecurity:
 
         assert cors_config["allow_methods"] == ["GET", "POST"]
         assert cors_config["allow_headers"] == ["Content-Type"]
+
+    def test_dashboard_cors_credentials_security(self):
+        """Dashboard should never combine wildcard origins with credentials."""
+        from services.dashboard.app import _get_cors_config
+
+        # Test development mode
+        with patch.dict(os.environ, {"ENVIRONMENT": "development"}):
+            dev_cors_config = _get_cors_config({})
+
+            # If credentials are enabled, origins must not be wildcard
+            if dev_cors_config.get("allow_credentials"):
+                assert dev_cors_config["allow_origins"] != ["*"], \
+                    "Development mode combines allow_credentials=True with wildcard origins"
+                # Should have explicit localhost origins
+                assert isinstance(dev_cors_config["allow_origins"], list), \
+                    "allow_origins should be a list"
+                assert len(dev_cors_config["allow_origins"]) > 0, \
+                    "allow_origins should not be empty when credentials enabled"
+                # Verify they are localhost origins
+                for origin in dev_cors_config["allow_origins"]:
+                    assert "localhost" in origin or "127.0.0.1" in origin, \
+                        f"Development origin should be localhost, got: {origin}"
+
+        # Test production mode
+        with patch.dict(os.environ, {"ENVIRONMENT": "production"}):
+            prod_cors_config = _get_cors_config({})
+
+            # If credentials are enabled, origins must not be wildcard
+            if prod_cors_config.get("allow_credentials"):
+                assert prod_cors_config["allow_origins"] != ["*"], \
+                    "Production mode combines allow_credentials=True with wildcard origins"
+
+        # Test with custom config that tries to use wildcard (should be overridden)
+        custom_config_wildcard = {
+            "cors": {
+                "allowed_origins": ["*"],
+                "allow_credentials": True,
+            }
+        }
+
+        with patch.dict(os.environ, {"ENVIRONMENT": "development"}):
+            cors_config = _get_cors_config(custom_config_wildcard)
+
+            # Even if config says wildcard, development should use explicit localhost
+            if cors_config.get("allow_credentials"):
+                assert cors_config["allow_origins"] != ["*"], \
+                    "Should not use wildcard origins from config when credentials enabled"
