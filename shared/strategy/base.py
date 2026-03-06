@@ -43,6 +43,43 @@ class MarketStateProtocol(Protocol):
         ...
 
 
+class MarketStateAdapter:
+    """Adapter to wrap string/Enum market states as Protocol-compliant objects.
+
+    Provides a simple way to convert string or Enum values into objects that conform
+    to MarketStateProtocol, enabling type-safe access to market regime information.
+
+    Args:
+        regime: Market regime classification (string or Enum)
+
+    Example:
+        >>> state = MarketStateAdapter("BULL_STRONG")
+        >>> state.regime
+        'BULL_STRONG'
+
+        >>> from enum import Enum
+        >>> class Regime(Enum):
+        ...     BULL = "BULL_STRONG"
+        >>> state = MarketStateAdapter(Regime.BULL)
+        >>> state.regime
+        'BULL_STRONG'
+    """
+
+    def __init__(self, regime: Any):
+        """Initialize with string or Enum regime.
+
+        Args:
+            regime: Market regime as str or Enum (will be converted to string)
+        """
+        # Handle Enum types
+        if hasattr(regime, "value"):
+            self.regime = str(regime.value)
+        elif hasattr(regime, "name"):
+            self.regime = str(regime.name)
+        else:
+            self.regime = str(regime)
+
+
 @dataclass
 class EntryContext:
     """진입 판단에 필요한 컨텍스트
