@@ -79,7 +79,7 @@ class ExitContext:
     market_data: dict[str, Any] = field(default_factory=dict)
     indicators: dict[str, Any] = field(default_factory=dict)
     timestamp: datetime = field(default_factory=datetime.now)
-    market_state: Optional[Any] = None
+    market_state: Optional[MarketStateProtocol] = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
