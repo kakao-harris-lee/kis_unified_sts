@@ -1,6 +1,8 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { backtestApi } from '../api/client';
+import ErrorMessage from '../components/ErrorMessage';
+import TableSkeleton from '../components/TableSkeleton';
 
 interface BacktestRunResponse {
   run_id: string;
@@ -68,7 +70,13 @@ function Backtest() {
   const [capital, setCapital] = useState(10000000);
   const queryClient = useQueryClient();
 
-  const { data: history } = useQuery<BacktestListResponse>({
+  const {
+    data: history,
+    isLoading: historyLoading,
+    isError: historyError,
+    error: historyErrorData,
+    refetch: refetchHistory,
+  } = useQuery<BacktestListResponse>({
     queryKey: ['backtest-history'],
     queryFn: () => backtestApi.list().then((r) => r.data),
   });
@@ -198,9 +206,14 @@ function Backtest() {
           {mutation.isPending ? 'Running...' : 'Run Backtest'}
         </button>
         {mutation.isError && (
-          <div className="text-sm text-red-400">
-            Failed to run backtest. Check inputs or data availability.
-          </div>
+          <ErrorMessage
+            message={
+              mutation.error instanceof Error
+                ? mutation.error.message
+                : 'Failed to run backtest. Check inputs or data availability.'
+            }
+            onRetry={() => mutation.mutate()}
+          />
         )}
       </div>
 
@@ -255,7 +268,18 @@ function Backtest() {
 
       <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
         <h2 className="text-lg font-medium mb-3">Recent Runs</h2>
-        {history?.runs?.length ? (
+        {historyError ? (
+          <ErrorMessage
+            message={
+              historyErrorData instanceof Error
+                ? historyErrorData.message
+                : 'Failed to load backtest history.'
+            }
+            onRetry={() => refetchHistory()}
+          />
+        ) : historyLoading ? (
+          <TableSkeleton rows={5} columns={6} />
+        ) : history?.runs?.length ? (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="text-gray-400">
