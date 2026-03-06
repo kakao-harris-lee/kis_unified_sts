@@ -542,6 +542,9 @@ class TradingOrchestrator:
         self._krx_open_api_client: Any | None = None
         self._krx_name_hydration_warned: bool = False
         self._symbol_metadata_cache: dict[str, dict[str, Any]] = {}
+        self._enriched_metadata_cache: dict[str, dict[str, Any]] = {}
+        self._cached_symbol_meta: dict[str, dict[str, Any]] = {}  # pure symbol_metadata
+        self._cached_daily_indicators: dict[str, dict[str, Any]] = {}  # pure daily indicators
         self._prev_day_volume_warned: bool = False
 
         # Redis keys namespaced by asset class to prevent collision
@@ -940,7 +943,6 @@ class TradingOrchestrator:
         self._indicator_resolver = None
         try:
             from services.trading.indicator_engine import StreamingIndicatorEngine
-            from shared.indicators.resolver import StreamingIndicatorResolver
 
             # Read indicator params from strategy entry configs
             bb_period, bb_std, rsi_period, high_period = 20, 2.0, 14, 5
@@ -980,24 +982,33 @@ class TradingOrchestrator:
                 staleness_seconds=staleness_seconds,
                 ema_periods=ema_periods,
             )
+            logger.info(
+                f"Indicator engine initialized (bb={bb_period}, "
+                f"std={bb_std}, rsi={rsi_period}, high_n={high_period})"
+            )
+        except Exception as e:
+            logger.warning(f"Indicator engine init failed: {e}")
+            self._indicator_engine = None
+
+        # Always instantiate resolver (even if engine is None) to avoid hot path fallback
+        try:
+            from shared.indicators.resolver import StreamingIndicatorResolver
+
             required_keys = (
                 tuple(self._strategy_manager.required_indicators)
                 if self._strategy_manager
                 else tuple()
             )
             self._indicator_resolver = StreamingIndicatorResolver(
-                engine=self._indicator_engine,
+                engine=self._indicator_engine,  # Can be None
                 required_keys=required_keys,
             )
             logger.info(
-                f"Indicator engine initialized (bb={bb_period}, "
-                f"std={bb_std}, rsi={rsi_period}, high_n={high_period}, "
-                f"required={len(required_keys)}, "
+                f"Indicator resolver initialized (required={len(required_keys)}, "
                 f"momentum_tf={list(self._indicator_resolver.timeframes)})"
             )
         except Exception as e:
-            logger.warning(f"Indicator engine init failed: {e}")
-            self._indicator_engine = None
+            logger.warning(f"Indicator resolver init failed: {e}")
             self._indicator_resolver = None
 
         # Hook futures WebSocket ticks into indicator engine and monitoring stream.
@@ -1204,6 +1215,12 @@ class TradingOrchestrator:
             self._refresh_universe_from_screener()
 
         self._sync_open_positions_metric()
+
+        # Ensure enriched metadata cache is built before hot path execution
+        # Cache may already be built via _refresh_daily_indicators() or
+        # _refresh_universe_from_screener(), but call explicitly to guarantee
+        # it's populated for futures or when Redis data isn't available yet
+        self._build_enriched_metadata_cache()
 
         logger.info(
             f"Components initialized: "
@@ -1640,12 +1657,77 @@ class TradingOrchestrator:
                 return False
 
             self._daily_indicators = indicators
+
+            # Invalidate enriched metadata cache after daily indicators update
+            self._invalidate_enriched_metadata_cache()
+
             if indicators:
                 logger.info(f"Loaded daily indicators for {len(indicators)} symbols")
             return True
         except Exception as e:
             logger.debug(f"Daily indicators not available: {e}")
             return False
+
+    def _build_enriched_metadata_cache(self):
+        """Build pre-merged metadata cache to avoid repeated dict operations in hot path.
+
+        Merges symbol_metadata + daily_indicators per symbol into _enriched_metadata_cache
+        for market_data enrichment. Also stores them separately for targeted use:
+        - _cached_symbol_meta: pure symbol_metadata (for context.metadata)
+        - _cached_daily_indicators: pure daily indicators (for indicators dict)
+
+        This cache is rebuilt whenever symbol_metadata or _daily_indicators change.
+        Pattern follows MarketDataCache from services/trading/data_provider.py.
+        """
+        self._enriched_metadata_cache.clear()
+        self._cached_symbol_meta.clear()
+        self._cached_daily_indicators.clear()
+
+        # Get all symbols from both metadata sources
+        metadata_symbols = set((self.config.symbol_metadata or {}).keys())
+        daily_symbols = set(self._daily_indicators.keys())
+        all_symbols = metadata_symbols | daily_symbols
+
+        for symbol in all_symbols:
+            # Start with symbol_metadata (static watchlist metadata)
+            meta = (self.config.symbol_metadata or {}).get(symbol, {})
+            enriched = dict(meta) if meta else {}
+
+            # Ensure code is always present
+            enriched["code"] = symbol
+
+            # Merge daily indicators (pre-market scanner data)
+            daily_ind = self._daily_indicators.get(symbol, {})
+            if daily_ind:
+                enriched.update(daily_ind)
+
+            # Store merged cache for market_data enrichment
+            self._enriched_metadata_cache[symbol] = enriched
+
+            # Store separated caches for targeted use
+            if meta:
+                self._cached_symbol_meta[symbol] = meta
+            if daily_ind:
+                self._cached_daily_indicators[symbol] = daily_ind
+
+        logger.debug(
+            f"Built enriched metadata cache: {len(self._enriched_metadata_cache)} symbols "
+            f"(metadata={len(metadata_symbols)}, daily={len(daily_symbols)})"
+        )
+
+    def _invalidate_enriched_metadata_cache(self):
+        """Invalidate and rebuild enriched metadata cache.
+
+        Called whenever symbol_metadata or _daily_indicators are updated to ensure
+        the pre-merged cache stays synchronized. This triggers a full cache rebuild
+        by calling _build_enriched_metadata_cache().
+
+        Usage:
+            - After _apply_universe_changes() updates symbol_metadata
+            - After _refresh_daily_indicators() updates _daily_indicators
+        """
+        logger.debug("Invalidating enriched metadata cache")
+        self._build_enriched_metadata_cache()
 
     def _load_ranked_targets(self, redis) -> tuple[list[str], dict[str, str], dict[str, dict[str, Any]]]:
         """Load ranked symbols from fusion targets first, then screener fallback."""
@@ -2014,6 +2096,9 @@ class TradingOrchestrator:
                     f"retained {len(stable_symbols) - len(added)}, "
                     f"warm {warm_n}, warming {warming_n})"
                 )
+
+        # Invalidate enriched metadata cache after universe changes
+        self._invalidate_enriched_metadata_cache()
 
     def _check_strategy_warnings(self):
         """Warn if strategy prerequisites (like prev_day_volume) are missing."""
@@ -3117,13 +3202,12 @@ class TradingOrchestrator:
                 if self._indicator_engine and not self._indicator_engine.is_warm(symbol):
                     return []
 
-                # Enrich with watchlist/baseline metadata (if present).
-                meta = (self.config.symbol_metadata or {}).get(symbol, {})
-                enriched = dict(symbol_data)
-                enriched["code"] = symbol
-                if meta.get("name"):
-                    enriched["name"] = meta["name"]
-                enriched.update(meta)
+                # Use pre-computed enriched metadata cache (includes symbol_metadata + daily_indicators)
+                cached_meta = self._enriched_metadata_cache.get(symbol, {})
+                enriched = {**symbol_data, **cached_meta, "code": symbol}
+
+                # Preserve pure symbol_metadata for context (without daily indicators)
+                meta = self._cached_symbol_meta.get(symbol, {})
 
                 # Inject streaming indicators (BB/RSI/RL/momentum)
                 indicators: dict[str, Any] = {}
@@ -3133,6 +3217,7 @@ class TradingOrchestrator:
                         indicators = resolver.collect_entry_indicators(symbol)
                     else:
                         # Backward-safe fallback (resolve from required keys without hardcoded timeframes).
+                        logger.warning("Indicator resolver not initialized; using fallback instantiation in hot path")
                         try:
                             from shared.indicators.resolver import StreamingIndicatorResolver
 
@@ -3146,10 +3231,9 @@ class TradingOrchestrator:
                     if indicators:
                         enriched.update(indicators)
 
-                # Inject daily indicators (for daily_pullback strategy)
-                daily_ind = getattr(self, "_daily_indicators", {}).get(symbol, {})
+                # Add daily indicators to indicators dict (kept separate from symbol metadata)
+                daily_ind = self._cached_daily_indicators.get(symbol, {})
                 if daily_ind:
-                    enriched.update(daily_ind)
                     indicators.update(daily_ind)
 
                 context = EntryContext(
@@ -3302,6 +3386,7 @@ class TradingOrchestrator:
                             indicators = resolver.collect_exit_indicators(symbol)
                         else:
                             # Backward-safe fallback (resolve from required keys without hardcoded timeframes).
+                            logger.warning("Indicator resolver not initialized; using fallback instantiation in exit hot path")
                             try:
                                 from shared.indicators.resolver import StreamingIndicatorResolver
 
@@ -3316,9 +3401,10 @@ class TradingOrchestrator:
                             data[symbol] = {**data[symbol], **indicators}
 
             # Inject daily indicators for exit (chandelier_exit needs daily ATR/HH)
+            # Use pre-computed daily indicators cache (without symbol metadata)
             for symbol in symbols:
                 if symbol in data and isinstance(data[symbol], dict):
-                    daily_ind = getattr(self, "_daily_indicators", {}).get(symbol, {})
+                    daily_ind = self._cached_daily_indicators.get(symbol, {})
                     if daily_ind:
                         data[symbol] = {**data[symbol], **daily_ind}
 

@@ -38,8 +38,12 @@ def _make_orchestrator(**kwargs):
     orch._order_queue_size = 0
     orch.total_pnl = 0.0
     orch._symbol_metadata_cache = {}
+    orch._enriched_metadata_cache = {}
+    orch._cached_symbol_meta = {}
+    orch._cached_daily_indicators = {}
     orch._symbol_last_seen = {}
     orch._symbol_names = {}
+    orch._daily_indicators = {}
     orch._prev_day_volume_warned = False
     orch._universe_retention_seconds = 600
     orch._max_universe_size = 40
