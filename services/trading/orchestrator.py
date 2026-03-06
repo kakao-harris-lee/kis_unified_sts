@@ -45,7 +45,7 @@ from services.monitoring.metrics import get_metrics_collector
 from shared.models.position import Position, PositionSide, PositionState
 from shared.models.signal import Signal, ExitSignal
 from shared.config.loader import ConfigLoader
-from shared.strategy.base import EntryContext
+from shared.strategy.base import EntryContext, MarketStateAdapter
 from shared.utils.calc import calc_order_quantity
 from shared.risk.manager import RiskManager
 from shared.risk.config import RiskConfig
@@ -3412,7 +3412,7 @@ class TradingOrchestrator:
             signals = await self._strategy_manager.check_exits(
                 positions=positions,
                 market_data=data,
-                market_state=self._current_regime,
+                market_state=MarketStateAdapter(self._current_regime) if self._current_regime else None,
             )
 
             # Execute exit orders (bounded parallelism)
