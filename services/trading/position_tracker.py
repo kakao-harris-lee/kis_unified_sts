@@ -937,11 +937,41 @@ class PositionTracker:
     async def save_closed_to_db(self, position: Position) -> bool:
         """Accumulate closed position for batch insertion to ClickHouse.
 
+        This method uses a batching strategy to optimize database performance by
+        accumulating closed positions and flushing them in bulk. Individual row
+        inserts create excessive parts in ClickHouse MergeTree tables, triggering
+        frequent background merges that degrade read performance.
+
+        Batching Behavior:
+            - Positions are accumulated in an in-memory buffer (_pending_swing_positions)
+            - Not immediately written to the database
+            - Batched inserts reduce ClickHouse connection overhead and write amplification
+
+        Flush Triggers (positions are written to DB when):
+            1. Batch size threshold reached (config.batch_size, default 50)
+            2. Timer-based auto-flush (every config.flush_interval_seconds, default 5s)
+            3. Manual flush via flush_pending_positions()
+            4. Graceful shutdown via stop_auto_flush()
+
+        For critical scenarios requiring immediate persistence (e.g., testing),
+        call flush_pending_positions() immediately after this method.
+
         Args:
             position: Closed position with exit_price/exit_time set.
 
         Returns:
-            True if accumulated successfully
+            True if accumulated successfully, False if position validation fails
+            or accumulation errors occur.
+
+        Example:
+            ```python
+            # Normal usage - automatic batching
+            await tracker.save_closed_to_db(position)
+
+            # Force immediate flush (e.g., for testing or critical trades)
+            await tracker.save_closed_to_db(position)
+            await tracker.flush_pending_positions()
+            ```
         """
         if not position.exit_price or not position.exit_time:
             return False
@@ -991,12 +1021,42 @@ class PositionTracker:
     async def save_rl_trade_to_db(self, position: Position, asset_class: str) -> bool:
         """Accumulate closed RL trade for batch insertion to ClickHouse.
 
+        This method uses a batching strategy to optimize database performance by
+        accumulating closed RL trades and flushing them in bulk. During backtesting
+        with Optuna, hundreds of positions may close per trial, making batching
+        critical to avoid overwhelming ClickHouse with individual inserts.
+
+        Batching Behavior:
+            - Trades are accumulated in an in-memory buffer (_pending_rl_trades)
+            - Not immediately written to the database
+            - Batched inserts reduce ClickHouse connection overhead and write amplification
+
+        Flush Triggers (trades are written to DB when):
+            1. Batch size threshold reached (config.batch_size, default 50)
+            2. Timer-based auto-flush (every config.flush_interval_seconds, default 5s)
+            3. Manual flush via flush_pending_positions()
+            4. Graceful shutdown via stop_auto_flush()
+
+        For critical scenarios requiring immediate persistence (e.g., testing),
+        call flush_pending_positions() immediately after this method.
+
         Args:
             position: Closed position with exit_price/exit_time set.
             asset_class: Asset class of the trade (e.g., 'futures', 'stock')
 
         Returns:
-            True if accumulated successfully
+            True if accumulated successfully, False if position validation fails
+            or accumulation errors occur.
+
+        Example:
+            ```python
+            # Normal usage - automatic batching
+            await tracker.save_rl_trade_to_db(position, "futures")
+
+            # Force immediate flush (e.g., for testing or critical trades)
+            await tracker.save_rl_trade_to_db(position, "futures")
+            await tracker.flush_pending_positions()
+            ```
         """
         if not position.exit_price or not position.exit_time:
             return False
