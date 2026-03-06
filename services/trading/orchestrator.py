@@ -47,6 +47,9 @@ from shared.models.signal import Signal, ExitSignal
 from shared.config.loader import ConfigLoader
 from shared.strategy.base import EntryContext
 from shared.utils.calc import calc_order_quantity
+from shared.risk.manager import RiskManager
+from shared.risk.config import RiskConfig
+from shared.risk.models import DrawdownLevel
 
 try:
     # Optional: only used when paper_trading=True
@@ -479,6 +482,9 @@ class TradingOrchestrator:
         self._data_provider: MarketDataProvider | None = None
         self._strategy_manager: StrategyManager | None = None
         self._position_tracker: PositionTracker | None = None
+        self._risk_manager: RiskManager | None = None
+        self._risk_block_alert_sent: bool = False  # Track if risk block alert has been sent
+        self._last_risk_save_time: float = 0.0  # Track last Redis save time for risk state
         self._paper_broker: Any | None = None
         self._kis_client: Any | None = None
         self._order_executor: Any | None = None
@@ -885,6 +891,24 @@ class TradingOrchestrator:
             config=PositionTrackerConfig(max_positions=global_max, database=db_name)
         )
 
+        # Risk manager (portfolio-level cross-asset risk management)
+        try:
+            risk_config_data = ConfigLoader.load("risk_management.yaml")
+            risk_params = risk_config_data.get("risk_management", {})
+            # Use orchestrator's initial capital if not specified in risk config
+            if "initial_capital" not in risk_params:
+                risk_params["initial_capital"] = self.config.initial_capital
+            risk_config = RiskConfig.from_dict(risk_params)
+            self._risk_manager = RiskManager(risk_config)
+            logger.info(
+                "Risk manager initialized: daily_loss_limit=%.1f%%, max_positions=%d",
+                risk_config.daily_loss_limit_pct,
+                risk_config.max_total_positions,
+            )
+        except Exception as e:
+            logger.warning(f"Risk manager init failed: {e}, continuing without risk management")
+            self._risk_manager = None
+
         # Adaptive position sizing based on strategy win rate
         try:
             from shared.config.loader import ConfigLoader
@@ -1128,6 +1152,19 @@ class TradingOrchestrator:
             logger.info("Position recovery disabled by env (STS_DISABLE_POSITION_RECOVERY)")
         elif self._position_tracker:
             await self._recover_positions_from_redis()
+
+        # --- Risk state recovery from Redis ---
+        if self._risk_manager:
+            recovered = await self._risk_manager.load_from_redis()
+            if recovered:
+                logger.info(
+                    f"Risk state recovered: "
+                    f"daily_pnl={self._risk_manager.state.daily_pnl:.2f}, "
+                    f"positions={self._risk_manager.metrics.total_positions}, "
+                    f"blocked={self._risk_manager.state.is_blocked}"
+                )
+            else:
+                logger.info("No risk state to recover (fresh start)")
 
         # --- Broker position verification ---
         await self._verify_positions_with_broker()
@@ -2693,6 +2730,10 @@ class TradingOrchestrator:
                     await self._update_market_snapshot(data)
                     self._feed_indicators(data)
                     self._log_indicator_diagnostics(tick_count, diag_interval, data)
+
+                # Update risk manager with current positions
+                await self._update_risk_state(tick_count, diag_interval)
+
                 self._record_market_metrics()
 
             except Exception as e:
@@ -2763,6 +2804,64 @@ class TradingOrchestrator:
                 f"{warm_count} warm, "
                 f"sample {sample_sym}={sample_candles} candles"
             )
+
+    async def _update_risk_state(self, tick_count: int, diag_interval: int):
+        """Update risk manager with current positions and save periodically to Redis.
+
+        Args:
+            tick_count: Current tick counter
+            diag_interval: Diagnostic logging interval
+        """
+        if not self._risk_manager or not self._position_tracker:
+            return
+
+        try:
+            # Update portfolio metrics from current positions
+            positions_by_asset = {self.config.asset_class: list(self._position_tracker.positions)}
+            self._risk_manager.update_positions(positions_by_asset)
+
+            # Periodic save to Redis (every 60 seconds)
+            current_time = time.monotonic()
+            if current_time - self._last_risk_save_time >= 60.0:
+                await self._risk_manager.save_to_redis()
+                self._last_risk_save_time = current_time
+
+                # Log risk state on save
+                if tick_count % diag_interval == 0:
+                    state = self._risk_manager.get_risk_state()
+                    metrics = self._risk_manager.get_portfolio_metrics()
+                    logger.info(
+                        f"Risk state: positions={metrics.total_positions}, "
+                        f"daily_pnl={state.daily_pnl_pct:.2f}%, "
+                        f"drawdown={state.drawdown_pct:.2f}% ({state.drawdown_level.value}), "
+                        f"blocked={state.is_blocked}"
+                    )
+
+            # Check for drawdown alerts and send if threshold crossed
+            state = self._risk_manager.get_risk_state()
+            if state.drawdown_level in (DrawdownLevel.DANGER, DrawdownLevel.CRITICAL):
+                # Only alert once per level
+                alert_key = f"drawdown_{state.drawdown_level.value}"
+                if alert_key not in state.alerts_sent:
+                    try:
+                        metrics = self._risk_manager.get_portfolio_metrics()
+                        message = (
+                            f"🚨 RISK ALERT - DRAWDOWN_{state.drawdown_level.value.upper()}\n"
+                            f"시간: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+                            f"<b>포트폴리오 드로다운 경고</b>\n\n"
+                            f"레벨: {state.drawdown_level.value.upper()}\n"
+                            f"현재 드로다운: {state.drawdown_pct:.2f}%\n"
+                            f"포지션 수: {metrics.total_positions}\n"
+                            f"일간 손익: {state.daily_pnl_pct:.2f}%\n"
+                            f"총 노출: {metrics.total_exposure_pct:.1f}%"
+                        )
+                        await self._notify(message)
+                        state.alerts_sent.add(alert_key)
+                    except Exception as e:
+                        logger.warning(f"Failed to send drawdown alert: {e}")
+
+        except Exception as e:
+            logger.error(f"Risk state update failed: {e}", exc_info=True)
 
     def _record_market_metrics(self):
         """Record staleness metrics."""
@@ -3255,6 +3354,35 @@ class TradingOrchestrator:
             # Re-check global position limit under lock
             if not self._position_tracker.can_open_position(signal.code):
                 logger.debug(f"Position limit reached, skipping entry for {signal.code}")
+                return
+
+            # Risk management check - portfolio-level limits
+            if self._risk_manager and not self._risk_manager.can_open_position(self.config.asset_class):
+                logger.warning(
+                    f"Risk manager blocked entry for {signal.code} "
+                    f"(asset_class={self.config.asset_class})"
+                )
+
+                # Send Telegram alert on first block (avoid spam)
+                if not self._risk_block_alert_sent:
+                    self._risk_block_alert_sent = True
+                    try:
+                        risk_state = self._risk_manager.get_risk_state()
+                        portfolio_metrics = self._risk_manager.get_portfolio_metrics()
+                        alert_message = (
+                            f"🚨 RISK ALERT - POSITION_ENTRY_BLOCKED\n"
+                            f"종목: {signal.code}\n"
+                            f"자산군: {self.config.asset_class}\n\n"
+                            f"<b>포트폴리오 현황:</b>\n"
+                            f"총 포지션: {portfolio_metrics.total_positions}/{self._risk_manager.config.max_total_positions}\n"
+                            f"일일 손익: {risk_state.daily_pnl_pct:.2f}%\n"
+                        )
+                        if risk_state.is_blocked:
+                            alert_message += f"차단 사유: {risk_state.block_reason.name}\n"
+                        await self._notify(alert_message)
+                    except Exception as e:
+                        logger.error(f"Failed to send risk block alert: {e}")
+
                 return
 
             # Per-strategy position limit check

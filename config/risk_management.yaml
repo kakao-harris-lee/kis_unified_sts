@@ -1,0 +1,141 @@
+# Risk Management Configuration
+# Portfolio-level risk controls and limits for cross-asset trading
+# Tracks aggregate exposure across stocks and futures to prevent excessive drawdowns
+
+risk_management:
+  # =============================================================================
+  # Portfolio-Level Risk Limits
+  # =============================================================================
+
+  # Daily loss limit as percentage of initial capital
+  # Trading will be blocked when daily P&L drops below this threshold
+  daily_loss_limit_pct: ${RISK_DAILY_LOSS_LIMIT_PCT:5.0}
+
+  # Maximum number of concurrent positions across all asset classes
+  max_total_positions: ${RISK_MAX_TOTAL_POSITIONS:20}
+
+  # Initial capital for risk calculations (KRW)
+  # This is used to calculate absolute loss limits from percentages
+  initial_capital: ${RISK_INITIAL_CAPITAL:10000000}
+
+  # =============================================================================
+  # Portfolio Drawdown Monitoring
+  # =============================================================================
+
+  drawdown:
+    # Enable continuous drawdown monitoring
+    enabled: true
+
+    # Alert thresholds (percentage drawdown from peak portfolio value)
+    thresholds:
+      # Warning level - informational alert via Telegram
+      warning: 3.0
+
+      # Danger level - heightened alert, consider reducing exposure
+      danger: 5.0
+
+      # Critical level - immediate action required, trading may be halted
+      critical: 7.0
+
+    # Track peak portfolio value over this many trading days
+    lookback_days: 30
+
+    # Send alert only once per threshold level until recovery
+    alert_once_per_level: true
+
+  # =============================================================================
+  # Per-Asset Class Limits
+  # =============================================================================
+
+  asset_limits:
+    # Stock trading limits
+    stock:
+      # Maximum concurrent stock positions
+      max_positions: ${RISK_STOCK_MAX_POSITIONS:15}
+
+      # Maximum position size as percentage of portfolio
+      max_position_size_pct: ${RISK_STOCK_MAX_POSITION_SIZE_PCT:10.0}
+
+      # Maximum total stock exposure as percentage of portfolio
+      max_total_exposure_pct: ${RISK_STOCK_MAX_EXPOSURE_PCT:80.0}
+
+    # Futures trading limits
+    futures:
+      # Maximum concurrent futures positions
+      max_positions: ${RISK_FUTURES_MAX_POSITIONS:5}
+
+      # Maximum position size as percentage of portfolio
+      # Futures use leverage, so limit is tighter
+      max_position_size_pct: ${RISK_FUTURES_MAX_POSITION_SIZE_PCT:15.0}
+
+      # Maximum total futures exposure as percentage of portfolio
+      max_total_exposure_pct: ${RISK_FUTURES_MAX_EXPOSURE_PCT:50.0}
+
+  # =============================================================================
+  # Position Sizing Controls
+  # =============================================================================
+
+  position_sizing:
+    # Reduce position sizes when approaching risk limits
+    adaptive_sizing_enabled: true
+
+    # Scale down position size when daily P&L approaches loss limit
+    # e.g., at 80% of daily loss limit, reduce size by 50%
+    scale_down_at_pct: 0.8
+    scale_down_factor: 0.5
+
+    # Minimum position size (KRW) - below this, don't open position
+    min_position_value: 1000000
+
+  # =============================================================================
+  # Risk Monitoring & Recovery
+  # =============================================================================
+
+  monitoring:
+    # Update risk metrics on every position change
+    update_on_position_change: true
+
+    # Periodic state persistence to Redis (seconds)
+    save_interval_seconds: 60
+
+    # Daily reset time (KST) - resets daily P&L tracking
+    daily_reset_time: "09:00"
+
+    # Auto-unblock after daily reset if no critical drawdown
+    auto_unblock_on_reset: true
+
+  # =============================================================================
+  # Notifications
+  # =============================================================================
+
+  notifications:
+    # Send Telegram alerts for risk events
+    enabled: true
+
+    # Events to notify
+    events:
+      daily_loss_limit_breached: true
+      drawdown_threshold_crossed: true
+      position_limit_reached: true
+      exposure_limit_approached: true
+      trading_blocked: true
+      trading_unblocked: true
+
+    # Use critical flag to bypass time-of-day restrictions
+    use_critical_flag: true
+
+  # =============================================================================
+  # Redis Persistence
+  # =============================================================================
+
+  redis:
+    # Redis key prefix for risk state
+    key_prefix: "risk:portfolio"
+
+    # State TTL (seconds) - 7 days
+    state_ttl: 604800
+
+    # Use Redis DB 1 (DB 0 is for other projects)
+    db: 1
+
+
