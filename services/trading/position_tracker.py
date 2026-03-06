@@ -295,9 +295,15 @@ class PositionTracker:
         self._pending_rl_trades: list[dict[str, Any]] = []
         self._batch_lock: asyncio.Lock = asyncio.Lock()
 
+        # Auto-flush background task
+        self._auto_flush_task: asyncio.Task | None = None
+
         logger.info(
             f"PositionTracker initialized: max_positions={self.config.max_positions}"
         )
+
+        # Start auto-flush task if configured
+        self._start_auto_flush_task()
 
     @property
     def positions(self) -> list[Position]:
@@ -1139,6 +1145,47 @@ class PositionTracker:
             )
 
         return swing_count, rl_count
+
+    def _start_auto_flush_task(self) -> None:
+        """Start background timer-based flush task.
+
+        Creates an asyncio task that periodically flushes pending positions
+        based on the configured flush_interval_seconds. The task runs
+        indefinitely with robust error handling.
+
+        The task is only started if flush_interval_seconds > 0.
+        """
+        if self.config.flush_interval_seconds <= 0:
+            logger.debug("Auto-flush disabled (flush_interval_seconds <= 0)")
+            return
+
+        async def _auto_flush_loop():
+            """Background task that periodically flushes pending positions."""
+            logger.info(
+                f"Auto-flush task started (interval={self.config.flush_interval_seconds}s)"
+            )
+            while True:
+                try:
+                    await asyncio.sleep(self.config.flush_interval_seconds)
+                    swing_count, rl_count = await self.flush_pending_positions()
+
+                    # Only log if we actually flushed something
+                    if swing_count > 0 or rl_count > 0:
+                        logger.info(
+                            f"Auto-flush triggered: {swing_count} swing positions, "
+                            f"{rl_count} RL trades"
+                        )
+                except asyncio.CancelledError:
+                    logger.info("Auto-flush task cancelled")
+                    break
+                except Exception as e:
+                    logger.error(f"Error in auto-flush task: {e}", exc_info=True)
+                    # Continue loop despite errors for robustness
+                    await asyncio.sleep(1)  # Brief delay before retry
+
+        # Create and store the task
+        self._auto_flush_task = asyncio.create_task(_auto_flush_loop())
+        logger.info("Auto-flush task created")
 
     @staticmethod
     def _calc_realized_pnl(position: Position) -> float:
