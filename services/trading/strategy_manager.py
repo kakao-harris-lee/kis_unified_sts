@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING, Any
 
 from shared.models.position import Position
 from shared.models.signal import ExitSignal, Signal
-from shared.strategy.base import EntryContext, ExitContext, TradingStrategy
+from shared.strategy.base import EntryContext, ExitContext, MarketStateProtocol, TradingStrategy
 from shared.strategy.registry import (
     StrategyFactory,
     register_builtin_components,
@@ -319,7 +319,7 @@ class StrategyManager:
         self,
         positions: list[Position],
         market_data: dict[str, Any],
-        market_state: Any | None = None,
+        market_state: MarketStateProtocol | None = None,
     ) -> list[ExitSignal]:
         """Check exit signals for positions
 
@@ -386,7 +386,7 @@ class StrategyManager:
         strategy: TradingStrategy,
         strategy_positions: list[Position],
         market_data: dict[str, Any],
-        market_state: Any | None,
+        market_state: MarketStateProtocol | None,
     ) -> list[ExitSignal]:
         """Check exits with exception handling.
 
