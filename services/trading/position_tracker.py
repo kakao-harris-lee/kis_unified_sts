@@ -43,6 +43,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Protocol
 
+from shared.exceptions import InfrastructureError, TradingSystemError, ValidationError
 from shared.models.position import Position, PositionSide, PositionState
 from shared.utils.calc import validate_price
 
@@ -930,7 +931,7 @@ class PositionTracker:
             logger.info(f"Saved {len(rows)} swing positions to DB")
             return len(rows)
 
-        except Exception as e:
+        except InfrastructureError as e:
             logger.error(f"Failed to save swing positions: {e}")
             return 0
 
@@ -1014,7 +1015,7 @@ class PositionTracker:
 
             return True
 
-        except Exception as e:
+        except (ValidationError, InfrastructureError) as e:
             logger.error(f"Failed to accumulate closed position {position.id[:8]}: {e}")
             return False
 
@@ -1106,7 +1107,7 @@ class PositionTracker:
 
             return True
 
-        except Exception as e:
+        except (ValidationError, InfrastructureError) as e:
             logger.error(f"Failed to accumulate RL trade {position.id[:8]}: {e}")
             return False
 
@@ -1157,7 +1158,7 @@ class PositionTracker:
             logger.info(f"Flushed {len(rows)} {label} batch to DB")
             return len(rows), pending_list
 
-        except Exception as e:
+        except InfrastructureError as e:
             # Re-enqueue rows so they are retried on the next flush
             async with self._batch_lock:
                 pending_list.extend(rows)
@@ -1253,7 +1254,7 @@ class PositionTracker:
                 except asyncio.CancelledError:
                     logger.info("Auto-flush task cancelled")
                     break
-                except Exception as e:
+                except TradingSystemError as e:
                     logger.error(f"Error in auto-flush task: {e}", exc_info=True)
                     # Continue loop despite errors for robustness
                     await asyncio.sleep(1)  # Brief delay before retry
@@ -1279,7 +1280,7 @@ class PositionTracker:
                 await self._auto_flush_task
             except asyncio.CancelledError:
                 logger.debug("Auto-flush task cancelled successfully")
-            except Exception as e:
+            except TradingSystemError as e:
                 logger.warning(f"Error while stopping auto-flush task: {e}")
 
         # Final flush to ensure all pending positions are written
@@ -1388,7 +1389,7 @@ class PositionTracker:
                 logger.info(f"Loaded {loaded} swing positions from DB")
             return loaded
 
-        except Exception as e:
+        except InfrastructureError as e:
             logger.error(f"Failed to load swing positions: {e}")
             return 0
 
