@@ -192,7 +192,7 @@ services:
     restart: unless-stopped
     command: ["python", "/app/services/monitoring/stream_exporter.py"]
     ports:
-      - "9093:9093"
+      - "127.0.0.1:9093:9093"
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
