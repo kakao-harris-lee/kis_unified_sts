@@ -23,8 +23,10 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
+import redis
 from prometheus_client import Counter, Gauge, start_http_server
 
+from shared.exceptions import InfrastructureError, ValidationError
 from shared.streaming.client import RedisClient
 from shared.streaming.message import StreamMessage
 
@@ -269,8 +271,19 @@ class StreamExporter:
             except KeyboardInterrupt:
                 logger.info("Stream exporter stopped by user")
                 return
-            except Exception as e:
+            except redis.RedisError as e:
+                logger.error(
+                    "Redis error in stream exporter loop: %s", e, exc_info=True
+                )
+                time.sleep(1.0)
+            except (InfrastructureError, ValidationError) as e:
                 logger.error("Stream exporter loop error: %s", e, exc_info=True)
+                time.sleep(1.0)
+            except Exception as e:
+                # Unexpected error (likely programming bug)
+                logger.error(
+                    "Unexpected error in stream exporter loop: %s", e, exc_info=True
+                )
                 time.sleep(1.0)
 
     def _process_events(
@@ -296,8 +309,14 @@ class StreamExporter:
         try:
             msg = StreamMessage.from_raw(stream_name, message_id, dict(raw_fields))
             payload = msg.data
-        except Exception:
+        except (ValidationError, ValueError, KeyError, TypeError) as e:
             self.parse_errors_total.labels(stream=stream_name).inc()
+            logger.debug(
+                "Failed to parse stream message: stream=%s message_id=%s error=%s",
+                stream_name,
+                message_id,
+                e,
+            )
             return
 
         symbol = str(payload.get("symbol") or payload.get("code") or "").strip()
@@ -462,8 +481,10 @@ class StreamExporter:
         for stream in self.config.streams:
             try:
                 self.stream_length.labels(stream=stream).set(self.client.xlen(stream))
-            except Exception:
-                logger.debug("xlen failed for stream=%s", stream, exc_info=True)
+            except (redis.RedisError, InfrastructureError) as e:
+                logger.debug(
+                    "Redis xlen operation failed for stream=%s: %s", stream, e
+                )
 
         # Flush finished minute bars even when there is no tick in next minute.
         for key, state in list(self._bars.items()):
