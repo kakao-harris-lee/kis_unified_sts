@@ -26,6 +26,9 @@ _env_config_cache: Any = None
 # Scaled market features cache — avoids duplicate scaler.transform() within same bar
 _scaled_market_cache: dict[int, Any] = {}  # key: hash of raw market features
 _scaled_market_cache_size: int = 120  # keep last N entries
+# Time features cache — avoids redundant numpy trig calculations within same minute
+_time_feature_cache: dict[int, list[float]] = {}  # key: timestamp rounded to minute
+_time_feature_cache_size: int = 120  # keep last N entries
 
 
 def load_rl_model(model_path: str, device: Any) -> Any | None:
@@ -172,20 +175,30 @@ def build_rl_observation(
         if timestamp.tzinfo
         else timestamp.replace(tzinfo=KST)
     )
-    start_dt = now.replace(
-        hour=market_open[0], minute=market_open[1], second=0, microsecond=0
-    )
-    end_dt = now.replace(
-        hour=market_close[0], minute=market_close[1], second=0, microsecond=0
-    )
-    total_minutes = max(1.0, (end_dt - start_dt).total_seconds() / 60.0)
-    elapsed = (now - start_dt).total_seconds() / 60.0
-    progress = max(0.0, min(1.0, elapsed / total_minutes))
-    time_features = [
-        progress,
-        float(np.sin(2 * np.pi * progress)),
-        float(np.cos(2 * np.pi * progress)),
-    ]
+    # Cache time features — Entry/Exit share same time state per minute
+    time_cache_key = int(now.replace(second=0, microsecond=0).timestamp())
+    if time_cache_key in _time_feature_cache:
+        time_features = _time_feature_cache[time_cache_key]
+    else:
+        start_dt = now.replace(
+            hour=market_open[0], minute=market_open[1], second=0, microsecond=0
+        )
+        end_dt = now.replace(
+            hour=market_close[0], minute=market_close[1], second=0, microsecond=0
+        )
+        total_minutes = max(1.0, (end_dt - start_dt).total_seconds() / 60.0)
+        elapsed = (now - start_dt).total_seconds() / 60.0
+        progress = max(0.0, min(1.0, elapsed / total_minutes))
+        time_features = [
+            progress,
+            float(np.sin(2 * np.pi * progress)),
+            float(np.cos(2 * np.pi * progress)),
+        ]
+        # Evict oldest entries if cache is full
+        if len(_time_feature_cache) >= _time_feature_cache_size:
+            oldest = next(iter(_time_feature_cache))
+            del _time_feature_cache[oldest]
+        _time_feature_cache[time_cache_key] = time_features
 
     obs = np.array(
         market_array[0].tolist()
