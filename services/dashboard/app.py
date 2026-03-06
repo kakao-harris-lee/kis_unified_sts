@@ -42,7 +42,7 @@ OPENAPI_TAGS = [
 def create_app(
     title: str = "KIS Unified Trading Dashboard",
     debug: bool = False,
-    require_auth: bool = False,
+    require_auth: Optional[bool] = None,
     api_key: Optional[str] = None,
     rate_limit: int = 0,
     rate_limit_window: int = 60,
@@ -52,11 +52,19 @@ def create_app(
     Args:
         title: Application title.
         debug: Enable debug mode.
-        require_auth: If True, require API key authentication.
-        api_key: The API key to use for authentication (required if require_auth=True).
+        require_auth: If True, require API key authentication. If None (default), enables auth if api_key is available.
+        api_key: The API key to use for authentication. Reads from DASHBOARD_API_KEY env var if not provided.
         rate_limit: Maximum requests per window. 0 disables rate limiting.
         rate_limit_window: Rate limit window in seconds.
     """
+    # Read API key from environment if not provided
+    if api_key is None:
+        api_key = os.environ.get("DASHBOARD_API_KEY")
+
+    # Enable authentication by default if API key is available
+    if require_auth is None:
+        require_auth = bool(api_key)
+
     app = FastAPI(
         title=title,
         description="Real-time trading dashboard for KIS unified platform",
