@@ -44,4 +44,3 @@ services:
       - '--storage.tsdb.path=/prometheus'
       - '--storage.tsdb.retention.time=3d'
       - '--web.enable-lifecycle'
-      - '--web.enable-admin-api'
