@@ -1214,6 +1214,12 @@ class TradingOrchestrator:
 
         self._sync_open_positions_metric()
 
+        # Ensure enriched metadata cache is built before hot path execution
+        # Cache may already be built via _refresh_daily_indicators() or
+        # _refresh_universe_from_screener(), but call explicitly to guarantee
+        # it's populated for futures or when Redis data isn't available yet
+        self._build_enriched_metadata_cache()
+
         logger.info(
             f"Components initialized: "
             f"{len(self._strategy_manager.strategies)} strategies, "
