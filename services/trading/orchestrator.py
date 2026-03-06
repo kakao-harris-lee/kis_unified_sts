@@ -1649,6 +1649,10 @@ class TradingOrchestrator:
                 return False
 
             self._daily_indicators = indicators
+
+            # Invalidate enriched metadata cache after daily indicators update
+            self._invalidate_enriched_metadata_cache()
+
             if indicators:
                 logger.info(f"Loaded daily indicators for {len(indicators)} symbols")
             return True
