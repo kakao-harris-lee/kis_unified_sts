@@ -290,6 +290,11 @@ class PositionTracker:
             maxlen=self.config.max_closed_positions
         )
 
+        # Batch accumulators for DB inserts
+        self._pending_swing_positions: list[dict[str, Any]] = []
+        self._pending_rl_trades: list[dict[str, Any]] = []
+        self._batch_lock: asyncio.Lock = asyncio.Lock()
+
         logger.info(
             f"PositionTracker initialized: max_positions={self.config.max_positions}"
         )
