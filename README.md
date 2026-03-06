@@ -171,20 +171,23 @@ strategy:
 
 ### 진입 전략 (Entry Strategies)
 
-| 전략 | 설명 | 자산군 |
-|------|------|--------|
-| BB Reversion | 볼린저 밴드 + RSI 평균회귀 | 주식 |
-| V35 Optimized | BB + RSI + MACD 복합 지표 | 주식 |
-| OFI Momentum | 주문흐름 불균형 기반 | 선물 |
-| Microstructure | 복합 마이크로스트럭처 | 선물 |
+| 전략 | 설명 | 자산군 | 상태 |
+|------|------|--------|------|
+| **trend_pullback** | 일봉 필터 + BB/Williams 풀백 진입 + ATR 동적 청산 | 주식 | 검증 중 |
+| **momentum_breakout** | 일봉 고가 근접 + 거래량 트렌드 + 돌파 진입 + ATR 청산 | 주식 | 검증 중 |
+| BB Reversion | 볼린저 밴드 + RSI 평균회귀 | 주식 | 비활성화 |
+| V35 Optimized | BB + RSI + MACD 복합 지표 | 주식 | 레거시 |
+| OFI Momentum | 주문흐름 불균형 기반 | 선물 | 레거시 |
+| Microstructure | 복합 마이크로스트럭처 | 선물 | 레거시 |
 
 ### 청산 전략 (Exit Strategies)
 
-| 전략 | 설명 |
-|------|------|
-| 3-Stage Exit | Survival → Breakeven → Maximize |
-| Trailing Stop | 동적 트레일링 스탑 |
-| Time-Based | 시간 기반 청산 |
+| 전략 | 설명 | 상태 |
+|------|------|------|
+| **ATR Dynamic** | ATR 기반 동적 스탑/트레일 (신규 전략용) | 활성 |
+| 3-Stage Exit | Survival → Breakeven → Maximize | 활성 |
+| Trailing Stop | 동적 트레일링 스탑 | 활성 |
+| Time-Based | 시간 기반 청산 | 활성 |
 
 ### 3-Stage Exit 동작 원리
 
@@ -236,6 +239,7 @@ pytest tests/ -q
 - [API 문서](docs/api.md)
 - [전략 가이드](docs/strategies.md)
 - [배포 가이드](docs/deployment.md)
+- [주식 전략 검증 요약](docs/STOCK_STRATEGY_VALIDATION_SUMMARY.md) - trend_pullback & momentum_breakout 검증 현황
 
 ## 기여 (Contributing)
 

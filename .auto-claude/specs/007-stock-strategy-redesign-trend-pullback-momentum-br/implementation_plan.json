@@ -218,7 +218,9 @@
             "command": "grep -h 'enabled:' config/strategies/stock/bb_reversion.yaml config/strategies/stock/opening_volume_surge.yaml config/strategies/stock/volume_accumulation.yaml config/strategies/stock/williams_r.yaml | grep -v '#'",
             "expected": "All four configs show 'enabled: false'"
           },
-          "status": "pending"
+          "status": "completed",
+          "notes": "Verified all four old stock strategies are disabled in production config:\n- bb_reversion.yaml: enabled: false (Absorbed into trend_pullback)\n- opening_volume_surge.yaml: enabled: false (No daily context, cost-disadvantaged)\n- volume_accumulation.yaml: enabled: false (Absorbed into momentum_breakout)\n- williams_r.yaml: enabled: false\n\nVerification command confirmed strategy-level enabled flags are all false. Nested config parameters (e.g., market_state_filter.enabled) do not affect production deployment when strategy is disabled.",
+          "updated_at": "2026-03-06T02:36:51.868818+00:00"
         },
         {
           "id": "subtask-3-2",
@@ -366,7 +368,7 @@
   "planStatus": "in_progress",
   "xstateState": "coding",
   "executionPhase": "coding",
-  "updated_at": "2026-03-06T02:28:39.636Z",
-  "last_updated": "2026-03-06T02:27:48.171455+00:00",
+  "updated_at": "2026-03-06T02:35:48.165Z",
+  "last_updated": "2026-03-06T02:36:51.868831+00:00",
   "recoveryNote": "Task recovered from stuck state at 2026-03-06T00:14:02.185Z"
 }
