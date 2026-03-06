@@ -18,7 +18,7 @@ from typing import Any, Optional
 
 from shared.config.mixins import ConfigMixin
 from shared.models.signal import ExitReason, ExitSignal
-from shared.strategy.base import ExitContext, ExitSignalGenerator
+from shared.strategy.base import ExitContext, ExitSignalGenerator, MarketStateProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -187,7 +187,7 @@ class ChandelierExit(ExitSignalGenerator[ChandelierExitConfig]):
         self,
         positions: list,
         market_data: dict[str, Any],
-        market_state: Optional[Any] = None,
+        market_state: Optional[MarketStateProtocol] = None,
     ) -> list[ExitSignal]:
         """Scan multiple positions for exit signals."""
         signals = []
