@@ -24,6 +24,7 @@ if TYPE_CHECKING:
 
 from shared.config.base import ServiceConfigBase
 from shared.config.loader import ConfigLoader
+from shared.exceptions import InfrastructureError, TradingSystemError, ValidationError
 from shared.streaming.client import RedisClient
 from shared.streaming.publisher import StreamPublisher
 
@@ -197,7 +198,8 @@ def _parse_json(raw: str | None) -> dict[str, Any]:
     try:
         data = json.loads(raw)
         return data if isinstance(data, dict) else {}
-    except Exception:
+    except (json.JSONDecodeError, TypeError, ValueError) as exc:
+        logger.debug("Failed to parse JSON: %s", exc)
         return {}
 
 
@@ -226,7 +228,8 @@ class FusionRanker:
             return None
         try:
             return datetime.fromisoformat(str(raw))
-        except Exception:
+        except (ValueError, TypeError) as exc:
+            logger.debug("Failed to parse generated_at timestamp: %s", exc)
             return None
 
     def _extract_realtime(
@@ -454,8 +457,12 @@ def run_fusion_ranker(config: FusionRankerConfig) -> None:
             started = time.time()
             try:
                 fusion.run_once()
+            except InfrastructureError as e:
+                logger.warning(f"Fusion run failed (infrastructure): {e}")
+            except TradingSystemError as e:
+                logger.warning(f"Fusion run failed (trading system): {e}")
             except Exception as e:
-                logger.warning(f"Fusion run failed: {e}")
+                logger.warning(f"Fusion run failed (unexpected): {e}", exc_info=True)
 
             elapsed = time.time() - started
             sleep_seconds = max(0.05, config.interval_seconds - elapsed)

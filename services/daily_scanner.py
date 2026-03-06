@@ -27,6 +27,7 @@ from pydantic import Field
 from shared.config.base import ServiceConfigBase
 from shared.db.client import get_clickhouse_client
 from shared.db.config import ClickHouseConfig
+from shared.exceptions import InfrastructureError
 from shared.streaming.client import RedisClient
 
 logger = logging.getLogger(__name__)
@@ -402,8 +403,12 @@ class DailyScanner:
                 )
                 for c in candles
             ]
-        except Exception as exc:
+        except InfrastructureError as exc:
             logger.warning("Failed to load daily bars for %s: %s", code, exc)
+            return []
+        except Exception as exc:
+            # Catch unexpected errors (e.g., data conversion issues)
+            logger.warning("Unexpected error loading daily bars for %s: %s", code, exc, exc_info=True)
             return []
 
     # ------------------------------------------------------------------
@@ -482,7 +487,10 @@ class DailyScanner:
                 len(result["trend_pullback"]),
                 len(result["momentum_breakout"]),
             )
-        except Exception as exc:
+        except InfrastructureError as exc:
             logger.warning("Failed to publish watchlist to Redis: %s", exc)
+        except Exception as exc:
+            # Catch unexpected errors (e.g., JSON serialization issues)
+            logger.warning("Unexpected error publishing watchlist: %s", exc, exc_info=True)
 
         return result
