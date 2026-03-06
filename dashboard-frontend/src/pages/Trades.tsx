@@ -12,6 +12,8 @@ import {
   Bar,
 } from 'recharts';
 import { tradesApi } from '../api/client';
+import TableSkeleton from '../components/TableSkeleton';
+import RefreshIndicator from '../components/RefreshIndicator';
 
 interface Trade {
   id: string;
@@ -94,7 +96,14 @@ function StatCard({ label, value, color }: { label: string; value: string; color
 function LiveTab() {
   const [strategyFilter, setStrategyFilter] = useState<string>('');
 
-  const { data: tradesData, isLoading: tradesLoading } = useQuery<TradesResponse>({
+  const {
+    data: tradesData,
+    isLoading: tradesLoading,
+    error: tradesError,
+    refetch: refetchTrades,
+    dataUpdatedAt: tradesUpdatedAt,
+    isRefetching: tradesRefetching,
+  } = useQuery<TradesResponse>({
     queryKey: ['trades', strategyFilter],
     queryFn: () =>
       tradesApi
@@ -103,11 +112,17 @@ function LiveTab() {
           limit: 100,
         })
         .then((r) => r.data),
+    refetchInterval: 10000,
   });
 
-  const { data: byStrategy } = useQuery<StrategyStats[]>({
+  const {
+    data: byStrategy,
+    error: strategyError,
+    refetch: refetchStrategy,
+  } = useQuery<StrategyStats[]>({
     queryKey: ['trades-by-strategy'],
     queryFn: () => tradesApi.getByStrategy().then((r) => r.data),
+    refetchInterval: 10000,
   });
 
   const cumulativePnlData =
@@ -128,6 +143,41 @@ function LiveTab() {
         [] as { idx: number; pnl: number; cumPnl: number; date: string }[]
       ) || [];
 
+  // Error states
+  if (tradesError) {
+    return (
+      <div className="bg-red-900/20 border border-red-900/50 rounded-lg p-6">
+        <div className="flex items-start gap-3">
+          <svg
+            className="w-6 h-6 text-red-400 flex-shrink-0 mt-0.5"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+            />
+          </svg>
+          <div className="flex-1">
+            <h3 className="text-lg font-medium text-red-400 mb-1">Failed to load trades</h3>
+            <p className="text-red-300/80 text-sm mb-3">
+              {tradesError instanceof Error ? tradesError.message : 'Unknown error occurred'}
+            </p>
+            <button
+              onClick={() => refetchTrades()}
+              className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-medium transition-colors"
+            >
+              Try Again
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -141,44 +191,74 @@ function LiveTab() {
           <option value="volume_accumulation">Volume Accumulation</option>
           <option value="opening_volume_surge">Opening Volume Surge</option>
         </select>
-        <div className="text-sm text-gray-400">{tradesData?.total || 0} trade(s)</div>
+        <div className="flex items-center gap-4">
+          <RefreshIndicator
+            lastUpdated={tradesUpdatedAt}
+            isRefreshing={tradesRefetching}
+            showStaleWarning={true}
+            staleThresholdSeconds={30}
+          />
+          <div className="text-sm text-gray-400">{tradesData?.total || 0} trade(s)</div>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
           <h3 className="text-lg font-medium mb-4">Cumulative P&L (%)</h3>
-          <ResponsiveContainer width="100%" height={250}>
-            <LineChart data={cumulativePnlData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-              <XAxis dataKey="idx" stroke="#9CA3AF" fontSize={12} />
-              <YAxis stroke="#9CA3AF" fontSize={12} />
-              <Tooltip
-                contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #374151' }}
-              />
-              <Line type="monotone" dataKey="cumPnl" stroke="#10B981" strokeWidth={2} dot={false} />
-            </LineChart>
-          </ResponsiveContainer>
+          {tradesLoading ? (
+            <div className="h-[250px] flex items-center justify-center">
+              <div className="animate-pulse text-gray-400">Loading chart...</div>
+            </div>
+          ) : (
+            <ResponsiveContainer width="100%" height={250}>
+              <LineChart data={cumulativePnlData}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                <XAxis dataKey="idx" stroke="#9CA3AF" fontSize={12} />
+                <YAxis stroke="#9CA3AF" fontSize={12} />
+                <Tooltip
+                  contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #374151' }}
+                />
+                <Line type="monotone" dataKey="cumPnl" stroke="#10B981" strokeWidth={2} dot={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          )}
         </div>
         <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
           <h3 className="text-lg font-medium mb-4">Performance by Strategy</h3>
-          <ResponsiveContainer width="100%" height={250}>
-            <BarChart data={byStrategy || []}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-              <XAxis dataKey="strategy" stroke="#9CA3AF" fontSize={12} />
-              <YAxis stroke="#9CA3AF" fontSize={12} />
-              <Tooltip
-                contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #374151' }}
-              />
-              <Bar dataKey="total_pnl" fill="#3B82F6" name="Total P&L %" />
-            </BarChart>
-          </ResponsiveContainer>
+          {tradesLoading || strategyError ? (
+            <div className="h-[250px] flex items-center justify-center">
+              {strategyError ? (
+                <div className="text-center">
+                  <div className="text-red-400 text-sm mb-2">Failed to load</div>
+                  <button
+                    onClick={() => refetchStrategy()}
+                    className="text-xs text-blue-400 hover:text-blue-300"
+                  >
+                    Retry
+                  </button>
+                </div>
+              ) : (
+                <div className="animate-pulse text-gray-400">Loading chart...</div>
+              )}
+            </div>
+          ) : (
+            <ResponsiveContainer width="100%" height={250}>
+              <BarChart data={byStrategy || []}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                <XAxis dataKey="strategy" stroke="#9CA3AF" fontSize={12} />
+                <YAxis stroke="#9CA3AF" fontSize={12} />
+                <Tooltip
+                  contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #374151' }}
+                />
+                <Bar dataKey="total_pnl" fill="#3B82F6" name="Total P&L %" />
+              </BarChart>
+            </ResponsiveContainer>
+          )}
         </div>
       </div>
 
       {tradesLoading ? (
-        <div className="bg-gray-800 rounded-lg p-8 text-center">
-          <div className="animate-pulse text-gray-400">Loading trades...</div>
-        </div>
+        <TableSkeleton rows={10} columns={8} />
       ) : tradesData?.trades.length === 0 ? (
         <div className="bg-gray-800 rounded-lg p-8 text-center text-gray-400">No trades found</div>
       ) : (
@@ -244,33 +324,117 @@ function LiveTab() {
 }
 
 function HistoryTab() {
-  const { data: stats, isLoading: statsLoading } = useQuery<DbStats>({
+  const {
+    data: stats,
+    isLoading: statsLoading,
+    error: statsError,
+    refetch: refetchStats,
+    dataUpdatedAt: statsUpdatedAt,
+    isRefetching: statsRefetching,
+  } = useQuery<DbStats>({
     queryKey: ['db-statistics'],
     queryFn: () => tradesApi.getDbStatistics().then((r) => r.data),
+    refetchInterval: 30000,
   });
 
-  const { data: trades, isLoading: tradesLoading } = useQuery<DbTrade[]>({
+  const {
+    data: trades,
+    isLoading: tradesLoading,
+    error: tradesError,
+    refetch: refetchTrades,
+  } = useQuery<DbTrade[]>({
     queryKey: ['db-trades'],
     queryFn: () => tradesApi.getDbTrades({ limit: 100 }).then((r) => r.data),
+    refetchInterval: 30000,
   });
 
-  const { data: openPositions } = useQuery<DbOpenPosition[]>({
+  const {
+    data: openPositions,
+    isLoading: positionsLoading,
+    error: positionsError,
+    refetch: refetchPositions,
+  } = useQuery<DbOpenPosition[]>({
     queryKey: ['db-open-positions'],
     queryFn: () => tradesApi.getDbOpenPositions().then((r) => r.data),
+    refetchInterval: 10000,
   });
 
   const isLoading = statsLoading || tradesLoading;
+  const hasError = statsError || tradesError || positionsError;
+
+  // Error state
+  if (hasError && !isLoading) {
+    return (
+      <div className="bg-red-900/20 border border-red-900/50 rounded-lg p-6">
+        <div className="flex items-start gap-3">
+          <svg
+            className="w-6 h-6 text-red-400 flex-shrink-0 mt-0.5"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+            />
+          </svg>
+          <div className="flex-1">
+            <h3 className="text-lg font-medium text-red-400 mb-1">Failed to load data</h3>
+            <p className="text-red-300/80 text-sm mb-3">
+              {statsError instanceof Error
+                ? statsError.message
+                : tradesError instanceof Error
+                  ? tradesError.message
+                  : positionsError instanceof Error
+                    ? positionsError.message
+                    : 'Unknown error occurred'}
+            </p>
+            <button
+              onClick={() => {
+                if (statsError) refetchStats();
+                if (tradesError) refetchTrades();
+                if (positionsError) refetchPositions();
+              }}
+              className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-medium transition-colors"
+            >
+              Try Again
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (isLoading) {
     return (
-      <div className="bg-gray-800 rounded-lg p-8 text-center">
-        <div className="animate-pulse text-gray-400">Loading DB trades...</div>
+      <div className="space-y-6">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          {Array.from({ length: 4 }).map((_, idx) => (
+            <div key={idx} className="bg-gray-800 rounded-lg p-4 border border-gray-700">
+              <div className="h-4 bg-gray-700 rounded animate-pulse w-20 mb-2" />
+              <div className="h-6 bg-gray-700 rounded animate-pulse w-24" />
+            </div>
+          ))}
+        </div>
+        <TableSkeleton rows={10} columns={9} />
       </div>
     );
   }
 
   return (
     <div className="space-y-6">
+      {/* Refresh Indicator */}
+      <div className="flex justify-end">
+        <RefreshIndicator
+          lastUpdated={statsUpdatedAt}
+          isRefreshing={statsRefetching}
+          showStaleWarning={true}
+          staleThresholdSeconds={60}
+        />
+      </div>
+
       {/* Stats Cards */}
       {stats && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -294,7 +458,32 @@ function HistoryTab() {
       )}
 
       {/* Open Positions */}
-      {openPositions && openPositions.length > 0 && (
+      {positionsLoading ? (
+        <div>
+          <h3 className="text-lg font-medium mb-3">Open Positions</h3>
+          <TableSkeleton rows={3} columns={10} />
+        </div>
+      ) : positionsError ? (
+        <div className="bg-yellow-900/20 border border-yellow-900/50 rounded-lg p-4">
+          <div className="flex items-center gap-2 text-yellow-400 text-sm">
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+              />
+            </svg>
+            <span>Failed to load open positions</span>
+            <button
+              onClick={() => refetchPositions()}
+              className="ml-2 text-blue-400 hover:text-blue-300 underline"
+            >
+              Retry
+            </button>
+          </div>
+        </div>
+      ) : openPositions && openPositions.length > 0 ? (
         <div>
           <h3 className="text-lg font-medium mb-3">Open Positions ({openPositions.length})</h3>
           <div className="bg-gray-800 rounded-lg overflow-hidden border border-gray-700">
@@ -348,7 +537,7 @@ function HistoryTab() {
             </table>
           </div>
         </div>
-      )}
+      ) : null}
 
       {/* Closed Trades Table */}
       <div>
