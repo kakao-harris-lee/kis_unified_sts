@@ -8,13 +8,39 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Generic, Optional, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, Optional, Protocol, TypeVar, runtime_checkable
 
 if TYPE_CHECKING:
     from shared.models.position import Position
     from shared.models.signal import ExitSignal, Signal
 
 TConfig = TypeVar("TConfig")
+
+
+@runtime_checkable
+class MarketStateProtocol(Protocol):
+    """Protocol for market state objects.
+
+    Defines the structural interface for market state objects passed to exit strategies.
+    This allows type-safe access to market regime and other state properties without
+    coupling to specific implementations.
+
+    Attributes:
+        regime: Current market regime classification (e.g., "BULL_STRONG", "BEAR", "NEUTRAL")
+
+    Example:
+        class MyMarketState:
+            def __init__(self, regime: str):
+                self.regime = regime
+
+        state = MyMarketState("BULL_STRONG")
+        # Works with any object that has a .regime property
+    """
+
+    @property
+    def regime(self) -> str:
+        """Current market regime classification."""
+        ...
 
 
 @dataclass
