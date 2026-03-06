@@ -12,6 +12,7 @@ Usage:
     data = load_config("exit/three_stage.yaml")
 """
 
+from shared.config.base import ServiceConfigBase
 from shared.config.loader import (
     ConfigError,
     ConfigLoader,
@@ -26,6 +27,8 @@ from shared.config.schema import KISConfig
 from shared.config.secrets import SecretsManager, require_secret
 
 __all__ = [
+    # Base
+    "ServiceConfigBase",
     # Loader
     "ConfigLoader",
     "ConfigError",
