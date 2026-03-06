@@ -20,10 +20,11 @@ import json
 import logging
 from dataclasses import dataclass
 from datetime import date, timedelta
-from typing import Optional
+from typing import ClassVar, Optional
 
-from shared.config.loader import ConfigLoader
-from shared.config.mixins import ConfigMixin
+from pydantic import Field
+
+from shared.config.base import ServiceConfigBase
 from shared.db.client import get_clickhouse_client
 from shared.db.config import ClickHouseConfig
 from shared.streaming.client import RedisClient
@@ -51,41 +52,46 @@ class DailyBar:
 # Configuration
 # ---------------------------------------------------------------------------
 
-@dataclass
-class DailyScannerConfig(ConfigMixin):
+class DailyScannerConfig(ServiceConfigBase):
     """Configuration for DailyScanner.
 
     All thresholds are loaded from ``config/daily_scanner.yaml``.
     """
 
+    _default_config_file: ClassVar[str] = "daily_scanner.yaml"
+
     # Trend-pullback filter params
-    tp_sma_period: int = 20
-    tp_rsi_period: int = 14
-    tp_rsi_max: float = 45.0
-    tp_trend_deviation_pct: float = 5.0
-    tp_min_volume_20d: int = 500_000
+    tp_sma_period: int = Field(default=20, description="SMA period for trend detection")
+    tp_rsi_period: int = Field(default=14, description="RSI period for pullback detection")
+    tp_rsi_max: float = Field(default=45.0, description="Maximum RSI value for pullback zone")
+    tp_trend_deviation_pct: float = Field(
+        default=5.0, description="Maximum deviation percentage below SMA to consider trend intact"
+    )
+    tp_min_volume_20d: int = Field(default=500_000, description="Minimum 20-day average volume for liquidity")
 
     # Momentum-breakout filter params
-    mb_high_period: int = 20
-    mb_proximity_pct: float = 5.0
-    mb_volume_trend_ratio: float = 1.2
-    mb_max_extension_pct: float = 15.0
+    mb_high_period: int = Field(default=20, description="Period for N-day high calculation")
+    mb_proximity_pct: float = Field(default=5.0, description="Maximum distance below N-day high (percentage)")
+    mb_volume_trend_ratio: float = Field(
+        default=1.2, description="Required ratio of short-term to long-term volume MA"
+    )
+    mb_max_extension_pct: float = Field(
+        default=15.0, description="Maximum extension above N-day high to avoid overextension"
+    )
 
     # Minimum-edge filter params
-    me_atr_period: int = 14
-    me_round_trip_cost: float = 0.005
-    me_min_atr_cost_ratio: float = 2.0
+    me_atr_period: int = Field(default=14, description="ATR period for volatility measurement")
+    me_round_trip_cost: float = Field(default=0.005, description="Round-trip trading cost (slippage + commission)")
+    me_min_atr_cost_ratio: float = Field(
+        default=2.0, description="Minimum ratio of ATR to round-trip cost for sufficient edge"
+    )
 
     # Redis publish params
-    max_watchlist_size: int = 40
-    redis_key: str = "system:daily_watchlist:latest"
-    redis_ttl_seconds: int = 86400
-
-    @classmethod
-    def from_yaml(cls) -> "DailyScannerConfig":
-        """Load configuration from config/daily_scanner.yaml."""
-        raw = ConfigLoader.load("daily_scanner.yaml")
-        return cls.from_dict(raw)
+    max_watchlist_size: int = Field(default=40, description="Maximum number of stocks per watchlist")
+    redis_key: str = Field(
+        default="system:daily_watchlist:latest", description="Redis key for publishing watchlist"
+    )
+    redis_ttl_seconds: int = Field(default=86400, description="TTL for Redis key (seconds)")
 
 
 # ---------------------------------------------------------------------------
