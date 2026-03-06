@@ -190,7 +190,7 @@ class ExitSignalGenerator(ABC, Generic[TConfig]):
         self,
         positions: list["Position"],
         market_data: dict[str, Any],
-        market_state: Optional[Any] = None,
+        market_state: Optional[MarketStateProtocol] = None,
     ) -> list["ExitSignal"]:
         """여러 포지션에 대해 청산 시그널 스캔
 
