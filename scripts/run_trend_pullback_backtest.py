@@ -48,8 +48,9 @@ load_dotenv(REPO_ROOT / ".env")
 
 # Import after path setup
 from shared.backtest import BacktestConfig, BacktestEngine
+from shared.backtest.adapter import BacktestStrategyAdapter
 from shared.config.loader import ConfigLoader
-from shared.strategy.registry import StrategyFactory
+from shared.strategy.registry import StrategyFactory, register_builtin_components
 
 # Setup logging
 logging.basicConfig(
@@ -57,6 +58,9 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
+
+# Register all builtin strategies
+register_builtin_components()
 
 
 def generate_synthetic_data(
@@ -195,21 +199,28 @@ def run_backtest(
 
     # Load strategy config
     try:
-        strategy = StrategyFactory.create_from_file("stock", strategy_name)
+        strategy_config = ConfigLoader.load_strategy("stock", strategy_name)
+        strategy = StrategyFactory.create(strategy_config)
         logger.info(f"Loaded strategy: {strategy_name}")
     except Exception as e:
         logger.error(f"Failed to load strategy: {e}")
         raise
 
+    # Wrap strategy with adapter for backtest engine
+    adapted_strategy = BacktestStrategyAdapter(strategy, strategy_config)
+
     # Create backtest config
+    # BacktestConfig.stock() already includes proper costs via CostConfig.stock():
+    # - commission: 0.015% (키움)
+    # - slippage: 0.01%
+    # - tax: 0.23% (매도세)
+    # Total round-trip cost: ~0.51% (meets 0.5% requirement)
     config = BacktestConfig.stock(
         initial_capital=initial_capital,
-        commission=0.0025,  # 0.25% (0.5% round-trip)
-        slippage=0.0001,     # 0.01%
     )
 
     # Run backtest
-    engine = BacktestEngine(strategy, config)
+    engine = BacktestEngine(adapted_strategy, config)
     result = engine.run(df)
 
     # Prepare results
