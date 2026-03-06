@@ -209,6 +209,46 @@ strategy:
     params: { ... }
 ```
 
+### ServiceConfigBase 패턴
+
+**모든 서비스 설정은 `ServiceConfigBase`를 상속한다** — 중복 코드 제거 및 일관성 보장.
+
+`shared/config/base.py` — Pydantic BaseModel 기반 통합 설정 베이스 클래스.
+
+**핵심 기능:**
+- `from_yaml()`: YAML 파일에서 로드 (ConfigLoader 통합, 섹션 추출 지원)
+- `from_env()`: 환경변수에서 로드 (prefix 매핑, 타입 자동 변환)
+- 환경변수 우선순위: YAML + env override 조합 가능
+- 데이터베이스 이름 검증: SQL injection 자동 방지 (alphanumeric + underscore만 허용)
+
+**사용 예시:**
+
+```python
+from pydantic import Field
+from shared.config.base import ServiceConfigBase
+
+class MyServiceConfig(ServiceConfigBase):
+    _default_config_file: ClassVar[str] = "my_service.yaml"
+    _env_prefix: ClassVar[str] = "MY_SERVICE_"
+
+    threshold: float = Field(default=0.5, description="Detection threshold")
+    enabled: bool = Field(default=True, description="Service enabled")
+    database: str = Field(default="market", description="Database name")
+
+# YAML에서 로드
+config = MyServiceConfig.from_yaml()
+
+# 환경변수에서 로드
+config = MyServiceConfig.from_env()  # MY_SERVICE_THRESHOLD, MY_SERVICE_ENABLED
+
+# YAML + 환경변수 오버라이드
+config = MyServiceConfig.from_yaml(apply_env_overrides=True)
+```
+
+**마이그레이션 완료:** 7개 서비스 설정이 ServiceConfigBase 사용 (DailyScannerConfig, FusionRankerConfig, TelegramConfig, TickStreamPublisherConfig, LLMConfig, ScreenerConfig, ClickHouseConfig) — ~385줄 boilerplate 제거.
+
+**상세 문서:** `docs/config_patterns.md` — 고급 패턴, 마이그레이션 가이드, 테스트 예시 포함.
+
 ### ConfigLoader
 
 `shared/config/loader.py` — 싱글톤, 스레드 안전, `${VAR_NAME}` / `${VAR_NAME:default}` 환경변수 해석, 경로 순회 보호, 캐싱.
