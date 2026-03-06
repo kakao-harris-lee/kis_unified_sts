@@ -36,17 +36,19 @@ import json
 import logging
 import os
 import time
-from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, ClassVar
 
 try:
     from zoneinfo import ZoneInfo
 except ImportError:
     from backports.zoneinfo import ZoneInfo
 
+from pydantic import Field
+
 from services.monitoring.notifier import TelegramConfig, TelegramNotifier
 from shared.collector.prev_day_volume import PrevDayVolumeCache
+from shared.config.base import ServiceConfigBase
 from shared.kis import KISAuthConfig
 from shared.kis.client import KISClient
 from shared.kis.ranking_client import KISRankingClient
@@ -57,65 +59,72 @@ logger = logging.getLogger(__name__)
 KST = ZoneInfo("Asia/Seoul")
 
 
-@dataclass(frozen=True)
-class ScreenerConfig:
-    interval_seconds: float = float(os.environ.get("SCREENER_INTERVAL_SECONDS", "1.0"))
-    rank_limit: int = int(os.environ.get("SCREENER_RANK_LIMIT", "30"))
-    top_n: int = int(os.environ.get("SCREENER_TOP_N", "20"))
-    weight_trade_value: float = float(os.environ.get("SCREENER_WEIGHT_TRADE_VALUE", "0.6"))
-    weight_gainer: float = float(os.environ.get("SCREENER_WEIGHT_GAINER", "0.4"))
-    notify_interval_seconds: float = float(
-        os.environ.get("SCREENER_NOTIFY_INTERVAL_SECONDS", "1800")
-    )
+class ScreenerConfig(ServiceConfigBase):
+    """Stock screener configuration.
 
-    universe_stream: str = os.environ.get("UNIVERSE_STREAM", "system:universe")
-    universe_latest_key: str = os.environ.get(
-        "UNIVERSE_LATEST_KEY", "system:universe:latest"
-    )
+    Loads from environment variables with SCREENER_ prefix.
+    For non-prefixed vars (UNIVERSE_STREAM, etc.), use direct env var names.
+    """
 
-    dip_top_n: int = int(os.environ.get("SCREENER_DIP_TOP_N", "20"))
-    dip_min_drop_pct: float = float(os.environ.get("SCREENER_DIP_MIN_DROP_PCT", "-2.0"))
-    dip_latest_key: str = os.environ.get(
-        "DIP_CANDIDATES_LATEST_KEY", "system:dip_candidates:latest"
-    )
+    _env_prefix: ClassVar[str | None] = "SCREENER_"
 
-    telegram_enabled: bool = os.environ.get(
-        "SCREENER_TELEGRAM_ENABLED", "false"
-    ).lower() == "true"
+    # Screening parameters
+    interval_seconds: float = Field(default=1.0, description="Polling interval in seconds")
+    rank_limit: int = Field(default=30, description="Number of stocks to fetch from each ranking")
+    top_n: int = Field(default=20, description="Number of top stocks to select")
+    weight_trade_value: float = Field(default=0.6, description="Weight for trade value ranking")
+    weight_gainer: float = Field(default=0.4, description="Weight for gainer ranking")
+    notify_interval_seconds: float = Field(default=1800.0, description="Notification interval in seconds")
 
-    trend_confirm_enabled: bool = os.environ.get(
-        "SCREENER_TREND_CONFIRM_ENABLED", "true"
-    ).lower() == "true"
-    trend_confirm_min_minutes_after_open: int = int(
-        os.environ.get("SCREENER_TREND_CONFIRM_MIN_MINUTES_AFTER_OPEN", "7")
-    )
-    trend_confirm_max_scan_codes: int = int(
-        os.environ.get("SCREENER_TREND_CONFIRM_MAX_SCAN_CODES", "20")
-    )
-    trend_confirm_bar_count: int = int(
-        os.environ.get("SCREENER_TREND_CONFIRM_BAR_COUNT", "8")
-    )
-    trend_confirm_min_return_pct: float = float(
-        os.environ.get("SCREENER_TREND_CONFIRM_MIN_RETURN_PCT", "0.35")
-    )
-    trend_confirm_min_positive_ratio: float = float(
-        os.environ.get("SCREENER_TREND_CONFIRM_MIN_POSITIVE_RATIO", "0.57")
-    )
-    trend_confirm_min_rising_lows_ratio: float = float(
-        os.environ.get("SCREENER_TREND_CONFIRM_MIN_RISING_LOWS_RATIO", "0.50")
-    )
-    trend_confirm_max_pullback_pct: float = float(
-        os.environ.get("SCREENER_TREND_CONFIRM_MAX_PULLBACK_PCT", "0.45")
-    )
-    trend_confirm_max_single_bar_volume_share: float = float(
-        os.environ.get("SCREENER_TREND_CONFIRM_MAX_SINGLE_BAR_VOLUME_SHARE", "0.55")
-    )
-    trend_confirm_cache_seconds: float = float(
-        os.environ.get("SCREENER_TREND_CONFIRM_CACHE_SECONDS", "90")
-    )
-    trend_confirm_fail_open: bool = os.environ.get(
-        "SCREENER_TREND_CONFIRM_FAIL_OPEN", "true"
-    ).lower() == "true"
+    # Redis keys (not prefixed with SCREENER_)
+    universe_stream: str = Field(default="system:universe", description="Redis stream key for universe updates")
+    universe_latest_key: str = Field(default="system:universe:latest", description="Redis key for latest universe snapshot")
+
+    # Dip candidate parameters
+    dip_top_n: int = Field(default=20, description="Number of dip candidates to select")
+    dip_min_drop_pct: float = Field(default=-2.0, description="Minimum drop percentage for dip candidates")
+    dip_latest_key: str = Field(default="system:dip_candidates:latest", description="Redis key for dip candidates")
+
+    # Telegram notification
+    telegram_enabled: bool = Field(default=False, description="Enable Telegram notifications")
+
+    # Trend confirmation parameters
+    trend_confirm_enabled: bool = Field(default=True, description="Enable trend confirmation filter")
+    trend_confirm_min_minutes_after_open: int = Field(default=7, description="Minutes after market open before applying trend filter")
+    trend_confirm_max_scan_codes: int = Field(default=20, description="Maximum number of codes to scan for trend confirmation")
+    trend_confirm_bar_count: int = Field(default=8, description="Number of minute bars to analyze")
+    trend_confirm_min_return_pct: float = Field(default=0.35, description="Minimum return percentage required")
+    trend_confirm_min_positive_ratio: float = Field(default=0.57, description="Minimum ratio of positive candles")
+    trend_confirm_min_rising_lows_ratio: float = Field(default=0.50, description="Minimum ratio of rising lows")
+    trend_confirm_max_pullback_pct: float = Field(default=0.45, description="Maximum pullback percentage allowed")
+    trend_confirm_max_single_bar_volume_share: float = Field(default=0.55, description="Maximum volume share in single bar")
+    trend_confirm_cache_seconds: float = Field(default=90.0, description="Cache duration for trend confirmations")
+    trend_confirm_fail_open: bool = Field(default=True, description="Keep original universe if all codes rejected")
+
+    @classmethod
+    def from_env(cls, env_prefix: str | None = None, **overrides: Any) -> "ScreenerConfig":
+        """Load configuration from environment variables.
+
+        Handles special non-prefixed environment variables:
+        - UNIVERSE_STREAM → universe_stream
+        - UNIVERSE_LATEST_KEY → universe_latest_key
+        - DIP_CANDIDATES_LATEST_KEY → dip_latest_key
+        """
+        # Load standard prefixed env vars
+        config_dict = cls._extract_env_vars(env_prefix or cls._env_prefix or "")
+
+        # Handle non-prefixed environment variables
+        if "UNIVERSE_STREAM" in os.environ:
+            config_dict["universe_stream"] = os.environ["UNIVERSE_STREAM"]
+        if "UNIVERSE_LATEST_KEY" in os.environ:
+            config_dict["universe_latest_key"] = os.environ["UNIVERSE_LATEST_KEY"]
+        if "DIP_CANDIDATES_LATEST_KEY" in os.environ:
+            config_dict["dip_latest_key"] = os.environ["DIP_CANDIDATES_LATEST_KEY"]
+
+        # Apply any overrides
+        config_dict.update(overrides)
+
+        return cls(**config_dict)
 
 
 def _rank_to_score(rank: int, max_rank: int) -> float:
@@ -591,7 +600,7 @@ def main() -> None:
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
-    config = ScreenerConfig()
+    config = ScreenerConfig.from_env()
     asyncio.run(run_screener(config))
 
 
