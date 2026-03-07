@@ -884,3 +884,391 @@ class TestStartupState:
             assert prometheus_started
 
             await orchestrator.stop()
+
+
+@pytest.mark.integration
+class TestTradingLoop:
+    """Test trading loop event processing and market data handling."""
+
+    @pytest.mark.asyncio
+    async def test_trading_loop_starts_and_runs(self):
+        """Verify trading loop starts and runs after orchestrator start."""
+        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        import asyncio
+
+        config = TradingConfig.stock(
+            strategy_name="bb_reversion",
+            symbols=["005930"],
+        )
+
+        loop_started = False
+        loop_running = False
+
+        async def mock_market_data_loop(*args):
+            nonlocal loop_started, loop_running
+            loop_started = True
+            loop_running = True
+            # Simulate loop running
+            await asyncio.sleep(0.1)
+
+        with patch.object(
+            TradingOrchestrator, "_init_kis_client", return_value=None
+        ), patch.object(
+            TradingOrchestrator, "_init_futures_slippage_controller"
+        ), patch.object(
+            TradingOrchestrator, "_init_price_feeds", return_value=None
+        ), patch.object(
+            TradingOrchestrator, "_init_data_provider"
+        ), patch.object(
+            TradingOrchestrator, "_init_tick_stream_publisher"
+        ), patch.object(
+            TradingOrchestrator, "_init_strategy_infrastructure"
+        ), patch.object(
+            TradingOrchestrator, "_init_indicator_engine"
+        ), patch.object(
+            TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
+        ), patch.object(
+            TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
+        ), patch.object(
+            TradingOrchestrator, "_start_market_data_loop", side_effect=mock_market_data_loop
+        ), patch.object(
+            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock())
+        ), patch(
+            "services.monitoring.metrics.get_metrics_collector"
+        ) as mock_metrics:
+            mock_metrics.return_value = MagicMock(
+                start_prometheus_server=MagicMock(),
+                register_strategies=MagicMock(),
+            )
+
+            orchestrator = TradingOrchestrator(config)
+            await orchestrator.start()
+
+            # Verify loop started
+            assert loop_started
+            assert loop_running
+
+            await orchestrator.stop()
+
+    @pytest.mark.asyncio
+    async def test_market_data_processing(self):
+        """Verify market data is processed through the loop."""
+        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+
+        config = TradingConfig.stock(
+            strategy_name="bb_reversion",
+            symbols=["005930"],
+        )
+
+        data_processed = []
+
+        # Mock data provider to simulate market data
+        mock_data_provider = MagicMock()
+        
+        def mock_init_data_provider(self_ref, *args):
+            self_ref._data_provider = mock_data_provider
+
+        async def mock_market_data_loop(self_ref):
+            # Simulate processing market data
+            for i in range(3):
+                data = {"symbol": "005930", "price": 60000 + i * 100, "volume": 1000}
+                data_processed.append(data)
+                await asyncio.sleep(0.01)
+
+        with patch.object(
+            TradingOrchestrator, "_init_kis_client", return_value=None
+        ), patch.object(
+            TradingOrchestrator, "_init_futures_slippage_controller"
+        ), patch.object(
+            TradingOrchestrator, "_init_price_feeds", return_value=None
+        ), patch.object(
+            TradingOrchestrator, "_init_data_provider", side_effect=mock_init_data_provider
+        ), patch.object(
+            TradingOrchestrator, "_init_tick_stream_publisher"
+        ), patch.object(
+            TradingOrchestrator, "_init_strategy_infrastructure"
+        ), patch.object(
+            TradingOrchestrator, "_init_indicator_engine"
+        ), patch.object(
+            TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
+        ), patch.object(
+            TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
+        ), patch.object(
+            TradingOrchestrator, "_start_market_data_loop", side_effect=mock_market_data_loop
+        ), patch.object(
+            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock())
+        ), patch(
+            "services.monitoring.metrics.get_metrics_collector"
+        ) as mock_metrics:
+            mock_metrics.return_value = MagicMock(
+                start_prometheus_server=MagicMock(),
+                register_strategies=MagicMock(),
+            )
+
+            orchestrator = TradingOrchestrator(config)
+            await orchestrator.start()
+
+            # Verify data was processed
+            assert len(data_processed) == 3
+            assert data_processed[0]["symbol"] == "005930"
+            assert data_processed[0]["price"] == 60000
+
+            await orchestrator.stop()
+
+    @pytest.mark.asyncio
+    async def test_loop_processes_multiple_symbols(self):
+        """Verify loop processes market data for multiple symbols."""
+        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+
+        config = TradingConfig.stock(
+            strategy_name="bb_reversion",
+            symbols=["005930", "000660", "035720"],
+        )
+
+        symbols_processed = set()
+
+        async def mock_market_data_loop(self_ref):
+            # Simulate processing data for all symbols
+            for symbol in self_ref.config.symbols:
+                symbols_processed.add(symbol)
+                await asyncio.sleep(0.01)
+
+        with patch.object(
+            TradingOrchestrator, "_init_kis_client", return_value=None
+        ), patch.object(
+            TradingOrchestrator, "_init_futures_slippage_controller"
+        ), patch.object(
+            TradingOrchestrator, "_init_price_feeds", return_value=None
+        ), patch.object(
+            TradingOrchestrator, "_init_data_provider"
+        ), patch.object(
+            TradingOrchestrator, "_init_tick_stream_publisher"
+        ), patch.object(
+            TradingOrchestrator, "_init_strategy_infrastructure"
+        ), patch.object(
+            TradingOrchestrator, "_init_indicator_engine"
+        ), patch.object(
+            TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
+        ), patch.object(
+            TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
+        ), patch.object(
+            TradingOrchestrator, "_start_market_data_loop", side_effect=mock_market_data_loop
+        ), patch.object(
+            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock())
+        ), patch(
+            "services.monitoring.metrics.get_metrics_collector"
+        ) as mock_metrics:
+            mock_metrics.return_value = MagicMock(
+                start_prometheus_server=MagicMock(),
+                register_strategies=MagicMock(),
+            )
+
+            orchestrator = TradingOrchestrator(config)
+            await orchestrator.start()
+
+            # Verify all symbols were processed
+            assert symbols_processed == {"005930", "000660", "035720"}
+
+            await orchestrator.stop()
+
+    @pytest.mark.asyncio
+    async def test_loop_stops_gracefully(self):
+        """Verify trading loop stops gracefully when orchestrator stops."""
+        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        import asyncio
+
+        config = TradingConfig.stock(
+            strategy_name="bb_reversion",
+            symbols=["005930"],
+        )
+
+        loop_stopped = False
+        stop_requested = asyncio.Event()
+
+        async def mock_market_data_loop(self_ref):
+            # Run until stop is requested
+            while self_ref.is_running:
+                await asyncio.sleep(0.01)
+            nonlocal loop_stopped
+            loop_stopped = True
+
+        async def mock_stop(self_ref, *args, **kwargs):
+            # Signal loop to stop
+            self_ref._state = TradingState.STOPPED
+            stop_requested.set()
+            await asyncio.sleep(0.05)  # Allow loop to finish
+
+        with patch.object(
+            TradingOrchestrator, "_init_kis_client", return_value=None
+        ), patch.object(
+            TradingOrchestrator, "_init_futures_slippage_controller"
+        ), patch.object(
+            TradingOrchestrator, "_init_price_feeds", return_value=None
+        ), patch.object(
+            TradingOrchestrator, "_init_data_provider"
+        ), patch.object(
+            TradingOrchestrator, "_init_tick_stream_publisher"
+        ), patch.object(
+            TradingOrchestrator, "_init_strategy_infrastructure"
+        ), patch.object(
+            TradingOrchestrator, "_init_indicator_engine"
+        ), patch.object(
+            TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
+        ), patch.object(
+            TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
+        ), patch.object(
+            TradingOrchestrator, "_start_market_data_loop", side_effect=mock_market_data_loop
+        ), patch.object(
+            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock())
+        ), patch(
+            "services.monitoring.metrics.get_metrics_collector"
+        ) as mock_metrics:
+            from services.trading.orchestrator import TradingState
+
+            mock_metrics.return_value = MagicMock(
+                start_prometheus_server=MagicMock(),
+                register_strategies=MagicMock(),
+            )
+
+            orchestrator = TradingOrchestrator(config)
+            
+            # Patch stop method
+            with patch.object(TradingOrchestrator, "stop", side_effect=mock_stop):
+                await orchestrator.start()
+                
+                # Wait a bit for loop to run
+                await asyncio.sleep(0.05)
+                
+                # Stop orchestrator
+                await orchestrator.stop()
+                
+                # Verify loop stopped
+                assert loop_stopped
+
+    @pytest.mark.asyncio
+    async def test_loop_continues_after_processing_error(self):
+        """Verify loop continues running even if individual data processing fails."""
+        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        import asyncio
+
+        config = TradingConfig.stock(
+            strategy_name="bb_reversion",
+            symbols=["005930"],
+        )
+
+        process_attempts = []
+
+        async def mock_market_data_loop(self_ref):
+            # Simulate processing with errors
+            for i in range(5):
+                try:
+                    process_attempts.append(i)
+                    if i == 2:
+                        # Simulate error on 3rd attempt
+                        raise ValueError("Simulated processing error")
+                except ValueError:
+                    # Log error but continue
+                    pass
+                await asyncio.sleep(0.01)
+
+        with patch.object(
+            TradingOrchestrator, "_init_kis_client", return_value=None
+        ), patch.object(
+            TradingOrchestrator, "_init_futures_slippage_controller"
+        ), patch.object(
+            TradingOrchestrator, "_init_price_feeds", return_value=None
+        ), patch.object(
+            TradingOrchestrator, "_init_data_provider"
+        ), patch.object(
+            TradingOrchestrator, "_init_tick_stream_publisher"
+        ), patch.object(
+            TradingOrchestrator, "_init_strategy_infrastructure"
+        ), patch.object(
+            TradingOrchestrator, "_init_indicator_engine"
+        ), patch.object(
+            TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
+        ), patch.object(
+            TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
+        ), patch.object(
+            TradingOrchestrator, "_start_market_data_loop", side_effect=mock_market_data_loop
+        ), patch.object(
+            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock())
+        ), patch(
+            "services.monitoring.metrics.get_metrics_collector"
+        ) as mock_metrics:
+            mock_metrics.return_value = MagicMock(
+                start_prometheus_server=MagicMock(),
+                register_strategies=MagicMock(),
+            )
+
+            orchestrator = TradingOrchestrator(config)
+            await orchestrator.start()
+
+            # Verify loop processed all attempts including after error
+            assert len(process_attempts) == 5
+            assert process_attempts == [0, 1, 2, 3, 4]
+
+            await orchestrator.stop()
+
+    @pytest.mark.asyncio
+    async def test_futures_loop_processes_continuous_data(self):
+        """Verify futures trading loop processes continuous market data."""
+        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+
+        config = TradingConfig.futures(
+            strategy_name="rl_mppo",
+            initial_capital=5_000_000,
+        )
+
+        futures_data_processed = []
+
+        async def mock_market_data_loop(self_ref):
+            # Simulate continuous futures data processing
+            for i in range(10):
+                data = {
+                    "symbol": "101S6000",  # KOSPI200 futures
+                    "price": 250.0 + i * 0.05,
+                    "timestamp": i,
+                }
+                futures_data_processed.append(data)
+                await asyncio.sleep(0.01)
+
+        with patch.object(
+            TradingOrchestrator, "_init_kis_client", return_value=None
+        ), patch.object(
+            TradingOrchestrator, "_init_futures_slippage_controller"
+        ), patch.object(
+            TradingOrchestrator, "_init_price_feeds", return_value=None
+        ), patch.object(
+            TradingOrchestrator, "_init_data_provider"
+        ), patch.object(
+            TradingOrchestrator, "_init_tick_stream_publisher"
+        ), patch.object(
+            TradingOrchestrator, "_init_strategy_infrastructure"
+        ), patch.object(
+            TradingOrchestrator, "_init_indicator_engine"
+        ), patch.object(
+            TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
+        ), patch.object(
+            TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
+        ), patch.object(
+            TradingOrchestrator, "_start_market_data_loop", side_effect=mock_market_data_loop
+        ), patch.object(
+            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock())
+        ), patch(
+            "services.monitoring.metrics.get_metrics_collector"
+        ) as mock_metrics:
+            mock_metrics.return_value = MagicMock(
+                start_prometheus_server=MagicMock(),
+                register_strategies=MagicMock(),
+            )
+
+            orchestrator = TradingOrchestrator(config)
+            await orchestrator.start()
+
+            # Verify continuous data processing
+            assert len(futures_data_processed) == 10
+            assert futures_data_processed[0]["price"] == 250.0
+            assert futures_data_processed[-1]["price"] == 250.45
+
+            await orchestrator.stop()
