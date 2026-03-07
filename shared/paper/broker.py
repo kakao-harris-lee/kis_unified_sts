@@ -87,9 +87,30 @@ class VirtualBroker:
 
     async def _execute_market_order(self, order: VirtualOrder, market_price: float) -> None:
         """Execute market order with slippage."""
-        # Apply slippage
+        # Calculate slippage - use slippage model if available, otherwise fall back to simple rate
+        if self.slippage_model and self.slippage_model.config.enabled:
+            # Use slippage model for realistic fill price calculation
+            order_size = float(order.quantity)
+            # Use default orderbook values until subtask 3-3 adds orderbook parameter
+            current_spread = 0.05  # Default spread for mini futures
+            available_depth = 10.0  # Default depth
+
+            slippage_bps = self.slippage_model.calculate_slippage(
+                order_size=order_size,
+                current_spread=current_spread,
+                available_depth=available_depth,
+                timestamp=order.timestamp,
+            )
+
+            # Convert bps to rate (1 bps = 0.01% = 0.0001)
+            slippage_rate = slippage_bps / 10000.0
+        else:
+            # Fall back to simple slippage rate
+            slippage_rate = self.slippage_rate
+
+        # Apply slippage based on order side
         if order.side == OrderSide.BUY:
-            fill_price = market_price * (1 + self.slippage_rate)
+            fill_price = market_price * (1 + slippage_rate)
             # Check sufficient balance for BUY orders
             estimated_commission = fill_price * order.quantity * self.commission_rate
             required_balance = fill_price * order.quantity + estimated_commission
@@ -98,7 +119,7 @@ class VirtualBroker:
                     f"Insufficient balance: need {required_balance:.2f}, have {self.balance:.2f}"
                 )
         else:
-            fill_price = market_price * (1 - self.slippage_rate)
+            fill_price = market_price * (1 - slippage_rate)
 
         order.filled = True
         order.fill_price = fill_price
