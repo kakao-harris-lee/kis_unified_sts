@@ -33,7 +33,7 @@ services:
     environment:
       # 개발 시 익명 접근 허용
       - GF_AUTH_ANONYMOUS_ENABLED=true
-      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
       # 디버그
       - GF_LOG_LEVEL=debug
 
@@ -44,4 +44,3 @@ services:
       - '--storage.tsdb.path=/prometheus'
       - '--storage.tsdb.retention.time=3d'
       - '--web.enable-lifecycle'
-      - '--web.enable-admin-api'
