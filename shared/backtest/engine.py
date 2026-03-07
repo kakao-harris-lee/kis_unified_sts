@@ -425,6 +425,29 @@ class BacktestEngine:
             # 선물: 1계약 고정 (RL은 max_contracts=1)
             # 마진 기반이므로 capital 차감 없이 PnL만 추적
             quantity = 1
+
+            # Calculate slippage-adjusted fill price for futures
+            if self.config.slippage_model and self.config.slippage_model.config.enabled:
+                # Use slippage model for realistic fill price
+                order_size = float(quantity)
+                current_spread = float(bar.get("spread", 0.05)) if bar else 0.05
+                available_depth = float(bar.get("depth", 10.0)) if bar else 10.0
+
+                slippage_bps = self.config.slippage_model.calculate_slippage(
+                    order_size=order_size,
+                    current_spread=current_spread,
+                    available_depth=available_depth,
+                    timestamp=timestamp,
+                )
+
+                # Convert bps to rate (1 bps = 0.01% = 0.0001)
+                slippage_rate = slippage_bps / 10000.0
+
+                # Adjust fill price based on side (buy = pay more, sell = receive less)
+                if side == "BUY":
+                    price = price * (1 + slippage_rate)
+                else:  # SELL (short entry)
+                    price = price * (1 - slippage_rate)
         else:
             # 주식: 고정 금액(order_amount_per_stock) 우선, 없으면 자본 대비 % 사용
             if self.config.order_amount_per_stock and self.config.order_amount_per_stock > 0:
