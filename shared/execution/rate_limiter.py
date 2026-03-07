@@ -33,6 +33,7 @@ from collections import deque
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
+from shared.config.tls import build_redis_tls_params
 from shared.resilience import CircuitBreaker, CircuitState
 
 from .exceptions import RateLimitExceeded
@@ -235,9 +236,6 @@ class RedisRateLimiter:
                     except ValueError:
                         logger.warning(f"Invalid db in redis_url: {parsed.path}, using db=1")
 
-                # TLS configuration from environment variables
-                tls_enabled = os.environ.get("REDIS_TLS_ENABLED", "false").lower() == "true"
-
                 # Base connection parameters
                 connection_params = {
                     "host": host,
@@ -249,27 +247,19 @@ class RedisRateLimiter:
                     "socket_timeout": 5.0,
                 }
 
-                # Add TLS parameters if enabled
-                if tls_enabled:
-                    connection_params["ssl"] = True
+                # Add TLS parameters from shared helper
+                tls_params = build_redis_tls_params()
 
-                    # Certificate requirements (default: required)
-                    cert_reqs = os.environ.get("REDIS_TLS_CERT_REQS", "required").lower()
-                    if cert_reqs == "none":
-                        connection_params["ssl_cert_reqs"] = ssl.CERT_NONE
-                    elif cert_reqs == "optional":
-                        connection_params["ssl_cert_reqs"] = ssl.CERT_OPTIONAL
-                    else:  # "required" or any other value
-                        connection_params["ssl_cert_reqs"] = ssl.CERT_REQUIRED
+                # Handle rediss:// URL scheme even if env var not set
+                if not tls_params and parsed.scheme == "rediss":
+                    tls_params = {"ssl": True, "ssl_cert_reqs": ssl.CERT_REQUIRED}
 
-                    # CA certificate bundle path
-                    ca_certs = os.environ.get("REDIS_TLS_CA_CERTS", None)
-                    if ca_certs:
-                        connection_params["ssl_ca_certs"] = ca_certs
+                connection_params.update(tls_params)
 
-                    logger.debug(f"Redis TLS 활성화: {host}:{port} (cert_reqs={cert_reqs})")
+                if tls_params:
+                    logger.debug(f"Redis TLS enabled: {host}:{port}")
                 else:
-                    logger.debug(f"Redis TLS 비활성화: {host}:{port}")
+                    logger.debug(f"Redis TLS disabled: {host}:{port}")
 
                 self._redis = Redis(**connection_params)
 

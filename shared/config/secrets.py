@@ -201,7 +201,7 @@ class SecretsManager:
         host = cls.get("REDIS_HOST", "localhost")
         port = cls.get("REDIS_PORT", "6379")
         password = cls.get("REDIS_PASSWORD", "")
-        tls_enabled = cls.get("REDIS_TLS_ENABLED", "false").lower() == "true"
+        tls_enabled = cls.get("REDIS_TLS_ENABLED", "false").lower() in ("true", "1", "yes")
 
         if domain == "stock":
             db = cls.get("REDIS_STOCK_DB", "1")

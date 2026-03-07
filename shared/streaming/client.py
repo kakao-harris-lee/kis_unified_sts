@@ -7,11 +7,12 @@ from __future__ import annotations
 
 import logging
 import os
-import ssl
 import threading
 from typing import Optional
 
 import redis
+
+from shared.config.tls import build_redis_tls_params
 
 logger = logging.getLogger(__name__)
 
@@ -35,9 +36,6 @@ class RedisClient:
         password = os.environ.get("REDIS_PASSWORD", None) or None
         db = int(os.environ.get("REDIS_DB", "1"))
 
-        # TLS configuration
-        tls_enabled = os.environ.get("REDIS_TLS_ENABLED", "false").lower() == "true"
-
         # Base connection parameters
         connection_params = {
             "host": host,
@@ -50,26 +48,13 @@ class RedisClient:
         }
 
         # Add TLS parameters if enabled
-        if tls_enabled:
-            connection_params["ssl"] = True
+        tls_params = build_redis_tls_params()
+        connection_params.update(tls_params)
 
-            # Certificate requirements (default: required)
-            cert_reqs = os.environ.get("REDIS_TLS_CERT_REQS", "required").lower()
-            if cert_reqs == "none":
-                connection_params["ssl_cert_reqs"] = ssl.CERT_NONE
-            elif cert_reqs == "optional":
-                connection_params["ssl_cert_reqs"] = ssl.CERT_OPTIONAL
-            else:  # "required" or any other value
-                connection_params["ssl_cert_reqs"] = ssl.CERT_REQUIRED
-
-            # CA certificate bundle path
-            ca_certs = os.environ.get("REDIS_TLS_CA_CERTS", None)
-            if ca_certs:
-                connection_params["ssl_ca_certs"] = ca_certs
-
-            logger.debug(f"Redis TLS 활성화: {host}:{port} (cert_reqs={cert_reqs})")
+        if tls_params:
+            logger.debug(f"Redis TLS enabled: {host}:{port}")
         else:
-            logger.debug(f"Redis TLS 비활성화: {host}:{port}")
+            logger.debug(f"Redis TLS disabled: {host}:{port}")
 
         client = redis.Redis(**connection_params)
         client.ping()
