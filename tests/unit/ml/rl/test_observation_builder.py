@@ -15,6 +15,7 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 
+from shared.strategy import rl_model_helpers
 from shared.strategy.rl_model_helpers import build_rl_observation
 
 
@@ -1221,3 +1222,244 @@ class TestTimeFeatures:
                 f"{progresses[i]} <= {progresses[i-1]} "
                 f"(timestamps: {timestamps[i-1]} -> {timestamps[i]})"
             )
+
+
+class TestCacheBehavior:
+    """캐시 동작 테스트 (시장 피처 캐시 및 시간 피처 캐시 hit/eviction)"""
+
+    def test_scaled_market_cache_size_is_120(self):
+        """스케일된 시장 캐시 크기는 120 엔트리로 설정됨을 검증"""
+        assert rl_model_helpers._scaled_market_cache_size == 120
+
+    def test_time_feature_cache_size_is_120(self):
+        """시간 피처 캐시 크기는 120 엔트리로 설정됨을 검증"""
+        assert rl_model_helpers._time_feature_cache_size == 120
+
+    def test_scaled_market_cache_hit_on_duplicate_features(
+        self, mock_env_config, sample_market_data, sample_indicators
+    ):
+        """동일한 시장 피처 요청 시 캐시 hit 검증"""
+        # 테스트 전 캐시 클리어
+        rl_model_helpers._scaled_market_cache.clear()
+
+        # transform 호출 횟수를 추적하는 mock scaler
+        mock_scaler = MagicMock()
+        transform_count = {"count": 0}
+
+        def mock_transform(arr):
+            transform_count["count"] += 1
+            return arr
+
+        mock_scaler.transform = mock_transform
+
+        timestamp = datetime(2026, 3, 7, 10, 0, 0)
+
+        # 첫 번째 호출 - 캐시 미스, scaler.transform 호출
+        obs1 = build_rl_observation(
+            market_data=sample_market_data,
+            indicators=sample_indicators,
+            position_side=0.0,
+            contracts=0.0,
+            unrealized_pnl=0.0,
+            timestamp=timestamp,
+            scaler=mock_scaler,
+            env_config=mock_env_config,
+        )
+
+        assert transform_count["count"] == 1
+        assert obs1 is not None
+
+        # 두 번째 호출 (동일 시장 피처) - 캐시 hit, scaler 호출 없음
+        obs2 = build_rl_observation(
+            market_data=sample_market_data,
+            indicators=sample_indicators,
+            position_side=0.0,
+            contracts=0.0,
+            unrealized_pnl=0.0,
+            timestamp=timestamp,
+            scaler=mock_scaler,
+            env_config=mock_env_config,
+        )
+
+        assert transform_count["count"] == 1  # 추가 transform 호출 없음
+        assert obs2 is not None
+        np.testing.assert_array_equal(obs1, obs2)
+
+    def test_scaled_market_cache_eviction_when_full(self, mock_env_config):
+        """120 엔트리 초과 시 캐시 eviction 검증"""
+        # 테스트 전 캐시 클리어
+        rl_model_helpers._scaled_market_cache.clear()
+
+        mock_scaler = None  # 단순성을 위해 raw features 사용
+        timestamp = datetime(2026, 3, 7, 10, 0, 0)
+
+        # 120개의 고유 엔트리로 캐시 채우기
+        for i in range(120):
+            market_data = {"close": 100.0 + i}
+            indicators = {"returns": 0.001 + i * 0.0001, "rsi": 50.0 + i * 0.1}
+
+            build_rl_observation(
+                market_data=market_data,
+                indicators=indicators,
+                position_side=0.0,
+                contracts=0.0,
+                unrealized_pnl=0.0,
+                timestamp=timestamp,
+                scaler=mock_scaler,
+                env_config=mock_env_config,
+            )
+
+        # 캐시는 최대 크기여야 함
+        assert len(rl_model_helpers._scaled_market_cache) == 120
+
+        # 하나 더 추가 - eviction 트리거
+        market_data = {"close": 9999.0}
+        indicators = {"returns": 0.999, "rsi": 99.0}
+
+        build_rl_observation(
+            market_data=market_data,
+            indicators=indicators,
+            position_side=0.0,
+            contracts=0.0,
+            unrealized_pnl=0.0,
+            timestamp=timestamp,
+            scaler=mock_scaler,
+            env_config=mock_env_config,
+        )
+
+        # 캐시는 여전히 최대 크기여야 함 (가장 오래된 엔트리 evict됨)
+        assert len(rl_model_helpers._scaled_market_cache) == 120
+
+    def test_time_feature_cache_hit_on_same_minute(
+        self, mock_env_config, sample_market_data, sample_indicators
+    ):
+        """동일 분 내 타임스탬프에서 시간 피처 캐시 hit 검증"""
+        # 테스트 전 캐시 클리어
+        rl_model_helpers._time_feature_cache.clear()
+
+        mock_scaler = None
+
+        # 첫 번째 호출 (10:05:15)
+        timestamp1 = datetime(2026, 3, 7, 10, 5, 15)
+        obs1 = build_rl_observation(
+            market_data=sample_market_data,
+            indicators=sample_indicators,
+            position_side=0.0,
+            contracts=0.0,
+            unrealized_pnl=0.0,
+            timestamp=timestamp1,
+            scaler=mock_scaler,
+            env_config=mock_env_config,
+        )
+
+        # 캐시는 1개 엔트리를 가져야 함
+        assert len(rl_model_helpers._time_feature_cache) == 1
+
+        # 두 번째 호출 (10:05:45, 동일 분) - 캐시 hit
+        timestamp2 = datetime(2026, 3, 7, 10, 5, 45)
+        obs2 = build_rl_observation(
+            market_data=sample_market_data,
+            indicators=sample_indicators,
+            position_side=0.0,
+            contracts=0.0,
+            unrealized_pnl=0.0,
+            timestamp=timestamp2,
+            scaler=mock_scaler,
+            env_config=mock_env_config,
+        )
+
+        # 캐시는 여전히 1개 엔트리여야 함 (동일 분)
+        assert len(rl_model_helpers._time_feature_cache) == 1
+
+        # 관측값은 동일해야 함 (시간 피처가 동일)
+        np.testing.assert_array_equal(obs1, obs2)
+
+    def test_time_feature_cache_miss_on_different_minute(
+        self, mock_env_config, sample_market_data, sample_indicators
+    ):
+        """다른 분의 타임스탬프에서 시간 피처 캐시 miss 검증"""
+        # 테스트 전 캐시 클리어
+        rl_model_helpers._time_feature_cache.clear()
+
+        mock_scaler = None
+
+        # 첫 번째 호출 (10:05:00)
+        timestamp1 = datetime(2026, 3, 7, 10, 5, 0)
+        obs1 = build_rl_observation(
+            market_data=sample_market_data,
+            indicators=sample_indicators,
+            position_side=0.0,
+            contracts=0.0,
+            unrealized_pnl=0.0,
+            timestamp=timestamp1,
+            scaler=mock_scaler,
+            env_config=mock_env_config,
+        )
+
+        # 캐시는 1개 엔트리를 가져야 함
+        assert len(rl_model_helpers._time_feature_cache) == 1
+
+        # 두 번째 호출 (10:06:00, 다른 분) - 캐시 miss
+        timestamp2 = datetime(2026, 3, 7, 10, 6, 0)
+        obs2 = build_rl_observation(
+            market_data=sample_market_data,
+            indicators=sample_indicators,
+            position_side=0.0,
+            contracts=0.0,
+            unrealized_pnl=0.0,
+            timestamp=timestamp2,
+            scaler=mock_scaler,
+            env_config=mock_env_config,
+        )
+
+        # 캐시는 이제 2개 엔트리를 가져야 함 (다른 분)
+        assert len(rl_model_helpers._time_feature_cache) == 2
+
+        # 시간 피처는 달라야 함 (다른 progress 값)
+        assert not np.array_equal(obs1[-3:], obs2[-3:])
+
+    def test_time_feature_cache_eviction_when_full(self, mock_env_config):
+        """120 엔트리 초과 시 시간 피처 캐시 eviction 검증"""
+        # 테스트 전 캐시 클리어
+        rl_model_helpers._time_feature_cache.clear()
+
+        mock_scaler = None
+        market_data = {"close": 100.0}
+        indicators = {"returns": 0.001, "rsi": 50.0}
+
+        # 120개의 고유 엔트리로 캐시 채우기 (분 단위로)
+        base_timestamp = datetime(2026, 3, 7, 9, 0, 0)
+        for i in range(120):
+            # 고유한 분 단위 타임스탬프 생성 (i 분 추가)
+            timestamp = base_timestamp.replace(
+                hour=9 + i // 60, minute=i % 60, second=0, microsecond=0
+            )
+            build_rl_observation(
+                market_data=market_data,
+                indicators=indicators,
+                position_side=0.0,
+                contracts=0.0,
+                unrealized_pnl=0.0,
+                timestamp=timestamp,
+                scaler=mock_scaler,
+                env_config=mock_env_config,
+            )
+
+        # 캐시는 최대 크기여야 함
+        assert len(rl_model_helpers._time_feature_cache) == 120
+
+        # 하나 더 추가 - eviction 트리거
+        timestamp_extra = datetime(2026, 3, 7, 11, 1, 0)
+        build_rl_observation(
+            market_data=market_data,
+            indicators=indicators,
+            position_side=0.0,
+            contracts=0.0,
+            unrealized_pnl=0.0,
+            timestamp=timestamp_extra,
+            scaler=mock_scaler,
+            env_config=mock_env_config,
+        )
+
+        # 캐시는 여전히 최대 크기여야 함 (가장 오래된 엔트리 evict됨)
+        assert len(rl_model_helpers._time_feature_cache) == 120
