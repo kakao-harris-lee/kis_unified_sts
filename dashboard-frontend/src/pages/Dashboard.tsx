@@ -1,9 +1,11 @@
+import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { tradingApi, tradesApi } from '../api/client';
 import StatusCard from '../components/StatusCard';
 import StatCard from '../components/StatCard';
 import ErrorMessage from '../components/ErrorMessage';
 import RefreshIndicator from '../components/RefreshIndicator';
+import ConfirmationModal from '../components/ConfirmationModal';
 import useQueryWithError from '../hooks/useQueryWithError';
 
 interface TradingStatus {
@@ -25,6 +27,8 @@ interface TradeStats {
 
 function Dashboard() {
   const queryClient = useQueryClient();
+  const [isStartModalOpen, setIsStartModalOpen] = useState(false);
+  const [isStopModalOpen, setIsStopModalOpen] = useState(false);
 
   const {
     data: status,
@@ -67,10 +71,20 @@ function Dashboard() {
   });
 
   const handleStartTrading = () => {
+    setIsStartModalOpen(true);
+  };
+
+  const handleConfirmStart = () => {
+    setIsStartModalOpen(false);
     startTradingMutation.mutate();
   };
 
   const handleStopTrading = () => {
+    setIsStopModalOpen(true);
+  };
+
+  const handleConfirmStop = () => {
+    setIsStopModalOpen(false);
     stopTradingMutation.mutate();
   };
 
@@ -202,6 +216,27 @@ function Dashboard() {
           />
         </div>
       </div>
+
+      {/* Confirmation Modals */}
+      <ConfirmationModal
+        isOpen={isStartModalOpen}
+        onClose={() => setIsStartModalOpen(false)}
+        onConfirm={handleConfirmStart}
+        title="Start Trading"
+        message="Are you sure you want to start trading? This will activate all enabled strategies and begin executing trades."
+        confirmText="Start Trading"
+        confirmStyle="green"
+      />
+
+      <ConfirmationModal
+        isOpen={isStopModalOpen}
+        onClose={() => setIsStopModalOpen(false)}
+        onConfirm={handleConfirmStop}
+        title="Stop Trading"
+        message="Are you sure you want to stop trading? This will halt all active strategies and may affect open positions."
+        confirmText="Stop Trading"
+        confirmStyle="red"
+      />
     </div>
   );
 }
