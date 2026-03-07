@@ -266,11 +266,6 @@ class MetricsCollector:
             "RL model KL divergence for observation distribution drift",
             ["strategy", "metric_type"],
         )
-        self.prom_rl_action_distribution_drift = Gauge(
-            "trading_rl_action_distribution_drift",
-            "RL model action distribution drift",
-            ["strategy"],
-        )
         self.prom_rl_observation_mean_drift = Gauge(
             "trading_rl_observation_mean_drift",
             "RL model observation mean drift",
@@ -417,14 +412,12 @@ class MetricsCollector:
         self,
         *,
         strategy: str,
-        code: str,
         drift_metrics: "DriftMetrics",
     ) -> None:
         """RL 모델 드리프트 메트릭 기록.
 
         Args:
             strategy: 전략 이름 (e.g., 'rl_mppo')
-            code: 거래 종목 코드 (e.g., 'A05xxx')
             drift_metrics: DriftMetrics 객체 (KL divergence, PSI, confidence 등)
         """
         if not HAS_PROMETHEUS:
@@ -450,7 +443,7 @@ class MetricsCollector:
             )
 
             logger.debug(
-                f"Drift metrics recorded for {strategy}/{code}: "
+                f"Drift metrics recorded for {strategy}: "
                 f"KL={drift_metrics.kl_divergence:.4f}, PSI={drift_metrics.psi_score:.4f}"
             )
         except Exception as e:

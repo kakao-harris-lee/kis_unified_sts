@@ -18,7 +18,8 @@ except ImportError:
         from aiohttp import ClientSession, TCPConnector
 
 from .config import ClickHouseConfig
-from .models import DailyCandle, MinuteCandle, DriftMetrics
+from .models import DailyCandle, MinuteCandle
+from shared.monitoring.drift_metrics import DriftMetrics
 
 logger = logging.getLogger(__name__)
 
