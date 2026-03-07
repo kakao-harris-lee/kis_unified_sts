@@ -34,6 +34,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from pydantic import BaseModel, Field, field_validator
+
 logger = logging.getLogger(__name__)
 
 # Optional imports
@@ -48,6 +50,189 @@ except ImportError:
     mlflow = None
     MlflowClient = None
     MlflowException = Exception
+
+
+class ModelMetadata(BaseModel):
+    """Pydantic schema for RL model metadata validation
+
+    Validates model training metrics, data ranges, and timestamps for consistent
+    model registry metadata tracking. Ensures data quality and type safety for
+    all registered model versions.
+
+    Attributes:
+        version: Model version identifier (e.g., "1", "2", "v1.0.0")
+        sharpe: Sharpe ratio (annualized risk-adjusted return)
+        win_rate: Win rate as decimal (0.0-1.0, e.g., 0.55 = 55%)
+        max_dd: Maximum drawdown as negative decimal (e.g., -0.15 = -15%)
+        training_data_start: Training data start date (ISO format: YYYY-MM-DD)
+        training_data_end: Training data end date (ISO format: YYYY-MM-DD)
+        registered_at: Model registration timestamp (ISO format)
+        total_trades: Total number of trades in backtest (optional)
+        profit_factor: Profit factor (gross profit / gross loss, optional)
+        avg_trade_return: Average return per trade (optional)
+        hyperparams: Model hyperparameters dict (optional)
+
+    Example:
+        >>> metadata = ModelMetadata(
+        ...     version="1",
+        ...     sharpe=1.5,
+        ...     win_rate=0.55,
+        ...     max_dd=-0.15,
+        ...     training_data_start="2025-01-01",
+        ...     training_data_end="2026-01-01",
+        ...     registered_at=datetime.now().isoformat(),
+        ...     total_trades=150,
+        ...     profit_factor=1.8
+        ... )
+        >>> print(metadata.sharpe)
+        1.5
+
+    Validation Errors:
+        - win_rate outside [0, 1] raises ValidationError
+        - max_dd > 0 raises ValidationError
+        - training_data_end before training_data_start raises ValidationError
+        - Invalid date formats raise ValidationError
+    """
+
+    # Required fields
+    version: str = Field(
+        ...,
+        description="Model version identifier (e.g., '1', '2', 'v1.0.0')",
+        min_length=1,
+    )
+    sharpe: float = Field(
+        ...,
+        description="Sharpe ratio (annualized risk-adjusted return)",
+    )
+    win_rate: float = Field(
+        ...,
+        ge=0.0,
+        le=1.0,
+        description="Win rate as decimal (0.0-1.0, e.g., 0.55 = 55%)",
+    )
+    max_dd: float = Field(
+        ...,
+        le=0.0,
+        description="Maximum drawdown as negative decimal (e.g., -0.15 = -15%)",
+    )
+    training_data_start: str = Field(
+        ...,
+        description="Training data start date (ISO format: YYYY-MM-DD)",
+        pattern=r"^\d{4}-\d{2}-\d{2}$",
+    )
+    training_data_end: str = Field(
+        ...,
+        description="Training data end date (ISO format: YYYY-MM-DD)",
+        pattern=r"^\d{4}-\d{2}-\d{2}$",
+    )
+    registered_at: str = Field(
+        default_factory=lambda: datetime.now().isoformat(),
+        description="Model registration timestamp (ISO format)",
+    )
+
+    # Optional metrics
+    total_trades: int | None = Field(
+        default=None,
+        ge=0,
+        description="Total number of trades in backtest",
+    )
+    profit_factor: float | None = Field(
+        default=None,
+        ge=0.0,
+        description="Profit factor (gross profit / gross loss)",
+    )
+    avg_trade_return: float | None = Field(
+        default=None,
+        description="Average return per trade (as decimal)",
+    )
+    hyperparams: dict[str, Any] | None = Field(
+        default=None,
+        description="Model hyperparameters (learning_rate, gamma, etc.)",
+    )
+
+    @field_validator("training_data_start", "training_data_end")
+    @classmethod
+    def validate_date_format(cls, v: str) -> str:
+        """Validate ISO date format (YYYY-MM-DD)
+
+        Args:
+            v: Date string to validate
+
+        Returns:
+            Validated date string
+
+        Raises:
+            ValueError: If date format is invalid or date doesn't exist
+        """
+        try:
+            datetime.strptime(v, "%Y-%m-%d")
+        except ValueError as e:
+            raise ValueError(
+                f"Invalid date format '{v}'. Expected YYYY-MM-DD format. Error: {e}"
+            )
+        return v
+
+    @field_validator("training_data_end")
+    @classmethod
+    def validate_date_range(cls, v: str, info) -> str:
+        """Validate training_data_end is after training_data_start
+
+        Args:
+            v: training_data_end value
+            info: ValidationInfo with other field values
+
+        Returns:
+            Validated end date
+
+        Raises:
+            ValueError: If end date is before start date
+        """
+        if "training_data_start" in info.data:
+            start = datetime.strptime(info.data["training_data_start"], "%Y-%m-%d")
+            end = datetime.strptime(v, "%Y-%m-%d")
+            if end <= start:
+                raise ValueError(
+                    f"training_data_end ({v}) must be after "
+                    f"training_data_start ({info.data['training_data_start']})"
+                )
+        return v
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert metadata to dict for MLflow tags
+
+        Returns:
+            Dict with all non-None fields converted to strings
+        """
+        data = self.model_dump(exclude_none=True)
+        # Convert hyperparams to string representation if present
+        if "hyperparams" in data and data["hyperparams"]:
+            data["hyperparams"] = str(data["hyperparams"])
+        return {k: str(v) for k, v in data.items()}
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "ModelMetadata":
+        """Create ModelMetadata from dict (e.g., from MLflow tags)
+
+        Args:
+            data: Dict with metadata fields
+
+        Returns:
+            ModelMetadata instance
+
+        Raises:
+            ValidationError: If data doesn't match schema
+        """
+        # Convert string values back to appropriate types
+        parsed = {}
+        for key, value in data.items():
+            if key in ["sharpe", "win_rate", "max_dd", "profit_factor", "avg_trade_return"]:
+                parsed[key] = float(value) if value != "N/A" else None
+            elif key == "total_trades":
+                parsed[key] = int(value) if value != "N/A" else None
+            else:
+                parsed[key] = value
+
+        return cls(**parsed)
 
 
 class ModelRegistry:
