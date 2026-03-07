@@ -239,6 +239,15 @@ class StreamingIndicatorEngine:
         ] = {}
         self._momentum_cache: dict[tuple[str, int], tuple[int, dict[str, Any]]] = {}
 
+        # Cache for get_indicators(): {symbol: (candle_count, indicators_dict)}
+        self._indicator_cache: dict[str, tuple[int, dict[str, float]]] = {}
+
+        # Cache statistics tracking
+        self._indicator_cache_hits: int = 0
+        self._indicator_cache_misses: int = 0
+        self._momentum_cache_hits: int = 0
+        self._momentum_cache_misses: int = 0
+
         # Volume indicators
         self._high_period = high_period
         self._rvol_short = rvol_short
@@ -489,6 +498,7 @@ class StreamingIndicatorEngine:
         self._momentum_cache = {
             key: value for key, value in self._momentum_cache.items() if key[0] != symbol
         }
+        self._indicator_cache.pop(symbol, None)
         self._warm_logged.discard(symbol)
         self._vwap_calc.reset(symbol)
         self._vol_accel_calc.reset(symbol)
@@ -520,6 +530,45 @@ class StreamingIndicatorEngine:
             return 0.0
         return min(len(acc.candles) / self.bb_period, 1.0)
 
+    def get_cache_stats(self) -> dict[str, Any]:
+        """Return cache statistics for performance monitoring.
+
+        Returns:
+            Dict with cache hit/miss counts and cache sizes:
+            - indicator_cache_hits: Number of cache hits for get_indicators()
+            - indicator_cache_misses: Number of cache misses for get_indicators()
+            - momentum_cache_hits: Number of cache hits for get_momentum_indicators()
+            - momentum_cache_misses: Number of cache misses for get_momentum_indicators()
+            - indicator_cache_size: Number of cached symbols
+            - momentum_cache_size: Number of cached (symbol, timeframe) pairs
+            - indicator_hit_rate: Percentage of cache hits (0-100)
+            - momentum_hit_rate: Percentage of cache hits (0-100)
+        """
+        indicator_total = self._indicator_cache_hits + self._indicator_cache_misses
+        momentum_total = self._momentum_cache_hits + self._momentum_cache_misses
+
+        indicator_hit_rate = (
+            (self._indicator_cache_hits / indicator_total * 100)
+            if indicator_total > 0
+            else 0.0
+        )
+        momentum_hit_rate = (
+            (self._momentum_cache_hits / momentum_total * 100)
+            if momentum_total > 0
+            else 0.0
+        )
+
+        return {
+            "indicator_cache_hits": self._indicator_cache_hits,
+            "indicator_cache_misses": self._indicator_cache_misses,
+            "momentum_cache_hits": self._momentum_cache_hits,
+            "momentum_cache_misses": self._momentum_cache_misses,
+            "indicator_cache_size": len(self._indicator_cache),
+            "momentum_cache_size": len(self._momentum_cache),
+            "indicator_hit_rate": indicator_hit_rate,
+            "momentum_hit_rate": momentum_hit_rate,
+        }
+
     def get_indicators(
         self, symbol: str, now: datetime | None = None
     ) -> dict[str, float]:
@@ -548,6 +597,15 @@ class StreamingIndicatorEngine:
                     self._staleness_seconds,
                 )
                 return {}
+
+        # Check cache: return cached result if candle count hasn't changed
+        candle_count = len(acc.candles)
+        cached = self._indicator_cache.get(symbol)
+        if cached and cached[0] == candle_count:
+            self._indicator_cache_hits += 1
+            return cached[1].copy()
+
+        self._indicator_cache_misses += 1
 
         candles = list(acc.candles)
         closes = [c.close for c in candles]
@@ -624,6 +682,9 @@ class StreamingIndicatorEngine:
 
         # Daily EMA alignment: EMA(5d) > EMA(10d) > EMA(20d) — multi-day uptrend
         result["ema_daily_aligned"] = self._calc_daily_ema_aligned(symbol)
+
+        # Update cache (store a copy so callers can safely mutate result)
+        self._indicator_cache[symbol] = (candle_count, result.copy())
 
         return result
 
@@ -859,15 +920,28 @@ class StreamingIndicatorEngine:
 
         from shared.indicators.momentum import calculate_all_momentum
 
-        candles = self.get_mtf_candles(symbol, timeframe, limit=0)
-        if len(candles) < min_candles:
+        # Check candle count directly from accumulator to avoid expensive dict conversion
+        mtf_map = self._mtf_accumulators.get(symbol)
+        if not mtf_map:
+            return {}
+        mtf_acc = mtf_map.get(timeframe)
+        if not mtf_acc:
             return {}
 
+        candle_count = len(mtf_acc.candles)
+        if candle_count < min_candles:
+            return {}
+
+        # Check cache before expensive dict conversion and DataFrame construction
         cache_key = (symbol, timeframe)
         cached = self._momentum_cache.get(cache_key)
-        if cached and cached[0] == len(candles):
+        if cached and cached[0] == candle_count:
+            self._momentum_cache_hits += 1
             return cached[1]
 
+        self._momentum_cache_misses += 1
+        # Cache miss: convert candles to dicts for DataFrame construction
+        candles = self.get_mtf_candles(symbol, timeframe, limit=0)
         df = pd.DataFrame(candles)
 
         try:
