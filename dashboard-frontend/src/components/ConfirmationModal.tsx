@@ -26,7 +26,8 @@ function ConfirmationModal({
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         onClose();
-      } else if (e.key === 'Enter') {
+      } else if (e.key === 'Enter' && confirmStyle !== 'red') {
+        e.preventDefault();
         onConfirm();
       }
     };
