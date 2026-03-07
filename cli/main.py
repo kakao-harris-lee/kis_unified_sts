@@ -1979,6 +1979,47 @@ def _run_futures_backtest_with_table(
             os.environ["FUTURES_CANDLE_TABLE"] = prev_table
 
 
+def _validate_rl_config(config_path: str) -> "RLMPPOConfig":
+    """Validate RL config and return validated config object.
+
+    Args:
+        config_path: Path to config YAML file
+
+    Returns:
+        Validated RLMPPOConfig object
+
+    Raises:
+        SystemExit: If validation fails
+    """
+    from pydantic import ValidationError
+    from shared.ml.rl.config import RLMPPOConfig
+
+    try:
+        validated_config = RLMPPOConfig.from_yaml(config_path)
+        click.echo("✓ Config validation passed")
+        click.echo(
+            f"  Learning rate: {validated_config.mppo.learning_rate}, "
+            f"Initial balance: {validated_config.env.initial_balance:,.0f}"
+        )
+        return validated_config
+    except ValidationError as e:
+        click.echo("✗ Config validation failed:", err=True)
+        click.echo("", err=True)
+        for error in e.errors():
+            field = ".".join(str(x) for x in error["loc"])
+            msg = error["msg"]
+            value = error.get("input")
+            click.echo(f"  Field: {field}", err=True)
+            click.echo(f"  Error: {msg}", err=True)
+            if value is not None:
+                click.echo(f"  Value: {value}", err=True)
+            click.echo("", err=True)
+        click.echo(
+            f"Fix the validation errors in {config_path} and try again.", err=True
+        )
+        sys.exit(1)
+
+
 @rl.command("train")
 @click.option("--algo", "-a", default="mppo", type=click.Choice(["mppo", "sac", "dqn", "a2c", "ppo", "dt", "all"]), help="Algorithm to train (default: mppo)")
 @click.option("--config", "-c", default=None, help="Config file path (auto-detected for dt)")
@@ -2001,39 +2042,14 @@ def rl_train(algo: str, config: str | None):
     click.echo("-" * 40)
 
     try:
-        from pydantic import ValidationError
-
         from scripts.training.train_rl import (
             load_data_from_clickhouse,
             precompute_tft_aux,
         )
-        from shared.ml.rl.config import RLMPPOConfig
         from shared.ml.rl.trainer import RLTrainer
 
         # Validate config early to fail fast before expensive data loading
-        try:
-            validated_config = RLMPPOConfig.from_yaml(config)
-            click.echo("✓ Config validation passed")
-            click.echo(
-                f"  Learning rate: {validated_config.mppo.learning_rate}, "
-                f"Initial balance: {validated_config.env.initial_balance:,.0f}"
-            )
-        except ValidationError as e:
-            click.echo("✗ Config validation failed:", err=True)
-            click.echo("", err=True)
-            for error in e.errors():
-                field = ".".join(str(x) for x in error["loc"])
-                msg = error["msg"]
-                value = error.get("input")
-                click.echo(f"  Field: {field}", err=True)
-                click.echo(f"  Error: {msg}", err=True)
-                if value is not None:
-                    click.echo(f"  Value: {value}", err=True)
-                click.echo("", err=True)
-            click.echo(
-                f"Fix the validation errors in {config} and try again.", err=True
-            )
-            sys.exit(1)
+        _validate_rl_config(config)
 
         train_days, train_prices, test_days, test_prices = load_data_from_clickhouse(
             config,
@@ -2101,6 +2117,9 @@ def rl_evaluate(model: str, config: str | None):
 
     algo_label = "DT" if is_dt else ("SAC" if is_sac else "MPPO")
     click.echo(f"Evaluating RL Model: {model} ({algo_label})")
+
+    # Validate config early
+    _validate_rl_config(config)
 
     try:
         from scripts.training.train_rl import (
@@ -2241,6 +2260,9 @@ def rl_pipeline(
     click.echo(f"  Backtest strategy: {strategy}")
     click.echo("-" * 50)
 
+    # Validate config early
+    _validate_rl_config(config)
+
     try:
         train_cfg_rel, train_cfg_abs = _write_temp_rl_config(
             config,
@@ -2353,6 +2375,9 @@ def rl_slippage(model: str, retrain: bool, config: str):
     """
     table = "Table 3 (retrain)" if retrain else "Table 2 (test-only)"
     click.echo(f"Slippage Analysis: {table}")
+
+    # Validate config early
+    _validate_rl_config(config)
 
     try:
         from scripts.training.train_rl import load_data_from_clickhouse
