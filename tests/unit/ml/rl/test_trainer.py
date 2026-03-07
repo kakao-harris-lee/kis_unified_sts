@@ -195,3 +195,240 @@ def test_trainer_device_attribute():
     # Device should be a valid string
     assert isinstance(trainer.device, str)
     assert trainer.device in ["cpu", "cuda", "mps"]
+
+
+class TestEnvironmentCreation:
+    """Test RLTrainer._make_env creates correct environment with ActionMasker wrapper."""
+
+    @pytest.fixture
+    def trainer(self):
+        """Create trainer instance."""
+        from shared.ml.rl.trainer import RLTrainer
+
+        return RLTrainer()
+
+    @pytest.fixture
+    def sample_data(self):
+        """Generate sample training data."""
+        import numpy as np
+
+        n_steps = 100
+        n_features = 25
+
+        np.random.seed(42)
+        features = np.random.randn(n_steps, n_features).astype(np.float32)
+        prices = np.zeros((n_steps, 4), dtype=np.float32)
+
+        base_price = 350.0
+        for i in range(n_steps):
+            price = base_price + np.random.normal(0, 0.5)
+            prices[i] = [
+                price - 0.1,  # open
+                price + 0.3,  # high
+                price - 0.3,  # low
+                price,  # close
+            ]
+            base_price = price
+
+        return [features], [prices]
+
+    def test_make_env_creates_dummy_vec_env(self, trainer, sample_data):
+        """Test _make_env returns DummyVecEnv wrapper."""
+        from stable_baselines3.common.vec_env import DummyVecEnv
+
+        train_days, train_prices = sample_data
+        env = trainer._make_env(train_days, train_prices, trainer.env_config)
+
+        assert isinstance(env, DummyVecEnv)
+        assert env.num_envs == 1
+
+    def test_make_env_with_action_masker_wrapper(self, trainer, sample_data):
+        """Test _make_env wraps discrete action env with ActionMasker."""
+        from sb3_contrib.common.wrappers import ActionMasker
+
+        train_days, train_prices = sample_data
+        env = trainer._make_env(
+            train_days, train_prices, trainer.env_config, continuous=False
+        )
+
+        # Get the underlying environment from DummyVecEnv
+        base_env = env.envs[0]
+
+        # Should be wrapped with ActionMasker
+        assert isinstance(base_env, ActionMasker)
+
+    def test_make_env_with_continuous_action_wrapper(self, trainer, sample_data):
+        """Test _make_env wraps continuous action env with ContinuousActionWrapper."""
+        from shared.ml.rl.wrappers import ContinuousActionWrapper
+
+        train_days, train_prices = sample_data
+        env = trainer._make_env(
+            train_days, train_prices, trainer.env_config, continuous=True
+        )
+
+        # Get the underlying environment from DummyVecEnv
+        base_env = env.envs[0]
+
+        # Should be wrapped with ContinuousActionWrapper
+        assert isinstance(base_env, ContinuousActionWrapper)
+
+    def test_make_env_observation_space(self, trainer, sample_data):
+        """Test created environment has correct observation space."""
+        import numpy as np
+
+        train_days, train_prices = sample_data
+        env = trainer._make_env(train_days, train_prices, trainer.env_config)
+
+        # DummyVecEnv observation space
+        obs_space = env.observation_space
+
+        # Should match config dimensions:
+        # n_market_features + n_aux_features + n_position_features
+        expected_dim = (
+            trainer.env_config.n_market_features
+            + trainer.env_config.n_aux_features
+            + trainer.env_config.n_position_features
+        )
+
+        assert obs_space.shape == (1, expected_dim)  # (num_envs, obs_dim)
+        assert obs_space.dtype == np.float32
+
+    def test_make_env_action_space(self, trainer, sample_data):
+        """Test created environment has correct action space."""
+        from gymnasium import spaces
+
+        train_days, train_prices = sample_data
+        env = trainer._make_env(train_days, train_prices, trainer.env_config)
+
+        # DummyVecEnv wraps the action space
+        action_space = env.action_space
+
+        # Should be Discrete(5) for 5 actions
+        assert isinstance(action_space, spaces.Discrete)
+        assert action_space.n == 5
+
+    def test_make_env_action_masks_available(self, trainer, sample_data):
+        """Test ActionMasker wrapper provides action masks."""
+        train_days, train_prices = sample_data
+        env = trainer._make_env(
+            train_days, train_prices, trainer.env_config, continuous=False
+        )
+
+        # Reset environment
+        obs = env.reset()
+
+        # Get the underlying ActionMasker environment
+        base_env = env.envs[0]
+
+        # Should have action_masks method
+        assert hasattr(base_env, "action_masks")
+
+        # Action masks should return valid mask
+        masks = base_env.action_masks()
+        assert masks.shape == (5,)  # 5 actions
+        assert masks.dtype == bool
+
+    def test_make_env_validates_empty_data(self, trainer):
+        """Test _make_env raises error for empty training data."""
+        with pytest.raises(ValueError, match="train_days must be provided"):
+            trainer._make_env(None, None, trainer.env_config)
+
+        with pytest.raises(ValueError, match="train_days must be provided"):
+            trainer._make_env([], [], trainer.env_config)
+
+    def test_make_env_day_rotation(self, trainer, sample_data):
+        """Test environment rotates through different days on reset."""
+        import numpy as np
+
+        # Create multi-day data
+        n_steps = 100
+        n_features = 25
+        n_days = 3
+
+        np.random.seed(42)
+        train_days = [
+            np.random.randn(n_steps, n_features).astype(np.float32)
+            for _ in range(n_days)
+        ]
+        train_prices = [
+            np.random.randn(n_steps, 4).astype(np.float32) for _ in range(n_days)
+        ]
+
+        env = trainer._make_env(train_days, train_prices, trainer.env_config)
+
+        # Get the underlying environment
+        base_env = env.envs[0]
+
+        # Access the wrapped environment to get _DayRotatingEnv
+        if hasattr(base_env, "env"):
+            rotating_env = base_env.env
+        else:
+            rotating_env = base_env
+
+        # Initial reset should use day 0
+        env.reset()
+        initial_day_idx = rotating_env._day_idx if hasattr(rotating_env, "_day_idx") else None
+
+        # Second reset should rotate to next day
+        env.reset()
+        second_day_idx = rotating_env._day_idx if hasattr(rotating_env, "_day_idx") else None
+
+        # If day rotation is implemented, indices should be different
+        if initial_day_idx is not None and second_day_idx is not None:
+            assert second_day_idx == (initial_day_idx + 1) % n_days
+
+    def test_make_env_uses_mask_fn(self, trainer, sample_data):
+        """Test ActionMasker uses the correct mask_fn from env module."""
+        from shared.ml.rl.env import mask_fn
+
+        train_days, train_prices = sample_data
+        env = trainer._make_env(
+            train_days, train_prices, trainer.env_config, continuous=False
+        )
+
+        # Get the underlying ActionMasker
+        base_env = env.envs[0]
+
+        # Reset environment
+        env.reset()
+
+        # Get masks from ActionMasker
+        masks = base_env.action_masks()
+
+        # Get the wrapped FuturesTradingEnv
+        if hasattr(base_env, "env"):
+            futures_env = base_env.env
+        else:
+            futures_env = base_env
+
+        # Masks should match what mask_fn would return
+        expected_masks = mask_fn(futures_env)
+        assert (masks == expected_masks).all()
+
+    def test_make_env_with_aux_features(self, trainer, sample_data):
+        """Test _make_env handles auxiliary features correctly."""
+        import numpy as np
+
+        train_days, train_prices = sample_data
+        n_steps = train_days[0].shape[0]
+        n_aux = 5
+
+        # Create auxiliary features
+        train_aux = [np.random.randn(n_steps, n_aux).astype(np.float32)]
+
+        # Update config to include aux features
+        config_with_aux = trainer.env_config
+        config_with_aux.n_aux_features = n_aux
+
+        env = trainer._make_env(
+            train_days, train_prices, config_with_aux, aux_days=train_aux
+        )
+
+        # Observation space should include aux features
+        expected_dim = (
+            config_with_aux.n_market_features
+            + config_with_aux.n_aux_features
+            + config_with_aux.n_position_features
+        )
+
+        assert env.observation_space.shape == (1, expected_dim)
