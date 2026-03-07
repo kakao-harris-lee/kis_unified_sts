@@ -25,7 +25,10 @@ import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any
+from typing import Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from shared.monitoring.drift_metrics import DriftMetrics
 
 logger = logging.getLogger(__name__)
 
@@ -409,6 +412,49 @@ class MetricsCollector:
         self.prom_rl_entry_action_probability.labels(
             strategy=strategy, action="hold"
         ).set(max(0.0, min(1.0, float(hold_prob))))
+
+    def record_drift_metrics(
+        self,
+        *,
+        strategy: str,
+        code: str,
+        drift_metrics: "DriftMetrics",
+    ) -> None:
+        """RL 모델 드리프트 메트릭 기록.
+
+        Args:
+            strategy: 전략 이름 (e.g., 'rl_mppo')
+            code: 거래 종목 코드 (e.g., 'A05xxx')
+            drift_metrics: DriftMetrics 객체 (KL divergence, PSI, confidence 등)
+        """
+        if not HAS_PROMETHEUS:
+            return
+
+        try:
+            # KL divergence 기록
+            self.prom_rl_kl_divergence.labels(
+                strategy=strategy, metric_type="kl"
+            ).set(float(drift_metrics.kl_divergence))
+
+            # PSI 기록
+            self.prom_rl_kl_divergence.labels(
+                strategy=strategy, metric_type="psi"
+            ).set(float(drift_metrics.psi_score))
+
+            # Confidence 분포 메트릭 기록
+            self.prom_rl_observation_mean_drift.labels(strategy=strategy).set(
+                float(drift_metrics.confidence_mean)
+            )
+            self.prom_rl_observation_std_drift.labels(strategy=strategy).set(
+                float(drift_metrics.confidence_std)
+            )
+
+            logger.debug(
+                f"Drift metrics recorded for {strategy}/{code}: "
+                f"KL={drift_metrics.kl_divergence:.4f}, PSI={drift_metrics.psi_score:.4f}"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to record drift metrics: {e}")
 
     def record_order_latency(self, latency_ms: float):
         """주문 레이턴시 기록"""
