@@ -1172,3 +1172,449 @@ class TestCostComponent:
             f"Cost should scale with commission rate: "
             f"normal={cost_normal}, high={cost_high}, ratio={commission_ratio}"
         )
+
+
+class TestRiskComponent:
+    """리스크 컴포넌트 (r_risk) 테스트
+
+    r_risk = max(0.0, -unrealized_pnl / initial_balance)
+
+    검증 사항:
+    - 미실현 손실 시: r_risk > 0 (페널티 발생)
+    - 미실현 수익 시: r_risk = 0 (페널티 없음)
+    - 포지션 없음: r_risk = 0
+    - Drawdown 페널티: actual_pnl <= max_loss 시 강제 청산 + 추가 페널티
+    - 손실 페널티 계수: loss_penalty_coeff 배율 적용
+    """
+
+    def test_long_position_unrealized_loss_penalty(self, env: FuturesTradingEnv):
+        """롱 포지션 미실현 손실: r_risk 페널티 발생"""
+        env.reset()
+        entry_price = env._get_current_price()
+
+        # 롱 진입
+        env.step(Action.LONG_ENTRY)
+
+        # 가격 하락 시뮬레이션 (미실현 손실 발생)
+        for _ in range(5):
+            env.step(Action.HOLD)
+
+        # 가격 하락 강제 설정
+        price_decrease = 3.0  # 3 포인트 하락
+        env.prices[env.current_step, 3] = entry_price - price_decrease
+        current_price = env._get_current_price()
+
+        # Hold 행동 (미실현 손실 상태 유지)
+        _, reward, _, _, info = env.step(Action.HOLD)
+
+        # 미실현 손익 계산
+        unrealized_pnl = (
+            (current_price - entry_price)
+            * env.config.contract_multiplier
+            * env.config.max_contracts
+        )
+        expected_r_risk = max(0.0, -unrealized_pnl / env.config.initial_balance)
+
+        # Hold 시: trade_pnl=0, trade_cost=0, r_risk > 0
+        expected_reward = (
+            env.config.w_profit * 0.0
+            - env.config.w_cost * 0.0
+            - env.config.w_risk * expected_r_risk
+        ) * env.config.reward_scale
+
+        assert unrealized_pnl < 0, "Test setup error: should have unrealized loss"
+        assert expected_r_risk > 0, "r_risk should be positive for unrealized loss"
+        assert reward == pytest.approx(expected_reward, rel=1e-5), (
+            f"Long unrealized loss penalty mismatch: expected {expected_reward}, got {reward}"
+        )
+
+        # 보상이 음수여야 함 (페널티)
+        assert reward < 0, "Reward should be negative due to risk penalty"
+
+        # 포지션 유지 확인
+        assert env.position == PositionSide.LONG
+        assert env.contracts == env.config.max_contracts
+
+    def test_short_position_unrealized_loss_penalty(self, env: FuturesTradingEnv):
+        """숏 포지션 미실현 손실: r_risk 페널티 발생"""
+        env.reset()
+        entry_price = env._get_current_price()
+
+        # 숏 진입
+        env.step(Action.SHORT_ENTRY)
+
+        # 가격 상승 시뮬레이션 (숏은 가격 상승 시 손실)
+        for _ in range(5):
+            env.step(Action.HOLD)
+
+        # 가격 상승 강제 설정
+        price_increase = 3.0  # 3 포인트 상승
+        env.prices[env.current_step, 3] = entry_price + price_increase
+        current_price = env._get_current_price()
+
+        # Hold 행동 (미실현 손실 상태 유지)
+        _, reward, _, _, info = env.step(Action.HOLD)
+
+        # 미실현 손익 계산 (숏: entry_price - current_price)
+        unrealized_pnl = (
+            (entry_price - current_price)
+            * env.config.contract_multiplier
+            * env.config.max_contracts
+        )
+        expected_r_risk = max(0.0, -unrealized_pnl / env.config.initial_balance)
+
+        # Hold 시: trade_pnl=0, trade_cost=0, r_risk > 0
+        expected_reward = (
+            env.config.w_profit * 0.0
+            - env.config.w_cost * 0.0
+            - env.config.w_risk * expected_r_risk
+        ) * env.config.reward_scale
+
+        assert unrealized_pnl < 0, "Test setup error: short should have unrealized loss"
+        assert expected_r_risk > 0, "r_risk should be positive for unrealized loss"
+        assert reward == pytest.approx(expected_reward, rel=1e-5), (
+            f"Short unrealized loss penalty mismatch: expected {expected_reward}, got {reward}"
+        )
+
+        # 보상이 음수여야 함 (페널티)
+        assert reward < 0, "Reward should be negative due to risk penalty"
+
+        # 포지션 유지 확인
+        assert env.position == PositionSide.SHORT
+        assert env.contracts == env.config.max_contracts
+
+    def test_long_position_unrealized_profit_no_penalty(self, env: FuturesTradingEnv):
+        """롱 포지션 미실현 수익: r_risk = 0 (페널티 없음)"""
+        env.reset()
+        entry_price = env._get_current_price()
+
+        # 롱 진입
+        env.step(Action.LONG_ENTRY)
+
+        # 가격 상승 시뮬레이션 (미실현 수익 발생)
+        for _ in range(5):
+            env.step(Action.HOLD)
+
+        # 가격 상승 강제 설정
+        price_increase = 3.0  # 3 포인트 상승
+        env.prices[env.current_step, 3] = entry_price + price_increase
+        current_price = env._get_current_price()
+
+        # Hold 행동 (미실현 수익 상태 유지)
+        _, reward, _, _, info = env.step(Action.HOLD)
+
+        # 미실현 손익 계산
+        unrealized_pnl = (
+            (current_price - entry_price)
+            * env.config.contract_multiplier
+            * env.config.max_contracts
+        )
+        expected_r_risk = max(0.0, -unrealized_pnl / env.config.initial_balance)
+
+        # Hold 시: trade_pnl=0, trade_cost=0, r_risk=0 (수익이므로 페널티 없음)
+        expected_reward = (
+            env.config.w_profit * 0.0
+            - env.config.w_cost * 0.0
+            - env.config.w_risk * expected_r_risk
+        ) * env.config.reward_scale
+
+        assert unrealized_pnl > 0, "Test setup error: should have unrealized profit"
+        assert expected_r_risk == 0.0, "r_risk should be 0 for unrealized profit"
+        assert reward == pytest.approx(expected_reward, abs=1e-9), (
+            f"Long unrealized profit reward mismatch: expected {expected_reward}, got {reward}"
+        )
+
+        # 보상이 0이어야 함 (Hold 행동, 페널티 없음)
+        assert reward == pytest.approx(0.0, abs=1e-9), "Reward should be 0 (no penalty, no profit)"
+
+        # 포지션 유지 확인
+        assert env.position == PositionSide.LONG
+        assert env.contracts == env.config.max_contracts
+
+    def test_short_position_unrealized_profit_no_penalty(self, env: FuturesTradingEnv):
+        """숏 포지션 미실현 수익: r_risk = 0 (페널티 없음)"""
+        env.reset()
+        entry_price = env._get_current_price()
+
+        # 숏 진입
+        env.step(Action.SHORT_ENTRY)
+
+        # 가격 하락 시뮬레이션 (숏은 가격 하락 시 수익)
+        for _ in range(5):
+            env.step(Action.HOLD)
+
+        # 가격 하락 강제 설정
+        price_decrease = 3.0  # 3 포인트 하락
+        env.prices[env.current_step, 3] = entry_price - price_decrease
+        current_price = env._get_current_price()
+
+        # Hold 행동 (미실현 수익 상태 유지)
+        _, reward, _, _, info = env.step(Action.HOLD)
+
+        # 미실현 손익 계산 (숏: entry_price - current_price)
+        unrealized_pnl = (
+            (entry_price - current_price)
+            * env.config.contract_multiplier
+            * env.config.max_contracts
+        )
+        expected_r_risk = max(0.0, -unrealized_pnl / env.config.initial_balance)
+
+        # Hold 시: trade_pnl=0, trade_cost=0, r_risk=0 (수익이므로 페널티 없음)
+        expected_reward = (
+            env.config.w_profit * 0.0
+            - env.config.w_cost * 0.0
+            - env.config.w_risk * expected_r_risk
+        ) * env.config.reward_scale
+
+        assert unrealized_pnl > 0, "Test setup error: short should have unrealized profit"
+        assert expected_r_risk == 0.0, "r_risk should be 0 for unrealized profit"
+        assert reward == pytest.approx(expected_reward, abs=1e-9), (
+            f"Short unrealized profit reward mismatch: expected {expected_reward}, got {reward}"
+        )
+
+        # 보상이 0이어야 함 (Hold 행동, 페널티 없음)
+        assert reward == pytest.approx(0.0, abs=1e-9), "Reward should be 0 (no penalty, no profit)"
+
+        # 포지션 유지 확인
+        assert env.position == PositionSide.SHORT
+        assert env.contracts == env.config.max_contracts
+
+    def test_flat_position_no_risk_penalty(self, env: FuturesTradingEnv):
+        """포지션 없음: r_risk = 0"""
+        env.reset()
+
+        # Hold 행동 (포지션 없음)
+        _, reward, _, _, info = env.step(Action.HOLD)
+
+        # 포지션 없으므로: trade_pnl=0, trade_cost=0, r_risk=0
+        expected_reward = 0.0
+
+        assert reward == pytest.approx(expected_reward, abs=1e-9), (
+            f"Flat position reward should be 0, got {reward}"
+        )
+
+        # 포지션 없음 확인
+        assert env.position == PositionSide.FLAT
+        assert env.contracts == 0
+
+    def test_max_loss_triggers_drawdown_penalty(self, env: FuturesTradingEnv):
+        """max_loss 초과: 강제 청산 + drawdown 페널티 발생"""
+        env.reset()
+        entry_price = env._get_current_price()
+
+        # 롱 진입
+        env.step(Action.LONG_ENTRY)
+
+        # 큰 손실 발생 시뮬레이션
+        # max_loss = -50M, initial_balance = 100M
+        # 손실률 50% 이상 발생시키기
+        # unrealized_pnl = -50M 이상 필요
+        # price_decrease = 50M / (contract_multiplier * max_contracts)
+        loss_amount = abs(env.config.max_loss)
+        required_price_decrease = loss_amount / (
+            env.config.contract_multiplier * env.config.max_contracts
+        )
+
+        # 가격 급락 설정 (max_loss를 초과하도록)
+        for _ in range(10):
+            env.step(Action.HOLD)
+
+        env.prices[env.current_step, 3] = entry_price - required_price_decrease - 10.0
+        current_price = env._get_current_price()
+
+        # Hold 행동 → max_loss 체크 → 강제 청산 트리거
+        _, reward, terminated, _, info = env.step(Action.HOLD)
+
+        # 미실현 손익 계산
+        unrealized_pnl = (
+            (current_price - entry_price)
+            * env.config.contract_multiplier
+            * env.config.max_contracts
+        )
+        actual_pnl = env.total_pnl + unrealized_pnl
+
+        # max_loss 초과 확인
+        assert actual_pnl <= env.config.max_loss, (
+            f"Test setup error: actual_pnl ({actual_pnl}) should be <= max_loss ({env.config.max_loss})"
+        )
+
+        # 강제 청산되어야 함
+        assert terminated is True, "Episode should be terminated due to max_loss"
+        assert env.position == PositionSide.FLAT, "Position should be forcefully closed"
+        assert env.contracts == 0, "No contracts should remain"
+
+        # Drawdown 페널티 계산
+        # penalty = max_loss * loss_penalty_coeff / initial_balance * reward_scale
+        expected_penalty = (
+            env.config.max_loss
+            * env.config.loss_penalty_coeff
+            / env.config.initial_balance
+            * env.config.reward_scale
+        )
+
+        # 보상은 강제 청산 보상 + drawdown 페널티를 포함
+        # 강제 청산 시 실현 손익 발생 + 페널티 추가
+        # 보상이 큰 음수여야 함
+        assert reward < 0, f"Reward should be negative due to drawdown penalty, got {reward}"
+
+        # 페널티가 적용되었는지 확인 (정확한 값 검증은 어렵지만 크기 확인)
+        assert reward < expected_penalty, (
+            f"Reward should include drawdown penalty: "
+            f"reward={reward}, expected_penalty={expected_penalty}"
+        )
+
+    def test_loss_penalty_coefficient_application(
+        self, env: FuturesTradingEnv, sample_data: tuple[np.ndarray, np.ndarray]
+    ):
+        """loss_penalty_coeff가 drawdown 페널티에 적용됨"""
+        # 기본 설정 (loss_penalty_coeff=2.0)
+        features, prices = sample_data
+        entry_price = prices[0, 3]
+
+        # 손실 페널티 계수가 다른 두 환경 생성
+        config_low_coeff = RLEnvConfig(
+            initial_balance=100_000_000,
+            commission_rate=0.00003,
+            tick_size=0.05,
+            tick_value=250_000,
+            contract_multiplier=250_000,
+            max_contracts=1,
+            slippage=0.0,
+            margin_rate=0.15,
+            n_market_features=25,
+            n_position_features=6,
+            w_profit=1.0,
+            w_cost=1.0,
+            w_risk=0.5,
+            w_mtm=0.0,
+            reward_scale=100.0,
+            max_loss=-50_000_000,
+            loss_penalty_coeff=1.0,  # 낮은 계수
+        )
+
+        config_high_coeff = RLEnvConfig(
+            initial_balance=100_000_000,
+            commission_rate=0.00003,
+            tick_size=0.05,
+            tick_value=250_000,
+            contract_multiplier=250_000,
+            max_contracts=1,
+            slippage=0.0,
+            margin_rate=0.15,
+            n_market_features=25,
+            n_position_features=6,
+            w_profit=1.0,
+            w_cost=1.0,
+            w_risk=0.5,
+            w_mtm=0.0,
+            reward_scale=100.0,
+            max_loss=-50_000_000,
+            loss_penalty_coeff=3.0,  # 높은 계수
+        )
+
+        env_low = FuturesTradingEnv(day_data=features, config=config_low_coeff, prices=prices.copy())
+        env_high = FuturesTradingEnv(day_data=features, config=config_high_coeff, prices=prices.copy())
+
+        # 두 환경 모두 초기화 및 진입
+        env_low.reset()
+        env_high.reset()
+
+        env_low.step(Action.LONG_ENTRY)
+        env_high.step(Action.LONG_ENTRY)
+
+        # 큰 손실 발생시키기 (max_loss 초과)
+        loss_amount = abs(config_low_coeff.max_loss)
+        required_price_decrease = loss_amount / (
+            config_low_coeff.contract_multiplier * config_low_coeff.max_contracts
+        )
+
+        for _ in range(10):
+            env_low.step(Action.HOLD)
+            env_high.step(Action.HOLD)
+
+        # 동일한 가격 하락 적용
+        env_low.prices[env_low.current_step, 3] = entry_price - required_price_decrease - 10.0
+        env_high.prices[env_high.current_step, 3] = entry_price - required_price_decrease - 10.0
+
+        # Hold 행동 → 강제 청산
+        _, reward_low, terminated_low, _, _ = env_low.step(Action.HOLD)
+        _, reward_high, terminated_high, _, _ = env_high.step(Action.HOLD)
+
+        # 둘 다 종료되어야 함
+        assert terminated_low is True, "Low coeff env should terminate"
+        assert terminated_high is True, "High coeff env should terminate"
+
+        # 높은 계수 환경의 페널티가 더 커야 함 (보상이 더 음수)
+        assert reward_high < reward_low, (
+            f"Higher loss_penalty_coeff should result in more negative reward: "
+            f"low_coeff={reward_low}, high_coeff={reward_high}"
+        )
+
+        # 페널티 차이 계산
+        expected_penalty_low = (
+            config_low_coeff.max_loss
+            * config_low_coeff.loss_penalty_coeff
+            / config_low_coeff.initial_balance
+            * config_low_coeff.reward_scale
+        )
+        expected_penalty_high = (
+            config_high_coeff.max_loss
+            * config_high_coeff.loss_penalty_coeff
+            / config_high_coeff.initial_balance
+            * config_high_coeff.reward_scale
+        )
+
+        # 페널티 비율이 계수 비율과 일치해야 함
+        coeff_ratio = config_high_coeff.loss_penalty_coeff / config_low_coeff.loss_penalty_coeff
+        penalty_ratio = expected_penalty_high / expected_penalty_low
+
+        assert penalty_ratio == pytest.approx(coeff_ratio, rel=1e-6), (
+            f"Penalty ratio should match coefficient ratio: "
+            f"coeff_ratio={coeff_ratio}, penalty_ratio={penalty_ratio}"
+        )
+
+    def test_risk_penalty_scales_with_unrealized_loss(self, env: FuturesTradingEnv):
+        """미실현 손실 크기에 비례하여 r_risk 증가"""
+        env.reset()
+        entry_price = env._get_current_price()
+
+        # 롱 진입
+        env.step(Action.LONG_ENTRY)
+
+        # 작은 손실 발생
+        for _ in range(5):
+            env.step(Action.HOLD)
+
+        small_decrease = 1.0
+        env.prices[env.current_step, 3] = entry_price - small_decrease
+        _, reward_small, _, _, _ = env.step(Action.HOLD)
+
+        # 큰 손실 발생
+        for _ in range(5):
+            env.step(Action.HOLD)
+
+        large_decrease = 5.0
+        env.prices[env.current_step, 3] = entry_price - large_decrease
+        _, reward_large, _, _, _ = env.step(Action.HOLD)
+
+        # 큰 손실의 페널티가 더 커야 함
+        assert reward_large < reward_small, (
+            f"Larger unrealized loss should result in more negative reward: "
+            f"small_loss={reward_small}, large_loss={reward_large}"
+        )
+
+        # r_risk 계산
+        unrealized_pnl_small = -small_decrease * env.config.contract_multiplier
+        unrealized_pnl_large = -large_decrease * env.config.contract_multiplier
+
+        r_risk_small = -unrealized_pnl_small / env.config.initial_balance
+        r_risk_large = -unrealized_pnl_large / env.config.initial_balance
+
+        # r_risk 비율이 손실 비율과 일치해야 함
+        loss_ratio = large_decrease / small_decrease
+        risk_ratio = r_risk_large / r_risk_small
+
+        assert risk_ratio == pytest.approx(loss_ratio, rel=1e-6), (
+            f"Risk penalty should scale linearly with unrealized loss: "
+            f"loss_ratio={loss_ratio}, risk_ratio={risk_ratio}"
+        )
