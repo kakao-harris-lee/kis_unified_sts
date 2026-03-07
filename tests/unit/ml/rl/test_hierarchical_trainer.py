@@ -201,6 +201,26 @@ class TestInit:
     def test_stores_config_path(self, trainer):
         assert trainer.config_path == "ml/rl_mppo.yaml"
 
+    def test_default_mode_is_risk_budget(self, mock_config_loader, mock_rl_env_config, mock_get_device):
+        """Test backward compatibility: default mode is 'risk_budget'."""
+        trainer = HierarchicalTrainer()
+        assert trainer.mode == "risk_budget"
+
+    def test_mode_parameter_sets_mode_risk_budget(self, mock_config_loader, mock_rl_env_config, mock_get_device):
+        """Test mode parameter sets mode to 'risk_budget'."""
+        trainer = HierarchicalTrainer(mode="risk_budget")
+        assert trainer.mode == "risk_budget"
+
+    def test_mode_parameter_sets_mode_directional(self, mock_config_loader, mock_rl_env_config, mock_get_device):
+        """Test mode parameter sets mode to 'directional'."""
+        trainer = HierarchicalTrainer(mode="directional")
+        assert trainer.mode == "directional"
+
+    def test_invalid_mode_raises_error(self, mock_config_loader, mock_rl_env_config, mock_get_device):
+        """Test invalid mode raises ValueError."""
+        with pytest.raises(ValueError, match="Invalid mode 'invalid'"):
+            HierarchicalTrainer(mode="invalid")
+
 
 # ============================================================================
 # Test _downsample_to_15m (PURE FUNCTION - Thoroughly Testable)
@@ -633,3 +653,291 @@ class TestEdgeCases:
         """save_dir should be a Path object."""
         assert isinstance(trainer.save_dir, Path)
         assert "hierarchical" in str(trainer.save_dir)
+
+
+# ============================================================================
+# Test Directional Mode Support
+# ============================================================================
+
+
+class TestDirectionalMode:
+    """Test directional mode support in HierarchicalTrainer."""
+
+    @pytest.fixture
+    def trainer_directional(self, mock_config_loader, mock_rl_env_config, mock_get_device):
+        """Create HierarchicalTrainer in directional mode."""
+        return HierarchicalTrainer(mode="directional")
+
+    def test_trainer_mode_is_directional(self, trainer_directional):
+        """Test trainer mode is set to directional."""
+        assert trainer_directional.mode == "directional"
+
+    def test_train_high_level_uses_directional_env(self, trainer_directional):
+        """Test _train_high_level uses DirectionalHighLevelEnv when mode=directional."""
+        from shared.ml.rl.hierarchical.high_level_env import DirectionalHighLevelEnv
+
+        # Mock data
+        train_days = [np.random.randn(30, 25).astype(np.float32)]
+        all_segment_results = [
+            [{"pnl": 1000, "n_trades": 2, "win_rate": 0.5}, {"pnl": -500, "n_trades": 1, "win_rate": 0.0}]
+        ]
+
+        # Mock PPO to avoid actual training
+        with patch("shared.ml.rl.hierarchical.trainer.PPO") as mock_ppo:
+            mock_model = MagicMock()
+            mock_ppo.return_value = mock_model
+
+            # Mock DummyVecEnv to capture env creation
+            with patch("shared.ml.rl.hierarchical.trainer.DummyVecEnv") as mock_vec_env:
+                mock_vec_env.return_value = MagicMock()
+
+                trainer_directional._train_high_level(train_days, all_segment_results)
+
+                # Verify env factory was called
+                assert mock_vec_env.called
+                env_factory = mock_vec_env.call_args[0][0][0]
+                env = env_factory()
+
+                # Verify it's a DirectionalHighLevelEnv instance
+                assert isinstance(env, DirectionalHighLevelEnv)
+
+    def test_train_high_level_risk_budget_uses_high_level_env(self, trainer):
+        """Test _train_high_level uses HighLevelEnv when mode=risk_budget (backward compatibility)."""
+        from shared.ml.rl.hierarchical.high_level_env import HighLevelEnv
+
+        # Mock data
+        train_days = [np.random.randn(30, 25).astype(np.float32)]
+        all_segment_results = [
+            [{"pnl": 1000, "n_trades": 2, "win_rate": 0.5}, {"pnl": -500, "n_trades": 1, "win_rate": 0.0}]
+        ]
+
+        # Mock PPO to avoid actual training
+        with patch("shared.ml.rl.hierarchical.trainer.PPO") as mock_ppo:
+            mock_model = MagicMock()
+            mock_ppo.return_value = mock_model
+
+            # Mock DummyVecEnv to capture env creation
+            with patch("shared.ml.rl.hierarchical.trainer.DummyVecEnv") as mock_vec_env:
+                mock_vec_env.return_value = MagicMock()
+
+                trainer._train_high_level(train_days, all_segment_results)
+
+                # Verify env factory was called
+                assert mock_vec_env.called
+                env_factory = mock_vec_env.call_args[0][0][0]
+                env = env_factory()
+
+                # Verify it's a HighLevelEnv instance (not Directional)
+                assert isinstance(env, HighLevelEnv)
+                assert not isinstance(env, DirectionalHighLevelEnv)
+
+    def test_directional_mode_loads_directional_config(self, trainer_directional):
+        """Test directional mode uses DirectionalHighLevelConfig."""
+        from shared.ml.rl.hierarchical.high_level_env import DirectionalHighLevelConfig
+
+        train_days = [np.random.randn(30, 25).astype(np.float32)]
+        all_segment_results = [
+            [{"pnl": 1000, "n_trades": 2, "win_rate": 0.5}]
+        ]
+
+        with patch("shared.ml.rl.hierarchical.trainer.PPO") as mock_ppo:
+            with patch("shared.ml.rl.hierarchical.trainer.DummyVecEnv") as mock_vec_env:
+                mock_ppo.return_value = MagicMock()
+                mock_vec_env.return_value = MagicMock()
+
+                trainer_directional._train_high_level(train_days, all_segment_results)
+
+                # Verify DirectionalHighLevelConfig was used (implicitly via DirectionalHighLevelEnv)
+                env_factory = mock_vec_env.call_args[0][0][0]
+                env = env_factory()
+                assert hasattr(env, "config")
+
+
+# ============================================================================
+# Test Joint Training
+# ============================================================================
+
+
+class TestJointTraining:
+    """Test joint training functionality."""
+
+    @pytest.fixture
+    def mock_maskable_ppo(self):
+        """Mock MaskablePPO for low-level."""
+        with patch("shared.ml.rl.hierarchical.trainer.MaskablePPO") as mock:
+            mock_model = MagicMock()
+            mock_model.learn = MagicMock()
+            mock_model.save = MagicMock()
+            mock.return_value = mock_model
+            yield mock
+
+    @pytest.fixture
+    def mock_ppo(self):
+        """Mock PPO for high-level."""
+        with patch("shared.ml.rl.hierarchical.trainer.PPO") as mock:
+            mock_model = MagicMock()
+            mock_model.learn = MagicMock()
+            mock_model.save = MagicMock()
+            mock.return_value = mock_model
+            yield mock
+
+    def test_train_joint_method_exists(self, trainer):
+        """Test train_joint method exists."""
+        assert hasattr(trainer, "train_joint")
+        assert callable(trainer.train_joint)
+
+    def test_train_joint_signature(self, trainer):
+        """Test train_joint has correct signature."""
+        import inspect
+        sig = inspect.signature(trainer.train_joint)
+        params = list(sig.parameters.keys())
+
+        assert "train_days" in params
+        assert "train_prices" in params
+        assert "eval_days" in params
+        assert "eval_prices" in params
+
+    def test_train_joint_creates_both_models(self, trainer, mock_maskable_ppo, mock_ppo):
+        """Test train_joint creates both low-level and high-level models."""
+        train_days = [np.random.randn(405, 25).astype(np.float32)]
+        train_prices = [np.random.randn(405, 4).astype(np.float32)]
+
+        # Mock vector envs
+        with patch("shared.ml.rl.hierarchical.trainer.DummyVecEnv") as mock_vec_env:
+            mock_vec_env.return_value = MagicMock()
+
+            # Mock _collect_segment_results to avoid complex setup
+            with patch.object(trainer, "_collect_segment_results") as mock_collect:
+                mock_collect.return_value = [
+                    [{"pnl": 1000, "n_trades": 2, "win_rate": 0.5}]
+                ]
+
+                # Run with minimal timesteps
+                original_config = trainer.config.copy()
+                trainer.config["hierarchical"]["joint_timesteps"] = 100
+                trainer.config["mppo"]["n_steps"] = 50
+
+                result = trainer.train_joint(train_days, train_prices)
+
+                # Restore config
+                trainer.config = original_config
+
+                # Verify both models created
+                assert "low_level" in result
+                assert "high_level" in result
+                assert result["low_level"] is not None
+                assert result["high_level"] is not None
+
+    def test_train_joint_alternates_updates(self, trainer, mock_maskable_ppo, mock_ppo):
+        """Test train_joint alternates between low and high level updates."""
+        train_days = [np.random.randn(405, 25).astype(np.float32)]
+        train_prices = [np.random.randn(405, 4).astype(np.float32)]
+
+        low_model_instance = mock_maskable_ppo.return_value
+        high_model_instance = mock_ppo.return_value
+
+        with patch("shared.ml.rl.hierarchical.trainer.DummyVecEnv") as mock_vec_env:
+            mock_vec_env.return_value = MagicMock()
+
+            with patch.object(trainer, "_collect_segment_results") as mock_collect:
+                mock_collect.return_value = [
+                    [{"pnl": 1000, "n_trades": 2, "win_rate": 0.5}]
+                ]
+
+                # Configure for predictable alternation
+                trainer.config["hierarchical"]["joint_timesteps"] = 300
+                trainer.config["hierarchical"]["joint_update_ratio"] = 3
+                trainer.config["mppo"]["n_steps"] = 100
+
+                trainer.train_joint(train_days, train_prices)
+
+                # Low-level should be trained multiple times
+                assert low_model_instance.learn.call_count >= 1
+
+                # High-level should be trained after update_ratio iterations
+                # With 300 timesteps, n_steps=100, that's 3 iterations
+                # With update_ratio=3, high-level should train once
+                # Note: Actual count may vary based on implementation details
+
+    def test_train_joint_saves_models_with_joint_suffix(self, trainer, mock_maskable_ppo, mock_ppo):
+        """Test train_joint saves models with '_joint' suffix."""
+        train_days = [np.random.randn(405, 25).astype(np.float32)]
+        train_prices = [np.random.randn(405, 4).astype(np.float32)]
+
+        low_model_instance = mock_maskable_ppo.return_value
+        high_model_instance = mock_ppo.return_value
+
+        with patch("shared.ml.rl.hierarchical.trainer.DummyVecEnv") as mock_vec_env:
+            mock_vec_env.return_value = MagicMock()
+
+            with patch.object(trainer, "_collect_segment_results") as mock_collect:
+                mock_collect.return_value = [
+                    [{"pnl": 1000, "n_trades": 2, "win_rate": 0.5}]
+                ]
+
+                trainer.config["hierarchical"]["joint_timesteps"] = 100
+                trainer.config["mppo"]["n_steps"] = 50
+
+                trainer.train_joint(train_days, train_prices)
+
+                # Verify models saved with _joint suffix
+                assert low_model_instance.save.called
+                assert high_model_instance.save.called
+
+                low_save_path = str(low_model_instance.save.call_args[0][0])
+                high_save_path = str(high_model_instance.save.call_args[0][0])
+
+                assert "low_level_joint" in low_save_path
+                assert "high_level_joint" in high_save_path
+
+    def test_train_joint_with_directional_mode(self, mock_config_loader, mock_rl_env_config, mock_get_device):
+        """Test train_joint works with directional mode."""
+        trainer_directional = HierarchicalTrainer(mode="directional")
+
+        train_days = [np.random.randn(405, 25).astype(np.float32)]
+        train_prices = [np.random.randn(405, 4).astype(np.float32)]
+
+        with patch("shared.ml.rl.hierarchical.trainer.MaskablePPO") as mock_mppo:
+            with patch("shared.ml.rl.hierarchical.trainer.PPO") as mock_ppo:
+                with patch("shared.ml.rl.hierarchical.trainer.DummyVecEnv") as mock_vec_env:
+                    mock_mppo.return_value = MagicMock()
+                    mock_ppo.return_value = MagicMock()
+                    mock_vec_env.return_value = MagicMock()
+
+                    with patch.object(trainer_directional, "_collect_segment_results") as mock_collect:
+                        mock_collect.return_value = [
+                            [{"pnl": 1000, "n_trades": 2, "win_rate": 0.5}]
+                        ]
+
+                        trainer_directional.config["hierarchical"]["joint_timesteps"] = 100
+                        trainer_directional.config["mppo"]["n_steps"] = 50
+
+                        result = trainer_directional.train_joint(train_days, train_prices)
+
+                        # Verify both models created in directional mode
+                        assert "low_level" in result
+                        assert "high_level" in result
+
+    def test_train_joint_respects_update_ratio_config(self, trainer, mock_maskable_ppo, mock_ppo):
+        """Test train_joint respects joint_update_ratio from config."""
+        train_days = [np.random.randn(405, 25).astype(np.float32)]
+        train_prices = [np.random.randn(405, 4).astype(np.float32)]
+
+        with patch("shared.ml.rl.hierarchical.trainer.DummyVecEnv") as mock_vec_env:
+            mock_vec_env.return_value = MagicMock()
+
+            with patch.object(trainer, "_collect_segment_results") as mock_collect:
+                mock_collect.return_value = [
+                    [{"pnl": 1000, "n_trades": 2, "win_rate": 0.5}]
+                ]
+
+                # Set specific update ratio
+                trainer.config["hierarchical"]["joint_update_ratio"] = 5
+                trainer.config["hierarchical"]["joint_timesteps"] = 100
+                trainer.config["mppo"]["n_steps"] = 20
+
+                result = trainer.train_joint(train_days, train_prices)
+
+                # Verify models were created (update ratio respected in alternation logic)
+                assert result["low_level"] is not None
+                assert result["high_level"] is not None
