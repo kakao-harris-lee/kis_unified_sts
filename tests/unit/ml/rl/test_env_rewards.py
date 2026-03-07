@@ -666,3 +666,509 @@ class TestProfitComponent:
         assert env_multi.total_pnl == pytest.approx(expected_total_pnl, rel=1e-5), (
             f"Multi-contract PnL mismatch: expected {expected_total_pnl}, got {env_multi.total_pnl}"
         )
+
+
+class TestCostComponent:
+    """비용 컴포넌트 (r_cost) 테스트
+
+    r_cost = trade_cost / initial_balance
+    trade_cost = commission + slippage_cost
+
+    검증 사항:
+    - 진입 시: commission = price * multiplier * commission_rate
+    - 청산 시: commission = price * multiplier * commission_rate
+    - 슬리피지: slippage_cost = price * multiplier * slippage
+    - Hold 시: trade_cost = 0
+    - 정규화: initial_balance로 나눔
+    """
+
+    def test_long_entry_commission_cost(self, env: FuturesTradingEnv):
+        """롱 진입: 수수료 비용 계산"""
+        env.reset()
+        entry_price = env._get_current_price()
+
+        # 롱 진입
+        _, reward, _, _, info = env.step(Action.LONG_ENTRY)
+
+        # 진입 비용 계산
+        expected_commission = (
+            entry_price * env.config.contract_multiplier * env.config.commission_rate
+        )
+        expected_slippage = entry_price * env.config.contract_multiplier * env.config.slippage
+        expected_cost = expected_commission + expected_slippage
+        expected_r_cost = expected_cost / env.config.initial_balance
+
+        # 슬리피지가 0이므로 비용은 수수료만
+        assert env.config.slippage == 0.0, "Test assumes slippage=0"
+        assert expected_cost == expected_commission
+
+        # r_cost 검증 (보상 계산에 사용됨)
+        # reward = (w_profit * r_profit - w_cost * r_cost - w_risk * r_risk) * reward_scale
+        # 진입 시: r_profit = -expected_cost / initial_balance (수수료 차감)
+        expected_r_profit = -expected_cost / env.config.initial_balance
+        expected_reward = (
+            env.config.w_profit * expected_r_profit
+            - env.config.w_cost * expected_r_cost
+            - env.config.w_risk * 0.0
+        ) * env.config.reward_scale
+
+        assert reward == pytest.approx(expected_reward, rel=1e-6), (
+            f"Long entry cost reward mismatch: expected {expected_reward}, got {reward}"
+        )
+
+        # 포지션 확인
+        assert env.position == PositionSide.LONG
+        assert env.contracts == env.config.max_contracts
+
+    def test_short_entry_commission_cost(self, env: FuturesTradingEnv):
+        """숏 진입: 수수료 비용 계산"""
+        env.reset()
+        entry_price = env._get_current_price()
+
+        # 숏 진입
+        _, reward, _, _, info = env.step(Action.SHORT_ENTRY)
+
+        # 진입 비용 계산
+        expected_commission = (
+            entry_price * env.config.contract_multiplier * env.config.commission_rate
+        )
+        expected_cost = expected_commission  # slippage=0
+        expected_r_cost = expected_cost / env.config.initial_balance
+
+        # r_cost 검증
+        expected_r_profit = -expected_cost / env.config.initial_balance
+        expected_reward = (
+            env.config.w_profit * expected_r_profit
+            - env.config.w_cost * expected_r_cost
+            - env.config.w_risk * 0.0
+        ) * env.config.reward_scale
+
+        assert reward == pytest.approx(expected_reward, rel=1e-6), (
+            f"Short entry cost reward mismatch: expected {expected_reward}, got {reward}"
+        )
+
+        # 포지션 확인
+        assert env.position == PositionSide.SHORT
+        assert env.contracts == env.config.max_contracts
+
+    def test_long_exit_commission_cost(self, env: FuturesTradingEnv):
+        """롱 청산: 수수료 비용 계산"""
+        env.reset()
+        entry_price = env._get_current_price()
+
+        # 롱 진입
+        env.step(Action.LONG_ENTRY)
+
+        # 가격 변동 후 청산
+        for _ in range(10):
+            env.step(Action.HOLD)
+
+        exit_price = env._get_current_price()
+
+        # 롱 청산
+        _, reward, _, _, info = env.step(Action.LONG_EXIT)
+
+        # 청산 비용 계산
+        expected_exit_commission = (
+            exit_price * env.config.contract_multiplier * env.config.commission_rate
+        )
+        expected_exit_cost = expected_exit_commission  # slippage=0
+        expected_r_cost = expected_exit_cost / env.config.initial_balance
+
+        # 실현 손익 계산
+        gross_pnl = (
+            (exit_price - entry_price)
+            * env.config.contract_multiplier
+            * env.config.max_contracts
+        )
+        trade_pnl = gross_pnl - expected_exit_cost
+        expected_r_profit = trade_pnl / env.config.initial_balance
+
+        # 보상 검증
+        expected_reward = (
+            env.config.w_profit * expected_r_profit
+            - env.config.w_cost * expected_r_cost
+            - env.config.w_risk * 0.0
+        ) * env.config.reward_scale
+
+        assert reward == pytest.approx(expected_reward, rel=1e-5), (
+            f"Long exit cost reward mismatch: expected {expected_reward}, got {reward}"
+        )
+
+        # 포지션 청산 확인
+        assert env.position == PositionSide.FLAT
+        assert env.contracts == 0
+
+    def test_short_exit_commission_cost(self, env: FuturesTradingEnv):
+        """숏 청산: 수수료 비용 계산"""
+        env.reset()
+        entry_price = env._get_current_price()
+
+        # 숏 진입
+        env.step(Action.SHORT_ENTRY)
+
+        # 가격 변동 후 청산
+        for _ in range(10):
+            env.step(Action.HOLD)
+
+        exit_price = env._get_current_price()
+
+        # 숏 청산
+        _, reward, _, _, info = env.step(Action.SHORT_EXIT)
+
+        # 청산 비용 계산
+        expected_exit_commission = (
+            exit_price * env.config.contract_multiplier * env.config.commission_rate
+        )
+        expected_exit_cost = expected_exit_commission  # slippage=0
+        expected_r_cost = expected_exit_cost / env.config.initial_balance
+
+        # 실현 손익 계산 (숏: entry_price - exit_price)
+        gross_pnl = (
+            (entry_price - exit_price)
+            * env.config.contract_multiplier
+            * env.config.max_contracts
+        )
+        trade_pnl = gross_pnl - expected_exit_cost
+        expected_r_profit = trade_pnl / env.config.initial_balance
+
+        # 보상 검증
+        expected_reward = (
+            env.config.w_profit * expected_r_profit
+            - env.config.w_cost * expected_r_cost
+            - env.config.w_risk * 0.0
+        ) * env.config.reward_scale
+
+        assert reward == pytest.approx(expected_reward, rel=1e-5), (
+            f"Short exit cost reward mismatch: expected {expected_reward}, got {reward}"
+        )
+
+        # 포지션 청산 확인
+        assert env.position == PositionSide.FLAT
+        assert env.contracts == 0
+
+    def test_hold_action_has_zero_cost(self, env: FuturesTradingEnv):
+        """Hold 행동: 거래 비용 = 0"""
+        env.reset()
+
+        # Hold 행동
+        _, reward, _, _, info = env.step(Action.HOLD)
+
+        # Hold는 거래 없음: trade_cost = 0, r_cost = 0
+        # r_profit = 0, r_risk = 0 (포지션 없음)
+        expected_reward = 0.0
+
+        assert reward == pytest.approx(expected_reward, abs=1e-9), (
+            f"Hold reward should be 0 (no cost), got {reward}"
+        )
+
+        # 포지션 없음 확인
+        assert env.position == PositionSide.FLAT
+        assert env.contracts == 0
+
+    def test_hold_while_holding_position_has_zero_cost(self, env: FuturesTradingEnv):
+        """포지션 보유 중 Hold: 거래 비용 = 0"""
+        env.reset()
+
+        # 롱 진입
+        env.step(Action.LONG_ENTRY)
+
+        # Hold 행동
+        _, reward, _, _, info = env.step(Action.HOLD)
+
+        # Hold는 거래 없음: trade_cost = 0, r_cost = 0
+        # r_profit = 0, r_risk는 미실현 손익에 따라 달라짐
+        # 진입 직후 가격 변동이 없으면 r_risk ≈ 0
+        expected_reward = (
+            env.config.w_profit * 0.0
+            - env.config.w_cost * 0.0
+            - env.config.w_risk * 0.0  # 가격 변동 없음
+        ) * env.config.reward_scale
+
+        # 보상이 0에 가까워야 함 (미세한 가격 변동은 허용)
+        assert abs(reward) < 1.0, (
+            f"Hold reward should be near 0 (no cost), got {reward}"
+        )
+
+        # 포지션 유지 확인
+        assert env.position == PositionSide.LONG
+        assert env.contracts == env.config.max_contracts
+
+    def test_slippage_cost_on_entry(self, env: FuturesTradingEnv, sample_data: tuple[np.ndarray, np.ndarray]):
+        """슬리피지가 있는 경우 진입 비용 = 수수료 + 슬리피지"""
+        # slippage=0.1 (10 틱)로 설정한 환경
+        config_with_slippage = RLEnvConfig(
+            initial_balance=100_000_000,
+            commission_rate=0.00003,
+            tick_size=0.05,
+            tick_value=250_000,
+            contract_multiplier=250_000,
+            max_contracts=1,
+            slippage=0.1,  # 슬리피지 설정
+            margin_rate=0.15,
+            n_market_features=25,
+            n_position_features=6,
+            w_profit=1.0,
+            w_cost=1.0,
+            w_risk=0.5,
+            w_mtm=0.0,
+            reward_scale=100.0,
+            max_loss=-50_000_000,
+            loss_penalty_coeff=2.0,
+        )
+
+        features, prices = sample_data
+        env_slip = FuturesTradingEnv(day_data=features, config=config_with_slippage, prices=prices)
+
+        env_slip.reset()
+        entry_price = env_slip._get_current_price()
+
+        # 롱 진입
+        _, reward, _, _, info = env_slip.step(Action.LONG_ENTRY)
+
+        # 진입 비용 = 수수료 + 슬리피지
+        expected_commission = (
+            entry_price * config_with_slippage.contract_multiplier * config_with_slippage.commission_rate
+        )
+        expected_slippage = (
+            entry_price * config_with_slippage.contract_multiplier * config_with_slippage.slippage
+        )
+        expected_total_cost = expected_commission + expected_slippage
+        expected_r_cost = expected_total_cost / config_with_slippage.initial_balance
+
+        # 슬리피지가 포함되었는지 확인
+        assert expected_slippage > 0, "Test setup error: slippage should be > 0"
+        assert expected_total_cost > expected_commission, (
+            "Total cost should be greater than commission due to slippage"
+        )
+
+        # 보상 검증
+        expected_r_profit = -expected_total_cost / config_with_slippage.initial_balance
+        expected_reward = (
+            config_with_slippage.w_profit * expected_r_profit
+            - config_with_slippage.w_cost * expected_r_cost
+            - config_with_slippage.w_risk * 0.0
+        ) * config_with_slippage.reward_scale
+
+        assert reward == pytest.approx(expected_reward, rel=1e-6), (
+            f"Entry with slippage reward mismatch: expected {expected_reward}, got {reward}"
+        )
+
+    def test_slippage_cost_on_exit(self, env: FuturesTradingEnv, sample_data: tuple[np.ndarray, np.ndarray]):
+        """슬리피지가 있는 경우 청산 비용 = 수수료 + 슬리피지"""
+        # slippage=0.1로 설정한 환경
+        config_with_slippage = RLEnvConfig(
+            initial_balance=100_000_000,
+            commission_rate=0.00003,
+            tick_size=0.05,
+            tick_value=250_000,
+            contract_multiplier=250_000,
+            max_contracts=1,
+            slippage=0.1,  # 슬리피지 설정
+            margin_rate=0.15,
+            n_market_features=25,
+            n_position_features=6,
+            w_profit=1.0,
+            w_cost=1.0,
+            w_risk=0.5,
+            w_mtm=0.0,
+            reward_scale=100.0,
+            max_loss=-50_000_000,
+            loss_penalty_coeff=2.0,
+        )
+
+        features, prices = sample_data
+        env_slip = FuturesTradingEnv(day_data=features, config=config_with_slippage, prices=prices)
+
+        env_slip.reset()
+        entry_price = env_slip._get_current_price()
+
+        # 롱 진입
+        env_slip.step(Action.LONG_ENTRY)
+
+        # 가격 변동 후 청산
+        for _ in range(10):
+            env_slip.step(Action.HOLD)
+
+        # 가격 상승 설정
+        env_slip.prices[env_slip.current_step, 3] = entry_price + 5.0
+        exit_price = env_slip._get_current_price()
+
+        # 롱 청산
+        _, reward, _, _, info = env_slip.step(Action.LONG_EXIT)
+
+        # 청산 비용 = 수수료 + 슬리피지
+        expected_exit_commission = (
+            exit_price * config_with_slippage.contract_multiplier * config_with_slippage.commission_rate
+        )
+        expected_exit_slippage = (
+            exit_price * config_with_slippage.contract_multiplier * config_with_slippage.slippage
+        )
+        expected_exit_cost = expected_exit_commission + expected_exit_slippage
+        expected_r_cost = expected_exit_cost / config_with_slippage.initial_balance
+
+        # 슬리피지가 포함되었는지 확인
+        assert expected_exit_slippage > 0, "Test setup error: exit slippage should be > 0"
+        assert expected_exit_cost > expected_exit_commission, (
+            "Exit cost should be greater than commission due to slippage"
+        )
+
+        # 실현 손익 계산
+        gross_pnl = (
+            (exit_price - entry_price)
+            * config_with_slippage.contract_multiplier
+            * config_with_slippage.max_contracts
+        )
+        trade_pnl = gross_pnl - expected_exit_cost
+        expected_r_profit = trade_pnl / config_with_slippage.initial_balance
+
+        # 보상 검증
+        expected_reward = (
+            config_with_slippage.w_profit * expected_r_profit
+            - config_with_slippage.w_cost * expected_r_cost
+            - config_with_slippage.w_risk * 0.0
+        ) * config_with_slippage.reward_scale
+
+        assert reward == pytest.approx(expected_reward, rel=1e-5), (
+            f"Exit with slippage reward mismatch: expected {expected_reward}, got {reward}"
+        )
+
+    def test_cost_normalization_by_initial_balance(self, env: FuturesTradingEnv):
+        """거래 비용은 초기 잔고로 정규화됨"""
+        env.reset()
+        entry_price = env._get_current_price()
+
+        # 롱 진입
+        _, reward, _, _, info = env.step(Action.LONG_ENTRY)
+
+        # 진입 비용 계산
+        entry_cost = entry_price * env.config.contract_multiplier * env.config.commission_rate
+        normalized_cost = entry_cost / env.config.initial_balance
+
+        # 정규화된 비용이 보상 계산에 사용됨
+        expected_r_cost = normalized_cost
+        expected_r_profit = -entry_cost / env.config.initial_balance
+        expected_reward = (
+            env.config.w_profit * expected_r_profit
+            - env.config.w_cost * expected_r_cost
+            - env.config.w_risk * 0.0
+        ) * env.config.reward_scale
+
+        assert reward == pytest.approx(expected_reward, rel=1e-6), (
+            f"Normalized cost reward mismatch: expected {expected_reward}, got {reward}"
+        )
+
+        # 정규화 값 범위 확인 (일반적으로 normalized_cost < 0.001)
+        assert normalized_cost < 0.01, (
+            f"Normalized cost seems too large: {normalized_cost}"
+        )
+
+    def test_cost_scales_with_contract_size(self, env: FuturesTradingEnv, sample_data: tuple[np.ndarray, np.ndarray]):
+        """비용은 계약 수량에 비례함"""
+        # max_contracts=2로 설정한 환경
+        config_multi = RLEnvConfig(
+            initial_balance=200_000_000,  # 증거금 여유 확보
+            commission_rate=0.00003,
+            tick_size=0.05,
+            tick_value=250_000,
+            contract_multiplier=250_000,
+            max_contracts=2,  # 2계약
+            slippage=0.0,
+            margin_rate=0.15,
+            n_market_features=25,
+            n_position_features=6,
+            w_profit=1.0,
+            w_cost=1.0,
+            w_risk=0.5,
+            w_mtm=0.0,
+            reward_scale=100.0,
+            max_loss=-50_000_000,
+            loss_penalty_coeff=2.0,
+        )
+
+        features, prices = sample_data
+        env_multi = FuturesTradingEnv(day_data=features, config=config_multi, prices=prices)
+
+        env_multi.reset()
+        entry_price = env_multi._get_current_price()
+
+        # 롱 진입 (2계약)
+        _, reward, _, _, info = env_multi.step(Action.LONG_ENTRY)
+
+        # 진입 비용 = 수수료 × 계약 수량
+        # 주의: 수수료는 가격 × multiplier × rate이므로, 2계약이면 2배가 됨
+        expected_cost_per_contract = (
+            entry_price * config_multi.contract_multiplier * config_multi.commission_rate
+        )
+        expected_total_cost = expected_cost_per_contract * config_multi.max_contracts
+        expected_r_cost = expected_total_cost / config_multi.initial_balance
+
+        # 2계약 비용이 1계약의 2배인지 확인
+        assert expected_total_cost == pytest.approx(expected_cost_per_contract * 2, rel=1e-6), (
+            "Cost should scale linearly with contract size"
+        )
+
+        # 보상 검증
+        expected_r_profit = -expected_total_cost / config_multi.initial_balance
+        expected_reward = (
+            config_multi.w_profit * expected_r_profit
+            - config_multi.w_cost * expected_r_cost
+            - config_multi.w_risk * 0.0
+        ) * config_multi.reward_scale
+
+        assert reward == pytest.approx(expected_reward, rel=1e-6), (
+            f"Multi-contract cost reward mismatch: expected {expected_reward}, got {reward}"
+        )
+
+    def test_commission_rate_affects_cost(self, env: FuturesTradingEnv, sample_data: tuple[np.ndarray, np.ndarray]):
+        """수수료율이 비용에 영향을 미침"""
+        # 높은 수수료율 설정
+        config_high_commission = RLEnvConfig(
+            initial_balance=100_000_000,
+            commission_rate=0.0001,  # 0.01% (기본의 3배 이상)
+            tick_size=0.05,
+            tick_value=250_000,
+            contract_multiplier=250_000,
+            max_contracts=1,
+            slippage=0.0,
+            margin_rate=0.15,
+            n_market_features=25,
+            n_position_features=6,
+            w_profit=1.0,
+            w_cost=1.0,
+            w_risk=0.5,
+            w_mtm=0.0,
+            reward_scale=100.0,
+            max_loss=-50_000_000,
+            loss_penalty_coeff=2.0,
+        )
+
+        features, prices = sample_data
+        env_high = FuturesTradingEnv(day_data=features, config=config_high_commission, prices=prices)
+
+        # 기본 환경과 높은 수수료 환경 비교
+        env.reset()
+        env_high.reset()
+
+        entry_price = env._get_current_price()
+
+        # 동일한 행동 수행
+        _, reward_normal, _, _, _ = env.step(Action.LONG_ENTRY)
+        _, reward_high, _, _, _ = env_high.step(Action.LONG_ENTRY)
+
+        # 높은 수수료 환경의 보상이 더 낮아야 함 (비용이 크므로)
+        assert reward_high < reward_normal, (
+            f"Higher commission should result in lower reward: "
+            f"normal={reward_normal}, high={reward_high}"
+        )
+
+        # 비용 차이 계산
+        cost_normal = entry_price * env.config.contract_multiplier * env.config.commission_rate
+        cost_high = entry_price * config_high_commission.contract_multiplier * config_high_commission.commission_rate
+
+        # 수수료율 비율만큼 비용 차이가 있어야 함
+        commission_ratio = config_high_commission.commission_rate / env.config.commission_rate
+        assert cost_high == pytest.approx(cost_normal * commission_ratio, rel=1e-6), (
+            f"Cost should scale with commission rate: "
+            f"normal={cost_normal}, high={cost_high}, ratio={commission_ratio}"
+        )
