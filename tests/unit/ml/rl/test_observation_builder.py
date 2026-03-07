@@ -676,6 +676,311 @@ class TestObservationWithScaler:
         assert obs.dtype == np.float32
 
 
+class TestScalerIntegration:
+    """스케일러 통합 테스트 (StandardScaler transform 및 clipping)"""
+
+    def test_scaler_transform_is_called(
+        self, mock_env_config, sample_market_data, sample_indicators
+    ):
+        """스케일러 transform 메서드가 호출됨을 검증"""
+        mock_scaler = MagicMock()
+        transform_count = {"count": 0}
+
+        def mock_transform(arr):
+            transform_count["count"] += 1
+            return arr * 0.5  # Simple scaling
+
+        mock_scaler.transform = mock_transform
+
+        obs = build_rl_observation(
+            market_data=sample_market_data,
+            indicators=sample_indicators,
+            position_side=0.0,
+            contracts=0.0,
+            unrealized_pnl=0.0,
+            timestamp=datetime(2026, 3, 7, 10, 0, 0),
+            scaler=mock_scaler,
+            env_config=mock_env_config,
+        )
+
+        # Scaler.transform should be called once
+        assert transform_count["count"] == 1, "Scaler transform should be called once"
+        assert obs is not None
+        assert obs.shape == (31,)
+
+    def test_scaler_transform_applied_to_market_features_only(
+        self, mock_env_config, sample_market_data, sample_indicators
+    ):
+        """스케일러는 시장 피처(첫 25개)에만 적용되고 포지션/시간 피처는 그대로 유지"""
+        # Clear cache to ensure fresh calculation
+        from shared.strategy import rl_model_helpers
+        rl_model_helpers._scaled_market_cache.clear()
+
+        # Mock scaler that scales features by 0.5
+        mock_scaler = MagicMock()
+        mock_scaler.transform = lambda x: x * 0.5
+
+        position_side = 1.0
+        contracts = 0.8
+        unrealized_pnl = 12345.0
+
+        obs_with_scaler = build_rl_observation(
+            market_data=sample_market_data,
+            indicators=sample_indicators,
+            position_side=position_side,
+            contracts=contracts,
+            unrealized_pnl=unrealized_pnl,
+            timestamp=datetime(2026, 3, 7, 10, 0, 0),
+            scaler=mock_scaler,
+            env_config=mock_env_config,
+        )
+
+        # Position features (indices 25-27) should NOT be scaled
+        assert obs_with_scaler[25] == pytest.approx(position_side, abs=1e-5), (
+            f"Position side should not be scaled: {obs_with_scaler[25]} != {position_side}"
+        )
+        assert obs_with_scaler[26] == pytest.approx(contracts, abs=1e-5), (
+            f"Contracts should not be scaled: {obs_with_scaler[26]} != {contracts}"
+        )
+        assert obs_with_scaler[27] == pytest.approx(unrealized_pnl, abs=1e-5), (
+            f"Unrealized PnL should not be scaled: {obs_with_scaler[27]} != {unrealized_pnl}"
+        )
+
+        # Time features (indices 28-30) should be in valid range (not scaled)
+        time_features = obs_with_scaler[28:31]
+        assert 0.0 <= time_features[0] <= 1.0, "session_progress should be in [0, 1]"
+        assert -1.0 <= time_features[1] <= 1.0, "sin should be in [-1, 1]"
+        assert -1.0 <= time_features[2] <= 1.0, "cos should be in [-1, 1]"
+
+    def test_scaler_clips_extreme_values_to_minus_5_plus_5(
+        self, mock_env_config, sample_market_data, sample_indicators
+    ):
+        """스케일러 적용 후 극단값은 [-5, 5] 범위로 클리핑됨"""
+        # Clear cache
+        from shared.strategy import rl_model_helpers
+        rl_model_helpers._scaled_market_cache.clear()
+
+        # Mock scaler that returns extreme values
+        mock_scaler = MagicMock()
+
+        def extreme_transform(x):
+            result = x.copy()
+            # Set some extreme values that should be clipped
+            result[0, 0] = 100.0  # Should be clipped to 5.0
+            result[0, 1] = -200.0  # Should be clipped to -5.0
+            result[0, 2] = 7.5    # Should be clipped to 5.0
+            result[0, 3] = -8.0   # Should be clipped to -5.0
+            result[0, 4] = 3.0    # Within range, no clipping
+            return result
+
+        mock_scaler.transform = extreme_transform
+
+        obs = build_rl_observation(
+            market_data=sample_market_data,
+            indicators=sample_indicators,
+            position_side=0.0,
+            contracts=0.0,
+            unrealized_pnl=0.0,
+            timestamp=datetime(2026, 3, 7, 10, 0, 0),
+            scaler=mock_scaler,
+            env_config=mock_env_config,
+        )
+
+        # Market features (first 25) should be clipped to [-5, 5]
+        market_features = obs[:25]
+        assert np.all(market_features >= -5.0), (
+            f"Market features should be >= -5.0, got min={market_features.min()}"
+        )
+        assert np.all(market_features <= 5.0), (
+            f"Market features should be <= 5.0, got max={market_features.max()}"
+        )
+
+        # Verify specific clipped values
+        assert obs[0] == pytest.approx(5.0, abs=1e-5), "100.0 should be clipped to 5.0"
+        assert obs[1] == pytest.approx(-5.0, abs=1e-5), "-200.0 should be clipped to -5.0"
+        assert obs[2] == pytest.approx(5.0, abs=1e-5), "7.5 should be clipped to 5.0"
+        assert obs[3] == pytest.approx(-5.0, abs=1e-5), "-8.0 should be clipped to -5.0"
+        assert obs[4] == pytest.approx(3.0, abs=1e-5), "3.0 should remain unchanged"
+
+    def test_scaler_clips_all_market_features_within_range(
+        self, mock_env_config, sample_market_data, sample_indicators
+    ):
+        """모든 시장 피처가 [-5, 5] 범위 내에 있음을 검증"""
+        # Clear cache
+        from shared.strategy import rl_model_helpers
+        rl_model_helpers._scaled_market_cache.clear()
+
+        # Mock scaler with realistic StandardScaler behavior
+        mock_scaler = MagicMock()
+
+        def realistic_transform(x):
+            # Simulate StandardScaler: (x - mean) / std
+            # Some values may go outside [-5, 5] before clipping
+            result = np.random.randn(x.shape[0], x.shape[1]).astype(np.float32) * 3.0
+            # Add some extreme outliers
+            result[0, 0] = 10.0
+            result[0, 5] = -15.0
+            result[0, 10] = 6.5
+            return result
+
+        mock_scaler.transform = realistic_transform
+
+        obs = build_rl_observation(
+            market_data=sample_market_data,
+            indicators=sample_indicators,
+            position_side=0.0,
+            contracts=0.0,
+            unrealized_pnl=0.0,
+            timestamp=datetime(2026, 3, 7, 10, 0, 0),
+            scaler=mock_scaler,
+            env_config=mock_env_config,
+        )
+
+        # All market features must be within [-5, 5]
+        market_features = obs[:25]
+        for i, val in enumerate(market_features):
+            assert -5.0 <= val <= 5.0, (
+                f"Market feature at index {i} out of range: {val}"
+            )
+
+    def test_scaler_preserves_exact_clipping_boundaries(
+        self, mock_env_config, sample_market_data, sample_indicators
+    ):
+        """경계값(정확히 -5.0, 5.0)이 올바르게 처리됨"""
+        # Clear cache
+        from shared.strategy import rl_model_helpers
+        rl_model_helpers._scaled_market_cache.clear()
+
+        mock_scaler = MagicMock()
+
+        def boundary_transform(x):
+            result = x.copy()
+            result[0, 0] = 5.0   # Exactly at upper boundary
+            result[0, 1] = -5.0  # Exactly at lower boundary
+            result[0, 2] = 4.999  # Just below upper boundary
+            result[0, 3] = -4.999 # Just above lower boundary
+            return result
+
+        mock_scaler.transform = boundary_transform
+
+        obs = build_rl_observation(
+            market_data=sample_market_data,
+            indicators=sample_indicators,
+            position_side=0.0,
+            contracts=0.0,
+            unrealized_pnl=0.0,
+            timestamp=datetime(2026, 3, 7, 10, 0, 0),
+            scaler=mock_scaler,
+            env_config=mock_env_config,
+        )
+
+        assert obs[0] == pytest.approx(5.0, abs=1e-5), "5.0 should remain 5.0"
+        assert obs[1] == pytest.approx(-5.0, abs=1e-5), "-5.0 should remain -5.0"
+        assert obs[2] == pytest.approx(4.999, abs=1e-5), "4.999 should remain 4.999"
+        assert obs[3] == pytest.approx(-4.999, abs=1e-5), "-4.999 should remain -4.999"
+
+    def test_scaler_integration_with_cache(
+        self, mock_env_config, sample_market_data, sample_indicators
+    ):
+        """스케일러와 캐시 통합: 동일 입력에 대해 transform은 1회만 호출"""
+        # Clear cache
+        from shared.strategy import rl_model_helpers
+        rl_model_helpers._scaled_market_cache.clear()
+
+        mock_scaler = MagicMock()
+        transform_count = {"count": 0}
+
+        def counting_transform(x):
+            transform_count["count"] += 1
+            return x * 0.5
+
+        mock_scaler.transform = counting_transform
+
+        # First call - should trigger transform
+        obs1 = build_rl_observation(
+            market_data=sample_market_data,
+            indicators=sample_indicators,
+            position_side=0.0,
+            contracts=0.0,
+            unrealized_pnl=0.0,
+            timestamp=datetime(2026, 3, 7, 10, 0, 0),
+            scaler=mock_scaler,
+            env_config=mock_env_config,
+        )
+
+        assert transform_count["count"] == 1, "First call should trigger transform"
+
+        # Second call with SAME market data - should hit cache, no transform
+        obs2 = build_rl_observation(
+            market_data=sample_market_data,
+            indicators=sample_indicators,
+            position_side=0.0,
+            contracts=0.0,
+            unrealized_pnl=0.0,
+            timestamp=datetime(2026, 3, 7, 10, 0, 5),  # Different time
+            scaler=mock_scaler,
+            env_config=mock_env_config,
+        )
+
+        assert transform_count["count"] == 1, "Second call should hit cache, no additional transform"
+
+        # Market features should be identical
+        np.testing.assert_array_equal(obs1[:25], obs2[:25],
+                                      err_msg="Cached market features should be identical")
+
+    def test_scaler_none_uses_raw_features(
+        self, mock_env_config, sample_market_data, sample_indicators
+    ):
+        """스케일러가 None이면 원본 피처를 사용 (클리핑 없음)"""
+        # Clear cache
+        from shared.strategy import rl_model_helpers
+        rl_model_helpers._scaled_market_cache.clear()
+
+        obs = build_rl_observation(
+            market_data=sample_market_data,
+            indicators=sample_indicators,
+            position_side=0.0,
+            contracts=0.0,
+            unrealized_pnl=0.0,
+            timestamp=datetime(2026, 3, 7, 10, 0, 0),
+            scaler=None,  # No scaler
+            env_config=mock_env_config,
+        )
+
+        assert obs is not None
+        assert obs.shape == (31,)
+        # Raw features may exceed [-5, 5] range (no clipping)
+        # This is expected behavior without scaler
+
+    def test_scaler_error_fallback_uses_raw_features(
+        self, mock_env_config, sample_market_data, sample_indicators
+    ):
+        """스케일러 에러 시 원본 피처로 폴백 (관측값은 정상 생성)"""
+        # Clear cache
+        from shared.strategy import rl_model_helpers
+        rl_model_helpers._scaled_market_cache.clear()
+
+        mock_scaler = MagicMock()
+        mock_scaler.transform.side_effect = RuntimeError("Scaler transformation failed")
+
+        obs = build_rl_observation(
+            market_data=sample_market_data,
+            indicators=sample_indicators,
+            position_side=0.0,
+            contracts=0.0,
+            unrealized_pnl=0.0,
+            timestamp=datetime(2026, 3, 7, 10, 0, 0),
+            scaler=mock_scaler,
+            env_config=mock_env_config,
+        )
+
+        # Should fall back to raw features without error
+        assert obs is not None
+        assert obs.shape == (31,)
+        assert obs.dtype == np.float32
+        assert np.all(np.isfinite(obs)), "All values should be finite even after scaler error"
+
+
 class TestTimeFeatures:
     """시간 피처 테스트 (session_progress, sin_encoding, cos_encoding)"""
 
