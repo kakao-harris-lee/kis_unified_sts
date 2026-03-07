@@ -325,6 +325,11 @@ class TradingPipeline:
                 metrics.failures += 1
                 breaker.record_failure()
                 logger.error(f"{stage.value} failed: {e}")
+            except Exception as e:
+                metrics.executions += 1
+                metrics.failures += 1
+                breaker.record_failure()
+                logger.error(f"{stage.value} unexpected error: {type(e).__name__}: {e}", exc_info=True)
 
             next_tick += interval
             sleep_time = next_tick - time.monotonic()

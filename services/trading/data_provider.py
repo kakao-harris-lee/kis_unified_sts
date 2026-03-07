@@ -337,6 +337,8 @@ class MarketDataProvider:
                 return
             except (NetworkError, APIError, ValidationError) as e:
                 logger.error(f"Data source fetch failed: {e}", exc_info=True)
+            except Exception as e:
+                logger.error(f"Unexpected data source fetch error: {type(e).__name__}: {e}", exc_info=True)
 
         # Use KIS client if available
         if self._kis_client is not None:
@@ -353,6 +355,8 @@ class MarketDataProvider:
                 return
             except (NetworkError, APIError) as e:
                 logger.error(f"KIS fetch failed: {e}", exc_info=True)
+            except Exception as e:
+                logger.error(f"Unexpected KIS fetch error: {type(e).__name__}: {e}", exc_info=True)
 
         # Fallback: Generate mock data (for testing/paper trading)
         for symbol in symbols:

@@ -6,7 +6,6 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import WebSocket, WebSocketDisconnect
 
-from shared.exceptions import NetworkError
 
 logger = logging.getLogger(__name__)
 
@@ -203,7 +202,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
     except WebSocketDisconnect:
         ws_manager.disconnect(websocket)
-    except (ValueError, KeyError, RuntimeError) as e:
+    except (ValueError, KeyError, RuntimeError, OSError) as e:
         # ValueError/KeyError: malformed JSON or missing required fields
         # RuntimeError: WebSocket state errors
         logger.error(f"WebSocket error: {e}")

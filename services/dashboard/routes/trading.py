@@ -6,7 +6,7 @@ from typing import List
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from shared.exceptions import InfrastructureError, ValidationError
+from shared.exceptions import InfrastructureError
 
 router = APIRouter(prefix="/api/trading", tags=["trading"])
 

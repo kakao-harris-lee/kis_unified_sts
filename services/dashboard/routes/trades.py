@@ -7,7 +7,7 @@ from typing import List, Optional
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
-from shared.exceptions import InfrastructureError, ValidationError
+from shared.exceptions import InfrastructureError
 
 router = APIRouter(prefix="/api/trades", tags=["trades"])
 
@@ -260,6 +260,8 @@ async def get_db_rl_statistics(
         return _empty_db_stats()
     except InfrastructureError as e:
         raise HTTPException(status_code=503, detail=f"ClickHouse unavailable: {e}")
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Database error: {type(e).__name__}")
 
 
 @router.get("/rl")
@@ -305,3 +307,5 @@ async def get_db_rl_trades(
         return [dict(zip(col_names, row)) for row in rows]
     except InfrastructureError as e:
         raise HTTPException(status_code=503, detail=f"ClickHouse unavailable: {e}")
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Database error: {type(e).__name__}")

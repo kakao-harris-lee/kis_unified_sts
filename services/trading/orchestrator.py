@@ -57,7 +57,6 @@ from shared.exceptions import (
     NetworkError,
     WebSocketDisconnectError,
     InfrastructureError,
-    RedisUnavailableError,
     APIError,
     ValidationError,
     TypeConversionError,
@@ -869,7 +868,7 @@ class TradingOrchestrator:
                 cfg.queue_maxsize,
                 cfg.flush_batch_size,
             )
-        except (ConfigurationError, InfrastructureError, RedisUnavailableError) as e:
+        except (ConfigurationError, InfrastructureError) as e:
             self._tick_stream_publisher = None
             logger.warning(f"Tick stream publisher init failed: {e}")
 
@@ -892,7 +891,7 @@ class TradingOrchestrator:
         try:
             from shared.config.secrets import SecretsManager
             db_name = SecretsManager.clickhouse_database(self.config.asset_class)
-        except (ConfigurationError, InvalidConfigError, MissingConfigError, KeyError, AttributeError):
+        except (ConfigurationError, KeyError, AttributeError):
             db_name = ""
         # Derive global max_positions from sum of per-strategy limits
         global_max = 10
@@ -949,7 +948,7 @@ class TradingOrchestrator:
             sizing_config = AdaptiveSizingConfig.from_dict(sizing_raw)
             self._adaptive_sizing = AdaptiveSizingManager(sizing_config, self.config.asset_class)
             self._adaptive_sizing.refresh()
-        except (ConfigurationError, InfrastructureError, RedisUnavailableError) as e:
+        except (ConfigurationError, InfrastructureError) as e:
             logger.warning(f"Adaptive sizing init failed: {e}")
 
     def _init_indicator_engine(self):
@@ -1174,7 +1173,7 @@ class TradingOrchestrator:
                 self._order_executor = OrderExecutor(config=exec_cfg, auth_manager=auth_manager)
                 await self._order_executor.initialize()
                 logger.info(f"OrderExecutor initialized (mode={mode})")
-            except (ConfigurationError, APIError, NetworkError, InfrastructureError, RedisUnavailableError, ValidationError, ValueError) as e:
+            except (ConfigurationError, APIError, NetworkError, InfrastructureError, ValidationError, ValueError) as e:
                 logger.warning(f"OrderExecutor init failed; orders will be mocked: {e}")
                 self._order_executor = None
 
@@ -1221,7 +1220,7 @@ class TradingOrchestrator:
             from shared.streaming.trading_state import TradingStatePublisher
             self._state_publisher = TradingStatePublisher(self.config.asset_class)
             logger.info("Trading state publisher initialized")
-        except (ConfigurationError, InfrastructureError, RedisUnavailableError) as e:
+        except (ConfigurationError, InfrastructureError) as e:
             logger.warning(f"Trading state publisher init failed: {e}")
 
         # Bootstrap symbols from screener if none configured
@@ -1253,7 +1252,7 @@ class TradingOrchestrator:
         try:
             from shared.streaming.trading_state import TradingStateReader
             reader = TradingStateReader(self.config.asset_class)
-        except (ConfigurationError, InfrastructureError, RedisUnavailableError) as e:
+        except (ConfigurationError, InfrastructureError) as e:
             logger.warning(f"Cannot initialize TradingStateReader for recovery: {e}")
             return 0
 
@@ -1576,7 +1575,7 @@ class TradingOrchestrator:
             self._accumulation_candidates = validated
             logger.info(f"Loaded {len(self._accumulation_candidates)} accumulation candidates")
             return True
-        except (InfrastructureError, RedisUnavailableError, OSError, ConnectionError) as e:
+        except (InfrastructureError, OSError, ConnectionError) as e:
             logger.debug(f"Accumulation candidates not available: {e}")
             return False
 
@@ -1645,7 +1644,7 @@ class TradingOrchestrator:
             if validated:
                 logger.info(f"Loaded {len(validated)} dip candidates (filtered {len(llm_blacklist)} by LLM)")
             return bool(validated)
-        except (InfrastructureError, RedisUnavailableError, OSError, ConnectionError) as e:
+        except (InfrastructureError, OSError, ConnectionError) as e:
             logger.debug(f"Dip candidates not available: {e}")
             return False
 
@@ -1679,7 +1678,7 @@ class TradingOrchestrator:
             if indicators:
                 logger.info(f"Loaded daily indicators for {len(indicators)} symbols")
             return True
-        except (InfrastructureError, RedisUnavailableError, OSError, ConnectionError) as e:
+        except (InfrastructureError, OSError, ConnectionError) as e:
             logger.debug(f"Daily indicators not available: {e}")
             return False
 
@@ -1817,7 +1816,7 @@ class TradingOrchestrator:
 
             return True
 
-        except (InfrastructureError, RedisUnavailableError, OSError, ConnectionError) as e:
+        except (InfrastructureError, OSError, ConnectionError) as e:
             logger.warning(f"Universe refresh failed: {e}")
         return False
 
@@ -1887,7 +1886,7 @@ class TradingOrchestrator:
             )
             return True
 
-        except (InfrastructureError, RedisUnavailableError, OSError, ConnectionError, ValidationError) as e:
+        except (InfrastructureError, OSError, ConnectionError, ValidationError) as e:
             logger.warning(f"Failed to load static watchlist: {e}")
             return False
 
@@ -2183,7 +2182,7 @@ class TradingOrchestrator:
                     self._prewarm_task = task
                     self._pending_notify_tasks.add(task)
                     task.add_done_callback(self._on_notify_done)
-            except (InfrastructureError, RedisUnavailableError, NetworkError, OSError, ConnectionError) as e:
+            except (InfrastructureError, NetworkError, OSError, ConnectionError) as e:
                 logger.warning(f"Universe refresh loop error: {e}")
             await asyncio.sleep(self._universe_refresh_interval)
 
@@ -2200,7 +2199,7 @@ class TradingOrchestrator:
             while self._market_data_running:
                 try:
                     self._refresh_universe_from_screener()
-                except (InfrastructureError, RedisUnavailableError, NetworkError, OSError, ConnectionError) as e:
+                except (InfrastructureError, NetworkError, OSError, ConnectionError) as e:
                     logger.warning(f"Dynamic fallback refresh error: {e}")
                 await asyncio.sleep(self._universe_refresh_interval)
             return
@@ -2372,7 +2371,7 @@ class TradingOrchestrator:
                 loaded += 1
             logger.info(f"Candle cache loaded: {loaded} symbols from Redis")
             return loaded
-        except (InfrastructureError, RedisUnavailableError, OSError, ConnectionError) as e:
+        except (InfrastructureError, OSError, ConnectionError) as e:
             logger.warning(f"Candle cache load failed: {e}")
             return 0
 
@@ -2463,7 +2462,7 @@ class TradingOrchestrator:
                         logger.error(
                             f"Failed to flush {self._position_tracker.position_count} positions to Redis after retries"
                         )
-            except (InfrastructureError, RedisUnavailableError, OSError, ConnectionError) as e:
+            except (InfrastructureError, OSError, ConnectionError) as e:
                 logger.error(f"Error during position shutdown: {e}")
 
         # Stop auto-flush task and flush any pending batched positions to DB
@@ -2477,7 +2476,7 @@ class TradingOrchestrator:
         # Save candle cache for fast restart recovery
         try:
             self._save_candle_cache_to_redis()
-        except (InfrastructureError, RedisUnavailableError, OSError, ConnectionError) as e:
+        except (InfrastructureError, OSError, ConnectionError) as e:
             logger.warning(f"Candle cache save on shutdown failed: {e}")
 
         await self._cleanup_resources()
@@ -2528,7 +2527,7 @@ class TradingOrchestrator:
         if self._tick_stream_publisher is not None:
             try:
                 self._tick_stream_publisher.close()
-            except (InfrastructureError, RedisUnavailableError, OSError, ConnectionError) as e:
+            except (InfrastructureError, OSError, ConnectionError) as e:
                 logger.warning(f"TickStreamPublisher cleanup failed: {e}")
             self._tick_stream_publisher = None
 
@@ -2539,7 +2538,7 @@ class TradingOrchestrator:
         if self._order_executor is not None:
             try:
                 await self._order_executor.cleanup()
-            except (InfrastructureError, RedisUnavailableError, APIError, NetworkError, OSError, ConnectionError) as e:
+            except (InfrastructureError, APIError, NetworkError, OSError, ConnectionError) as e:
                 logger.warning(f"OrderExecutor cleanup failed: {e}")
             self._order_executor = None
 
@@ -2665,6 +2664,13 @@ class TradingOrchestrator:
             except (InfrastructureError, NetworkError, APIError, ValidationError) as e:
                 logger.error(f"Session error: {e}")
                 await self._notify(f"⚠️ Error: {e}")
+                await asyncio.sleep(self.config.error_retry_delay_seconds)
+            except Exception as e:
+                logger.error(
+                    f"Unexpected session error (not in custom hierarchy): {type(e).__name__}: {e}",
+                    exc_info=True,
+                )
+                await self._notify(f"⚠️ Unexpected error: {type(e).__name__}: {e}")
                 await asyncio.sleep(self.config.error_retry_delay_seconds)
 
         await self.stop()
@@ -2979,7 +2985,7 @@ class TradingOrchestrator:
                     except (NetworkError, OSError, ConnectionError, TimeoutError) as e:
                         logger.warning(f"Failed to send drawdown alert: {e}")
 
-        except (InfrastructureError, RedisUnavailableError, ValidationError) as e:
+        except (InfrastructureError, ValidationError) as e:
             logger.error(f"Risk state update failed: {e}", exc_info=True)
 
     def _record_market_metrics(self):
@@ -3110,7 +3116,7 @@ class TradingOrchestrator:
             if self._adaptive_sizing:
                 try:
                     self._adaptive_sizing.refresh()
-                except (InfrastructureError, RedisUnavailableError, OSError, ConnectionError) as e:
+                except (InfrastructureError, OSError, ConnectionError) as e:
                     logger.debug(f"Adaptive sizing refresh failed: {e}")
 
             logger.debug(f"Market regime: {regime}")
@@ -3329,7 +3335,7 @@ class TradingOrchestrator:
                 self._last_candle_cache_save = now
                 try:
                     self._save_candle_cache_to_redis()
-                except (InfrastructureError, RedisUnavailableError, OSError, ConnectionError):
+                except (InfrastructureError, OSError, ConnectionError):
                     # Silently skip if Redis is unavailable
                     pass
 
