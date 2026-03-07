@@ -260,6 +260,164 @@ class TestObservationStructure:
         assert np.all(np.isfinite(market_features)), "All market features should be finite"
 
 
+class TestPositionFeatures:
+    """포지션 피처 인코딩 테스트"""
+
+    def test_flat_position_encoding(
+        self, mock_env_config, sample_market_data, sample_indicators
+    ):
+        """포지션 없음: position_side=0, contracts=0, unrealized_pnl=0"""
+        obs = build_rl_observation(
+            market_data=sample_market_data,
+            indicators=sample_indicators,
+            position_side=0.0,
+            contracts=0.0,
+            unrealized_pnl=0.0,
+            timestamp=datetime(2026, 3, 7, 10, 0, 0),
+            scaler=None,
+            env_config=mock_env_config,
+        )
+
+        position_features = obs[25:28]
+        assert position_features[0] == pytest.approx(0.0, abs=1e-5), "position_side should be 0 for flat"
+        assert position_features[1] == pytest.approx(0.0, abs=1e-5), "contracts should be 0 for flat"
+        assert position_features[2] == pytest.approx(0.0, abs=1e-5), "unrealized_pnl should be 0 for flat"
+
+    def test_long_position_encoding_with_profit(
+        self, mock_env_config, sample_market_data, sample_indicators
+    ):
+        """롱 포지션 이익: position_side=1, contracts>0, unrealized_pnl>0"""
+        obs = build_rl_observation(
+            market_data=sample_market_data,
+            indicators=sample_indicators,
+            position_side=1.0,
+            contracts=1.0,
+            unrealized_pnl=50000.0,
+            timestamp=datetime(2026, 3, 7, 10, 0, 0),
+            scaler=None,
+            env_config=mock_env_config,
+        )
+
+        position_features = obs[25:28]
+        assert position_features[0] == pytest.approx(1.0, abs=1e-5), "position_side should be 1.0 for long"
+        assert position_features[1] == pytest.approx(1.0, abs=1e-5), "contracts should be 1.0"
+        assert position_features[2] == pytest.approx(50000.0, abs=1e-5), "unrealized_pnl should be 50000.0"
+
+    def test_long_position_encoding_with_loss(
+        self, mock_env_config, sample_market_data, sample_indicators
+    ):
+        """롱 포지션 손실: position_side=1, contracts>0, unrealized_pnl<0"""
+        obs = build_rl_observation(
+            market_data=sample_market_data,
+            indicators=sample_indicators,
+            position_side=1.0,
+            contracts=1.0,
+            unrealized_pnl=-20000.0,
+            timestamp=datetime(2026, 3, 7, 10, 0, 0),
+            scaler=None,
+            env_config=mock_env_config,
+        )
+
+        position_features = obs[25:28]
+        assert position_features[0] == pytest.approx(1.0, abs=1e-5), "position_side should be 1.0 for long"
+        assert position_features[1] == pytest.approx(1.0, abs=1e-5), "contracts should be 1.0"
+        assert position_features[2] == pytest.approx(-20000.0, abs=1e-5), "unrealized_pnl should be -20000.0 (loss)"
+
+    def test_short_position_encoding_with_loss(
+        self, mock_env_config, sample_market_data, sample_indicators
+    ):
+        """숏 포지션 손실: position_side=-1, contracts>0, unrealized_pnl<0"""
+        obs = build_rl_observation(
+            market_data=sample_market_data,
+            indicators=sample_indicators,
+            position_side=-1.0,
+            contracts=1.0,
+            unrealized_pnl=-30000.0,
+            timestamp=datetime(2026, 3, 7, 10, 0, 0),
+            scaler=None,
+            env_config=mock_env_config,
+        )
+
+        position_features = obs[25:28]
+        assert position_features[0] == pytest.approx(-1.0, abs=1e-5), "position_side should be -1.0 for short"
+        assert position_features[1] == pytest.approx(1.0, abs=1e-5), "contracts should be 1.0"
+        assert position_features[2] == pytest.approx(-30000.0, abs=1e-5), "unrealized_pnl should be -30000.0 (loss)"
+
+    def test_short_position_encoding_with_profit(
+        self, mock_env_config, sample_market_data, sample_indicators
+    ):
+        """숏 포지션 이익: position_side=-1, contracts>0, unrealized_pnl>0"""
+        obs = build_rl_observation(
+            market_data=sample_market_data,
+            indicators=sample_indicators,
+            position_side=-1.0,
+            contracts=1.0,
+            unrealized_pnl=40000.0,
+            timestamp=datetime(2026, 3, 7, 10, 0, 0),
+            scaler=None,
+            env_config=mock_env_config,
+        )
+
+        position_features = obs[25:28]
+        assert position_features[0] == pytest.approx(-1.0, abs=1e-5), "position_side should be -1.0 for short"
+        assert position_features[1] == pytest.approx(1.0, abs=1e-5), "contracts should be 1.0"
+        assert position_features[2] == pytest.approx(40000.0, abs=1e-5), "unrealized_pnl should be 40000.0 (profit)"
+
+    def test_position_features_indices_consistency(
+        self, mock_env_config, sample_market_data, sample_indicators
+    ):
+        """포지션 피처는 항상 인덱스 25:28에 위치"""
+        # Test with different position states
+        test_cases = [
+            (0.0, 0.0, 0.0),  # flat
+            (1.0, 1.0, 50000.0),  # long with profit
+            (-1.0, 1.0, -30000.0),  # short with loss
+        ]
+
+        for position_side, contracts, unrealized_pnl in test_cases:
+            obs = build_rl_observation(
+                market_data=sample_market_data,
+                indicators=sample_indicators,
+                position_side=position_side,
+                contracts=contracts,
+                unrealized_pnl=unrealized_pnl,
+                timestamp=datetime(2026, 3, 7, 10, 0, 0),
+                scaler=None,
+                env_config=mock_env_config,
+            )
+
+            # Position features are at indices 25:28
+            assert obs[25] == pytest.approx(position_side, abs=1e-5), (
+                f"Position side at index 25 mismatch: {obs[25]} != {position_side}"
+            )
+            assert obs[26] == pytest.approx(contracts, abs=1e-5), (
+                f"Contracts at index 26 mismatch: {obs[26]} != {contracts}"
+            )
+            assert obs[27] == pytest.approx(unrealized_pnl, abs=1e-5), (
+                f"Unrealized PnL at index 27 mismatch: {obs[27]} != {unrealized_pnl}"
+            )
+
+    def test_fractional_contracts(
+        self, mock_env_config, sample_market_data, sample_indicators
+    ):
+        """소수 계약 수 처리 (정규화된 값 등)"""
+        obs = build_rl_observation(
+            market_data=sample_market_data,
+            indicators=sample_indicators,
+            position_side=1.0,
+            contracts=0.5,  # fractional contract
+            unrealized_pnl=25000.0,
+            timestamp=datetime(2026, 3, 7, 10, 0, 0),
+            scaler=None,
+            env_config=mock_env_config,
+        )
+
+        position_features = obs[25:28]
+        assert position_features[0] == pytest.approx(1.0, abs=1e-5), "position_side should be 1.0"
+        assert position_features[1] == pytest.approx(0.5, abs=1e-5), "contracts should be 0.5"
+        assert position_features[2] == pytest.approx(25000.0, abs=1e-5), "unrealized_pnl should be 25000.0"
+
+
 class TestObservationConsistency:
     """관측값 일관성 테스트"""
 
