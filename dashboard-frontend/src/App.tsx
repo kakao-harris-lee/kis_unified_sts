@@ -22,6 +22,11 @@ const queryClient = new QueryClient({
   },
 });
 
+const navClassName = ({ isActive }: { isActive: boolean }) =>
+  isActive
+    ? "px-3 py-2 rounded-md bg-blue-600 text-white"
+    : "px-3 py-2 rounded-md hover:bg-gray-700";
+
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
@@ -36,54 +41,19 @@ function App() {
                       KIS Trading
                     </span>
                     <div className="flex space-x-4">
-                      <NavLink
-                        to="/"
-                        className={({ isActive }) =>
-                          isActive
-                            ? "px-3 py-2 rounded-md bg-blue-600 text-white"
-                            : "px-3 py-2 rounded-md hover:bg-gray-700"
-                        }
-                      >
+                      <NavLink to="/" end className={navClassName}>
                         Dashboard
                       </NavLink>
-                      <NavLink
-                        to="/positions"
-                        className={({ isActive }) =>
-                          isActive
-                            ? "px-3 py-2 rounded-md bg-blue-600 text-white"
-                            : "px-3 py-2 rounded-md hover:bg-gray-700"
-                        }
-                      >
+                      <NavLink to="/positions" className={navClassName}>
                         Positions
                       </NavLink>
-                      <NavLink
-                        to="/signals"
-                        className={({ isActive }) =>
-                          isActive
-                            ? "px-3 py-2 rounded-md bg-blue-600 text-white"
-                            : "px-3 py-2 rounded-md hover:bg-gray-700"
-                        }
-                      >
+                      <NavLink to="/signals" className={navClassName}>
                         Signals
                       </NavLink>
-                      <NavLink
-                        to="/trades"
-                        className={({ isActive }) =>
-                          isActive
-                            ? "px-3 py-2 rounded-md bg-blue-600 text-white"
-                            : "px-3 py-2 rounded-md hover:bg-gray-700"
-                        }
-                      >
+                      <NavLink to="/trades" className={navClassName}>
                         Trades
                       </NavLink>
-                      <NavLink
-                        to="/backtest"
-                        className={({ isActive }) =>
-                          isActive
-                            ? "px-3 py-2 rounded-md bg-blue-600 text-white"
-                            : "px-3 py-2 rounded-md hover:bg-gray-700"
-                        }
-                      >
+                      <NavLink to="/backtest" className={navClassName}>
                         Backtest
                       </NavLink>
                     </div>
