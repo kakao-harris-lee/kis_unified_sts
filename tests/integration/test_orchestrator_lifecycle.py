@@ -1894,3 +1894,524 @@ class TestPauseResume:
             await orchestrator.resume()
             # Should remain IDLE (not change to RUNNING)
             assert orchestrator.state == TradingState.IDLE
+
+
+@pytest.mark.integration
+class TestGracefulShutdown:
+    """Test graceful shutdown and cleanup procedures."""
+
+    @pytest.mark.asyncio
+    async def test_websocket_close_on_shutdown(self):
+        """Verify WebSocket connections are properly closed during shutdown."""
+        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+
+        config = TradingConfig.stock(
+            strategy_name="bb_reversion",
+            symbols=["005930"],
+        )
+
+        # Mock price feeds to track close calls
+        mock_stock_feed = MagicMock()
+        mock_stock_feed.stop = AsyncMock()
+        mock_futures_feed = MagicMock()
+        mock_futures_feed.stop = AsyncMock()
+
+        with patch.object(
+            TradingOrchestrator, "_init_kis_client", return_value=None
+        ), patch.object(
+            TradingOrchestrator, "_init_futures_slippage_controller"
+        ), patch.object(
+            TradingOrchestrator, "_init_price_feeds"
+        ), patch.object(
+            TradingOrchestrator, "_init_data_provider"
+        ), patch.object(
+            TradingOrchestrator, "_init_tick_stream_publisher"
+        ), patch.object(
+            TradingOrchestrator, "_init_strategy_infrastructure"
+        ), patch.object(
+            TradingOrchestrator, "_init_indicator_engine"
+        ), patch.object(
+            TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
+        ), patch.object(
+            TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
+        ), patch.object(
+            TradingOrchestrator, "_start_market_data_loop", new_callable=AsyncMock
+        ), patch.object(
+            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock())
+        ), patch(
+            "services.monitoring.metrics.get_metrics_collector"
+        ) as mock_metrics, patch.object(
+            TradingOrchestrator, "_notify", new_callable=AsyncMock
+        ):
+            mock_metrics.return_value = MagicMock(
+                start_prometheus_server=MagicMock(),
+                register_strategies=MagicMock(),
+            )
+
+            orchestrator = TradingOrchestrator(config)
+            await orchestrator.start()
+
+            # Inject mock price feeds
+            orchestrator._stock_price_feed = mock_stock_feed
+            orchestrator._futures_price_feed = mock_futures_feed
+            orchestrator._market_data_running = True
+
+            # Stop orchestrator
+            await orchestrator.stop()
+
+            # Verify WebSocket close was called on both feeds
+            mock_stock_feed.stop.assert_awaited_once()
+            mock_futures_feed.stop.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_redis_flush_on_shutdown(self):
+        """Verify positions are flushed to Redis during shutdown."""
+        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from shared.models.position import Position
+
+        config = TradingConfig.stock(
+            strategy_name="bb_reversion",
+            symbols=["005930"],
+        )
+
+        # Mock position tracker and state publisher
+        mock_position_tracker = MagicMock()
+        mock_position_tracker.position_count = 2
+        mock_position_tracker.positions = [
+            Position(
+                id="pos1",
+                code="005930",
+                strategy="bb_reversion",
+                entry_price=70000,
+                quantity=10,
+                side="LONG",
+            ),
+            Position(
+                id="pos2",
+                code="005930",
+                strategy="bb_reversion",
+                entry_price=71000,
+                quantity=5,
+                side="LONG",
+            ),
+        ]
+        mock_position_tracker.stop_auto_flush = AsyncMock()
+
+        mock_state_publisher = MagicMock()
+        mock_state_publisher.publish_positions_update = MagicMock()
+        mock_state_publisher.publish_status = MagicMock()
+
+        mock_data_provider = MagicMock()
+        mock_data_provider.get_data = AsyncMock(return_value={"005930": {"close": 72000}})
+
+        with patch.object(
+            TradingOrchestrator, "_init_kis_client", return_value=None
+        ), patch.object(
+            TradingOrchestrator, "_init_futures_slippage_controller"
+        ), patch.object(
+            TradingOrchestrator, "_init_price_feeds"
+        ), patch.object(
+            TradingOrchestrator, "_init_data_provider"
+        ), patch.object(
+            TradingOrchestrator, "_init_tick_stream_publisher"
+        ), patch.object(
+            TradingOrchestrator, "_init_strategy_infrastructure"
+        ), patch.object(
+            TradingOrchestrator, "_init_indicator_engine"
+        ), patch.object(
+            TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
+        ), patch.object(
+            TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
+        ), patch.object(
+            TradingOrchestrator, "_start_market_data_loop", new_callable=AsyncMock
+        ), patch.object(
+            TradingOrchestrator, "_stop_market_data_loop", new_callable=AsyncMock
+        ), patch.object(
+            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock())
+        ), patch(
+            "services.monitoring.metrics.get_metrics_collector"
+        ) as mock_metrics, patch.object(
+            TradingOrchestrator, "_notify", new_callable=AsyncMock
+        ):
+            mock_metrics.return_value = MagicMock(
+                start_prometheus_server=MagicMock(),
+                register_strategies=MagicMock(),
+            )
+
+            orchestrator = TradingOrchestrator(config)
+            await orchestrator.start()
+
+            # Inject mocks
+            orchestrator._position_tracker = mock_position_tracker
+            orchestrator._state_publisher = mock_state_publisher
+            orchestrator._data_provider = mock_data_provider
+
+            # Stop orchestrator
+            await orchestrator.stop()
+
+            # Verify positions were flushed to Redis
+            mock_state_publisher.publish_positions_update.assert_called()
+            # Verify the positions list was passed
+            call_args = mock_state_publisher.publish_positions_update.call_args
+            assert len(call_args[0][0]) == 2  # Two positions
+            assert call_args[1]["throttle"] == 0  # No throttling on shutdown
+
+            # Verify auto-flush was stopped
+            mock_position_tracker.stop_auto_flush.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_position_serialization_on_shutdown(self):
+        """Verify positions are properly serialized before Redis flush."""
+        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from shared.models.position import Position
+
+        config = TradingConfig.futures(
+            strategy_name="rl_mppo",
+        )
+
+        # Create test positions with various states
+        test_positions = [
+            Position(
+                id="swing_pos",
+                code="101S6000",
+                strategy="rl_mppo",
+                entry_price=350.0,
+                quantity=1,
+                side="LONG",
+            ),
+        ]
+
+        mock_position_tracker = MagicMock()
+        mock_position_tracker.position_count = 1
+        mock_position_tracker.positions = test_positions
+        mock_position_tracker.stop_auto_flush = AsyncMock()
+
+        # Track what gets serialized
+        serialized_positions = []
+
+        def capture_positions(positions, **kwargs):
+            serialized_positions.extend(positions)
+
+        mock_state_publisher = MagicMock()
+        mock_state_publisher.publish_positions_update = MagicMock(side_effect=capture_positions)
+        mock_state_publisher.publish_status = MagicMock()
+
+        mock_data_provider = MagicMock()
+        mock_data_provider.get_data = AsyncMock(return_value={"101S6000": {"close": 352.0}})
+
+        with patch.object(
+            TradingOrchestrator, "_init_kis_client", return_value=None
+        ), patch.object(
+            TradingOrchestrator, "_init_futures_slippage_controller"
+        ), patch.object(
+            TradingOrchestrator, "_init_price_feeds"
+        ), patch.object(
+            TradingOrchestrator, "_init_data_provider"
+        ), patch.object(
+            TradingOrchestrator, "_init_tick_stream_publisher"
+        ), patch.object(
+            TradingOrchestrator, "_init_strategy_infrastructure"
+        ), patch.object(
+            TradingOrchestrator, "_init_indicator_engine"
+        ), patch.object(
+            TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
+        ), patch.object(
+            TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
+        ), patch.object(
+            TradingOrchestrator, "_start_market_data_loop", new_callable=AsyncMock
+        ), patch.object(
+            TradingOrchestrator, "_stop_market_data_loop", new_callable=AsyncMock
+        ), patch.object(
+            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock())
+        ), patch(
+            "services.monitoring.metrics.get_metrics_collector"
+        ) as mock_metrics, patch.object(
+            TradingOrchestrator, "_notify", new_callable=AsyncMock
+        ):
+            mock_metrics.return_value = MagicMock(
+                start_prometheus_server=MagicMock(),
+                register_strategies=MagicMock(),
+            )
+
+            orchestrator = TradingOrchestrator(config)
+            await orchestrator.start()
+
+            # Inject mocks
+            orchestrator._position_tracker = mock_position_tracker
+            orchestrator._state_publisher = mock_state_publisher
+            orchestrator._data_provider = mock_data_provider
+
+            # Stop orchestrator
+            await orchestrator.stop()
+
+            # Verify position was serialized correctly
+            assert len(serialized_positions) == 1
+            pos = serialized_positions[0]
+            assert pos.id == "swing_pos"
+            assert pos.code == "101S6000"
+            assert pos.strategy == "rl_mppo"
+            assert pos.entry_price == 350.0
+            assert pos.quantity == 1
+            assert pos.side == "LONG"
+
+    @pytest.mark.asyncio
+    async def test_timeout_handling_forces_redis_flush(self):
+        """Verify timeout triggers forced Redis flush as last resort."""
+        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from shared.models.position import Position
+
+        config = TradingConfig.stock(
+            strategy_name="bb_reversion",
+            symbols=["005930"],
+        )
+
+        # Mock position tracker with positions
+        mock_position_tracker = MagicMock()
+        mock_position_tracker.position_count = 1
+        mock_position_tracker.positions = [
+            Position(
+                id="pos1",
+                code="005930",
+                strategy="bb_reversion",
+                entry_price=70000,
+                quantity=10,
+                side="LONG",
+            ),
+        ]
+        mock_position_tracker.stop_auto_flush = AsyncMock()
+
+        mock_state_publisher = MagicMock()
+        # First call times out, second (forced) call succeeds
+        mock_state_publisher.publish_positions_update = MagicMock()
+        mock_state_publisher.publish_status = MagicMock()
+
+        # Simulate a slow shutdown that will timeout
+        async def slow_stop():
+            await asyncio.sleep(2.0)  # Longer than timeout
+
+        with patch.object(
+            TradingOrchestrator, "_init_kis_client", return_value=None
+        ), patch.object(
+            TradingOrchestrator, "_init_futures_slippage_controller"
+        ), patch.object(
+            TradingOrchestrator, "_init_price_feeds"
+        ), patch.object(
+            TradingOrchestrator, "_init_data_provider"
+        ), patch.object(
+            TradingOrchestrator, "_init_tick_stream_publisher"
+        ), patch.object(
+            TradingOrchestrator, "_init_strategy_infrastructure"
+        ), patch.object(
+            TradingOrchestrator, "_init_indicator_engine"
+        ), patch.object(
+            TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
+        ), patch.object(
+            TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
+        ), patch.object(
+            TradingOrchestrator, "_start_market_data_loop", new_callable=AsyncMock
+        ), patch.object(
+            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock())
+        ), patch(
+            "services.monitoring.metrics.get_metrics_collector"
+        ) as mock_metrics, patch.object(
+            TradingOrchestrator, "_notify", new_callable=AsyncMock
+        ), patch.object(
+            TradingOrchestrator, "_stop_impl", side_effect=slow_stop
+        ):
+            mock_metrics.return_value = MagicMock(
+                start_prometheus_server=MagicMock(),
+                register_strategies=MagicMock(),
+            )
+
+            orchestrator = TradingOrchestrator(config)
+            await orchestrator.start()
+
+            # Inject mocks
+            orchestrator._position_tracker = mock_position_tracker
+            orchestrator._state_publisher = mock_state_publisher
+
+            # Stop with short timeout (will trigger timeout)
+            await orchestrator.stop(timeout=0.1)
+
+            # Verify forced Redis flush was attempted
+            # Should be called at least once (in the timeout handler)
+            assert mock_state_publisher.publish_positions_update.call_count >= 1
+
+            # Verify state changed to STOPPED despite timeout
+            from services.trading.orchestrator import TradingState
+
+            assert orchestrator.state == TradingState.STOPPED
+            assert orchestrator._running is False
+
+    @pytest.mark.asyncio
+    async def test_cleanup_resources_releases_all_components(self):
+        """Verify all components are properly released during cleanup."""
+        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+
+        config = TradingConfig.stock(
+            strategy_name="bb_reversion",
+            symbols=["005930"],
+        )
+
+        # Mock all components that should be cleaned up
+        mock_tick_stream = MagicMock()
+        mock_tick_stream.close = MagicMock()
+
+        mock_pipeline = MagicMock()
+        mock_pipeline.stop = AsyncMock()
+        mock_pipeline.start = AsyncMock()
+
+        mock_order_executor = MagicMock()
+        mock_order_executor.cleanup = AsyncMock()
+
+        mock_mock_mirror = MagicMock()
+        mock_mock_mirror.cleanup = AsyncMock()
+
+        with patch.object(
+            TradingOrchestrator, "_init_kis_client", return_value=None
+        ), patch.object(
+            TradingOrchestrator, "_init_futures_slippage_controller"
+        ), patch.object(
+            TradingOrchestrator, "_init_price_feeds"
+        ), patch.object(
+            TradingOrchestrator, "_init_data_provider"
+        ), patch.object(
+            TradingOrchestrator, "_init_tick_stream_publisher"
+        ), patch.object(
+            TradingOrchestrator, "_init_strategy_infrastructure"
+        ), patch.object(
+            TradingOrchestrator, "_init_indicator_engine"
+        ), patch.object(
+            TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
+        ), patch.object(
+            TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
+        ), patch.object(
+            TradingOrchestrator, "_start_market_data_loop", new_callable=AsyncMock
+        ), patch.object(
+            TradingOrchestrator, "_stop_market_data_loop", new_callable=AsyncMock
+        ), patch.object(
+            TradingOrchestrator, "_create_pipeline", return_value=mock_pipeline
+        ), patch(
+            "services.monitoring.metrics.get_metrics_collector"
+        ) as mock_metrics, patch.object(
+            TradingOrchestrator, "_notify", new_callable=AsyncMock
+        ):
+            mock_metrics.return_value = MagicMock(
+                start_prometheus_server=MagicMock(),
+                register_strategies=MagicMock(),
+            )
+
+            orchestrator = TradingOrchestrator(config)
+            await orchestrator.start()
+
+            # Inject mocks
+            orchestrator._tick_stream_publisher = mock_tick_stream
+            orchestrator.pipeline = mock_pipeline
+            orchestrator._order_executor = mock_order_executor
+            orchestrator._mock_mirror = mock_mock_mirror
+
+            # Stop orchestrator
+            await orchestrator.stop()
+
+            # Verify all components were cleaned up
+            mock_tick_stream.close.assert_called_once()
+            mock_pipeline.stop.assert_awaited()
+            mock_order_executor.cleanup.assert_awaited_once()
+            mock_mock_mirror.cleanup.assert_awaited_once()
+
+            # Verify components are set to None
+            assert orchestrator._tick_stream_publisher is None
+            assert orchestrator.pipeline is None
+            assert orchestrator._order_executor is None
+            assert orchestrator._mock_mirror is None
+            assert orchestrator._data_provider is None
+            assert orchestrator._strategy_manager is None
+            assert orchestrator._position_tracker is None
+            assert orchestrator._indicator_engine is None
+
+    @pytest.mark.asyncio
+    async def test_redis_flush_retry_on_connection_error(self):
+        """Verify Redis flush retries on connection errors."""
+        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from shared.models.position import Position
+
+        config = TradingConfig.stock(
+            strategy_name="bb_reversion",
+            symbols=["005930"],
+        )
+
+        mock_position_tracker = MagicMock()
+        mock_position_tracker.position_count = 1
+        mock_position_tracker.positions = [
+            Position(
+                id="pos1",
+                code="005930",
+                strategy="bb_reversion",
+                entry_price=70000,
+                quantity=10,
+                side="LONG",
+            ),
+        ]
+        mock_position_tracker.stop_auto_flush = AsyncMock()
+
+        mock_state_publisher = MagicMock()
+        # First two calls fail, third succeeds
+        mock_state_publisher.publish_positions_update = MagicMock(
+            side_effect=[
+                ConnectionError("Redis connection failed"),
+                ConnectionError("Redis connection failed"),
+                None,  # Success on third try
+            ]
+        )
+        mock_state_publisher.publish_status = MagicMock()
+
+        mock_data_provider = MagicMock()
+        mock_data_provider.get_data = AsyncMock(return_value={"005930": {"close": 72000}})
+
+        with patch.object(
+            TradingOrchestrator, "_init_kis_client", return_value=None
+        ), patch.object(
+            TradingOrchestrator, "_init_futures_slippage_controller"
+        ), patch.object(
+            TradingOrchestrator, "_init_price_feeds"
+        ), patch.object(
+            TradingOrchestrator, "_init_data_provider"
+        ), patch.object(
+            TradingOrchestrator, "_init_tick_stream_publisher"
+        ), patch.object(
+            TradingOrchestrator, "_init_strategy_infrastructure"
+        ), patch.object(
+            TradingOrchestrator, "_init_indicator_engine"
+        ), patch.object(
+            TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
+        ), patch.object(
+            TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
+        ), patch.object(
+            TradingOrchestrator, "_start_market_data_loop", new_callable=AsyncMock
+        ), patch.object(
+            TradingOrchestrator, "_stop_market_data_loop", new_callable=AsyncMock
+        ), patch.object(
+            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock())
+        ), patch(
+            "services.monitoring.metrics.get_metrics_collector"
+        ) as mock_metrics, patch.object(
+            TradingOrchestrator, "_notify", new_callable=AsyncMock
+        ):
+            mock_metrics.return_value = MagicMock(
+                start_prometheus_server=MagicMock(),
+                register_strategies=MagicMock(),
+            )
+
+            orchestrator = TradingOrchestrator(config)
+            await orchestrator.start()
+
+            # Inject mocks
+            orchestrator._position_tracker = mock_position_tracker
+            orchestrator._state_publisher = mock_state_publisher
+            orchestrator._data_provider = mock_data_provider
+
+            # Stop orchestrator
+            await orchestrator.stop()
+
+            # Verify publish_positions_update was called 3 times (2 failures + 1 success)
+            assert mock_state_publisher.publish_positions_update.call_count == 3
