@@ -21,6 +21,7 @@ services:
       # API 인증
       - API_KEY=${API_KEY}
       - API_KEY_HEADER=${API_KEY_HEADER:-X-API-Key}
+      - METRICS_REQUIRE_AUTH=${METRICS_REQUIRE_AUTH:-false}
       # Telegram 알림
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
       - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
@@ -69,6 +70,8 @@ services:
       - DASHBOARD_REQUIRE_AUTH=${DASHBOARD_REQUIRE_AUTH:-true}
       - DASHBOARD_API_KEY=${DASHBOARD_API_KEY:-}
       - DASHBOARD_DEV_MODE=${DASHBOARD_DEV_MODE:-false}
+      # Metrics 인증
+      - METRICS_REQUIRE_AUTH=${METRICS_REQUIRE_AUTH:-false}
       # Redis
       - REDIS_HOST=host.docker.internal
       - REDIS_PORT=6379

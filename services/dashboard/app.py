@@ -64,11 +64,25 @@ def create_app(
     # Check if dev mode is enabled (disables authentication)
     dev_mode = os.environ.get("DASHBOARD_DEV_MODE", "").lower() == "true"
     if dev_mode:
-        logger.info("Dev mode enabled - authentication disabled")
+        logger.warning("Dev mode enabled - authentication disabled")
         require_auth = False
     elif require_auth is None:
-        # Enable authentication by default if API key is available
-        require_auth = bool(api_key)
+        # Honor DASHBOARD_REQUIRE_AUTH env var (documented in .env.example)
+        env_require = os.environ.get("DASHBOARD_REQUIRE_AUTH", "").lower()
+        if env_require == "true":
+            require_auth = True
+        elif env_require == "false":
+            require_auth = False
+        else:
+            # Fallback: enable auth if API key is available
+            require_auth = bool(api_key)
+
+    # Warn if auth is required but no API key is configured
+    if require_auth and not api_key:
+        logger.critical(
+            "DASHBOARD_REQUIRE_AUTH=true but DASHBOARD_API_KEY is not set. "
+            "All dashboard requests will be rejected."
+        )
 
     app = FastAPI(
         title=title,

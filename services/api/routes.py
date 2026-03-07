@@ -23,7 +23,6 @@ Endpoints:
 
 from __future__ import annotations
 
-import hmac
 import logging
 import os
 import re
@@ -154,18 +153,16 @@ def verify_metrics_api_key(request: Request) -> None:
         ):
             ...
     """
+    from services.api.auth import get_api_key, validate_api_key
+
     # 환경 변수 체크 - 기본값은 false (인증 비활성화)
     require_auth = os.environ.get("METRICS_REQUIRE_AUTH", "false").lower() == "true"
 
     if not require_auth:
         return None
 
-    # API 키 검증 필요
-    api_key = request.headers.get("X-API-Key")
-    expected_key = os.environ.get("API_KEY")
-
     # API 키가 설정되지 않은 경우 - 보안 경고
-    if not expected_key:
+    if not get_api_key():
         logger.warning(
             "METRICS_REQUIRE_AUTH is enabled but API_KEY is not set. "
             "Metrics endpoint is protected but has no valid key configured."
@@ -175,8 +172,9 @@ def verify_metrics_api_key(request: Request) -> None:
             detail="Authentication required but not configured",
         )
 
-    # API 키 검증 (timing-safe comparison)
-    if not api_key or not hmac.compare_digest(api_key.encode(), expected_key.encode()):
+    # API 키 검증 (reuse existing auth module with timing-safe comparison)
+    api_key = request.headers.get("X-API-Key")
+    if not validate_api_key(api_key):
         raise HTTPException(
             status_code=401,
             detail="Invalid or missing API key",
