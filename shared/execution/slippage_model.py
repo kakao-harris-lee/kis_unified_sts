@@ -150,3 +150,76 @@ def _parse_time(time_str: str) -> time:
     hour = int(parts[0])
     minute = int(parts[1])
     return time(hour=hour, minute=minute)
+
+
+class SlippageModel:
+    """Slippage model for KOSPI200 mini futures execution.
+
+    Calculates realistic slippage based on:
+    - Order size relative to available depth
+    - Current bid-ask spread
+    - Time-of-day effects
+    - Configurable base costs and impact factors
+    """
+
+    def __init__(self, config: SlippageModelConfig):
+        """Initialize slippage model.
+
+        Args:
+            config: Slippage model configuration
+        """
+        self.config = config
+
+    def calculate_slippage(
+        self,
+        order_size: float,
+        current_spread: float,
+        available_depth: float,
+        timestamp: datetime | None = None,
+    ) -> float:
+        """Calculate slippage for an order.
+
+        Args:
+            order_size: Order size in contracts
+            current_spread: Current bid-ask spread in price units
+            available_depth: Available liquidity at best price in contracts
+            timestamp: Order timestamp (defaults to now)
+
+        Returns:
+            Slippage cost in basis points (bps)
+        """
+        if not self.config.enabled:
+            return 0.0
+
+        # Start with base spread cost
+        slippage_bps = self.config.base_spread_bps
+
+        # Add depth impact if order size exceeds available depth
+        if available_depth > 0:
+            depth_ratio = order_size / available_depth
+            if depth_ratio > 1.0:
+                # Order exceeds available depth - add penalty
+                depth_penalty = (depth_ratio - 1.0) * self.config.depth_impact_factor
+                slippage_bps += depth_penalty
+        else:
+            # No depth available - apply maximum penalty
+            slippage_bps += self.config.depth_impact_factor * 2.0
+
+        # Add spread-based component (wider spread = more slippage)
+        # Normalize by a typical spread (0.05 for mini futures)
+        typical_spread = 0.05
+        if current_spread > typical_spread:
+            spread_ratio = current_spread / typical_spread
+            slippage_bps += (spread_ratio - 1.0) * self.config.base_spread_bps
+
+        # Apply time-of-day multiplier
+        if timestamp is None:
+            timestamp = datetime.now()
+        time_multiplier = self.config.get_time_multiplier(timestamp.time())
+        slippage_bps *= time_multiplier
+
+        # Clamp to configured min/max
+        slippage_bps = max(self.config.min_slippage_bps, slippage_bps)
+        slippage_bps = min(self.config.max_slippage_bps, slippage_bps)
+
+        return slippage_bps
