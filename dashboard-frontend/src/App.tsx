@@ -36,36 +36,56 @@ function App() {
                       KIS Trading
                     </span>
                     <div className="flex space-x-4">
-                      <Link
+                      <NavLink
                         to="/"
-                        className="px-3 py-2 rounded-md hover:bg-gray-700"
+                        className={({ isActive }) =>
+                          isActive
+                            ? "px-3 py-2 rounded-md bg-blue-600 text-white"
+                            : "px-3 py-2 rounded-md hover:bg-gray-700"
+                        }
                       >
                         Dashboard
-                      </Link>
-                      <Link
+                      </NavLink>
+                      <NavLink
                         to="/positions"
-                        className="px-3 py-2 rounded-md hover:bg-gray-700"
+                        className={({ isActive }) =>
+                          isActive
+                            ? "px-3 py-2 rounded-md bg-blue-600 text-white"
+                            : "px-3 py-2 rounded-md hover:bg-gray-700"
+                        }
                       >
                         Positions
-                      </Link>
-                      <Link
+                      </NavLink>
+                      <NavLink
                         to="/signals"
-                        className="px-3 py-2 rounded-md hover:bg-gray-700"
+                        className={({ isActive }) =>
+                          isActive
+                            ? "px-3 py-2 rounded-md bg-blue-600 text-white"
+                            : "px-3 py-2 rounded-md hover:bg-gray-700"
+                        }
                       >
                         Signals
-                      </Link>
-                      <Link
+                      </NavLink>
+                      <NavLink
                         to="/trades"
-                        className="px-3 py-2 rounded-md hover:bg-gray-700"
+                        className={({ isActive }) =>
+                          isActive
+                            ? "px-3 py-2 rounded-md bg-blue-600 text-white"
+                            : "px-3 py-2 rounded-md hover:bg-gray-700"
+                        }
                       >
                         Trades
-                      </Link>
-                      <Link
+                      </NavLink>
+                      <NavLink
                         to="/backtest"
-                        className="px-3 py-2 rounded-md hover:bg-gray-700"
+                        className={({ isActive }) =>
+                          isActive
+                            ? "px-3 py-2 rounded-md bg-blue-600 text-white"
+                            : "px-3 py-2 rounded-md hover:bg-gray-700"
+                        }
                       >
                         Backtest
-                      </Link>
+                      </NavLink>
                     </div>
                   </div>
                 </div>
