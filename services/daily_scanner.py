@@ -432,6 +432,15 @@ class DailyScanner:
             Dictionary with keys ``"trend_pullback"`` and ``"momentum_breakout"``,
             each mapping to a list of passing codes (up to ``max_watchlist_size``).
         """
+        # Filter funnel metrics
+        total_input = len(codes)
+        loaded_count = 0
+        min_edge_count = 0
+        trend_pullback_raw = 0
+        momentum_breakout_raw = 0
+
+        logger.info(f"Starting daily scan on {total_input} stocks")
+
         trend_pullback: list[str] = []
         momentum_breakout: list[str] = []
 
@@ -441,19 +450,44 @@ class DailyScanner:
                 logger.debug("Skipping %s — no data", code)
                 continue
 
+            loaded_count += 1
+
             if not self.check_minimum_edge(code, bars):
                 logger.debug("Skipping %s — minimum edge not met", code)
                 continue
 
+            min_edge_count += 1
+
             if self.filter_trend_pullback(code, bars):
                 trend_pullback.append(code)
+                trend_pullback_raw += 1
             if self.filter_momentum_breakout(code, bars):
                 momentum_breakout.append(code)
+                momentum_breakout_raw += 1
 
         cfg = self.config
+
+        # Log funnel metrics
+        logger.info("=" * 60)
+        logger.info("Daily Scanner Filter Funnel:")
+        logger.info(f"  Universe (input):        {total_input:>5} stocks")
+        logger.info(f"  Data loaded:             {loaded_count:>5} stocks ({loaded_count/total_input*100:.1f}%)")
+        logger.info(f"  Minimum edge passed:     {min_edge_count:>5} stocks ({min_edge_count/total_input*100:.1f}%)")
+        logger.info(f"  Trend pullback (raw):    {trend_pullback_raw:>5} stocks ({trend_pullback_raw/total_input*100:.1f}%)")
+        logger.info(f"  Momentum breakout (raw): {momentum_breakout_raw:>5} stocks ({momentum_breakout_raw/total_input*100:.1f}%)")
+        logger.info("-" * 60)
+
+        # Truncate to max watchlist size
+        final_tp = trend_pullback[: cfg.max_watchlist_size]
+        final_mb = momentum_breakout[: cfg.max_watchlist_size]
+
+        logger.info(f"  Final trend_pullback:    {len(final_tp):>5} stocks (max={cfg.max_watchlist_size})")
+        logger.info(f"  Final momentum_breakout: {len(final_mb):>5} stocks (max={cfg.max_watchlist_size})")
+        logger.info("=" * 60)
+
         return {
-            "trend_pullback": trend_pullback[: cfg.max_watchlist_size],
-            "momentum_breakout": momentum_breakout[: cfg.max_watchlist_size],
+            "trend_pullback": final_tp,
+            "momentum_breakout": final_mb,
         }
 
     def scan_and_publish(self, codes: list[str]) -> dict[str, list[str]]:
