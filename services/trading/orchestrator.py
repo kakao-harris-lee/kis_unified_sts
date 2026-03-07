@@ -50,6 +50,7 @@ from shared.utils.calc import calc_order_quantity
 from shared.risk.manager import RiskManager
 from shared.risk.config import RiskConfig
 from shared.risk.models import DrawdownLevel
+from shared.regime.performance_tracker import RegimePerformanceTracker, RegimePerformanceConfig
 from shared.exceptions import (
     ConfigurationError,
     InvalidConfigError,
@@ -325,6 +326,9 @@ class TradingConfig:
     # Universe mode: "dynamic" (screener-driven, default) or "static" (daily watchlist)
     universe_mode: str = "dynamic"
 
+    # Regime performance tracking
+    regime_performance_tracking_enabled: bool = False
+
     def __post_init__(self):
         """Validate configuration values."""
         self._validate()
@@ -505,6 +509,15 @@ class TradingOrchestrator:
 
         # Market regime
         self._current_regime: str | None = None
+
+        # Regime performance tracker (optional, controlled by config)
+        self._regime_tracker: RegimePerformanceTracker | None = None
+        if config.regime_performance_tracking_enabled:
+            regime_config = RegimePerformanceConfig(
+                redis_enabled=False,  # Start with in-memory, can enable later
+            )
+            self._regime_tracker = RegimePerformanceTracker(regime_config)
+            logger.info("Regime performance tracking enabled")
 
         # Adaptive position sizing (initialized in _init_components)
         self._adaptive_sizing: Any | None = None
@@ -3842,6 +3855,7 @@ class TradingOrchestrator:
             "entry_signal_confidence": signal.confidence,
             "signal_direction": direction,
             "execution": exec_meta,
+            "entry_regime": self._current_regime,  # Store regime at entry for performance tracking
         }
         # Forward exit parameter overrides from signal.metadata (e.g. trend mode)
         signal_meta = getattr(signal, "metadata", None) or {}
@@ -3865,6 +3879,27 @@ class TradingOrchestrator:
 
         if not position:
             return
+
+        # Record entry in regime performance tracker
+        if self._regime_tracker and self._current_regime:
+            try:
+                self._regime_tracker.record_entry(
+                    regime=self._current_regime,
+                    code=signal.code,
+                    price=fill_price,
+                    timestamp=datetime.now(),
+                    model_name=signal.strategy,
+                    metadata={
+                        "signal_confidence": signal.confidence,
+                        "direction": direction,
+                    },
+                )
+                logger.debug(
+                    f"Recorded entry in regime tracker: regime={self._current_regime}, "
+                    f"code={signal.code}, strategy={signal.strategy}"
+                )
+            except Exception as e:
+                logger.error(f"Failed to record entry in regime tracker: {e}", exc_info=True)
 
         self.total_trades += 1
         self._sync_open_positions_metric()
@@ -4134,6 +4169,32 @@ class TradingOrchestrator:
 
         if not closed:
             return
+
+        # Record exit in regime performance tracker
+        if self._regime_tracker:
+            try:
+                # Extract entry regime from position metadata
+                entry_regime = closed.metadata.get("entry_regime") if closed.metadata else None
+                if entry_regime:
+                    self._regime_tracker.record_exit(
+                        regime=entry_regime,
+                        code=signal.code,
+                        price=fill_price,
+                        timestamp=datetime.now(),
+                        pnl=closed.unrealized_pnl,
+                        model_name=closed.strategy,
+                    )
+                    logger.debug(
+                        f"Recorded exit in regime tracker: regime={entry_regime}, "
+                        f"code={signal.code}, pnl={closed.unrealized_pnl:.2f}"
+                    )
+                else:
+                    logger.debug(
+                        f"No entry_regime in position metadata for {signal.code}, "
+                        "skipping regime performance tracking"
+                    )
+            except Exception as e:
+                logger.error(f"Failed to record exit in regime tracker: {e}", exc_info=True)
 
         # Position.current_price is set to exit_price on close,
         # so unrealized_pnl effectively equals realized PnL.
