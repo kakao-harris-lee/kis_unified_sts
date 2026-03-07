@@ -194,10 +194,14 @@ class SecretsManager:
 
         Args:
             domain: "stock", "futures", or None for system/default
+
+        Returns:
+            Redis URL with rediss:// scheme if TLS enabled, redis:// otherwise
         """
         host = cls.get("REDIS_HOST", "localhost")
         port = cls.get("REDIS_PORT", "6379")
         password = cls.get("REDIS_PASSWORD", "")
+        tls_enabled = cls.get("REDIS_TLS_ENABLED", "false").lower() == "true"
 
         if domain == "stock":
             db = cls.get("REDIS_STOCK_DB", "1")
@@ -206,9 +210,12 @@ class SecretsManager:
         else:
             db = cls.get("REDIS_SYSTEM_DB", "1")
 
+        # Use rediss:// scheme for TLS, redis:// for non-TLS
+        scheme = "rediss" if tls_enabled else "redis"
+
         if password:
-            return f"redis://:{password}@{host}:{port}/{db}"
-        return f"redis://{host}:{port}/{db}"
+            return f"{scheme}://:{password}@{host}:{port}/{db}"
+        return f"{scheme}://{host}:{port}/{db}"
 
     @classmethod
     def clickhouse_database(cls, domain: Optional[Domain] = None) -> str:
