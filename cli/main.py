@@ -1264,6 +1264,119 @@ def collect_status():
 
 
 # =============================================================================
+# Scan Commands
+# =============================================================================
+
+
+@cli.group()
+def scan():
+    """스캔/스크리닝 명령
+
+    \b
+    Examples:
+        sts scan daily              # Run daily scanner with default universe
+        sts scan daily --symbols 005930,000660
+    """
+    pass
+
+
+@scan.command("daily")
+@click.option(
+    "--symbols",
+    "-s",
+    type=str,
+    default=None,
+    help="Comma-separated stock codes (default: STOCK_UNIVERSE)",
+)
+def scan_daily(symbols: str | None):
+    """Run daily scanner for pre-market universe selection
+
+    Scans stock universe using daily candle data and publishes filtered
+    watchlists to Redis for consumption by intraday trading strategies.
+
+    Applies Layer 1 filters:
+    - Minimum edge (ATR vs trading costs)
+    - Trend pullback (uptrend + RSI pullback)
+    - Momentum breakout (near N-day high + rising volume)
+
+    Results are published to Redis key ``system:daily_watchlist:latest``.
+
+    \b
+    Examples:
+        sts scan daily
+        sts scan daily --symbols 005930,000660,035720
+    """
+    from shared.collector.historical.stock import STOCK_UNIVERSE
+    from services.daily_scanner import DailyScanner, DailyScannerConfig
+
+    # Parse symbols
+    if symbols:
+        symbol_list = [s.strip() for s in symbols.split(",") if s.strip()]
+    else:
+        symbol_list = [item["code"] for item in STOCK_UNIVERSE]
+
+    if not symbol_list:
+        click.echo("Error: No symbols provided", err=True)
+        sys.exit(1)
+
+    click.echo("=" * 80)
+    click.echo("Daily Scanner Starting")
+    click.echo(f"Universe size: {len(symbol_list)} stocks")
+    click.echo("=" * 80)
+
+    try:
+        # Load configuration
+        config = DailyScannerConfig.from_yaml()
+        click.echo(f"Loaded DailyScannerConfig from {config._default_config_file}")
+
+        # Initialize scanner
+        scanner = DailyScanner(config)
+
+        # Run scan and publish to Redis
+        result = scanner.scan_and_publish(symbol_list)
+
+        # Print results table
+        click.echo("\n" + "=" * 80)
+        click.echo("Daily Scanner Results")
+        click.echo("=" * 80)
+
+        tp_stocks = result.get("trend_pullback", [])
+        mb_stocks = result.get("momentum_breakout", [])
+
+        click.echo(f"\nTrend Pullback Watchlist ({len(tp_stocks)} stocks):")
+        click.echo("-" * 80)
+        if tp_stocks:
+            for i, code in enumerate(tp_stocks, 1):
+                click.echo(f"  {i:2}. {code}")
+        else:
+            click.echo("  (none)")
+
+        click.echo(f"\nMomentum Breakout Watchlist ({len(mb_stocks)} stocks):")
+        click.echo("-" * 80)
+        if mb_stocks:
+            for i, code in enumerate(mb_stocks, 1):
+                click.echo(f"  {i:2}. {code}")
+        else:
+            click.echo("  (none)")
+
+        click.echo("\n" + "=" * 80)
+        click.echo("Summary")
+        click.echo("=" * 80)
+        click.echo(f"  Trend pullback watchlist:    {len(tp_stocks):>5} stocks")
+        click.echo(f"  Momentum breakout watchlist: {len(mb_stocks):>5} stocks")
+        click.echo(f"  Published to Redis: {config.redis_key}")
+        click.echo(f"  TTL: {config.redis_ttl_seconds}s ({config.redis_ttl_seconds // 3600}h)")
+        click.echo("=" * 80)
+
+    except Exception as exc:
+        click.echo(f"Error: Daily scanner failed: {exc}", err=True)
+        import traceback
+        if logging.getLogger().level <= logging.DEBUG:
+            traceback.print_exc()
+        sys.exit(1)
+
+
+# =============================================================================
 # Trading Commands
 # =============================================================================
 
