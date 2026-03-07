@@ -561,3 +561,351 @@ class TestRLFeatureCalculatorStochastic:
         )
         k, d = rl_calc._calc_stochastic(df, period=14, smooth=3)
         assert k.dropna().iloc[-1] == pytest.approx(0.0, abs=1.0)
+
+
+class TestFeatureEdgeCases:
+    """Edge case tests for feature calculation robustness."""
+
+    def test_empty_dataframe(self, calc):
+        """Empty DataFrame should return empty DataFrame with columns."""
+        df = pd.DataFrame(columns=["datetime", "open", "high", "low", "close", "volume"])
+        result = calc.calculate(df)
+        assert len(result) == 0
+        # Should still have feature columns defined
+        for col in FEATURE_COLUMNS:
+            assert col in result.columns
+
+    def test_empty_dataframe_rl(self, rl_calc):
+        """Empty DataFrame should work for RLFeatureCalculator too."""
+        df = pd.DataFrame(columns=["datetime", "open", "high", "low", "close", "volume"])
+        result = rl_calc.calculate(df)
+        assert len(result) == 0
+        for col in RL_FEATURE_COLUMNS:
+            assert col in result.columns
+
+    def test_single_row_dataframe(self, calc):
+        """Single row should produce features with expected NaN behavior."""
+        df = pd.DataFrame(
+            {
+                "datetime": [pd.Timestamp("2026-01-01 09:00")],
+                "open": [100.0],
+                "high": [101.0],
+                "low": [99.0],
+                "close": [100.5],
+                "volume": [1000.0],
+            }
+        )
+        result = calc.calculate(df)
+        assert len(result) == 1
+        # Most features should be NaN with only 1 row
+        assert pd.isna(result["returns"].iloc[0])
+        assert pd.isna(result["rsi"].iloc[0])
+
+    def test_single_row_dataframe_rl(self, rl_calc):
+        """Single row should work for RL calculator."""
+        df = pd.DataFrame(
+            {
+                "datetime": [pd.Timestamp("2026-01-01 09:00")],
+                "open": [100.0],
+                "high": [101.0],
+                "low": [99.0],
+                "close": [100.5],
+                "volume": [1000.0],
+            }
+        )
+        result = rl_calc.calculate(df)
+        assert len(result) == 1
+        # Most features should be NaN
+        assert pd.isna(result["returns"].iloc[0])
+        assert pd.isna(result["macd"].iloc[0])
+
+    def test_nan_in_close_prices(self, calc):
+        """NaN values in close should be handled gracefully."""
+        n = 50
+        df = pd.DataFrame(
+            {
+                "datetime": pd.date_range("2026-01-01", periods=n, freq="min"),
+                "open": [100.0] * n,
+                "high": [101.0] * n,
+                "low": [99.0] * n,
+                "close": [100.0 if i % 10 != 5 else np.nan for i in range(n)],
+                "volume": [500.0] * n,
+            }
+        )
+        result = calc.calculate(df)
+        # Should not crash
+        assert len(result) == n
+        # NaN should propagate through calculations
+        assert pd.isna(result["returns"].iloc[5])
+
+    def test_nan_in_volume(self, calc):
+        """NaN values in volume should be handled."""
+        n = 50
+        df = pd.DataFrame(
+            {
+                "datetime": pd.date_range("2026-01-01", periods=n, freq="min"),
+                "open": [100.0] * n,
+                "high": [101.0] * n,
+                "low": [99.0] * n,
+                "close": [100.0] * n,
+                "volume": [500.0 if i % 10 != 3 else np.nan for i in range(n)],
+            }
+        )
+        result = calc.calculate(df)
+        assert len(result) == n
+        # Volume ratio should be NaN where volume is NaN
+        assert pd.isna(result["volume_ratio"].iloc[3])
+
+    def test_zero_volume(self, calc):
+        """Zero volume should be handled (division by zero)."""
+        n = 50
+        df = pd.DataFrame(
+            {
+                "datetime": pd.date_range("2026-01-01", periods=n, freq="min"),
+                "open": [100.0] * n,
+                "high": [101.0] * n,
+                "low": [99.0] * n,
+                "close": [100.0] * n,
+                "volume": [0.0] * n,  # All zero volume
+            }
+        )
+        result = calc.calculate(df)
+        # Should not crash
+        assert len(result) == n
+        # Volume ratio should handle zero denominator
+        volume_ratio = result["volume_ratio"].dropna()
+        # With all zero volume, ratio might be inf or nan - both are ok
+        assert len(result) > 0
+
+    def test_extreme_price_values(self, calc):
+        """Very large or very small prices should be handled."""
+        n = 50
+        df = pd.DataFrame(
+            {
+                "datetime": pd.date_range("2026-01-01", periods=n, freq="min"),
+                "open": [1e6] * n,
+                "high": [1e6 + 100] * n,
+                "low": [1e6 - 100] * n,
+                "close": [1e6 + i for i in range(n)],
+                "volume": [500.0] * n,
+            }
+        )
+        result = calc.calculate(df)
+        assert len(result) == n
+        # Features should still be calculated
+        returns = result["returns"].dropna()
+        assert len(returns) > 0
+        # Returns should be small relative to price
+        assert abs(returns.mean()) < 1.0
+
+    def test_extreme_small_price_values(self, calc):
+        """Very small prices should be handled."""
+        n = 50
+        df = pd.DataFrame(
+            {
+                "datetime": pd.date_range("2026-01-01", periods=n, freq="min"),
+                "open": [0.001] * n,
+                "high": [0.0011] * n,
+                "low": [0.0009] * n,
+                "close": [0.001 + i * 0.00001 for i in range(n)],
+                "volume": [500.0] * n,
+            }
+        )
+        result = calc.calculate(df)
+        assert len(result) == n
+        # Should not have inf or extreme values
+        returns = result["returns"].dropna()
+        assert np.isfinite(returns).all()
+
+    def test_negative_prices(self, calc):
+        """Negative prices (edge case, shouldn't happen in real data)."""
+        n = 50
+        df = pd.DataFrame(
+            {
+                "datetime": pd.date_range("2026-01-01", periods=n, freq="min"),
+                "open": [-100.0] * n,
+                "high": [-99.0] * n,
+                "low": [-101.0] * n,
+                "close": [-100.0] * n,
+                "volume": [500.0] * n,
+            }
+        )
+        result = calc.calculate(df)
+        # Should not crash
+        assert len(result) == n
+
+    def test_constant_prices_no_volatility(self, calc):
+        """Constant prices (no volatility) should produce valid features."""
+        n = 100
+        df = pd.DataFrame(
+            {
+                "datetime": pd.date_range("2026-01-01", periods=n, freq="min"),
+                "open": [100.0] * n,
+                "high": [100.0] * n,
+                "low": [100.0] * n,
+                "close": [100.0] * n,
+                "volume": [500.0] * n,
+            }
+        )
+        result = calc.calculate(df)
+        assert len(result) == n
+        # Returns should be 0
+        returns = result["returns"].dropna()
+        assert (returns == 0.0).all()
+        # HL range should be 0
+        assert (result["hl_range"] == 0.0).all()
+
+    def test_constant_prices_rl_features(self, rl_calc):
+        """Constant prices for RL calculator."""
+        n = 150
+        df = pd.DataFrame(
+            {
+                "datetime": pd.date_range("2026-01-01", periods=n, freq="min"),
+                "open": [100.0] * n,
+                "high": [100.0] * n,
+                "low": [100.0] * n,
+                "close": [100.0] * n,
+                "volume": [500.0] * n,
+            }
+        )
+        result = rl_calc.calculate(df)
+        assert len(result) == n
+        # ATR should be 0 or very small
+        atr = result["atr"].dropna()
+        if len(atr) > 0:
+            assert atr.iloc[-1] == pytest.approx(0.0, abs=0.01)
+        # BB width should be 0 or very small
+        bb_width = result["bb_width"].dropna()
+        if len(bb_width) > 0:
+            assert bb_width.iloc[-1] == pytest.approx(0.0, abs=0.01)
+
+    def test_high_below_low_invalid_data(self, calc):
+        """Invalid OHLC where high < low should be handled."""
+        n = 50
+        df = pd.DataFrame(
+            {
+                "datetime": pd.date_range("2026-01-01", periods=n, freq="min"),
+                "open": [100.0] * n,
+                "high": [99.0] * n,  # Invalid: high < low
+                "low": [101.0] * n,
+                "close": [100.0] * n,
+                "volume": [500.0] * n,
+            }
+        )
+        result = calc.calculate(df)
+        # Should not crash
+        assert len(result) == n
+        # HL range will be negative but calculation should work
+        assert "hl_range" in result.columns
+
+    def test_inf_values_in_input(self, calc):
+        """Infinity values in input should be handled."""
+        n = 50
+        df = pd.DataFrame(
+            {
+                "datetime": pd.date_range("2026-01-01", periods=n, freq="min"),
+                "open": [100.0] * n,
+                "high": [101.0] * n,
+                "low": [99.0] * n,
+                "close": [100.0 if i != 25 else np.inf for i in range(n)],
+                "volume": [500.0] * n,
+            }
+        )
+        result = calc.calculate(df)
+        # Should not crash
+        assert len(result) == n
+
+    def test_extract_features_with_all_nans(self, calc):
+        """Extract features from DataFrame with all NaN features."""
+        df = pd.DataFrame(
+            {
+                "datetime": pd.date_range("2026-01-01", periods=5, freq="min"),
+                "open": [100.0] * 5,
+                "high": [101.0] * 5,
+                "low": [99.0] * 5,
+                "close": [100.0] * 5,
+                "volume": [500.0] * 5,
+            }
+        )
+        result = calc.calculate(df)
+        # With only 5 rows, most features will be NaN
+        features = calc.extract_features(result)
+        # Should fill NaN with 0
+        assert features.shape[0] >= 0
+        assert features.shape[1] == 10
+        if features.shape[0] > 0:
+            assert np.isfinite(features).all()
+
+    def test_prepare_sequence_with_mixed_nans(self, calc):
+        """Prepare sequence with some NaN values in features."""
+        features = []
+        for i in range(100):
+            feat = {col: float(i) if i % 5 != 0 else np.nan for col in FEATURE_COLUMNS}
+            features.append(feat)
+        result = calc.prepare_sequence(features, seq_len=60)
+        assert result is not None
+        assert result.shape == (60, 10)
+        # NaN should be replaced with 0
+        assert np.isfinite(result).all()
+
+    def test_rl_calc_extreme_volatility(self, rl_calc):
+        """Extreme volatility should not break RL features."""
+        np.random.seed(42)
+        n = 150
+        # Create extreme volatility
+        close = [100.0]
+        for _ in range(n - 1):
+            close.append(close[-1] * (1 + np.random.uniform(-0.1, 0.1)))
+
+        df = pd.DataFrame(
+            {
+                "datetime": pd.date_range("2026-01-01", periods=n, freq="min"),
+                "open": close,
+                "high": [c * 1.02 for c in close],
+                "low": [c * 0.98 for c in close],
+                "close": close,
+                "volume": [500.0] * n,
+            }
+        )
+        result = rl_calc.calculate(df)
+        assert len(result) == n
+        # All RL features should be calculated
+        for col in RL_FEATURE_COLUMNS:
+            assert col in result.columns
+
+    def test_missing_datetime_column(self, calc):
+        """DataFrame without datetime column should still work."""
+        n = 50
+        df = pd.DataFrame(
+            {
+                "open": [100.0] * n,
+                "high": [101.0] * n,
+                "low": [99.0] * n,
+                "close": [100.0 + i * 0.1 for i in range(n)],
+                "volume": [500.0] * n,
+            }
+        )
+        result = calc.calculate(df)
+        assert len(result) == n
+        # Features should still be calculated
+        for col in FEATURE_COLUMNS:
+            assert col in result.columns
+
+    def test_unsorted_datetime(self, calc):
+        """Unsorted datetime should be handled (or preserve order)."""
+        n = 50
+        dates = pd.date_range("2026-01-01", periods=n, freq="min")
+        # Reverse the dates
+        df = pd.DataFrame(
+            {
+                "datetime": dates[::-1],
+                "open": [100.0] * n,
+                "high": [101.0] * n,
+                "low": [99.0] * n,
+                "close": [100.0 + i * 0.1 for i in range(n)],
+                "volume": [500.0] * n,
+            }
+        )
+        result = calc.calculate(df)
+        # Should not crash
+        assert len(result) == n
