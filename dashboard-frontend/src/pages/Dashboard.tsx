@@ -186,19 +186,19 @@ function Dashboard() {
             title="Win Rate"
             value={`${((stats?.win_rate || 0) * 100).toFixed(1)}%`}
             loading={statsLoading}
-            highlight={!!(stats?.win_rate && stats.win_rate > 0.5)}
+            variant={stats?.win_rate && stats.win_rate > 0.5 ? 'positive' : stats?.win_rate ? 'negative' : 'neutral'}
           />
           <StatCard
             title="Total P&L"
             value={`${(stats?.total_pnl || 0).toFixed(2)}%`}
             loading={statsLoading}
-            highlight={!!(stats?.total_pnl && stats.total_pnl > 0)}
+            variant={stats?.total_pnl && stats.total_pnl > 0 ? 'positive' : stats?.total_pnl && stats.total_pnl < 0 ? 'negative' : 'neutral'}
           />
           <StatCard
             title="Profit Factor"
             value={(stats?.profit_factor || 0).toFixed(2)}
             loading={statsLoading}
-            highlight={!!(stats?.profit_factor && stats.profit_factor > 1)}
+            variant={stats?.profit_factor && stats.profit_factor > 1 ? 'positive' : stats?.profit_factor && stats.profit_factor < 1 ? 'negative' : 'neutral'}
           />
         </div>
       </div>
