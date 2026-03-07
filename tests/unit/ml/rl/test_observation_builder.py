@@ -19,6 +19,16 @@ from shared.strategy import rl_model_helpers
 from shared.strategy.rl_model_helpers import build_rl_observation
 
 
+@pytest.fixture(autouse=True)
+def _clear_rl_caches():
+    """각 테스트 전후로 RL 캐시를 클리어하여 테스트 간 격리 보장"""
+    rl_model_helpers._scaled_market_cache.clear()
+    rl_model_helpers._time_feature_cache.clear()
+    yield
+    rl_model_helpers._scaled_market_cache.clear()
+    rl_model_helpers._time_feature_cache.clear()
+
+
 @pytest.fixture
 def mock_env_config():
     """테스트용 환경 설정 모형"""

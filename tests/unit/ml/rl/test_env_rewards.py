@@ -658,9 +658,9 @@ class TestProfitComponent:
             * 2  # 2계약
         )
 
-        # 실제 손익은 수수료 차감 후
-        entry_cost = entry_price * config_multi.contract_multiplier * config_multi.commission_rate * 2
-        exit_cost = exit_price * config_multi.contract_multiplier * config_multi.commission_rate * 2
+        # 수수료 = exec_price * multiplier * rate (계약 수량과 무관)
+        entry_cost = entry_price * config_multi.contract_multiplier * config_multi.commission_rate
+        exit_cost = exit_price * config_multi.contract_multiplier * config_multi.commission_rate
         expected_total_pnl = expected_gross_pnl - entry_cost - exit_cost
 
         assert env_multi.total_pnl == pytest.approx(expected_total_pnl, rel=1e-5), (
@@ -895,8 +895,12 @@ class TestCostComponent:
         assert env.contracts == env.config.max_contracts
 
     def test_slippage_cost_on_entry(self, env: FuturesTradingEnv, sample_data: tuple[np.ndarray, np.ndarray]):
-        """슬리피지가 있는 경우 진입 비용 = 수수료 + 슬리피지"""
-        # slippage=0.1 (10 틱)로 설정한 환경
+        """슬리피지는 가격 조정으로 적용됨 (exec_price = price + slippage * tick_size)
+
+        슬리피지가 있으면 exec_price가 불리한 방향으로 조정되어,
+        수수료(exec_price 기반)가 약간 증가하고 진입가가 높아짐.
+        """
+        # slippage=2 (2틱 = 0.10포인트)로 설정한 환경
         config_with_slippage = RLEnvConfig(
             initial_balance=100_000_000,
             commission_rate=0.00003,
@@ -904,7 +908,7 @@ class TestCostComponent:
             tick_value=250_000,
             contract_multiplier=250_000,
             max_contracts=1,
-            slippage=0.1,  # 슬리피지 설정
+            slippage=2.0,  # 2틱 슬리피지
             margin_rate=0.15,
             n_market_features=25,
             n_position_features=6,
@@ -921,42 +925,46 @@ class TestCostComponent:
         env_slip = FuturesTradingEnv(day_data=features, config=config_with_slippage, prices=prices)
 
         env_slip.reset()
-        entry_price = env_slip._get_current_price()
+        raw_price = env_slip._get_current_price()
 
         # 롱 진입
         _, reward, _, _, info = env_slip.step(Action.LONG_ENTRY)
 
-        # 진입 비용 = 수수료 + 슬리피지
+        # 슬리피지는 가격 조정: exec_price = price + slippage * tick_size (매수 시 비싸게)
+        slip = config_with_slippage.slippage * config_with_slippage.tick_size
+        exec_price = raw_price + slip
+        assert exec_price > raw_price, "Buy slippage should increase exec price"
+
+        # 수수료는 exec_price 기반 (슬리피지가 반영된 가격)
         expected_commission = (
-            entry_price * config_with_slippage.contract_multiplier * config_with_slippage.commission_rate
-        )
-        expected_slippage = (
-            entry_price * config_with_slippage.contract_multiplier * config_with_slippage.slippage
-        )
-        expected_total_cost = expected_commission + expected_slippage
-        expected_r_cost = expected_total_cost / config_with_slippage.initial_balance
-
-        # 슬리피지가 포함되었는지 확인
-        assert expected_slippage > 0, "Test setup error: slippage should be > 0"
-        assert expected_total_cost > expected_commission, (
-            "Total cost should be greater than commission due to slippage"
+            exec_price * config_with_slippage.contract_multiplier * config_with_slippage.commission_rate
         )
 
-        # 보상 검증
-        expected_r_profit = -expected_total_cost / config_with_slippage.initial_balance
+        # trade_cost = commission만 (슬리피지는 별도 비용이 아님)
+        # trade_pnl = -commission (진입 시)
+        expected_r_cost = expected_commission / config_with_slippage.initial_balance
+        expected_r_profit = -expected_commission / config_with_slippage.initial_balance
+
+        # 슬리피지로 인해 진입 직후 미실현 손실 발생 (entry_price > current_price)
+        unrealized_pnl = (raw_price - exec_price) * config_with_slippage.contract_multiplier * 1
+        expected_r_risk = max(0.0, -unrealized_pnl / config_with_slippage.initial_balance)
+
         expected_reward = (
             config_with_slippage.w_profit * expected_r_profit
             - config_with_slippage.w_cost * expected_r_cost
-            - config_with_slippage.w_risk * 0.0
+            - config_with_slippage.w_risk * expected_r_risk
         ) * config_with_slippage.reward_scale
 
         assert reward == pytest.approx(expected_reward, rel=1e-6), (
             f"Entry with slippage reward mismatch: expected {expected_reward}, got {reward}"
         )
 
+        # 진입가가 슬리피지 반영된 가격인지 확인
+        assert env_slip.entry_price == pytest.approx(exec_price, rel=1e-6)
+
     def test_slippage_cost_on_exit(self, env: FuturesTradingEnv, sample_data: tuple[np.ndarray, np.ndarray]):
-        """슬리피지가 있는 경우 청산 비용 = 수수료 + 슬리피지"""
-        # slippage=0.1로 설정한 환경
+        """슬리피지는 청산 시에도 가격 조정으로 적용됨 (매도 시 exec_price = price - slippage * tick_size)"""
+        # slippage=2 (2틱)로 설정한 환경
         config_with_slippage = RLEnvConfig(
             initial_balance=100_000_000,
             commission_rate=0.00003,
@@ -964,7 +972,7 @@ class TestCostComponent:
             tick_value=250_000,
             contract_multiplier=250_000,
             max_contracts=1,
-            slippage=0.1,  # 슬리피지 설정
+            slippage=2.0,  # 2틱 슬리피지
             margin_rate=0.15,
             n_market_features=25,
             n_position_features=6,
@@ -981,46 +989,40 @@ class TestCostComponent:
         env_slip = FuturesTradingEnv(day_data=features, config=config_with_slippage, prices=prices)
 
         env_slip.reset()
-        entry_price = env_slip._get_current_price()
 
-        # 롱 진입
+        # 롱 진입 (진입가는 슬리피지 적용됨)
         env_slip.step(Action.LONG_ENTRY)
+        actual_entry_price = env_slip.entry_price  # 슬리피지 적용된 진입가
 
         # 가격 변동 후 청산
         for _ in range(10):
             env_slip.step(Action.HOLD)
 
         # 가격 상승 설정
-        env_slip.prices[env_slip.current_step, 3] = entry_price + 5.0
-        exit_price = env_slip._get_current_price()
+        raw_exit_price = actual_entry_price + 5.0
+        env_slip.prices[env_slip.current_step, 3] = raw_exit_price
 
         # 롱 청산
         _, reward, _, _, info = env_slip.step(Action.LONG_EXIT)
 
-        # 청산 비용 = 수수료 + 슬리피지
+        # 청산 시 슬리피지: exec_price = price - slippage * tick_size (매도 시 싸게)
+        slip = config_with_slippage.slippage * config_with_slippage.tick_size
+        exec_exit_price = raw_exit_price - slip
+
+        # 수수료는 exec_price 기반
         expected_exit_commission = (
-            exit_price * config_with_slippage.contract_multiplier * config_with_slippage.commission_rate
-        )
-        expected_exit_slippage = (
-            exit_price * config_with_slippage.contract_multiplier * config_with_slippage.slippage
-        )
-        expected_exit_cost = expected_exit_commission + expected_exit_slippage
-        expected_r_cost = expected_exit_cost / config_with_slippage.initial_balance
-
-        # 슬리피지가 포함되었는지 확인
-        assert expected_exit_slippage > 0, "Test setup error: exit slippage should be > 0"
-        assert expected_exit_cost > expected_exit_commission, (
-            "Exit cost should be greater than commission due to slippage"
+            exec_exit_price * config_with_slippage.contract_multiplier * config_with_slippage.commission_rate
         )
 
-        # 실현 손익 계산
+        # 실현 손익 = (exec_exit - entry) * multiplier * contracts - commission
         gross_pnl = (
-            (exit_price - entry_price)
+            (exec_exit_price - actual_entry_price)
             * config_with_slippage.contract_multiplier
             * config_with_slippage.max_contracts
         )
-        trade_pnl = gross_pnl - expected_exit_cost
+        trade_pnl = gross_pnl - expected_exit_commission
         expected_r_profit = trade_pnl / config_with_slippage.initial_balance
+        expected_r_cost = expected_exit_commission / config_with_slippage.initial_balance
 
         # 보상 검증
         expected_reward = (
@@ -1095,21 +1097,15 @@ class TestCostComponent:
         # 롱 진입 (2계약)
         _, reward, _, _, info = env_multi.step(Action.LONG_ENTRY)
 
-        # 진입 비용 = 수수료 × 계약 수량
-        # 주의: 수수료는 가격 × multiplier × rate이므로, 2계약이면 2배가 됨
-        expected_cost_per_contract = (
+        # 수수료 = exec_price * multiplier * rate (계약 수량과 무관)
+        # env._execute_action은 cost = exec_price * multiplier * rate로 계산
+        expected_commission = (
             entry_price * config_multi.contract_multiplier * config_multi.commission_rate
         )
-        expected_total_cost = expected_cost_per_contract * config_multi.max_contracts
-        expected_r_cost = expected_total_cost / config_multi.initial_balance
+        expected_r_cost = expected_commission / config_multi.initial_balance
 
-        # 2계약 비용이 1계약의 2배인지 확인
-        assert expected_total_cost == pytest.approx(expected_cost_per_contract * 2, rel=1e-6), (
-            "Cost should scale linearly with contract size"
-        )
-
-        # 보상 검증
-        expected_r_profit = -expected_total_cost / config_multi.initial_balance
+        # 보상 검증 (trade_pnl = -commission, trade_cost = commission)
+        expected_r_profit = -expected_commission / config_multi.initial_balance
         expected_reward = (
             config_multi.w_profit * expected_r_profit
             - config_multi.w_cost * expected_r_cost
