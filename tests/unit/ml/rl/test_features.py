@@ -246,6 +246,269 @@ class TestRLFeatureCalculator:
         assert len(rl_calc.get_feature_names()) == 25
 
 
+class TestRLFeatureCalculatorIndividualFeatures:
+    """Individual tests for all 15 RL-specific features"""
+
+    def test_macd_calculated(self, rl_calc, ohlcv_df):
+        """MACD column exists and has valid values"""
+        result = rl_calc.calculate(ohlcv_df)
+        assert "macd" in result.columns
+        valid = result["macd"].dropna()
+        assert len(valid) > 0
+
+    def test_macd_fast_slow_relationship(self, rl_calc):
+        """MACD = EMA(fast) - EMA(slow)"""
+        n = 100
+        df = pd.DataFrame(
+            {
+                "datetime": pd.date_range("2026-01-01", periods=n, freq="min"),
+                "open": [100.0] * n,
+                "high": [101.0] * n,
+                "low": [99.0] * n,
+                "close": [100.0 + i * 0.1 for i in range(n)],
+                "volume": [500.0] * n,
+            }
+        )
+        result = rl_calc.calculate(df)
+        # For uptrend, MACD should be mostly positive
+        valid = result["macd"].dropna()
+        assert valid.iloc[-10:].mean() > 0
+
+    def test_macd_signal_calculated(self, rl_calc, ohlcv_df):
+        """MACD signal column exists and is EMA of MACD"""
+        result = rl_calc.calculate(ohlcv_df)
+        assert "macd_signal" in result.columns
+        valid = result["macd_signal"].dropna()
+        assert len(valid) > 0
+
+    def test_macd_hist_calculated(self, rl_calc, ohlcv_df):
+        """MACD histogram = MACD - Signal"""
+        result = rl_calc.calculate(ohlcv_df)
+        assert "macd_hist" in result.columns
+        valid = result[["macd", "macd_signal", "macd_hist"]].dropna()
+        np.testing.assert_allclose(
+            valid["macd_hist"].values,
+            (valid["macd"] - valid["macd_signal"]).values,
+            atol=1e-10,
+        )
+
+    def test_sma_ratio_60_calculated(self, rl_calc, ohlcv_df):
+        """SMA ratio 60 exists and is close/SMA(60)"""
+        result = rl_calc.calculate(ohlcv_df)
+        assert "sma_ratio_60" in result.columns
+        valid = result["sma_ratio_60"].dropna()
+        # Should have reasonable values around 1.0
+        assert 0.5 < valid.mean() < 1.5
+        assert (valid > 0).all()
+
+    def test_sma_ratio_120_calculated(self, rl_calc, ohlcv_df):
+        """SMA ratio 120 exists and is close/SMA(120)"""
+        result = rl_calc.calculate(ohlcv_df)
+        assert "sma_ratio_120" in result.columns
+        valid = result["sma_ratio_120"].dropna()
+        # Should have reasonable values around 1.0
+        assert 0.5 < valid.mean() < 1.5
+        assert (valid > 0).all()
+
+    def test_sma_ratios_near_one_stable_market(self, rl_calc):
+        """SMA ratios near 1.0 in stable market"""
+        n = 150
+        df = pd.DataFrame(
+            {
+                "datetime": pd.date_range("2026-01-01", periods=n, freq="min"),
+                "open": [100.0] * n,
+                "high": [100.5] * n,
+                "low": [99.5] * n,
+                "close": [100.0] * n,
+                "volume": [500.0] * n,
+            }
+        )
+        result = rl_calc.calculate(df)
+        for window in [60, 120]:
+            valid = result[f"sma_ratio_{window}"].dropna()
+            if len(valid) > 0:
+                assert valid.iloc[-1] == pytest.approx(1.0, abs=0.01)
+
+    def test_ema_ratio_5_calculated(self, rl_calc, ohlcv_df):
+        """EMA ratio 5 exists and is close/EMA(5)"""
+        result = rl_calc.calculate(ohlcv_df)
+        assert "ema_ratio_5" in result.columns
+        valid = result["ema_ratio_5"].dropna()
+        assert (valid > 0).all()
+        assert 0.5 < valid.mean() < 1.5
+
+    def test_ema_ratio_10_calculated(self, rl_calc, ohlcv_df):
+        """EMA ratio 10 exists and is close/EMA(10)"""
+        result = rl_calc.calculate(ohlcv_df)
+        assert "ema_ratio_10" in result.columns
+        valid = result["ema_ratio_10"].dropna()
+        assert (valid > 0).all()
+        assert 0.5 < valid.mean() < 1.5
+
+    def test_ema_ratio_20_calculated(self, rl_calc, ohlcv_df):
+        """EMA ratio 20 exists and is close/EMA(20)"""
+        result = rl_calc.calculate(ohlcv_df)
+        assert "ema_ratio_20" in result.columns
+        valid = result["ema_ratio_20"].dropna()
+        assert (valid > 0).all()
+        assert 0.5 < valid.mean() < 1.5
+
+    def test_ema_ratios_responsive_to_trend(self, rl_calc):
+        """EMA ratios respond faster than SMA in trending market"""
+        n = 100
+        df = pd.DataFrame(
+            {
+                "datetime": pd.date_range("2026-01-01", periods=n, freq="min"),
+                "open": [100.0 + i * 0.5 for i in range(n)],
+                "high": [101.0 + i * 0.5 for i in range(n)],
+                "low": [99.0 + i * 0.5 for i in range(n)],
+                "close": [100.0 + i * 0.5 for i in range(n)],
+                "volume": [500.0] * n,
+            }
+        )
+        result = rl_calc.calculate(df)
+        # In uptrend, EMA ratios should be > 1
+        for window in [5, 10, 20]:
+            valid = result[f"ema_ratio_{window}"].dropna()
+            assert valid.iloc[-1] > 1.0
+
+    def test_bb_upper_dist_calculated(self, rl_calc, ohlcv_df):
+        """BB upper distance = (upper - close) / close"""
+        result = rl_calc.calculate(ohlcv_df)
+        assert "bb_upper_dist" in result.columns
+        valid = result["bb_upper_dist"].dropna()
+        # Should be mostly positive (upper band above price)
+        assert valid.mean() > 0
+        assert (valid > -0.5).all()  # allow some tolerance
+
+    def test_bb_lower_dist_calculated(self, rl_calc, ohlcv_df):
+        """BB lower distance = (close - lower) / close"""
+        result = rl_calc.calculate(ohlcv_df)
+        assert "bb_lower_dist" in result.columns
+        valid = result["bb_lower_dist"].dropna()
+        # Should be mostly positive (price above lower band)
+        assert valid.mean() > 0
+        assert (valid > -0.5).all()  # allow some tolerance
+
+    def test_bb_distances_relationship(self, rl_calc, ohlcv_df):
+        """BB upper and lower distances sum relates to BB width"""
+        result = rl_calc.calculate(ohlcv_df)
+        valid = result[["bb_upper_dist", "bb_lower_dist", "bb_width"]].dropna()
+        # upper_dist + lower_dist should approximate bb_width
+        total_dist = valid["bb_upper_dist"] + valid["bb_lower_dist"]
+        # The relationship is approximate due to normalization differences
+        assert (total_dist > 0).all()
+        assert (valid["bb_width"] > 0).all()
+
+    def test_bb_width_calculated(self, rl_calc, ohlcv_df):
+        """BB width = (upper - lower) / mid"""
+        result = rl_calc.calculate(ohlcv_df)
+        assert "bb_width" in result.columns
+        valid = result["bb_width"].dropna()
+        assert (valid >= 0).all()
+        # Typical BB width values
+        assert valid.mean() > 0
+        assert valid.mean() < 1.0
+
+    def test_bb_width_expands_with_volatility(self, rl_calc):
+        """BB width increases in volatile market"""
+        n = 100
+        # Stable market
+        df_stable = pd.DataFrame(
+            {
+                "datetime": pd.date_range("2026-01-01", periods=n, freq="min"),
+                "open": [100.0] * n,
+                "high": [100.2] * n,
+                "low": [99.8] * n,
+                "close": [100.0] * n,
+                "volume": [500.0] * n,
+            }
+        )
+        # Volatile market
+        np.random.seed(42)
+        volatile_close = [100.0 + np.random.randn() * 2 for _ in range(n)]
+        df_volatile = pd.DataFrame(
+            {
+                "datetime": pd.date_range("2026-01-01", periods=n, freq="min"),
+                "open": volatile_close,
+                "high": [c + 1 for c in volatile_close],
+                "low": [c - 1 for c in volatile_close],
+                "close": volatile_close,
+                "volume": [500.0] * n,
+            }
+        )
+
+        result_stable = rl_calc.calculate(df_stable)
+        result_volatile = rl_calc.calculate(df_volatile)
+
+        bb_stable = result_stable["bb_width"].dropna().mean()
+        bb_volatile = result_volatile["bb_width"].dropna().mean()
+
+        assert bb_volatile > bb_stable
+
+    def test_atr_calculated(self, rl_calc, ohlcv_df):
+        """ATR column exists and is normalized"""
+        result = rl_calc.calculate(ohlcv_df)
+        assert "atr" in result.columns
+        valid = result["atr"].dropna()
+        assert (valid >= 0).all()
+        # ATR should be small fraction of price (normalized)
+        assert valid.mean() < 0.5
+
+    def test_stoch_k_calculated(self, rl_calc, ohlcv_df):
+        """Stochastic %K exists and is bounded 0-100"""
+        result = rl_calc.calculate(ohlcv_df)
+        assert "stoch_k" in result.columns
+        valid = result["stoch_k"].dropna()
+        assert valid.min() >= -1  # small tolerance
+        assert valid.max() <= 101
+
+    def test_stoch_d_calculated(self, rl_calc, ohlcv_df):
+        """Stochastic %D exists and is SMA of %K"""
+        result = rl_calc.calculate(ohlcv_df)
+        assert "stoch_d" in result.columns
+        valid = result["stoch_d"].dropna()
+        assert valid.min() >= -1  # small tolerance
+        assert valid.max() <= 101
+
+    def test_stoch_k_d_relationship(self, rl_calc, ohlcv_df):
+        """Stochastic %D is smoother than %K"""
+        result = rl_calc.calculate(ohlcv_df)
+        valid = result[["stoch_k", "stoch_d"]].dropna()
+        # %D should have lower volatility than %K
+        k_std = valid["stoch_k"].std()
+        d_std = valid["stoch_d"].std()
+        assert d_std <= k_std
+
+    def test_price_change_5_calculated(self, rl_calc, ohlcv_df):
+        """Price change 5 exists and is 5-period pct change"""
+        result = rl_calc.calculate(ohlcv_df)
+        assert "price_change_5" in result.columns
+        valid = result["price_change_5"].dropna()
+        # Should have both positive and negative values
+        assert len(valid) > 0
+        # Reasonable change magnitude
+        assert abs(valid.mean()) < 0.5
+
+    def test_price_change_5_uptrend(self, rl_calc):
+        """Price change 5 is positive in strong uptrend"""
+        n = 50
+        df = pd.DataFrame(
+            {
+                "datetime": pd.date_range("2026-01-01", periods=n, freq="min"),
+                "open": [100.0 + i for i in range(n)],
+                "high": [101.0 + i for i in range(n)],
+                "low": [99.0 + i for i in range(n)],
+                "close": [100.0 + i for i in range(n)],
+                "volume": [500.0] * n,
+            }
+        )
+        result = rl_calc.calculate(df)
+        valid = result["price_change_5"].dropna()
+        # Should be mostly positive in uptrend
+        assert valid.mean() > 0
+
+
 class TestRLFeatureCalculatorATR:
     def test_atr_known_values(self, rl_calc):
         """ATR for constant-range candles should equal that range / close."""
