@@ -2726,6 +2726,162 @@ def rl_train_hierarchical(mode: str, training: str, config: str):
         sys.exit(1)
 
 
+@rl.command("evaluate-hierarchical")
+@click.option(
+    "--high-model",
+    "-h",
+    default="hierarchical/high_level_final",
+    help="High-level model path (default: hierarchical/high_level_final)",
+)
+@click.option(
+    "--low-model",
+    "-l",
+    default="hierarchical/low_level_final",
+    help="Low-level model path (default: hierarchical/low_level_final)",
+)
+@click.option(
+    "--baseline",
+    "-b",
+    default="mppo_best",
+    help="Baseline flat rl_mppo model path (default: mppo_best)",
+)
+@click.option(
+    "--mode",
+    "-m",
+    default="directional",
+    type=click.Choice(["directional", "risk_budget"]),
+    help="High-level agent mode (default: directional)",
+)
+@click.option(
+    "--config",
+    "-c",
+    default="ml/rl_mppo.yaml",
+    help="Config file path (default: ml/rl_mppo.yaml)",
+)
+def rl_evaluate_hierarchical(
+    high_model: str, low_model: str, baseline: str, mode: str, config: str
+):
+    """계층적 RL 모델 평가 및 비교
+
+    계층적 모델(High-level + Low-level)을 flat rl_mppo 베이스라인과 비교.
+    Sharpe ratio, 수익률, 승률, MDD 등 주요 지표 비교표 출력.
+
+    \b
+    Examples:
+        sts rl evaluate-hierarchical
+        sts rl evaluate-hierarchical --mode directional
+        sts rl evaluate-hierarchical --high-model hierarchical/high_level_joint --low-model hierarchical/low_level_joint
+        sts rl evaluate-hierarchical --baseline mppo_best --mode risk_budget
+    """
+    from pathlib import Path
+
+    click.echo("Starting Hierarchical RL Evaluation")
+    click.echo(f"  High-level model: {high_model}")
+    click.echo(f"  Low-level model: {low_model}")
+    click.echo(f"  Baseline model: {baseline}")
+    click.echo(f"  Mode: {mode}")
+    click.echo(f"  Config: {config}")
+    click.echo("-" * 40)
+
+    try:
+        from scripts.training.train_rl import load_data_from_clickhouse
+        from shared.ml.rl.hierarchical.evaluator import HierarchicalEvaluator
+        from stable_baselines3 import PPO
+        from sb3_contrib import MaskablePPO
+
+        # Load test data from ClickHouse
+        click.echo("\nLoading test data from ClickHouse...")
+        _, _, test_days, test_prices = load_data_from_clickhouse(config)
+        click.echo(f"  Test days: {len(test_days)}")
+
+        # Load models
+        click.echo("\nLoading models...")
+
+        # High-level model (PPO)
+        high_model_path = Path(f"models/futures/rl/{high_model}")
+        if not high_model_path.exists():
+            click.echo(f"Error: High-level model not found at {high_model_path}", err=True)
+            sys.exit(1)
+        high_model_zip = high_model_path / "best_model.zip"
+        if not high_model_zip.exists():
+            high_model_zip = high_model_path.with_suffix(".zip")
+        click.echo(f"  Loading high-level model from {high_model_zip}")
+        high_model_obj = PPO.load(str(high_model_zip))
+
+        # Low-level model (MaskablePPO)
+        low_model_path = Path(f"models/futures/rl/{low_model}")
+        if not low_model_path.exists():
+            click.echo(f"Error: Low-level model not found at {low_model_path}", err=True)
+            sys.exit(1)
+        low_model_zip = low_model_path / "best_model.zip"
+        if not low_model_zip.exists():
+            low_model_zip = low_model_path.with_suffix(".zip")
+        click.echo(f"  Loading low-level model from {low_model_zip}")
+        low_model_obj = MaskablePPO.load(str(low_model_zip))
+
+        # Baseline model (MaskablePPO)
+        baseline_path = Path(f"models/futures/rl/{baseline}")
+        if not baseline_path.exists():
+            click.echo(f"Error: Baseline model not found at {baseline_path}", err=True)
+            sys.exit(1)
+        baseline_zip = baseline_path / "best_model.zip"
+        if not baseline_zip.exists():
+            baseline_zip = baseline_path.with_suffix(".zip")
+        click.echo(f"  Loading baseline model from {baseline_zip}")
+        baseline_model_obj = MaskablePPO.load(str(baseline_zip))
+
+        # Create evaluator and run comparison
+        click.echo("\nRunning evaluation and comparison...")
+        evaluator = HierarchicalEvaluator(config_path=config)
+
+        comparison_df = evaluator.compare_with_baseline(
+            high_model=high_model_obj,
+            low_model=low_model_obj,
+            baseline_model=baseline_model_obj,
+            test_days_1m=test_days,
+            test_prices_1m=test_prices,
+            test_days_15m=None,  # Auto-generated from 1m data
+            mode=mode,
+        )
+
+        # Print comparison table
+        click.echo("\n" + "=" * 80)
+        click.echo("HIERARCHICAL RL vs BASELINE COMPARISON")
+        click.echo("=" * 80)
+        click.echo(comparison_df.to_string(index=False))
+        click.echo("=" * 80)
+
+        # Highlight key improvements
+        improvement_row = comparison_df[comparison_df["model"] == "Improvement (%)"]
+        if not improvement_row.empty:
+            sharpe_improvement = improvement_row["sharpe_ratio"].iloc[0]
+            total_return_improvement = improvement_row["total_return_pct"].iloc[0]
+
+            click.echo("\nKey Findings:")
+            click.echo(f"  Sharpe Ratio Improvement: {sharpe_improvement:+.2f}%")
+            click.echo(f"  Total Return Improvement: {total_return_improvement:+.2f}%")
+
+            if sharpe_improvement > 0:
+                click.echo("\n✓ Hierarchical RL shows improved risk-adjusted returns!")
+            else:
+                click.echo("\n⚠ Hierarchical RL did not outperform baseline on Sharpe ratio")
+
+        click.echo("\n✓ Evaluation complete!")
+
+    except ImportError as e:
+        click.echo(f"Error: Required package not installed: {e}", err=True)
+        click.echo("Install with: pip install -e .[ml]", err=True)
+        sys.exit(1)
+    except FileNotFoundError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
+
+
 # =============================================================================
 # TFT Commands
 # =============================================================================
