@@ -1,6 +1,7 @@
 """ClickHouse client with singleton pattern."""
 import logging
 import asyncio
+import ssl
 import threading
 from typing import Optional, List, AsyncGenerator, ClassVar, TYPE_CHECKING
 from datetime import date, datetime
@@ -8,13 +9,13 @@ from datetime import date, datetime
 from clickhouse_driver import Client as SyncClient
 try:
     from aiochclient import ChClient
-    from aiohttp import ClientSession
+    from aiohttp import ClientSession, TCPConnector
     HAS_ASYNC = True
 except ImportError:
     HAS_ASYNC = False
     if TYPE_CHECKING:
         from aiochclient import ChClient
-        from aiohttp import ClientSession
+        from aiohttp import ClientSession, TCPConnector
 
 from .config import ClickHouseConfig
 from .models import DailyCandle, MinuteCandle
@@ -240,18 +241,43 @@ class ClickHouseClient:
                     logger.warning(f"Error during singleton cleanup: {e}")
             cls._instance = None
 
+    def _build_connection_params(self) -> dict:
+        """Build connection parameters including TLS settings.
+
+        Returns:
+            dict: Connection parameters for SyncClient
+        """
+        params = {
+            "host": self.config.host,
+            "port": self.config.port,
+            "user": self.config.user,
+            "password": self.config.password,
+            "database": self.config.database,
+            "connect_timeout": self.config.connect_timeout,
+        }
+
+        # Add TLS settings if enabled
+        if self.config.secure:
+            params["secure"] = True
+            params["verify"] = self.config.verify_ssl
+
+            # Add certificate paths if provided
+            if self.config.ca_cert:
+                params["ca_certs"] = self.config.ca_cert
+            if self.config.client_cert:
+                params["certfile"] = self.config.client_cert
+            if self.config.client_key:
+                params["keyfile"] = self.config.client_key
+
+        return params
+
     def get_sync_client(self) -> SyncClient:
         """Get or create sync client."""
         if self._sync_client is None:
-            self._sync_client = SyncClient(
-                host=self.config.host,
-                port=self.config.port,
-                user=self.config.user,
-                password=self.config.password,
-                database=self.config.database,
-                connect_timeout=self.config.connect_timeout,
-            )
-            logger.info(f"Connected to ClickHouse (Sync): {self.config.host}:{self.config.port}")
+            params = self._build_connection_params()
+            self._sync_client = SyncClient(**params)
+            protocol = "TLS" if self.config.secure else "plain"
+            logger.info(f"Connected to ClickHouse (Sync, {protocol}): {self.config.host}:{self.config.port}")
         return self._sync_client
 
     def disconnect(self):
@@ -265,12 +291,10 @@ class ClickHouseClient:
         """Initialize database and tables."""
         try:
             # Create database first (connect without database)
-            temp_client = SyncClient(
-                host=self.config.host,
-                port=self.config.port,
-                user=self.config.user,
-                password=self.config.password,
-            )
+            # Build connection params without database
+            temp_params = self._build_connection_params()
+            temp_params.pop("database", None)  # Remove database from params
+            temp_client = SyncClient(**temp_params)
             # Safe because self.config.database is validated in Config
             temp_client.execute(f"CREATE DATABASE IF NOT EXISTS {self.config.database}")
             temp_client.disconnect()
@@ -370,20 +394,63 @@ class AsyncClickHouseClient:
         self._client: Optional[ChClient] = None
         self._initialized: bool = False
 
+    def _build_ssl_context(self) -> Optional[ssl.SSLContext]:
+        """Build SSL context for async client.
+
+        Returns:
+            ssl.SSLContext if TLS is enabled, None otherwise
+        """
+        if not self.config.secure:
+            return None
+
+        # Create SSL context
+        ssl_context = ssl.create_default_context()
+
+        # Configure certificate verification
+        if not self.config.verify_ssl:
+            ssl_context.check_hostname = False
+            ssl_context.verify_mode = ssl.CERT_NONE
+        else:
+            ssl_context.verify_mode = ssl.CERT_REQUIRED
+
+        # Load CA certificate if provided
+        if self.config.ca_cert:
+            ssl_context.load_verify_locations(cafile=self.config.ca_cert)
+
+        # Load client certificate and key for mutual TLS
+        if self.config.client_cert and self.config.client_key:
+            ssl_context.load_cert_chain(
+                certfile=self.config.client_cert,
+                keyfile=self.config.client_key
+            )
+
+        return ssl_context
+
     async def connect(self):
         if self._session is None:
-            session = ClientSession()
+            # Build SSL context if TLS is enabled
+            ssl_context = self._build_ssl_context()
+
+            # Create connector with SSL context
+            connector = TCPConnector(ssl=ssl_context) if ssl_context else None
+            session = ClientSession(connector=connector)
+
             try:
+                # Use https:// for secure connections, http:// otherwise
+                protocol = "https" if self.config.secure else "http"
+                url = f"{protocol}://{self.config.host}:{self.config.http_port}"
+
                 self._client = ChClient(
                     session,
-                    url=f"http://{self.config.host}:{self.config.http_port}",
+                    url=url,
                     user=self.config.user,
                     password=self.config.password,
                     database=self.config.database,
                 )
                 self._session = session
                 self._initialized = True
-                logger.info(f"Connected to ClickHouse (Async): {self.config.host} (HTTP)")
+                protocol_desc = "HTTPS/TLS" if self.config.secure else "HTTP"
+                logger.info(f"Connected to ClickHouse (Async, {protocol_desc}): {self.config.host}:{self.config.http_port}")
             except Exception:
                 await session.close()
                 raise

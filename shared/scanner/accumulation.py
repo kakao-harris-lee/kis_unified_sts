@@ -28,6 +28,7 @@ import numpy as np
 import pandas as pd
 import redis
 
+from shared.config.tls import build_redis_tls_params, get_clickhouse_tls_params
 from shared.indicators.volume import OBVCalculator
 
 logger = logging.getLogger(__name__)
@@ -59,17 +60,21 @@ class AccumulationCandidate:
 def _get_redis_client():
     """Get Redis client for publishing results."""
     redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/1")
-    return redis.Redis.from_url(redis_url, decode_responses=True)
+    tls_params = build_redis_tls_params()
+    return redis.Redis.from_url(redis_url, decode_responses=True, **tls_params)
 
 
 def _get_clickhouse_config():
     """Get ClickHouse config from environment."""
+    tls_params = get_clickhouse_tls_params()
+
     return {
         "host": os.getenv("CLICKHOUSE_HOST", "localhost"),
         "port": int(os.getenv("CLICKHOUSE_PORT", "8123")),
         "username": os.getenv("CLICKHOUSE_USER", "default"),
         "password": os.getenv("CLICKHOUSE_PASSWORD", ""),
         "database": "market",
+        **tls_params,
     }
 
 

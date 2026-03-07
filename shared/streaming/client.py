@@ -12,6 +12,8 @@ from typing import Optional
 
 import redis
 
+from shared.config.tls import build_redis_tls_params
+
 logger = logging.getLogger(__name__)
 
 
@@ -34,16 +36,27 @@ class RedisClient:
         password = os.environ.get("REDIS_PASSWORD", None) or None
         db = int(os.environ.get("REDIS_DB", "1"))
 
-        client = redis.Redis(
-            host=host,
-            port=port,
-            password=password,
-            db=db,
-            decode_responses=True,
-            socket_connect_timeout=5,
-            socket_timeout=5,
-        )
+        # Base connection parameters
+        connection_params = {
+            "host": host,
+            "port": port,
+            "password": password,
+            "db": db,
+            "decode_responses": True,
+            "socket_connect_timeout": 5,
+            "socket_timeout": 5,
+        }
 
+        # Add TLS parameters if enabled
+        tls_params = build_redis_tls_params()
+        connection_params.update(tls_params)
+
+        if tls_params:
+            logger.debug(f"Redis TLS enabled: {host}:{port}")
+        else:
+            logger.debug(f"Redis TLS disabled: {host}:{port}")
+
+        client = redis.Redis(**connection_params)
         client.ping()
         logger.debug(f"Redis 연결 성공: {host}:{port}")
         return client

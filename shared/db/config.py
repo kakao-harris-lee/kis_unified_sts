@@ -27,6 +27,17 @@ class ClickHouseConfig(ServiceConfigBase):
     pool_size: int = Field(default=5, description="Connection pool size")
     connect_timeout: int = Field(default=10, description="Connection timeout seconds")
 
+    # TLS/SSL settings
+    secure: bool = Field(default=False, description="Enable TLS/SSL connection")
+    verify_ssl: bool = Field(default=True, description="Verify SSL certificates")
+    ca_cert: str | None = Field(default=None, description="Path to CA certificate file")
+    client_cert: str | None = Field(
+        default=None, description="Path to client certificate file (for mutual TLS)"
+    )
+    client_key: str | None = Field(
+        default=None, description="Path to client key file (for mutual TLS)"
+    )
+
     @classmethod
     def from_env(cls, database: str | None = None) -> "ClickHouseConfig":
         """Create config from environment variables.
@@ -43,6 +54,13 @@ class ClickHouseConfig(ServiceConfigBase):
             - CLICKHOUSE_PORT is typically the HTTP port (8123)
             - CLICKHOUSE_NATIVE_PORT is the native protocol port (9000)
             - If native port is not set, defaults to 9000 when HTTP port is 8123
+
+            TLS environment variables:
+            - CLICKHOUSE_SECURE: Enable TLS (true/false)
+            - CLICKHOUSE_VERIFY_SSL: Verify SSL certificates (true/false)
+            - CLICKHOUSE_CA_CERT: Path to CA certificate
+            - CLICKHOUSE_CLIENT_CERT: Path to client certificate (mutual TLS)
+            - CLICKHOUSE_CLIENT_KEY: Path to client key (mutual TLS)
         """
         http_port = int(os.environ.get("CLICKHOUSE_PORT", "8123"))
         raw_native_port = os.environ.get("CLICKHOUSE_NATIVE_PORT")
@@ -53,6 +71,18 @@ class ClickHouseConfig(ServiceConfigBase):
             # Keep native protocol default on 9000 unless an explicit native port is provided.
             native_port = 9000 if http_port == 8123 else http_port
 
+        # Parse boolean TLS settings
+        secure = os.environ.get("CLICKHOUSE_SECURE", "false").lower() in (
+            "true",
+            "1",
+            "yes",
+        )
+        verify_ssl = os.environ.get("CLICKHOUSE_VERIFY_SSL", "true").lower() in (
+            "true",
+            "1",
+            "yes",
+        )
+
         return cls(
             host=os.environ.get("CLICKHOUSE_HOST", "localhost"),
             port=native_port,
@@ -60,7 +90,13 @@ class ClickHouseConfig(ServiceConfigBase):
             user=os.environ.get("CLICKHOUSE_USER", "default"),
             password=os.environ.get("CLICKHOUSE_PASSWORD", ""),
             database=database or os.environ.get("CLICKHOUSE_STOCK_DATABASE", "market"),
+            secure=secure,
+            verify_ssl=verify_ssl,
+            ca_cert=os.environ.get("CLICKHOUSE_CA_CERT"),
+            client_cert=os.environ.get("CLICKHOUSE_CLIENT_CERT"),
+            client_key=os.environ.get("CLICKHOUSE_CLIENT_KEY"),
         )
 
     def __str__(self) -> str:
-        return f"ClickHouse({self.user}@{self.host}:{self.port}/{self.database})"
+        protocol = "clickhouses" if self.secure else "clickhouse"
+        return f"{protocol}://{self.user}@{self.host}:{self.port}/{self.database}"

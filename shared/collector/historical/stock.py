@@ -29,6 +29,7 @@ import httpx
 import clickhouse_connect
 
 from shared.config.secrets import SecretsManager
+from shared.config.tls import get_clickhouse_tls_params
 from .calendar import get_trading_days_range, is_after_market_close, is_trading_day
 
 logger = logging.getLogger(__name__)
@@ -83,12 +84,15 @@ STOCK_UNIVERSE = [
 
 def _get_clickhouse_config() -> Dict[str, Any]:
     """Get ClickHouse configuration for stock database."""
+    tls_params = get_clickhouse_tls_params()
+
     return {
         "host": os.getenv("CLICKHOUSE_HOST", "localhost"),
         "port": int(os.getenv("CLICKHOUSE_PORT", "8123")),
         "database": os.getenv("CLICKHOUSE_STOCK_DATABASE", "market"),
         "user": os.getenv("CLICKHOUSE_USER", "trading"),
         "password": os.getenv("CLICKHOUSE_PASSWORD", ""),
+        **tls_params,
     }
 
 
@@ -274,6 +278,9 @@ def get_stock_db_client() -> clickhouse_connect.driver.client.Client:
         username=config["user"],
         password=config["password"],
         database=config["database"],
+        secure=config["secure"],
+        verify=config["verify"],
+        ca_cert=config["ca_cert"],
     )
 
 
@@ -285,6 +292,9 @@ def ensure_stock_database() -> None:
         port=config["port"],
         username=config["user"],
         password=config["password"],
+        secure=config["secure"],
+        verify=config["verify"],
+        ca_cert=config["ca_cert"],
     )
 
     # Create database

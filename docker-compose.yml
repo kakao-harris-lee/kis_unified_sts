@@ -30,6 +30,10 @@ services:
       - REDIS_PORT=6379
       - REDIS_DB=1
       - REDIS_PASSWORD=${REDIS_PASSWORD:-changeme}
+      # Redis TLS Configuration (see docs/TLS_SETUP.md)
+      - REDIS_TLS_ENABLED=${REDIS_TLS_ENABLED:-false}
+      - REDIS_TLS_CERT_REQS=${REDIS_TLS_CERT_REQS:-required}
+      - REDIS_TLS_CA_CERTS=${REDIS_TLS_CA_CERTS:-}
       # 환경
       - ENVIRONMENT=${ENVIRONMENT:-production}
     volumes:
@@ -80,6 +84,10 @@ services:
       - REDIS_PORT=6379
       - REDIS_DB=1
       - REDIS_PASSWORD=${REDIS_PASSWORD:-changeme}
+      # Redis TLS Configuration (see docs/TLS_SETUP.md)
+      - REDIS_TLS_ENABLED=${REDIS_TLS_ENABLED:-false}
+      - REDIS_TLS_CERT_REQS=${REDIS_TLS_CERT_REQS:-required}
+      - REDIS_TLS_CA_CERTS=${REDIS_TLS_CA_CERTS:-}
       # Trading
       - TRADING_ASSET_CLASS=stock
       # ClickHouse
@@ -88,6 +96,10 @@ services:
       - CLICKHOUSE_USER=${CLICKHOUSE_USER:-default}
       - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD:-}
       - CLICKHOUSE_STOCK_DATABASE=${CLICKHOUSE_STOCK_DATABASE:-market}
+      # ClickHouse TLS Configuration (see docs/TLS_SETUP.md)
+      - CLICKHOUSE_SECURE=${CLICKHOUSE_SECURE:-false}
+      - CLICKHOUSE_VERIFY_SSL=${CLICKHOUSE_VERIFY_SSL:-true}
+      - CLICKHOUSE_CA_CERT=${CLICKHOUSE_CA_CERT:-}
       # 환경
       - ENVIRONMENT=${ENVIRONMENT:-production}
     volumes:
@@ -201,6 +213,10 @@ services:
       - REDIS_PORT=6379
       - REDIS_DB=1
       - REDIS_PASSWORD=${REDIS_PASSWORD:-changeme}
+      # Redis TLS Configuration (see docs/TLS_SETUP.md)
+      - REDIS_TLS_ENABLED=${REDIS_TLS_ENABLED:-false}
+      - REDIS_TLS_CERT_REQS=${REDIS_TLS_CERT_REQS:-required}
+      - REDIS_TLS_CA_CERTS=${REDIS_TLS_CA_CERTS:-}
       - STREAM_EXPORTER_PORT=9093
       - STREAM_EXPORTER_STREAMS=market:ticks,raw_data
       - STREAM_EXPORTER_READ_COUNT=200

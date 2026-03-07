@@ -25,6 +25,7 @@ import httpx
 import clickhouse_connect
 
 from shared.config.secrets import SecretsManager
+from shared.config.tls import get_clickhouse_tls_params
 from .calendar import get_trading_days_range, is_after_market_close
 from .futures import get_active_codes_for_date
 
@@ -37,12 +38,15 @@ logger = logging.getLogger(__name__)
 
 def _get_clickhouse_config() -> Dict[str, Any]:
     """Get ClickHouse configuration from environment."""
+    tls_params = get_clickhouse_tls_params()
+
     return {
         "host": os.getenv("CLICKHOUSE_HOST", "localhost"),
         "port": int(os.getenv("CLICKHOUSE_PORT", "8123")),
         "database": os.getenv("CLICKHOUSE_FUTURES_DATABASE", os.getenv("CLICKHOUSE_DATABASE", "kospi")),
         "user": os.getenv("CLICKHOUSE_USER", "default"),
         "password": os.getenv("CLICKHOUSE_PASSWORD", ""),
+        **tls_params,
     }
 
 
@@ -556,6 +560,9 @@ def get_db_client(database: str = None):
         database=database or config["database"],
         username=config["user"] or None,
         password=config["password"] or None,
+        secure=config["secure"],
+        verify=config["verify"],
+        ca_cert=config["ca_cert"],
     )
 
 

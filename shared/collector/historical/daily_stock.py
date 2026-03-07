@@ -55,6 +55,9 @@ def ensure_daily_candles_table():
         port=config["port"],
         username=config["user"],
         password=config["password"],
+        secure=config["secure"],
+        verify=config["verify"],
+        ca_cert=config["ca_cert"],
     )
 
     # Create database
