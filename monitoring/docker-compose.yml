@@ -11,7 +11,7 @@ services:
     container_name: sts-prometheus
     restart: unless-stopped
     ports:
-      - "9090:9090"
+      - "127.0.0.1:9090:9090"
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./prometheus/alert_rules.yml:/etc/prometheus/alert_rules.yml:ro
@@ -31,7 +31,7 @@ services:
     env_file:
       - ../.env
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     volumes:
       - monitoring_grafana_data:/var/lib/grafana
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
@@ -48,7 +48,7 @@ services:
     container_name: sts-redis-exporter
     restart: unless-stopped
     ports:
-      - "9121:9121"
+      - "127.0.0.1:9121:9121"
     environment:
       - REDIS_ADDR=${MONITORING_REDIS_ADDR:-host.docker.internal:6379}
     extra_hosts:
@@ -66,7 +66,7 @@ services:
       - REDIS_HOST=${MONITORING_STREAM_EXPORTER_REDIS_HOST:-127.0.0.1}
       - REDIS_PORT=${MONITORING_STREAM_EXPORTER_REDIS_PORT:-6379}
       - REDIS_DB=${MONITORING_STREAM_EXPORTER_REDIS_DB:-1}
-      - REDIS_PASSWORD=${MONITORING_STREAM_EXPORTER_REDIS_PASSWORD:-}
+      - REDIS_PASSWORD=${MONITORING_STREAM_EXPORTER_REDIS_PASSWORD:-changeme}
       - STREAM_EXPORTER_PORT=9093
       - STREAM_EXPORTER_STREAMS=market:ticks,raw_data
       - STREAM_EXPORTER_READ_COUNT=200

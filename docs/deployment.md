@@ -421,7 +421,7 @@ TELEGRAM_CHAT_ID=your_chat_id
 
 ```bash
 # Redis 데이터 백업
-docker compose exec redis redis-cli BGSAVE
+docker compose exec redis redis-cli -a "$REDIS_PASSWORD" BGSAVE
 docker cp kis-redis:/data/dump.rdb ./backups/redis-$(date +%Y%m%d).rdb
 
 # 설정 파일 백업
@@ -459,10 +459,10 @@ docker compose restart app
 
 ```bash
 # Redis 상태 확인
-docker compose exec redis redis-cli ping
+docker compose exec redis redis-cli -a "$REDIS_PASSWORD" ping
 
 # 연결 테스트
-docker compose exec app python -c "import redis; r = redis.from_url('redis://redis:6379'); print(r.ping())"
+docker compose exec app python -c "import redis; r = redis.Redis(host='redis', port=6379, password='$REDIS_PASSWORD'); print(r.ping())"
 ```
 
 #### 3. KIS API 인증 실패
