@@ -40,3 +40,19 @@ class TickData:
     bid_price: float
     ask_price: float
     cumulative_volume: int
+
+
+@dataclass
+class DriftMetrics:
+    """RL model drift detection metrics"""
+    timestamp: datetime
+    code: str
+    strategy: str
+    kl_divergence: float
+    psi_score: float
+    confidence_mean: float
+    confidence_std: float
+    sharpe_5d: float = None
+    sharpe_20d: float = None
+    win_rate_5d: float = None
+    win_rate_20d: float = None
