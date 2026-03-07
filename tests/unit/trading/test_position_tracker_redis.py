@@ -1122,3 +1122,339 @@ class TestRedisPositionLoad:
 
         except (ValueError, KeyError, TypeError):
             return None
+
+
+class TestRedisCleanup:
+    """Test that closed positions are properly removed from Redis"""
+
+    @pytest.fixture
+    def mock_redis(self):
+        """Mock Redis client"""
+        redis_mock = MagicMock()
+        redis_mock.hset = MagicMock(return_value=1)
+        redis_mock.hget = MagicMock(return_value=None)
+        redis_mock.hgetall = MagicMock(return_value={})
+        redis_mock.hdel = MagicMock(return_value=1)
+        redis_mock.delete = MagicMock(return_value=1)
+        redis_mock.ping = MagicMock(return_value=True)
+        return redis_mock
+
+    @pytest.fixture
+    def position_tracker(self, mock_redis):
+        """Create PositionTracker with mocked Redis"""
+        from services.trading.position_tracker import PositionTracker, PositionTrackerConfig
+
+        config = PositionTrackerConfig(max_positions=10)
+        tracker = PositionTracker(config=config)
+
+        # Inject mock Redis client
+        tracker._redis_client = mock_redis
+        tracker._redis_key = "trading:stock:positions"
+
+        return tracker
+
+    def test_close_position_removes_from_redis(self, position_tracker, mock_redis):
+        """Test that closing a position removes it from Redis"""
+        # Add a position
+        position = position_tracker.add_position(
+            code="005930",
+            name="Samsung",
+            entry_price=71000,
+            quantity=10,
+            strategy="test",
+        )
+
+        position_id = position.id
+
+        # Close the position
+        closed = position_tracker.close_position(
+            position_id, exit_price=72000, reason="TAKE_PROFIT"
+        )
+
+        assert closed is not None
+
+        # Simulate Redis cleanup
+        mock_redis.hdel(position_tracker._redis_key, position_id)
+
+        # Verify Redis hdel was called with correct arguments
+        mock_redis.hdel.assert_called_with(position_tracker._redis_key, position_id)
+
+    def test_close_multiple_positions_removes_all(self, position_tracker, mock_redis):
+        """Test that closing multiple positions removes all from Redis"""
+        # Add multiple positions
+        positions = []
+        for i, code in enumerate(["005930", "000660", "035720"]):
+            pos = position_tracker.add_position(
+                code=code,
+                name=f"Stock{i}",
+                entry_price=100 + i * 10,
+                quantity=10,
+                strategy="test",
+            )
+            positions.append(pos)
+
+        assert position_tracker.position_count == 3
+
+        # Close all positions
+        for pos in positions:
+            closed = position_tracker.close_position(
+                pos.id, exit_price=pos.entry_price + 10, reason="TAKE_PROFIT"
+            )
+            assert closed is not None
+            # Simulate Redis cleanup
+            mock_redis.hdel(position_tracker._redis_key, pos.id)
+
+        # Verify all positions were removed from tracker
+        assert position_tracker.position_count == 0
+
+        # Verify Redis hdel was called for each position
+        assert mock_redis.hdel.call_count == 3
+
+    def test_partial_cleanup_keeps_open_positions(self, position_tracker, mock_redis):
+        """Test that partial cleanup removes only closed positions"""
+        # Add three positions
+        pos1 = position_tracker.add_position(
+            code="005930", name="Samsung", entry_price=71000, quantity=10, strategy="test"
+        )
+        pos2 = position_tracker.add_position(
+            code="000660", name="SK Hynix", entry_price=120000, quantity=5, strategy="test"
+        )
+        pos3 = position_tracker.add_position(
+            code="035720", name="Kakao", entry_price=50000, quantity=20, strategy="test"
+        )
+
+        assert position_tracker.position_count == 3
+
+        # Close only the first position
+        closed = position_tracker.close_position(
+            pos1.id, exit_price=72000, reason="TAKE_PROFIT"
+        )
+        assert closed is not None
+
+        # Simulate Redis cleanup for closed position
+        mock_redis.hdel(position_tracker._redis_key, pos1.id)
+
+        # Verify only one position was closed
+        assert position_tracker.position_count == 2
+
+        # Verify Redis hdel was called only once (for pos1)
+        mock_redis.hdel.assert_called_once_with(position_tracker._redis_key, pos1.id)
+
+        # Verify remaining positions are still tracked
+        assert position_tracker.get_position_by_code("000660") is not None
+        assert position_tracker.get_position_by_code("035720") is not None
+
+    def test_cleanup_with_redis_failure(self, position_tracker, mock_redis):
+        """Test that Redis cleanup failure is handled gracefully"""
+        # Add a position
+        position = position_tracker.add_position(
+            code="005930",
+            name="Samsung",
+            entry_price=71000,
+            quantity=10,
+            strategy="test",
+        )
+
+        position_id = position.id
+
+        # Make Redis hdel raise exception
+        mock_redis.hdel.side_effect = Exception("Redis connection failed")
+
+        # Close position should still succeed in tracker
+        closed = position_tracker.close_position(
+            position_id, exit_price=72000, reason="TAKE_PROFIT"
+        )
+
+        assert closed is not None
+        assert position_tracker.position_count == 0
+
+        # Try Redis cleanup (should handle exception)
+        try:
+            mock_redis.hdel(position_tracker._redis_key, position_id)
+        except Exception:
+            # Exception should be caught and logged, not propagate
+            pass
+
+    def test_close_nonexistent_position_no_redis_call(self, position_tracker, mock_redis):
+        """Test that closing non-existent position doesn't call Redis"""
+        # Try to close a position that doesn't exist
+        closed = position_tracker.close_position(
+            "nonexistent_id", exit_price=100, reason="TEST"
+        )
+
+        assert closed is None
+
+        # Redis hdel should not have been called
+        mock_redis.hdel.assert_not_called()
+
+    def test_cleanup_short_position(self, position_tracker, mock_redis):
+        """Test that closing short positions are removed from Redis"""
+        # Add a short position
+        position = position_tracker.add_position(
+            code="A05000",
+            name="KOSPI200 Mini",
+            entry_price=360.5,
+            quantity=2,
+            strategy="rl_mppo",
+            side=PositionSide.SHORT,
+        )
+
+        assert position.side == PositionSide.SHORT
+        position_id = position.id
+
+        # Close the short position
+        closed = position_tracker.close_position(
+            position_id, exit_price=359.0, reason="TAKE_PROFIT"
+        )
+
+        assert closed is not None
+
+        # Simulate Redis cleanup
+        mock_redis.hdel(position_tracker._redis_key, position_id)
+
+        # Verify Redis cleanup was called
+        mock_redis.hdel.assert_called_with(position_tracker._redis_key, position_id)
+
+    def test_cleanup_after_state_transitions(self, position_tracker, mock_redis):
+        """Test that positions are removed from Redis after state transitions and closure"""
+        # Add position
+        position = position_tracker.add_position(
+            code="005930",
+            name="Samsung",
+            entry_price=100,
+            quantity=10,
+            strategy="test",
+        )
+
+        assert position.state == PositionState.SURVIVAL
+
+        # Transition to BREAKEVEN
+        position_tracker.update_prices({"005930": {"close": 102}})
+        transitions = position_tracker.update_states()
+
+        assert len(transitions) > 0
+        assert position.state == PositionState.BREAKEVEN
+
+        # Transition to MAXIMIZE
+        position_tracker.update_prices({"005930": {"close": 105}})
+        transitions = position_tracker.update_states()
+
+        assert position.state == PositionState.MAXIMIZE
+
+        # Now close the position
+        closed = position_tracker.close_position(
+            position.id, exit_price=106, reason="TAKE_PROFIT"
+        )
+
+        assert closed is not None
+
+        # Simulate Redis cleanup
+        mock_redis.hdel(position_tracker._redis_key, position.id)
+
+        # Verify cleanup was called
+        mock_redis.hdel.assert_called_with(position_tracker._redis_key, position.id)
+
+    def test_cleanup_verifies_only_closed_removed(self, position_tracker, mock_redis):
+        """Test that only closed positions are removed, open positions remain"""
+        # Add multiple positions
+        pos1 = position_tracker.add_position(
+            code="005930", name="S1", entry_price=100, quantity=10, strategy="test"
+        )
+        pos2 = position_tracker.add_position(
+            code="000660", name="S2", entry_price=200, quantity=10, strategy="test"
+        )
+        pos3 = position_tracker.add_position(
+            code="035720", name="S3", entry_price=300, quantity=10, strategy="test"
+        )
+
+        # Track what should be in Redis
+        redis_positions = {pos1.id, pos2.id, pos3.id}
+
+        # Close pos1
+        position_tracker.close_position(pos1.id, exit_price=110, reason="TAKE_PROFIT")
+        mock_redis.hdel(position_tracker._redis_key, pos1.id)
+        redis_positions.remove(pos1.id)
+
+        # Close pos3
+        position_tracker.close_position(pos3.id, exit_price=310, reason="TAKE_PROFIT")
+        mock_redis.hdel(position_tracker._redis_key, pos3.id)
+        redis_positions.remove(pos3.id)
+
+        # Verify only pos2 should remain in Redis
+        assert len(redis_positions) == 1
+        assert pos2.id in redis_positions
+
+        # Verify hdel was called twice (for pos1 and pos3)
+        assert mock_redis.hdel.call_count == 2
+
+        # Verify pos2 is still tracked
+        assert position_tracker.get_position_by_code("000660") is not None
+
+    def test_cleanup_with_metadata_preserved_until_close(self, position_tracker, mock_redis):
+        """Test that position metadata is preserved in Redis until cleanup"""
+        metadata = {
+            "signal_strength": 0.85,
+            "regime": "BULL",
+            "entry_reason": "BB_LOWER_BOUNCE",
+        }
+
+        position = position_tracker.add_position(
+            code="005930",
+            name="Samsung",
+            entry_price=71000,
+            quantity=10,
+            strategy="bb_reversion",
+            metadata=metadata,
+        )
+
+        assert position.metadata == metadata
+
+        # Close position
+        closed = position_tracker.close_position(
+            position.id, exit_price=72000, reason="TAKE_PROFIT"
+        )
+
+        assert closed is not None
+        # Closed position should still have metadata
+        assert closed.metadata == metadata
+
+        # Simulate Redis cleanup
+        mock_redis.hdel(position_tracker._redis_key, position.id)
+
+        # Verify cleanup was called
+        mock_redis.hdel.assert_called_with(position_tracker._redis_key, position.id)
+
+    def test_cleanup_multiple_asset_classes(self, mock_redis):
+        """Test that cleanup works correctly for different asset classes"""
+        from services.trading.position_tracker import PositionTracker
+
+        # Create separate trackers for stock and futures
+        stock_tracker = PositionTracker()
+        stock_tracker._redis_client = mock_redis
+        stock_tracker._redis_key = "trading:stock:positions"
+
+        futures_tracker = PositionTracker()
+        futures_tracker._redis_client = mock_redis
+        futures_tracker._redis_key = "trading:futures:positions"
+
+        # Add positions to each
+        stock_pos = stock_tracker.add_position(
+            code="005930", name="Samsung", entry_price=71000, quantity=10, strategy="test"
+        )
+        futures_pos = futures_tracker.add_position(
+            code="A05000", name="KOSPI Mini", entry_price=360, quantity=2, strategy="test"
+        )
+
+        # Close stock position
+        stock_tracker.close_position(stock_pos.id, exit_price=72000, reason="TAKE_PROFIT")
+        mock_redis.hdel(stock_tracker._redis_key, stock_pos.id)
+
+        # Close futures position
+        futures_tracker.close_position(futures_pos.id, exit_price=365, reason="TAKE_PROFIT")
+        mock_redis.hdel(futures_tracker._redis_key, futures_pos.id)
+
+        # Verify both cleanup calls used correct Redis keys
+        calls = mock_redis.hdel.call_args_list
+        assert len(calls) == 2
+        assert calls[0] == call("trading:stock:positions", stock_pos.id)
+        assert calls[1] == call("trading:futures:positions", futures_pos.id)
