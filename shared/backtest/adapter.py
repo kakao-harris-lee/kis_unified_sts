@@ -362,6 +362,11 @@ class BacktestStrategyAdapter:
                 logger.warning(f"Failed to initialize regime detector: {e}. Disabling regime detection.")
                 self._regime_detection_enabled = False
 
+        # Regime tracking for backtest results
+        self._regime_distribution: dict[str, int] = {}
+        self._model_switches: list[dict[str, Any]] = []
+        self._current_model_name: Optional[str] = None
+
     def _context_metadata(
         self,
         market_state: str = "UNKNOWN",
@@ -486,6 +491,56 @@ class BacktestStrategyAdapter:
     def set_position(self, position: dict[str, Any] | None) -> None:
         """BacktestEngine → adapter position sync for RL context."""
         self._current_position = position
+
+    def log_model_switch(
+        self,
+        timestamp: datetime,
+        old_model: str,
+        new_model: str,
+        regime: str,
+        confidence: float,
+    ) -> None:
+        """Log a model switch event for backtest tracking.
+
+        Called by adaptive strategies (e.g., RLMPPOEntry) when switching models.
+
+        Args:
+            timestamp: Time of the switch
+            old_model: Previous model name/path
+            new_model: New model name/path
+            regime: Regime that triggered the switch
+            confidence: Regime detection confidence
+        """
+        switch_event = {
+            "timestamp": timestamp.isoformat() if isinstance(timestamp, datetime) else str(timestamp),
+            "old_model": old_model,
+            "new_model": new_model,
+            "regime": regime,
+            "confidence": confidence,
+        }
+        self._model_switches.append(switch_event)
+        self._current_model_name = new_model
+        logger.info(
+            f"Model switch logged: {old_model} -> {new_model} "
+            f"(regime: {regime}, confidence: {confidence:.2f})"
+        )
+
+    def get_regime_stats(self) -> dict[str, Any]:
+        """Get regime tracking statistics for backtest results.
+
+        Returns:
+            Dictionary containing:
+                - regime_distribution: dict[str, int] - bars per regime
+                - model_switches: list[dict] - model switch events
+                - total_bars_tracked: int - total bars with regime data
+        """
+        total_bars = sum(self._regime_distribution.values())
+        return {
+            "regime_distribution": dict(self._regime_distribution),
+            "model_switches": list(self._model_switches),
+            "total_bars_tracked": total_bars,
+            "regime_enabled": self._regime_detection_enabled,
+        }
 
     def check_exit(self, bar: dict[str, Any]) -> tuple[bool, ExitReason | None]:
         """Check exit strategy for current position.
@@ -636,6 +691,10 @@ class BacktestStrategyAdapter:
                     regime_signal = self._regime_detector.detect(regime_df)
                     regime = regime_signal.state.value if regime_signal.state else None
                     regime_confidence = regime_signal.confidence
+
+                    # Track regime distribution for backtest results
+                    if regime:
+                        self._regime_distribution[regime] = self._regime_distribution.get(regime, 0) + 1
                 except Exception as e:
                     logger.debug(f"Regime detection failed: {e}")
 
@@ -686,6 +745,24 @@ class BacktestStrategyAdapter:
 
         if signal is None:
             return SignalType.HOLD
+
+        # Track model switches from signal metadata (for adaptive strategies)
+        if signal.metadata.get("model_name"):
+            new_model = signal.metadata["model_name"]
+            if self._current_model_name and self._current_model_name != new_model:
+                # Model switched - log it
+                self._model_switches.append({
+                    "timestamp": timestamp.isoformat(),
+                    "old_model": self._current_model_name,
+                    "new_model": new_model,
+                    "regime": regime or market_state,
+                    "confidence": regime_confidence or 0.0,
+                })
+                logger.info(
+                    f"Model switch detected: {self._current_model_name} -> {new_model} "
+                    f"(regime: {regime or market_state})"
+                )
+            self._current_model_name = new_model
 
         direction = signal.metadata.get("signal_direction", "long")
         if direction == "long":
