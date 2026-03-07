@@ -2623,6 +2623,109 @@ def rl_tensorboard(logdir: str, port: int):
         click.echo("\nTensorBoard stopped")
 
 
+@rl.command("train-hierarchical")
+@click.option(
+    "--mode",
+    "-m",
+    default="directional",
+    type=click.Choice(["directional", "risk_budget"]),
+    help="High-level agent mode (default: directional)",
+)
+@click.option(
+    "--training",
+    "-t",
+    default="sequential",
+    type=click.Choice(["sequential", "joint"]),
+    help="Training mode (default: sequential)",
+)
+@click.option(
+    "--config",
+    "-c",
+    default="ml/rl_mppo.yaml",
+    help="Config file path (default: ml/rl_mppo.yaml)",
+)
+def rl_train_hierarchical(mode: str, training: str, config: str):
+    """계층적 RL 모델 학습 (Multi-timeframe)
+
+    고수준 에이전트(15분봉)가 전략적 방향을 설정하고,
+    저수준 에이전트(1분봉)가 정밀한 진입/청산을 실행.
+
+    \b
+    Modes:
+        directional:  High-level outputs LONG_BIAS/SHORT_BIAS/FLAT
+        risk_budget:  High-level outputs AGGRESSIVE/NEUTRAL/DEFENSIVE
+
+    \b
+    Training:
+        sequential:   Low-level 완전 학습 후 High-level 학습
+        joint:        High/Low-level 동시 학습, 교대 업데이트
+
+    \b
+    Examples:
+        sts rl train-hierarchical
+        sts rl train-hierarchical --mode directional --training sequential
+        sts rl train-hierarchical --mode risk_budget --training joint
+        sts rl train-hierarchical --config ml/rl_mppo.yaml
+    """
+    click.echo("Starting Hierarchical RL Training")
+    click.echo(f"  Mode: {mode}")
+    click.echo(f"  Training: {training}")
+    click.echo(f"  Config: {config}")
+    click.echo("-" * 40)
+
+    try:
+        from scripts.training.train_rl import load_data_from_clickhouse
+        from shared.ml.rl.hierarchical.trainer import HierarchicalTrainer
+
+        # Load data from ClickHouse
+        click.echo("Loading data from ClickHouse...")
+        train_days, train_prices, test_days, test_prices = load_data_from_clickhouse(
+            config,
+            persist_scaler=True,
+        )
+        click.echo(f"  Train days: {len(train_days)}")
+        click.echo(f"  Test days: {len(test_days)}")
+
+        # Create hierarchical trainer
+        trainer = HierarchicalTrainer(config_path=config, mode=mode)
+
+        # Train based on selected mode
+        if training == "sequential":
+            click.echo("\n=== Sequential Training ===")
+            models = trainer.train(
+                train_days=train_days,
+                train_prices=train_prices,
+                eval_days=test_days,
+                eval_prices=test_prices,
+            )
+            click.echo("\nSequential training complete!")
+            click.echo(f"  Low-level model: {trainer.save_dir}/low_level_final")
+            click.echo(f"  High-level model: {trainer.save_dir}/high_level_final")
+        else:  # joint
+            click.echo("\n=== Joint Training ===")
+            models = trainer.train_joint(
+                train_days=train_days,
+                train_prices=train_prices,
+                eval_days=test_days,
+                eval_prices=test_prices,
+            )
+            click.echo("\nJoint training complete!")
+            click.echo(f"  Low-level model: {trainer.save_dir}/low_level_joint")
+            click.echo(f"  High-level model: {trainer.save_dir}/high_level_joint")
+
+        click.echo("\n✓ Hierarchical training finished successfully")
+
+    except ImportError as e:
+        click.echo(f"Error: Required package not installed: {e}", err=True)
+        click.echo("Install with: pip install -e .[ml]", err=True)
+        sys.exit(1)
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
+
+
 # =============================================================================
 # TFT Commands
 # =============================================================================
