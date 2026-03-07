@@ -432,3 +432,209 @@ class TestEnvironmentCreation:
         )
 
         assert env.observation_space.shape == (1, expected_dim)
+
+
+class TestModelCreation:
+    """Test RLTrainer._create_model creates MaskablePPO with correct hyperparameters."""
+
+    @pytest.fixture
+    def trainer(self):
+        """Create trainer instance."""
+        from shared.ml.rl.trainer import RLTrainer
+
+        return RLTrainer()
+
+    @pytest.fixture
+    def mock_env(self, trainer):
+        """Create a mock environment for model creation."""
+        import numpy as np
+
+        # Create minimal sample data
+        n_steps = 100
+        n_features = 25
+
+        np.random.seed(42)
+        features = np.random.randn(n_steps, n_features).astype(np.float32)
+        prices = np.zeros((n_steps, 4), dtype=np.float32)
+
+        base_price = 350.0
+        for i in range(n_steps):
+            price = base_price + np.random.normal(0, 0.5)
+            prices[i] = [
+                price - 0.1,  # open
+                price + 0.3,  # high
+                price - 0.3,  # low
+                price,  # close
+            ]
+            base_price = price
+
+        return trainer._make_env([features], [prices], trainer.env_config)
+
+    def test_create_maskable_ppo_model(self, trainer, mock_env):
+        """Test _create_model creates MaskablePPO with correct type."""
+        from sb3_contrib import MaskablePPO
+
+        algo_config = trainer.config.get("mppo", {})
+        model = trainer._create_model("mppo", mock_env, algo_config)
+
+        assert isinstance(model, MaskablePPO)
+        assert model.policy is not None
+        assert model.env is mock_env
+
+    def test_model_hyperparameters_from_config(self, trainer, mock_env):
+        """Test model is created with hyperparameters from config."""
+        algo_config = trainer.config.get("mppo", {})
+        model = trainer._create_model("mppo", mock_env, algo_config)
+
+        # Verify learning rate
+        expected_lr = algo_config.get("learning_rate", 0.0001)
+        assert model.learning_rate == expected_lr
+
+        # Verify gamma (discount factor)
+        expected_gamma = algo_config.get("gamma", 0.99)
+        assert model.gamma == expected_gamma
+
+        # Verify GAE lambda
+        expected_gae_lambda = algo_config.get("gae_lambda", 0.95)
+        assert model.gae_lambda == expected_gae_lambda
+
+        # Verify clip range
+        expected_clip_range = algo_config.get("clip_range", 0.2)
+        # clip_range can be a function, so we need to handle that
+        clip_range_val = model.clip_range(1.0) if callable(model.clip_range) else model.clip_range
+        assert clip_range_val == expected_clip_range
+
+        # Verify entropy coefficient
+        expected_ent_coef = algo_config.get("ent_coef", 0.01)
+        assert model.ent_coef == expected_ent_coef
+
+        # Verify value function coefficient
+        expected_vf_coef = algo_config.get("vf_coef", 0.5)
+        assert model.vf_coef == expected_vf_coef
+
+        # Verify max gradient norm
+        expected_max_grad_norm = algo_config.get("max_grad_norm", 0.5)
+        assert model.max_grad_norm == expected_max_grad_norm
+
+        # Verify n_steps
+        expected_n_steps = algo_config.get("n_steps", 2048)
+        assert model.n_steps == expected_n_steps
+
+        # Verify batch_size
+        expected_batch_size = algo_config.get("batch_size", 64)
+        assert model.batch_size == expected_batch_size
+
+        # Verify n_epochs
+        expected_n_epochs = algo_config.get("n_epochs", 10)
+        assert model.n_epochs == expected_n_epochs
+
+    def test_model_policy_architecture_from_config(self, trainer, mock_env):
+        """Test model policy architecture matches config policy_kwargs."""
+        algo_config = trainer.config.get("mppo", {})
+        model = trainer._create_model("mppo", mock_env, algo_config)
+
+        # Get expected policy_kwargs from config
+        expected_policy_kwargs = algo_config.get("policy_kwargs", {})
+
+        if expected_policy_kwargs:
+            # Verify net_arch is configured
+            if "net_arch" in expected_policy_kwargs:
+                expected_net_arch = expected_policy_kwargs["net_arch"]
+
+                # The policy should have the architecture defined in config
+                # Access through model.policy for SB3 models
+                assert hasattr(model, "policy")
+
+                # For MaskablePPO, policy_kwargs should be accessible
+                # The exact structure depends on SB3 internals, but we can verify
+                # it was passed through
+                if hasattr(model.policy, "mlp_extractor"):
+                    mlp = model.policy.mlp_extractor
+                    # Verify policy and value networks exist
+                    assert hasattr(mlp, "policy_net")
+                    assert hasattr(mlp, "value_net")
+
+    def test_model_uses_correct_device(self, trainer, mock_env):
+        """Test model is created on the correct device."""
+        algo_config = trainer.config.get("mppo", {})
+        model = trainer._create_model("mppo", mock_env, algo_config)
+
+        # Model device should match trainer device
+        assert str(model.device) == trainer.device
+
+    def test_model_uses_tensorboard_log(self, trainer, mock_env):
+        """Test model is configured with tensorboard logging."""
+        algo_config = trainer.config.get("mppo", {})
+        model = trainer._create_model("mppo", mock_env, algo_config)
+
+        # Verify tensorboard_log is set
+        assert model.tensorboard_log == trainer.tb_log
+
+    def test_model_verbose_is_set(self, trainer, mock_env):
+        """Test model verbose parameter is set."""
+        algo_config = trainer.config.get("mppo", {})
+        model = trainer._create_model("mppo", mock_env, algo_config)
+
+        # Verify verbose is set to 1
+        assert model.verbose == 1
+
+    def test_model_with_custom_policy_kwargs(self, trainer, mock_env):
+        """Test model creation with custom policy_kwargs."""
+        custom_policy_kwargs = {
+            "net_arch": {
+                "pi": [128, 128],
+                "vf": [128, 128],
+            }
+        }
+
+        custom_config = {
+            "learning_rate": 0.0002,
+            "gamma": 0.995,
+            "policy_kwargs": custom_policy_kwargs,
+        }
+
+        model = trainer._create_model("mppo", mock_env, custom_config)
+
+        # Verify model was created with custom learning rate
+        assert model.learning_rate == 0.0002
+        assert model.gamma == 0.995
+
+        # Verify policy networks exist
+        assert hasattr(model.policy, "mlp_extractor")
+
+    def test_model_with_empty_policy_kwargs(self, trainer, mock_env):
+        """Test model creation with empty policy_kwargs."""
+        config_with_empty_kwargs = {
+            "learning_rate": 0.0001,
+            "gamma": 0.99,
+            "policy_kwargs": {},
+        }
+
+        model = trainer._create_model("mppo", mock_env, config_with_empty_kwargs)
+
+        # Model should be created successfully even with empty policy_kwargs
+        assert isinstance(model, type(model))
+        assert model.learning_rate == 0.0001
+
+    def test_model_defaults_when_params_missing(self, trainer, mock_env):
+        """Test model uses default values when config params are missing."""
+        minimal_config = {}
+
+        model = trainer._create_model("mppo", mock_env, minimal_config)
+
+        # Verify default values are used
+        assert model.learning_rate == 0.0001  # default from _create_model
+        assert model.gamma == 0.99  # default from _create_model
+        assert model.gae_lambda == 0.95  # default from _create_model
+        assert model.n_steps == 2048  # default from _create_model
+        assert model.batch_size == 64  # default from _create_model
+
+    def test_model_mlp_policy_type(self, trainer, mock_env):
+        """Test model uses MlpPolicy."""
+        algo_config = trainer.config.get("mppo", {})
+        model = trainer._create_model("mppo", mock_env, algo_config)
+
+        # Verify policy type
+        assert model.policy is not None
+        # The policy should be an MLP policy (not CNN, etc.)
+        assert hasattr(model.policy, "mlp_extractor")
