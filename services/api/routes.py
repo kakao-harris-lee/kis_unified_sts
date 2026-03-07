@@ -18,16 +18,17 @@ Endpoints:
     POST /api/v1/backtest/run     - 백테스트 실행 (인증 필요)
     GET  /api/v1/backtest/results - 백테스트 결과
 
-    GET  /metrics                 - Prometheus 메트릭 (인증 불필요)
+    GET  /metrics                 - Prometheus 메트릭 (조건부 인증: METRICS_REQUIRE_AUTH)
 """
 
 from __future__ import annotations
 
 import logging
+import os
 import re
 from datetime import datetime
 from enum import Enum
-from typing import TYPE_CHECKING, Annotated, Any, Callable
+from typing import TYPE_CHECKING, Annotated, Any, Callable, Optional
 
 from shared.api.error_sanitizer import sanitize_error_message
 
@@ -126,6 +127,60 @@ def get_rate_limit_strategies():
 def get_rate_limit_backtest():
     """Backtest 엔드포인트용 rate limit (낮음)"""
     return _create_rate_limit_dependency("10/minute")
+
+
+# =============================================================================
+# Metrics Authentication
+# =============================================================================
+
+
+def verify_metrics_api_key(request: Request) -> None:
+    """Metrics 엔드포인트용 API 키 검증
+
+    METRICS_REQUIRE_AUTH 환경 변수가 'true'일 때만 인증을 요구합니다.
+    기본값은 false로, Prometheus 스크래퍼와의 호환성을 위해 인증을 비활성화합니다.
+
+    Args:
+        request: FastAPI Request 객체
+
+    Raises:
+        HTTPException: API 키가 유효하지 않거나 누락된 경우 401 에러
+
+    Example:
+        @router.get("/metrics")
+        async def metrics(
+            _auth: Annotated[None, Depends(verify_metrics_api_key)] = None
+        ):
+            ...
+    """
+    from services.api.auth import get_api_key, validate_api_key
+
+    # 환경 변수 체크 - 기본값은 false (인증 비활성화)
+    require_auth = os.environ.get("METRICS_REQUIRE_AUTH", "false").lower() == "true"
+
+    if not require_auth:
+        return None
+
+    # API 키가 설정되지 않은 경우 - 보안 경고
+    if not get_api_key():
+        logger.warning(
+            "METRICS_REQUIRE_AUTH is enabled but API_KEY is not set. "
+            "Metrics endpoint is protected but has no valid key configured."
+        )
+        raise HTTPException(
+            status_code=401,
+            detail="Authentication required but not configured",
+        )
+
+    # API 키 검증 (reuse existing auth module with timing-safe comparison)
+    api_key = request.headers.get("X-API-Key")
+    if not validate_api_key(api_key):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid or missing API key",
+        )
+
+    return None
 
 
 # Dummy classes for when FastAPI is not available
@@ -746,13 +801,19 @@ async def get_backtest_results(experiment: str | None = None, limit: int = 10):
 
 
 # =============================================================================
-# Metrics (인증 없음 — Prometheus scraping용 내부 엔드포인트)
+# Metrics (조건부 인증 — METRICS_REQUIRE_AUTH 환경 변수 기반)
 # =============================================================================
 
 
 @router.get("/metrics", tags=["Monitoring"])
-async def prometheus_metrics():
-    """Prometheus 메트릭 (내부 네트워크 전용, 인증 불필요)"""
+async def prometheus_metrics(
+    _auth: Annotated[None, Depends(verify_metrics_api_key)] = None,
+):
+    """Prometheus 메트릭 (조건부 인증)
+
+    METRICS_REQUIRE_AUTH=true 환경 변수 설정 시 X-API-Key 헤더 필요.
+    기본값은 false로, Prometheus 스크래퍼 호환성을 위해 인증 비활성화.
+    """
     try:
         from services.monitoring import MetricsCollector
 

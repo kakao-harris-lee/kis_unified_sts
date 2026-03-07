@@ -42,7 +42,7 @@ OPENAPI_TAGS = [
 def create_app(
     title: str = "KIS Unified Trading Dashboard",
     debug: bool = False,
-    require_auth: bool = False,
+    require_auth: Optional[bool] = None,
     api_key: Optional[str] = None,
     rate_limit: int = 0,
     rate_limit_window: int = 60,
@@ -52,11 +52,38 @@ def create_app(
     Args:
         title: Application title.
         debug: Enable debug mode.
-        require_auth: If True, require API key authentication.
-        api_key: The API key to use for authentication (required if require_auth=True).
+        require_auth: If True, require API key authentication. If None (default), enables auth if api_key is available.
+        api_key: The API key to use for authentication. Reads from DASHBOARD_API_KEY env var if not provided.
         rate_limit: Maximum requests per window. 0 disables rate limiting.
         rate_limit_window: Rate limit window in seconds.
     """
+    # Read API key from environment if not provided
+    if api_key is None:
+        api_key = os.environ.get("DASHBOARD_API_KEY")
+
+    # Check if dev mode is enabled (disables authentication)
+    dev_mode = os.environ.get("DASHBOARD_DEV_MODE", "").lower() == "true"
+    if dev_mode:
+        logger.warning("Dev mode enabled - authentication disabled")
+        require_auth = False
+    elif require_auth is None:
+        # Honor DASHBOARD_REQUIRE_AUTH env var (documented in .env.example)
+        env_require = os.environ.get("DASHBOARD_REQUIRE_AUTH", "").lower()
+        if env_require == "true":
+            require_auth = True
+        elif env_require == "false":
+            require_auth = False
+        else:
+            # Fallback: enable auth if API key is available
+            require_auth = bool(api_key)
+
+    # Warn if auth is required but no API key is configured
+    if require_auth and not api_key:
+        logger.critical(
+            "DASHBOARD_REQUIRE_AUTH=true but DASHBOARD_API_KEY is not set. "
+            "All dashboard requests will be rejected."
+        )
+
     app = FastAPI(
         title=title,
         description="Real-time trading dashboard for KIS unified platform",

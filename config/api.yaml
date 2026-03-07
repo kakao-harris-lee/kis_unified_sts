@@ -59,6 +59,32 @@ api:
     # 로그에 스택 트레이스 포함
     log_stacktrace: true
 
+  # Authentication 설정
+  authentication:
+    # API 키 기반 인증
+    api_key:
+      enabled: true
+      # 환경 변수에서 로드: DASHBOARD_API_KEY
+      header_name: "X-API-Key"
+      query_param_name: "api_key"  # WebSocket용
+
+    # 대시보드 인증
+    dashboard:
+      require_auth: true
+      # 개발 모드: DASHBOARD_DEV_MODE=true로 인증 비활성화 가능
+      dev_mode: false
+
+    # 메트릭스 엔드포인트 인증
+    metrics:
+      require_auth: false  # Prometheus 스크래퍼 호환성 위해 기본 비활성화
+
+    # 공개 엔드포인트 (인증 불필요)
+    public_endpoints:
+      - "/health"
+      - "/docs"
+      - "/redoc"
+      - "/openapi.json"
+
 
 # 개발 환경 오버라이드
 development:
@@ -77,3 +103,8 @@ development:
 
     errors:
       expose_details: true
+
+    authentication:
+      dashboard:
+        require_auth: false  # 개발 환경에서는 기본 비활성화
+        dev_mode: true
