@@ -29,6 +29,7 @@ Example ValidationError:
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import Any, ClassVar, Literal
 
 from pydantic import Field, field_validator
@@ -36,6 +37,64 @@ from pydantic import Field, field_validator
 from shared.config.base import ServiceConfigBase
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# ParamSpec for Optuna Integration
+# =============================================================================
+
+
+@dataclass
+class ParamSpec:
+    """Parameter specification for Optuna optimization.
+
+    Lightweight version to avoid importing entire optimizer module.
+
+    Attributes:
+        name: Parameter name
+        param_type: Type ("int", "float", "categorical")
+        low: Minimum value (int/float)
+        high: Maximum value (int/float)
+        step: Step size (optional)
+        choices: Choices (categorical)
+        log: Use log scale for sampling
+    """
+
+    name: str
+    param_type: str  # "int", "float", "categorical"
+    low: float | None = None
+    high: float | None = None
+    step: float | None = None
+    choices: list[Any] | None = None
+    log: bool = False
+
+    @classmethod
+    def int(
+        cls,
+        name: str,
+        low: int,
+        high: int,
+        step: int = 1,
+    ) -> ParamSpec:
+        """Create integer parameter spec."""
+        return cls(name=name, param_type="int", low=low, high=high, step=step)
+
+    @classmethod
+    def float(
+        cls,
+        name: str,
+        low: float,
+        high: float,
+        step: float | None = None,
+        log: bool = False,
+    ) -> ParamSpec:
+        """Create float parameter spec."""
+        return cls(name=name, param_type="float", low=low, high=high, step=step, log=log)
+
+    @classmethod
+    def categorical(cls, name: str, choices: list[Any]) -> ParamSpec:
+        """Create categorical parameter spec."""
+        return cls(name=name, param_type="categorical", choices=choices)
 
 
 # =============================================================================
@@ -770,3 +829,126 @@ class RLMPPOConfig(ServiceConfigBase):
             0.0001
         """
         return super().from_yaml(path)
+
+    @classmethod
+    def get_param_ranges(cls) -> dict[str, ParamSpec]:
+        """Extract Optuna-compatible parameter ranges from schema.
+
+        Introspects Pydantic Field metadata to extract numeric constraints
+        (ge, le, gt, lt) and converts them to ParamSpec objects for use with
+        Optuna hyperparameter optimization.
+
+        Returns:
+            Dict mapping field paths (e.g., 'mppo.learning_rate') to ParamSpec objects
+
+        Example:
+            >>> ranges = RLMPPOConfig.get_param_ranges()
+            >>> ranges["mppo.learning_rate"]
+            ParamSpec(name='mppo.learning_rate', param_type='float', low=1e-05, high=0.01, log=True)
+            >>> ranges["mppo.batch_size"]
+            ParamSpec(name='mppo.batch_size', param_type='int', low=16, high=512)
+
+        Usage with Optuna:
+            >>> import optuna
+            >>> ranges = RLMPPOConfig.get_param_ranges()
+            >>> def objective(trial):
+            ...     # Extract ParamSpec attributes
+            ...     lr_spec = ranges["mppo.learning_rate"]
+            ...     lr = trial.suggest_float(lr_spec.name, lr_spec.low, lr_spec.high, log=lr_spec.log)
+            ...     # ... run training with lr
+        """
+
+        import typing
+
+        ranges = {}
+
+        # Define which nested configs to extract from
+        config_sections = {
+            "mppo": MPPOHyperparameters,
+            "dqn": DQNHyperparameters,
+            "a2c": A2CHyperparameters,
+            "ppo": PPOHyperparameters,
+            "sac": SACHyperparameters,
+            "env": EnvConfig,
+            "reward": RewardConfig,
+            "data": DataConfig,
+            "training": TrainingConfig,
+            "hierarchical": HierarchicalConfig,
+            "position_sizing": PositionSizingConfig,
+        }
+
+        for section_name, section_class in config_sections.items():
+            for field_name, field_info in section_class.model_fields.items():
+                # Extract type annotation
+                field_type = field_info.annotation
+
+                # Handle Optional/Union types
+                origin = typing.get_origin(field_type)
+                if origin is typing.Union:
+                    args = typing.get_args(field_type)
+                    # Get non-None type
+                    field_type = next(
+                        (arg for arg in args if arg is not type(None)), None
+                    )
+
+                # Skip non-numeric fields
+                if field_type not in [int, float]:
+                    continue
+
+                # Extract constraints from field metadata (Pydantic v2)
+                ge = None
+                le = None
+                gt = None
+                lt = None
+
+                for constraint in field_info.metadata:
+                    constraint_type = type(constraint).__name__
+                    if constraint_type == "Ge":
+                        ge = constraint.ge
+                    elif constraint_type == "Le":
+                        le = constraint.le
+                    elif constraint_type == "Gt":
+                        gt = constraint.gt
+                    elif constraint_type == "Lt":
+                        lt = constraint.lt
+
+                # Determine bounds
+                low = None
+                high = None
+
+                if ge is not None:
+                    low = ge
+                elif gt is not None:
+                    # For gt constraint, use the value as-is (Optuna handles exclusive bounds)
+                    low = gt
+
+                if le is not None:
+                    high = le
+                elif lt is not None:
+                    # For lt constraint, use the value as-is (Optuna handles exclusive bounds)
+                    high = lt
+
+                # Need both bounds to create a range
+                if low is None or high is None:
+                    continue
+
+                # Create ParamSpec
+                param_name = f"{section_name}.{field_name}"
+
+                # Detect log scale for learning rates or wide ranges (>2 orders of magnitude)
+                use_log = (
+                    "learning_rate" in field_name
+                    or "lr" in field_name
+                    or (high / low > 100 if low > 0 else False)
+                )
+
+                if field_type == int:
+                    ranges[param_name] = ParamSpec.int(
+                        param_name, int(low), int(high)
+                    )
+                else:  # float
+                    ranges[param_name] = ParamSpec.float(
+                        param_name, float(low), float(high), log=use_log
+                    )
+
+        return ranges
