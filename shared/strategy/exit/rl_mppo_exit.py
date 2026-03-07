@@ -24,7 +24,7 @@ from zoneinfo import ZoneInfo
 from shared.ml.base import get_device
 from shared.models.position import Position, PositionSide
 from shared.models.signal import ExitReason, ExitSignal
-from shared.strategy.base import ExitContext, ExitSignalGenerator
+from shared.strategy.base import ExitContext, ExitSignalGenerator, MarketStateProtocol
 from shared.strategy.market_data import get_price_from_snapshot, get_symbol_snapshot
 from shared.strategy.market_time import now_kst
 from shared.strategy.rl_model_helpers import (
@@ -209,7 +209,7 @@ class RLMPPOExit(ExitSignalGenerator[RLMPPOExitConfig]):
         self,
         positions: list[Position],
         market_data: dict[str, Any],
-        market_state: Optional[Any] = None,
+        market_state: Optional[MarketStateProtocol] = None,
     ) -> list[ExitSignal]:
         """여러 포지션에 대해 청산 시그널 스캔"""
         if not positions:

@@ -30,7 +30,7 @@ from shared.indicators.volume_ratio import (
     VolumeRatioCalculator,
 )
 from shared.models.signal import ExitReason, ExitSignal
-from shared.strategy.base import ExitContext, ExitSignalGenerator, get_series_from_context
+from shared.strategy.base import ExitContext, ExitSignalGenerator, MarketStateProtocol, get_series_from_context
 
 logger = logging.getLogger(__name__)
 
@@ -319,7 +319,7 @@ class VRCompositeExit(ExitSignalGenerator[VRCompositeExitConfig]):
         self,
         positions: list,
         market_data: dict[str, Any],
-        market_state: Optional[Any] = None,
+        market_state: Optional[MarketStateProtocol] = None,
     ) -> list[ExitSignal]:
         """여러 포지션에 대해 VR 기반 청산 시그널 스캔."""
         exit_signals: list[ExitSignal] = []

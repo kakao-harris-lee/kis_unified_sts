@@ -39,7 +39,7 @@ from typing import TYPE_CHECKING, Any, Optional
 
 from shared.models.position import Position, PositionSide, PositionState
 from shared.models.signal import ExitReason, ExitSignal
-from shared.strategy.base import ExitContext, ExitSignalGenerator
+from shared.strategy.base import ExitContext, ExitSignalGenerator, MarketStateProtocol
 from shared.strategy.market_data import get_price_from_snapshot, get_symbol_snapshot
 from shared.strategy.market_time import (
     effective_close_time,
@@ -274,7 +274,7 @@ class ThreeStageExit(ExitSignalGenerator[ThreeStageExitConfig]):
         self,
         positions: list[Position],
         market_data: dict[str, Any],
-        market_state: Optional[Any] = None,
+        market_state: Optional[MarketStateProtocol] = None,
     ) -> list[ExitSignal]:
         """여러 포지션에 대해 청산 시그널 스캔
 
@@ -354,7 +354,7 @@ class ThreeStageExit(ExitSignalGenerator[ThreeStageExitConfig]):
         self,
         position: Position,
         market_data: dict[str, Any],
-        market_state: Optional[Any],
+        market_state: Optional[MarketStateProtocol],
         now: datetime,
     ) -> Optional[ExitSignal]:
         """개별 포지션 청산 조건 체크
@@ -473,23 +473,16 @@ class ThreeStageExit(ExitSignalGenerator[ThreeStageExitConfig]):
         else:
             return PositionState.SURVIVAL
 
-    def _is_bear_market(self, market_state: Any) -> bool:
+    def _is_bear_market(self, market_state: Optional[MarketStateProtocol]) -> bool:
         """BEAR 시장 여부 체크"""
         if market_state is None:
             return False
 
-        if hasattr(market_state, "regime"):
-            return market_state.regime in (
-                "BEAR",
-                "BEAR_STRONG",
-                "BEAR_MODERATE",
-            )
-        if hasattr(market_state, "name"):
-            return "BEAR" in market_state.name.upper()
-        if hasattr(market_state, "value"):
-            return "BEAR" in str(market_state.value).upper()
-
-        return False
+        return market_state.regime in (
+            "BEAR",
+            "BEAR_STRONG",
+            "BEAR_MODERATE",
+        )
 
     # -------------------------------------------------------------------------
     # Stage-based Exit Logic

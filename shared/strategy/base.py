@@ -8,13 +8,76 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Generic, Optional, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, Optional, Protocol, TypeVar, runtime_checkable
 
 if TYPE_CHECKING:
     from shared.models.position import Position
     from shared.models.signal import ExitSignal, Signal
 
 TConfig = TypeVar("TConfig")
+
+
+@runtime_checkable
+class MarketStateProtocol(Protocol):
+    """Protocol for market state objects.
+
+    Defines the structural interface for market state objects passed to exit strategies.
+    This allows type-safe access to market regime and other state properties without
+    coupling to specific implementations.
+
+    Attributes:
+        regime: Current market regime classification (e.g., "BULL_STRONG", "BEAR", "NEUTRAL")
+
+    Example:
+        class MyMarketState:
+            def __init__(self, regime: str):
+                self.regime = regime
+
+        state = MyMarketState("BULL_STRONG")
+        # Works with any object that has a .regime property
+    """
+
+    @property
+    def regime(self) -> str:
+        """Current market regime classification."""
+        ...
+
+
+class MarketStateAdapter:
+    """Adapter to wrap string/Enum market states as Protocol-compliant objects.
+
+    Provides a simple way to convert string or Enum values into objects that conform
+    to MarketStateProtocol, enabling type-safe access to market regime information.
+
+    Args:
+        regime: Market regime classification (string or Enum)
+
+    Example:
+        >>> state = MarketStateAdapter("BULL_STRONG")
+        >>> state.regime
+        'BULL_STRONG'
+
+        >>> from enum import Enum
+        >>> class Regime(Enum):
+        ...     BULL = "BULL_STRONG"
+        >>> state = MarketStateAdapter(Regime.BULL)
+        >>> state.regime
+        'BULL_STRONG'
+    """
+
+    def __init__(self, regime: Any):
+        """Initialize with string or Enum regime.
+
+        Args:
+            regime: Market regime as str or Enum (will be converted to string)
+        """
+        # Handle Enum types
+        if hasattr(regime, "value"):
+            self.regime = str(regime.value)
+        elif hasattr(regime, "name"):
+            self.regime = str(regime.name)
+        else:
+            self.regime = str(regime)
 
 
 @dataclass
@@ -53,7 +116,7 @@ class ExitContext:
     market_data: dict[str, Any] = field(default_factory=dict)
     indicators: dict[str, Any] = field(default_factory=dict)
     timestamp: datetime = field(default_factory=datetime.now)
-    market_state: Optional[Any] = None
+    market_state: Optional[MarketStateProtocol] = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -164,7 +227,7 @@ class ExitSignalGenerator(ABC, Generic[TConfig]):
         self,
         positions: list["Position"],
         market_data: dict[str, Any],
-        market_state: Optional[Any] = None,
+        market_state: Optional[MarketStateProtocol] = None,
     ) -> list["ExitSignal"]:
         """여러 포지션에 대해 청산 시그널 스캔
 
