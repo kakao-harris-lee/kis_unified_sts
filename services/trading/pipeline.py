@@ -23,6 +23,7 @@ from datetime import datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Callable, Coroutine
 
+from shared.exceptions import TradingSystemError
 from shared.resilience import CircuitBreaker
 
 if TYPE_CHECKING:
@@ -123,6 +124,8 @@ async def with_retry(
         try:
             return await func()
         except Exception as e:
+            # NOTE: Intentionally broad exception handler for generic retry logic.
+            # Callers can pass any async function and we retry on any error.
             last_error = e
             if attempt < max_retries:
                 logger.warning(
@@ -317,11 +320,16 @@ class TradingPipeline:
                 if result:
                     logger.debug(f"{stage.value}: {result}")
 
-            except Exception as e:
+            except TradingSystemError as e:
                 metrics.executions += 1
                 metrics.failures += 1
                 breaker.record_failure()
                 logger.error(f"{stage.value} failed: {e}")
+            except Exception as e:
+                metrics.executions += 1
+                metrics.failures += 1
+                breaker.record_failure()
+                logger.error(f"{stage.value} unexpected error: {type(e).__name__}: {e}", exc_info=True)
 
             next_tick += interval
             sleep_time = next_tick - time.monotonic()

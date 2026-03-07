@@ -27,6 +27,7 @@ from typing import Any
 from pydantic import Field
 
 from shared.config.base import ServiceConfigBase
+from shared.exceptions import APIError, NetworkError
 
 logger = logging.getLogger(__name__)
 
@@ -272,7 +273,12 @@ class TelegramNotifier(Notifier):
                     logger.error(f"Telegram send failed: status={response.status}")
                     return False
 
+        except (OSError, TimeoutError) as e:
+            # Network errors: connection failures, timeouts, DNS errors
+            logger.error(f"Telegram network error: {e}")
+            return False
         except Exception as e:
+            # aiohttp-specific errors (ClientError, etc.) that we can't import without aiohttp
             logger.error(f"Telegram send error: {e}")
             return False
 

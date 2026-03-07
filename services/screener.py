@@ -49,6 +49,7 @@ from pydantic import Field
 from services.monitoring.notifier import TelegramConfig, TelegramNotifier
 from shared.collector.prev_day_volume import PrevDayVolumeCache
 from shared.config.base import ServiceConfigBase
+from shared.exceptions import APIError, InfrastructureError, TradingSystemError
 from shared.kis import KISAuthConfig
 from shared.kis.client import KISClient
 from shared.kis.ranking_client import KISRankingClient
@@ -445,8 +446,10 @@ async def run_screener(config: ScreenerConfig) -> None:
     prev_vol_cache = PrevDayVolumeCache()
     try:
         await prev_vol_cache.warm_all_async()
+    except InfrastructureError as e:
+        logger.warning("Failed to warm prev-day volume cache (infrastructure): %s", e)
     except Exception as e:
-        logger.warning("Failed to warm prev-day volume cache: %s", e)
+        logger.warning("Failed to warm prev-day volume cache (unexpected): %s", e, exc_info=True)
 
     logger.info(
         "Stock screener started "
@@ -581,8 +584,14 @@ async def run_screener(config: ScreenerConfig) -> None:
                     )
                     logger.info(f"Published dip candidates: {len(dip_codes)} codes")
 
+            except APIError as e:
+                logger.warning(f"Screener iteration failed (API error): {e}")
+            except InfrastructureError as e:
+                logger.warning(f"Screener iteration failed (infrastructure): {e}")
+            except TradingSystemError as e:
+                logger.warning(f"Screener iteration failed (trading system): {e}")
             except Exception as e:
-                logger.warning(f"Screener iteration failed: {e}")
+                logger.warning(f"Screener iteration failed (unexpected): {e}", exc_info=True)
 
             elapsed = time.time() - started
             sleep_for = max(0.0, config.interval_seconds - elapsed)

@@ -83,7 +83,7 @@ async def async_holiday_loader(
                     holidays.add(h)
             except (ValueError, TypeError) as e:
                 logger.debug(f"Skipping invalid holiday: {h} - {e}")
-    except Exception as e:
+    except (OSError, IOError, yaml.YAMLError, ValueError, TypeError) as e:
         logger.error(f"Failed to load holidays: {e}", exc_info=True)
 
     return holidays

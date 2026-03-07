@@ -24,6 +24,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
+from shared.exceptions import APIError, NetworkError, ValidationError
+
 if TYPE_CHECKING:
     pass
 
@@ -333,8 +335,10 @@ class MarketDataProvider:
                 self._last_batch_fetch = now
                 logger.debug(f"Fetched data for {len(symbols)} symbols from data_source")
                 return
-            except Exception as e:
+            except (NetworkError, APIError, ValidationError) as e:
                 logger.error(f"Data source fetch failed: {e}", exc_info=True)
+            except Exception as e:
+                logger.error(f"Unexpected data source fetch error: {type(e).__name__}: {e}", exc_info=True)
 
         # Use KIS client if available
         if self._kis_client is not None:
@@ -349,8 +353,10 @@ class MarketDataProvider:
                 self._last_batch_fetch = now
                 logger.debug(f"Fetched data for {len(symbols)} symbols from KIS")
                 return
-            except Exception as e:
+            except (NetworkError, APIError) as e:
                 logger.error(f"KIS fetch failed: {e}", exc_info=True)
+            except Exception as e:
+                logger.error(f"Unexpected KIS fetch error: {type(e).__name__}: {e}", exc_info=True)
 
         # Fallback: Generate mock data (for testing/paper trading)
         for symbol in symbols:
@@ -397,7 +403,7 @@ class MarketDataProvider:
                         result[symbol] = price_data
                 except asyncio.TimeoutError:
                     logger.warning(f"Timeout fetching {symbol}")
-                except Exception as e:
+                except (NetworkError, APIError) as e:
                     logger.warning(f"Error fetching {symbol}: {e}")
             return result
 
@@ -421,7 +427,7 @@ class MarketDataProvider:
                 except asyncio.TimeoutError:
                     logger.warning(f"Timeout fetching {symbol}")
                     return (symbol, None)
-                except Exception as e:
+                except (NetworkError, APIError) as e:
                     logger.warning(f"Error fetching {symbol}: {e}")
                     return (symbol, None)
 

@@ -28,6 +28,13 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Callable, Coroutine
 
+from shared.exceptions import (
+    APIError,
+    InfrastructureError,
+    NetworkError,
+    TradingSystemError,
+)
+
 logger = logging.getLogger(__name__)
 
 # 스레드 풀 (동기 작업용)
@@ -174,7 +181,9 @@ class HealthChecker:
                 message=f"Health check timed out after {self.timeout}s",
                 latency_ms=self.timeout * 1000,
             )
-        except Exception as e:
+        except (TradingSystemError, OSError) as e:
+            # TradingSystemError: all trading system errors (infrastructure, network, API)
+            # OSError: low-level network/connection errors
             return ComponentHealth(
                 name=name,
                 status=ComponentStatus.UNHEALTHY,
@@ -274,7 +283,13 @@ def create_redis_check(redis_url: str) -> HealthCheckFunc:
                 status=ComponentStatus.UNKNOWN,
                 message="redis package not installed",
             )
-        except Exception as e:
+        except (
+            aioredis.ConnectionError,
+            aioredis.TimeoutError,
+            aioredis.RedisError,
+            OSError,
+        ) as e:
+            # Redis connection errors, timeout errors, and low-level network errors
             return ComponentHealth(
                 name="redis",
                 status=ComponentStatus.UNHEALTHY,
@@ -315,7 +330,8 @@ def create_database_check(connection_string: str) -> HealthCheckFunc:
                 status=ComponentStatus.UNKNOWN,
                 message="database driver not installed",
             )
-        except Exception as e:
+        except (OSError, TimeoutError) as e:
+            # Network errors, connection failures, timeout errors from ClickHouse
             return ComponentHealth(
                 name="database",
                 status=ComponentStatus.UNHEALTHY,
@@ -337,7 +353,8 @@ def create_kis_api_check(_app_key: str, _app_secret: str) -> HealthCheckFunc:
                 status=ComponentStatus.HEALTHY,
                 message="KIS API is accessible",
             )
-        except Exception as e:
+        except (APIError, NetworkError, OSError) as e:
+            # API errors (rate limits, auth), network errors, connection failures
             return ComponentHealth(
                 name="kis_api",
                 status=ComponentStatus.UNHEALTHY,

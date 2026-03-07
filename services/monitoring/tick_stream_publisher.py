@@ -15,9 +15,11 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Any
 
+import redis
 from pydantic import ConfigDict, Field
 
 from shared.config.base import ServiceConfigBase
+from shared.exceptions import InfrastructureError
 from shared.streaming.client import RedisClient
 
 logger = logging.getLogger(__name__)
@@ -388,14 +390,14 @@ class TickStreamPublisher:
             self._published_total += 1
             self._last_publish_success_at = now
             self._refresh_ttl_if_due(stream_name=stream_name, now=now)
-        except Exception:
+        except (redis.RedisError, InfrastructureError) as e:
             self._publish_error_total += 1
             logger.debug(
-                "Tick stream publish failed: asset=%s symbol=%s stream=%s",
+                "Redis stream publish failed: asset=%s symbol=%s stream=%s error=%s",
                 asset,
                 symbol,
                 stream_name,
-                exc_info=True,
+                e,
             )
 
     def _refresh_ttl_if_due(self, *, stream_name: str, now: float) -> None:
@@ -406,9 +408,9 @@ class TickStreamPublisher:
         try:
             self.client.expire(stream_name, int(self.config.stream_ttl_seconds))
             self._last_ttl_refresh_at[stream_name] = now
-        except Exception:
+        except (redis.RedisError, InfrastructureError) as e:
             logger.debug(
-                "Failed to refresh stream TTL: stream=%s",
+                "Failed to refresh stream TTL: stream=%s error=%s",
                 stream_name,
-                exc_info=True,
+                e,
             )

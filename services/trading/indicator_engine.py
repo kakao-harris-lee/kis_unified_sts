@@ -33,6 +33,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+from shared.exceptions import ValidationError
 from shared.indicators.volume import VolumeAccelerationCalculator, VWAPCalculator
 
 logger = logging.getLogger(__name__)
@@ -959,7 +960,7 @@ class StreamingIndicatorEngine:
                 rsi_period=rsi_period,
                 williams_r_period=williams_r_period,
             )
-        except Exception as e:
+        except (ValidationError, ValueError, KeyError, IndexError, ZeroDivisionError) as e:
             logger.error(f"Momentum indicator calculation failed for {symbol}: {e}")
             return {}
 

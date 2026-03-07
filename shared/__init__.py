@@ -7,6 +7,7 @@
 - indicators: 기술적 지표
 - models: 데이터 모델
 - backtest: 백테스트 엔진
+- exceptions: 통합 예외 계층 구조 (import from shared.exceptions directly)
 """
 
 from importlib.metadata import version, PackageNotFoundError

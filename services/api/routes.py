@@ -31,6 +31,12 @@ from enum import Enum
 from typing import TYPE_CHECKING, Annotated, Any, Callable, Optional
 
 from shared.api.error_sanitizer import sanitize_error_message
+from shared.exceptions import (
+    ConfigurationError,
+    InfrastructureError,
+    NetworkError,
+    TradingSystemError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -441,7 +447,8 @@ def _create_session_runner(orchestrator: "TradingOrchestrator") -> Callable:
     async def run_with_error_handling():
         try:
             await orchestrator.run_session()
-        except Exception as e:
+        except TradingSystemError as e:
+            # Catch all trading system errors (network, API, infrastructure, etc.)
             logger.error(f"Trading session failed: {e}", exc_info=True)
 
             # Update orchestrator state to reflect failure
@@ -457,7 +464,8 @@ def _create_session_runner(orchestrator: "TradingOrchestrator") -> Callable:
                         f"⚠️ Trading Session Failed\n"
                         f"Error: {e}"
                     )
-                except Exception as notify_error:
+                except NetworkError as notify_error:
+                    # Telegram notification failures are network errors
                     logger.error(f"Failed to send error notification: {notify_error}")
 
     return run_with_error_handling
@@ -661,7 +669,10 @@ async def list_strategies(asset_class: AssetClass | None = None):
                 for s in strategies
             ]
         }
-    except Exception as e:
+    except (ConfigurationError, FileNotFoundError, ValueError) as e:
+        # ConfigurationError: invalid config files
+        # FileNotFoundError: missing strategy files
+        # ValueError: malformed YAML or invalid data
         logger.error(f"Failed to load strategies: {e}", exc_info=True)
         return {"strategies": [], "error": sanitize_error_message(e)}
 
@@ -693,7 +704,9 @@ async def get_strategy(
         raise HTTPException(
             status_code=404, detail=f"Strategy not found: {asset_class.value}/{name}"
         )
-    except Exception as e:
+    except (ConfigurationError, ValueError) as e:
+        # ConfigurationError: invalid config file
+        # ValueError: malformed YAML or invalid data
         logger.error(f"Failed to load strategy {asset_class.value}/{name}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=sanitize_error_message(e))
 
@@ -769,7 +782,10 @@ async def run_backtest(
 
     except HTTPException:
         raise
-    except Exception as e:
+    except (TradingSystemError, ValueError, ImportError) as e:
+        # TradingSystemError: any trading system error during backtest
+        # ValueError: invalid parameters or data
+        # ImportError: missing optional dependencies
         logger.error(f"Backtest failed: {e}", exc_info=True)
         return {"success": False, "message": sanitize_error_message(e), "run_id": None, "result": None}
 
@@ -795,7 +811,9 @@ async def get_backtest_results(experiment: str | None = None, limit: int = 10):
             return {"runs": [], "message": "Specify experiment name"}
     except ImportError:
         return {"runs": [], "error": "MLflow not installed"}
-    except Exception as e:
+    except (InfrastructureError, RuntimeError) as e:
+        # InfrastructureError: MLflow tracking server connection issues
+        # RuntimeError: MLflow API errors
         logger.error(f"Failed to get backtest results: {e}", exc_info=True)
         return {"runs": [], "error": sanitize_error_message(e)}
 
@@ -820,6 +838,9 @@ async def prometheus_metrics(
         collector = MetricsCollector()
         content = collector.export_prometheus()
         return Response(content=content, media_type="text/plain")
-    except Exception as e:
+    except (InfrastructureError, ImportError, RuntimeError) as e:
+        # InfrastructureError: Redis/ClickHouse connection issues
+        # ImportError: missing monitoring dependencies
+        # RuntimeError: metrics collection errors
         logger.error(f"Failed to export metrics: {e}")
         raise HTTPException(status_code=500, detail="Failed to export metrics")

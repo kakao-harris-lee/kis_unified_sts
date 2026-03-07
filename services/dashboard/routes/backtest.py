@@ -19,6 +19,7 @@ from pydantic import BaseModel
 from shared.backtest import BacktestConfig, BacktestEngine
 from shared.backtest.engine import SignalType
 from shared.config.loader import ConfigLoader, ConfigNotFoundError
+from shared.exceptions import ConfigurationError, InfrastructureError, ValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -134,7 +135,8 @@ def _validate_table_name(table: str) -> str:
 def _set_korean_font() -> str | None:
     try:
         from matplotlib import font_manager, rcParams
-    except Exception:
+    except ImportError:
+        # matplotlib not installed - charting unavailable
         return None
 
     preferred = [
@@ -163,7 +165,8 @@ def _set_korean_font() -> str | None:
             rcParams["font.family"] = name
             rcParams["axes.unicode_minus"] = False
             return name
-        except Exception:
+        except (OSError, RuntimeError, ValueError):
+            # Font file unreadable or invalid - continue to fallback
             pass
 
     known_paths = [
@@ -182,7 +185,8 @@ def _set_korean_font() -> str | None:
             rcParams["font.family"] = name
             rcParams["axes.unicode_minus"] = False
             return name
-        except Exception:
+        except (OSError, RuntimeError, ValueError):
+            # Font file unreadable or invalid - continue to next path
             continue
 
     for font_path in font_manager.findSystemFonts(fontext="ttf"):
@@ -231,7 +235,8 @@ def _resolve_stock_name(code: str) -> str:
                     name = str(row.get("종목명", "")).strip()
                     if name:
                         _stock_name_cache[str(stock_code)] = name
-        except Exception:
+        except (ConfigurationError, InfrastructureError, ValidationError):
+            # KRX API unavailable or misconfigured - use fallback
             pass
 
     if code in _stock_name_cache:
@@ -243,7 +248,8 @@ def _resolve_stock_name(code: str) -> str:
         for item in STOCK_UNIVERSE:
             if item.get("code") == code and item.get("name"):
                 return item["name"]
-    except Exception:
+    except (ImportError, AttributeError):
+        # STOCK_UNIVERSE not available - use code as fallback
         pass
 
     return code
@@ -524,7 +530,7 @@ def _generate_chart(
         font_name = _set_korean_font()
         import matplotlib.pyplot as plt
         import mplfinance as mpf
-    except Exception as e:
+    except ImportError as e:
         logger.error(f"mplfinance not available: {e}")
         return None
 
@@ -664,7 +670,7 @@ def _generate_chart(
                         label="Equity (scaled)",
                     )
                 )
-        except Exception as e:
+        except (ValueError, KeyError, ZeroDivisionError) as e:
             logger.debug(f"Failed to overlay equity curve: {e}")
 
     if rsi_valid and rsi_panel is not None:
@@ -768,7 +774,8 @@ def _generate_chart(
                         fontsize=8,
                         framealpha=0.6,
                     )
-    except Exception:
+    except (AttributeError, TypeError):
+        # Legend generation failed - continue without legends
         pass
     buf = io.BytesIO()
     fig.savefig(buf, format="png", bbox_inches="tight")
