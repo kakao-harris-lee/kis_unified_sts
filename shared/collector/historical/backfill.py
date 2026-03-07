@@ -37,12 +37,19 @@ logger = logging.getLogger(__name__)
 
 def _get_clickhouse_config() -> Dict[str, Any]:
     """Get ClickHouse configuration from environment."""
+    # Parse TLS settings
+    secure = os.getenv("CLICKHOUSE_SECURE", "false").lower() in ("true", "1", "yes")
+    verify_ssl = os.getenv("CLICKHOUSE_VERIFY_SSL", "true").lower() in ("true", "1", "yes")
+
     return {
         "host": os.getenv("CLICKHOUSE_HOST", "localhost"),
         "port": int(os.getenv("CLICKHOUSE_PORT", "8123")),
         "database": os.getenv("CLICKHOUSE_FUTURES_DATABASE", os.getenv("CLICKHOUSE_DATABASE", "kospi")),
         "user": os.getenv("CLICKHOUSE_USER", "default"),
         "password": os.getenv("CLICKHOUSE_PASSWORD", ""),
+        "secure": secure,
+        "verify": verify_ssl,
+        "ca_cert": os.getenv("CLICKHOUSE_CA_CERT"),
     }
 
 
@@ -556,6 +563,9 @@ def get_db_client(database: str = None):
         database=database or config["database"],
         username=config["user"] or None,
         password=config["password"] or None,
+        secure=config["secure"],
+        verify=config["verify"],
+        ca_cert=config["ca_cert"],
     )
 
 

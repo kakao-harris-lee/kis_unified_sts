@@ -83,12 +83,19 @@ STOCK_UNIVERSE = [
 
 def _get_clickhouse_config() -> Dict[str, Any]:
     """Get ClickHouse configuration for stock database."""
+    # Parse TLS settings
+    secure = os.getenv("CLICKHOUSE_SECURE", "false").lower() in ("true", "1", "yes")
+    verify_ssl = os.getenv("CLICKHOUSE_VERIFY_SSL", "true").lower() in ("true", "1", "yes")
+
     return {
         "host": os.getenv("CLICKHOUSE_HOST", "localhost"),
         "port": int(os.getenv("CLICKHOUSE_PORT", "8123")),
         "database": os.getenv("CLICKHOUSE_STOCK_DATABASE", "market"),
         "user": os.getenv("CLICKHOUSE_USER", "trading"),
         "password": os.getenv("CLICKHOUSE_PASSWORD", ""),
+        "secure": secure,
+        "verify": verify_ssl,
+        "ca_cert": os.getenv("CLICKHOUSE_CA_CERT"),
     }
 
 
@@ -274,6 +281,9 @@ def get_stock_db_client() -> clickhouse_connect.driver.client.Client:
         username=config["user"],
         password=config["password"],
         database=config["database"],
+        secure=config["secure"],
+        verify=config["verify"],
+        ca_cert=config["ca_cert"],
     )
 
 
@@ -285,6 +295,9 @@ def ensure_stock_database() -> None:
         port=config["port"],
         username=config["user"],
         password=config["password"],
+        secure=config["secure"],
+        verify=config["verify"],
+        ca_cert=config["ca_cert"],
     )
 
     # Create database

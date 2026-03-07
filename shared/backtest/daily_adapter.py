@@ -324,11 +324,18 @@ def load_stock_daily_from_clickhouse(
 
     import clickhouse_connect
 
+    # Parse TLS settings
+    secure = os.getenv("CLICKHOUSE_SECURE", "false").lower() in ("true", "1", "yes")
+    verify_ssl = os.getenv("CLICKHOUSE_VERIFY_SSL", "true").lower() in ("true", "1", "yes")
+
     client = clickhouse_connect.get_client(
         host=os.getenv("CLICKHOUSE_HOST", "localhost"),
         port=int(os.getenv("CLICKHOUSE_PORT", "8123")),
         username=os.getenv("CLICKHOUSE_USER", "default"),
         password=os.getenv("CLICKHOUSE_PASSWORD", ""),
+        secure=secure,
+        verify=verify_ssl,
+        ca_cert=os.getenv("CLICKHOUSE_CA_CERT"),
     )
 
     # Build parameterized query to prevent SQL injection

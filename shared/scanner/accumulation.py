@@ -64,12 +64,19 @@ def _get_redis_client():
 
 def _get_clickhouse_config():
     """Get ClickHouse config from environment."""
+    # Parse TLS settings
+    secure = os.getenv("CLICKHOUSE_SECURE", "false").lower() in ("true", "1", "yes")
+    verify_ssl = os.getenv("CLICKHOUSE_VERIFY_SSL", "true").lower() in ("true", "1", "yes")
+
     return {
         "host": os.getenv("CLICKHOUSE_HOST", "localhost"),
         "port": int(os.getenv("CLICKHOUSE_PORT", "8123")),
         "username": os.getenv("CLICKHOUSE_USER", "default"),
         "password": os.getenv("CLICKHOUSE_PASSWORD", ""),
         "database": "market",
+        "secure": secure,
+        "verify": verify_ssl,
+        "ca_cert": os.getenv("CLICKHOUSE_CA_CERT"),
     }
 
 
