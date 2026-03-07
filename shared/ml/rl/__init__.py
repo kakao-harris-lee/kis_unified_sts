@@ -5,7 +5,7 @@ Gymnasium 환경, Maskable PPO / SAC / Decision Transformer.
 """
 
 # Config is always available (no gymnasium dependency)
-from shared.ml.rl.config import RLMPPOConfig
+from shared.ml.rl.config import ParamSpec, RLMPPOConfig, suggest_from_schema
 
 # Gymnasium-dependent imports (optional)
 try:
@@ -42,6 +42,7 @@ __all__ = [
     "DTConfig",
     "DTTrainer",
     "FuturesTradingEnv",
+    "ParamSpec",
     "PositionSide",
     "RLEnvConfig",
     "RLFeatureCalculator",
@@ -50,4 +51,5 @@ __all__ = [
     "RL_FEATURE_COLUMNS",
     "mask_fn",
     "run_paper_trader",
+    "suggest_from_schema",
 ]

@@ -20,6 +20,24 @@ Usage:
     except ValidationError as e:
         print(f"Config validation failed: {e}")
 
+Optuna Integration:
+    from shared.ml.rl.config import RLMPPOConfig, suggest_from_schema
+    import optuna
+
+    # Extract parameter ranges from schema
+    ranges = RLMPPOConfig.get_param_ranges()
+
+    # Use in Optuna objective function
+    def objective(trial):
+        lr = suggest_from_schema(trial, ranges["mppo.learning_rate"])
+        batch_size = suggest_from_schema(trial, ranges["mppo.batch_size"])
+        gamma = suggest_from_schema(trial, ranges["mppo.gamma"])
+        # ... train model and return metric
+        return metric
+
+    study = optuna.create_study(direction="maximize")
+    study.optimize(objective, n_trials=100)
+
 Example ValidationError:
     ValidationError: 1 validation error for RLMPPOConfig
     mppo.learning_rate
@@ -37,6 +55,17 @@ from pydantic import Field, field_validator
 from shared.config.base import ServiceConfigBase
 
 logger = logging.getLogger(__name__)
+
+# Optional imports
+try:
+    import optuna
+    from optuna import Trial
+
+    HAS_OPTUNA = True
+except ImportError:
+    HAS_OPTUNA = False
+    optuna = None
+    Trial = None
 
 
 # =============================================================================
@@ -95,6 +124,109 @@ class ParamSpec:
     def categorical(cls, name: str, choices: list[Any]) -> ParamSpec:
         """Create categorical parameter spec."""
         return cls(name=name, param_type="categorical", choices=choices)
+
+
+def suggest_from_schema(trial: Trial, spec: ParamSpec) -> Any:
+    """Suggest hyperparameter value from Pydantic schema constraints using Optuna Trial.
+
+    Maps ParamSpec constraints to appropriate trial.suggest_* methods for Optuna
+    hyperparameter optimization. This enables automatic parameter space exploration
+    while respecting the validated ranges defined in RLMPPOConfig.
+
+    Args:
+        trial: Optuna Trial object for suggesting hyperparameter values
+        spec: ParamSpec containing parameter name, type, and constraints
+
+    Returns:
+        Suggested parameter value (int, float, or categorical choice)
+
+    Raises:
+        ImportError: If optuna is not installed
+        ValueError: If spec.param_type is invalid or required fields are missing
+
+    Example:
+        >>> import optuna
+        >>> from shared.ml.rl.config import RLMPPOConfig, suggest_from_schema
+        >>>
+        >>> # Define objective function for Optuna
+        >>> def objective(trial):
+        ...     # Get parameter ranges from schema
+        ...     ranges = RLMPPOConfig.get_param_ranges()
+        ...
+        ...     # Suggest hyperparameters using schema constraints
+        ...     lr = suggest_from_schema(trial, ranges["mppo.learning_rate"])
+        ...     batch_size = suggest_from_schema(trial, ranges["mppo.batch_size"])
+        ...     gamma = suggest_from_schema(trial, ranges["mppo.gamma"])
+        ...
+        ...     # Train model with suggested hyperparameters
+        ...     # ... (training code)
+        ...     return evaluation_metric
+        ...
+        >>> # Run optimization
+        >>> study = optuna.create_study(direction="maximize")
+        >>> study.optimize(objective, n_trials=100)
+
+    Notes:
+        - int parameters use trial.suggest_int() with optional step
+        - float parameters use trial.suggest_float() with optional step or log scale
+        - categorical parameters use trial.suggest_categorical()
+        - Log scale is automatically applied for learning rates and wide ranges
+    """
+    if not HAS_OPTUNA:
+        raise ImportError(
+            "Optuna is required for suggest_from_schema(). "
+            "Install with: pip install optuna>=3.0.0"
+        )
+
+    if spec.param_type == "int":
+        if spec.low is None or spec.high is None:
+            raise ValueError(
+                f"ParamSpec '{spec.name}' is missing low/high bounds for int type"
+            )
+        return trial.suggest_int(
+            spec.name,
+            int(spec.low),
+            int(spec.high),
+            step=int(spec.step) if spec.step else 1,
+        )
+
+    elif spec.param_type == "float":
+        if spec.low is None or spec.high is None:
+            raise ValueError(
+                f"ParamSpec '{spec.name}' is missing low/high bounds for float type"
+            )
+
+        # Use step if provided, otherwise use log scale
+        if spec.step:
+            return trial.suggest_float(
+                spec.name,
+                spec.low,
+                spec.high,
+                step=spec.step,
+            )
+        else:
+            return trial.suggest_float(
+                spec.name,
+                spec.low,
+                spec.high,
+                log=spec.log,
+            )
+
+    elif spec.param_type == "categorical":
+        if spec.choices is None or len(spec.choices) == 0:
+            raise ValueError(
+                f"ParamSpec '{spec.name}' is missing choices for categorical type"
+            )
+        return trial.suggest_categorical(
+            spec.name,
+            spec.choices,
+        )
+
+    else:
+        raise ValueError(
+            f"Invalid param_type '{spec.param_type}'. "
+            f"Must be 'int', 'float', or 'categorical'"
+        )
 
 
 # =============================================================================
