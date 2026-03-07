@@ -683,8 +683,8 @@ class StreamingIndicatorEngine:
         # Daily EMA alignment: EMA(5d) > EMA(10d) > EMA(20d) — multi-day uptrend
         result["ema_daily_aligned"] = self._calc_daily_ema_aligned(symbol)
 
-        # Update cache
-        self._indicator_cache[symbol] = (candle_count, result)
+        # Update cache (store a copy so callers can safely mutate result)
+        self._indicator_cache[symbol] = (candle_count, result.copy())
 
         return result
 

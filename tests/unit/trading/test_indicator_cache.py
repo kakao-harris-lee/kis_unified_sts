@@ -156,6 +156,20 @@ class TestIndicatorCacheBasics:
         result3 = warm_engine.get_indicators(symbol)
         assert result3["bb_lower"] == result1["bb_lower"]
 
+    def test_cache_miss_result_mutation_does_not_corrupt_cache(self, warm_engine):
+        """Mutating the result from a cache miss must not corrupt the cache."""
+        symbol = "005930"
+
+        result_miss = warm_engine.get_indicators(symbol)  # cache miss
+        original_bb = result_miss["bb_lower"]
+
+        # Mutate the miss result (orchestrator does indicators.update())
+        result_miss["bb_lower"] = 99999.0
+
+        # Cache hit should return the original value, not the mutated one
+        result_hit = warm_engine.get_indicators(symbol)
+        assert result_hit["bb_lower"] == original_bb
+
 
 class TestCacheClearingBehavior:
     """Test cache clearing on symbol removal."""
