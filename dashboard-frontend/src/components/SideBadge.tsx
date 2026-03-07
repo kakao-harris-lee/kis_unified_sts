@@ -1,5 +1,5 @@
 interface SideBadgeProps {
-  side: 'BUY' | 'SELL' | 'LONG' | 'SHORT' | 'long' | 'short';
+  side: 'BUY' | 'SELL' | 'LONG' | 'SHORT' | 'long' | 'short' | string;
 }
 
 function SideBadge({ side }: SideBadgeProps) {
