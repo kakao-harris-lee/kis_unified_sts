@@ -155,3 +155,16 @@ paper:
   force_close_time: "15:35"    # 강제 청산 시각 (KST)
   telegram_notify: true        # 텔레그램 알림 활성화
   log_dir: "./results/rl/paper/"
+
+# === Drift Monitoring ===
+drift_monitoring:
+  enabled: true                                 # 드리프트 모니터링 활성화
+  kl_threshold: 0.1                             # KL divergence 임계값
+  psi_threshold: 0.2                            # PSI (Population Stability Index) 임계값
+  confidence_shift_threshold: 0.15              # 모델 신뢰도 변화 임계값
+  sharpe_degradation_threshold: -0.5            # Sharpe ratio 저하 임계값
+  win_rate_degradation_threshold: -0.1          # 승률 저하 임계값 (10%p)
+  reference_window_days: 30                     # 기준 분포 수집 기간 (일)
+  alert_cooldown_minutes: 60                    # 알림 쿨다운 시간 (분)
+  log_to_clickhouse: true                       # ClickHouse에 드리프트 메트릭 기록
+  expose_prometheus: true                       # Prometheus 메트릭 노출
