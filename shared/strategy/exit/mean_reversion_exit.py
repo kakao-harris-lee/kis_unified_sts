@@ -332,13 +332,12 @@ class MeanReversionExit(ExitSignalGenerator[MeanReversionExitConfig]):
     def _is_bear_market(market_state: Optional[MarketStateProtocol]) -> bool:
         if market_state is None:
             return False
-        if hasattr(market_state, "regime"):
-            return market_state.regime in ("BEAR", "BEAR_STRONG", "BEAR_MODERATE")
-        if hasattr(market_state, "name"):
-            return "BEAR" in market_state.name.upper()
-        if hasattr(market_state, "value"):
-            return "BEAR" in str(market_state.value).upper()
-        return False
+
+        return market_state.regime in (
+            "BEAR",
+            "BEAR_STRONG",
+            "BEAR_MODERATE",
+        )
 
     def _create_exit_signal(
         self,
