@@ -25,10 +25,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
+import ssl
 import time
 from collections import deque
 from typing import TYPE_CHECKING
+from urllib.parse import urlparse
 
 from shared.resilience import CircuitBreaker, CircuitState
 
@@ -214,20 +217,66 @@ class RedisRateLimiter:
         )
 
     async def _get_redis(self) -> Redis:
-        """Get or create Redis connection."""
+        """Get or create Redis connection with TLS support."""
         if self._redis is None:
             try:
                 from redis.asyncio import Redis
 
-                self._redis = Redis.from_url(
-                    self._redis_url,
-                    decode_responses=True,
-                    socket_timeout=5.0,  # Prevent hangs
-                    socket_connect_timeout=5.0,
-                )
+                # Parse redis_url to extract connection parameters
+                parsed = urlparse(self._redis_url)
+                host = parsed.hostname or "localhost"
+                port = parsed.port or 6379
+                password = parsed.password or None
+                # Extract db from path (e.g., /1 -> 1)
+                db = 1  # default
+                if parsed.path and len(parsed.path) > 1:
+                    try:
+                        db = int(parsed.path.lstrip("/"))
+                    except ValueError:
+                        logger.warning(f"Invalid db in redis_url: {parsed.path}, using db=1")
+
+                # TLS configuration from environment variables
+                tls_enabled = os.environ.get("REDIS_TLS_ENABLED", "false").lower() == "true"
+
+                # Base connection parameters
+                connection_params = {
+                    "host": host,
+                    "port": port,
+                    "password": password,
+                    "db": db,
+                    "decode_responses": True,
+                    "socket_connect_timeout": 5.0,
+                    "socket_timeout": 5.0,
+                }
+
+                # Add TLS parameters if enabled
+                if tls_enabled:
+                    connection_params["ssl"] = True
+
+                    # Certificate requirements (default: required)
+                    cert_reqs = os.environ.get("REDIS_TLS_CERT_REQS", "required").lower()
+                    if cert_reqs == "none":
+                        connection_params["ssl_cert_reqs"] = ssl.CERT_NONE
+                    elif cert_reqs == "optional":
+                        connection_params["ssl_cert_reqs"] = ssl.CERT_OPTIONAL
+                    else:  # "required" or any other value
+                        connection_params["ssl_cert_reqs"] = ssl.CERT_REQUIRED
+
+                    # CA certificate bundle path
+                    ca_certs = os.environ.get("REDIS_TLS_CA_CERTS", None)
+                    if ca_certs:
+                        connection_params["ssl_ca_certs"] = ca_certs
+
+                    logger.debug(f"Redis TLS 활성화: {host}:{port} (cert_reqs={cert_reqs})")
+                else:
+                    logger.debug(f"Redis TLS 비활성화: {host}:{port}")
+
+                self._redis = Redis(**connection_params)
+
                 # Register Lua script for better performance
                 self._script_sha = await self._redis.script_load(RATE_LIMIT_SCRIPT)
                 logger.debug(f"Redis connected: {_sanitize_redis_url(self._redis_url)}")
+
             except ImportError:
                 raise ImportError(
                     "redis package required for rate limiting. "
