@@ -60,7 +60,7 @@ class RLEnvConfig(ServiceConfigBase):
     _default_config_file: ClassVar[str] = "ml/rl_mppo.yaml"
 
     # 환경
-    initial_balance: float = Field(default=10_000_000)
+    initial_balance: float = Field(default=100_000_000)
     commission_rate: float = Field(default=0.00003)
     tick_size: float = Field(default=0.05)
     tick_value: int = Field(default=250_000)
@@ -79,9 +79,9 @@ class RLEnvConfig(ServiceConfigBase):
     market_close: str = Field(default="15:45")
 
     # 보상함수 가중치
-    w_profit: float = Field(default=5.0)
-    w_cost: float = Field(default=2.0)
-    w_risk: float = Field(default=0.3)
+    w_profit: float = Field(default=10.0)
+    w_cost: float = Field(default=0.3)
+    w_risk: float = Field(default=0.0)
     w_mtm: float = Field(default=0.0)
     inaction_penalty: float = Field(default=0.0)
     reward_scale: float = Field(default=100.0)

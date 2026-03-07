@@ -2049,7 +2049,9 @@ def rl_train(algo: str, config: str | None):
         from shared.ml.rl.trainer import RLTrainer
 
         # Validate config early to fail fast before expensive data loading
-        _validate_rl_config(config)
+        # RLMPPOConfig validation only applies to MPPO configs
+        if algo in ("mppo", "all"):
+            _validate_rl_config(config)
 
         train_days, train_prices, test_days, test_prices = load_data_from_clickhouse(
             config,
@@ -2118,8 +2120,9 @@ def rl_evaluate(model: str, config: str | None):
     algo_label = "DT" if is_dt else ("SAC" if is_sac else "MPPO")
     click.echo(f"Evaluating RL Model: {model} ({algo_label})")
 
-    # Validate config early
-    _validate_rl_config(config)
+    # Validate config early (only for MPPO configs)
+    if not is_dt and not is_sac:
+        _validate_rl_config(config)
 
     try:
         from scripts.training.train_rl import (

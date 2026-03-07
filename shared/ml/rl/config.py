@@ -47,11 +47,11 @@ Example ValidationError:
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
 from typing import Any, ClassVar, Literal
 
 from pydantic import Field, field_validator
 
+from shared.backtest.optimizer import ParamSpec
 from shared.config.base import ServiceConfigBase
 
 logger = logging.getLogger(__name__)
@@ -68,62 +68,26 @@ except ImportError:
     Trial = None
 
 
-# =============================================================================
-# ParamSpec for Optuna Integration
-# =============================================================================
+def _validate_time_format(v: str) -> str:
+    """Validate HH:MM time format.
 
+    Args:
+        v: Time string to validate
 
-@dataclass
-class ParamSpec:
-    """Parameter specification for Optuna optimization.
+    Returns:
+        Validated time string
 
-    Lightweight version to avoid importing entire optimizer module.
-
-    Attributes:
-        name: Parameter name
-        param_type: Type ("int", "float", "categorical")
-        low: Minimum value (int/float)
-        high: Maximum value (int/float)
-        step: Step size (optional)
-        choices: Choices (categorical)
-        log: Use log scale for sampling
+    Raises:
+        ValueError: If format is invalid or time values are out of range
     """
+    import re
 
-    name: str
-    param_type: str  # "int", "float", "categorical"
-    low: float | None = None
-    high: float | None = None
-    step: float | None = None
-    choices: list[Any] | None = None
-    log: bool = False
-
-    @classmethod
-    def int(
-        cls,
-        name: str,
-        low: int,
-        high: int,
-        step: int = 1,
-    ) -> ParamSpec:
-        """Create integer parameter spec."""
-        return cls(name=name, param_type="int", low=low, high=high, step=step)
-
-    @classmethod
-    def float(
-        cls,
-        name: str,
-        low: float,
-        high: float,
-        step: float | None = None,
-        log: bool = False,
-    ) -> ParamSpec:
-        """Create float parameter spec."""
-        return cls(name=name, param_type="float", low=low, high=high, step=step, log=log)
-
-    @classmethod
-    def categorical(cls, name: str, choices: list[Any]) -> ParamSpec:
-        """Create categorical parameter spec."""
-        return cls(name=name, param_type="categorical", choices=choices)
+    if not re.match(r"^\d{2}:\d{2}$", v):
+        raise ValueError(f"Time must be in HH:MM format, got: {v}")
+    hours, minutes = map(int, v.split(":"))
+    if not (0 <= hours < 24 and 0 <= minutes < 60):
+        raise ValueError(f"Invalid time: {v}")
+    return v
 
 
 def suggest_from_schema(trial: Trial, spec: ParamSpec) -> Any:
@@ -299,14 +263,7 @@ class EnvConfig(ServiceConfigBase):
     @classmethod
     def validate_time_format(cls, v: str) -> str:
         """Validate HH:MM time format."""
-        import re
-
-        if not re.match(r"^\d{2}:\d{2}$", v):
-            raise ValueError(f"Time must be in HH:MM format, got: {v}")
-        hours, minutes = map(int, v.split(":"))
-        if not (0 <= hours < 24 and 0 <= minutes < 60):
-            raise ValueError(f"Invalid time: {v}")
-        return v
+        return _validate_time_format(v)
 
 
 # =============================================================================
@@ -858,14 +815,7 @@ class PaperTradingConfig(ServiceConfigBase):
     @classmethod
     def validate_time_format(cls, v: str) -> str:
         """Validate HH:MM time format."""
-        import re
-
-        if not re.match(r"^\d{2}:\d{2}$", v):
-            raise ValueError(f"Time must be in HH:MM format, got: {v}")
-        hours, minutes = map(int, v.split(":"))
-        if not (0 <= hours < 24 and 0 <= minutes < 60):
-            raise ValueError(f"Invalid time: {v}")
-        return v
+        return _validate_time_format(v)
 
 
 # =============================================================================
