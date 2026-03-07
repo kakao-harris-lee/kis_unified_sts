@@ -2,7 +2,10 @@
 import logging
 import uuid
 from datetime import datetime
-from typing import Dict, List, Optional, Callable
+from typing import Dict, List, Optional, Callable, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from shared.execution.slippage_model import SlippageModel
 
 from .models import (
     VirtualOrder,
@@ -32,11 +35,13 @@ class VirtualBroker:
         initial_balance: float = 10000000,
         commission_rate: float = 0.00015,  # 0.015%
         slippage_rate: float = 0.0001,     # 0.01%
+        slippage_model: Optional["SlippageModel"] = None,
     ):
         self.initial_balance = initial_balance
         self.balance = initial_balance
         self.commission_rate = commission_rate
         self.slippage_rate = slippage_rate
+        self.slippage_model = slippage_model
 
         self.positions: Dict[str, VirtualPosition] = {}
         self.orders: List[VirtualOrder] = []
