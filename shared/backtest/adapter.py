@@ -17,16 +17,18 @@ import asyncio
 import logging
 from collections import defaultdict, deque
 from datetime import datetime
-from typing import Any
+from typing import Any, Optional
 
 import pandas as pd
 
 from services.trading.indicator_engine import StreamingIndicatorEngine
 from shared.backtest.engine import ExitReason, SignalType
 from shared.backtest.metadata import load_backtest_metadata, resolve_symbol_metadata
+from shared.config import ConfigLoader
 from shared.indicators.contracts import IndicatorContract
 from shared.indicators.resolver import StreamingIndicatorResolver
 from shared.models.position import Position as ModelPosition, PositionSide
+from shared.regime.adaptive_detector import AdaptiveRegimeDetector, AdaptiveRegimeConfig
 from shared.strategy.base import EntryContext, ExitContext, TradingStrategy
 
 logger = logging.getLogger(__name__)
@@ -322,13 +324,64 @@ class BacktestStrategyAdapter:
         self._precomputed_rl_features: list[dict[str, float]] | None = None
         self._bar_index: int = 0
 
+        # Adaptive regime detection (optional, controlled by config flag)
+        self._regime_detection_enabled = bool(
+            strategy_config.get("backtest", {}).get("regime_detection_enabled", False)
+        )
+        self._regime_detector: Optional[AdaptiveRegimeDetector] = None
+        self._regime_history: dict[str, deque] = defaultdict(
+            lambda: deque(maxlen=100)  # Keep last 100 bars for regime detection
+        )
+
+        if self._regime_detection_enabled:
+            try:
+                regime_config_dict = ConfigLoader.load("ml/regime_adaptive.yaml")
+                detector_params = regime_config_dict.get("detector", {})
+                lookback = detector_params.get("lookback", {})
+                thresholds = detector_params.get("thresholds", {})
+
+                regime_config = AdaptiveRegimeConfig(
+                    mfi_bull_threshold=thresholds.get("mfi", {}).get("neutral_upper", 60.0),
+                    mfi_bear_threshold=thresholds.get("mfi", {}).get("neutral_lower", 40.0),
+                    mfi_period=lookback.get("mfi_period", 14),
+                    adx_strong_trend=thresholds.get("adx", {}).get("strong_trend", 25.0),
+                    adx_weak_trend=thresholds.get("adx", {}).get("weak_trend", 20.0),
+                    adx_period=lookback.get("adx_period", 14),
+                    atr_period=lookback.get("atr_period", 14),
+                    atr_high_volatility=thresholds.get("volatility", {}).get("high", 0.025),
+                    atr_low_volatility=thresholds.get("volatility", {}).get("low", 0.015),
+                    sma_fast=lookback.get("sma_short", 10),
+                    sma_slow=lookback.get("sma_long", 50),
+                    trend_threshold=thresholds.get("trend", {}).get("bullish_threshold", 0.01),
+                    confidence_threshold=detector_params.get("confidence", {}).get("min_confidence", 0.7),
+                    min_bars=lookback.get("min_bars", 50),
+                )
+                self._regime_detector = AdaptiveRegimeDetector(regime_config)
+                logger.info("Adaptive regime detection enabled for backtest")
+            except Exception as e:
+                logger.warning(f"Failed to initialize regime detector: {e}. Disabling regime detection.")
+                self._regime_detection_enabled = False
+
     def _context_metadata(
         self,
         market_state: str = "UNKNOWN",
         code: str = "",
         raw_code: Any = None,
+        regime: Optional[str] = None,
+        regime_confidence: Optional[float] = None,
     ) -> dict[str, Any]:
-        """Build metadata payload aligned with live orchestrator context."""
+        """Build metadata payload aligned with live orchestrator context.
+
+        Args:
+            market_state: Basic market state from MFI/MarketClassifier
+            code: Stock/futures code
+            raw_code: Raw code (may be non-string)
+            regime: Adaptive regime state (if regime detection enabled)
+            regime_confidence: Confidence score for regime detection (0-1)
+
+        Returns:
+            Metadata dict with market_state, regime, and other context
+        """
         symbol_meta = resolve_symbol_metadata(self._backtest_metadata, code)
         accumulation_candidates = dict(
             self._backtest_metadata.get("accumulation_candidates", {})
@@ -344,15 +397,22 @@ class BacktestStrategyAdapter:
                 # Non-hashable raw key (unexpected) — keep string key path.
                 pass
 
+        # Use adaptive regime if provided, otherwise fall back to market_state
+        final_regime = regime if regime is not None else market_state
+
         metadata: dict[str, Any] = {
             "market_state": market_state,
-            "regime": market_state,
+            "regime": final_regime,
             "is_backtest": True,
             "symbol_metadata": symbol_meta,
             "daily_watchlist": self._backtest_metadata.get("daily_watchlist", {}),
             "dip_candidates": self._backtest_metadata.get("dip_candidates", {}),
             "accumulation_candidates": accumulation_candidates,
         }
+
+        # Add regime confidence if available
+        if regime_confidence is not None:
+            metadata["regime_confidence"] = regime_confidence
 
         # Preserve existing synthetic fallback for volume_accumulation if no candidates
         # were provided in backtest metadata.
@@ -557,10 +617,34 @@ class BacktestStrategyAdapter:
         else:
             market_state = "UNKNOWN"
 
+        # Detect adaptive regime if enabled
+        regime: Optional[str] = None
+        regime_confidence: Optional[float] = None
+        if self._regime_detection_enabled and self._regime_detector is not None:
+            # Store bar in regime history for building DataFrame
+            self._regime_history[code].append({
+                "close": float(bar.get("close", 0) or 0),
+                "high": float(bar.get("high", 0) or 0),
+                "low": float(bar.get("low", 0) or 0),
+                "volume": float(bar.get("volume", 0) or 0),
+            })
+
+            # Build DataFrame from recent bars for regime detection
+            if len(self._regime_history[code]) >= self._regime_detector.config.min_bars:
+                try:
+                    regime_df = pd.DataFrame(list(self._regime_history[code]))
+                    regime_signal = self._regime_detector.detect(regime_df)
+                    regime = regime_signal.state.value if regime_signal.state else None
+                    regime_confidence = regime_signal.confidence
+                except Exception as e:
+                    logger.debug(f"Regime detection failed: {e}")
+
         metadata = self._context_metadata(
             market_state=market_state,
             code=code,
             raw_code=bar.get("code"),
+            regime=regime,
+            regime_confidence=regime_confidence,
         )
 
         # Build position list for RL action masks + observation
