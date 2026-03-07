@@ -6,7 +6,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from shared.execution.slippage_model import SlippageModel
 
 
 @dataclass
@@ -102,6 +105,7 @@ class BacktestConfig:
         point_value: 1포인트 가치 (선물용)
         cost: 비용 설정
         risk: 리스크 설정
+        slippage_model: 슬리피지 모델 (선물용, None이면 고정 슬리피지율 사용)
         verbose: 디버그 출력
     """
 
@@ -113,6 +117,7 @@ class BacktestConfig:
 
     cost: CostConfig = field(default_factory=CostConfig)
     risk: RiskConfig = field(default_factory=RiskConfig)
+    slippage_model: SlippageModel | None = None
 
     verbose: bool = False
 
@@ -152,6 +157,17 @@ class BacktestConfig:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> BacktestConfig:
+        # Import SlippageModel at runtime to avoid circular imports
+        slippage_model = None
+        if "slippage_model" in data:
+            from shared.execution.slippage_model import (
+                SlippageModel,
+                SlippageModelConfig,
+            )
+
+            slippage_config = SlippageModelConfig.from_dict(data["slippage_model"])
+            slippage_model = SlippageModel(slippage_config)
+
         return cls(
             initial_capital=data.get("initial_capital", 10_000_000),
             position_size_pct=data.get("position_size_pct", 10.0),
@@ -160,6 +176,7 @@ class BacktestConfig:
             point_value=data.get("point_value", 1.0),
             cost=CostConfig.from_dict(data.get("cost", {})),
             risk=RiskConfig.from_dict(data.get("risk", {})),
+            slippage_model=slippage_model,
             verbose=data.get("verbose", False),
         )
 

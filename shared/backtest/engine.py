@@ -425,6 +425,31 @@ class BacktestEngine:
             # 선물: 1계약 고정 (RL은 max_contracts=1)
             # 마진 기반이므로 capital 차감 없이 PnL만 추적
             quantity = 1
+
+            # Calculate slippage-adjusted fill price for futures
+            if self.config.slippage_model and self.config.slippage_model.config.enabled:
+                # Use slippage model for realistic fill price
+                order_size = float(quantity)
+                _default_spread = self.config.slippage_model.config.default_spread
+                _default_depth = self.config.slippage_model.config.default_depth
+                current_spread = float(bar.get("spread", _default_spread)) if bar else _default_spread
+                available_depth = float(bar.get("depth", _default_depth)) if bar else _default_depth
+
+                slippage_bps = self.config.slippage_model.calculate_slippage(
+                    order_size=order_size,
+                    current_spread=current_spread,
+                    available_depth=available_depth,
+                    timestamp=timestamp,
+                )
+
+                # Convert bps to rate (1 bps = 0.01% = 0.0001)
+                slippage_rate = slippage_bps / 10000.0
+
+                # Adjust fill price based on side (buy = pay more, sell = receive less)
+                if side == "BUY":
+                    price = price * (1 + slippage_rate)
+                else:  # SELL (short entry)
+                    price = price * (1 - slippage_rate)
         else:
             # 주식: 고정 금액(order_amount_per_stock) 우선, 없으면 자본 대비 % 사용
             if self.config.order_amount_per_stock and self.config.order_amount_per_stock > 0:
@@ -491,9 +516,35 @@ class BacktestEngine:
 
         if pv > 1:
             # 선물: PnL 기반 자본 추적
+            # Calculate slippage-adjusted exit price for futures
+            if self.config.slippage_model and self.config.slippage_model.config.enabled:
+                # Use slippage model for realistic exit fill price
+                order_size = float(pos.quantity)
+                # Use configured defaults for orderbook data (would come from bar in production)
+                current_spread = self.config.slippage_model.config.default_spread
+                available_depth = self.config.slippage_model.config.default_depth
+
+                slippage_bps = self.config.slippage_model.calculate_slippage(
+                    order_size=order_size,
+                    current_spread=current_spread,
+                    available_depth=available_depth,
+                    timestamp=exit_time,
+                )
+
+                # Convert bps to rate (1 bps = 0.01% = 0.0001)
+                slippage_rate = slippage_bps / 10000.0
+
+                # Adjust exit price based on position side
+                # Closing BUY (selling) = receive less, Closing SELL (buying) = pay more
+                if pos.side == "BUY":
+                    exit_price = exit_price * (1 - slippage_rate)
+                else:  # SELL (buying to cover short)
+                    exit_price = exit_price * (1 + slippage_rate)
+
             notional = exit_price * pos.quantity * pv
             commission = notional * cost.commission_rate
-            slippage = notional * cost.slippage_rate
+            # Slippage already applied to exit_price, so use 0 for fixed slippage
+            slippage = notional * cost.slippage_rate if not (self.config.slippage_model and self.config.slippage_model.config.enabled) else 0
             trade_costs = commission + slippage
 
             if pos.side == "BUY":
