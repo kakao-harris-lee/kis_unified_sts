@@ -729,3 +729,421 @@ class TestDailyReturnsTracking:
 
         # MDD should be negative (there were losses)
         assert metrics["max_drawdown_pct"] < 0
+
+
+class TestSlippageAnalysis:
+    """Test slippage analysis functionality."""
+
+    @patch("shared.ml.rl.evaluator.FuturesTradingEnv")
+    def test_slippage_analysis_returns_correct_structure(
+        self, mock_env_class, evaluator, mock_model, sample_test_data
+    ):
+        """Test slippage analysis returns DataFrame with expected columns."""
+        test_days, test_prices = sample_test_data
+
+        # Mock environment
+        mock_env_instance = MagicMock()
+        mock_env_instance.reset.return_value = (np.zeros(31), {"balance": 100_000_000})
+        mock_env_instance.step.return_value = (
+            np.zeros(31),
+            0.0,
+            True,
+            False,
+            {"balance": 100_500_000, "n_trades": 5},
+        )
+        mock_env_instance.wins = 3
+        mock_env_instance.losses = 2
+        mock_env_instance.trade_history = [
+            {"pnl": 200_000},
+            {"pnl": 150_000},
+            {"pnl": -100_000},
+            {"pnl": 300_000},
+            {"pnl": -50_000},
+        ]
+        mock_env_class.return_value = mock_env_instance
+
+        # Run slippage analysis
+        df = evaluator.slippage_analysis(mock_model, test_days, test_prices)
+
+        # Verify DataFrame structure
+        assert isinstance(df, pd.DataFrame)
+        assert len(df) == 5  # 5 slippage values configured
+        assert "slippage" in df.columns
+        assert "return_pct" in df.columns
+        assert "rr_ratio" in df.columns
+        assert "win_rate_pct" in df.columns
+        assert "total_trades" in df.columns
+
+        # Verify slippage values
+        expected_slippages = [0.00, 0.05, 0.10, 0.15, 0.20]
+        assert df["slippage"].tolist() == expected_slippages
+
+    @patch("shared.ml.rl.evaluator.FuturesTradingEnv")
+    def test_slippage_impact_on_returns(
+        self, mock_env_class, evaluator, mock_model, sample_test_data
+    ):
+        """Test that returns decrease as slippage increases."""
+        test_days, test_prices = sample_test_data
+
+        # Mock environment to return different balances based on slippage
+        # Higher slippage → lower final balance
+        def create_env_mock(slippage):
+            mock_env = MagicMock()
+            mock_env.reset.return_value = (np.zeros(31), {"balance": 100_000_000})
+            
+            # Final balance decreases with slippage
+            # 0.0: +5%, 0.05: +4%, 0.10: +3%, 0.15: +2%, 0.20: +1%
+            balance_impact = max(0.05 - slippage, 0.01)
+            final_balance = 100_000_000 * (1 + balance_impact)
+            
+            mock_env.step.return_value = (
+                np.zeros(31),
+                0.0,
+                True,
+                False,
+                {"balance": final_balance, "n_trades": 5},
+            )
+            mock_env.wins = 3
+            mock_env.losses = 2
+            mock_env.trade_history = [{"pnl": 100_000}] * 5
+            return mock_env
+
+        # Set up mock to return different environments based on slippage
+        mock_env_class.side_effect = lambda day_data, config, prices, aux_data=None: create_env_mock(
+            config.slippage
+        )
+
+        # Run slippage analysis
+        df = evaluator.slippage_analysis(mock_model, test_days, test_prices)
+
+        # Verify returns decrease monotonically with slippage (allowing some tolerance)
+        returns = df["return_pct"].values
+        for i in range(len(returns) - 1):
+            # Returns should not increase as slippage increases
+            assert returns[i] >= returns[i + 1] - 0.1, (
+                f"Returns should decrease with slippage: "
+                f"slip={df['slippage'].iloc[i]:.2f} ret={returns[i]:.2f} vs "
+                f"slip={df['slippage'].iloc[i+1]:.2f} ret={returns[i+1]:.2f}"
+            )
+
+    @patch("shared.ml.rl.evaluator.FuturesTradingEnv")
+    def test_slippage_impact_calculation(
+        self, mock_env_class, evaluator, mock_model, sample_test_data
+    ):
+        """Test slippage impact is correctly calculated and significant."""
+        test_days, test_prices = sample_test_data
+
+        # Create environment mocks with clear slippage impact
+        call_count = [0]
+        slippage_returns = {
+            0.00: 0.05,   # 5% return with no slippage
+            0.05: 0.04,   # 4% return
+            0.10: 0.03,   # 3% return
+            0.15: 0.02,   # 2% return
+            0.20: 0.01,   # 1% return
+        }
+
+        def step_side_effect(*args, **kwargs):
+            # Get current slippage being tested
+            current_slip = evaluator.slippage_values[call_count[0] // len(test_days)]
+            ret = slippage_returns[current_slip]
+            final_balance = 100_000_000 * (1 + ret)
+            call_count[0] += 1
+            
+            return (
+                np.zeros(31),
+                0.0,
+                True,
+                False,
+                {"balance": final_balance, "n_trades": 3},
+            )
+
+        mock_env_instance = MagicMock()
+        mock_env_instance.reset.return_value = (np.zeros(31), {"balance": 100_000_000})
+        mock_env_instance.step.side_effect = step_side_effect
+        mock_env_instance.wins = 2
+        mock_env_instance.losses = 1
+        mock_env_instance.trade_history = [
+            {"pnl": 200_000},
+            {"pnl": -100_000},
+            {"pnl": 150_000},
+        ]
+        mock_env_class.return_value = mock_env_instance
+
+        df = evaluator.slippage_analysis(mock_model, test_days, test_prices)
+
+        # Verify slippage impact is captured
+        # Return degradation from 0.0 to 0.20 slippage
+        zero_slip_return = df[df["slippage"] == 0.00]["return_pct"].iloc[0]
+        high_slip_return = df[df["slippage"] == 0.20]["return_pct"].iloc[0]
+        
+        impact = zero_slip_return - high_slip_return
+        # Impact should be significant (at least 3% degradation)
+        assert impact >= 3.0, f"Slippage impact should be significant, got {impact:.2f}%"
+
+    @patch("shared.ml.rl.evaluator.FuturesTradingEnv")
+    def test_slippage_analysis_with_single_day(
+        self, mock_env_class, evaluator, mock_model, sample_test_data
+    ):
+        """Test slippage analysis works with single day of data."""
+        test_days, test_prices = sample_test_data
+
+        # Mock environment
+        mock_env_instance = MagicMock()
+        mock_env_instance.reset.return_value = (np.zeros(31), {"balance": 100_000_000})
+        mock_env_instance.step.return_value = (
+            np.zeros(31),
+            0.0,
+            True,
+            False,
+            {"balance": 101_000_000, "n_trades": 2},
+        )
+        mock_env_instance.wins = 1
+        mock_env_instance.losses = 1
+        mock_env_instance.trade_history = [
+            {"pnl": 150_000},
+            {"pnl": -50_000},
+        ]
+        mock_env_class.return_value = mock_env_instance
+
+        # Run with single day
+        df = evaluator.slippage_analysis(
+            mock_model, [test_days[0]], [test_prices[0]]
+        )
+
+        # Should still return results for all slippage values
+        assert len(df) == 5
+        assert all(df["total_trades"] == 2)
+
+    @patch("shared.ml.rl.evaluator.FuturesTradingEnv")
+    def test_slippage_comparison_across_values(
+        self, mock_env_class, evaluator, mock_model, sample_test_data
+    ):
+        """Test comparison of metrics across different slippage values."""
+        test_days, test_prices = sample_test_data
+
+        # Mock environment with varying performance by slippage
+        def create_mock_for_slippage(slippage_val):
+            mock = MagicMock()
+            mock.reset.return_value = (np.zeros(31), {"balance": 100_000_000})
+            
+            # Higher slippage → more trades, lower win rate
+            n_trades = 5 + int(slippage_val * 10)  # More trades with higher slippage
+            wins = max(1, int(n_trades * (0.7 - slippage_val)))  # Win rate decreases
+            losses = n_trades - wins
+            
+            final_balance = 100_000_000 * (1 + 0.04 - slippage_val * 0.15)
+            
+            mock.step.return_value = (
+                np.zeros(31),
+                0.0,
+                True,
+                False,
+                {"balance": final_balance, "n_trades": n_trades},
+            )
+            mock.wins = wins
+            mock.losses = losses
+            mock.trade_history = [{"pnl": 100_000 if i < wins else -50_000} 
+                                   for i in range(n_trades)]
+            return mock
+
+        mock_env_class.side_effect = lambda day_data, config, prices, aux_data=None: create_mock_for_slippage(
+            config.slippage
+        )
+
+        df = evaluator.slippage_analysis(mock_model, test_days, test_prices)
+
+        # Verify each slippage level has valid metrics
+        for idx, row in df.iterrows():
+            assert row["return_pct"] != 0, f"Return should be non-zero at slip={row['slippage']}"
+            assert row["total_trades"] > 0, f"Should have trades at slip={row['slippage']}"
+            assert 0 <= row["win_rate_pct"] <= 100, (
+                f"Win rate should be valid percentage at slip={row['slippage']}"
+            )
+            assert row["rr_ratio"] > 0, f"RR ratio should be positive at slip={row['slippage']}"
+
+    @patch("shared.ml.rl.evaluator.FuturesTradingEnv")
+    def test_slippage_analysis_zero_slippage_baseline(
+        self, mock_env_class, evaluator, mock_model, sample_test_data
+    ):
+        """Test that zero slippage provides baseline performance."""
+        test_days, test_prices = sample_test_data
+
+        # Mock environment with optimal performance at zero slippage
+        mock_env_instance = MagicMock()
+        mock_env_instance.reset.return_value = (np.zeros(31), {"balance": 100_000_000})
+        mock_env_instance.step.return_value = (
+            np.zeros(31),
+            0.0,
+            True,
+            False,
+            {"balance": 105_000_000, "n_trades": 10},  # 5% return
+        )
+        mock_env_instance.wins = 8
+        mock_env_instance.losses = 2
+        mock_env_instance.trade_history = [
+            {"pnl": 100_000} if i < 8 else {"pnl": -50_000} for i in range(10)
+        ]
+        mock_env_class.return_value = mock_env_instance
+
+        df = evaluator.slippage_analysis(mock_model, test_days, test_prices)
+
+        # Zero slippage should give best or near-best performance
+        zero_slip_row = df[df["slippage"] == 0.00].iloc[0]
+        max_return = df["return_pct"].max()
+        
+        # Zero slippage return should be at or near maximum
+        assert zero_slip_row["return_pct"] >= max_return - 0.5, (
+            "Zero slippage should provide best or near-best returns"
+        )
+
+    @patch("shared.ml.rl.evaluator.FuturesTradingEnv")
+    def test_slippage_analysis_metrics_consistency(
+        self, mock_env_class, evaluator, mock_model, sample_test_data
+    ):
+        """Test that all metrics are consistently calculated across slippage values."""
+        test_days, test_prices = sample_test_data
+
+        # Mock environment
+        mock_env_instance = MagicMock()
+        mock_env_instance.reset.return_value = (np.zeros(31), {"balance": 100_000_000})
+        mock_env_instance.step.return_value = (
+            np.zeros(31),
+            0.0,
+            True,
+            False,
+            {"balance": 102_000_000, "n_trades": 6},
+        )
+        mock_env_instance.wins = 4
+        mock_env_instance.losses = 2
+        mock_env_instance.trade_history = [
+            {"pnl": 200_000},
+            {"pnl": 150_000},
+            {"pnl": -100_000},
+            {"pnl": 250_000},
+            {"pnl": -75_000},
+            {"pnl": 100_000},
+        ]
+        mock_env_class.return_value = mock_env_instance
+
+        df = evaluator.slippage_analysis(mock_model, test_days, test_prices)
+
+        # Verify no NaN or inf values (except allowed inf for RR ratio)
+        assert not df["slippage"].isna().any()
+        assert not df["return_pct"].isna().any()
+        assert not df["win_rate_pct"].isna().any()
+        assert not df["total_trades"].isna().any()
+
+        # Verify all metrics are finite and reasonable
+        for _, row in df.iterrows():
+            assert np.isfinite(row["return_pct"]), "Return should be finite"
+            assert np.isfinite(row["win_rate_pct"]), "Win rate should be finite"
+            assert row["win_rate_pct"] >= 0 and row["win_rate_pct"] <= 100, (
+                "Win rate should be percentage"
+            )
+            # RR ratio can be inf if no losses, but should be positive
+            assert row["rr_ratio"] > 0 or row["rr_ratio"] == float("inf"), (
+                "RR ratio should be positive or inf"
+            )
+
+    @patch("shared.ml.rl.evaluator.FuturesTradingEnv")
+    def test_slippage_analysis_no_trades(
+        self, mock_env_class, evaluator, mock_model, sample_test_data
+    ):
+        """Test slippage analysis handles case with no trades."""
+        test_days, test_prices = sample_test_data
+
+        # Mock environment with no trades
+        mock_env_instance = MagicMock()
+        mock_env_instance.reset.return_value = (np.zeros(31), {"balance": 100_000_000})
+        mock_env_instance.step.return_value = (
+            np.zeros(31),
+            0.0,
+            True,
+            False,
+            {"balance": 100_000_000, "n_trades": 0},
+        )
+        mock_env_instance.wins = 0
+        mock_env_instance.losses = 0
+        mock_env_instance.trade_history = []
+        mock_env_class.return_value = mock_env_instance
+
+        df = evaluator.slippage_analysis(mock_model, [test_days[0]], [test_prices[0]])
+
+        # Should still return results
+        assert len(df) == 5
+        assert all(df["total_trades"] == 0)
+        assert all(df["win_rate_pct"] == 0.0)
+        assert all(df["return_pct"] == 0.0)
+
+    @patch("shared.ml.rl.evaluator.FuturesTradingEnv")
+    def test_slippage_values_from_config(
+        self, mock_env_class, evaluator, mock_model, sample_test_data
+    ):
+        """Test that slippage values are correctly loaded from config."""
+        test_days, test_prices = sample_test_data
+
+        # Mock environment
+        mock_env_instance = MagicMock()
+        mock_env_instance.reset.return_value = (np.zeros(31), {"balance": 100_000_000})
+        mock_env_instance.step.return_value = (
+            np.zeros(31),
+            0.0,
+            True,
+            False,
+            {"balance": 101_000_000, "n_trades": 1},
+        )
+        mock_env_instance.wins = 1
+        mock_env_instance.losses = 0
+        mock_env_instance.trade_history = [{"pnl": 100_000}]
+        mock_env_class.return_value = mock_env_instance
+
+        df = evaluator.slippage_analysis(mock_model, [test_days[0]], [test_prices[0]])
+
+        # Verify configured slippage values are used
+        expected_slippages = evaluator.slippage_values
+        actual_slippages = df["slippage"].tolist()
+        
+        assert actual_slippages == expected_slippages, (
+            f"Slippage values should match config: "
+            f"expected {expected_slippages}, got {actual_slippages}"
+        )
+
+    @patch("shared.ml.rl.evaluator.FuturesTradingEnv")
+    def test_slippage_applied_to_environment(
+        self, mock_env_class, evaluator, mock_model, sample_test_data
+    ):
+        """Test that each slippage value is correctly applied to environment config."""
+        test_days, test_prices = sample_test_data
+
+        # Track which slippage values were used
+        slippage_used = []
+
+        def env_factory(day_data, config, prices, aux_data=None):
+            slippage_used.append(config.slippage)
+            mock = MagicMock()
+            mock.reset.return_value = (np.zeros(31), {"balance": 100_000_000})
+            mock.step.return_value = (
+                np.zeros(31),
+                0.0,
+                True,
+                False,
+                {"balance": 101_000_000, "n_trades": 1},
+            )
+            mock.wins = 1
+            mock.losses = 0
+            mock.trade_history = [{"pnl": 100_000}]
+            return mock
+
+        mock_env_class.side_effect = env_factory
+
+        df = evaluator.slippage_analysis(mock_model, [test_days[0]], [test_prices[0]])
+
+        # Verify each slippage value was applied
+        expected_slippages = [0.00, 0.05, 0.10, 0.15, 0.20]
+        
+        # Each slippage is used once per test day
+        assert slippage_used == expected_slippages, (
+            f"Expected slippage values {expected_slippages} to be applied, "
+            f"got {slippage_used}"
+        )
