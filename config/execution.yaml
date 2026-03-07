@@ -46,6 +46,9 @@ slippage_model:
   depth_impact_factor: 0.8       # 유동성 부족 시 추가 슬리피지 배수 (mini는 유동성 1/9~1/42로 높게 설정)
   min_slippage_bps: 0.5          # 최소 슬리피지 (0.5 bps)
   max_slippage_bps: 15.0         # 최대 슬리피지 (15 bps, 극단적 상황 방지)
+  typical_spread: 0.05           # 스프레드 정규화 기준값 (mini futures 일반적 스프레드)
+  default_spread: 0.05           # 호가 데이터 없을 때 기본 스프레드 (backtest/paper fallback)
+  default_depth: 10.0            # 호가 데이터 없을 때 기본 잔량 (backtest/paper fallback)
 
   # 시간대별 슬리피지 배수 (HH:MM-HH:MM 형식)
   time_of_day_multipliers:

@@ -25,6 +25,9 @@ class SlippageModelConfig:
         time_of_day_multipliers: Dict mapping time window (HH:MM-HH:MM) to multiplier
         min_slippage_bps: Minimum slippage in basis points (floor)
         max_slippage_bps: Maximum slippage in basis points (cap)
+        typical_spread: Typical spread for normalization (mini futures default 0.05)
+        default_spread: Default spread when no orderbook data available (backtest/paper fallback)
+        default_depth: Default depth when no orderbook data available (backtest/paper fallback)
     """
 
     enabled: bool = False
@@ -33,6 +36,9 @@ class SlippageModelConfig:
     time_of_day_multipliers: dict[str, float] = field(default_factory=dict)
     min_slippage_bps: float = 0.5
     max_slippage_bps: float = 10.0
+    typical_spread: float = 0.05
+    default_spread: float = 0.05
+    default_depth: float = 10.0
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> SlippageModelConfig:
@@ -68,6 +74,9 @@ class SlippageModelConfig:
             time_of_day_multipliers=time_multipliers,
             min_slippage_bps=float(data.get("min_slippage_bps", 0.5)),
             max_slippage_bps=float(data.get("max_slippage_bps", 10.0)),
+            typical_spread=float(data.get("typical_spread", 0.05)),
+            default_spread=float(data.get("default_spread", 0.05)),
+            default_depth=float(data.get("default_depth", 10.0)),
         )
 
     def get_time_multiplier(self, current_time: time | None = None) -> float:
@@ -123,11 +132,11 @@ def _time_in_window(current: time, window_str: str) -> bool:
         end = _parse_time(end_str.strip())
 
         if start <= end:
-            # Normal window (e.g., 09:00-12:00)
-            return start <= current <= end
+            # Normal window (e.g., 09:00-12:00) — exclusive end to avoid overlap
+            return start <= current < end
         else:
-            # Overnight window (e.g., 23:00-01:00)
-            return current >= start or current <= end
+            # Overnight window (e.g., 23:00-01:00) — exclusive end
+            return current >= start or current < end
 
     except (ValueError, AttributeError) as e:
         logger.warning(f"Invalid time window format '{window_str}': {e}")
@@ -206,8 +215,8 @@ class SlippageModel:
             slippage_bps += self.config.depth_impact_factor * 2.0
 
         # Add spread-based component (wider spread = more slippage)
-        # Normalize by a typical spread (0.05 for mini futures)
-        typical_spread = 0.05
+        # Normalize by a typical spread (configurable, default 0.05 for mini futures)
+        typical_spread = self.config.typical_spread
         if current_spread > typical_spread:
             spread_ratio = current_spread / typical_spread
             slippage_bps += (spread_ratio - 1.0) * self.config.base_spread_bps

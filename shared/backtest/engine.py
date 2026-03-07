@@ -430,8 +430,10 @@ class BacktestEngine:
             if self.config.slippage_model and self.config.slippage_model.config.enabled:
                 # Use slippage model for realistic fill price
                 order_size = float(quantity)
-                current_spread = float(bar.get("spread", 0.05)) if bar else 0.05
-                available_depth = float(bar.get("depth", 10.0)) if bar else 10.0
+                _default_spread = self.config.slippage_model.config.default_spread
+                _default_depth = self.config.slippage_model.config.default_depth
+                current_spread = float(bar.get("spread", _default_spread)) if bar else _default_spread
+                available_depth = float(bar.get("depth", _default_depth)) if bar else _default_depth
 
                 slippage_bps = self.config.slippage_model.calculate_slippage(
                     order_size=order_size,
@@ -518,9 +520,9 @@ class BacktestEngine:
             if self.config.slippage_model and self.config.slippage_model.config.enabled:
                 # Use slippage model for realistic exit fill price
                 order_size = float(pos.quantity)
-                # Use reasonable defaults for orderbook data (would come from bar in production)
-                current_spread = 0.05
-                available_depth = 10.0
+                # Use configured defaults for orderbook data (would come from bar in production)
+                current_spread = self.config.slippage_model.config.default_spread
+                available_depth = self.config.slippage_model.config.default_depth
 
                 slippage_bps = self.config.slippage_model.calculate_slippage(
                     order_size=order_size,

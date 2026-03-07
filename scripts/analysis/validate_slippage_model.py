@@ -225,26 +225,26 @@ def compare_results(
     comparison = {
         'no_slippage': {
             'final_capital': result_no_slip.final_capital,
-            'total_return': result_no_slip.total_return,
+            'total_return': result_no_slip.total_return_pct,
             'total_trades': result_no_slip.total_trades,
             'win_rate': result_no_slip.win_rate,
             'profit_factor': result_no_slip.profit_factor,
-            'max_drawdown': result_no_slip.max_drawdown,
+            'max_drawdown': result_no_slip.max_drawdown_pct,
         },
         'with_slippage': {
             'final_capital': result_with_slip.final_capital,
-            'total_return': result_with_slip.total_return,
+            'total_return': result_with_slip.total_return_pct,
             'total_trades': result_with_slip.total_trades,
             'win_rate': result_with_slip.win_rate,
             'profit_factor': result_with_slip.profit_factor,
-            'max_drawdown': result_with_slip.max_drawdown,
+            'max_drawdown': result_with_slip.max_drawdown_pct,
         },
     }
 
     # Calculate differences
     capital_diff = result_with_slip.final_capital - result_no_slip.final_capital
     capital_diff_pct = (capital_diff / result_no_slip.final_capital) * 100
-    return_diff = result_with_slip.total_return - result_no_slip.total_return
+    return_diff = result_with_slip.total_return_pct - result_no_slip.total_return_pct
 
     print(f"\nFinal Capital:")
     print(f"  Without slippage: {result_no_slip.final_capital:,.0f} KRW")
@@ -252,8 +252,8 @@ def compare_results(
     print(f"  Difference:       {capital_diff:,.0f} KRW ({capital_diff_pct:+.2f}%)")
 
     print(f"\nTotal Return:")
-    print(f"  Without slippage: {result_no_slip.total_return:+.2f}%")
-    print(f"  With slippage:    {result_with_slip.total_return:+.2f}%")
+    print(f"  Without slippage: {result_no_slip.total_return_pct:+.2f}%")
+    print(f"  With slippage:    {result_with_slip.total_return_pct:+.2f}%")
     print(f"  Difference:       {return_diff:+.2f}%")
 
     print(f"\nTrade Statistics:")

@@ -121,9 +121,9 @@ class VirtualBroker:
                 is_buy = (order.side == OrderSide.BUY)
                 available_depth = orderbook.available_qty(is_buy)
             else:
-                # Fall back to default values when orderbook is not provided
-                current_spread = 0.05  # Default spread for mini futures
-                available_depth = 10.0  # Default depth
+                # Fall back to configured default values when orderbook is not provided
+                current_spread = self.slippage_model.config.default_spread
+                available_depth = self.slippage_model.config.default_depth
 
             slippage_bps = self.slippage_model.calculate_slippage(
                 order_size=order_size,

@@ -511,8 +511,8 @@ def test_backtest_slippage_comparison_long_position():
     )
 
     # P&L comparison: slippage should reduce profit
-    pnl_no_slip = trade_no_slip.profit
-    pnl_with_slip = trade_with_slip.profit
+    pnl_no_slip = trade_no_slip.pnl
+    pnl_with_slip = trade_with_slip.pnl
 
     assert pnl_with_slip < pnl_no_slip, (
         f"Slippage should reduce P&L: "
@@ -619,8 +619,8 @@ def test_backtest_slippage_comparison_short_position():
     )
 
     # P&L comparison: slippage should make loss larger (or profit smaller)
-    pnl_no_slip = trade_no_slip.profit
-    pnl_with_slip = trade_with_slip.profit
+    pnl_no_slip = trade_no_slip.pnl
+    pnl_with_slip = trade_with_slip.pnl
 
     assert pnl_with_slip < pnl_no_slip, (
         f"Slippage should reduce P&L (increase loss): "
@@ -718,9 +718,9 @@ def test_backtest_slippage_impact_on_winrate():
     )
 
     # Total return should be lower with slippage
-    assert result_with_slip.total_return <= result_no_slip.total_return, (
-        f"Total return with slippage ({result_with_slip.total_return:.2%}) "
-        f"should be <= without slippage ({result_no_slip.total_return:.2%})"
+    assert result_with_slip.total_return_pct <= result_no_slip.total_return_pct, (
+        f"Total return with slippage ({result_with_slip.total_return_pct:.2f}%) "
+        f"should be <= without slippage ({result_no_slip.total_return_pct:.2f}%)"
     )
 
     # Calculate cumulative slippage cost across all trades
