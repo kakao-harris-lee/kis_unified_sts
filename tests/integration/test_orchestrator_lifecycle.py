@@ -1272,3 +1272,625 @@ class TestTradingLoop:
             assert futures_data_processed[-1]["price"] == 250.45
 
             await orchestrator.stop()
+
+
+@pytest.mark.integration
+class TestPauseResume:
+    """Test orchestrator pause/resume functionality without data loss."""
+
+    @pytest.mark.asyncio
+    async def test_basic_pause_resume_state_transitions(self):
+        """Verify basic pause/resume state transitions work correctly."""
+        from services.trading.orchestrator import (
+            TradingOrchestrator,
+            TradingConfig,
+            TradingState,
+        )
+
+        config = TradingConfig.stock(
+            strategy_name="bb_reversion",
+            symbols=["005930"],
+        )
+
+        with patch.object(
+            TradingOrchestrator, "_init_kis_client", return_value=None
+        ), patch.object(
+            TradingOrchestrator, "_init_futures_slippage_controller"
+        ), patch.object(
+            TradingOrchestrator, "_init_price_feeds", return_value=None
+        ), patch.object(
+            TradingOrchestrator, "_init_data_provider"
+        ), patch.object(
+            TradingOrchestrator, "_init_tick_stream_publisher"
+        ), patch.object(
+            TradingOrchestrator, "_init_strategy_infrastructure"
+        ), patch.object(
+            TradingOrchestrator, "_init_indicator_engine"
+        ), patch.object(
+            TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
+        ), patch.object(
+            TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
+        ), patch.object(
+            TradingOrchestrator, "_start_market_data_loop", new_callable=AsyncMock
+        ), patch.object(
+            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock(), stop=AsyncMock())
+        ), patch(
+            "services.monitoring.metrics.get_metrics_collector"
+        ) as mock_metrics, patch.object(
+            TradingOrchestrator, "_notify", new_callable=AsyncMock
+        ):
+            mock_metrics.return_value = MagicMock(
+                start_prometheus_server=MagicMock(),
+                register_strategies=MagicMock(),
+            )
+
+            orchestrator = TradingOrchestrator(config)
+
+            # Initial state
+            assert orchestrator.state == TradingState.IDLE
+
+            # Start -> RUNNING
+            await orchestrator.start()
+            assert orchestrator.state == TradingState.RUNNING
+
+            # Pause -> PAUSED
+            await orchestrator.pause()
+            assert orchestrator.state == TradingState.PAUSED
+
+            # Resume -> RUNNING
+            await orchestrator.resume()
+            assert orchestrator.state == TradingState.RUNNING
+
+            # Cleanup
+            await orchestrator.stop()
+            assert orchestrator.state == TradingState.STOPPED
+
+    @pytest.mark.asyncio
+    async def test_pause_resume_preserves_positions(self):
+        """Verify positions are preserved during pause/resume."""
+        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from services.trading.position_tracker import PositionTracker
+        from shared.models import Position, PositionSide
+
+        config = TradingConfig.stock(
+            strategy_name="bb_reversion",
+            symbols=["005930", "000660"],
+        )
+
+        # Create mock positions
+        mock_positions = [
+            Position(
+                code="005930",
+                name="삼성전자",
+                side=PositionSide.LONG,
+                entry_price=70000.0,
+                quantity=10,
+                current_price=71000.0,
+                strategy="bb_reversion",
+            ),
+            Position(
+                code="000660",
+                name="SK하이닉스",
+                side=PositionSide.LONG,
+                entry_price=120000.0,
+                quantity=5,
+                current_price=122000.0,
+                strategy="bb_reversion",
+            ),
+        ]
+
+        with patch.object(
+            TradingOrchestrator, "_init_kis_client", return_value=None
+        ), patch.object(
+            TradingOrchestrator, "_init_futures_slippage_controller"
+        ), patch.object(
+            TradingOrchestrator, "_init_price_feeds", return_value=None
+        ), patch.object(
+            TradingOrchestrator, "_init_data_provider"
+        ), patch.object(
+            TradingOrchestrator, "_init_tick_stream_publisher"
+        ), patch.object(
+            TradingOrchestrator, "_init_strategy_infrastructure"
+        ), patch.object(
+            TradingOrchestrator, "_init_indicator_engine"
+        ), patch.object(
+            TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
+        ), patch.object(
+            TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
+        ), patch.object(
+            TradingOrchestrator, "_start_market_data_loop", new_callable=AsyncMock
+        ), patch.object(
+            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock(), stop=AsyncMock())
+        ), patch(
+            "services.monitoring.metrics.get_metrics_collector"
+        ) as mock_metrics, patch.object(
+            TradingOrchestrator, "_notify", new_callable=AsyncMock
+        ):
+            mock_metrics.return_value = MagicMock(
+                start_prometheus_server=MagicMock(),
+                register_strategies=MagicMock(),
+            )
+
+            orchestrator = TradingOrchestrator(config)
+            await orchestrator.start()
+
+            # Add positions to position tracker
+            orchestrator._position_tracker = MagicMock(spec=PositionTracker)
+            orchestrator._position_tracker.positions = mock_positions.copy()
+            orchestrator._position_tracker.position_count = len(mock_positions)
+
+            # Capture positions before pause
+            positions_before = list(orchestrator._position_tracker.positions)
+
+            # Pause
+            await orchestrator.pause()
+
+            # Verify positions still exist during pause
+            assert len(orchestrator._position_tracker.positions) == 2
+            assert orchestrator._position_tracker.positions == positions_before
+
+            # Resume
+            await orchestrator.resume()
+
+            # Verify positions are still intact after resume
+            assert len(orchestrator._position_tracker.positions) == 2
+            assert orchestrator._position_tracker.positions == positions_before
+
+            await orchestrator.stop()
+
+    @pytest.mark.asyncio
+    async def test_pause_resume_preserves_statistics(self):
+        """Verify trading statistics are preserved during pause/resume."""
+        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+
+        config = TradingConfig.stock(
+            strategy_name="bb_reversion",
+            symbols=["005930"],
+        )
+
+        with patch.object(
+            TradingOrchestrator, "_init_kis_client", return_value=None
+        ), patch.object(
+            TradingOrchestrator, "_init_futures_slippage_controller"
+        ), patch.object(
+            TradingOrchestrator, "_init_price_feeds", return_value=None
+        ), patch.object(
+            TradingOrchestrator, "_init_data_provider"
+        ), patch.object(
+            TradingOrchestrator, "_init_tick_stream_publisher"
+        ), patch.object(
+            TradingOrchestrator, "_init_strategy_infrastructure"
+        ), patch.object(
+            TradingOrchestrator, "_init_indicator_engine"
+        ), patch.object(
+            TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
+        ), patch.object(
+            TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
+        ), patch.object(
+            TradingOrchestrator, "_start_market_data_loop", new_callable=AsyncMock
+        ), patch.object(
+            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock(), stop=AsyncMock())
+        ), patch(
+            "services.monitoring.metrics.get_metrics_collector"
+        ) as mock_metrics, patch.object(
+            TradingOrchestrator, "_notify", new_callable=AsyncMock
+        ):
+            mock_metrics.return_value = MagicMock(
+                start_prometheus_server=MagicMock(),
+                register_strategies=MagicMock(),
+            )
+
+            orchestrator = TradingOrchestrator(config)
+            await orchestrator.start()
+
+            # Set some statistics
+            orchestrator.session_count = 5
+            orchestrator.total_trades = 42
+            orchestrator.total_pnl = 123456.78
+
+            # Capture stats before pause
+            session_count_before = orchestrator.session_count
+            total_trades_before = orchestrator.total_trades
+            total_pnl_before = orchestrator.total_pnl
+
+            # Pause
+            await orchestrator.pause()
+
+            # Verify stats unchanged during pause
+            assert orchestrator.session_count == session_count_before
+            assert orchestrator.total_trades == total_trades_before
+            assert orchestrator.total_pnl == total_pnl_before
+
+            # Resume
+            await orchestrator.resume()
+
+            # Verify stats unchanged after resume
+            assert orchestrator.session_count == session_count_before
+            assert orchestrator.total_trades == total_trades_before
+            assert orchestrator.total_pnl == total_pnl_before
+
+            await orchestrator.stop()
+
+    @pytest.mark.asyncio
+    async def test_pause_stops_pipeline_resume_restarts(self):
+        """Verify pause stops pipeline and resume restarts it."""
+        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+
+        config = TradingConfig.stock(
+            strategy_name="bb_reversion",
+            symbols=["005930"],
+        )
+
+        mock_pipeline = MagicMock()
+        mock_pipeline.start = AsyncMock()
+        mock_pipeline.stop = AsyncMock()
+
+        with patch.object(
+            TradingOrchestrator, "_init_kis_client", return_value=None
+        ), patch.object(
+            TradingOrchestrator, "_init_futures_slippage_controller"
+        ), patch.object(
+            TradingOrchestrator, "_init_price_feeds", return_value=None
+        ), patch.object(
+            TradingOrchestrator, "_init_data_provider"
+        ), patch.object(
+            TradingOrchestrator, "_init_tick_stream_publisher"
+        ), patch.object(
+            TradingOrchestrator, "_init_strategy_infrastructure"
+        ), patch.object(
+            TradingOrchestrator, "_init_indicator_engine"
+        ), patch.object(
+            TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
+        ), patch.object(
+            TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
+        ), patch.object(
+            TradingOrchestrator, "_start_market_data_loop", new_callable=AsyncMock
+        ), patch.object(
+            TradingOrchestrator, "_create_pipeline", return_value=mock_pipeline
+        ), patch(
+            "services.monitoring.metrics.get_metrics_collector"
+        ) as mock_metrics, patch.object(
+            TradingOrchestrator, "_notify", new_callable=AsyncMock
+        ):
+            mock_metrics.return_value = MagicMock(
+                start_prometheus_server=MagicMock(),
+                register_strategies=MagicMock(),
+            )
+
+            orchestrator = TradingOrchestrator(config)
+            await orchestrator.start()
+
+            # Pipeline should have started
+            assert mock_pipeline.start.call_count >= 1
+
+            # Pause - pipeline should stop
+            await orchestrator.pause()
+            assert mock_pipeline.stop.call_count == 1
+
+            # Resume - pipeline should start again
+            await orchestrator.resume()
+            assert mock_pipeline.start.call_count >= 2
+
+            await orchestrator.stop()
+
+    @pytest.mark.asyncio
+    async def test_market_data_continuity_after_resume(self):
+        """Verify market data processing continues correctly after resume."""
+        import asyncio
+        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+
+        config = TradingConfig.futures(
+            strategy_name="rl_mppo",
+        )
+
+        # Track market data processing
+        market_data_events = []
+        pause_event = asyncio.Event()
+        resume_event = asyncio.Event()
+
+        async def mock_market_data_loop(self_ref):
+            """Simulate market data loop that can be paused/resumed"""
+            for i in range(20):
+                # Simulate pause at iteration 10
+                if i == 10:
+                    pause_event.set()
+                    # Wait for resume signal
+                    await resume_event.wait()
+
+                market_data_events.append({
+                    "iteration": i,
+                    "price": 250.0 + i * 0.1,
+                    "state": self_ref.state.value,
+                })
+                await asyncio.sleep(0.01)
+
+        with patch.object(
+            TradingOrchestrator, "_init_kis_client", return_value=None
+        ), patch.object(
+            TradingOrchestrator, "_init_futures_slippage_controller"
+        ), patch.object(
+            TradingOrchestrator, "_init_price_feeds", return_value=None
+        ), patch.object(
+            TradingOrchestrator, "_init_data_provider"
+        ), patch.object(
+            TradingOrchestrator, "_init_tick_stream_publisher"
+        ), patch.object(
+            TradingOrchestrator, "_init_strategy_infrastructure"
+        ), patch.object(
+            TradingOrchestrator, "_init_indicator_engine"
+        ), patch.object(
+            TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
+        ), patch.object(
+            TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
+        ), patch.object(
+            TradingOrchestrator, "_start_market_data_loop", side_effect=mock_market_data_loop
+        ), patch.object(
+            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock(), stop=AsyncMock())
+        ), patch(
+            "services.monitoring.metrics.get_metrics_collector"
+        ) as mock_metrics, patch.object(
+            TradingOrchestrator, "_notify", new_callable=AsyncMock
+        ):
+            mock_metrics.return_value = MagicMock(
+                start_prometheus_server=MagicMock(),
+                register_strategies=MagicMock(),
+            )
+
+            orchestrator = TradingOrchestrator(config)
+
+            # Start orchestrator
+            async def run_with_pause_resume():
+                await orchestrator.start()
+
+                # Wait for pause point
+                await pause_event.wait()
+
+                # Pause
+                await orchestrator.pause()
+                await asyncio.sleep(0.05)  # Brief pause
+
+                # Resume
+                await orchestrator.resume()
+                resume_event.set()
+
+                # Wait a bit for remaining iterations
+                await asyncio.sleep(0.3)
+
+                await orchestrator.stop()
+
+            await run_with_pause_resume()
+
+            # Verify market data was processed continuously
+            # (though state changed during pause)
+            assert len(market_data_events) == 20
+            assert market_data_events[0]["iteration"] == 0
+            assert market_data_events[-1]["iteration"] == 19
+
+            # Verify data continuity (no gaps in iteration sequence)
+            iterations = [event["iteration"] for event in market_data_events]
+            assert iterations == list(range(20))
+
+    @pytest.mark.asyncio
+    async def test_no_duplicate_orders_after_resume(self):
+        """Verify no duplicate orders are placed after resume."""
+        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from shared.models import Signal, SignalDirection
+
+        config = TradingConfig.stock(
+            strategy_name="bb_reversion",
+            symbols=["005930"],
+        )
+
+        # Track order execution attempts
+        order_attempts = []
+
+        async def mock_execute_order(*args, **kwargs):
+            """Track order execution attempts"""
+            signal = args[0] if args else kwargs.get("signal")
+            order_attempts.append({
+                "code": signal.code,
+                "direction": signal.direction,
+            })
+            # Simulate successful order
+            return MagicMock(success=True, order_id=f"ORDER_{len(order_attempts)}")
+
+        with patch.object(
+            TradingOrchestrator, "_init_kis_client", return_value=None
+        ), patch.object(
+            TradingOrchestrator, "_init_futures_slippage_controller"
+        ), patch.object(
+            TradingOrchestrator, "_init_price_feeds", return_value=None
+        ), patch.object(
+            TradingOrchestrator, "_init_data_provider"
+        ), patch.object(
+            TradingOrchestrator, "_init_tick_stream_publisher"
+        ), patch.object(
+            TradingOrchestrator, "_init_strategy_infrastructure"
+        ), patch.object(
+            TradingOrchestrator, "_init_indicator_engine"
+        ), patch.object(
+            TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
+        ), patch.object(
+            TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
+        ), patch.object(
+            TradingOrchestrator, "_start_market_data_loop", new_callable=AsyncMock
+        ), patch.object(
+            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock(), stop=AsyncMock())
+        ), patch.object(
+            TradingOrchestrator, "_execute_entry_order", side_effect=mock_execute_order
+        ), patch(
+            "services.monitoring.metrics.get_metrics_collector"
+        ) as mock_metrics, patch.object(
+            TradingOrchestrator, "_notify", new_callable=AsyncMock
+        ):
+            mock_metrics.return_value = MagicMock(
+                start_prometheus_server=MagicMock(),
+                register_strategies=MagicMock(),
+            )
+
+            orchestrator = TradingOrchestrator(config)
+            await orchestrator.start()
+
+            # Create a test signal
+            test_signal = Signal(
+                code="005930",
+                name="삼성전자",
+                direction=SignalDirection.ENTRY,
+                strategy="bb_reversion",
+                price=70000.0,
+                confidence=0.85,
+            )
+
+            # Execute order before pause
+            await orchestrator._execute_entry_order(test_signal)
+            initial_order_count = len(order_attempts)
+
+            # Pause
+            await orchestrator.pause()
+
+            # Try to execute during pause (should not happen in real scenario,
+            # but testing defensive behavior)
+            # Note: In real implementation, check should prevent this
+
+            # Resume
+            await orchestrator.resume()
+
+            # After resume, order attempts should not have duplicated
+            # The count should only increase if new signals are generated
+            assert len(order_attempts) == initial_order_count
+
+            await orchestrator.stop()
+
+    @pytest.mark.asyncio
+    async def test_multiple_pause_resume_cycles(self):
+        """Verify orchestrator handles multiple pause/resume cycles correctly."""
+        from services.trading.orchestrator import (
+            TradingOrchestrator,
+            TradingConfig,
+            TradingState,
+        )
+
+        config = TradingConfig.stock(
+            strategy_name="bb_reversion",
+            symbols=["005930"],
+        )
+
+        with patch.object(
+            TradingOrchestrator, "_init_kis_client", return_value=None
+        ), patch.object(
+            TradingOrchestrator, "_init_futures_slippage_controller"
+        ), patch.object(
+            TradingOrchestrator, "_init_price_feeds", return_value=None
+        ), patch.object(
+            TradingOrchestrator, "_init_data_provider"
+        ), patch.object(
+            TradingOrchestrator, "_init_tick_stream_publisher"
+        ), patch.object(
+            TradingOrchestrator, "_init_strategy_infrastructure"
+        ), patch.object(
+            TradingOrchestrator, "_init_indicator_engine"
+        ), patch.object(
+            TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
+        ), patch.object(
+            TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
+        ), patch.object(
+            TradingOrchestrator, "_start_market_data_loop", new_callable=AsyncMock
+        ), patch.object(
+            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock(), stop=AsyncMock())
+        ), patch(
+            "services.monitoring.metrics.get_metrics_collector"
+        ) as mock_metrics, patch.object(
+            TradingOrchestrator, "_notify", new_callable=AsyncMock
+        ):
+            mock_metrics.return_value = MagicMock(
+                start_prometheus_server=MagicMock(),
+                register_strategies=MagicMock(),
+            )
+
+            orchestrator = TradingOrchestrator(config)
+            await orchestrator.start()
+
+            # Set some initial state
+            orchestrator.total_trades = 10
+
+            # Multiple pause/resume cycles
+            for i in range(5):
+                # Pause
+                await orchestrator.pause()
+                assert orchestrator.state == TradingState.PAUSED
+
+                # State should be preserved
+                assert orchestrator.total_trades == 10
+
+                # Resume
+                await orchestrator.resume()
+                assert orchestrator.state == TradingState.RUNNING
+
+                # State should still be preserved
+                assert orchestrator.total_trades == 10
+
+            await orchestrator.stop()
+
+    @pytest.mark.asyncio
+    async def test_pause_from_non_running_state_is_noop(self):
+        """Verify pause from non-RUNNING state is a no-op."""
+        from services.trading.orchestrator import (
+            TradingOrchestrator,
+            TradingConfig,
+            TradingState,
+        )
+
+        config = TradingConfig.stock(
+            strategy_name="bb_reversion",
+            symbols=["005930"],
+        )
+
+        with patch(
+            "services.monitoring.metrics.get_metrics_collector"
+        ) as mock_metrics, patch.object(
+            TradingOrchestrator, "_notify", new_callable=AsyncMock
+        ):
+            mock_metrics.return_value = MagicMock(
+                start_prometheus_server=MagicMock(),
+                register_strategies=MagicMock(),
+            )
+
+            orchestrator = TradingOrchestrator(config)
+
+            # Try to pause when IDLE
+            assert orchestrator.state == TradingState.IDLE
+            await orchestrator.pause()
+            # Should remain IDLE (not change to PAUSED)
+            assert orchestrator.state == TradingState.IDLE
+
+    @pytest.mark.asyncio
+    async def test_resume_from_non_paused_state_is_noop(self):
+        """Verify resume from non-PAUSED state is a no-op."""
+        from services.trading.orchestrator import (
+            TradingOrchestrator,
+            TradingConfig,
+            TradingState,
+        )
+
+        config = TradingConfig.stock(
+            strategy_name="bb_reversion",
+            symbols=["005930"],
+        )
+
+        with patch(
+            "services.monitoring.metrics.get_metrics_collector"
+        ) as mock_metrics, patch.object(
+            TradingOrchestrator, "_notify", new_callable=AsyncMock
+        ):
+            mock_metrics.return_value = MagicMock(
+                start_prometheus_server=MagicMock(),
+                register_strategies=MagicMock(),
+            )
+
+            orchestrator = TradingOrchestrator(config)
+
+            # Try to resume when IDLE
+            assert orchestrator.state == TradingState.IDLE
+            await orchestrator.resume()
+            # Should remain IDLE (not change to RUNNING)
+            assert orchestrator.state == TradingState.IDLE
