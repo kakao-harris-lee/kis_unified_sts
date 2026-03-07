@@ -106,6 +106,26 @@ SCHEMAS = {
         TTL exit_date + INTERVAL 180 DAY
         COMMENT 'Closed RL trade records for performance analytics'
     """,
+    "rl_drift_metrics": """
+        CREATE TABLE IF NOT EXISTS {database}.rl_drift_metrics (
+            timestamp DateTime,
+            code String,
+            strategy LowCardinality(String),
+            kl_divergence Float64,
+            psi_score Float64,
+            confidence_mean Float64,
+            confidence_std Float64,
+            sharpe_5d Nullable(Float64),
+            sharpe_20d Nullable(Float64),
+            win_rate_5d Nullable(Float64),
+            win_rate_20d Nullable(Float64),
+            created_at DateTime DEFAULT now()
+        ) ENGINE = MergeTree()
+        PARTITION BY toYYYYMM(timestamp)
+        ORDER BY (strategy, timestamp)
+        TTL timestamp + INTERVAL 180 DAY
+        COMMENT 'RL model drift detection metrics for production monitoring'
+    """,
     "tick_data": """
         CREATE TABLE IF NOT EXISTS {database}.tick_data (
             code String,
