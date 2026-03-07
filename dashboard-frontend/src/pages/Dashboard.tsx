@@ -28,6 +28,7 @@ interface TradeStats {
 function Dashboard() {
   const queryClient = useQueryClient();
   const [isStartModalOpen, setIsStartModalOpen] = useState(false);
+  const [isStopModalOpen, setIsStopModalOpen] = useState(false);
 
   const {
     data: status,
@@ -79,6 +80,11 @@ function Dashboard() {
   };
 
   const handleStopTrading = () => {
+    setIsStopModalOpen(true);
+  };
+
+  const handleConfirmStop = () => {
+    setIsStopModalOpen(false);
     stopTradingMutation.mutate();
   };
 
@@ -220,6 +226,16 @@ function Dashboard() {
         message="Are you sure you want to start trading? This will activate all enabled strategies and begin executing trades."
         confirmText="Start Trading"
         confirmStyle="green"
+      />
+
+      <ConfirmationModal
+        isOpen={isStopModalOpen}
+        onClose={() => setIsStopModalOpen(false)}
+        onConfirm={handleConfirmStop}
+        title="Stop Trading"
+        message="Are you sure you want to stop trading? This will halt all active strategies and may affect open positions."
+        confirmText="Stop Trading"
+        confirmStyle="red"
       />
     </div>
   );
