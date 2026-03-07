@@ -722,6 +722,7 @@ class RLMPPOConfig(ServiceConfigBase):
     dqn: DQNHyperparameters = Field(default_factory=DQNHyperparameters)
     a2c: A2CHyperparameters = Field(default_factory=A2CHyperparameters)
     ppo: PPOHyperparameters = Field(default_factory=PPOHyperparameters)
+    sac: SACHyperparameters = Field(default_factory=SACHyperparameters)
     ma_cross: MACrossConfig = Field(default_factory=MACrossConfig)
 
     # Data and training

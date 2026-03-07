@@ -90,6 +90,15 @@ ppo:
   n_epochs: 10
   total_timesteps: 5_000_000
 
+sac:
+  learning_rate: 0.0003
+  gamma: 0.99
+  buffer_size: 100_000
+  tau: 0.005
+  ent_coef: auto
+  batch_size: 64
+  total_timesteps: 5_000_000
+
 ma_cross:
   short_window: 5
   long_window: 20
