@@ -1,10 +1,15 @@
 """계층적 RL 2단계 학습 파이프라인
 
 Phase 1: Low-level (1분봉) — 전체 데이터로 매매 실행 모델 학습
-Phase 2: High-level (15분봉) — low-level 결과 기반 리스크 예산 모델 학습
+Phase 2: High-level (15분봉) — low-level 결과 기반 리스크 예산 또는 방향성 편향 모델 학습
 
 Usage:
-    trainer = HierarchicalTrainer()
+    # Risk budget mode (기본)
+    trainer = HierarchicalTrainer(mode="risk_budget")
+    models = trainer.train(train_days, train_prices)
+
+    # Directional bias mode
+    trainer = HierarchicalTrainer(mode="directional")
     models = trainer.train(train_days, train_prices)
 """
 
@@ -19,7 +24,14 @@ import numpy as np
 from shared.config import ConfigLoader
 from shared.ml.base import get_device
 from shared.ml.rl.env import RLEnvConfig
-from shared.ml.rl.hierarchical.high_level_env import HighLevelAction, HighLevelConfig, HighLevelEnv
+from shared.ml.rl.hierarchical.high_level_env import (
+    DirectionalHighLevelConfig,
+    DirectionalHighLevelEnv,
+    HighLevelAction,
+    HighLevelConfig,
+    HighLevelDirectionalAction,
+    HighLevelEnv,
+)
 from shared.ml.rl.hierarchical.low_level_env import LowLevelEnv
 
 logger = logging.getLogger(__name__)
@@ -34,12 +46,27 @@ class HierarchicalTrainer:
 
     Phase 2: High-level (15분봉)
         - Phase 1 low-level 결과를 보상으로 사용
-        - 15분마다 risk_budget 결정 모델 학습
+        - 15분마다 risk_budget 또는 directional_bias 결정 모델 학습
+
+    Modes:
+        - "risk_budget": High-level이 리스크 예산 결정 (AGGRESSIVE/NEUTRAL/DEFENSIVE)
+        - "directional": High-level이 방향성 편향 결정 (LONG_BIAS/SHORT_BIAS/FLAT)
     """
 
-    def __init__(self, config_path: str = "ml/rl_mppo.yaml"):
+    def __init__(self, config_path: str = "ml/rl_mppo.yaml", mode: str = "risk_budget"):
+        """
+        Args:
+            config_path: 설정 파일 경로
+            mode: "risk_budget" 또는 "directional"
+        """
+        if mode not in ("risk_budget", "directional"):
+            raise ValueError(
+                f"Invalid mode '{mode}'. Must be 'risk_budget' or 'directional'."
+            )
+
         self.config = ConfigLoader.load(config_path)
         self.config_path = config_path
+        self.mode = mode
         self.env_config = RLEnvConfig.from_yaml(config_path)
         self.device = get_device(self.config.get("mppo", {}).get("device", "auto"))
 
@@ -161,16 +188,27 @@ class HierarchicalTrainer:
         from stable_baselines3.common.vec_env import DummyVecEnv
 
         hl_cfg = self.config.get("hierarchical", {})
-        risk_budgets_raw = hl_cfg.get("risk_budgets", {})
-        risk_budgets = {
-            HighLevelAction.AGGRESSIVE: risk_budgets_raw.get("aggressive", 1.0),
-            HighLevelAction.NEUTRAL: risk_budgets_raw.get("neutral", 0.5),
-            HighLevelAction.DEFENSIVE: risk_budgets_raw.get("defensive", 0.0),
-        }
-        hl_config = HighLevelConfig(
-            initial_balance=self.env_config.initial_balance,
-            risk_budgets=risk_budgets,
-        )
+
+        # 모드에 따라 환경 설정 및 클래스 선택
+        if self.mode == "directional":
+            hl_config = DirectionalHighLevelConfig(
+                initial_balance=self.env_config.initial_balance,
+            )
+            env_class = DirectionalHighLevelEnv
+            logger.info("Using DirectionalHighLevelEnv for high-level training")
+        else:  # risk_budget
+            risk_budgets_raw = hl_cfg.get("risk_budgets", {})
+            risk_budgets = {
+                HighLevelAction.AGGRESSIVE: risk_budgets_raw.get("aggressive", 1.0),
+                HighLevelAction.NEUTRAL: risk_budgets_raw.get("neutral", 0.5),
+                HighLevelAction.DEFENSIVE: risk_budgets_raw.get("defensive", 0.0),
+            }
+            hl_config = HighLevelConfig(
+                initial_balance=self.env_config.initial_balance,
+                risk_budgets=risk_budgets,
+            )
+            env_class = HighLevelEnv
+            logger.info("Using HighLevelEnv (risk_budget) for high-level training")
 
         # 15분봉 피처 생성 (1분봉을 15분 평균으로 축소)
         train_15m_days = []
@@ -189,7 +227,7 @@ class HierarchicalTrainer:
         day_idx = [0]
 
         def make_fn():
-            class _RotatingHighEnv(HighLevelEnv):
+            class _RotatingHighEnv(env_class):
                 def reset(self, **kwargs):
                     idx = day_idx[0] % len(train_15m_days)
                     self.day_data = train_15m_days[idx]
