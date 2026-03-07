@@ -379,17 +379,17 @@ function HistoryTab() {
           <StatCard
             title="Win Rate"
             value={`${stats.win_rate.toFixed(1)}%`}
-            highlight={stats.win_rate >= 50}
+            variant={stats.win_rate >= 50 ? 'positive' : 'negative'}
           />
           <StatCard
             title="Total P&L"
             value={`${stats.total_pnl >= 0 ? '+' : ''}${stats.total_pnl.toLocaleString()}`}
-            highlight={stats.total_pnl >= 0}
+            variant={stats.total_pnl >= 0 ? 'positive' : 'negative'}
           />
           <StatCard
             title="Avg P&L"
             value={`${stats.avg_pnl >= 0 ? '+' : ''}${stats.avg_pnl.toLocaleString()}`}
-            highlight={stats.avg_pnl >= 0}
+            variant={stats.avg_pnl >= 0 ? 'positive' : 'negative'}
           />
         </div>
       )}

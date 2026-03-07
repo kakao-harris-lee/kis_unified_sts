@@ -1,13 +1,25 @@
+type StatCardVariant = 'positive' | 'negative' | 'neutral';
+
+const VARIANT_CLASSES: Record<StatCardVariant, string> = {
+  positive: 'text-green-400',
+  negative: 'text-red-400',
+  neutral: 'text-white',
+};
+
 interface StatCardProps {
   title: string;
   value: string | number;
   loading?: boolean;
+  /** @deprecated Use `variant` instead */
   highlight?: boolean;
+  variant?: StatCardVariant;
   error?: string;
   onRetry?: () => void;
 }
 
-function StatCard({ title, value, loading, highlight, error, onRetry }: StatCardProps) {
+function StatCard({ title, value, loading, highlight, variant, error, onRetry }: StatCardProps) {
+  const resolvedVariant: StatCardVariant = variant ?? (highlight ? 'positive' : 'neutral');
+
   return (
     <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
       <div className="text-sm text-gray-400 mb-1">{title}</div>
@@ -45,9 +57,7 @@ function StatCard({ title, value, loading, highlight, error, onRetry }: StatCard
         </div>
       ) : (
         <div
-          className={`text-2xl font-bold ${
-            highlight ? 'text-green-400' : 'text-white'
-          }`}
+          className={`text-2xl font-bold ${VARIANT_CLASSES[resolvedVariant]}`}
         >
           {value}
         </div>
