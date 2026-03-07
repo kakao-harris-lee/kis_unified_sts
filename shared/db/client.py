@@ -240,18 +240,43 @@ class ClickHouseClient:
                     logger.warning(f"Error during singleton cleanup: {e}")
             cls._instance = None
 
+    def _build_connection_params(self) -> dict:
+        """Build connection parameters including TLS settings.
+
+        Returns:
+            dict: Connection parameters for SyncClient
+        """
+        params = {
+            "host": self.config.host,
+            "port": self.config.port,
+            "user": self.config.user,
+            "password": self.config.password,
+            "database": self.config.database,
+            "connect_timeout": self.config.connect_timeout,
+        }
+
+        # Add TLS settings if enabled
+        if self.config.secure:
+            params["secure"] = True
+            params["verify"] = self.config.verify_ssl
+
+            # Add certificate paths if provided
+            if self.config.ca_cert:
+                params["ca_certs"] = self.config.ca_cert
+            if self.config.client_cert:
+                params["certfile"] = self.config.client_cert
+            if self.config.client_key:
+                params["keyfile"] = self.config.client_key
+
+        return params
+
     def get_sync_client(self) -> SyncClient:
         """Get or create sync client."""
         if self._sync_client is None:
-            self._sync_client = SyncClient(
-                host=self.config.host,
-                port=self.config.port,
-                user=self.config.user,
-                password=self.config.password,
-                database=self.config.database,
-                connect_timeout=self.config.connect_timeout,
-            )
-            logger.info(f"Connected to ClickHouse (Sync): {self.config.host}:{self.config.port}")
+            params = self._build_connection_params()
+            self._sync_client = SyncClient(**params)
+            protocol = "TLS" if self.config.secure else "plain"
+            logger.info(f"Connected to ClickHouse (Sync, {protocol}): {self.config.host}:{self.config.port}")
         return self._sync_client
 
     def disconnect(self):
@@ -265,12 +290,10 @@ class ClickHouseClient:
         """Initialize database and tables."""
         try:
             # Create database first (connect without database)
-            temp_client = SyncClient(
-                host=self.config.host,
-                port=self.config.port,
-                user=self.config.user,
-                password=self.config.password,
-            )
+            # Build connection params without database
+            temp_params = self._build_connection_params()
+            temp_params.pop("database", None)  # Remove database from params
+            temp_client = SyncClient(**temp_params)
             # Safe because self.config.database is validated in Config
             temp_client.execute(f"CREATE DATABASE IF NOT EXISTS {self.config.database}")
             temp_client.disconnect()
