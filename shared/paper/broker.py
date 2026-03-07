@@ -6,6 +6,7 @@ from typing import Dict, List, Optional, Callable, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from shared.execution.slippage_model import SlippageModel
+    from shared.execution.slippage_control import OrderBookSnapshot
 
 from .models import (
     VirtualOrder,
@@ -59,8 +60,19 @@ class VirtualBroker:
         price: float,
         order_type: OrderType = OrderType.MARKET,
         market_price: float | None = None,
+        orderbook: Optional["OrderBookSnapshot"] = None,
     ) -> VirtualOrder:
-        """Submit and execute order."""
+        """Submit and execute order.
+
+        Args:
+            symbol: Trading symbol
+            side: Order side (BUY/SELL)
+            quantity: Order quantity
+            price: Order price (used as market price for MARKET orders, limit price for LIMIT orders)
+            order_type: Order type (MARKET/LIMIT)
+            market_price: Current market price (used for LIMIT order execution check)
+            orderbook: Order book snapshot for realistic slippage calculation
+        """
         order_id = f"VO-{uuid.uuid4().hex[:8].upper()}"
 
         if order_type == OrderType.LIMIT and price <= 0:
@@ -78,22 +90,40 @@ class VirtualBroker:
 
         # Simulate execution for market orders
         if order_type == OrderType.MARKET:
-            await self._execute_market_order(order, price)
+            await self._execute_market_order(order, price, orderbook)
         elif order_type == OrderType.LIMIT:
             await self._execute_limit_order(order, market_price)
 
         self.orders.append(order)
         return order
 
-    async def _execute_market_order(self, order: VirtualOrder, market_price: float) -> None:
-        """Execute market order with slippage."""
+    async def _execute_market_order(
+        self,
+        order: VirtualOrder,
+        market_price: float,
+        orderbook: Optional["OrderBookSnapshot"] = None,
+    ) -> None:
+        """Execute market order with slippage.
+
+        Args:
+            order: Virtual order to execute
+            market_price: Current market price
+            orderbook: Order book snapshot for realistic slippage calculation
+        """
         # Calculate slippage - use slippage model if available, otherwise fall back to simple rate
         if self.slippage_model and self.slippage_model.config.enabled:
             # Use slippage model for realistic fill price calculation
             order_size = float(order.quantity)
-            # Use default orderbook values until subtask 3-3 adds orderbook parameter
-            current_spread = 0.05  # Default spread for mini futures
-            available_depth = 10.0  # Default depth
+
+            # Extract orderbook data if available, otherwise use defaults
+            if orderbook is not None:
+                current_spread = orderbook.spread
+                is_buy = (order.side == OrderSide.BUY)
+                available_depth = orderbook.available_qty(is_buy)
+            else:
+                # Fall back to default values when orderbook is not provided
+                current_spread = 0.05  # Default spread for mini futures
+                available_depth = 10.0  # Default depth
 
             slippage_bps = self.slippage_model.calculate_slippage(
                 order_size=order_size,
