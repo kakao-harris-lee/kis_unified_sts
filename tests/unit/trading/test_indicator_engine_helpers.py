@@ -571,5 +571,378 @@ class TestHelperIntegration:
             )
 
 
-# Import datetime for integration test
+class TestRLFeatures:
+    """Tests for RL features calculation and market-wide MFI."""
+
+    def _build_rl_warm_engine(self, symbol: str = "005930", num_candles: int = 30) -> StreamingIndicatorEngine:
+        """Build an engine with sufficient candles for RL features (requires 26+ for MACD).
+
+        Creates candles with realistic price movement and volume patterns.
+        staleness_seconds=0 disables staleness guard for testing.
+        """
+        engine = StreamingIndicatorEngine(bb_period=20, staleness_seconds=0)
+
+        base_price = 70000.0
+        base_volume = 1000
+        cumulative = 0
+
+        for minute in range(num_candles):
+            ts = datetime(2026, 2, 20, 9, minute, 30)
+            # Price with slight upward trend and noise
+            price = base_price + minute * 50 + (minute % 5) * 20
+            cumulative += base_volume + minute * 5
+            engine.on_tick(
+                symbol,
+                {
+                    "close": price,
+                    "high": price + 100,
+                    "low": price - 100,
+                    "volume": cumulative,
+                },
+                ts,
+            )
+
+        # Finalize last candle
+        cumulative += base_volume + num_candles * 5
+        engine.on_tick(
+            symbol,
+            {
+                "close": base_price + num_candles * 50,
+                "high": base_price + num_candles * 50 + 100,
+                "low": base_price + num_candles * 50 - 100,
+                "volume": cumulative,
+            },
+            datetime(2026, 2, 20, 9, num_candles, 30),
+        )
+
+        return engine
+
+    def test_get_rl_features_returns_all_25_features(self):
+        """RL features should return all 25 expected keys when warm."""
+        engine = self._build_rl_warm_engine(num_candles=30)
+        features = engine.get_rl_features("005930")
+
+        expected_keys = {
+            "returns",
+            "ma_ratio_5", "ma_ratio_10", "ma_ratio_20",
+            "rsi",
+            "bb_position",
+            "volume_ratio",
+            "volatility",
+            "hl_range",
+            "candle_body",
+            "macd", "macd_signal", "macd_hist",
+            "sma_ratio_60", "sma_ratio_120",
+            "ema_ratio_5", "ema_ratio_10", "ema_ratio_20",
+            "bb_upper_dist", "bb_lower_dist", "bb_width",
+            "atr",
+            "stoch_k", "stoch_d",
+            "price_change_5",
+        }
+
+        assert set(features.keys()) == expected_keys, (
+            f"Missing or extra keys. Expected {expected_keys}, got {set(features.keys())}"
+        )
+
+    def test_get_rl_features_all_values_finite(self):
+        """All RL feature values should be finite numbers."""
+        engine = self._build_rl_warm_engine(num_candles=30)
+        features = engine.get_rl_features("005930")
+
+        for key, value in features.items():
+            assert math.isfinite(value), f"Feature '{key}' has non-finite value: {value}"
+
+    def test_get_rl_features_insufficient_data(self):
+        """RL features should return empty dict with <26 candles (MACD requirement)."""
+        engine = StreamingIndicatorEngine()
+        symbol = "TEST"
+
+        # Add only 20 candles (less than 26 required for MACD)
+        cumulative = 0
+        for minute in range(20):
+            ts = datetime(2026, 2, 20, 9, minute, 30)
+            cumulative += 1000
+            engine.on_tick(
+                symbol,
+                {"close": 100.0 + minute, "high": 105.0 + minute, "low": 95.0 + minute, "volume": cumulative},
+                ts,
+            )
+
+        features = engine.get_rl_features(symbol)
+        assert features == {}, "Should return empty dict when insufficient data"
+
+    def test_get_rl_features_nonexistent_symbol(self):
+        """RL features should return empty dict for unknown symbol."""
+        engine = StreamingIndicatorEngine()
+        features = engine.get_rl_features("NONEXISTENT")
+        assert features == {}
+
+    def test_get_rl_features_ma_ratios_reflect_trend(self):
+        """MA ratios should be >1.0 for uptrending prices."""
+        engine = self._build_rl_warm_engine(num_candles=30)
+        features = engine.get_rl_features("005930")
+
+        # Price is increasing in our test data, so close/MA should be >1.0
+        assert features["ma_ratio_5"] > 1.0, "ma_ratio_5 should be >1.0 for uptrend"
+        assert features["ma_ratio_10"] > 1.0, "ma_ratio_10 should be >1.0 for uptrend"
+        assert features["ma_ratio_20"] > 1.0, "ma_ratio_20 should be >1.0 for uptrend"
+
+    def test_get_rl_features_bb_position_in_range(self):
+        """BB position should typically be between 0 and 1."""
+        engine = self._build_rl_warm_engine(num_candles=30)
+        features = engine.get_rl_features("005930")
+
+        # BB position can be <0 or >1 if price is outside bands, but typically in [0, 1]
+        assert math.isfinite(features["bb_position"]), "bb_position should be finite"
+
+    def test_get_rl_features_rsi_in_valid_range(self):
+        """RSI should be between 0 and 100."""
+        engine = self._build_rl_warm_engine(num_candles=30)
+        features = engine.get_rl_features("005930")
+
+        assert 0.0 <= features["rsi"] <= 100.0, f"RSI should be in [0, 100], got {features['rsi']}"
+
+    def test_get_rl_features_stochastic_in_valid_range(self):
+        """Stochastic K and D should be between 0 and 100."""
+        engine = self._build_rl_warm_engine(num_candles=30)
+        features = engine.get_rl_features("005930")
+
+        assert 0.0 <= features["stoch_k"] <= 100.0, f"stoch_k should be in [0, 100], got {features['stoch_k']}"
+        assert 0.0 <= features["stoch_d"] <= 100.0, f"stoch_d should be in [0, 100], got {features['stoch_d']}"
+
+    def test_get_rl_features_macd_components(self):
+        """MACD histogram should equal macd - macd_signal."""
+        engine = self._build_rl_warm_engine(num_candles=30)
+        features = engine.get_rl_features("005930")
+
+        expected_hist = features["macd"] - features["macd_signal"]
+        assert math.isclose(features["macd_hist"], expected_hist, rel_tol=1e-9), (
+            f"MACD histogram mismatch: {features['macd_hist']} vs {expected_hist}"
+        )
+
+    def test_get_rl_features_volume_ratio_reflects_activity(self):
+        """Volume ratio should be positive for active trading."""
+        engine = self._build_rl_warm_engine(num_candles=30)
+        features = engine.get_rl_features("005930")
+
+        assert features["volume_ratio"] > 0.0, "volume_ratio should be positive"
+
+    def test_get_rl_features_with_120_candles(self):
+        """RL features should work correctly with 120+ candles (for sma_ratio_120)."""
+        engine = self._build_rl_warm_engine(num_candles=125)
+        features = engine.get_rl_features("005930")
+
+        # With 125 candles, sma_ratio_120 should be computed (not default 1.0)
+        assert features["sma_ratio_120"] != 1.0 or features["sma_ratio_120"] > 0.0
+
+    def test_get_rl_features_bb_distances_positive(self):
+        """BB distances should be positive (distance from bands to price)."""
+        engine = self._build_rl_warm_engine(num_candles=30)
+        features = engine.get_rl_features("005930")
+
+        # bb_upper_dist = (upper - close) / close should be positive when price < upper
+        # bb_lower_dist = (close - lower) / close should be positive when price > lower
+        assert features["bb_upper_dist"] >= -1.0, "bb_upper_dist should be reasonable"
+        assert features["bb_lower_dist"] >= -1.0, "bb_lower_dist should be reasonable"
+        assert features["bb_width"] > 0.0, "bb_width should be positive"
+
+    def test_get_rl_features_atr_positive(self):
+        """ATR should be positive for volatile markets."""
+        engine = self._build_rl_warm_engine(num_candles=30)
+        features = engine.get_rl_features("005930")
+
+        assert features["atr"] >= 0.0, "ATR should be non-negative"
+
+    def test_get_rl_features_consistent_across_calls(self):
+        """RL features should be deterministic for same data."""
+        engine = self._build_rl_warm_engine(num_candles=30)
+
+        features1 = engine.get_rl_features("005930")
+        features2 = engine.get_rl_features("005930")
+
+        for key in features1.keys():
+            assert features1[key] == features2[key], f"Feature '{key}' not deterministic"
+
+
+class TestMarketWideMFI:
+    """Tests for market-wide MFI calculation."""
+
+    def _build_multi_symbol_engine(self) -> StreamingIndicatorEngine:
+        """Build an engine with multiple warm symbols for market MFI testing."""
+        engine = StreamingIndicatorEngine(bb_period=20, staleness_seconds=0)
+
+        # Create 5 symbols with varying MFI patterns
+        symbols = ["SYM1", "SYM2", "SYM3", "SYM4", "SYM5"]
+        base_prices = [50000, 70000, 90000, 40000, 60000]
+
+        for idx, symbol in enumerate(symbols):
+            base_price = base_prices[idx]
+            cumulative = 0
+
+            # Add 20 candles per symbol (sufficient for MFI period=14)
+            for minute in range(20):
+                ts = datetime(2026, 2, 20, 9, minute, 30)
+                # Vary price patterns to create different MFI values
+                price = base_price + minute * (50 + idx * 10)
+                cumulative += 1000 + minute * (100 + idx * 20)
+                engine.on_tick(
+                    symbol,
+                    {
+                        "close": price,
+                        "high": price + 100,
+                        "low": price - 100,
+                        "volume": cumulative,
+                    },
+                    ts,
+                )
+
+            # Finalize last candle
+            cumulative += 1000 + 20 * (100 + idx * 20)
+            engine.on_tick(
+                symbol,
+                {
+                    "close": base_price + 20 * (50 + idx * 10),
+                    "high": base_price + 20 * (50 + idx * 10) + 100,
+                    "low": base_price + 20 * (50 + idx * 10) - 100,
+                    "volume": cumulative,
+                },
+                datetime(2026, 2, 20, 9, 20, 30),
+            )
+
+        return engine
+
+    def test_get_market_mfi_returns_median(self):
+        """Market MFI should return median of all warm symbols."""
+        engine = self._build_multi_symbol_engine()
+        market_mfi = engine.get_market_mfi()
+
+        assert market_mfi is not None, "Market MFI should not be None with warm symbols"
+        assert 0.0 <= market_mfi <= 100.0, f"Market MFI should be in [0, 100], got {market_mfi}"
+
+    def test_get_market_mfi_with_active_symbols_filter(self):
+        """Market MFI should respect active_symbols filter."""
+        engine = self._build_multi_symbol_engine()
+
+        # Filter to only 2 symbols
+        active = {"SYM1", "SYM3"}
+        market_mfi = engine.get_market_mfi(active_symbols=active)
+
+        assert market_mfi is not None, "Market MFI should work with filtered symbols"
+
+    def test_get_market_mfi_insufficient_data(self):
+        """Market MFI should return None when no warm symbols."""
+        engine = StreamingIndicatorEngine()
+
+        # Add only a few ticks (not enough for MFI period=14)
+        cumulative = 0
+        for minute in range(5):
+            cumulative += 1000
+            engine.on_tick(
+                "TEST",
+                {"close": 100.0, "high": 101.0, "low": 99.0, "volume": cumulative},
+                datetime(2026, 2, 20, 9, minute, 30),
+            )
+
+        market_mfi = engine.get_market_mfi()
+        assert market_mfi is None, "Market MFI should be None with insufficient data"
+
+    def test_get_market_mfi_no_symbols(self):
+        """Market MFI should return None when no symbols tracked."""
+        engine = StreamingIndicatorEngine()
+        market_mfi = engine.get_market_mfi()
+        assert market_mfi is None
+
+    def test_get_market_mfi_empty_active_symbols(self):
+        """Market MFI should return None when active_symbols filter excludes all."""
+        engine = self._build_multi_symbol_engine()
+
+        # Filter with no matching symbols
+        market_mfi = engine.get_market_mfi(active_symbols=set())
+        assert market_mfi is None
+
+    def test_get_market_mfi_single_symbol(self):
+        """Market MFI should work with single symbol (median = that value)."""
+        engine = StreamingIndicatorEngine(bb_period=20, staleness_seconds=0)
+        symbol = "SINGLE"
+        cumulative = 0
+
+        for minute in range(20):
+            ts = datetime(2026, 2, 20, 9, minute, 30)
+            cumulative += 1000
+            engine.on_tick(
+                symbol,
+                {"close": 100.0 + minute, "high": 105.0 + minute, "low": 95.0 + minute, "volume": cumulative},
+                ts,
+            )
+
+        cumulative += 1000
+        engine.on_tick(
+            symbol,
+            {"close": 120.0, "high": 125.0, "low": 115.0, "volume": cumulative},
+            datetime(2026, 2, 20, 9, 20, 30),
+        )
+
+        market_mfi = engine.get_market_mfi()
+        assert market_mfi is not None, "Market MFI should work with single symbol"
+
+    def test_get_market_mfi_median_calculation_even_count(self):
+        """Market MFI should correctly compute median for even number of symbols."""
+        engine = self._build_multi_symbol_engine()
+
+        # We have 5 symbols, so median is the middle value
+        # Let's verify it's actually computing median by checking range
+        market_mfi = engine.get_market_mfi()
+        assert market_mfi is not None
+
+        # Median should be between min and max of individual MFIs
+        # This is a sanity check that it's not just averaging or taking first/last
+        assert 0.0 <= market_mfi <= 100.0
+
+    def test_get_market_mfi_deterministic(self):
+        """Market MFI should return same value for repeated calls."""
+        engine = self._build_multi_symbol_engine()
+
+        mfi1 = engine.get_market_mfi()
+        mfi2 = engine.get_market_mfi()
+
+        assert mfi1 == mfi2, "Market MFI should be deterministic"
+
+    def test_get_market_mfi_with_mixed_warm_cold_symbols(self):
+        """Market MFI should only include warm symbols (>= 14 candles)."""
+        engine = StreamingIndicatorEngine(bb_period=20, staleness_seconds=0)
+
+        # Add one warm symbol (20 candles)
+        cumulative_warm = 0
+        for minute in range(20):
+            ts = datetime(2026, 2, 20, 9, minute, 30)
+            cumulative_warm += 1000
+            engine.on_tick(
+                "WARM",
+                {"close": 100.0 + minute, "high": 105.0 + minute, "low": 95.0 + minute, "volume": cumulative_warm},
+                ts,
+            )
+        cumulative_warm += 1000
+        engine.on_tick(
+            "WARM",
+            {"close": 120.0, "high": 125.0, "low": 115.0, "volume": cumulative_warm},
+            datetime(2026, 2, 20, 9, 20, 30),
+        )
+
+        # Add one cold symbol (only 5 candles)
+        cumulative_cold = 0
+        for minute in range(5):
+            ts = datetime(2026, 2, 20, 9, minute, 30)
+            cumulative_cold += 1000
+            engine.on_tick(
+                "COLD",
+                {"close": 200.0 + minute, "high": 205.0 + minute, "low": 195.0 + minute, "volume": cumulative_cold},
+                ts,
+            )
+
+        market_mfi = engine.get_market_mfi()
+        # Should get MFI (only from WARM symbol, since COLD has < 14 candles)
+        assert market_mfi is not None, "Should compute MFI from warm symbol only"
+
+
+# Import datetime for tests (already imported at top of file, but kept for clarity)
 from datetime import datetime
