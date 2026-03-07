@@ -132,7 +132,13 @@ training:
 # === Hierarchical RL ===
 hierarchical:
   bars_per_step: 15                # 15분봉 = 15개 1분봉
-  high_level_timesteps: 500_000    # High-level 학습 타임스텝
+  high_level_timesteps: 500_000    # High-level 학습 타임스텝 (sequential mode)
+
+  # 학습 모드
+  training_mode: sequential        # sequential (순차 학습) | joint (동시 학습)
+  joint_timesteps: 5_000_000       # Joint training 총 타임스텝
+  joint_update_ratio: 15           # Joint training에서 low:high 업데이트 비율 (15:1 = 15분:1분)
+
   risk_budgets:                    # 행동별 리스크 예산 (0~1 스케일)
     aggressive: 1.0                # 풀 사이즈
     neutral: 0.5                   # 절반
