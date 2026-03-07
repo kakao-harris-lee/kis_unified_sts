@@ -1618,3 +1618,459 @@ class TestRiskComponent:
             f"Risk penalty should scale linearly with unrealized loss: "
             f"loss_ratio={loss_ratio}, risk_ratio={risk_ratio}"
         )
+
+
+class TestMTMComponent:
+    """MTM (Mark-to-Market) 컴포넌트 (r_mtm) 테스트
+
+    r_mtm = (unrealized_pnl - prev_unrealized_pnl) / initial_balance
+
+    검증 사항:
+    - w_mtm=0일 때: MTM 비활성 (보상에 기여하지 않음)
+    - w_mtm>0일 때: 미실현 손익 변화를 추적
+    - 진입 시: r_mtm = 0 (이전 미실현 손익 없음)
+    - 보유 중 가격 상승: r_mtm > 0 (LONG), r_mtm < 0 (SHORT)
+    - 보유 중 가격 하락: r_mtm < 0 (LONG), r_mtm > 0 (SHORT)
+    - 청산 시: r_mtm 계산 안 함 (r_profit과 이중 계산 방지)
+    - FLAT 포지션: r_mtm = 0
+    """
+
+    @pytest.fixture
+    def mtm_config(self) -> RLEnvConfig:
+        """MTM 활성화 설정 (w_mtm=0.3)"""
+        return RLEnvConfig(
+            initial_balance=100_000_000,
+            commission_rate=0.00003,
+            tick_size=0.05,
+            tick_value=250_000,
+            contract_multiplier=250_000,
+            max_contracts=1,
+            slippage=0.0,
+            margin_rate=0.15,
+            n_market_features=25,
+            n_position_features=6,
+            w_profit=1.0,
+            w_cost=1.0,
+            w_risk=0.5,
+            w_mtm=0.3,  # MTM 활성화
+            inaction_penalty=0.0,
+            reward_scale=100.0,
+            max_loss=-50_000_000,
+            loss_penalty_coeff=2.0,
+        )
+
+    @pytest.fixture
+    def mtm_env(
+        self, mtm_config: RLEnvConfig, sample_data: tuple[np.ndarray, np.ndarray]
+    ) -> FuturesTradingEnv:
+        """MTM 활성화 환경"""
+        features, prices = sample_data
+        return FuturesTradingEnv(day_data=features, config=mtm_config, prices=prices)
+
+    def test_mtm_disabled_when_w_mtm_zero(self, env: FuturesTradingEnv):
+        """w_mtm=0일 때 MTM이 보상에 기여하지 않음"""
+        env.reset()
+        entry_price = env._get_current_price()
+
+        # 롱 진입
+        env.step(Action.LONG_ENTRY)
+
+        # 가격 상승
+        price_increase = 5.0
+        env.prices[env.current_step, 3] = entry_price + price_increase
+
+        # Hold
+        _, reward, _, _, _ = env.step(Action.HOLD)
+
+        # MTM이 비활성화되어 있으므로 (w_mtm=0.0)
+        # 보상은 r_profit(0) - r_cost(0) - r_risk(0)만 포함
+        # Hold 시 실현 손익 없고, 비용도 없으므로 보상은 r_risk만 영향
+        assert env.config.w_mtm == 0.0, "Test assumes w_mtm=0"
+
+        # r_risk는 미실현 이익 시 0이므로 Hold 보상은 0
+        unrealized_pnl = price_increase * env.config.contract_multiplier
+        assert unrealized_pnl > 0, "Should have unrealized profit"
+
+        # 보상 계산: profit(0) - cost(0) - risk(0) = 0
+        expected_reward = 0.0
+        assert reward == pytest.approx(expected_reward, abs=1e-6), (
+            f"Hold reward with w_mtm=0 should be 0: expected {expected_reward}, got {reward}"
+        )
+
+    def test_mtm_zero_on_long_entry(self, mtm_env: FuturesTradingEnv):
+        """롱 진입 시 r_mtm=0 (이전 미실현 손익 없음)"""
+        mtm_env.reset()
+        entry_price = mtm_env._get_current_price()
+
+        # 진입 직전 _prev_unrealized_pnl = 0
+        assert mtm_env._prev_unrealized_pnl == 0.0
+
+        # 롱 진입
+        _, reward, _, _, _ = mtm_env.step(Action.LONG_ENTRY)
+
+        # 진입 직후 unrealized_pnl = 0 (진입가 = 현재가)
+        # r_mtm = (0 - 0) / initial_balance = 0
+        # 진입 비용만 있으므로 r_profit < 0, r_cost > 0
+        entry_cost = (
+            entry_price * mtm_env.config.contract_multiplier * mtm_env.config.commission_rate
+        )
+        expected_r_profit = -entry_cost / mtm_env.config.initial_balance
+        expected_r_cost = entry_cost / mtm_env.config.initial_balance
+        expected_r_mtm = 0.0
+        expected_reward = (
+            mtm_env.config.w_profit * expected_r_profit
+            - mtm_env.config.w_cost * expected_r_cost
+            - mtm_env.config.w_risk * 0.0
+            + mtm_env.config.w_mtm * expected_r_mtm
+        ) * mtm_env.config.reward_scale
+
+        assert reward == pytest.approx(expected_reward, rel=1e-6), (
+            f"Long entry reward mismatch: expected {expected_reward}, got {reward}"
+        )
+
+    def test_mtm_zero_on_short_entry(self, mtm_env: FuturesTradingEnv):
+        """숏 진입 시 r_mtm=0 (이전 미실현 손익 없음)"""
+        mtm_env.reset()
+        entry_price = mtm_env._get_current_price()
+
+        # 숏 진입
+        _, reward, _, _, _ = mtm_env.step(Action.SHORT_ENTRY)
+
+        # 진입 직후 r_mtm = 0
+        entry_cost = (
+            entry_price * mtm_env.config.contract_multiplier * mtm_env.config.commission_rate
+        )
+        expected_r_profit = -entry_cost / mtm_env.config.initial_balance
+        expected_r_cost = entry_cost / mtm_env.config.initial_balance
+        expected_r_mtm = 0.0
+        expected_reward = (
+            mtm_env.config.w_profit * expected_r_profit
+            - mtm_env.config.w_cost * expected_r_cost
+            - mtm_env.config.w_risk * 0.0
+            + mtm_env.config.w_mtm * expected_r_mtm
+        ) * mtm_env.config.reward_scale
+
+        assert reward == pytest.approx(expected_reward, rel=1e-6), (
+            f"Short entry reward mismatch: expected {expected_reward}, got {reward}"
+        )
+
+    def test_mtm_positive_on_long_profit(self, mtm_env: FuturesTradingEnv):
+        """롱 포지션 가격 상승 시 r_mtm > 0"""
+        mtm_env.reset()
+        entry_price = mtm_env._get_current_price()
+
+        # 롱 진입
+        mtm_env.step(Action.LONG_ENTRY)
+
+        # 가격 상승
+        price_increase = 5.0
+        mtm_env.prices[mtm_env.current_step, 3] = entry_price + price_increase
+
+        # Hold
+        _, reward, _, _, _ = mtm_env.step(Action.HOLD)
+
+        # 미실현 손익 변화 계산
+        prev_unrealized_pnl = 0.0  # 진입 직후
+        current_unrealized_pnl = price_increase * mtm_env.config.contract_multiplier
+        mtm_change = current_unrealized_pnl - prev_unrealized_pnl
+
+        expected_r_mtm = mtm_change / mtm_env.config.initial_balance
+        assert expected_r_mtm > 0, "MTM should be positive for long profit"
+
+        # 보상 계산: profit(0) - cost(0) - risk(0) + mtm(>0)
+        expected_reward = (
+            mtm_env.config.w_mtm * expected_r_mtm
+        ) * mtm_env.config.reward_scale
+
+        assert reward == pytest.approx(expected_reward, rel=1e-6), (
+            f"Hold reward with MTM mismatch: expected {expected_reward}, got {reward}"
+        )
+
+    def test_mtm_negative_on_long_loss(self, mtm_env: FuturesTradingEnv):
+        """롱 포지션 가격 하락 시 r_mtm < 0"""
+        mtm_env.reset()
+        entry_price = mtm_env._get_current_price()
+
+        # 롱 진입
+        mtm_env.step(Action.LONG_ENTRY)
+
+        # 가격 하락
+        price_decrease = 3.0
+        mtm_env.prices[mtm_env.current_step, 3] = entry_price - price_decrease
+
+        # Hold
+        _, reward, _, _, _ = mtm_env.step(Action.HOLD)
+
+        # 미실현 손익 변화 계산
+        prev_unrealized_pnl = 0.0
+        current_unrealized_pnl = -price_decrease * mtm_env.config.contract_multiplier
+        mtm_change = current_unrealized_pnl - prev_unrealized_pnl
+
+        expected_r_mtm = mtm_change / mtm_env.config.initial_balance
+        assert expected_r_mtm < 0, "MTM should be negative for long loss"
+
+        # 보상 계산: r_risk도 음수 (미실현 손실)
+        expected_r_risk = -current_unrealized_pnl / mtm_env.config.initial_balance
+
+        expected_reward = (
+            -mtm_env.config.w_risk * expected_r_risk
+            + mtm_env.config.w_mtm * expected_r_mtm
+        ) * mtm_env.config.reward_scale
+
+        assert reward == pytest.approx(expected_reward, rel=1e-5), (
+            f"Hold reward with negative MTM mismatch: expected {expected_reward}, got {reward}"
+        )
+
+    def test_mtm_positive_on_short_loss(self, mtm_env: FuturesTradingEnv):
+        """숏 포지션 가격 상승 시 r_mtm < 0 (손실)"""
+        mtm_env.reset()
+        entry_price = mtm_env._get_current_price()
+
+        # 숏 진입
+        mtm_env.step(Action.SHORT_ENTRY)
+
+        # 가격 상승 (숏에게는 불리)
+        price_increase = 4.0
+        mtm_env.prices[mtm_env.current_step, 3] = entry_price + price_increase
+
+        # Hold
+        _, reward, _, _, _ = mtm_env.step(Action.HOLD)
+
+        # 숏은 가격 상승 시 손실
+        prev_unrealized_pnl = 0.0
+        current_unrealized_pnl = -price_increase * mtm_env.config.contract_multiplier
+        mtm_change = current_unrealized_pnl - prev_unrealized_pnl
+
+        expected_r_mtm = mtm_change / mtm_env.config.initial_balance
+        assert expected_r_mtm < 0, "MTM should be negative for short loss"
+
+        # r_risk도 음수
+        expected_r_risk = -current_unrealized_pnl / mtm_env.config.initial_balance
+
+        expected_reward = (
+            -mtm_env.config.w_risk * expected_r_risk
+            + mtm_env.config.w_mtm * expected_r_mtm
+        ) * mtm_env.config.reward_scale
+
+        assert reward == pytest.approx(expected_reward, rel=1e-5), (
+            f"Hold reward with short MTM mismatch: expected {expected_reward}, got {reward}"
+        )
+
+    def test_mtm_negative_on_short_profit(self, mtm_env: FuturesTradingEnv):
+        """숏 포지션 가격 하락 시 r_mtm > 0 (이익)"""
+        mtm_env.reset()
+        entry_price = mtm_env._get_current_price()
+
+        # 숏 진입
+        mtm_env.step(Action.SHORT_ENTRY)
+
+        # 가격 하락 (숏에게는 유리)
+        price_decrease = 6.0
+        mtm_env.prices[mtm_env.current_step, 3] = entry_price - price_decrease
+
+        # Hold
+        _, reward, _, _, _ = mtm_env.step(Action.HOLD)
+
+        # 숏은 가격 하락 시 이익
+        prev_unrealized_pnl = 0.0
+        current_unrealized_pnl = price_decrease * mtm_env.config.contract_multiplier
+        mtm_change = current_unrealized_pnl - prev_unrealized_pnl
+
+        expected_r_mtm = mtm_change / mtm_env.config.initial_balance
+        assert expected_r_mtm > 0, "MTM should be positive for short profit"
+
+        # r_risk는 0 (이익이므로)
+        expected_reward = (
+            mtm_env.config.w_mtm * expected_r_mtm
+        ) * mtm_env.config.reward_scale
+
+        assert reward == pytest.approx(expected_reward, rel=1e-6), (
+            f"Hold reward with short profit MTM mismatch: expected {expected_reward}, got {reward}"
+        )
+
+    def test_mtm_tracks_incremental_changes(self, mtm_env: FuturesTradingEnv):
+        """MTM은 스텝 간 미실현 손익 변화만 추적 (누적 아님)"""
+        mtm_env.reset()
+        entry_price = mtm_env._get_current_price()
+
+        # 롱 진입
+        mtm_env.step(Action.LONG_ENTRY)
+
+        # 첫 번째 가격 상승
+        price_1 = entry_price + 2.0
+        mtm_env.prices[mtm_env.current_step, 3] = price_1
+        _, reward_1, _, _, _ = mtm_env.step(Action.HOLD)
+
+        # 미실현 손익: 0 → 2.0 * multiplier
+        unrealized_1 = 2.0 * mtm_env.config.contract_multiplier
+        expected_r_mtm_1 = unrealized_1 / mtm_env.config.initial_balance
+        expected_reward_1 = (
+            mtm_env.config.w_mtm * expected_r_mtm_1
+        ) * mtm_env.config.reward_scale
+
+        assert reward_1 == pytest.approx(expected_reward_1, rel=1e-6)
+
+        # 두 번째 가격 상승
+        price_2 = entry_price + 5.0  # 추가로 3.0 상승
+        mtm_env.prices[mtm_env.current_step, 3] = price_2
+        _, reward_2, _, _, _ = mtm_env.step(Action.HOLD)
+
+        # 미실현 손익: 2.0 → 5.0 (변화: +3.0)
+        unrealized_2 = 5.0 * mtm_env.config.contract_multiplier
+        prev_unrealized_2 = 2.0 * mtm_env.config.contract_multiplier
+        mtm_change_2 = unrealized_2 - prev_unrealized_2
+
+        expected_r_mtm_2 = mtm_change_2 / mtm_env.config.initial_balance
+        expected_reward_2 = (
+            mtm_env.config.w_mtm * expected_r_mtm_2
+        ) * mtm_env.config.reward_scale
+
+        assert reward_2 == pytest.approx(expected_reward_2, rel=1e-6), (
+            f"Second MTM reward should reflect incremental change: "
+            f"expected {expected_reward_2}, got {reward_2}"
+        )
+
+        # 두 번째 변화가 더 크므로 보상도 더 큼
+        assert reward_2 > reward_1, "Larger MTM change should result in larger reward"
+
+    def test_mtm_not_applied_on_exit(self, mtm_env: FuturesTradingEnv):
+        """청산 시 MTM 계산 안 함 (r_profit과 이중 계산 방지)"""
+        mtm_env.reset()
+        entry_price = mtm_env._get_current_price()
+
+        # 롱 진입
+        mtm_env.step(Action.LONG_ENTRY)
+
+        # 가격 상승
+        price_increase = 7.0
+        mtm_env.prices[mtm_env.current_step, 3] = entry_price + price_increase
+
+        # Hold 후 exit
+        mtm_env.step(Action.HOLD)
+
+        exit_price = mtm_env._get_current_price()
+        _, reward, _, _, _ = mtm_env.step(Action.LONG_EXIT)
+
+        # 청산 시 r_mtm은 계산되지 않음 (r_profit에 포함)
+        gross_pnl = (
+            (exit_price - entry_price)
+            * mtm_env.config.contract_multiplier
+            * mtm_env.config.max_contracts
+        )
+        exit_cost = exit_price * mtm_env.config.contract_multiplier * mtm_env.config.commission_rate
+        trade_pnl = gross_pnl - exit_cost
+
+        expected_r_profit = trade_pnl / mtm_env.config.initial_balance
+        expected_r_cost = exit_cost / mtm_env.config.initial_balance
+        # r_mtm은 청산 시 0
+        expected_r_mtm = 0.0
+
+        expected_reward = (
+            mtm_env.config.w_profit * expected_r_profit
+            - mtm_env.config.w_cost * expected_r_cost
+            + mtm_env.config.w_mtm * expected_r_mtm
+        ) * mtm_env.config.reward_scale
+
+        assert reward == pytest.approx(expected_reward, rel=1e-5), (
+            f"Exit reward should not include MTM: expected {expected_reward}, got {reward}"
+        )
+
+        # 포지션 청산 확인
+        assert mtm_env.position == PositionSide.FLAT
+
+    def test_mtm_zero_when_flat(self, mtm_env: FuturesTradingEnv):
+        """FLAT 포지션일 때 r_mtm=0"""
+        mtm_env.reset()
+
+        # FLAT 상태에서 Hold
+        _, reward, _, _, _ = mtm_env.step(Action.HOLD)
+
+        # FLAT이므로 모든 컴포넌트 0
+        expected_reward = 0.0
+        assert reward == pytest.approx(expected_reward, abs=1e-6), (
+            f"FLAT position reward should be 0: expected {expected_reward}, got {reward}"
+        )
+
+        assert mtm_env.position == PositionSide.FLAT
+
+    def test_mtm_scaling_with_weight(self, sample_data: tuple[np.ndarray, np.ndarray]):
+        """w_mtm 가중치에 따라 MTM 보상 스케일 변화"""
+        features, prices = sample_data
+
+        # w_mtm=0.3 환경
+        config_low = RLEnvConfig(
+            initial_balance=100_000_000,
+            commission_rate=0.00003,
+            tick_size=0.05,
+            tick_value=250_000,
+            contract_multiplier=250_000,
+            max_contracts=1,
+            slippage=0.0,
+            margin_rate=0.15,
+            n_market_features=25,
+            n_position_features=6,
+            w_profit=1.0,
+            w_cost=1.0,
+            w_risk=0.5,
+            w_mtm=0.3,
+            inaction_penalty=0.0,
+            reward_scale=100.0,
+            max_loss=-50_000_000,
+            loss_penalty_coeff=2.0,
+        )
+        env_low = FuturesTradingEnv(day_data=features, config=config_low, prices=prices)
+
+        # w_mtm=0.9 환경
+        config_high = RLEnvConfig(
+            initial_balance=100_000_000,
+            commission_rate=0.00003,
+            tick_size=0.05,
+            tick_value=250_000,
+            contract_multiplier=250_000,
+            max_contracts=1,
+            slippage=0.0,
+            margin_rate=0.15,
+            n_market_features=25,
+            n_position_features=6,
+            w_profit=1.0,
+            w_cost=1.0,
+            w_risk=0.5,
+            w_mtm=0.9,  # 3배 증가
+            inaction_penalty=0.0,
+            reward_scale=100.0,
+            max_loss=-50_000_000,
+            loss_penalty_coeff=2.0,
+        )
+        env_high = FuturesTradingEnv(day_data=features, config=config_high, prices=prices)
+
+        # 동일한 시나리오 실행
+        env_low.reset()
+        env_high.reset()
+
+        entry_price = env_low._get_current_price()
+
+        # 롱 진입
+        env_low.step(Action.LONG_ENTRY)
+        env_high.step(Action.LONG_ENTRY)
+
+        # 가격 상승
+        price_increase = 4.0
+        env_low.prices[env_low.current_step, 3] = entry_price + price_increase
+        env_high.prices[env_high.current_step, 3] = entry_price + price_increase
+
+        # Hold
+        _, reward_low, _, _, _ = env_low.step(Action.HOLD)
+        _, reward_high, _, _, _ = env_high.step(Action.HOLD)
+
+        # w_mtm이 3배 증가하면 MTM 컴포넌트 기여도도 3배
+        weight_ratio = config_high.w_mtm / config_low.w_mtm
+        assert weight_ratio == pytest.approx(3.0, rel=1e-6)
+
+        # 보상 비율 확인 (대략 3배)
+        # reward = w_mtm * r_mtm * reward_scale
+        # 다른 컴포넌트가 0이므로 보상 비율 = w_mtm 비율
+        reward_ratio = reward_high / reward_low
+        assert reward_ratio == pytest.approx(weight_ratio, rel=1e-6), (
+            f"Reward should scale with w_mtm: weight_ratio={weight_ratio}, "
+            f"reward_ratio={reward_ratio}"
+        )
