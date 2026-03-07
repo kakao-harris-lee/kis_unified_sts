@@ -11,12 +11,16 @@ Usage:
     comparison = evaluator.compare_with_baseline(
         high_model, low_model, baseline_model, test_days_1m, test_prices_1m
     )
+    latency = evaluator.benchmark_inference_latency(
+        high_model, low_model, test_days_1m, test_prices_1m, mode="directional"
+    )
 """
 
 from __future__ import annotations
 
 import copy
 import logging
+import time
 from pathlib import Path
 from typing import Any
 
@@ -306,6 +310,256 @@ class HierarchicalEvaluator:
 
         self._log_mlflow_artifact("hierarchical_comparison.csv", df)
         return df
+
+    def benchmark_inference_latency(
+        self,
+        high_model: Any,
+        low_model: Any,
+        test_days_1m: list[np.ndarray],
+        test_prices_1m: list[np.ndarray],
+        test_days_15m: list[np.ndarray] | None = None,
+        mode: str = "directional",
+        n_warmup: int = 10,
+        deterministic: bool = True,
+    ) -> dict[str, Any]:
+        """추론 지연 시간 벤치마크
+
+        High-level 및 Low-level 모델의 추론 시간을 측정하여
+        1분봉 캔들 제약(< 60초) 충족 여부를 확인한다.
+
+        Args:
+            high_model: High-level 학습된 모델
+            low_model: Low-level 학습된 모델
+            test_days_1m: 테스트 1분봉 데이터
+            test_prices_1m: 테스트 1분봉 가격 데이터
+            test_days_15m: 테스트 15분봉 데이터 (선택)
+            mode: "risk_budget" 또는 "directional"
+            n_warmup: 워밍업 추론 횟수 (타이밍 제외)
+            deterministic: 결정적 행동 사용 여부
+
+        Returns:
+            벤치마크 결과 딕셔너리 (mean, median, p95, p99, max 등)
+        """
+        if mode not in ("risk_budget", "directional"):
+            raise ValueError(f"Invalid mode '{mode}'. Must be 'risk_budget' or 'directional'.")
+
+        logger.info("=== Inference Latency Benchmark ===")
+        logger.info(f"Mode: {mode}, Warmup iterations: {n_warmup}")
+
+        # 15분봉 데이터가 없으면 1분봉에서 생성
+        if test_days_15m is None:
+            test_days_15m = self._create_15m_data(test_days_1m)
+
+        # 첫 번째 날 데이터로 환경 생성
+        if not test_days_1m or not test_days_15m:
+            raise ValueError("Test data is empty")
+
+        day_data_1m = test_days_1m[0]
+        day_prices_1m = test_prices_1m[0]
+        day_data_15m = test_days_15m[0]
+
+        config = copy.copy(self.env_config)
+        config.slippage = 0.0
+
+        # Low-level 환경 생성
+        low_env = LowLevelEnv(day_data=day_data_1m, config=config, prices=day_prices_1m)
+        low_obs, _ = low_env.reset()
+
+        # High-level 환경 생성
+        if mode == "directional":
+            high_env = DirectionalHighLevelEnv(
+                day_data_15m=day_data_15m,
+                config=self.directional_high_level_config,
+            )
+        else:
+            high_env = HighLevelEnv(
+                day_data_15m=day_data_15m,
+                config=self.high_level_config,
+            )
+        high_obs, _ = high_env.reset()
+
+        # === Warmup Phase ===
+        logger.info(f"Warming up models ({n_warmup} iterations)...")
+        for _ in range(n_warmup):
+            # High-level warmup
+            high_model.predict(high_obs, deterministic=deterministic)
+            # Low-level warmup
+            masks = low_env.action_masks()
+            low_model.predict(low_obs, deterministic=deterministic, action_masks=masks)
+
+        # === High-level Model Benchmark ===
+        logger.info("Benchmarking high-level model...")
+        high_times = []
+        n_high_inferences = min(100, len(day_data_15m))  # 최대 100회 또는 데이터 길이
+
+        for i in range(n_high_inferences):
+            start = time.perf_counter()
+            high_model.predict(high_obs, deterministic=deterministic)
+            elapsed = time.perf_counter() - start
+            high_times.append(elapsed * 1000)  # ms 단위로 저장
+
+        # === Low-level Model Benchmark ===
+        logger.info("Benchmarking low-level model...")
+        low_times = []
+        n_low_inferences = min(400, len(day_data_1m))  # 최대 400회 또는 데이터 길이
+
+        for i in range(n_low_inferences):
+            masks = low_env.action_masks()
+            start = time.perf_counter()
+            low_model.predict(low_obs, deterministic=deterministic, action_masks=masks)
+            elapsed = time.perf_counter() - start
+            low_times.append(elapsed * 1000)  # ms 단위로 저장
+
+        # === Combined Hierarchical System Benchmark ===
+        logger.info("Benchmarking combined hierarchical system...")
+        combined_times = []
+        n_combined = min(50, len(test_days_1m))  # 최대 50일 테스트
+
+        for day_idx in range(n_combined):
+            day_data_1m = test_days_1m[day_idx]
+            day_prices_1m = test_prices_1m[day_idx]
+            day_data_15m = test_days_15m[day_idx]
+
+            # Low-level 환경 재생성
+            low_env = LowLevelEnv(day_data=day_data_1m, config=config, prices=day_prices_1m)
+            low_obs, _ = low_env.reset()
+
+            # High-level 환경 재생성
+            if mode == "directional":
+                high_env = DirectionalHighLevelEnv(
+                    day_data_15m=day_data_15m,
+                    config=self.directional_high_level_config,
+                )
+            else:
+                high_env = HighLevelEnv(
+                    day_data_15m=day_data_15m,
+                    config=self.high_level_config,
+                )
+            high_obs, _ = high_env.reset()
+
+            step = 0
+            terminated = False
+            day_start = time.perf_counter()
+
+            while not terminated:
+                # 15분 간격으로 high-level 행동 결정
+                if step % self.bars_per_step == 0:
+                    high_action, _ = high_model.predict(high_obs, deterministic=deterministic)
+                    high_action = int(high_action)
+
+                    if mode == "directional":
+                        current_directional_bias = HighLevelDirectionalAction.BIAS_NAMES.get(
+                            high_action, "flat"
+                        )
+                        low_env.set_directional_bias(current_directional_bias)
+                    else:
+                        current_risk_budget = self.high_level_config.risk_budgets.get(
+                            high_action, 0.5
+                        )
+                        low_env.set_risk_budget(current_risk_budget)
+
+                # Low-level 행동
+                masks = low_env.action_masks()
+                low_action, _ = low_model.predict(
+                    low_obs, deterministic=deterministic, action_masks=masks
+                )
+                low_obs, reward, terminated, truncated, info = low_env.step(int(low_action))
+                step += 1
+
+            day_elapsed = time.perf_counter() - day_start
+            combined_times.append(day_elapsed * 1000)  # ms 단위
+
+        # === 통계 계산 ===
+        high_stats = self._compute_latency_stats(high_times, "High-level")
+        low_stats = self._compute_latency_stats(low_times, "Low-level")
+        combined_stats = self._compute_latency_stats(combined_times, "Combined (per day)")
+
+        # === 1분봉 제약 검증 ===
+        # Combined time을 1분봉 개수로 나눈 평균 시간
+        avg_combined_ms = combined_stats["mean_ms"]
+        avg_bars_per_day = np.mean([len(d) for d in test_days_1m])
+        avg_time_per_bar_ms = avg_combined_ms / avg_bars_per_day if avg_bars_per_day > 0 else 0
+        avg_time_per_bar_s = avg_time_per_bar_ms / 1000
+
+        constraint_60s = 60.0  # 1분봉 제약
+        passes_constraint = avg_time_per_bar_s < constraint_60s
+
+        logger.info(f"\n=== Latency Constraint Check ===")
+        logger.info(f"Average inference time per 1-minute bar: {avg_time_per_bar_ms:.2f} ms ({avg_time_per_bar_s:.3f} s)")
+        logger.info(f"Constraint (< 60s per bar): {'✓ PASS' if passes_constraint else '✗ FAIL'}")
+
+        if not passes_constraint:
+            logger.warning(
+                f"⚠️  Average inference time ({avg_time_per_bar_s:.3f}s) exceeds "
+                f"1-minute candle constraint ({constraint_60s}s)!"
+            )
+
+        # === MLflow 로깅 ===
+        results_df = pd.DataFrame([high_stats, low_stats, combined_stats])
+        self._log_mlflow_artifact("inference_latency_benchmark.csv", results_df)
+
+        # 결과 요약
+        results = {
+            "high_level_stats": high_stats,
+            "low_level_stats": low_stats,
+            "combined_stats": combined_stats,
+            "avg_time_per_bar_ms": round(avg_time_per_bar_ms, 2),
+            "avg_time_per_bar_s": round(avg_time_per_bar_s, 3),
+            "passes_60s_constraint": passes_constraint,
+            "n_high_inferences": n_high_inferences,
+            "n_low_inferences": n_low_inferences,
+            "n_combined_days": n_combined,
+        }
+
+        logger.info("\n=== Benchmark Complete ===")
+        return results
+
+    def _compute_latency_stats(self, times_ms: list[float], label: str) -> dict[str, Any]:
+        """지연 시간 통계 계산
+
+        Args:
+            times_ms: 지연 시간 목록 (ms)
+            label: 레이블 (예: "High-level")
+
+        Returns:
+            통계 딕셔너리
+        """
+        if not times_ms:
+            return {
+                "model": label,
+                "mean_ms": 0.0,
+                "median_ms": 0.0,
+                "p95_ms": 0.0,
+                "p99_ms": 0.0,
+                "max_ms": 0.0,
+                "min_ms": 0.0,
+                "std_ms": 0.0,
+                "n_samples": 0,
+            }
+
+        times_arr = np.array(times_ms)
+        stats = {
+            "model": label,
+            "mean_ms": round(float(np.mean(times_arr)), 2),
+            "median_ms": round(float(np.median(times_arr)), 2),
+            "p95_ms": round(float(np.percentile(times_arr, 95)), 2),
+            "p99_ms": round(float(np.percentile(times_arr, 99)), 2),
+            "max_ms": round(float(np.max(times_arr)), 2),
+            "min_ms": round(float(np.min(times_arr)), 2),
+            "std_ms": round(float(np.std(times_arr)), 2),
+            "n_samples": len(times_ms),
+        }
+
+        logger.info(
+            f"{label}: mean={stats['mean_ms']:.2f}ms, "
+            f"median={stats['median_ms']:.2f}ms, "
+            f"p95={stats['p95_ms']:.2f}ms, "
+            f"p99={stats['p99_ms']:.2f}ms, "
+            f"max={stats['max_ms']:.2f}ms "
+            f"(n={stats['n_samples']})"
+        )
+
+        return stats
 
     def _evaluate_baseline(
         self,
