@@ -520,8 +520,8 @@ class TestLowLevelEnvActionMasking:
         masks = env.action_masks()
 
         # LONG_ENTRY should be allowed, SHORT_ENTRY blocked
-        assert masks[Action.LONG_ENTRY] is True
-        assert masks[Action.SHORT_ENTRY] is False
+        assert masks[Action.LONG_ENTRY] == True
+        assert masks[Action.SHORT_ENTRY] == False
 
     def test_short_bias_blocks_long_entry(self, base_env_data):
         """Test short bias blocks LONG_ENTRY action."""
@@ -533,8 +533,8 @@ class TestLowLevelEnvActionMasking:
         masks = env.action_masks()
 
         # SHORT_ENTRY should be allowed, LONG_ENTRY blocked
-        assert masks[Action.SHORT_ENTRY] is True
-        assert masks[Action.LONG_ENTRY] is False
+        assert masks[Action.SHORT_ENTRY] == True
+        assert masks[Action.LONG_ENTRY] == False
 
     def test_flat_bias_allows_both_directions(self, base_env_data):
         """Test flat bias allows both LONG_ENTRY and SHORT_ENTRY."""
@@ -560,7 +560,7 @@ class TestLowLevelEnvActionMasking:
         masks = env.action_masks()
 
         # HOLD should always be available
-        assert masks[Action.HOLD] is True
+        assert masks[Action.HOLD] == True
 
     def test_short_bias_allows_exits(self, base_env_data):
         """Test short bias still allows exit actions."""
@@ -572,7 +572,7 @@ class TestLowLevelEnvActionMasking:
         masks = env.action_masks()
 
         # HOLD should always be available
-        assert masks[Action.HOLD] is True
+        assert masks[Action.HOLD] == True
 
 
 # ============================================================================
@@ -592,8 +592,8 @@ class TestLowLevelEnvCombinedConstraints:
         masks = env.action_masks()
 
         # Both entries should be blocked by zero risk budget
-        assert masks[Action.LONG_ENTRY] is False
-        assert masks[Action.SHORT_ENTRY] is False
+        assert masks[Action.LONG_ENTRY] == False
+        assert masks[Action.SHORT_ENTRY] == False
 
     def test_zero_risk_budget_with_long_bias(self, base_env_data):
         """Test risk_budget=0 with long bias blocks both entries."""
@@ -606,8 +606,8 @@ class TestLowLevelEnvCombinedConstraints:
         masks = env.action_masks()
 
         # Both should be blocked (risk budget takes precedence)
-        assert masks[Action.LONG_ENTRY] is False
-        assert masks[Action.SHORT_ENTRY] is False
+        assert masks[Action.LONG_ENTRY] == False
+        assert masks[Action.SHORT_ENTRY] == False
 
     def test_full_risk_budget_with_long_bias(self, base_env_data):
         """Test risk_budget=1.0 with long bias allows LONG_ENTRY only."""
@@ -620,8 +620,8 @@ class TestLowLevelEnvCombinedConstraints:
         masks = env.action_masks()
 
         # LONG_ENTRY allowed, SHORT_ENTRY blocked by bias
-        assert masks[Action.LONG_ENTRY] is True
-        assert masks[Action.SHORT_ENTRY] is False
+        assert masks[Action.LONG_ENTRY] == True
+        assert masks[Action.SHORT_ENTRY] == False
 
     def test_full_risk_budget_with_short_bias(self, base_env_data):
         """Test risk_budget=1.0 with short bias allows SHORT_ENTRY only."""
@@ -634,8 +634,8 @@ class TestLowLevelEnvCombinedConstraints:
         masks = env.action_masks()
 
         # SHORT_ENTRY allowed, LONG_ENTRY blocked by bias
-        assert masks[Action.SHORT_ENTRY] is True
-        assert masks[Action.LONG_ENTRY] is False
+        assert masks[Action.SHORT_ENTRY] == True
+        assert masks[Action.LONG_ENTRY] == False
 
 
 # ============================================================================
@@ -677,14 +677,14 @@ class TestDirectionalHierarchicalIntegration:
         masks = low_env.action_masks()
 
         # Verify SHORT_ENTRY is blocked
-        assert masks[Action.SHORT_ENTRY] is False
+        assert masks[Action.SHORT_ENTRY] == False
 
         # Simulate high-level changing to short bias
         low_env.set_directional_bias("short")
         masks = low_env.action_masks()
 
         # Verify LONG_ENTRY is now blocked
-        assert masks[Action.LONG_ENTRY] is False
+        assert masks[Action.LONG_ENTRY] == False
 
     def test_episode_with_all_flat_bias(self, directional_high_level_data, low_level_results):
         """Test episode where high-level always chooses FLAT bias."""

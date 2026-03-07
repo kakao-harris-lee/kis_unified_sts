@@ -683,7 +683,7 @@ class TestDirectionalMode:
         ]
 
         # Mock PPO to avoid actual training
-        with patch("shared.ml.rl.hierarchical.trainer.PPO") as mock_ppo:
+        with patch("stable_baselines3.PPO") as mock_ppo:
             mock_model = MagicMock()
             mock_ppo.return_value = mock_model
 
@@ -712,7 +712,7 @@ class TestDirectionalMode:
         ]
 
         # Mock PPO to avoid actual training
-        with patch("shared.ml.rl.hierarchical.trainer.PPO") as mock_ppo:
+        with patch("stable_baselines3.PPO") as mock_ppo:
             mock_model = MagicMock()
             mock_ppo.return_value = mock_model
 
@@ -740,7 +740,7 @@ class TestDirectionalMode:
             [{"pnl": 1000, "n_trades": 2, "win_rate": 0.5}]
         ]
 
-        with patch("shared.ml.rl.hierarchical.trainer.PPO") as mock_ppo:
+        with patch("stable_baselines3.PPO") as mock_ppo:
             with patch("shared.ml.rl.hierarchical.trainer.DummyVecEnv") as mock_vec_env:
                 mock_ppo.return_value = MagicMock()
                 mock_vec_env.return_value = MagicMock()
@@ -764,7 +764,7 @@ class TestJointTraining:
     @pytest.fixture
     def mock_maskable_ppo(self):
         """Mock MaskablePPO for low-level."""
-        with patch("shared.ml.rl.hierarchical.trainer.MaskablePPO") as mock:
+        with patch("sb3_contrib.MaskablePPO") as mock:
             mock_model = MagicMock()
             mock_model.learn = MagicMock()
             mock_model.save = MagicMock()
@@ -774,7 +774,7 @@ class TestJointTraining:
     @pytest.fixture
     def mock_ppo(self):
         """Mock PPO for high-level."""
-        with patch("shared.ml.rl.hierarchical.trainer.PPO") as mock:
+        with patch("stable_baselines3.PPO") as mock:
             mock_model = MagicMock()
             mock_model.learn = MagicMock()
             mock_model.save = MagicMock()
@@ -897,8 +897,8 @@ class TestJointTraining:
         train_days = [np.random.randn(405, 25).astype(np.float32)]
         train_prices = [np.random.randn(405, 4).astype(np.float32)]
 
-        with patch("shared.ml.rl.hierarchical.trainer.MaskablePPO") as mock_mppo:
-            with patch("shared.ml.rl.hierarchical.trainer.PPO") as mock_ppo:
+        with patch("sb3_contrib.MaskablePPO") as mock_mppo:
+            with patch("stable_baselines3.PPO") as mock_ppo:
                 with patch("shared.ml.rl.hierarchical.trainer.DummyVecEnv") as mock_vec_env:
                     mock_mppo.return_value = MagicMock()
                     mock_ppo.return_value = MagicMock()
