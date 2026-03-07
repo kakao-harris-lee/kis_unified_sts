@@ -674,3 +674,245 @@ class TestObservationWithScaler:
         assert obs is not None
         assert obs.shape == (31,)
         assert obs.dtype == np.float32
+
+
+class TestTimeFeatures:
+    """시간 피처 테스트 (session_progress, sin_encoding, cos_encoding)"""
+
+    def test_time_features_at_market_start(
+        self, mock_env_config, sample_market_data, sample_indicators
+    ):
+        """장 시작(09:00)에서 시간 피처: progress=0, sin=0, cos=1"""
+        obs = build_rl_observation(
+            market_data=sample_market_data,
+            indicators=sample_indicators,
+            position_side=0.0,
+            contracts=0.0,
+            unrealized_pnl=0.0,
+            timestamp=datetime(2026, 3, 7, 9, 0, 0),  # 09:00
+            scaler=None,
+            env_config=mock_env_config,
+        )
+
+        time_features = obs[28:31]
+
+        # session_progress should be 0 at market open
+        assert time_features[0] == pytest.approx(0.0, abs=1e-5), (
+            f"session_progress should be 0 at market open, got {time_features[0]}"
+        )
+
+        # sin(0) should be 0
+        assert time_features[1] == pytest.approx(0.0, abs=1e-5), (
+            f"sin(0) should be 0, got {time_features[1]}"
+        )
+
+        # cos(0) should be 1
+        assert time_features[2] == pytest.approx(1.0, abs=1e-5), (
+            f"cos(0) should be 1, got {time_features[2]}"
+        )
+
+    def test_time_features_at_market_middle(
+        self, mock_env_config, sample_market_data, sample_indicators
+    ):
+        """장 중간(12:22)에서 시간 피처: progress≈0.5, sin≈0, cos≈-1"""
+        # Market hours: 09:00 ~ 15:45 (6h 45m = 405 minutes)
+        # Middle would be ~202.5 minutes from open = 12:22:30
+        obs = build_rl_observation(
+            market_data=sample_market_data,
+            indicators=sample_indicators,
+            position_side=0.0,
+            contracts=0.0,
+            unrealized_pnl=0.0,
+            timestamp=datetime(2026, 3, 7, 12, 22, 30),  # ~middle
+            scaler=None,
+            env_config=mock_env_config,
+        )
+
+        time_features = obs[28:31]
+
+        # session_progress should be ~0.5 at market middle
+        assert time_features[0] == pytest.approx(0.5, abs=0.02), (
+            f"session_progress should be ~0.5 at market middle, got {time_features[0]}"
+        )
+
+        # sin(π) should be ~0 (at progress=0.5, angle=π)
+        assert time_features[1] == pytest.approx(0.0, abs=0.1), (
+            f"sin(π) should be ~0 at middle, got {time_features[1]}"
+        )
+
+        # cos(π) should be ~-1
+        assert time_features[2] == pytest.approx(-1.0, abs=0.1), (
+            f"cos(π) should be ~-1 at middle, got {time_features[2]}"
+        )
+
+    def test_time_features_at_market_end(
+        self, mock_env_config, sample_market_data, sample_indicators
+    ):
+        """장 마감(15:45)에서 시간 피처: progress=1, sin≈0, cos≈1"""
+        obs = build_rl_observation(
+            market_data=sample_market_data,
+            indicators=sample_indicators,
+            position_side=0.0,
+            contracts=0.0,
+            unrealized_pnl=0.0,
+            timestamp=datetime(2026, 3, 7, 15, 45, 0),  # 15:45
+            scaler=None,
+            env_config=mock_env_config,
+        )
+
+        time_features = obs[28:31]
+
+        # session_progress should be 1 at market close
+        assert time_features[0] == pytest.approx(1.0, abs=1e-5), (
+            f"session_progress should be 1 at market close, got {time_features[0]}"
+        )
+
+        # sin(2π) should be ~0 (full cycle)
+        assert time_features[1] == pytest.approx(0.0, abs=0.1), (
+            f"sin(2π) should be ~0 at market close, got {time_features[1]}"
+        )
+
+        # cos(2π) should be ~1 (full cycle)
+        assert time_features[2] == pytest.approx(1.0, abs=0.1), (
+            f"cos(2π) should be ~1 at market close, got {time_features[2]}"
+        )
+
+    def test_time_features_morning_quarter(
+        self, mock_env_config, sample_market_data, sample_indicators
+    ):
+        """장 시작 후 25% 시점(10:41)에서 시간 피처 검증"""
+        # 25% of 405 minutes = 101.25 minutes from 09:00 = 10:41:15
+        obs = build_rl_observation(
+            market_data=sample_market_data,
+            indicators=sample_indicators,
+            position_side=0.0,
+            contracts=0.0,
+            unrealized_pnl=0.0,
+            timestamp=datetime(2026, 3, 7, 10, 41, 15),
+            scaler=None,
+            env_config=mock_env_config,
+        )
+
+        time_features = obs[28:31]
+
+        # session_progress should be ~0.25
+        assert time_features[0] == pytest.approx(0.25, abs=0.02), (
+            f"session_progress should be ~0.25, got {time_features[0]}"
+        )
+
+        # At progress=0.25, angle = 0.25 * 2π = π/2, so sin(π/2) = 1, cos(π/2) = 0
+        assert time_features[1] == pytest.approx(1.0, abs=0.1), (
+            f"sin(π/2) should be ~1, got {time_features[1]}"
+        )
+
+        assert time_features[2] == pytest.approx(0.0, abs=0.1), (
+            f"cos(π/2) should be ~0, got {time_features[2]}"
+        )
+
+    def test_time_features_afternoon_quarter(
+        self, mock_env_config, sample_market_data, sample_indicators
+    ):
+        """장 시작 후 75% 시점(14:03)에서 시간 피처 검증"""
+        # 75% of 405 minutes = 303.75 minutes from 09:00 = 14:03:45
+        obs = build_rl_observation(
+            market_data=sample_market_data,
+            indicators=sample_indicators,
+            position_side=0.0,
+            contracts=0.0,
+            unrealized_pnl=0.0,
+            timestamp=datetime(2026, 3, 7, 14, 3, 45),
+            scaler=None,
+            env_config=mock_env_config,
+        )
+
+        time_features = obs[28:31]
+
+        # session_progress should be ~0.75
+        assert time_features[0] == pytest.approx(0.75, abs=0.02), (
+            f"session_progress should be ~0.75, got {time_features[0]}"
+        )
+
+        # At progress=0.75, angle = 0.75 * 2π = 3π/2, so sin(3π/2) = -1, cos(3π/2) = 0
+        assert time_features[1] == pytest.approx(-1.0, abs=0.1), (
+            f"sin(3π/2) should be ~-1, got {time_features[1]}"
+        )
+
+        assert time_features[2] == pytest.approx(0.0, abs=0.1), (
+            f"cos(3π/2) should be ~0, got {time_features[2]}"
+        )
+
+    def test_time_features_are_in_valid_range(
+        self, mock_env_config, sample_market_data, sample_indicators
+    ):
+        """모든 시간 피처는 유효한 범위 내에 있어야 함"""
+        test_timestamps = [
+            datetime(2026, 3, 7, 9, 0, 0),    # start
+            datetime(2026, 3, 7, 10, 30, 0),  # morning
+            datetime(2026, 3, 7, 12, 0, 0),   # noon
+            datetime(2026, 3, 7, 14, 0, 0),   # afternoon
+            datetime(2026, 3, 7, 15, 45, 0),  # end
+        ]
+
+        for timestamp in test_timestamps:
+            obs = build_rl_observation(
+                market_data=sample_market_data,
+                indicators=sample_indicators,
+                position_side=0.0,
+                contracts=0.0,
+                unrealized_pnl=0.0,
+                timestamp=timestamp,
+                scaler=None,
+                env_config=mock_env_config,
+            )
+
+            time_features = obs[28:31]
+
+            # session_progress should be in [0, 1]
+            assert 0.0 <= time_features[0] <= 1.0, (
+                f"session_progress out of range [0, 1]: {time_features[0]} at {timestamp}"
+            )
+
+            # sin/cos should be in [-1, 1]
+            assert -1.0 <= time_features[1] <= 1.0, (
+                f"sin_encoding out of range [-1, 1]: {time_features[1]} at {timestamp}"
+            )
+            assert -1.0 <= time_features[2] <= 1.0, (
+                f"cos_encoding out of range [-1, 1]: {time_features[2]} at {timestamp}"
+            )
+
+    def test_time_features_progress_monotonic(
+        self, mock_env_config, sample_market_data, sample_indicators
+    ):
+        """시간 진행률(session_progress)은 단조 증가해야 함"""
+        timestamps = [
+            datetime(2026, 3, 7, 9, 0, 0),
+            datetime(2026, 3, 7, 10, 0, 0),
+            datetime(2026, 3, 7, 11, 0, 0),
+            datetime(2026, 3, 7, 12, 0, 0),
+            datetime(2026, 3, 7, 13, 0, 0),
+            datetime(2026, 3, 7, 14, 0, 0),
+            datetime(2026, 3, 7, 15, 0, 0),
+            datetime(2026, 3, 7, 15, 45, 0),
+        ]
+
+        progresses = []
+        for timestamp in timestamps:
+            obs = build_rl_observation(
+                market_data=sample_market_data,
+                indicators=sample_indicators,
+                position_side=0.0,
+                contracts=0.0,
+                unrealized_pnl=0.0,
+                timestamp=timestamp,
+                scaler=None,
+                env_config=mock_env_config,
+            )
+            progresses.append(obs[28])  # session_progress
+
+        # Verify monotonic increase
+        for i in range(1, len(progresses)):
+            assert progresses[i] > progresses[i - 1], (
+                f"session_progress not monotonic at step {i}: "
+                f"{progresses[i]} <= {progresses[i-1]} "
+                f"(timestamps: {timestamps[i-1]} -> {timestamps[i]})"
+            )
