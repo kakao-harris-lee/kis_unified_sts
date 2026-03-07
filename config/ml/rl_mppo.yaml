@@ -144,6 +144,17 @@ hierarchical:
     batch_size: 32
     n_epochs: 10
     ent_coef: 0.05
+  directional_bias:
+    enabled: false                   # 방향 바이어스 활성화
+    mode: neutral                    # neutral, long_bias, short_bias
+    strength: 0.3                    # 바이어스 강도 (0.0~1.0)
+    long_threshold: 0.6              # LONG 선호 시 확률 임계값
+    short_threshold: 0.6             # SHORT 선호 시 확률 임계값
+    adaptive: false                  # 시장 조건에 따른 동적 조정
+    regime_signals:                  # Regime 기반 바이어스 (adaptive=true일 때)
+      use_trend: true                # 추세 지표 사용
+      use_volatility: true           # 변동성 지표 사용
+      lookback_bars: 60              # 회고 기간 (분봉 기준)
 
 # === Kelly Position Sizing ===
 position_sizing:
