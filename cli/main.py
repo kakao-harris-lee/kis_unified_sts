@@ -2001,11 +2001,39 @@ def rl_train(algo: str, config: str | None):
     click.echo("-" * 40)
 
     try:
+        from pydantic import ValidationError
+
         from scripts.training.train_rl import (
             load_data_from_clickhouse,
             precompute_tft_aux,
         )
+        from shared.ml.rl.config import RLMPPOConfig
         from shared.ml.rl.trainer import RLTrainer
+
+        # Validate config early to fail fast before expensive data loading
+        try:
+            validated_config = RLMPPOConfig.from_yaml(config)
+            click.echo("✓ Config validation passed")
+            click.echo(
+                f"  Learning rate: {validated_config.mppo.learning_rate}, "
+                f"Initial balance: {validated_config.env.initial_balance:,.0f}"
+            )
+        except ValidationError as e:
+            click.echo("✗ Config validation failed:", err=True)
+            click.echo("", err=True)
+            for error in e.errors():
+                field = ".".join(str(x) for x in error["loc"])
+                msg = error["msg"]
+                value = error.get("input")
+                click.echo(f"  Field: {field}", err=True)
+                click.echo(f"  Error: {msg}", err=True)
+                if value is not None:
+                    click.echo(f"  Value: {value}", err=True)
+                click.echo("", err=True)
+            click.echo(
+                f"Fix the validation errors in {config} and try again.", err=True
+            )
+            sys.exit(1)
 
         train_days, train_prices, test_days, test_prices = load_data_from_clickhouse(
             config,
