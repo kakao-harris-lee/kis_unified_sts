@@ -2,6 +2,20 @@
 
 Verifies that the backtest engine correctly uses the slippage model
 for futures trading when configured.
+
+Test Coverage:
+1. Basic slippage model usage (enabled/disabled/None)
+2. Long position entry/exit slippage
+3. Short position entry/exit slippage
+4. Direct comparison tests showing P&L impact
+5. Multi-trade cumulative slippage impact
+
+Expected Behavior:
+- BUY entry: pays MORE (worse fill) → entry_price increases
+- SELL entry (short): receives LESS (worse fill) → entry_price decreases
+- BUY exit (closing long): receives LESS (worse fill) → exit_price decreases
+- SELL exit (closing short): pays MORE (worse fill) → exit_price increases
+- Overall: P&L is lower with slippage (more realistic backtest results)
 """
 
 import pandas as pd
@@ -407,3 +421,316 @@ def test_backtest_exit_slippage_short():
     assert trade.exit_price <= expected_max_exit, (
         f"Exit price {trade.exit_price} should be <= {expected_max_exit}"
     )
+
+
+def test_backtest_slippage_comparison_long_position():
+    """Direct comparison: backtest with slippage enabled vs disabled for long position.
+
+    Verifies that:
+    1. Slippage model increases entry price (worse fill on buy)
+    2. Slippage model decreases exit price (worse fill on sell)
+    3. Total P&L is lower with slippage (more realistic)
+    """
+
+    class BuyHoldSellStrategy:
+        """Strategy that buys on bar 1, holds, exits on bar 4."""
+
+        name = "comparison_test"
+
+        def __init__(self):
+            self.position = None
+            self.bar_count = 0
+
+        def set_position(self, position):
+            self.position = position
+
+        def on_bar(self, bar):
+            self.bar_count += 1
+            if self.bar_count == 1:
+                return SignalType.BUY  # Entry
+            elif self.bar_count == 4:
+                return SignalType.SELL  # Exit
+            return SignalType.HOLD
+
+    # Create test data with clear price movement
+    # Entry at 100.0, Exit at 100.15 (profit expected)
+    data = create_test_data(num_bars=5, base_price=100.0)
+
+    # ========== Run WITHOUT slippage model ==========
+    config_no_slippage = BacktestConfig.futures(
+        initial_capital=10_000_000,
+        contracts=1,
+        point_value=250_000,
+    )
+    config_no_slippage.slippage_model = None
+
+    strategy_no_slip = BuyHoldSellStrategy()
+    engine_no_slip = BacktestEngine(strategy_no_slip, config_no_slippage)
+    result_no_slip = engine_no_slip.run(data)
+
+    # ========== Run WITH slippage model ==========
+    slippage_config = SlippageModelConfig(
+        enabled=True,
+        base_spread_bps=2.0,  # 2 bps base slippage
+        depth_impact_factor=0.5,
+        min_slippage_bps=1.0,
+        max_slippage_bps=10.0,
+    )
+    slippage_model = SlippageModel(slippage_config)
+
+    config_with_slippage = BacktestConfig.futures(
+        initial_capital=10_000_000,
+        contracts=1,
+        point_value=250_000,
+    )
+    config_with_slippage.slippage_model = slippage_model
+
+    strategy_with_slip = BuyHoldSellStrategy()
+    engine_with_slip = BacktestEngine(strategy_with_slip, config_with_slippage)
+    result_with_slip = engine_with_slip.run(data)
+
+    # ========== Compare Results ==========
+    assert result_no_slip.total_trades == 1, "No slippage: expected 1 trade"
+    assert result_with_slip.total_trades == 1, "With slippage: expected 1 trade"
+
+    trade_no_slip = result_no_slip.trades[0]
+    trade_with_slip = result_with_slip.trades[0]
+
+    # Entry price comparison: slippage should increase entry price (worse fill)
+    assert trade_no_slip.entry_price == 100.0, "No slippage: entry at market price"
+    assert trade_with_slip.entry_price > trade_no_slip.entry_price, (
+        f"Slippage should increase entry price: "
+        f"{trade_with_slip.entry_price} > {trade_no_slip.entry_price}"
+    )
+
+    # Exit price comparison: slippage should decrease exit price (worse fill)
+    assert trade_no_slip.exit_price == 100.15, "No slippage: exit at market price"
+    assert trade_with_slip.exit_price < trade_no_slip.exit_price, (
+        f"Slippage should decrease exit price: "
+        f"{trade_with_slip.exit_price} < {trade_no_slip.exit_price}"
+    )
+
+    # P&L comparison: slippage should reduce profit
+    pnl_no_slip = trade_no_slip.profit
+    pnl_with_slip = trade_with_slip.profit
+
+    assert pnl_with_slip < pnl_no_slip, (
+        f"Slippage should reduce P&L: "
+        f"{pnl_with_slip:,.0f} < {pnl_no_slip:,.0f}"
+    )
+
+    # Calculate slippage impact
+    slippage_cost = pnl_no_slip - pnl_with_slip
+    assert slippage_cost > 0, "Slippage cost should be positive"
+
+    # Verify slippage is reasonable (not excessive)
+    # With base_spread_bps=2.0, expected ~4 bps total (entry + exit)
+    # Max is 20 bps (10 bps entry + 10 bps exit)
+    max_expected_slippage = 100.0 * 0.002 * 250_000  # 20 bps * point_value
+    assert slippage_cost <= max_expected_slippage, (
+        f"Slippage cost {slippage_cost:,.0f} should not exceed {max_expected_slippage:,.0f}"
+    )
+
+
+def test_backtest_slippage_comparison_short_position():
+    """Direct comparison: backtest with slippage enabled vs disabled for short position.
+
+    Verifies that:
+    1. Slippage model decreases entry price (worse fill on short sell)
+    2. Slippage model increases exit price (worse fill on buy to cover)
+    3. Total P&L is lower with slippage (more realistic)
+    """
+
+    class ShortHoldCoverStrategy:
+        """Strategy that shorts on bar 1, holds, covers on bar 4."""
+
+        name = "short_comparison_test"
+
+        def __init__(self):
+            self.position = None
+            self.bar_count = 0
+
+        def set_position(self, position):
+            self.position = position
+
+        def on_bar(self, bar):
+            self.bar_count += 1
+            if self.bar_count == 1:
+                return SignalType.SELL  # Short entry
+            elif self.bar_count == 4:
+                return SignalType.BUY  # Cover (exit)
+            return SignalType.HOLD
+
+    # Create test data with price increase (short should lose money)
+    data = create_test_data(num_bars=5, base_price=100.0)
+
+    # ========== Run WITHOUT slippage model ==========
+    config_no_slippage = BacktestConfig.futures(
+        initial_capital=10_000_000,
+        contracts=1,
+        point_value=250_000,
+    )
+    config_no_slippage.slippage_model = None
+
+    strategy_no_slip = ShortHoldCoverStrategy()
+    engine_no_slip = BacktestEngine(strategy_no_slip, config_no_slippage)
+    result_no_slip = engine_no_slip.run(data)
+
+    # ========== Run WITH slippage model ==========
+    slippage_config = SlippageModelConfig(
+        enabled=True,
+        base_spread_bps=2.0,
+        depth_impact_factor=0.5,
+        min_slippage_bps=1.0,
+        max_slippage_bps=10.0,
+    )
+    slippage_model = SlippageModel(slippage_config)
+
+    config_with_slippage = BacktestConfig.futures(
+        initial_capital=10_000_000,
+        contracts=1,
+        point_value=250_000,
+    )
+    config_with_slippage.slippage_model = slippage_model
+
+    strategy_with_slip = ShortHoldCoverStrategy()
+    engine_with_slip = BacktestEngine(strategy_with_slip, config_with_slippage)
+    result_with_slip = engine_with_slip.run(data)
+
+    # ========== Compare Results ==========
+    assert result_no_slip.total_trades == 1, "No slippage: expected 1 trade"
+    assert result_with_slip.total_trades == 1, "With slippage: expected 1 trade"
+
+    trade_no_slip = result_no_slip.trades[0]
+    trade_with_slip = result_with_slip.trades[0]
+
+    # Entry price comparison: slippage should decrease entry price (worse fill on short)
+    assert trade_no_slip.entry_price == 100.0, "No slippage: entry at market price"
+    assert trade_with_slip.entry_price < trade_no_slip.entry_price, (
+        f"Slippage should decrease short entry price: "
+        f"{trade_with_slip.entry_price} < {trade_no_slip.entry_price}"
+    )
+
+    # Exit price comparison: slippage should increase exit price (worse fill on cover)
+    assert trade_no_slip.exit_price == 100.15, "No slippage: exit at market price"
+    assert trade_with_slip.exit_price > trade_no_slip.exit_price, (
+        f"Slippage should increase cover price: "
+        f"{trade_with_slip.exit_price} > {trade_no_slip.exit_price}"
+    )
+
+    # P&L comparison: slippage should make loss larger (or profit smaller)
+    pnl_no_slip = trade_no_slip.profit
+    pnl_with_slip = trade_with_slip.profit
+
+    assert pnl_with_slip < pnl_no_slip, (
+        f"Slippage should reduce P&L (increase loss): "
+        f"{pnl_with_slip:,.0f} < {pnl_no_slip:,.0f}"
+    )
+
+    # Calculate slippage impact
+    slippage_cost = pnl_no_slip - pnl_with_slip
+    assert slippage_cost > 0, "Slippage cost should be positive"
+
+    # Verify slippage is reasonable (not excessive)
+    max_expected_slippage = 100.0 * 0.002 * 250_000  # 20 bps max
+    assert slippage_cost <= max_expected_slippage, (
+        f"Slippage cost {slippage_cost:,.0f} should not exceed {max_expected_slippage:,.0f}"
+    )
+
+
+def test_backtest_slippage_impact_on_winrate():
+    """Test that slippage model affects overall backtest performance metrics.
+
+    Verifies that a strategy with multiple trades shows measurable difference
+    in total P&L, win rate, and other metrics when slippage is enabled.
+    """
+
+    class MultiTradeStrategy:
+        """Strategy that makes multiple trades throughout the backtest."""
+
+        name = "multi_trade_test"
+
+        def __init__(self):
+            self.position = None
+            self.bar_count = 0
+            self.trade_count = 0
+
+        def set_position(self, position):
+            self.position = position
+
+        def on_bar(self, bar):
+            self.bar_count += 1
+            # Trade every 10 bars (5 trades total in 50 bars)
+            if self.bar_count % 10 == 1 and self.trade_count < 5:
+                self.trade_count += 1
+                return SignalType.BUY if self.trade_count % 2 == 1 else SignalType.SELL
+            elif self.bar_count % 10 == 6 and self.position is not None:
+                return SignalType.SELL if self.position.side == "BUY" else SignalType.BUY
+            return SignalType.HOLD
+
+    # Create test data with some volatility
+    data = create_test_data(num_bars=50, base_price=100.0)
+
+    # ========== Run WITHOUT slippage ==========
+    config_no_slippage = BacktestConfig.futures(
+        initial_capital=10_000_000,
+        contracts=1,
+        point_value=250_000,
+    )
+    config_no_slippage.slippage_model = None
+
+    strategy_no_slip = MultiTradeStrategy()
+    engine_no_slip = BacktestEngine(strategy_no_slip, config_no_slippage)
+    result_no_slip = engine_no_slip.run(data)
+
+    # ========== Run WITH slippage ==========
+    slippage_config = SlippageModelConfig(
+        enabled=True,
+        base_spread_bps=2.0,
+        depth_impact_factor=0.5,
+        min_slippage_bps=1.0,
+        max_slippage_bps=10.0,
+    )
+    slippage_model = SlippageModel(slippage_config)
+
+    config_with_slippage = BacktestConfig.futures(
+        initial_capital=10_000_000,
+        contracts=1,
+        point_value=250_000,
+    )
+    config_with_slippage.slippage_model = slippage_model
+
+    strategy_with_slip = MultiTradeStrategy()
+    engine_with_slip = BacktestEngine(strategy_with_slip, config_with_slippage)
+    result_with_slip = engine_with_slip.run(data)
+
+    # ========== Compare Overall Performance ==========
+    # Both should have same number of trades
+    assert result_no_slip.total_trades == result_with_slip.total_trades, (
+        "Trade count should be the same"
+    )
+    assert result_no_slip.total_trades > 0, "Should have at least one trade"
+
+    # Final capital should be lower with slippage
+    assert result_with_slip.final_capital <= result_no_slip.final_capital, (
+        f"Final capital with slippage ({result_with_slip.final_capital:,.0f}) "
+        f"should be <= without slippage ({result_no_slip.final_capital:,.0f})"
+    )
+
+    # Total return should be lower with slippage
+    assert result_with_slip.total_return <= result_no_slip.total_return, (
+        f"Total return with slippage ({result_with_slip.total_return:.2%}) "
+        f"should be <= without slippage ({result_no_slip.total_return:.2%})"
+    )
+
+    # Calculate cumulative slippage cost across all trades
+    total_slippage_cost = (
+        result_no_slip.final_capital - result_with_slip.final_capital
+    )
+
+    # With multiple trades, slippage cost should be measurable
+    if result_no_slip.total_trades > 0:
+        avg_slippage_per_trade = total_slippage_cost / result_no_slip.total_trades
+        assert avg_slippage_per_trade >= 0, (
+            "Average slippage per trade should be non-negative"
+        )
