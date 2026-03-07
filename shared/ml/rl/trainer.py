@@ -17,9 +17,11 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+from pydantic import ValidationError
 
 from shared.config import ConfigLoader
 from shared.ml.base import get_device
+from shared.ml.rl.config import RLMPPOConfig
 from shared.ml.rl.env import FuturesTradingEnv, RLEnvConfig, mask_fn
 
 logger = logging.getLogger(__name__)
@@ -49,16 +51,33 @@ class RLTrainer:
     """
 
     def __init__(self, config_path: str = "ml/rl_mppo.yaml"):
+        # Load and validate config with Pydantic schema
+        try:
+            self.validated_config = RLMPPOConfig.from_yaml(config_path)
+            logger.info(
+                f"✓ Config validation passed: {config_path} "
+                f"(mppo.learning_rate={self.validated_config.mppo.learning_rate}, "
+                f"env.initial_balance={self.validated_config.env.initial_balance})"
+            )
+        except ValidationError as e:
+            logger.error(f"Config validation failed for {config_path}:")
+            for error in e.errors():
+                field = ".".join(str(loc) for loc in error["loc"])
+                logger.error(f"  - {field}: {error['msg']} (got: {error.get('input')})")
+            raise ValueError(
+                f"Invalid RL configuration in {config_path}. "
+                f"See error messages above for details."
+            ) from e
+
+        # Keep dict-based config for backward compatibility
         self.config = ConfigLoader.load(config_path)
         self.env_config = RLEnvConfig.from_yaml(config_path)
         self.device = get_device(self.config.get("mppo", {}).get("device", "auto"))
         self.save_dir = Path(
-            self.config.get("training", {}).get("save_dir", "./models/futures/rl/")
+            self.validated_config.training.save_dir
         )
         self.save_dir.mkdir(parents=True, exist_ok=True)
-        self.tb_log = self.config.get("training", {}).get(
-            "tensorboard_log", "./results/rl/tensorboard/"
-        )
+        self.tb_log = self.validated_config.training.tensorboard_log
 
     def train(
         self,

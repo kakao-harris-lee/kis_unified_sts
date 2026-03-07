@@ -39,7 +39,12 @@ import logging
 import os
 import re
 from pathlib import Path
-from typing import Any, ClassVar, Self
+from typing import Any, ClassVar
+
+try:
+    from typing import Self  # Python 3.11+
+except ImportError:
+    from typing_extensions import Self  # Python 3.10 backport
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
