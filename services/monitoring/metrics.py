@@ -258,6 +258,26 @@ class MetricsCollector:
             "trading_signal_evaluations_total",
             "Total signal evaluation cycles",
         )
+        self.prom_rl_kl_divergence = Gauge(
+            "trading_rl_kl_divergence",
+            "RL model KL divergence for observation distribution drift",
+            ["strategy", "metric_type"],
+        )
+        self.prom_rl_action_distribution_drift = Gauge(
+            "trading_rl_action_distribution_drift",
+            "RL model action distribution drift",
+            ["strategy"],
+        )
+        self.prom_rl_observation_mean_drift = Gauge(
+            "trading_rl_observation_mean_drift",
+            "RL model observation mean drift",
+            ["strategy"],
+        )
+        self.prom_rl_observation_std_drift = Gauge(
+            "trading_rl_observation_std_drift",
+            "RL model observation std drift",
+            ["strategy"],
+        )
 
         # Histograms
         self.prom_trade_pnl = Histogram(
