@@ -432,6 +432,9 @@ class DailyScanner:
             Dictionary with keys ``"trend_pullback"`` and ``"momentum_breakout"``,
             each mapping to a list of passing codes (up to ``max_watchlist_size``).
         """
+        if not codes:
+            return {"trend_pullback": [], "momentum_breakout": []}
+
         # Filter funnel metrics
         total_input = len(codes)
         loaded_count = 0
