@@ -329,6 +329,9 @@ class TradingConfig:
     # Regime performance tracking
     regime_performance_tracking_enabled: bool = False
 
+    # Regime detection mode: 'simple' (MFI+ADX), 'adaptive' (multi-metric), or 'hmm' (future)
+    regime_detection_mode: str = "simple"
+
     def __post_init__(self):
         """Validate configuration values."""
         self._validate()
@@ -343,6 +346,12 @@ class TradingConfig:
         if self.universe_mode not in ("dynamic", "static"):
             raise ValueError(
                 f"universe_mode must be 'dynamic' or 'static', got {self.universe_mode}"
+            )
+
+        if self.regime_detection_mode not in ("simple", "adaptive", "hmm"):
+            raise ValueError(
+                f"regime_detection_mode must be 'simple', 'adaptive', or 'hmm', "
+                f"got {self.regime_detection_mode}"
             )
 
         if not (MIN_INITIAL_CAPITAL <= self.initial_capital <= MAX_INITIAL_CAPITAL):
@@ -509,6 +518,48 @@ class TradingOrchestrator:
 
         # Market regime
         self._current_regime: str | None = None
+        self._current_regime_confidence: float | None = None
+
+        # Adaptive regime detector (optional, controlled by config)
+        self._adaptive_regime_detector: Any | None = None
+        if config.regime_detection_mode == "adaptive":
+            try:
+                from shared.regime.adaptive_detector import (
+                    AdaptiveRegimeDetector,
+                    AdaptiveRegimeConfig,
+                )
+                from shared.config.loader import ConfigLoader
+
+                # Load adaptive regime config
+                regime_cfg_dict = ConfigLoader.load("ml/regime_adaptive.yaml")
+                detector_cfg = regime_cfg_dict.get("detector", {})
+
+                # Build AdaptiveRegimeConfig from YAML
+                adaptive_config = AdaptiveRegimeConfig(
+                    mfi_bull_threshold=detector_cfg.get("mfi_bull_threshold", 60.0),
+                    mfi_bear_threshold=detector_cfg.get("mfi_bear_threshold", 40.0),
+                    mfi_period=detector_cfg.get("mfi_period", 14),
+                    adx_strong_trend=detector_cfg.get("adx_strong_trend", 25.0),
+                    adx_weak_trend=detector_cfg.get("adx_weak_trend", 20.0),
+                    adx_period=detector_cfg.get("adx_period", 14),
+                    volatility_high_threshold=detector_cfg.get("volatility_high_threshold", 2.0),
+                    volatility_low_threshold=detector_cfg.get("volatility_low_threshold", 0.5),
+                    atr_period=detector_cfg.get("atr_period", 14),
+                    sma_fast_period=detector_cfg.get("sma_fast_period", 20),
+                    sma_slow_period=detector_cfg.get("sma_slow_period", 50),
+                    min_confidence_threshold=detector_cfg.get("min_confidence_threshold", 0.6),
+                )
+                self._adaptive_regime_detector = AdaptiveRegimeDetector(adaptive_config)
+                logger.info(f"Adaptive regime detection enabled (mode={config.regime_detection_mode})")
+            except (ConfigurationError, MissingConfigError, InvalidConfigError) as e:
+                logger.error(f"Failed to initialize adaptive regime detector: {e}", exc_info=True)
+                self._adaptive_regime_detector = None
+            except Exception as e:
+                logger.error(
+                    f"Unexpected error initializing adaptive regime detector: {e}",
+                    exc_info=True,
+                )
+                self._adaptive_regime_detector = None
 
         # Regime performance tracker (optional, controlled by config)
         self._regime_tracker: RegimePerformanceTracker | None = None
@@ -3110,7 +3161,14 @@ class TradingOrchestrator:
 
         Uses MarketClassifier with MFI computed from streaming indicator engine.
         Falls back to simple avg-change classification when MFI is unavailable.
+
+        If config.regime_detection_mode == 'adaptive', delegates to _handle_adaptive_regime().
         """
+        # Delegate to adaptive regime handler if enabled
+        if self.config.regime_detection_mode == "adaptive" and self._adaptive_regime_detector:
+            return await self._handle_adaptive_regime()
+
+        # Otherwise, use simple regime detection (legacy behavior)
         if not self._data_provider:
             return None
 
@@ -3121,6 +3179,7 @@ class TradingOrchestrator:
 
             regime = self._classify_market(data)
             self._current_regime = regime
+            self._current_regime_confidence = None  # Simple mode doesn't provide confidence
 
             # Periodic refresh of daily indicators (for daily_pullback)
             self._refresh_daily_indicators()
@@ -3193,6 +3252,119 @@ class TradingOrchestrator:
             return "SIDEWAYS_DOWN"
         else:
             return "SIDEWAYS_FLAT"
+
+    async def _handle_adaptive_regime(self) -> dict[str, Any] | None:
+        """Adaptive regime detection handler using AdaptiveRegimeDetector.
+
+        Uses multi-metric classification (MFI, ADX, volatility, trend) to detect
+        enhanced regime states (TRENDING_BULL, TRENDING_BEAR, VOLATILE_SIDEWAYS, etc.).
+
+        Returns:
+            Dict with regime, confidence, and timestamp, or None if detection failed
+        """
+        if not self._adaptive_regime_detector:
+            logger.warning("Adaptive regime detector not initialized, falling back to simple mode")
+            return None
+
+        if not self._indicator_engine:
+            logger.debug("Indicator engine not available for adaptive regime detection")
+            return None
+
+        try:
+            # Get recent OHLCV data from indicator engine for regime detection
+            # AdaptiveRegimeDetector.detect() expects a DataFrame with OHLCV + volume
+            recent_bars = self._get_recent_bars_for_regime()
+
+            if recent_bars is None or recent_bars.empty:
+                logger.debug("No recent bars available for adaptive regime detection")
+                return None
+
+            # Detect regime using multi-metric classification
+            regime_signal = self._adaptive_regime_detector.detect(recent_bars)
+
+            if not regime_signal:
+                logger.debug("AdaptiveRegimeDetector returned None")
+                return None
+
+            # Update current regime state
+            self._current_regime = regime_signal.state.value
+            self._current_regime_confidence = regime_signal.confidence
+
+            # Periodic refresh of daily indicators (for daily_pullback)
+            self._refresh_daily_indicators()
+
+            # Refresh adaptive sizing multipliers
+            if self._adaptive_sizing:
+                try:
+                    self._adaptive_sizing.refresh()
+                except (InfrastructureError, OSError, ConnectionError) as e:
+                    logger.debug(f"Adaptive sizing refresh failed: {e}")
+
+            logger.info(
+                f"AdaptiveRegime: {regime_signal.state.value} "
+                f"(confidence: {regime_signal.confidence:.2f})"
+            )
+
+            return {
+                "regime": regime_signal.state.value,
+                "confidence": regime_signal.confidence,
+                "timestamp": regime_signal.timestamp.isoformat(),
+                "indicators": regime_signal.indicators,  # MFI, ADX, volatility, trend values
+            }
+
+        except (ValidationError, ValueError, TypeError, AttributeError) as e:
+            logger.error(f"Adaptive regime detection failed: {e}", exc_info=True)
+            return None
+        except Exception as e:
+            logger.error(
+                f"Unexpected error in adaptive regime detection: {e}",
+                exc_info=True,
+            )
+            return None
+
+    def _get_recent_bars_for_regime(self) -> Any:
+        """Get recent OHLCV bars for regime detection.
+
+        Returns:
+            DataFrame with columns: open, high, low, close, volume
+            or None if data not available
+        """
+        if not self._indicator_engine:
+            return None
+
+        try:
+            # For stock mode: get bars for primary symbol (or first symbol in list)
+            # For futures mode: get bars for the futures contract
+            symbol = None
+            if self.config.asset_class == "futures":
+                # Get the primary futures symbol (should be tracked by indicator engine)
+                if self.config.symbols:
+                    symbol = self.config.symbols[0]
+            else:
+                # For stocks, we need aggregated market data across symbols
+                # Use first symbol as proxy for now (AdaptiveRegimeDetector works on market-level)
+                if self.config.symbols:
+                    symbol = self.config.symbols[0]
+
+            if not symbol:
+                logger.debug("No symbol available for regime detection")
+                return None
+
+            # Get recent bars from indicator engine (need at least 50+ bars for SMA calculation)
+            # IndicatorEngine stores minute bars, fetch last 100 bars
+            bars_df = self._indicator_engine.get_recent_bars(symbol, lookback=100)
+
+            return bars_df
+
+        except (ValidationError, ValueError, TypeError, AttributeError, KeyError) as e:
+            logger.debug(f"Failed to get recent bars for regime detection: {e}")
+            return None
+        except Exception as e:
+            logger.error(
+                f"Unexpected error getting recent bars for regime: {e}",
+                exc_info=True,
+            )
+            return None
 
     async def _handle_entry(self) -> list[Signal]:
         """Entry signal handler (runs every 1 sec)
@@ -3280,6 +3452,7 @@ class TradingOrchestrator:
                     metadata={
                         "paper_trading": self.config.paper_trading,
                         "regime": self._current_regime,
+                        "regime_confidence": self._current_regime_confidence,
                         "market_state": self._current_regime,
                         "symbol_metadata": meta,
                         "accumulation_candidates": getattr(self, "_accumulation_candidates", {}),
