@@ -2074,3 +2074,414 @@ class TestMTMComponent:
             f"Reward should scale with w_mtm: weight_ratio={weight_ratio}, "
             f"reward_ratio={reward_ratio}"
         )
+
+
+class TestRewardScaling:
+    """보상 스케일링 (reward_scale) 테스트
+
+    reward_scale은 모든 보상 컴포넌트를 곱하는 최종 배율:
+    R = (w_profit * r_profit - w_cost * r_cost - w_risk * r_risk
+         + w_mtm * r_mtm - inaction_penalty) * reward_scale
+
+    검증 사항:
+    - reward_scale 배율이 정확히 적용되는지 확인
+    - 다른 reward_scale 값에 대해 비례 관계 유지
+    - 최종 보상 범위가 합리적인지 확인
+    """
+
+    def test_reward_scale_multiplier_applied(self, sample_data: tuple[np.ndarray, np.ndarray]):
+        """reward_scale 배율이 정확히 적용됨"""
+        features, prices = sample_data
+
+        # reward_scale=1.0 환경
+        config_scale1 = RLEnvConfig(
+            initial_balance=100_000_000,
+            commission_rate=0.00003,
+            tick_size=0.05,
+            tick_value=250_000,
+            contract_multiplier=250_000,
+            max_contracts=1,
+            slippage=0.0,
+            margin_rate=0.15,
+            n_market_features=25,
+            n_position_features=6,
+            w_profit=1.0,
+            w_cost=1.0,
+            w_risk=0.5,
+            w_mtm=0.0,
+            inaction_penalty=0.0,
+            reward_scale=1.0,  # 배율 없음
+            max_loss=-50_000_000,
+            loss_penalty_coeff=2.0,
+        )
+        env_scale1 = FuturesTradingEnv(day_data=features, config=config_scale1, prices=prices)
+
+        # 동일한 시나리오 실행
+        env_scale1.reset()
+        entry_price = env_scale1._get_current_price()
+
+        # 롱 진입
+        _, reward_entry, _, _, _ = env_scale1.step(Action.LONG_ENTRY)
+
+        # 진입 비용 계산
+        entry_cost = entry_price * config_scale1.contract_multiplier * config_scale1.commission_rate
+        expected_r_profit = -entry_cost / config_scale1.initial_balance
+        expected_r_cost = entry_cost / config_scale1.initial_balance
+
+        # reward_scale=1.0이므로 그대로
+        expected_reward_unscaled = (
+            config_scale1.w_profit * expected_r_profit
+            - config_scale1.w_cost * expected_r_cost
+            - config_scale1.w_risk * 0.0
+        )
+        expected_reward = expected_reward_unscaled * config_scale1.reward_scale
+
+        assert reward_entry == pytest.approx(expected_reward, rel=1e-6), (
+            f"Reward with scale=1.0 mismatch: expected {expected_reward}, got {reward_entry}"
+        )
+
+        # 보상이 매우 작은 범위여야 함 (진입 비용만 있고 scale=1.0)
+        assert abs(reward_entry) < 1e-3, (
+            f"Unscaled reward should be very small: got {reward_entry}"
+        )
+
+    def test_reward_scale_proportional(self, sample_data: tuple[np.ndarray, np.ndarray]):
+        """다른 reward_scale 값에 대해 보상이 비례 관계 유지"""
+        features, prices = sample_data
+
+        # reward_scale=1.0 환경
+        config_scale1 = RLEnvConfig(
+            initial_balance=100_000_000,
+            commission_rate=0.00003,
+            tick_size=0.05,
+            tick_value=250_000,
+            contract_multiplier=250_000,
+            max_contracts=1,
+            slippage=0.0,
+            margin_rate=0.15,
+            n_market_features=25,
+            n_position_features=6,
+            w_profit=1.0,
+            w_cost=1.0,
+            w_risk=0.5,
+            w_mtm=0.0,
+            inaction_penalty=0.0,
+            reward_scale=1.0,
+            max_loss=-50_000_000,
+            loss_penalty_coeff=2.0,
+        )
+
+        # reward_scale=100.0 환경
+        config_scale100 = RLEnvConfig(
+            initial_balance=100_000_000,
+            commission_rate=0.00003,
+            tick_size=0.05,
+            tick_value=250_000,
+            contract_multiplier=250_000,
+            max_contracts=1,
+            slippage=0.0,
+            margin_rate=0.15,
+            n_market_features=25,
+            n_position_features=6,
+            w_profit=1.0,
+            w_cost=1.0,
+            w_risk=0.5,
+            w_mtm=0.0,
+            inaction_penalty=0.0,
+            reward_scale=100.0,  # 100배
+            max_loss=-50_000_000,
+            loss_penalty_coeff=2.0,
+        )
+
+        # reward_scale=500.0 환경
+        config_scale500 = RLEnvConfig(
+            initial_balance=100_000_000,
+            commission_rate=0.00003,
+            tick_size=0.05,
+            tick_value=250_000,
+            contract_multiplier=250_000,
+            max_contracts=1,
+            slippage=0.0,
+            margin_rate=0.15,
+            n_market_features=25,
+            n_position_features=6,
+            w_profit=1.0,
+            w_cost=1.0,
+            w_risk=0.5,
+            w_mtm=0.0,
+            inaction_penalty=0.0,
+            reward_scale=500.0,  # 500배
+            max_loss=-50_000_000,
+            loss_penalty_coeff=2.0,
+        )
+
+        env_scale1 = FuturesTradingEnv(day_data=features, config=config_scale1, prices=prices)
+        env_scale100 = FuturesTradingEnv(day_data=features, config=config_scale100, prices=prices)
+        env_scale500 = FuturesTradingEnv(day_data=features, config=config_scale500, prices=prices)
+
+        # 동일한 시나리오 실행
+        env_scale1.reset()
+        env_scale100.reset()
+        env_scale500.reset()
+
+        entry_price = env_scale1._get_current_price()
+
+        # 롱 진입
+        env_scale1.step(Action.LONG_ENTRY)
+        env_scale100.step(Action.LONG_ENTRY)
+        env_scale500.step(Action.LONG_ENTRY)
+
+        # 가격 상승 시뮬레이션
+        price_increase = 8.0
+        env_scale1.prices[env_scale1.current_step, 3] = entry_price + price_increase
+        env_scale100.prices[env_scale100.current_step, 3] = entry_price + price_increase
+        env_scale500.prices[env_scale500.current_step, 3] = entry_price + price_increase
+
+        # 청산
+        _, reward_scale1, _, _, _ = env_scale1.step(Action.LONG_EXIT)
+        _, reward_scale100, _, _, _ = env_scale100.step(Action.LONG_EXIT)
+        _, reward_scale500, _, _, _ = env_scale500.step(Action.LONG_EXIT)
+
+        # 보상 비율 확인
+        ratio_100_to_1 = reward_scale100 / reward_scale1
+        ratio_500_to_1 = reward_scale500 / reward_scale1
+        ratio_500_to_100 = reward_scale500 / reward_scale100
+
+        assert ratio_100_to_1 == pytest.approx(100.0, rel=1e-6), (
+            f"Reward with scale=100 should be 100x of scale=1: "
+            f"expected 100.0, got {ratio_100_to_1}"
+        )
+
+        assert ratio_500_to_1 == pytest.approx(500.0, rel=1e-6), (
+            f"Reward with scale=500 should be 500x of scale=1: "
+            f"expected 500.0, got {ratio_500_to_1}"
+        )
+
+        assert ratio_500_to_100 == pytest.approx(5.0, rel=1e-6), (
+            f"Reward with scale=500 should be 5x of scale=100: "
+            f"expected 5.0, got {ratio_500_to_100}"
+        )
+
+    def test_final_reward_range_with_default_scale(self, env: FuturesTradingEnv):
+        """기본 reward_scale=100.0 사용 시 최종 보상 범위 확인"""
+        env.reset()
+        entry_price = env._get_current_price()
+
+        # 롱 진입
+        env.step(Action.LONG_ENTRY)
+
+        # 큰 수익 시나리오 (10 포인트 상승)
+        profit_price = entry_price + 10.0
+        env.prices[env.current_step, 3] = profit_price
+        _, reward_profit, _, _, _ = env.step(Action.LONG_EXIT)
+
+        # 수익성 거래의 보상은 양수이고 합리적인 범위 내
+        assert reward_profit > 0, f"Profitable trade should have positive reward: got {reward_profit}"
+        assert reward_profit < 10.0, (
+            f"Reward should be scaled reasonably (< 10.0 with scale=100): got {reward_profit}"
+        )
+
+        # 손실 시나리오 (롱 진입 후 10 포인트 하락)
+        env.reset()
+        entry_price = env._get_current_price()
+        env.step(Action.LONG_ENTRY)
+
+        loss_price = entry_price - 10.0
+        env.prices[env.current_step, 3] = loss_price
+        _, reward_loss, _, _, _ = env.step(Action.LONG_EXIT)
+
+        # 손실 거래의 보상은 음수
+        assert reward_loss < 0, f"Losing trade should have negative reward: got {reward_loss}"
+        assert reward_loss > -10.0, (
+            f"Loss reward should be in reasonable range (> -10.0 with scale=100): got {reward_loss}"
+        )
+
+    def test_reward_scale_affects_all_components(self, sample_data: tuple[np.ndarray, np.ndarray]):
+        """reward_scale이 모든 보상 컴포넌트에 적용됨"""
+        features, prices = sample_data
+
+        # 모든 컴포넌트를 활성화한 환경
+        config_multi = RLEnvConfig(
+            initial_balance=100_000_000,
+            commission_rate=0.00003,
+            tick_size=0.05,
+            tick_value=250_000,
+            contract_multiplier=250_000,
+            max_contracts=1,
+            slippage=0.0,
+            margin_rate=0.15,
+            n_market_features=25,
+            n_position_features=6,
+            w_profit=1.0,
+            w_cost=1.0,
+            w_risk=0.5,
+            w_mtm=0.3,  # MTM 활성화
+            inaction_penalty=0.0,
+            reward_scale=50.0,  # 중간 배율
+            max_loss=-50_000_000,
+            loss_penalty_coeff=2.0,
+        )
+        env_multi = FuturesTradingEnv(day_data=features, config=config_multi, prices=prices)
+
+        env_multi.reset()
+        entry_price = env_multi._get_current_price()
+
+        # 롱 진입
+        _, reward_entry, _, _, _ = env_multi.step(Action.LONG_ENTRY)
+
+        # 진입 보상 계산 (비용만 발생)
+        entry_cost = entry_price * config_multi.contract_multiplier * config_multi.commission_rate
+        expected_r_profit = -entry_cost / config_multi.initial_balance
+        expected_r_cost = entry_cost / config_multi.initial_balance
+        expected_reward_entry = (
+            config_multi.w_profit * expected_r_profit
+            - config_multi.w_cost * expected_r_cost
+            - config_multi.w_risk * 0.0
+            + config_multi.w_mtm * 0.0
+        ) * config_multi.reward_scale
+
+        assert reward_entry == pytest.approx(expected_reward_entry, rel=1e-6), (
+            f"Entry reward with scale=50.0 mismatch: expected {expected_reward_entry}, "
+            f"got {reward_entry}"
+        )
+
+        # 가격 상승 후 Hold (MTM 컴포넌트 활성)
+        price_increase = 3.0
+        env_multi.prices[env_multi.current_step, 3] = entry_price + price_increase
+        _, reward_hold, _, _, _ = env_multi.step(Action.HOLD)
+
+        # Hold 보상에 MTM 컴포넌트 포함
+        unrealized = price_increase * config_multi.contract_multiplier
+        expected_r_mtm = unrealized / config_multi.initial_balance
+        expected_reward_hold = (
+            config_multi.w_mtm * expected_r_mtm
+        ) * config_multi.reward_scale
+
+        assert reward_hold == pytest.approx(expected_reward_hold, rel=1e-6), (
+            f"Hold reward with MTM and scale=50.0 mismatch: expected {expected_reward_hold}, "
+            f"got {reward_hold}"
+        )
+
+        # reward_scale이 MTM 컴포넌트에도 적용됨
+        assert abs(reward_hold) > 0, "Hold reward should be non-zero when MTM is active"
+
+    def test_zero_reward_scale_produces_zero_reward(self, sample_data: tuple[np.ndarray, np.ndarray]):
+        """reward_scale=0.0이면 모든 보상이 0"""
+        features, prices = sample_data
+
+        config_zero = RLEnvConfig(
+            initial_balance=100_000_000,
+            commission_rate=0.00003,
+            tick_size=0.05,
+            tick_value=250_000,
+            contract_multiplier=250_000,
+            max_contracts=1,
+            slippage=0.0,
+            margin_rate=0.15,
+            n_market_features=25,
+            n_position_features=6,
+            w_profit=1.0,
+            w_cost=1.0,
+            w_risk=0.5,
+            w_mtm=0.0,
+            inaction_penalty=0.0,
+            reward_scale=0.0,  # 보상 없음
+            max_loss=-50_000_000,
+            loss_penalty_coeff=2.0,
+        )
+        env_zero = FuturesTradingEnv(day_data=features, config=config_zero, prices=prices)
+
+        env_zero.reset()
+        entry_price = env_zero._get_current_price()
+
+        # 롱 진입
+        _, reward_entry, _, _, _ = env_zero.step(Action.LONG_ENTRY)
+        assert reward_entry == 0.0, f"Reward should be 0 with scale=0: got {reward_entry}"
+
+        # 가격 변동 후 청산
+        env_zero.prices[env_zero.current_step, 3] = entry_price + 5.0
+        _, reward_exit, _, _, _ = env_zero.step(Action.LONG_EXIT)
+        assert reward_exit == 0.0, f"Reward should be 0 with scale=0: got {reward_exit}"
+
+        # Hold
+        _, reward_hold, _, _, _ = env_zero.step(Action.HOLD)
+        assert reward_hold == 0.0, f"Reward should be 0 with scale=0: got {reward_hold}"
+
+    def test_negative_reward_scale_inverts_reward(self, sample_data: tuple[np.ndarray, np.ndarray]):
+        """음수 reward_scale은 보상의 부호를 반전"""
+        features, prices = sample_data
+
+        # 양수 reward_scale 환경
+        config_pos = RLEnvConfig(
+            initial_balance=100_000_000,
+            commission_rate=0.00003,
+            tick_size=0.05,
+            tick_value=250_000,
+            contract_multiplier=250_000,
+            max_contracts=1,
+            slippage=0.0,
+            margin_rate=0.15,
+            n_market_features=25,
+            n_position_features=6,
+            w_profit=1.0,
+            w_cost=1.0,
+            w_risk=0.5,
+            w_mtm=0.0,
+            inaction_penalty=0.0,
+            reward_scale=100.0,
+            max_loss=-50_000_000,
+            loss_penalty_coeff=2.0,
+        )
+
+        # 음수 reward_scale 환경
+        config_neg = RLEnvConfig(
+            initial_balance=100_000_000,
+            commission_rate=0.00003,
+            tick_size=0.05,
+            tick_value=250_000,
+            contract_multiplier=250_000,
+            max_contracts=1,
+            slippage=0.0,
+            margin_rate=0.15,
+            n_market_features=25,
+            n_position_features=6,
+            w_profit=1.0,
+            w_cost=1.0,
+            w_risk=0.5,
+            w_mtm=0.0,
+            inaction_penalty=0.0,
+            reward_scale=-100.0,  # 음수
+            max_loss=-50_000_000,
+            loss_penalty_coeff=2.0,
+        )
+
+        env_pos = FuturesTradingEnv(day_data=features, config=config_pos, prices=prices)
+        env_neg = FuturesTradingEnv(day_data=features, config=config_neg, prices=prices)
+
+        # 동일한 시나리오 실행
+        env_pos.reset()
+        env_neg.reset()
+
+        entry_price = env_pos._get_current_price()
+
+        # 롱 진입
+        env_pos.step(Action.LONG_ENTRY)
+        env_neg.step(Action.LONG_ENTRY)
+
+        # 가격 상승
+        env_pos.prices[env_pos.current_step, 3] = entry_price + 7.0
+        env_neg.prices[env_neg.current_step, 3] = entry_price + 7.0
+
+        # 청산
+        _, reward_pos, _, _, _ = env_pos.step(Action.LONG_EXIT)
+        _, reward_neg, _, _, _ = env_neg.step(Action.LONG_EXIT)
+
+        # 부호가 반대
+        assert reward_pos == pytest.approx(-reward_neg, rel=1e-6), (
+            f"Negative scale should invert reward: pos={reward_pos}, neg={reward_neg}"
+        )
+
+        # 양수 스케일은 수익성 거래에서 양의 보상
+        assert reward_pos > 0, f"Positive scale with profit should give positive reward: {reward_pos}"
+        # 음수 스케일은 수익성 거래에서 음의 보상
+        assert reward_neg < 0, f"Negative scale with profit should give negative reward: {reward_neg}"
