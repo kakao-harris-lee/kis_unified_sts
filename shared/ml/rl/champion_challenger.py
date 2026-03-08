@@ -168,6 +168,8 @@ class ChampionChallengerEvaluator:
 
         Args:
             challenger_metrics: Challenger model evaluation metrics
+                Can use either full format (sharpe_ratio, win_rate_pct, max_drawdown_pct)
+                or simplified format (sharpe, win_rate, max_dd)
             champion_metrics: Champion model evaluation metrics (None if no champion exists)
 
         Returns:
@@ -180,10 +182,16 @@ class ChampionChallengerEvaluator:
         min_improvement_pct = self.thresholds.get("min_improvement_pct", 0.05)
         min_sharpe_improvement = self.thresholds.get("min_sharpe_improvement", 0.10)
 
-        # Convert metrics to normalized format (RLEvaluator returns percentages)
-        challenger_sharpe = challenger_metrics["sharpe_ratio"]
-        challenger_win_rate = challenger_metrics["win_rate_pct"] / 100.0  # Convert % to decimal
-        challenger_max_dd = challenger_metrics["max_drawdown_pct"] / 100.0  # Convert % to decimal
+        # Normalize metrics to standard format (handle both full and simplified keys)
+        challenger_sharpe = self._get_metric(challenger_metrics, "sharpe_ratio", "sharpe")
+        challenger_win_rate = self._get_metric(challenger_metrics, "win_rate_pct", "win_rate")
+        challenger_max_dd = self._get_metric(challenger_metrics, "max_drawdown_pct", "max_dd")
+
+        # Convert percentages to decimals if needed (RLEvaluator returns percentages)
+        if "win_rate_pct" in challenger_metrics:
+            challenger_win_rate = challenger_win_rate / 100.0
+        if "max_drawdown_pct" in challenger_metrics:
+            challenger_max_dd = challenger_max_dd / 100.0
 
         # Check 1: Absolute thresholds
         if challenger_sharpe < min_sharpe:
@@ -212,8 +220,12 @@ class ChampionChallengerEvaluator:
 
         # Check 2: Relative improvement (if champion exists)
         if champion_metrics is not None:
-            champion_sharpe = champion_metrics["sharpe_ratio"]
-            champion_win_rate = champion_metrics["win_rate_pct"] / 100.0
+            champion_sharpe = self._get_metric(champion_metrics, "sharpe_ratio", "sharpe")
+            champion_win_rate = self._get_metric(champion_metrics, "win_rate_pct", "win_rate")
+
+            # Convert percentages to decimals if needed
+            if "win_rate_pct" in champion_metrics:
+                champion_win_rate = champion_win_rate / 100.0
 
             # Calculate improvement
             sharpe_improvement = challenger_sharpe - champion_sharpe
@@ -415,6 +427,38 @@ class ChampionChallengerEvaluator:
         )
 
         return report
+
+    def _get_metric(
+        self,
+        metrics: dict[str, float],
+        primary_key: str,
+        fallback_key: str
+    ) -> float:
+        """Get metric value with fallback to alternative key
+
+        Supports both RLEvaluator format (sharpe_ratio, win_rate_pct, max_drawdown_pct)
+        and simplified format (sharpe, win_rate, max_dd)
+
+        Args:
+            metrics: Metrics dictionary
+            primary_key: Primary key to look for (e.g., "sharpe_ratio")
+            fallback_key: Fallback key if primary not found (e.g., "sharpe")
+
+        Returns:
+            Metric value
+
+        Raises:
+            KeyError: If neither key exists in metrics
+        """
+        if primary_key in metrics:
+            return metrics[primary_key]
+        elif fallback_key in metrics:
+            return metrics[fallback_key]
+        else:
+            raise KeyError(
+                f"Metric not found. Expected either '{primary_key}' or '{fallback_key}' "
+                f"in metrics dict. Available keys: {list(metrics.keys())}"
+            )
 
     def _assess_risk(
         self,
