@@ -594,3 +594,130 @@ class KISClient(AsyncSessionMixin):
         except Exception as e:
             logger.warning(f"Futures balance inquiry exception: {e}")
             return []
+
+    # ------------------------------------------------------------------
+    # ATS Order Submission (Alternative Trading System - 넥스트레이드)
+    # ------------------------------------------------------------------
+
+    async def submit_ats_order(
+        self,
+        symbol: str,
+        side: str,
+        quantity: int,
+        price: float = 0,
+        order_type: str = "00",
+        account_no: str = "",
+    ) -> dict[str, Any]:
+        """Submit stock order to ATS (넥스트레이드) venue.
+
+        Args:
+            symbol: Stock code (6 digits)
+            side: Order side ("BUY" or "SELL")
+            quantity: Order quantity
+            price: Order price (0 for market orders)
+            order_type: Order division code (00=market, 01=limit, etc.)
+            account_no: Account number (defaults to KIS_STOCK_ACCOUNT_NO env var)
+
+        Returns:
+            dict with keys: success (bool), order_no (str), message (str)
+
+        Raises:
+            Exception: On API errors or invalid parameters
+        """
+        if not account_no:
+            account_no = os.getenv(
+                "KIS_STOCK_ACCOUNT_NO", os.getenv("KIS_ACCOUNT_NO", "")
+            )
+        account_no = self._normalize_account_no(account_no)
+        if len(account_no) != 10:
+            raise ValueError("Account number must be 10 digits")
+
+        if self._is_futures(symbol):
+            raise ValueError(f"ATS orders only support stocks, not futures: {symbol}")
+
+        await self._rate_limiter.acquire()
+        session = await self._get_session()
+        headers = await self.auth_manager.get_auth_headers_async()
+
+        # TR IDs for ATS orders
+        # Real mode: TTTC0802U (buy), TTTC0801U (sell)
+        # Mock mode: VTTC0802U (buy), VTTC0801U (sell)
+        # Note: These are based on KRX pattern; actual ATS TR IDs may differ
+        is_buy = side.upper() == "BUY"
+        if self.config.is_real:
+            tr_id = "TTTC0802U" if is_buy else "TTTC0801U"
+        else:
+            tr_id = "VTTC0802U" if is_buy else "VTTC0801U"
+
+        headers["tr_id"] = tr_id
+        headers["custtype"] = "P"
+
+        body = {
+            "CANO": account_no[:8],
+            "ACNT_PRDT_CD": account_no[8:10],
+            "PDNO": symbol,
+            "ORD_DVSN": order_type,
+            "ORD_QTY": str(quantity),
+            "ORD_UNPR": str(int(price)) if price else "0",
+        }
+
+        # ATS endpoint path (based on context.json assumption)
+        path = "/uapi/domestic-stock/v1/trading/order-ats"
+        url = f"{self.config.base_url}{path}"
+
+        timeout_seconds = getattr(
+            self.config, "request_timeout_seconds", _DEFAULT_REQUEST_TIMEOUT
+        )
+        request_timeout = aiohttp.ClientTimeout(total=float(timeout_seconds))
+
+        try:
+            async with session.post(
+                url, headers=headers, json=body, timeout=request_timeout
+            ) as response:
+                if response.status != 200:
+                    text = await response.text()
+                    if "EGW00201" in text:
+                        self._rate_limiter.penalty()
+                    logger.error(
+                        f"ATS order failed ({response.status}) for {symbol}: {text}"
+                    )
+                    return {
+                        "success": False,
+                        "order_no": None,
+                        "message": f"HTTP {response.status}: {text[:200]}",
+                    }
+
+                data = await response.json()
+                if data.get("rt_cd") != "0":
+                    error_msg = data.get("msg1", "Unknown error")
+                    logger.error(f"ATS order error for {symbol}: [{data.get('rt_cd')}] {error_msg}")
+                    return {
+                        "success": False,
+                        "order_no": None,
+                        "message": f"[{data.get('rt_cd')}] {error_msg}",
+                    }
+
+                self._rate_limiter.reset_backoff()
+                output = data.get("output", {})
+                order_no = str(output.get("ODNO") or output.get("odno") or "").strip()
+
+                return {
+                    "success": True,
+                    "order_no": order_no or None,
+                    "message": data.get("msg1", "Success"),
+                }
+
+        except asyncio.TimeoutError:
+            logger.error(f"ATS order timeout for {symbol}")
+            return {
+                "success": False,
+                "order_no": None,
+                "message": "Request timeout",
+            }
+        except Exception as e:
+            logger.warning(f"ATS order exception for {symbol}: {e}")
+            return {
+                "success": False,
+                "order_no": None,
+                "message": str(e),
+            }
