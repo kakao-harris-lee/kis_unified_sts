@@ -218,7 +218,7 @@ class StreamingIndicatorEngine:
         rvol_short: int = 5,
         rvol_long: int = 20,
         staleness_seconds: float = 180.0,
-        mtf_timeframes: list[int] | None = None,
+        mtf_timeframes: list[int | str] | None = None,
         mtf_maxlen: int = 250,
         ema_periods: list[int] | None = None,
         daily_ema_periods: list[int] | None = None,
@@ -233,12 +233,21 @@ class StreamingIndicatorEngine:
         self._ema_periods: list[int] = ema_periods or [5, 20, 60]
 
         # Multi-timeframe accumulators: {symbol: {timeframe: accumulator}}
+        # Separate 'daily' from numeric timeframes (5, 15, etc.)
         self._mtf_timeframes = mtf_timeframes or []
+        self._numeric_mtf_timeframes: list[int] = [
+            tf for tf in self._mtf_timeframes if isinstance(tf, int)
+        ]
+        self._has_daily = 'daily' in self._mtf_timeframes
         self._mtf_maxlen = mtf_maxlen
         self._mtf_accumulators: dict[
             str, dict[int, MultiTimeframeCandleAccumulator]
         ] = {}
         self._momentum_cache: dict[tuple[str, int], tuple[int, dict[str, Any]]] = {}
+
+        # Daily candles (loaded from ClickHouse, not aggregated from 1m)
+        # {symbol: deque[Candle]}
+        self._daily_candles: dict[str, deque] = {}
 
         # Cache for get_indicators(): {symbol: (candle_count, indicators_dict)}
         self._indicator_cache: dict[str, tuple[int, dict[str, float]]] = {}
@@ -441,6 +450,8 @@ class StreamingIndicatorEngine:
         """
         if timeframe not in self._mtf_timeframes:
             self._mtf_timeframes.append(timeframe)
+        if timeframe not in self._numeric_mtf_timeframes:
+            self._numeric_mtf_timeframes.append(timeframe)
 
         mtf_map = self._mtf_accumulators.get(symbol)
         if mtf_map is None:
@@ -835,13 +846,17 @@ class StreamingIndicatorEngine:
         ]
 
     def _feed_mtf_candle(self, symbol: str, candle: Candle) -> None:
-        """Feed a completed 1-minute candle to all multi-timeframe accumulators."""
+        """Feed a completed 1-minute candle to all multi-timeframe accumulators.
+
+        Note: 'daily' timeframe is NOT fed here — daily candles are loaded
+        directly from ClickHouse via seed_daily_candles().
+        """
         mtf_map = self._mtf_accumulators.get(symbol)
         if mtf_map is None:
             mtf_map = {}
             self._mtf_accumulators[symbol] = mtf_map
 
-        for tf in self._mtf_timeframes:
+        for tf in self._numeric_mtf_timeframes:
             mtf_acc = mtf_map.get(tf)
             if mtf_acc is None:
                 mtf_acc = MultiTimeframeCandleAccumulator(
