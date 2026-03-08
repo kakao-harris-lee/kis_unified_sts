@@ -2403,6 +2403,7 @@ class TradingOrchestrator:
 
         ch_hits = 0
         kis_hits = 0
+        daily_ch_hits = 0
         for symbol in symbols:
             if self._indicator_engine.is_warm(symbol):
                 continue
@@ -2432,11 +2433,19 @@ class TradingOrchestrator:
                     logger.info(f"Prewarm {symbol}: {len(candles)} candles seeded")
                 else:
                     logger.debug(f"Prewarm {symbol}: no candles returned")
+
+                # Fetch and seed daily candles from ClickHouse (for multi-timeframe strategies)
+                daily_candles = await self._fetch_daily_candles_from_clickhouse(symbol, limit=252)
+                if daily_candles:
+                    daily_ch_hits += 1
+                    self._indicator_engine.seed_daily_candles(symbol, daily_candles)
+                    logger.info(f"Prewarm {symbol}: {len(daily_candles)} daily candles seeded")
             except (asyncio.TimeoutError, Exception) as e:
                 logger.warning(f"Prewarm failed for {symbol}: {e}")
         logger.info(
             f"Prewarm complete: {redis_hits} from Redis, "
-            f"{ch_hits} from ClickHouse, {kis_hits} from KIS REST"
+            f"{ch_hits} from ClickHouse, {kis_hits} from KIS REST, "
+            f"{daily_ch_hits} daily candles from ClickHouse"
         )
 
     def _save_candle_cache_to_redis(self) -> None:
