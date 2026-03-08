@@ -118,6 +118,9 @@ class RLMPPOConfig:
             "SIDEWAYS_DOWN",
         ]
     )
+    # Regime-aware adaptive model selection
+    regime_adaptive_enabled: bool = False
+    regime_model_mapping_path: str = "regime_model_mapping.yaml"
 
 
 @EntryRegistry.register("rl_mppo")
@@ -140,6 +143,8 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
         self._scaler = None
         self._device = get_device(config.device)
         self._env_config = None  # lazy loaded
+        self._model_selector = None  # AdaptiveModelSelector (lazy loaded)
+        self._current_model_path: str | None = None  # Track current model path
 
     def _validate_config(self) -> None:
         """설정 유효성 검증"""
@@ -294,6 +299,74 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
                 for item in self.config.risk_off_regime_keywords
             ), "risk_off_regime_keywords must contain non-empty strings"
 
+    def _load_model_selector(self):
+        """Lazy load AdaptiveModelSelector if regime_adaptive_enabled."""
+        if self._model_selector is not None:
+            return self._model_selector
+
+        if not self.config.regime_adaptive_enabled:
+            return None
+
+        try:
+            from shared.config import ConfigLoader
+            from shared.regime.adaptive_detector import AdaptiveRegimeState
+            from shared.regime.model_selector import (
+                AdaptiveModelSelector,
+                ModelMapping,
+                ModelSwitchingConfig,
+            )
+
+            # Load regime-to-model mapping config
+            mapping_config = ConfigLoader.load(self.config.regime_model_mapping_path)
+
+            # Extract switching config
+            switching_cfg_dict = mapping_config.get("switching_config", {})
+            switching_config = ModelSwitchingConfig(
+                min_confidence=switching_cfg_dict.get("min_confidence", 0.7),
+                cooldown_minutes=switching_cfg_dict.get("cooldown_minutes", 60),
+                min_consecutive_detections=switching_cfg_dict.get("min_consecutive_detections", 3),
+            )
+
+            # Extract default model
+            default_cfg = mapping_config.get("default_strategy", {})
+            default_model = ModelMapping(
+                model_path=default_cfg.get("model_path"),
+                strategy_profile=default_cfg.get("strategy_profile"),
+            )
+
+            # Initialize selector
+            selector = AdaptiveModelSelector(
+                default_model=default_model,
+                switching_config=switching_config,
+            )
+
+            # Register regime mappings
+            regime_mappings = mapping_config.get("regime_mapping", {})
+            for regime_name, model_cfg in regime_mappings.items():
+                try:
+                    # Convert regime name to AdaptiveRegimeState enum
+                    regime_state = AdaptiveRegimeState[regime_name]
+                    model_mapping = ModelMapping(
+                        model_path=model_cfg.get("model_path"),
+                        strategy_profile=model_cfg.get("strategy_profile"),
+                    )
+                    selector.register(regime_state, model_mapping)
+                except (KeyError, ValueError) as e:
+                    logger.warning(
+                        f"Failed to register regime {regime_name}: {e}"
+                    )
+                    continue
+
+            self._model_selector = selector
+            logger.info(
+                f"AdaptiveModelSelector initialized with {len(regime_mappings)} regime mappings"
+            )
+            return selector
+
+        except Exception as e:
+            logger.error(f"Failed to initialize AdaptiveModelSelector: {e}", exc_info=True)
+            return None
+
     @property
     def name(self) -> str:
         return "rl_mppo"
@@ -336,6 +409,10 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
         enforce_time_filter = (not is_backtest) or self.config.apply_time_filter_in_backtest
         if enforce_time_filter and not self._is_trading_time(context.timestamp, is_paper=is_paper):
             return None
+
+        # Regime-aware model selection
+        if self.config.regime_adaptive_enabled:
+            self._handle_regime_model_switching(context)
 
         # 모델 로드 (lazy)
         model = self._load_model()
@@ -781,11 +858,114 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
             return None
         return parsed if parsed > 0 else None
 
+    def _handle_regime_model_switching(self, context: EntryContext) -> None:
+        """Handle regime-aware model switching.
+
+        Checks context for regime signal, updates model selector,
+        and reloads model if regime changed.
+        """
+        selector = self._load_model_selector()
+        if selector is None:
+            return
+
+        # Try to get regime from context metadata
+        regime_state = context.metadata.get("regime")
+        regime_confidence = context.metadata.get("regime_confidence", 0.0)
+
+        if not regime_state:
+            # No regime info in context, skip switching
+            return
+
+        try:
+            from datetime import datetime
+
+            from shared.regime.adaptive_detector import AdaptiveRegimeState
+            from shared.regime.models import RegimeSignal
+
+            # Convert regime string to AdaptiveRegimeState if needed
+            if isinstance(regime_state, str):
+                try:
+                    regime_state = AdaptiveRegimeState[regime_state]
+                except (KeyError, ValueError):
+                    logger.warning(f"Unknown regime state: {regime_state}")
+                    return
+
+            # Create regime signal
+            signal = RegimeSignal(
+                state=regime_state,
+                confidence=float(regime_confidence),
+                timestamp=context.timestamp or datetime.now(),
+            )
+
+            # Update selector and check for model switch
+            new_model = selector.update(signal)
+
+            if new_model:
+                # Model switch occurred
+                new_model_path = self._resolve_model_path(new_model)
+
+                if new_model_path and new_model_path != self._current_model_path:
+                    # Update model path and clear cached model to force reload
+                    old_path = self._current_model_path or self.config.model_path
+                    self._current_model_path = new_model_path
+
+                    # Clear cached model - next _load_model() will reload
+                    self._model = None
+
+                    logger.info(
+                        f"RL model switch triggered by regime change: "
+                        f"{old_path} -> {new_model_path} "
+                        f"(regime: {regime_state.value if hasattr(regime_state, 'value') else regime_state}, "
+                        f"confidence: {regime_confidence:.2f})"
+                    )
+
+        except Exception as e:
+            logger.error(f"Error in regime model switching: {e}", exc_info=True)
+
+    def _resolve_model_path(self, model_mapping) -> str | None:
+        """Resolve ModelMapping to actual model path.
+
+        Args:
+            model_mapping: ModelMapping instance with either model_path or strategy_profile
+
+        Returns:
+            Model file path or None if resolution failed
+        """
+        try:
+            # Direct model path
+            if model_mapping.model_path:
+                return model_mapping.model_path
+
+            # Strategy profile - need to load config and extract model_path
+            if model_mapping.strategy_profile:
+                from shared.config import ConfigLoader
+
+                try:
+                    profile_config = ConfigLoader.load_strategy(
+                        "futures", model_mapping.strategy_profile
+                    )
+                    # Extract model_path from entry.params
+                    return profile_config.get("strategy", {}).get("entry", {}).get("params", {}).get("model_path")
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to load strategy profile {model_mapping.strategy_profile}: {e}"
+                    )
+                    return None
+
+            return None
+
+        except Exception as e:
+            logger.error(f"Error resolving model path: {e}", exc_info=True)
+            return None
+
     def _load_model(self) -> Any:
         """학습된 모델 로드 (lazy loading, 모듈 캐시 사용)"""
         if self._model is not None:
             return self._model
-        self._model = load_rl_model(self.config.model_path, self._device)
+
+        # Use current model path if set by regime switching, otherwise use config
+        model_path = self._current_model_path or self.config.model_path
+        self._model = load_rl_model(model_path, self._device)
         return self._model
 
     def _load_scaler(self) -> Any:

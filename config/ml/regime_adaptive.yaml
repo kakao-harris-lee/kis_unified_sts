@@ -1,0 +1,180 @@
+# Adaptive Regime Detection Configuration
+# Combines MarketClassifier (MFI/ADX), volatility metrics, and trend strength
+# into a unified multi-state classifier for regime-aware model selection
+
+# === Detector Configuration ===
+detector:
+  # Regime classification thresholds
+  thresholds:
+    # MFI (Money Flow Index) - measures buying/selling pressure
+    mfi:
+      overbought: 80          # Above this = strong buying pressure
+      oversold: 20            # Below this = strong selling pressure
+      neutral_upper: 60       # Between neutral_lower and neutral_upper = balanced
+      neutral_lower: 40
+
+    # ADX (Average Directional Index) - measures trend strength
+    adx:
+      strong_trend: 25        # Above this = strong trending market
+      weak_trend: 20          # Below this = weak/sideways market
+      very_strong_trend: 40   # Above this = very strong trend
+
+    # Volatility (ATR ratio) - normalized ATR relative to price
+    volatility:
+      high: 0.02              # Above this = high volatility / volatile markets
+      low: 0.005              # Below this = low volatility / calm markets
+      extreme: 0.035          # Above this = extreme volatility
+
+    # Trend strength (SMA crossover magnitude)
+    trend:
+      bullish_threshold: 0.01 # SMA short > SMA long by this % = bullish trend
+      bearish_threshold: -0.01 # SMA short < SMA long by this % = bearish trend
+      sideways_band: 0.005    # Within ±this % = sideways/choppy
+
+  # Confidence scoring
+  confidence:
+    min_confidence: 0.5       # Minimum confidence to use regime (else UNKNOWN)
+    high_confidence: 0.7      # Threshold for "high confidence" regime
+
+    # Confidence weights (how much each metric contributes to final confidence)
+    weights:
+      mfi: 0.25               # MFI agreement weight
+      adx: 0.30               # ADX agreement weight (most reliable)
+      volatility: 0.20        # Volatility agreement weight
+      trend: 0.25             # Trend agreement weight
+
+  # Lookback periods (in bars)
+  lookback:
+    mfi_period: 14            # Standard MFI period
+    adx_period: 14            # Standard ADX period
+    atr_period: 14            # ATR for volatility calculation
+    volatility_window: 20     # Window for volatility normalization
+    sma_short: 20             # Short-term SMA for trend detection
+    sma_long: 50              # Long-term SMA for trend detection
+    min_bars: 60              # Minimum bars required for detection (max of above)
+
+# === Regime States ===
+# AdaptiveRegimeState enum values and their descriptions
+regime_states:
+  TRENDING_BULL:
+    description: "Strong uptrend with high ADX and bullish MFI"
+    typical_strategy: "trend_following"
+    expected_models: ["rl_mppo_profile_balanced", "rl_mppo_profile_pnl"]
+
+  TRENDING_BEAR:
+    description: "Strong downtrend with high ADX and bearish MFI"
+    typical_strategy: "trend_following_short"
+    expected_models: ["rl_mppo_profile_pnl", "rl_mppo_profile_balanced"]
+
+  VOLATILE_SIDEWAYS:
+    description: "High volatility without clear trend (low ADX, high ATR)"
+    typical_strategy: "volatility_mean_reversion"
+    expected_models: ["rl_mppo_profile_winrate"]
+
+  CALM_SIDEWAYS:
+    description: "Low volatility and weak trend (low ADX, low ATR)"
+    typical_strategy: "mean_reversion"
+    expected_models: ["rl_mppo_profile_winrate"]
+
+  MEAN_REVERTING:
+    description: "Oscillating between overbought/oversold with weak trend"
+    typical_strategy: "mean_reversion"
+    expected_models: ["rl_mppo_profile_balanced"]
+
+  UNKNOWN:
+    description: "Insufficient data or conflicting signals"
+    typical_strategy: "default"
+    expected_models: ["rl_mppo_profile_balanced"]
+
+# === Feature Engineering ===
+features:
+  # Technical indicators used for regime classification
+  required:
+    - close
+    - high
+    - low
+    - volume
+
+  derived:
+    - mfi          # Money Flow Index
+    - adx          # Average Directional Index
+    - plus_di      # Positive Directional Indicator
+    - minus_di     # Negative Directional Indicator
+    - atr          # Average True Range
+    - atr_pct      # ATR as % of close (normalized volatility)
+    - sma_short    # Short-term Simple Moving Average
+    - sma_long     # Long-term Simple Moving Average
+    - sma_diff_pct # % difference between SMAs (trend strength)
+
+# === Integration Settings ===
+integration:
+  # How often to update regime detection (in seconds, for real-time trading)
+  update_interval: 60           # Check regime every minute
+
+  # Regime stability - prevent thrashing
+  stability:
+    min_consecutive: 3          # Require N consecutive same-regime detections before switching
+    cooldown_minutes: 30        # Minimum time between regime switches
+
+  # Fallback behavior
+  fallback:
+    on_error: "UNKNOWN"         # Regime to use if detection fails
+    on_low_confidence: "UNKNOWN" # Regime to use if confidence < min_confidence
+    use_last_known: true        # Use last successful detection if current fails
+
+# === Logging & Monitoring ===
+monitoring:
+  log_level: INFO               # DEBUG for detailed regime detection logs
+  log_regime_changes: true      # Log when regime changes
+  log_confidence_scores: true   # Log confidence breakdown per metric
+
+  # Metrics to track
+  track_metrics:
+    - regime_distribution       # Count of bars in each regime
+    - regime_transitions        # Count of transitions between regimes
+    - avg_confidence_per_regime # Average confidence score per regime
+    - detection_errors          # Count of detection failures
+
+  # Prometheus metrics (optional)
+  prometheus:
+    enabled: false
+    namespace: "sts"
+    subsystem: "regime_adaptive"
+    metrics:
+      - regime_detection_count
+      - regime_confidence_gauge
+      - regime_transition_count
+
+# === Validation ===
+validation:
+  # Data quality checks before regime detection
+  require_complete_bars: true   # Skip detection if any required data is missing
+  reject_zero_volume: true      # Skip bars with zero volume
+  require_positive_price: true  # Skip bars with non-positive OHLC
+
+  # Sanity checks
+  max_volatility_ratio: 0.5     # Reject if ATR > 50% of price (data error)
+  max_price_jump_pct: 0.1       # Reject if close-to-close jump > 10% (halt/error)
+
+# === Experimentation ===
+# Alternative threshold profiles for testing
+experimental_profiles:
+  conservative:
+    # Higher thresholds = more stable regime detection, fewer switches
+    adx:
+      strong_trend: 30
+    volatility:
+      high: 0.025
+    confidence:
+      min_confidence: 0.7
+
+  aggressive:
+    # Lower thresholds = more sensitive regime detection, more switches
+    adx:
+      strong_trend: 20
+    volatility:
+      high: 0.015
+    confidence:
+      min_confidence: 0.5
+
+  active_profile: "default"     # Which profile to use: "default", "conservative", "aggressive"

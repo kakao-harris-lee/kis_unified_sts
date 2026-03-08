@@ -1,0 +1,151 @@
+# Regime-to-Model Mapping Configuration
+# Maps detected market regimes to optimal RL models or strategy profiles
+
+# Switching configuration - prevents model thrashing
+switching_config:
+  # Minimum confidence threshold for regime detection (0.0-1.0)
+  min_confidence: 0.7
+
+  # Cooldown period between model switches (minutes)
+  # Prevents frequent switching that could destabilize trading
+  cooldown_minutes: 60
+
+  # Minimum consecutive regime detections before switching
+  # Ensures regime signal is persistent, not a false spike
+  min_consecutive_detections: 3
+
+# Default strategy - fallback when regime is UNKNOWN or low confidence
+default_strategy:
+  # Using strategy_profile (reference to config/strategies/futures/*.yaml)
+  strategy_profile: rl_mppo_profile_balanced
+
+  # Alternative: Use direct model path
+  # model_path: "models/futures/rl/mppo_best/best_model.zip"
+
+# Regime-to-model mapping
+# Supports both strategy_profile (config reference) and model_path (direct path)
+# Note: Each entry must specify EITHER strategy_profile OR model_path, not both
+regime_mapping:
+  # Strong uptrend with buying pressure
+  # Use asymmetric long-focused model with spike guards
+  TRENDING_BULL:
+    strategy_profile: rl_mppo_profile_uptrend_spike_guard
+    # Alternative models for this regime:
+    # - rl_mppo_profile_asym_long_strict (strict long entries)
+    # - rl_mppo_profile_balanced (conservative balanced approach)
+
+  # Strong downtrend with selling pressure
+  # Use asymmetric short-focused model or PnL-maximizing profile
+  TRENDING_BEAR:
+    strategy_profile: rl_mppo_profile_asym_short_strict
+    # Alternative models:
+    # - rl_mppo_profile_pnl (maximize PnL in trending down market)
+    # - rl_mppo_profile_regime_strict (strict regime-aware handling)
+
+  # High volatility with no clear direction
+  # Use regime-aware switching to handle rapid changes
+  VOLATILE_SIDEWAYS:
+    strategy_profile: rl_mppo_profile_regime_switch
+    # Alternative models:
+    # - rl_mppo_profile_regime_strict (strict regime handling)
+    # - rl_mppo_profile_balanced (conservative approach)
+
+  # Low volatility sideways movement
+  # Use balanced or win-rate focused approach
+  CALM_SIDEWAYS:
+    strategy_profile: rl_mppo_profile_winrate
+    # Alternative models:
+    # - rl_mppo_profile_balanced (balanced risk/reward)
+    # - rl_mppo_profile_live_aligned (production-tuned)
+
+  # Mean reverting market (oscillating around equilibrium)
+  # Use balanced profile optimized for range-bound trading
+  MEAN_REVERTING:
+    strategy_profile: rl_mppo_profile_balanced
+    # Alternative models:
+    # - rl_mppo_profile_winrate (maximize win rate in range)
+    # - rl_mppo_profile_regime_strict (strict mean reversion handling)
+
+  # Unknown/uncertain regime
+  # Fallback to most conservative balanced profile
+  # Note: default_strategy is used instead if confidence too low
+  UNKNOWN:
+    strategy_profile: rl_mppo_profile_balanced
+
+# Performance tracking (optional, for regime attribution)
+performance_tracking:
+  enabled: false  # Set to true to enable regime-specific performance tracking
+
+  # Redis key prefix for storing regime performance stats
+  redis_key_prefix: "regime_performance"
+
+  # Track these metrics per regime
+  metrics:
+    - win_rate
+    - avg_pnl
+    - sharpe_ratio
+    - total_trades
+    - avg_holding_time
+
+# Integration settings
+integration:
+  # Enable adaptive model selection in RL strategies
+  # When true, RLMPPOEntry will use AdaptiveModelSelector
+  regime_adaptive_enabled: false  # Set to true to enable in production
+
+  # Regime detection mode: 'simple' (MarketClassifier) or 'adaptive' (AdaptiveRegimeDetector)
+  regime_detection_mode: adaptive
+
+  # Update interval for regime detection (seconds)
+  # Too frequent = higher CPU load, too infrequent = slower regime response
+  regime_update_interval_seconds: 300  # 5 minutes
+
+  # Log model switches to Telegram
+  notify_model_switches: true
+
+  # Log regime changes to Telegram
+  notify_regime_changes: false  # Set to true for debugging
+
+# Monitoring and validation
+monitoring:
+  # Log regime detection results
+  log_regime_detection: true
+
+  # Log model switching decisions
+  log_model_switches: true
+
+  # Alert on low confidence detections
+  alert_on_low_confidence: false
+  low_confidence_threshold: 0.5
+
+  # Alert on frequent switches (possible thrashing)
+  alert_on_frequent_switches: true
+  max_switches_per_day: 10
+
+# Validation rules
+validation:
+  # Validate that all referenced strategy profiles exist
+  validate_profiles_exist: true
+
+  # Validate that all model paths are accessible
+  validate_model_paths: true
+
+  # Fail fast on configuration errors
+  fail_on_validation_error: true
+
+# Notes:
+# - Model switching occurs only when ALL conditions are met:
+#   1. Regime confidence >= min_confidence
+#   2. Time since last switch >= cooldown_minutes
+#   3. Consecutive detections >= min_consecutive_detections
+#   4. New model differs from current model
+#
+# - Strategy profile references point to config/strategies/futures/{name}.yaml
+#
+# - Model paths are relative to project root or absolute paths
+#
+# - Cooldown prevents thrashing but may delay response to regime changes
+#   Tune based on market volatility and strategy requirements
+#
+# - Consecutive detections ensure regime is persistent, not a spike
+#   Higher values = more conservative switching, slower adaptation
