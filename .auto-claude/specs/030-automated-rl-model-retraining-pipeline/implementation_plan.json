@@ -345,8 +345,9 @@
             "type": "manual",
             "instructions": "Verify that pipeline sends Telegram messages on: (1) new model promoted, (2) model rolled back, (3) training failed, (4) threshold not met (no promotion)"
           },
-          "status": "pending",
-          "notes": "Use TelegramNotifier with is_critical=True for all retraining events. Message format: [RL Retraining] {event} | Model: {version} | Sharpe: {sharpe} | Win Rate: {win_rate}"
+          "status": "completed",
+          "notes": "Implemented Telegram notifications for all key retraining pipeline events:\n1. Model promotion (when challenger promoted to production)\n2. Promotion rejection (when threshold not met)\n3. Training failure (pipeline errors)\n4. Model rollback (when production model underperforms)\n\nAll notifications use HTML formatting, respect config flags, and properly handle async calls with asyncio.run(). Critical events bypass trading hours check.",
+          "updated_at": "2026-03-08T03:35:21.962833+00:00"
         },
         {
           "id": "subtask-4-4",
@@ -529,6 +530,6 @@
   "planStatus": "in_progress",
   "xstateState": "backlog",
   "executionPhase": "coding",
-  "updated_at": "2026-03-08T03:29:30.984Z",
-  "last_updated": "2026-03-08T03:24:21.665651+00:00"
+  "updated_at": "2026-03-08T03:36:04.427Z",
+  "last_updated": "2026-03-08T03:35:21.962846+00:00"
 }

@@ -669,15 +669,18 @@ class RetrainingPipeline:
         self,
         comparison: dict[str, Any],
         model_path: Path | None = None,
+        skip_paper_trading: bool = False,
     ) -> bool:
-        """Promote challenger to production if it meets thresholds
+        """Promote challenger to Staging if it meets backtest thresholds
 
-        Registers challenger in ModelRegistry and transitions to Production stage
-        if promotion decision is positive. Archives current champion if exists.
+        First stage of promotion: registers model and moves to Staging stage.
+        Paper trading validation is required before final Production promotion
+        (unless skip_paper_trading=True for testing/emergency deployments).
 
         Args:
             comparison: Comparison results from evaluate_models()
             model_path: Path to challenger model file (optional)
+            skip_paper_trading: If True, promote directly to Production (default: False)
 
         Returns:
             True if promotion occurred, False otherwise
@@ -726,6 +729,10 @@ class RetrainingPipeline:
                 "max_dd": challenger_metrics.get("max_drawdown_pct", 0.0) / 100.0,
             }
 
+            # Determine target stage and validation requirements
+            target_stage = "Production" if skip_paper_trading else "Staging"
+            paper_days = self.thresholds.get("paper_trading_days", 5)
+
             # Register model
             model_version = self.registry.register_model(
                 model_path=str(model_path),
@@ -733,34 +740,46 @@ class RetrainingPipeline:
                 metadata={
                     "promoted_at": datetime.now().isoformat(),
                     "promotion_reason": reason,
+                    "requires_paper_validation": not skip_paper_trading,
+                    "paper_trading_days_required": paper_days if not skip_paper_trading else 0,
                 },
             )
 
             logger.info(f"Model registered: version {model_version}")
 
-            # Promote to Production stage
+            # Promote to target stage
             promotion_success = self.registry.promote_model(
                 version=model_version,
-                stage="Production",
-                archive_current=True,
+                stage=target_stage,
+                archive_current=(target_stage == "Production"),
             )
 
             if promotion_success:
-                logger.info(f"✓ Model version {model_version} promoted to Production")
+                logger.info(f"✓ Model version {model_version} promoted to {target_stage}")
                 if HAS_MLFLOW:
                     mlflow.log_param("promotion_decision", "approved")
                     mlflow.log_param("promoted_version", model_version)
+                    mlflow.log_param("promoted_stage", target_stage)
                     mlflow.log_param("promotion_reason", reason)
+                    mlflow.log_param("skip_paper_trading", skip_paper_trading)
 
-                # Send promotion notification
-                self._send_promotion_notification(
-                    version=model_version,
-                    reason=reason,
-                    metrics=challenger_metrics,
-                )
+                # Send appropriate notification
+                if target_stage == "Staging":
+                    self._send_staging_notification(
+                        version=model_version,
+                        reason=reason,
+                        metrics=challenger_metrics,
+                        paper_days=paper_days,
+                    )
+                else:
+                    self._send_promotion_notification(
+                        version=model_version,
+                        reason=reason,
+                        metrics=challenger_metrics,
+                    )
                 return True
             else:
-                logger.error("Failed to promote model to Production")
+                logger.error(f"Failed to promote model to {target_stage}")
                 return False
 
         except Exception as e:
@@ -769,6 +788,388 @@ class RetrainingPipeline:
                 mlflow.log_param("promotion_decision", "failed")
                 mlflow.log_param("promotion_error", str(e))
             return False
+
+    def check_paper_trading_performance(
+        self,
+        model_version: str | None = None,
+        min_days: int | None = None,
+    ) -> dict[str, Any]:
+        """Check paper trading performance for a Staging model
+
+        Analyzes recent paper trading logs to determine if model meets production
+        readiness criteria. Checks performance over required validation period.
+
+        Args:
+            model_version: Model version to check. If None, uses current Staging model
+            min_days: Minimum days of paper trading required. If None, uses config
+
+        Returns:
+            dict with keys:
+                - ready_for_production: bool
+                - reason: str
+                - metrics: dict (sharpe, win_rate, trades, etc.)
+                - days_validated: int
+        """
+        if min_days is None:
+            min_days = self.thresholds.get("paper_trading_days", 5)
+
+        min_trades = self.thresholds.get("paper_trading_min_trades", 10)
+
+        # Get Staging model if not specified
+        if model_version is None:
+            staging_versions = self.registry.list_versions(stage="Staging")
+            if not staging_versions:
+                return {
+                    "ready_for_production": False,
+                    "reason": "No Staging model found",
+                    "metrics": {},
+                    "days_validated": 0,
+                }
+            model_version = staging_versions[0]["version"]
+
+        logger.info(f"Checking paper trading performance for model version {model_version}")
+
+        # Load paper trading logs
+        try:
+            paper_logs = self._load_paper_trading_logs(model_version, days=min_days)
+        except Exception as e:
+            logger.error(f"Failed to load paper trading logs: {e}")
+            return {
+                "ready_for_production": False,
+                "reason": f"Failed to load paper trading logs: {e}",
+                "metrics": {},
+                "days_validated": 0,
+            }
+
+        if not paper_logs:
+            return {
+                "ready_for_production": False,
+                "reason": f"No paper trading data found (need {min_days} days)",
+                "metrics": {},
+                "days_validated": 0,
+            }
+
+        # Calculate performance metrics from logs
+        metrics = self._calculate_paper_metrics(paper_logs)
+        days_validated = len(paper_logs)
+
+        # Check validation requirements
+        if days_validated < min_days:
+            return {
+                "ready_for_production": False,
+                "reason": f"Insufficient validation period ({days_validated}/{min_days} days)",
+                "metrics": metrics,
+                "days_validated": days_validated,
+            }
+
+        if metrics.get("total_trades", 0) < min_trades:
+            return {
+                "ready_for_production": False,
+                "reason": f"Insufficient trades ({metrics['total_trades']}/{min_trades} trades)",
+                "metrics": metrics,
+                "days_validated": days_validated,
+            }
+
+        # Check performance thresholds
+        sharpe = metrics.get("sharpe", 0.0)
+        win_rate = metrics.get("win_rate", 0.0)
+        max_dd = metrics.get("max_dd", 0.0)
+
+        min_sharpe = self.thresholds.get("min_sharpe_ratio", 1.0)
+        min_wr = self.thresholds.get("min_win_rate", 0.45)
+        max_dd_threshold = self.thresholds.get("max_drawdown_threshold", -0.20)
+
+        failures = []
+        if sharpe < min_sharpe:
+            failures.append(f"Sharpe {sharpe:.2f} < {min_sharpe:.2f}")
+        if win_rate < min_wr:
+            failures.append(f"Win rate {win_rate:.1%} < {min_wr:.1%}")
+        if max_dd < max_dd_threshold:
+            failures.append(f"Max DD {max_dd:.1%} < {max_dd_threshold:.1%}")
+
+        if failures:
+            return {
+                "ready_for_production": False,
+                "reason": "Performance below thresholds: " + "; ".join(failures),
+                "metrics": metrics,
+                "days_validated": days_validated,
+            }
+
+        # All checks passed
+        return {
+            "ready_for_production": True,
+            "reason": f"Validated over {days_validated} days with {metrics['total_trades']} trades",
+            "metrics": metrics,
+            "days_validated": days_validated,
+        }
+
+    def promote_staging_to_production(
+        self,
+        model_version: str | None = None,
+        force: bool = False,
+    ) -> bool:
+        """Promote Staging model to Production after paper trading validation
+
+        Final promotion step: moves validated model from Staging to Production.
+        Requires paper trading validation to pass unless force=True.
+
+        Args:
+            model_version: Model version to promote. If None, uses current Staging model
+            force: If True, skip validation and promote anyway
+
+        Returns:
+            True if promotion successful, False otherwise
+        """
+        # Get Staging model
+        if model_version is None:
+            staging_versions = self.registry.list_versions(stage="Staging")
+            if not staging_versions:
+                logger.error("No Staging model to promote")
+                return False
+            model_version = staging_versions[0]["version"]
+
+        logger.info(f"=" * 80)
+        logger.info(f"Attempting to promote Staging model {model_version} to Production")
+        logger.info(f"=" * 80)
+
+        # Check paper trading validation (unless forced)
+        if not force:
+            validation = self.check_paper_trading_performance(model_version)
+
+            if not validation["ready_for_production"]:
+                logger.warning(f"Paper trading validation failed: {validation['reason']}")
+                logger.warning(f"Metrics: {validation['metrics']}")
+
+                # Send rejection notification
+                self._send_paper_validation_failed_notification(
+                    version=model_version,
+                    reason=validation["reason"],
+                    metrics=validation["metrics"],
+                    days_validated=validation["days_validated"],
+                )
+                return False
+
+            logger.info(f"✓ Paper trading validation passed: {validation['reason']}")
+            logger.info(f"Metrics: {validation['metrics']}")
+
+        # Promote to Production
+        try:
+            promotion_success = self.registry.promote_model(
+                version=model_version,
+                stage="Production",
+                archive_current=True,
+            )
+
+            if promotion_success:
+                logger.info(f"✓ Model version {model_version} promoted to Production")
+
+                # Log to MLflow
+                if HAS_MLFLOW:
+                    with mlflow.start_run(run_name=f"paper_validation_{model_version}"):
+                        mlflow.log_param("model_version", model_version)
+                        mlflow.log_param("promotion_type", "staging_to_production")
+                        mlflow.log_param("forced", force)
+
+                        if not force:
+                            validation = self.check_paper_trading_performance(model_version)
+                            for key, value in validation["metrics"].items():
+                                mlflow.log_metric(f"paper_{key}", value)
+                            mlflow.log_metric("paper_days_validated", validation["days_validated"])
+
+                # Send production promotion notification
+                metrics = validation["metrics"] if not force else {}
+                self._send_paper_validation_success_notification(
+                    version=model_version,
+                    metrics=metrics,
+                    days_validated=validation.get("days_validated", 0) if not force else 0,
+                )
+
+                return True
+            else:
+                logger.error("Failed to promote model to Production")
+                return False
+
+        except Exception as e:
+            logger.error(f"Production promotion failed: {e}", exc_info=True)
+            return False
+
+    def reject_staging_model(
+        self,
+        model_version: str | None = None,
+        reason: str = "Manual rejection",
+    ) -> bool:
+        """Reject and archive a Staging model that failed paper trading validation
+
+        Args:
+            model_version: Model version to reject. If None, uses current Staging model
+            reason: Reason for rejection
+
+        Returns:
+            True if rejection successful, False otherwise
+        """
+        # Get Staging model
+        if model_version is None:
+            staging_versions = self.registry.list_versions(stage="Staging")
+            if not staging_versions:
+                logger.error("No Staging model to reject")
+                return False
+            model_version = staging_versions[0]["version"]
+
+        logger.info(f"Rejecting Staging model {model_version}: {reason}")
+
+        try:
+            # Move to Archived
+            rejection_success = self.registry.promote_model(
+                version=model_version,
+                stage="Archived",
+                archive_current=False,
+            )
+
+            if rejection_success:
+                logger.info(f"✓ Model version {model_version} rejected and archived")
+
+                # Log to MLflow
+                if HAS_MLFLOW:
+                    with mlflow.start_run(run_name=f"staging_rejection_{model_version}"):
+                        mlflow.log_param("model_version", model_version)
+                        mlflow.log_param("rejection_reason", reason)
+                        mlflow.log_param("rejected_at", datetime.now().isoformat())
+
+                # Send rejection notification
+                self._send_staging_rejection_notification(
+                    version=model_version,
+                    reason=reason,
+                )
+
+                return True
+            else:
+                logger.error("Failed to reject Staging model")
+                return False
+
+        except Exception as e:
+            logger.error(f"Staging rejection failed: {e}", exc_info=True)
+            return False
+
+    def _load_paper_trading_logs(
+        self,
+        model_version: str,
+        days: int,
+    ) -> list[dict[str, Any]]:
+        """Load paper trading logs for model validation
+
+        Looks for paper trading log files in results/rl/paper/ directory.
+        Each log file should contain daily trading session results.
+
+        Args:
+            model_version: Model version identifier
+            days: Number of days to load
+
+        Returns:
+            List of daily log dictionaries
+        """
+        import json
+        from datetime import timedelta
+
+        log_dir = Path(self.config.get("paper", {}).get("log_dir", "./results/rl/paper/"))
+
+        if not log_dir.exists():
+            logger.warning(f"Paper trading log directory not found: {log_dir}")
+            return []
+
+        # Look for log files matching the model version
+        # Format: paper_YYYYMMDD_{model_version}.json
+        logs = []
+        today = datetime.now().date()
+
+        for i in range(days):
+            date = today - timedelta(days=i)
+            date_str = date.strftime("%Y%m%d")
+
+            # Try multiple naming patterns
+            patterns = [
+                f"paper_{date_str}_{model_version}.json",
+                f"paper_{date_str}.json",  # Fallback: any paper trading log from that day
+            ]
+
+            for pattern in patterns:
+                log_path = log_dir / pattern
+                if log_path.exists():
+                    try:
+                        with open(log_path) as f:
+                            log_data = json.load(f)
+                            logs.append(log_data)
+                        break  # Found log for this day
+                    except Exception as e:
+                        logger.warning(f"Failed to load {log_path}: {e}")
+
+        logger.info(f"Loaded {len(logs)} days of paper trading logs")
+        return logs
+
+    def _calculate_paper_metrics(self, paper_logs: list[dict[str, Any]]) -> dict[str, float]:
+        """Calculate aggregate metrics from paper trading logs
+
+        Args:
+            paper_logs: List of daily paper trading logs
+
+        Returns:
+            Dictionary of performance metrics
+        """
+        if not paper_logs:
+            return {}
+
+        # Aggregate trades across all days
+        all_trades = []
+        total_pnl = 0.0
+        initial_balance = self.config.get("env", {}).get("initial_balance", 10_000_000)
+
+        for log in paper_logs:
+            trades = log.get("trades", [])
+            all_trades.extend(trades)
+            total_pnl += log.get("total_pnl", 0.0)
+
+        if not all_trades:
+            return {
+                "total_trades": 0,
+                "sharpe": 0.0,
+                "win_rate": 0.0,
+                "max_dd": 0.0,
+                "total_return": 0.0,
+            }
+
+        # Calculate metrics
+        wins = sum(1 for t in all_trades if t.get("pnl", 0) > 0)
+        losses = sum(1 for t in all_trades if t.get("pnl", 0) < 0)
+        win_rate = wins / len(all_trades) if all_trades else 0.0
+
+        # Calculate returns for Sharpe
+        returns = [t.get("pnl", 0) / initial_balance for t in all_trades]
+        mean_return = np.mean(returns) if returns else 0.0
+        std_return = np.std(returns) if len(returns) > 1 else 1e-6
+        sharpe = (mean_return / std_return) * np.sqrt(252) if std_return > 0 else 0.0
+
+        # Calculate max drawdown
+        balances = [initial_balance]
+        for t in all_trades:
+            balances.append(balances[-1] + t.get("pnl", 0))
+
+        peak = balances[0]
+        max_dd = 0.0
+        for balance in balances:
+            if balance > peak:
+                peak = balance
+            dd = (balance - peak) / peak if peak > 0 else 0.0
+            max_dd = min(max_dd, dd)
+
+        return {
+            "total_trades": len(all_trades),
+            "wins": wins,
+            "losses": losses,
+            "win_rate": win_rate,
+            "sharpe": sharpe,
+            "total_return": total_pnl / initial_balance,
+            "max_dd": max_dd,
+            "avg_pnl_per_trade": total_pnl / len(all_trades) if all_trades else 0.0,
+        }
 
     def rollback_if_failed(
         self,
@@ -1230,6 +1631,173 @@ class RetrainingPipeline:
 
         except Exception as e:
             logger.warning(f"Failed to send training failure notification: {e}")
+
+    def _send_staging_notification(
+        self,
+        version: str,
+        reason: str,
+        metrics: dict[str, float],
+        paper_days: int,
+    ) -> None:
+        """Send Telegram notification for model promotion to Staging
+
+        Args:
+            version: Model version promoted to Staging
+            reason: Promotion reason
+            metrics: Model performance metrics
+            paper_days: Number of paper trading days required
+        """
+        if not self._notifier:
+            return
+
+        # Check if notifications are enabled
+        notify_on = self.config.get("notifications", {}).get("notify_on", {})
+        if not notify_on.get("paper_trading_start", False):
+            return
+
+        try:
+            # Build notification message
+            message = (
+                "🟡 <b>RL Model Promoted to Staging</b>\n\n"
+                f"<b>Version:</b> {version}\n"
+                f"<b>Reason:</b> {reason}\n\n"
+                "<b>Backtest Performance:</b>\n"
+                f"Sharpe Ratio: {metrics.get('sharpe_ratio', 0.0):.2f}\n"
+                f"Win Rate: {metrics.get('win_rate_pct', 0.0):.1f}%\n"
+                f"Max Drawdown: {metrics.get('max_drawdown_pct', 0.0):.2f}%\n\n"
+                f"⏳ <b>Paper Trading Validation Required:</b> {paper_days} days\n"
+                "Model will be promoted to Production after successful paper trading validation."
+            )
+
+            # Use asyncio.run to properly handle async call
+            asyncio.run(self._notifier.send_message(message, is_critical=False))
+            logger.info("Staging promotion notification sent via Telegram")
+
+        except Exception as e:
+            logger.warning(f"Failed to send staging notification: {e}")
+
+    def _send_paper_validation_success_notification(
+        self,
+        version: str,
+        metrics: dict[str, float],
+        days_validated: int,
+    ) -> None:
+        """Send Telegram notification for successful paper trading validation
+
+        Args:
+            version: Model version that passed validation
+            metrics: Paper trading performance metrics
+            days_validated: Number of days validated
+        """
+        if not self._notifier:
+            return
+
+        # Check if notifications are enabled
+        notify_on = self.config.get("notifications", {}).get("notify_on", {})
+        if not notify_on.get("paper_trading_complete", True):
+            return
+
+        try:
+            # Build notification message
+            message = (
+                "✅ <b>Paper Trading Validation Passed</b>\n\n"
+                f"<b>Version:</b> {version}\n"
+                f"<b>Validation Period:</b> {days_validated} days\n\n"
+                "<b>Paper Trading Performance:</b>\n"
+                f"Sharpe Ratio: {metrics.get('sharpe', 0.0):.2f}\n"
+                f"Win Rate: {metrics.get('win_rate', 0.0):.1%}\n"
+                f"Max Drawdown: {metrics.get('max_dd', 0.0):.1%}\n"
+                f"Total Trades: {metrics.get('total_trades', 0)}\n"
+                f"Total Return: {metrics.get('total_return', 0.0):.2%}\n\n"
+                "🟢 <b>Model promoted to Production</b>"
+            )
+
+            # Use asyncio.run to properly handle async call
+            asyncio.run(self._notifier.send_message(message, is_critical=True))
+            logger.info("Paper validation success notification sent via Telegram")
+
+        except Exception as e:
+            logger.warning(f"Failed to send paper validation success notification: {e}")
+
+    def _send_paper_validation_failed_notification(
+        self,
+        version: str,
+        reason: str,
+        metrics: dict[str, float],
+        days_validated: int,
+    ) -> None:
+        """Send Telegram notification for failed paper trading validation
+
+        Args:
+            version: Model version that failed validation
+            reason: Failure reason
+            metrics: Paper trading performance metrics
+            days_validated: Number of days validated
+        """
+        if not self._notifier:
+            return
+
+        # Check if notifications are enabled
+        notify_on = self.config.get("notifications", {}).get("notify_on", {})
+        if not notify_on.get("paper_trading_complete", True):
+            return
+
+        try:
+            # Build notification message
+            message = (
+                "❌ <b>Paper Trading Validation Failed</b>\n\n"
+                f"<b>Version:</b> {version}\n"
+                f"<b>Validation Period:</b> {days_validated} days\n"
+                f"<b>Reason:</b> {reason}\n\n"
+                "<b>Paper Trading Performance:</b>\n"
+                f"Sharpe Ratio: {metrics.get('sharpe', 0.0):.2f}\n"
+                f"Win Rate: {metrics.get('win_rate', 0.0):.1%}\n"
+                f"Max Drawdown: {metrics.get('max_dd', 0.0):.1%}\n"
+                f"Total Trades: {metrics.get('total_trades', 0)}\n\n"
+                "🔴 <b>Model will NOT be promoted to Production</b>"
+            )
+
+            # Use asyncio.run to properly handle async call
+            asyncio.run(self._notifier.send_message(message, is_critical=True))
+            logger.info("Paper validation failure notification sent via Telegram")
+
+        except Exception as e:
+            logger.warning(f"Failed to send paper validation failure notification: {e}")
+
+    def _send_staging_rejection_notification(
+        self,
+        version: str,
+        reason: str,
+    ) -> None:
+        """Send Telegram notification for Staging model rejection
+
+        Args:
+            version: Model version rejected
+            reason: Rejection reason
+        """
+        if not self._notifier:
+            return
+
+        # Check if notifications are enabled
+        notify_on = self.config.get("notifications", {}).get("notify_on", {})
+        if not notify_on.get("promotion_rejected", True):
+            return
+
+        try:
+            # Build notification message
+            message = (
+                "🔴 <b>Staging Model Rejected</b>\n\n"
+                f"<b>Version:</b> {version}\n"
+                f"<b>Reason:</b> {reason}\n\n"
+                "Model has been archived and will not proceed to Production."
+            )
+
+            # Use asyncio.run to properly handle async call
+            asyncio.run(self._notifier.send_message(message, is_critical=False))
+            logger.info("Staging rejection notification sent via Telegram")
+
+        except Exception as e:
+            logger.warning(f"Failed to send staging rejection notification: {e}")
 
     def _load_data(self) -> tuple[
         list[np.ndarray],
