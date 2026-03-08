@@ -63,6 +63,9 @@ from shared.exceptions import (
     ValidationError,
     TypeConversionError,
 )
+from shared.execution.venue_router import VenueRouter, MarketData, RoutingDecision
+from shared.execution.config import ATSRoutingConfig
+from shared.execution.models import ExecutionVenue
 
 try:
     # Optional: only used when paper_trading=True
@@ -559,6 +562,21 @@ class TradingOrchestrator:
 
         # Adaptive position sizing (initialized in _init_components)
         self._adaptive_sizing: Any | None = None
+
+        # ATS Venue Router (initialized from execution.yaml)
+        self._venue_router: VenueRouter | None = None
+        try:
+            execution_cfg = ConfigLoader.load("execution.yaml")
+            ats_routing_dict = execution_cfg.get("ats_routing", {})
+            ats_config = ATSRoutingConfig(**ats_routing_dict)
+            self._venue_router = VenueRouter(ats_config)
+            logger.info(f"VenueRouter initialized: enabled={ats_config.enabled}")
+        except (ConfigurationError, MissingConfigError, InvalidConfigError) as e:
+            logger.warning(f"Failed to load ATS routing config: {e}")
+            self._venue_router = None
+        except Exception as e:
+            logger.error(f"Unexpected error initializing VenueRouter: {e}", exc_info=True)
+            self._venue_router = None
 
         # Market data loop state
         self._market_data_task: asyncio.Task | None = None
@@ -3964,6 +3982,31 @@ class TradingOrchestrator:
             req_type = OrderType.LIMIT if order_type == "limit" else OrderType.MARKET
             req_price = float(limit_price) if (req_type == OrderType.LIMIT and limit_price) else None
 
+            # Select execution venue using VenueRouter
+            selected_venue = ExecutionVenue.KRX  # Default to KRX
+            if self._venue_router and self.config.asset_class == "stock":
+                try:
+                    order_request_for_routing = OrderRequest(
+                        code=code,
+                        side=side,
+                        order_type=req_type,
+                        quantity=quantity,
+                        price=req_price,
+                    )
+                    # TODO: Get market_data from data provider for better routing decisions
+                    routing_decision = self._venue_router.select_venue(
+                        order=order_request_for_routing,
+                        market_data=None,
+                        current_time=datetime.now(),
+                    )
+                    selected_venue = ExecutionVenue(routing_decision.venue)
+                    logger.info(
+                        f"Venue routing decision: {routing_decision.venue.value} - {routing_decision.reason}"
+                    )
+                except Exception as e:
+                    logger.warning(f"Venue routing failed, using default KRX: {e}")
+                    selected_venue = ExecutionVenue.KRX
+
             resp = await self._order_executor.execute_order(
                 OrderRequest(
                     code=code,
@@ -3971,6 +4014,7 @@ class TradingOrchestrator:
                     order_type=req_type,
                     quantity=quantity,
                     price=req_price,
+                    venue=selected_venue,
                 )
             )
             fallback_price = float(limit_price or market_price)
@@ -4305,13 +4349,42 @@ class TradingOrchestrator:
         elif self._order_executor is not None:
             # Real execution
             from shared.execution.models import OrderRequest, OrderSide, OrderType
+
+            side = OrderSide.BUY if is_buy else OrderSide.SELL
+
+            # Select execution venue using VenueRouter
+            selected_venue = ExecutionVenue.KRX  # Default to KRX
+            if self._venue_router and self.config.asset_class == "stock":
+                try:
+                    order_request_for_routing = OrderRequest(
+                        code=code,
+                        side=side,
+                        order_type=OrderType.MARKET,
+                        quantity=quantity,
+                        price=None,
+                    )
+                    # TODO: Get market_data from data provider for better routing decisions
+                    routing_decision = self._venue_router.select_venue(
+                        order=order_request_for_routing,
+                        market_data=None,
+                        current_time=datetime.now(),
+                    )
+                    selected_venue = ExecutionVenue(routing_decision.venue)
+                    logger.info(
+                        f"Venue routing decision (exit): {routing_decision.venue.value} - {routing_decision.reason}"
+                    )
+                except Exception as e:
+                    logger.warning(f"Venue routing failed (exit), using default KRX: {e}")
+                    selected_venue = ExecutionVenue.KRX
+
             resp = await self._order_executor.execute_order(
                 OrderRequest(
                     code=code,
-                    side=OrderSide.BUY if is_buy else OrderSide.SELL,
+                    side=side,
                     order_type=OrderType.MARKET,
                     quantity=quantity,
                     price=None,
+                    venue=selected_venue,
                 )
             )
             return bool(resp.success), float(resp.filled_price or price)
