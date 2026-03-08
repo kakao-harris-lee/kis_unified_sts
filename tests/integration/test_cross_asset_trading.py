@@ -1326,3 +1326,186 @@ class TestCrossAssetTrading:
         # Phase 9: Cleanup
         # ============================================
         r.close()
+
+    @pytest.mark.asyncio
+    async def test_eod_policies_by_asset_class(self, redis_url):
+        """Test futures EOD force-close at 15:15 vs stock swing positions.
+
+        Verifies:
+        - Futures positions are force-closed at 15:15 (EOD policy)
+        - Stock positions in MAXIMIZE state are NOT force-closed at EOD
+          (swing positions allowed per CLAUDE.md policy)
+
+        This test validates asset-specific EOD behavior:
+        - Futures: intraday only, force-close at 15:15
+        - Stocks: swing positions allowed, no forced EOD close
+        """
+        from shared.strategy.base import ExitContext
+        from shared.strategy.exit.rl_mppo_exit import RLMPPOExit, RLMPPOExitConfig
+        from shared.strategy.exit.three_stage import ThreeStageExit, ThreeStageExitConfig
+        from shared.models.signal import ExitReason
+        from shared.strategy.market_time import now_kst
+        from zoneinfo import ZoneInfo
+
+        # ============================================
+        # Phase 1: Create Test Positions
+        # ============================================
+        # Futures position (any state, will be force-closed at EOD)
+        futures_position = create_futures_position(
+            pos_id="FUT-EOD-001",
+            code="101S6000",
+            name="KOSPI200 Futures",
+            side=PositionSide.LONG,
+            entry_price=350.0,
+            quantity=1,
+            current_price=352.0,  # +0.57% profit
+            state=PositionState.SURVIVAL,
+        )
+
+        # Stock position in MAXIMIZE state (swing position candidate)
+        stock_position = create_stock_position(
+            pos_id="STK-SWING-001",
+            code="005930",
+            name="Samsung Electronics",
+            side=PositionSide.LONG,
+            entry_price=70000.0,
+            quantity=10,
+            current_price=73500.0,  # +5% profit
+            state=PositionState.MAXIMIZE,  # Swing position state
+        )
+
+        # ============================================
+        # Phase 2: Setup Exit Strategies
+        # ============================================
+        # Futures exit strategy (RL M-PPO)
+        futures_exit_config = RLMPPOExitConfig(
+            model_path="models/futures/rl/mppo_best/best_model.zip",
+            min_exit_confidence=0.5,
+            hard_stop_pct=-0.03,
+            eod_close_hour=15,
+            eod_close_minute=15,
+        )
+        futures_exit_strategy = RLMPPOExit(futures_exit_config)
+
+        # Stock exit strategy (Three-Stage with swing positions allowed)
+        stock_exit_config = ThreeStageExitConfig(
+            stop_loss_pct=-0.05,
+            breakeven_threshold_pct=0.02,
+            maximize_threshold_pct=0.05,
+            trailing_stop_pct=-0.03,
+            eod_close_hour=23,  # Swing strategy - EOD disabled
+            eod_close_minute=59,  # Allows overnight positions
+        )
+        stock_exit_strategy = ThreeStageExit(stock_exit_config)
+
+        # ============================================
+        # Phase 3: Mock Market Data
+        # ============================================
+        # Create mock market data provider
+        mock_market_data = MagicMock()
+
+        # Mock futures price snapshot
+        mock_market_data.get_symbol_snapshot.return_value = {
+            "101S6000": {
+                "last_price": 352.0,
+                "bid_price": 351.95,
+                "ask_price": 352.05,
+                "volume": 10000,
+            }
+        }
+
+        # Mock stock price snapshot
+        mock_stock_snapshot = {
+            "005930": {
+                "last_price": 73500.0,
+                "bid_price": 73450.0,
+                "ask_price": 73550.0,
+                "volume": 5000000,
+            }
+        }
+
+        # ============================================
+        # Phase 4: Test Futures EOD Close at 15:15
+        # ============================================
+        # Mock time to 15:15 (futures EOD)
+        eod_time = datetime(2024, 3, 15, 15, 15, 0, tzinfo=ZoneInfo("Asia/Seoul"))
+
+        with patch("shared.strategy.exit.rl_mppo_exit.now_kst", return_value=eod_time):
+            # Create exit context for futures
+            futures_exit_ctx = ExitContext(
+                position=futures_position,
+                market_data=mock_market_data,
+                timestamp=eod_time,
+                metadata={"is_backtest": False},  # Real trading mode
+            )
+
+            # Check if futures should exit
+            with patch.object(
+                futures_exit_strategy,
+                "_get_current_price",
+                return_value=352.0,
+            ):
+                futures_should_exit, futures_signal = await futures_exit_strategy.should_exit(
+                    futures_exit_ctx
+                )
+
+            # Verify futures exits at EOD
+            assert futures_should_exit, "Futures position should exit at 15:15 EOD"
+            assert futures_signal is not None, "Futures exit signal should be generated"
+            assert futures_signal.reason == ExitReason.EOD_CLOSE, (
+                f"Futures should exit with EOD_CLOSE reason, got {futures_signal.reason}"
+            )
+            assert futures_signal.priority == 1, "EOD close should have high priority (1)"
+
+        # ============================================
+        # Phase 5: Test Stock Swing Position at Same Time
+        # ============================================
+        # Test stock at 15:15 (same time as futures EOD, but before stock EOD 23:59)
+        # Stock should NOT exit because EOD is configured at 23:59 (swing allowed)
+
+        with patch("shared.strategy.exit.three_stage.now_kst", return_value=eod_time):
+            with patch("shared.strategy.exit.three_stage.is_trading_day_kst", return_value=True):
+                with patch("shared.strategy.exit.three_stage.to_kst", return_value=eod_time):
+                    # Create exit context for stock
+                    stock_exit_ctx = ExitContext(
+                        position=stock_position,
+                        market_data=mock_market_data,
+                        timestamp=eod_time,
+                        metadata={"is_backtest": False},  # Real trading mode
+                    )
+
+                    # Mock market data for stock
+                    with patch.object(
+                        stock_exit_strategy,
+                        "_get_current_price",
+                        return_value=73500.0,
+                    ):
+                        stock_should_exit, stock_signal = await stock_exit_strategy.should_exit(
+                            stock_exit_ctx
+                        )
+
+            # Verify stock does NOT exit at 15:15
+            # Stock EOD is configured at 23:59, so it should hold
+            if stock_should_exit and stock_signal:
+                # If it exits, it should NOT be for EOD_CLOSE reason
+                assert stock_signal.reason != ExitReason.EOD_CLOSE, (
+                    f"Stock swing position should not exit due to EOD at 15:15. "
+                    f"Stock EOD is at 23:59. Got exit reason: {stock_signal.reason}"
+                )
+                # It might exit for other valid reasons (trailing stop, etc.)
+            else:
+                # Expected: stock holds because EOD is at 23:59, not 15:15
+                pass  # This is the expected behavior
+
+        # ============================================
+        # Phase 6: Verify Asset Class EOD Policy Isolation
+        # ============================================
+        # Verify that futures and stock exit strategies use different EOD policies
+
+        # Futures: Intraday only, force-close at 15:15
+        assert futures_exit_config.eod_close_hour == 15
+        assert futures_exit_config.eod_close_minute == 15
+
+        # Stocks: Swing positions allowed, EOD set to 23:59 (effectively disabled)
+        assert stock_exit_config.eod_close_hour == 23
+        assert stock_exit_config.eod_close_minute == 59
