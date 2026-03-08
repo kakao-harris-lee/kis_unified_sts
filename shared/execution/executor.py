@@ -14,7 +14,7 @@ import aiohttp
 
 from .config import ExecutionConfig, TradingMode
 from .exceptions import RateLimitExceeded
-from .models import OrderRequest, OrderResponse, OrderSide
+from .models import ExecutionVenue, OrderRequest, OrderResponse, OrderSide
 
 if TYPE_CHECKING:
     from .rate_limiter import RedisRateLimiter
@@ -242,9 +242,12 @@ class OrderExecutor:
         # Generate fake order number
         order_no = f"PAPER-{uuid.uuid4().hex[:8].upper()}"
 
+        # Preserve venue from order request
+        venue = order.venue if order.venue else ExecutionVenue.KRX.value
+
         logger.info(
             f"[PAPER] Order simulated: {order.side} {order.code} "
-            f"x{order.quantity} @ {order.price or 'MARKET'}"
+            f"x{order.quantity} @ {order.price or 'MARKET'} venue={venue}"
         )
 
         return OrderResponse(
@@ -252,14 +255,30 @@ class OrderExecutor:
             order_no=order_no,
             message="Paper order simulated",
             filled_qty=order.quantity,
+            venue=venue,
         )
 
     async def _send_kis_stock_order(
         self, order: OrderRequest, is_mock: bool
     ) -> OrderResponse:
-        """Send domestic stock order to KIS API."""
-        headers = await self._build_auth_headers(
-            tr_id=(
+        """Send domestic stock order to KIS API with venue-specific routing."""
+        # Determine venue (default to KRX if not specified)
+        venue = order.venue if order.venue else ExecutionVenue.KRX.value
+        is_ats = venue == ExecutionVenue.ATS.value
+
+        # Select TR code based on venue, mode, and side
+        if is_ats:
+            tr_id = (
+                self.config.tr_code_ats_buy_mock
+                if is_mock and order.side == OrderSide.BUY.value
+                else self.config.tr_code_ats_buy_real
+                if order.side == OrderSide.BUY.value
+                else self.config.tr_code_ats_sell_mock
+                if is_mock
+                else self.config.tr_code_ats_sell_real
+            )
+        else:
+            tr_id = (
                 self.config.tr_code_buy_mock
                 if is_mock and order.side == OrderSide.BUY.value
                 else self.config.tr_code_buy_real
@@ -268,9 +287,14 @@ class OrderExecutor:
                 if is_mock
                 else self.config.tr_code_sell_real
             )
-        )
+
+        headers = await self._build_auth_headers(tr_id=tr_id)
         if headers is None:
-            return OrderResponse(success=False, message="Failed to get auth headers")
+            return OrderResponse(
+                success=False,
+                message="Failed to get auth headers",
+                venue=venue
+            )
 
         body = {
             "CANO": self.account_prefix,
@@ -281,8 +305,12 @@ class OrderExecutor:
             "ORD_UNPR": str(int(order.price)) if order.price else "0",
         }
 
+        # Route to venue-specific endpoint
         base_url = self.config.kis_mock_base_url if is_mock else self.config.kis_real_base_url
-        url = f"{base_url}/uapi/domestic-stock/v1/trading/order-cash"
+        endpoint = "order-ats" if is_ats else "order-cash"
+        url = f"{base_url}/uapi/domestic-stock/v1/trading/{endpoint}"
+
+        logger.debug(f"Routing order to venue={venue}, endpoint={endpoint}")
 
         data, status = await self._request_json("POST", url, headers=headers, json=body)
         if status == 200 and data.get("rt_cd") == "0":
@@ -290,22 +318,31 @@ class OrderExecutor:
                 success=True,
                 order_no=data.get("output", {}).get("ODNO"),
                 message=data.get("msg1", "Success"),
+                venue=venue,
             )
         return OrderResponse(
             success=False,
             message=f"[{data.get('rt_cd')}] {data.get('msg1', 'Unknown error')}",
+            venue=venue,
         )
 
     async def _send_kis_futures_order(
         self, order: OrderRequest, is_mock: bool
     ) -> OrderResponse:
         """Send domestic futures order and monitor fill/cancel when configured."""
+        # Futures always use KRX venue
+        venue = order.venue if order.venue else ExecutionVenue.KRX.value
+
         is_night = self._is_night_session()
         tr_id = self._resolve_futures_order_tr_id(is_mock=is_mock, is_night=is_night)
 
         headers = await self._build_auth_headers(tr_id=tr_id)
         if headers is None:
-            return OrderResponse(success=False, message="Failed to get auth headers")
+            return OrderResponse(
+                success=False,
+                message="Failed to get auth headers",
+                venue=venue
+            )
 
         ord_dvsn_cd = self._map_futures_order_type(order.order_type)
         body = {
@@ -330,6 +367,7 @@ class OrderExecutor:
             return OrderResponse(
                 success=False,
                 message=f"[{data.get('rt_cd')}] {data.get('msg1', 'Unknown error')}",
+                venue=venue,
             )
 
         output = data.get("output", {}) if isinstance(data.get("output"), dict) else {}
@@ -338,6 +376,7 @@ class OrderExecutor:
             success=True,
             order_no=order_no or None,
             message=data.get("msg1", "Success"),
+            venue=venue,
         )
 
         should_check_fill = (
@@ -364,6 +403,9 @@ class OrderExecutor:
         is_night: bool,
     ) -> OrderResponse:
         """Wait for futures fill status and cancel unfilled remainder on timeout."""
+        # Futures always use KRX venue
+        venue = order.venue if order.venue else ExecutionVenue.KRX.value
+
         poll = float(self.config.futures_fill_check_poll_interval_seconds)
         timeout = float(self.config.futures_fill_check_timeout_seconds)
         deadline = datetime.now() + timedelta(seconds=timeout)
@@ -386,6 +428,7 @@ class OrderExecutor:
                         message=f"Futures order rejected: {reason}",
                         filled_qty=status.filled_qty,
                         filled_price=status.avg_fill_price,
+                        venue=venue,
                     )
                 if status.filled_qty >= order.quantity:
                     return OrderResponse(
@@ -394,6 +437,7 @@ class OrderExecutor:
                         message="Futures order fully filled",
                         filled_qty=status.filled_qty,
                         filled_price=status.avg_fill_price,
+                        venue=venue,
                     )
             await asyncio.sleep(poll)
 
@@ -404,6 +448,7 @@ class OrderExecutor:
                 message="Futures order fill timeout",
                 filled_qty=last_status.filled_qty,
                 filled_price=last_status.avg_fill_price,
+                venue=venue,
             )
 
         cancel_qty = last_status.remaining_qty if last_status.remaining_qty > 0 else max(
@@ -422,6 +467,7 @@ class OrderExecutor:
                 message=f"Futures fill timeout and cancel failed: {cancel_resp.message}",
                 filled_qty=last_status.filled_qty,
                 filled_price=last_status.avg_fill_price,
+                venue=venue,
             )
 
         refreshed = await self._inquire_futures_fill_status(
@@ -440,6 +486,7 @@ class OrderExecutor:
             message=f"Futures unfilled order cancelled: {cancel_resp.message}",
             filled_qty=filled_qty,
             filled_price=filled_price,
+            venue=venue,
         )
 
     async def _inquire_futures_fill_status(

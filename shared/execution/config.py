@@ -318,11 +318,17 @@ class ExecutionConfig(BaseModel):
         description="KIS 실전투자 API base URL"
     )
 
-    # KIS TR codes for order types
+    # KIS TR codes for order types (KRX)
     tr_code_buy_mock: str = Field(default="VTTC0802U", description="TR code for mock buy order")
     tr_code_buy_real: str = Field(default="TTTC0802U", description="TR code for real buy order")
     tr_code_sell_mock: str = Field(default="VTTC0801U", description="TR code for mock sell order")
     tr_code_sell_real: str = Field(default="TTTC0801U", description="TR code for real sell order")
+
+    # KIS TR codes for ATS orders
+    tr_code_ats_buy_mock: str = Field(default="VTTC0852U", description="TR code for ATS mock buy order")
+    tr_code_ats_buy_real: str = Field(default="TTTC0852U", description="TR code for ATS real buy order")
+    tr_code_ats_sell_mock: str = Field(default="VTTC0851U", description="TR code for ATS mock sell order")
+    tr_code_ats_sell_real: str = Field(default="TTTC0851U", description="TR code for ATS real sell order")
 
     # Futures order TR IDs (KIS [국내선물옵션] 주문/계좌 기준)
     futures_tr_code_order_day_mock: str = Field(
