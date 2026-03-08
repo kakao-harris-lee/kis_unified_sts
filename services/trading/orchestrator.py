@@ -2331,6 +2331,66 @@ class TradingOrchestrator:
             logger.debug(f"ClickHouse prewarm failed for {symbol}: {e}")
             return []
 
+    async def _fetch_daily_candles_from_clickhouse(
+        self, symbol: str, limit: int = 252
+    ) -> list[dict]:
+        """Fetch recent daily candles from ClickHouse.
+
+        Used for multi-timeframe strategies that need daily context.
+
+        Args:
+            symbol: Stock/futures code
+            limit: Number of daily candles (default 252 = ~1 year trading days)
+
+        Returns:
+            List of daily candle dicts with keys: date, open, high, low, close, volume
+        """
+        try:
+            from clickhouse_driver import Client as CHSyncClient
+
+            ch_host = os.getenv("CLICKHOUSE_HOST", "localhost")
+            ch_port = int(
+                os.getenv(
+                    "CLICKHOUSE_NATIVE_PORT",
+                    os.getenv("CLICKHOUSE_PORT", "9000"),
+                )
+            )
+            ch_user = os.getenv("CLICKHOUSE_USER", "default")
+            ch_pw = os.getenv("CLICKHOUSE_PASSWORD", "")
+            ch_db = os.getenv("CLICKHOUSE_STOCK_DATABASE", "market")
+
+            loop = asyncio.get_event_loop()
+            rows = await loop.run_in_executor(
+                None,
+                lambda: CHSyncClient(
+                    host=ch_host,
+                    port=ch_port,
+                    user=ch_user,
+                    password=ch_pw,
+                    database=ch_db,
+                ).execute(
+                    "SELECT code, date, open, high, low, close, volume "
+                    "FROM daily_candles "
+                    "WHERE code = %(code)s "
+                    "ORDER BY date DESC LIMIT %(limit)s",
+                    {"code": symbol, "limit": limit},
+                ),
+            )
+            candles = []
+            for row in reversed(rows):  # oldest first
+                candles.append({
+                    "date": row[1],
+                    "open": float(row[2]),
+                    "high": float(row[3]),
+                    "low": float(row[4]),
+                    "close": float(row[5]),
+                    "volume": int(row[6]),
+                })
+            return candles
+        except (InfrastructureError, OSError, ConnectionError, ValueError, IndexError) as e:
+            logger.debug(f"ClickHouse daily candle fetch failed for {symbol}: {e}")
+            return []
+
     async def _prewarm_symbols(self, symbols: list[str]) -> None:
         """Seed indicator engine with historical candles.
 
