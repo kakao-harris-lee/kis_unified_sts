@@ -734,12 +734,22 @@ class RetrainingPipeline:
                 mlflow.log_param("promotion_error", str(e))
             return False
 
-    def rollback_if_failed(self) -> bool:
+    def rollback_if_failed(
+        self,
+        test_days: list[np.ndarray] | None = None,
+        test_prices: list[np.ndarray] | None = None,
+        test_aux: list[np.ndarray] | None = None,
+    ) -> bool:
         """Rollback to previous champion if current production model underperforms
 
         Monitors production model performance and triggers rollback if it falls
         below configured thresholds. Demotes current champion and restores
         previous archived model.
+
+        Args:
+            test_days: Test data (daily features). If None, loads from ClickHouse
+            test_prices: Test prices (daily OHLC)
+            test_aux: Auxiliary test features
 
         Returns:
             True if rollback occurred, False otherwise
@@ -748,7 +758,9 @@ class RetrainingPipeline:
             logger.info("Rollback disabled in config")
             return False
 
+        logger.info("=" * 80)
         logger.info("Checking if rollback is needed...")
+        logger.info("=" * 80)
 
         # Get current production champion
         current_champion = self.registry.get_champion()
@@ -762,28 +774,304 @@ class RetrainingPipeline:
             logger.warning("No archived model available for rollback")
             return False
 
-        # In a full implementation, we would:
-        # 1. Monitor production model performance over time
-        # 2. Compare against rollback thresholds
-        # 3. Trigger rollback if thresholds breached
+        # Get most recent archived model (previous champion)
+        previous_champion = sorted(
+            archived_versions,
+            key=lambda v: int(v["version"]),
+            reverse=True
+        )[0]
 
-        # For now, this is a manual trigger point
-        # Actual rollback decision would be based on production metrics
-        logger.info("Rollback check complete: No rollback needed at this time")
-        return False
+        logger.info(
+            f"Current champion: version {current_champion['version']} "
+            f"(Sharpe: {current_champion['metrics'].get('sharpe', 'N/A')})"
+        )
+        logger.info(
+            f"Previous champion: version {previous_champion['version']} "
+            f"(Sharpe: {previous_champion['metrics'].get('sharpe', 'N/A')})"
+        )
 
-        # Example rollback implementation:
-        # try:
-        #     success = self.registry.rollback_model()
-        #     if success:
-        #         logger.info("✓ Rolled back to previous champion")
-        #         if HAS_MLFLOW:
-        #             mlflow.log_param("rollback_triggered", True)
-        #             mlflow.log_param("rollback_timestamp", datetime.now().isoformat())
-        #         return True
-        # except Exception as e:
-        #     logger.error(f"Rollback failed: {e}")
-        #     return False
+        # Load test data if not provided
+        if test_days is None or test_prices is None:
+            try:
+                _, _, test_days, test_prices = self._load_data()
+                logger.info(f"Loaded {len(test_days)} days of test data for evaluation")
+            except Exception as e:
+                logger.error(f"Failed to load test data for rollback evaluation: {e}")
+                return False
+
+        # Load and evaluate current production model
+        try:
+            from sb3_contrib import MaskablePPO
+
+            # Download current champion model
+            champion_source = current_champion.get("source")
+            if not champion_source:
+                logger.error("No source path for current champion model")
+                return False
+
+            if HAS_MLFLOW:
+                import tempfile
+
+                logger.info(f"Downloading current champion model from MLflow...")
+                temp_dir = tempfile.mkdtemp()
+                artifact_path = champion_source.split("/", 3)[-1]
+                run_id = current_champion.get("run_id")
+
+                if not run_id:
+                    logger.error("No run_id found for current champion")
+                    return False
+
+                # Download artifact
+                local_path = mlflow.artifacts.download_artifacts(
+                    run_id=run_id,
+                    artifact_path=artifact_path,
+                    dst_path=temp_dir,
+                )
+
+                # Load model
+                model_path = str(local_path).replace(".zip", "")
+                current_model = MaskablePPO.load(model_path)
+                logger.info("Current champion model loaded successfully")
+            else:
+                logger.error("MLflow not available, cannot load model for rollback check")
+                return False
+
+        except Exception as e:
+            logger.error(f"Failed to load current champion model: {e}", exc_info=True)
+            return False
+
+        # Evaluate current model on test data
+        try:
+            logger.info("Evaluating current production model performance...")
+            current_metrics = self.evaluator.rl_evaluator.evaluate_model(
+                model=current_model,
+                test_days=test_days,
+                test_prices=test_prices,
+                slippage=0.0,
+                deterministic=True,
+                test_aux=test_aux,
+            )
+
+            logger.info(
+                f"Current model performance: "
+                f"Sharpe={current_metrics['sharpe_ratio']:.2f}, "
+                f"Win Rate={current_metrics['win_rate_pct']:.1f}%, "
+                f"Max DD={current_metrics['max_drawdown_pct']:.2f}%"
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to evaluate current model: {e}", exc_info=True)
+            return False
+
+        # Get previous champion metrics (baseline for comparison)
+        previous_metrics = previous_champion["metrics"]
+
+        # Normalize metric format
+        if "sharpe" in previous_metrics and "sharpe_ratio" not in previous_metrics:
+            previous_sharpe = previous_metrics.get("sharpe", 0.0)
+        else:
+            previous_sharpe = previous_metrics.get("sharpe_ratio", 0.0)
+
+        if "win_rate" in previous_metrics and "win_rate_pct" not in previous_metrics:
+            previous_win_rate = previous_metrics.get("win_rate", 0.0) * 100
+        else:
+            previous_win_rate = previous_metrics.get("win_rate_pct", 0.0)
+
+        if "max_dd" in previous_metrics and "max_drawdown_pct" not in previous_metrics:
+            previous_max_dd = previous_metrics.get("max_dd", 0.0) * 100
+        else:
+            previous_max_dd = previous_metrics.get("max_drawdown_pct", 0.0)
+
+        # Extract rollback thresholds
+        sharpe_threshold = float(self.thresholds.get("rollback_sharpe_threshold", 0.8))
+        win_rate_threshold = float(self.thresholds.get("rollback_win_rate_threshold", 0.9))
+        max_dd_threshold = float(self.thresholds.get("rollback_max_dd_threshold", 1.2))
+
+        # Check rollback conditions
+        rollback_reasons = []
+
+        # Sharpe ratio check (current should be >= 80% of previous)
+        if previous_sharpe > 0:
+            sharpe_ratio = current_metrics["sharpe_ratio"] / previous_sharpe
+            if sharpe_ratio < sharpe_threshold:
+                rollback_reasons.append(
+                    f"Sharpe ratio degraded: {sharpe_ratio:.2%} of previous "
+                    f"(threshold: {sharpe_threshold:.0%})"
+                )
+
+        # Win rate check (current should be >= 90% of previous)
+        if previous_win_rate > 0:
+            win_rate_ratio = current_metrics["win_rate_pct"] / previous_win_rate
+            if win_rate_ratio < win_rate_threshold:
+                rollback_reasons.append(
+                    f"Win rate degraded: {win_rate_ratio:.2%} of previous "
+                    f"(threshold: {win_rate_threshold:.0%})"
+                )
+
+        # Max drawdown check (current should be <= 120% of previous)
+        # Note: max_dd is negative, so more negative = worse
+        if previous_max_dd < 0:
+            max_dd_ratio = abs(current_metrics["max_drawdown_pct"]) / abs(previous_max_dd)
+            if max_dd_ratio > max_dd_threshold:
+                rollback_reasons.append(
+                    f"Max drawdown exceeded: {max_dd_ratio:.2%} of previous "
+                    f"(threshold: {max_dd_threshold:.0%})"
+                )
+
+        # Decide rollback
+        should_rollback = len(rollback_reasons) > 0
+
+        if not should_rollback:
+            logger.info("✓ Rollback check passed: Production model performing within thresholds")
+            logger.info("=" * 80)
+            return False
+
+        # Log rollback decision
+        logger.warning("❌ Rollback triggered: Production model underperforming")
+        for reason in rollback_reasons:
+            logger.warning(f"  - {reason}")
+
+        # Start MLflow run for rollback tracking
+        if HAS_MLFLOW:
+            try:
+                experiment_name = self.mlflow_config.get(
+                    "experiment_name",
+                    "rl_retraining_pipeline"
+                )
+                mlflow.set_experiment(experiment_name)
+                mlflow.start_run(run_name=f"rollback_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
+
+                # Log rollback metadata
+                mlflow.log_params({
+                    "rollback_triggered": True,
+                    "rollback_timestamp": datetime.now().isoformat(),
+                    "demoted_version": current_champion["version"],
+                    "restored_version": previous_champion["version"],
+                    "rollback_reason_count": len(rollback_reasons),
+                })
+
+                # Log performance comparison
+                mlflow.log_metrics({
+                    "current_sharpe": current_metrics["sharpe_ratio"],
+                    "current_win_rate": current_metrics["win_rate_pct"],
+                    "current_max_dd": current_metrics["max_drawdown_pct"],
+                    "previous_sharpe": previous_sharpe,
+                    "previous_win_rate": previous_win_rate,
+                    "previous_max_dd": previous_max_dd,
+                })
+
+                # Log rollback reasons
+                for i, reason in enumerate(rollback_reasons):
+                    mlflow.log_param(f"rollback_reason_{i+1}", reason)
+
+            except MlflowException as e:
+                logger.warning(f"MLflow logging failed: {e}")
+
+        # Execute rollback
+        try:
+            success = self.registry.rollback_model()
+
+            if success:
+                logger.info(
+                    f"✓ Rolled back from version {current_champion['version']} "
+                    f"to version {previous_champion['version']}"
+                )
+
+                # Send Telegram notification
+                self._send_rollback_notification(
+                    current_version=current_champion["version"],
+                    previous_version=previous_champion["version"],
+                    reasons=rollback_reasons,
+                    current_metrics=current_metrics,
+                    previous_metrics={
+                        "sharpe_ratio": previous_sharpe,
+                        "win_rate_pct": previous_win_rate,
+                        "max_drawdown_pct": previous_max_dd,
+                    },
+                )
+
+                if HAS_MLFLOW:
+                    mlflow.log_param("rollback_success", True)
+
+                logger.info("=" * 80)
+                return True
+
+            else:
+                logger.error("Failed to execute rollback")
+                if HAS_MLFLOW:
+                    mlflow.log_param("rollback_success", False)
+                    mlflow.log_param("rollback_error", "Registry rollback failed")
+                logger.info("=" * 80)
+                return False
+
+        except Exception as e:
+            logger.error(f"Rollback failed: {e}", exc_info=True)
+            if HAS_MLFLOW:
+                mlflow.log_param("rollback_success", False)
+                mlflow.log_param("rollback_error", str(e))
+            logger.info("=" * 80)
+            return False
+
+        finally:
+            if HAS_MLFLOW:
+                try:
+                    mlflow.end_run()
+                except MlflowException:
+                    pass
+
+    def _send_rollback_notification(
+        self,
+        current_version: str,
+        previous_version: str,
+        reasons: list[str],
+        current_metrics: dict[str, float],
+        previous_metrics: dict[str, float],
+    ) -> None:
+        """Send Telegram notification for rollback event
+
+        Args:
+            current_version: Demoted model version
+            previous_version: Restored model version
+            reasons: List of rollback reasons
+            current_metrics: Current model performance metrics
+            previous_metrics: Previous model performance metrics
+        """
+        if not self.config.get("notifications", {}).get("telegram", {}).get("enabled", False):
+            return
+
+        # Check if rollback notifications are enabled
+        notify_on = self.config.get("notifications", {}).get("notify_on", {})
+        if not notify_on.get("rollback_triggered", True):
+            return
+
+        try:
+            from shared.notification.telegram import TelegramNotifier
+
+            notifier = TelegramNotifier()
+
+            # Build notification message
+            message = (
+                "🔴 *RL Model Rollback Triggered*\n\n"
+                f"*Demoted Version:* {current_version}\n"
+                f"*Restored Version:* {previous_version}\n\n"
+                "*Rollback Reasons:*\n"
+            )
+
+            for i, reason in enumerate(reasons, 1):
+                message += f"{i}. {reason}\n"
+
+            message += (
+                "\n*Performance Comparison:*\n"
+                f"Sharpe: {current_metrics['sharpe_ratio']:.2f} → {previous_metrics['sharpe_ratio']:.2f}\n"
+                f"Win Rate: {current_metrics['win_rate_pct']:.1f}% → {previous_metrics['win_rate_pct']:.1f}%\n"
+                f"Max DD: {current_metrics['max_drawdown_pct']:.2f}% → {previous_metrics['max_drawdown_pct']:.2f}%\n"
+            )
+
+            notifier.send_message(message, parse_mode="Markdown")
+            logger.info("Rollback notification sent via Telegram")
+
+        except Exception as e:
+            logger.warning(f"Failed to send rollback notification: {e}")
 
     def _load_data(self) -> tuple[
         list[np.ndarray],
