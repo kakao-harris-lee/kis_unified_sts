@@ -50,6 +50,7 @@ class Position:
         state: 포지션 상태 (3-Stage)
         strategy: 진입 전략명
         fee_rate: 거래 수수료율
+        execution_venue: 실행 거래소 (KRX/ATS)
     """
 
     id: str
@@ -73,6 +74,7 @@ class Position:
     # 수수료 (설정에서 로드)
     fee_rate: float = 0.003  # 기본 0.3% (편도 0.15% * 2)
     metadata: dict[str, Any] = field(default_factory=dict)
+    execution_venue: str = "KRX"  # 실행 거래소 (KRX/ATS)
 
     # 청산 관련
     exit_triggered: bool = False

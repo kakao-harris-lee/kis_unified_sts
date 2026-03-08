@@ -340,8 +340,20 @@ class PositionTracker:
         side: PositionSide = PositionSide.LONG,
         fee_rate: float | None = None,
         metadata: dict[str, Any] | None = None,
+        execution_venue: str = "KRX",
     ) -> Position | None:
         """Add a new position
+
+        Args:
+            code: Stock/futures code
+            name: Stock/futures name
+            entry_price: Entry price
+            quantity: Position quantity
+            strategy: Strategy name
+            side: Position side (LONG/SHORT)
+            fee_rate: Trading fee rate (overrides config default)
+            metadata: Additional metadata dict
+            execution_venue: Execution venue (KRX/ATS)
 
         Returns:
             Position if added successfully, None if limits exceeded
@@ -371,6 +383,7 @@ class PositionTracker:
             strategy=strategy,
             fee_rate=fee_rate or self.config.default_fee_rate,
             metadata=metadata or {},
+            execution_venue=execution_venue,
         )
 
         # Add to main dict
@@ -833,11 +846,11 @@ class PositionTracker:
     # Shared SQL column list for swing_positions INSERT (DRY)
     _SWING_INSERT_COLS = (
         "(id, code, name, entry_date, entry_price, quantity, strategy, "
-        "stop_loss_price, high_since_entry, current_state, is_open, "
+        "execution_venue, stop_loss_price, high_since_entry, current_state, is_open, "
         "exit_date, exit_price, exit_reason, pnl, side, fee_rate)"
     )
     _RL_TRADE_INSERT_COLS = (
-        "(id, asset_class, code, name, side, strategy, entry_date, entry_price, "
+        "(id, asset_class, code, name, side, strategy, execution_venue, entry_date, entry_price, "
         "exit_date, exit_price, quantity, pnl, pnl_pct, hold_seconds, exit_reason, metadata_json)"
     )
     _RL_TRADES_SCHEMA_TEMPLATE = """
@@ -905,6 +918,7 @@ class PositionTracker:
                         position.entry_price,
                         position.quantity,
                         position.strategy,
+                        position.execution_venue,
                         position.stop_price,
                         position.highest_price,
                         position.state.value,
@@ -988,6 +1002,7 @@ class PositionTracker:
                 position.entry_price,
                 position.quantity,
                 position.strategy,
+                position.execution_venue,
                 position.stop_price,
                 position.highest_price,
                 position.state.value,
@@ -1080,6 +1095,7 @@ class PositionTracker:
                 position.name,
                 position.side.value,
                 position.strategy,
+                position.execution_venue,
                 position.entry_time,
                 position.entry_price,
                 position.exit_time,
@@ -1313,7 +1329,7 @@ class PositionTracker:
                 client = ch.get_sync_client()
                 return client.execute(f"""
                     SELECT id, code, name, entry_date, entry_price, quantity,
-                           strategy, stop_loss_price, high_since_entry, current_state,
+                           strategy, execution_venue, stop_loss_price, high_since_entry, current_state,
                            side, fee_rate
                     FROM {database}.swing_positions FINAL
                     WHERE is_open = 1
@@ -1332,6 +1348,7 @@ class PositionTracker:
                     entry_price,
                     quantity,
                     strategy,
+                    execution_venue,
                     stop_price,
                     high_since_entry,
                     state_str,
@@ -1369,6 +1386,7 @@ class PositionTracker:
                     state=state,
                     strategy=strategy,
                     fee_rate=fee_rate_val if fee_rate_val else self.config.default_fee_rate,
+                    execution_venue=execution_venue if execution_venue else "KRX",
                 )
                 position.stop_price = stop_price or 0.0
 

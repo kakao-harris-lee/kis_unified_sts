@@ -3793,7 +3793,7 @@ class TradingOrchestrator:
                 quantity=quantity,
             )
 
-        is_filled, fill_price, filled_qty = await self._place_entry_order(
+        is_filled, fill_price, filled_qty, venue = await self._place_entry_order(
             code=code,
             is_short=is_short,
             quantity=quantity,
@@ -3810,6 +3810,7 @@ class TradingOrchestrator:
                 "filled_qty": int(filled_qty),
                 "blocked_reason": "",
                 "transitions": [],
+                "venue": venue,
             },
         )
 
@@ -3865,7 +3866,7 @@ class TradingOrchestrator:
         passive_price = float(decision.target_price or signal_price)
         latest_quote = await self._get_quote_payload(code)
         current_touch_price = float(latest_quote.get("ask_price_1" if is_buy else "bid_price_1", passive_price))
-        is_filled, fill_price, filled_qty = await self._place_entry_order(
+        is_filled, fill_price, filled_qty, venue = await self._place_entry_order(
             code=code,
             is_short=is_short,
             quantity=quantity,
@@ -3875,6 +3876,7 @@ class TradingOrchestrator:
         )
         execution_meta["submit_price"] = passive_price
         execution_meta["filled_qty"] = int(filled_qty)
+        execution_meta["venue"] = venue
         if is_filled:
             execution_meta["state"] = "filled"
             if 0 < int(filled_qty) < int(quantity):
@@ -3910,7 +3912,7 @@ class TradingOrchestrator:
             return False, 0.0, execution_meta
 
         retry_market_price = float(retry_decision.target_price or signal_price)
-        filled_retry, fill_retry, retry_filled_qty = await self._place_entry_order(
+        filled_retry, fill_retry, retry_filled_qty, retry_venue = await self._place_entry_order(
             code=code,
             is_short=is_short,
             quantity=quantity,
@@ -3920,6 +3922,7 @@ class TradingOrchestrator:
         )
         execution_meta["filled_qty"] = int(retry_filled_qty)
         execution_meta["submit_price"] = retry_market_price
+        execution_meta["venue"] = retry_venue
         execution_meta["state"] = retry_decision.state.value
         execution_meta["execution_path"] = "retry_market_once"
         if filled_retry:
@@ -3942,13 +3945,13 @@ class TradingOrchestrator:
         order_type: str,
         limit_price: float | None,
         market_price: float,
-    ) -> tuple[bool, float, int]:
+    ) -> tuple[bool, float, int, str]:
         if self.config.paper_trading and self._paper_broker:
             try:
                 from shared.paper import OrderSide as PaperOrderSide
                 from shared.paper import OrderType as PaperOrderType
             except ImportError:
-                return False, 0.0, 0
+                return False, 0.0, 0, "KRX"
 
             side = PaperOrderSide.SELL if is_short else PaperOrderSide.BUY
             if order_type == "limit":
@@ -3962,7 +3965,8 @@ class TradingOrchestrator:
                 )
                 is_filled = bool(getattr(order, "filled", False))
                 fill_price = float(getattr(order, "fill_price", 0.0) or 0.0)
-                return is_filled, fill_price, (quantity if is_filled else 0)
+                venue = getattr(order, "venue", "KRX")
+                return is_filled, fill_price, (quantity if is_filled else 0), venue
 
             order = await self._paper_broker.submit_order(
                 symbol=code,
@@ -3973,7 +3977,8 @@ class TradingOrchestrator:
             )
             is_filled = bool(getattr(order, "filled", True))
             fill_price = float(getattr(order, "fill_price", market_price) or market_price)
-            return is_filled, fill_price, (quantity if is_filled else 0)
+            venue = getattr(order, "venue", "KRX")
+            return is_filled, fill_price, (quantity if is_filled else 0), venue
 
         if self._order_executor is not None:
             from shared.execution.models import OrderRequest, OrderSide, OrderType
@@ -4020,23 +4025,24 @@ class TradingOrchestrator:
             fallback_price = float(limit_price or market_price)
             filled_qty = int(getattr(resp, "filled_qty", 0) or 0)
             filled_price = float(getattr(resp, "filled_price", 0.0) or 0.0)
+            resp_venue = str(getattr(resp, "venue", selected_venue.value if hasattr(selected_venue, "value") else selected_venue))
 
             # Partial fills must be tracked even when broker final status is
             # timeout/cancel to avoid orphan live positions.
             if filled_qty > 0:
-                return True, float(filled_price or fallback_price), max(0, filled_qty)
+                return True, float(filled_price or fallback_price), max(0, filled_qty), resp_venue
 
             if bool(resp.success):
                 if req_type == OrderType.MARKET:
-                    return True, float(filled_price or fallback_price), quantity
+                    return True, float(filled_price or fallback_price), quantity, resp_venue
                 if self.config.asset_class != "futures":
-                    return True, float(filled_price or fallback_price), quantity
+                    return True, float(filled_price or fallback_price), quantity, resp_venue
                 if filled_price > 0:
-                    return True, float(filled_price), quantity
+                    return True, float(filled_price), quantity, resp_venue
 
-            return False, 0.0, 0
+            return False, 0.0, 0, resp_venue
 
-        return True, float(limit_price or market_price), quantity
+        return True, float(limit_price or market_price), quantity, "KRX"
 
     async def _process_filled_entry(
         self,
@@ -4076,6 +4082,8 @@ class TradingOrchestrator:
         ):
             if key in signal_meta:
                 pos_metadata[key] = signal_meta[key]
+        # Extract execution venue from execution metadata
+        execution_venue = exec_meta.get("venue", "KRX")
         position = self._position_tracker.add_position(
             code=signal.code,
             name=signal.name or self._symbol_names.get(signal.code, signal.code),
@@ -4084,6 +4092,7 @@ class TradingOrchestrator:
             strategy=signal.strategy,
             side=PositionSide.SHORT if is_short else PositionSide.LONG,
             metadata=pos_metadata,
+            execution_venue=execution_venue,
         )
 
         if not position:
