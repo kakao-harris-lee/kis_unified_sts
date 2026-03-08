@@ -68,3 +68,8 @@ export const experimentsApi = {
   getBest: (experimentId: string, metric?: string) =>
     apiClient.get(`/api/experiments/${experimentId}/best`, { params: { metric } }),
 };
+
+// Metrics API
+export const metricsApi = {
+  getVenue: () => apiClient.get('/api/metrics/venue'),
+};

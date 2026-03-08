@@ -6,6 +6,7 @@ import StatCard from '../components/StatCard';
 import ErrorMessage from '../components/ErrorMessage';
 import RefreshIndicator from '../components/RefreshIndicator';
 import ConfirmationModal from '../components/ConfirmationModal';
+import VenueMetrics from '../components/VenueMetrics';
 import useQueryWithError from '../hooks/useQueryWithError';
 
 interface TradingStatus {
@@ -216,6 +217,9 @@ function Dashboard() {
           />
         </div>
       </div>
+
+      {/* Venue Metrics Section */}
+      <VenueMetrics />
 
       {/* Confirmation Modals */}
       <ConfirmationModal
