@@ -684,3 +684,185 @@ class TestCrossAssetTrading:
         # Phase 10: Cleanup
         # ============================================
         r.close()
+
+    @pytest.mark.asyncio
+    @pytest.mark.skipif(
+        not is_redis_available(),
+        reason="Redis is not available. Start Redis with: docker-compose -f docker-compose.dev.yml up redis -d"
+    )
+    async def test_redis_position_key_isolation(self, redis_url):
+        """Test Redis key isolation between stock and futures asset classes.
+
+        This test verifies that position data for different asset classes
+        is stored in separate Redis keys to prevent state corruption.
+
+        Flow:
+        1. Publish stock positions to Redis using TradingStatePublisher("stock")
+        2. Publish futures positions to Redis using TradingStatePublisher("futures")
+        3. Verify separate Redis keys exist (trading:stock:positions vs trading:futures:positions)
+        4. Verify no cross-contamination between asset class keys
+        5. Verify TradingStateReader reads correct asset-specific data
+        6. Verify position updates don't leak across asset classes
+        """
+        import redis
+
+        # Step 1: Create TradingStatePublishers for each asset class
+        stock_publisher = TradingStatePublisher(asset_class="stock")
+        futures_publisher = TradingStatePublisher(asset_class="futures")
+
+        # Step 2: Create and publish stock positions
+        stock_pos_1 = create_stock_position(
+            pos_id="STOCK-ISO-001",
+            code="005930",
+            name="Samsung Electronics",
+            entry_price=70000.0,
+            quantity=10,
+        )
+
+        stock_pos_2 = create_stock_position(
+            pos_id="STOCK-ISO-002",
+            code="000660",
+            name="SK Hynix",
+            entry_price=120000.0,
+            quantity=5,
+        )
+
+        # Publish stock positions
+        stock_publisher.publish_position_opened(stock_pos_1)
+        stock_publisher.publish_position_opened(stock_pos_2)
+
+        # Step 3: Create and publish futures positions
+        futures_pos_1 = create_futures_position(
+            pos_id="FUTURES-ISO-001",
+            code="101S6000",
+            name="KOSPI200 Futures",
+            side=PositionSide.LONG,
+            entry_price=350000.0,
+            quantity=1,
+        )
+
+        futures_pos_2 = create_futures_position(
+            pos_id="FUTURES-ISO-002",
+            code="101S6000",
+            name="KOSPI200 Futures",
+            side=PositionSide.SHORT,
+            entry_price=351000.0,
+            quantity=1,
+        )
+
+        # Publish futures positions
+        futures_publisher.publish_position_opened(futures_pos_1)
+        futures_publisher.publish_position_opened(futures_pos_2)
+
+        # Step 4: Verify separate Redis keys exist
+        r = redis.Redis.from_url(redis_url, decode_responses=True)
+
+        # Check that both keys exist
+        stock_key_exists = r.exists("trading:stock:positions")
+        futures_key_exists = r.exists("trading:futures:positions")
+
+        assert stock_key_exists > 0, "Stock positions key should exist in Redis"
+        assert futures_key_exists > 0, "Futures positions key should exist in Redis"
+
+        # Step 5: Verify position counts in each key
+        stock_positions_raw = r.hgetall("trading:stock:positions")
+        futures_positions_raw = r.hgetall("trading:futures:positions")
+
+        assert len(stock_positions_raw) == 2, "Should have exactly 2 stock positions"
+        assert len(futures_positions_raw) == 2, "Should have exactly 2 futures positions"
+
+        # Step 6: Verify no cross-contamination
+        stock_position_ids = set(stock_positions_raw.keys())
+        futures_position_ids = set(futures_positions_raw.keys())
+
+        # Stock positions should only contain stock IDs
+        assert "STOCK-ISO-001" in stock_position_ids
+        assert "STOCK-ISO-002" in stock_position_ids
+        assert "FUTURES-ISO-001" not in stock_position_ids
+        assert "FUTURES-ISO-002" not in stock_position_ids
+
+        # Futures positions should only contain futures IDs
+        assert "FUTURES-ISO-001" in futures_position_ids
+        assert "FUTURES-ISO-002" in futures_position_ids
+        assert "STOCK-ISO-001" not in futures_position_ids
+        assert "STOCK-ISO-002" not in futures_position_ids
+
+        # Step 7: Verify position data integrity
+        # Parse stock position data
+        stock_pos_1_data = json.loads(stock_positions_raw["STOCK-ISO-001"])
+        assert stock_pos_1_data["code"] == "005930"
+        assert stock_pos_1_data["strategy"] == "bb_reversion"
+        assert float(stock_pos_1_data["entry_price"]) == 70000.0
+
+        # Parse futures position data
+        futures_pos_1_data = json.loads(futures_positions_raw["FUTURES-ISO-001"])
+        assert futures_pos_1_data["code"] == "101S6000"
+        assert futures_pos_1_data["strategy"] == "rl_mppo"
+        assert float(futures_pos_1_data["entry_price"]) == 350000.0
+
+        # Step 8: Verify TradingStateReader reads correct asset-specific data
+        stock_reader = TradingStateReader(asset_class="stock")
+        futures_reader = TradingStateReader(asset_class="futures")
+
+        # Read stock positions
+        stock_positions_read = stock_reader.get_positions()
+        assert len(stock_positions_read) == 2
+        stock_ids_read = {pos["id"] for pos in stock_positions_read.values()}
+        assert "STOCK-ISO-001" in stock_ids_read
+        assert "STOCK-ISO-002" in stock_ids_read
+
+        # Read futures positions
+        futures_positions_read = futures_reader.get_positions()
+        assert len(futures_positions_read) == 2
+        futures_ids_read = {pos["id"] for pos in futures_positions_read.values()}
+        assert "FUTURES-ISO-001" in futures_ids_read
+        assert "FUTURES-ISO-002" in futures_ids_read
+
+        # Step 9: Test position updates don't leak across asset classes
+        # Update a stock position
+        stock_pos_1.current_price = 72000.0
+        stock_publisher.publish_position_opened(stock_pos_1)  # Update in Redis
+
+        # Update a futures position
+        futures_pos_1.current_price = 352000.0
+        futures_publisher.publish_position_opened(futures_pos_1)  # Update in Redis
+
+        # Verify updates are isolated
+        stock_positions_updated = r.hgetall("trading:stock:positions")
+        futures_positions_updated = r.hgetall("trading:futures:positions")
+
+        stock_pos_1_updated = json.loads(stock_positions_updated["STOCK-ISO-001"])
+        assert float(stock_pos_1_updated["current_price"]) == 72000.0
+
+        futures_pos_1_updated = json.loads(futures_positions_updated["FUTURES-ISO-001"])
+        assert float(futures_pos_1_updated["current_price"]) == 352000.0
+
+        # Verify no cross-contamination in counts
+        assert len(stock_positions_updated) == 2
+        assert len(futures_positions_updated) == 2
+
+        # Step 10: Test position close isolation
+        # Close a stock position
+        stock_publisher.publish_position_closed(stock_pos_1)
+
+        # Close a futures position
+        futures_publisher.publish_position_closed(futures_pos_1)
+
+        # Verify positions removed from respective keys
+        stock_positions_after_close = r.hgetall("trading:stock:positions")
+        futures_positions_after_close = r.hgetall("trading:futures:positions")
+
+        assert len(stock_positions_after_close) == 1, "Should have 1 stock position after close"
+        assert len(futures_positions_after_close) == 1, "Should have 1 futures position after close"
+        assert "STOCK-ISO-001" not in stock_positions_after_close
+        assert "FUTURES-ISO-001" not in futures_positions_after_close
+
+        # Verify trades keys are also isolated
+        stock_trades_key_exists = r.exists("trading:stock:trades")
+        futures_trades_key_exists = r.exists("trading:futures:trades")
+
+        assert stock_trades_key_exists > 0, "Stock trades key should exist"
+        assert futures_trades_key_exists > 0, "Futures trades key should exist"
+
+        # Step 11: Cleanup
+        r.close()
