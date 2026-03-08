@@ -10,6 +10,7 @@ from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from shared.execution.slippage_model import SlippageModel
+    from shared.backtest.ats_simulator import ATSSimulator
 
 
 @dataclass
@@ -106,6 +107,8 @@ class BacktestConfig:
         cost: 비용 설정
         risk: 리스크 설정
         slippage_model: 슬리피지 모델 (선물용, None이면 고정 슬리피지율 사용)
+        ats_enabled: ATS 라우팅 시뮬레이션 활성화 (주식 전용)
+        ats_simulator: ATS 시뮬레이터 인스턴스
         verbose: 디버그 출력
     """
 
@@ -118,6 +121,8 @@ class BacktestConfig:
     cost: CostConfig = field(default_factory=CostConfig)
     risk: RiskConfig = field(default_factory=RiskConfig)
     slippage_model: SlippageModel | None = None
+    ats_enabled: bool = False
+    ats_simulator: ATSSimulator | None = None
 
     verbose: bool = False
 
@@ -168,6 +173,18 @@ class BacktestConfig:
             slippage_config = SlippageModelConfig.from_dict(data["slippage_model"])
             slippage_model = SlippageModel(slippage_config)
 
+        # Import ATSSimulator at runtime to avoid circular imports
+        ats_simulator = None
+        ats_enabled = data.get("ats_enabled", False)
+        if ats_enabled and "ats_simulation" in data:
+            from shared.backtest.ats_simulator import (
+                ATSSimulator,
+                ATSSimulationConfig,
+            )
+
+            ats_config = ATSSimulationConfig.from_dict(data["ats_simulation"])
+            ats_simulator = ATSSimulator.from_config(ats_config)
+
         return cls(
             initial_capital=data.get("initial_capital", 10_000_000),
             position_size_pct=data.get("position_size_pct", 10.0),
@@ -177,6 +194,8 @@ class BacktestConfig:
             cost=CostConfig.from_dict(data.get("cost", {})),
             risk=RiskConfig.from_dict(data.get("risk", {})),
             slippage_model=slippage_model,
+            ats_enabled=ats_enabled,
+            ats_simulator=ats_simulator,
             verbose=data.get("verbose", False),
         )
 

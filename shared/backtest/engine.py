@@ -21,13 +21,14 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 import numpy as np
 import pandas as pd
 
 from shared.backtest.config import BacktestConfig
 from shared.backtest.result import BacktestResult, BacktestTrade
+from shared.backtest.ats_simulator import ATSSimulator
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +89,7 @@ class Position:
     lowest_price: float = 0.0
     bars_held: int = 0
     atr_at_entry: float = 0.0
+    execution_venue: str = "KRX"  # "KRX" or "ATS"
 
     @property
     def current_value(self) -> float:
@@ -122,6 +124,11 @@ class BacktestEngine:
         """
         self.strategy = strategy
         self.config = config or BacktestConfig()
+
+        # ATS 시뮬레이터 초기화
+        self.ats_simulator = self.config.ats_simulator
+        if self.config.ats_enabled and self.ats_simulator:
+            logger.info(f"ATS simulation enabled: fill_rate={self.ats_simulator.ats_fill_rate:.1%}")
 
         # 상태 초기화
         self._reset()
@@ -421,6 +428,21 @@ class BacktestEngine:
         cost = self.config.cost
         pv = self.config.point_value  # 주식=1, 선물=250_000
 
+        # ATS venue selection (stock only)
+        execution_venue: Literal["KRX", "ATS"] = "KRX"
+        if pv <= 1 and self.config.ats_enabled and self.ats_simulator:
+            # Simulate venue selection for stock orders
+            venue_selection = self.ats_simulator.simulate_venue_selection(
+                order_size=1,  # Will be determined later
+                market_data=None,  # Simplified for backtest
+            )
+            execution_venue = venue_selection.venue
+
+            if self.config.verbose:
+                logger.info(
+                    f"[{timestamp}] Venue selected: {execution_venue} - {venue_selection.reason}"
+                )
+
         if pv > 1:
             # 선물: 1계약 고정 (RL은 max_contracts=1)
             # 마진 기반이므로 capital 차감 없이 PnL만 추적
@@ -456,6 +478,16 @@ class BacktestEngine:
                 position_value = min(self.capital, float(self.config.order_amount_per_stock))
             else:
                 position_value = self.capital * (self.config.position_size_pct / 100)
+
+            # Apply ATS slippage if enabled and ATS venue selected
+            if self.config.ats_enabled and self.ats_simulator and execution_venue == "ATS":
+                # Apply ATS slippage model (price improvement)
+                price = self.ats_simulator.apply_ats_slippage(
+                    order_side=side,
+                    base_price=price,
+                    venue="ATS",
+                )
+
             effective_price = price * (1 + cost.commission_rate + cost.slippage_rate)
             quantity = int(position_value / effective_price)
 
@@ -482,6 +514,7 @@ class BacktestEngine:
             highest_price=price,
             lowest_price=price,
             atr_at_entry=atr_value,
+            execution_venue=execution_venue,
         )
 
         self.positions[code] = position
@@ -558,6 +591,17 @@ class BacktestEngine:
             self.capital += pnl
         else:
             # 주식: 매도 대금 기반 자본 추적
+            # Apply ATS slippage if enabled and ATS venue was used
+            if self.config.ats_enabled and self.ats_simulator and pos.execution_venue == "ATS":
+                # Apply ATS slippage model on exit
+                # Note: For exit, we reverse the side (BUY position → SELL to exit)
+                exit_side: Literal["BUY", "SELL"] = "SELL" if pos.side == "BUY" else "BUY"
+                exit_price = self.ats_simulator.apply_ats_slippage(
+                    order_side=exit_side,
+                    base_price=exit_price,
+                    venue="ATS",
+                )
+
             revenue = exit_price * pos.quantity
             commission = revenue * cost.commission_rate
             slippage = revenue * cost.slippage_rate
@@ -600,6 +644,7 @@ class BacktestEngine:
             pnl_pct=pnl_pct,
             commission=commission + (tax if pv <= 1 else 0),
             exit_reason=reason_name,
+            execution_venue=pos.execution_venue,
         )
 
         self.trades.append(trade)
