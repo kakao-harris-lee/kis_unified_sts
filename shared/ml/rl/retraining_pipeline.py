@@ -514,15 +514,86 @@ class RetrainingPipeline:
                 f"(Sharpe: {champion_info['metrics'].get('sharpe', 'N/A')})"
             )
 
-            # Note: In production, we would load the champion model from MLflow
-            # For now, we'll compare metrics from registry against live evaluation
-            # This is a simplified version - full implementation would load model from:
-            # champion_model = mlflow.pyfunc.load_model(champion_info['source'])
+            # Load champion model from MLflow artifact
+            champion_model = None
+            champion_source = champion_info.get("source")
 
-            # For now, use champion metrics from registry
-            champion_metrics = champion_info["metrics"]
+            if champion_source:
+                try:
+                    # Download champion model from MLflow to temp directory
+                    import tempfile
+                    from sb3_contrib import MaskablePPO
+
+                    logger.info(f"Downloading champion model from: {champion_source}")
+
+                    # MLflow source is like "runs:/<run_id>/models/mppo_challenger_*.zip"
+                    # We need to extract the artifact path and download it
+                    if HAS_MLFLOW:
+                        # Download artifact from MLflow
+                        temp_dir = tempfile.mkdtemp()
+                        artifact_path = champion_source.split("/", 3)[-1]  # Extract path after run_id
+                        run_id = champion_info.get("run_id")
+
+                        if run_id:
+                            # Download artifact from run
+                            local_path = mlflow.artifacts.download_artifacts(
+                                run_id=run_id,
+                                artifact_path=artifact_path,
+                                dst_path=temp_dir,
+                            )
+                            logger.info(f"Champion model downloaded to: {local_path}")
+
+                            # Load SB3 model (remove .zip extension if present)
+                            model_path = str(local_path).replace(".zip", "")
+                            champion_model = MaskablePPO.load(model_path)
+                            logger.info("Champion model loaded successfully")
+                        else:
+                            logger.warning("No run_id found in champion info, using cached metrics")
+                    else:
+                        logger.warning("MLflow not available, using cached champion metrics")
+
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to load champion model from MLflow: {e}. "
+                        "Using cached metrics instead."
+                    )
+                    champion_model = None
+            else:
+                logger.warning("No source path found for champion model, using cached metrics")
+
+            # Evaluate champion if loaded, otherwise use cached metrics
+            if champion_model is not None:
+                logger.info("Evaluating champion model on test data...")
+                champion_metrics = self.evaluator.rl_evaluator.evaluate_model(
+                    model=champion_model,
+                    test_days=test_days,
+                    test_prices=test_prices,
+                    slippage=0.0,
+                    deterministic=True,
+                    test_aux=test_aux,
+                )
+                logger.info(
+                    f"Champion fresh evaluation: Sharpe={champion_metrics['sharpe_ratio']:.2f}, "
+                    f"Win Rate={champion_metrics['win_rate_pct']:.1f}%, "
+                    f"Max DD={champion_metrics['max_drawdown_pct']:.2f}%"
+                )
+            else:
+                # Fall back to cached metrics from registry
+                logger.info("Using cached champion metrics from registry")
+                champion_metrics = champion_info["metrics"]
+
+                # Normalize metric format to match RLEvaluator output
+                if "sharpe" in champion_metrics and "sharpe_ratio" not in champion_metrics:
+                    champion_metrics["sharpe_ratio"] = champion_metrics.get("sharpe", 0.0)
+                if "win_rate" in champion_metrics and "win_rate_pct" not in champion_metrics:
+                    # win_rate is stored as decimal (0.55), convert to percentage (55.0)
+                    champion_metrics["win_rate_pct"] = champion_metrics.get("win_rate", 0.0) * 100
+                if "max_dd" in champion_metrics and "max_drawdown_pct" not in champion_metrics:
+                    # max_dd is stored as decimal (-0.15), convert to percentage (-15.0)
+                    champion_metrics["max_drawdown_pct"] = champion_metrics.get("max_dd", 0.0) * 100
 
             # Evaluate challenger
+            logger.info("Evaluating challenger model on test data...")
             challenger_metrics = self.evaluator.rl_evaluator.evaluate_model(
                 model=challenger_model,
                 test_days=test_days,
@@ -530,6 +601,11 @@ class RetrainingPipeline:
                 slippage=0.0,
                 deterministic=True,
                 test_aux=test_aux,
+            )
+            logger.info(
+                f"Challenger evaluation: Sharpe={challenger_metrics['sharpe_ratio']:.2f}, "
+                f"Win Rate={challenger_metrics['win_rate_pct']:.1f}%, "
+                f"Max DD={challenger_metrics['max_drawdown_pct']:.2f}%"
             )
 
             # Make promotion decision
