@@ -26,10 +26,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import joblib
 import numpy as np
+import pandas as pd
 
 from shared.config import ConfigLoader
 from shared.ml.rl.champion_challenger import ChampionChallengerEvaluator
+from shared.ml.rl.features import RLFeatureCalculator, RL_FEATURE_COLUMNS
 from shared.ml.rl.model_registry import ModelRegistry
 from shared.ml.rl.trainer import RLTrainer
 
@@ -45,6 +48,86 @@ except ImportError:
     HAS_MLFLOW = False
     mlflow = None
     MlflowException = Exception
+
+
+def _validate_ohlcv_quality(
+    df: pd.DataFrame,
+    *,
+    symbol: str,
+    table: str,
+    max_zero_volume_ratio: float = 0.95,
+    max_zero_volume_price_move_ratio: float = 0.20,
+    reject_duplicate_datetime: bool = True,
+    require_monotonic_datetime: bool = True,
+) -> None:
+    """Validate OHLCV integrity for RL training/evaluation inputs"""
+    if df.empty:
+        raise ValueError(f"Empty dataset: {table} ({symbol})")
+
+    if "datetime" not in df.columns:
+        raise ValueError("Missing required column: datetime")
+
+    if reject_duplicate_datetime:
+        duplicate_count = int(df["datetime"].duplicated().sum())
+        if duplicate_count > 0:
+            raise ValueError(
+                f"Data quality check failed ({table}/{symbol}): "
+                f"duplicated datetime rows={duplicate_count}"
+            )
+
+    if require_monotonic_datetime and not df["datetime"].is_monotonic_increasing:
+        raise ValueError(
+            f"Data quality check failed ({table}/{symbol}): "
+            "datetime is not monotonic increasing"
+        )
+
+    if "volume" in df.columns:
+        zero_volume_ratio = float((df["volume"] == 0).mean())
+        if zero_volume_ratio > max_zero_volume_ratio:
+            raise ValueError(
+                f"Data quality check failed ({table}/{symbol}): "
+                f"zero-volume ratio={zero_volume_ratio:.4f} > {max_zero_volume_ratio:.4f}"
+            )
+
+        if "close" in df.columns:
+            close_diff = df["close"].diff().abs().fillna(0)
+            phantom_ratio = float(((df["volume"] == 0) & (close_diff > 0)).mean())
+            if phantom_ratio > max_zero_volume_price_move_ratio:
+                raise ValueError(
+                    f"Data quality check failed ({table}/{symbol}): "
+                    "zero-volume moving-price ratio="
+                    f"{phantom_ratio:.4f} > {max_zero_volume_price_move_ratio:.4f}"
+                )
+
+
+def _generate_sample_data(n_days: int = 60, bars_per_day: int = 405) -> pd.DataFrame:
+    """Generate sample data (when ClickHouse is not available)"""
+    np.random.seed(42)
+    rows = []
+    base_price = 350.0
+
+    for day in range(n_days):
+        price = base_price
+        for bar in range(bars_per_day):
+            dt = pd.Timestamp(
+                f"2025-{1 + day // 22:02d}-{1 + day % 22:02d} "
+                f"{9 + bar // 60:02d}:{bar % 60:02d}:00"
+            )
+            change = np.random.normal(0, 0.1)
+            price += change
+            high = price + abs(np.random.normal(0, 0.05))
+            low = price - abs(np.random.normal(0, 0.05))
+            volume = int(np.random.exponential(100))
+            rows.append({
+                "datetime": dt,
+                "open": price - change * 0.5,
+                "high": high,
+                "low": low,
+                "close": price,
+                "volume": volume,
+            })
+
+    return pd.DataFrame(rows)
 
 
 class RetrainingPipeline:
@@ -535,34 +618,181 @@ class RetrainingPipeline:
     ]:
         """Load training and test data from ClickHouse
 
-        Uses load_data_from_clickhouse from train_rl.py (or similar logic).
-        Implements rolling window: train on last N days, test on held-out M days.
+        Implements data loading with date range filtering and train/test split.
+        Steps:
+        1. Load OHLCV data from ClickHouse with date filters
+        2. Validate data quality
+        3. Calculate RL features
+        4. Split by dates with train_ratio
+        5. Normalize using MinMaxScaler
+        6. Return daily episodes as lists
 
         Returns:
             Tuple of (train_days, train_prices, test_days, test_prices)
         """
         logger.info("Loading data from ClickHouse...")
 
-        # Import here to avoid circular dependency
-        try:
-            from scripts.training.train_rl import load_data_from_clickhouse
+        # Extract data config
+        symbol = self.data_config.get("symbol", "101S6000")
+        database = self.data_config.get("database", "kospi")
+        table = self.data_config.get("table", "kospi200f_1m")
+        start_date = self.data_config.get("start_date")
+        end_date = self.data_config.get("end_date")
+        allow_sample_fallback = bool(self.data_config.get("allow_sample_fallback", True))
+        train_ratio = float(self.data_config.get("train_ratio", 0.8))
+        min_bars = self.data_config.get("min_bars_per_day", 300)
 
-            # Load data using base RL config
-            base_config = self.training_config.get("base_config", "ml/rl_mppo.yaml")
-            train_days, train_prices, test_days, test_prices = load_data_from_clickhouse(
-                config_path=base_config,
-                persist_scaler=True,
+        # Quality validation config
+        quality_cfg = self.data_config.get("quality", {}) or {}
+        quality_enabled = bool(quality_cfg.get("enabled", True))
+        max_zero_volume_ratio = float(quality_cfg.get("max_zero_volume_ratio", 0.95))
+        max_zero_volume_price_move_ratio = float(
+            quality_cfg.get("max_zero_volume_price_move_ratio", 0.20)
+        )
+        reject_duplicate_datetime = bool(quality_cfg.get("reject_duplicate_datetime", True))
+        require_monotonic_datetime = bool(quality_cfg.get("require_monotonic_datetime", True))
+
+        logger.info(
+            f"Loading data: {database}.{table}, symbol={symbol}, "
+            f"train_ratio={train_ratio}, start={start_date}, end={end_date}"
+        )
+
+        # Load data from ClickHouse
+        try:
+            import os
+            from clickhouse_driver import Client as CHSyncClient
+
+            client = CHSyncClient(
+                host=os.getenv("CLICKHOUSE_HOST", "localhost"),
+                port=int(os.getenv("CLICKHOUSE_NATIVE_PORT", "9000")),
+                user=os.getenv("CLICKHOUSE_USER", "default"),
+                password=os.getenv("CLICKHOUSE_PASSWORD", ""),
             )
 
-            # Log data ranges to MLflow
-            if HAS_MLFLOW and self.mlflow_config.get("log_data_ranges", True):
-                mlflow.log_param("train_days_count", len(train_days))
-                mlflow.log_param("test_days_count", len(test_days))
+            # Build query with date range filters
+            where = ["code = %(symbol)s"]
+            params: dict[str, object] = {"symbol": symbol}
+            if start_date:
+                where.append("datetime >= %(start_dt)s")
+                params["start_dt"] = pd.to_datetime(start_date).to_pydatetime()
+            if end_date:
+                where.append("datetime <= %(end_dt)s")
+                params["end_dt"] = pd.to_datetime(end_date).to_pydatetime()
 
-            return train_days, train_prices, test_days, test_prices
+            query = f"""
+                SELECT datetime, open, high, low, close, volume
+                FROM {database}.{table}
+                WHERE {' AND '.join(where)}
+                ORDER BY datetime
+            """
+            rows = client.execute(query, params)
+            df = pd.DataFrame(
+                rows,
+                columns=["datetime", "open", "high", "low", "close", "volume"]
+            )
 
-        except ImportError as e:
-            logger.error(f"Failed to import data loading function: {e}")
-            # Fallback: return empty arrays
-            logger.warning("Using empty data arrays - training will fail")
-            return [], [], [], []
+        except Exception as e:
+            if not allow_sample_fallback:
+                raise RuntimeError(
+                    f"ClickHouse load failed for {database}.{table} ({symbol}): {e}"
+                ) from e
+            logger.warning(f"ClickHouse not available: {e}. Using sample data.")
+            df = _generate_sample_data()
+
+        # Handle empty data
+        if df.empty:
+            if not allow_sample_fallback:
+                raise ValueError(
+                    f"No data loaded from {database}.{table} ({symbol}) "
+                    f"for range {start_date} ~ {end_date}"
+                )
+            logger.warning("No data loaded. Using sample data.")
+            df = _generate_sample_data()
+        elif quality_enabled:
+            _validate_ohlcv_quality(
+                df,
+                symbol=symbol,
+                table=f"{database}.{table}",
+                max_zero_volume_ratio=max_zero_volume_ratio,
+                max_zero_volume_price_move_ratio=max_zero_volume_price_move_ratio,
+                reject_duplicate_datetime=reject_duplicate_datetime,
+                require_monotonic_datetime=require_monotonic_datetime,
+            )
+
+        # Calculate RL features
+        calc = RLFeatureCalculator()
+        df = calc.calculate(df)
+
+        # Remove NaN rows
+        df = df.dropna(subset=RL_FEATURE_COLUMNS)
+
+        # Split by dates
+        df["date"] = pd.to_datetime(df["datetime"]).dt.date
+        dates = sorted(df["date"].unique())
+
+        # Filter dates with minimum bar count
+        valid_dates = []
+        for d in dates:
+            day_df = df[df["date"] == d]
+            if len(day_df) >= min_bars:
+                valid_dates.append(d)
+
+        logger.info(f"Valid dates: {len(valid_dates)} / {len(dates)}")
+
+        # Train/test split by dates
+        split_idx = int(len(valid_dates) * train_ratio)
+        train_dates = valid_dates[:split_idx]
+        test_dates = valid_dates[split_idx:]
+
+        # Normalize using MinMaxScaler
+        from sklearn.preprocessing import MinMaxScaler
+
+        scaler = MinMaxScaler()
+
+        # Fit scaler on training data
+        train_all = pd.concat([df[df["date"] == d][RL_FEATURE_COLUMNS] for d in train_dates])
+        scaler.fit(train_all.values)
+
+        # Save scaler for inference
+        save_dir = Path(
+            self.training_config.get("save_dir", "./models/futures/rl/")
+        )
+        save_dir.mkdir(parents=True, exist_ok=True)
+        scaler_path = save_dir / "scaler.joblib"
+        joblib.dump(scaler, scaler_path)
+        logger.info(f"Scaler saved to {scaler_path}")
+
+        # Helper to split days into episodes
+        def split_days(date_list):
+            days = []
+            prices = []
+            for d in date_list:
+                day_df = df[df["date"] == d]
+                if len(day_df) == 0:
+                    continue
+                features = scaler.transform(day_df[RL_FEATURE_COLUMNS].values)
+                ohlc = day_df[["open", "high", "low", "close"]].values
+                days.append(features.astype(np.float32))
+                prices.append(ohlc.astype(np.float32))
+            return days, prices
+
+        train_days, train_prices = split_days(train_dates)
+        test_days, test_prices = split_days(test_dates)
+
+        logger.info(
+            f"Data split: train={len(train_days)} days, test={len(test_days)} days"
+        )
+
+        # Log to MLflow
+        if HAS_MLFLOW and self.mlflow_config.get("log_data_ranges", True):
+            mlflow.log_param("train_days_count", len(train_days))
+            mlflow.log_param("test_days_count", len(test_days))
+            mlflow.log_param("symbol", symbol)
+            mlflow.log_param("database", database)
+            mlflow.log_param("table", table)
+            if start_date:
+                mlflow.log_param("start_date", start_date)
+            if end_date:
+                mlflow.log_param("end_date", end_date)
+
+        return train_days, train_prices, test_days, test_prices
