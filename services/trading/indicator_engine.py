@@ -898,6 +898,37 @@ class StreamingIndicatorEngine:
             for c in candles
         ]
 
+    def get_daily_candles(
+        self, symbol: str, limit: int = 200
+    ) -> list[dict[str, float]]:
+        """Return recent daily candles for a symbol.
+
+        Daily candles are loaded from ClickHouse (not aggregated from 1m).
+
+        Args:
+            symbol: Symbol to get candles for.
+            limit: Maximum number of candles to return.
+
+        Returns:
+            List of candle dicts with open, high, low, close, volume.
+        """
+        daily_deque = self._daily_candles.get(symbol)
+        if not daily_deque:
+            return []
+        candles = list(daily_deque)
+        if limit > 0:
+            candles = candles[-limit:]
+        return [
+            {
+                "open": c.open,
+                "high": c.high,
+                "low": c.low,
+                "close": c.close,
+                "volume": c.volume,
+            }
+            for c in candles
+        ]
+
     def get_momentum_indicators(
         self,
         symbol: str,
