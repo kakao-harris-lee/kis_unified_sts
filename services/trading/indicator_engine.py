@@ -1069,6 +1069,76 @@ class StreamingIndicatorEngine:
         self._momentum_cache[cache_key] = (len(df), result)
         return result
 
+    def get_daily_indicators(
+        self,
+        symbol: str,
+        *,
+        sma_periods: list[int] | None = None,
+        ema_periods: list[int] | None = None,
+        rsi_period: int = 5,
+        min_candles: int = 50,
+    ) -> dict[str, Any]:
+        """Compute daily timeframe indicators from daily candles.
+
+        Uses pandas-based calculators from shared.indicators.daily on
+        the daily candles loaded from ClickHouse.
+
+        Args:
+            symbol: Symbol to compute indicators for.
+            sma_periods: SMA periods to calculate (default: [20, 60, 200]).
+            ema_periods: EMA periods to calculate (default: [5, 10, 20]).
+            rsi_period: RSI period (default: 5).
+            min_candles: Minimum candles needed for valid computation.
+
+        Returns:
+            Dict with daily indicator values (sma_20, sma_60, sma_200,
+            ema_5, ema_10, ema_20, rsi_5).
+            Empty dict if insufficient data.
+        """
+        from shared.indicators.daily import calculate_daily_indicators
+
+        if sma_periods is None:
+            sma_periods = [20, 60, 200]
+        if ema_periods is None:
+            ema_periods = [5, 10, 20]
+
+        # Check candle count directly from accumulator to avoid expensive dict conversion
+        daily_deque = self._daily_candles.get(symbol)
+        if not daily_deque:
+            return {}
+
+        candle_count = len(daily_deque)
+        if candle_count < min_candles:
+            return {}
+
+        # Check cache before expensive dict conversion
+        cache_key = (symbol, "daily")
+        cached = self._momentum_cache.get(cache_key)
+        if cached and cached[0] == candle_count:
+            self._momentum_cache_hits += 1
+            return cached[1]
+
+        self._momentum_cache_misses += 1
+        # Cache miss: convert candles to dicts for calculation
+        candles = self.get_daily_candles(symbol, limit=0)
+
+        try:
+            result = calculate_daily_indicators(
+                candles,
+                sma_periods=sma_periods,
+                ema_periods=ema_periods,
+                rsi_period=rsi_period,
+            )
+        except (ValidationError, ValueError, KeyError, IndexError, ZeroDivisionError) as e:
+            logger.error(f"Daily indicator calculation failed for {symbol}: {e}")
+            return {}
+
+        # Cache result
+        if result:
+            self._momentum_cache[cache_key] = (candle_count, result)
+
+        return result
+
     def get_market_mfi(self, active_symbols: set[str] | None = None) -> float | None:
         """Compute aggregate MFI across warm symbols.
 
