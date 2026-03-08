@@ -86,18 +86,15 @@ def _make_entry_context(
 
 def _make_signal(
     code: str = "005930",
-    signal_type: SignalType = SignalType.LONG_ENTRY,
-    entry_price: float = 100.0,
-    stop_loss_pct: float = 2.0,
+    signal_type: SignalType = SignalType.ENTRY,
+    price: float = 100.0,
 ) -> Signal:
     """Create a Signal for testing."""
     return Signal(
         code=code,
         name="Test Stock",
         signal_type=signal_type,
-        entry_price=entry_price,
-        stop_loss_price=entry_price * (1 - stop_loss_pct / 100),
-        take_profit_price=entry_price * (1 + stop_loss_pct * 2 / 100),
+        price=price,
         timestamp=datetime(2026, 3, 8, 10, 30, 0),
         confidence=0.8,
         metadata={"test": True},
@@ -135,7 +132,7 @@ class TestMeanReversionEntryGracefulDegradation:
 
         # Should generate signal normally
         assert signal is not None
-        assert signal.signal_type == SignalType.LONG_ENTRY
+        assert signal.signal_type == SignalType.ENTRY
         assert signal.code == "005930"
 
     @pytest.mark.asyncio
@@ -166,7 +163,7 @@ class TestMeanReversionEntryGracefulDegradation:
 
         # Should generate signal - filter is disabled
         assert signal is not None
-        assert signal.signal_type == SignalType.LONG_ENTRY
+        assert signal.signal_type == SignalType.ENTRY
 
     @pytest.mark.asyncio
     async def test_regime_filter_enabled_with_none_context(self):
@@ -192,7 +189,7 @@ class TestMeanReversionEntryGracefulDegradation:
 
         # Should generate signal - graceful degradation when context is None
         assert signal is not None
-        assert signal.signal_type == SignalType.LONG_ENTRY
+        assert signal.signal_type == SignalType.ENTRY
 
     @pytest.mark.asyncio
     async def test_regime_filter_blocks_in_strong_bearish(self):
@@ -223,7 +220,7 @@ class TestMeanReversionEntryGracefulDegradation:
 
         # Should NOT generate LONG signal in STRONG_BEARISH
         # Note: May return None or fall through to SHORT check
-        assert signal is None or signal.signal_type != SignalType.LONG_ENTRY
+        assert signal is None or signal.signal_type != SignalType.ENTRY
 
     @pytest.mark.asyncio
     async def test_regime_filter_allows_in_bullish(self):
@@ -254,7 +251,7 @@ class TestMeanReversionEntryGracefulDegradation:
 
         # Should generate LONG signal in BULLISH regime
         assert signal is not None
-        assert signal.signal_type == SignalType.LONG_ENTRY
+        assert signal.signal_type == SignalType.ENTRY
 
 
 # =============================================================================
