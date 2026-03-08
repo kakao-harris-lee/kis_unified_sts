@@ -16,11 +16,12 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Optional
 
 from shared.strategy.base import PositionSizer
 
 if TYPE_CHECKING:
+    from shared.llm.market_context import MarketContext
     from shared.models.position import Position
     from shared.models.signal import Signal
 
@@ -74,6 +75,7 @@ class FixedSizer(PositionSizer[FixedSizerConfig]):
         signal: "Signal",
         account_balance: float,
         current_positions: list["Position"],
+        market_context: Optional["MarketContext"] = None,
     ) -> int:
         """포지션 크기 계산
 
@@ -81,6 +83,7 @@ class FixedSizer(PositionSizer[FixedSizerConfig]):
             signal: 진입 시그널
             account_balance: 계좌 잔고
             current_positions: 현재 보유 포지션
+            market_context: LLM 시장 분석 컨텍스트 (선택적)
 
         Returns:
             매매 수량
@@ -169,6 +172,7 @@ class RiskBasedSizer(PositionSizer[RiskBasedSizerConfig]):
         signal: "Signal",
         account_balance: float,
         current_positions: list["Position"],
+        market_context: Optional["MarketContext"] = None,
     ) -> int:
         """포지션 크기 계산
 
@@ -176,6 +180,7 @@ class RiskBasedSizer(PositionSizer[RiskBasedSizerConfig]):
             signal: 진입 시그널
             account_balance: 계좌 잔고
             current_positions: 현재 보유 포지션
+            market_context: LLM 시장 분석 컨텍스트 (선택적)
 
         Returns:
             매매 수량

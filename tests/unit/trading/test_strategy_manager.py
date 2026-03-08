@@ -1,6 +1,7 @@
 """Tests for services/trading/strategy_manager.py"""
 
 import pytest
+from datetime import datetime
 from unittest.mock import MagicMock, AsyncMock, patch
 
 
@@ -510,3 +511,131 @@ class TestStrategyManager:
                 assert stats["asset_class"] == "stock"
                 assert stats["strategy_count"] == 1
                 assert "test_strategy" in stats["strategies"]
+
+    @pytest.mark.asyncio
+    async def test_cost_filter_integration(self, mock_strategy):
+        """Test cost filter integration with StrategyManager"""
+        with patch(
+            "services.trading.strategy_manager.register_builtin_components"
+        ):
+            with patch(
+                "services.trading.strategy_manager.StrategyFactory"
+            ) as mock_factory:
+                mock_factory.create_all.return_value = []
+
+                from services.trading.strategy_manager import (
+                    StrategyManager,
+                    StrategyManagerConfig,
+                )
+                from shared.strategy.base import EntryContext
+
+                # Test 1: CostFilter instantiated when enabled
+                config = StrategyManagerConfig(
+                    cost_filter_enabled=True,
+                    min_atr_cost_ratio=1.5,
+                    commission_rate=0.003,
+                    slippage_bps=1.5,
+                )
+                manager = StrategyManager(asset_class="stock", config=config)
+                assert manager.cost_filter is not None
+                assert manager.cost_filter.config.min_atr_cost_ratio == 1.5
+                assert manager.cost_filter.config.commission_rate == 0.003
+                assert manager.cost_filter.config.slippage_bps == 1.5
+
+                # Test 2: CostFilter disabled when config is False
+                config_disabled = StrategyManagerConfig(cost_filter_enabled=False)
+                manager_disabled = StrategyManager(
+                    asset_class="stock", config=config_disabled
+                )
+                assert manager_disabled.cost_filter is None
+
+                # Test 3: Signals filtered by cost filter in check_entries
+                # Setup: Create a signal that should pass the filter
+                from shared.models.signal import Signal
+
+                passing_signal = Signal(
+                    code="005930",
+                    name="Samsung",
+                    strategy="test_strategy",
+                    confidence=0.8,
+                    timestamp=datetime.now(),
+                    metadata={"signal_direction": "long"},
+                )
+
+                # Mock strategy to return the passing signal
+                mock_strategy.check_entry = AsyncMock(return_value=passing_signal)
+                manager.add_strategy(mock_strategy)
+
+                # Create context with sufficient ATR
+                context = EntryContext(
+                    market_data={
+                        "005930": {
+                            "close": 100000.0,  # 100,000 KRW
+                            "price": 100000.0,
+                        }
+                    },
+                    indicators={
+                        "005930": {
+                            "atr": 1500.0,  # 1.5% ATR → edge_ratio = 4.76 > 1.5
+                        }
+                    },
+                    timestamp=datetime.now(),
+                    market_state="BULL",
+                )
+
+                signals = await manager.check_entries(context)
+                assert len(signals) == 1
+                assert signals[0].code == "005930"
+
+                # Test 4: Signals rejected when ATR insufficient
+                # Reset strategy mock
+                mock_strategy.check_entry = AsyncMock(return_value=passing_signal)
+
+                # Create context with insufficient ATR
+                context_low_atr = EntryContext(
+                    market_data={
+                        "005930": {
+                            "close": 100000.0,
+                            "price": 100000.0,
+                        }
+                    },
+                    indicators={
+                        "005930": {
+                            "atr": 200.0,  # 0.2% ATR → edge_ratio = 0.63 < 1.5
+                        }
+                    },
+                    timestamp=datetime.now(),
+                    market_state="BULL",
+                )
+
+                # Capture log output to verify rejection logging
+                with patch("services.trading.strategy_manager.logger") as mock_logger:
+                    signals_rejected = await manager.check_entries(context_low_atr)
+                    assert len(signals_rejected) == 0
+
+                    # Verify rejection was logged with correct message
+                    log_calls = [str(call) for call in mock_logger.info.call_args_list]
+                    rejection_logged = any(
+                        "Cost filter rejected 005930" in call and "Insufficient edge" in call
+                        for call in log_calls
+                    )
+                    assert rejection_logged, f"Expected rejection log not found in: {log_calls}"
+
+                # Test 5: Filter bypassed when disabled
+                manager_no_filter = StrategyManager(
+                    asset_class="stock", config=config_disabled
+                )
+                mock_strategy_no_filter = MagicMock()
+                mock_strategy_no_filter.name = "test_strategy_no_filter"
+                mock_strategy_no_filter.required_indicators = []
+                mock_strategy_no_filter.check_entry = AsyncMock(
+                    return_value=passing_signal
+                )
+                manager_no_filter.add_strategy(mock_strategy_no_filter)
+
+                # Even with low ATR, signal should pass (no filter)
+                signals_no_filter = await manager_no_filter.check_entries(
+                    context_low_atr
+                )
+                assert len(signals_no_filter) == 1
+                assert signals_no_filter[0].code == "005930"

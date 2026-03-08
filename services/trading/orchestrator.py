@@ -529,8 +529,6 @@ class TradingOrchestrator:
                     AdaptiveRegimeDetector,
                     AdaptiveRegimeConfig,
                 )
-                from shared.config.loader import ConfigLoader
-
                 # Load adaptive regime config
                 regime_cfg_dict = ConfigLoader.load("ml/regime_adaptive.yaml")
 
@@ -647,6 +645,10 @@ class TradingOrchestrator:
         # Daily indicators from pre-market scanner (scalars + series for daily strategies)
         self._daily_indicators: dict[str, dict[str, Any]] = {}
 
+        # LLM Context Publisher (initialized in _initialize_components)
+        self._llm_context_publisher: Any | None = None
+        self._llm_context_task: asyncio.Task | None = None
+
         self._llm_training_data_dir = os.environ.get(
             "LLM_TRAINING_DATA_DIR", "output/llm"
         )
@@ -685,6 +687,9 @@ class TradingOrchestrator:
 
         # Start shared market data loop before pipeline
         await self._start_market_data_loop()
+
+        # Start LLM context publisher loop (if enabled)
+        await self._start_llm_context_publisher()
 
         # 파이프라인 생성 및 시작
         self.pipeline = self._create_pipeline()
@@ -732,6 +737,9 @@ class TradingOrchestrator:
 
         # 9. Load Swing Positions
         await self._load_swing_positions()
+
+        # 10. Initialize LLM Context Publisher
+        self._init_llm_context_publisher()
 
     @staticmethod
     def _deep_merge_config_dict(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
@@ -923,6 +931,35 @@ class TradingOrchestrator:
             self._tick_stream_publisher = None
             logger.warning(f"Tick stream publisher init failed: {e}")
 
+    def _init_llm_context_publisher(self) -> None:
+        """Initialize LLM Context Publisher for market analysis integration."""
+        try:
+            # Load LLM config (includes market_context_publisher section)
+            llm_yaml = ConfigLoader.load("llm.yaml")
+            publisher_config = llm_yaml.get("market_context_publisher", {})
+
+            # Check if enabled
+            if not publisher_config.get("enabled", False):
+                self._llm_context_publisher = None
+                logger.info("LLM context publisher disabled by config")
+                return
+
+            # Initialize publisher
+            from services.trading.llm_context_publisher import LLMContextPublisher
+
+            self._llm_context_publisher = LLMContextPublisher(
+                asset_class=self.config.asset_class
+            )
+            logger.info(
+                "LLM context publisher initialized "
+                "(interval=%d min, redis_ttl=%d sec)",
+                publisher_config.get("analysis_interval_minutes", 30),
+                publisher_config.get("redis_ttl_seconds", 7200),
+            )
+        except (ConfigurationError, InvalidConfigError, MissingConfigError) as e:
+            self._llm_context_publisher = None
+            logger.warning(f"LLM context publisher init failed: {e}")
+
     def _init_strategy_infrastructure(self):
         """Initialize Strategy Manager and Position Tracker"""
         # Strategy manager
@@ -956,7 +993,6 @@ class TradingOrchestrator:
                 global_max = sum(strategy_limits)
         # Load batch insert settings from YAML config
         try:
-            from shared.config.loader import ConfigLoader
             pt_cfg = ConfigLoader.load("execution.yaml").get("position_tracker", {})
         except (InvalidConfigError, MissingConfigError, OSError, yaml.YAMLError, KeyError, TypeError):
             pt_cfg = {}
@@ -989,7 +1025,6 @@ class TradingOrchestrator:
 
         # Adaptive position sizing based on strategy win rate
         try:
-            from shared.config.loader import ConfigLoader
             from shared.strategy.adaptive_sizing import (
                 AdaptiveSizingConfig,
                 AdaptiveSizingManager,
@@ -1413,7 +1448,6 @@ class TradingOrchestrator:
         """
         # Load broker_verification config
         try:
-            from shared.config.loader import ConfigLoader
             exec_cfg = ConfigLoader.load("execution.yaml")
             bv_cfg = exec_cfg.get("broker_verification", {})
         except (InvalidConfigError, MissingConfigError, OSError, yaml.YAMLError, KeyError, TypeError):
@@ -2959,6 +2993,87 @@ class TradingOrchestrator:
             self._market_data_task.cancel()
             await asyncio.gather(self._market_data_task, return_exceptions=True)
             self._market_data_task = None
+
+        # Stop LLM context publisher task
+        if self._llm_context_task:
+            self._llm_context_task.cancel()
+            await asyncio.gather(self._llm_context_task, return_exceptions=True)
+            self._llm_context_task = None
+
+    async def _start_llm_context_publisher(self) -> None:
+        """Start LLM context publisher background task."""
+        if not self._llm_context_publisher:
+            return
+
+        try:
+            # Load publisher config
+            llm_yaml = ConfigLoader.load("llm.yaml")
+            publisher_config = llm_yaml.get("market_context_publisher", {})
+
+            run_on_startup = publisher_config.get("run_on_startup", True)
+            interval_minutes = publisher_config.get("analysis_interval_minutes", 30)
+
+            # Run initial analysis on startup if configured
+            if run_on_startup:
+                logger.info("Running initial LLM market analysis on startup...")
+                try:
+                    market_context = await self._llm_context_publisher.run_analysis()
+                    if market_context:
+                        # Publish to Redis
+                        from shared.streaming.trading_state import TradingStatePublisher
+                        publisher = TradingStatePublisher(self.config.asset_class)
+                        publisher.publish_market_context(market_context)
+                        logger.info(
+                            f"Initial LLM market context published: regime={market_context.regime}, "
+                            f"confidence={market_context.confidence:.2f}"
+                        )
+                except Exception as e:
+                    logger.warning(f"Initial LLM analysis failed: {e}", exc_info=True)
+
+            # Start periodic refresh task
+            self._llm_context_task = asyncio.create_task(
+                self._llm_context_publisher_loop(interval_minutes),
+                name="llm_context_publisher_loop",
+            )
+            logger.info(f"LLM context publisher task started (interval={interval_minutes} min)")
+
+        except (InvalidConfigError, MissingConfigError, OSError, yaml.YAMLError) as e:
+            logger.warning(f"LLM context publisher start failed: {e}")
+
+    async def _llm_context_publisher_loop(self, interval_minutes: float) -> None:
+        """Background loop for periodic LLM market analysis.
+
+        Args:
+            interval_minutes: Interval between analysis runs in minutes
+        """
+        interval_seconds = interval_minutes * 60
+        logger.info(f"LLM context publisher loop started (interval={interval_minutes} min)")
+
+        while True:
+            try:
+                await asyncio.sleep(interval_seconds)
+
+                # Run analysis
+                market_context = await self._llm_context_publisher.run_analysis()
+                if market_context:
+                    # Publish to Redis
+                    from shared.streaming.trading_state import TradingStatePublisher
+                    publisher = TradingStatePublisher(self.config.asset_class)
+                    publisher.publish_market_context(market_context)
+                    logger.info(
+                        f"LLM market context updated: regime={market_context.regime}, "
+                        f"confidence={market_context.confidence:.2f}"
+                    )
+                else:
+                    logger.debug("LLM analysis returned None (analysis may have failed)")
+
+            except asyncio.CancelledError:
+                logger.info("LLM context publisher loop cancelled")
+                break
+            except Exception as e:
+                logger.error(f"Error in LLM context publisher loop: {e}", exc_info=True)
+                # Continue loop despite errors (fire-and-forget pattern)
+                await asyncio.sleep(60)  # Wait 1 minute before retry on error
 
     async def _market_data_loop(self, interval: float) -> None:
         logger.info(
