@@ -529,8 +529,6 @@ class TradingOrchestrator:
                     AdaptiveRegimeDetector,
                     AdaptiveRegimeConfig,
                 )
-                from shared.config.loader import ConfigLoader
-
                 # Load adaptive regime config
                 regime_cfg_dict = ConfigLoader.load("ml/regime_adaptive.yaml")
 
@@ -995,7 +993,6 @@ class TradingOrchestrator:
                 global_max = sum(strategy_limits)
         # Load batch insert settings from YAML config
         try:
-            from shared.config.loader import ConfigLoader
             pt_cfg = ConfigLoader.load("execution.yaml").get("position_tracker", {})
         except (InvalidConfigError, MissingConfigError, OSError, yaml.YAMLError, KeyError, TypeError):
             pt_cfg = {}
@@ -1028,7 +1025,6 @@ class TradingOrchestrator:
 
         # Adaptive position sizing based on strategy win rate
         try:
-            from shared.config.loader import ConfigLoader
             from shared.strategy.adaptive_sizing import (
                 AdaptiveSizingConfig,
                 AdaptiveSizingManager,
@@ -1445,7 +1441,6 @@ class TradingOrchestrator:
         """
         # Load broker_verification config
         try:
-            from shared.config.loader import ConfigLoader
             exec_cfg = ConfigLoader.load("execution.yaml")
             bv_cfg = exec_cfg.get("broker_verification", {})
         except (InvalidConfigError, MissingConfigError, OSError, yaml.YAMLError, KeyError, TypeError):
