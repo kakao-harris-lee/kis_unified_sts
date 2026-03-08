@@ -18,6 +18,7 @@ def _make_context(
     volume_ma: float = 1000.0,
     atr: float = 1400.0,  # atr/close = 2.0% > round_trip_cost(0.5%) * min_ratio(2.0) = 1.0%
     williams_r: float = -75.0,
+    daily_sma_200: float = None,  # Default: use close * 0.95 to ensure uptrend
     timestamp: datetime = None,
     watchlist_codes: list = None,
     include_watchlist: bool = True,
@@ -27,6 +28,10 @@ def _make_context(
 
     if timestamp is None:
         timestamp = datetime(2026, 2, 26, 10, 30, 0)
+
+    # Default daily_sma_200 to be below close (uptrend condition)
+    if daily_sma_200 is None:
+        daily_sma_200 = close * 0.95
 
     metadata: dict[str, Any] = {}
     if include_watchlist:
@@ -51,6 +56,7 @@ def _make_context(
             "volume_ma": volume_ma,
             "atr": atr,
             "momentum_5m": {"williams_r": williams_r},
+            "daily_sma_200": daily_sma_200,
         },
         timestamp=timestamp,
         metadata=metadata,

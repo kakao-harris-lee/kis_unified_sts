@@ -1070,8 +1070,12 @@ class TradingOrchestrator:
                 staleness_seconds = float(
                     _ie_cfg.get("staleness_seconds", 180.0)
                 )
+                mtf_timeframes = _ie_cfg.get("mtf_timeframes", None)
+                mtf_maxlen = int(_ie_cfg.get("mtf_maxlen", 250))
             except (InvalidConfigError, MissingConfigError, OSError, yaml.YAMLError, KeyError, TypeError, ValueError):
                 staleness_seconds = 180.0
+                mtf_timeframes = None
+                mtf_maxlen = 250
 
             self._indicator_engine = StreamingIndicatorEngine(
                 bb_period=bb_period,
@@ -1080,10 +1084,13 @@ class TradingOrchestrator:
                 high_period=high_period,
                 staleness_seconds=staleness_seconds,
                 ema_periods=ema_periods,
+                mtf_timeframes=mtf_timeframes,
+                mtf_maxlen=mtf_maxlen,
             )
             logger.info(
                 f"Indicator engine initialized (bb={bb_period}, "
-                f"std={bb_std}, rsi={rsi_period}, high_n={high_period})"
+                f"std={bb_std}, rsi={rsi_period}, high_n={high_period}, "
+                f"mtf_timeframes={mtf_timeframes}, mtf_maxlen={mtf_maxlen})"
             )
         except (ValidationError, ValueError, TypeError) as e:
             logger.warning(f"Indicator engine init failed: {e}")
@@ -2365,6 +2372,66 @@ class TradingOrchestrator:
             logger.debug(f"ClickHouse prewarm failed for {symbol}: {e}")
             return []
 
+    async def _fetch_daily_candles_from_clickhouse(
+        self, symbol: str, limit: int = 252
+    ) -> list[dict]:
+        """Fetch recent daily candles from ClickHouse.
+
+        Used for multi-timeframe strategies that need daily context.
+
+        Args:
+            symbol: Stock/futures code
+            limit: Number of daily candles (default 252 = ~1 year trading days)
+
+        Returns:
+            List of daily candle dicts with keys: date, open, high, low, close, volume
+        """
+        try:
+            from clickhouse_driver import Client as CHSyncClient
+
+            ch_host = os.getenv("CLICKHOUSE_HOST", "localhost")
+            ch_port = int(
+                os.getenv(
+                    "CLICKHOUSE_NATIVE_PORT",
+                    os.getenv("CLICKHOUSE_PORT", "9000"),
+                )
+            )
+            ch_user = os.getenv("CLICKHOUSE_USER", "default")
+            ch_pw = os.getenv("CLICKHOUSE_PASSWORD", "")
+            ch_db = os.getenv("CLICKHOUSE_STOCK_DATABASE", "market")
+
+            loop = asyncio.get_event_loop()
+            rows = await loop.run_in_executor(
+                None,
+                lambda: CHSyncClient(
+                    host=ch_host,
+                    port=ch_port,
+                    user=ch_user,
+                    password=ch_pw,
+                    database=ch_db,
+                ).execute(
+                    "SELECT code, date, open, high, low, close, volume "
+                    "FROM daily_candles "
+                    "WHERE code = %(code)s "
+                    "ORDER BY date DESC LIMIT %(limit)s",
+                    {"code": symbol, "limit": limit},
+                ),
+            )
+            candles = []
+            for row in reversed(rows):  # oldest first
+                candles.append({
+                    "date": row[1],
+                    "open": float(row[2]),
+                    "high": float(row[3]),
+                    "low": float(row[4]),
+                    "close": float(row[5]),
+                    "volume": int(row[6]),
+                })
+            return candles
+        except (InfrastructureError, OSError, ConnectionError, ValueError, IndexError) as e:
+            logger.debug(f"ClickHouse daily candle fetch failed for {symbol}: {e}")
+            return []
+
     async def _prewarm_symbols(self, symbols: list[str]) -> None:
         """Seed indicator engine with historical candles.
 
@@ -2377,6 +2444,7 @@ class TradingOrchestrator:
 
         ch_hits = 0
         kis_hits = 0
+        daily_ch_hits = 0
         for symbol in symbols:
             if self._indicator_engine.is_warm(symbol):
                 continue
@@ -2406,11 +2474,19 @@ class TradingOrchestrator:
                     logger.info(f"Prewarm {symbol}: {len(candles)} candles seeded")
                 else:
                     logger.debug(f"Prewarm {symbol}: no candles returned")
+
+                # Fetch and seed daily candles from ClickHouse (for multi-timeframe strategies)
+                daily_candles = await self._fetch_daily_candles_from_clickhouse(symbol, limit=252)
+                if daily_candles:
+                    daily_ch_hits += 1
+                    self._indicator_engine.seed_daily_candles(symbol, daily_candles)
+                    logger.info(f"Prewarm {symbol}: {len(daily_candles)} daily candles seeded")
             except (asyncio.TimeoutError, Exception) as e:
                 logger.warning(f"Prewarm failed for {symbol}: {e}")
         logger.info(
             f"Prewarm complete: {redis_hits} from Redis, "
-            f"{ch_hits} from ClickHouse, {kis_hits} from KIS REST"
+            f"{ch_hits} from ClickHouse, {kis_hits} from KIS REST, "
+            f"{daily_ch_hits} daily candles from ClickHouse"
         )
 
     def _save_candle_cache_to_redis(self) -> None:
@@ -3550,6 +3626,16 @@ class TradingOrchestrator:
                 daily_ind = self._cached_daily_indicators.get(symbol, {})
                 if daily_ind:
                     indicators.update(daily_ind)
+
+                # Fetch daily indicators from engine (SMA/EMA/RSI on daily timeframe)
+                if self._indicator_engine:
+                    try:
+                        daily_indicators = self._indicator_engine.get_daily_indicators(symbol)
+                        # Add with daily_ prefix for multi-timeframe clarity
+                        for key, value in daily_indicators.items():
+                            indicators[f"daily_{key}"] = value
+                    except (ValidationError, KeyError, AttributeError) as e:
+                        logger.debug(f"Failed to fetch daily indicators for {symbol}: {e}")
 
                 context = EntryContext(
                     market_data=enriched,

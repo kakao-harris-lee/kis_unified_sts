@@ -218,7 +218,7 @@ class StreamingIndicatorEngine:
         rvol_short: int = 5,
         rvol_long: int = 20,
         staleness_seconds: float = 180.0,
-        mtf_timeframes: list[int] | None = None,
+        mtf_timeframes: list[int | str] | None = None,
         mtf_maxlen: int = 250,
         ema_periods: list[int] | None = None,
         daily_ema_periods: list[int] | None = None,
@@ -233,12 +233,21 @@ class StreamingIndicatorEngine:
         self._ema_periods: list[int] = ema_periods or [5, 20, 60]
 
         # Multi-timeframe accumulators: {symbol: {timeframe: accumulator}}
+        # Separate 'daily' from numeric timeframes (5, 15, etc.)
         self._mtf_timeframes = mtf_timeframes or []
+        self._numeric_mtf_timeframes: list[int] = [
+            tf for tf in self._mtf_timeframes if isinstance(tf, int)
+        ]
+        self._has_daily = 'daily' in self._mtf_timeframes
         self._mtf_maxlen = mtf_maxlen
         self._mtf_accumulators: dict[
             str, dict[int, MultiTimeframeCandleAccumulator]
         ] = {}
         self._momentum_cache: dict[tuple[str, int], tuple[int, dict[str, Any]]] = {}
+
+        # Daily candles (loaded from ClickHouse, not aggregated from 1m)
+        # {symbol: deque[Candle]}
+        self._daily_candles: dict[str, deque] = {}
 
         # Cache for get_indicators(): {symbol: (candle_count, indicators_dict)}
         self._indicator_cache: dict[str, tuple[int, dict[str, float]]] = {}
@@ -441,6 +450,8 @@ class StreamingIndicatorEngine:
         """
         if timeframe not in self._mtf_timeframes:
             self._mtf_timeframes.append(timeframe)
+        if timeframe not in self._numeric_mtf_timeframes:
+            self._numeric_mtf_timeframes.append(timeframe)
 
         mtf_map = self._mtf_accumulators.get(symbol)
         if mtf_map is None:
@@ -474,6 +485,43 @@ class StreamingIndicatorEngine:
             logger.info(
                 f"Indicator engine: {symbol} {timeframe}m pre-warmed "
                 f"({len(mtf_acc.candles)} candles, {seeded} seeded)"
+            )
+
+    def seed_daily_candles(self, symbol: str, candles: list[dict]) -> None:
+        """Pre-warm daily candle buffer with historical data.
+
+        Each candle dict must have: open, high, low, close, volume.
+        Candles should be in chronological order (oldest first).
+
+        Args:
+            symbol: Stock/futures symbol.
+            candles: List of daily candle dicts with OHLCV data.
+        """
+        if symbol not in self._daily_candles:
+            self._daily_candles[symbol] = deque(maxlen=200)
+
+        daily_deque = self._daily_candles[symbol]
+        seeded = 0
+
+        for c in candles:
+            try:
+                candle = Candle(
+                    open=float(c["open"]),
+                    high=float(c["high"]),
+                    low=float(c["low"]),
+                    close=float(c["close"]),
+                    volume=float(c.get("volume", 0)),
+                    minute=0,  # Not used for daily candles
+                )
+                daily_deque.append(candle)
+                seeded += 1
+            except (KeyError, ValueError):
+                continue
+
+        if seeded > 0:
+            logger.info(
+                f"Indicator engine: {symbol} daily candles pre-warmed "
+                f"({len(daily_deque)} total, {seeded} seeded)"
             )
 
     def set_volume_baseline(self, symbol: str, cumulative_volume: float) -> None:
@@ -835,13 +883,17 @@ class StreamingIndicatorEngine:
         ]
 
     def _feed_mtf_candle(self, symbol: str, candle: Candle) -> None:
-        """Feed a completed 1-minute candle to all multi-timeframe accumulators."""
+        """Feed a completed 1-minute candle to all multi-timeframe accumulators.
+
+        Note: 'daily' timeframe is NOT fed here — daily candles are loaded
+        directly from ClickHouse via seed_daily_candles().
+        """
         mtf_map = self._mtf_accumulators.get(symbol)
         if mtf_map is None:
             mtf_map = {}
             self._mtf_accumulators[symbol] = mtf_map
 
-        for tf in self._mtf_timeframes:
+        for tf in self._numeric_mtf_timeframes:
             mtf_acc = mtf_map.get(tf)
             if mtf_acc is None:
                 mtf_acc = MultiTimeframeCandleAccumulator(
@@ -870,6 +922,37 @@ class StreamingIndicatorEngine:
         if not mtf_acc:
             return []
         candles = list(mtf_acc.candles)
+        if limit > 0:
+            candles = candles[-limit:]
+        return [
+            {
+                "open": c.open,
+                "high": c.high,
+                "low": c.low,
+                "close": c.close,
+                "volume": c.volume,
+            }
+            for c in candles
+        ]
+
+    def get_daily_candles(
+        self, symbol: str, limit: int = 200
+    ) -> list[dict[str, float]]:
+        """Return recent daily candles for a symbol.
+
+        Daily candles are loaded from ClickHouse (not aggregated from 1m).
+
+        Args:
+            symbol: Symbol to get candles for.
+            limit: Maximum number of candles to return.
+
+        Returns:
+            List of candle dicts with open, high, low, close, volume.
+        """
+        daily_deque = self._daily_candles.get(symbol)
+        if not daily_deque:
+            return []
+        candles = list(daily_deque)
         if limit > 0:
             candles = candles[-limit:]
         return [
@@ -984,6 +1067,76 @@ class StreamingIndicatorEngine:
         }
 
         self._momentum_cache[cache_key] = (len(df), result)
+        return result
+
+    def get_daily_indicators(
+        self,
+        symbol: str,
+        *,
+        sma_periods: list[int] | None = None,
+        ema_periods: list[int] | None = None,
+        rsi_period: int = 5,
+        min_candles: int = 50,
+    ) -> dict[str, Any]:
+        """Compute daily timeframe indicators from daily candles.
+
+        Uses pandas-based calculators from shared.indicators.daily on
+        the daily candles loaded from ClickHouse.
+
+        Args:
+            symbol: Symbol to compute indicators for.
+            sma_periods: SMA periods to calculate (default: [20, 60, 200]).
+            ema_periods: EMA periods to calculate (default: [5, 10, 20]).
+            rsi_period: RSI period (default: 5).
+            min_candles: Minimum candles needed for valid computation.
+
+        Returns:
+            Dict with daily indicator values (sma_20, sma_60, sma_200,
+            ema_5, ema_10, ema_20, rsi_5).
+            Empty dict if insufficient data.
+        """
+        from shared.indicators.daily import calculate_daily_indicators
+
+        if sma_periods is None:
+            sma_periods = [20, 60, 200]
+        if ema_periods is None:
+            ema_periods = [5, 10, 20]
+
+        # Check candle count directly from accumulator to avoid expensive dict conversion
+        daily_deque = self._daily_candles.get(symbol)
+        if not daily_deque:
+            return {}
+
+        candle_count = len(daily_deque)
+        if candle_count < min_candles:
+            return {}
+
+        # Check cache before expensive dict conversion
+        cache_key = (symbol, "daily")
+        cached = self._momentum_cache.get(cache_key)
+        if cached and cached[0] == candle_count:
+            self._momentum_cache_hits += 1
+            return cached[1]
+
+        self._momentum_cache_misses += 1
+        # Cache miss: convert candles to dicts for calculation
+        candles = self.get_daily_candles(symbol, limit=0)
+
+        try:
+            result = calculate_daily_indicators(
+                candles,
+                sma_periods=sma_periods,
+                ema_periods=ema_periods,
+                rsi_period=rsi_period,
+            )
+        except (ValidationError, ValueError, KeyError, IndexError, ZeroDivisionError) as e:
+            logger.error(f"Daily indicator calculation failed for {symbol}: {e}")
+            return {}
+
+        # Cache result
+        if result:
+            self._momentum_cache[cache_key] = (candle_count, result)
+
         return result
 
     def get_market_mfi(self, active_symbols: set[str] | None = None) -> float | None:
