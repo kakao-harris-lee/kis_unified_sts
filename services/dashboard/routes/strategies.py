@@ -91,6 +91,32 @@ class StrategySaveResponse(BaseModel):
     file_path: str
 
 
+class StrategyValidateRequest(BaseModel):
+    """Strategy validation request."""
+
+    asset_class: str = Field(..., description="Asset class (stock, futures)")
+    config: Dict[str, Any] = Field(..., description="Strategy configuration to validate")
+
+    @field_validator("asset_class")
+    @classmethod
+    def validate_asset_class(cls, v: str) -> str:
+        """Validate asset class is supported."""
+        if v not in SUPPORTED_ASSETS:
+            raise ValueError(
+                f"Invalid asset_class '{v}'. Must be one of: {', '.join(SUPPORTED_ASSETS)}"
+            )
+        return v
+
+
+class StrategyValidateResponse(BaseModel):
+    """Strategy validation response."""
+
+    valid: bool
+    errors: List[str] = Field(default_factory=list)
+    warnings: List[str] = Field(default_factory=list)
+    message: str
+
+
 @router.get("", response_model=StrategyListResponse)
 async def list_strategies(
     asset_class: Optional[str] = Query(
@@ -363,6 +389,154 @@ async def save_strategy(
         raise HTTPException(
             status_code=500,
             detail=f"Failed to save strategy: {str(e)}",
+        )
+
+
+@router.post("/validate", response_model=StrategyValidateResponse)
+async def validate_strategy(
+    request: StrategyValidateRequest,
+):
+    """Validate strategy configuration without saving.
+
+    This endpoint validates a strategy configuration by:
+    1. Checking basic structure (required fields)
+    2. Validating component types exist in registries
+    3. Attempting to create strategy instance with StrategyFactory
+
+    Args:
+        request: StrategyValidateRequest with asset_class and config
+
+    Returns:
+        StrategyValidateResponse with validation results
+
+    Raises:
+        HTTPException: 500 if unexpected error occurs
+    """
+    errors = []
+    warnings = []
+
+    try:
+        # Validate basic structure - must have "strategy" key
+        if "strategy" not in request.config:
+            errors.append("Missing 'strategy' key in config")
+            return StrategyValidateResponse(
+                valid=False,
+                errors=errors,
+                warnings=warnings,
+                message="Invalid configuration structure",
+            )
+
+        strategy_config = request.config["strategy"]
+
+        # Validate required fields
+        required_fields = ["name", "asset_class", "entry", "exit", "position"]
+        for field in required_fields:
+            if field not in strategy_config:
+                errors.append(f"Missing required field: strategy.{field}")
+
+        if errors:
+            return StrategyValidateResponse(
+                valid=False,
+                errors=errors,
+                warnings=warnings,
+                message="Missing required fields",
+            )
+
+        # Validate asset_class matches request
+        config_asset_class = strategy_config.get("asset_class")
+        if config_asset_class != request.asset_class:
+            warnings.append(
+                f"Config asset_class '{config_asset_class}' differs from request asset_class '{request.asset_class}'"
+            )
+
+        # Validate component configs have 'type' field
+        entry_config = strategy_config.get("entry", {})
+        exit_config = strategy_config.get("exit", {})
+        position_config = strategy_config.get("position", {})
+
+        entry_type = entry_config.get("type")
+        exit_type = exit_config.get("type")
+        position_type = position_config.get("type")
+
+        # Check required 'type' fields
+        if not entry_type:
+            errors.append("Missing 'type' field in entry configuration")
+        if not exit_type:
+            errors.append("Missing 'type' field in exit configuration")
+        if not position_type:
+            errors.append("Missing 'type' field in position configuration")
+
+        if errors:
+            return StrategyValidateResponse(
+                valid=False,
+                errors=errors,
+                warnings=warnings,
+                message="Invalid component configuration",
+            )
+
+        # Check if component types are registered
+        if not EntryRegistry.is_registered(entry_type):
+            available = EntryRegistry.list_all()
+            errors.append(
+                f"Unknown entry type '{entry_type}'. Available: {', '.join(available)}"
+            )
+
+        if not ExitRegistry.is_registered(exit_type):
+            available = ExitRegistry.list_all()
+            errors.append(
+                f"Unknown exit type '{exit_type}'. Available: {', '.join(available)}"
+            )
+
+        if not SizerRegistry.is_registered(position_type):
+            available = SizerRegistry.list_all()
+            errors.append(
+                f"Unknown position type '{position_type}'. Available: {', '.join(available)}"
+            )
+
+        if errors:
+            return StrategyValidateResponse(
+                valid=False,
+                errors=errors,
+                warnings=warnings,
+                message="Invalid component types",
+            )
+
+        # Try to create strategy using StrategyFactory
+        # This validates params and ensures components can be instantiated
+        try:
+            strategy = StrategyFactory.create_from_config(request.config)
+            logger.info(
+                f"Successfully validated strategy: {strategy_config.get('name')} "
+                f"(asset_class={request.asset_class})"
+            )
+        except ComponentNotFoundError as e:
+            errors.append(f"Component not found: {str(e)}")
+        except ConfigError as e:
+            errors.append(f"Configuration error: {str(e)}")
+        except Exception as e:
+            errors.append(f"Strategy creation failed: {str(e)}")
+
+        if errors:
+            return StrategyValidateResponse(
+                valid=False,
+                errors=errors,
+                warnings=warnings,
+                message="Strategy validation failed",
+            )
+
+        # Success - all validation passed
+        return StrategyValidateResponse(
+            valid=True,
+            errors=[],
+            warnings=warnings,
+            message="Strategy configuration is valid",
+        )
+
+    except Exception as e:
+        logger.exception(f"Unexpected error during strategy validation: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Internal server error: {str(e)}",
         )
 
 
