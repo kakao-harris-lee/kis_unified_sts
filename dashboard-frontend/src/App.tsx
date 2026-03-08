@@ -6,6 +6,7 @@ import Signals from './pages/Signals';
 import Trades from './pages/Trades';
 import Backtest from './pages/Backtest';
 import Experiments from './pages/Experiments';
+import StrategyConfig from './pages/StrategyConfig';
 import ErrorBoundary from './components/ErrorBoundary';
 
 const queryClient = new QueryClient({
@@ -60,6 +61,9 @@ function App() {
                       <NavLink to="/experiments" className={navClassName}>
                         Experiments
                       </NavLink>
+                      <NavLink to="/strategies" className={navClassName}>
+                        Strategies
+                      </NavLink>
                     </div>
                   </div>
                 </div>
@@ -74,6 +78,7 @@ function App() {
                 <Route path="/trades" element={<Trades />} />
                 <Route path="/backtest" element={<Backtest />} />
                 <Route path="/experiments" element={<Experiments />} />
+                <Route path="/strategies" element={<StrategyConfig />} />
               </Routes>
             </main>
           </div>
