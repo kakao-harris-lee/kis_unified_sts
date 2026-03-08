@@ -286,6 +286,9 @@ class ChampionChallengerEvaluator:
     ) -> dict[str, float]:
         """Calculate improvement metrics comparing challenger to champion
 
+        Supports both RLEvaluator format (sharpe_ratio, win_rate_pct, max_drawdown_pct)
+        and simplified format (sharpe, win_rate, max_dd). Missing metrics default to 0.0.
+
         Args:
             challenger_metrics: Challenger evaluation metrics
             champion_metrics: Champion evaluation metrics
@@ -299,39 +302,39 @@ class ChampionChallengerEvaluator:
                 return 0.0
             return ((new - old) / abs(old)) * 100.0
 
-        # Calculate improvements
-        sharpe_improvement = (
-            challenger_metrics["sharpe_ratio"] - champion_metrics["sharpe_ratio"]
-        )
-        sharpe_improvement_pct = safe_pct_change(
-            challenger_metrics["sharpe_ratio"],
-            champion_metrics["sharpe_ratio"]
-        )
+        def safe_get_metric(metrics: dict[str, float], primary: str, fallback: str) -> float:
+            """Get metric with safe defaults if not found"""
+            try:
+                return self._get_metric(metrics, primary, fallback)
+            except KeyError:
+                return 0.0
 
-        win_rate_improvement = (
-            challenger_metrics["win_rate_pct"] - champion_metrics["win_rate_pct"]
-        )
-        win_rate_improvement_pct = safe_pct_change(
-            challenger_metrics["win_rate_pct"],
-            champion_metrics["win_rate_pct"]
-        )
+        # Extract metrics with fallbacks to support both formats
+        challenger_sharpe = safe_get_metric(challenger_metrics, "sharpe_ratio", "sharpe")
+        champion_sharpe = safe_get_metric(champion_metrics, "sharpe_ratio", "sharpe")
+
+        challenger_win_rate = safe_get_metric(challenger_metrics, "win_rate_pct", "win_rate")
+        champion_win_rate = safe_get_metric(champion_metrics, "win_rate_pct", "win_rate")
+
+        challenger_max_dd = safe_get_metric(challenger_metrics, "max_drawdown_pct", "max_dd")
+        champion_max_dd = safe_get_metric(champion_metrics, "max_drawdown_pct", "max_dd")
+
+        challenger_return = challenger_metrics.get("avg_return_pct", challenger_metrics.get("avg_return", 0.0))
+        champion_return = champion_metrics.get("avg_return_pct", champion_metrics.get("avg_return", 0.0))
+
+        # Calculate improvements
+        sharpe_improvement = challenger_sharpe - champion_sharpe
+        sharpe_improvement_pct = safe_pct_change(challenger_sharpe, champion_sharpe)
+
+        win_rate_improvement = challenger_win_rate - champion_win_rate
+        win_rate_improvement_pct = safe_pct_change(challenger_win_rate, champion_win_rate)
 
         # For max drawdown, improvement means less negative (closer to 0)
-        max_dd_improvement = (
-            challenger_metrics["max_drawdown_pct"] - champion_metrics["max_drawdown_pct"]
-        )
-        max_dd_improvement_pct = safe_pct_change(
-            challenger_metrics["max_drawdown_pct"],
-            champion_metrics["max_drawdown_pct"]
-        )
+        max_dd_improvement = challenger_max_dd - champion_max_dd
+        max_dd_improvement_pct = safe_pct_change(challenger_max_dd, champion_max_dd)
 
-        return_improvement = (
-            challenger_metrics["avg_return_pct"] - champion_metrics["avg_return_pct"]
-        )
-        return_improvement_pct = safe_pct_change(
-            challenger_metrics["avg_return_pct"],
-            champion_metrics["avg_return_pct"]
-        )
+        return_improvement = challenger_return - champion_return
+        return_improvement_pct = safe_pct_change(challenger_return, champion_return)
 
         return {
             "sharpe_improvement": round(sharpe_improvement, 2),
@@ -355,6 +358,8 @@ class ChampionChallengerEvaluator:
 
         Args:
             challenger_metrics: Challenger evaluation metrics
+                Can use either full format (sharpe_ratio, win_rate_pct, max_drawdown_pct)
+                or simplified format (sharpe, win_rate, max_dd)
             champion_metrics: Champion evaluation metrics (None if no champion)
             improvement: Pre-calculated improvement metrics (optional)
             promotion_decision: Tuple of (should_promote, reason) (optional)
@@ -378,16 +383,12 @@ class ChampionChallengerEvaluator:
         else:
             should_promote, reason = promotion_decision
 
+        # Extract challenger metrics with fallbacks
+        challenger_report = self._extract_metrics_for_report(challenger_metrics)
+
         # Build report
         report: dict[str, Any] = {
-            "challenger": {
-                "sharpe_ratio": challenger_metrics["sharpe_ratio"],
-                "win_rate_pct": challenger_metrics["win_rate_pct"],
-                "max_drawdown_pct": challenger_metrics["max_drawdown_pct"],
-                "avg_return_pct": challenger_metrics["avg_return_pct"],
-                "total_trades": challenger_metrics["total_trades"],
-                "rr_ratio": challenger_metrics.get("rr_ratio", 0.0),
-            },
+            "challenger": challenger_report,
             "promotion_decision": {
                 "approved": should_promote,
                 "reason": reason,
@@ -403,14 +404,7 @@ class ChampionChallengerEvaluator:
 
         # Add champion and improvement data if available
         if champion_metrics is not None:
-            report["champion"] = {
-                "sharpe_ratio": champion_metrics["sharpe_ratio"],
-                "win_rate_pct": champion_metrics["win_rate_pct"],
-                "max_drawdown_pct": champion_metrics["max_drawdown_pct"],
-                "avg_return_pct": champion_metrics["avg_return_pct"],
-                "total_trades": champion_metrics["total_trades"],
-                "rr_ratio": champion_metrics.get("rr_ratio", 0.0),
-            }
+            report["champion"] = self._extract_metrics_for_report(champion_metrics)
         else:
             report["champion"] = None
 
@@ -460,6 +454,55 @@ class ChampionChallengerEvaluator:
                 f"in metrics dict. Available keys: {list(metrics.keys())}"
             )
 
+    def _extract_metrics_for_report(
+        self,
+        metrics: dict[str, float]
+    ) -> dict[str, float]:
+        """Extract metrics for report with fallbacks and defaults
+
+        Supports both RLEvaluator format (sharpe_ratio, win_rate_pct, max_drawdown_pct)
+        and simplified format (sharpe, win_rate, max_dd)
+
+        Args:
+            metrics: Raw metrics dictionary
+
+        Returns:
+            Standardized metrics dict with defaults for missing values
+        """
+        # Extract core metrics with fallbacks
+        try:
+            sharpe_ratio = self._get_metric(metrics, "sharpe_ratio", "sharpe")
+        except KeyError:
+            sharpe_ratio = 0.0
+
+        try:
+            win_rate_pct = self._get_metric(metrics, "win_rate_pct", "win_rate")
+        except KeyError:
+            win_rate_pct = 0.0
+
+        try:
+            max_drawdown_pct = self._get_metric(metrics, "max_drawdown_pct", "max_dd")
+        except KeyError:
+            max_drawdown_pct = 0.0
+
+        try:
+            avg_return_pct = self._get_metric(metrics, "avg_return_pct", "avg_return")
+        except KeyError:
+            avg_return_pct = 0.0
+
+        # Optional metrics with direct .get() fallback
+        total_trades = metrics.get("total_trades", 0)
+        rr_ratio = metrics.get("rr_ratio", 0.0)
+
+        return {
+            "sharpe_ratio": sharpe_ratio,
+            "win_rate_pct": win_rate_pct,
+            "max_drawdown_pct": max_drawdown_pct,
+            "avg_return_pct": avg_return_pct,
+            "total_trades": total_trades,
+            "rr_ratio": rr_ratio,
+        }
+
     def _assess_risk(
         self,
         challenger_metrics: dict[str, float],
@@ -479,9 +522,11 @@ class ChampionChallengerEvaluator:
         risk_factors = []
 
         # Check for low sample size
-        if challenger_metrics["total_trades"] < self.evaluation_config.get("min_sample_size", 30):
+        total_trades = challenger_metrics.get("total_trades", 0)
+        min_sample_size = self.evaluation_config.get("min_sample_size", 30)
+        if total_trades < min_sample_size:
             risk_factors.append(
-                f"Low sample size ({challenger_metrics['total_trades']} trades)"
+                f"Low sample size ({total_trades} trades, min {min_sample_size})"
             )
 
         # Check for volatile performance
@@ -494,9 +539,10 @@ class ChampionChallengerEvaluator:
 
         # Check for marginal improvement
         if improvement and champion_metrics:
-            if improvement["sharpe_improvement_pct"] < 10:  # Less than 10% improvement
+            sharpe_improvement_pct = improvement.get("sharpe_improvement_pct", 0.0)
+            if sharpe_improvement_pct < 10:  # Less than 10% improvement
                 risk_factors.append(
-                    f"Marginal Sharpe improvement ({improvement['sharpe_improvement_pct']:.1f}%)"
+                    f"Marginal Sharpe improvement ({sharpe_improvement_pct:.1f}%)"
                 )
 
         # Determine risk level
