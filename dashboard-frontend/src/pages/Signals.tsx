@@ -94,72 +94,135 @@ function Signals() {
           No signals found
         </div>
       ) : (
-        <div className="bg-gray-800 rounded-lg overflow-hidden border border-gray-700">
-          <table className="w-full">
-            <thead className="bg-gray-700">
-              <tr>
-                <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">
-                  Time
-                </th>
-                <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">
-                  Strategy
-                </th>
-                <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">
-                  Symbol
-                </th>
-                <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">
-                  Side
-                </th>
-                <th className="px-4 py-3 text-right text-sm font-medium text-gray-300">
-                  Price
-                </th>
-                <th className="px-4 py-3 text-right text-sm font-medium text-gray-300">
-                  Strength
-                </th>
-                <th className="px-4 py-3 text-center text-sm font-medium text-gray-300">
-                  Executed
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-700">
-              {data?.signals.map((signal) => (
-                <tr key={signal.id} className="hover:bg-gray-750">
-                  <td className="px-4 py-3 text-sm text-gray-400">
-                    {new Date(signal.timestamp).toLocaleString()}
-                  </td>
-                  <td className="px-4 py-3">{signal.strategy}</td>
-                  <td className="px-4 py-3 font-medium">{signal.symbol}</td>
-                  <td className="px-4 py-3">
-                    <SideBadge side={signal.side} />
-                  </td>
-                  <td className="px-4 py-3 text-right">
-                    {signal.price.toLocaleString()}
-                  </td>
-                  <td className="px-4 py-3 text-right">
-                    <div className="flex items-center justify-end">
-                      <div className="w-16 bg-gray-700 rounded-full h-2 mr-2">
+        <>
+          {/* Mobile Card View */}
+          <div className="block md:hidden space-y-4">
+            {data?.signals.map((signal) => (
+              <div
+                key={signal.id}
+                className="bg-gray-800 rounded-lg p-4 border border-gray-700"
+              >
+                <div className="flex items-center justify-between mb-3">
+                  <span className="font-medium text-lg">{signal.symbol}</span>
+                  <SideBadge side={signal.side} />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3 text-sm">
+                  <div>
+                    <div className="text-gray-400">Time</div>
+                    <div className="font-medium text-xs">
+                      {new Date(signal.timestamp).toLocaleString()}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-gray-400">Strategy</div>
+                    <div className="font-medium">{signal.strategy}</div>
+                  </div>
+                  <div>
+                    <div className="text-gray-400">Price</div>
+                    <div className="font-medium">
+                      {signal.price.toLocaleString()}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-gray-400">Executed</div>
+                    <div className="font-medium">
+                      {signal.executed ? (
+                        <span className="text-green-400">Yes</span>
+                      ) : (
+                        <span className="text-gray-500">No</span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="col-span-2">
+                    <div className="text-gray-400 mb-1">Strength</div>
+                    <div className="flex items-center">
+                      <div className="flex-1 bg-gray-700 rounded-full h-2 mr-2">
                         <div
                           className="bg-blue-500 h-2 rounded-full"
                           style={{ width: `${signal.strength * 100}%` }}
                         />
                       </div>
-                      <span className="text-sm">
+                      <span className="text-sm font-medium">
                         {(signal.strength * 100).toFixed(0)}%
                       </span>
                     </div>
-                  </td>
-                  <td className="px-4 py-3 text-center">
-                    {signal.executed ? (
-                      <span className="text-green-400">✓</span>
-                    ) : (
-                      <span className="text-gray-500">-</span>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Desktop Table View with Horizontal Scroll */}
+          <div className="hidden md:block bg-gray-800 rounded-lg overflow-hidden border border-gray-700">
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead className="bg-gray-700">
+                  <tr>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">
+                      Time
+                    </th>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">
+                      Strategy
+                    </th>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">
+                      Symbol
+                    </th>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">
+                      Side
+                    </th>
+                    <th className="px-4 py-3 text-right text-sm font-medium text-gray-300">
+                      Price
+                    </th>
+                    <th className="px-4 py-3 text-right text-sm font-medium text-gray-300">
+                      Strength
+                    </th>
+                    <th className="px-4 py-3 text-center text-sm font-medium text-gray-300">
+                      Executed
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-700">
+                  {data?.signals.map((signal) => (
+                    <tr key={signal.id} className="hover:bg-gray-750">
+                      <td className="px-4 py-3 text-sm text-gray-400">
+                        {new Date(signal.timestamp).toLocaleString()}
+                      </td>
+                      <td className="px-4 py-3">{signal.strategy}</td>
+                      <td className="px-4 py-3 font-medium">{signal.symbol}</td>
+                      <td className="px-4 py-3">
+                        <SideBadge side={signal.side} />
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        {signal.price.toLocaleString()}
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <div className="flex items-center justify-end">
+                          <div className="w-16 bg-gray-700 rounded-full h-2 mr-2">
+                            <div
+                              className="bg-blue-500 h-2 rounded-full"
+                              style={{ width: `${signal.strength * 100}%` }}
+                            />
+                          </div>
+                          <span className="text-sm">
+                            {(signal.strength * 100).toFixed(0)}%
+                          </span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        {signal.executed ? (
+                          <span className="text-green-400">Yes</span>
+                        ) : (
+                          <span className="text-gray-500">-</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </>
       )}
     </div>
   );
