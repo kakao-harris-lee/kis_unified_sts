@@ -4,10 +4,11 @@ The orchestrator (CLI process) publishes trading state to Redis.
 The dashboard (Docker container) reads it back for display.
 
 Redis Keys (all in DB1):
-    trading:{asset}:status     — HASH   (orchestrator status snapshot)
-    trading:{asset}:positions  — HASH   (field=position_id, value=JSON)
-    trading:{asset}:trades     — LIST   (most recent first, max 500)
-    trading:{asset}:signals    — LIST   (most recent first, max 200)
+    trading:{asset}:status          — HASH   (orchestrator status snapshot)
+    trading:{asset}:positions       — HASH   (field=position_id, value=JSON)
+    trading:{asset}:trades          — LIST   (most recent first, max 500)
+    trading:{asset}:signals         — LIST   (most recent first, max 200)
+    trading:{asset}:market_context  — STRING (LLM market analysis JSON)
 """
 
 from __future__ import annotations
@@ -32,6 +33,7 @@ _KEY_POSITIONS = "trading:{asset}:positions"
 _KEY_TRADES = "trading:{asset}:trades"
 _KEY_SIGNALS = "trading:{asset}:signals"
 _KEY_CANDLE_CACHE = "trading:{asset}:candle_cache"
+_KEY_MARKET_CONTEXT = "trading:{asset}:market_context"
 
 MAX_TRADES = 500
 MAX_SIGNALS = 200
@@ -184,6 +186,26 @@ class TradingStatePublisher:
         except Exception:
             logger.debug("Failed to publish signal", exc_info=True)
 
+    # -- Market Context -------------------------------------------------------
+
+    def publish_market_context(self, context: Any) -> None:
+        """Publish LLM market analysis context as a JSON string.
+
+        Args:
+            context: MarketContext instance from shared.llm.market_context
+        """
+        try:
+            r = _get_redis()
+            key = _key(_KEY_MARKET_CONTEXT, self._asset)
+            # Use to_dict() method if available, otherwise assume it's already a dict
+            data = context.to_dict() if hasattr(context, "to_dict") else context
+            pipe = r.pipeline(transaction=False)
+            pipe.set(key, json.dumps(data))
+            pipe.expire(key, STATUS_TTL_SECONDS)
+            pipe.execute()
+        except Exception:
+            logger.debug("Failed to publish market context", exc_info=True)
+
     # -- Raw dict methods (for non-orchestrator publishers like RL paper trader) -
 
     def publish_raw_position(self, position_id: str, data: dict) -> None:
@@ -240,7 +262,7 @@ class TradingStatePublisher:
         try:
             r = _get_redis()
             pipe = r.pipeline(transaction=False)
-            for tmpl in (_KEY_STATUS, _KEY_POSITIONS, _KEY_TRADES, _KEY_SIGNALS):
+            for tmpl in (_KEY_STATUS, _KEY_POSITIONS, _KEY_TRADES, _KEY_SIGNALS, _KEY_MARKET_CONTEXT):
                 pipe.delete(_key(tmpl, self._asset))
             pipe.execute()
         except Exception:
@@ -425,3 +447,23 @@ class TradingStateReader:
         except Exception:
             logger.debug("Failed to read candle cache from Redis", exc_info=True)
             return {}
+
+    def get_market_context(self) -> Any | None:
+        """Read LLM market analysis context from Redis.
+
+        Returns:
+            MarketContext instance if available, None otherwise.
+        """
+        try:
+            r = _get_redis()
+            key = _key(_KEY_MARKET_CONTEXT, self._asset)
+            raw = r.get(key)
+            if not raw:
+                return None
+            data = json.loads(raw)
+            # Import here to avoid circular dependency
+            from shared.llm.market_context import MarketContext
+            return MarketContext.from_dict(data)
+        except Exception:
+            logger.debug("Failed to read market context from Redis", exc_info=True)
+            return None

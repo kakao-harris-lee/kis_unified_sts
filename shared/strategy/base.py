@@ -11,6 +11,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, Generic, Optional, Protocol, TypeVar, runtime_checkable
 
 if TYPE_CHECKING:
+    from shared.llm.market_context import MarketContext
     from shared.models.position import Position
     from shared.models.signal import ExitSignal, Signal
 
@@ -89,6 +90,7 @@ class EntryContext:
         indicators: 계산된 지표 값
         current_positions: 현재 보유 포지션 목록
         timestamp: 현재 시간
+        market_context: LLM 시장 분석 컨텍스트 (regime, sentiment, risk 등)
         metadata: 추가 메타데이터
     """
 
@@ -96,6 +98,7 @@ class EntryContext:
     indicators: dict[str, Any] = field(default_factory=dict)
     current_positions: list["Position"] = field(default_factory=list)
     timestamp: datetime = field(default_factory=datetime.now)
+    market_context: Optional["MarketContext"] = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -109,6 +112,7 @@ class ExitContext:
         indicators: 계산된 지표 값
         timestamp: 현재 시간
         market_state: 시장 상태 (MarketClassifier 결과)
+        market_context: LLM 시장 분석 컨텍스트 (regime, sentiment, risk 등)
         metadata: 추가 메타데이터
     """
 
@@ -117,6 +121,7 @@ class ExitContext:
     indicators: dict[str, Any] = field(default_factory=dict)
     timestamp: datetime = field(default_factory=datetime.now)
     market_state: Optional[MarketStateProtocol] = None
+    market_context: Optional["MarketContext"] = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -259,8 +264,15 @@ class PositionSizer(ABC, Generic[TConfig]):
         signal: "Signal",
         account_balance: float,
         current_positions: list["Position"],
+        market_context: Optional["MarketContext"] = None,
     ) -> int:
         """포지션 크기 계산
+
+        Args:
+            signal: 진입 시그널
+            account_balance: 계좌 잔고
+            current_positions: 현재 보유 포지션
+            market_context: LLM 시장 분석 컨텍스트 (선택적)
 
         Returns:
             quantity: 매매 수량
@@ -307,8 +319,9 @@ class TradingStrategy:
         signal: "Signal",
         account_balance: float,
         current_positions: list["Position"],
+        market_context: Optional["MarketContext"] = None,
     ) -> int:
         """포지션 크기 계산"""
         return self.position_sizer.calculate(
-            signal, account_balance, current_positions
+            signal, account_balance, current_positions, market_context
         )
