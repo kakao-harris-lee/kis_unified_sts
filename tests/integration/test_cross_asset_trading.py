@@ -101,7 +101,7 @@ def mock_futures_config():
 @pytest.fixture
 def mock_kis_api():
     """Mock KIS API responses for both asset classes."""
-    with patch("shared.kis.api.KISApi") as mock_api_class:
+    with patch("shared.kis.client.KISClient") as mock_api_class:
         mock_api = Mock()
         mock_api_class.return_value = mock_api
 
@@ -448,21 +448,10 @@ class TestCrossAssetTrading:
         # ============================================
         # Phase 1: Initialize Position Trackers
         # ============================================
-        stock_tracker = PositionTracker(
-            asset_class="stock",
-            config=tracker_config,
-            redis_url=redis_url,
-        )
-
-        futures_tracker = PositionTracker(
-            asset_class="futures",
-            config=tracker_config,
-            redis_url=redis_url,
-        )
+        stock_tracker = PositionTracker(config=tracker_config)
+        futures_tracker = PositionTracker(config=tracker_config)
 
         # Verify trackers are configured correctly
-        assert stock_tracker.asset_class == "stock"
-        assert futures_tracker.asset_class == "futures"
         assert stock_tracker.config.max_positions == 20
         assert futures_tracker.config.max_positions == 20
 
@@ -491,11 +480,11 @@ class TestCrossAssetTrading:
             strategy="bb_reversion",
         )
 
-        stock_tracker.add_position(stock_pos_1)
-        stock_tracker.add_position(stock_pos_2)
+        stock_tracker.add_recovered_position(stock_pos_1)
+        stock_tracker.add_recovered_position(stock_pos_2)
 
         # Verify stock positions tracked
-        assert len(stock_tracker.get_all_positions()) == 2
+        assert len(stock_tracker.positions) == 2
         assert stock_tracker.get_position("STOCK-001") is not None
         assert stock_tracker.get_position("STOCK-002") is not None
 
@@ -524,29 +513,43 @@ class TestCrossAssetTrading:
             strategy="rl_mppo",
         )
 
-        futures_tracker.add_position(futures_pos_1)
-        futures_tracker.add_position(futures_pos_2)
+        futures_tracker.add_recovered_position(futures_pos_1)
+        futures_tracker.add_recovered_position(futures_pos_2)
 
         # Verify futures positions tracked
-        assert len(futures_tracker.get_all_positions()) == 2
+        assert len(futures_tracker.positions) == 2
         assert futures_tracker.get_position("FUTURES-001") is not None
         assert futures_tracker.get_position("FUTURES-002") is not None
 
         # ============================================
         # Phase 4: Verify Redis Key Isolation
         # ============================================
-        r = redis.Redis.from_url(redis_url, decode_responses=True)
+        # Publish positions to Redis using TradingStatePublisher
+        stock_publisher = TradingStatePublisher(asset_class="stock")
+        futures_publisher = TradingStatePublisher(asset_class="futures")
 
-        # Verify separate Redis keys exist
-        stock_positions_raw = r.hgetall("trading:stock:positions")
-        futures_positions_raw = r.hgetall("trading:futures:positions")
+        stock_publisher.publish_positions_update(
+            list(stock_tracker.positions),
+            throttle=0,  # Immediate flush
+        )
+        futures_publisher.publish_positions_update(
+            list(futures_tracker.positions),
+            throttle=0,  # Immediate flush
+        )
 
-        assert len(stock_positions_raw) == 2, "Should have 2 stock positions in Redis"
-        assert len(futures_positions_raw) == 2, "Should have 2 futures positions in Redis"
+        # Verify separate Redis keys exist using TradingStateReader
+        stock_reader = TradingStateReader(asset_class="stock")
+        futures_reader = TradingStateReader(asset_class="futures")
+
+        stock_positions_from_redis = stock_reader.get_positions()
+        futures_positions_from_redis = futures_reader.get_positions()
+
+        assert len(stock_positions_from_redis) == 2, "Should have 2 stock positions in Redis"
+        assert len(futures_positions_from_redis) == 2, "Should have 2 futures positions in Redis"
 
         # Verify position IDs are correctly isolated
-        stock_ids = set(stock_positions_raw.keys())
-        futures_ids = set(futures_positions_raw.keys())
+        stock_ids = {p["id"] for p in stock_positions_from_redis}
+        futures_ids = {p["id"] for p in futures_positions_from_redis}
 
         assert "STOCK-001" in stock_ids
         assert "STOCK-002" in stock_ids
@@ -561,12 +564,15 @@ class TestCrossAssetTrading:
         # Phase 5: Concurrent Position Updates
         # ============================================
         # Simulate price movements for stock positions
-        stock_tracker.update_position("STOCK-001", current_price=72000.0)  # +2.86% profit
-        stock_tracker.update_position("STOCK-002", current_price=125000.0)  # +4.17% profit
+        stock_tracker.update_prices({
+            "005930": 72000.0,  # +2.86% profit for STOCK-001
+            "000660": 125000.0,  # +4.17% profit for STOCK-002
+        })
 
         # Simulate price movements for futures positions
-        futures_tracker.update_position("FUTURES-001", current_price=352000.0)  # +0.57% profit
-        futures_tracker.update_position("FUTURES-002", current_price=350000.0)  # +0.28% profit (short)
+        futures_tracker.update_prices({
+            "101S6000": 352000.0,  # Updates both FUTURES-001 and FUTURES-002
+        })
 
         # Verify stock position updates
         stock_pos_1_updated = stock_tracker.get_position("STOCK-001")
@@ -586,39 +592,40 @@ class TestCrossAssetTrading:
         assert futures_pos_1_updated.unrealized_pnl > 0
 
         futures_pos_2_updated = futures_tracker.get_position("FUTURES-002")
-        assert futures_pos_2_updated.current_price == 350000.0
-        assert futures_pos_2_updated.unrealized_pnl > 0  # Short position profits from price drop
+        assert futures_pos_2_updated.current_price == 352000.0
+        assert futures_pos_2_updated.unrealized_pnl < 0  # Short position loses when price rises
 
         # ============================================
         # Phase 6: Position State Transitions
         # ============================================
         # Stock position reaches BREAKEVEN threshold (2%)
-        stock_pos_1_updated.state = PositionState.BREAKEVEN
-        stock_tracker.update_position("STOCK-001", current_price=73000.0)
+        stock_tracker.update_prices({"005930": 73000.0})  # +4.29% profit
+        stock_tracker.update_states()
 
-        # Verify state persisted
+        # Verify state transitioned to BREAKEVEN (since profit > 2%)
         stock_pos_1_state = stock_tracker.get_position("STOCK-001")
         assert stock_pos_1_state.state == PositionState.BREAKEVEN
 
-        # Futures position remains in SURVIVAL (RL-based exit)
-        futures_pos_1_updated.state = PositionState.SURVIVAL
-        futures_tracker.update_position("FUTURES-001", current_price=353000.0)
+        # Update futures position price
+        futures_tracker.update_prices({"101S6000": 353000.0})
+        futures_tracker.update_states()
 
-        # Verify state persisted
+        # Verify futures position state
         futures_pos_1_state = futures_tracker.get_position("FUTURES-001")
+        # Note: FUTURES-001 profit is small (~0.86%), stays in SURVIVAL
         assert futures_pos_1_state.state == PositionState.SURVIVAL
 
         # ============================================
         # Phase 7: Exit Positions
         # ============================================
         # Close stock position (profitable exit)
-        closed_stock_pos = stock_tracker.close_position("STOCK-001", exit_price=73000.0)
+        closed_stock_pos = stock_tracker.close_position("STOCK-001", exit_price=73000.0, reason="TAKE_PROFIT")
         assert closed_stock_pos is not None
         assert closed_stock_pos.id == "STOCK-001"
         assert closed_stock_pos.exit_price == 73000.0
 
         # Close futures position (profitable exit)
-        closed_futures_pos = futures_tracker.close_position("FUTURES-001", exit_price=353000.0)
+        closed_futures_pos = futures_tracker.close_position("FUTURES-001", exit_price=353000.0, reason="TAKE_PROFIT")
         assert closed_futures_pos is not None
         assert closed_futures_pos.id == "FUTURES-001"
         assert closed_futures_pos.exit_price == 353000.0
@@ -628,55 +635,110 @@ class TestCrossAssetTrading:
         assert futures_tracker.get_position("FUTURES-001") is None
 
         # Verify remaining positions still tracked
-        assert len(stock_tracker.get_all_positions()) == 1
-        assert len(futures_tracker.get_all_positions()) == 1
+        assert len(stock_tracker.positions) == 1
+        assert len(futures_tracker.positions) == 1
 
         # ============================================
         # Phase 8: Portfolio P&L Aggregation
         # ============================================
         # Calculate total portfolio P&L across assets
         stock_total_pnl = sum(
-            pos.unrealized_pnl for pos in stock_tracker.get_all_positions()
+            pos.unrealized_pnl for pos in stock_tracker.positions
         )
         futures_total_pnl = sum(
-            pos.unrealized_pnl for pos in futures_tracker.get_all_positions()
+            pos.unrealized_pnl for pos in futures_tracker.positions
         )
         portfolio_total_pnl = stock_total_pnl + futures_total_pnl
 
         assert stock_total_pnl > 0, "Stock portfolio should be profitable"
-        assert futures_total_pnl > 0, "Futures portfolio should be profitable"
+        # Note: FUTURES-002 is SHORT and lost money when price rose from 351000 to 353000
+        assert futures_total_pnl < 0, "Remaining futures position (SHORT) should have loss"
+        # Overall portfolio should still be positive due to stock gains
         assert portfolio_total_pnl > 0, "Total portfolio should be profitable"
 
         # ============================================
         # Phase 9: Graceful Shutdown and Recovery
         # ============================================
+        # Re-publish updated positions to Redis after closing some
+        stock_publisher.publish_positions_update(
+            list(stock_tracker.positions),
+            throttle=0,  # Immediate flush
+        )
+        futures_publisher.publish_positions_update(
+            list(futures_tracker.positions),
+            throttle=0,  # Immediate flush
+        )
+
         # Simulate shutdown: positions should persist in Redis
-        stock_tracker_snapshot = stock_tracker.get_all_positions()
-        futures_tracker_snapshot = futures_tracker.get_all_positions()
+        stock_tracker_snapshot = stock_tracker.positions
+        futures_tracker_snapshot = futures_tracker.positions
 
         assert len(stock_tracker_snapshot) == 1
         assert len(futures_tracker_snapshot) == 1
 
         # Create new tracker instances (simulating process restart)
-        stock_tracker_recovered = PositionTracker(
-            asset_class="stock",
-            config=tracker_config,
-            redis_url=redis_url,
-        )
+        stock_tracker_recovered = PositionTracker(config=tracker_config)
+        futures_tracker_recovered = PositionTracker(config=tracker_config)
 
-        futures_tracker_recovered = PositionTracker(
-            asset_class="futures",
-            config=tracker_config,
-            redis_url=redis_url,
-        )
+        # Load positions from Redis using TradingStateReader
+        stock_reader_recovery = TradingStateReader(asset_class="stock")
+        futures_reader_recovery = TradingStateReader(asset_class="futures")
 
-        # Load positions from Redis
-        stock_tracker_recovered.load_from_redis()
-        futures_tracker_recovered.load_from_redis()
+        stock_positions_data = stock_reader_recovery.get_positions()
+        futures_positions_data = futures_reader_recovery.get_positions()
+
+        # Recover positions into trackers
+        for pos_data in stock_positions_data:
+            side_str = pos_data.get("side", "long")
+            side = PositionSide(side_str)
+            entry_time = datetime.fromisoformat(pos_data.get("entry_time", datetime.now().isoformat()))
+            entry_price = float(pos_data["entry_price"])
+            current_price = float(pos_data.get("current_price", entry_price))
+
+            pos = Position(
+                id=pos_data["id"],
+                code=pos_data["code"],
+                name=pos_data.get("name", ""),
+                side=side,
+                quantity=int(pos_data["quantity"]),
+                entry_price=entry_price,
+                entry_time=entry_time,
+                current_price=current_price,
+                highest_price=float(pos_data.get("highest_price", max(entry_price, current_price))),
+                lowest_price=float(pos_data.get("lowest_price", min(entry_price, current_price))),
+                state=PositionState(pos_data.get("state", "survival").lower()),
+                strategy=pos_data.get("strategy", ""),
+                fee_rate=float(pos_data.get("fee_rate", 0.003)),
+            )
+            stock_tracker_recovered.add_recovered_position(pos)
+
+        for pos_data in futures_positions_data:
+            side_str = pos_data.get("side", "long")
+            side = PositionSide(side_str)
+            entry_time = datetime.fromisoformat(pos_data.get("entry_time", datetime.now().isoformat()))
+            entry_price = float(pos_data["entry_price"])
+            current_price = float(pos_data.get("current_price", entry_price))
+
+            pos = Position(
+                id=pos_data["id"],
+                code=pos_data["code"],
+                name=pos_data.get("name", ""),
+                side=side,
+                quantity=int(pos_data["quantity"]),
+                entry_price=entry_price,
+                entry_time=entry_time,
+                current_price=current_price,
+                highest_price=float(pos_data.get("highest_price", max(entry_price, current_price))),
+                lowest_price=float(pos_data.get("lowest_price", min(entry_price, current_price))),
+                state=PositionState(pos_data.get("state", "survival").lower()),
+                strategy=pos_data.get("strategy", ""),
+                fee_rate=float(pos_data.get("fee_rate", 0.003)),
+            )
+            futures_tracker_recovered.add_recovered_position(pos)
 
         # Verify positions recovered
-        stock_recovered_positions = stock_tracker_recovered.get_all_positions()
-        futures_recovered_positions = futures_tracker_recovered.get_all_positions()
+        stock_recovered_positions = stock_tracker_recovered.positions
+        futures_recovered_positions = futures_tracker_recovered.positions
 
         assert len(stock_recovered_positions) == 1
         assert len(futures_recovered_positions) == 1
@@ -690,10 +752,7 @@ class TestCrossAssetTrading:
         assert recovered_futures_pos.code == "101S6000"
         assert recovered_futures_pos.strategy == "rl_mppo"
 
-        # ============================================
-        # Phase 10: Cleanup
-        # ============================================
-        r.close()
+        # Redis cleanup is handled by the fixture
 
     @pytest.mark.asyncio
     @pytest.mark.skipif(
@@ -817,14 +876,14 @@ class TestCrossAssetTrading:
         # Read stock positions
         stock_positions_read = stock_reader.get_positions()
         assert len(stock_positions_read) == 2
-        stock_ids_read = {pos["id"] for pos in stock_positions_read.values()}
+        stock_ids_read = {pos["id"] for pos in stock_positions_read}
         assert "STOCK-ISO-001" in stock_ids_read
         assert "STOCK-ISO-002" in stock_ids_read
 
         # Read futures positions
         futures_positions_read = futures_reader.get_positions()
         assert len(futures_positions_read) == 2
-        futures_ids_read = {pos["id"] for pos in futures_positions_read.values()}
+        futures_ids_read = {pos["id"] for pos in futures_positions_read}
         assert "FUTURES-ISO-001" in futures_ids_read
         assert "FUTURES-ISO-002" in futures_ids_read
 
