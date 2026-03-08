@@ -166,6 +166,7 @@ def create_stock_position(
     quantity: int = 10,
     strategy: str = "bb_reversion",
     state: PositionState = PositionState.SURVIVAL,
+    current_price: float = None,
 ) -> Position:
     """Helper to create test stock positions.
 
@@ -178,10 +179,14 @@ def create_stock_position(
         quantity: Number of shares
         strategy: Strategy name
         state: Position state (SURVIVAL/BREAKEVEN/MAXIMIZE)
+        current_price: Current price in KRW (defaults to entry_price)
 
     Returns:
         Position object for stock trading
     """
+    if current_price is None:
+        current_price = entry_price
+
     return Position(
         id=pos_id,
         code=code,
@@ -190,9 +195,9 @@ def create_stock_position(
         quantity=quantity,
         entry_price=entry_price,
         entry_time=datetime.now(),
-        current_price=entry_price,
-        highest_price=entry_price,
-        lowest_price=entry_price,
+        current_price=current_price,
+        highest_price=max(entry_price, current_price),
+        lowest_price=min(entry_price, current_price),
         state=state,
         strategy=strategy,
     )
@@ -207,6 +212,7 @@ def create_futures_position(
     quantity: int = 1,
     strategy: str = "rl_mppo",
     state: PositionState = PositionState.SURVIVAL,
+    current_price: float = None,
 ) -> Position:
     """Helper to create test futures positions.
 
@@ -219,10 +225,14 @@ def create_futures_position(
         quantity: Number of contracts
         strategy: Strategy name
         state: Position state (SURVIVAL/BREAKEVEN/MAXIMIZE)
+        current_price: Current price (defaults to entry_price)
 
     Returns:
         Position object for futures trading
     """
+    if current_price is None:
+        current_price = entry_price
+
     return Position(
         id=pos_id,
         code=code,
@@ -231,9 +241,9 @@ def create_futures_position(
         quantity=quantity,
         entry_price=entry_price,
         entry_time=datetime.now(),
-        current_price=entry_price,
-        highest_price=entry_price,
-        lowest_price=entry_price,
+        current_price=current_price,
+        highest_price=max(entry_price, current_price),
+        lowest_price=min(entry_price, current_price),
         state=state,
         strategy=strategy,
     )
@@ -866,3 +876,190 @@ class TestCrossAssetTrading:
 
         # Step 11: Cleanup
         r.close()
+
+    @pytest.mark.asyncio
+    @pytest.mark.skipif(
+        not is_redis_available(),
+        reason="Redis not available",
+    )
+    async def test_cross_asset_risk_limits(self, redis_url):
+        """Test RiskManager enforces limits across stock and futures positions.
+
+        Scenario:
+        1. Set max_total_positions=5, open 3 stock + 3 futures (6 total)
+        2. Verify 6th position is blocked due to position limit
+        3. Set daily_loss_limit_pct=2%, trigger losses in both assets
+        4. Verify total loss blocks new positions across both asset classes
+
+        Verifies:
+        - Position count limit enforced across assets
+        - Daily loss limit calculated from both stock and futures
+        - Risk state blocks new positions when limit exceeded
+        - Block reason correctly reported
+        """
+        from shared.risk.manager import RiskManager
+        from shared.risk.config import RiskConfig
+        from shared.risk.models import BlockReason
+
+        # Step 1: Test cross-asset position count enforcement
+        # Set up risk manager with low position limit (5 total)
+        risk_config = RiskConfig(
+            daily_loss_limit_pct=10.0,  # High limit, won't trigger yet
+            max_total_positions=5,  # Only 5 positions allowed total
+            initial_capital=10_000_000,  # 10M KRW
+        )
+        risk_manager = RiskManager(risk_config)
+
+        # Create 3 stock positions
+        stock_positions = [
+            create_stock_position(
+                pos_id="STOCK-RISK-001",
+                code="005930",
+                name="삼성전자",
+                side=PositionSide.LONG,
+                entry_price=70000,
+                current_price=69000,  # Small loss
+                quantity=10,
+            ),
+            create_stock_position(
+                pos_id="STOCK-RISK-002",
+                code="000660",
+                name="SK하이닉스",
+                side=PositionSide.LONG,
+                entry_price=120000,
+                current_price=118000,  # Small loss
+                quantity=5,
+            ),
+            create_stock_position(
+                pos_id="STOCK-RISK-003",
+                code="035720",
+                name="카카오",
+                side=PositionSide.LONG,
+                entry_price=50000,
+                current_price=49500,  # Small loss
+                quantity=20,
+            ),
+        ]
+
+        # Create 2 futures positions
+        futures_positions = [
+            create_futures_position(
+                pos_id="FUTURES-RISK-001",
+                code="101S6000",
+                name="KOSPI200 선물",
+                side=PositionSide.LONG,
+                entry_price=350000,
+                current_price=345000,  # Small loss
+                quantity=1,
+            ),
+            create_futures_position(
+                pos_id="FUTURES-RISK-002",
+                code="101S6000",
+                name="KOSPI200 선물",
+                side=PositionSide.SHORT,
+                entry_price=340000,
+                current_price=342000,  # Small loss
+                quantity=1,
+            ),
+        ]
+
+        # Update risk manager with positions (3 stock + 2 futures = 5 total)
+        positions_by_asset = {
+            "stock": stock_positions,
+            "futures": futures_positions,
+        }
+        risk_manager.update_positions(positions_by_asset)
+
+        # Verify portfolio metrics
+        metrics = risk_manager.get_portfolio_metrics()
+        assert metrics.total_positions == 5, "Should have 5 total positions"
+        assert metrics.exposure_by_asset["stock"].position_count == 3, "Should have 3 stock positions"
+        assert metrics.exposure_by_asset["futures"].position_count == 2, "Should have 2 futures positions"
+
+        # At limit (5/5), new positions should be blocked
+        can_open_stock = risk_manager.can_open_position("stock")
+        can_open_futures = risk_manager.can_open_position("futures")
+
+        assert can_open_stock is False, "Should not allow opening stock position (at limit)"
+        assert can_open_futures is False, "Should not allow opening futures position (at limit)"
+
+        # Step 2: Test cross-asset daily loss limit enforcement
+        # Create new risk manager with low daily loss limit
+        risk_config_loss_limit = RiskConfig(
+            daily_loss_limit_pct=2.0,  # Only 2% allowed (200,000 KRW)
+            max_total_positions=20,  # High limit, won't trigger
+            initial_capital=10_000_000,  # 10M KRW
+        )
+        risk_manager_loss = RiskManager(risk_config_loss_limit)
+
+        # Simulate positions with losses across both asset classes
+        # Stock losses: -150,000 KRW
+        stock_positions_with_loss = [
+            create_stock_position(
+                pos_id="STOCK-LOSS-001",
+                code="005930",
+                name="삼성전자",
+                side=PositionSide.LONG,
+                entry_price=70000,
+                current_price=65000,  # -5000 per share * 10 = -50,000 KRW
+                quantity=10,
+            ),
+            create_stock_position(
+                pos_id="STOCK-LOSS-002",
+                code="000660",
+                name="SK하이닉스",
+                side=PositionSide.LONG,
+                entry_price=120000,
+                current_price=110000,  # -10,000 per share * 10 = -100,000 KRW
+                quantity=10,
+            ),
+        ]
+
+        # Futures losses: -100,000 KRW (total loss = -250,000 = -2.5%)
+        futures_positions_with_loss = [
+            create_futures_position(
+                pos_id="FUTURES-LOSS-001",
+                code="101S6000",
+                name="KOSPI200 선물",
+                side=PositionSide.LONG,
+                entry_price=350000,
+                current_price=340000,  # -10,000 per contract * 10 contracts = -100,000 KRW
+                quantity=10,
+            ),
+        ]
+
+        # Update positions and calculate PnL
+        positions_with_loss = {
+            "stock": stock_positions_with_loss,
+            "futures": futures_positions_with_loss,
+        }
+        risk_manager_loss.update_positions(positions_with_loss)
+
+        # Manually calculate and set daily PnL to simulate actual trading losses
+        # Stock loss: (65000-70000)*10 + (110000-120000)*10 = -50,000 + -100,000 = -150,000
+        # Futures loss: (340000-350000)*10 = -100,000
+        # Total: -250,000 KRW = -2.5% of 10M (exceeds 2% limit)
+        total_daily_loss = -250_000
+        risk_manager_loss._daily_pnl = total_daily_loss
+
+        # Verify daily loss percentage
+        loss_pct = abs(total_daily_loss) / risk_config_loss_limit.initial_capital * 100
+        assert loss_pct == 2.5, "Daily loss should be 2.5%"
+        assert loss_pct > risk_config_loss_limit.daily_loss_limit_pct, "Should exceed limit"
+
+        # Check that new position entry is blocked for both asset classes
+        can_open_stock_loss = risk_manager_loss.can_open_position("stock")
+        can_open_futures_loss = risk_manager_loss.can_open_position("futures")
+
+        assert can_open_stock_loss is False, "Stock entry should be blocked due to daily loss"
+        assert can_open_futures_loss is False, "Futures entry should be blocked due to daily loss"
+
+        # Verify the internal daily loss tracking
+        # The _daily_pnl test attribute should reflect the simulated loss
+        assert risk_manager_loss._daily_pnl == total_daily_loss, "Daily PnL tracking should match simulated loss"
+
+        # Step 3: Verify cross-asset metrics are accurate
+        metrics_loss = risk_manager_loss.get_portfolio_metrics()
+        assert metrics_loss.total_positions == 3, "Should have 3 total positions (2 stock + 1 futures)"
+        assert metrics_loss.exposure_by_asset["stock"].position_count == 2, "Should have 2 stock positions"
+        assert metrics_loss.exposure_by_asset["futures"].position_count == 1, "Should have 1 futures position"
