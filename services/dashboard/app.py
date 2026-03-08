@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 
 from shared.api.cors import get_cors_config, load_api_config
+from shared.strategy.registry import register_builtin_components
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +88,9 @@ def create_app(
             "DASHBOARD_REQUIRE_AUTH=true but DASHBOARD_API_KEY is not set. "
             "All dashboard requests will be rejected."
         )
+
+    # Initialize strategy registries
+    register_builtin_components()
 
     app = FastAPI(
         title=title,
