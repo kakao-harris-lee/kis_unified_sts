@@ -7,6 +7,7 @@ import Trades from './pages/Trades';
 import Backtest from './pages/Backtest';
 import Experiments from './pages/Experiments';
 import StrategyConfig from './pages/StrategyConfig';
+import StrategyCreate from './pages/StrategyCreate';
 import ErrorBoundary from './components/ErrorBoundary';
 
 const queryClient = new QueryClient({
@@ -79,6 +80,7 @@ function App() {
                 <Route path="/backtest" element={<Backtest />} />
                 <Route path="/experiments" element={<Experiments />} />
                 <Route path="/strategies" element={<StrategyConfig />} />
+                <Route path="/strategies/new" element={<StrategyCreate />} />
               </Routes>
             </main>
           </div>

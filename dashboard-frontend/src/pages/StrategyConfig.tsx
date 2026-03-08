@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { useNavigate } from 'react-router-dom';
 import { strategiesApi } from '../api/client';
 import ErrorMessage from '../components/ErrorMessage';
 import TableSkeleton from '../components/TableSkeleton';
@@ -41,9 +42,9 @@ interface StrategyConfig {
 }
 
 function StrategyConfig() {
+  const navigate = useNavigate();
   const [assetFilter, setAssetFilter] = useState<'all' | 'stock' | 'futures'>('all');
   const [selectedStrategy, setSelectedStrategy] = useState<StrategyInfo | null>(null);
-  const [showCreateNew, setShowCreateNew] = useState(false);
 
   const {
     data: strategies,
@@ -84,8 +85,7 @@ function StrategyConfig() {
   });
 
   const handleCreateNew = () => {
-    setShowCreateNew(true);
-    setSelectedStrategy(null);
+    navigate('/strategies/new');
   };
 
   const formatParamValue = (value: unknown): string => {
@@ -144,10 +144,7 @@ function StrategyConfig() {
               {strategies.strategies.map((strategy) => (
                 <div
                   key={`${strategy.asset_class}-${strategy.name}`}
-                  onClick={() => {
-                    setSelectedStrategy(strategy);
-                    setShowCreateNew(false);
-                  }}
+                  onClick={() => setSelectedStrategy(strategy)}
                   className={`p-3 rounded cursor-pointer transition-colors ${
                     selectedStrategy?.name === strategy.name &&
                     selectedStrategy?.asset_class === strategy.asset_class
@@ -192,14 +189,7 @@ function StrategyConfig() {
 
         {/* Strategy Details */}
         <div className="lg:col-span-2 space-y-4">
-          {showCreateNew ? (
-            <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
-              <h3 className="text-lg font-medium mb-4">Create New Strategy</h3>
-              <div className="text-center text-gray-400 py-8">
-                Strategy creation form will be implemented in next subtask
-              </div>
-            </div>
-          ) : !selectedStrategy ? (
+          {!selectedStrategy ? (
             <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
               <div className="text-center text-gray-400 py-8">
                 Select a strategy to view details or click "Create New Strategy"
