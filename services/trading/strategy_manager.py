@@ -40,7 +40,10 @@ from shared.strategy.registry import (
 )
 
 if TYPE_CHECKING:
-    pass
+    from shared.llm.market_context import MarketContext
+
+# Local import to avoid circular dependencies
+from services.trading.llm_context_provider import LLMContextProvider
 
 logger = logging.getLogger(__name__)
 
@@ -257,6 +260,9 @@ class StrategyManager:
         else:
             self.cost_filter = None
 
+        # LLM context provider for market analysis
+        self._llm_context_provider = LLMContextProvider(asset_class=asset_class)
+
         logger.info(
             f"StrategyManager initialized: {len(self.strategies)} strategies "
             f"for {asset_class}, cost_filter={'enabled' if self.cost_filter else 'disabled'}"
@@ -321,6 +327,18 @@ class StrategyManager:
         """
         if not self.strategies:
             return []
+
+        # Fetch LLM market context and inject into EntryContext
+        market_context = self._llm_context_provider.get_context()
+        context.market_context = market_context
+
+        if market_context:
+            logger.debug(
+                f"LLM market context injected: regime={market_context.regime}, "
+                f"risk_score={market_context.risk_score:.2f}"
+            )
+        else:
+            logger.debug("No LLM market context available - strategies will proceed without it")
 
         signals = []
 
@@ -397,6 +415,17 @@ class StrategyManager:
         if not positions or not self.strategies:
             return []
 
+        # Fetch LLM market context and inject into ExitContext
+        market_context = self._llm_context_provider.get_context()
+
+        if market_context:
+            logger.debug(
+                f"LLM market context injected for exits: regime={market_context.regime}, "
+                f"risk_score={market_context.risk_score:.2f}"
+            )
+        else:
+            logger.debug("No LLM market context available for exits - strategies will proceed without it")
+
         # Pre-group positions by strategy (O(n) instead of O(n*m))
         positions_by_strategy: dict[str, list[Position]] = {}
         for position in positions:
@@ -415,6 +444,7 @@ class StrategyManager:
                     positions_by_strategy.get(strategy.name, []),
                     market_data,
                     market_state,
+                    market_context,
                 )
                 for strategy in self.strategies.values()
             ]
@@ -427,7 +457,7 @@ class StrategyManager:
             for strategy in self.strategies.values():
                 strategy_positions = positions_by_strategy.get(strategy.name, [])
                 result = await self._check_exits_safe(
-                    strategy, strategy_positions, market_data, market_state
+                    strategy, strategy_positions, market_data, market_state, market_context
                 )
                 signals.extend(result)
 
@@ -447,6 +477,7 @@ class StrategyManager:
         strategy_positions: list[Position],
         market_data: dict[str, Any],
         market_state: MarketStateProtocol | None,
+        market_context: MarketContext | None,
     ) -> list[ExitSignal]:
         """Check exits with exception handling.
 
@@ -455,6 +486,7 @@ class StrategyManager:
             strategy_positions: Pre-filtered positions for this strategy
             market_data: Current market data
             market_state: Market regime
+            market_context: LLM-derived market analysis context
 
         Returns:
             List of exit signals
@@ -479,6 +511,7 @@ class StrategyManager:
                     position=position,
                     market_data=market_data,
                     market_state=market_state,
+                    market_context=market_context,
                     timestamp=datetime.now(),
                 )
                 should_exit, signal = await strategy.check_exit(context)

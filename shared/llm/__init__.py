@@ -30,6 +30,7 @@ from .data_classes import (
     StockTradingPlan,
     TechnicalAnalysis,
 )
+from .market_context import MarketContext
 from .krx_api_client import KRXOpenAPIClient
 from .llm_analyzer import (
     LLMAnalyzer,
@@ -96,6 +97,7 @@ __all__ = [
     "BondIndexData",
     "IndexData",
     "MarketAnalysis",
+    "MarketContext",
     # Data Classes - Legacy
     "AnalysisResult",
     "StockTradingPlan",

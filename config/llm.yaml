@@ -84,6 +84,13 @@ futures:
   stop_loss_pt: 3.0         # 손절 포인트
   take_profit_pt: 5.0       # 익절 포인트
 
+market_context_publisher:
+  # LLM 시장 분석 결과를 Redis에 주기적으로 발행
+  enabled: true                      # 백그라운드 발행 활성화
+  run_on_startup: true               # 시작 시 즉시 분석 실행
+  analysis_interval_minutes: 30      # 분석 실행 주기 (분)
+  redis_ttl_seconds: 7200            # Redis 캐시 TTL (2시간)
+
 notification:
   # 알림 시간대 설정
   start_time: "08:30"
