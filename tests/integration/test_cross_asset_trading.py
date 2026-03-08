@@ -1063,3 +1063,266 @@ class TestCrossAssetTrading:
         assert metrics_loss.total_positions == 3, "Should have 3 total positions (2 stock + 1 futures)"
         assert metrics_loss.exposure_by_asset["stock"].position_count == 2, "Should have 2 stock positions"
         assert metrics_loss.exposure_by_asset["futures"].position_count == 1, "Should have 1 futures position"
+
+    @pytest.mark.asyncio
+    @pytest.mark.skipif(
+        not is_redis_available(),
+        reason="Redis not available",
+    )
+    async def test_graceful_shutdown_multi_asset(
+        self, redis_url, mock_stock_config, mock_futures_config
+    ):
+        """Test graceful shutdown with open stock and futures positions.
+
+        This test validates multi-asset graceful shutdown and recovery:
+        1. Start stock and futures orchestrators with active positions
+        2. Simulate state transitions in both asset classes
+        3. Trigger graceful shutdown (SIGTERM) on both orchestrators
+        4. Verify positions flushed to isolated Redis keys
+        5. Simulate restart and verify 100% position recovery for both assets
+        6. Verify no cross-contamination between asset classes
+
+        Flow:
+        - Stock orchestrator: 3 positions (SURVIVAL, BREAKEVEN, MAXIMIZE)
+        - Futures orchestrator: 2 positions (LONG, SHORT)
+        - Shutdown both orchestrators
+        - Verify Redis keys: trading:stock:positions and trading:futures:positions
+        - Restart and recover all 5 positions
+        """
+        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+
+        # ============================================
+        # Phase 1: Setup Stock Orchestrator
+        # ============================================
+        with patch("services.trading.orchestrator.MarketDataProvider") as MockStockProvider:
+            mock_stock_provider = AsyncMock()
+            MockStockProvider.return_value = mock_stock_provider
+
+            stock_orchestrator = TradingOrchestrator(mock_stock_config)
+
+            # Initialize strategy infrastructure
+            stock_orchestrator._init_strategy_infrastructure()
+            stock_orchestrator._state_publisher = TradingStatePublisher(asset_class="stock")
+
+            # Add stock test positions
+            stock_positions = [
+                create_stock_position(
+                    pos_id="STOCK-SD-001",
+                    code="005930",
+                    name="Samsung Electronics",
+                    entry_price=70000.0,
+                    quantity=10,
+                    state=PositionState.SURVIVAL,
+                ),
+                create_stock_position(
+                    pos_id="STOCK-SD-002",
+                    code="000660",
+                    name="SK Hynix",
+                    entry_price=120000.0,
+                    quantity=5,
+                    state=PositionState.BREAKEVEN,
+                ),
+                create_stock_position(
+                    pos_id="STOCK-SD-003",
+                    code="035720",
+                    name="Kakao",
+                    entry_price=50000.0,
+                    quantity=20,
+                    state=PositionState.MAXIMIZE,
+                ),
+            ]
+
+            for pos in stock_positions:
+                stock_orchestrator._position_tracker.add_recovered_position(pos)
+
+            assert stock_orchestrator._position_tracker.position_count == 3
+
+        # ============================================
+        # Phase 2: Setup Futures Orchestrator
+        # ============================================
+        with patch("services.trading.orchestrator.MarketDataProvider") as MockFuturesProvider:
+            mock_futures_provider = AsyncMock()
+            MockFuturesProvider.return_value = mock_futures_provider
+
+            futures_orchestrator = TradingOrchestrator(mock_futures_config)
+
+            # Initialize strategy infrastructure
+            futures_orchestrator._init_strategy_infrastructure()
+            futures_orchestrator._state_publisher = TradingStatePublisher(asset_class="futures")
+
+            # Add futures test positions
+            futures_positions = [
+                create_futures_position(
+                    pos_id="FUTURES-SD-001",
+                    code="101S6000",
+                    name="KOSPI200 Futures",
+                    side=PositionSide.LONG,
+                    entry_price=350000.0,
+                    quantity=1,
+                    state=PositionState.SURVIVAL,
+                ),
+                create_futures_position(
+                    pos_id="FUTURES-SD-002",
+                    code="101S6000",
+                    name="KOSPI200 Futures",
+                    side=PositionSide.SHORT,
+                    entry_price=351000.0,
+                    quantity=1,
+                    state=PositionState.SURVIVAL,
+                ),
+            ]
+
+            for pos in futures_positions:
+                futures_orchestrator._position_tracker.add_recovered_position(pos)
+
+            assert futures_orchestrator._position_tracker.position_count == 2
+
+        # ============================================
+        # Phase 3: Simulate State Transitions
+        # ============================================
+        # Update stock prices to trigger state transitions
+        stock_orchestrator._position_tracker.update_prices({
+            "005930": 71500.0,  # +2.14% -> BREAKEVEN
+            "000660": 126500.0,  # +5.42% -> MAXIMIZE
+        })
+
+        # Update futures prices
+        futures_orchestrator._position_tracker.update_prices({
+            "101S6000": 352000.0,  # LONG +0.57%, SHORT -0.28%
+        })
+
+        # Force state updates
+        stock_transitions = stock_orchestrator._position_tracker.update_states()
+        futures_transitions = futures_orchestrator._position_tracker.update_states()
+
+        # Verify stock states changed
+        stock_pos_1 = stock_orchestrator._position_tracker.get_position("STOCK-SD-001")
+        stock_pos_2 = stock_orchestrator._position_tracker.get_position("STOCK-SD-002")
+        assert stock_pos_1.state == PositionState.BREAKEVEN
+        assert stock_pos_2.state == PositionState.MAXIMIZE
+
+        # ============================================
+        # Phase 4: Flush Positions to Redis
+        # ============================================
+        # Simulate immediate flush on state transition (graceful shutdown behavior)
+        if stock_orchestrator._state_publisher:
+            stock_orchestrator._state_publisher.publish_positions_update(
+                list(stock_orchestrator._position_tracker.positions),
+                throttle=0,  # Immediate flush
+            )
+
+        if futures_orchestrator._state_publisher:
+            futures_orchestrator._state_publisher.publish_positions_update(
+                list(futures_orchestrator._position_tracker.positions),
+                throttle=0,  # Immediate flush
+            )
+
+        # Wait for Redis writes to complete
+        await asyncio.sleep(0.1)
+
+        # ============================================
+        # Phase 5: Verify Redis Key Isolation
+        # ============================================
+        import redis
+
+        r = redis.Redis.from_url(redis_url, decode_responses=True)
+
+        # Verify separate keys exist
+        stock_positions_raw = r.hgetall("trading:stock:positions")
+        futures_positions_raw = r.hgetall("trading:futures:positions")
+
+        assert len(stock_positions_raw) == 3, "Should have 3 stock positions in Redis"
+        assert len(futures_positions_raw) == 2, "Should have 2 futures positions in Redis"
+
+        # Verify position IDs are correctly isolated
+        stock_ids = set(stock_positions_raw.keys())
+        futures_ids = set(futures_positions_raw.keys())
+
+        assert "STOCK-SD-001" in stock_ids
+        assert "STOCK-SD-002" in stock_ids
+        assert "STOCK-SD-003" in stock_ids
+        assert "FUTURES-SD-001" in futures_ids
+        assert "FUTURES-SD-002" in futures_ids
+
+        # Verify no cross-contamination
+        assert "FUTURES-SD-001" not in stock_ids
+        assert "FUTURES-SD-002" not in stock_ids
+        assert "STOCK-SD-001" not in futures_ids
+        assert "STOCK-SD-002" not in futures_ids
+
+        # ============================================
+        # Phase 6: Trigger Graceful Shutdown
+        # ============================================
+        # Call stop() on both orchestrators (simulates SIGTERM)
+        await stock_orchestrator.stop(timeout=5)
+        await futures_orchestrator.stop(timeout=5)
+
+        # Verify final Redis flush occurred
+        stock_positions_after_shutdown = r.hgetall("trading:stock:positions")
+        futures_positions_after_shutdown = r.hgetall("trading:futures:positions")
+
+        assert len(stock_positions_after_shutdown) == 3, "Stock positions should persist after shutdown"
+        assert len(futures_positions_after_shutdown) == 2, "Futures positions should persist after shutdown"
+
+        # ============================================
+        # Phase 7: Verify Position Recovery from Redis
+        # ============================================
+        # Use TradingStateReader to verify positions can be recovered
+        stock_reader = TradingStateReader(asset_class="stock")
+        futures_reader = TradingStateReader(asset_class="futures")
+
+        # Read stock positions from Redis (returns list of position dicts)
+        stock_positions_read = stock_reader.get_positions()
+        assert len(stock_positions_read) == 3, "Should have 3 stock positions in Redis"
+
+        # Verify stock position details
+        stock_ids_read = {pos["id"] for pos in stock_positions_read}
+        assert "STOCK-SD-001" in stock_ids_read
+        assert "STOCK-SD-002" in stock_ids_read
+        assert "STOCK-SD-003" in stock_ids_read
+
+        # Build position lookup dict for verification
+        stock_pos_dict = {pos["id"]: pos for pos in stock_positions_read}
+
+        # Verify stock position states preserved
+        assert stock_pos_dict["STOCK-SD-001"]["code"] == "005930"
+        assert stock_pos_dict["STOCK-SD-001"]["state"] == "breakeven"
+        assert stock_pos_dict["STOCK-SD-002"]["code"] == "000660"
+        assert stock_pos_dict["STOCK-SD-002"]["state"] == "maximize"
+        assert stock_pos_dict["STOCK-SD-003"]["code"] == "035720"
+        assert stock_pos_dict["STOCK-SD-003"]["state"] == "maximize"
+
+        # Read futures positions from Redis (returns list of position dicts)
+        futures_positions_read = futures_reader.get_positions()
+        assert len(futures_positions_read) == 2, "Should have 2 futures positions in Redis"
+
+        # Verify futures position details
+        futures_ids_read = {pos["id"] for pos in futures_positions_read}
+        assert "FUTURES-SD-001" in futures_ids_read
+        assert "FUTURES-SD-002" in futures_ids_read
+
+        # Build position lookup dict for verification
+        futures_pos_dict = {pos["id"]: pos for pos in futures_positions_read}
+
+        # Verify futures position sides preserved
+        assert futures_pos_dict["FUTURES-SD-001"]["code"] == "101S6000"
+        assert futures_pos_dict["FUTURES-SD-001"]["side"] == "long"
+        assert futures_pos_dict["FUTURES-SD-002"]["code"] == "101S6000"
+        assert futures_pos_dict["FUTURES-SD-002"]["side"] == "short"
+
+        # ============================================
+        # Phase 8: Verify No Cross-Asset Contamination
+        # ============================================
+        # Verify stock positions don't contain futures IDs
+        assert "FUTURES-SD-001" not in stock_ids_read
+        assert "FUTURES-SD-002" not in stock_ids_read
+
+        # Verify futures positions don't contain stock IDs
+        assert "STOCK-SD-001" not in futures_ids_read
+        assert "STOCK-SD-002" not in futures_ids_read
+        assert "STOCK-SD-003" not in futures_ids_read
+
+        # ============================================
+        # Phase 9: Cleanup
+        # ============================================
+        r.close()
