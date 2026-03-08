@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import logging
 import os
+import subprocess
 import tempfile
 from datetime import datetime
 from pathlib import Path
@@ -287,6 +288,24 @@ class ModelRegistry:
             )
             logger.info(f"Created new registered model: {model_name}")
 
+    def _get_git_sha(self) -> str:
+        """Get current git commit SHA for audit trail
+
+        Returns:
+            Git SHA (short form) or 'unknown' if not in a git repo
+        """
+        try:
+            result = subprocess.run(
+                ["git", "rev-parse", "--short", "HEAD"],
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=5,
+            )
+            return result.stdout.strip()
+        except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+            return "unknown"
+
     def register_model(
         self,
         model_path: str | Path,
@@ -350,12 +369,23 @@ class ModelRegistry:
 
             # Add metadata tags
             version_num = model_version.version
+            git_sha = self._get_git_sha()
+
+            # Core metadata
             self.client.set_model_version_tag(
                 self.model_name,
                 version_num,
                 "registered_at",
                 datetime.now().isoformat(),
             )
+            self.client.set_model_version_tag(
+                self.model_name,
+                version_num,
+                "git_sha",
+                git_sha,
+            )
+
+            # Performance metrics
             self.client.set_model_version_tag(
                 self.model_name,
                 version_num,
@@ -375,6 +405,17 @@ class ModelRegistry:
                 str(metrics.get("max_dd", "N/A")),
             )
 
+            # Additional metrics if available
+            for metric_key in ["total_trades", "profit_factor", "avg_trade_return"]:
+                if metric_key in metrics:
+                    self.client.set_model_version_tag(
+                        self.model_name,
+                        version_num,
+                        metric_key,
+                        str(metrics[metric_key]),
+                    )
+
+            # Custom metadata
             if metadata:
                 for key, value in metadata.items():
                     self.client.set_model_version_tag(
@@ -524,12 +565,27 @@ class ModelRegistry:
                 stage,
             )
 
-            # Add promotion timestamp
+            # Add promotion metadata with git SHA for audit trail
+            git_sha = self._get_git_sha()
+            promotion_timestamp = datetime.now().isoformat()
+
             self.client.set_model_version_tag(
                 self.model_name,
                 str(version),
                 f"promoted_to_{stage.lower()}_at",
-                datetime.now().isoformat(),
+                promotion_timestamp,
+            )
+            self.client.set_model_version_tag(
+                self.model_name,
+                str(version),
+                f"promoted_to_{stage.lower()}_git_sha",
+                git_sha,
+            )
+            self.client.set_model_version_tag(
+                self.model_name,
+                str(version),
+                "last_promotion_stage",
+                stage,
             )
 
             logger.info(f"Promoted model version {version} to {stage}")
@@ -581,23 +637,53 @@ class ModelRegistry:
                 "Production",
             )
 
-            # Add rollback tags
+            # Add comprehensive rollback tags for audit trail
+            rollback_timestamp = datetime.now().isoformat()
+            git_sha = self._get_git_sha()
+
+            # Tag restored model
             self.client.set_model_version_tag(
                 self.model_name,
                 previous.version,
                 "rollback_at",
-                datetime.now().isoformat(),
+                rollback_timestamp,
             )
+            self.client.set_model_version_tag(
+                self.model_name,
+                previous.version,
+                "rollback_git_sha",
+                git_sha,
+            )
+            self.client.set_model_version_tag(
+                self.model_name,
+                previous.version,
+                "rollback_from_version",
+                current["version"],
+            )
+
+            # Tag demoted model
             self.client.set_model_version_tag(
                 self.model_name,
                 current["version"],
                 "demoted_at",
-                datetime.now().isoformat(),
+                rollback_timestamp,
+            )
+            self.client.set_model_version_tag(
+                self.model_name,
+                current["version"],
+                "demoted_git_sha",
+                git_sha,
+            )
+            self.client.set_model_version_tag(
+                self.model_name,
+                current["version"],
+                "rollback_to_version",
+                previous.version,
             )
 
             logger.info(
                 f"Rolled back from version {current['version']} "
-                f"to version {previous.version}"
+                f"to version {previous.version} (git SHA: {git_sha})"
             )
             return True
 

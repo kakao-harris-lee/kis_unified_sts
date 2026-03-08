@@ -22,7 +22,10 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import subprocess
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -249,6 +252,16 @@ class RetrainingPipeline:
                     f"{len(test_days) if test_days else 0} test days"
                 )
 
+            # Extract date ranges for audit trail
+            train_start, train_end = self._extract_date_range(train_days, train_prices)
+            test_start, test_end = self._extract_date_range(
+                test_days if test_days else [],
+                test_prices if test_prices else []
+            )
+
+            logger.info(f"Training data: {train_start} to {train_end} ({len(train_days)} days)")
+            logger.info(f"Test data: {test_start} to {test_end} ({len(test_days) if test_days else 0} days)")
+
             # Step 2: Train challenger model
             logger.info("Step 1/3: Training challenger model...")
             challenger_model = self.train_challenger(
@@ -279,11 +292,52 @@ class RetrainingPipeline:
             }
 
             if HAS_MLFLOW:
+                # Log comprehensive parameters for audit trail
+                git_sha = self._get_git_sha()
                 mlflow.log_params({
+                    "git_sha": git_sha,
+                    "pipeline_timestamp": datetime.now().isoformat(),
                     "train_days_count": len(train_days),
                     "test_days_count": len(test_days) if test_days else 0,
+                    "train_data_start": train_start,
+                    "train_data_end": train_end,
+                    "test_data_start": test_start,
+                    "test_data_end": test_end,
                     "promoted": promoted,
+                    "promotion_reason": comparison.get("reason", "unknown"),
                 })
+
+                # Log challenger metrics
+                challenger_metrics = comparison.get("challenger", {})
+                if challenger_metrics:
+                    mlflow.log_metrics({
+                        "challenger_sharpe": challenger_metrics.get("sharpe_ratio", 0.0),
+                        "challenger_win_rate": challenger_metrics.get("win_rate_pct", 0.0),
+                        "challenger_max_dd": challenger_metrics.get("max_drawdown_pct", 0.0),
+                        "challenger_total_trades": challenger_metrics.get("total_trades", 0),
+                        "challenger_profit_factor": challenger_metrics.get("profit_factor", 0.0),
+                    })
+
+                # Log champion metrics if available
+                champion_metrics = comparison.get("champion")
+                if champion_metrics:
+                    mlflow.log_metrics({
+                        "champion_sharpe": champion_metrics.get("sharpe_ratio", 0.0),
+                        "champion_win_rate": champion_metrics.get("win_rate_pct", 0.0),
+                        "champion_max_dd": champion_metrics.get("max_drawdown_pct", 0.0),
+                    })
+
+                    # Log improvement metrics
+                    improvement = comparison.get("improvement", {})
+                    if improvement:
+                        mlflow.log_metrics({
+                            "sharpe_improvement": improvement.get("sharpe_improvement", 0.0),
+                            "win_rate_improvement": improvement.get("win_rate_improvement", 0.0),
+                            "max_dd_improvement": improvement.get("max_dd_improvement", 0.0),
+                        })
+
+                # Log comparison as artifact for full audit trail
+                self._log_comparison_artifact(comparison, "pipeline_comparison.json")
 
             logger.info("=" * 80)
             if promoted:
@@ -357,12 +411,23 @@ class RetrainingPipeline:
             except MlflowException as e:
                 logger.warning(f"Failed to set MLflow experiment: {e}")
 
+        # Extract training data date range for audit trail
+        train_start, train_end = self._extract_date_range(train_days, train_prices)
+        git_sha = self._get_git_sha()
+
+        logger.info(f"Training data: {train_start} to {train_end} ({len(train_days)} days)")
+        logger.info(f"Git SHA: {git_sha}")
+
         # Collect training metadata
         training_params = {
+            "git_sha": git_sha,
+            "training_timestamp": datetime.now().isoformat(),
             "pipeline_version": version,
             "algo": "mppo",
             "model_type": "challenger",
             "n_train_days": len(train_days) if train_days else 0,
+            "train_data_start": train_start,
+            "train_data_end": train_end,
             "has_aux_features": train_aux is not None,
             **{
                 k: v
@@ -693,8 +758,31 @@ class RetrainingPipeline:
         if not should_promote:
             logger.info(f"Promotion rejected: {reason}")
             if HAS_MLFLOW:
-                mlflow.log_param("promotion_decision", "rejected")
-                mlflow.log_param("rejection_reason", reason)
+                git_sha = self._get_git_sha()
+                mlflow.log_params({
+                    "promotion_decision": "rejected",
+                    "rejection_reason": reason,
+                    "rejection_timestamp": datetime.now().isoformat(),
+                    "git_sha": git_sha,
+                })
+
+                # Log rejection metrics for audit trail
+                mlflow.log_metrics({
+                    "rejected_sharpe": challenger_metrics.get("sharpe_ratio", 0.0),
+                    "rejected_win_rate": challenger_metrics.get("win_rate_pct", 0.0),
+                    "rejected_max_dd": challenger_metrics.get("max_drawdown_pct", 0.0),
+                })
+
+                # Log rejection decision as artifact
+                rejection_report = {
+                    "decision": "rejected",
+                    "reason": reason,
+                    "timestamp": datetime.now().isoformat(),
+                    "git_sha": git_sha,
+                    "challenger_metrics": challenger_metrics,
+                    "champion_metrics": champion_metrics,
+                }
+                self._log_comparison_artifact(rejection_report, "rejection_decision.json")
 
             # Send rejection notification
             self._send_rejection_notification(
@@ -757,11 +845,41 @@ class RetrainingPipeline:
             if promotion_success:
                 logger.info(f"✓ Model version {model_version} promoted to {target_stage}")
                 if HAS_MLFLOW:
-                    mlflow.log_param("promotion_decision", "approved")
-                    mlflow.log_param("promoted_version", model_version)
-                    mlflow.log_param("promoted_stage", target_stage)
-                    mlflow.log_param("promotion_reason", reason)
-                    mlflow.log_param("skip_paper_trading", skip_paper_trading)
+                    git_sha = self._get_git_sha()
+                    mlflow.log_params({
+                        "promotion_decision": "approved",
+                        "promoted_version": model_version,
+                        "promoted_stage": target_stage,
+                        "promotion_reason": reason,
+                        "skip_paper_trading": skip_paper_trading,
+                        "promotion_timestamp": datetime.now().isoformat(),
+                        "git_sha": git_sha,
+                    })
+
+                    # Log detailed metrics for audit trail
+                    mlflow.log_metrics({
+                        "promoted_sharpe": challenger_metrics.get("sharpe_ratio", 0.0),
+                        "promoted_win_rate": challenger_metrics.get("win_rate_pct", 0.0),
+                        "promoted_max_dd": challenger_metrics.get("max_drawdown_pct", 0.0),
+                        "promoted_total_trades": challenger_metrics.get("total_trades", 0),
+                        "promoted_profit_factor": challenger_metrics.get("profit_factor", 0.0),
+                    })
+
+                    # Log promotion decision as artifact
+                    promotion_report = {
+                        "decision": "approved",
+                        "version": model_version,
+                        "stage": target_stage,
+                        "reason": reason,
+                        "timestamp": datetime.now().isoformat(),
+                        "git_sha": git_sha,
+                        "challenger_metrics": challenger_metrics,
+                        "champion_metrics": champion_metrics,
+                        "skip_paper_trading": skip_paper_trading,
+                        "requires_paper_validation": not skip_paper_trading,
+                        "paper_trading_days_required": paper_days if not skip_paper_trading else 0,
+                    }
+                    self._log_comparison_artifact(promotion_report, "promotion_decision.json")
 
                 # Send appropriate notification
                 if target_stage == "Staging":
@@ -1378,13 +1496,19 @@ class RetrainingPipeline:
                 mlflow.set_experiment(experiment_name)
                 mlflow.start_run(run_name=f"rollback_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
 
+                git_sha = self._get_git_sha()
+
                 # Log rollback metadata
                 mlflow.log_params({
+                    "git_sha": git_sha,
                     "rollback_triggered": True,
                     "rollback_timestamp": datetime.now().isoformat(),
                     "demoted_version": current_champion["version"],
                     "restored_version": previous_champion["version"],
                     "rollback_reason_count": len(rollback_reasons),
+                    "rollback_sharpe_threshold": sharpe_threshold,
+                    "rollback_win_rate_threshold": win_rate_threshold,
+                    "rollback_max_dd_threshold": max_dd_threshold,
                 })
 
                 # Log performance comparison
@@ -1392,14 +1516,52 @@ class RetrainingPipeline:
                     "current_sharpe": current_metrics["sharpe_ratio"],
                     "current_win_rate": current_metrics["win_rate_pct"],
                     "current_max_dd": current_metrics["max_drawdown_pct"],
+                    "current_total_trades": current_metrics.get("total_trades", 0),
+                    "current_profit_factor": current_metrics.get("profit_factor", 0.0),
                     "previous_sharpe": previous_sharpe,
                     "previous_win_rate": previous_win_rate,
                     "previous_max_dd": previous_max_dd,
+                    "sharpe_degradation_pct": (
+                        (current_metrics["sharpe_ratio"] / previous_sharpe - 1.0) * 100
+                        if previous_sharpe > 0 else 0.0
+                    ),
+                    "win_rate_degradation_pct": (
+                        (current_metrics["win_rate_pct"] / previous_win_rate - 1.0) * 100
+                        if previous_win_rate > 0 else 0.0
+                    ),
                 })
 
                 # Log rollback reasons
                 for i, reason in enumerate(rollback_reasons):
                     mlflow.log_param(f"rollback_reason_{i+1}", reason)
+
+                # Log comprehensive rollback report as artifact
+                rollback_report = {
+                    "event": "rollback",
+                    "timestamp": datetime.now().isoformat(),
+                    "git_sha": git_sha,
+                    "demoted_version": current_champion["version"],
+                    "restored_version": previous_champion["version"],
+                    "reasons": rollback_reasons,
+                    "thresholds": {
+                        "sharpe_threshold": sharpe_threshold,
+                        "win_rate_threshold": win_rate_threshold,
+                        "max_dd_threshold": max_dd_threshold,
+                    },
+                    "current_model": {
+                        "version": current_champion["version"],
+                        "metrics": current_metrics,
+                    },
+                    "previous_model": {
+                        "version": previous_champion["version"],
+                        "metrics": {
+                            "sharpe_ratio": previous_sharpe,
+                            "win_rate_pct": previous_win_rate,
+                            "max_drawdown_pct": previous_max_dd,
+                        },
+                    },
+                }
+                self._log_comparison_artifact(rollback_report, "rollback_report.json")
 
             except MlflowException as e:
                 logger.warning(f"MLflow logging failed: {e}")
@@ -1798,6 +1960,93 @@ class RetrainingPipeline:
 
         except Exception as e:
             logger.warning(f"Failed to send staging rejection notification: {e}")
+
+    def _get_git_sha(self) -> str:
+        """Get current git commit SHA for versioning
+
+        Returns:
+            Git SHA (short form) or 'unknown' if not in a git repo
+        """
+        try:
+            result = subprocess.run(
+                ["git", "rev-parse", "--short", "HEAD"],
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=5,
+            )
+            return result.stdout.strip()
+        except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+            return "unknown"
+
+    def _extract_date_range(
+        self,
+        days: list[np.ndarray],
+        prices: list[np.ndarray],
+    ) -> tuple[str, str]:
+        """Extract start and end dates from daily episode data
+
+        Args:
+            days: List of daily feature arrays
+            prices: List of daily price arrays
+
+        Returns:
+            Tuple of (start_date, end_date) in YYYY-MM-DD format
+        """
+        if not days or len(days) == 0:
+            return ("unknown", "unknown")
+
+        try:
+            # Prices array has datetime info - reconstruct dates from indices
+            # Use config dates if available
+            start_date = self.data_config.get("start_date", "unknown")
+            end_date = self.data_config.get("end_date", "unknown")
+
+            # If dates are timestamps, convert them
+            if start_date != "unknown" and hasattr(pd, "to_datetime"):
+                start_date = pd.to_datetime(start_date).strftime("%Y-%m-%d")
+            if end_date != "unknown" and hasattr(pd, "to_datetime"):
+                end_date = pd.to_datetime(end_date).strftime("%Y-%m-%d")
+
+            return (str(start_date), str(end_date))
+        except Exception as e:
+            logger.warning(f"Failed to extract date range: {e}")
+            return ("unknown", "unknown")
+
+    def _log_comparison_artifact(
+        self,
+        comparison: dict[str, Any],
+        artifact_name: str = "model_comparison.json",
+    ) -> None:
+        """Log comparison report as MLflow artifact
+
+        Args:
+            comparison: Comparison results dict
+            artifact_name: Name for the artifact file
+        """
+        if not HAS_MLFLOW:
+            return
+
+        try:
+            # Create temporary file with comparison data
+            with tempfile.NamedTemporaryFile(
+                mode='w',
+                suffix='.json',
+                delete=False,
+                prefix='comparison_'
+            ) as f:
+                json.dump(comparison, f, indent=2, default=str)
+                temp_path = f.name
+
+            # Log as artifact
+            mlflow.log_artifact(temp_path, artifact_path="comparisons")
+            logger.debug(f"Logged comparison artifact: {artifact_name}")
+
+            # Clean up temp file
+            Path(temp_path).unlink(missing_ok=True)
+
+        except Exception as e:
+            logger.warning(f"Failed to log comparison artifact: {e}")
 
     def _load_data(self) -> tuple[
         list[np.ndarray],
