@@ -99,26 +99,7 @@ class DailyBacktestAdapter:
         if self._regime_detection_enabled:
             try:
                 regime_config_dict = ConfigLoader.load("ml/regime_adaptive.yaml")
-                detector_params = regime_config_dict.get("detector", {})
-                lookback = detector_params.get("lookback", {})
-                thresholds = detector_params.get("thresholds", {})
-
-                regime_config = AdaptiveRegimeConfig(
-                    mfi_bull_threshold=thresholds.get("mfi", {}).get("neutral_upper", 60.0),
-                    mfi_bear_threshold=thresholds.get("mfi", {}).get("neutral_lower", 40.0),
-                    mfi_period=lookback.get("mfi_period", 14),
-                    adx_strong_trend=thresholds.get("adx", {}).get("strong_trend", 25.0),
-                    adx_weak_trend=thresholds.get("adx", {}).get("weak_trend", 20.0),
-                    adx_period=lookback.get("adx_period", 14),
-                    atr_period=lookback.get("atr_period", 14),
-                    atr_high_volatility=thresholds.get("volatility", {}).get("high", 0.025),
-                    atr_low_volatility=thresholds.get("volatility", {}).get("low", 0.015),
-                    sma_fast=lookback.get("sma_short", 10),
-                    sma_slow=lookback.get("sma_long", 50),
-                    trend_threshold=thresholds.get("trend", {}).get("bullish_threshold", 0.01),
-                    confidence_threshold=detector_params.get("confidence", {}).get("min_confidence", 0.7),
-                    min_bars=lookback.get("min_bars", 50),
-                )
+                regime_config = AdaptiveRegimeConfig.from_yaml_dict(regime_config_dict)
                 self._regime_detector = AdaptiveRegimeDetector(regime_config)
                 logger.info("Adaptive regime detection enabled for daily backtest")
             except Exception as e:

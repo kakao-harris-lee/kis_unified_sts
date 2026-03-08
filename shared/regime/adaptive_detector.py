@@ -64,6 +64,43 @@ class AdaptiveRegimeConfig:
     confidence_threshold: float = 0.7  # Minimum confidence for signal
     min_bars: int = 50  # Minimum bars required for detection
 
+    @classmethod
+    def from_yaml_dict(cls, regime_cfg_dict: dict) -> "AdaptiveRegimeConfig":
+        """Create config from parsed regime_adaptive.yaml dict.
+
+        Handles the nested YAML structure:
+            detector.thresholds.{mfi,adx,volatility,trend}
+            detector.lookback.{mfi_period,adx_period,...}
+            detector.confidence.{min_confidence}
+
+        Args:
+            regime_cfg_dict: Full dict loaded from ml/regime_adaptive.yaml
+
+        Returns:
+            AdaptiveRegimeConfig with values from YAML (or defaults)
+        """
+        detector_cfg = regime_cfg_dict.get("detector", {})
+        thresholds = detector_cfg.get("thresholds", {})
+        lookback = detector_cfg.get("lookback", {})
+        confidence = detector_cfg.get("confidence", {})
+
+        return cls(
+            mfi_bull_threshold=thresholds.get("mfi", {}).get("neutral_upper", 60.0),
+            mfi_bear_threshold=thresholds.get("mfi", {}).get("neutral_lower", 40.0),
+            mfi_period=lookback.get("mfi_period", 14),
+            adx_strong_trend=thresholds.get("adx", {}).get("strong_trend", 25.0),
+            adx_weak_trend=thresholds.get("adx", {}).get("weak_trend", 20.0),
+            adx_period=lookback.get("adx_period", 14),
+            atr_period=lookback.get("atr_period", 14),
+            atr_high_volatility=thresholds.get("volatility", {}).get("high", 0.025),
+            atr_low_volatility=thresholds.get("volatility", {}).get("low", 0.015),
+            sma_fast=lookback.get("sma_short", 10),
+            sma_slow=lookback.get("sma_long", 50),
+            trend_threshold=thresholds.get("trend", {}).get("bullish_threshold", 0.01),
+            confidence_threshold=confidence.get("min_confidence", 0.7),
+            min_bars=lookback.get("min_bars", 50),
+        )
+
 
 class AdaptiveRegimeDetector:
     """Detect market regime using multi-metric classification.

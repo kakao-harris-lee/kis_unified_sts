@@ -35,6 +35,7 @@ from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Protocol
 
+import pandas as pd
 import yaml
 
 from services.trading.pipeline import TradingPipeline
@@ -532,23 +533,9 @@ class TradingOrchestrator:
 
                 # Load adaptive regime config
                 regime_cfg_dict = ConfigLoader.load("ml/regime_adaptive.yaml")
-                detector_cfg = regime_cfg_dict.get("detector", {})
 
-                # Build AdaptiveRegimeConfig from YAML
-                adaptive_config = AdaptiveRegimeConfig(
-                    mfi_bull_threshold=detector_cfg.get("mfi_bull_threshold", 60.0),
-                    mfi_bear_threshold=detector_cfg.get("mfi_bear_threshold", 40.0),
-                    mfi_period=detector_cfg.get("mfi_period", 14),
-                    adx_strong_trend=detector_cfg.get("adx_strong_trend", 25.0),
-                    adx_weak_trend=detector_cfg.get("adx_weak_trend", 20.0),
-                    adx_period=detector_cfg.get("adx_period", 14),
-                    volatility_high_threshold=detector_cfg.get("volatility_high_threshold", 2.0),
-                    volatility_low_threshold=detector_cfg.get("volatility_low_threshold", 0.5),
-                    atr_period=detector_cfg.get("atr_period", 14),
-                    sma_fast_period=detector_cfg.get("sma_fast_period", 20),
-                    sma_slow_period=detector_cfg.get("sma_slow_period", 50),
-                    min_confidence_threshold=detector_cfg.get("min_confidence_threshold", 0.6),
-                )
+                # Build AdaptiveRegimeConfig from nested YAML structure
+                adaptive_config = AdaptiveRegimeConfig.from_yaml_dict(regime_cfg_dict)
                 self._adaptive_regime_detector = AdaptiveRegimeDetector(adaptive_config)
                 logger.info(f"Adaptive regime detection enabled (mode={config.regime_detection_mode})")
             except (ConfigurationError, MissingConfigError, InvalidConfigError) as e:
@@ -3352,7 +3339,12 @@ class TradingOrchestrator:
 
             # Get recent bars from indicator engine (need at least 50+ bars for SMA calculation)
             # IndicatorEngine stores minute bars, fetch last 100 bars
-            bars_df = self._indicator_engine.get_recent_bars(symbol, lookback=100)
+            candles = self._indicator_engine.get_recent_candles(symbol, limit=100)
+            if not candles:
+                return None
+
+            # Convert list[dict] to DataFrame for AdaptiveRegimeDetector.detect()
+            bars_df = pd.DataFrame(candles)
 
             return bars_df
 

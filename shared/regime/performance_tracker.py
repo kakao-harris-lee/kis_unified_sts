@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import statistics
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
@@ -74,6 +75,7 @@ class TradeRecord:
     exit_timestamp: Optional[datetime] = None
     pnl: Optional[float] = None
     model_name: Optional[str] = None
+    side: str = "LONG"  # "LONG" or "SHORT"
     metadata: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -90,12 +92,19 @@ class TradeRecord:
 
     @property
     def return_pct(self) -> float:
-        """Calculate return percentage."""
+        """Calculate return percentage.
+
+        For LONG positions: (exit - entry) / entry
+        For SHORT positions: (entry - exit) / entry (negated)
+        """
         if not self.is_closed:
             return 0.0
         if self.entry_price == 0:
             return 0.0
-        return (self.exit_price - self.entry_price) / self.entry_price
+        raw = (self.exit_price - self.entry_price) / self.entry_price
+        if self.side == "SHORT":
+            return -raw
+        return raw
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
@@ -110,6 +119,7 @@ class TradeRecord:
             else None,
             "pnl": self.pnl,
             "model_name": self.model_name,
+            "side": self.side,
             "metadata": self.metadata,
         }
 
@@ -127,6 +137,7 @@ class TradeRecord:
             else None,
             pnl=data.get("pnl"),
             model_name=data.get("model_name"),
+            side=data.get("side", "LONG"),
             metadata=data.get("metadata", {}),
         )
 
@@ -680,8 +691,8 @@ class RegimePerformanceTracker:
             import redis
 
             self._redis_client = redis.Redis(
-                host="localhost",
-                port=6379,
+                host=os.environ.get("REDIS_HOST", "localhost"),
+                port=int(os.environ.get("REDIS_PORT", "6379")),
                 db=self.config.redis_db,
                 decode_responses=True,
             )
