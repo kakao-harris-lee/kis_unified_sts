@@ -28,6 +28,7 @@ class BacktestTrade:
         pnl_pct: 손익률 (%)
         commission: 수수료
         exit_reason: 청산 사유
+        execution_venue: 실행 장소 (e.g., "KRX", "ATS")
     """
 
     code: str
@@ -43,6 +44,7 @@ class BacktestTrade:
     pnl_pct: float
     commission: float
     exit_reason: str = ""
+    execution_venue: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -59,6 +61,7 @@ class BacktestTrade:
             "pnl_pct": self.pnl_pct,
             "commission": self.commission,
             "exit_reason": self.exit_reason,
+            "execution_venue": self.execution_venue,
         }
 
 
