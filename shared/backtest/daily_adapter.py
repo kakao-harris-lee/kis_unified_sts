@@ -15,14 +15,16 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime
-from typing import Any
+from typing import Any, Optional
 
 import numpy as np
 import pandas as pd
 
 from shared.backtest.engine import ExitReason, SignalType
 from shared.backtest.metadata import load_backtest_metadata, resolve_symbol_metadata
+from shared.config import ConfigLoader
 from shared.models.position import Position as ModelPosition, PositionSide
+from shared.regime.adaptive_detector import AdaptiveRegimeDetector, AdaptiveRegimeConfig
 from shared.strategy.base import EntryContext, ExitContext, TradingStrategy
 
 logger = logging.getLogger(__name__)
@@ -70,6 +72,8 @@ class DailyBacktestAdapter:
         # Raw daily series for strategies that compute their own indicators (e.g. VR composite)
         self._raw_closes: list[float] = []
         self._raw_volumes: list[int] = []
+        self._raw_highs: list[float] = []  # For regime detection
+        self._raw_lows: list[float] = []  # For regime detection
         self._series_window: int = entry_params.get("vr_period", 0) + entry_params.get("ma_long", 0) + 10
         if self._series_window < 80:
             self._series_window = 80
@@ -86,11 +90,46 @@ class DailyBacktestAdapter:
         self._current_position: dict[str, Any] | None = None
         self._entry_bar_index: int | None = None
 
-    def _context_metadata(self, code: str, market_state: str = "UNKNOWN") -> dict[str, Any]:
-        """Build metadata payload aligned with live orchestrator context."""
-        return {
+        # Adaptive regime detection (optional, controlled by config flag)
+        self._regime_detection_enabled = bool(
+            strategy_config.get("backtest", {}).get("regime_detection_enabled", False)
+        )
+        self._regime_detector: Optional[AdaptiveRegimeDetector] = None
+
+        if self._regime_detection_enabled:
+            try:
+                regime_config_dict = ConfigLoader.load("ml/regime_adaptive.yaml")
+                regime_config = AdaptiveRegimeConfig.from_yaml_dict(regime_config_dict)
+                self._regime_detector = AdaptiveRegimeDetector(regime_config)
+                logger.info("Adaptive regime detection enabled for daily backtest")
+            except Exception as e:
+                logger.warning(f"Failed to initialize regime detector: {e}. Disabling regime detection.")
+                self._regime_detection_enabled = False
+
+    def _context_metadata(
+        self,
+        code: str,
+        market_state: str = "UNKNOWN",
+        regime: Optional[str] = None,
+        regime_confidence: Optional[float] = None,
+    ) -> dict[str, Any]:
+        """Build metadata payload aligned with live orchestrator context.
+
+        Args:
+            code: Stock/futures code
+            market_state: Basic market state (for backward compatibility)
+            regime: Adaptive regime state (if regime detection enabled)
+            regime_confidence: Confidence score for regime detection (0-1)
+
+        Returns:
+            Metadata dict with market_state, regime, and other context
+        """
+        # Use adaptive regime if provided, otherwise fall back to market_state
+        final_regime = regime if regime is not None else market_state
+
+        metadata = {
             "market_state": market_state,
-            "regime": market_state,
+            "regime": final_regime,
             "is_backtest": True,
             "symbol_metadata": resolve_symbol_metadata(self._backtest_metadata, code),
             "daily_watchlist": self._backtest_metadata.get("daily_watchlist", {}),
@@ -99,6 +138,12 @@ class DailyBacktestAdapter:
                 "accumulation_candidates", {}
             ),
         }
+
+        # Add regime confidence if available
+        if regime_confidence is not None:
+            metadata["regime_confidence"] = regime_confidence
+
+        return metadata
 
     def prescan_data(self, data: pd.DataFrame) -> None:
         """Pre-compute all indicators for the entire daily DataFrame.
@@ -138,6 +183,14 @@ class DailyBacktestAdapter:
         # Store raw series for strategies that need rolling windows (VR composite)
         self._raw_closes = df["close"].astype(float).tolist()
         self._raw_volumes = df["volume"].astype(int).tolist()
+
+        # Store OHLCV for regime detection
+        if self._regime_detection_enabled and "high" in df.columns and "low" in df.columns:
+            self._raw_highs = df["high"].astype(float).tolist()
+            self._raw_lows = df["low"].astype(float).tolist()
+        else:
+            self._raw_highs = []
+            self._raw_lows = []
 
         warmup = self._warmup_bars
         valid_count = sum(1 for r in self._precomputed if not np.isnan(r.get("sma_200", float("nan"))))
@@ -282,12 +335,35 @@ class DailyBacktestAdapter:
         if not self._warmup_key and self._bar_index < self._warmup_bars:
             return SignalType.HOLD
 
+        # Detect adaptive regime if enabled
+        regime: Optional[str] = None
+        regime_confidence: Optional[float] = None
+        if self._regime_detection_enabled and self._regime_detector is not None:
+            # Build DataFrame from historical data up to current bar
+            # Use bar_index - 1 since we already incremented it
+            current_idx = self._bar_index - 1
+            if current_idx >= self._regime_detector.config.min_bars:
+                try:
+                    # Get recent bars for regime detection
+                    lookback_start = max(0, current_idx - 100)  # Use last 100 bars
+                    regime_df = pd.DataFrame({
+                        "close": self._raw_closes[lookback_start:current_idx + 1],
+                        "high": self._raw_highs[lookback_start:current_idx + 1] if self._raw_highs else self._raw_closes[lookback_start:current_idx + 1],
+                        "low": self._raw_lows[lookback_start:current_idx + 1] if self._raw_lows else self._raw_closes[lookback_start:current_idx + 1],
+                        "volume": self._raw_volumes[lookback_start:current_idx + 1],
+                    })
+                    regime_signal = self._regime_detector.detect(regime_df)
+                    regime = regime_signal.state.value if regime_signal.state else None
+                    regime_confidence = regime_signal.confidence
+                except Exception as e:
+                    logger.debug(f"Regime detection failed: {e}")
+
         context = EntryContext(
             market_data=bar,
             indicators=indicators,
             current_positions=[],
             timestamp=timestamp,
-            metadata=self._context_metadata(code),
+            metadata=self._context_metadata(code, regime=regime, regime_confidence=regime_confidence),
         )
 
         try:
