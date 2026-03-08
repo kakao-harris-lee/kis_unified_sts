@@ -90,6 +90,7 @@ function StrategyForm({ mode, initialData, onSuccess, onCancel }: StrategyFormPr
 
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
   const [validationWarnings, setValidationWarnings] = useState<string[]>([]);
+  const [saveSuccess, setSaveSuccess] = useState(false);
 
   // Fetch schemas for current selections
   const { data: entrySchema } = useQuery<JSONSchema>({
@@ -203,6 +204,7 @@ function StrategyForm({ mode, initialData, onSuccess, onCancel }: StrategyFormPr
         .then((r) => r.data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['strategies'] });
+      setSaveSuccess(true);
       if (onSuccess) {
         onSuccess();
       }
@@ -218,6 +220,7 @@ function StrategyForm({ mode, initialData, onSuccess, onCancel }: StrategyFormPr
       setValidationErrors(['Strategy name is required']);
       return;
     }
+    setSaveSuccess(false);
     saveMutation.mutate();
   };
 
@@ -512,6 +515,15 @@ function StrategyForm({ mode, initialData, onSuccess, onCancel }: StrategyFormPr
               <li key={i}>{warning}</li>
             ))}
           </ul>
+        </div>
+      )}
+
+      {/* Success Message */}
+      {saveSuccess && !saveMutation.isPending && (
+        <div className="bg-green-900/20 border border-green-700 rounded-lg p-4">
+          <div className="text-green-400 font-medium">
+            ✓ Strategy saved successfully
+          </div>
         </div>
       )}
 
