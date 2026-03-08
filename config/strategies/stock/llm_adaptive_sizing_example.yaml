@@ -1,0 +1,201 @@
+# LLM Adaptive Sizing Example Strategy
+#
+# LLM 시장 분석 컨텍스트 기반 적응형 포지션 사이징 예제
+#
+# 핵심 아이디어:
+#   - MarketContext의 confidence, risk_score, risk_mode에 따라 포지션 크기 동적 조정
+#   - 높은 신뢰도 시장 → 포지션 확대 (1.2x boost)
+#   - 높은 리스크 환경 → 포지션 축소 (0.6x penalty)
+#   - RISK_ON/OFF 모드에 따른 스케일링
+#
+# 사용 방법:
+#   1. config/llm.yaml에서 market_context_publisher.enabled: true 설정
+#   2. strategy.use_llm_context: true 활성화
+#   3. position.type: llm_adaptive 설정
+#   4. TradingOrchestrator가 LLM 분석을 주기적으로 실행하고 Redis에 발행
+#   5. StrategyManager가 MarketContext를 읽어 포지션 사이저에 전달
+
+strategy:
+  name: llm_adaptive_sizing_example
+  asset_class: stock
+  enabled: false  # Example config — enable when ready to use
+  use_llm_context: true  # ✅ LLM market analysis integration ENABLED
+  description: "LLM 적응형 포지션 사이징 예제 (mean_reversion entry)"
+
+  # ===========================================================================
+  # 진입 조건 (Entry) — 예제로 mean_reversion 사용
+  # ===========================================================================
+  entry:
+    type: mean_reversion
+    params:
+      bb_period: 20
+      bb_std: 2.0
+      bb_touch_buffer: 1.00
+      rsi_period: 14
+      rsi_oversold: 35
+      allow_short: false
+      volume_confirm: false
+
+      # 시장 상태 필터 (MarketClassifier)
+      market_state_filter:
+        enabled: true
+        allowed_states:
+          - SIDEWAYS_FLAT
+          - SIDEWAYS_DOWN
+          - SIDEWAYS_UP
+        blocked_states:
+          - BEAR_MODERATE
+          - BEAR_STRONG
+          - BULL_STRONG
+
+      # 시간 필터
+      skip_market_open_minutes: 30
+      skip_market_close_minutes: 15
+      market_open_hour: 9
+      market_open_minute: 0
+      market_close_hour: 15
+      market_close_minute: 15
+
+      # 시그널 쿨다운
+      signal_cooldown_seconds: 300
+
+      # 포지션 사이징 힌트
+      stop_loss_pct: 3.0
+
+  # ===========================================================================
+  # 청산 조건 (Exit) — 예제로 mean_reversion_exit 사용
+  # ===========================================================================
+  exit:
+    type: mean_reversion_exit
+    params:
+      atr_stop_multiplier: 2.0
+      max_stop_loss_pct: -0.03
+      target_bb_middle: true
+      time_cut_minutes: 120
+      eod_close_hour: 23
+      eod_close_minute: 59
+      fee_rate: 0.003
+      enable_bear_exit: true
+
+  # ===========================================================================
+  # 포지션 사이징 (LLM Adaptive Sizer) ⭐ 핵심 설정
+  # ===========================================================================
+  position:
+    type: llm_adaptive  # ✅ LLM 적응형 사이저 사용
+    params:
+      # -------------------------------------------------------------------
+      # 기본 리스크 관리 (RiskBasedSizer 상속)
+      # -------------------------------------------------------------------
+      risk_per_trade_pct: 1.0       # 거래당 리스크 1% (계좌 대비)
+      stop_loss_pct: 3.0            # 손절 기준 -3%
+      max_position_pct: 10.0        # 종목당 최대 10%
+      max_positions: 5              # 최대 동시 보유 5종목
+      min_quantity: 1               # 최소 수량
+      max_quantity: 10000           # 최대 수량
+
+      # -------------------------------------------------------------------
+      # LLM Confidence 기반 스케일링
+      # -------------------------------------------------------------------
+      confidence_threshold_high: 0.7      # 높은 신뢰도 임계값 (>= 0.7)
+      confidence_threshold_low: 0.4       # 낮은 신뢰도 임계값 (< 0.4)
+      confidence_boost_high: 1.2          # 높은 신뢰도 → 1.2배 부스트
+      confidence_penalty_low: 0.7         # 낮은 신뢰도 → 0.7배 축소
+      enable_confidence_scaling: true     # Confidence 스케일링 활성화
+
+      # -------------------------------------------------------------------
+      # LLM Risk Score 기반 스케일링
+      # -------------------------------------------------------------------
+      risk_score_threshold_high: 70.0     # 높은 리스크 임계값 (0-100 scale)
+      risk_score_penalty_high: 0.6        # 높은 리스크 → 0.6배 축소
+      enable_risk_score_scaling: true     # Risk Score 스케일링 활성화
+
+      # -------------------------------------------------------------------
+      # LLM Risk Mode 기반 스케일링
+      # -------------------------------------------------------------------
+      risk_mode_scaling:
+        RISK_ON: 1.2      # 시장 낙관 → 1.2배 확대
+        NEUTRAL: 1.0      # 중립 → 1.0배 유지
+        RISK_OFF: 0.5     # 시장 위험 회피 → 0.5배 축소
+      enable_risk_mode_scaling: true      # Risk Mode 스케일링 활성화
+
+  # ===========================================================================
+  # 지표 설정 (Indicators)
+  # ===========================================================================
+  indicators:
+    bollinger_bands:
+      period: 20
+      std_dev: 2.0
+    rsi:
+      period: 14
+    mfi:
+      period: 14
+    adx:
+      period: 14
+
+  # ===========================================================================
+  # 시장 분류 임계값 (MarketClassifier)
+  # ===========================================================================
+  market_classifier:
+    mfi_thresholds:
+      bull_strong: 57
+      bull_moderate: 55
+      sideways_up: 51
+      sideways_flat_upper: 57
+      sideways_flat_lower: 43
+      sideways_down_lower: 41
+      bear: 41
+    adx_thresholds:
+      strong_trend: 25
+      moderate_trend: 20
+      weak_trend: 15
+
+
+# ===========================================================================
+# LLM Adaptive Sizing 동작 예시
+# ===========================================================================
+#
+# 시나리오 1: 높은 신뢰도 + RISK_ON 환경
+#   - MarketContext: confidence=0.8, risk_score=30, risk_mode=RISK_ON
+#   - Base quantity: 100주
+#   - Confidence multiplier: 1.2 (boost)
+#   - Risk score multiplier: 1.0 (정상)
+#   - Risk mode multiplier: 1.2 (RISK_ON)
+#   - Final quantity: 100 × 1.2 × 1.0 × 1.2 = 144주
+#
+# 시나리오 2: 낮은 신뢰도 + 높은 리스크 + RISK_OFF 환경
+#   - MarketContext: confidence=0.3, risk_score=75, risk_mode=RISK_OFF
+#   - Base quantity: 100주
+#   - Confidence multiplier: 0.7 (penalty)
+#   - Risk score multiplier: 0.6 (penalty)
+#   - Risk mode multiplier: 0.5 (RISK_OFF)
+#   - Final quantity: 100 × 0.7 × 0.6 × 0.5 = 21주
+#
+# 시나리오 3: LLM Context 없음 (graceful degradation)
+#   - MarketContext: None (Redis 장애, LLM 분석 실패 등)
+#   - RiskBasedSizer 기본 로직으로 fallback
+#   - Final quantity: 100주 (base quantity)
+#
+# ===========================================================================
+# 설정 체크리스트
+# ===========================================================================
+#
+# ✅ config/llm.yaml 설정:
+#    market_context_publisher:
+#      enabled: true
+#      analysis_interval_minutes: 30  # 30분마다 LLM 분석
+#      redis_ttl_seconds: 3600         # 1시간 TTL
+#
+# ✅ Redis 연결 확인:
+#    - Key: trading:stock:market_context
+#    - Value: MarketContext JSON (regime, risk_score, confidence, risk_mode, ...)
+#
+# ✅ TradingOrchestrator 실행:
+#    - LLMContextPublisher가 주기적으로 LLM 분석 수행
+#    - StrategyManager가 MarketContext를 읽어 포지션 사이저에 전달
+#
+# ✅ 로그 확인:
+#    - "LLMAdaptiveSizer: base=X, conf=Y, risk=Z, mode=W, adjusted=A"
+#    - "High confidence (0.8) → boost 1.2x"
+#    - "High risk_score (75) → penalty 0.6x"
+#
+# ===========================================================================
