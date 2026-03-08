@@ -3512,6 +3512,16 @@ class TradingOrchestrator:
                 if daily_ind:
                     indicators.update(daily_ind)
 
+                # Fetch daily indicators from engine (SMA/EMA/RSI on daily timeframe)
+                if self._indicator_engine:
+                    try:
+                        daily_indicators = self._indicator_engine.get_daily_indicators(symbol)
+                        # Add with daily_ prefix for multi-timeframe clarity
+                        for key, value in daily_indicators.items():
+                            indicators[f"daily_{key}"] = value
+                    except (ValidationError, KeyError, AttributeError) as e:
+                        logger.debug(f"Failed to fetch daily indicators for {symbol}: {e}")
+
                 context = EntryContext(
                     market_data=enriched,
                     indicators=indicators,
