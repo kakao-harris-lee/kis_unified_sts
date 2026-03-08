@@ -3,10 +3,13 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import re
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import yaml
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 from shared.config.loader import ConfigLoader, ConfigError, ConfigNotFoundError
 from shared.strategy.registry import (
@@ -14,6 +17,7 @@ from shared.strategy.registry import (
     ExitRegistry,
     SizerRegistry,
     ComponentNotFoundError,
+    StrategyFactory,
 )
 
 logger = logging.getLogger(__name__)
@@ -42,6 +46,49 @@ class StrategyListResponse(BaseModel):
     strategies: List[StrategyInfo]
     total: int
     asset_class: Optional[str] = None
+
+
+class StrategySaveRequest(BaseModel):
+    """Strategy save request."""
+
+    asset_class: str = Field(..., description="Asset class (stock, futures)")
+    name: str = Field(..., description="Strategy name (alphanumeric, underscores, hyphens)")
+    config: Dict[str, Any] = Field(..., description="Full strategy configuration as dict")
+
+    @field_validator("asset_class")
+    @classmethod
+    def validate_asset_class(cls, v: str) -> str:
+        """Validate asset class is supported."""
+        if v not in SUPPORTED_ASSETS:
+            raise ValueError(
+                f"Invalid asset_class '{v}'. Must be one of: {', '.join(SUPPORTED_ASSETS)}"
+            )
+        return v
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v: str) -> str:
+        """Validate strategy name is safe (prevent path traversal)."""
+        # Allow alphanumeric, underscore, hyphen only
+        if not re.match(r"^[a-zA-Z0-9_-]+$", v):
+            raise ValueError(
+                "Strategy name must contain only alphanumeric characters, underscores, and hyphens"
+            )
+        # Prevent path traversal
+        if ".." in v or "/" in v or "\\" in v:
+            raise ValueError("Strategy name cannot contain path separators or '..'")
+        # Prevent empty or too long
+        if len(v) == 0 or len(v) > 100:
+            raise ValueError("Strategy name must be 1-100 characters")
+        return v
+
+
+class StrategySaveResponse(BaseModel):
+    """Strategy save response."""
+
+    success: bool
+    message: str
+    file_path: str
 
 
 @router.get("", response_model=StrategyListResponse)
@@ -176,6 +223,146 @@ async def get_strategy_detail(
         raise HTTPException(
             status_code=500,
             detail=f"Internal server error: {str(e)}",
+        )
+
+
+@router.post("", response_model=StrategySaveResponse, status_code=201)
+async def save_strategy(
+    request: StrategySaveRequest,
+):
+    """Save strategy configuration to YAML file.
+
+    Creates or updates a strategy YAML file in config/strategies/{asset_class}/{name}.yaml.
+    Validates the configuration structure before saving.
+
+    Args:
+        request: Strategy save request with asset_class, name, and config
+
+    Returns:
+        StrategySaveResponse with success status and file path
+
+    Raises:
+        HTTPException: 400 if validation fails, 500 if file write fails
+    """
+    asset_class = request.asset_class
+    name = request.name
+    config = request.config
+
+    try:
+        # Get config directory from ConfigLoader
+        config_dir = ConfigLoader.get_config_dir()
+        strategies_dir = config_dir / "strategies" / asset_class
+
+        # Ensure directory exists
+        strategies_dir.mkdir(parents=True, exist_ok=True)
+
+        # Build file path
+        file_path = strategies_dir / f"{name}.yaml"
+
+        # Validate config structure
+        # Required top-level key: "strategy"
+        if "strategy" not in config:
+            raise HTTPException(
+                status_code=400,
+                detail="Configuration must contain top-level 'strategy' key",
+            )
+
+        strategy_config = config["strategy"]
+
+        # Validate required fields
+        required_fields = ["name", "asset_class", "entry", "exit", "position"]
+        missing_fields = [f for f in required_fields if f not in strategy_config]
+        if missing_fields:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Strategy config missing required fields: {missing_fields}",
+            )
+
+        # Validate entry/exit/position have 'type' field
+        for component_type in ["entry", "exit", "position"]:
+            component_config = strategy_config.get(component_type, {})
+            if "type" not in component_config:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"'{component_type}' configuration must contain 'type' field",
+                )
+
+            # Validate component type is registered
+            type_name = component_config["type"]
+            if component_type == "entry":
+                if not EntryRegistry.is_registered(type_name):
+                    available = EntryRegistry.list_all()
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Unknown entry type '{type_name}'. Available: {available}",
+                    )
+            elif component_type == "exit":
+                if not ExitRegistry.is_registered(type_name):
+                    available = ExitRegistry.list_all()
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Unknown exit type '{type_name}'. Available: {available}",
+                    )
+            elif component_type == "position":
+                if not SizerRegistry.is_registered(type_name):
+                    available = SizerRegistry.list_all()
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Unknown position type '{type_name}'. Available: {available}",
+                    )
+
+        # Optional: Try to create strategy instance to validate params
+        # This will catch any config errors early
+        try:
+            params = strategy_config.get("entry", {}).get("params", {})
+            entry_type = strategy_config["entry"]["type"]
+            _ = EntryRegistry.create(entry_type, params)
+        except Exception as e:
+            logger.warning(f"Entry validation failed (non-fatal): {e}")
+            # Don't fail the save, just log warning
+
+        try:
+            params = strategy_config.get("exit", {}).get("params", {})
+            exit_type = strategy_config["exit"]["type"]
+            _ = ExitRegistry.create(exit_type, params)
+        except Exception as e:
+            logger.warning(f"Exit validation failed (non-fatal): {e}")
+
+        try:
+            params = strategy_config.get("position", {}).get("params", {})
+            position_type = strategy_config["position"]["type"]
+            _ = SizerRegistry.create(position_type, params)
+        except Exception as e:
+            logger.warning(f"Position validation failed (non-fatal): {e}")
+
+        # Write YAML file
+        with open(file_path, "w", encoding="utf-8") as f:
+            yaml.safe_dump(
+                config,
+                f,
+                default_flow_style=False,
+                sort_keys=False,
+                allow_unicode=True,
+            )
+
+        logger.info(f"Saved strategy configuration: {file_path}")
+
+        # Clear ConfigLoader cache so new config is loaded on next request
+        ConfigLoader.clear_cache()
+
+        return StrategySaveResponse(
+            success=True,
+            message=f"Strategy '{name}' saved successfully",
+            file_path=str(file_path.relative_to(config_dir.parent)),
+        )
+
+    except HTTPException:
+        raise  # Re-raise HTTP exceptions
+    except Exception as e:
+        logger.exception(f"Unexpected error saving strategy {asset_class}/{name}: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to save strategy: {str(e)}",
         )
 
 
