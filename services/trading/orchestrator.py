@@ -1035,8 +1035,12 @@ class TradingOrchestrator:
                 staleness_seconds = float(
                     _ie_cfg.get("staleness_seconds", 180.0)
                 )
+                mtf_timeframes = _ie_cfg.get("mtf_timeframes", None)
+                mtf_maxlen = int(_ie_cfg.get("mtf_maxlen", 250))
             except (InvalidConfigError, MissingConfigError, OSError, yaml.YAMLError, KeyError, TypeError, ValueError):
                 staleness_seconds = 180.0
+                mtf_timeframes = None
+                mtf_maxlen = 250
 
             self._indicator_engine = StreamingIndicatorEngine(
                 bb_period=bb_period,
@@ -1045,10 +1049,13 @@ class TradingOrchestrator:
                 high_period=high_period,
                 staleness_seconds=staleness_seconds,
                 ema_periods=ema_periods,
+                mtf_timeframes=mtf_timeframes,
+                mtf_maxlen=mtf_maxlen,
             )
             logger.info(
                 f"Indicator engine initialized (bb={bb_period}, "
-                f"std={bb_std}, rsi={rsi_period}, high_n={high_period})"
+                f"std={bb_std}, rsi={rsi_period}, high_n={high_period}, "
+                f"mtf_timeframes={mtf_timeframes}, mtf_maxlen={mtf_maxlen})"
             )
         except (ValidationError, ValueError, TypeError) as e:
             logger.warning(f"Indicator engine init failed: {e}")
