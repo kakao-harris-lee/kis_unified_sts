@@ -16,6 +16,7 @@ Usage:
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime
 from typing import Optional
 
@@ -25,6 +26,15 @@ from shared.llm.market_context import MarketContext
 from shared.llm.unified_market_analyzer import UnifiedMarketAnalyzer
 
 logger = logging.getLogger(__name__)
+
+# Optional Prometheus
+try:
+    from prometheus_client import Counter, Gauge
+
+    HAS_PROMETHEUS = True
+except ImportError:
+    HAS_PROMETHEUS = False
+    logger.debug("prometheus_client not available, metrics disabled")
 
 
 class LLMContextPublisher:
@@ -56,10 +66,37 @@ class LLMContextPublisher:
         self.config = config or LLMConfig.from_env()
         self.analyzer = UnifiedMarketAnalyzer(self.config)
 
+        # Setup Prometheus metrics (optional)
+        if HAS_PROMETHEUS:
+            self._setup_prometheus_metrics()
+
         logger.info(
             f"LLMContextPublisher initialized for {asset_class} "
             f"(provider={self.config.llm_provider}, model={self.config.model})"
         )
+
+    def _setup_prometheus_metrics(self):
+        """Setup Prometheus metrics for LLM context monitoring."""
+        # Counters for success/failure tracking
+        self.prom_analysis_success = Counter(
+            "llm_analysis_success_total",
+            "Total successful LLM market analyses",
+            ["asset_class"],
+        )
+        self.prom_analysis_failure = Counter(
+            "llm_analysis_failure_total",
+            "Total failed LLM market analyses",
+            ["asset_class"],
+        )
+
+        # Gauge for last update timestamp
+        self.prom_last_update_time = Gauge(
+            "llm_analysis_last_update_timestamp",
+            "Timestamp of last successful LLM analysis (Unix time)",
+            ["asset_class"],
+        )
+
+        logger.debug(f"Prometheus metrics initialized for LLM context ({self.asset_class})")
 
     async def run_analysis(self, mode: str = "all") -> Optional[MarketContext]:
         """Run market analysis and return MarketContext.
@@ -92,6 +129,11 @@ class LLMContextPublisher:
                 f"confidence={market_context.confidence:.2f}"
             )
 
+            # Update success metrics
+            if HAS_PROMETHEUS:
+                self.prom_analysis_success.labels(asset_class=self.asset_class).inc()
+                self.prom_last_update_time.labels(asset_class=self.asset_class).set(time.time())
+
             return market_context
 
         except Exception as e:
@@ -99,6 +141,11 @@ class LLMContextPublisher:
                 f"LLM market analysis failed: {e}",
                 exc_info=True,
             )
+
+            # Update failure metrics
+            if HAS_PROMETHEUS:
+                self.prom_analysis_failure.labels(asset_class=self.asset_class).inc()
+
             return None
 
     def _convert_analysis(self, analysis: MarketAnalysis) -> MarketContext:
