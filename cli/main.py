@@ -2623,6 +2623,132 @@ def rl_tensorboard(logdir: str, port: int):
         click.echo("\nTensorBoard stopped")
 
 
+@rl.command("retrain")
+@click.option(
+    "--config",
+    "-c",
+    default="ml/retraining_pipeline.yaml",
+    show_default=True,
+    help="Pipeline config file path",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Evaluate only without promotion (testing mode)",
+)
+@click.option(
+    "--force",
+    is_flag=True,
+    help="Skip threshold validation and force promotion",
+)
+def rl_retrain(config: str, dry_run: bool, force: bool):
+    """RL 모델 자동 재학습 및 champion/challenger 평가
+
+    \b
+    Workflow:
+        1. Load champion model from MLflow Production stage
+        2. Train challenger model on latest ClickHouse data
+        3. Evaluate both models on held-out test set
+        4. Promote challenger if it meets performance thresholds
+        5. Log full audit trail to MLflow
+
+    \b
+    Examples:
+        sts rl retrain
+        sts rl retrain --dry-run
+        sts rl retrain --force --config ml/retraining_pipeline.yaml
+    """
+    click.echo("Starting RL Retraining Pipeline")
+    click.echo(f"  Config: {config}")
+    click.echo(f"  Dry Run: {dry_run}")
+    click.echo(f"  Force Promotion: {force}")
+    click.echo("-" * 60)
+
+    try:
+        from shared.ml.rl.retraining_pipeline import RetrainingPipeline
+
+        # Initialize pipeline
+        pipeline = RetrainingPipeline(config_path=config)
+
+        # Run full retraining workflow
+        click.echo("\n[1/5] Loading champion model...")
+        champion_metrics = None  # Will be loaded in pipeline.run()
+
+        click.echo("[2/5] Training challenger model...")
+        click.echo("[3/5] Evaluating models on test data...")
+        click.echo("[4/5] Comparing performance and checking thresholds...")
+
+        # Run pipeline with dry-run and force options
+        result = pipeline.run(dry_run=dry_run, force_promotion=force)
+
+        # Display results
+        click.echo("\n" + "=" * 60)
+        click.echo("Retraining Pipeline Results")
+        click.echo("=" * 60)
+
+        if result.get("status") == "success":
+            click.echo("✅ Status: SUCCESS")
+
+            # Champion metrics
+            if "champion_metrics" in result:
+                champ = result["champion_metrics"]
+                click.echo(
+                    f"\n📊 Champion Model (v{result.get('champion_version', 'N/A')})"
+                )
+                click.echo(f"   Sharpe Ratio: {champ.get('sharpe', 0):.3f}")
+                click.echo(f"   Win Rate: {champ.get('win_rate', 0) * 100:.1f}%")
+                click.echo(f"   Max Drawdown: {champ.get('max_dd', 0) * 100:.1f}%")
+
+            # Challenger metrics
+            if "challenger_metrics" in result:
+                chal = result["challenger_metrics"]
+                click.echo(
+                    f"\n🆕 Challenger Model (v{result.get('challenger_version', 'N/A')})"
+                )
+                click.echo(f"   Sharpe Ratio: {chal.get('sharpe', 0):.3f}")
+                click.echo(f"   Win Rate: {chal.get('win_rate', 0) * 100:.1f}%")
+                click.echo(f"   Max Drawdown: {chal.get('max_dd', 0) * 100:.1f}%")
+
+            # Promotion decision
+            promoted = result.get("promoted", False)
+            if dry_run:
+                click.echo("\n🔍 Dry Run Mode: No promotion performed")
+                if result.get("should_promote", False):
+                    click.echo("   ✓ Would promote: Thresholds met")
+                else:
+                    click.echo(
+                        f"   ✗ Would NOT promote: {result.get('promotion_reason', 'Unknown')}"
+                    )
+            elif promoted:
+                click.echo("\n🎉 Model Promoted to Production!")
+                click.echo(f"   Version: {result.get('challenger_version', 'N/A')}")
+                click.echo(f"   Reason: {result.get('promotion_reason', 'Thresholds met')}")
+            else:
+                click.echo("\n⚠️  Model NOT Promoted")
+                click.echo(f"   Reason: {result.get('promotion_reason', 'Thresholds not met')}")
+
+            # MLflow info
+            if "mlflow_run_id" in result:
+                click.echo(f"\n📝 MLflow Run ID: {result['mlflow_run_id']}")
+
+        else:
+            click.echo(f"❌ Status: FAILED")
+            click.echo(f"   Error: {result.get('error', 'Unknown error')}")
+            sys.exit(1)
+
+        click.echo("=" * 60)
+
+    except KeyboardInterrupt:
+        click.echo("\n\nRetraining interrupted by user")
+        sys.exit(130)
+    except Exception as e:
+        click.echo(f"\n❌ Error: {e}", err=True)
+        import traceback
+
+        traceback.print_exc()
+        sys.exit(1)
+
+
 # =============================================================================
 # TFT Commands
 # =============================================================================
