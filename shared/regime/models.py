@@ -2,7 +2,10 @@
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import Optional, Dict
+from typing import Optional, Dict, Union, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .adaptive_detector import AdaptiveRegimeState
 
 
 class RegimeState(str, Enum):
@@ -15,11 +18,16 @@ class RegimeState(str, Enum):
 
 @dataclass
 class RegimeSignal:
-    """Regime detection signal."""
-    state: RegimeState
+    """Regime detection signal.
+
+    Supports both basic RegimeState and enhanced AdaptiveRegimeState.
+    The indicators field stores multi-metric details (MFI, ADX, volatility, trend)
+    when using adaptive regime detection.
+    """
+    state: Union[RegimeState, "AdaptiveRegimeState"]
     confidence: float
     timestamp: datetime
-    indicators: Optional[Dict] = None
+    indicators: Optional[Dict] = None  # Multi-metric details: MFI, ADX, volatility, trend
     confidence_threshold: float = 0.7  # Default from RegimeConfig.confidence_threshold
 
     @property

@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { BrowserRouter, Routes, Route, Link } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, NavLink } from 'react-router-dom';
 import Dashboard from './pages/Dashboard';
 import Positions from './pages/Positions';
 import Signals from './pages/Signals';
@@ -22,6 +22,11 @@ const queryClient = new QueryClient({
   },
 });
 
+const navClassName = ({ isActive }: { isActive: boolean }) =>
+  isActive
+    ? "px-3 py-2 rounded-md bg-blue-600 text-white"
+    : "px-3 py-2 rounded-md hover:bg-gray-700";
+
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
@@ -36,36 +41,21 @@ function App() {
                       KIS Trading
                     </span>
                     <div className="flex space-x-4">
-                      <Link
-                        to="/"
-                        className="px-3 py-2 rounded-md hover:bg-gray-700"
-                      >
+                      <NavLink to="/" end className={navClassName}>
                         Dashboard
-                      </Link>
-                      <Link
-                        to="/positions"
-                        className="px-3 py-2 rounded-md hover:bg-gray-700"
-                      >
+                      </NavLink>
+                      <NavLink to="/positions" className={navClassName}>
                         Positions
-                      </Link>
-                      <Link
-                        to="/signals"
-                        className="px-3 py-2 rounded-md hover:bg-gray-700"
-                      >
+                      </NavLink>
+                      <NavLink to="/signals" className={navClassName}>
                         Signals
-                      </Link>
-                      <Link
-                        to="/trades"
-                        className="px-3 py-2 rounded-md hover:bg-gray-700"
-                      >
+                      </NavLink>
+                      <NavLink to="/trades" className={navClassName}>
                         Trades
-                      </Link>
-                      <Link
-                        to="/backtest"
-                        className="px-3 py-2 rounded-md hover:bg-gray-700"
-                      >
+                      </NavLink>
+                      <NavLink to="/backtest" className={navClassName}>
                         Backtest
-                      </Link>
+                      </NavLink>
                     </div>
                   </div>
                 </div>

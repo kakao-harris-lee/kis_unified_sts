@@ -1,5 +1,6 @@
 import { Position } from '../pages/Positions';
 import TableSkeleton from './TableSkeleton';
+import SideBadge from './SideBadge';
 
 interface PositionsTableProps {
   positions: Position[];
@@ -39,15 +40,7 @@ function PositionsTable({ positions, loading, error }: PositionsTableProps) {
           >
             <div className="flex items-center justify-between mb-3">
               <span className="font-medium text-lg">{position.symbol}</span>
-              <span
-                className={`px-2 py-1 rounded text-xs font-medium ${
-                  position.side === 'BUY'
-                    ? 'bg-green-900 text-green-300'
-                    : 'bg-red-900 text-red-300'
-                }`}
-              >
-                {position.side}
-              </span>
+              <SideBadge side={position.side} />
             </div>
 
             <div className="grid grid-cols-2 gap-3 text-sm">
@@ -141,15 +134,7 @@ function PositionsTable({ positions, loading, error }: PositionsTableProps) {
                 <tr key={idx} className="hover:bg-gray-750">
                   <td className="px-4 py-3 font-medium">{position.symbol}</td>
                   <td className="px-4 py-3">
-                    <span
-                      className={`px-2 py-1 rounded text-xs font-medium ${
-                        position.side === 'BUY'
-                          ? 'bg-green-900 text-green-300'
-                          : 'bg-red-900 text-red-300'
-                      }`}
-                    >
-                      {position.side}
-                    </span>
+                    <SideBadge side={position.side} />
                   </td>
                   <td className="px-4 py-3 text-right">{position.quantity}</td>
                   <td className="px-4 py-3 text-right">

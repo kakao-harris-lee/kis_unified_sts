@@ -2,7 +2,11 @@
 import logging
 import uuid
 from datetime import datetime
-from typing import Dict, List, Optional, Callable
+from typing import Dict, List, Optional, Callable, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from shared.execution.slippage_model import SlippageModel
+    from shared.execution.slippage_control import OrderBookSnapshot
 
 from .models import (
     VirtualOrder,
@@ -32,11 +36,13 @@ class VirtualBroker:
         initial_balance: float = 10000000,
         commission_rate: float = 0.00015,  # 0.015%
         slippage_rate: float = 0.0001,     # 0.01%
+        slippage_model: Optional["SlippageModel"] = None,
     ):
         self.initial_balance = initial_balance
         self.balance = initial_balance
         self.commission_rate = commission_rate
         self.slippage_rate = slippage_rate
+        self.slippage_model = slippage_model
 
         self.positions: Dict[str, VirtualPosition] = {}
         self.orders: List[VirtualOrder] = []
@@ -54,8 +60,19 @@ class VirtualBroker:
         price: float,
         order_type: OrderType = OrderType.MARKET,
         market_price: float | None = None,
+        orderbook: Optional["OrderBookSnapshot"] = None,
     ) -> VirtualOrder:
-        """Submit and execute order."""
+        """Submit and execute order.
+
+        Args:
+            symbol: Trading symbol
+            side: Order side (BUY/SELL)
+            quantity: Order quantity
+            price: Order price (used as market price for MARKET orders, limit price for LIMIT orders)
+            order_type: Order type (MARKET/LIMIT)
+            market_price: Current market price (used for LIMIT order execution check)
+            orderbook: Order book snapshot for realistic slippage calculation
+        """
         order_id = f"VO-{uuid.uuid4().hex[:8].upper()}"
 
         if order_type == OrderType.LIMIT and price <= 0:
@@ -73,18 +90,57 @@ class VirtualBroker:
 
         # Simulate execution for market orders
         if order_type == OrderType.MARKET:
-            await self._execute_market_order(order, price)
+            await self._execute_market_order(order, price, orderbook)
         elif order_type == OrderType.LIMIT:
             await self._execute_limit_order(order, market_price)
 
         self.orders.append(order)
         return order
 
-    async def _execute_market_order(self, order: VirtualOrder, market_price: float) -> None:
-        """Execute market order with slippage."""
-        # Apply slippage
+    async def _execute_market_order(
+        self,
+        order: VirtualOrder,
+        market_price: float,
+        orderbook: Optional["OrderBookSnapshot"] = None,
+    ) -> None:
+        """Execute market order with slippage.
+
+        Args:
+            order: Virtual order to execute
+            market_price: Current market price
+            orderbook: Order book snapshot for realistic slippage calculation
+        """
+        # Calculate slippage - use slippage model if available, otherwise fall back to simple rate
+        if self.slippage_model and self.slippage_model.config.enabled:
+            # Use slippage model for realistic fill price calculation
+            order_size = float(order.quantity)
+
+            # Extract orderbook data if available, otherwise use defaults
+            if orderbook is not None:
+                current_spread = orderbook.spread
+                is_buy = (order.side == OrderSide.BUY)
+                available_depth = orderbook.available_qty(is_buy)
+            else:
+                # Fall back to configured default values when orderbook is not provided
+                current_spread = self.slippage_model.config.default_spread
+                available_depth = self.slippage_model.config.default_depth
+
+            slippage_bps = self.slippage_model.calculate_slippage(
+                order_size=order_size,
+                current_spread=current_spread,
+                available_depth=available_depth,
+                timestamp=order.timestamp,
+            )
+
+            # Convert bps to rate (1 bps = 0.01% = 0.0001)
+            slippage_rate = slippage_bps / 10000.0
+        else:
+            # Fall back to simple slippage rate
+            slippage_rate = self.slippage_rate
+
+        # Apply slippage based on order side
         if order.side == OrderSide.BUY:
-            fill_price = market_price * (1 + self.slippage_rate)
+            fill_price = market_price * (1 + slippage_rate)
             # Check sufficient balance for BUY orders
             estimated_commission = fill_price * order.quantity * self.commission_rate
             required_balance = fill_price * order.quantity + estimated_commission
@@ -93,7 +149,7 @@ class VirtualBroker:
                     f"Insufficient balance: need {required_balance:.2f}, have {self.balance:.2f}"
                 )
         else:
-            fill_price = market_price * (1 - self.slippage_rate)
+            fill_price = market_price * (1 - slippage_rate)
 
         order.filled = True
         order.fill_price = fill_price

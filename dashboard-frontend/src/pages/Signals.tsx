@@ -4,6 +4,7 @@ import TableSkeleton from '../components/TableSkeleton';
 import RefreshIndicator from '../components/RefreshIndicator';
 import ErrorMessage from '../components/ErrorMessage';
 import useQueryWithError from '../hooks/useQueryWithError';
+import SideBadge from '../components/SideBadge';
 
 interface Signal {
   id: string;
@@ -103,15 +104,7 @@ function Signals() {
               >
                 <div className="flex items-center justify-between mb-3">
                   <span className="font-medium text-lg">{signal.symbol}</span>
-                  <span
-                    className={`px-2 py-1 rounded text-xs font-medium ${
-                      signal.side === 'BUY'
-                        ? 'bg-green-900 text-green-300'
-                        : 'bg-red-900 text-red-300'
-                    }`}
-                  >
-                    {signal.side}
-                  </span>
+                  <SideBadge side={signal.side} />
                 </div>
 
                 <div className="grid grid-cols-2 gap-3 text-sm">
@@ -135,7 +128,7 @@ function Signals() {
                     <div className="text-gray-400">Executed</div>
                     <div className="font-medium">
                       {signal.executed ? (
-                        <span className="text-green-400">✓ Yes</span>
+                        <span className="text-green-400">Yes</span>
                       ) : (
                         <span className="text-gray-500">No</span>
                       )}
@@ -198,15 +191,7 @@ function Signals() {
                       <td className="px-4 py-3">{signal.strategy}</td>
                       <td className="px-4 py-3 font-medium">{signal.symbol}</td>
                       <td className="px-4 py-3">
-                        <span
-                          className={`px-2 py-1 rounded text-xs font-medium ${
-                            signal.side === 'BUY'
-                              ? 'bg-green-900 text-green-300'
-                              : 'bg-red-900 text-red-300'
-                          }`}
-                        >
-                          {signal.side}
-                        </span>
+                        <SideBadge side={signal.side} />
                       </td>
                       <td className="px-4 py-3 text-right">
                         {signal.price.toLocaleString()}
@@ -226,7 +211,7 @@ function Signals() {
                       </td>
                       <td className="px-4 py-3 text-center">
                         {signal.executed ? (
-                          <span className="text-green-400">✓</span>
+                          <span className="text-green-400">Yes</span>
                         ) : (
                           <span className="text-gray-500">-</span>
                         )}

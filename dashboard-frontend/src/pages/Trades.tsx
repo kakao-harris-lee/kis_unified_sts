@@ -15,6 +15,8 @@ import { tradesApi } from '../api/client';
 import TableSkeleton from '../components/TableSkeleton';
 import RefreshIndicator from '../components/RefreshIndicator';
 import ErrorMessage from '../components/ErrorMessage';
+import SideBadge from '../components/SideBadge';
+import StatCard from '../components/StatCard';
 
 interface Trade {
   id: string;
@@ -84,15 +86,6 @@ interface DbOpenPosition {
 }
 
 type TabType = 'live' | 'history';
-
-function StatCard({ label, value, color }: { label: string; value: string; color?: string }) {
-  return (
-    <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
-      <div className="text-xs text-gray-400 uppercase tracking-wide">{label}</div>
-      <div className={`text-xl font-bold mt-1 ${color || 'text-white'}`}>{value}</div>
-    </div>
-  );
-}
 
 function LiveTab() {
   const [strategyFilter, setStrategyFilter] = useState<string>('');
@@ -248,15 +241,7 @@ function LiveTab() {
               >
                 <div className="flex items-center justify-between mb-3">
                   <span className="font-medium text-lg">{trade.symbol}</span>
-                  <span
-                    className={`px-2 py-1 rounded text-xs font-medium ${
-                      trade.side === 'BUY'
-                        ? 'bg-green-900 text-green-300'
-                        : 'bg-red-900 text-red-300'
-                    }`}
-                  >
-                    {trade.side}
-                  </span>
+                  <SideBadge side={trade.side} />
                 </div>
 
                 <div className="grid grid-cols-2 gap-3 text-sm">
@@ -330,15 +315,7 @@ function LiveTab() {
                       <td className="px-4 py-3">{trade.strategy}</td>
                       <td className="px-4 py-3 font-medium">{trade.symbol}</td>
                       <td className="px-4 py-3">
-                        <span
-                          className={`px-2 py-1 rounded text-xs font-medium ${
-                            trade.side === 'BUY'
-                              ? 'bg-green-900 text-green-300'
-                              : 'bg-red-900 text-red-300'
-                          }`}
-                        >
-                          {trade.side}
-                        </span>
+                        <SideBadge side={trade.side} />
                       </td>
                       <td className="px-4 py-3 text-right">{trade.entry_price.toLocaleString()}</td>
                       <td className="px-4 py-3 text-right">{trade.exit_price.toLocaleString()}</td>
@@ -461,21 +438,21 @@ function HistoryTab() {
       {/* Stats Cards */}
       {stats && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <StatCard label="Total Trades" value={String(stats.total_trades)} />
+          <StatCard title="Total Trades" value={String(stats.total_trades)} />
           <StatCard
-            label="Win Rate"
+            title="Win Rate"
             value={`${stats.win_rate.toFixed(1)}%`}
-            color={stats.win_rate >= 50 ? 'text-green-400' : 'text-red-400'}
+            variant={stats.win_rate >= 50 ? 'positive' : 'negative'}
           />
           <StatCard
-            label="Total P&L"
+            title="Total P&L"
             value={`${stats.total_pnl >= 0 ? '+' : ''}${stats.total_pnl.toLocaleString()}`}
-            color={stats.total_pnl >= 0 ? 'text-green-400' : 'text-red-400'}
+            variant={stats.total_pnl >= 0 ? 'positive' : 'negative'}
           />
           <StatCard
-            label="Avg P&L"
+            title="Avg P&L"
             value={`${stats.avg_pnl >= 0 ? '+' : ''}${stats.avg_pnl.toLocaleString()}`}
-            color={stats.avg_pnl >= 0 ? 'text-green-400' : 'text-red-400'}
+            variant={stats.avg_pnl >= 0 ? 'positive' : 'negative'}
           />
         </div>
       )}
@@ -504,15 +481,7 @@ function HistoryTab() {
               >
                 <div className="flex items-center justify-between mb-3">
                   <span className="font-medium text-lg">{pos.code}</span>
-                  <span
-                    className={`px-2 py-1 rounded text-xs font-medium ${
-                      pos.side === 'long'
-                        ? 'bg-green-900 text-green-300'
-                        : 'bg-red-900 text-red-300'
-                    }`}
-                  >
-                    {pos.side}
-                  </span>
+                  <SideBadge side={pos.side} />
                 </div>
 
                 <div className="grid grid-cols-2 gap-3 text-sm">
@@ -584,15 +553,7 @@ function HistoryTab() {
                       <td className="px-4 py-3">{pos.name}</td>
                       <td className="px-4 py-3">{pos.strategy}</td>
                       <td className="px-4 py-3">
-                        <span
-                          className={`px-2 py-1 rounded text-xs font-medium ${
-                            pos.side === 'long'
-                              ? 'bg-green-900 text-green-300'
-                              : 'bg-red-900 text-red-300'
-                          }`}
-                        >
-                          {pos.side}
-                        </span>
+                        <SideBadge side={pos.side} />
                       </td>
                       <td className="px-4 py-3 text-sm text-gray-400">
                         {new Date(pos.entry_date).toLocaleString()}
@@ -633,15 +594,7 @@ function HistoryTab() {
                 >
                   <div className="flex items-center justify-between mb-3">
                     <span className="font-medium text-lg">{trade.code}</span>
-                    <span
-                      className={`px-2 py-1 rounded text-xs font-medium ${
-                        trade.side === 'long'
-                          ? 'bg-green-900 text-green-300'
-                          : 'bg-red-900 text-red-300'
-                      }`}
-                    >
-                      {trade.side}
-                    </span>
+                    <SideBadge side={trade.side} />
                   </div>
 
                   <div className="grid grid-cols-2 gap-3 text-sm">
@@ -717,15 +670,7 @@ function HistoryTab() {
                         <td className="px-4 py-3">{trade.name}</td>
                         <td className="px-4 py-3">{trade.strategy}</td>
                         <td className="px-4 py-3">
-                          <span
-                            className={`px-2 py-1 rounded text-xs font-medium ${
-                              trade.side === 'long'
-                                ? 'bg-green-900 text-green-300'
-                                : 'bg-red-900 text-red-300'
-                            }`}
-                          >
-                            {trade.side}
-                          </span>
+                          <SideBadge side={trade.side} />
                         </td>
                         <td className="px-4 py-3 text-right">{trade.entry_price.toLocaleString()}</td>
                         <td className="px-4 py-3 text-right">

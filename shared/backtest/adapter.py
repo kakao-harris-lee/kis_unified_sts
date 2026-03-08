@@ -17,16 +17,18 @@ import asyncio
 import logging
 from collections import defaultdict, deque
 from datetime import datetime
-from typing import Any
+from typing import Any, Optional
 
 import pandas as pd
 
 from services.trading.indicator_engine import StreamingIndicatorEngine
 from shared.backtest.engine import ExitReason, SignalType
 from shared.backtest.metadata import load_backtest_metadata, resolve_symbol_metadata
+from shared.config import ConfigLoader
 from shared.indicators.contracts import IndicatorContract
 from shared.indicators.resolver import StreamingIndicatorResolver
 from shared.models.position import Position as ModelPosition, PositionSide
+from shared.regime.adaptive_detector import AdaptiveRegimeDetector, AdaptiveRegimeConfig
 from shared.strategy.base import EntryContext, ExitContext, TradingStrategy
 
 logger = logging.getLogger(__name__)
@@ -322,13 +324,50 @@ class BacktestStrategyAdapter:
         self._precomputed_rl_features: list[dict[str, float]] | None = None
         self._bar_index: int = 0
 
+        # Adaptive regime detection (optional, controlled by config flag)
+        self._regime_detection_enabled = bool(
+            strategy_config.get("backtest", {}).get("regime_detection_enabled", False)
+        )
+        self._regime_detector: Optional[AdaptiveRegimeDetector] = None
+        self._regime_history: dict[str, deque] = defaultdict(
+            lambda: deque(maxlen=100)  # Keep last 100 bars for regime detection
+        )
+
+        if self._regime_detection_enabled:
+            try:
+                regime_config_dict = ConfigLoader.load("ml/regime_adaptive.yaml")
+                regime_config = AdaptiveRegimeConfig.from_yaml_dict(regime_config_dict)
+                self._regime_detector = AdaptiveRegimeDetector(regime_config)
+                logger.info("Adaptive regime detection enabled for backtest")
+            except Exception as e:
+                logger.warning(f"Failed to initialize regime detector: {e}. Disabling regime detection.")
+                self._regime_detection_enabled = False
+
+        # Regime tracking for backtest results
+        self._regime_distribution: dict[str, int] = {}
+        self._model_switches: list[dict[str, Any]] = []
+        self._current_model_name: Optional[str] = None
+
     def _context_metadata(
         self,
         market_state: str = "UNKNOWN",
         code: str = "",
         raw_code: Any = None,
+        regime: Optional[str] = None,
+        regime_confidence: Optional[float] = None,
     ) -> dict[str, Any]:
-        """Build metadata payload aligned with live orchestrator context."""
+        """Build metadata payload aligned with live orchestrator context.
+
+        Args:
+            market_state: Basic market state from MFI/MarketClassifier
+            code: Stock/futures code
+            raw_code: Raw code (may be non-string)
+            regime: Adaptive regime state (if regime detection enabled)
+            regime_confidence: Confidence score for regime detection (0-1)
+
+        Returns:
+            Metadata dict with market_state, regime, and other context
+        """
         symbol_meta = resolve_symbol_metadata(self._backtest_metadata, code)
         accumulation_candidates = dict(
             self._backtest_metadata.get("accumulation_candidates", {})
@@ -344,15 +383,22 @@ class BacktestStrategyAdapter:
                 # Non-hashable raw key (unexpected) — keep string key path.
                 pass
 
+        # Use adaptive regime if provided, otherwise fall back to market_state
+        final_regime = regime if regime is not None else market_state
+
         metadata: dict[str, Any] = {
             "market_state": market_state,
-            "regime": market_state,
+            "regime": final_regime,
             "is_backtest": True,
             "symbol_metadata": symbol_meta,
             "daily_watchlist": self._backtest_metadata.get("daily_watchlist", {}),
             "dip_candidates": self._backtest_metadata.get("dip_candidates", {}),
             "accumulation_candidates": accumulation_candidates,
         }
+
+        # Add regime confidence if available
+        if regime_confidence is not None:
+            metadata["regime_confidence"] = regime_confidence
 
         # Preserve existing synthetic fallback for volume_accumulation if no candidates
         # were provided in backtest metadata.
@@ -426,6 +472,56 @@ class BacktestStrategyAdapter:
     def set_position(self, position: dict[str, Any] | None) -> None:
         """BacktestEngine → adapter position sync for RL context."""
         self._current_position = position
+
+    def log_model_switch(
+        self,
+        timestamp: datetime,
+        old_model: str,
+        new_model: str,
+        regime: str,
+        confidence: float,
+    ) -> None:
+        """Log a model switch event for backtest tracking.
+
+        Called by adaptive strategies (e.g., RLMPPOEntry) when switching models.
+
+        Args:
+            timestamp: Time of the switch
+            old_model: Previous model name/path
+            new_model: New model name/path
+            regime: Regime that triggered the switch
+            confidence: Regime detection confidence
+        """
+        switch_event = {
+            "timestamp": timestamp.isoformat() if isinstance(timestamp, datetime) else str(timestamp),
+            "old_model": old_model,
+            "new_model": new_model,
+            "regime": regime,
+            "confidence": confidence,
+        }
+        self._model_switches.append(switch_event)
+        self._current_model_name = new_model
+        logger.info(
+            f"Model switch logged: {old_model} -> {new_model} "
+            f"(regime: {regime}, confidence: {confidence:.2f})"
+        )
+
+    def get_regime_stats(self) -> dict[str, Any]:
+        """Get regime tracking statistics for backtest results.
+
+        Returns:
+            Dictionary containing:
+                - regime_distribution: dict[str, int] - bars per regime
+                - model_switches: list[dict] - model switch events
+                - total_bars_tracked: int - total bars with regime data
+        """
+        total_bars = sum(self._regime_distribution.values())
+        return {
+            "regime_distribution": dict(self._regime_distribution),
+            "model_switches": list(self._model_switches),
+            "total_bars_tracked": total_bars,
+            "regime_enabled": self._regime_detection_enabled,
+        }
 
     def check_exit(self, bar: dict[str, Any]) -> tuple[bool, ExitReason | None]:
         """Check exit strategy for current position.
@@ -557,10 +653,38 @@ class BacktestStrategyAdapter:
         else:
             market_state = "UNKNOWN"
 
+        # Detect adaptive regime if enabled
+        regime: Optional[str] = None
+        regime_confidence: Optional[float] = None
+        if self._regime_detection_enabled and self._regime_detector is not None:
+            # Store bar in regime history for building DataFrame
+            self._regime_history[code].append({
+                "close": float(bar.get("close", 0) or 0),
+                "high": float(bar.get("high", 0) or 0),
+                "low": float(bar.get("low", 0) or 0),
+                "volume": float(bar.get("volume", 0) or 0),
+            })
+
+            # Build DataFrame from recent bars for regime detection
+            if len(self._regime_history[code]) >= self._regime_detector.config.min_bars:
+                try:
+                    regime_df = pd.DataFrame(list(self._regime_history[code]))
+                    regime_signal = self._regime_detector.detect(regime_df)
+                    regime = regime_signal.state.value if regime_signal.state else None
+                    regime_confidence = regime_signal.confidence
+
+                    # Track regime distribution for backtest results
+                    if regime:
+                        self._regime_distribution[regime] = self._regime_distribution.get(regime, 0) + 1
+                except Exception as e:
+                    logger.debug(f"Regime detection failed: {e}")
+
         metadata = self._context_metadata(
             market_state=market_state,
             code=code,
             raw_code=bar.get("code"),
+            regime=regime,
+            regime_confidence=regime_confidence,
         )
 
         # Build position list for RL action masks + observation
@@ -602,6 +726,24 @@ class BacktestStrategyAdapter:
 
         if signal is None:
             return SignalType.HOLD
+
+        # Track model switches from signal metadata (for adaptive strategies)
+        if signal.metadata.get("model_name"):
+            new_model = signal.metadata["model_name"]
+            if self._current_model_name and self._current_model_name != new_model:
+                # Model switched - log it
+                self._model_switches.append({
+                    "timestamp": timestamp.isoformat(),
+                    "old_model": self._current_model_name,
+                    "new_model": new_model,
+                    "regime": regime or market_state,
+                    "confidence": regime_confidence or 0.0,
+                })
+                logger.info(
+                    f"Model switch detected: {self._current_model_name} -> {new_model} "
+                    f"(regime: {regime or market_state})"
+                )
+            self._current_model_name = new_model
 
         direction = signal.metadata.get("signal_direction", "long")
         if direction == "long":
