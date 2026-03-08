@@ -1,0 +1,163 @@
+# Automated RL Model Retraining Pipeline
+# Champion/Challenger evaluation and automated model promotion
+
+# === Performance Thresholds ===
+# Criteria for promoting a challenger model to production champion
+thresholds:
+  # Absolute minimum performance requirements (challenger must meet these)
+  min_sharpe_ratio: 1.0                    # Minimum Sharpe ratio for promotion
+  min_win_rate: 0.45                       # Minimum win rate (45%)
+  max_drawdown_threshold: -0.20            # Maximum acceptable drawdown (-20%)
+
+  # Relative improvement requirements (vs current champion)
+  min_improvement_pct: 0.05                # Minimum 5% improvement in primary metric (Sharpe)
+  min_sharpe_improvement: 0.10             # Minimum 0.10 absolute Sharpe improvement
+
+  # Paper trading validation before final promotion
+  paper_trading_days: 5                    # Days to validate in paper trading before promotion
+  paper_trading_min_trades: 10             # Minimum trades required during paper trading
+
+  # Rollback thresholds (if promoted model underperforms in production)
+  rollback_sharpe_threshold: 0.8           # Rollback if Sharpe drops below 80% of champion
+  rollback_win_rate_threshold: 0.9         # Rollback if win rate drops below 90% of champion
+  rollback_max_dd_threshold: 1.2           # Rollback if max drawdown exceeds 120% of champion
+
+# === Data Configuration ===
+data:
+  source: clickhouse
+  database: kospi
+  table: kospi200f_1m
+  symbol: "101S6000"                       # KOSPI200 선물 연결선물
+
+  # Training data window (rolling window strategy)
+  train_days: 90                           # Train on last 90 days
+  test_days: 30                            # Test on most recent 30 days
+  validation_days: 14                      # Validation set for champion/challenger comparison
+
+  # Data quality filters
+  min_bars_per_day: 300
+  quality:
+    enabled: true
+    reject_duplicate_datetime: true
+    require_monotonic_datetime: true
+    max_zero_volume_ratio: 0.95
+    max_zero_volume_price_move_ratio: 0.20
+
+# === Training Configuration ===
+training:
+  # Inherit base config from rl_mppo.yaml
+  base_config: "config/ml/rl_mppo.yaml"
+
+  # Retraining-specific overrides
+  total_timesteps: 3_000_000               # Faster retraining (vs 5M for initial training)
+  eval_freq: 10_000
+  checkpoint_freq: 50_000
+
+  # Error handling
+  max_retries: 2                           # Retry training up to 2 times on failure
+  timeout_hours: 12                        # Training timeout
+
+  # Model versioning
+  version_format: "v{timestamp}"           # e.g., v20260308_143022
+  save_challenger_path: "./models/futures/rl/challenger/"
+  keep_last_n_versions: 10                 # Cleanup old models
+
+# === Evaluation Configuration ===
+evaluation:
+  # Metrics to track for champion/challenger comparison
+  primary_metric: sharpe_ratio             # Main metric for promotion decision
+  secondary_metrics:
+    - win_rate
+    - max_drawdown
+    - profit_factor
+    - total_trades
+    - avg_trade_return
+
+  # Statistical significance testing
+  min_sample_size: 30                      # Minimum trades for valid comparison
+  confidence_level: 0.95                   # 95% confidence for statistical tests
+
+  # Comparison report
+  generate_comparison_report: true
+  save_report_to_mlflow: true
+
+# === MLflow Integration ===
+mlflow:
+  experiment_name: "rl_retraining_pipeline"
+  registered_model_name: "rl_mppo_futures"
+
+  # Stages: None → Staging (challenger) → Production (champion) → Archived (rollback)
+  staging_tag: "Staging"
+  production_tag: "Production"
+  archived_tag: "Archived"
+
+  # Metadata to log
+  log_data_ranges: true
+  log_comparison_report: true
+  log_promotion_decision: true
+  log_hyperparameters: true
+
+# === Scheduling Configuration ===
+schedule:
+  # Cron schedule for automatic retraining (weekly by default)
+  enabled: true
+  cron: "0 2 * * 0"                        # Every Sunday at 2 AM KST
+  timezone: "Asia/Seoul"
+
+  # Lock file to prevent concurrent runs
+  lock_file: "/tmp/rl_retraining.lock"
+  lock_timeout_hours: 24
+
+# === Notification Configuration ===
+notifications:
+  telegram:
+    enabled: true
+    critical_only: true                    # Only send critical events
+
+  # Events to notify
+  notify_on:
+    training_start: false
+    training_complete: true
+    training_failed: true
+    promotion_approved: true
+    promotion_rejected: true
+    rollback_triggered: true
+    paper_trading_start: false
+    paper_trading_complete: true
+
+# === Rollback Configuration ===
+rollback:
+  enabled: true
+
+  # Automatic rollback triggers
+  auto_rollback_on_failure: true
+  monitor_production_days: 7               # Monitor promoted model for 7 days
+
+  # Rollback decision criteria
+  check_interval_hours: 24                 # Check performance every 24 hours
+  consecutive_failures: 2                  # Trigger rollback after 2 consecutive failures
+
+  # Safety: Keep previous champion for N days before archiving
+  keep_previous_champion_days: 30
+
+# === Advanced Features (Optional) ===
+advanced:
+  # A/B testing: Run champion and challenger in parallel
+  ab_testing:
+    enabled: false
+    traffic_split: 0.5                     # 50/50 split
+    duration_days: 7
+
+  # Ensemble: Combine champion and challenger predictions
+  ensemble:
+    enabled: false
+    strategy: "weighted_average"           # weighted_average | voting | stacking
+    champion_weight: 0.6
+    challenger_weight: 0.4
+
+  # Gradual rollout: Slowly increase challenger traffic
+  gradual_rollout:
+    enabled: false
+    initial_traffic: 0.1                   # Start with 10%
+    increment_per_day: 0.1                 # Increase by 10% per day
+    max_traffic: 1.0
