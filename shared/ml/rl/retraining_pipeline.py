@@ -298,7 +298,8 @@ class RetrainingPipeline:
         """Train new challenger model
 
         Uses RLTrainer to train a new model on fresh data. Saves model with
-        timestamped version and registers in ModelRegistry.
+        timestamped version and registers in ModelRegistry. Full MLflow tracking
+        of training process, hyperparameters, and metadata.
 
         Args:
             train_days: Training data (daily features)
@@ -307,6 +308,9 @@ class RetrainingPipeline:
 
         Returns:
             Trained model
+
+        Raises:
+            Exception: If training fails after all retry attempts
         """
         logger.info("Training new challenger model...")
 
@@ -314,12 +318,63 @@ class RetrainingPipeline:
         if train_days is None or train_prices is None:
             train_days, train_prices, _, _ = self._load_data()
 
-        # Train model using RLTrainer
+        # Generate version identifier
+        version = datetime.now().strftime(
+            self.training_config.get("version_format", "%Y%m%d_%H%M%S")
+        )
+
+        # Prepare MLflow experiment
+        experiment_name = self.mlflow_config.get(
+            "experiment_name",
+            "rl_retraining_pipeline"
+        )
+
+        # Start MLflow run for retraining pipeline (wraps RLTrainer's internal run)
+        if HAS_MLFLOW:
+            try:
+                mlflow.set_experiment(experiment_name)
+            except MlflowException as e:
+                logger.warning(f"Failed to set MLflow experiment: {e}")
+
+        # Collect training metadata
+        training_params = {
+            "pipeline_version": version,
+            "algo": "mppo",
+            "model_type": "challenger",
+            "n_train_days": len(train_days) if train_days else 0,
+            "has_aux_features": train_aux is not None,
+            **{
+                k: v
+                for k, v in self.training_config.items()
+                if isinstance(v, (int, float, str, bool))
+            },
+        }
+
+        # Train model with retry logic and MLflow tracking
         max_retries = self.training_config.get("max_retries", 2)
         last_error = None
+        model = None
 
         for attempt in range(max_retries + 1):
+            # Start MLflow run for this training attempt
+            run_name = f"challenger_{version}_attempt_{attempt + 1}"
+
+            if HAS_MLFLOW:
+                try:
+                    mlflow.start_run(run_name=run_name, nested=True)
+                    mlflow.log_params(training_params)
+                    mlflow.log_param("attempt_number", attempt + 1)
+                    mlflow.log_param("max_retries", max_retries)
+                except MlflowException as e:
+                    logger.warning(f"MLflow run start failed: {e}")
+
             try:
+                logger.info(
+                    f"Training attempt {attempt + 1}/{max_retries + 1} "
+                    f"(version: {version})..."
+                )
+
+                # Train model using RLTrainer (it has its own MLflow tracking)
                 model = self.trainer.train(
                     algo="mppo",
                     train_days=train_days,
@@ -327,25 +382,69 @@ class RetrainingPipeline:
                     train_aux=train_aux,
                 )
 
-                # Save model with timestamp version
-                version = datetime.now().strftime("%Y%m%d_%H%M%S")
+                # Save model with versioned filename
                 model_filename = f"mppo_challenger_{version}.zip"
                 model_path = self.challenger_path / model_filename
                 model.save(str(model_path))
                 logger.info(f"Challenger model saved: {model_path}")
 
+                # Log model metadata to MLflow
+                if HAS_MLFLOW:
+                    try:
+                        mlflow.log_param("model_path", str(model_path))
+                        mlflow.log_param("model_filename", model_filename)
+                        mlflow.log_param("training_status", "success")
+                        mlflow.log_metric("training_attempts_used", attempt + 1)
+
+                        # Log model as artifact
+                        mlflow.log_artifact(str(model_path), artifact_path="models")
+
+                        logger.info(f"Model metadata logged to MLflow: {run_name}")
+                    except MlflowException as e:
+                        logger.warning(f"MLflow artifact logging failed: {e}")
+                    finally:
+                        try:
+                            mlflow.end_run()
+                        except MlflowException:
+                            pass
+
+                # Training successful, return model
+                logger.info(
+                    f"Training successful on attempt {attempt + 1}/{max_retries + 1}"
+                )
                 return model
 
             except Exception as e:
                 last_error = e
                 logger.warning(
-                    f"Training attempt {attempt + 1}/{max_retries + 1} failed: {e}"
+                    f"Training attempt {attempt + 1}/{max_retries + 1} failed: {e}",
+                    exc_info=True,
                 )
+
+                # Log failure to MLflow
+                if HAS_MLFLOW:
+                    try:
+                        mlflow.log_param("training_status", "failed")
+                        mlflow.log_param("error_message", str(e)[:500])
+                        mlflow.log_param("error_type", type(e).__name__)
+                        mlflow.log_metric("training_attempts_used", attempt + 1)
+                    except MlflowException as mlflow_err:
+                        logger.warning(f"MLflow error logging failed: {mlflow_err}")
+                    finally:
+                        try:
+                            mlflow.end_run()
+                        except MlflowException:
+                            pass
+
+                # Retry or raise
                 if attempt < max_retries:
-                    logger.info("Retrying training...")
+                    logger.info(f"Retrying training... ({max_retries - attempt} retries left)")
                     continue
                 else:
-                    logger.error(f"Training failed after {max_retries + 1} attempts")
+                    logger.error(
+                        f"Training failed after {max_retries + 1} attempts. "
+                        f"Last error: {last_error}"
+                    )
                     raise last_error
 
     def evaluate_models(
