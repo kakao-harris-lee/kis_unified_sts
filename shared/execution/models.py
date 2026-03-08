@@ -23,6 +23,17 @@ class OrderType(str, Enum):
     CONDITIONAL = "02"  # 조건부지정가
 
 
+class ExecutionVenue(str, Enum):
+    """Execution venue enumeration.
+
+    Trading venues:
+    - KRX: Korean Exchange (traditional exchange)
+    - ATS: Alternative Trading System
+    """
+    KRX = "KRX"
+    ATS = "ATS"
+
+
 class OrderRequest(BaseModel):
     """Order request model."""
 
@@ -33,6 +44,7 @@ class OrderRequest(BaseModel):
     order_type: OrderType = Field(default=OrderType.MARKET, description="Order type")
     quantity: int = Field(..., gt=0, description="Order quantity")
     price: Optional[float] = Field(default=None, description="Limit price (required for LIMIT orders)")
+    venue: ExecutionVenue = Field(default=ExecutionVenue.KRX, description="Execution venue")
 
 
 class OrderResponse(BaseModel):
@@ -43,3 +55,4 @@ class OrderResponse(BaseModel):
     message: str = Field(default="", description="Response message")
     filled_qty: int = Field(default=0, description="Filled quantity")
     filled_price: float = Field(default=0.0, description="Average fill price")
+    venue: ExecutionVenue = Field(default=ExecutionVenue.KRX, description="Execution venue")
