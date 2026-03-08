@@ -1,6 +1,7 @@
 """Order execution configuration."""
 import re
 from enum import Enum
+from typing import Dict, List
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -10,6 +11,157 @@ class TradingMode(str, Enum):
     PAPER = "PAPER"   # Local simulation (no API calls)
     MOCK = "MOCK"     # KIS 모의투자 API
     REAL = "REAL"     # KIS 실전투자 API
+
+
+class ExecutionVenuePreference(str, Enum):
+    """Execution venue preference for time-of-day routing."""
+    KRX = "KRX"       # Prefer KRX
+    ATS = "ATS"       # Prefer ATS (넥스트레이드)
+    AUTO = "AUTO"     # Auto-select based on routing rules
+
+
+class ATSSimulationConfig(BaseModel):
+    """ATS simulation parameters for backtest/paper trading."""
+
+    model_config = ConfigDict(use_enum_values=True)
+
+    ats_fill_rate: float = Field(
+        default=0.65,
+        ge=0.0,
+        le=1.0,
+        description="ATS average fill rate (default: 65%)"
+    )
+    price_improvement_mean_bps: float = Field(
+        default=3.0,
+        ge=0.0,
+        le=50.0,
+        description="Mean price improvement in basis points"
+    )
+    price_improvement_std_bps: float = Field(
+        default=2.0,
+        ge=0.0,
+        le=20.0,
+        description="Standard deviation of price improvement"
+    )
+    latency_penalty_ms: float = Field(
+        default=15.0,
+        ge=0.0,
+        le=1000.0,
+        description="Additional latency penalty for ATS execution (milliseconds)"
+    )
+
+
+class ATSRoutingConfig(BaseModel):
+    """Korean ATS (넥스트레이드) routing configuration."""
+
+    model_config = ConfigDict(use_enum_values=True)
+
+    enabled: bool = Field(
+        default=False,
+        description="Enable ATS routing (default: disabled)"
+    )
+    default_venue: str = Field(
+        default="KRX",
+        description="Default execution venue (KRX | ATS)"
+    )
+
+    # Rule 1: Price improvement threshold
+    price_improvement_threshold_bps: float = Field(
+        default=5.0,
+        ge=0.0,
+        le=100.0,
+        description="Minimum price improvement for ATS selection (basis points)"
+    )
+
+    # Rule 2: Liquidity requirements
+    min_liquidity_depth: float = Field(
+        default=100.0,
+        ge=0.0,
+        description="Minimum quote depth (shares)"
+    )
+    min_depth_multiplier: float = Field(
+        default=2.0,
+        ge=0.0,
+        le=100.0,
+        description="Minimum depth as multiple of order size"
+    )
+
+    # Rule 3: Spread limits
+    max_spread_bps: float = Field(
+        default=30.0,
+        ge=0.0,
+        le=1000.0,
+        description="Maximum spread for ATS usage (basis points)"
+    )
+    spread_comparison_enabled: bool = Field(
+        default=True,
+        description="Enable KRX vs ATS spread comparison"
+    )
+
+    # Rule 4: Fill rate model
+    ats_fill_rate_threshold: float = Field(
+        default=0.7,
+        ge=0.0,
+        le=1.0,
+        description="Minimum fill probability threshold"
+    )
+    prefer_certainty: bool = Field(
+        default=True,
+        description="Prefer KRX when fill uncertainty is high"
+    )
+
+    # Rule 5: Time-of-day preferences
+    time_of_day_preferences: Dict[str, str] = Field(
+        default_factory=dict,
+        description="Time window preferences (HH:MM-HH:MM -> KRX|ATS|AUTO)"
+    )
+
+    # Rule 6: Stock filters
+    min_market_cap: float = Field(
+        default=1_000_000_000_000,  # 1 trillion KRW
+        ge=0.0,
+        description="Minimum market cap for ATS routing"
+    )
+    excluded_sectors: List[str] = Field(
+        default_factory=list,
+        description="Excluded sectors (e.g. ['금융', '보험'])"
+    )
+
+    # Simulation parameters
+    simulation: ATSSimulationConfig = Field(
+        default_factory=ATSSimulationConfig,
+        description="Simulation parameters for backtest/paper trading"
+    )
+
+    @field_validator("default_venue")
+    @classmethod
+    def validate_default_venue(cls, v: str) -> str:
+        """Validate default venue is KRX or ATS."""
+        if v not in ("KRX", "ATS"):
+            raise ValueError(
+                f"Default venue must be 'KRX' or 'ATS', got: {v!r}"
+            )
+        return v
+
+    @field_validator("time_of_day_preferences")
+    @classmethod
+    def validate_time_preferences(cls, v: Dict[str, str]) -> Dict[str, str]:
+        """Validate time window format and venue values."""
+        import re as regex_module
+
+        time_window_pattern = r"^\d{2}:\d{2}-\d{2}:\d{2}$"
+        valid_venues = {"KRX", "ATS", "AUTO"}
+
+        for window, venue in v.items():
+            if not regex_module.match(time_window_pattern, window):
+                raise ValueError(
+                    f"Time window must be in HH:MM-HH:MM format, got: {window!r}"
+                )
+            if venue not in valid_venues:
+                raise ValueError(
+                    f"Venue preference must be KRX, ATS, or AUTO, got: {venue!r}"
+                )
+        return v
 
 
 class ExecutionConfig(BaseModel):
