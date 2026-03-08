@@ -21,6 +21,7 @@ Usage:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime
 from pathlib import Path
@@ -176,6 +177,20 @@ class RetrainingPipeline:
         )
         self.challenger_path.mkdir(parents=True, exist_ok=True)
 
+        # Initialize Telegram notifier
+        self._notifier = None
+        notification_config = self.config.get("notifications", {})
+        telegram_config = notification_config.get("telegram", {})
+        if telegram_config.get("enabled", False):
+            try:
+                from shared.notification.telegram import TelegramNotifier
+                self._notifier = TelegramNotifier()
+                logger.info("Telegram notifications enabled for retraining pipeline")
+            except ImportError:
+                logger.warning("python-telegram-bot not installed. Notifications disabled.")
+            except Exception as e:
+                logger.warning(f"Failed to initialize Telegram notifier: {e}")
+
         logger.info(f"RetrainingPipeline initialized with config: {config_path}")
 
     def run(
@@ -284,6 +299,12 @@ class RetrainingPipeline:
             if HAS_MLFLOW:
                 mlflow.log_param("pipeline_status", "failed")
                 mlflow.log_param("failure_reason", str(e))
+
+            # Send training failure notification
+            self._send_training_failure_notification(
+                error=e,
+                stage="retraining_pipeline",
+            )
             raise
         finally:
             if HAS_MLFLOW:
@@ -664,12 +685,20 @@ class RetrainingPipeline:
         should_promote = comparison["should_promote"]
         reason = comparison["reason"]
         challenger_metrics = comparison["challenger"]
+        champion_metrics = comparison.get("champion")
 
         if not should_promote:
             logger.info(f"Promotion rejected: {reason}")
             if HAS_MLFLOW:
                 mlflow.log_param("promotion_decision", "rejected")
                 mlflow.log_param("rejection_reason", reason)
+
+            # Send rejection notification
+            self._send_rejection_notification(
+                reason=reason,
+                challenger_metrics=challenger_metrics,
+                champion_metrics=champion_metrics,
+            )
             return False
 
         logger.info(f"Promotion approved: {reason}")
@@ -722,6 +751,13 @@ class RetrainingPipeline:
                     mlflow.log_param("promotion_decision", "approved")
                     mlflow.log_param("promoted_version", model_version)
                     mlflow.log_param("promotion_reason", reason)
+
+                # Send promotion notification
+                self._send_promotion_notification(
+                    version=model_version,
+                    reason=reason,
+                    metrics=challenger_metrics,
+                )
                 return True
             else:
                 logger.error("Failed to promote model to Production")
@@ -1036,7 +1072,7 @@ class RetrainingPipeline:
             current_metrics: Current model performance metrics
             previous_metrics: Previous model performance metrics
         """
-        if not self.config.get("notifications", {}).get("telegram", {}).get("enabled", False):
+        if not self._notifier:
             return
 
         # Check if rollback notifications are enabled
@@ -1045,33 +1081,155 @@ class RetrainingPipeline:
             return
 
         try:
-            from shared.notification.telegram import TelegramNotifier
-
-            notifier = TelegramNotifier()
-
             # Build notification message
             message = (
-                "🔴 *RL Model Rollback Triggered*\n\n"
-                f"*Demoted Version:* {current_version}\n"
-                f"*Restored Version:* {previous_version}\n\n"
-                "*Rollback Reasons:*\n"
+                "🔴 <b>RL Model Rollback Triggered</b>\n\n"
+                f"<b>Demoted Version:</b> {current_version}\n"
+                f"<b>Restored Version:</b> {previous_version}\n\n"
+                "<b>Rollback Reasons:</b>\n"
             )
 
             for i, reason in enumerate(reasons, 1):
                 message += f"{i}. {reason}\n"
 
             message += (
-                "\n*Performance Comparison:*\n"
+                "\n<b>Performance Comparison:</b>\n"
                 f"Sharpe: {current_metrics['sharpe_ratio']:.2f} → {previous_metrics['sharpe_ratio']:.2f}\n"
                 f"Win Rate: {current_metrics['win_rate_pct']:.1f}% → {previous_metrics['win_rate_pct']:.1f}%\n"
                 f"Max DD: {current_metrics['max_drawdown_pct']:.2f}% → {previous_metrics['max_drawdown_pct']:.2f}%\n"
             )
 
-            notifier.send_message(message, parse_mode="Markdown")
+            # Use asyncio.run to properly handle async call
+            asyncio.run(self._notifier.send_message(message, is_critical=True))
             logger.info("Rollback notification sent via Telegram")
 
         except Exception as e:
             logger.warning(f"Failed to send rollback notification: {e}")
+
+    def _send_promotion_notification(
+        self,
+        version: str,
+        reason: str,
+        metrics: dict[str, float],
+    ) -> None:
+        """Send Telegram notification for model promotion
+
+        Args:
+            version: Promoted model version
+            reason: Promotion reason
+            metrics: Model performance metrics
+        """
+        if not self._notifier:
+            return
+
+        # Check if promotion notifications are enabled
+        notify_on = self.config.get("notifications", {}).get("notify_on", {})
+        if not notify_on.get("promotion_approved", True):
+            return
+
+        try:
+            # Build notification message
+            message = (
+                "🟢 <b>RL Model Promoted to Production</b>\n\n"
+                f"<b>Version:</b> {version}\n"
+                f"<b>Reason:</b> {reason}\n\n"
+                "<b>Performance Metrics:</b>\n"
+                f"Sharpe Ratio: {metrics.get('sharpe_ratio', 0.0):.2f}\n"
+                f"Win Rate: {metrics.get('win_rate_pct', 0.0):.1f}%\n"
+                f"Max Drawdown: {metrics.get('max_drawdown_pct', 0.0):.2f}%\n"
+                f"Total Trades: {metrics.get('total_trades', 0)}\n"
+                f"Total Return: {metrics.get('total_return_pct', 0.0):.2f}%\n"
+            )
+
+            # Use asyncio.run to properly handle async call
+            asyncio.run(self._notifier.send_message(message, is_critical=True))
+            logger.info("Promotion notification sent via Telegram")
+
+        except Exception as e:
+            logger.warning(f"Failed to send promotion notification: {e}")
+
+    def _send_rejection_notification(
+        self,
+        reason: str,
+        challenger_metrics: dict[str, float],
+        champion_metrics: dict[str, float] | None = None,
+    ) -> None:
+        """Send Telegram notification for promotion rejection
+
+        Args:
+            reason: Rejection reason
+            challenger_metrics: Challenger model performance metrics
+            champion_metrics: Optional champion model metrics for comparison
+        """
+        if not self._notifier:
+            return
+
+        # Check if rejection notifications are enabled
+        notify_on = self.config.get("notifications", {}).get("notify_on", {})
+        if not notify_on.get("promotion_rejected", True):
+            return
+
+        try:
+            # Build notification message
+            message = (
+                "🟡 <b>RL Model Promotion Rejected</b>\n\n"
+                f"<b>Reason:</b> {reason}\n\n"
+                "<b>Challenger Performance:</b>\n"
+                f"Sharpe Ratio: {challenger_metrics.get('sharpe_ratio', 0.0):.2f}\n"
+                f"Win Rate: {challenger_metrics.get('win_rate_pct', 0.0):.1f}%\n"
+                f"Max Drawdown: {challenger_metrics.get('max_drawdown_pct', 0.0):.2f}%\n"
+            )
+
+            if champion_metrics:
+                message += (
+                    "\n<b>Current Champion Performance:</b>\n"
+                    f"Sharpe Ratio: {champion_metrics.get('sharpe_ratio', 0.0):.2f}\n"
+                    f"Win Rate: {champion_metrics.get('win_rate_pct', 0.0):.1f}%\n"
+                    f"Max Drawdown: {champion_metrics.get('max_drawdown_pct', 0.0):.2f}%\n"
+                )
+
+            # Use asyncio.run to properly handle async call
+            asyncio.run(self._notifier.send_message(message, is_critical=False))
+            logger.info("Rejection notification sent via Telegram")
+
+        except Exception as e:
+            logger.warning(f"Failed to send rejection notification: {e}")
+
+    def _send_training_failure_notification(
+        self,
+        error: Exception,
+        stage: str = "training",
+    ) -> None:
+        """Send Telegram notification for training failure
+
+        Args:
+            error: The exception that caused the failure
+            stage: The stage where the failure occurred (training, evaluation, promotion)
+        """
+        if not self._notifier:
+            return
+
+        # Check if failure notifications are enabled
+        notify_on = self.config.get("notifications", {}).get("notify_on", {})
+        if not notify_on.get("training_failed", True):
+            return
+
+        try:
+            # Build notification message
+            message = (
+                "🔴 <b>RL Model Retraining Failed</b>\n\n"
+                f"<b>Stage:</b> {stage}\n"
+                f"<b>Error:</b> {type(error).__name__}\n"
+                f"<b>Details:</b> {str(error)}\n"
+                f"<b>Time:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+            )
+
+            # Use asyncio.run to properly handle async call
+            asyncio.run(self._notifier.send_error(message))
+            logger.info("Training failure notification sent via Telegram")
+
+        except Exception as e:
+            logger.warning(f"Failed to send training failure notification: {e}")
 
     def _load_data(self) -> tuple[
         list[np.ndarray],
