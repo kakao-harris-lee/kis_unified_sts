@@ -100,6 +100,60 @@ if pnl_pct >= self.config.exit.breakeven_threshold:
 - **RL 청산 안전장치**: hard stop(-3%) + EOD close(15:15)가 모델 예측보다 우선한다.
 - **데이터 정책(고정)**: RL 학습/평가는 `kospi200f_1m`의 `101S6000`(KOSPI200 선물 연결선물) 기준으로 수행하고, 실거래 종목은 KOSPI200 mini 근월물(`A05xxx`, 자동 감지)로 운용한다.
 
+#### 계층적 RL (Hierarchical RL)
+
+**아키텍처**: 전문 트레이더처럼 멀티 타임프레임 의사결정 — 상위 타임프레임에서 전략 방향, 하위 타임프레임에서 정밀 실행.
+
+- **High-level Agent (15분봉)**: 시장 상태 분석 → 전략 방향 설정
+- **Low-level Agent (1분봉)**: High-level의 방향 제약 하에 정밀 진입/청산 실행
+
+**운용 모드 (2가지)**:
+
+| 모드 | High-level 출력 | Low-level 제약 | 용도 |
+|------|----------------|---------------|------|
+| `risk_budget` | AGGRESSIVE / NEUTRAL / DEFENSIVE | 포지션 크기 제약 | 리스크 관리 기반 운용 |
+| `directional` | LONG_BIAS / SHORT_BIAS / FLAT | 진입 방향 제약 (action mask) | 트렌드 추종/역추세 전략 |
+
+**Directional Mode 동작**:
+- `LONG_BIAS` → Low-level의 SHORT_ENTRY 차단 (롱 진입만 허용)
+- `SHORT_BIAS` → Low-level의 LONG_ENTRY 차단 (숏 진입만 허용)
+- `FLAT` → 양방향 진입 모두 허용 (관망 모드)
+
+**학습 전략 (2가지)**:
+
+| 전략 | 방법 | 장점 | 단점 |
+|------|------|------|------|
+| `sequential` | Low-level 완전 학습 → High-level 학습 | 안정적, 디버깅 용이 | 시간 소요 큼 |
+| `joint` | High/Low-level 동시 학습, 교대 업데이트 (15:1 비율) | 빠른 수렴, 긴밀한 협력 | 학습 불안정 가능 |
+
+**CLI 명령어**:
+
+```bash
+# 학습 - Directional mode, Sequential training (권장)
+sts rl train-hierarchical --mode directional --training sequential
+
+# 학습 - Risk budget mode, Joint training
+sts rl train-hierarchical --mode risk_budget --training joint
+
+# 평가 - Hierarchical vs Flat RL 비교
+sts rl evaluate-hierarchical
+
+# 평가 - Joint 학습 모델 비교
+sts rl evaluate-hierarchical \
+    --high-model hierarchical/high_level_joint \
+    --low-model hierarchical/low_level_joint
+```
+
+**성능 기대치**:
+- Sharpe ratio 향상: flat rl_mppo 대비 10-30% 개선 예상
+- 승률 개선: 멀티 타임프레임 필터링으로 거짓 신호 감소
+- 레이턴시 제약: 추론 시간 p99 < 60초 (1분봉 제약 준수)
+
+**구현 위치**:
+- `shared/ml/rl/hierarchical/` — High-level env, Low-level env, Trainer, Evaluator
+- `config/ml/rl_mppo.yaml` — `hierarchical` 섹션 (directional_bias, training_mode, joint_timesteps)
+- `tests/unit/ml/rl/test_hierarchical*.py` — 포괄적 테스트 (51개 테스트 메서드)
+
 ---
 
 ## 📁 디렉토리 구조
@@ -133,6 +187,11 @@ kis-unified-trading/
 │   ├── models/                      # Signal, Position, ExitReason 등
 │   ├── indicators/                  # 기술적 지표 (technical, orderbook, volume, composite)
 │   ├── llm/                         # LLM 시장 분석 (14개 모듈)
+│   ├── ml/rl/                       # RL 구현
+│   │   ├── hierarchical/            # 계층적 RL (High-level 15m + Low-level 1m)
+│   │   ├── env.py                   # Flat RL 환경
+│   │   ├── trainer.py               # RL 학습기
+│   │   └── evaluator.py             # RL 평가기
 │   ├── paper/                       # 모의투자 엔진
 │   ├── kis/                         # KIS API 어댑터
 │   ├── notification/telegram.py     # Telegram 알림
@@ -403,6 +462,12 @@ sts paper start --strategy bb_reversion --asset stock
 # RL
 sts rl train --algo mppo
 sts rl evaluate --model mppo_best
+
+# 계층적 RL (Hierarchical RL)
+sts rl train-hierarchical --mode directional --training sequential
+sts rl train-hierarchical --mode risk_budget --training joint
+sts rl evaluate-hierarchical
+sts rl evaluate-hierarchical --high-model hierarchical/high_level_joint --low-model hierarchical/low_level_joint
 
 # 포맷팅 & 테스트
 black . && ruff check --fix .
