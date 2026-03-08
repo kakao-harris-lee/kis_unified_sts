@@ -276,6 +276,16 @@ class MetricsCollector:
             "RL model observation std drift",
             ["strategy"],
         )
+        self.prom_venue_order_count = Gauge(
+            "trading_venue_order_count",
+            "Number of orders executed per venue",
+            ["venue"],
+        )
+        self.prom_venue_price_improvement_bps = Gauge(
+            "trading_venue_price_improvement_bps",
+            "Price improvement in basis points per venue",
+            ["venue"],
+        )
 
         # Histograms
         self.prom_trade_pnl = Histogram(
@@ -520,6 +530,16 @@ class MetricsCollector:
         """Signal evaluation cycle 기록"""
         if HAS_PROMETHEUS:
             self.prom_signal_evaluations.inc()
+
+    def record_venue_order_count(self, venue: str, count: int) -> None:
+        """Venue별 주문 수 기록"""
+        if HAS_PROMETHEUS:
+            self.prom_venue_order_count.labels(venue=venue).set(count)
+
+    def record_venue_price_improvement(self, venue: str, improvement_bps: float) -> None:
+        """Venue별 가격 개선(basis points) 기록"""
+        if HAS_PROMETHEUS:
+            self.prom_venue_price_improvement_bps.labels(venue=venue).set(improvement_bps)
 
     def get_metrics(self) -> TradingMetrics:
         """메트릭 조회"""
