@@ -117,3 +117,55 @@ async def list_strategies(
             status_code=500,
             detail=f"Internal server error: {str(e)}",
         )
+
+
+@router.get("/{asset}/{name}")
+async def get_strategy_detail(
+    asset: str,
+    name: str,
+):
+    """Get full strategy configuration.
+
+    Args:
+        asset: Asset class (stock, futures)
+        name: Strategy name
+
+    Returns:
+        Full strategy YAML config as JSON
+
+    Raises:
+        HTTPException: 400 if invalid asset_class, 404 if strategy not found, 500 if config loading fails
+    """
+    # Validate asset parameter
+    if asset not in SUPPORTED_ASSETS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid asset class '{asset}'. Must be one of: {', '.join(SUPPORTED_ASSETS)}",
+        )
+
+    try:
+        # Load strategy config using ConfigLoader
+        config = ConfigLoader.load_strategy(asset_class=asset, strategy_name=name)
+
+        logger.info(f"Loaded strategy config: {asset}/{name}")
+
+        return config
+
+    except ConfigNotFoundError as e:
+        logger.error(f"Strategy not found: {asset}/{name} - {e}")
+        raise HTTPException(
+            status_code=404,
+            detail=f"Strategy '{name}' not found for asset class '{asset}'",
+        )
+    except ConfigError as e:
+        logger.error(f"Config error loading {asset}/{name}: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Configuration error: {str(e)}",
+        )
+    except Exception as e:
+        logger.exception(f"Unexpected error loading strategy {asset}/{name}: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Internal server error: {str(e)}",
+        )
