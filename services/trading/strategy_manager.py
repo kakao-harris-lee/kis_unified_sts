@@ -39,7 +39,10 @@ from shared.strategy.registry import (
 )
 
 if TYPE_CHECKING:
-    pass
+    from shared.llm.market_context import MarketContext
+
+# Local import to avoid circular dependencies
+from services.trading.llm_context_provider import LLMContextProvider
 
 logger = logging.getLogger(__name__)
 
@@ -199,6 +202,9 @@ class StrategyManager:
         # Signal deduplication cache
         self._recent_signals: dict[str, datetime] = {}
 
+        # LLM context provider for market analysis
+        self._llm_context_provider = LLMContextProvider(asset_class=asset_class)
+
         logger.info(
             f"StrategyManager initialized: {len(self.strategies)} strategies "
             f"for {asset_class}"
@@ -263,6 +269,18 @@ class StrategyManager:
         """
         if not self.strategies:
             return []
+
+        # Fetch LLM market context and inject into EntryContext
+        market_context = self._llm_context_provider.get_context()
+        context.market_context = market_context
+
+        if market_context:
+            logger.debug(
+                f"LLM market context injected: regime={market_context.regime}, "
+                f"risk_score={market_context.risk_score:.2f}"
+            )
+        else:
+            logger.debug("No LLM market context available - strategies will proceed without it")
 
         signals = []
 
