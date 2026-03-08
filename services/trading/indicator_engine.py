@@ -487,6 +487,43 @@ class StreamingIndicatorEngine:
                 f"({len(mtf_acc.candles)} candles, {seeded} seeded)"
             )
 
+    def seed_daily_candles(self, symbol: str, candles: list[dict]) -> None:
+        """Pre-warm daily candle buffer with historical data.
+
+        Each candle dict must have: open, high, low, close, volume.
+        Candles should be in chronological order (oldest first).
+
+        Args:
+            symbol: Stock/futures symbol.
+            candles: List of daily candle dicts with OHLCV data.
+        """
+        if symbol not in self._daily_candles:
+            self._daily_candles[symbol] = deque(maxlen=200)
+
+        daily_deque = self._daily_candles[symbol]
+        seeded = 0
+
+        for c in candles:
+            try:
+                candle = Candle(
+                    open=float(c["open"]),
+                    high=float(c["high"]),
+                    low=float(c["low"]),
+                    close=float(c["close"]),
+                    volume=float(c.get("volume", 0)),
+                    minute=0,  # Not used for daily candles
+                )
+                daily_deque.append(candle)
+                seeded += 1
+            except (KeyError, ValueError):
+                continue
+
+        if seeded > 0:
+            logger.info(
+                f"Indicator engine: {symbol} daily candles pre-warmed "
+                f"({len(daily_deque)} total, {seeded} seeded)"
+            )
+
     def set_volume_baseline(self, symbol: str, cumulative_volume: float) -> None:
         """Pre-set cumulative volume baseline for a symbol.
 
