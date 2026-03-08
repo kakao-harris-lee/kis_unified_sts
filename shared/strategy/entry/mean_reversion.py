@@ -73,6 +73,10 @@ class MeanReversionConfig(ConfigMixin):
     # Confidence calculation parameters
     bb_width_scale_factor: float = 0.5
 
+    # Market regime filter (LLM-based)
+    regime_filter: bool = False  # Enable regime-based filtering
+    block_long_in_strong_bearish: bool = True  # Skip LONG signals in STRONG_BEARISH regime
+
 
 class MeanReversionEntry(EntrySignalGenerator[MeanReversionConfig]):
     """Mean reversion entry strategy.
@@ -265,24 +269,78 @@ class MeanReversionEntry(EntrySignalGenerator[MeanReversionConfig]):
         # Check for long entry (oversold)
         long_touch = close <= bb_lower * self.config.bb_touch_buffer
         if long_touch and rsi < oversold_threshold:
-            logger.info(
-                f"Mean Reversion LONG signal: {code} close={close}, "
-                f"bb_lower={bb_lower}, rsi={rsi}"
-            )
-            self._last_signal_at[code] = now
-            return Signal(
-                code=code,
-                name=name,
-                signal_type=SignalType.ENTRY,
-                price=close,
-                timestamp=context.timestamp,
-                strategy="mean_reversion",
-                confidence=self._calculate_confidence(close, bb_lower, bb_upper, rsi, is_long=True),
-                metadata={
-                    "signal_direction": "long",
-                    "stop_loss_pct": float(self.config.stop_loss_pct),
-                },
-            )
+            # Apply regime filter for LONG signals
+            if self.config.regime_filter and self.config.block_long_in_strong_bearish:
+                if context.market_context is not None:
+                    from shared.llm.data_classes import MarketSignal
+
+                    if context.market_context.overall_signal == MarketSignal.STRONG_BEARISH:
+                        logger.info(
+                            f"Blocking Mean Reversion LONG signal for {code} due to STRONG_BEARISH regime "
+                            f"(regime={context.market_context.regime}, signal={context.market_context.overall_signal.name})"
+                        )
+                        # Continue to check for SHORT signals if enabled
+                        # (fall through to SHORT check below)
+                    else:
+                        # Regime allows LONG signals
+                        logger.info(
+                            f"Mean Reversion LONG signal: {code} close={close}, "
+                            f"bb_lower={bb_lower}, rsi={rsi} (regime={context.market_context.regime})"
+                        )
+                        self._last_signal_at[code] = now
+                        return Signal(
+                            code=code,
+                            name=name,
+                            signal_type=SignalType.ENTRY,
+                            price=close,
+                            timestamp=context.timestamp,
+                            strategy="mean_reversion",
+                            confidence=self._calculate_confidence(close, bb_lower, bb_upper, rsi, is_long=True),
+                            metadata={
+                                "signal_direction": "long",
+                                "stop_loss_pct": float(self.config.stop_loss_pct),
+                            },
+                        )
+                else:
+                    # No market context available - allow signal (graceful degradation)
+                    logger.info(
+                        f"Mean Reversion LONG signal: {code} close={close}, "
+                        f"bb_lower={bb_lower}, rsi={rsi} (no regime data)"
+                    )
+                    self._last_signal_at[code] = now
+                    return Signal(
+                        code=code,
+                        name=name,
+                        signal_type=SignalType.ENTRY,
+                        price=close,
+                        timestamp=context.timestamp,
+                        strategy="mean_reversion",
+                        confidence=self._calculate_confidence(close, bb_lower, bb_upper, rsi, is_long=True),
+                        metadata={
+                            "signal_direction": "long",
+                            "stop_loss_pct": float(self.config.stop_loss_pct),
+                        },
+                    )
+            else:
+                # Regime filter disabled - allow signal
+                logger.info(
+                    f"Mean Reversion LONG signal: {code} close={close}, "
+                    f"bb_lower={bb_lower}, rsi={rsi}"
+                )
+                self._last_signal_at[code] = now
+                return Signal(
+                    code=code,
+                    name=name,
+                    signal_type=SignalType.ENTRY,
+                    price=close,
+                    timestamp=context.timestamp,
+                    strategy="mean_reversion",
+                    confidence=self._calculate_confidence(close, bb_lower, bb_upper, rsi, is_long=True),
+                    metadata={
+                        "signal_direction": "long",
+                        "stop_loss_pct": float(self.config.stop_loss_pct),
+                    },
+                )
 
         # Check for short entry (overbought)
         if not self.config.allow_short:
