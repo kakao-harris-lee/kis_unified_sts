@@ -29,6 +29,7 @@ import pandas as pd
 
 from shared.config import ConfigLoader
 from shared.ml.rl.env import RLEnvConfig
+from shared.ml.rl.evaluator import RLEvaluator
 from shared.ml.rl.hierarchical.high_level_env import (
     DirectionalHighLevelConfig,
     DirectionalHighLevelEnv,
@@ -38,6 +39,7 @@ from shared.ml.rl.hierarchical.high_level_env import (
     HighLevelEnv,
 )
 from shared.ml.rl.hierarchical.low_level_env import LowLevelEnv
+from shared.ml.rl.hierarchical.utils import downsample_1m_to_15m
 
 logger = logging.getLogger(__name__)
 
@@ -162,6 +164,11 @@ class HierarchicalEvaluator:
                         )
                         low_env.set_risk_budget(current_risk_budget)
 
+                    # High-level 환경 전진 (관측값 업데이트)
+                    if high_step < len(day_data_15m) - 1:
+                        high_obs, _, _, _, _ = high_env.step(high_action)
+                    high_step += 1
+
                 # Low-level 행동 (action masking 적용)
                 masks = low_env.action_masks()
                 low_action, _ = low_model.predict(
@@ -238,6 +245,8 @@ class HierarchicalEvaluator:
         Returns:
             비교 결과 DataFrame
         """
+        slippage = self.env_config.slippage
+
         logger.info("Evaluating hierarchical model...")
         hierarchical_metrics = self.evaluate_hierarchical(
             high_model,
@@ -246,12 +255,12 @@ class HierarchicalEvaluator:
             test_prices_1m,
             test_days_15m,
             mode=mode,
-            slippage=0.0,
+            slippage=slippage,
         )
 
         logger.info("Evaluating baseline flat rl_mppo...")
         baseline_metrics = self._evaluate_baseline(
-            baseline_model, test_days_1m, test_prices_1m, slippage=0.0
+            baseline_model, test_days_1m, test_prices_1m, slippage=slippage
         )
 
         # 비교 결과 생성
@@ -438,6 +447,7 @@ class HierarchicalEvaluator:
             high_obs, _ = high_env.reset()
 
             step = 0
+            high_step = 0
             terminated = False
             day_start = time.perf_counter()
 
@@ -457,6 +467,11 @@ class HierarchicalEvaluator:
                             high_action, 0.5
                         )
                         low_env.set_risk_budget(current_risk_budget)
+
+                    # High-level 환경 전진 (관측값 업데이트)
+                    if high_step < len(day_data_15m) - 1:
+                        high_obs, _, _, _, _ = high_env.step(high_action)
+                    high_step += 1
 
                 # Low-level 행동
                 masks = low_env.action_masks()
@@ -649,48 +664,11 @@ class HierarchicalEvaluator:
         Returns:
             15분봉 피처 배열 리스트
         """
-        days_15m = []
-        for day_1m in days_1m:
-            n_bars = len(day_1m)
-            n_15m_bars = n_bars // self.bars_per_step
+        return [downsample_1m_to_15m(day, self.bars_per_step) for day in days_1m]
 
-            # 15분 간격으로 리샘플링 (평균)
-            bars_15m = []
-            for i in range(n_15m_bars):
-                start_idx = i * self.bars_per_step
-                end_idx = start_idx + self.bars_per_step
-                segment = day_1m[start_idx:end_idx]
-                # 평균값으로 15분봉 생성
-                bar_15m = np.mean(segment, axis=0)
-                bars_15m.append(bar_15m)
-
-            days_15m.append(np.array(bars_15m, dtype=np.float32))
-
-        return days_15m
-
-    def _calc_max_drawdown(self, daily_returns: list[float]) -> float:
-        """최대 낙폭 계산"""
-        if not daily_returns:
-            return 0.0
-
-        cumulative = np.cumprod(1 + np.array(daily_returns))
-        peak = np.maximum.accumulate(cumulative)
-        drawdown = (cumulative - peak) / peak
-        return float(np.min(drawdown))
-
-    def _calc_sharpe(
-        self, daily_returns: list[float], risk_free_rate: float = 0.035
-    ) -> float:
-        """샤프 비율 계산 (연율화)"""
-        if not daily_returns or len(daily_returns) < 2:
-            return 0.0
-
-        returns = np.array(daily_returns)
-        daily_rf = (1 + risk_free_rate) ** (1 / 252) - 1
-        excess = returns - daily_rf
-        if np.std(excess) == 0:
-            return 0.0
-        return float(np.mean(excess) / np.std(excess) * np.sqrt(252))
+    # _calc_max_drawdown / _calc_sharpe: RLEvaluator의 static 메서드 재사용
+    _calc_max_drawdown = staticmethod(RLEvaluator._calc_max_drawdown)
+    _calc_sharpe = staticmethod(RLEvaluator._calc_sharpe)
 
     def _calc_improvement(
         self, baseline: float, new: float, lower_is_better: bool = False
@@ -703,14 +681,20 @@ class HierarchicalEvaluator:
             lower_is_better: True면 낮을수록 좋은 지표 (예: max_drawdown)
 
         Returns:
-            개선율 (%)
+            개선율 (%). 양수 = 개선, 음수 = 악화.
         """
-        if baseline == 0:
-            return 0.0
-
-        improvement = ((new - baseline) / abs(baseline)) * 100
         if lower_is_better:
-            improvement = -improvement  # 낮을수록 좋은 지표는 부호 반전
+            # max_drawdown 등 음수 지표: 절대값 기준으로 감소하면 개선
+            abs_baseline = abs(baseline)
+            abs_new = abs(new)
+            if abs_baseline == 0:
+                return 0.0
+            # 절대값이 줄었으면 개선 (양수), 늘었으면 악화 (음수)
+            improvement = ((abs_baseline - abs_new) / abs_baseline) * 100
+        else:
+            if baseline == 0:
+                return 0.0
+            improvement = ((new - baseline) / abs(baseline)) * 100
 
         return round(improvement, 2)
 

@@ -290,7 +290,8 @@ class RLEvaluator:
         self._log_mlflow_artifact(artifact_name, df)
         return df
 
-    def _calc_max_drawdown(self, daily_returns: list[float]) -> float:
+    @staticmethod
+    def _calc_max_drawdown(daily_returns: list[float]) -> float:
         """최대 낙폭 계산"""
         if not daily_returns:
             return 0.0
@@ -300,8 +301,9 @@ class RLEvaluator:
         drawdown = (cumulative - peak) / peak
         return float(np.min(drawdown))
 
+    @staticmethod
     def _calc_sharpe(
-        self, daily_returns: list[float], risk_free_rate: float = 0.035
+        daily_returns: list[float], risk_free_rate: float = 0.035
     ) -> float:
         """샤프 비율 계산 (연율화)"""
         if not daily_returns or len(daily_returns) < 2:

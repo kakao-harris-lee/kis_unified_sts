@@ -2729,7 +2729,7 @@ def rl_train_hierarchical(mode: str, training: str, config: str):
 @rl.command("evaluate-hierarchical")
 @click.option(
     "--high-model",
-    "-h",
+    "-H",
     default="hierarchical/high_level_final",
     help="High-level model path (default: hierarchical/high_level_final)",
 )

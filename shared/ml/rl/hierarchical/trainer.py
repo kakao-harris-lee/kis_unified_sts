@@ -41,6 +41,7 @@ from shared.ml.rl.hierarchical.high_level_env import (
     HighLevelEnv,
 )
 from shared.ml.rl.hierarchical.low_level_env import LowLevelEnv
+from shared.ml.rl.hierarchical.utils import downsample_1m_to_15m
 
 logger = logging.getLogger(__name__)
 
@@ -495,7 +496,7 @@ class HierarchicalTrainer:
         return model
 
     def _downsample_to_15m(self, day_data_1m: np.ndarray) -> np.ndarray:
-        """1분봉 → 15분봉 다운샘플 (구간 평균)
+        """1분봉 -> 15분봉 다운샘플 (구간 평균)
 
         Args:
             day_data_1m: (n_bars, 25) 1분봉 정규화 피처
@@ -503,12 +504,4 @@ class HierarchicalTrainer:
         Returns:
             (n_bars_15m, 25) 15분봉 피처
         """
-        n_bars = len(day_data_1m)
-        features_15m = []
-
-        for start in range(0, n_bars, self.bars_per_step):
-            end = min(start + self.bars_per_step, n_bars)
-            segment = day_data_1m[start:end]
-            features_15m.append(segment.mean(axis=0))
-
-        return np.array(features_15m, dtype=np.float32)
+        return downsample_1m_to_15m(day_data_1m, self.bars_per_step)
