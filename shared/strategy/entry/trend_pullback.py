@@ -1,11 +1,13 @@
 """Trend Pullback Entry Strategy.
 
 멀티 타임프레임 추세 추종 눌림목 전략:
+- 일간 SMA(200) 위에서 장기 상승 추세 확인
 - BB 하단 터치 + RSI 과매도에서 반등 진입
 - Williams %R 과매도 반전 시 진입
 - 일간 watchlist 기반 후보 종목 필터링
 
 Entry Conditions (Long):
+    Trend filter: close > SMA(200) — 장기 상승 추세
     Primary: BB touch (close <= bb_lower * buffer) AND RSI < rsi_oversold
     OR
     Alternative: Williams %R reversal (prev_wr < oversold AND current_wr >= reversal)
@@ -76,6 +78,7 @@ class TrendPullbackEntry(EntrySignalGenerator[TrendPullbackConfig]):
 
     Entry conditions (Long):
         Layer 1: code must be in daily_watchlist["strategies"]["trend_pullback"]
+        Trend filter: close > SMA(200) — 장기 상승 추세
         Time: skip first 30 min and last 15 min of session
         Cooldown: no signal within signal_cooldown_seconds
         Edge: atr/close >= round_trip_cost * min_atr_cost_ratio
@@ -113,7 +116,7 @@ class TrendPullbackEntry(EntrySignalGenerator[TrendPullbackConfig]):
 
     @property
     def required_indicators(self) -> list[str]:
-        return ["bb_lower", "bb_middle", "rsi", "volume", "volume_ma", "atr", "momentum_5m"]
+        return ["bb_lower", "bb_middle", "rsi", "volume", "volume_ma", "atr", "momentum_5m", "daily_sma_200"]
 
     async def generate(self, context: EntryContext) -> Optional[Signal]:
         """Generate entry signal based on trend pullback conditions."""
@@ -121,9 +124,15 @@ class TrendPullbackEntry(EntrySignalGenerator[TrendPullbackConfig]):
         indicators = context.indicators or {}
 
         def _get(key: str, default: float = 0.0) -> float:
-            if key in indicators:
-                return float(indicators.get(key, default) or default)
-            return float(data.get(key, default) or default)
+            # Check exact key, then daily_ prefixed key (paper trading injects daily_ prefix)
+            for k in (key, f"daily_{key}"):
+                if k in indicators:
+                    val = indicators.get(k, default)
+                    return float(val) if val is not None else default
+                if k in data:
+                    val = data.get(k, default)
+                    return float(val) if val is not None else default
+            return default
 
         code = str(data.get("code", "") or "")
         name = str(data.get("name", "") or "")
@@ -139,6 +148,11 @@ class TrendPullbackEntry(EntrySignalGenerator[TrendPullbackConfig]):
             watchlist_codes = strategies.get("trend_pullback", [])
             if code not in watchlist_codes:
                 return None
+
+        # --- Trend filter: close > SMA(200) — 장기 상승 추세 ---
+        sma_200 = _get("sma_200", 0)
+        if sma_200 <= 0 or close <= sma_200:
+            return None
 
         now = context.timestamp
 
