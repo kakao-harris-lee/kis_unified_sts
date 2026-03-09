@@ -2428,28 +2428,19 @@ def rl_slippage(model: str, retrain: bool, config: str):
     default=None,
     help="Futures symbol override (default: auto-detected KOSPI200 mini front-month)",
 )
-@click.option(
-    "--engine",
-    type=click.Choice(["orchestrator", "legacy"], case_sensitive=False),
-    default="orchestrator",
-    show_default=True,
-    help="Execution engine path",
-)
 @click.option("--no-daemon", is_flag=True, help="Run single session (foreground, no loop)")
 def rl_paper(
     model: str,
     config: str,
     strategy: str,
     symbol: str,
-    engine: str,
     no_daemon: bool,
 ):
     """RL Paper Trading 실행
 
     \b
     학습된 MaskablePPO 모델로 실시간 paper trading.
-    기본 엔진은 orchestrator 경로(전략/리스크/주문 공통 경로).
-    legacy는 기존 paper_trader 단독 엔진.
+    Orchestrator 경로(전략/리스크/주문 공통 경로)로 실행.
 
     \b
     Example:
@@ -2467,20 +2458,9 @@ def rl_paper(
     click.echo(f"  Strategy: {strategy}")
     if symbol:
         click.echo(f"  Symbol: {symbol}")
-    click.echo(f"  Engine: {engine}")
     click.echo(f"  Mode: {'single session' if no_daemon else 'daemon'}")
 
     try:
-        if engine == "legacy":
-            from shared.ml.rl.paper_trader import run_paper_trader
-
-            asyncio.run(run_paper_trader(
-                config_path=config,
-                model_name=model,
-                symbol=symbol,
-            ))
-            return
-
         from services.trading.orchestrator import TradingConfig, TradingOrchestrator
 
         # Allow model override for rl_mppo strategy when running via orchestrator.

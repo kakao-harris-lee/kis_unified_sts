@@ -6,6 +6,9 @@ on:
     branches: [main, develop]
   pull_request:
     branches: [main]
+  schedule:
+    # Run performance tests weekly on Monday at 00:00 UTC
+    - cron: '0 0 * * 1'
 
 jobs:
   test:
@@ -100,3 +103,57 @@ jobs:
       - name: Run mypy
         run: mypy shared/ --ignore-missing-imports --no-error-summary || true
         continue-on-error: true
+
+  performance:
+    runs-on: ubuntu-latest
+    # Run on PRs to main and weekly schedule
+    if: github.event_name == 'schedule' || (github.event_name == 'pull_request' && github.base_ref == 'main')
+
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+          pip install prometheus-client clickhouse-connect gymnasium pytest-json-report
+
+      - name: Run performance tests
+        run: |
+          pytest tests/performance/ -v -s --json-report --json-report-file=tests/performance/current.json
+        env:
+          REDIS_URL: redis://localhost:6379/0
+          ENVIRONMENT: test
+
+      - name: Check for performance regressions
+        run: |
+          python scripts/performance/check_regression.py \
+            --baseline tests/performance/baselines.json \
+            --current tests/performance/current.json
+        continue-on-error: false
+
+      - name: Upload performance report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: performance-report
+          path: tests/performance/current.json
+          retention-days: 30
