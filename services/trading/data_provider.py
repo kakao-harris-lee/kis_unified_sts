@@ -633,10 +633,7 @@ class MarketDataProvider:
                         f"Data source unhealthy, triggering failover to REST polling. "
                         f"Health status: {health_status}"
                     )
-                    # Failover will be triggered by _failover_to_rest() method
-                    # (implemented in subtask-2-3)
-                    # For now, just log the event
-                    # TODO: Call self._failover_to_rest() once implemented
+                    await self._failover_to_rest()
 
             except asyncio.CancelledError:
                 logger.info("Health check loop cancelled")
@@ -644,6 +641,80 @@ class MarketDataProvider:
             except Exception as e:
                 logger.error(f"Error in health check loop: {type(e).__name__}: {e}", exc_info=True)
                 # Continue checking despite errors
+
+    async def _failover_to_rest(self):
+        """Fail over from WebSocket to REST polling mode.
+
+        Called when WebSocket data source becomes unhealthy. Switches to
+        REST API polling as a fallback to maintain data availability.
+
+        This method is idempotent - calling it multiple times has no effect
+        if already in REST fallback mode.
+        """
+        # Already in fallback mode, nothing to do
+        if self._current_mode == DataSourceMode.REST_FALLBACK:
+            logger.debug("Already in REST fallback mode, ignoring failover request")
+            return
+
+        logger.warning(
+            f"Failing over to REST polling mode "
+            f"(interval: {self.config.rest_poll_interval_seconds}s)"
+        )
+
+        # Switch mode
+        self._current_mode = DataSourceMode.REST_FALLBACK
+
+        # Create KIS client if not already available
+        if self._kis_client is None:
+            logger.warning("No KIS client available for REST fallback, using mock data")
+            # Fallback will use mock data via _generate_mock_data in _fetch_batch
+            return
+
+        # Start REST polling loop task
+        # This will be implemented in subtask-2-4
+        if self._fallback_poll_task is None or self._fallback_poll_task.done():
+            try:
+                self._fallback_poll_task = asyncio.create_task(self._rest_poll_loop())
+                logger.info("Started REST polling task")
+            except Exception as e:
+                logger.error(f"Failed to start REST polling task: {e}", exc_info=True)
+                # Continue with manual fetches via get_data() if polling task fails
+
+    async def _rest_poll_loop(self):
+        """REST polling loop for fallback mode.
+
+        Continuously polls market data via REST API when WebSocket is unavailable.
+        This method runs until cancelled or until recovery to WebSocket mode.
+
+        Full implementation in subtask-2-4.
+        """
+        logger.info(
+            f"Starting REST polling loop (interval: {self.config.rest_poll_interval_seconds}s)"
+        )
+
+        # Placeholder implementation - will be fully implemented in subtask-2-4
+        # For now, just log and sleep to prevent immediate cancellation
+        while self._current_mode == DataSourceMode.REST_FALLBACK:
+            try:
+                # TODO (subtask-2-4): Implement actual REST polling logic
+                # - Fetch all tracked symbols via KIS client
+                # - Update cache with fresh data
+                # - Handle rate limiting and errors
+                logger.debug("REST poll cycle (placeholder)")
+
+                # Sleep until next poll interval
+                await asyncio.sleep(self.config.rest_poll_interval_seconds)
+
+            except asyncio.CancelledError:
+                logger.info("REST polling loop cancelled")
+                raise
+            except Exception as e:
+                logger.error(
+                    f"Error in REST polling loop: {type(e).__name__}: {e}",
+                    exc_info=True,
+                )
+                # Brief pause before retry on error
+                await asyncio.sleep(1.0)
 
     def clear_cache(self):
         """Clear all cached data"""
