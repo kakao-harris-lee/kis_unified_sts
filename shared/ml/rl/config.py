@@ -788,7 +788,7 @@ class PositionSizingConfig(ServiceConfigBase):
 
 
 class PaperTradingConfig(ServiceConfigBase):
-    """Paper trading configuration (legacy paper_trader.py).
+    """Paper trading configuration for TradingOrchestrator.
 
     Valid Ranges:
         - warmup_bars: 50 - 500
