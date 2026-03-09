@@ -68,3 +68,22 @@ export const experimentsApi = {
   getBest: (experimentId: string, metric?: string) =>
     apiClient.get(`/api/experiments/${experimentId}/best`, { params: { metric } }),
 };
+
+// Strategies API
+export const strategiesApi = {
+  list: (params?: { asset_class?: string; enabled_only?: boolean }) =>
+    apiClient.get('/api/strategies', { params }),
+  get: (asset: string, name: string) =>
+    apiClient.get(`/api/strategies/${asset}/${name}`),
+  save: (data: {
+    asset_class: string;
+    name: string;
+    config: Record<string, unknown>;
+  }) => apiClient.post('/api/strategies', data),
+  validate: (data: {
+    asset_class: string;
+    config: Record<string, unknown>;
+  }) => apiClient.post('/api/strategies/validate', data),
+  schema: (params: { entry_type?: string; exit_type?: string; position_type?: string }) =>
+    apiClient.get('/api/strategies/schema', { params }),
+};
