@@ -4,15 +4,7 @@ import ErrorMessage from './ErrorMessage';
 import RefreshIndicator from './RefreshIndicator';
 import useQueryWithError from '../hooks/useQueryWithError';
 import { apiClient } from '../api/client';
-
-interface VenueMetricsData {
-  krx_count: number;
-  ats_count: number;
-  krx_fill_rate: number;
-  ats_fill_rate: number;
-  avg_price_improvement_bps: number;
-  ats_price_improvement_bps: number;
-}
+import type { VenueMetricsData } from '../types';
 
 const COLORS = {
   KRX: '#6c8aff',
