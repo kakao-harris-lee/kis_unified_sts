@@ -50,15 +50,17 @@ MAX_DAILY_DAYS = int(os.getenv("STOCK_DAILY_MAX_DAYS", "100"))
 def ensure_daily_candles_table():
     """Ensure daily_candles table exists."""
     config = _get_clickhouse_config()
-    client = clickhouse_connect.get_client(
-        host=config["host"],
-        port=config["port"],
-        username=config["user"],
-        password=config["password"],
-        secure=config["secure"],
-        verify=config["verify"],
-        ca_cert=config["ca_cert"],
-    )
+    kwargs = {
+        "host": config["host"],
+        "port": config["port"],
+        "username": config["user"],
+        "password": config["password"],
+        "secure": config["secure"],
+        "verify": config["verify"],
+    }
+    if config.get("ca_cert"):
+        kwargs["ca_cert"] = config["ca_cert"]
+    client = clickhouse_connect.get_client(**kwargs)
 
     # Create database
     client.command(f"CREATE DATABASE IF NOT EXISTS {config['database']}")

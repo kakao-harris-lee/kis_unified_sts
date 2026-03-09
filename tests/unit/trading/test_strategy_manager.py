@@ -645,3 +645,57 @@ class TestStrategyManager:
                 )
                 assert len(signals_no_filter) == 1
                 assert signals_no_filter[0].code == "005930"
+
+    @pytest.mark.asyncio
+    async def test_cost_filter_accepts_flat_symbol_context(self, mock_strategy):
+        """Cost filter must support orchestrator's flat per-symbol EntryContext."""
+        with patch("services.trading.strategy_manager.register_builtin_components"):
+            with patch("services.trading.strategy_manager.StrategyFactory") as mock_factory:
+                mock_factory.create_all.return_value = []
+
+                from services.trading.strategy_manager import (
+                    StrategyManager,
+                    StrategyManagerConfig,
+                )
+                from shared.models.signal import Signal
+                from shared.strategy.base import EntryContext
+
+                config = StrategyManagerConfig(
+                    cost_filter_enabled=True,
+                    min_atr_cost_ratio=1.5,
+                    commission_rate=0.003,
+                    slippage_bps=1.5,
+                )
+                manager = StrategyManager(asset_class="futures", config=config)
+
+                passing_signal = Signal(
+                    code="A05603",
+                    name="KOSPI200선물",
+                    strategy="test_strategy",
+                    price=757.18,
+                    confidence=0.84,
+                    timestamp=datetime.now(),
+                    metadata={"signal_direction": "long"},
+                )
+
+                mock_strategy.check_entry = AsyncMock(return_value=passing_signal)
+                manager.add_strategy(mock_strategy)
+
+                context = EntryContext(
+                    market_data={
+                        "code": "A05603",
+                        "close": 757.18,
+                        "price": 757.18,
+                        "open": 761.48,
+                    },
+                    indicators={
+                        "atr": 8.4,
+                        "bb_width": 0.012,
+                    },
+                    timestamp=datetime.now(),
+                    metadata={"market_state": "BEAR_MODERATE", "paper_trading": True},
+                )
+
+                signals = await manager.check_entries(context)
+                assert len(signals) == 1
+                assert signals[0].code == "A05603"

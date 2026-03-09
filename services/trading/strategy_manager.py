@@ -545,9 +545,11 @@ class StrategyManager:
 
         filtered = []
         for signal in signals:
-            # Get indicators and price for this symbol
-            indicators = context.indicators.get(signal.code, {})
-            market_data = context.market_data.get(signal.code, {})
+            # EntryContext market_data/indicators may be either:
+            # 1) symbol-scoped flat payloads (orchestrator hot path), or
+            # 2) symbol-keyed nested dicts (some tests/backtests).
+            indicators = self._resolve_symbol_payload(context.indicators, signal.code)
+            market_data = self._resolve_symbol_payload(context.market_data, signal.code)
             price = market_data.get("close") or market_data.get("price", 0.0)
 
             # Check cost filter
@@ -559,6 +561,14 @@ class StrategyManager:
                 logger.info(f"Cost filter rejected {signal.code}: {reason}")
 
         return filtered
+
+    @staticmethod
+    def _resolve_symbol_payload(payload: dict[str, Any], symbol: str) -> dict[str, Any]:
+        """Resolve symbol-specific nested payloads while preserving flat contexts."""
+        candidate = payload.get(symbol)
+        if isinstance(candidate, dict):
+            return candidate
+        return payload
 
     def _dedupe_signals(self, signals: list[Signal]) -> list[Signal]:
         """Deduplicate signals by symbol"""
