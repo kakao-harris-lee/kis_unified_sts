@@ -36,6 +36,10 @@ OPENAPI_TAGS = [
         "name": "experiments",
         "description": "MLflow experiment tracking",
     },
+    {
+        "name": "metrics",
+        "description": "Performance and execution venue metrics",
+    },
 ]
 
 
@@ -136,7 +140,7 @@ def _register_routes(app: FastAPI) -> None:
     """Register API routes."""
     from fastapi import WebSocket
 
-    from services.dashboard.routes import backtest, experiments, signals, trades, trading
+    from services.dashboard.routes import backtest, experiments, metrics, signals, trades, trading
     from services.dashboard.websocket import websocket_endpoint
 
     # Include API routers
@@ -145,6 +149,7 @@ def _register_routes(app: FastAPI) -> None:
     app.include_router(trades.router)
     app.include_router(backtest.router)
     app.include_router(experiments.router)
+    app.include_router(metrics.router, tags=["metrics"])
 
     # WebSocket endpoint
     @app.websocket("/ws")
