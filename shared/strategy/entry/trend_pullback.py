@@ -152,6 +152,7 @@ class TrendPullbackEntry(EntrySignalGenerator[TrendPullbackConfig]):
         # --- Trend filter: close > SMA(200) — 장기 상승 추세 ---
         sma_200 = _get("sma_200", 0)
         if sma_200 <= 0 or close <= sma_200:
+            logger.debug(f"TrendPullback {code}: SMA filter fail (close={close}, sma_200={sma_200})")
             return None
 
         now = context.timestamp
@@ -169,20 +170,24 @@ class TrendPullbackEntry(EntrySignalGenerator[TrendPullbackConfig]):
         )
 
         if now < open_dt:
+            logger.debug(f"TrendPullback {code}: before market open")
             return None
 
         if self.config.skip_market_open_minutes > 0:
             if now < open_dt + timedelta(minutes=self.config.skip_market_open_minutes):
+                logger.debug(f"TrendPullback {code}: skip market open window")
                 return None
 
         if self.config.skip_market_close_minutes > 0:
             if now >= close_dt - timedelta(minutes=self.config.skip_market_close_minutes):
+                logger.debug(f"TrendPullback {code}: skip market close window")
                 return None
 
         # --- Cooldown ---
         if self.config.signal_cooldown_seconds > 0:
             last_time = self._last_signal_time.get(code)
             if last_time and (now - last_time).total_seconds() < self.config.signal_cooldown_seconds:
+                logger.debug(f"TrendPullback {code}: cooldown active")
                 return None
 
         # --- Minimum edge filter: atr/close >= round_trip_cost * min_atr_cost_ratio ---
@@ -191,6 +196,7 @@ class TrendPullbackEntry(EntrySignalGenerator[TrendPullbackConfig]):
             atr_ratio = atr / close
             min_required = self.config.round_trip_cost * self.config.min_atr_cost_ratio
             if atr_ratio < min_required:
+                logger.debug(f"TrendPullback {code}: ATR cost ratio too low ({atr_ratio:.6f} < {min_required:.6f})")
                 return None
 
         # --- Extract Williams %R from momentum_5m ---
@@ -222,12 +228,19 @@ class TrendPullbackEntry(EntrySignalGenerator[TrendPullbackConfig]):
                     trigger_type = "wr_reversal"
 
         if trigger_type is None:
+            logger.debug(
+                f"TrendPullback {code}: no trigger (bb_lower={bb_lower}, close={close}, rsi={rsi:.1f})"
+            )
             return None
 
         # --- Volume confirm ---
         volume = _get("volume", 0)
         volume_ma = _get("volume_ma", 0)
         if volume_ma > 0 and volume < volume_ma * self.config.volume_threshold:
+            logger.debug(
+                f"TrendPullback {code}: volume filter fail "
+                f"(vol={volume}, vol_ma={volume_ma}, threshold={self.config.volume_threshold})"
+            )
             return None
 
         # --- Calculate stop loss and confidence ---

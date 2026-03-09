@@ -3369,7 +3369,7 @@ class TradingOrchestrator:
                 except (InfrastructureError, OSError, ConnectionError) as e:
                     logger.debug(f"Adaptive sizing refresh failed: {e}")
 
-            logger.debug(f"Market regime: {regime}")
+            logger.info(f"Market regime: {regime}")
 
             return {
                 "regime": regime,
@@ -3564,8 +3564,10 @@ class TradingOrchestrator:
         # Futures (bidirectional) can profit from short entries in BEAR.
         if self.config.asset_class != "futures":
             if not self._current_regime:
+                logger.info("Entry blocked: regime not yet classified")
                 return []
             if "BEAR" in self._current_regime:
+                logger.info(f"Entry blocked: regime={self._current_regime}")
                 return []
 
         # Check position limit
@@ -4374,18 +4376,36 @@ class TradingOrchestrator:
         execution_meta: dict[str, Any] | None = None,
     ):
         """Log and notify entry."""
+        direction = "SHORT" if is_short else "LONG"
+        regime_str = self._current_regime or "unknown"
         if execution_meta:
             logger.info(
-                "Entry executed: %s (%s) @ %.2f x %s [mode=%s, slippage=%+.2ft]",
+                "Entry executed: %s (%s) @ %.2f x %s "
+                "[strategy=%s, direction=%s, confidence=%.2f, regime=%s, mode=%s, slippage=%+.2ft]",
                 name,
                 code,
                 float(price),
                 qty,
+                strategy,
+                direction,
+                confidence,
+                regime_str,
                 execution_meta.get("mode", "default"),
                 float(execution_meta.get("slippage_ticks", 0.0)),
             )
         else:
-            logger.info(f"Entry executed: {name} ({code}) @ {price:,.0f} x {qty}")
+            logger.info(
+                "Entry executed: %s (%s) @ %s x %s "
+                "[strategy=%s, direction=%s, confidence=%.2f, regime=%s]",
+                name,
+                code,
+                f"{price:,.0f}",
+                qty,
+                strategy,
+                direction,
+                confidence,
+                regime_str,
+            )
         amount = price * qty
         entry_label = "숏 진입" if is_short else "롱 진입"
         slippage_line = ""
@@ -4571,7 +4591,9 @@ class TradingOrchestrator:
         pnl = closed.unrealized_pnl
         pnl_pct = closed.profit_pct
 
-        self._log_exit(name, signal.code, fill_price, exit_quantity, reason_str, pnl, pnl_pct, close_is_buy)
+        strategy_name = signal.strategy or closed.strategy or ""
+        holding_mins = getattr(signal, "holding_minutes", None) or 0
+        self._log_exit(name, signal.code, fill_price, exit_quantity, reason_str, pnl, pnl_pct, close_is_buy, strategy_name, holding_mins)
 
         # Collect snapshot
         indicators = self._collect_exit_indicators(signal.code, fill_price)
@@ -4604,14 +4626,16 @@ class TradingOrchestrator:
             self._pending_notify_tasks.add(task)
             task.add_done_callback(self._on_notify_done)
 
-    def _log_exit(self, name, code, price, qty, reason, pnl, pnl_pct, is_buy):
+    def _log_exit(self, name, code, price, qty, reason, pnl, pnl_pct, is_buy, strategy="", holding_minutes=0):
         """Log and notify exit."""
         pnl_emoji = "🟢" if pnl >= 0 else "🔴"
         side_str = "숏 청산" if is_buy else "롱 청산"
 
+        held_str = f", held={holding_minutes}min" if holding_minutes else ""
+        strategy_str = f", strategy={strategy}" if strategy else ""
         logger.info(
             f"Exit executed: {name} ({code}) @ {price:,.0f} "
-            f"(reason={reason}, pnl={pnl_pct:+.2f}%)"
+            f"(reason={reason}{strategy_str}, pnl={pnl_pct:+.2f}%{held_str})"
         )
         self._schedule_notify(
             f"{pnl_emoji} <b>{side_str}</b>\n"

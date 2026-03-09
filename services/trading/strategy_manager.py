@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
@@ -263,6 +264,9 @@ class StrategyManager:
         # LLM context provider for market analysis
         self._llm_context_provider = LLMContextProvider(asset_class=asset_class)
 
+        # Throttle for cycle summary logging (every 60s)
+        self._last_cycle_log_time: float = 0.0
+
         logger.info(
             f"StrategyManager initialized: {len(self.strategies)} strategies "
             f"for {asset_class}, cost_filter={'enabled' if self.cost_filter else 'disabled'}"
@@ -369,6 +373,15 @@ class StrategyManager:
             logger.info(
                 f"Entry signals: {len(signals)} from {len(self.strategies)} strategies"
             )
+
+        # Throttled cycle summary (every 60s) — helps diagnose silent periods
+        now_mono = time.monotonic()
+        if now_mono - self._last_cycle_log_time >= 60.0:
+            strategy_names = ", ".join(self.strategies.keys())
+            logger.info(
+                f"Signal cycle: {len(signals)} signals from [{strategy_names}]"
+            )
+            self._last_cycle_log_time = now_mono
 
         return signals
 

@@ -414,7 +414,8 @@ class ATRDynamicExit(ExitSignalGenerator[ATRDynamicExitConfig]):
         now = now_kst()
         logger.info(
             f"[{self.name}] Exit signal: {position.code} | "
-            f"Reason: {reason.value} | P/L: {profit_pct:+.2%}"
+            f"Reason: {reason.value} | P/L: {profit_pct:+.2%} | "
+            f"price={current_price:.0f} | held={holding_minutes}min"
         )
         return ExitSignal(
             code=position.code,
