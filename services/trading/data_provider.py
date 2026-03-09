@@ -22,6 +22,7 @@ import logging
 import random
 from dataclasses import dataclass, field
 from datetime import datetime
+from enum import Enum
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from shared.exceptions import APIError, NetworkError, ValidationError
@@ -30,6 +31,13 @@ if TYPE_CHECKING:
     pass
 
 logger = logging.getLogger(__name__)
+
+
+class DataSourceMode(Enum):
+    """Data source operational mode for failover state machine"""
+
+    WEBSOCKET = "websocket"
+    REST_FALLBACK = "rest_fallback"
 
 
 # Validation constants
@@ -82,6 +90,12 @@ class DataProviderConfig:
     # Mock data seed for reproducibility (None = random)
     mock_seed: int | None = None
 
+    # Failover: Health check interval in seconds
+    health_check_interval_seconds: float = 5.0
+
+    # Failover: REST polling interval in seconds (when in fallback mode)
+    rest_poll_interval_seconds: float = 5.0
+
     def __post_init__(self):
         """Validate configuration values."""
         self._validate()
@@ -109,6 +123,18 @@ class DataProviderConfig:
         if self.mock_seed is not None and not isinstance(self.mock_seed, int):
             raise TypeError(f"mock_seed must be int or None, got {type(self.mock_seed)}")
 
+        if not (MIN_TIMEOUT_SECONDS <= self.health_check_interval_seconds <= MAX_TIMEOUT_SECONDS):
+            raise ValueError(
+                f"health_check_interval_seconds must be between {MIN_TIMEOUT_SECONDS} "
+                f"and {MAX_TIMEOUT_SECONDS}, got {self.health_check_interval_seconds}"
+            )
+
+        if not (MIN_CACHE_TTL_SECONDS <= self.rest_poll_interval_seconds <= MAX_CACHE_TTL_SECONDS):
+            raise ValueError(
+                f"rest_poll_interval_seconds must be between {MIN_CACHE_TTL_SECONDS} "
+                f"and {MAX_CACHE_TTL_SECONDS}, got {self.rest_poll_interval_seconds}"
+            )
+
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> DataProviderConfig:
         """Create config from dict with validation.
@@ -127,6 +153,8 @@ class DataProviderConfig:
         batch_size = data.get("batch_size", 20)
         timeout = data.get("fetch_timeout_seconds", 5.0)
         mock_seed = data.get("mock_seed")
+        health_check_interval = data.get("health_check_interval_seconds", 5.0)
+        rest_poll_interval = data.get("rest_poll_interval_seconds", 5.0)
 
         # Type validation
         if not isinstance(cache_ttl, (int, float)):
@@ -135,12 +163,18 @@ class DataProviderConfig:
             raise TypeError(f"batch_size must be int, got {type(batch_size)}")
         if not isinstance(timeout, (int, float)):
             raise TypeError(f"fetch_timeout_seconds must be numeric, got {type(timeout)}")
+        if not isinstance(health_check_interval, (int, float)):
+            raise TypeError(f"health_check_interval_seconds must be numeric, got {type(health_check_interval)}")
+        if not isinstance(rest_poll_interval, (int, float)):
+            raise TypeError(f"rest_poll_interval_seconds must be numeric, got {type(rest_poll_interval)}")
 
         return cls(
             cache_ttl_seconds=float(cache_ttl),
             batch_size=int(batch_size),
             fetch_timeout_seconds=float(timeout),
             mock_seed=mock_seed,
+            health_check_interval_seconds=float(health_check_interval),
+            rest_poll_interval_seconds=float(rest_poll_interval),
         )
 
 
@@ -212,10 +246,25 @@ class MarketDataProvider:
         # Initialize random generator for mock data (with optional seed)
         self._rng = random.Random(self.config.mock_seed)
 
+        # Failover state machine
+        self._current_mode: DataSourceMode = DataSourceMode.WEBSOCKET
+        self._fallback_poll_task: asyncio.Task[None] | None = None
+        self._health_check_task: asyncio.Task[None] | None = None
+
         logger.info(
             f"MarketDataProvider initialized: {len(self.symbols)} symbols, "
-            f"TTL={self.config.cache_ttl_seconds}s"
+            f"TTL={self.config.cache_ttl_seconds}s, mode={self._current_mode.value}"
         )
+
+    @property
+    def current_mode(self) -> DataSourceMode:
+        """Get current data source mode (WEBSOCKET or REST_FALLBACK)"""
+        return self._current_mode
+
+    @property
+    def is_in_failover_mode(self) -> bool:
+        """Check if currently in REST fallback mode"""
+        return self._current_mode == DataSourceMode.REST_FALLBACK
 
     def add_symbols(self, symbols: list[str]):
         """Add symbols to track"""
@@ -486,7 +535,7 @@ class MarketDataProvider:
         }
 
     def get_cache_stats(self) -> dict[str, Any]:
-        """Get cache statistics"""
+        """Get cache statistics including failover state"""
         fresh_count = sum(
             1 for c in self._cache.values()
             if not c.is_stale(self.config.cache_ttl_seconds)
@@ -500,6 +549,10 @@ class MarketDataProvider:
             "last_batch_fetch": (
                 self._last_batch_fetch.isoformat() if self._last_batch_fetch else None
             ),
+            "current_mode": self._current_mode.value,
+            "is_in_failover": self.is_in_failover_mode,
+            "health_check_active": self._health_check_task is not None and not self._health_check_task.done(),
+            "fallback_poll_active": self._fallback_poll_task is not None and not self._fallback_poll_task.done(),
         }
 
     def clear_cache(self):
