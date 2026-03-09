@@ -588,9 +588,8 @@ class MarketDataProvider:
                                 else self._data_source.is_healthy()
                             )
                             if is_healthy:
-                                logger.info("WebSocket is healthy again, recovery possible")
-                                # Recovery will be triggered by _recover_to_websocket() method
-                                # (implemented in subtask-2-5)
+                                logger.info("WebSocket is healthy again, attempting recovery")
+                                await self._recover_to_websocket()
                         except Exception as e:
                             logger.debug(f"Error checking WebSocket health for recovery: {e}")
                     continue
@@ -735,6 +734,64 @@ class MarketDataProvider:
                 )
                 # Brief pause before retry on error
                 await asyncio.sleep(1.0)
+
+    async def _recover_to_websocket(self):
+        """Recover from REST fallback to WebSocket mode.
+
+        Called when WebSocket data source becomes healthy again. Switches back
+        to WebSocket mode from REST polling fallback.
+
+        This method is idempotent - calling it multiple times has no effect
+        if already in WebSocket mode.
+        """
+        # Already in WebSocket mode, nothing to do
+        if self._current_mode == DataSourceMode.WEBSOCKET:
+            logger.debug("Already in WebSocket mode, ignoring recovery request")
+            return
+
+        # Verify WebSocket is actually healthy before recovering
+        if self._data_source is None:
+            logger.warning("Cannot recover to WebSocket: no data source configured")
+            return
+
+        # Check if data source is healthy
+        is_healthy = False
+        if hasattr(self._data_source, "is_healthy"):
+            try:
+                is_healthy = (
+                    await self._data_source.is_healthy()
+                    if asyncio.iscoroutinefunction(self._data_source.is_healthy)
+                    else self._data_source.is_healthy()
+                )
+            except Exception as e:
+                logger.warning(f"Error checking WebSocket health during recovery: {e}")
+                return
+
+        if not is_healthy:
+            logger.debug("WebSocket not healthy, cannot recover yet")
+            return
+
+        logger.info("Recovering to WebSocket mode from REST fallback")
+
+        # Switch mode (this will stop the REST polling loop via its condition check)
+        self._current_mode = DataSourceMode.WEBSOCKET
+
+        # Cancel REST polling task if it's still running
+        if self._fallback_poll_task is not None and not self._fallback_poll_task.done():
+            try:
+                self._fallback_poll_task.cancel()
+                # Wait briefly for task to finish cancelling
+                try:
+                    await asyncio.wait_for(self._fallback_poll_task, timeout=1.0)
+                except asyncio.CancelledError:
+                    pass
+                except asyncio.TimeoutError:
+                    logger.warning("REST polling task did not cancel within timeout")
+                logger.info("Stopped REST polling task")
+            except Exception as e:
+                logger.error(f"Error stopping REST polling task: {e}", exc_info=True)
+
+        logger.info("Successfully recovered to WebSocket mode")
 
     def clear_cache(self):
         """Clear all cached data"""
