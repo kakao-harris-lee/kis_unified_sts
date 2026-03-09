@@ -133,8 +133,26 @@ class BacktestConfig:
         position_size_pct: float = 10.0,
         order_amount_per_stock: float | None = None,
         max_positions: int = 5,
+        ats_enabled: bool = False,
     ) -> BacktestConfig:
-        """주식용 설정"""
+        """주식용 설정
+
+        Args:
+            initial_capital: 초기 자본
+            position_size_pct: 포지션 크기 (자본 대비 %)
+            order_amount_per_stock: 종목당 고정 주문 금액
+            max_positions: 최대 동시 포지션 수
+            ats_enabled: ATS 시뮬레이션 활성화 여부
+
+        Returns:
+            BacktestConfig: 주식용 백테스트 설정
+        """
+        ats_simulator = None
+        if ats_enabled:
+            from shared.backtest.ats_simulator import ATSSimulator
+            # Use default simulation parameters
+            ats_simulator = ATSSimulator()
+
         return cls(
             initial_capital=initial_capital,
             position_size_pct=position_size_pct,
@@ -142,6 +160,8 @@ class BacktestConfig:
             max_positions=max_positions,
             point_value=1.0,
             cost=CostConfig.stock(),
+            ats_enabled=ats_enabled,
+            ats_simulator=ats_simulator,
         )
 
     @classmethod
