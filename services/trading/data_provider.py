@@ -26,6 +26,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from shared.exceptions import APIError, NetworkError, ValidationError
+from shared.notification.telegram import TelegramNotifier
 
 if TYPE_CHECKING:
     pass
@@ -96,6 +97,9 @@ class DataProviderConfig:
     # Failover: REST polling interval in seconds (when in fallback mode)
     rest_poll_interval_seconds: float = 5.0
 
+    # Failover: Send Telegram alerts on failover/recovery
+    send_telegram_alerts: bool = True
+
     def __post_init__(self):
         """Validate configuration values."""
         self._validate()
@@ -155,6 +159,7 @@ class DataProviderConfig:
         mock_seed = data.get("mock_seed")
         health_check_interval = data.get("health_check_interval_seconds", 5.0)
         rest_poll_interval = data.get("rest_poll_interval_seconds", 5.0)
+        send_telegram_alerts = data.get("send_telegram_alerts", True)
 
         # Type validation
         if not isinstance(cache_ttl, (int, float)):
@@ -167,6 +172,8 @@ class DataProviderConfig:
             raise TypeError(f"health_check_interval_seconds must be numeric, got {type(health_check_interval)}")
         if not isinstance(rest_poll_interval, (int, float)):
             raise TypeError(f"rest_poll_interval_seconds must be numeric, got {type(rest_poll_interval)}")
+        if not isinstance(send_telegram_alerts, bool):
+            raise TypeError(f"send_telegram_alerts must be bool, got {type(send_telegram_alerts)}")
 
         return cls(
             cache_ttl_seconds=float(cache_ttl),
@@ -175,6 +182,7 @@ class DataProviderConfig:
             mock_seed=mock_seed,
             health_check_interval_seconds=float(health_check_interval),
             rest_poll_interval_seconds=float(rest_poll_interval),
+            send_telegram_alerts=bool(send_telegram_alerts),
         )
 
 
@@ -225,6 +233,7 @@ class MarketDataProvider:
         config: DataProviderConfig | None = None,
         kis_client: Any | None = None,
         data_source: MarketDataSource | None = None,
+        telegram_notifier: TelegramNotifier | None = None,
     ):
         """
         Args:
@@ -232,11 +241,13 @@ class MarketDataProvider:
             config: Provider configuration
             kis_client: KIS API client (optional, uses mock if None)
             data_source: Custom data source implementing MarketDataSource protocol
+            telegram_notifier: Telegram notifier for failover alerts (optional)
         """
         self.symbols = symbols or []
         self.config = config or DataProviderConfig()
         self._kis_client = kis_client
         self._data_source = data_source
+        self._telegram_notifier = telegram_notifier
 
         # Cache: symbol -> MarketDataCache
         self._cache: dict[str, MarketDataCache] = {}
@@ -663,6 +674,21 @@ class MarketDataProvider:
         # Switch mode
         self._current_mode = DataSourceMode.REST_FALLBACK
 
+        # Send Telegram alert if configured
+        if self.config.send_telegram_alerts and self._telegram_notifier is not None:
+            try:
+                await self._telegram_notifier.send_message(
+                    f"⚠️ <b>WebSocket Failover</b>\n"
+                    f"WebSocket 연결이 끊어져 REST API 모드로 전환합니다.\n"
+                    f"Polling 간격: {self.config.rest_poll_interval_seconds}초\n"
+                    f"시간: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+                    is_critical=True,
+                )
+                logger.info("Sent Telegram alert for WebSocket failover")
+            except Exception as e:
+                # Don't let telegram failures break failover
+                logger.error(f"Failed to send Telegram failover alert: {e}", exc_info=False)
+
         # Create KIS client if not already available
         if self._kis_client is None:
             logger.warning("No KIS client available for REST fallback, using mock data")
@@ -792,6 +818,20 @@ class MarketDataProvider:
                 logger.error(f"Error stopping REST polling task: {e}", exc_info=True)
 
         logger.info("Successfully recovered to WebSocket mode")
+
+        # Send Telegram alert if configured
+        if self.config.send_telegram_alerts and self._telegram_notifier is not None:
+            try:
+                await self._telegram_notifier.send_message(
+                    f"✅ <b>WebSocket 복구</b>\n"
+                    f"WebSocket 연결이 복구되어 실시간 데이터 피드를 재개합니다.\n"
+                    f"시간: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+                    is_critical=True,
+                )
+                logger.info("Sent Telegram alert for WebSocket recovery")
+            except Exception as e:
+                # Don't let telegram failures break recovery
+                logger.error(f"Failed to send Telegram recovery alert: {e}", exc_info=False)
 
     def clear_cache(self):
         """Clear all cached data"""
