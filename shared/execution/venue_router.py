@@ -286,8 +286,9 @@ class VenueRouter:
             )
 
         # All checks passed - route to ATS
+        side_str = order.side.value if hasattr(order.side, 'value') else str(order.side)
         logger.info(
-            f"Routing to ATS: {order.code} {order.side.value} {order.quantity} - "
+            f"Routing to ATS: {order.code} {side_str} {order.quantity} - "
             f"price_improvement={price_improvement:.2f}bps, fill_rate={fill_rate:.2%}"
         )
         return RoutingDecision(
