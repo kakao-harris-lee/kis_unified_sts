@@ -48,7 +48,7 @@ except ImportError:
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
-from shared.config.loader import ConfigLoader
+from shared.config.loader import ConfigLoader, ConfigNotFoundError
 
 logger = logging.getLogger(__name__)
 
@@ -155,7 +155,24 @@ class ServiceConfigBase(BaseModel):
                 )
 
         # Load YAML via ConfigLoader
-        raw_data = ConfigLoader.load(path)
+        # For absolute paths, read YAML directly (bypass ConfigLoader path validation
+        # which restricts paths to the config directory).
+        if os.path.isabs(str(path)):
+            import yaml
+
+            abs_path = str(path)
+            if not os.path.exists(abs_path):
+                raise ConfigNotFoundError(f"Config file not found: {abs_path}")
+            with open(abs_path, "r", encoding="utf-8") as f:
+                raw_data = yaml.safe_load(f) or {}
+        else:
+            # If KIS_CONFIG_DIR env var is set and differs from ConfigLoader's
+            # current config dir (e.g. during tests with monkeypatched env),
+            # update ConfigLoader to use the new directory.
+            env_config_dir = os.environ.get("KIS_CONFIG_DIR")
+            if env_config_dir and Path(env_config_dir) != ConfigLoader.get_config_dir():
+                ConfigLoader.set_config_dir(env_config_dir)
+            raw_data = ConfigLoader.load(path)
 
         # Multi-section merge: combine multiple top-level keys
         if sections is not None:
@@ -186,6 +203,10 @@ class ServiceConfigBase(BaseModel):
         # Ensure we have a dict
         if not isinstance(config_data, dict):
             config_data = {}
+
+        # Remove None values so Pydantic field defaults take effect
+        # (e.g. YAML "name: null" should fall back to the field default)
+        config_data = {k: v for k, v in config_data.items() if v is not None}
 
         # Apply environment variable overrides if requested
         if apply_env_overrides:
@@ -278,7 +299,10 @@ class ServiceConfigBase(BaseModel):
             # Parse value based on type
             try:
                 parsed_value = cls._parse_env_value(env_value, field_type)
-                env_data[field_name] = parsed_value
+                # Skip None values so Pydantic field defaults take effect
+                # (empty string env var → None → use field default)
+                if parsed_value is not None:
+                    env_data[field_name] = parsed_value
             except (ValueError, TypeError) as e:
                 logger.warning(
                     f"Failed to parse {env_key}={env_value} as {field_type}: {e}"

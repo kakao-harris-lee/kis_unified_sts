@@ -264,7 +264,7 @@ class TestPositionSizerGracefulDegradation:
 
     def test_fixed_sizer_ignores_market_context(self):
         """Test FixedSizer works with or without market_context."""
-        config = FixedSizerConfig(quantity=100)
+        config = FixedSizerConfig(fixed_quantity=100)
         sizer = FixedSizer(config)
         signal = _make_signal()
 
@@ -284,7 +284,7 @@ class TestPositionSizerGracefulDegradation:
             stop_loss_pct=2.0,
         )
         sizer = RiskBasedSizer(config)
-        signal = _make_signal(entry_price=100.0, stop_loss_pct=2.0)
+        signal = _make_signal()
 
         # Without market_context
         qty1 = sizer.calculate(signal, 100000.0, [], market_context=None)
@@ -306,7 +306,7 @@ class TestPositionSizerGracefulDegradation:
             confidence_penalty_low=0.5,  # Would penalize if context present
         )
         sizer = LLMAdaptiveSizer(config)
-        signal = _make_signal(entry_price=100.0, stop_loss_pct=2.0)
+        signal = _make_signal()
 
         # Without market_context - should use base RiskBasedSizer logic
         qty_without_context = sizer.calculate(signal, 100000.0, [], market_context=None)
@@ -336,7 +336,7 @@ class TestPositionSizerGracefulDegradation:
             enable_risk_mode_scaling=False,
         )
         sizer = LLMAdaptiveSizer(config)
-        signal = _make_signal(entry_price=100.0, stop_loss_pct=2.0)
+        signal = _make_signal()
 
         # High confidence context
         high_confidence_context = _make_market_context(confidence=0.8)
@@ -363,7 +363,7 @@ class TestPositionSizerGracefulDegradation:
         sizer = LLMAdaptiveSizer(config)
 
         # Signal with very low entry price → would result in 0 base quantity
-        signal = _make_signal(entry_price=1.0, stop_loss_pct=2.0)
+        signal = _make_signal(price=1.0)
 
         # Should return 0 even with market_context
         context = _make_market_context(confidence=1.0)  # Max confidence
@@ -426,11 +426,13 @@ class TestExitStrategyGracefulDegradation:
     @pytest.mark.asyncio
     async def test_exit_context_accepts_none_market_context(self):
         """Test ExitContext can be created with market_context=None."""
-        from shared.models.position import Position
+        from shared.models.position import Position, PositionSide
 
         position = Position(
+            id="test-pos-001",
             code="005930",
             name="Test Stock",
+            side=PositionSide.LONG,
             quantity=100,
             entry_price=100.0,
             current_price=105.0,
@@ -455,15 +457,17 @@ class TestExitStrategyGracefulDegradation:
         This is a smoke test - specific exit strategies should have their own
         tests for graceful degradation if they use market_context.
         """
-        from shared.models.position import Position
+        from shared.models.position import Position, PositionSide
         from shared.strategy.exit.three_stage import ThreeStageExit, ThreeStageExitConfig
 
         config = ThreeStageExitConfig()
         exit_strategy = ThreeStageExit(config)
 
         position = Position(
+            id="test-pos-002",
             code="005930",
             name="Test Stock",
+            side=PositionSide.LONG,
             quantity=100,
             entry_price=100.0,
             current_price=105.0,
@@ -479,10 +483,10 @@ class TestExitStrategyGracefulDegradation:
         )
 
         # Should not raise exception
-        signal = await exit_strategy.generate(context)
+        should_exit, exit_signal = await exit_strategy.should_exit(context)
 
-        # May or may not generate exit signal, but should work
-        assert signal is None or signal is not None  # Just verify it doesn't crash
+        # May or may not exit, but should work without raising
+        assert isinstance(should_exit, bool)  # Just verify it doesn't crash
 
 
 # =============================================================================
@@ -544,7 +548,7 @@ class TestEdgeCases:
             stop_loss_pct=2.0,
         )
         sizer = LLMAdaptiveSizer(config)
-        signal = _make_signal(entry_price=100.0, stop_loss_pct=2.0)
+        signal = _make_signal()
 
         # Should not crash with invalid values
         qty = sizer.calculate(signal, 100000.0, [], market_context=invalid_context)
@@ -593,15 +597,17 @@ class TestGracefulDegradationSummary:
         assert qty > 0, "Sizer should calculate valid quantity without market_context"
 
         # 3. Exit strategy evaluates without market_context
-        from shared.models.position import Position
+        from shared.models.position import Position, PositionSide
         from shared.strategy.exit.three_stage import ThreeStageExit, ThreeStageExitConfig
 
         position = Position(
+            id="test-pos-003",
             code=signal.code,
             name=signal.name,
+            side=PositionSide.LONG,
             quantity=qty,
-            entry_price=signal.entry_price,
-            current_price=signal.entry_price * 1.05,
+            entry_price=signal.price,
+            current_price=signal.price * 1.05,
             entry_time=signal.timestamp,
         )
 
@@ -616,9 +622,9 @@ class TestGracefulDegradationSummary:
             market_context=None,  # No LLM context
         )
 
-        exit_signal = await exit_strategy.generate(exit_context)
+        should_exit, exit_signal = await exit_strategy.should_exit(exit_context)
         # May or may not exit, but should not crash
-        assert True, "Exit strategy should work without market_context"
+        assert isinstance(should_exit, bool), "Exit strategy should work without market_context"
 
     def test_no_exceptions_when_context_none(self):
         """Meta-test: Verify None context never raises exceptions."""

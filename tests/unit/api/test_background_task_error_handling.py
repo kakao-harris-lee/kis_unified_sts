@@ -13,9 +13,11 @@ async def test_background_task_updates_state_on_error():
     """Background task 실패 시 상태가 ERROR로 업데이트되어야 함"""
     from services.trading.orchestrator import TradingState
     from services.api.routes import _create_session_runner
+    from shared.exceptions import NetworkError
 
     mock_orchestrator = MagicMock()
-    mock_orchestrator.run_session = AsyncMock(side_effect=RuntimeError("Connection lost"))
+    mock_orchestrator.run_session = AsyncMock(side_effect=NetworkError("Connection lost"))
+    mock_orchestrator._notify = AsyncMock()  # Must be async since the route awaits it
     mock_orchestrator.state = TradingState.RUNNING
     mock_orchestrator.last_error = None
     mock_orchestrator.last_error_time = None
@@ -33,10 +35,11 @@ async def test_background_task_sends_notification_on_error():
     """Background task 실패 시 알림 전송"""
     from services.trading.orchestrator import TradingState
     from services.api.routes import _create_session_runner
+    from shared.exceptions import NetworkError
 
     mock_notify = AsyncMock()
     mock_orchestrator = MagicMock()
-    mock_orchestrator.run_session = AsyncMock(side_effect=RuntimeError("Error"))
+    mock_orchestrator.run_session = AsyncMock(side_effect=NetworkError("Error"))
     mock_orchestrator.state = TradingState.RUNNING
     mock_orchestrator._notify = mock_notify
 
@@ -51,11 +54,12 @@ async def test_background_task_handles_notification_failure():
     """알림 전송 실패해도 상태는 업데이트되어야 함"""
     from services.trading.orchestrator import TradingState
     from services.api.routes import _create_session_runner
+    from shared.exceptions import NetworkError
 
     mock_orchestrator = MagicMock()
-    mock_orchestrator.run_session = AsyncMock(side_effect=RuntimeError("Error"))
+    mock_orchestrator.run_session = AsyncMock(side_effect=NetworkError("Error"))
     mock_orchestrator.state = TradingState.RUNNING
-    mock_orchestrator._notify = AsyncMock(side_effect=Exception("Notification failed"))
+    mock_orchestrator._notify = AsyncMock(side_effect=NetworkError("Notification failed"))
 
     runner = _create_session_runner(mock_orchestrator)
     await runner()  # Should not raise

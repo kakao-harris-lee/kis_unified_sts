@@ -270,6 +270,26 @@ class LLMConfig(ServiceConfigBase):
         if "model" not in env_vars:
             env_vars["model"] = os.environ.get("LLM_MODEL", default_model)
 
+        # Handle fields with "llm_" prefix in field name but env var uses plain "LLM_".
+        # _extract_env_vars("LLM_") strips prefix → "prompt_cache_enabled" which
+        # doesn't match field "llm_prompt_cache_enabled". Map explicitly.
+        _llm_field_map = {
+            "LLM_STRICT_JSON_SCHEMA": "llm_strict_json_schema",
+            "LLM_PROMPT_CACHE_ENABLED": "llm_prompt_cache_enabled",
+            "LLM_PROMPT_CACHE_TTL_SECONDS": "llm_prompt_cache_ttl_seconds",
+            "LLM_PROMPT_CACHE_PREFIX": "llm_prompt_cache_prefix",
+            "LLM_BATCH_SIZE": "llm_batch_size",
+        }
+        for env_key, field_name in _llm_field_map.items():
+            if field_name not in env_vars:
+                env_val = os.environ.get(env_key)
+                if env_val is not None:
+                    field_info = cls.model_fields.get(field_name)
+                    if field_info is not None:
+                        env_vars[field_name] = cls._parse_env_value(
+                            env_val, field_info.annotation
+                        )
+
         # Handle KRX API key (uses different prefix)
         if "krx_api_key" not in env_vars:
             env_vars["krx_api_key"] = os.environ.get("KRX_API_KEY", "")
@@ -322,7 +342,18 @@ class LLMConfig(ServiceConfigBase):
                     "_default_config_file class attribute"
                 )
 
-        data = ConfigLoader.load(path)
+        # ConfigLoader.load() expects a str (calls unquote internally).
+        # Convert Path objects and handle absolute paths directly.
+        path_str = str(path)
+        import os as _os
+
+        if _os.path.isabs(path_str):
+            import yaml as _yaml
+
+            with open(path_str, "r", encoding="utf-8") as _f:
+                data = _yaml.safe_load(_f) or {}
+        else:
+            data = ConfigLoader.load(path_str)
 
         # Extract sections (supports both new and legacy formats)
         llm_common = data.get("llm", {}) if isinstance(data, dict) else {}

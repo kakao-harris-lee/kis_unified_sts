@@ -385,11 +385,13 @@ class TestTimerBasedFlush:
         # Mock flush to raise error on first call, succeed on second
         call_count = 0
 
+        from shared.exceptions import TradingSystemError
+
         async def mock_flush():
             nonlocal call_count
             call_count += 1
             if call_count == 1:
-                raise Exception("Simulated DB error")
+                raise TradingSystemError("Simulated DB error")
             return 0, 0
 
         with patch.object(

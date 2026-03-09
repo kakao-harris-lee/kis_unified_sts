@@ -241,13 +241,15 @@ class TestStrategyManager:
             ) as mock_factory:
                 mock_factory.create_all.return_value = []
 
-                from services.trading.strategy_manager import StrategyManager
+                from services.trading.strategy_manager import StrategyManager, StrategyManagerConfig
                 from shared.strategy.base import EntryContext
 
-                manager = StrategyManager(asset_class="stock")
+                manager = StrategyManager(asset_class="stock", config=StrategyManagerConfig(cost_filter_enabled=False))
                 manager.add_strategy(mock_strategy)
 
                 context = MagicMock(spec=EntryContext)
+                context.indicators = {}
+                context.market_data = {}
                 signals = await manager.check_entries(context)
 
                 assert len(signals) == 1
@@ -293,13 +295,15 @@ class TestStrategyManager:
             ) as mock_factory:
                 mock_factory.create_all.return_value = []
 
-                from services.trading.strategy_manager import StrategyManager
+                from services.trading.strategy_manager import StrategyManager, StrategyManagerConfig
                 from shared.strategy.base import EntryContext
 
-                manager = StrategyManager(asset_class="stock")
+                manager = StrategyManager(asset_class="stock", config=StrategyManagerConfig(cost_filter_enabled=False))
                 manager.add_strategy(mock_strategy)
 
                 context = MagicMock(spec=EntryContext)
+                context.indicators = {}
+                context.market_data = {}
 
                 # First call
                 signals1 = await manager.check_entries(context)
@@ -339,7 +343,7 @@ class TestStrategyManager:
 
                 manager = StrategyManager(
                     asset_class="stock",
-                    config=StrategyManagerConfig(dedupe_scope="strategy"),
+                    config=StrategyManagerConfig(dedupe_scope="strategy", cost_filter_enabled=False),
                 )
                 mock_strategy.check_entry = AsyncMock(return_value=mock_signal)
                 mock_signal.metadata = {"signal_direction": "long"}
@@ -347,6 +351,8 @@ class TestStrategyManager:
                 manager.add_strategy(strategy2)
 
                 context = MagicMock(spec=EntryContext)
+                context.indicators = {}
+                context.market_data = {}
                 signals = await manager.check_entries(context)
 
                 assert len(signals) == 2
@@ -580,7 +586,7 @@ class TestStrategyManager:
                         }
                     },
                     timestamp=datetime.now(),
-                    market_state="BULL",
+                    metadata={"market_state": "BULL"},
                 )
 
                 signals = await manager.check_entries(context)
@@ -605,7 +611,7 @@ class TestStrategyManager:
                         }
                     },
                     timestamp=datetime.now(),
-                    market_state="BULL",
+                    metadata={"market_state": "BULL"},
                 )
 
                 # Capture log output to verify rejection logging

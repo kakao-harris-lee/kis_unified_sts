@@ -14,6 +14,7 @@ import numpy as np
 import pytest
 
 from shared.ml.rl.env import RLEnvConfig
+from shared.ml.rl.hierarchical.high_level_env import DirectionalHighLevelEnv, HighLevelEnv
 from shared.ml.rl.hierarchical.trainer import HierarchicalTrainer
 
 
@@ -688,7 +689,7 @@ class TestDirectionalMode:
             mock_ppo.return_value = mock_model
 
             # Mock DummyVecEnv to capture env creation
-            with patch("shared.ml.rl.hierarchical.trainer.DummyVecEnv") as mock_vec_env:
+            with patch("stable_baselines3.common.vec_env.DummyVecEnv") as mock_vec_env:
                 mock_vec_env.return_value = MagicMock()
 
                 trainer_directional._train_high_level(train_days, all_segment_results)
@@ -717,7 +718,7 @@ class TestDirectionalMode:
             mock_ppo.return_value = mock_model
 
             # Mock DummyVecEnv to capture env creation
-            with patch("shared.ml.rl.hierarchical.trainer.DummyVecEnv") as mock_vec_env:
+            with patch("stable_baselines3.common.vec_env.DummyVecEnv") as mock_vec_env:
                 mock_vec_env.return_value = MagicMock()
 
                 trainer._train_high_level(train_days, all_segment_results)
@@ -741,7 +742,7 @@ class TestDirectionalMode:
         ]
 
         with patch("stable_baselines3.PPO") as mock_ppo:
-            with patch("shared.ml.rl.hierarchical.trainer.DummyVecEnv") as mock_vec_env:
+            with patch("stable_baselines3.common.vec_env.DummyVecEnv") as mock_vec_env:
                 mock_ppo.return_value = MagicMock()
                 mock_vec_env.return_value = MagicMock()
 
@@ -803,7 +804,7 @@ class TestJointTraining:
         train_prices = [np.random.randn(405, 4).astype(np.float32)]
 
         # Mock vector envs
-        with patch("shared.ml.rl.hierarchical.trainer.DummyVecEnv") as mock_vec_env:
+        with patch("stable_baselines3.common.vec_env.DummyVecEnv") as mock_vec_env:
             mock_vec_env.return_value = MagicMock()
 
             # Mock _collect_segment_results to avoid complex setup
@@ -836,7 +837,7 @@ class TestJointTraining:
         low_model_instance = mock_maskable_ppo.return_value
         high_model_instance = mock_ppo.return_value
 
-        with patch("shared.ml.rl.hierarchical.trainer.DummyVecEnv") as mock_vec_env:
+        with patch("stable_baselines3.common.vec_env.DummyVecEnv") as mock_vec_env:
             mock_vec_env.return_value = MagicMock()
 
             with patch.object(trainer, "_collect_segment_results") as mock_collect:
@@ -867,7 +868,7 @@ class TestJointTraining:
         low_model_instance = mock_maskable_ppo.return_value
         high_model_instance = mock_ppo.return_value
 
-        with patch("shared.ml.rl.hierarchical.trainer.DummyVecEnv") as mock_vec_env:
+        with patch("stable_baselines3.common.vec_env.DummyVecEnv") as mock_vec_env:
             mock_vec_env.return_value = MagicMock()
 
             with patch.object(trainer, "_collect_segment_results") as mock_collect:
@@ -899,7 +900,7 @@ class TestJointTraining:
 
         with patch("sb3_contrib.MaskablePPO") as mock_mppo:
             with patch("stable_baselines3.PPO") as mock_ppo:
-                with patch("shared.ml.rl.hierarchical.trainer.DummyVecEnv") as mock_vec_env:
+                with patch("stable_baselines3.common.vec_env.DummyVecEnv") as mock_vec_env:
                     mock_mppo.return_value = MagicMock()
                     mock_ppo.return_value = MagicMock()
                     mock_vec_env.return_value = MagicMock()
@@ -923,7 +924,7 @@ class TestJointTraining:
         train_days = [np.random.randn(405, 25).astype(np.float32)]
         train_prices = [np.random.randn(405, 4).astype(np.float32)]
 
-        with patch("shared.ml.rl.hierarchical.trainer.DummyVecEnv") as mock_vec_env:
+        with patch("stable_baselines3.common.vec_env.DummyVecEnv") as mock_vec_env:
             mock_vec_env.return_value = MagicMock()
 
             with patch.object(trainer, "_collect_segment_results") as mock_collect:

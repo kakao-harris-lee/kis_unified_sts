@@ -240,8 +240,9 @@ class TestMomentumCacheStats:
         """Momentum cache hits should be tracked separately."""
         symbol = "005930"
 
-        # Enable multi-timeframe tracking
+        # Enable multi-timeframe tracking (must set both lists)
         warm_engine._mtf_timeframes = [5]
+        warm_engine._numeric_mtf_timeframes = [5]
 
         # Feed enough 1-min candles to build 5-min candles
         for i in range(50):
@@ -258,16 +259,16 @@ class TestMomentumCacheStats:
                 ts,
             )
 
-        # First call: cache miss
-        warm_engine.get_momentum_indicators(symbol, timeframe=5)
+        # First call: cache miss (use min_candles=1 to bypass the candle count guard)
+        warm_engine.get_momentum_indicators(symbol, timeframe=5, min_candles=1)
         stats_after_first = warm_engine.get_cache_stats()
 
         assert stats_after_first["momentum_cache_misses"] == 1
         assert stats_after_first["momentum_cache_hits"] == 0
 
         # Repeated calls: cache hits
-        warm_engine.get_momentum_indicators(symbol, timeframe=5)
-        warm_engine.get_momentum_indicators(symbol, timeframe=5)
+        warm_engine.get_momentum_indicators(symbol, timeframe=5, min_candles=1)
+        warm_engine.get_momentum_indicators(symbol, timeframe=5, min_candles=1)
         stats_after_hits = warm_engine.get_cache_stats()
 
         assert stats_after_hits["momentum_cache_misses"] == 1
@@ -279,6 +280,7 @@ class TestMomentumCacheStats:
         """Momentum cache should invalidate when candle count changes."""
         symbol = "005930"
         warm_engine._mtf_timeframes = [5]
+        warm_engine._numeric_mtf_timeframes = [5]
 
         # Build initial 5-min candles
         for i in range(50):
@@ -295,9 +297,9 @@ class TestMomentumCacheStats:
                 ts,
             )
 
-        # Get momentum indicators and cache hit
-        warm_engine.get_momentum_indicators(symbol, timeframe=5)
-        warm_engine.get_momentum_indicators(symbol, timeframe=5)  # cache hit
+        # Get momentum indicators and cache hit (use min_candles=1 to bypass guard)
+        warm_engine.get_momentum_indicators(symbol, timeframe=5, min_candles=1)
+        warm_engine.get_momentum_indicators(symbol, timeframe=5, min_candles=1)  # cache hit
         stats_before = warm_engine.get_cache_stats()
 
         assert stats_before["momentum_cache_hits"] == 1
@@ -317,7 +319,7 @@ class TestMomentumCacheStats:
             )
 
         # Next call should be a cache miss
-        warm_engine.get_momentum_indicators(symbol, timeframe=5)
+        warm_engine.get_momentum_indicators(symbol, timeframe=5, min_candles=1)
         stats_after = warm_engine.get_cache_stats()
 
         assert stats_after["momentum_cache_misses"] == 2

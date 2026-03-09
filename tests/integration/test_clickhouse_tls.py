@@ -40,7 +40,14 @@ def clickhouse_available():
 
 @pytest.fixture
 def clean_env(monkeypatch):
-    """Clean environment for TLS testing."""
+    """Clean environment for TLS testing.
+
+    Preserves CLICKHOUSE_PASSWORD so tests can authenticate against a
+    password-protected ClickHouse instance.
+    """
+    # Save password before cleaning — needed for auth
+    saved_password = os.environ.get("CLICKHOUSE_PASSWORD")
+
     # Remove TLS-related env vars to start fresh
     env_vars = [
         "CLICKHOUSE_SECURE",
@@ -57,6 +64,10 @@ def clean_env(monkeypatch):
     ]
     for var in env_vars:
         monkeypatch.delenv(var, raising=False)
+
+    # Restore password for authentication
+    if saved_password:
+        monkeypatch.setenv("CLICKHOUSE_PASSWORD", saved_password)
 
 
 # =============================================================================
@@ -648,7 +659,9 @@ async def test_e2e_tls_configuration_consistency(clean_env, monkeypatch):
     async_client = AsyncClickHouseClient(config)
     assert async_client.config.secure is True, "Async client config should enable TLS"
 
-    ssl_context = async_client._build_ssl_context()
+    # Mock ssl_context.load_verify_locations to avoid FileNotFoundError for non-existent CA cert
+    with patch("ssl.SSLContext.load_verify_locations"):
+        ssl_context = async_client._build_ssl_context()
     assert ssl_context is not None, "SSL context should be created"
 
     # 3. Collector config should enable TLS

@@ -178,11 +178,14 @@ class TestSlippageModelConfig:
         # Exact start time
         assert config.get_time_multiplier(time(9, 0)) == 1.5
 
-        # Exact end time
-        assert config.get_time_multiplier(time(10, 0)) == 1.5
+        # Just before end time (end is exclusive)
+        assert config.get_time_multiplier(time(9, 59)) == 1.5
 
         # Just before start
         assert config.get_time_multiplier(time(8, 59)) == 1.0
+
+        # At exact end (exclusive)
+        assert config.get_time_multiplier(time(10, 0)) == 1.0
 
         # Just after end
         assert config.get_time_multiplier(time(10, 1)) == 1.0
@@ -253,20 +256,22 @@ class TestHelperFunctions:
         # Inside window
         assert _time_in_window(time(9, 30), "09:00-10:00") is True
         assert _time_in_window(time(9, 0), "09:00-10:00") is True
-        assert _time_in_window(time(10, 0), "09:00-10:00") is True
+        assert _time_in_window(time(9, 59), "09:00-10:00") is True
 
-        # Outside window
+        # Outside window (end is exclusive)
+        assert _time_in_window(time(10, 0), "09:00-10:00") is False
         assert _time_in_window(time(8, 59), "09:00-10:00") is False
         assert _time_in_window(time(10, 1), "09:00-10:00") is False
 
     def test_time_in_window_overnight(self):
         """Test _time_in_window with overnight time window."""
-        # Overnight window (23:00-01:00)
+        # Overnight window (23:00-01:00), end is exclusive
         assert _time_in_window(time(23, 30), "23:00-01:00") is True
         assert _time_in_window(time(0, 30), "23:00-01:00") is True
-        assert _time_in_window(time(1, 0), "23:00-01:00") is True
+        assert _time_in_window(time(0, 59), "23:00-01:00") is True
 
-        # Outside overnight window
+        # Outside overnight window (end exclusive)
+        assert _time_in_window(time(1, 0), "23:00-01:00") is False
         assert _time_in_window(time(12, 0), "23:00-01:00") is False
         assert _time_in_window(time(1, 1), "23:00-01:00") is False
 

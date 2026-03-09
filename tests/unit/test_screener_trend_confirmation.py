@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
 from datetime import datetime
 
 import pytest
@@ -115,13 +114,12 @@ async def test_apply_trend_confirmation_filters_unconfirmed_codes():
         {"open": 99.5, "high": 99.7, "low": 99.0, "close": 99.2, "volume": 1000},
     ]
     client = _DummyKISClient({"000001": bars_pass, "000002": bars_fail})
-    config = replace(
-        ScreenerConfig(),
-        trend_confirm_enabled=True,
-        trend_confirm_max_scan_codes=2,
-        trend_confirm_bar_count=3,
-        trend_confirm_fail_open=False,
-    )
+    config = ScreenerConfig().model_copy(update={
+        "trend_confirm_enabled": True,
+        "trend_confirm_max_scan_codes": 2,
+        "trend_confirm_bar_count": 3,
+        "trend_confirm_fail_open": False,
+    })
     filtered, diagnostics = await _apply_trend_confirmation(
         codes=["000001", "000002"],
         info_by_code={},
@@ -147,13 +145,12 @@ async def test_apply_trend_confirmation_keeps_unscanned_codes():
         {"open": 99.5, "high": 99.7, "low": 99.0, "close": 99.2, "volume": 1000},
     ]
     client = _DummyKISClient({"000001": bars_pass, "000002": bars_fail})
-    config = replace(
-        ScreenerConfig(),
-        trend_confirm_enabled=True,
-        trend_confirm_max_scan_codes=2,
-        trend_confirm_bar_count=3,
-        trend_confirm_fail_open=False,
-    )
+    config = ScreenerConfig().model_copy(update={
+        "trend_confirm_enabled": True,
+        "trend_confirm_max_scan_codes": 2,
+        "trend_confirm_bar_count": 3,
+        "trend_confirm_fail_open": False,
+    })
     filtered, diagnostics = await _apply_trend_confirmation(
         codes=["000001", "000002", "000003"],
         info_by_code={},

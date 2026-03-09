@@ -213,7 +213,7 @@ async def test_websocket_send_personal(websocket_manager):
 async def test_websocket_handles_send_error(websocket_manager):
     """Test that send errors disconnect the client."""
     ws = create_mock_websocket()
-    ws.send_json = AsyncMock(side_effect=Exception("Connection closed"))
+    ws.send_json = AsyncMock(side_effect=RuntimeError("Connection closed"))
 
     await websocket_manager.connect(ws, "client1")
     assert websocket_manager.get_connection_count() == 1
