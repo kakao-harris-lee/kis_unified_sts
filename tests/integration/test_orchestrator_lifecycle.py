@@ -3,6 +3,7 @@
 Tests the orchestrator startup sequence to ensure components initialize
 in the correct order and dependencies are properly established.
 """
+import asyncio
 import pytest
 from datetime import date, time
 from unittest.mock import AsyncMock, MagicMock, patch, call
@@ -50,7 +51,7 @@ class TestStartupSequence:
         ) as mock_positions, patch.object(
             TradingOrchestrator, "_start_market_data_loop", new_callable=AsyncMock
         ) as mock_market_data, patch.object(
-            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock())
+            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock(), stop=AsyncMock())
         ) as mock_pipeline, patch(
             "services.monitoring.metrics.get_metrics_collector"
         ) as mock_metrics:
@@ -145,7 +146,7 @@ class TestStartupSequence:
         ), patch.object(
             TradingOrchestrator, "_start_market_data_loop", new_callable=AsyncMock
         ), patch.object(
-            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock())
+            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock(), stop=AsyncMock())
         ), patch(
             "services.monitoring.metrics.get_metrics_collector"
         ) as mock_metrics:
@@ -198,7 +199,7 @@ class TestStartupSequence:
         ), patch.object(
             TradingOrchestrator, "_start_market_data_loop", new_callable=AsyncMock
         ), patch.object(
-            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock())
+            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock(), stop=AsyncMock())
         ), patch(
             "services.monitoring.metrics.get_metrics_collector"
         ) as mock_metrics:
@@ -256,7 +257,7 @@ class TestStartupSequence:
         ), patch.object(
             TradingOrchestrator, "_start_market_data_loop", new_callable=AsyncMock
         ), patch.object(
-            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock())
+            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock(), stop=AsyncMock())
         ), patch(
             "services.monitoring.metrics.get_metrics_collector"
         ) as mock_metrics:
@@ -289,6 +290,7 @@ class TestStartupSequence:
             assert market_data_started, "Market data loop must start before pipeline"
             pipeline_mock = MagicMock()
             pipeline_mock.start = AsyncMock()
+            pipeline_mock.stop = AsyncMock()
             return pipeline_mock
 
         with patch.object(
@@ -365,7 +367,7 @@ class TestStartupSequence:
         ), patch.object(
             TradingOrchestrator, "_start_market_data_loop", new_callable=AsyncMock
         ), patch.object(
-            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock())
+            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock(), stop=AsyncMock())
         ), patch(
             "services.monitoring.metrics.get_metrics_collector"
         ) as mock_metrics:
@@ -405,7 +407,7 @@ class TestStartupSequence:
 
             return wrapper
 
-        async def mark_ready_async(name):
+        def mark_ready_async(name):
             async def wrapper(*args):
                 components_ready[name] = True
 
@@ -416,6 +418,7 @@ class TestStartupSequence:
                 assert ready, f"Component {component} must be ready before pipeline starts"
             pipeline_mock = MagicMock()
             pipeline_mock.start = AsyncMock()
+            pipeline_mock.stop = AsyncMock()
             return pipeline_mock
 
         with patch.object(
@@ -499,7 +502,7 @@ class TestStartupSequence:
         ), patch.object(
             TradingOrchestrator, "_start_market_data_loop", new_callable=AsyncMock
         ), patch.object(
-            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock())
+            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock(), stop=AsyncMock())
         ), patch(
             "services.monitoring.metrics.get_metrics_collector"
         ) as mock_metrics:
@@ -559,7 +562,7 @@ class TestStartupSequence:
         ), patch.object(
             TradingOrchestrator, "_start_market_data_loop", new_callable=AsyncMock
         ), patch.object(
-            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock())
+            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock(), stop=AsyncMock())
         ), patch(
             "services.monitoring.metrics.get_metrics_collector"
         ) as mock_metrics:
@@ -595,24 +598,15 @@ class TestComponentDependencies:
         strategy_infra_initialized = False
         indicator_params_verified = False
 
-        def mock_strategy_init(self_ref):
+        def mock_strategy_init():
             nonlocal strategy_infra_initialized
             strategy_infra_initialized = True
-            # Create a minimal strategy manager mock
-            self_ref._strategy_manager = MagicMock()
-            self_ref._strategy_manager.strategy_names = ["bb_reversion"]
-            self_ref._position_tracker = MagicMock()
-            self_ref._risk_manager = MagicMock()
-            self_ref._adaptive_sizing = MagicMock()
 
-        def mock_indicator_init(self_ref):
+        def mock_indicator_init():
             nonlocal indicator_params_verified
             # Verify strategy infrastructure is ready
             assert strategy_infra_initialized, "Strategy infrastructure must be ready"
-            assert self_ref._strategy_manager is not None
             indicator_params_verified = True
-            self_ref._indicator_engine = MagicMock()
-            self_ref._indicator_resolver = MagicMock()
 
         with patch.object(
             TradingOrchestrator, "_init_kis_client", return_value=None
@@ -635,7 +629,7 @@ class TestComponentDependencies:
         ), patch.object(
             TradingOrchestrator, "_start_market_data_loop", new_callable=AsyncMock
         ), patch.object(
-            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock())
+            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock(), stop=AsyncMock())
         ), patch(
             "services.monitoring.metrics.get_metrics_collector"
         ) as mock_metrics:
@@ -663,11 +657,10 @@ class TestComponentDependencies:
 
         paper_broker_initialized = False
 
-        async def mock_execution_init(self_ref):
+        async def mock_execution_init():
             nonlocal paper_broker_initialized
-            # Simulate paper broker initialization
-            if self_ref.config.paper_trading:
-                self_ref._paper_broker = MagicMock()
+            # Simulate paper broker initialization for paper trading config
+            if config.paper_trading:
                 paper_broker_initialized = True
 
         with patch.object(
@@ -691,7 +684,7 @@ class TestComponentDependencies:
         ), patch.object(
             TradingOrchestrator, "_start_market_data_loop", new_callable=AsyncMock
         ), patch.object(
-            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock())
+            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock(), stop=AsyncMock())
         ), patch(
             "services.monitoring.metrics.get_metrics_collector"
         ) as mock_metrics:
@@ -746,7 +739,7 @@ class TestStartupState:
         ), patch.object(
             TradingOrchestrator, "_start_market_data_loop", new_callable=AsyncMock
         ), patch.object(
-            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock())
+            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock(), stop=AsyncMock())
         ), patch(
             "services.monitoring.metrics.get_metrics_collector"
         ) as mock_metrics:
@@ -799,7 +792,7 @@ class TestStartupState:
         ), patch.object(
             TradingOrchestrator, "_start_market_data_loop", new_callable=AsyncMock
         ), patch.object(
-            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock())
+            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock(), stop=AsyncMock())
         ), patch(
             "services.monitoring.metrics.get_metrics_collector"
         ) as mock_metrics:
@@ -868,9 +861,9 @@ class TestStartupState:
         ), patch.object(
             TradingOrchestrator,
             "_create_pipeline",
-            return_value=MagicMock(start=mock_pipeline_start),
+            return_value=MagicMock(start=mock_pipeline_start, stop=AsyncMock()),
         ), patch(
-            "services.monitoring.metrics.get_metrics_collector"
+            "services.trading.orchestrator.get_metrics_collector"
         ) as mock_metrics:
             mock_metrics_instance = MagicMock()
             mock_metrics_instance.start_prometheus_server = mock_prometheus_start
@@ -932,7 +925,7 @@ class TestTradingLoop:
         ), patch.object(
             TradingOrchestrator, "_start_market_data_loop", side_effect=mock_market_data_loop
         ), patch.object(
-            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock())
+            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock(), stop=AsyncMock())
         ), patch(
             "services.monitoring.metrics.get_metrics_collector"
         ) as mock_metrics:
@@ -961,14 +954,16 @@ class TestTradingLoop:
         )
 
         data_processed = []
+        orchestrator_holder = [None]
 
         # Mock data provider to simulate market data
         mock_data_provider = MagicMock()
-        
-        def mock_init_data_provider(self_ref, *args):
-            self_ref._data_provider = mock_data_provider
 
-        async def mock_market_data_loop(self_ref):
+        def mock_init_data_provider(*args):
+            if orchestrator_holder[0] is not None:
+                orchestrator_holder[0]._data_provider = mock_data_provider
+
+        async def mock_market_data_loop():
             # Simulate processing market data
             for i in range(3):
                 data = {"symbol": "005930", "price": 60000 + i * 100, "volume": 1000}
@@ -996,7 +991,7 @@ class TestTradingLoop:
         ), patch.object(
             TradingOrchestrator, "_start_market_data_loop", side_effect=mock_market_data_loop
         ), patch.object(
-            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock())
+            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock(), stop=AsyncMock())
         ), patch(
             "services.monitoring.metrics.get_metrics_collector"
         ) as mock_metrics:
@@ -1006,6 +1001,7 @@ class TestTradingLoop:
             )
 
             orchestrator = TradingOrchestrator(config)
+            orchestrator_holder[0] = orchestrator
             await orchestrator.start()
 
             # Verify data was processed
@@ -1027,9 +1023,9 @@ class TestTradingLoop:
 
         symbols_processed = set()
 
-        async def mock_market_data_loop(self_ref):
+        async def mock_market_data_loop():
             # Simulate processing data for all symbols
-            for symbol in self_ref.config.symbols:
+            for symbol in config.symbols:
                 symbols_processed.add(symbol)
                 await asyncio.sleep(0.01)
 
@@ -1054,7 +1050,7 @@ class TestTradingLoop:
         ), patch.object(
             TradingOrchestrator, "_start_market_data_loop", side_effect=mock_market_data_loop
         ), patch.object(
-            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock())
+            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock(), stop=AsyncMock())
         ), patch(
             "services.monitoring.metrics.get_metrics_collector"
         ) as mock_metrics:
@@ -1083,20 +1079,28 @@ class TestTradingLoop:
         )
 
         loop_stopped = False
-        stop_requested = asyncio.Event()
+        orchestrator_holder = [None]
+        loop_task_holder = [None]
 
-        async def mock_market_data_loop(self_ref):
+        async def _loop_body():
             # Run until stop is requested
-            while self_ref.is_running:
+            while orchestrator_holder[0] is None or orchestrator_holder[0].is_running:
                 await asyncio.sleep(0.01)
             nonlocal loop_stopped
             loop_stopped = True
 
-        async def mock_stop(self_ref, *args, **kwargs):
+        async def mock_start_market_data_loop():
+            # Mimic real implementation: create task instead of blocking
+            loop_task_holder[0] = asyncio.create_task(_loop_body())
+
+        async def mock_stop(*args, **kwargs):
             # Signal loop to stop
-            self_ref._state = TradingState.STOPPED
-            stop_requested.set()
-            await asyncio.sleep(0.05)  # Allow loop to finish
+            if orchestrator_holder[0] is not None:
+                orchestrator_holder[0]._running = False
+                orchestrator_holder[0]._state = TradingState.STOPPED
+            # Wait for loop task to finish
+            if loop_task_holder[0] is not None:
+                await asyncio.wait_for(loop_task_holder[0], timeout=1.0)
 
         with patch.object(
             TradingOrchestrator, "_init_kis_client", return_value=None
@@ -1117,9 +1121,9 @@ class TestTradingLoop:
         ), patch.object(
             TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
         ), patch.object(
-            TradingOrchestrator, "_start_market_data_loop", side_effect=mock_market_data_loop
+            TradingOrchestrator, "_start_market_data_loop", side_effect=mock_start_market_data_loop
         ), patch.object(
-            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock())
+            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock(), stop=AsyncMock())
         ), patch(
             "services.monitoring.metrics.get_metrics_collector"
         ) as mock_metrics:
@@ -1131,17 +1135,18 @@ class TestTradingLoop:
             )
 
             orchestrator = TradingOrchestrator(config)
-            
+            orchestrator_holder[0] = orchestrator
+
             # Patch stop method
             with patch.object(TradingOrchestrator, "stop", side_effect=mock_stop):
                 await orchestrator.start()
-                
+
                 # Wait a bit for loop to run
                 await asyncio.sleep(0.05)
-                
+
                 # Stop orchestrator
                 await orchestrator.stop()
-                
+
                 # Verify loop stopped
                 assert loop_stopped
 
@@ -1158,7 +1163,7 @@ class TestTradingLoop:
 
         process_attempts = []
 
-        async def mock_market_data_loop(self_ref):
+        async def mock_market_data_loop():
             # Simulate processing with errors
             for i in range(5):
                 try:
@@ -1192,7 +1197,7 @@ class TestTradingLoop:
         ), patch.object(
             TradingOrchestrator, "_start_market_data_loop", side_effect=mock_market_data_loop
         ), patch.object(
-            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock())
+            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock(), stop=AsyncMock())
         ), patch(
             "services.monitoring.metrics.get_metrics_collector"
         ) as mock_metrics:
@@ -1222,7 +1227,7 @@ class TestTradingLoop:
 
         futures_data_processed = []
 
-        async def mock_market_data_loop(self_ref):
+        async def mock_market_data_loop():
             # Simulate continuous futures data processing
             for i in range(10):
                 data = {
@@ -1254,7 +1259,7 @@ class TestTradingLoop:
         ), patch.object(
             TradingOrchestrator, "_start_market_data_loop", side_effect=mock_market_data_loop
         ), patch.object(
-            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock())
+            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock(), stop=AsyncMock())
         ), patch(
             "services.monitoring.metrics.get_metrics_collector"
         ) as mock_metrics:
@@ -1350,7 +1355,7 @@ class TestPauseResume:
         """Verify positions are preserved during pause/resume."""
         from services.trading.orchestrator import TradingOrchestrator, TradingConfig
         from services.trading.position_tracker import PositionTracker
-        from shared.models import Position, PositionSide
+        from shared.models.position import Position, PositionSide
 
         config = TradingConfig.stock(
             strategy_name="bb_reversion",
@@ -1360,6 +1365,7 @@ class TestPauseResume:
         # Create mock positions
         mock_positions = [
             Position(
+                id="pos_005930",
                 code="005930",
                 name="삼성전자",
                 side=PositionSide.LONG,
@@ -1369,6 +1375,7 @@ class TestPauseResume:
                 strategy="bb_reversion",
             ),
             Position(
+                id="pos_000660",
                 code="000660",
                 name="SK하이닉스",
                 side=PositionSide.LONG,
@@ -1587,8 +1594,9 @@ class TestPauseResume:
         market_data_events = []
         pause_event = asyncio.Event()
         resume_event = asyncio.Event()
+        orchestrator_holder = [None]
 
-        async def mock_market_data_loop(self_ref):
+        async def _loop_body():
             """Simulate market data loop that can be paused/resumed"""
             for i in range(20):
                 # Simulate pause at iteration 10
@@ -1597,12 +1605,17 @@ class TestPauseResume:
                     # Wait for resume signal
                     await resume_event.wait()
 
+                state_value = orchestrator_holder[0].state.value if orchestrator_holder[0] else "unknown"
                 market_data_events.append({
                     "iteration": i,
                     "price": 250.0 + i * 0.1,
-                    "state": self_ref.state.value,
+                    "state": state_value,
                 })
                 await asyncio.sleep(0.01)
+
+        async def mock_start_market_data_loop():
+            # Mimic real implementation: create task instead of blocking
+            asyncio.create_task(_loop_body())
 
         with patch.object(
             TradingOrchestrator, "_init_kis_client", return_value=None
@@ -1623,7 +1636,7 @@ class TestPauseResume:
         ), patch.object(
             TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
         ), patch.object(
-            TradingOrchestrator, "_start_market_data_loop", side_effect=mock_market_data_loop
+            TradingOrchestrator, "_start_market_data_loop", side_effect=mock_start_market_data_loop
         ), patch.object(
             TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock(), stop=AsyncMock())
         ), patch(
@@ -1637,6 +1650,7 @@ class TestPauseResume:
             )
 
             orchestrator = TradingOrchestrator(config)
+            orchestrator_holder[0] = orchestrator
 
             # Start orchestrator
             async def run_with_pause_resume():
@@ -1674,7 +1688,7 @@ class TestPauseResume:
     async def test_no_duplicate_orders_after_resume(self):
         """Verify no duplicate orders are placed after resume."""
         from services.trading.orchestrator import TradingOrchestrator, TradingConfig
-        from shared.models import Signal, SignalDirection
+        from shared.models.signal import Signal, SignalType
 
         config = TradingConfig.stock(
             strategy_name="bb_reversion",
@@ -1689,7 +1703,7 @@ class TestPauseResume:
             signal = args[0] if args else kwargs.get("signal")
             order_attempts.append({
                 "code": signal.code,
-                "direction": signal.direction,
+                "direction": signal.signal_type,
             })
             # Simulate successful order
             return MagicMock(success=True, order_id=f"ORDER_{len(order_attempts)}")
@@ -1717,7 +1731,7 @@ class TestPauseResume:
         ), patch.object(
             TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock(), stop=AsyncMock())
         ), patch.object(
-            TradingOrchestrator, "_execute_entry_order", side_effect=mock_execute_order
+            TradingOrchestrator, "_execute_entry", side_effect=mock_execute_order
         ), patch(
             "services.monitoring.metrics.get_metrics_collector"
         ) as mock_metrics, patch.object(
@@ -1735,14 +1749,14 @@ class TestPauseResume:
             test_signal = Signal(
                 code="005930",
                 name="삼성전자",
-                direction=SignalDirection.ENTRY,
+                signal_type=SignalType.ENTRY,
                 strategy="bb_reversion",
                 price=70000.0,
                 confidence=0.85,
             )
 
             # Execute order before pause
-            await orchestrator._execute_entry_order(test_signal)
+            await orchestrator._execute_entry(test_signal)
             initial_order_count = len(order_attempts)
 
             # Pause
@@ -1937,7 +1951,7 @@ class TestGracefulShutdown:
         ), patch.object(
             TradingOrchestrator, "_start_market_data_loop", new_callable=AsyncMock
         ), patch.object(
-            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock())
+            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock(), stop=AsyncMock())
         ), patch(
             "services.monitoring.metrics.get_metrics_collector"
         ) as mock_metrics, patch.object(
@@ -1967,7 +1981,7 @@ class TestGracefulShutdown:
     async def test_redis_flush_on_shutdown(self):
         """Verify positions are flushed to Redis during shutdown."""
         from services.trading.orchestrator import TradingOrchestrator, TradingConfig
-        from shared.models.position import Position
+        from shared.models.position import Position, PositionSide
 
         config = TradingConfig.stock(
             strategy_name="bb_reversion",
@@ -1981,18 +1995,20 @@ class TestGracefulShutdown:
             Position(
                 id="pos1",
                 code="005930",
+                name="삼성전자",
                 strategy="bb_reversion",
                 entry_price=70000,
                 quantity=10,
-                side="LONG",
+                side=PositionSide.LONG,
             ),
             Position(
                 id="pos2",
                 code="005930",
+                name="삼성전자",
                 strategy="bb_reversion",
                 entry_price=71000,
                 quantity=5,
-                side="LONG",
+                side=PositionSide.LONG,
             ),
         ]
         mock_position_tracker.stop_auto_flush = AsyncMock()
@@ -2027,7 +2043,7 @@ class TestGracefulShutdown:
         ), patch.object(
             TradingOrchestrator, "_stop_market_data_loop", new_callable=AsyncMock
         ), patch.object(
-            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock())
+            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock(), stop=AsyncMock())
         ), patch(
             "services.monitoring.metrics.get_metrics_collector"
         ) as mock_metrics, patch.object(
@@ -2063,7 +2079,7 @@ class TestGracefulShutdown:
     async def test_position_serialization_on_shutdown(self):
         """Verify positions are properly serialized before Redis flush."""
         from services.trading.orchestrator import TradingOrchestrator, TradingConfig
-        from shared.models.position import Position
+        from shared.models.position import Position, PositionSide
 
         config = TradingConfig.futures(
             strategy_name="rl_mppo",
@@ -2074,10 +2090,11 @@ class TestGracefulShutdown:
             Position(
                 id="swing_pos",
                 code="101S6000",
+                name="KOSPI200 선물",
                 strategy="rl_mppo",
                 entry_price=350.0,
                 quantity=1,
-                side="LONG",
+                side=PositionSide.LONG,
             ),
         ]
 
@@ -2085,6 +2102,9 @@ class TestGracefulShutdown:
         mock_position_tracker.position_count = 1
         mock_position_tracker.positions = test_positions
         mock_position_tracker.stop_auto_flush = AsyncMock()
+        mock_position_tracker.close_position.return_value = MagicMock(
+            unrealized_pnl=0.0
+        )
 
         # Track what gets serialized
         serialized_positions = []
@@ -2122,7 +2142,7 @@ class TestGracefulShutdown:
         ), patch.object(
             TradingOrchestrator, "_stop_market_data_loop", new_callable=AsyncMock
         ), patch.object(
-            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock())
+            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock(), stop=AsyncMock())
         ), patch(
             "services.monitoring.metrics.get_metrics_collector"
         ) as mock_metrics, patch.object(
@@ -2152,13 +2172,13 @@ class TestGracefulShutdown:
             assert pos.strategy == "rl_mppo"
             assert pos.entry_price == 350.0
             assert pos.quantity == 1
-            assert pos.side == "LONG"
+            assert pos.side == PositionSide.LONG
 
     @pytest.mark.asyncio
     async def test_timeout_handling_forces_redis_flush(self):
         """Verify timeout triggers forced Redis flush as last resort."""
         from services.trading.orchestrator import TradingOrchestrator, TradingConfig
-        from shared.models.position import Position
+        from shared.models.position import Position, PositionSide
 
         config = TradingConfig.stock(
             strategy_name="bb_reversion",
@@ -2172,10 +2192,11 @@ class TestGracefulShutdown:
             Position(
                 id="pos1",
                 code="005930",
+                name="삼성전자",
                 strategy="bb_reversion",
                 entry_price=70000,
                 quantity=10,
-                side="LONG",
+                side=PositionSide.LONG,
             ),
         ]
         mock_position_tracker.stop_auto_flush = AsyncMock()
@@ -2210,7 +2231,7 @@ class TestGracefulShutdown:
         ), patch.object(
             TradingOrchestrator, "_start_market_data_loop", new_callable=AsyncMock
         ), patch.object(
-            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock())
+            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock(), stop=AsyncMock())
         ), patch(
             "services.monitoring.metrics.get_metrics_collector"
         ) as mock_metrics, patch.object(
@@ -2333,7 +2354,7 @@ class TestGracefulShutdown:
     async def test_redis_flush_retry_on_connection_error(self):
         """Verify Redis flush retries on connection errors."""
         from services.trading.orchestrator import TradingOrchestrator, TradingConfig
-        from shared.models.position import Position
+        from shared.models.position import Position, PositionSide
 
         config = TradingConfig.stock(
             strategy_name="bb_reversion",
@@ -2346,10 +2367,11 @@ class TestGracefulShutdown:
             Position(
                 id="pos1",
                 code="005930",
+                name="삼성전자",
                 strategy="bb_reversion",
                 entry_price=70000,
                 quantity=10,
-                side="LONG",
+                side=PositionSide.LONG,
             ),
         ]
         mock_position_tracker.stop_auto_flush = AsyncMock()
@@ -2391,7 +2413,7 @@ class TestGracefulShutdown:
         ), patch.object(
             TradingOrchestrator, "_stop_market_data_loop", new_callable=AsyncMock
         ), patch.object(
-            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock())
+            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock(), stop=AsyncMock())
         ), patch(
             "services.monitoring.metrics.get_metrics_collector"
         ) as mock_metrics, patch.object(

@@ -659,7 +659,7 @@ async def test_time_of_day_multiplier():
     from shared.execution.slippage_model import SlippageModel, SlippageModelConfig
     from unittest.mock import Mock
 
-    # Create config with time-of-day multipliers
+    # Create config with time-of-day multipliers using "HH:MM-HH:MM" format
     slippage_config = SlippageModelConfig(
         enabled=True,
         base_spread_bps=1.5,
@@ -667,9 +667,9 @@ async def test_time_of_day_multiplier():
         min_slippage_bps=0.5,
         max_slippage_bps=15.0,
         time_of_day_multipliers={
-            "market_open": {"start": "09:00", "end": "09:30", "multiplier": 1.5},
-            "market_close": {"start": "15:00", "end": "15:20", "multiplier": 1.3},
-            "normal": {"start": "09:30", "end": "15:00", "multiplier": 1.0},
+            "09:00-09:30": 1.5,   # market open: higher slippage
+            "15:00-15:20": 1.3,   # market close: moderately higher
+            "09:30-15:00": 1.0,   # normal hours: no extra multiplier
         },
     )
     slippage_model = SlippageModel(slippage_config)

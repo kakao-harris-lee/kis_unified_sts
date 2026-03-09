@@ -652,7 +652,8 @@ class TestRedisPositionLoad:
         assert position_tracker.position_count == 1
 
         # Verify position data was correctly restored
-        position = position_tracker.get_position_by_code("005930")
+        _positions = position_tracker.get_positions_by_symbol("005930")
+        position = _positions[0] if _positions else None
         assert position is not None
         assert position.code == "005930"
         assert position.name == "Samsung Electronics"
@@ -697,9 +698,9 @@ class TestRedisPositionLoad:
         assert position_tracker.position_count == 3
 
         # Verify all positions were loaded
-        assert position_tracker.get_position_by_code("005930") is not None
-        assert position_tracker.get_position_by_code("000660") is not None
-        assert position_tracker.get_position_by_code("035720") is not None
+        assert len(position_tracker.get_positions_by_symbol("005930")) > 0
+        assert len(position_tracker.get_positions_by_symbol("000660")) > 0
+        assert len(position_tracker.get_positions_by_symbol("035720")) > 0
 
     def test_load_short_position(self, position_tracker, mock_redis):
         """Test loading short positions with correct side"""
@@ -731,7 +732,8 @@ class TestRedisPositionLoad:
         assert loaded_count == 1
 
         # Verify short position was loaded correctly
-        position = position_tracker.get_position_by_code("A05000")
+        _positions = position_tracker.get_positions_by_symbol("A05000")
+        position = _positions[0] if _positions else None
         assert position is not None
         assert position.side == PositionSide.SHORT
         assert position.strategy == "rl_mppo"
@@ -770,9 +772,9 @@ class TestRedisPositionLoad:
         assert loaded_count == 3
 
         # Verify all states were restored correctly
-        positions = position_tracker.get_all_positions()
+        positions = position_tracker.positions
         states_found = {pos.state.value for pos in positions}
-        assert states_found == {"SURVIVAL", "BREAKEVEN", "MAXIMIZE"}
+        assert states_found == {"survival", "breakeven", "maximize"}
 
     def test_load_position_with_metadata(self, position_tracker, mock_redis):
         """Test loading position with metadata preserved"""
@@ -809,7 +811,8 @@ class TestRedisPositionLoad:
         assert loaded_count == 1
 
         # Verify metadata was restored
-        position = position_tracker.get_position_by_code("005930")
+        _positions = position_tracker.get_positions_by_symbol("005930")
+        position = _positions[0] if _positions else None
         assert position is not None
         assert position.metadata == metadata
         assert position.metadata["signal_strength"] == 0.85
@@ -898,7 +901,8 @@ class TestRedisPositionLoad:
         assert loaded_count == 1
 
         # Verify timestamp was parsed correctly
-        position = position_tracker.get_position_by_code("005930")
+        _positions = position_tracker.get_positions_by_symbol("005930")
+        position = _positions[0] if _positions else None
         assert position is not None
         assert position.entry_time == entry_time
 
@@ -933,7 +937,8 @@ class TestRedisPositionLoad:
         assert loaded_count == 1
 
         # Verify custom fee rate was restored
-        position = position_tracker.get_position_by_code("A05000")
+        _positions = position_tracker.get_positions_by_symbol("A05000")
+        position = _positions[0] if _positions else None
         assert position is not None
         assert position.fee_rate == custom_fee_rate
 
@@ -1018,7 +1023,8 @@ class TestRedisPositionLoad:
         assert loaded_count == 1
 
         # Verify highest/lowest prices were restored
-        position = position_tracker.get_position_by_code("005930")
+        _positions = position_tracker.get_positions_by_symbol("005930")
+        position = _positions[0] if _positions else None
         assert position is not None
         assert position.highest_price == 73000
         assert position.lowest_price == 70000
@@ -1056,16 +1062,16 @@ class TestRedisPositionLoad:
                         continue
 
                     # Check if position already exists (avoid duplicates)
-                    if tracker.get_position_by_code(position_dict['code']) is not None:
+                    if tracker.get_positions_by_symbol(position_dict['code']):
                         continue
 
                     # Deserialize position
                     position = self._deserialize_position(position_dict)
 
                     if position is not None:
-                        # Add position to tracker (using internal method to bypass normal add)
-                        tracker._positions[position.id] = position
-                        loaded_count += 1
+                        # Add position to tracker using recovery method (preserves ID and updates indices)
+                        if tracker.add_recovered_position(position):
+                            loaded_count += 1
 
                 except (json.JSONDecodeError, ValueError, KeyError):
                     # Skip corrupted position data
@@ -1097,26 +1103,24 @@ class TestRedisPositionLoad:
             # For testing, we simulate by creating a minimal position structure
             from shared.models.position import Position
 
+            entry_time = datetime.fromisoformat(data['entry_time']) if 'entry_time' in data else datetime.now()
+
             position = Position(
+                id=data['id'],
                 code=data['code'],
                 name=data['name'],
                 side=PositionSide(data['side']),
                 entry_price=float(data['entry_price']),
                 quantity=int(data['quantity']),
+                entry_time=entry_time,
+                current_price=float(data.get('current_price', data['entry_price'])),
+                highest_price=float(data.get('highest_price', data['entry_price'])),
+                lowest_price=float(data.get('lowest_price', data['entry_price'])),
+                state=PositionState(data['state'].lower()),
                 strategy=data['strategy'],
                 fee_rate=float(data.get('fee_rate', 0.00015)),
                 metadata=metadata,
             )
-
-            # Restore additional state
-            position.id = data['id']
-            position.current_price = float(data.get('current_price', data['entry_price']))
-            position.highest_price = float(data.get('highest_price', data['entry_price']))
-            position.lowest_price = float(data.get('lowest_price', data['entry_price']))
-            position.state = PositionState(data['state'])
-
-            if 'entry_time' in data:
-                position.entry_time = datetime.fromisoformat(data['entry_time'])
 
             return position
 
@@ -1241,8 +1245,8 @@ class TestRedisCleanup:
         mock_redis.hdel.assert_called_once_with(position_tracker._redis_key, pos1.id)
 
         # Verify remaining positions are still tracked
-        assert position_tracker.get_position_by_code("000660") is not None
-        assert position_tracker.get_position_by_code("035720") is not None
+        assert len(position_tracker.get_positions_by_symbol("000660")) > 0
+        assert len(position_tracker.get_positions_by_symbol("035720")) > 0
 
     def test_cleanup_with_redis_failure(self, position_tracker, mock_redis):
         """Test that Redis cleanup failure is handled gracefully"""
@@ -1388,7 +1392,7 @@ class TestRedisCleanup:
         assert mock_redis.hdel.call_count == 2
 
         # Verify pos2 is still tracked
-        assert position_tracker.get_position_by_code("000660") is not None
+        assert len(position_tracker.get_positions_by_symbol("000660")) > 0
 
     def test_cleanup_with_metadata_preserved_until_close(self, position_tracker, mock_redis):
         """Test that position metadata is preserved in Redis until cleanup"""

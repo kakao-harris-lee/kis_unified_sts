@@ -258,8 +258,23 @@ async def test_mlflow_experiments_multiple_runs(mock_mlflow_client):
         "end_date": "2024-12-31",
     }
 
-    # Update mock to return multiple runs
-    mock_client.search_runs.return_value = [mock_run, mock_run_2]
+    # Update mock to return multiple runs, respecting order_by for best-run calls
+    def _search_runs_side_effect(*args, **kwargs):
+        max_results = kwargs.get("max_results", None)
+        order_by = kwargs.get("order_by", [])
+        all_runs = [mock_run, mock_run_2]
+        # If max_results=1 and ordering by sharpe DESC, return highest sharpe run
+        if max_results == 1 and any("DESC" in o for o in (order_by or [])):
+            # Sort by sharpe_ratio descending
+            sorted_runs = sorted(
+                all_runs,
+                key=lambda r: r.data.metrics.get("sharpe_ratio", 0),
+                reverse=True,
+            )
+            return sorted_runs[:1]
+        return all_runs
+
+    mock_client.search_runs.side_effect = _search_runs_side_effect
 
     app = create_app()
     transport = ASGITransport(app=app)

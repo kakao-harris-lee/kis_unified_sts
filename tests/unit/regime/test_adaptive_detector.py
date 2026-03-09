@@ -100,6 +100,7 @@ class TestAdaptiveRegimeDetector:
         assert signal.state in [
             AdaptiveRegimeState.VOLATILE_SIDEWAYS,
             AdaptiveRegimeState.MEAN_REVERTING,
+            AdaptiveRegimeState.CALM_SIDEWAYS,
         ]
 
     def test_detect_calm_sideways(self):

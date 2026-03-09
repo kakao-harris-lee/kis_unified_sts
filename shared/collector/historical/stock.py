@@ -90,7 +90,7 @@ def _get_clickhouse_config() -> Dict[str, Any]:
         "host": os.getenv("CLICKHOUSE_HOST", "localhost"),
         "port": int(os.getenv("CLICKHOUSE_PORT", "8123")),
         "database": os.getenv("CLICKHOUSE_STOCK_DATABASE", "market"),
-        "user": os.getenv("CLICKHOUSE_USER", "trading"),
+        "user": os.getenv("CLICKHOUSE_USER", "default"),
         "password": os.getenv("CLICKHOUSE_PASSWORD", ""),
         **tls_params,
     }
@@ -272,16 +272,18 @@ def _get_semaphore() -> asyncio.Semaphore:
 def get_stock_db_client() -> clickhouse_connect.driver.client.Client:
     """Get ClickHouse client for stock database."""
     config = _get_clickhouse_config()
-    return clickhouse_connect.get_client(
-        host=config["host"],
-        port=config["port"],
-        username=config["user"],
-        password=config["password"],
-        database=config["database"],
-        secure=config["secure"],
-        verify=config["verify"],
-        ca_cert=config["ca_cert"],
-    )
+    kwargs = {
+        "host": config["host"],
+        "port": config["port"],
+        "username": config["user"],
+        "password": config["password"],
+        "database": config["database"],
+        "secure": config["secure"],
+        "verify": config["verify"],
+    }
+    if config.get("ca_cert"):
+        kwargs["ca_cert"] = config["ca_cert"]
+    return clickhouse_connect.get_client(**kwargs)
 
 
 def ensure_stock_database() -> None:

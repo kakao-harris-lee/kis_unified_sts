@@ -45,6 +45,7 @@ def _make_orchestrator(**kwargs):
     orch._prev_day_volume_warned = False
     orch._universe_retention_seconds = 600
     orch._max_universe_size = 40
+    orch._current_regime_confidence = None
     return orch
 
 

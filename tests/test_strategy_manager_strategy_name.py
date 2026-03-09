@@ -53,11 +53,12 @@ class _DummySizer(PositionSizer[dict]):
 
 @pytest.mark.asyncio
 async def test_strategy_manager_overwrites_signal_strategy_to_trading_strategy_name():
-    # Provide a non-existent strategy name to avoid auto-loading all built-in strategies.
+    # Provide no strategy_names to avoid auto-loading from disk (avoids ConfigNotFoundError).
+    # Disable cost filter to avoid ATR/price validation rejecting the test signal.
     sm = StrategyManager(
         asset_class="stock",
-        strategy_names=["__does_not_exist__"],
-        config=StrategyManagerConfig(),
+        strategy_names=[],
+        config=StrategyManagerConfig(cost_filter_enabled=False),
     )
 
     strategy = TradingStrategy(
@@ -68,7 +69,8 @@ async def test_strategy_manager_overwrites_signal_strategy_to_trading_strategy_n
     )
     sm.add_strategy(strategy)
 
-    ctx = EntryContext(market_data={"code": "000000", "close": 100.0})
+    # Market data must be keyed by symbol for cost filter to find price
+    ctx = EntryContext(market_data={"000000": {"code": "000000", "close": 100.0}})
     signals = await sm.check_entries(ctx)
 
     assert len(signals) == 1

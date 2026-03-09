@@ -152,6 +152,7 @@ class TestTradingOrchestrator:
         from services.monitoring.metrics import MetricsCollector
 
         monkeypatch.setattr(MetricsCollector, "start_prometheus_server", lambda *a, **kw: None)
+        monkeypatch.setattr(TradingOrchestrator, "_init_llm_context_publisher", lambda *a, **kw: None)
 
         config = TradingConfig.stock()
         orch = TradingOrchestrator(config)
@@ -168,6 +169,7 @@ class TestTradingOrchestrator:
         from services.monitoring.metrics import MetricsCollector
 
         monkeypatch.setattr(MetricsCollector, "start_prometheus_server", lambda *a, **kw: None)
+        monkeypatch.setattr(TradingOrchestrator, "_init_llm_context_publisher", lambda *a, **kw: None)
 
         config = TradingConfig.stock()
         orch = TradingOrchestrator(config)
@@ -641,6 +643,7 @@ class TestTradingOrchestrator:
             profit_pct=0.0,
             exit_time=None,
             entry_time=None,
+            entry_price=100.0,
         )
         orch._position_tracker = MagicMock()
         orch._position_tracker.get_position.return_value = position

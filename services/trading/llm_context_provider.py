@@ -24,6 +24,8 @@ from datetime import datetime
 from threading import Lock
 from typing import Optional
 
+from shared.streaming.trading_state import TradingStateReader
+
 logger = logging.getLogger(__name__)
 
 # Cache TTL in seconds (60s default)
@@ -88,7 +90,6 @@ class LLMContextProvider:
             TradingStateReader instance
         """
         if self._reader is None:
-            from shared.streaming.trading_state import TradingStateReader
             self._reader = TradingStateReader(self._asset_class)
         return self._reader
 

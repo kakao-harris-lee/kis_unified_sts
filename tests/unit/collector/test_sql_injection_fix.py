@@ -24,7 +24,7 @@ class TestDailyAdapterParameterizedQueries:
         ]
         mock_client.query.return_value = mock_result
 
-        with patch("shared.backtest.daily_adapter.clickhouse_connect.get_client", return_value=mock_client):
+        with patch("clickhouse_connect.get_client", return_value=mock_client):
             # Should not raise exception and should use parameterized query
             df = load_stock_daily_from_clickhouse(
                 code=malicious_code,
@@ -67,7 +67,7 @@ class TestDailyAdapterParameterizedQueries:
         ]
         mock_client.query.return_value = mock_result
 
-        with patch("shared.backtest.daily_adapter.clickhouse_connect.get_client", return_value=mock_client):
+        with patch("clickhouse_connect.get_client", return_value=mock_client):
             df = load_stock_daily_from_clickhouse(code, start_date, end_date)
 
             call_args = mock_client.query.call_args
@@ -93,7 +93,7 @@ class TestDailyAdapterParameterizedQueries:
         ]
         mock_client.query.return_value = mock_result
 
-        with patch("shared.backtest.daily_adapter.clickhouse_connect.get_client", return_value=mock_client):
+        with patch("clickhouse_connect.get_client", return_value=mock_client):
             df = load_stock_daily_from_clickhouse(code=code)
 
             call_args = mock_client.query.call_args
@@ -391,7 +391,7 @@ class TestSQLInjectionPayloads:
         ]
         mock_client.query.return_value = mock_result
 
-        with patch("shared.backtest.daily_adapter.clickhouse_connect.get_client", return_value=mock_client):
+        with patch("clickhouse_connect.get_client", return_value=mock_client):
             df = load_stock_daily_from_clickhouse(
                 code=malicious_code,
                 start_date=date(2024, 1, 1),
