@@ -686,21 +686,34 @@ class MarketDataProvider:
         Continuously polls market data via REST API when WebSocket is unavailable.
         This method runs until cancelled or until recovery to WebSocket mode.
 
-        Full implementation in subtask-2-4.
+        Fetches all tracked symbols using KIS client at regular intervals,
+        respecting rate limits and handling errors gracefully.
         """
         logger.info(
             f"Starting REST polling loop (interval: {self.config.rest_poll_interval_seconds}s)"
         )
 
-        # Placeholder implementation - will be fully implemented in subtask-2-4
-        # For now, just log and sleep to prevent immediate cancellation
         while self._current_mode == DataSourceMode.REST_FALLBACK:
             try:
-                # TODO (subtask-2-4): Implement actual REST polling logic
-                # - Fetch all tracked symbols via KIS client
-                # - Update cache with fresh data
-                # - Handle rate limiting and errors
-                logger.debug("REST poll cycle (placeholder)")
+                # Skip polling if no symbols tracked
+                if not self.symbols:
+                    logger.debug("REST poll cycle: no symbols to fetch")
+                    await asyncio.sleep(self.config.rest_poll_interval_seconds)
+                    continue
+
+                # Fetch all tracked symbols via KIS client (or data source)
+                # This uses existing _fetch_batch which:
+                # - Handles rate limiting via staggered requests
+                # - Updates cache with fresh data
+                # - Falls back to mock data if needed
+                logger.debug(f"REST poll cycle: fetching {len(self.symbols)} symbols")
+
+                async with self._lock:
+                    await self._fetch_batch(self.symbols)
+
+                logger.debug(
+                    f"REST poll cycle: successfully fetched {len(self.symbols)} symbols"
+                )
 
                 # Sleep until next poll interval
                 await asyncio.sleep(self.config.rest_poll_interval_seconds)
@@ -708,9 +721,16 @@ class MarketDataProvider:
             except asyncio.CancelledError:
                 logger.info("REST polling loop cancelled")
                 raise
+            except (NetworkError, APIError) as e:
+                # Expected errors during REST polling - log at warning level
+                logger.warning(
+                    f"REST polling network/API error: {type(e).__name__}: {e}"
+                )
+                # Brief pause before retry on error (shorter than normal interval)
+                await asyncio.sleep(1.0)
             except Exception as e:
                 logger.error(
-                    f"Error in REST polling loop: {type(e).__name__}: {e}",
+                    f"Unexpected error in REST polling loop: {type(e).__name__}: {e}",
                     exc_info=True,
                 )
                 # Brief pause before retry on error
