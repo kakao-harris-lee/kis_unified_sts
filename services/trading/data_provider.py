@@ -555,6 +555,96 @@ class MarketDataProvider:
             "fallback_poll_active": self._fallback_poll_task is not None and not self._fallback_poll_task.done(),
         }
 
+    async def _health_check_loop(self):
+        """Health monitoring loop for WebSocket data source.
+
+        Checks data source health at regular intervals and triggers failover
+        to REST polling if WebSocket becomes unhealthy.
+
+        The loop checks:
+        - If data source has is_healthy() method, call it
+        - If data source has get_health_status() method, log detailed status
+        - Trigger failover if data source is unhealthy
+
+        This runs continuously until cancelled via task cancellation.
+        """
+        logger.info(
+            f"Starting health check loop (interval: {self.config.health_check_interval_seconds}s)"
+        )
+
+        while True:
+            try:
+                await asyncio.sleep(self.config.health_check_interval_seconds)
+
+                # Check if we're in WebSocket mode (no need to check if in fallback)
+                if self._current_mode != DataSourceMode.WEBSOCKET:
+                    logger.debug("Health check: in REST fallback mode, checking for recovery")
+                    # Check if WebSocket is healthy again for recovery
+                    if hasattr(self._data_source, "is_healthy"):
+                        try:
+                            is_healthy = (
+                                await self._data_source.is_healthy()
+                                if asyncio.iscoroutinefunction(self._data_source.is_healthy)
+                                else self._data_source.is_healthy()
+                            )
+                            if is_healthy:
+                                logger.info("WebSocket is healthy again, recovery possible")
+                                # Recovery will be triggered by _recover_to_websocket() method
+                                # (implemented in subtask-2-5)
+                        except Exception as e:
+                            logger.debug(f"Error checking WebSocket health for recovery: {e}")
+                    continue
+
+                # We're in WebSocket mode, check health
+                if self._data_source is None:
+                    logger.debug("Health check: no data source configured (using mock data)")
+                    continue
+
+                # Get detailed health status if available
+                health_status = None
+                if hasattr(self._data_source, "get_health_status"):
+                    try:
+                        health_status = (
+                            await self._data_source.get_health_status()
+                            if asyncio.iscoroutinefunction(self._data_source.get_health_status)
+                            else self._data_source.get_health_status()
+                        )
+                        logger.debug(f"Health check: data source status = {health_status}")
+                    except Exception as e:
+                        logger.warning(f"Error getting health status: {e}")
+
+                # Check if data source is healthy
+                is_healthy = True
+                if hasattr(self._data_source, "is_healthy"):
+                    try:
+                        is_healthy = (
+                            await self._data_source.is_healthy()
+                            if asyncio.iscoroutinefunction(self._data_source.is_healthy)
+                            else self._data_source.is_healthy()
+                        )
+                        logger.debug(f"Health check: is_healthy = {is_healthy}")
+                    except Exception as e:
+                        logger.warning(f"Error checking is_healthy: {e}")
+                        is_healthy = False
+
+                # Trigger failover if unhealthy
+                if not is_healthy:
+                    logger.warning(
+                        f"Data source unhealthy, triggering failover to REST polling. "
+                        f"Health status: {health_status}"
+                    )
+                    # Failover will be triggered by _failover_to_rest() method
+                    # (implemented in subtask-2-3)
+                    # For now, just log the event
+                    # TODO: Call self._failover_to_rest() once implemented
+
+            except asyncio.CancelledError:
+                logger.info("Health check loop cancelled")
+                raise
+            except Exception as e:
+                logger.error(f"Error in health check loop: {type(e).__name__}: {e}", exc_info=True)
+                # Continue checking despite errors
+
     def clear_cache(self):
         """Clear all cached data"""
         self._cache.clear()
