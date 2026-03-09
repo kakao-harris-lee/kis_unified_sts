@@ -332,6 +332,64 @@ config = MyServiceConfig.from_yaml(apply_env_overrides=True)
 - **Graceful shutdown**: CLI에서 SIGTERM/SIGINT → `orchestrator.stop(timeout=10s)` → Redis force flush. Cron은 SIGTERM → 5초 대기 → `kill -0` 확인 → SIGKILL.
 - **KIS Rate Limiter**: `_RateLimiter`는 EGW00201 시 exponential backoff (cap 30s). 10회 consecutive 후 5분 cooldown auto-reset으로 death spiral 방지.
 
+### ATS Routing (Korean Alternative Trading System)
+
+**개요**: 2025년 3월 출범한 한국 대체거래소(넥스트레이드) 지원. 주식 주문을 KRX와 ATS 간 최적 실행 경로로 라우팅하여 가격 개선 기회 및 유동성 확보.
+
+**핵심 컴포넌트**:
+
+| 컴포넌트 | 역할 | 위치 |
+|---------|------|------|
+| `VenueRouter` | KRX vs ATS 실행 거래소 선택 로직 | `shared/execution/venue_router.py` |
+| `ATSRoutingConfig` | 라우팅 규칙 설정 (Pydantic 모델) | `shared/execution/config.py` |
+| `OrderExecutor` | 거래소별 주문 실행 (KIS API 라우팅) | `shared/execution/executor.py` |
+| `ATSSimulator` | 백테스트용 ATS 시뮬레이션 | `shared/backtest/ats_simulator.py` |
+
+**라우팅 규칙 (6가지)**:
+
+1. **가격 개선 임계값** (`price_improvement_threshold_bps`): ATS 선택을 위한 최소 가격 개선 (기본값: 5 bps = 0.05%)
+2. **유동성 요구사항** (`min_liquidity_depth`, `min_depth_multiplier`): 최소 호가 잔량 및 주문 크기 대비 배수 검증
+3. **스프레드 제한** (`max_spread_bps`, `spread_comparison_enabled`): ATS 사용 최대 스프레드 및 KRX 대비 비교
+4. **체결 확률 모델** (`ats_fill_rate_threshold`): 최소 체결 확률 기반 필터링 (기본값: 70%)
+5. **시간대별 선호도** (`time_of_day_preferences`): 장 초반/마감 시 KRX 선호, 중간 시간대 자동 라우팅
+6. **종목 필터** (`min_market_cap`, `excluded_sectors`): 최소 시가총액 및 섹터 제외 기준
+
+**운용 정책**:
+
+- **주식 전용**: 선물은 ATS 미지원 (KRX only)
+- **기본값 비활성화**: `config/execution.yaml`에서 `ats_routing.enabled: false` (opt-in)
+- **거래소 추적**: 모든 주문의 실행 거래소(`execution_venue`)를 ClickHouse에 기록 (`rl_trades`, `swing_positions`)
+- **백테스트 시뮬레이션**: ATS는 평균 3 bps 가격 개선, 65% 체결률로 모델링 (KRX 대비)
+- **모니터링**: Grafana 대시보드의 `VenueMetrics` 카드에서 거래소별 분포 및 가격 개선 추적
+
+**설정 예시** (`config/execution.yaml`):
+
+```yaml
+ats_routing:
+  enabled: false                             # 기본값: 비활성
+  default_venue: KRX                         # 기본 실행 거래소
+  price_improvement_threshold_bps: 5.0       # 최소 가격 개선 (5 bps)
+  min_liquidity_depth: 100.0                 # 최소 호가 잔량
+  min_depth_multiplier: 2.0                  # 주문 크기 대비 최소 잔량 배수
+  max_spread_bps: 30.0                       # ATS 사용 최대 스프레드
+  ats_fill_rate_threshold: 0.7               # 최소 체결 확률 (70%)
+  time_of_day_preferences:
+    "09:00-09:30": KRX                       # 장 초반: KRX 선호
+    "09:30-15:00": AUTO                      # 중간: 자동 라우팅
+    "15:00-15:30": KRX                       # 장 마감: KRX 선호
+  min_market_cap: 1000000000000              # 최소 시가총액 (1조원)
+```
+
+**CLI 사용법**:
+
+```bash
+# ATS 활성화하여 백테스트 실행
+sts backtest run --strategy bb_reversion --asset stock --data ./data.csv --ats-enabled
+
+# ATS 활성화하여 모의투자 실행 (config/execution.yaml에서 enabled: true 설정 후)
+sts paper start --strategy bb_reversion --asset stock
+```
+
 ### 3-Stage Exit 상태 머신
 
 `shared/strategy/exit/three_stage.py` — `ThreeStageExit` + `ThreeStageExitConfig`
