@@ -78,3 +78,11 @@ data_provider:
   cache_ttl_stock: 30.0          # 주식 REST polling 시 TTL (초)
   cache_ttl_futures: 5.0         # 선물 REST polling 시 TTL (초)
   stagger_delay: 0.1             # 배치 내 요청 간 딜레이 (초)
+
+# WebSocket Failover with REST Fallback 설정
+failover:
+  enabled: true                  # WebSocket 실패 시 REST API로 자동 전환 활성화
+  health_check_interval_seconds: 5.0  # WebSocket 연결 상태 확인 간격 (초)
+  staleness_threshold_seconds: 10.0   # 데이터 stale 판단 임계값 (초, 이 시간 동안 데이터 없으면 failover)
+  rest_poll_interval_seconds: 5.0     # REST fallback 시 polling 간격 (초)
+  send_telegram_alerts: true     # Failover 및 복구 시 Telegram 알림 전송 여부

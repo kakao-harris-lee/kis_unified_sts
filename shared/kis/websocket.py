@@ -315,6 +315,9 @@ class KISWebSocketAdapter(BaseAPIAdapter):
         # Bounded message queue to prevent OOM
         self._message_queue: queue.Queue = queue.Queue(maxsize=MESSAGE_QUEUE_MAXSIZE)
 
+        # Health monitoring
+        self._last_message_ts: Optional[float] = None
+
     # -------------------------------------------------------------------------
     # Thread-Safe State Accessors
     # -------------------------------------------------------------------------
@@ -344,6 +347,47 @@ class KISWebSocketAdapter(BaseAPIAdapter):
         """Thread-safe running state setter."""
         with self._state_lock:
             self._running = value
+
+    # -------------------------------------------------------------------------
+    # Health Monitoring
+    # -------------------------------------------------------------------------
+
+    def get_connection_staleness(self) -> Optional[float]:
+        """Get time in seconds since last WebSocket message.
+
+        Returns:
+            Seconds since last message, or None if no messages received yet
+        """
+        with self._state_lock:
+            if self._last_message_ts is None:
+                return None
+            return max(0.0, time.time() - self._last_message_ts)
+
+    def get_health_status(self) -> Dict[str, Any]:
+        """Get comprehensive health status of WebSocket connection.
+
+        Returns:
+            Dictionary containing:
+                - connected: bool - WebSocket connection state
+                - running: bool - Thread running state
+                - last_message_ts: float | None - Unix timestamp of last message
+                - staleness_seconds: float | None - Seconds since last message
+        """
+        with self._state_lock:
+            last_msg_ts = self._last_message_ts
+            connected = self._connected
+            running = self._running
+
+        staleness = None
+        if last_msg_ts is not None:
+            staleness = max(0.0, time.time() - last_msg_ts)
+
+        return {
+            "connected": connected,
+            "running": running,
+            "last_message_ts": last_msg_ts,
+            "staleness_seconds": staleness,
+        }
 
     # -------------------------------------------------------------------------
     # BaseAPIAdapter Implementation
@@ -533,6 +577,10 @@ class KISWebSocketAdapter(BaseAPIAdapter):
 
         Uses bounded queue with overflow handling.
         """
+        # Track timestamp for health monitoring
+        with self._state_lock:
+            self._last_message_ts = time.time()
+
         try:
             self._message_queue.put_nowait(message)
         except queue.Full:

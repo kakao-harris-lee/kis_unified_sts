@@ -306,3 +306,467 @@ class TestMarketDataSourceProtocol:
         assert len(data) == 3
         # Allow for stagger overhead (3 * 50ms + 10ms API + margin)
         assert elapsed < 0.3
+
+
+class TestFailoverLogic:
+    """MarketDataProvider failover and recovery tests"""
+
+    def test_initial_mode_is_websocket(self):
+        """Test provider initializes in WebSocket mode"""
+        from services.trading.data_provider import MarketDataProvider, DataSourceMode
+
+        provider = MarketDataProvider()
+        assert provider.current_mode == DataSourceMode.WEBSOCKET
+        assert not provider.is_in_failover_mode
+
+    def test_failover_state_properties(self):
+        """Test failover state properties are readable"""
+        from services.trading.data_provider import MarketDataProvider, DataProviderConfig
+
+        config = DataProviderConfig(
+            health_check_interval_seconds=5.0,
+            rest_poll_interval_seconds=5.0,
+        )
+        provider = MarketDataProvider(config=config)
+
+        stats = provider.get_cache_stats()
+        assert "current_mode" in stats
+        assert "is_in_failover" in stats
+        assert "health_check_active" in stats
+        assert "fallback_poll_active" in stats
+        assert stats["current_mode"] == "websocket"
+        assert stats["is_in_failover"] is False
+
+    @pytest.mark.asyncio
+    async def test_failover_to_rest(self):
+        """Test failover from WebSocket to REST mode"""
+        from services.trading.data_provider import MarketDataProvider, DataSourceMode
+
+        provider = MarketDataProvider(symbols=["005930"])
+
+        # Initial state
+        assert provider.current_mode == DataSourceMode.WEBSOCKET
+
+        # Trigger failover
+        await provider._failover_to_rest()
+
+        # Should now be in REST fallback mode
+        assert provider.current_mode == DataSourceMode.REST_FALLBACK
+        assert provider.is_in_failover_mode
+
+    @pytest.mark.asyncio
+    async def test_failover_idempotency(self):
+        """Test failover is idempotent (calling twice has no effect)"""
+        from services.trading.data_provider import MarketDataProvider, DataSourceMode
+
+        provider = MarketDataProvider()
+
+        # First failover
+        await provider._failover_to_rest()
+        assert provider.current_mode == DataSourceMode.REST_FALLBACK
+
+        # Second failover should be no-op
+        await provider._failover_to_rest()
+        assert provider.current_mode == DataSourceMode.REST_FALLBACK
+
+    @pytest.mark.asyncio
+    async def test_recovery_to_websocket(self):
+        """Test recovery from REST fallback to WebSocket mode"""
+        from services.trading.data_provider import MarketDataProvider, DataSourceMode
+
+        class HealthySource:
+            async def get_current_price(self, symbol: str) -> dict:
+                return {"close": 50000}
+
+            def is_healthy(self) -> bool:
+                return True
+
+        provider = MarketDataProvider(
+            symbols=["005930"],
+            data_source=HealthySource(),
+        )
+
+        # Failover to REST
+        await provider._failover_to_rest()
+        assert provider.current_mode == DataSourceMode.REST_FALLBACK
+
+        # Recover to WebSocket
+        await provider._recover_to_websocket()
+        assert provider.current_mode == DataSourceMode.WEBSOCKET
+        assert not provider.is_in_failover_mode
+
+    @pytest.mark.asyncio
+    async def test_recovery_requires_healthy_source(self):
+        """Test recovery only happens if data source is healthy"""
+        from services.trading.data_provider import MarketDataProvider, DataSourceMode
+
+        class UnhealthySource:
+            async def get_current_price(self, symbol: str) -> dict:
+                return {"close": 50000}
+
+            def is_healthy(self) -> bool:
+                return False
+
+        provider = MarketDataProvider(
+            symbols=["005930"],
+            data_source=UnhealthySource(),
+        )
+
+        # Failover to REST
+        await provider._failover_to_rest()
+        assert provider.current_mode == DataSourceMode.REST_FALLBACK
+
+        # Attempt recovery (should fail because source is unhealthy)
+        await provider._recover_to_websocket()
+        # Should remain in REST fallback
+        assert provider.current_mode == DataSourceMode.REST_FALLBACK
+
+    @pytest.mark.asyncio
+    async def test_recovery_idempotency(self):
+        """Test recovery is idempotent (calling twice has no effect)"""
+        from services.trading.data_provider import MarketDataProvider, DataSourceMode
+
+        class HealthySource:
+            def is_healthy(self) -> bool:
+                return True
+
+        provider = MarketDataProvider(data_source=HealthySource())
+
+        # Already in WebSocket mode
+        assert provider.current_mode == DataSourceMode.WEBSOCKET
+
+        # Recovery should be no-op
+        await provider._recover_to_websocket()
+        assert provider.current_mode == DataSourceMode.WEBSOCKET
+
+    @pytest.mark.asyncio
+    async def test_failover_with_telegram_alerts(self):
+        """Test failover sends Telegram alert when configured"""
+        from services.trading.data_provider import MarketDataProvider, DataProviderConfig
+        from unittest.mock import AsyncMock
+
+        telegram_notifier = AsyncMock()
+        config = DataProviderConfig(send_telegram_alerts=True)
+
+        provider = MarketDataProvider(
+            config=config,
+            telegram_notifier=telegram_notifier,
+        )
+
+        await provider._failover_to_rest()
+
+        # Should have sent failover alert
+        telegram_notifier.send_message.assert_called_once()
+        call_args = telegram_notifier.send_message.call_args
+        message = call_args[0][0]
+        assert "WebSocket" in message
+        assert "REST" in message
+
+    @pytest.mark.asyncio
+    async def test_recovery_with_telegram_alerts(self):
+        """Test recovery sends Telegram alert when configured"""
+        from services.trading.data_provider import MarketDataProvider, DataProviderConfig
+        from unittest.mock import AsyncMock
+
+        class HealthySource:
+            def is_healthy(self) -> bool:
+                return True
+
+        telegram_notifier = AsyncMock()
+        config = DataProviderConfig(send_telegram_alerts=True)
+
+        provider = MarketDataProvider(
+            config=config,
+            data_source=HealthySource(),
+            telegram_notifier=telegram_notifier,
+        )
+
+        # Failover then recover
+        await provider._failover_to_rest()
+        telegram_notifier.reset_mock()
+
+        await provider._recover_to_websocket()
+
+        # Should have sent recovery alert
+        telegram_notifier.send_message.assert_called_once()
+        call_args = telegram_notifier.send_message.call_args
+        message = call_args[0][0]
+        assert "복구" in message or "recovery" in message.lower()
+
+    @pytest.mark.asyncio
+    async def test_telegram_alerts_disabled(self):
+        """Test Telegram alerts are not sent when disabled"""
+        from services.trading.data_provider import MarketDataProvider, DataProviderConfig
+        from unittest.mock import AsyncMock
+
+        telegram_notifier = AsyncMock()
+        config = DataProviderConfig(send_telegram_alerts=False)
+
+        provider = MarketDataProvider(
+            config=config,
+            telegram_notifier=telegram_notifier,
+        )
+
+        await provider._failover_to_rest()
+
+        # Should not have sent alert
+        telegram_notifier.send_message.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_telegram_alert_failure_does_not_break_failover(self):
+        """Test failover continues even if Telegram alert fails"""
+        from services.trading.data_provider import MarketDataProvider, DataProviderConfig, DataSourceMode
+        from unittest.mock import AsyncMock
+
+        telegram_notifier = AsyncMock()
+        telegram_notifier.send_message.side_effect = Exception("Telegram API error")
+
+        config = DataProviderConfig(send_telegram_alerts=True)
+
+        provider = MarketDataProvider(
+            config=config,
+            telegram_notifier=telegram_notifier,
+        )
+
+        # Failover should succeed despite Telegram error
+        await provider._failover_to_rest()
+        assert provider.current_mode == DataSourceMode.REST_FALLBACK
+
+    @pytest.mark.asyncio
+    async def test_health_check_loop_triggers_failover(self):
+        """Test health check loop triggers failover when source becomes unhealthy"""
+        from services.trading.data_provider import MarketDataProvider, DataProviderConfig, DataSourceMode
+
+        class ToggleHealthSource:
+            def __init__(self):
+                self.healthy = False
+
+            def is_healthy(self) -> bool:
+                return self.healthy
+
+        config = DataProviderConfig(health_check_interval_seconds=0.5)
+        source = ToggleHealthSource()
+        provider = MarketDataProvider(config=config, data_source=source)
+
+        # Start health check task
+        health_task = asyncio.create_task(provider._health_check_loop())
+
+        # Wait for first health check cycle (interval + processing time)
+        await asyncio.sleep(0.7)
+
+        # Should have triggered failover because source is unhealthy
+        assert provider.current_mode == DataSourceMode.REST_FALLBACK
+
+        # Cleanup
+        health_task.cancel()
+        try:
+            await health_task
+        except asyncio.CancelledError:
+            pass
+
+    @pytest.mark.asyncio
+    async def test_health_check_loop_triggers_recovery(self):
+        """Test health check loop triggers recovery when source becomes healthy again"""
+        from services.trading.data_provider import MarketDataProvider, DataProviderConfig, DataSourceMode
+
+        class ToggleHealthSource:
+            def __init__(self):
+                self.healthy = True
+
+            def is_healthy(self) -> bool:
+                return self.healthy
+
+        config = DataProviderConfig(health_check_interval_seconds=0.5)
+        source = ToggleHealthSource()
+        provider = MarketDataProvider(config=config, data_source=source)
+
+        # Manually failover first
+        await provider._failover_to_rest()
+        assert provider.current_mode == DataSourceMode.REST_FALLBACK
+
+        # Start health check task
+        health_task = asyncio.create_task(provider._health_check_loop())
+
+        # Wait for health check cycle (interval + processing time)
+        await asyncio.sleep(0.7)
+
+        # Should have recovered because source is healthy
+        assert provider.current_mode == DataSourceMode.WEBSOCKET
+
+        # Cleanup
+        health_task.cancel()
+        try:
+            await health_task
+        except asyncio.CancelledError:
+            pass
+
+    @pytest.mark.asyncio
+    async def test_rest_poll_loop_fetches_data(self):
+        """Test REST polling loop fetches data at regular intervals"""
+        from services.trading.data_provider import MarketDataProvider, DataProviderConfig
+
+        fetch_count = []
+
+        class CountingClient:
+            async def get_current_price(self, symbol: str) -> dict:
+                fetch_count.append(symbol)
+                return {"close": 50000}
+
+        config = DataProviderConfig(rest_poll_interval_seconds=0.5)
+        provider = MarketDataProvider(
+            symbols=["005930"],
+            config=config,
+            kis_client=CountingClient(),
+        )
+
+        # Enter REST fallback mode and start polling
+        await provider._failover_to_rest()
+
+        # Let polling run for a bit (enough for 2 cycles)
+        await asyncio.sleep(1.2)
+
+        # Should have fetched data at least twice
+        assert len(fetch_count) >= 2
+
+        # Cleanup
+        if provider._fallback_poll_task:
+            provider._fallback_poll_task.cancel()
+            try:
+                await provider._fallback_poll_task
+            except asyncio.CancelledError:
+                pass
+
+    @pytest.mark.asyncio
+    async def test_rest_poll_loop_stops_after_recovery(self):
+        """Test REST polling loop stops when recovering to WebSocket"""
+        from services.trading.data_provider import MarketDataProvider, DataProviderConfig, DataSourceMode
+
+        class HealthySource:
+            def is_healthy(self) -> bool:
+                return True
+
+        class DummyClient:
+            async def get_current_price(self, symbol: str) -> dict:
+                return {"close": 50000}
+
+        config = DataProviderConfig(rest_poll_interval_seconds=0.5)
+        provider = MarketDataProvider(
+            symbols=["005930"],
+            config=config,
+            data_source=HealthySource(),
+            kis_client=DummyClient(),
+        )
+
+        # Enter REST fallback mode
+        await provider._failover_to_rest()
+        assert provider._fallback_poll_task is not None
+
+        # Let polling start
+        await asyncio.sleep(0.1)
+
+        # Recover to WebSocket
+        await provider._recover_to_websocket()
+        assert provider.current_mode == DataSourceMode.WEBSOCKET
+
+        # Wait for task to finish cancelling
+        await asyncio.sleep(0.2)
+
+        # Poll task should be done/cancelled
+        assert provider._fallback_poll_task.done()
+
+    @pytest.mark.asyncio
+    async def test_rest_poll_loop_handles_fetch_errors(self):
+        """Test REST polling loop continues despite fetch errors"""
+        from services.trading.data_provider import MarketDataProvider, DataProviderConfig
+        from shared.exceptions import NetworkError
+
+        error_count = []
+        success_count = []
+
+        class FlakeyClient:
+            def __init__(self):
+                self.call_count = 0
+
+            async def get_current_price(self, symbol: str) -> dict:
+                self.call_count += 1
+                if self.call_count == 1:
+                    error_count.append(1)
+                    raise NetworkError("Connection failed")
+                success_count.append(1)
+                return {"close": 50000}
+
+        config = DataProviderConfig(rest_poll_interval_seconds=0.5)
+        client = FlakeyClient()
+        provider = MarketDataProvider(
+            symbols=["005930"],
+            config=config,
+            kis_client=client,
+        )
+
+        # Enter REST fallback mode
+        await provider._failover_to_rest()
+
+        # Let polling run for a bit (should encounter error then recover)
+        await asyncio.sleep(1.2)
+
+        # Should have encountered error but continued
+        assert len(error_count) >= 1
+        assert len(success_count) >= 1
+
+        # Cleanup
+        if provider._fallback_poll_task:
+            provider._fallback_poll_task.cancel()
+            try:
+                await provider._fallback_poll_task
+            except asyncio.CancelledError:
+                pass
+
+    @pytest.mark.asyncio
+    async def test_health_check_with_no_data_source(self):
+        """Test health check handles case with no data source gracefully"""
+        from services.trading.data_provider import MarketDataProvider, DataProviderConfig, DataSourceMode
+
+        config = DataProviderConfig(health_check_interval_seconds=0.5)
+        provider = MarketDataProvider(config=config)
+
+        # Start health check (should not crash with no data source)
+        health_task = asyncio.create_task(provider._health_check_loop())
+
+        await asyncio.sleep(0.7)
+
+        # Should remain in WebSocket mode
+        assert provider.current_mode == DataSourceMode.WEBSOCKET
+
+        # Cleanup
+        health_task.cancel()
+        try:
+            await health_task
+        except asyncio.CancelledError:
+            pass
+
+    @pytest.mark.asyncio
+    async def test_async_is_healthy_method(self):
+        """Test health check handles async is_healthy() method"""
+        from services.trading.data_provider import MarketDataProvider, DataProviderConfig, DataSourceMode
+
+        class AsyncHealthSource:
+            async def is_healthy(self) -> bool:
+                return False
+
+        config = DataProviderConfig(health_check_interval_seconds=0.5)
+        provider = MarketDataProvider(config=config, data_source=AsyncHealthSource())
+
+        # Start health check
+        health_task = asyncio.create_task(provider._health_check_loop())
+
+        await asyncio.sleep(0.7)
+
+        # Should have triggered failover
+        assert provider.current_mode == DataSourceMode.REST_FALLBACK
+
+        # Cleanup
+        health_task.cancel()
+        try:
+            await health_task
+        except asyncio.CancelledError:
+            pass

@@ -141,6 +141,9 @@ class KISStockPriceFeed:
         self._subscription_delay = float(feed_cfg.get("subscription_delay", 0.05))
         self._approval_key_timeout = int(feed_cfg.get("approval_key_timeout", 10))
         queue_maxsize = int(feed_cfg.get("queue_maxsize", 10000))
+        self._stale_threshold = float(
+            feed_cfg.get("stale_threshold_seconds", 3.0)
+        )
 
         # Price cache: {symbol: price_dict}
         self._prices: dict[str, dict[str, Any]] = {}
@@ -307,6 +310,51 @@ class KISStockPriceFeed:
         if self._last_tick_ts is None:
             return None
         return max(0.0, time.time() - self._last_tick_ts)
+
+    def is_healthy(self) -> bool:
+        """Check if the feed is healthy (receiving recent data).
+
+        Returns:
+            True if staleness is within threshold and feed is running, False otherwise.
+        """
+        if not self._running:
+            return False
+        staleness = self.get_staleness_seconds()
+        if staleness is None:
+            return False
+        return staleness < self._stale_threshold
+
+    def get_health_status(self) -> dict[str, Any]:
+        """Get detailed health status for diagnostics.
+
+        Returns:
+            Dictionary with health metrics:
+            - running: bool - whether feed is running
+            - connected: bool - whether WebSocket is connected
+            - last_tick_ts: float | None - timestamp of last tick
+            - staleness_seconds: float | None - seconds since last tick
+            - is_healthy: bool - overall health status
+            - symbol_count: int - number of subscribed symbols
+            - cached_symbols: list[str] - symbols with cached data
+            - tick_count: int - total ticks processed
+            - dropped_count: int - total dropped messages
+        """
+        with self._prices_lock:
+            cached_symbols = list(self._prices.keys())
+
+        staleness = self.get_staleness_seconds()
+
+        return {
+            "running": self._running,
+            "connected": self._connected.is_set(),
+            "last_tick_ts": self._last_tick_ts,
+            "staleness_seconds": staleness,
+            "is_healthy": self.is_healthy(),
+            "symbol_count": len(self._subscribed),
+            "cached_symbols": cached_symbols,
+            "tick_count": self._tick_count,
+            "dropped_count": self._dropped_count,
+        }
 
     @property
     def supports_instant_read(self) -> bool:
