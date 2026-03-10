@@ -78,6 +78,8 @@ data_provider:
   cache_ttl_stock: 30.0          # 주식 REST polling 시 TTL (초)
   cache_ttl_futures: 5.0         # 선물 REST polling 시 TTL (초)
   stagger_delay: 0.1             # 배치 내 요청 간 딜레이 (초)
+  batch_size: 20                 # 배치 당 최대 심볼 수
+  fetch_timeout_seconds: 5.0     # 데이터 조회 타임아웃 (초)
 
 # WebSocket Failover with REST Fallback 설정
 failover:

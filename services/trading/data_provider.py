@@ -97,6 +97,9 @@ class DataProviderConfig:
     # Failover: REST polling interval in seconds (when in fallback mode)
     rest_poll_interval_seconds: float = 5.0
 
+    # Failover: Data staleness threshold in seconds (trigger failover if no data)
+    staleness_threshold_seconds: float = 10.0
+
     # Failover: Send Telegram alerts on failover/recovery
     send_telegram_alerts: bool = True
 
@@ -439,12 +442,19 @@ class MarketDataProvider:
 
         source_candidates: list[tuple[str, MarketDataSource | Any]] = []
         if self._current_mode == DataSourceMode.REST_FALLBACK:
+            # In REST fallback mode, use KIS REST client exclusively
             if self._kis_client is not None:
                 source_candidates.append(("kis_client", self._kis_client))
         else:
+            # In WEBSOCKET mode, only use the WebSocket data source.
+            # Do NOT fall through to kis_client here — doing so would trigger
+            # REST API calls on every WS cache miss, causing rate-limit pressure
+            # (see commit bba111f). Failover to REST is handled separately by
+            # _health_check_loop → _failover_to_rest.
             if self._data_source is not None:
                 source_candidates.append(("data_source", self._data_source))
-            if self._kis_client is not None:
+            elif self._kis_client is not None:
+                # No WebSocket source configured at all — use REST as primary
                 source_candidates.append(("kis_client", self._kis_client))
 
         for source_name, source in source_candidates:

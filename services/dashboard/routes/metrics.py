@@ -124,7 +124,11 @@ def _collect_venue_metrics_sync() -> Dict[str, Any]:
 
     total_counts = {"KRX": 0, "ATS": 0}
     for database in _candidate_databases():
-        db_counts = _query_venue_counts_for_database(database)
+        try:
+            db_counts = _query_venue_counts_for_database(database)
+        except Exception as e:
+            logger.warning("Failed to query venue counts for database %s: %s", database, e)
+            continue
         total_counts["KRX"] += db_counts.get("KRX", 0)
         total_counts["ATS"] += db_counts.get("ATS", 0)
 

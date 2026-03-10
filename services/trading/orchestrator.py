@@ -916,17 +916,19 @@ class TradingOrchestrator:
         send_telegram_alerts = bool(failover_cfg.get("send_telegram_alerts", True))
         if self.config.enable_telegram and send_telegram_alerts:
             try:
+                from shared.config.secrets import SecretsManager
                 from shared.notification.telegram import TelegramNotifier
 
-                bot_token = self.config.telegram_token or os.getenv("TELEGRAM_BOT_TOKEN", "")
-                chat_id = self.config.telegram_chat_id or os.getenv("TELEGRAM_CHAT_ID", "")
+                domain = self.config.asset_class if self.config.asset_class in ("stock", "futures") else None
+                bot_token = self.config.telegram_token or SecretsManager.telegram_token(domain) or ""
+                chat_id = self.config.telegram_chat_id or SecretsManager.telegram_chat_id(domain) or ""
                 if bot_token and chat_id:
                     telegram_notifier = TelegramNotifier(
                         bot_token=bot_token,
                         chat_id=chat_id,
                     )
             except Exception as e:
-                logger.warning(f"Failed to initialize failover telegram notifier: {e}")
+                logger.warning("Failed to initialize failover telegram notifier: %s", e)
 
         self._data_provider_failover_enabled = bool(failover_cfg.get("enabled", False))
 
@@ -942,6 +944,9 @@ class TradingOrchestrator:
                 ),
                 rest_poll_interval_seconds=float(
                     failover_cfg.get("rest_poll_interval_seconds", 5.0)
+                ),
+                staleness_threshold_seconds=float(
+                    failover_cfg.get("staleness_threshold_seconds", 10.0)
                 ),
                 send_telegram_alerts=send_telegram_alerts,
             ),
