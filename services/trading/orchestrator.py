@@ -966,10 +966,13 @@ class TradingOrchestrator:
         strategy_names = (
             [self.config.strategy_name] if self.config.strategy_name else None
         )
+        # Disable cost filter for futures — RL strategies manage entry quality
+        # via confidence thresholds; mini futures low ATR causes false rejections
+        cost_filter = self.config.asset_class != "futures"
         self._strategy_manager = StrategyManager(
             asset_class=self.config.asset_class,
             strategy_names=strategy_names,
-            config=StrategyManagerConfig(),
+            config=StrategyManagerConfig(cost_filter_enabled=cost_filter),
         )
 
         # Pre-register strategy names for Prometheus metric discovery
