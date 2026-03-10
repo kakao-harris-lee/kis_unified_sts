@@ -61,7 +61,7 @@
             "type": "grafana-clickhouse-datasource",
             "uid": "clickhouse"
           },
-          "rawSql": "WITH\n  (SELECT count() FROM kospi.rl_trades WHERE asset_class = 'futures') AS trades,\n  (SELECT round(ifNull(sum(pnl), 0), 1) FROM kospi.rl_trades WHERE asset_class = 'futures') AS total_pnl,\n  (SELECT round(if(count() > 0, countIf(pnl > 0) / count() * 100, 0), 1) FROM kospi.rl_trades WHERE asset_class = 'futures') AS win_rate,\n  (SELECT round(if(count() > 0, avg(pnl), 0), 0) FROM kospi.rl_trades WHERE asset_class = 'futures') AS avg_pnl\nSELECT line\nFROM (\n  SELECT 1 AS ord, concat('Trades : ', toString(trades)) AS line\n  UNION ALL\n  SELECT 2 AS ord, concat('Total pnl : ', toString(total_pnl)) AS line\n  UNION ALL\n  SELECT 3 AS ord, concat('win_rate : ', toString(win_rate), '%') AS line\n  UNION ALL\n  SELECT 4 AS ord, concat('avg_pnl : ', toString(avg_pnl)) AS line\n)\nORDER BY ord",
+          "rawSql": "WITH\n  (SELECT count() FROM kospi.rl_trades WHERE asset_class = 'futures') AS trades,\n  (SELECT round(ifNull(sum(pnl * 50000), 0)) FROM kospi.rl_trades WHERE asset_class = 'futures') AS total_pnl,\n  (SELECT round(if(count() > 0, countIf(pnl > 0) / count() * 100, 0), 1) FROM kospi.rl_trades WHERE asset_class = 'futures') AS win_rate,\n  (SELECT round(if(count() > 0, avg(pnl * 50000), 0)) FROM kospi.rl_trades WHERE asset_class = 'futures') AS avg_pnl\nSELECT line\nFROM (\n  SELECT 1 AS ord, concat('Trades : ', toString(trades)) AS line\n  UNION ALL\n  SELECT 2 AS ord, concat('Total PnL : ', formatReadableQuantity(total_pnl), ' KRW') AS line\n  UNION ALL\n  SELECT 3 AS ord, concat('Win Rate : ', toString(win_rate), '%') AS line\n  UNION ALL\n  SELECT 4 AS ord, concat('Avg PnL : ', formatReadableQuantity(avg_pnl), ' KRW') AS line\n)\nORDER BY ord",
           "format": 1,
           "queryType": "sql",
           "refId": "A",
@@ -138,7 +138,7 @@
             "type": "grafana-clickhouse-datasource",
             "uid": "clickhouse"
           },
-          "rawSql": "SELECT exit_date as time, sum(pnl) OVER (ORDER BY exit_date) as cum_pnl FROM kospi.rl_trades WHERE asset_class = 'futures' ORDER BY exit_date",
+          "rawSql": "SELECT exit_date as time, sum(pnl * 50000) OVER (ORDER BY exit_date) as cum_pnl FROM kospi.rl_trades WHERE asset_class = 'futures' ORDER BY exit_date",
           "format": 0,
           "queryType": "sql",
           "refId": "A",
@@ -298,7 +298,7 @@
             "type": "grafana-clickhouse-datasource",
             "uid": "clickhouse"
           },
-          "rawSql": "SELECT toDate(exit_date) as day, sum(pnl) as daily_pnl FROM kospi.rl_trades WHERE asset_class = 'futures' GROUP BY day ORDER BY day",
+          "rawSql": "SELECT toDate(exit_date) as day, sum(pnl * 50000) as daily_pnl FROM kospi.rl_trades WHERE asset_class = 'futures' GROUP BY day ORDER BY day",
           "format": 1,
           "queryType": "sql",
           "refId": "A",
@@ -375,7 +375,7 @@
             "type": "grafana-clickhouse-datasource",
             "uid": "clickhouse"
           },
-          "rawSql": "SELECT floor(pnl / 50000) * 50000 as bucket, count() as cnt FROM kospi.rl_trades WHERE asset_class = 'futures' GROUP BY bucket ORDER BY bucket",
+          "rawSql": "SELECT floor(pnl * 50000 / 50000) * 50000 as bucket, count() as cnt FROM kospi.rl_trades WHERE asset_class = 'futures' GROUP BY bucket ORDER BY bucket",
           "format": 1,
           "queryType": "sql",
           "refId": "A",
@@ -488,7 +488,7 @@
             "type": "grafana-clickhouse-datasource",
             "uid": "clickhouse"
           },
-          "rawSql": "SELECT strategy, count() as trades, if(count() > 0, round(countIf(pnl > 0) / count() * 100, 1), 0) as win_rate, ifNull(sum(pnl), 0) as total_pnl, if(count() > 0, round(avg(pnl), 0), 0) as avg_pnl FROM kospi.rl_trades WHERE asset_class = 'futures' GROUP BY strategy ORDER BY total_pnl DESC",
+          "rawSql": "SELECT strategy, count() as trades, if(count() > 0, round(countIf(pnl > 0) / count() * 100, 1), 0) as win_rate, round(ifNull(sum(pnl * 50000), 0)) as total_pnl, if(count() > 0, round(avg(pnl * 50000)) , 0) as avg_pnl FROM kospi.rl_trades WHERE asset_class = 'futures' GROUP BY strategy ORDER BY total_pnl DESC",
           "format": 1,
           "queryType": "sql",
           "refId": "A",
@@ -528,66 +528,46 @@
         },
         "overrides": [
           {
-            "matcher": { "id": "byName", "options": "entry_price" },
+            "matcher": { "id": "byName", "options": "daily_pnl" },
             "properties": [
               { "id": "unit", "value": "currencyKRW" },
-              { "id": "displayName", "value": "Entry Price" }
+              { "id": "displayName", "value": "Daily PnL" },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background",
+                  "mode": "basic"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    { "color": "red", "value": null },
+                    { "color": "green", "value": 0 }
+                  ]
+                }
+              }
             ]
           },
           {
-            "matcher": { "id": "byName", "options": "stop_loss_price" },
+            "matcher": { "id": "byName", "options": "win_rate" },
             "properties": [
-              { "id": "unit", "value": "currencyKRW" },
-              { "id": "displayName", "value": "Stop Loss" }
+              { "id": "unit", "value": "percent" },
+              { "id": "displayName", "value": "Win Rate" }
             ]
           },
           {
-            "matcher": { "id": "byName", "options": "high_since_entry" },
+            "matcher": { "id": "byName", "options": "day" },
             "properties": [
-              { "id": "unit", "value": "currencyKRW" },
-              { "id": "displayName", "value": "High Since Entry" }
+              { "id": "displayName", "value": "Date" }
             ]
           },
           {
-            "matcher": { "id": "byName", "options": "entry_date" },
+            "matcher": { "id": "byName", "options": "avg_hold_min" },
             "properties": [
-              { "id": "displayName", "value": "Entry Date" }
-            ]
-          },
-          {
-            "matcher": { "id": "byName", "options": "code" },
-            "properties": [
-              { "id": "displayName", "value": "Code" }
-            ]
-          },
-          {
-            "matcher": { "id": "byName", "options": "name" },
-            "properties": [
-              { "id": "displayName", "value": "Name" }
-            ]
-          },
-          {
-            "matcher": { "id": "byName", "options": "strategy" },
-            "properties": [
-              { "id": "displayName", "value": "Strategy" }
-            ]
-          },
-          {
-            "matcher": { "id": "byName", "options": "side" },
-            "properties": [
-              { "id": "displayName", "value": "Side" }
-            ]
-          },
-          {
-            "matcher": { "id": "byName", "options": "quantity" },
-            "properties": [
-              { "id": "displayName", "value": "Qty" }
-            ]
-          },
-          {
-            "matcher": { "id": "byName", "options": "current_state" },
-            "properties": [
-              { "id": "displayName", "value": "State" }
+              { "id": "displayName", "value": "Avg Hold (min)" }
             ]
           }
         ]
@@ -611,7 +591,7 @@
             "type": "grafana-clickhouse-datasource",
             "uid": "clickhouse"
           },
-          "rawSql": "SELECT code, name, strategy, side, entry_date, entry_price, quantity, current_state, high_since_entry, stop_loss_price FROM kospi.swing_positions FINAL WHERE is_open = 1 ORDER BY entry_date DESC",
+          "rawSql": "SELECT toDate(exit_date) as day, count() as trades, countIf(pnl > 0) as wins, countIf(pnl <= 0) as losses, round(countIf(pnl > 0) / count() * 100, 1) as win_rate, round(sum(pnl * 50000)) as daily_pnl, round(avg(hold_seconds / 60), 1) as avg_hold_min FROM kospi.rl_trades WHERE asset_class = 'futures' GROUP BY day ORDER BY day DESC LIMIT 14",
           "format": 1,
           "queryType": "sql",
           "refId": "A",
@@ -623,7 +603,7 @@
           }
         }
       ],
-      "title": "Open Positions",
+      "title": "Daily Summary (Last 14 Days)",
       "type": "table"
     },
     {
@@ -729,6 +709,19 @@
             "properties": [
               { "id": "displayName", "value": "Side" }
             ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "pnl_pct" },
+            "properties": [
+              { "id": "unit", "value": "percent" },
+              { "id": "displayName", "value": "PnL %" }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "hold_min" },
+            "properties": [
+              { "id": "displayName", "value": "Hold (min)" }
+            ]
           }
         ]
       },
@@ -751,7 +744,7 @@
             "type": "grafana-clickhouse-datasource",
             "uid": "clickhouse"
           },
-          "rawSql": "SELECT code, name, strategy, side, entry_date, entry_price, exit_date, exit_price, pnl, exit_reason FROM kospi.rl_trades WHERE asset_class = 'futures' ORDER BY exit_date DESC LIMIT 50",
+          "rawSql": "SELECT code, name, strategy, side, entry_date, entry_price, exit_date, exit_price, round(pnl * 50000) as pnl, round(pnl_pct, 2) as pnl_pct, round(hold_seconds / 60, 1) as hold_min, exit_reason FROM kospi.rl_trades WHERE asset_class = 'futures' ORDER BY exit_date DESC LIMIT 50",
           "format": 1,
           "queryType": "sql",
           "refId": "A",
