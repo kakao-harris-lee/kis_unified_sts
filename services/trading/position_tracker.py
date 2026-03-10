@@ -861,6 +861,7 @@ class PositionTracker:
             name String,
             side LowCardinality(String),
             strategy LowCardinality(String),
+            execution_venue LowCardinality(String) DEFAULT 'KRX',
             entry_date DateTime,
             entry_price Float64,
             exit_date DateTime,

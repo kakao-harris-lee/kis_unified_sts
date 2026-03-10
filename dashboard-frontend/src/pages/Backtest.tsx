@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { backtestApi } from '../api/client';
 import ErrorMessage from '../components/ErrorMessage';
 import TableSkeleton from '../components/TableSkeleton';
+import useStrategies from '../hooks/useStrategies';
 
 interface BacktestRunResponse {
   run_id: string;
@@ -37,20 +38,6 @@ interface BacktestListResponse {
   limit: number;
 }
 
-const strategyOptions = {
-  stock: [
-    { value: 'bb_reversion', label: 'BB Reversion' },
-    { value: 'mean_reversion', label: 'Mean Reversion' },
-    { value: 'v35_optimized', label: 'V35 Optimized' },
-    { value: 'stochrsi_trend', label: 'StochRSI Trend' },
-    { value: 'ma_crossover', label: 'MA Crossover' },
-  ],
-  futures: [
-    { value: 'ma_crossover', label: 'MA Crossover' },
-    { value: 'stochrsi_trend', label: 'StochRSI Trend' },
-  ],
-};
-
 const futuresTableOptions = [
   { value: 'kospi_mini_1m', label: 'KOSPI Mini 1m' },
   { value: 'kospi200f_1m', label: 'KOSPI200 Futures 1m' },
@@ -60,7 +47,8 @@ const futuresTableOptions = [
 function Backtest() {
   const today = useMemo(() => new Date().toISOString().slice(0, 10), []);
   const [assetClass, setAssetClass] = useState<'stock' | 'futures'>('stock');
-  const [strategy, setStrategy] = useState('bb_reversion');
+  const [strategy, setStrategy] = useState('');
+  const { byAssetClass } = useStrategies();
   const [symbol, setSymbol] = useState('005930');
   const [futuresTable, setFuturesTable] = useState('kospi_mini_1m');
   const [startDate, setStartDate] = useState(
@@ -117,9 +105,8 @@ function Backtest() {
               onChange={(e) => {
                 const next = e.target.value as 'stock' | 'futures';
                 setAssetClass(next);
-                const nextStrategy =
-                  strategyOptions[next][0]?.value || 'ma_crossover';
-                setStrategy(nextStrategy);
+                const nextStrategies = byAssetClass(next);
+                setStrategy(nextStrategies[0]?.name || '');
                 setSymbol(next === 'stock' ? '005930' : 'A05601');
               }}
               className="bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm w-full"
@@ -135,9 +122,9 @@ function Backtest() {
               onChange={(e) => setStrategy(e.target.value)}
               className="bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm w-full"
             >
-              {strategyOptions[assetClass].map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
+              {byAssetClass(assetClass).map((s) => (
+                <option key={s.name} value={s.name}>
+                  {s.name.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())}
                 </option>
               ))}
             </select>
@@ -223,25 +210,25 @@ function Backtest() {
             <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
               <div className="text-sm text-gray-400">Total Return</div>
               <div className="text-xl font-bold">
-                {result.total_return_pct.toFixed(2)}%
+                {(result.total_return_pct ?? 0).toFixed(2)}%
               </div>
             </div>
             <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
               <div className="text-sm text-gray-400">Sharpe</div>
               <div className="text-xl font-bold">
-                {result.sharpe_ratio.toFixed(2)}
+                {(result.sharpe_ratio ?? 0).toFixed(2)}
               </div>
             </div>
             <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
               <div className="text-sm text-gray-400">Max Drawdown</div>
               <div className="text-xl font-bold">
-                {result.max_drawdown_pct.toFixed(2)}%
+                {(result.max_drawdown_pct ?? 0).toFixed(2)}%
               </div>
             </div>
             <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
               <div className="text-sm text-gray-400">Win Rate</div>
               <div className="text-xl font-bold">
-                {result.win_rate.toFixed(1)}%
+                {(result.win_rate ?? 0).toFixed(1)}%
               </div>
             </div>
           </div>
@@ -249,7 +236,7 @@ function Backtest() {
           <div className="bg-gray-800 rounded-lg p-4 border border-gray-700 space-y-2">
             <div className="text-sm text-gray-400">
               Trades: {result.total_trades} | Final Capital:{' '}
-              {result.final_capital.toLocaleString()}
+              {(result.final_capital ?? 0).toLocaleString()}
             </div>
             {result.chart_image ? (
               <img
@@ -300,7 +287,7 @@ function Backtest() {
                     <td className="py-2">{run.strategy}</td>
                     <td className="py-2">{run.symbol}</td>
                     <td className="py-2 text-right">
-                      {run.total_return_pct.toFixed(2)}%
+                      {(run.total_return_pct ?? 0).toFixed(2)}%
                     </td>
                     <td className="py-2 text-right">{run.total_trades}</td>
                   </tr>

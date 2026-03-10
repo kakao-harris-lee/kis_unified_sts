@@ -202,19 +202,25 @@ class RateLimiter:
 
 _semaphore: Optional[asyncio.Semaphore] = None
 _rate_limiter: Optional[RateLimiter] = None
+_semaphore_loop: Optional[asyncio.AbstractEventLoop] = None
+_rate_limiter_loop: Optional[asyncio.AbstractEventLoop] = None
 
 
 def _get_semaphore() -> asyncio.Semaphore:
-    global _semaphore
-    if _semaphore is None:
+    global _semaphore, _semaphore_loop
+    loop = asyncio.get_running_loop()
+    if _semaphore is None or _semaphore_loop is not loop:
         _semaphore = asyncio.Semaphore(10)
+        _semaphore_loop = loop
     return _semaphore
 
 
 def _get_rate_limiter() -> RateLimiter:
-    global _rate_limiter
-    if _rate_limiter is None:
+    global _rate_limiter, _rate_limiter_loop
+    loop = asyncio.get_running_loop()
+    if _rate_limiter is None or _rate_limiter_loop is not loop:
         _rate_limiter = RateLimiter(20)
+        _rate_limiter_loop = loop
     return _rate_limiter
 
 
@@ -554,15 +560,19 @@ def parse_ohlcv(code: str, date_str: str, data: dict) -> List[Tuple]:
 def get_db_client(database: str = None):
     """Get ClickHouse client."""
     config = _get_clickhouse_config()
+    kwargs = {
+        "host": config["host"],
+        "port": config["port"],
+        "database": database or config["database"],
+        "username": config["user"] or None,
+        "password": config["password"] or None,
+        "secure": config["secure"],
+        "verify": config["verify"],
+    }
+    if config.get("ca_cert"):
+        kwargs["ca_cert"] = config["ca_cert"]
     return clickhouse_connect.get_client(
-        host=config["host"],
-        port=config["port"],
-        database=database or config["database"],
-        username=config["user"] or None,
-        password=config["password"] or None,
-        secure=config["secure"],
-        verify=config["verify"],
-        ca_cert=config["ca_cert"],
+        **kwargs,
     )
 
 
@@ -620,6 +630,100 @@ def insert_batch(client, rows: List[Tuple], table_name: str = "kospi_mini_1m"):
         VALUES {', '.join(values)}
     """
     client.command(sql)
+
+
+def _load_continuous_source_rows(
+    client,
+    start: date,
+    end: date,
+    table_name: str = "kospi200f_1m",
+) -> List[Tuple[str, datetime, float, float, float, float, int]]:
+    """Load A01* full-size futures rows for continuous-contract reconstruction."""
+    result = client.query(
+        f"""
+        SELECT
+            code,
+            datetime,
+            open,
+            high,
+            low,
+            close,
+            volume
+        FROM {table_name} FINAL
+        WHERE code LIKE 'A01%%'
+          AND toDate(datetime) >= %(start)s
+          AND toDate(datetime) <= %(end)s
+        ORDER BY datetime, code
+        """,
+        parameters={"start": start, "end": end},
+    )
+    return list(result.result_rows)
+
+
+def _build_continuous_rows(
+    rows: List[Tuple[str, datetime, float, float, float, float, int]],
+) -> List[Tuple[str, datetime, float, float, float, float, int]]:
+    """Build 101S6000 rows by selecting the dominant contract for each day."""
+    if not rows:
+        return []
+
+    daily_volume: Dict[date, Dict[str, int]] = {}
+    for code, dt, _open, _high, _low, _close, volume in rows:
+        daily_contracts = daily_volume.setdefault(dt.date(), {})
+        daily_contracts[code] = daily_contracts.get(code, 0) + int(volume or 0)
+
+    dominant_contract_by_day: Dict[date, str] = {}
+    for day, contract_volume in daily_volume.items():
+        dominant_contract_by_day[day] = sorted(
+            contract_volume.items(),
+            key=lambda item: (-item[1], item[0]),
+        )[0][0]
+
+    rebuilt_rows: List[Tuple[str, datetime, float, float, float, float, int]] = []
+    for code, dt, open_, high, low, close, volume in rows:
+        if dominant_contract_by_day.get(dt.date()) != code:
+            continue
+        rebuilt_rows.append(
+            ("101S6000", dt, float(open_), float(high), float(low), float(close), int(volume))
+        )
+
+    return rebuilt_rows
+
+
+def rebuild_continuous_kospi200f(
+    client,
+    start: date,
+    end: date,
+    *,
+    table_name: str = "kospi200f_1m",
+    verbose: bool = True,
+) -> int:
+    """Rebuild continuous KOSPI200 futures code 101S6000 from A01* contracts."""
+    source_rows = _load_continuous_source_rows(client, start, end, table_name=table_name)
+    rebuilt_rows = _build_continuous_rows(source_rows)
+    if not rebuilt_rows:
+        if verbose:
+            print("Continuous 101S6000 rebuild skipped. No source rows found.")
+        return 0
+
+    client.command(
+        f"""
+        ALTER TABLE {table_name}
+        DELETE WHERE code = '101S6000'
+          AND toDate(datetime) >= %(start)s
+          AND toDate(datetime) <= %(end)s
+        """,
+        parameters={"start": start, "end": end},
+    )
+    insert_batch(client, rebuilt_rows, table_name=table_name)
+
+    if verbose:
+        print(
+            "Rebuilt continuous 101S6000 rows: "
+            f"{len(rebuilt_rows)} ({start} ~ {end})"
+        )
+
+    return len(rebuilt_rows)
 
 
 def get_collected_pairs_in_range(
@@ -1108,8 +1212,20 @@ async def backfill_kospi200f(
             rows = await collect_batch(client, db_client, day_tasks, table_name="kospi200f_1m")
             total_rows += rows
 
+    rebuilt_rows = rebuild_continuous_kospi200f(
+        db_client,
+        start,
+        end,
+        table_name="kospi200f_1m",
+        verbose=verbose,
+    )
+    db_client.close()
+
     if verbose:
-        print(f"KOSPI 200 Futures backfill complete. tasks={total_tasks}, rows={total_rows}")
+        print(
+            "KOSPI 200 Futures backfill complete. "
+            f"tasks={total_tasks}, rows={total_rows}, rebuilt_101S6000={rebuilt_rows}"
+        )
 
     return total_rows
 
@@ -1142,8 +1258,20 @@ async def collect_today_kospi200f(verbose: bool = True):
     async with httpx.AsyncClient(timeout=30.0) as client:
         rows = await collect_batch(client, db_client, tasks, table_name="kospi200f_1m")
 
+    rebuilt_rows = rebuild_continuous_kospi200f(
+        db_client,
+        today,
+        today,
+        table_name="kospi200f_1m",
+        verbose=verbose,
+    )
+    db_client.close()
+
     if verbose:
-        print(f"Today's KOSPI 200 Futures collection complete. Rows: {rows}")
+        print(
+            "Today's KOSPI 200 Futures collection complete. "
+            f"Rows: {rows}, rebuilt_101S6000={rebuilt_rows}"
+        )
 
     return rows
 

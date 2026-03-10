@@ -268,25 +268,15 @@ class OrderExecutor:
 
         # Select TR code based on venue, mode, and side
         if is_ats:
-            tr_id = (
-                self.config.tr_code_ats_buy_mock
-                if is_mock and order.side == OrderSide.BUY.value
-                else self.config.tr_code_ats_buy_real
-                if order.side == OrderSide.BUY.value
-                else self.config.tr_code_ats_sell_mock
-                if is_mock
-                else self.config.tr_code_ats_sell_real
-            )
+            if order.side == OrderSide.BUY.value:
+                tr_id = self.config.tr_code_ats_buy_mock if is_mock else self.config.tr_code_ats_buy_real
+            else:
+                tr_id = self.config.tr_code_ats_sell_mock if is_mock else self.config.tr_code_ats_sell_real
         else:
-            tr_id = (
-                self.config.tr_code_buy_mock
-                if is_mock and order.side == OrderSide.BUY.value
-                else self.config.tr_code_buy_real
-                if order.side == OrderSide.BUY.value
-                else self.config.tr_code_sell_mock
-                if is_mock
-                else self.config.tr_code_sell_real
-            )
+            if order.side == OrderSide.BUY.value:
+                tr_id = self.config.tr_code_buy_mock if is_mock else self.config.tr_code_buy_real
+            else:
+                tr_id = self.config.tr_code_sell_mock if is_mock else self.config.tr_code_sell_real
 
         headers = await self._build_auth_headers(tr_id=tr_id)
         if headers is None:

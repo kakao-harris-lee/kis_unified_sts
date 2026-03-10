@@ -90,7 +90,7 @@ def _get_clickhouse_config() -> Dict[str, Any]:
         "host": os.getenv("CLICKHOUSE_HOST", "localhost"),
         "port": int(os.getenv("CLICKHOUSE_PORT", "8123")),
         "database": os.getenv("CLICKHOUSE_STOCK_DATABASE", "market"),
-        "user": os.getenv("CLICKHOUSE_USER", "trading"),
+        "user": os.getenv("CLICKHOUSE_USER", "default"),
         "password": os.getenv("CLICKHOUSE_PASSWORD", ""),
         **tls_params,
     }
@@ -249,19 +249,25 @@ _rate_limiter: Optional[RateLimiter] = None
 _rate_limit_per_sec = int(os.getenv("STOCK_RATE_LIMIT", "5"))
 _max_concurrent_requests = int(os.getenv("STOCK_MAX_CONCURRENCY", "3"))
 _semaphore: Optional[asyncio.Semaphore] = None
+_rate_limiter_loop: Optional[asyncio.AbstractEventLoop] = None
+_semaphore_loop: Optional[asyncio.AbstractEventLoop] = None
 
 
 def _get_rate_limiter() -> RateLimiter:
-    global _rate_limiter
-    if _rate_limiter is None:
+    global _rate_limiter, _rate_limiter_loop
+    loop = asyncio.get_running_loop()
+    if _rate_limiter is None or _rate_limiter_loop is not loop:
         _rate_limiter = RateLimiter(_rate_limit_per_sec)
+        _rate_limiter_loop = loop
     return _rate_limiter
 
 
 def _get_semaphore() -> asyncio.Semaphore:
-    global _semaphore
-    if _semaphore is None:
+    global _semaphore, _semaphore_loop
+    loop = asyncio.get_running_loop()
+    if _semaphore is None or _semaphore_loop is not loop:
         _semaphore = asyncio.Semaphore(_max_concurrent_requests)
+        _semaphore_loop = loop
     return _semaphore
 
 
@@ -272,30 +278,34 @@ def _get_semaphore() -> asyncio.Semaphore:
 def get_stock_db_client() -> clickhouse_connect.driver.client.Client:
     """Get ClickHouse client for stock database."""
     config = _get_clickhouse_config()
-    return clickhouse_connect.get_client(
-        host=config["host"],
-        port=config["port"],
-        username=config["user"],
-        password=config["password"],
-        database=config["database"],
-        secure=config["secure"],
-        verify=config["verify"],
-        ca_cert=config["ca_cert"],
-    )
+    kwargs = {
+        "host": config["host"],
+        "port": config["port"],
+        "username": config["user"],
+        "password": config["password"],
+        "database": config["database"],
+        "secure": config["secure"],
+        "verify": config["verify"],
+    }
+    if config.get("ca_cert"):
+        kwargs["ca_cert"] = config["ca_cert"]
+    return clickhouse_connect.get_client(**kwargs)
 
 
 def ensure_stock_database() -> None:
     """Ensure stock database and tables exist."""
     config = _get_clickhouse_config()
-    client = clickhouse_connect.get_client(
-        host=config["host"],
-        port=config["port"],
-        username=config["user"],
-        password=config["password"],
-        secure=config["secure"],
-        verify=config["verify"],
-        ca_cert=config["ca_cert"],
-    )
+    kwargs = {
+        "host": config["host"],
+        "port": config["port"],
+        "username": config["user"],
+        "password": config["password"],
+        "secure": config["secure"],
+        "verify": config["verify"],
+    }
+    if config.get("ca_cert"):
+        kwargs["ca_cert"] = config["ca_cert"]
+    client = clickhouse_connect.get_client(**kwargs)
 
     # Create database
     client.command(f"CREATE DATABASE IF NOT EXISTS {config['database']}")

@@ -90,8 +90,9 @@ class TestGetDbClient:
         tracker = PositionTracker(config=PositionTrackerConfig(database=""))
 
         mock_instance = MagicMock()
-        mock_instance.config.database = "kospi"
         MockCH.return_value = mock_instance
+        # The code uses cfg.database (from_env return value), not ch.config.database
+        MockConfig.from_env.return_value.database = "kospi"
 
         ch, db = tracker._get_db_client()
         assert db == "kospi"
@@ -197,8 +198,9 @@ class TestSaveClosedToDb:
         assert len(tracker._pending_swing_positions) == 1
 
         # Flush fails gracefully and re-enqueues the rows
+        from shared.exceptions import InfrastructureError
         with patch.object(
-            tracker, "_get_db_client", side_effect=Exception("connection refused")
+            tracker, "_get_db_client", side_effect=InfrastructureError("connection refused")
         ):
             flushed, _ = await tracker.flush_pending_positions()
 

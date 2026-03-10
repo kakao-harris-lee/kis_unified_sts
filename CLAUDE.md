@@ -26,7 +26,7 @@
   - 비율 기반 지표(BB, RSI, BB bandwidth)는 두 상품 간 전이 가능 확인 완료
   - 미니의 낮은 유동성(F200 대비 1/9~1/42)은 인지하고 수용
 - **현재 운용 전략**: `rl_mppo` (Maskable PPO, long/short intraday)
-- **운용 경로 표준**: `TradingOrchestrator` 경로를 기본으로 사용한다. `shared/ml/rl/paper_trader.py`는 레거시/검증용 보조 경로다.
+- **운용 경로 표준**: `TradingOrchestrator` 경로를 사용한다.
 - **핵심 합의 사항**
   - 진입/청산 방향은 `signal_direction` 기준으로 처리한다.
   - 선물 paper/live 모두 숏 진입 및 숏 청산(BUY to cover)을 지원해야 한다.
@@ -91,7 +91,7 @@ if pnl_pct >= self.config.exit.breakeven_threshold:
 
 #### RL 선물 운용 규칙
 
-- `sts rl paper` 기본 엔진은 `orchestrator`다. 레거시 엔진은 `--engine legacy`로만 사용한다.
+- `sts rl paper` 명령은 `TradingOrchestrator`를 사용한다.
 - `rl_mppo` 전략의 모델 경로 오버라이드는 `RL_MPPO_MODEL_PATH` 환경변수를 사용한다.
 - 오케스트레이터는 RL 전략에 대해 `IndicatorEngine`의 최근 분봉(OHLCV)을 주입하여 피처 계산을 보조한다.
 - **진입/청산 모두 RL 모델**: entry(`RLMPPOEntry`) + exit(`RLMPPOExit`)가 동일 모델의 5개 액션(LONG_ENTRY=0, LONG_EXIT=1, SHORT_ENTRY=2, SHORT_EXIT=3, HOLD=4)을 사용한다.

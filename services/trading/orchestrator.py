@@ -532,8 +532,6 @@ class TradingOrchestrator:
                     AdaptiveRegimeDetector,
                     AdaptiveRegimeConfig,
                 )
-                from shared.config.loader import ConfigLoader
-
                 # Load adaptive regime config
                 regime_cfg_dict = ConfigLoader.load("ml/regime_adaptive.yaml")
 
@@ -665,6 +663,10 @@ class TradingOrchestrator:
         # Daily indicators from pre-market scanner (scalars + series for daily strategies)
         self._daily_indicators: dict[str, dict[str, Any]] = {}
 
+        # LLM Context Publisher (initialized in _initialize_components)
+        self._llm_context_publisher: Any | None = None
+        self._llm_context_task: asyncio.Task | None = None
+
         self._llm_training_data_dir = os.environ.get(
             "LLM_TRAINING_DATA_DIR", "output/llm"
         )
@@ -703,6 +705,9 @@ class TradingOrchestrator:
 
         # Start shared market data loop before pipeline
         await self._start_market_data_loop()
+
+        # Start LLM context publisher loop (if enabled)
+        await self._start_llm_context_publisher()
 
         # 파이프라인 생성 및 시작
         self.pipeline = self._create_pipeline()
@@ -750,6 +755,9 @@ class TradingOrchestrator:
 
         # 9. Load Swing Positions
         await self._load_swing_positions()
+
+        # 10. Initialize LLM Context Publisher
+        self._init_llm_context_publisher()
 
     @staticmethod
     def _deep_merge_config_dict(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
@@ -941,16 +949,48 @@ class TradingOrchestrator:
             self._tick_stream_publisher = None
             logger.warning(f"Tick stream publisher init failed: {e}")
 
+    def _init_llm_context_publisher(self) -> None:
+        """Initialize LLM Context Publisher for market analysis integration."""
+        try:
+            # Load LLM config (includes market_context_publisher section)
+            llm_yaml = ConfigLoader.load("llm.yaml")
+            publisher_config = llm_yaml.get("market_context_publisher", {})
+
+            # Check if enabled
+            if not publisher_config.get("enabled", False):
+                self._llm_context_publisher = None
+                logger.info("LLM context publisher disabled by config")
+                return
+
+            # Initialize publisher
+            from services.trading.llm_context_publisher import LLMContextPublisher
+
+            self._llm_context_publisher = LLMContextPublisher(
+                asset_class=self.config.asset_class
+            )
+            logger.info(
+                "LLM context publisher initialized "
+                "(interval=%d min, redis_ttl=%d sec)",
+                publisher_config.get("analysis_interval_minutes", 30),
+                publisher_config.get("redis_ttl_seconds", 7200),
+            )
+        except (ConfigurationError, InvalidConfigError, MissingConfigError) as e:
+            self._llm_context_publisher = None
+            logger.warning(f"LLM context publisher init failed: {e}")
+
     def _init_strategy_infrastructure(self):
         """Initialize Strategy Manager and Position Tracker"""
         # Strategy manager
         strategy_names = (
             [self.config.strategy_name] if self.config.strategy_name else None
         )
+        # Disable cost filter for futures — RL strategies manage entry quality
+        # via confidence thresholds; mini futures low ATR causes false rejections
+        cost_filter = self.config.asset_class != "futures"
         self._strategy_manager = StrategyManager(
             asset_class=self.config.asset_class,
             strategy_names=strategy_names,
-            config=StrategyManagerConfig(),
+            config=StrategyManagerConfig(cost_filter_enabled=cost_filter),
         )
 
         # Pre-register strategy names for Prometheus metric discovery
@@ -974,7 +1014,6 @@ class TradingOrchestrator:
                 global_max = sum(strategy_limits)
         # Load batch insert settings from YAML config
         try:
-            from shared.config.loader import ConfigLoader
             pt_cfg = ConfigLoader.load("execution.yaml").get("position_tracker", {})
         except (InvalidConfigError, MissingConfigError, OSError, yaml.YAMLError, KeyError, TypeError):
             pt_cfg = {}
@@ -1007,7 +1046,6 @@ class TradingOrchestrator:
 
         # Adaptive position sizing based on strategy win rate
         try:
-            from shared.config.loader import ConfigLoader
             from shared.strategy.adaptive_sizing import (
                 AdaptiveSizingConfig,
                 AdaptiveSizingManager,
@@ -1053,8 +1091,12 @@ class TradingOrchestrator:
                 staleness_seconds = float(
                     _ie_cfg.get("staleness_seconds", 180.0)
                 )
+                mtf_timeframes = _ie_cfg.get("mtf_timeframes", None)
+                mtf_maxlen = int(_ie_cfg.get("mtf_maxlen", 250))
             except (InvalidConfigError, MissingConfigError, OSError, yaml.YAMLError, KeyError, TypeError, ValueError):
                 staleness_seconds = 180.0
+                mtf_timeframes = None
+                mtf_maxlen = 250
 
             self._indicator_engine = StreamingIndicatorEngine(
                 bb_period=bb_period,
@@ -1063,10 +1105,13 @@ class TradingOrchestrator:
                 high_period=high_period,
                 staleness_seconds=staleness_seconds,
                 ema_periods=ema_periods,
+                mtf_timeframes=mtf_timeframes,
+                mtf_maxlen=mtf_maxlen,
             )
             logger.info(
                 f"Indicator engine initialized (bb={bb_period}, "
-                f"std={bb_std}, rsi={rsi_period}, high_n={high_period})"
+                f"std={bb_std}, rsi={rsi_period}, high_n={high_period}, "
+                f"mtf_timeframes={mtf_timeframes}, mtf_maxlen={mtf_maxlen})"
             )
         except (ValidationError, ValueError, TypeError) as e:
             logger.warning(f"Indicator engine init failed: {e}")
@@ -1424,7 +1469,6 @@ class TradingOrchestrator:
         """
         # Load broker_verification config
         try:
-            from shared.config.loader import ConfigLoader
             exec_cfg = ConfigLoader.load("execution.yaml")
             bv_cfg = exec_cfg.get("broker_verification", {})
         except (InvalidConfigError, MissingConfigError, OSError, yaml.YAMLError, KeyError, TypeError):
@@ -2349,6 +2393,66 @@ class TradingOrchestrator:
             logger.debug(f"ClickHouse prewarm failed for {symbol}: {e}")
             return []
 
+    async def _fetch_daily_candles_from_clickhouse(
+        self, symbol: str, limit: int = 252
+    ) -> list[dict]:
+        """Fetch recent daily candles from ClickHouse.
+
+        Used for multi-timeframe strategies that need daily context.
+
+        Args:
+            symbol: Stock/futures code
+            limit: Number of daily candles (default 252 = ~1 year trading days)
+
+        Returns:
+            List of daily candle dicts with keys: date, open, high, low, close, volume
+        """
+        try:
+            from clickhouse_driver import Client as CHSyncClient
+
+            ch_host = os.getenv("CLICKHOUSE_HOST", "localhost")
+            ch_port = int(
+                os.getenv(
+                    "CLICKHOUSE_NATIVE_PORT",
+                    os.getenv("CLICKHOUSE_PORT", "9000"),
+                )
+            )
+            ch_user = os.getenv("CLICKHOUSE_USER", "default")
+            ch_pw = os.getenv("CLICKHOUSE_PASSWORD", "")
+            ch_db = os.getenv("CLICKHOUSE_STOCK_DATABASE", "market")
+
+            loop = asyncio.get_event_loop()
+            rows = await loop.run_in_executor(
+                None,
+                lambda: CHSyncClient(
+                    host=ch_host,
+                    port=ch_port,
+                    user=ch_user,
+                    password=ch_pw,
+                    database=ch_db,
+                ).execute(
+                    "SELECT code, date, open, high, low, close, volume "
+                    "FROM daily_candles "
+                    "WHERE code = %(code)s "
+                    "ORDER BY date DESC LIMIT %(limit)s",
+                    {"code": symbol, "limit": limit},
+                ),
+            )
+            candles = []
+            for row in reversed(rows):  # oldest first
+                candles.append({
+                    "date": row[1],
+                    "open": float(row[2]),
+                    "high": float(row[3]),
+                    "low": float(row[4]),
+                    "close": float(row[5]),
+                    "volume": int(row[6]),
+                })
+            return candles
+        except (InfrastructureError, OSError, ConnectionError, ValueError, IndexError) as e:
+            logger.debug(f"ClickHouse daily candle fetch failed for {symbol}: {e}")
+            return []
+
     async def _prewarm_symbols(self, symbols: list[str]) -> None:
         """Seed indicator engine with historical candles.
 
@@ -2361,6 +2465,7 @@ class TradingOrchestrator:
 
         ch_hits = 0
         kis_hits = 0
+        daily_ch_hits = 0
         for symbol in symbols:
             if self._indicator_engine.is_warm(symbol):
                 continue
@@ -2390,11 +2495,19 @@ class TradingOrchestrator:
                     logger.info(f"Prewarm {symbol}: {len(candles)} candles seeded")
                 else:
                     logger.debug(f"Prewarm {symbol}: no candles returned")
+
+                # Fetch and seed daily candles from ClickHouse (for multi-timeframe strategies)
+                daily_candles = await self._fetch_daily_candles_from_clickhouse(symbol, limit=252)
+                if daily_candles:
+                    daily_ch_hits += 1
+                    self._indicator_engine.seed_daily_candles(symbol, daily_candles)
+                    logger.info(f"Prewarm {symbol}: {len(daily_candles)} daily candles seeded")
             except (asyncio.TimeoutError, Exception) as e:
                 logger.warning(f"Prewarm failed for {symbol}: {e}")
         logger.info(
             f"Prewarm complete: {redis_hits} from Redis, "
-            f"{ch_hits} from ClickHouse, {kis_hits} from KIS REST"
+            f"{ch_hits} from ClickHouse, {kis_hits} from KIS REST, "
+            f"{daily_ch_hits} daily candles from ClickHouse"
         )
 
     def _save_candle_cache_to_redis(self) -> None:
@@ -2902,6 +3015,87 @@ class TradingOrchestrator:
             await asyncio.gather(self._market_data_task, return_exceptions=True)
             self._market_data_task = None
 
+        # Stop LLM context publisher task
+        if self._llm_context_task:
+            self._llm_context_task.cancel()
+            await asyncio.gather(self._llm_context_task, return_exceptions=True)
+            self._llm_context_task = None
+
+    async def _start_llm_context_publisher(self) -> None:
+        """Start LLM context publisher background task."""
+        if not self._llm_context_publisher:
+            return
+
+        try:
+            # Load publisher config
+            llm_yaml = ConfigLoader.load("llm.yaml")
+            publisher_config = llm_yaml.get("market_context_publisher", {})
+
+            run_on_startup = publisher_config.get("run_on_startup", True)
+            interval_minutes = publisher_config.get("analysis_interval_minutes", 30)
+
+            # Run initial analysis on startup if configured
+            if run_on_startup:
+                logger.info("Running initial LLM market analysis on startup...")
+                try:
+                    market_context = await self._llm_context_publisher.run_analysis()
+                    if market_context:
+                        # Publish to Redis
+                        from shared.streaming.trading_state import TradingStatePublisher
+                        publisher = TradingStatePublisher(self.config.asset_class)
+                        publisher.publish_market_context(market_context)
+                        logger.info(
+                            f"Initial LLM market context published: regime={market_context.regime}, "
+                            f"confidence={market_context.confidence:.2f}"
+                        )
+                except Exception as e:
+                    logger.warning(f"Initial LLM analysis failed: {e}", exc_info=True)
+
+            # Start periodic refresh task
+            self._llm_context_task = asyncio.create_task(
+                self._llm_context_publisher_loop(interval_minutes),
+                name="llm_context_publisher_loop",
+            )
+            logger.info(f"LLM context publisher task started (interval={interval_minutes} min)")
+
+        except (InvalidConfigError, MissingConfigError, OSError, yaml.YAMLError) as e:
+            logger.warning(f"LLM context publisher start failed: {e}")
+
+    async def _llm_context_publisher_loop(self, interval_minutes: float) -> None:
+        """Background loop for periodic LLM market analysis.
+
+        Args:
+            interval_minutes: Interval between analysis runs in minutes
+        """
+        interval_seconds = interval_minutes * 60
+        logger.info(f"LLM context publisher loop started (interval={interval_minutes} min)")
+
+        while True:
+            try:
+                await asyncio.sleep(interval_seconds)
+
+                # Run analysis
+                market_context = await self._llm_context_publisher.run_analysis()
+                if market_context:
+                    # Publish to Redis
+                    from shared.streaming.trading_state import TradingStatePublisher
+                    publisher = TradingStatePublisher(self.config.asset_class)
+                    publisher.publish_market_context(market_context)
+                    logger.info(
+                        f"LLM market context updated: regime={market_context.regime}, "
+                        f"confidence={market_context.confidence:.2f}"
+                    )
+                else:
+                    logger.debug("LLM analysis returned None (analysis may have failed)")
+
+            except asyncio.CancelledError:
+                logger.info("LLM context publisher loop cancelled")
+                break
+            except Exception as e:
+                logger.error(f"Error in LLM context publisher loop: {e}", exc_info=True)
+                # Continue loop despite errors (fire-and-forget pattern)
+                await asyncio.sleep(60)  # Wait 1 minute before retry on error
+
     async def _market_data_loop(self, interval: float) -> None:
         logger.info(
             f"Market data loop started (interval={interval}s, "
@@ -3180,8 +3374,7 @@ class TradingOrchestrator:
         try:
             data = await self._get_market_data_snapshot()
             if not data:
-                return None
-
+                logger.debug("Market data snapshot empty, regime from indicator engine only")
             regime = self._classify_market(data)
             self._current_regime = regime
             self._current_regime_confidence = None  # Simple mode doesn't provide confidence
@@ -3196,12 +3389,12 @@ class TradingOrchestrator:
                 except (InfrastructureError, OSError, ConnectionError) as e:
                     logger.debug(f"Adaptive sizing refresh failed: {e}")
 
-            logger.debug(f"Market regime: {regime}")
+            logger.info(f"Market regime: {regime}")
 
             return {
                 "regime": regime,
                 "timestamp": datetime.now().isoformat(),
-                "symbols_checked": len(data),
+                "symbols_checked": len(data) if data else 0,
             }
 
         except (NetworkError, APIError, InfrastructureError, ValidationError) as e:
@@ -3218,10 +3411,7 @@ class TradingOrchestrator:
         Falls back to simple avg-change heuristic when MFI is not yet available
         (during warmup period).
         """
-        if not market_data:
-            return "UNKNOWN"
-
-        # Try MFI-based classification via MarketClassifier
+        # Try MFI-based classification via MarketClassifier (works even without market_data)
         if self._indicator_engine:
             active = set(self.config.symbols) if self.config.symbols else None
             mfi = self._indicator_engine.get_market_mfi(active)
@@ -3391,8 +3581,10 @@ class TradingOrchestrator:
         # Futures (bidirectional) can profit from short entries in BEAR.
         if self.config.asset_class != "futures":
             if not self._current_regime:
+                logger.info("Entry blocked: regime not yet classified")
                 return []
             if "BEAR" in self._current_regime:
+                logger.info(f"Entry blocked: regime={self._current_regime}")
                 return []
 
         # Check position limit
@@ -3453,6 +3645,16 @@ class TradingOrchestrator:
                 daily_ind = self._cached_daily_indicators.get(symbol, {})
                 if daily_ind:
                     indicators.update(daily_ind)
+
+                # Fetch daily indicators from engine (SMA/EMA/RSI on daily timeframe)
+                if self._indicator_engine:
+                    try:
+                        daily_indicators = self._indicator_engine.get_daily_indicators(symbol)
+                        # Add with daily_ prefix for multi-timeframe clarity
+                        for key, value in daily_indicators.items():
+                            indicators[f"daily_{key}"] = value
+                    except (ValidationError, KeyError, AttributeError) as e:
+                        logger.debug(f"Failed to fetch daily indicators for {symbol}: {e}")
 
                 context = EntryContext(
                     market_data=enriched,
@@ -3936,6 +4138,44 @@ class TradingOrchestrator:
         execution_meta["state"] = "cancelled"
         return False, 0.0, execution_meta
 
+    def _select_execution_venue(
+        self,
+        code: str,
+        side: Any,
+        order_type: Any,
+        quantity: int,
+        price: float | None = None,
+    ) -> ExecutionVenue:
+        """Select execution venue using VenueRouter (stock only).
+
+        Falls back to KRX if routing fails or is unavailable.
+        """
+        if not (self._venue_router and self.config.asset_class == "stock"):
+            return ExecutionVenue.KRX
+
+        try:
+            from shared.execution.models import OrderRequest
+
+            order_request = OrderRequest(
+                code=code,
+                side=side,
+                order_type=order_type,
+                quantity=quantity,
+                price=price,
+            )
+            routing_decision = self._venue_router.select_venue(
+                order=order_request,
+                market_data=None,
+                current_time=datetime.now(),
+            )
+            logger.info(
+                f"Venue routing decision: {routing_decision.venue.value} - {routing_decision.reason}"
+            )
+            return ExecutionVenue(routing_decision.venue)
+        except Exception as e:
+            logger.warning(f"Venue routing failed, using default KRX: {e}")
+            return ExecutionVenue.KRX
+
     async def _place_entry_order(
         self,
         *,
@@ -3988,29 +4228,9 @@ class TradingOrchestrator:
             req_price = float(limit_price) if (req_type == OrderType.LIMIT and limit_price) else None
 
             # Select execution venue using VenueRouter
-            selected_venue = ExecutionVenue.KRX  # Default to KRX
-            if self._venue_router and self.config.asset_class == "stock":
-                try:
-                    order_request_for_routing = OrderRequest(
-                        code=code,
-                        side=side,
-                        order_type=req_type,
-                        quantity=quantity,
-                        price=req_price,
-                    )
-                    # TODO: Get market_data from data provider for better routing decisions
-                    routing_decision = self._venue_router.select_venue(
-                        order=order_request_for_routing,
-                        market_data=None,
-                        current_time=datetime.now(),
-                    )
-                    selected_venue = ExecutionVenue(routing_decision.venue)
-                    logger.info(
-                        f"Venue routing decision: {routing_decision.venue.value} - {routing_decision.reason}"
-                    )
-                except Exception as e:
-                    logger.warning(f"Venue routing failed, using default KRX: {e}")
-                    selected_venue = ExecutionVenue.KRX
+            selected_venue = self._select_execution_venue(
+                code=code, side=side, order_type=req_type, quantity=quantity, price=req_price,
+            )
 
             resp = await self._order_executor.execute_order(
                 OrderRequest(
@@ -4025,7 +4245,8 @@ class TradingOrchestrator:
             fallback_price = float(limit_price or market_price)
             filled_qty = int(getattr(resp, "filled_qty", 0) or 0)
             filled_price = float(getattr(resp, "filled_price", 0.0) or 0.0)
-            resp_venue = str(getattr(resp, "venue", selected_venue.value if hasattr(selected_venue, "value") else selected_venue))
+            venue_attr = getattr(resp, "venue", selected_venue)
+            resp_venue = venue_attr.value if hasattr(venue_attr, "value") else str(venue_attr)
 
             # Partial fills must be tracked even when broker final status is
             # timeout/cancel to avoid orphan live positions.
@@ -4226,18 +4447,36 @@ class TradingOrchestrator:
         execution_meta: dict[str, Any] | None = None,
     ):
         """Log and notify entry."""
+        direction = "SHORT" if is_short else "LONG"
+        regime_str = self._current_regime or "unknown"
         if execution_meta:
             logger.info(
-                "Entry executed: %s (%s) @ %.2f x %s [mode=%s, slippage=%+.2ft]",
+                "Entry executed: %s (%s) @ %.2f x %s "
+                "[strategy=%s, direction=%s, confidence=%.2f, regime=%s, mode=%s, slippage=%+.2ft]",
                 name,
                 code,
                 float(price),
                 qty,
+                strategy,
+                direction,
+                confidence,
+                regime_str,
                 execution_meta.get("mode", "default"),
                 float(execution_meta.get("slippage_ticks", 0.0)),
             )
         else:
-            logger.info(f"Entry executed: {name} ({code}) @ {price:,.0f} x {qty}")
+            logger.info(
+                "Entry executed: %s (%s) @ %s x %s "
+                "[strategy=%s, direction=%s, confidence=%.2f, regime=%s]",
+                name,
+                code,
+                f"{price:,.0f}",
+                qty,
+                strategy,
+                direction,
+                confidence,
+                regime_str,
+            )
         amount = price * qty
         entry_label = "숏 진입" if is_short else "롱 진입"
         slippage_line = ""
@@ -4362,29 +4601,9 @@ class TradingOrchestrator:
             side = OrderSide.BUY if is_buy else OrderSide.SELL
 
             # Select execution venue using VenueRouter
-            selected_venue = ExecutionVenue.KRX  # Default to KRX
-            if self._venue_router and self.config.asset_class == "stock":
-                try:
-                    order_request_for_routing = OrderRequest(
-                        code=code,
-                        side=side,
-                        order_type=OrderType.MARKET,
-                        quantity=quantity,
-                        price=None,
-                    )
-                    # TODO: Get market_data from data provider for better routing decisions
-                    routing_decision = self._venue_router.select_venue(
-                        order=order_request_for_routing,
-                        market_data=None,
-                        current_time=datetime.now(),
-                    )
-                    selected_venue = ExecutionVenue(routing_decision.venue)
-                    logger.info(
-                        f"Venue routing decision (exit): {routing_decision.venue.value} - {routing_decision.reason}"
-                    )
-                except Exception as e:
-                    logger.warning(f"Venue routing failed (exit), using default KRX: {e}")
-                    selected_venue = ExecutionVenue.KRX
+            selected_venue = self._select_execution_venue(
+                code=code, side=side, order_type=OrderType.MARKET, quantity=quantity,
+            )
 
             resp = await self._order_executor.execute_order(
                 OrderRequest(
@@ -4452,7 +4671,9 @@ class TradingOrchestrator:
         pnl = closed.unrealized_pnl
         pnl_pct = closed.profit_pct
 
-        self._log_exit(name, signal.code, fill_price, exit_quantity, reason_str, pnl, pnl_pct, close_is_buy)
+        strategy_name = signal.strategy or closed.strategy or ""
+        holding_mins = getattr(signal, "holding_minutes", None) or 0
+        self._log_exit(name, signal.code, fill_price, exit_quantity, reason_str, pnl, pnl_pct, close_is_buy, strategy_name, holding_mins)
 
         # Collect snapshot
         indicators = self._collect_exit_indicators(signal.code, fill_price)
@@ -4485,14 +4706,16 @@ class TradingOrchestrator:
             self._pending_notify_tasks.add(task)
             task.add_done_callback(self._on_notify_done)
 
-    def _log_exit(self, name, code, price, qty, reason, pnl, pnl_pct, is_buy):
+    def _log_exit(self, name, code, price, qty, reason, pnl, pnl_pct, is_buy, strategy="", holding_minutes=0):
         """Log and notify exit."""
         pnl_emoji = "🟢" if pnl >= 0 else "🔴"
         side_str = "숏 청산" if is_buy else "롱 청산"
 
+        held_str = f", held={holding_minutes}min" if holding_minutes else ""
+        strategy_str = f", strategy={strategy}" if strategy else ""
         logger.info(
             f"Exit executed: {name} ({code}) @ {price:,.0f} "
-            f"(reason={reason}, pnl={pnl_pct:+.2f}%)"
+            f"(reason={reason}{strategy_str}, pnl={pnl_pct:+.2f}%{held_str})"
         )
         self._schedule_notify(
             f"{pnl_emoji} <b>{side_str}</b>\n"

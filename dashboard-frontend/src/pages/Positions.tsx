@@ -5,13 +5,14 @@ import RefreshIndicator from '../components/RefreshIndicator';
 import useQueryWithError from '../hooks/useQueryWithError';
 
 export interface Position {
-  symbol: string;
+  code: string;
+  name: string;
   side: 'BUY' | 'SELL';
   quantity: number;
   entry_price: number;
   current_price: number;
   unrealized_pnl: number;
-  unrealized_pnl_pct: number;
+  pnl_pct: number;
   strategy: string;
   entry_time: string;
 }

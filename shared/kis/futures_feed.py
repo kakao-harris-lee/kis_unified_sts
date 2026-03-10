@@ -103,6 +103,45 @@ class KISFuturesPriceFeed:
             return None
         return max(0.0, time.time() - self._last_tick_ts)
 
+    def is_healthy(self) -> bool:
+        """Check if the feed is healthy (receiving recent data).
+
+        Returns:
+            True if staleness is within threshold and feed is running, False otherwise.
+        """
+        if not self._running:
+            return False
+        staleness = self.get_staleness_seconds()
+        if staleness is None:
+            return False
+        return staleness < self._orderbook_stale_threshold
+
+    def get_health_status(self) -> dict[str, Any]:
+        """Get detailed health status for diagnostics.
+
+        Returns:
+            Dictionary with health metrics:
+            - running: bool - whether feed is running
+            - last_tick_ts: float | None - timestamp of last tick
+            - staleness_seconds: float | None - seconds since last tick
+            - is_healthy: bool - overall health status
+            - symbol_count: int - number of tracked symbols
+            - cached_symbols: list[str] - symbols with cached data
+        """
+        with self._prices_lock:
+            cached_symbols = list(self._prices.keys())
+
+        staleness = self.get_staleness_seconds()
+
+        return {
+            "running": self._running,
+            "last_tick_ts": self._last_tick_ts,
+            "staleness_seconds": staleness,
+            "is_healthy": self.is_healthy(),
+            "symbol_count": len(self._symbols),
+            "cached_symbols": cached_symbols,
+        }
+
     def update_symbols(
         self,
         symbols: list[str],

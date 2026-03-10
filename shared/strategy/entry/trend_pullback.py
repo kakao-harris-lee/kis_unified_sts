@@ -1,11 +1,13 @@
 """Trend Pullback Entry Strategy.
 
 멀티 타임프레임 추세 추종 눌림목 전략:
+- 일간 SMA(200) 위에서 장기 상승 추세 확인
 - BB 하단 터치 + RSI 과매도에서 반등 진입
 - Williams %R 과매도 반전 시 진입
 - 일간 watchlist 기반 후보 종목 필터링
 
 Entry Conditions (Long):
+    Trend filter: close > SMA(200) — 장기 상승 추세
     Primary: BB touch (close <= bb_lower * buffer) AND RSI < rsi_oversold
     OR
     Alternative: Williams %R reversal (prev_wr < oversold AND current_wr >= reversal)
@@ -76,6 +78,7 @@ class TrendPullbackEntry(EntrySignalGenerator[TrendPullbackConfig]):
 
     Entry conditions (Long):
         Layer 1: code must be in daily_watchlist["strategies"]["trend_pullback"]
+        Trend filter: close > SMA(200) — 장기 상승 추세
         Time: skip first 30 min and last 15 min of session
         Cooldown: no signal within signal_cooldown_seconds
         Edge: atr/close >= round_trip_cost * min_atr_cost_ratio
@@ -113,7 +116,7 @@ class TrendPullbackEntry(EntrySignalGenerator[TrendPullbackConfig]):
 
     @property
     def required_indicators(self) -> list[str]:
-        return ["bb_lower", "bb_middle", "rsi", "volume", "volume_ma", "atr", "momentum_5m"]
+        return ["bb_lower", "bb_middle", "rsi", "volume", "volume_ma", "atr", "momentum_5m", "daily_sma_200"]
 
     async def generate(self, context: EntryContext) -> Optional[Signal]:
         """Generate entry signal based on trend pullback conditions."""
@@ -121,9 +124,15 @@ class TrendPullbackEntry(EntrySignalGenerator[TrendPullbackConfig]):
         indicators = context.indicators or {}
 
         def _get(key: str, default: float = 0.0) -> float:
-            if key in indicators:
-                return float(indicators.get(key, default) or default)
-            return float(data.get(key, default) or default)
+            # Check exact key, then daily_ prefixed key (paper trading injects daily_ prefix)
+            for k in (key, f"daily_{key}"):
+                if k in indicators:
+                    val = indicators.get(k, default)
+                    return float(val) if val is not None else default
+                if k in data:
+                    val = data.get(k, default)
+                    return float(val) if val is not None else default
+            return default
 
         code = str(data.get("code", "") or "")
         name = str(data.get("name", "") or "")
@@ -140,6 +149,12 @@ class TrendPullbackEntry(EntrySignalGenerator[TrendPullbackConfig]):
             if code not in watchlist_codes:
                 return None
 
+        # --- Trend filter: close > SMA(200) — 장기 상승 추세 ---
+        sma_200 = _get("sma_200", 0)
+        if sma_200 <= 0 or close <= sma_200:
+            logger.debug(f"TrendPullback {code}: SMA filter fail (close={close}, sma_200={sma_200})")
+            return None
+
         now = context.timestamp
 
         # --- Time filters ---
@@ -155,20 +170,24 @@ class TrendPullbackEntry(EntrySignalGenerator[TrendPullbackConfig]):
         )
 
         if now < open_dt:
+            logger.debug(f"TrendPullback {code}: before market open")
             return None
 
         if self.config.skip_market_open_minutes > 0:
             if now < open_dt + timedelta(minutes=self.config.skip_market_open_minutes):
+                logger.debug(f"TrendPullback {code}: skip market open window")
                 return None
 
         if self.config.skip_market_close_minutes > 0:
             if now >= close_dt - timedelta(minutes=self.config.skip_market_close_minutes):
+                logger.debug(f"TrendPullback {code}: skip market close window")
                 return None
 
         # --- Cooldown ---
         if self.config.signal_cooldown_seconds > 0:
             last_time = self._last_signal_time.get(code)
             if last_time and (now - last_time).total_seconds() < self.config.signal_cooldown_seconds:
+                logger.debug(f"TrendPullback {code}: cooldown active")
                 return None
 
         # --- Minimum edge filter: atr/close >= round_trip_cost * min_atr_cost_ratio ---
@@ -177,6 +196,7 @@ class TrendPullbackEntry(EntrySignalGenerator[TrendPullbackConfig]):
             atr_ratio = atr / close
             min_required = self.config.round_trip_cost * self.config.min_atr_cost_ratio
             if atr_ratio < min_required:
+                logger.debug(f"TrendPullback {code}: ATR cost ratio too low ({atr_ratio:.6f} < {min_required:.6f})")
                 return None
 
         # --- Extract Williams %R from momentum_5m ---
@@ -208,12 +228,19 @@ class TrendPullbackEntry(EntrySignalGenerator[TrendPullbackConfig]):
                     trigger_type = "wr_reversal"
 
         if trigger_type is None:
+            logger.debug(
+                f"TrendPullback {code}: no trigger (bb_lower={bb_lower}, close={close}, rsi={rsi:.1f})"
+            )
             return None
 
         # --- Volume confirm ---
         volume = _get("volume", 0)
         volume_ma = _get("volume_ma", 0)
         if volume_ma > 0 and volume < volume_ma * self.config.volume_threshold:
+            logger.debug(
+                f"TrendPullback {code}: volume filter fail "
+                f"(vol={volume}, vol_ma={volume_ma}, threshold={self.config.volume_threshold})"
+            )
             return None
 
         # --- Calculate stop loss and confidence ---

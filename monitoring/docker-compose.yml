@@ -31,7 +31,7 @@ services:
     env_file:
       - ../.env
     ports:
-      - "127.0.0.1:3000:3000"
+      - "0.0.0.0:3000:3000"
     volumes:
       - monitoring_grafana_data:/var/lib/grafana
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
@@ -40,6 +40,7 @@ services:
       - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
       - GF_INSTALL_PLUGINS=grafana-clickhouse-datasource
+      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD}
     extra_hosts:
       - "host.docker.internal:host-gateway"
 

@@ -137,7 +137,8 @@ class TestRegimePerformanceTracker:
         """Create tracker with test configuration."""
         config = RegimePerformanceConfig(
             max_trades_per_regime=10,
-            redis_enabled=False
+            redis_enabled=False,
+            min_trades_for_stats=1,
         )
         return RegimePerformanceTracker(config)
 
@@ -382,7 +383,7 @@ class TestRegimePerformanceTracker:
 
         stats = tracker.get_regime_stats("TRENDING_BULL")
         assert stats["win_rate"] == 1.0
-        assert stats["profit_factor"] == float('inf')  # No losses
+        assert stats["profit_factor"] == 0.0  # No losses: returns 0.0 per implementation
 
     def test_edge_case_all_losers(self, tracker):
         """0% win rate, no winners"""

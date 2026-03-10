@@ -22,12 +22,6 @@ except ImportError:  # pragma: no cover
     RL_FEATURE_COLUMNS = None  # type: ignore
     ContinuousActionWrapper = None  # type: ignore
 
-try:  # Optional runtime dependency (Crypto/websocket stack)
-    from shared.ml.rl.paper_trader import RLPaperTrader, run_paper_trader
-except Exception:  # pragma: no cover
-    RLPaperTrader = None  # type: ignore
-    run_paper_trader = None  # type: ignore
-
 try:  # Optional: transformers for Decision Transformer
     from shared.ml.rl.decision_transformer import DTAgent, DTConfig, DTTrainer
 except ImportError:  # pragma: no cover
@@ -47,9 +41,7 @@ __all__ = [
     "RLEnvConfig",
     "RLFeatureCalculator",
     "RLMPPOConfig",
-    "RLPaperTrader",
     "RL_FEATURE_COLUMNS",
     "mask_fn",
-    "run_paper_trader",
     "suggest_from_schema",
 ]

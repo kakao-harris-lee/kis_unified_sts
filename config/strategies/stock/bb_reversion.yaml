@@ -20,6 +20,7 @@ strategy:
   name: bb_reversion
   asset_class: stock
   enabled: false  # Absorbed into trend_pullback (2026-02-26 redesign)
+  use_llm_context: false  # LLM market analysis integration (default disabled for backward compatibility)
   description: "단기 급락 평균 회귀 스윙 전략 (BB + RSI)"
 
   # ===========================================================================
@@ -141,6 +142,18 @@ strategy:
 
       # 종목당 투자 금액 (고정 금액 방식 사용 시)
       order_amount_per_stock: 1000000  # 100만원
+
+  # ===========================================================================
+  # 비용 필터 (Cost Filter)
+  # ===========================================================================
+  # Reject signals where ATR-based expected move < 1.5x round-trip cost
+  # 예상 수익이 거래 비용을 충분히 초과하지 않는 신호를 사전 필터링하여
+  # 손익분기점 근처의 marginal 거래를 방지
+  cost_filter:
+    enabled: true                      # 비용 필터 활성화
+    min_atr_cost_ratio: 1.5            # ATR 기반 예상 변동 >= 1.5x 왕복 비용
+    commission_rate: 0.003             # 수수료율 0.3% (편도 0.15% × 2)
+    slippage_bps: 1.5                  # 슬리피지 1.5 bps (0.015%)
 
   # ===========================================================================
   # 지표 설정 (Indicators)

@@ -290,7 +290,7 @@ class TestEnvironmentCreation:
             + trainer.env_config.n_position_features
         )
 
-        assert obs_space.shape == (1, expected_dim)  # (num_envs, obs_dim)
+        assert obs_space.shape == (expected_dim,)  # (obs_dim,)
         assert obs_space.dtype == np.float32
 
     def test_make_env_action_space(self, trainer, sample_data):
@@ -431,7 +431,7 @@ class TestEnvironmentCreation:
             + config_with_aux.n_position_features
         )
 
-        assert env.observation_space.shape == (1, expected_dim)
+        assert env.observation_space.shape == (expected_dim,)
 
 
 class TestModelCreation:

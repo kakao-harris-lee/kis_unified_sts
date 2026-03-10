@@ -480,22 +480,25 @@ class BacktestEngine:
                 position_value = self.capital * (self.config.position_size_pct / 100)
 
             # Apply ATS slippage if enabled and ATS venue selected
-            if self.config.ats_enabled and self.ats_simulator and execution_venue == "ATS":
-                # Apply ATS slippage model (price improvement)
+            is_ats_venue = self.config.ats_enabled and self.ats_simulator and execution_venue == "ATS"
+            if is_ats_venue:
+                # Apply ATS slippage model (price improvement) — replaces regular slippage
                 price = self.ats_simulator.apply_ats_slippage(
                     order_side=side,
                     base_price=price,
                     venue="ATS",
                 )
 
-            effective_price = price * (1 + cost.commission_rate + cost.slippage_rate)
+            # ATS slippage already applied above; skip regular slippage for ATS orders
+            slippage_rate = 0.0 if is_ats_venue else cost.slippage_rate
+            effective_price = price * (1 + cost.commission_rate + slippage_rate)
             quantity = int(position_value / effective_price)
 
             if quantity < 1:
                 return
 
             commission = price * quantity * cost.commission_rate
-            slippage = price * quantity * cost.slippage_rate
+            slippage = price * quantity * slippage_rate
             total_cost = price * quantity + commission + slippage
 
             if total_cost > self.capital:
@@ -592,8 +595,9 @@ class BacktestEngine:
         else:
             # 주식: 매도 대금 기반 자본 추적
             # Apply ATS slippage if enabled and ATS venue was used
-            if self.config.ats_enabled and self.ats_simulator and pos.execution_venue == "ATS":
-                # Apply ATS slippage model on exit
+            is_ats_exit = self.config.ats_enabled and self.ats_simulator and pos.execution_venue == "ATS"
+            if is_ats_exit:
+                # Apply ATS slippage model on exit — replaces regular slippage
                 # Note: For exit, we reverse the side (BUY position → SELL to exit)
                 exit_side: Literal["BUY", "SELL"] = "SELL" if pos.side == "BUY" else "BUY"
                 exit_price = self.ats_simulator.apply_ats_slippage(
@@ -602,9 +606,11 @@ class BacktestEngine:
                     venue="ATS",
                 )
 
+            # ATS slippage already applied above; skip regular slippage for ATS orders
+            exit_slippage_rate = 0.0 if is_ats_exit else cost.slippage_rate
             revenue = exit_price * pos.quantity
             commission = revenue * cost.commission_rate
-            slippage = revenue * cost.slippage_rate
+            slippage = revenue * exit_slippage_rate
 
             tax = 0.0
             if pos.side == "BUY" and cost.tax_rate > 0:

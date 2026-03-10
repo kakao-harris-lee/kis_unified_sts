@@ -202,7 +202,7 @@ class BacktestConfig:
                 ATSSimulationConfig,
             )
 
-            ats_config = ATSSimulationConfig.from_dict(data["ats_simulation"])
+            ats_config = ATSSimulationConfig.model_validate(data["ats_simulation"])
             ats_simulator = ATSSimulator.from_config(ats_config)
 
         return cls(

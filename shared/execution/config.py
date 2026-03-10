@@ -97,6 +97,12 @@ class ATSRoutingConfig(BaseModel):
         default=True,
         description="Enable KRX vs ATS spread comparison"
     )
+    spread_comparison_multiplier: float = Field(
+        default=1.5,
+        ge=1.0,
+        le=10.0,
+        description="ATS spread must be within this multiple of KRX spread"
+    )
 
     # Rule 4: Fill rate model
     ats_fill_rate_threshold: float = Field(

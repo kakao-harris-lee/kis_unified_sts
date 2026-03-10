@@ -258,7 +258,7 @@ class VenueRouter:
         # Rule 3b: Spread comparison (if enabled)
         if (
             self.config.spread_comparison_enabled
-            and market_data.ats_spread_bps > market_data.krx_spread_bps * 1.5
+            and market_data.ats_spread_bps > market_data.krx_spread_bps * self.config.spread_comparison_multiplier
         ):
             return RoutingDecision(
                 venue=ExecutionVenue.KRX,

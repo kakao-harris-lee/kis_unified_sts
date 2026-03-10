@@ -491,6 +491,13 @@ def register_builtin_components() -> None:
     except ImportError:
         logger.debug("Position sizers not available")
 
+    try:
+        from shared.strategy.position.llm_adaptive_sizer import LLMAdaptiveSizer
+
+        SizerRegistry.register_class("llm_adaptive", LLMAdaptiveSizer)
+    except ImportError:
+        logger.debug("LLMAdaptiveSizer not available")
+
     logger.info(
         f"Registered components - "
         f"Entry: {EntryRegistry.list_all()}, "

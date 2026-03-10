@@ -25,10 +25,11 @@ class TestTelegramConfig:
         """환경변수 미설정 시"""
         from services.monitoring.notifier import TelegramConfig
 
+        # Use clear=True so all Telegram env vars are absent → os.getenv returns None
+        # Avoid patching os.getenv with a blanket return_value as it breaks bool parsing
         with patch.dict(os.environ, {}, clear=True):
-            with patch.object(os, "getenv", return_value=""):
-                config = TelegramConfig.from_env()
-                assert config.is_configured is False
+            config = TelegramConfig.from_env()
+            assert config.is_configured is False
 
     def test_repr_hides_sensitive_data(self):
         """repr에서 민감 정보 숨김"""

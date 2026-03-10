@@ -639,15 +639,12 @@ class KISClient(AsyncSessionMixin):
         session = await self._get_session()
         headers = await self.auth_manager.get_auth_headers_async()
 
-        # TR IDs for ATS orders
-        # Real mode: TTTC0802U (buy), TTTC0801U (sell)
-        # Mock mode: VTTC0802U (buy), VTTC0801U (sell)
-        # Note: These are based on KRX pattern; actual ATS TR IDs may differ
+        # TR IDs for ATS orders (distinct from KRX TR codes)
         is_buy = side.upper() == "BUY"
         if self.config.is_real:
-            tr_id = "TTTC0802U" if is_buy else "TTTC0801U"
+            tr_id = "TTTC0852U" if is_buy else "TTTC0851U"
         else:
-            tr_id = "VTTC0802U" if is_buy else "VTTC0801U"
+            tr_id = "VTTC0852U" if is_buy else "VTTC0851U"
 
         headers["tr_id"] = tr_id
         headers["custtype"] = "P"

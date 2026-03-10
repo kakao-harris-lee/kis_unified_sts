@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
@@ -33,13 +34,17 @@ from shared.exceptions import ConfigurationError, TradingSystemError
 from shared.models.position import Position
 from shared.models.signal import ExitSignal, Signal
 from shared.strategy.base import EntryContext, ExitContext, MarketStateProtocol, TradingStrategy
+from shared.strategy.filters import CostFilter, CostFilterConfig
 from shared.strategy.registry import (
     StrategyFactory,
     register_builtin_components,
 )
 
 if TYPE_CHECKING:
-    pass
+    from shared.llm.market_context import MarketContext
+
+# Local import to avoid circular dependencies
+from services.trading.llm_context_provider import LLMContextProvider
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +72,12 @@ class StrategyManagerConfig:
     # Parallel execution
     parallel_entries: bool = True
     parallel_exits: bool = True
+
+    # Cost filter
+    cost_filter_enabled: bool = True
+    min_atr_cost_ratio: float = 1.5
+    commission_rate: float = 0.003
+    slippage_bps: float = 1.5
 
     def __post_init__(self):
         """Validate configuration values."""
@@ -105,6 +116,26 @@ class StrategyManagerConfig:
                 f"parallel_exits must be bool, got {type(self.parallel_exits)}"
             )
 
+        if not isinstance(self.cost_filter_enabled, bool):
+            raise TypeError(
+                f"cost_filter_enabled must be bool, got {type(self.cost_filter_enabled)}"
+            )
+
+        if self.min_atr_cost_ratio <= 0.0:
+            raise ValueError(
+                f"min_atr_cost_ratio must be positive, got {self.min_atr_cost_ratio}"
+            )
+
+        if not (0.0 <= self.commission_rate <= 0.1):
+            raise ValueError(
+                f"commission_rate must be between 0.0 and 0.1, got {self.commission_rate}"
+            )
+
+        if not (0.0 <= self.slippage_bps <= 100.0):
+            raise ValueError(
+                f"slippage_bps must be between 0.0 and 100.0, got {self.slippage_bps}"
+            )
+
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> StrategyManagerConfig:
         """Create config from dict with validation.
@@ -125,6 +156,10 @@ class StrategyManagerConfig:
         dedupe_scope = data.get("dedupe_scope", "direction")
         parallel_entries = data.get("parallel_entries", True)
         parallel_exits = data.get("parallel_exits", True)
+        cost_filter_enabled = data.get("cost_filter_enabled", True)
+        min_atr_cost_ratio = data.get("min_atr_cost_ratio", 1.5)
+        commission_rate = data.get("commission_rate", 0.003)
+        slippage_bps = data.get("slippage_bps", 1.5)
 
         # Type validation
         if not isinstance(min_confidence, (int, float)):
@@ -135,6 +170,18 @@ class StrategyManagerConfig:
             raise TypeError(
                 f"dedupe_window_seconds must be numeric, got {type(dedupe_window)}"
             )
+        if not isinstance(min_atr_cost_ratio, (int, float)):
+            raise TypeError(
+                f"min_atr_cost_ratio must be numeric, got {type(min_atr_cost_ratio)}"
+            )
+        if not isinstance(commission_rate, (int, float)):
+            raise TypeError(
+                f"commission_rate must be numeric, got {type(commission_rate)}"
+            )
+        if not isinstance(slippage_bps, (int, float)):
+            raise TypeError(
+                f"slippage_bps must be numeric, got {type(slippage_bps)}"
+            )
 
         return cls(
             min_confidence=float(min_confidence),
@@ -143,6 +190,10 @@ class StrategyManagerConfig:
             dedupe_window_seconds=float(dedupe_window),
             parallel_entries=bool(parallel_entries),
             parallel_exits=bool(parallel_exits),
+            cost_filter_enabled=bool(cost_filter_enabled),
+            min_atr_cost_ratio=float(min_atr_cost_ratio),
+            commission_rate=float(commission_rate),
+            slippage_bps=float(slippage_bps),
         )
 
 
@@ -199,9 +250,26 @@ class StrategyManager:
         # Signal deduplication cache
         self._recent_signals: dict[str, datetime] = {}
 
+        # Initialize cost filter
+        if self.config.cost_filter_enabled:
+            cost_filter_config = CostFilterConfig(
+                min_atr_cost_ratio=self.config.min_atr_cost_ratio,
+                commission_rate=self.config.commission_rate,
+                slippage_bps=self.config.slippage_bps,
+            )
+            self.cost_filter = CostFilter(cost_filter_config)
+        else:
+            self.cost_filter = None
+
+        # LLM context provider for market analysis
+        self._llm_context_provider = LLMContextProvider(asset_class=asset_class)
+
+        # Throttle for cycle summary logging (every 60s)
+        self._last_cycle_log_time: float = 0.0
+
         logger.info(
             f"StrategyManager initialized: {len(self.strategies)} strategies "
-            f"for {asset_class}"
+            f"for {asset_class}, cost_filter={'enabled' if self.cost_filter else 'disabled'}"
         )
 
     def _load_strategies(self, strategy_names: list[str] | None):
@@ -264,6 +332,18 @@ class StrategyManager:
         if not self.strategies:
             return []
 
+        # Fetch LLM market context and inject into EntryContext
+        market_context = self._llm_context_provider.get_context()
+        context.market_context = market_context
+
+        if market_context:
+            logger.debug(
+                f"LLM market context injected: regime={market_context.regime}, "
+                f"risk_score={market_context.risk_score:.2f}"
+            )
+        else:
+            logger.debug("No LLM market context available - strategies will proceed without it")
+
         signals = []
 
         if self.config.parallel_entries:
@@ -286,12 +366,22 @@ class StrategyManager:
 
         # Filter and deduplicate
         signals = self._filter_signals(signals)
+        signals = self._filter_by_cost(signals, context)
         signals = self._dedupe_signals(signals)
 
         if signals:
             logger.info(
                 f"Entry signals: {len(signals)} from {len(self.strategies)} strategies"
             )
+
+        # Throttled cycle summary (every 60s) — helps diagnose silent periods
+        now_mono = time.monotonic()
+        if now_mono - self._last_cycle_log_time >= 60.0:
+            strategy_names = ", ".join(self.strategies.keys())
+            logger.info(
+                f"Signal cycle: {len(signals)} signals from [{strategy_names}]"
+            )
+            self._last_cycle_log_time = now_mono
 
         return signals
 
@@ -338,6 +428,17 @@ class StrategyManager:
         if not positions or not self.strategies:
             return []
 
+        # Fetch LLM market context and inject into ExitContext
+        market_context = self._llm_context_provider.get_context()
+
+        if market_context:
+            logger.debug(
+                f"LLM market context injected for exits: regime={market_context.regime}, "
+                f"risk_score={market_context.risk_score:.2f}"
+            )
+        else:
+            logger.debug("No LLM market context available for exits - strategies will proceed without it")
+
         # Pre-group positions by strategy (O(n) instead of O(n*m))
         positions_by_strategy: dict[str, list[Position]] = {}
         for position in positions:
@@ -356,6 +457,7 @@ class StrategyManager:
                     positions_by_strategy.get(strategy.name, []),
                     market_data,
                     market_state,
+                    market_context,
                 )
                 for strategy in self.strategies.values()
             ]
@@ -368,7 +470,7 @@ class StrategyManager:
             for strategy in self.strategies.values():
                 strategy_positions = positions_by_strategy.get(strategy.name, [])
                 result = await self._check_exits_safe(
-                    strategy, strategy_positions, market_data, market_state
+                    strategy, strategy_positions, market_data, market_state, market_context
                 )
                 signals.extend(result)
 
@@ -388,6 +490,7 @@ class StrategyManager:
         strategy_positions: list[Position],
         market_data: dict[str, Any],
         market_state: MarketStateProtocol | None,
+        market_context: MarketContext | None,
     ) -> list[ExitSignal]:
         """Check exits with exception handling.
 
@@ -396,6 +499,7 @@ class StrategyManager:
             strategy_positions: Pre-filtered positions for this strategy
             market_data: Current market data
             market_state: Market regime
+            market_context: LLM-derived market analysis context
 
         Returns:
             List of exit signals
@@ -420,6 +524,7 @@ class StrategyManager:
                     position=position,
                     market_data=market_data,
                     market_state=market_state,
+                    market_context=market_context,
                     timestamp=datetime.now(),
                 )
                 should_exit, signal = await strategy.check_exit(context)
@@ -435,6 +540,48 @@ class StrategyManager:
     def _filter_signals(self, signals: list[Signal]) -> list[Signal]:
         """Filter signals by confidence threshold"""
         return [s for s in signals if s.confidence >= self.config.min_confidence]
+
+    def _filter_by_cost(
+        self, signals: list[Signal], context: EntryContext
+    ) -> list[Signal]:
+        """Filter signals by cost-aware edge threshold.
+
+        Args:
+            signals: Signals to filter
+            context: Entry context with market data and indicators
+
+        Returns:
+            Filtered signals that pass cost filter
+        """
+        if not self.cost_filter:
+            return signals
+
+        filtered = []
+        for signal in signals:
+            # EntryContext market_data/indicators may be either:
+            # 1) symbol-scoped flat payloads (orchestrator hot path), or
+            # 2) symbol-keyed nested dicts (some tests/backtests).
+            indicators = self._resolve_symbol_payload(context.indicators, signal.code)
+            market_data = self._resolve_symbol_payload(context.market_data, signal.code)
+            price = market_data.get("close") or market_data.get("price", 0.0)
+
+            # Check cost filter
+            passed, reason = self.cost_filter.check_signal(signal, indicators, price)
+
+            if passed:
+                filtered.append(signal)
+            else:
+                logger.info(f"Cost filter rejected {signal.code}: {reason}")
+
+        return filtered
+
+    @staticmethod
+    def _resolve_symbol_payload(payload: dict[str, Any], symbol: str) -> dict[str, Any]:
+        """Resolve symbol-specific nested payloads while preserving flat contexts."""
+        candidate = payload.get(symbol)
+        if isinstance(candidate, dict):
+            return candidate
+        return payload
 
     def _dedupe_signals(self, signals: list[Signal]) -> list[Signal]:
         """Deduplicate signals by symbol"""
@@ -504,10 +651,16 @@ class StrategyManager:
 
     def get_stats(self) -> dict[str, Any]:
         """Get manager statistics"""
-        return {
+        stats = {
             "asset_class": self.asset_class,
             "strategy_count": len(self.strategies),
             "strategies": list(self.strategies.keys()),
             "required_indicators": self.required_indicators,
             "recent_signals_cached": len(self._recent_signals),
         }
+
+        # Add cost filter stats if enabled
+        if self.cost_filter:
+            stats["cost_filter"] = self.cost_filter.get_stats()
+
+        return stats

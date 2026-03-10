@@ -16,12 +16,12 @@ from services.trading.indicator_engine import StreamingIndicatorEngine
 def _build_warm_mtf_engine(
     symbol: str = "005930",
     timeframe: int = 5,
-    num_1m_candles: int = 250,
+    num_1m_candles: int = 260,
 ) -> StreamingIndicatorEngine:
     """Build an engine with enough 1m candles to produce warm MTF candles.
 
-    For 5-minute timeframe: 250 1m candles → 50 5m candles
-    For 15-minute timeframe: 250 1m candles → 16 15m candles (need more for 50)
+    For 5-minute timeframe: 260 1m candles → 51 5m candles (>=50 required)
+    For 15-minute timeframe: 260 1m candles → 17 15m candles (need more for 50)
 
     Args:
         symbol: Symbol to warm up.
@@ -79,7 +79,7 @@ class TestMomentumIndicatorsTRIX:
 
     def test_get_momentum_indicators_trix_present(self):
         """TRIX and TRIX signal should be present in momentum indicators."""
-        engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=250)
+        engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=260)
         indicators = engine.get_momentum_indicators("005930", timeframe=5)
 
         assert "trix" in indicators
@@ -91,7 +91,7 @@ class TestMomentumIndicatorsTRIX:
         """TRIX values should be finite numbers."""
         import math
 
-        engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=250)
+        engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=260)
         indicators = engine.get_momentum_indicators("005930", timeframe=5)
 
         assert math.isfinite(indicators["trix"])
@@ -102,7 +102,7 @@ class TestMomentumIndicatorsTRIX:
 
         For consistently rising prices, TRIX should eventually be positive.
         """
-        engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=250)
+        engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=260)
         indicators = engine.get_momentum_indicators("005930", timeframe=5)
 
         # With steadily increasing prices (base + minute*10), TRIX should be positive
@@ -117,7 +117,7 @@ class TestMomentumIndicatorsCCI:
 
     def test_get_momentum_indicators_cci_present(self):
         """CCI should be present in momentum indicators."""
-        engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=250)
+        engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=260)
         indicators = engine.get_momentum_indicators("005930", timeframe=5)
 
         assert "cci" in indicators
@@ -127,7 +127,7 @@ class TestMomentumIndicatorsCCI:
         """CCI should be a finite number."""
         import math
 
-        engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=250)
+        engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=260)
         indicators = engine.get_momentum_indicators("005930", timeframe=5)
 
         assert math.isfinite(indicators["cci"])
@@ -138,7 +138,7 @@ class TestMomentumIndicatorsCCI:
         For normal market conditions, CCI should be within reasonable bounds.
         Extreme values (>500 or <-500) would indicate calculation issues.
         """
-        engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=250)
+        engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=260)
         indicators = engine.get_momentum_indicators("005930", timeframe=5)
 
         # Sanity check: CCI shouldn't be absurdly large for normal data
@@ -152,7 +152,7 @@ class TestMomentumIndicatorsMACD:
 
     def test_get_momentum_indicators_macd_present(self):
         """MACD line, signal, and oscillator should be present."""
-        engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=250)
+        engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=260)
         indicators = engine.get_momentum_indicators("005930", timeframe=5)
 
         assert "macd_line" in indicators
@@ -163,7 +163,7 @@ class TestMomentumIndicatorsMACD:
         """All MACD values should be finite numbers."""
         import math
 
-        engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=250)
+        engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=260)
         indicators = engine.get_momentum_indicators("005930", timeframe=5)
 
         assert math.isfinite(indicators["macd_line"])
@@ -172,7 +172,7 @@ class TestMomentumIndicatorsMACD:
 
     def test_macd_oscillator_is_difference(self):
         """MACD oscillator should equal MACD line minus MACD signal."""
-        engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=250)
+        engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=260)
         indicators = engine.get_momentum_indicators("005930", timeframe=5)
 
         calculated_osc = indicators["macd_line"] - indicators["macd_signal"]
@@ -186,7 +186,7 @@ class TestMomentumIndicatorsMACD:
 
         MACD = EMA(12) - EMA(26). For steadily rising prices, fast EMA > slow EMA.
         """
-        engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=250)
+        engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=260)
         indicators = engine.get_momentum_indicators("005930", timeframe=5)
 
         # With steadily increasing prices, MACD line should be positive
@@ -200,7 +200,7 @@ class TestMomentumIndicatorsStochastic:
 
     def test_get_momentum_indicators_stochastic_present(self):
         """Stochastic %K and %D should be present."""
-        engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=250)
+        engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=260)
         indicators = engine.get_momentum_indicators("005930", timeframe=5)
 
         assert "sto_k" in indicators
@@ -208,7 +208,7 @@ class TestMomentumIndicatorsStochastic:
 
     def test_stochastic_range_0_to_100(self):
         """Stochastic %K and %D should be in range [0, 100]."""
-        engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=250)
+        engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=260)
         indicators = engine.get_momentum_indicators("005930", timeframe=5)
 
         assert 0 <= indicators["sto_k"] <= 100, (
@@ -224,7 +224,7 @@ class TestMomentumIndicatorsStochastic:
         %K = (close - lowest_low) / (highest_high - lowest_low) * 100
         In an uptrend, close is near highest_high, so %K should be high.
         """
-        engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=250)
+        engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=260)
         indicators = engine.get_momentum_indicators("005930", timeframe=5)
 
         # For steadily rising prices, stochastic should be elevated
@@ -238,7 +238,7 @@ class TestMomentumIndicatorsOtherIndicators:
 
     def test_obv_present(self):
         """On-Balance Volume should be present."""
-        engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=250)
+        engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=260)
         indicators = engine.get_momentum_indicators("005930", timeframe=5)
 
         assert "obv" in indicators
@@ -246,7 +246,7 @@ class TestMomentumIndicatorsOtherIndicators:
 
     def test_rsi_present_and_in_range(self):
         """RSI should be present and in range [0, 100]."""
-        engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=250)
+        engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=260)
         indicators = engine.get_momentum_indicators("005930", timeframe=5)
 
         assert "rsi" in indicators
@@ -256,7 +256,7 @@ class TestMomentumIndicatorsOtherIndicators:
 
     def test_williams_r_present_and_in_range(self):
         """Williams %R should be present and in range [-100, 0]."""
-        engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=250)
+        engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=260)
         indicators = engine.get_momentum_indicators("005930", timeframe=5)
 
         assert "williams_r" in indicators
@@ -270,7 +270,7 @@ class TestMomentumIndicatorsMetadata:
 
     def test_includes_timeframe(self):
         """Result should include timeframe metadata."""
-        engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=250)
+        engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=260)
         indicators = engine.get_momentum_indicators("005930", timeframe=5)
 
         assert "timeframe" in indicators
@@ -278,7 +278,7 @@ class TestMomentumIndicatorsMetadata:
 
     def test_includes_candle_count(self):
         """Result should include candle count metadata."""
-        engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=250)
+        engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=260)
         indicators = engine.get_momentum_indicators("005930", timeframe=5)
 
         assert "candle_count" in indicators
@@ -286,7 +286,7 @@ class TestMomentumIndicatorsMetadata:
 
     def test_includes_dataframe(self):
         """Result should include full DataFrame for advanced analysis."""
-        engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=250)
+        engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=260)
         indicators = engine.get_momentum_indicators("005930", timeframe=5)
 
         assert "df" in indicators
@@ -348,9 +348,9 @@ class TestMomentumIndicatorsWarmup:
 
     def test_momentum_succeeds_with_sufficient_data(self):
         """Non-empty dict when candle count >= min_candles."""
-        engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=250)
+        engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=260)
 
-        # 250 1m candles → 50 5m candles, equals default min_candles=50
+        # 260 1m candles → 51 5m candles, exceeds default min_candles=50
         indicators = engine.get_momentum_indicators("005930", timeframe=5, min_candles=50)
 
         assert indicators != {}, "Should return indicators when sufficient data"
@@ -358,9 +358,9 @@ class TestMomentumIndicatorsWarmup:
 
     def test_custom_min_candles_threshold(self):
         """Respect custom min_candles parameter."""
-        engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=100)
+        engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=105)
 
-        # 100 1m candles → 20 5m candles
+        # 105 1m candles → 21 5m candles
         # Should succeed with min_candles=20, fail with min_candles=50
         indicators_low_threshold = engine.get_momentum_indicators(
             "005930", timeframe=5, min_candles=20
@@ -378,7 +378,7 @@ class TestMomentumIndicatorsCaching:
 
     def test_caches_result_by_symbol_timeframe(self):
         """Results should be cached by (symbol, timeframe) key."""
-        engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=250)
+        engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=260)
 
         # First call computes
         indicators1 = engine.get_momentum_indicators("005930", timeframe=5)
@@ -391,7 +391,7 @@ class TestMomentumIndicatorsCaching:
 
     def test_cache_invalidates_on_new_candle(self):
         """Cache should invalidate when new candles are added."""
-        engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=250)
+        engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=260)
 
         indicators1 = engine.get_momentum_indicators("005930", timeframe=5)
         candle_count1 = indicators1["candle_count"]
@@ -433,7 +433,7 @@ class TestMomentumIndicatorsErrorHandling:
 
     def test_empty_on_unregistered_timeframe(self):
         """Empty dict when timeframe not in mtf_timeframes."""
-        engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=250)
+        engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=260)
 
         # Request 15m timeframe, but only 5m is registered
         indicators = engine.get_momentum_indicators("005930", timeframe=15)
@@ -444,7 +444,7 @@ class TestMomentumIndicatorsErrorHandling:
 
     def test_handles_calculation_errors_gracefully(self):
         """Should return empty dict on calculation errors (logged, not raised)."""
-        engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=250)
+        engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=260)
 
         # Artificially corrupt data to trigger calculation error
         # (This is a design test - normal data shouldn't error, but we verify graceful handling)
@@ -460,7 +460,7 @@ class TestMomentumIndicatorsCustomParameters:
 
     def test_custom_trix_parameters(self):
         """Custom TRIX parameters should be respected."""
-        engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=250)
+        engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=260)
 
         # Use non-default parameters
         indicators = engine.get_momentum_indicators(
@@ -476,7 +476,7 @@ class TestMomentumIndicatorsCustomParameters:
 
     def test_custom_cci_period(self):
         """Custom CCI period should be respected."""
-        engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=250)
+        engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=260)
 
         indicators = engine.get_momentum_indicators(
             "005930",
@@ -488,7 +488,7 @@ class TestMomentumIndicatorsCustomParameters:
 
     def test_custom_macd_parameters(self):
         """Custom MACD parameters should be respected."""
-        engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=250)
+        engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=260)
 
         indicators = engine.get_momentum_indicators(
             "005930",
@@ -504,7 +504,7 @@ class TestMomentumIndicatorsCustomParameters:
 
     def test_custom_stochastic_parameters(self):
         """Custom Stochastic parameters should be respected."""
-        engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=250)
+        engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=260)
 
         indicators = engine.get_momentum_indicators(
             "005930",
@@ -523,7 +523,7 @@ class TestMomentumIndicatorsMultipleTimeframes:
 
     def test_5_minute_timeframe(self):
         """5-minute timeframe should work correctly."""
-        engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=250)
+        engine = _build_warm_mtf_engine(timeframe=5, num_1m_candles=260)
         indicators = engine.get_momentum_indicators("005930", timeframe=5)
 
         assert indicators != {}
@@ -531,8 +531,8 @@ class TestMomentumIndicatorsMultipleTimeframes:
 
     def test_15_minute_timeframe(self):
         """15-minute timeframe should work correctly."""
-        # 750 1m candles → 50 15m candles
-        engine = _build_warm_mtf_engine(timeframe=15, num_1m_candles=750)
+        # 760 1m candles → 50 15m candles
+        engine = _build_warm_mtf_engine(timeframe=15, num_1m_candles=760)
         indicators = engine.get_momentum_indicators("005930", timeframe=15)
 
         assert indicators != {}
@@ -546,7 +546,7 @@ class TestMomentumIndicatorsMultipleTimeframes:
         # Build data for two symbols
         for symbol in ["SYMBOL_A", "SYMBOL_B"]:
             cumulative = 0
-            for minute in range(250):
+            for minute in range(260):
                 ts = datetime(2026, 2, 17, 9 + minute // 60, minute % 60, 30)
                 price = 100.0 if symbol == "SYMBOL_A" else 200.0
                 cumulative += 1000
@@ -560,9 +560,9 @@ class TestMomentumIndicatorsMultipleTimeframes:
             cumulative += 1000
             engine.on_tick(
                 symbol,
-                {"close": price + 250, "high": price + 260, "low": price + 240,
+                {"close": price + 260, "high": price + 270, "low": price + 250,
                  "volume": cumulative},
-                datetime(2026, 2, 17, 9 + 250 // 60, 250 % 60, 31),
+                datetime(2026, 2, 17, 9 + 260 // 60, 260 % 60, 31),
             )
 
         indicators_a = engine.get_momentum_indicators("SYMBOL_A", timeframe=5)

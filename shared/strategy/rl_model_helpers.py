@@ -146,7 +146,10 @@ def build_rl_observation(
     market_features = []
     missing_features = []
     for col in RL_FEATURE_COLUMNS:
-        val = indicators.get(col, market_data.get(col, derived.get(col)))
+        # Prefer rl_-prefixed key (normalized RL feature) over base indicator
+        # e.g. rl_atr (ATR/close, normalized) vs atr (raw absolute ATR)
+        rl_key = f"rl_{col}"
+        val = indicators.get(rl_key, indicators.get(col, market_data.get(col, derived.get(col))))
         if val is None:
             missing_features.append(col)
             market_features.append(0.0)

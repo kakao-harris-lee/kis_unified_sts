@@ -665,7 +665,7 @@ def test_backtest_slippage_impact_on_winrate():
                 self.trade_count += 1
                 return SignalType.BUY if self.trade_count % 2 == 1 else SignalType.SELL
             elif self.bar_count % 10 == 6 and self.position is not None:
-                return SignalType.SELL if self.position.side == "BUY" else SignalType.BUY
+                return SignalType.SELL if self.position.get("side", "BUY") == "BUY" else SignalType.BUY
             return SignalType.HOLD
 
     # Create test data with some volatility

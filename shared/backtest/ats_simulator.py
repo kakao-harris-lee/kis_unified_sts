@@ -41,44 +41,9 @@ from typing import Any, Literal
 
 import numpy as np
 
+from shared.execution.config import ATSSimulationConfig
+
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class ATSSimulationConfig:
-    """Configuration for ATS simulation in backtests.
-
-    Attributes:
-        ats_fill_rate: Average fill rate for ATS orders (0.0-1.0)
-        price_improvement_mean_bps: Mean price improvement in basis points
-        price_improvement_std_bps: Standard deviation of price improvement
-        latency_penalty_ms: Additional execution latency for ATS (milliseconds)
-    """
-
-    ats_fill_rate: float = 0.65
-    price_improvement_mean_bps: float = 3.0
-    price_improvement_std_bps: float = 2.0
-    latency_penalty_ms: float = 15.0
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> ATSSimulationConfig:
-        """Create config from dictionary (YAML loader).
-
-        Args:
-            data: Configuration dictionary
-
-        Returns:
-            ATSSimulationConfig instance
-        """
-        if not isinstance(data, dict):
-            return cls()
-
-        return cls(
-            ats_fill_rate=float(data.get("ats_fill_rate", 0.65)),
-            price_improvement_mean_bps=float(data.get("price_improvement_mean_bps", 3.0)),
-            price_improvement_std_bps=float(data.get("price_improvement_std_bps", 2.0)),
-            latency_penalty_ms=float(data.get("latency_penalty_ms", 15.0)),
-        )
 
 
 @dataclass
@@ -153,10 +118,9 @@ class ATSSimulator:
         self.price_improvement_std_bps = price_improvement_std_bps
         self.latency_penalty_ms = latency_penalty_ms
 
-        # Set random seed for reproducibility
-        if random_seed is not None:
-            random.seed(random_seed)
-            np.random.seed(random_seed)
+        # Instance-level RNG to avoid mutating global random state
+        self._rng = random.Random(random_seed)
+        self._np_rng = np.random.default_rng(random_seed)
 
         logger.info(
             f"ATSSimulator initialized: fill_rate={ats_fill_rate:.1%}, "
@@ -329,7 +293,7 @@ class ATSSimulator:
             FillResult
         """
         # Simulate fill probability
-        fill_random = random.random()
+        fill_random = self._rng.random()
         filled = fill_random < self.ats_fill_rate
 
         if not filled:
@@ -342,7 +306,7 @@ class ATSSimulator:
             )
 
         # Sample price improvement from normal distribution
-        price_improvement_sample_bps = np.random.normal(
+        price_improvement_sample_bps = self._np_rng.normal(
             self.price_improvement_mean_bps,
             self.price_improvement_std_bps,
         )
@@ -395,7 +359,7 @@ class ATSSimulator:
             return base_price
 
         # ATS: apply sampled price improvement
-        price_improvement_bps = np.random.normal(
+        price_improvement_bps = self._np_rng.normal(
             self.price_improvement_mean_bps,
             self.price_improvement_std_bps,
         )
