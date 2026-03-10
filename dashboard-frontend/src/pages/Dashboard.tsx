@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { tradingApi, tradesApi } from '../api/client';
+import { tradingApi } from '../api/client';
 import StatusCard from '../components/StatusCard';
 import StatCard from '../components/StatCard';
 import ErrorMessage from '../components/ErrorMessage';
@@ -12,17 +12,13 @@ interface TradingStatus {
   is_running: boolean;
   market_status: string;
   active_strategies: string[];
-  last_update: string;
-}
-
-interface TradeStats {
-  total_trades: number;
-  winning_trades: number;
-  losing_trades: number;
-  win_rate: number;
+  total_positions: number;
   total_pnl: number;
-  avg_pnl: number;
-  profit_factor: number;
+  unrealized_pnl: number;
+  closed_trades: number;
+  closed_pnl: number;
+  closed_win_rate: number;
+  last_update: string;
 }
 
 function Dashboard() {
@@ -43,18 +39,6 @@ function Dashboard() {
     refetchInterval: 10000, // Auto-refresh every 10 seconds
   });
 
-  const {
-    data: stats,
-    isLoading: statsLoading,
-    errorMessage: statsError,
-    refetch: refetchStats,
-    dataUpdatedAt: statsUpdatedAt,
-    isFetching: statsFetching,
-  } = useQueryWithError<TradeStats>({
-    queryKey: ['trade-stats'],
-    queryFn: () => tradesApi.getStatistics().then((r) => r.data),
-    refetchInterval: 10000, // Auto-refresh every 10 seconds
-  });
 
   const startTradingMutation = useMutation({
     mutationFn: () => tradingApi.startTrading(),
@@ -151,68 +135,51 @@ function Dashboard() {
             loading={statusLoading}
           />
           <StatusCard
-            title="Market Status"
+            title="Market Regime"
             value={status?.market_status || 'Unknown'}
-            status={status?.market_status === 'open' ? 'success' : 'neutral'}
+            status={status?.market_status?.includes('BULL') ? 'success' : status?.market_status?.includes('BEAR') ? 'warning' : 'neutral'}
+            loading={statusLoading}
+          />
+          <StatusCard
+            title="Open Positions"
+            value={String(status?.total_positions ?? 0)}
             loading={statusLoading}
           />
           <StatusCard
             title="Active Strategies"
-            value={String(status?.active_strategies?.length || 0)}
-            loading={statusLoading}
-          />
-          <StatusCard
-            title="Last Update"
-            value={
-              status?.last_update
-                ? new Date(status.last_update).toLocaleTimeString()
-                : '-'
-            }
+            value={`${status?.active_strategies?.length || 0} (${status?.active_strategies?.join(', ') || '-'})`}
             loading={statusLoading}
           />
         </div>
       </div>
 
-      {/* Stats Section */}
+      {/* Session Performance */}
       <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <h2 className="text-xl font-semibold">Performance Statistics</h2>
-          <RefreshIndicator
-            lastUpdated={statsUpdatedAt}
-            isRefreshing={statsFetching}
-          />
-        </div>
-
-        {statsError && (
-          <ErrorMessage
-            message={statsError}
-            onRetry={() => refetchStats()}
-          />
-        )}
+        <h2 className="text-xl font-semibold">Session Performance</h2>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           <StatCard
-            title="Total Trades"
-            value={stats?.total_trades || 0}
-            loading={statsLoading}
+            title="Unrealized P&L"
+            value={`${(status?.unrealized_pnl ?? 0) >= 0 ? '+' : ''}${Math.round(status?.unrealized_pnl ?? 0).toLocaleString()}`}
+            loading={statusLoading}
+            variant={(status?.unrealized_pnl ?? 0) > 0 ? 'positive' : (status?.unrealized_pnl ?? 0) < 0 ? 'negative' : 'neutral'}
           />
           <StatCard
-            title="Win Rate"
-            value={`${((stats?.win_rate || 0) * 100).toFixed(1)}%`}
-            loading={statsLoading}
-            variant={stats?.win_rate && stats.win_rate > 0.5 ? 'positive' : stats?.win_rate ? 'negative' : 'neutral'}
+            title="Realized P&L"
+            value={`${(status?.closed_pnl ?? 0) >= 0 ? '+' : ''}${Math.round(status?.closed_pnl ?? 0).toLocaleString()}`}
+            loading={statusLoading}
+            variant={(status?.closed_pnl ?? 0) > 0 ? 'positive' : (status?.closed_pnl ?? 0) < 0 ? 'negative' : 'neutral'}
           />
           <StatCard
-            title="Total P&L"
-            value={`${(stats?.total_pnl || 0).toFixed(2)}%`}
-            loading={statsLoading}
-            variant={stats?.total_pnl && stats.total_pnl > 0 ? 'positive' : stats?.total_pnl && stats.total_pnl < 0 ? 'negative' : 'neutral'}
+            title="Closed Trades"
+            value={status?.closed_trades ?? 0}
+            loading={statusLoading}
           />
           <StatCard
-            title="Profit Factor"
-            value={(stats?.profit_factor || 0).toFixed(2)}
-            loading={statsLoading}
-            variant={stats?.profit_factor && stats.profit_factor > 1 ? 'positive' : stats?.profit_factor && stats.profit_factor < 1 ? 'negative' : 'neutral'}
+            title="Win Rate (Closed)"
+            value={`${(status?.closed_win_rate ?? 0).toFixed(1)}%`}
+            loading={statusLoading}
+            variant={(status?.closed_win_rate ?? 0) > 50 ? 'positive' : (status?.closed_win_rate ?? 0) > 0 ? 'negative' : 'neutral'}
           />
         </div>
       </div>

@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const API_BASE = import.meta.env.VITE_API_URL || '';
 
 export const apiClient = axios.create({
   baseURL: API_BASE,
@@ -38,11 +38,11 @@ export const tradesApi = {
     apiClient.get('/api/trades', { params }),
   getStatistics: () => apiClient.get('/api/trades/statistics'),
   getByStrategy: () => apiClient.get('/api/trades/by-strategy'),
-  // ClickHouse DB endpoints
-  getDbTrades: (params?: { strategy?: string; limit?: number }) =>
-    apiClient.get('/api/trades/db', { params }),
-  getDbStatistics: () => apiClient.get('/api/trades/db/statistics'),
-  getDbOpenPositions: () => apiClient.get('/api/trades/db/open'),
+  // ClickHouse RL endpoints
+  getRlStatistics: (params?: { asset_class?: string; strategy?: string }) =>
+    apiClient.get('/api/trades/rl/statistics', { params }),
+  getRlTrades: (params?: { asset_class?: string; strategy?: string; limit?: number }) =>
+    apiClient.get('/api/trades/rl', { params }),
 };
 
 // Backtest API

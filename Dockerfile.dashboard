@@ -1,9 +1,19 @@
 # Dockerfile.dashboard
-# Dashboard API specific build
+# Multi-stage: React frontend build + Python API server
+
+# Stage 1: Build React frontend
+FROM node:20-slim AS frontend
+WORKDIR /app/frontend
+COPY dashboard-frontend/package.json dashboard-frontend/package-lock.json* ./
+RUN npm install --production=false
+COPY dashboard-frontend/ .
+RUN npm run build
+
+# Stage 2: Python API server + static files
 FROM python:3.11-slim
 
 LABEL maintainer="harris"
-LABEL description="KIS Trading Dashboard API"
+LABEL description="KIS Trading Dashboard (React SPA + FastAPI)"
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -26,6 +36,9 @@ RUN pip install --upgrade pip && pip install .
 
 # Copy remaining files
 COPY config/ ./config/
+
+# Copy React build output from Stage 1
+COPY --from=frontend /app/frontend/dist /app/static
 
 RUN useradd -m -u 1000 appuser && \
     chown -R appuser:appuser /app

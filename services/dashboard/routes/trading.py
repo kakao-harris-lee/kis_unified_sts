@@ -19,6 +19,10 @@ class TradingStatus(BaseModel):
     active_strategies: List[str]
     total_positions: int
     total_pnl: float
+    unrealized_pnl: float
+    closed_trades: int
+    closed_pnl: float
+    closed_win_rate: float
     last_update: datetime
 
 
@@ -61,6 +65,10 @@ async def get_trading_status():
             active_strategies=[],
             total_positions=0,
             total_pnl=0.0,
+            unrealized_pnl=0.0,
+            closed_trades=0,
+            closed_pnl=0.0,
+            closed_win_rate=0.0,
             last_update=datetime.now(),
         )
 
@@ -109,6 +117,10 @@ async def get_trading_status():
         active_strategies=strategies,
         total_positions=positions.get("open_positions", 0) if isinstance(positions, dict) else 0,
         total_pnl=float(stats.get("total_pnl", 0)),
+        unrealized_pnl=float(positions.get("unrealized_pnl", 0)) if isinstance(positions, dict) else 0.0,
+        closed_trades=int(positions.get("closed_count", 0)) if isinstance(positions, dict) else 0,
+        closed_pnl=float(positions.get("closed_pnl", 0)) if isinstance(positions, dict) else 0.0,
+        closed_win_rate=float(positions.get("closed_win_rate", 0)) if isinstance(positions, dict) else 0.0,
         last_update=datetime.fromisoformat(start_time) if start_time else datetime.now(),
     )
 

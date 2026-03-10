@@ -11,12 +11,13 @@ import {
   BarChart,
   Bar,
 } from 'recharts';
-import { tradesApi } from '../api/client';
+import { tradingApi, tradesApi } from '../api/client';
 import TableSkeleton from '../components/TableSkeleton';
 import RefreshIndicator from '../components/RefreshIndicator';
 import ErrorMessage from '../components/ErrorMessage';
 import SideBadge from '../components/SideBadge';
 import StatCard from '../components/StatCard';
+import StrategySelect from '../components/StrategySelect';
 
 interface Trade {
   id: string;
@@ -150,16 +151,7 @@ function LiveTab() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <select
-          value={strategyFilter}
-          onChange={(e) => setStrategyFilter(e.target.value)}
-          className="bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm"
-        >
-          <option value="">All Strategies</option>
-          <option value="bb_reversion">BB Reversion</option>
-          <option value="volume_accumulation">Volume Accumulation</option>
-          <option value="opening_volume_surge">Opening Volume Surge</option>
-        </select>
+        <StrategySelect value={strategyFilter} onChange={setStrategyFilter} />
         <div className="flex items-center gap-4">
           <RefreshIndicator
             lastUpdated={tradesUpdatedAt}
@@ -257,32 +249,32 @@ function LiveTab() {
                   </div>
                   <div>
                     <div className="text-gray-400">Entry Price</div>
-                    <div className="font-medium">{trade.entry_price.toLocaleString()}</div>
+                    <div className="font-medium">{(trade.entry_price ?? 0).toLocaleString()}</div>
                   </div>
                   <div>
                     <div className="text-gray-400">Exit Price</div>
-                    <div className="font-medium">{trade.exit_price.toLocaleString()}</div>
+                    <div className="font-medium">{(trade.exit_price ?? 0).toLocaleString()}</div>
                   </div>
                   <div>
                     <div className="text-gray-400">P&L</div>
                     <div
                       className={`font-medium ${
-                        trade.pnl >= 0 ? 'text-green-400' : 'text-red-400'
+                        (trade.pnl ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'
                       }`}
                     >
-                      {trade.pnl >= 0 ? '+' : ''}
-                      {trade.pnl.toLocaleString()}
+                      {(trade.pnl ?? 0) >= 0 ? '+' : ''}
+                      {(trade.pnl ?? 0).toLocaleString()}
                     </div>
                   </div>
                   <div>
                     <div className="text-gray-400">P&L %</div>
                     <div
                       className={`font-medium ${
-                        trade.pnl_pct >= 0 ? 'text-green-400' : 'text-red-400'
+                        (trade.pnl_pct ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'
                       }`}
                     >
-                      {trade.pnl_pct >= 0 ? '+' : ''}
-                      {trade.pnl_pct.toFixed(2)}%
+                      {(trade.pnl_pct ?? 0) >= 0 ? '+' : ''}
+                      {(trade.pnl_pct ?? 0).toFixed(2)}%
                     </div>
                   </div>
                 </div>
@@ -317,23 +309,23 @@ function LiveTab() {
                       <td className="px-4 py-3">
                         <SideBadge side={trade.side} />
                       </td>
-                      <td className="px-4 py-3 text-right">{trade.entry_price.toLocaleString()}</td>
-                      <td className="px-4 py-3 text-right">{trade.exit_price.toLocaleString()}</td>
+                      <td className="px-4 py-3 text-right">{(trade.entry_price ?? 0).toLocaleString()}</td>
+                      <td className="px-4 py-3 text-right">{(trade.exit_price ?? 0).toLocaleString()}</td>
                       <td
                         className={`px-4 py-3 text-right font-medium ${
-                          trade.pnl >= 0 ? 'text-green-400' : 'text-red-400'
+                          (trade.pnl ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'
                         }`}
                       >
-                        {trade.pnl >= 0 ? '+' : ''}
-                        {trade.pnl.toLocaleString()}
+                        {(trade.pnl ?? 0) >= 0 ? '+' : ''}
+                        {(trade.pnl ?? 0).toLocaleString()}
                       </td>
                       <td
                         className={`px-4 py-3 text-right font-medium ${
-                          trade.pnl_pct >= 0 ? 'text-green-400' : 'text-red-400'
+                          (trade.pnl_pct ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'
                         }`}
                       >
-                        {trade.pnl_pct >= 0 ? '+' : ''}
-                        {trade.pnl_pct.toFixed(2)}%
+                        {(trade.pnl_pct ?? 0) >= 0 ? '+' : ''}
+                        {(trade.pnl_pct ?? 0).toFixed(2)}%
                       </td>
                     </tr>
                   ))}
@@ -357,7 +349,10 @@ function HistoryTab() {
     isRefetching: statsRefetching,
   } = useQuery<DbStats>({
     queryKey: ['db-statistics'],
-    queryFn: () => tradesApi.getDbStatistics().then((r) => r.data),
+    queryFn: async () => {
+      const r = await tradesApi.getRlStatistics();
+      return r.data;
+    },
     refetchInterval: 30000,
   });
 
@@ -368,7 +363,10 @@ function HistoryTab() {
     refetch: refetchTrades,
   } = useQuery<DbTrade[]>({
     queryKey: ['db-trades'],
-    queryFn: () => tradesApi.getDbTrades({ limit: 100 }).then((r) => r.data),
+    queryFn: async () => {
+      const r = await tradesApi.getRlTrades({ limit: 100 });
+      return Array.isArray(r.data) ? r.data : [];
+    },
     refetchInterval: 30000,
   });
 
@@ -379,7 +377,7 @@ function HistoryTab() {
     refetch: refetchPositions,
   } = useQuery<DbOpenPosition[]>({
     queryKey: ['db-open-positions'],
-    queryFn: () => tradesApi.getDbOpenPositions().then((r) => r.data),
+    queryFn: () => tradingApi.getPositions().then((r) => Array.isArray(r.data) ? r.data : []),
     refetchInterval: 10000,
   });
 
@@ -441,18 +439,18 @@ function HistoryTab() {
           <StatCard title="Total Trades" value={String(stats.total_trades)} />
           <StatCard
             title="Win Rate"
-            value={`${stats.win_rate.toFixed(1)}%`}
-            variant={stats.win_rate >= 50 ? 'positive' : 'negative'}
+            value={`${(stats.win_rate ?? 0).toFixed(1)}%`}
+            variant={(stats.win_rate ?? 0) >= 50 ? 'positive' : 'negative'}
           />
           <StatCard
             title="Total P&L"
-            value={`${stats.total_pnl >= 0 ? '+' : ''}${stats.total_pnl.toLocaleString()}`}
-            variant={stats.total_pnl >= 0 ? 'positive' : 'negative'}
+            value={`${(stats.total_pnl ?? 0) >= 0 ? '+' : ''}${(stats.total_pnl ?? 0).toLocaleString()}`}
+            variant={(stats.total_pnl ?? 0) >= 0 ? 'positive' : 'negative'}
           />
           <StatCard
             title="Avg P&L"
-            value={`${stats.avg_pnl >= 0 ? '+' : ''}${stats.avg_pnl.toLocaleString()}`}
-            variant={stats.avg_pnl >= 0 ? 'positive' : 'negative'}
+            value={`${(stats.avg_pnl ?? 0) >= 0 ? '+' : ''}${(stats.avg_pnl ?? 0).toLocaleString()}`}
+            variant={(stats.avg_pnl ?? 0) >= 0 ? 'positive' : 'negative'}
           />
         </div>
       )}
@@ -501,7 +499,7 @@ function HistoryTab() {
                   </div>
                   <div>
                     <div className="text-gray-400">Entry Price</div>
-                    <div className="font-medium">{pos.entry_price.toLocaleString()}</div>
+                    <div className="font-medium">{(pos.entry_price ?? 0).toLocaleString()}</div>
                   </div>
                   <div>
                     <div className="text-gray-400">Quantity</div>
@@ -517,11 +515,11 @@ function HistoryTab() {
                   </div>
                   <div>
                     <div className="text-gray-400">High</div>
-                    <div className="font-medium">{pos.high_since_entry.toLocaleString()}</div>
+                    <div className="font-medium">{(pos.high_since_entry ?? 0).toLocaleString()}</div>
                   </div>
                   <div>
                     <div className="text-gray-400">Stop Loss</div>
-                    <div className="font-medium">{pos.stop_loss_price.toLocaleString()}</div>
+                    <div className="font-medium">{(pos.stop_loss_price ?? 0).toLocaleString()}</div>
                   </div>
                 </div>
               </div>
@@ -558,15 +556,15 @@ function HistoryTab() {
                       <td className="px-4 py-3 text-sm text-gray-400">
                         {new Date(pos.entry_date).toLocaleString()}
                       </td>
-                      <td className="px-4 py-3 text-right">{pos.entry_price.toLocaleString()}</td>
+                      <td className="px-4 py-3 text-right">{(pos.entry_price ?? 0).toLocaleString()}</td>
                       <td className="px-4 py-3 text-right">{pos.quantity}</td>
                       <td className="px-4 py-3">
                         <span className="px-2 py-1 rounded text-xs font-medium bg-blue-900 text-blue-300">
                           {pos.current_state}
                         </span>
                       </td>
-                      <td className="px-4 py-3 text-right">{pos.high_since_entry.toLocaleString()}</td>
-                      <td className="px-4 py-3 text-right">{pos.stop_loss_price.toLocaleString()}</td>
+                      <td className="px-4 py-3 text-right">{(pos.high_since_entry ?? 0).toLocaleString()}</td>
+                      <td className="px-4 py-3 text-right">{(pos.stop_loss_price ?? 0).toLocaleString()}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -618,12 +616,12 @@ function HistoryTab() {
                     </div>
                     <div>
                       <div className="text-gray-400">Entry Price</div>
-                      <div className="font-medium">{trade.entry_price.toLocaleString()}</div>
+                      <div className="font-medium">{(trade.entry_price ?? 0).toLocaleString()}</div>
                     </div>
                     <div>
                       <div className="text-gray-400">Exit Price</div>
                       <div className="font-medium">
-                        {trade.exit_price ? trade.exit_price.toLocaleString() : '-'}
+                        {trade.exit_price ? (trade.exit_price ?? 0).toLocaleString() : '-'}
                       </div>
                     </div>
                     <div className="col-span-2">
@@ -634,7 +632,7 @@ function HistoryTab() {
                         }`}
                       >
                         {trade.pnl != null
-                          ? `${trade.pnl >= 0 ? '+' : ''}${trade.pnl.toLocaleString()}`
+                          ? `${(trade.pnl ?? 0) >= 0 ? '+' : ''}${(trade.pnl ?? 0).toLocaleString()}`
                           : '-'}
                       </div>
                     </div>
@@ -672,9 +670,9 @@ function HistoryTab() {
                         <td className="px-4 py-3">
                           <SideBadge side={trade.side} />
                         </td>
-                        <td className="px-4 py-3 text-right">{trade.entry_price.toLocaleString()}</td>
+                        <td className="px-4 py-3 text-right">{(trade.entry_price ?? 0).toLocaleString()}</td>
                         <td className="px-4 py-3 text-right">
-                          {trade.exit_price ? trade.exit_price.toLocaleString() : '-'}
+                          {trade.exit_price ? (trade.exit_price ?? 0).toLocaleString() : '-'}
                         </td>
                         <td
                           className={`px-4 py-3 text-right font-medium ${
@@ -682,7 +680,7 @@ function HistoryTab() {
                           }`}
                         >
                           {trade.pnl != null
-                            ? `${trade.pnl >= 0 ? '+' : ''}${trade.pnl.toLocaleString()}`
+                            ? `${(trade.pnl ?? 0) >= 0 ? '+' : ''}${(trade.pnl ?? 0).toLocaleString()}`
                             : '-'}
                         </td>
                         <td className="px-4 py-3 text-sm text-gray-400">{trade.exit_reason || '-'}</td>
