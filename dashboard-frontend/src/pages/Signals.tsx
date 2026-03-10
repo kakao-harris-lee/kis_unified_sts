@@ -3,6 +3,7 @@ import { signalsApi } from '../api/client';
 import TableSkeleton from '../components/TableSkeleton';
 import RefreshIndicator from '../components/RefreshIndicator';
 import ErrorMessage from '../components/ErrorMessage';
+import StrategySelect from '../components/StrategySelect';
 import useQueryWithError from '../hooks/useQueryWithError';
 import SideBadge from '../components/SideBadge';
 
@@ -59,16 +60,7 @@ function Signals() {
       <div className="flex space-x-4">
         <div>
           <label className="block text-sm text-gray-400 mb-1">Strategy</label>
-          <select
-            value={strategyFilter}
-            onChange={(e) => setStrategyFilter(e.target.value)}
-            className="bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm"
-          >
-            <option value="">All Strategies</option>
-            <option value="bb_reversion">BB Reversion</option>
-            <option value="volume_momentum">Volume Momentum</option>
-            <option value="pure_micro">Pure Micro</option>
-          </select>
+          <StrategySelect value={strategyFilter} onChange={setStrategyFilter} />
         </div>
         <div>
           <label className="block text-sm text-gray-400 mb-1">Side</label>
@@ -140,11 +132,11 @@ function Signals() {
                       <div className="flex-1 bg-gray-700 rounded-full h-2 mr-2">
                         <div
                           className="bg-blue-500 h-2 rounded-full"
-                          style={{ width: `${signal.strength * 100}%` }}
+                          style={{ width: `${(signal.strength ?? 0) * 100}%` }}
                         />
                       </div>
                       <span className="text-sm font-medium">
-                        {(signal.strength * 100).toFixed(0)}%
+                        {((signal.strength ?? 0) * 100).toFixed(0)}%
                       </span>
                     </div>
                   </div>
@@ -201,11 +193,11 @@ function Signals() {
                           <div className="w-16 bg-gray-700 rounded-full h-2 mr-2">
                             <div
                               className="bg-blue-500 h-2 rounded-full"
-                              style={{ width: `${signal.strength * 100}%` }}
+                              style={{ width: `${(signal.strength ?? 0) * 100}%` }}
                             />
                           </div>
                           <span className="text-sm">
-                            {(signal.strength * 100).toFixed(0)}%
+                            {((signal.strength ?? 0) * 100).toFixed(0)}%
                           </span>
                         </div>
                       </td>
