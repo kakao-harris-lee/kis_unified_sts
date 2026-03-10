@@ -3356,8 +3356,7 @@ class TradingOrchestrator:
         try:
             data = await self._get_market_data_snapshot()
             if not data:
-                return None
-
+                logger.debug("Market data snapshot empty, regime from indicator engine only")
             regime = self._classify_market(data)
             self._current_regime = regime
             self._current_regime_confidence = None  # Simple mode doesn't provide confidence
@@ -3377,7 +3376,7 @@ class TradingOrchestrator:
             return {
                 "regime": regime,
                 "timestamp": datetime.now().isoformat(),
-                "symbols_checked": len(data),
+                "symbols_checked": len(data) if data else 0,
             }
 
         except (NetworkError, APIError, InfrastructureError, ValidationError) as e:
@@ -3394,10 +3393,7 @@ class TradingOrchestrator:
         Falls back to simple avg-change heuristic when MFI is not yet available
         (during warmup period).
         """
-        if not market_data:
-            return "UNKNOWN"
-
-        # Try MFI-based classification via MarketClassifier
+        # Try MFI-based classification via MarketClassifier (works even without market_data)
         if self._indicator_engine:
             active = set(self.config.symbols) if self.config.symbols else None
             mfi = self._indicator_engine.get_market_mfi(active)
