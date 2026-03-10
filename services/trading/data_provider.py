@@ -267,6 +267,61 @@ class MarketDataProvider:
             f"TTL={self.config.cache_ttl_seconds}s, mode={self._current_mode.value}"
         )
 
+    async def start_background_tasks(self) -> None:
+        """Start background health monitoring for WebSocket failover.
+
+        Starts the health check loop only when a WebSocket-style data source is
+        available and exposes health-related hooks. Calling this method multiple
+        times is safe.
+        """
+        if self._data_source is None:
+            logger.debug("Failover monitoring skipped: no primary data source configured")
+            return
+
+        supports_health_monitoring = any(
+            hasattr(self._data_source, attr)
+            for attr in ("is_healthy", "get_health_status")
+        )
+        if not supports_health_monitoring:
+            logger.debug(
+                "Failover monitoring skipped: data source has no health hooks"
+            )
+            return
+
+        if self._health_check_task is not None and not self._health_check_task.done():
+            logger.debug("Failover health check already running")
+            return
+
+        self._health_check_task = asyncio.create_task(
+            self._health_check_loop(),
+            name="market_data_provider_health_check",
+        )
+        logger.info("Started MarketDataProvider failover health monitoring")
+
+    async def stop_background_tasks(self) -> None:
+        """Stop health monitoring and fallback polling tasks.
+
+        This is used during orchestrator shutdown to avoid false failover events
+        while feeds are intentionally being torn down.
+        """
+        tasks: list[asyncio.Task[None]] = []
+
+        if self._health_check_task is not None and not self._health_check_task.done():
+            self._health_check_task.cancel()
+            tasks.append(self._health_check_task)
+
+        if self._fallback_poll_task is not None and not self._fallback_poll_task.done():
+            self._fallback_poll_task.cancel()
+            tasks.append(self._fallback_poll_task)
+
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+        self._health_check_task = None
+        self._fallback_poll_task = None
+        self._current_mode = DataSourceMode.WEBSOCKET
+        logger.info("Stopped MarketDataProvider background tasks")
+
     @property
     def current_mode(self) -> DataSourceMode:
         """Get current data source mode (WEBSOCKET or REST_FALLBACK)"""
@@ -382,10 +437,19 @@ class MarketDataProvider:
         """Fetch market data for a batch of symbols"""
         now = datetime.now()
 
-        # Use custom data source if provided (protocol-based)
-        if self._data_source is not None:
+        source_candidates: list[tuple[str, MarketDataSource | Any]] = []
+        if self._current_mode == DataSourceMode.REST_FALLBACK:
+            if self._kis_client is not None:
+                source_candidates.append(("kis_client", self._kis_client))
+        else:
+            if self._data_source is not None:
+                source_candidates.append(("data_source", self._data_source))
+            if self._kis_client is not None:
+                source_candidates.append(("kis_client", self._kis_client))
+
+        for source_name, source in source_candidates:
             try:
-                data = await self._fetch_from_source(symbols, self._data_source)
+                data = await self._fetch_from_source(symbols, source)
                 for symbol, symbol_data in data.items():
                     self._cache[symbol] = MarketDataCache(
                         symbol=symbol,
@@ -393,30 +457,23 @@ class MarketDataProvider:
                         fetched_at=now,
                     )
                 self._last_batch_fetch = now
-                logger.debug(f"Fetched data for {len(symbols)} symbols from data_source")
+                logger.debug(
+                    "Fetched data for %d symbols from %s (mode=%s)",
+                    len(symbols),
+                    source_name,
+                    self._current_mode.value,
+                )
                 return
             except (NetworkError, APIError, ValidationError) as e:
-                logger.error(f"Data source fetch failed: {e}", exc_info=True)
+                logger.error("%s fetch failed: %s", source_name, e, exc_info=True)
             except Exception as e:
-                logger.error(f"Unexpected data source fetch error: {type(e).__name__}: {e}", exc_info=True)
-
-        # Use KIS client if available
-        if self._kis_client is not None:
-            try:
-                data = await self._fetch_from_source(symbols, self._kis_client)
-                for symbol, symbol_data in data.items():
-                    self._cache[symbol] = MarketDataCache(
-                        symbol=symbol,
-                        data=symbol_data,
-                        fetched_at=now,
-                    )
-                self._last_batch_fetch = now
-                logger.debug(f"Fetched data for {len(symbols)} symbols from KIS")
-                return
-            except (NetworkError, APIError) as e:
-                logger.error(f"KIS fetch failed: {e}", exc_info=True)
-            except Exception as e:
-                logger.error(f"Unexpected KIS fetch error: {type(e).__name__}: {e}", exc_info=True)
+                logger.error(
+                    "Unexpected %s fetch error: %s: %s",
+                    source_name,
+                    type(e).__name__,
+                    e,
+                    exc_info=True,
+                )
 
         # Fallback: Generate mock data (for testing/paper trading)
         for symbol in symbols:

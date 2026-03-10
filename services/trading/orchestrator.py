@@ -74,7 +74,7 @@ except Exception:  # pragma: no cover
     PaperOrderSide = None  # type: ignore
 
 if TYPE_CHECKING:
-    pass
+    from shared.config.schema import PipelineConfig
 
 logger = logging.getLogger(__name__)
 
@@ -582,6 +582,7 @@ class TradingOrchestrator:
         self._market_data_lock = asyncio.Lock()
         self._market_data_snapshot: dict[str, dict[str, Any]] = {}
         self._market_data_updated_at: datetime | None = None
+        self._data_provider_failover_enabled = False
         self._metrics = get_metrics_collector()
         self._order_executor = order_executor
 
@@ -894,9 +895,12 @@ class TradingOrchestrator:
     def _init_data_provider(self, data_source):
         """Initialize Market Data Provider"""
         try:
-            dp_cfg = ConfigLoader.load("streaming.yaml").get("data_provider", {})
+            streaming_cfg = ConfigLoader.load("streaming.yaml")
+            dp_cfg = streaming_cfg.get("data_provider", {})
+            failover_cfg = streaming_cfg.get("failover", {})
         except (InvalidConfigError, MissingConfigError, OSError, yaml.YAMLError, KeyError, TypeError):
             dp_cfg = {}
+            failover_cfg = {}
 
         if data_source:
             cache_ttl = float(dp_cfg.get("cache_ttl_websocket", 2.0))
@@ -908,14 +912,42 @@ class TradingOrchestrator:
 
         stagger_delay = float(dp_cfg.get("stagger_delay", 0.1))
 
+        telegram_notifier = None
+        send_telegram_alerts = bool(failover_cfg.get("send_telegram_alerts", True))
+        if self.config.enable_telegram and send_telegram_alerts:
+            try:
+                from shared.notification.telegram import TelegramNotifier
+
+                bot_token = self.config.telegram_token or os.getenv("TELEGRAM_BOT_TOKEN", "")
+                chat_id = self.config.telegram_chat_id or os.getenv("TELEGRAM_CHAT_ID", "")
+                if bot_token and chat_id:
+                    telegram_notifier = TelegramNotifier(
+                        bot_token=bot_token,
+                        chat_id=chat_id,
+                    )
+            except Exception as e:
+                logger.warning(f"Failed to initialize failover telegram notifier: {e}")
+
+        self._data_provider_failover_enabled = bool(failover_cfg.get("enabled", False))
+
         self._data_provider = MarketDataProvider(
             symbols=self.config.symbols,
             config=DataProviderConfig(
                 cache_ttl_seconds=cache_ttl,
+                batch_size=int(dp_cfg.get("batch_size", 20)),
+                fetch_timeout_seconds=float(dp_cfg.get("fetch_timeout_seconds", 5.0)),
                 stagger_delay_seconds=stagger_delay,
+                health_check_interval_seconds=float(
+                    failover_cfg.get("health_check_interval_seconds", 5.0)
+                ),
+                rest_poll_interval_seconds=float(
+                    failover_cfg.get("rest_poll_interval_seconds", 5.0)
+                ),
+                send_telegram_alerts=send_telegram_alerts,
             ),
-            kis_client=self._kis_client if not data_source else None,
+            kis_client=self._kis_client,
             data_source=data_source,
+            telegram_notifier=telegram_notifier,
         )
 
     def _init_tick_stream_publisher(self) -> None:
@@ -2959,6 +2991,12 @@ class TradingOrchestrator:
                 logger.warning(f"Futures WebSocket feed start failed: {e}")
                 self._futures_price_feed = None
 
+        if self._data_provider and self._data_provider_failover_enabled:
+            try:
+                await self._data_provider.start_background_tasks()
+            except Exception as e:
+                logger.warning(f"Failed to start data provider failover monitoring: {e}")
+
         # Pre-warm indicators FIRST (exclusive API access, no rate conflicts)
         if self._indicator_engine and self._kis_client and self.config.symbols:
             await self._prewarm_symbols(self.config.symbols)
@@ -2993,6 +3031,12 @@ class TradingOrchestrator:
             return
 
         self._market_data_running = False
+
+        if self._data_provider:
+            try:
+                await self._data_provider.stop_background_tasks()
+            except Exception as e:
+                logger.warning(f"Data provider background task stop error: {e}")
 
         # Stop WebSocket price feed
         if self._stock_price_feed:
@@ -3040,10 +3084,7 @@ class TradingOrchestrator:
                 try:
                     market_context = await self._llm_context_publisher.run_analysis()
                     if market_context:
-                        # Publish to Redis
-                        from shared.streaming.trading_state import TradingStatePublisher
-                        publisher = TradingStatePublisher(self.config.asset_class)
-                        publisher.publish_market_context(market_context)
+                        self._llm_context_publisher.publish_to_redis(market_context)
                         logger.info(
                             f"Initial LLM market context published: regime={market_context.regime}, "
                             f"confidence={market_context.confidence:.2f}"
@@ -3077,10 +3118,7 @@ class TradingOrchestrator:
                 # Run analysis
                 market_context = await self._llm_context_publisher.run_analysis()
                 if market_context:
-                    # Publish to Redis
-                    from shared.streaming.trading_state import TradingStatePublisher
-                    publisher = TradingStatePublisher(self.config.asset_class)
-                    publisher.publish_market_context(market_context)
+                    self._llm_context_publisher.publish_to_redis(market_context)
                     logger.info(
                         f"LLM market context updated: regime={market_context.regime}, "
                         f"confidence={market_context.confidence:.2f}"

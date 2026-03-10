@@ -565,6 +565,57 @@ class TestFailoverLogic:
             pass
 
     @pytest.mark.asyncio
+    async def test_start_background_tasks_starts_health_monitoring(self):
+        """Test lifecycle helper starts health monitoring when supported."""
+        from services.trading.data_provider import MarketDataProvider
+
+        class HealthySource:
+            def is_healthy(self) -> bool:
+                return True
+
+        provider = MarketDataProvider(data_source=HealthySource())
+
+        await provider.start_background_tasks()
+
+        assert provider._health_check_task is not None
+        assert not provider._health_check_task.done()
+
+        await provider.stop_background_tasks()
+        assert provider._health_check_task is None
+
+    @pytest.mark.asyncio
+    async def test_failover_mode_prefers_rest_client_over_websocket_source(self):
+        """Test REST fallback reads from KIS client instead of stale WebSocket cache."""
+        from services.trading.data_provider import MarketDataProvider
+
+        class WebSocketSource:
+            async def get_current_price(self, symbol: str) -> dict:
+                return {"close": 100.0, "source": "websocket"}
+
+            def is_healthy(self) -> bool:
+                return False
+
+        class RestClient:
+            async def get_current_price(self, symbol: str) -> dict:
+                return {"close": 200.0, "source": "rest"}
+
+        provider = MarketDataProvider(
+            symbols=["005930"],
+            data_source=WebSocketSource(),
+            kis_client=RestClient(),
+        )
+
+        websocket_data = await provider.get_data(force_refresh=True)
+        assert websocket_data["005930"]["source"] == "websocket"
+
+        await provider._failover_to_rest()
+        rest_data = await provider.get_data(force_refresh=True)
+
+        assert rest_data["005930"]["source"] == "rest"
+
+        await provider.stop_background_tasks()
+
+    @pytest.mark.asyncio
     async def test_health_check_loop_triggers_recovery(self):
         """Test health check loop triggers recovery when source becomes healthy again"""
         from services.trading.data_provider import MarketDataProvider, DataProviderConfig, DataSourceMode

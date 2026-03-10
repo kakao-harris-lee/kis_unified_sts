@@ -13,6 +13,22 @@ from unittest.mock import Mock, patch, AsyncMock
 import asyncio
 
 
+def _build_paper_execution_config():
+    """Create a paper-safe ExecutionConfig from repo config.
+
+    Integration tests should not depend on externally configured account
+    placeholders. PAPER mode allows an empty account number.
+    """
+    from shared.execution.config import ExecutionConfig
+    from shared.config.loader import ConfigLoader
+
+    config_dict = ConfigLoader.load("execution.yaml")
+    execution = dict(config_dict["execution"])
+    execution["trading_mode"] = "PAPER"
+    execution["account_no"] = ""
+    return ExecutionConfig(**execution)
+
+
 @pytest.mark.integration
 def test_ats_config_loading():
     """Test ATS routing configuration loads correctly."""
@@ -112,13 +128,7 @@ async def test_order_executor_venue_routing():
     """Test OrderExecutor routes to correct venue."""
     from shared.execution.executor import OrderExecutor
     from shared.execution.models import OrderRequest, OrderSide, ExecutionVenue
-    from shared.execution.config import ExecutionConfig
-    from shared.config.loader import ConfigLoader
-
-    # Load execution config
-    config_dict = ConfigLoader.load("execution.yaml")
-    exec_config = ExecutionConfig(**config_dict["execution"])
-    exec_config.trading_mode = "PAPER"  # Use paper mode for testing
+    exec_config = _build_paper_execution_config()
 
     # Create executor
     executor = OrderExecutor(exec_config)
@@ -340,7 +350,7 @@ async def test_e2e_paper_trading_with_ats():
     """
     from shared.execution.executor import OrderExecutor
     from shared.execution.models import OrderRequest, OrderSide, ExecutionVenue
-    from shared.execution.config import ExecutionConfig, ATSRoutingConfig
+    from shared.execution.config import ATSRoutingConfig
     from shared.execution.venue_router import VenueRouter
     from shared.config.loader import ConfigLoader
     from services.trading.position_tracker import PositionTracker, PositionTrackerConfig
@@ -348,8 +358,7 @@ async def test_e2e_paper_trading_with_ats():
 
     # Load configs
     config_dict = ConfigLoader.load("execution.yaml")
-    exec_config = ExecutionConfig(**config_dict["execution"])
-    exec_config.trading_mode = "PAPER"
+    exec_config = _build_paper_execution_config()
 
     ats_config = ATSRoutingConfig(**config_dict["ats_routing"])
     ats_config.enabled = True  # Enable for test

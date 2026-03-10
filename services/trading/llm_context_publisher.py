@@ -295,17 +295,23 @@ class LLMContextPublisher:
     def publish_to_redis(self, context: MarketContext) -> None:
         """Publish MarketContext to Redis.
 
-        This method will be implemented in subtask-2-2 after TradingStatePublisher
-        gains the publish_market_context() method.
-
         Args:
             context: MarketContext to publish.
         """
-        # TODO: Implement after subtask-2-2 completes
-        # from shared.streaming.trading_state import TradingStatePublisher
-        # publisher = TradingStatePublisher(self.asset_class)
-        # publisher.publish_market_context(context)
-        logger.debug(
-            "publish_to_redis called but not yet implemented "
-            "(waiting for subtask-2-2)"
-        )
+        try:
+            from shared.streaming.trading_state import TradingStatePublisher
+
+            publisher = TradingStatePublisher(self.asset_class)
+            publisher.publish_market_context(context)
+            logger.debug(
+                "Published LLM market context to Redis: asset=%s regime=%s confidence=%.2f",
+                self.asset_class,
+                context.regime,
+                context.confidence,
+            )
+        except Exception as e:
+            logger.debug(
+                "Failed to publish LLM market context to Redis: %s",
+                e,
+                exc_info=True,
+            )
