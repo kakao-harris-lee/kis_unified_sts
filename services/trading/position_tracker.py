@@ -1341,21 +1341,44 @@ class PositionTracker:
 
             loaded = 0
             for row in result:
-                (
-                    pos_id,
-                    code,
-                    name,
-                    entry_time,
-                    entry_price,
-                    quantity,
-                    strategy,
-                    execution_venue,
-                    stop_price,
-                    high_since_entry,
-                    state_str,
-                    side_str,
-                    fee_rate_val,
-                ) = row
+                if len(row) == 13:
+                    (
+                        pos_id,
+                        code,
+                        name,
+                        entry_time,
+                        entry_price,
+                        quantity,
+                        strategy,
+                        execution_venue,
+                        stop_price,
+                        high_since_entry,
+                        state_str,
+                        side_str,
+                        fee_rate_val,
+                    ) = row
+                elif len(row) == 12:
+                    (
+                        pos_id,
+                        code,
+                        name,
+                        entry_time,
+                        entry_price,
+                        quantity,
+                        strategy,
+                        stop_price,
+                        high_since_entry,
+                        state_str,
+                        side_str,
+                        fee_rate_val,
+                    ) = row
+                    execution_venue = "KRX"
+                else:
+                    logger.warning(
+                        "Skipping persisted position with unexpected column count: %s",
+                        len(row),
+                    )
+                    continue
 
                 # Skip if already tracked
                 if pos_id in self._positions:

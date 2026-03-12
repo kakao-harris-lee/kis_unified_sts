@@ -3389,6 +3389,19 @@ class TradingOrchestrator:
             )
         return result
 
+    @staticmethod
+    def _normalize_entry_order_result(result: Any) -> tuple[bool, float, int, str]:
+        """Normalize legacy/new entry-order return tuples."""
+        if not isinstance(result, tuple):
+            raise ValueError(f"Unexpected entry order result type: {type(result)}")
+        if len(result) == 4:
+            is_filled, fill_price, filled_qty, venue = result
+            return bool(is_filled), float(fill_price), int(filled_qty), str(venue)
+        if len(result) == 3:
+            is_filled, fill_price, filled_qty = result
+            return bool(is_filled), float(fill_price), int(filled_qty), "KRX"
+        raise ValueError(f"Unexpected entry order result length: {len(result)}")
+
     def _update_entry_slippage_stats(self, adverse_ticks: float) -> None:
         stats = self._entry_slippage_stats
         count = int(stats.get("count", 0.0)) + 1
@@ -3477,6 +3490,9 @@ class TradingOrchestrator:
                 change = data.get("change", 0)
                 if change:
                     changes.append(change)
+
+        if not market_data:
+            return "UNKNOWN"
 
         if not changes:
             return "SIDEWAYS_FLAT"
@@ -4114,13 +4130,15 @@ class TradingOrchestrator:
         passive_price = float(decision.target_price or signal_price)
         latest_quote = await self._get_quote_payload(code)
         current_touch_price = float(latest_quote.get("ask_price_1" if is_buy else "bid_price_1", passive_price))
-        is_filled, fill_price, filled_qty, venue = await self._place_entry_order(
-            code=code,
-            is_short=is_short,
-            quantity=quantity,
-            order_type="limit",
-            limit_price=passive_price,
-            market_price=current_touch_price,
+        is_filled, fill_price, filled_qty, venue = self._normalize_entry_order_result(
+            await self._place_entry_order(
+                code=code,
+                is_short=is_short,
+                quantity=quantity,
+                order_type="limit",
+                limit_price=passive_price,
+                market_price=current_touch_price,
+            )
         )
         execution_meta["submit_price"] = passive_price
         execution_meta["filled_qty"] = int(filled_qty)
@@ -4160,13 +4178,15 @@ class TradingOrchestrator:
             return False, 0.0, execution_meta
 
         retry_market_price = float(retry_decision.target_price or signal_price)
-        filled_retry, fill_retry, retry_filled_qty, retry_venue = await self._place_entry_order(
-            code=code,
-            is_short=is_short,
-            quantity=quantity,
-            order_type="market",
-            limit_price=None,
-            market_price=retry_market_price,
+        filled_retry, fill_retry, retry_filled_qty, retry_venue = self._normalize_entry_order_result(
+            await self._place_entry_order(
+                code=code,
+                is_short=is_short,
+                quantity=quantity,
+                order_type="market",
+                limit_price=None,
+                market_price=retry_market_price,
+            )
         )
         execution_meta["filled_qty"] = int(retry_filled_qty)
         execution_meta["submit_price"] = retry_market_price
