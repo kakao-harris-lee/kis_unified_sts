@@ -1677,18 +1677,21 @@ class TradingOrchestrator:
             logger.warning(f"Failed to ensure DB schema: {e}")
 
     async def _persist_closed_position(self, closed, strategy: str):
-        """Persist a closed position to ClickHouse (fire-and-forget safe)."""
+        """Persist a closed position to ClickHouse (fire-and-forget safe).
+
+        All strategies are recorded to rl_trades (universal table).
+        Swing strategies are additionally recorded to swing_positions (legacy).
+        """
         try:
             if not self._position_tracker:
                 return
             strategy = str(strategy or "")
             if strategy in self.SWING_STRATEGIES:
                 await self._position_tracker.save_closed_to_db(closed)
-                return
-            if strategy.startswith("rl_"):
-                await self._position_tracker.save_rl_trade_to_db(
-                    closed, self.config.asset_class
-                )
+            # Record all trades to rl_trades (universal trade history)
+            await self._position_tracker.save_rl_trade_to_db(
+                closed, self.config.asset_class
+            )
         except (InfrastructureError, OSError, ConnectionError) as e:
             logger.warning(f"Failed to persist closed position {getattr(closed, 'id', '?')[:8]}: {e}")
 
