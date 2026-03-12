@@ -36,6 +36,7 @@ ENTRY_SIGNALS_RE = re.compile(r"Entry signals:\s*(\d+)")
 BLOCK_RE = re.compile(r"Entry blocked by execution guard:\s+\S+\s+([^\s]+)")
 SLIPPAGE_RE = re.compile(r"slippage=([+-]?\d+(?:\.\d+)?)t")
 EXIT_PNL_RE = re.compile(r"Exit executed: .*pnl=([+-]?\d+(?:\.\d+)?)%")
+TIMESTAMP_RE = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3})")
 
 # Matrix presets for paper slippage guard tuning.
 # label -> strategy + env overrides
@@ -114,15 +115,18 @@ def _infer_profile(log_path: Path) -> str:
 
 def _compute_uptrend_score(metrics: dict[str, Any]) -> float:
     score = 0.0
-    score += float(metrics["total_pnl_pct"]) * 25.0
+    score += float(metrics["total_pnl_pct"]) * 35.0
     score += float(metrics["win_rate"]) * 35.0
-    score += float(metrics["entry_fill_rate"]) * 30.0
-    score += float(metrics["signal_execution_rate"]) * 10.0
-    score -= float(metrics["avg_slippage_ticks_abs"]) * 8.0
+    score += float(metrics["entry_fill_rate"]) * 12.0
+    score += float(metrics["signal_execution_rate"]) * 6.0
+    score += min(float(metrics["avg_hold_seconds"]), 300.0) / 300.0 * 12.0
+    score -= float(metrics["avg_slippage_ticks_abs"]) * 10.0
     score -= float(metrics["blocks_wide_spread"]) * 0.15
     score -= float(metrics["blocks_insufficient_depth"]) * 0.15
     if int(metrics["exits"]) == 0:
-        score -= 8.0
+        score -= 25.0
+    elif float(metrics["avg_hold_seconds"]) < 15.0:
+        score -= (15.0 - float(metrics["avg_hold_seconds"])) * 0.8
     return round(score, 4)
 
 
@@ -133,15 +137,26 @@ def parse_paper_log(log_path: Path, profile: str | None = None) -> dict[str, Any
     block_counts: dict[str, int] = {}
     slippages: list[float] = []
     pnl_pcts: list[float] = []
+    pending_entry_times: list[datetime] = []
+    hold_seconds: list[float] = []
 
     with log_path.open(encoding="utf-8", errors="replace") as fp:
         for line in fp:
+            timestamp_match = TIMESTAMP_RE.match(line)
+            line_ts = (
+                datetime.strptime(timestamp_match.group(1), "%Y-%m-%d %H:%M:%S,%f")
+                if timestamp_match
+                else None
+            )
+
             match = ENTRY_SIGNALS_RE.search(line)
             if match:
                 entry_signals += int(match.group(1))
 
             if "Entry executed:" in line:
                 entries += 1
+                if line_ts is not None:
+                    pending_entry_times.append(line_ts)
 
             match = BLOCK_RE.search(line)
             if match:
@@ -157,6 +172,9 @@ def parse_paper_log(log_path: Path, profile: str | None = None) -> dict[str, Any
             if match:
                 pnl_pcts.append(float(match.group(1)))
                 exits += 1
+                if line_ts is not None and pending_entry_times:
+                    entry_ts = pending_entry_times.pop(0)
+                    hold_seconds.append(max(0.0, (line_ts - entry_ts).total_seconds()))
 
     blocked_total = sum(block_counts.values())
     attempts = entries + blocked_total
@@ -185,6 +203,7 @@ def parse_paper_log(log_path: Path, profile: str | None = None) -> dict[str, Any
         "avg_slippage_ticks_abs": (
             round(mean([abs(item) for item in slippages]), 4) if slippages else 0.0
         ),
+        "avg_hold_seconds": round(mean(hold_seconds), 4) if hold_seconds else 0.0,
         "win_rate": round(win_rate, 4),
         "avg_pnl_pct": round(mean(pnl_pcts), 4) if pnl_pcts else 0.0,
         "total_pnl_pct": round(sum(pnl_pcts), 4),
@@ -215,6 +234,7 @@ def _write_summary(rows: list[dict[str, Any]], output_dir: Path) -> tuple[Path, 
         "win_rate",
         "avg_pnl_pct",
         "total_pnl_pct",
+        "avg_hold_seconds",
         "avg_slippage_ticks",
         "avg_slippage_ticks_abs",
         "log_file",
@@ -240,7 +260,7 @@ def _write_summary(rows: list[dict[str, Any]], output_dir: Path) -> tuple[Path, 
 def _print_rank(rows: list[dict[str, Any]]) -> None:
     print(
         f"{'rank':>4} {'profile':<36} {'score':>8} {'sig':>5} {'ent':>5} {'exit':>5} "
-        f"{'fill%':>7} {'win%':>7} {'pnl%':>8} {'spread_blk':>10} {'depth_blk':>9}"
+        f"{'fill%':>7} {'win%':>7} {'pnl%':>8} {'hold_s':>8} {'spread_blk':>10} {'depth_blk':>9}"
     )
     for idx, row in enumerate(rows, start=1):
         print(
@@ -253,6 +273,7 @@ def _print_rank(rows: list[dict[str, Any]]) -> None:
             f"{float(row['entry_fill_rate']) * 100:>7.1f} "
             f"{float(row['win_rate']) * 100:>7.1f} "
             f"{float(row['total_pnl_pct']):>8.2f} "
+            f"{float(row['avg_hold_seconds']):>8.1f} "
             f"{int(row['blocks_wide_spread']):>10} "
             f"{int(row['blocks_insufficient_depth']):>9}"
         )

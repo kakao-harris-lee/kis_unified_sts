@@ -51,6 +51,8 @@ class RLMPPOExitConfig:
     scaler_path: str = ""
     min_exit_confidence: float = 0.5  # entry(0.6)보다 낮음 — 청산은 더 적극적
     backtest_min_exit_confidence: float = 0.3
+    min_hold_seconds: int = 60
+    backtest_min_hold_seconds: int = 0
     # 안전장치
     hard_stop_pct: float = -0.03  # -3%
     eod_close_hour: int = 15
@@ -80,6 +82,10 @@ class RLMPPOExit(ExitSignalGenerator[RLMPPOExitConfig]):
             "min_exit_confidence must be between 0.0 and 1.0"
         )
         assert self.config.hard_stop_pct < 0, "hard_stop_pct must be negative"
+        assert self.config.min_hold_seconds >= 0, "min_hold_seconds must be >= 0"
+        assert self.config.backtest_min_hold_seconds >= 0, (
+            "backtest_min_hold_seconds must be >= 0"
+        )
 
     @property
     def name(self) -> str:
@@ -130,6 +136,18 @@ class RLMPPOExit(ExitSignalGenerator[RLMPPOExitConfig]):
                     now=now,
                 ),
             )
+
+        min_hold_seconds = self._get_min_hold_seconds(context)
+        hold_seconds = self._get_hold_seconds(position, now)
+        if hold_seconds < float(min_hold_seconds):
+            logger.debug(
+                "[%s] RL exit suppressed for %s: hold=%.2fs < min_hold=%ss",
+                self.name,
+                position.code,
+                hold_seconds,
+                min_hold_seconds,
+            )
+            return (False, None)
 
         # 3. RL 모델 예측
         model = self._load_model()
@@ -344,6 +362,24 @@ class RLMPPOExit(ExitSignalGenerator[RLMPPOExitConfig]):
 
         eod = dt_time(self.config.eod_close_hour, self.config.eod_close_minute)
         return t >= eod
+
+    def _get_min_hold_seconds(self, context: ExitContext) -> int:
+        if context.metadata.get("is_backtest"):
+            return self.config.backtest_min_hold_seconds
+        return self.config.min_hold_seconds
+
+    @staticmethod
+    def _get_hold_seconds(position: Position, now: datetime) -> float:
+        entry_time = getattr(position, "entry_time", None)
+        if not isinstance(entry_time, datetime):
+            return float("inf")
+
+        if entry_time.tzinfo is None and now.tzinfo is not None:
+            entry_time = entry_time.replace(tzinfo=now.tzinfo)
+        elif entry_time.tzinfo is not None and now.tzinfo is None:
+            now = now.replace(tzinfo=entry_time.tzinfo)
+
+        return max(0.0, (now - entry_time).total_seconds())
 
     @staticmethod
     def _extract_indicators(

@@ -71,6 +71,8 @@ strategy:
       device: auto
       min_exit_confidence: 0.5
       backtest_min_exit_confidence: 0.35
+      min_hold_seconds: 60
+      backtest_min_hold_seconds: 0
       hard_stop_pct: -0.03
       eod_close_hour: 15
       eod_close_minute: 15

@@ -67,6 +67,8 @@ strategy:
       device: auto
       min_exit_confidence: 0.5       # 청산은 진입(0.6)보다 적극적
       backtest_min_exit_confidence: 0.3  # 백테스트 시 낮은 threshold
+      min_hold_seconds: 60
+      backtest_min_hold_seconds: 0
       # 안전장치
       hard_stop_pct: -0.03           # -3% (모델 학습 시 허용 범위)
       eod_close_hour: 15
