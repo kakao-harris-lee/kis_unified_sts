@@ -21,6 +21,20 @@ from shared.ml.data.dataset_quality import validate_ohlcv_quality  # noqa: E402
 from shared.ml.data.regime_labeler import RegimeLabeler, RegimeLabelerConfig  # noqa: E402
 
 
+def _resolve_clickhouse_native_port() -> int:
+    native_port = os.getenv("CLICKHOUSE_NATIVE_PORT", "").strip()
+    if native_port:
+        return int(native_port)
+
+    # `.env.example` sets CLICKHOUSE_PORT=8123 for HTTP, which is incompatible
+    # with clickhouse-driver's native client. Only reuse it when it already
+    # points to a native-compatible port.
+    legacy_port = os.getenv("CLICKHOUSE_PORT", "").strip()
+    if legacy_port and legacy_port not in {"8123", "8443"}:
+        return int(legacy_port)
+    return 9000
+
+
 def _generate_sample_data(n_days: int = 20, bars_per_day: int = 390) -> pd.DataFrame:
     import numpy as np
 
@@ -82,7 +96,7 @@ def _load_ohlcv_from_clickhouse(config_path: str, allow_sample_fallback: bool) -
 
         client = CHSyncClient(
             host=os.getenv("CLICKHOUSE_HOST", "localhost"),
-            port=int(os.getenv("CLICKHOUSE_NATIVE_PORT", os.getenv("CLICKHOUSE_PORT", "9000"))),
+            port=_resolve_clickhouse_native_port(),
             user=os.getenv("CLICKHOUSE_USER", "default"),
             password=os.getenv("CLICKHOUSE_PASSWORD", ""),
         )

@@ -61,6 +61,7 @@ class HybridRLDataLoader:
         if persist_scaler:
             save_dir = Path(self.rl_config.get("training", {}).get("save_dir", "./models/futures/rl/"))
             save_dir.mkdir(parents=True, exist_ok=True)
+            joblib.dump(scaler, save_dir / "scaler.joblib")
             joblib.dump(scaler, save_dir / "hybrid_scaler.joblib")
 
         train_days, train_prices = _frame_to_days(train_df, scaler)
