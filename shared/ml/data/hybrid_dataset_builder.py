@@ -131,6 +131,7 @@ class HybridDatasetBuilder:
         frame = pd.read_csv(path) if path.suffix == ".csv" else pd.read_parquet(path)
         frame = frame.copy()
         frame["datetime"] = pd.to_datetime(frame["datetime"])
+        frame = self._normalize_ohlcv_columns(frame)
         frame = frame.sort_values("datetime").reset_index(drop=True)
         if "date" not in frame.columns:
             frame["date"] = frame["datetime"].dt.date
@@ -139,6 +140,18 @@ class HybridDatasetBuilder:
         if "source_market" not in frame.columns:
             frame["source_market"] = source_market
         return frame
+
+    @staticmethod
+    def _normalize_ohlcv_columns(frame: pd.DataFrame) -> pd.DataFrame:
+        normalized = frame.copy()
+        for base in ["open", "high", "low", "close", "volume"]:
+            if base in normalized.columns:
+                continue
+            for candidate in [f"{base}_x", f"{base}_y", f"{base}_left", f"{base}_right"]:
+                if candidate in normalized.columns:
+                    normalized[base] = normalized[candidate]
+                    break
+        return normalized
 
     def _infer_real_catalog_provenance(self, real_path: Path | None, real_df: pd.DataFrame) -> tuple[str, bool]:
         if not real_df.empty:
