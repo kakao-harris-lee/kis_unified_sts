@@ -379,7 +379,7 @@ class TestTradingOrchestrator:
                 "timestamp": 1700000000.0,
             }
         )
-        orch._place_entry_order = AsyncMock(return_value=(True, 330.50, 1))
+        orch._place_entry_order = AsyncMock(return_value=(True, 330.50, 1, "KRX"))
 
         signal = Signal(
             code="A05603",
@@ -438,8 +438,8 @@ class TestTradingOrchestrator:
         )
         orch._place_entry_order = AsyncMock(
             side_effect=[
-                (False, 0.0, 0),  # passive limit not filled
-                (True, 330.50, 1),  # market retry filled
+                (False, 0.0, 0, "KRX"),  # passive limit not filled
+                (True, 330.50, 1, "KRX"),  # market retry filled
             ]
         )
 
@@ -500,7 +500,7 @@ class TestTradingOrchestrator:
             }
         )
         orch._place_entry_order = AsyncMock(
-            return_value=(True, 330.50, 1)  # partial-fill signal from executor
+            return_value=(True, 330.50, 1, "KRX")  # partial-fill signal from executor
         )
 
         signal = Signal(
@@ -574,7 +574,7 @@ class TestTradingOrchestrator:
             return_value=OrderResponse(success=True, order_no="00001234", message="accepted")
         )
 
-        filled, fill_price, filled_qty = await orch._place_entry_order(
+        filled, fill_price, filled_qty, venue = await orch._place_entry_order(
             code="A05603",
             is_short=False,
             quantity=2,
@@ -586,6 +586,7 @@ class TestTradingOrchestrator:
         assert filled is False
         assert fill_price == 0.0
         assert filled_qty == 0
+        assert venue == "KRX"
 
     @pytest.mark.asyncio
     async def test_place_entry_order_tracks_partial_fill_even_on_cancel(self):
@@ -608,7 +609,7 @@ class TestTradingOrchestrator:
             )
         )
 
-        filled, fill_price, filled_qty = await orch._place_entry_order(
+        filled, fill_price, filled_qty, venue = await orch._place_entry_order(
             code="A05603",
             is_short=False,
             quantity=2,
@@ -620,6 +621,7 @@ class TestTradingOrchestrator:
         assert filled is True
         assert fill_price == 330.52
         assert filled_qty == 1
+        assert venue == "KRX"
 
     @pytest.mark.asyncio
     async def test_execute_exit_short_position_uses_buy(self):

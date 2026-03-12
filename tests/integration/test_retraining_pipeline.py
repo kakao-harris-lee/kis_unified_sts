@@ -15,6 +15,7 @@ Test Coverage:
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import json
 import tempfile
 from datetime import datetime, timedelta
@@ -356,6 +357,9 @@ class TestRetrainingPipelineIntegration:
         mock_challenger_worse_metrics,
     ):
         """Test rollback when promoted model underperforms."""
+        if importlib.util.find_spec("sb3_contrib") is None:
+            pytest.skip("sb3_contrib is not installed in this test environment")
+
         with patch.object(
             RetrainingPipeline, "_load_data"
         ) as mock_load_data, patch.object(

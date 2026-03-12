@@ -150,10 +150,10 @@ class TestSaveClosedToDb:
         assert len(rows) == 1
 
         row = rows[0]
-        assert row[10] == 0  # is_open = closed
-        assert row[14] == 20000.0  # pnl = (72000 - 70000) * 10
-        assert row[15] == "long"  # side
-        assert row[16] == 0.003  # fee_rate
+        assert row[11] == 0  # is_open = closed
+        assert row[15] == 20000.0  # pnl = (72000 - 70000) * 10
+        assert row[16] == "long"  # side
+        assert row[17] == 0.003  # fee_rate
 
     @pytest.mark.asyncio
     async def test_saves_short_position(self):
@@ -177,8 +177,8 @@ class TestSaveClosedToDb:
 
         assert result is True
         row = mock_client.execute.call_args[0][1][0]
-        assert row[14] == 5.0  # pnl = (350 - 345) * 1 (short profit)
-        assert row[15] == "short"
+        assert row[15] == 5.0  # pnl = (350 - 345) * 1 (short profit)
+        assert row[16] == "short"
 
     @pytest.mark.asyncio
     async def test_handles_db_error(self):
@@ -240,8 +240,8 @@ class TestSaveToDbWithSideAndFeeRate:
 
         assert "side, fee_rate" in sql
         row = rows[0]
-        assert row[15] == "long"  # side
-        assert row[16] == 0.005  # fee_rate
+        assert row[16] == "long"  # side
+        assert row[17] == 0.005  # fee_rate
 
 
 class TestSaveRlTradeToDb:
@@ -281,10 +281,10 @@ class TestSaveRlTradeToDb:
         row = rows[0]
         assert row[1] == "futures"  # asset_class
         assert row[5] == "rl_mppo"  # strategy
-        assert row[11] == 5.0  # pnl = (350 - 345) * 1
-        assert row[12] > 0.0  # pnl_pct
-        assert row[13] > 0  # hold_seconds
-        assert "model_version" in row[15]  # metadata_json
+        assert row[12] == 5.0  # pnl = (350 - 345) * 1
+        assert row[13] > 0.0  # pnl_pct
+        assert row[14] > 0  # hold_seconds
+        assert "model_version" in row[16]  # metadata_json
 
     @pytest.mark.asyncio
     async def test_skips_rl_trade_if_not_closed(self):
