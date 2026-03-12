@@ -154,6 +154,25 @@ def test_is_trading_time_hard_eod_block_applies_in_paper():
     assert strategy._is_trading_time(datetime(2026, 2, 12, 15, 35, 0), is_paper=False) is True
 
 
+def test_is_trading_time_skip_close_boundary_is_exclusive_in_paper():
+    strategy = RLMPPOEntry(
+        RLMPPOConfig(
+            day_session_enabled=True,
+            day_market_open="09:00",
+            day_market_close="15:45",
+            skip_market_open_minutes=0,
+            skip_market_close_minutes=0,
+            paper_skip_market_close_minutes=30,
+            eod_hard_block_minutes=0,
+            paper_eod_hard_block_minutes=0,
+            night_session_enabled=False,
+        )
+    )
+
+    assert strategy._is_trading_time(datetime(2026, 2, 12, 15, 14, 0), is_paper=True) is True
+    assert strategy._is_trading_time(datetime(2026, 2, 12, 15, 15, 0), is_paper=True) is False
+
+
 @pytest.mark.asyncio
 async def test_generate_overrides_hold_to_entry_when_gap_small(monkeypatch):
     strategy = RLMPPOEntry(

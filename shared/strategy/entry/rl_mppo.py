@@ -1181,5 +1181,5 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
             return False
 
         if start_minute <= end_minute:
-            return start_minute <= current_minute <= end_minute
-        return current_minute >= start_minute or current_minute <= end_minute
+            return start_minute <= current_minute < end_minute
+        return current_minute >= start_minute or current_minute < end_minute
