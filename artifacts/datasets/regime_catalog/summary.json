@@ -1,0 +1,37 @@
+{
+  "rows": 171,
+  "days": 171,
+  "avg_day_return": -0.010937342972496055,
+  "avg_realized_vol": 0.030310092201836027,
+  "max_intraday_range": 0.42597360798197625,
+  "trend_distribution": {
+    "bear": 103,
+    "bull": 50,
+    "sideways": 18
+  },
+  "volatility_distribution": {
+    "low": 138,
+    "normal": 29,
+    "high": 2,
+    "shock": 2
+  },
+  "event_distribution": {
+    "gap_up": 73,
+    "opening_drive": 52,
+    "normal": 24,
+    "gap_down": 15,
+    "melt_up": 3,
+    "rebound": 2,
+    "crash": 2
+  },
+  "provenance": {
+    "source_mode": "clickhouse",
+    "is_authentic_real": true,
+    "symbol": "101S6000",
+    "database": "kospi",
+    "table": "kospi200f_1m",
+    "start_date": null,
+    "end_date": null,
+    "fallback_reason": null
+  }
+}

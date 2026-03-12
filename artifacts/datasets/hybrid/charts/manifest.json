@@ -1,0 +1,39 @@
+{
+  "dataset_label": "hybrid_train",
+  "charts": [
+    {
+      "kind": "overview",
+      "path": "/home/deploy/project/kis_unified_sts/artifacts/datasets/hybrid/charts/hybrid_train_overview.png"
+    },
+    {
+      "kind": "monthly",
+      "label": "2025-07",
+      "path": "/home/deploy/project/kis_unified_sts/artifacts/datasets/hybrid/charts/hybrid_train_2025-07.png"
+    },
+    {
+      "kind": "monthly",
+      "label": "2025-08",
+      "path": "/home/deploy/project/kis_unified_sts/artifacts/datasets/hybrid/charts/hybrid_train_2025-08.png"
+    },
+    {
+      "kind": "monthly",
+      "label": "2025-09",
+      "path": "/home/deploy/project/kis_unified_sts/artifacts/datasets/hybrid/charts/hybrid_train_2025-09.png"
+    },
+    {
+      "kind": "monthly",
+      "label": "2025-10",
+      "path": "/home/deploy/project/kis_unified_sts/artifacts/datasets/hybrid/charts/hybrid_train_2025-10.png"
+    },
+    {
+      "kind": "monthly",
+      "label": "2025-11",
+      "path": "/home/deploy/project/kis_unified_sts/artifacts/datasets/hybrid/charts/hybrid_train_2025-11.png"
+    },
+    {
+      "kind": "monthly",
+      "label": "2025-12",
+      "path": "/home/deploy/project/kis_unified_sts/artifacts/datasets/hybrid/charts/hybrid_train_2025-12.png"
+    }
+  ]
+}
