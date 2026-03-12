@@ -1,0 +1,138 @@
+# Synthetic KOSPI-like 1-minute OHLCV generation config
+
+generator:
+  timezone: Asia/Seoul
+  market_open: "09:00"
+  bars_per_day: 390
+  start_date: "2025-01-02"
+  num_days: 20
+  start_price: 350.0
+  annual_vol: 0.20
+  drift_per_bar: 0.0
+  seed: 42
+  student_t_df: 6
+  alpha: 0.03
+  beta: 0.95
+  gamma: 0.02
+  jump_probability: 0.0005
+  jump_sigma: 0.003
+  negative_jump_bias: 0.6
+  volume_lambda: 1200
+  volume_day_level_sigma: 0.35
+  volume_persistence: 0.93
+  volume_state_sigma: 0.18
+  volume_return_sensitivity: 1.8
+  volume_sigma_sensitivity: 0.8
+  volume_downside_asymmetry: 0.35
+  volume_burst_scale: 0.16
+  volume_noise_sigma: 0.25
+  intraday:
+    open_boost: 1.5
+    close_boost: 1.3
+    decay: 0.08
+    floor: 0.6
+  volume_intraday:
+    open_boost: 1.35
+    close_boost: 1.18
+    decay: 0.05
+    floor: 0.78
+  volume_lunch_dip:
+    center: 0.52
+    width: 0.11
+    depth: 0.16
+    depth_sigma: 0.05
+  volume_open_drive:
+    window: 18
+    amplitude: 0.11
+    sigma: 0.12
+  volume_close_ramp:
+    window: 25
+    amplitude: 0.09
+    sigma: 0.1
+  volume_event_bursts:
+    base_probability: 0.004
+    decay: 0.72
+    amplitude_sigma: 0.3
+    max_horizon: 8
+
+scenarios:
+  normal_trend:
+    annual_vol_multiplier: 1.0
+    drift_per_bar: 0.00005
+    jump_probability_multiplier: 1.0
+    jump_sigma_multiplier: 1.0
+    volume_level_multiplier: 1.0
+    event_volume_multiplier: 1.0
+  sideways_chop:
+    annual_vol_multiplier: 0.9
+    drift_per_bar: 0.0
+    jump_probability_multiplier: 1.2
+    jump_sigma_multiplier: 0.9
+    volume_level_multiplier: 0.92
+    event_volume_multiplier: 0.85
+  crash_day:
+    annual_vol_multiplier: 1.8
+    drift_per_bar: -0.00025
+    jump_probability_multiplier: 4.0
+    jump_sigma_multiplier: 2.5
+    volume_level_multiplier: 1.55
+    event_volume_multiplier: 1.75
+  panic_rebound:
+    annual_vol_multiplier: 1.7
+    drift_per_bar: 0.00022
+    jump_probability_multiplier: 3.0
+    jump_sigma_multiplier: 2.0
+    volume_level_multiplier: 1.45
+    event_volume_multiplier: 1.6
+  melt_up:
+    annual_vol_multiplier: 1.2
+    drift_per_bar: 0.00018
+    jump_probability_multiplier: 1.5
+    jump_sigma_multiplier: 1.3
+    volume_level_multiplier: 1.15
+    event_volume_multiplier: 1.15
+  gap_and_fade:
+    annual_vol_multiplier: 1.3
+    drift_per_bar: -0.00008
+    jump_probability_multiplier: 2.0
+    jump_sigma_multiplier: 1.5
+    volume_level_multiplier: 1.1
+    event_volume_multiplier: 1.25
+  volatility_cluster:
+    annual_vol_multiplier: 1.6
+    drift_per_bar: 0.0
+    jump_probability_multiplier: 2.5
+    jump_sigma_multiplier: 1.8
+    volume_level_multiplier: 1.3
+    event_volume_multiplier: 1.45
+
+dataset:
+  output_dir: artifacts/datasets/synthetic
+  save_dataset: true
+  save_daily_summary: true
+  charting:
+    enabled: true
+    output_dirname: charts
+    file_format: png
+    create_overview: true
+    partition_when_days_gte: 31
+    create_monthly_charts: true
+    create_yearly_charts: true
+    overview_resample_rule: 15min
+    monthly_resample_rule: 15min
+    yearly_resample_rule: 1D
+    moving_averages: [20, 60]
+    include_volume: true
+    style: charles
+    dpi: 144
+    figscale: 1.2
+    figratio: [16, 9]
+    warn_too_much_data: 100000
+  scenario_schedule:
+    - normal_trend
+    - sideways_chop
+    - crash_day
+    - panic_rebound
+    - melt_up
+    - gap_and_fade
+    - volatility_cluster

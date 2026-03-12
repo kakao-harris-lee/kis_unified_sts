@@ -1,0 +1,43 @@
+# Bootstrap dataset config for environments without real KOSPI data
+
+inputs:
+  real_catalog_path: artifacts/datasets/regime_catalog/labeled_bars.parquet
+  synthetic_dataset_path: artifacts/datasets/synthetic/synthetic_dataset.parquet
+  transfer_dataset_path: artifacts/datasets/transfer/transfer_dataset.parquet
+
+split:
+  real_train_ratio: 0.7
+  real_validation_ratio: 0.15
+  real_test_ratio: 0.15
+  synthetic_validation_ratio: 0.1
+  bootstrap_when_real_missing: true
+  bootstrap_test_source: synthetic
+
+mixing:
+  train_real_weight: 0.0
+  train_synthetic_weight: 0.7
+  train_transfer_weight: 0.3
+  shuffle_seed: 42
+
+output:
+  output_dir: artifacts/datasets/hybrid_bootstrap
+  save_splits: true
+  manifest_version: 1
+  charting:
+    enabled: true
+    output_dirname: charts
+    file_format: png
+    create_overview: true
+    partition_when_days_gte: 31
+    create_monthly_charts: true
+    create_yearly_charts: true
+    overview_resample_rule: 30min
+    monthly_resample_rule: 30min
+    yearly_resample_rule: 1D
+    moving_averages: [20, 60]
+    include_volume: true
+    style: charles
+    dpi: 144
+    figscale: 1.2
+    figratio: [16, 9]
+    warn_too_much_data: 100000
