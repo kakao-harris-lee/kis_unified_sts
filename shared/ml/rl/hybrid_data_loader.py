@@ -21,6 +21,18 @@ def _read_frame(path: Path) -> pd.DataFrame:
     return pd.read_parquet(path)
 
 
+def _normalize_ohlcv_columns(df: pd.DataFrame) -> pd.DataFrame:
+    normalized = df.copy()
+    for base in ["open", "high", "low", "close", "volume"]:
+        if base in normalized.columns:
+            continue
+        for candidate in [f"{base}_x", f"{base}_y", f"{base}_left", f"{base}_right"]:
+            if candidate in normalized.columns:
+                normalized[base] = normalized[candidate]
+                break
+    return normalized
+
+
 def _frame_to_days(df: pd.DataFrame, scaler: MinMaxScaler) -> tuple[list[np.ndarray], list[np.ndarray]]:
     days: list[np.ndarray] = []
     prices: list[np.ndarray] = []
@@ -47,6 +59,7 @@ class HybridRLDataLoader:
         manifest_path: str | Path,
         *,
         persist_scaler: bool = False,
+        scaler_output_dir: str | Path | None = None,
     ) -> dict[str, Any]:
         manifest_file = Path(manifest_path)
         manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
@@ -59,8 +72,13 @@ class HybridRLDataLoader:
         scaler.fit(train_df[RL_FEATURE_COLUMNS].values)
 
         if persist_scaler:
-            save_dir = Path(self.rl_config.get("training", {}).get("save_dir", "./models/futures/rl/"))
+            save_dir = (
+                Path(scaler_output_dir)
+                if scaler_output_dir is not None
+                else Path(self.rl_config.get("training", {}).get("save_dir", "./models/futures/rl/"))
+            )
             save_dir.mkdir(parents=True, exist_ok=True)
+            joblib.dump(scaler, save_dir / "scaler.joblib")
             joblib.dump(scaler, save_dir / "hybrid_scaler.joblib")
 
         train_days, train_prices = _frame_to_days(train_df, scaler)
@@ -78,7 +96,7 @@ class HybridRLDataLoader:
         }
 
     def _prepare_split(self, split_path: str) -> pd.DataFrame:
-        df = _read_frame(Path(split_path)).copy()
+        df = _normalize_ohlcv_columns(_read_frame(Path(split_path)).copy())
         df["datetime"] = pd.to_datetime(df["datetime"])
         df = df.sort_values(["date", "datetime"]).reset_index(drop=True)
         calc_df = self.feature_calculator.calculate(df[["datetime", "open", "high", "low", "close", "volume"]].copy())

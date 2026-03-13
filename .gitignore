@@ -53,6 +53,14 @@ models/futures/tft/
 
 # Data
 data/
+!shared/ml/data/
+!shared/ml/data/**
+!tests/unit/ml/data/
+!tests/unit/ml/data/**
+shared/ml/data/**/__pycache__/
+shared/ml/data/**/*.pyc
+tests/unit/ml/data/**/__pycache__/
+tests/unit/ml/data/**/*.pyc
 results/
 mlflow.db
 

@@ -37,8 +37,28 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    trainer = RLTrainer(config_path=args.rl_config)
+    scaler_output_dir: Path | None = None
+    if args.smoke:
+        trainer.config.setdefault(args.algo, {})
+        trainer.config[args.algo]["total_timesteps"] = 256
+        trainer.config[args.algo]["n_steps"] = 128
+        trainer.config[args.algo]["batch_size"] = 32
+        trainer.config[args.algo]["n_epochs"] = 2
+        trainer.config.setdefault("training", {})
+        trainer.config["training"]["eval_freq"] = 128
+        trainer.config["training"]["checkpoint_freq"] = 256
+        trainer.save_dir = project_root / "models/futures/rl/bootstrap_smoke"
+        trainer.save_dir.mkdir(parents=True, exist_ok=True)
+        trainer.tb_log = "./results/rl/bootstrap_smoke/tensorboard/"
+        scaler_output_dir = trainer.save_dir
+
     loader = HybridRLDataLoader(args.rl_config)
-    data = loader.load_from_manifest(project_root / args.manifest, persist_scaler=not args.prepare_only)
+    data = loader.load_from_manifest(
+        project_root / args.manifest,
+        persist_scaler=not args.prepare_only,
+        scaler_output_dir=scaler_output_dir,
+    )
 
     summary = {
         "train_days": len(data["train_days"]),
@@ -60,19 +80,7 @@ def main() -> None:
         print(json.dumps(summary, ensure_ascii=False, indent=2))
         return
 
-    trainer = RLTrainer(config_path=args.rl_config)
     if args.smoke:
-        trainer.config.setdefault(args.algo, {})
-        trainer.config[args.algo]["total_timesteps"] = 256
-        trainer.config[args.algo]["n_steps"] = 128
-        trainer.config[args.algo]["batch_size"] = 32
-        trainer.config[args.algo]["n_epochs"] = 2
-        trainer.config.setdefault("training", {})
-        trainer.config["training"]["eval_freq"] = 128
-        trainer.config["training"]["checkpoint_freq"] = 256
-        trainer.save_dir = project_root / "models/futures/rl/bootstrap_smoke"
-        trainer.save_dir.mkdir(parents=True, exist_ok=True)
-        trainer.tb_log = "./results/rl/bootstrap_smoke/tensorboard/"
         summary["smoke_overrides"] = {
             "total_timesteps": 256,
             "n_steps": 128,
