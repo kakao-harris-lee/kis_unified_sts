@@ -1212,3 +1212,11 @@ EOF
 - [x] 한달치 누락 데이터는 "재적재 금지" 명시 — 신뢰 불가 profit 오염 방지 ✓
 - [x] 일간 자본/PnL 추적 뷰로 장기 가시성 확보 ✓
 - [x] 선물 rl_trades 경로 변경 없음 — 기존 578건 데이터 유지 ✓
+
+## Smoke Test Results (Task 4)
+
+- **2026-04-14 evening (post-market)**: Integration startup sanity verified.
+  - `TradingOrchestrator(asset_class='stock')` initializes without error
+  - `PositionTrackerConfig(asset_class='stock')` accepts the new field
+  - `market.stock_trades` table accessible (0 rows, as expected pre-first-trade)
+- **Next market day (2026-04-15)**: Full end-to-end smoke test with live paper session pending.
