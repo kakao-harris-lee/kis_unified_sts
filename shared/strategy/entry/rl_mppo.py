@@ -74,7 +74,7 @@ class RLMPPOConfig:
     night_eod_hard_block_minutes: int | None = None
     paper_eod_hard_block_minutes: int | None = None
     paper_night_eod_hard_block_minutes: int | None = None
-    enable_hold_override: bool = True
+    enable_hold_override: bool = False
     hold_override_max_gap: float = 0.12
     hold_override_min_entry_prob: float = 0.33
     hold_override_min_confidence: float = 0.35

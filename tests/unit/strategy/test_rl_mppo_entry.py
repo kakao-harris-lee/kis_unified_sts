@@ -31,6 +31,10 @@ def test_build_observation_has_expected_shape():
     assert obs.shape == (31,)
 
 
+def test_default_config_disables_hold_override():
+    assert RLMPPOConfig().enable_hold_override is False
+
+
 @pytest.mark.asyncio
 async def test_generate_short_signal_sets_signal_direction(monkeypatch):
     strategy = RLMPPOEntry(RLMPPOConfig(min_confidence=0.5))
