@@ -99,6 +99,9 @@ class PositionTrackerConfig:
     batch_size: int = 50  # Number of closed positions to batch before flush
     flush_interval_seconds: float = 5.0  # Max seconds to wait before flush
 
+    # Asset class for this tracker instance (used to guard stock-only paths)
+    asset_class: str = ""  # e.g. 'stock', 'futures'
+
     def __post_init__(self):
         """Validate configuration values."""
         self._validate()
@@ -294,6 +297,7 @@ class PositionTracker:
         # Batch accumulators for DB inserts
         self._pending_swing_positions: list[tuple[Any, ...]] = []
         self._pending_rl_trades: list[tuple[Any, ...]] = []
+        self._pending_stock_trades: list[tuple[Any, ...]] = []
         self._batch_lock: asyncio.Lock = asyncio.Lock()
 
         # Auto-flush background task
@@ -880,6 +884,13 @@ class PositionTracker:
         COMMENT 'Closed RL trade records for performance analytics'
     """
 
+    _STOCK_TRADE_INSERT_COLS = (
+        "(id, code, name, side, strategy, execution_venue, "
+        "entry_date, entry_price, exit_date, exit_price, quantity, "
+        "pnl, pnl_pct, commission, slippage, hold_seconds, "
+        "exit_reason, exit_state, metadata_json)"
+    )
+
     def _get_db_client(self):
         """Get ClickHouse client and database name for position persistence.
 
@@ -1128,6 +1139,105 @@ class PositionTracker:
             logger.error(f"Failed to accumulate RL trade {position.id[:8]}: {e}")
             return False
 
+    async def save_stock_trade_to_db(self, position: Position) -> bool:
+        """Accumulate closed stock trade for batch insertion to ClickHouse market.stock_trades.
+
+        This method is the stock-specific counterpart to save_rl_trade_to_db and uses
+        the same batching strategy to optimise database performance.
+
+        Batching Behavior:
+            - Trades are accumulated in an in-memory buffer (_pending_stock_trades)
+            - Not immediately written to the database
+            - Batched inserts reduce ClickHouse connection overhead
+
+        Flush Triggers (trades are written to DB when):
+            1. Batch size threshold reached (config.batch_size, default 50)
+            2. Timer-based auto-flush (every config.flush_interval_seconds, default 5s)
+            3. Manual flush via flush_pending_positions()
+            4. Graceful shutdown via stop_auto_flush()
+
+        Args:
+            position: Closed position with exit_price/exit_time set.
+
+        Returns:
+            True if accumulated successfully, False if guard conditions prevent
+            accumulation (wrong asset_class, missing exit data, or errors).
+        """
+        if self.config.asset_class != "stock":
+            logger.warning(
+                f"save_stock_trade_to_db called on non-stock tracker "
+                f"(asset_class={self.config.asset_class!r}); ignoring"
+            )
+            return False
+
+        if not position.exit_price or not position.exit_time:
+            logger.warning(
+                f"save_stock_trade_to_db: position {position.id[:8]} has no exit data; skipping"
+            )
+            return False
+
+        try:
+            pnl = self._calc_realized_pnl(position)
+            hold_seconds = 0
+            if position.entry_time and position.exit_time:
+                hold_seconds = max(
+                    0, int((position.exit_time - position.entry_time).total_seconds())
+                )
+
+            entry_price = position.entry_price
+            quantity = position.quantity
+            pnl_pct = (pnl / max(entry_price * quantity, 1e-9)) * 100.0
+
+            metadata = position.metadata if isinstance(position.metadata, dict) else {}
+            commission = float(metadata.get("commission", 0.0))
+            slippage = float(metadata.get("slippage", 0.0))
+            metadata_json = json.dumps(metadata, ensure_ascii=False, default=str)
+
+            exit_state = ""
+            if position.state is not None:
+                exit_state = position.state.value if hasattr(position.state, "value") else str(position.state)
+
+            row = (
+                position.id,
+                position.code,
+                position.name,
+                position.side.value,
+                position.strategy,
+                position.execution_venue,
+                position.entry_time,
+                entry_price,
+                position.exit_time,
+                position.exit_price,
+                quantity,
+                pnl,
+                pnl_pct,
+                commission,
+                slippage,
+                hold_seconds,
+                position.exit_reason or "",
+                exit_state,
+                metadata_json,
+            )
+
+            async with self._batch_lock:
+                self._pending_stock_trades.append(row)
+                batch_size = len(self._pending_stock_trades)
+
+            logger.info(
+                f"Accumulated stock trade: {position.code} "
+                f"(strategy={position.strategy}, pnl={pnl:+,.0f}, id={position.id[:8]}, batch={batch_size}/{self.config.batch_size})"
+            )
+
+            # Flush if batch threshold reached
+            if batch_size >= self.config.batch_size:
+                await self._flush_stock_trades_batch()
+
+            return True
+
+        except (ValidationError, InfrastructureError) as e:
+            logger.error(f"Failed to accumulate stock trade {position.id[:8]}: {e}")
+            return False
+
     async def _flush_batch(
         self,
         pending_list: list[tuple[Any, ...]],
@@ -1211,6 +1321,20 @@ class PositionTracker:
         )
         return count
 
+    async def _flush_stock_trades_batch(self) -> int:
+        """Flush accumulated stock trades batch to ClickHouse market.stock_trades.
+
+        Returns:
+            Number of trades flushed
+        """
+        count, self._pending_stock_trades = await self._flush_batch(
+            self._pending_stock_trades,
+            table_name="stock_trades",
+            insert_cols=self._STOCK_TRADE_INSERT_COLS,
+            label="stock trades",
+        )
+        return count
+
     async def flush_pending_positions(self) -> tuple[int, int]:
         """Flush all pending batches to database.
 
@@ -1222,10 +1346,12 @@ class PositionTracker:
         """
         swing_count = await self._flush_swing_positions_batch()
         rl_count = await self._flush_rl_trades_batch()
+        stock_count = await self._flush_stock_trades_batch()
 
-        if swing_count > 0 or rl_count > 0:
+        if swing_count > 0 or rl_count > 0 or stock_count > 0:
             logger.info(
-                f"Manual flush completed: {swing_count} swing positions, {rl_count} RL trades"
+                f"Manual flush completed: {swing_count} swing positions, "
+                f"{rl_count} RL trades, {stock_count} stock trades"
             )
 
         return swing_count, rl_count
@@ -1301,6 +1427,7 @@ class PositionTracker:
                 logger.warning(f"Error while stopping auto-flush task: {e}")
 
         # Final flush to ensure all pending positions are written
+        # flush_pending_positions also flushes _pending_stock_trades via _flush_stock_trades_batch
         swing_count, rl_count = await self.flush_pending_positions()
         if swing_count > 0 or rl_count > 0:
             logger.info(
