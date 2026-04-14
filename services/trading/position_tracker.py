@@ -1100,6 +1100,9 @@ class PositionTracker:
             metadata = position.metadata if isinstance(position.metadata, dict) else {}
             metadata_json = json.dumps(metadata, ensure_ascii=False, default=str)
 
+            entry_notional = max(position.entry_price * position.quantity, 1e-9)
+            pnl_pct = (pnl / entry_notional) * 100.0
+
             row = (
                 position.id,
                 str(asset_class or "unknown"),
@@ -1114,7 +1117,7 @@ class PositionTracker:
                 position.exit_price,
                 position.quantity,
                 pnl,
-                position.profit_pct,
+                pnl_pct,
                 hold_seconds,
                 position.exit_reason or "",
                 metadata_json,
