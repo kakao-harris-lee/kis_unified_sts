@@ -87,3 +87,59 @@ async def test_save_stock_trade_rejects_futures_asset_class():
 
     assert result is False
     assert tracker._pending_stock_trades == []
+
+
+from unittest.mock import patch
+
+
+class TestOrchestratorRouting:
+    """Asset-class routing: stock → save_stock_trade_to_db, futures+rl → save_rl_trade_to_db."""
+
+    @pytest.mark.asyncio
+    async def test_stock_orchestrator_routes_to_stock_trades(self):
+        from services.trading.orchestrator import TradingConfig, TradingOrchestrator
+
+        cfg = TradingConfig(
+            asset_class="stock",
+            strategy_name="momentum_breakout",
+            initial_capital=100_000_000.0,
+            order_amount_per_trade=1_000_000.0,
+        )
+        orch = TradingOrchestrator(cfg)
+        closed = _make_closed_stock_position(strategy="momentum_breakout")
+
+        save_stock = AsyncMock(return_value=True)
+        save_rl = AsyncMock(return_value=True)
+        orch._position_tracker = MagicMock()
+        orch._position_tracker.save_stock_trade_to_db = save_stock
+        orch._position_tracker.save_rl_trade_to_db = save_rl
+
+        await orch._persist_closed_position(closed, "momentum_breakout")
+
+        save_stock.assert_awaited_once_with(closed)
+        save_rl.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_futures_rl_orchestrator_routes_to_rl_trades(self):
+        from services.trading.orchestrator import TradingConfig, TradingOrchestrator
+
+        cfg = TradingConfig(
+            asset_class="futures",
+            strategy_name="rl_mppo",
+            initial_capital=10_000_000.0,
+            order_amount_per_trade=1_000_000.0,
+            symbols=["A05603"],
+        )
+        orch = TradingOrchestrator(cfg)
+        closed = _make_closed_stock_position(strategy="rl_mppo")
+
+        save_stock = AsyncMock(return_value=True)
+        save_rl = AsyncMock(return_value=True)
+        orch._position_tracker = MagicMock()
+        orch._position_tracker.save_stock_trade_to_db = save_stock
+        orch._position_tracker.save_rl_trade_to_db = save_rl
+
+        await orch._persist_closed_position(closed, "rl_mppo")
+
+        save_rl.assert_awaited_once()
+        save_stock.assert_not_awaited()
