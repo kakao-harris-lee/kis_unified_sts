@@ -16,6 +16,8 @@ class TestDataProviderConfig:
         assert config.cache_ttl_seconds == 1.0
         assert config.batch_size == 20
         assert config.fetch_timeout_seconds == 5.0
+        assert config.staleness_threshold_seconds == 10.0
+        assert config.rest_fallback_max_symbols is None
         assert config.mock_seed is None
 
     def test_validation_passes(self):
@@ -60,10 +62,14 @@ class TestDataProviderConfig:
         config = DataProviderConfig.from_dict({
             "cache_ttl_seconds": 2.0,
             "batch_size": 15,
+            "staleness_threshold_seconds": 12.0,
+            "rest_fallback_max_symbols": 10,
             "mock_seed": 42,
         })
         assert config.cache_ttl_seconds == 2.0
         assert config.batch_size == 15
+        assert config.staleness_threshold_seconds == 12.0
+        assert config.rest_fallback_max_symbols == 10
         assert config.mock_seed == 42
 
     def test_from_dict_type_validation(self):
@@ -538,13 +544,19 @@ class TestFailoverLogic:
         from services.trading.data_provider import MarketDataProvider, DataProviderConfig, DataSourceMode
 
         class ToggleHealthSource:
-            def __init__(self):
-                self.healthy = False
+            def get_health_status(self) -> dict:
+                return {
+                    "running": True,
+                    "connected": True,
+                    "staleness_seconds": 11.0,
+                    "fresh_symbol_count": 1,
+                    "symbol_count": 1,
+                }
 
-            def is_healthy(self) -> bool:
-                return self.healthy
-
-        config = DataProviderConfig(health_check_interval_seconds=0.5)
+        config = DataProviderConfig(
+            health_check_interval_seconds=0.5,
+            staleness_threshold_seconds=10.0,
+        )
         source = ToggleHealthSource()
         provider = MarketDataProvider(config=config, data_source=source)
 
@@ -621,13 +633,19 @@ class TestFailoverLogic:
         from services.trading.data_provider import MarketDataProvider, DataProviderConfig, DataSourceMode
 
         class ToggleHealthSource:
-            def __init__(self):
-                self.healthy = True
+            def get_health_status(self) -> dict:
+                return {
+                    "running": True,
+                    "connected": True,
+                    "staleness_seconds": 1.0,
+                    "fresh_symbol_count": 1,
+                    "symbol_count": 1,
+                }
 
-            def is_healthy(self) -> bool:
-                return self.healthy
-
-        config = DataProviderConfig(health_check_interval_seconds=0.5)
+        config = DataProviderConfig(
+            health_check_interval_seconds=0.5,
+            staleness_threshold_seconds=10.0,
+        )
         source = ToggleHealthSource()
         provider = MarketDataProvider(config=config, data_source=source)
 
@@ -821,3 +839,100 @@ class TestFailoverLogic:
             await health_task
         except asyncio.CancelledError:
             pass
+
+    @pytest.mark.asyncio
+    async def test_health_check_uses_provider_staleness_threshold(self):
+        """Feed health should respect the failover threshold configured on the provider."""
+        from services.trading.data_provider import MarketDataProvider, DataProviderConfig, DataSourceMode
+
+        class NearStaleSource:
+            def get_health_status(self) -> dict:
+                return {
+                    "running": True,
+                    "connected": True,
+                    "staleness_seconds": 4.8,
+                    "fresh_symbol_count": 1,
+                    "symbol_count": 1,
+                }
+
+            def is_healthy(self) -> bool:
+                return False
+
+        provider = MarketDataProvider(
+            config=DataProviderConfig(
+                health_check_interval_seconds=0.5,
+                staleness_threshold_seconds=10.0,
+            ),
+            data_source=NearStaleSource(),
+        )
+
+        health_task = asyncio.create_task(provider._health_check_loop())
+        await asyncio.sleep(0.7)
+
+        assert provider.current_mode == DataSourceMode.WEBSOCKET
+
+        health_task.cancel()
+        try:
+            await health_task
+        except asyncio.CancelledError:
+            pass
+
+    @pytest.mark.asyncio
+    async def test_sequential_fetch_continues_after_generic_symbol_error(self):
+        """A generic KIS client exception should not abort the whole sequential batch."""
+        from services.trading.data_provider import MarketDataProvider
+
+        class FlakeySequentialSource:
+            supports_parallel = False
+
+            async def get_current_price(self, symbol: str) -> dict:
+                if symbol == "005930":
+                    raise Exception("KIS API Error 500")
+                return {"code": symbol, "close": 123.0}
+
+        provider = MarketDataProvider()
+        data = await provider._fetch_from_source(
+            ["005930", "000660"],
+            FlakeySequentialSource(),
+        )
+
+        assert "005930" not in data
+        assert data["000660"]["close"] == 123.0
+
+    @pytest.mark.asyncio
+    async def test_fetch_batch_preserves_cache_when_real_source_fails(self):
+        """REST/source failures should keep the last real cache instead of generating mock data."""
+        from services.trading.data_provider import DataSourceMode, MarketDataProvider, MarketDataCache
+
+        class FailingClient:
+            supports_parallel = False
+
+            async def get_current_price(self, symbol: str) -> dict:
+                raise Exception("KIS API Error 500")
+
+        provider = MarketDataProvider(symbols=["005930"], kis_client=FailingClient())
+        provider._current_mode = DataSourceMode.REST_FALLBACK
+        provider._cache["005930"] = MarketDataCache(
+            symbol="005930",
+            data={"code": "005930", "close": 71000.0},
+            fetched_at=datetime.now(),
+        )
+
+        await provider._fetch_batch(["005930"])
+
+        assert provider._cache["005930"].data["close"] == 71000.0
+
+    def test_select_rest_poll_symbols_prefers_oldest_cache_and_limit(self):
+        """REST fallback should poll the stalest symbols first when capped."""
+        from services.trading.data_provider import MarketDataProvider, DataProviderConfig, MarketDataCache
+
+        provider = MarketDataProvider(
+            symbols=["A", "B", "C"],
+            config=DataProviderConfig(rest_fallback_max_symbols=2),
+        )
+        now = datetime.now()
+        provider._cache["A"] = MarketDataCache("A", {"close": 1}, now - timedelta(seconds=5))
+        provider._cache["B"] = MarketDataCache("B", {"close": 1}, now - timedelta(seconds=10))
+        provider._cache["C"] = MarketDataCache("C", {"close": 1}, now - timedelta(seconds=1))
+
+        assert provider._select_rest_poll_symbols() == ["B", "A"]

@@ -46,12 +46,16 @@ from services.monitoring.metrics import get_metrics_collector
 from shared.models.position import Position, PositionSide, PositionState
 from shared.models.signal import Signal, ExitSignal
 from shared.config.loader import ConfigLoader
+from shared.db.config import ClickHouseConfig
 from shared.strategy.base import EntryContext, MarketStateAdapter
 from shared.utils.calc import calc_order_quantity
 from shared.risk.manager import RiskManager
 from shared.risk.config import RiskConfig
 from shared.risk.models import DrawdownLevel
-from shared.regime.performance_tracker import RegimePerformanceTracker, RegimePerformanceConfig
+from shared.regime.performance_tracker import (
+    RegimePerformanceTracker,
+    RegimePerformanceConfig,
+)
 from shared.exceptions import (
     ConfigurationError,
     InvalidConfigError,
@@ -96,7 +100,9 @@ class HolidayLoader(Protocol):
         ...
 
 
-def default_holiday_loader(config_path: str = "config/market_schedule.yaml") -> set[date]:
+def default_holiday_loader(
+    config_path: str = "config/market_schedule.yaml",
+) -> set[date]:
     """Default implementation for loading holidays from config file.
 
     Args:
@@ -319,7 +325,9 @@ class TradingConfig:
     paper_slippage_rate: float = 0.001  # 슬리피지 0.1%
 
     # Position recovery
-    swing_recovery_max_age_days: int = 7  # Max age for swing position recovery from Redis
+    swing_recovery_max_age_days: int = (
+        7  # Max age for swing position recovery from Redis
+    )
 
     # Error recovery
     error_retry_delay_seconds: float = 60.0  # Retry delay after errors (default 1 min)
@@ -379,9 +387,14 @@ class TradingConfig:
             raise TypeError(f"symbols must be a list, got {type(self.symbols)}")
 
         if not isinstance(self.paper_trading, bool):
-            raise TypeError(f"paper_trading must be bool, got {type(self.paper_trading)}")
+            raise TypeError(
+                f"paper_trading must be bool, got {type(self.paper_trading)}"
+            )
 
-        if not isinstance(self.max_concurrent_orders, int) or self.max_concurrent_orders < 1:
+        if (
+            not isinstance(self.max_concurrent_orders, int)
+            or self.max_concurrent_orders < 1
+        ):
             raise ValueError(
                 f"max_concurrent_orders must be int >= 1, got {self.max_concurrent_orders}"
             )
@@ -513,8 +526,12 @@ class TradingOrchestrator:
         self._strategy_manager: StrategyManager | None = None
         self._position_tracker: PositionTracker | None = None
         self._risk_manager: RiskManager | None = None
-        self._risk_block_alert_sent: bool = False  # Track if risk block alert has been sent
-        self._last_risk_save_time: float = 0.0  # Track last Redis save time for risk state
+        self._risk_block_alert_sent: bool = (
+            False  # Track if risk block alert has been sent
+        )
+        self._last_risk_save_time: float = (
+            0.0  # Track last Redis save time for risk state
+        )
         self._paper_broker: Any | None = None
         self._kis_client: Any | None = None
         self._order_executor: Any | None = None
@@ -532,15 +549,20 @@ class TradingOrchestrator:
                     AdaptiveRegimeDetector,
                     AdaptiveRegimeConfig,
                 )
+
                 # Load adaptive regime config
                 regime_cfg_dict = ConfigLoader.load("ml/regime_adaptive.yaml")
 
                 # Build AdaptiveRegimeConfig from nested YAML structure
                 adaptive_config = AdaptiveRegimeConfig.from_yaml_dict(regime_cfg_dict)
                 self._adaptive_regime_detector = AdaptiveRegimeDetector(adaptive_config)
-                logger.info(f"Adaptive regime detection enabled (mode={config.regime_detection_mode})")
+                logger.info(
+                    f"Adaptive regime detection enabled (mode={config.regime_detection_mode})"
+                )
             except (ConfigurationError, MissingConfigError, InvalidConfigError) as e:
-                logger.error(f"Failed to initialize adaptive regime detector: {e}", exc_info=True)
+                logger.error(
+                    f"Failed to initialize adaptive regime detector: {e}", exc_info=True
+                )
                 self._adaptive_regime_detector = None
             except Exception as e:
                 logger.error(
@@ -573,7 +595,9 @@ class TradingOrchestrator:
             logger.warning(f"Failed to load ATS routing config: {e}")
             self._venue_router = None
         except Exception as e:
-            logger.error(f"Unexpected error initializing VenueRouter: {e}", exc_info=True)
+            logger.error(
+                f"Unexpected error initializing VenueRouter: {e}", exc_info=True
+            )
             self._venue_router = None
 
         # Market data loop state
@@ -625,7 +649,9 @@ class TradingOrchestrator:
         self._symbol_metadata_cache: dict[str, dict[str, Any]] = {}
         self._enriched_metadata_cache: dict[str, dict[str, Any]] = {}
         self._cached_symbol_meta: dict[str, dict[str, Any]] = {}  # pure symbol_metadata
-        self._cached_daily_indicators: dict[str, dict[str, Any]] = {}  # pure daily indicators
+        self._cached_daily_indicators: dict[str, dict[str, Any]] = (
+            {}
+        )  # pure daily indicators
         self._prev_day_volume_warned: bool = False
 
         # Redis keys namespaced by asset class to prevent collision
@@ -656,10 +682,20 @@ class TradingOrchestrator:
         try:
             _sf_cfg = ConfigLoader.load("streaming.yaml").get("stock_feed", {})
             self._max_universe_size = int(_sf_cfg.get("max_symbols", 40))
-        except (InvalidConfigError, MissingConfigError, OSError, yaml.YAMLError, KeyError, TypeError, ValueError):
+        except (
+            InvalidConfigError,
+            MissingConfigError,
+            OSError,
+            yaml.YAMLError,
+            KeyError,
+            TypeError,
+            ValueError,
+        ):
             self._max_universe_size = 40
         # Daily watchlist for static universe mode (populated from DailyScanner)
-        self._daily_watchlist: dict[str, Any] = {}  # {strategies: {name: [codes]}, codes: [...]}
+        self._daily_watchlist: dict[str, Any] = (
+            {}
+        )  # {strategies: {name: [codes]}, codes: [...]}
         self._daily_watchlist_key = "system:daily_watchlist:latest"
         # Daily indicators from pre-market scanner (scalars + series for daily strategies)
         self._daily_indicators: dict[str, dict[str, Any]] = {}
@@ -688,7 +724,10 @@ class TradingOrchestrator:
 
     @property
     def is_running(self) -> bool:
-        return self._running and self.state in (TradingState.RUNNING, TradingState.WAITING)
+        return self._running and self.state in (
+            TradingState.RUNNING,
+            TradingState.WAITING,
+        )
 
     async def start(self):
         """거래 시작"""
@@ -761,13 +800,17 @@ class TradingOrchestrator:
         self._init_llm_context_publisher()
 
     @staticmethod
-    def _deep_merge_config_dict(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    def _deep_merge_config_dict(
+        base: dict[str, Any], override: dict[str, Any]
+    ) -> dict[str, Any]:
         """Recursively merge two config dictionaries without mutating inputs."""
         merged: dict[str, Any] = dict(base)
         for key, value in override.items():
             current = merged.get(key)
             if isinstance(current, dict) and isinstance(value, dict):
-                merged[key] = TradingOrchestrator._deep_merge_config_dict(current, value)
+                merged[key] = TradingOrchestrator._deep_merge_config_dict(
+                    current, value
+                )
             else:
                 merged[key] = value
         return merged
@@ -843,7 +886,9 @@ class TradingOrchestrator:
 
             if self.config.asset_class == "futures":
                 app_key = os.getenv("KIS_FUTURES_APP_KEY", os.getenv("KIS_APP_KEY", ""))
-                app_secret = os.getenv("KIS_FUTURES_APP_SECRET", os.getenv("KIS_APP_SECRET", ""))
+                app_secret = os.getenv(
+                    "KIS_FUTURES_APP_SECRET", os.getenv("KIS_APP_SECRET", "")
+                )
                 # 선물은 항상 실서버 사용 (모의서버는 선물 시세 미지원)
                 is_real = True
             else:
@@ -851,7 +896,9 @@ class TradingOrchestrator:
                 app_secret = os.getenv("KIS_APP_SECRET", "")
                 market = os.getenv("KIS_STOCK_MARKET", "real")
                 is_real = market.lower() == "real"
-            kis_config = KISAuthConfig(app_key=app_key, app_secret=app_secret, is_real=is_real)
+            kis_config = KISAuthConfig(
+                app_key=app_key, app_secret=app_secret, is_real=is_real
+            )
             self._kis_client = KISClient(kis_config)
             logger.info("KIS Client initialized")
             return kis_config
@@ -872,6 +919,7 @@ class TradingOrchestrator:
         if self.config.asset_class == "stock":
             try:
                 from shared.kis.stock_feed import KISStockPriceFeed
+
                 self._stock_price_feed = KISStockPriceFeed(
                     config=kis_config,
                 )
@@ -882,6 +930,7 @@ class TradingOrchestrator:
         elif self.config.asset_class == "futures":
             try:
                 from shared.kis.futures_feed import KISFuturesPriceFeed
+
                 self._futures_price_feed = KISFuturesPriceFeed(
                     config=kis_config,
                 )
@@ -898,7 +947,14 @@ class TradingOrchestrator:
             streaming_cfg = ConfigLoader.load("streaming.yaml")
             dp_cfg = streaming_cfg.get("data_provider", {})
             failover_cfg = streaming_cfg.get("failover", {})
-        except (InvalidConfigError, MissingConfigError, OSError, yaml.YAMLError, KeyError, TypeError):
+        except (
+            InvalidConfigError,
+            MissingConfigError,
+            OSError,
+            yaml.YAMLError,
+            KeyError,
+            TypeError,
+        ):
             dp_cfg = {}
             failover_cfg = {}
 
@@ -919,9 +975,21 @@ class TradingOrchestrator:
                 from shared.config.secrets import SecretsManager
                 from shared.notification.telegram import TelegramNotifier
 
-                domain = self.config.asset_class if self.config.asset_class in ("stock", "futures") else None
-                bot_token = self.config.telegram_token or SecretsManager.telegram_token(domain) or ""
-                chat_id = self.config.telegram_chat_id or SecretsManager.telegram_chat_id(domain) or ""
+                domain = (
+                    self.config.asset_class
+                    if self.config.asset_class in ("stock", "futures")
+                    else None
+                )
+                bot_token = (
+                    self.config.telegram_token
+                    or SecretsManager.telegram_token(domain)
+                    or ""
+                )
+                chat_id = (
+                    self.config.telegram_chat_id
+                    or SecretsManager.telegram_chat_id(domain)
+                    or ""
+                )
                 if bot_token and chat_id:
                     telegram_notifier = TelegramNotifier(
                         bot_token=bot_token,
@@ -947,6 +1015,9 @@ class TradingOrchestrator:
                 ),
                 staleness_threshold_seconds=float(
                     failover_cfg.get("staleness_threshold_seconds", 10.0)
+                ),
+                rest_fallback_max_symbols=failover_cfg.get(
+                    "rest_fallback_max_symbols"
                 ),
                 send_telegram_alerts=send_telegram_alerts,
             ),
@@ -1036,6 +1107,7 @@ class TradingOrchestrator:
         # Position tracker (route to asset-specific ClickHouse database)
         try:
             from shared.config.secrets import SecretsManager
+
             db_name = SecretsManager.clickhouse_database(self.config.asset_class)
         except (ConfigurationError, KeyError, AttributeError):
             db_name = ""
@@ -1052,7 +1124,14 @@ class TradingOrchestrator:
         # Load batch insert settings from YAML config
         try:
             pt_cfg = ConfigLoader.load("execution.yaml").get("position_tracker", {})
-        except (InvalidConfigError, MissingConfigError, OSError, yaml.YAMLError, KeyError, TypeError):
+        except (
+            InvalidConfigError,
+            MissingConfigError,
+            OSError,
+            yaml.YAMLError,
+            KeyError,
+            TypeError,
+        ):
             pt_cfg = {}
         self._position_tracker = PositionTracker(
             config=PositionTrackerConfig(
@@ -1077,8 +1156,15 @@ class TradingOrchestrator:
                 risk_config.daily_loss_limit_pct,
                 risk_config.max_total_positions,
             )
-        except (InvalidConfigError, MissingConfigError, ConfigurationError, ValidationError) as e:
-            logger.warning(f"Risk manager init failed: {e}, continuing without risk management")
+        except (
+            InvalidConfigError,
+            MissingConfigError,
+            ConfigurationError,
+            ValidationError,
+        ) as e:
+            logger.warning(
+                f"Risk manager init failed: {e}, continuing without risk management"
+            )
             self._risk_manager = None
 
         # Adaptive position sizing based on strategy win rate
@@ -1090,7 +1176,9 @@ class TradingOrchestrator:
 
             sizing_raw = ConfigLoader.load("execution.yaml").get("adaptive_sizing", {})
             sizing_config = AdaptiveSizingConfig.from_dict(sizing_raw)
-            self._adaptive_sizing = AdaptiveSizingManager(sizing_config, self.config.asset_class)
+            self._adaptive_sizing = AdaptiveSizingManager(
+                sizing_config, self.config.asset_class
+            )
             self._adaptive_sizing.refresh()
         except (ConfigurationError, InfrastructureError) as e:
             logger.warning(f"Adaptive sizing init failed: {e}")
@@ -1114,7 +1202,11 @@ class TradingOrchestrator:
                         rsi_period = cfg.get("rsi_period", rsi_period)
                         high_period = cfg.get("breakout_period", high_period)
                         # Collect EMA periods from trend mode config
-                        for ema_key in ("trend_ema_fast", "trend_ema_mid", "trend_ema_slow"):
+                        for ema_key in (
+                            "trend_ema_fast",
+                            "trend_ema_mid",
+                            "trend_ema_slow",
+                        ):
                             val = cfg.get(ema_key)
                             if val is not None:
                                 ema_periods_set.add(int(val))
@@ -1125,12 +1217,18 @@ class TradingOrchestrator:
                 _ie_cfg = ConfigLoader.load("streaming.yaml").get(
                     "indicator_engine", {}
                 )
-                staleness_seconds = float(
-                    _ie_cfg.get("staleness_seconds", 180.0)
-                )
+                staleness_seconds = float(_ie_cfg.get("staleness_seconds", 180.0))
                 mtf_timeframes = _ie_cfg.get("mtf_timeframes", None)
                 mtf_maxlen = int(_ie_cfg.get("mtf_maxlen", 250))
-            except (InvalidConfigError, MissingConfigError, OSError, yaml.YAMLError, KeyError, TypeError, ValueError):
+            except (
+                InvalidConfigError,
+                MissingConfigError,
+                OSError,
+                yaml.YAMLError,
+                KeyError,
+                TypeError,
+                ValueError,
+            ):
                 staleness_seconds = 180.0
                 mtf_timeframes = None
                 mtf_maxlen = 250
@@ -1178,14 +1276,18 @@ class TradingOrchestrator:
         # Hook futures WebSocket ticks into indicator engine and monitoring stream.
         if self._futures_price_feed:
 
-            def _on_futures_tick(symbol: str, data: dict[str, Any], ts: datetime) -> None:
+            def _on_futures_tick(
+                symbol: str, data: dict[str, Any], ts: datetime
+            ) -> None:
                 if self._indicator_engine:
                     # Initialize baseline for new symbols (same logic as _feed_indicators)
                     if symbol not in self._indicator_engine._last_cumulative_volume:
                         if data.get("volume_is_cumulative") is not False:
                             raw_vol = float(data.get("volume", 0))
                             if raw_vol > 0:
-                                self._indicator_engine.set_volume_baseline(symbol, raw_vol)
+                                self._indicator_engine.set_volume_baseline(
+                                    symbol, raw_vol
+                                )
                     self._indicator_engine.on_tick(symbol, data, ts)
 
                 if self._futures_slippage_controller:
@@ -1195,7 +1297,9 @@ class TradingOrchestrator:
                             self._futures_slippage_controller.register_trade_tick(
                                 symbol, price, timestamp=ts
                             )
-                    except Exception:  # Graceful degradation: silently skip tick registration failures
+                    except (
+                        Exception
+                    ):  # Graceful degradation: silently skip tick registration failures
                         pass
 
                 if self._tick_stream_publisher:
@@ -1204,9 +1308,7 @@ class TradingOrchestrator:
                         fallback_name = self._symbol_names.get(symbol, "")
                         if fallback_name:
                             monitor_data["name"] = fallback_name
-                    self._tick_stream_publisher.publish(
-                        "futures", symbol, monitor_data
-                    )
+                    self._tick_stream_publisher.publish("futures", symbol, monitor_data)
 
             self._futures_price_feed.set_tick_callback(_on_futures_tick)
 
@@ -1252,13 +1354,22 @@ class TradingOrchestrator:
                 try:
                     from shared.execution.mock_mirror import MockAccountMirror
 
-                    self._mock_mirror = MockAccountMirror(asset_class=self.config.asset_class)
+                    self._mock_mirror = MockAccountMirror(
+                        asset_class=self.config.asset_class
+                    )
                     ok = await self._mock_mirror.initialize()
                     if ok:
-                        logger.info("MockAccountMirror initialized — trades will be mirrored")
+                        logger.info(
+                            "MockAccountMirror initialized — trades will be mirrored"
+                        )
                     else:
                         self._mock_mirror = None
-                except (ConfigurationError, APIError, NetworkError, InfrastructureError) as e:
+                except (
+                    ConfigurationError,
+                    APIError,
+                    NetworkError,
+                    InfrastructureError,
+                ) as e:
                     logger.warning(f"MockAccountMirror init failed (ignored): {e}")
                     self._mock_mirror = None
         else:
@@ -1267,13 +1378,26 @@ class TradingOrchestrator:
                 from shared.execution.config import ExecutionConfig
                 from shared.execution.executor import OrderExecutor
 
-                mode = (self.config.execution_mode or os.getenv("TRADING_MODE", "MOCK")).upper()
+                mode = (
+                    self.config.execution_mode or os.getenv("TRADING_MODE", "MOCK")
+                ).upper()
                 if mode not in ("MOCK", "REAL"):
-                    raise ValueError(f"execution_mode must be MOCK or REAL for live execution, got {mode!r}")
+                    raise ValueError(
+                        f"execution_mode must be MOCK or REAL for live execution, got {mode!r}"
+                    )
 
                 try:
-                    raw_exec_cfg = ConfigLoader.load("execution.yaml").get("execution", {})
-                except (InvalidConfigError, MissingConfigError, OSError, yaml.YAMLError, KeyError, TypeError):
+                    raw_exec_cfg = ConfigLoader.load("execution.yaml").get(
+                        "execution", {}
+                    )
+                except (
+                    InvalidConfigError,
+                    MissingConfigError,
+                    OSError,
+                    yaml.YAMLError,
+                    KeyError,
+                    TypeError,
+                ):
                     raw_exec_cfg = {}
 
                 exec_kwargs: dict[str, Any] = {}
@@ -1288,21 +1412,25 @@ class TradingOrchestrator:
                         ]
                     # Backward compatibility: execution.yaml used orders_per_second key.
                     if "orders_per_second" in raw_exec_cfg:
-                        exec_kwargs["requests_per_second"] = raw_exec_cfg["orders_per_second"]
+                        exec_kwargs["requests_per_second"] = raw_exec_cfg[
+                            "orders_per_second"
+                        ]
                     elif "requests_per_second" in raw_exec_cfg:
-                        exec_kwargs["requests_per_second"] = raw_exec_cfg["requests_per_second"]
+                        exec_kwargs["requests_per_second"] = raw_exec_cfg[
+                            "requests_per_second"
+                        ]
                     if "futures_fill_check_enabled" in raw_exec_cfg:
                         exec_kwargs["futures_fill_check_enabled"] = raw_exec_cfg[
                             "futures_fill_check_enabled"
                         ]
                     if "futures_fill_check_poll_interval_seconds" in raw_exec_cfg:
-                        exec_kwargs["futures_fill_check_poll_interval_seconds"] = raw_exec_cfg[
-                            "futures_fill_check_poll_interval_seconds"
-                        ]
+                        exec_kwargs["futures_fill_check_poll_interval_seconds"] = (
+                            raw_exec_cfg["futures_fill_check_poll_interval_seconds"]
+                        )
                     if "futures_fill_check_timeout_seconds" in raw_exec_cfg:
-                        exec_kwargs["futures_fill_check_timeout_seconds"] = raw_exec_cfg[
-                            "futures_fill_check_timeout_seconds"
-                        ]
+                        exec_kwargs["futures_fill_check_timeout_seconds"] = (
+                            raw_exec_cfg["futures_fill_check_timeout_seconds"]
+                        )
                     if "futures_auto_cancel_unfilled" in raw_exec_cfg:
                         exec_kwargs["futures_auto_cancel_unfilled"] = raw_exec_cfg[
                             "futures_auto_cancel_unfilled"
@@ -1311,7 +1439,9 @@ class TradingOrchestrator:
                 exec_cfg = ExecutionConfig(
                     trading_mode=mode,
                     account_no=(
-                        os.getenv("KIS_FUTURES_ACCOUNT_NO", os.getenv("KIS_ACCOUNT_NO", ""))
+                        os.getenv(
+                            "KIS_FUTURES_ACCOUNT_NO", os.getenv("KIS_ACCOUNT_NO", "")
+                        )
                         if self.config.asset_class == "futures"
                         else os.getenv("KIS_ACCOUNT_NO", "")
                     ),
@@ -1320,11 +1450,24 @@ class TradingOrchestrator:
                     **exec_kwargs,
                 )
 
-                auth_manager = getattr(self._kis_client, "auth_manager", None) if self._kis_client else None
-                self._order_executor = OrderExecutor(config=exec_cfg, auth_manager=auth_manager)
+                auth_manager = (
+                    getattr(self._kis_client, "auth_manager", None)
+                    if self._kis_client
+                    else None
+                )
+                self._order_executor = OrderExecutor(
+                    config=exec_cfg, auth_manager=auth_manager
+                )
                 await self._order_executor.initialize()
                 logger.info(f"OrderExecutor initialized (mode={mode})")
-            except (ConfigurationError, APIError, NetworkError, InfrastructureError, ValidationError, ValueError) as e:
+            except (
+                ConfigurationError,
+                APIError,
+                NetworkError,
+                InfrastructureError,
+                ValidationError,
+                ValueError,
+            ) as e:
                 logger.warning(f"OrderExecutor init failed; orders will be mocked: {e}")
                 self._order_executor = None
 
@@ -1335,22 +1478,29 @@ class TradingOrchestrator:
             os.getenv("STS_DISABLE_POSITION_RECOVERY", "")
         ).strip().lower() in {"1", "true", "yes", "on"}
         if recovery_disabled:
-            logger.info("Position recovery disabled by env (STS_DISABLE_POSITION_RECOVERY)")
+            logger.info(
+                "Position recovery disabled by env (STS_DISABLE_POSITION_RECOVERY)"
+            )
         elif self._position_tracker:
             await self._recover_positions_from_redis()
 
         # --- Risk state recovery from Redis ---
         if self._risk_manager:
-            recovered = await self._risk_manager.load_from_redis()
-            if recovered:
+            if recovery_disabled:
                 logger.info(
-                    f"Risk state recovered: "
-                    f"daily_pnl={self._risk_manager.state.daily_pnl:.2f}, "
-                    f"positions={self._risk_manager.metrics.total_positions}, "
-                    f"blocked={self._risk_manager.state.is_blocked}"
+                    "Risk recovery disabled by env (STS_DISABLE_POSITION_RECOVERY)"
                 )
             else:
-                logger.info("No risk state to recover (fresh start)")
+                recovered = await self._risk_manager.load_from_redis()
+                if recovered:
+                    logger.info(
+                        f"Risk state recovered: "
+                        f"daily_pnl={self._risk_manager.state.daily_pnl:.2f}, "
+                        f"positions={self._risk_manager.metrics.total_positions}, "
+                        f"blocked={self._risk_manager.state.is_blocked}"
+                    )
+                else:
+                    logger.info("No risk state to recover (fresh start)")
 
         # --- Broker position verification ---
         await self._verify_positions_with_broker()
@@ -1369,6 +1519,7 @@ class TradingOrchestrator:
         # Redis state publisher
         try:
             from shared.streaming.trading_state import TradingStatePublisher
+
             self._state_publisher = TradingStatePublisher(self.config.asset_class)
             logger.info("Trading state publisher initialized")
         except (ConfigurationError, InfrastructureError) as e:
@@ -1402,6 +1553,7 @@ class TradingOrchestrator:
         """
         try:
             from shared.streaming.trading_state import TradingStateReader
+
             reader = TradingStateReader(self.config.asset_class)
         except (ConfigurationError, InfrastructureError) as e:
             logger.warning(f"Cannot initialize TradingStateReader for recovery: {e}")
@@ -1435,14 +1587,18 @@ class TradingOrchestrator:
             age_days = (today - entry_time.date()).days
             if strategy in self.SWING_STRATEGIES:
                 if age_days > max_age_days:
-                    logger.debug(f"Stale swing position: {pos_data.get('code')} (age={age_days}d)")
+                    logger.debug(
+                        f"Stale swing position: {pos_data.get('code')} (age={age_days}d)"
+                    )
                     reader.remove_position(pos_id)
                     stale += 1
                     continue
             else:
                 # Intraday strategies: same-day only
                 if entry_time.date() != today:
-                    logger.debug(f"Stale intraday position: {pos_data.get('code')} (age={age_days}d)")
+                    logger.debug(
+                        f"Stale intraday position: {pos_data.get('code')} (age={age_days}d)"
+                    )
                     reader.remove_position(pos_id)
                     stale += 1
                     continue
@@ -1458,14 +1614,19 @@ class TradingOrchestrator:
                 position = Position(
                     id=pos_id,
                     code=pos_code,
-                    name=pos_data.get("name", "") or self._symbol_names.get(pos_code, pos_code),
+                    name=pos_data.get("name", "")
+                    or self._symbol_names.get(pos_code, pos_code),
                     side=side,
                     quantity=int(pos_data["quantity"]),
                     entry_price=entry_price,
                     entry_time=entry_time,
                     current_price=current_price,
-                    highest_price=float(pos_data.get("highest_price", max(entry_price, current_price))),
-                    lowest_price=float(pos_data.get("lowest_price", min(entry_price, current_price))),
+                    highest_price=float(
+                        pos_data.get("highest_price", max(entry_price, current_price))
+                    ),
+                    lowest_price=float(
+                        pos_data.get("lowest_price", min(entry_price, current_price))
+                    ),
                     state=PositionState(pos_data.get("state", "survival").lower()),
                     strategy=strategy,
                     fee_rate=float(pos_data.get("fee_rate", 0.003)),
@@ -1508,7 +1669,14 @@ class TradingOrchestrator:
         try:
             exec_cfg = ConfigLoader.load("execution.yaml")
             bv_cfg = exec_cfg.get("broker_verification", {})
-        except (InvalidConfigError, MissingConfigError, OSError, yaml.YAMLError, KeyError, TypeError):
+        except (
+            InvalidConfigError,
+            MissingConfigError,
+            OSError,
+            yaml.YAMLError,
+            KeyError,
+            TypeError,
+        ):
             bv_cfg = {}
 
         if not bv_cfg.get("enabled", True):
@@ -1583,7 +1751,9 @@ class TradingOrchestrator:
                 logger.warning(msg)
                 if reconcile_qty:
                     rp.quantity = bp["quantity"]
-                    logger.info(f"[{code}] Quantity reconciled to broker value: {bp['quantity']}")
+                    logger.info(
+                        f"[{code}] Quantity reconciled to broker value: {bp['quantity']}"
+                    )
                 else:
                     alerts.append(msg)
 
@@ -1623,7 +1793,12 @@ class TradingOrchestrator:
                             if self.config.symbols is None:
                                 self.config.symbols = []
                             self.config.symbols.append(code)
-                except (ValidationError, InfrastructureError, ValueError, KeyError) as e:
+                except (
+                    ValidationError,
+                    InfrastructureError,
+                    ValueError,
+                    KeyError,
+                ) as e:
                     logger.warning(f"[{code}] Failed to auto-track: {e}")
             else:
                 alerts.append(msg)
@@ -1693,7 +1868,9 @@ class TradingOrchestrator:
                 closed, self.config.asset_class
             )
         except (InfrastructureError, OSError, ConnectionError) as e:
-            logger.warning(f"Failed to persist closed position {getattr(closed, 'id', '?')[:8]}: {e}")
+            logger.warning(
+                f"Failed to persist closed position {getattr(closed, 'id', '?')[:8]}: {e}"
+            )
 
     ACCUMULATION_REDIS_KEY = "system:accumulation:latest"
 
@@ -1701,6 +1878,7 @@ class TradingOrchestrator:
         """Load accumulation candidates from Redis (published by overnight scanner)."""
         try:
             from shared.streaming.client import RedisClient
+
             redis_client = RedisClient.get_client()
             raw = redis_client.get(self.ACCUMULATION_REDIS_KEY)
             if not raw:
@@ -1722,17 +1900,25 @@ class TradingOrchestrator:
                     continue
                 code = c.get("code")
                 score = c.get("score")
-                if isinstance(code, str) and code.isalnum() and isinstance(score, (int, float)):
+                if (
+                    isinstance(code, str)
+                    and code.isalnum()
+                    and isinstance(score, (int, float))
+                ):
                     validated[code] = int(score)
 
             self._accumulation_candidates = validated
-            logger.info(f"Loaded {len(self._accumulation_candidates)} accumulation candidates")
+            logger.info(
+                f"Loaded {len(self._accumulation_candidates)} accumulation candidates"
+            )
             return True
         except (InfrastructureError, OSError, ConnectionError) as e:
             logger.debug(f"Accumulation candidates not available: {e}")
             return False
 
-    SWING_STRATEGIES = frozenset({"volume_accumulation", "bb_reversion", "daily_pullback", "vr_composite"})
+    SWING_STRATEGIES = frozenset(
+        {"volume_accumulation", "bb_reversion", "daily_pullback", "vr_composite"}
+    )
     DIP_CANDIDATES_REDIS_KEY = "system:dip_candidates:latest"
     LLM_QUALITY_REDIS_KEY = "system:llm_quality:latest"
 
@@ -1743,6 +1929,7 @@ class TradingOrchestrator:
         """
         try:
             from shared.streaming.client import RedisClient
+
             redis_client = RedisClient.get_client()
             raw = redis_client.get(self.DIP_CANDIDATES_REDIS_KEY)
             if not raw:
@@ -1795,7 +1982,9 @@ class TradingOrchestrator:
 
             self._dip_candidates = validated
             if validated:
-                logger.info(f"Loaded {len(validated)} dip candidates (filtered {len(llm_blacklist)} by LLM)")
+                logger.info(
+                    f"Loaded {len(validated)} dip candidates (filtered {len(llm_blacklist)} by LLM)"
+                )
             return bool(validated)
         except (InfrastructureError, OSError, ConnectionError) as e:
             logger.debug(f"Dip candidates not available: {e}")
@@ -1810,6 +1999,7 @@ class TradingOrchestrator:
         """
         try:
             from shared.streaming.client import RedisClient
+
             redis_client = RedisClient.get_client()
             raw = redis_client.get(self.DAILY_INDICATORS_REDIS_KEY)
             if not raw:
@@ -1896,7 +2086,9 @@ class TradingOrchestrator:
         logger.debug("Invalidating enriched metadata cache")
         self._build_enriched_metadata_cache()
 
-    def _load_ranked_targets(self, redis) -> tuple[list[str], dict[str, str], dict[str, dict[str, Any]]]:
+    def _load_ranked_targets(
+        self, redis
+    ) -> tuple[list[str], dict[str, str], dict[str, dict[str, Any]]]:
         """Load ranked symbols from fusion targets first, then screener fallback."""
         keys = [
             ("fusion", self._trade_targets_latest_key),
@@ -1935,7 +2127,13 @@ class TradingOrchestrator:
                 )
                 logger.debug(f"Loaded {len(codes)} symbols from {source} key: {key}")
                 return codes, names, metadata
-            except (ValidationError, KeyError, TypeError, ValueError, AttributeError) as e:
+            except (
+                ValidationError,
+                KeyError,
+                TypeError,
+                ValueError,
+                AttributeError,
+            ) as e:
                 logger.debug(f"Failed parsing ranked target payload ({key}): {e}")
 
         return [], {}, {}
@@ -1949,6 +2147,7 @@ class TradingOrchestrator:
         """
         try:
             from shared.streaming.client import RedisClient
+
             redis = RedisClient.get_client()
             codes, names, metadata = self._load_ranked_targets(redis)
 
@@ -1981,6 +2180,7 @@ class TradingOrchestrator:
         """
         try:
             from shared.streaming.client import RedisClient
+
             redis = RedisClient.get_client()
             raw = redis.get(self._daily_watchlist_key)
             if not raw:
@@ -1997,10 +2197,14 @@ class TradingOrchestrator:
             all_codes: set[str] = set()
             for strat_codes in strategies.values():
                 if isinstance(strat_codes, list):
-                    all_codes.update(str(c).strip() for c in strat_codes if str(c).strip())
+                    all_codes.update(
+                        str(c).strip() for c in strat_codes if str(c).strip()
+                    )
 
             if not all_codes:
-                logger.warning("Static watchlist is empty, falling back to dynamic mode.")
+                logger.warning(
+                    "Static watchlist is empty, falling back to dynamic mode."
+                )
                 return False
 
             # Store full watchlist for injection into entry context
@@ -2202,7 +2406,7 @@ class TradingOrchestrator:
             )
             remaining_slots = self._max_universe_size - len(protected)
             if remaining_slots >= 0:
-                stable_symbols = protected | set(by_recency[: remaining_slots])
+                stable_symbols = protected | set(by_recency[:remaining_slots])
             else:
                 # More protected than max — keep all protected, drop nothing
                 stable_symbols = protected
@@ -2248,11 +2452,13 @@ class TradingOrchestrator:
 
             if added or removed:
                 warm_n = sum(
-                    1 for s in stable_symbols
+                    1
+                    for s in stable_symbols
                     if self._indicator_engine and self._indicator_engine.is_warm(s)
                 )
                 warming_n = sum(
-                    1 for s in stable_symbols
+                    1
+                    for s in stable_symbols
                     if self._indicator_engine
                     and not self._indicator_engine.is_warm(s)
                     and self._indicator_engine.warmup_progress(s) >= 0.5
@@ -2352,7 +2558,12 @@ class TradingOrchestrator:
             while self._market_data_running:
                 try:
                     self._refresh_universe_from_screener()
-                except (InfrastructureError, NetworkError, OSError, ConnectionError) as e:
+                except (
+                    InfrastructureError,
+                    NetworkError,
+                    OSError,
+                    ConnectionError,
+                ) as e:
                     logger.warning(f"Dynamic fallback refresh error: {e}")
                 await asyncio.sleep(self._universe_refresh_interval)
             return
@@ -2390,26 +2601,21 @@ class TradingOrchestrator:
         try:
             from clickhouse_driver import Client as CHSyncClient
 
-            ch_host = os.getenv("CLICKHOUSE_HOST", "localhost")
-            ch_port = int(
-                os.getenv(
-                    "CLICKHOUSE_NATIVE_PORT",
-                    os.getenv("CLICKHOUSE_PORT", "9000"),
-                )
+            # Reuse the shared env parsing so the native driver does not
+            # accidentally point at the HTTP port (8123).
+            ch_cfg = ClickHouseConfig.from_env(
+                database=os.getenv("CLICKHOUSE_STOCK_DATABASE", "market")
             )
-            ch_user = os.getenv("CLICKHOUSE_USER", "default")
-            ch_pw = os.getenv("CLICKHOUSE_PASSWORD", "")
-            ch_db = os.getenv("CLICKHOUSE_STOCK_DATABASE", "market")
 
             loop = asyncio.get_event_loop()
             rows = await loop.run_in_executor(
                 None,
                 lambda: CHSyncClient(
-                    host=ch_host,
-                    port=ch_port,
-                    user=ch_user,
-                    password=ch_pw,
-                    database=ch_db,
+                    host=ch_cfg.host,
+                    port=ch_cfg.port,
+                    user=ch_cfg.user,
+                    password=ch_cfg.password,
+                    database=ch_cfg.database,
                 ).execute(
                     "SELECT code, datetime, open, high, low, close, volume "
                     "FROM minute_candles "
@@ -2420,16 +2626,24 @@ class TradingOrchestrator:
             )
             candles = []
             for row in reversed(rows):  # oldest first
-                candles.append({
-                    "datetime": row[1],
-                    "open": float(row[2]),
-                    "high": float(row[3]),
-                    "low": float(row[4]),
-                    "close": float(row[5]),
-                    "volume": int(row[6]),
-                })
+                candles.append(
+                    {
+                        "datetime": row[1],
+                        "open": float(row[2]),
+                        "high": float(row[3]),
+                        "low": float(row[4]),
+                        "close": float(row[5]),
+                        "volume": int(row[6]),
+                    }
+                )
             return candles
-        except (InfrastructureError, OSError, ConnectionError, ValueError, IndexError) as e:
+        except (
+            InfrastructureError,
+            OSError,
+            ConnectionError,
+            ValueError,
+            IndexError,
+        ) as e:
             logger.debug(f"ClickHouse prewarm failed for {symbol}: {e}")
             return []
 
@@ -2450,26 +2664,19 @@ class TradingOrchestrator:
         try:
             from clickhouse_driver import Client as CHSyncClient
 
-            ch_host = os.getenv("CLICKHOUSE_HOST", "localhost")
-            ch_port = int(
-                os.getenv(
-                    "CLICKHOUSE_NATIVE_PORT",
-                    os.getenv("CLICKHOUSE_PORT", "9000"),
-                )
+            ch_cfg = ClickHouseConfig.from_env(
+                database=os.getenv("CLICKHOUSE_STOCK_DATABASE", "market")
             )
-            ch_user = os.getenv("CLICKHOUSE_USER", "default")
-            ch_pw = os.getenv("CLICKHOUSE_PASSWORD", "")
-            ch_db = os.getenv("CLICKHOUSE_STOCK_DATABASE", "market")
 
             loop = asyncio.get_event_loop()
             rows = await loop.run_in_executor(
                 None,
                 lambda: CHSyncClient(
-                    host=ch_host,
-                    port=ch_port,
-                    user=ch_user,
-                    password=ch_pw,
-                    database=ch_db,
+                    host=ch_cfg.host,
+                    port=ch_cfg.port,
+                    user=ch_cfg.user,
+                    password=ch_cfg.password,
+                    database=ch_cfg.database,
                 ).execute(
                     "SELECT code, date, open, high, low, close, volume "
                     "FROM daily_candles "
@@ -2480,16 +2687,24 @@ class TradingOrchestrator:
             )
             candles = []
             for row in reversed(rows):  # oldest first
-                candles.append({
-                    "date": row[1],
-                    "open": float(row[2]),
-                    "high": float(row[3]),
-                    "low": float(row[4]),
-                    "close": float(row[5]),
-                    "volume": int(row[6]),
-                })
+                candles.append(
+                    {
+                        "date": row[1],
+                        "open": float(row[2]),
+                        "high": float(row[3]),
+                        "low": float(row[4]),
+                        "close": float(row[5]),
+                        "volume": int(row[6]),
+                    }
+                )
             return candles
-        except (InfrastructureError, OSError, ConnectionError, ValueError, IndexError) as e:
+        except (
+            InfrastructureError,
+            OSError,
+            ConnectionError,
+            ValueError,
+            IndexError,
+        ) as e:
             logger.debug(f"ClickHouse daily candle fetch failed for {symbol}: {e}")
             return []
 
@@ -2537,11 +2752,15 @@ class TradingOrchestrator:
                     logger.debug(f"Prewarm {symbol}: no candles returned")
 
                 # Fetch and seed daily candles from ClickHouse (for multi-timeframe strategies)
-                daily_candles = await self._fetch_daily_candles_from_clickhouse(symbol, limit=252)
+                daily_candles = await self._fetch_daily_candles_from_clickhouse(
+                    symbol, limit=252
+                )
                 if daily_candles:
                     daily_ch_hits += 1
                     self._indicator_engine.seed_daily_candles(symbol, daily_candles)
-                    logger.info(f"Prewarm {symbol}: {len(daily_candles)} daily candles seeded")
+                    logger.info(
+                        f"Prewarm {symbol}: {len(daily_candles)} daily candles seeded"
+                    )
             except (asyncio.TimeoutError, Exception) as e:
                 logger.warning(f"Prewarm failed for {symbol}: {e}")
         logger.info(
@@ -2608,9 +2827,7 @@ class TradingOrchestrator:
 
         for attempt in range(max_retries):
             try:
-                self._state_publisher.publish_positions_update(
-                    positions, throttle=0
-                )
+                self._state_publisher.publish_positions_update(positions, throttle=0)
                 if attempt > 0:
                     logger.info(
                         f"Redis flush succeeded on attempt {attempt + 1}/{max_retries}"
@@ -2620,7 +2837,7 @@ class TradingOrchestrator:
             except (ConnectionError, TimeoutError, OSError) as e:
                 # Transient network/connection errors - retry with backoff
                 if attempt < max_retries - 1:
-                    delay = min(0.1 * (2 ** attempt), 1.0)
+                    delay = min(0.1 * (2**attempt), 1.0)
                     logger.warning(
                         f"Redis flush failed (attempt {attempt + 1}/{max_retries}): {e}. "
                         f"Retrying in {delay*1000:.0f}ms..."
@@ -2653,9 +2870,7 @@ class TradingOrchestrator:
         try:
             await asyncio.wait_for(self._stop_impl(), timeout=timeout)
         except asyncio.TimeoutError:
-            logger.error(
-                f"Graceful shutdown timed out after {timeout}s, forcing..."
-            )
+            logger.error(f"Graceful shutdown timed out after {timeout}s, forcing...")
             # Force Redis flush as last resort with retry
             await self._flush_positions_with_retry(max_retries=3)
             self.state = TradingState.STOPPED
@@ -2691,7 +2906,9 @@ class TradingOrchestrator:
         if self._position_tracker:
             try:
                 await self._position_tracker.stop_auto_flush()
-                logger.info("Position tracker auto-flush stopped and final batch flushed")
+                logger.info(
+                    "Position tracker auto-flush stopped and final batch flushed"
+                )
             except (InfrastructureError, OSError, ConnectionError) as e:
                 logger.error(f"Error stopping position tracker auto-flush: {e}")
 
@@ -2720,7 +2937,8 @@ class TradingOrchestrator:
     async def _close_intraday_positions(self, data):
         """Force close non-swing positions at EOD."""
         intraday_positions = [
-            pos for pos in self._position_tracker.positions
+            pos
+            for pos in self._position_tracker.positions
             if pos.strategy not in self.SWING_STRATEGIES
         ]
         for pos in intraday_positions:
@@ -2760,14 +2978,26 @@ class TradingOrchestrator:
         if self._order_executor is not None:
             try:
                 await self._order_executor.cleanup()
-            except (InfrastructureError, APIError, NetworkError, OSError, ConnectionError) as e:
+            except (
+                InfrastructureError,
+                APIError,
+                NetworkError,
+                OSError,
+                ConnectionError,
+            ) as e:
                 logger.warning(f"OrderExecutor cleanup failed: {e}")
             self._order_executor = None
 
         if self._mock_mirror is not None:
             try:
                 await self._mock_mirror.cleanup()
-            except (APIError, NetworkError, InfrastructureError, OSError, ConnectionError) as e:
+            except (
+                APIError,
+                NetworkError,
+                InfrastructureError,
+                OSError,
+                ConnectionError,
+            ) as e:
                 logger.warning(f"MockAccountMirror cleanup failed: {e}")
             self._mock_mirror = None
 
@@ -2776,7 +3006,6 @@ class TradingOrchestrator:
         self._position_tracker = None
         self._indicator_engine = None
         self._indicator_resolver = None
-
 
     async def pause(self):
         """일시 정지"""
@@ -2911,7 +3140,15 @@ class TradingOrchestrator:
             if not isinstance(raw_pipeline, dict):
                 raise ValueError("pipeline config must be a mapping")
             return PipelineConfig.model_validate(raw_pipeline)
-        except (InvalidConfigError, MissingConfigError, OSError, yaml.YAMLError, ValueError, TypeError, ValidationError) as e:
+        except (
+            InvalidConfigError,
+            MissingConfigError,
+            OSError,
+            yaml.YAMLError,
+            ValueError,
+            TypeError,
+            ValidationError,
+        ) as e:
             logger.warning(f"Failed to load pipeline config (using defaults): {e}")
             return None
 
@@ -2979,7 +3216,13 @@ class TradingOrchestrator:
                     f"Stock WebSocket feed started, "
                     f"{self._stock_price_feed.symbol_count} symbols subscribed"
                 )
-            except (NetworkError, WebSocketDisconnectError, APIError, OSError, ConnectionError) as e:
+            except (
+                NetworkError,
+                WebSocketDisconnectError,
+                APIError,
+                OSError,
+                ConnectionError,
+            ) as e:
                 logger.warning(f"Stock WebSocket feed start failed: {e}")
                 self._stock_price_feed = None
         if self._futures_price_feed:
@@ -2995,7 +3238,13 @@ class TradingOrchestrator:
                     f"{self._futures_price_feed.symbol_count} symbols subscribed "
                     f"(trade={len(feed_symbols)}, aux={len(self._futures_slippage_aux_symbols)})"
                 )
-            except (NetworkError, WebSocketDisconnectError, APIError, OSError, ConnectionError) as e:
+            except (
+                NetworkError,
+                WebSocketDisconnectError,
+                APIError,
+                OSError,
+                ConnectionError,
+            ) as e:
                 logger.warning(f"Futures WebSocket feed start failed: {e}")
                 self._futures_price_feed = None
 
@@ -3003,7 +3252,9 @@ class TradingOrchestrator:
             try:
                 await self._data_provider.start_background_tasks()
             except Exception as e:
-                logger.warning(f"Failed to start data provider failover monitoring: {e}")
+                logger.warning(
+                    f"Failed to start data provider failover monitoring: {e}"
+                )
 
         # Pre-warm indicators FIRST (exclusive API access, no rate conflicts)
         if self._indicator_engine and self._kis_client and self.config.symbols:
@@ -3050,12 +3301,22 @@ class TradingOrchestrator:
         if self._stock_price_feed:
             try:
                 await self._stock_price_feed.stop()
-            except (NetworkError, WebSocketDisconnectError, OSError, ConnectionError) as e:
+            except (
+                NetworkError,
+                WebSocketDisconnectError,
+                OSError,
+                ConnectionError,
+            ) as e:
                 logger.warning(f"Stock price feed stop error: {e}")
         if self._futures_price_feed:
             try:
                 await self._futures_price_feed.stop()
-            except (NetworkError, WebSocketDisconnectError, OSError, ConnectionError) as e:
+            except (
+                NetworkError,
+                WebSocketDisconnectError,
+                OSError,
+                ConnectionError,
+            ) as e:
                 logger.warning(f"Futures price feed stop error: {e}")
 
         if self._universe_refresh_task:
@@ -3105,7 +3366,9 @@ class TradingOrchestrator:
                 self._llm_context_publisher_loop(interval_minutes),
                 name="llm_context_publisher_loop",
             )
-            logger.info(f"LLM context publisher task started (interval={interval_minutes} min)")
+            logger.info(
+                f"LLM context publisher task started (interval={interval_minutes} min)"
+            )
 
         except (InvalidConfigError, MissingConfigError, OSError, yaml.YAMLError) as e:
             logger.warning(f"LLM context publisher start failed: {e}")
@@ -3117,7 +3380,9 @@ class TradingOrchestrator:
             interval_minutes: Interval between analysis runs in minutes
         """
         interval_seconds = interval_minutes * 60
-        logger.info(f"LLM context publisher loop started (interval={interval_minutes} min)")
+        logger.info(
+            f"LLM context publisher loop started (interval={interval_minutes} min)"
+        )
 
         while True:
             try:
@@ -3132,7 +3397,9 @@ class TradingOrchestrator:
                         f"confidence={market_context.confidence:.2f}"
                     )
                 else:
-                    logger.debug("LLM analysis returned None (analysis may have failed)")
+                    logger.debug(
+                        "LLM analysis returned None (analysis may have failed)"
+                    )
 
             except asyncio.CancelledError:
                 logger.info("LLM context publisher loop cancelled")
@@ -3170,7 +3437,13 @@ class TradingOrchestrator:
 
                 self._record_market_metrics()
 
-            except (NetworkError, APIError, InfrastructureError, OSError, ConnectionError) as e:
+            except (
+                NetworkError,
+                APIError,
+                InfrastructureError,
+                OSError,
+                ConnectionError,
+            ) as e:
                 logger.warning(f"Market data refresh failed: {e}")
 
             next_tick += interval
@@ -3190,8 +3463,7 @@ class TradingOrchestrator:
         if tick_count <= 3 or tick_count % diag_interval == 0:
             n_syms = len(data) if data else 0
             logger.info(
-                f"[tick {tick_count}] fetched {n_syms} symbols "
-                f"in {fetch_ms:.0f}ms"
+                f"[tick {tick_count}] fetched {n_syms} symbols " f"in {fetch_ms:.0f}ms"
             )
 
     async def _update_market_snapshot(self, data):
@@ -3224,7 +3496,8 @@ class TradingOrchestrator:
         """Periodically log indicator engine status."""
         if tick_count % diag_interval == 0 and self._indicator_engine:
             warm_count = sum(
-                1 for s in self._indicator_engine._accumulators
+                1
+                for s in self._indicator_engine._accumulators
                 if self._indicator_engine.is_warm(s)
             )
             # Safe access to complex internal structure for diagnostics
@@ -3251,7 +3524,9 @@ class TradingOrchestrator:
 
         try:
             # Update portfolio metrics from current positions
-            positions_by_asset = {self.config.asset_class: list(self._position_tracker.positions)}
+            positions_by_asset = {
+                self.config.asset_class: list(self._position_tracker.positions)
+            }
             self._risk_manager.update_positions(positions_by_asset)
 
             # Periodic save to Redis (every 60 seconds)
@@ -3351,7 +3626,9 @@ class TradingOrchestrator:
             snapshot = dict(self._market_data_snapshot)
 
         if symbols:
-            return {symbol: snapshot[symbol] for symbol in symbols if symbol in snapshot}
+            return {
+                symbol: snapshot[symbol] for symbol in symbols if symbol in snapshot
+            }
         return snapshot
 
     async def _get_quote_payload(self, symbol: str) -> dict[str, Any]:
@@ -3361,7 +3638,9 @@ class TradingOrchestrator:
         if payload and payload.get("bid_price_1") and payload.get("ask_price_1"):
             return payload
 
-        if self._futures_price_feed and hasattr(self._futures_price_feed, "get_orderbook_snapshot"):
+        if self._futures_price_feed and hasattr(
+            self._futures_price_feed, "get_orderbook_snapshot"
+        ):
             try:
                 ob = self._futures_price_feed.get_orderbook_snapshot(symbol)
                 if ob:
@@ -3423,7 +3702,10 @@ class TradingOrchestrator:
         If config.regime_detection_mode == 'adaptive', delegates to _handle_adaptive_regime().
         """
         # Delegate to adaptive regime handler if enabled
-        if self.config.regime_detection_mode == "adaptive" and self._adaptive_regime_detector:
+        if (
+            self.config.regime_detection_mode == "adaptive"
+            and self._adaptive_regime_detector
+        ):
             return await self._handle_adaptive_regime()
 
         # Otherwise, use simple regime detection (legacy behavior)
@@ -3433,10 +3715,14 @@ class TradingOrchestrator:
         try:
             data = await self._get_market_data_snapshot()
             if not data:
-                logger.debug("Market data snapshot empty, regime from indicator engine only")
+                logger.debug(
+                    "Market data snapshot empty, regime from indicator engine only"
+                )
             regime = self._classify_market(data)
             self._current_regime = regime
-            self._current_regime_confidence = None  # Simple mode doesn't provide confidence
+            self._current_regime_confidence = (
+                None  # Simple mode doesn't provide confidence
+            )
 
             # Periodic refresh of daily indicators (for daily_pullback)
             self._refresh_daily_indicators()
@@ -3477,6 +3763,7 @@ class TradingOrchestrator:
             if mfi is not None:
                 try:
                     from shared.strategy.market_classifier import MarketClassifier
+
                     classifier = MarketClassifier()
                     state = classifier.classify(mfi=mfi, adx=0.0)
                     return state.value
@@ -3520,7 +3807,9 @@ class TradingOrchestrator:
             Dict with regime, confidence, and timestamp, or None if detection failed
         """
         if not self._adaptive_regime_detector:
-            logger.warning("Adaptive regime detector not initialized, falling back to simple mode")
+            logger.warning(
+                "Adaptive regime detector not initialized, falling back to simple mode"
+            )
             return None
 
         if not self._indicator_engine:
@@ -3670,7 +3959,9 @@ class TradingOrchestrator:
                     return []
 
                 # Skip entry if indicator engine hasn't warmed up for this symbol
-                if self._indicator_engine and not self._indicator_engine.is_warm(symbol):
+                if self._indicator_engine and not self._indicator_engine.is_warm(
+                    symbol
+                ):
                     return []
 
                 # Use pre-computed enriched metadata cache (includes symbol_metadata + daily_indicators)
@@ -3688,15 +3979,23 @@ class TradingOrchestrator:
                         indicators = resolver.collect_entry_indicators(symbol)
                     else:
                         # Backward-safe fallback (resolve from required keys without hardcoded timeframes).
-                        logger.warning("Indicator resolver not initialized; using fallback instantiation in hot path")
+                        logger.warning(
+                            "Indicator resolver not initialized; using fallback instantiation in hot path"
+                        )
                         try:
-                            from shared.indicators.resolver import StreamingIndicatorResolver
+                            from shared.indicators.resolver import (
+                                StreamingIndicatorResolver,
+                            )
 
                             fallback_resolver = StreamingIndicatorResolver(
                                 engine=self._indicator_engine,
-                                required_keys=tuple(self._strategy_manager.required_indicators),
+                                required_keys=tuple(
+                                    self._strategy_manager.required_indicators
+                                ),
                             )
-                            indicators = fallback_resolver.collect_entry_indicators(symbol)
+                            indicators = fallback_resolver.collect_entry_indicators(
+                                symbol
+                            )
                         except (ValidationError, KeyError, AttributeError):
                             # Fallback to basic indicators if resolver fails
                             indicators = self._indicator_engine.get_indicators(symbol)
@@ -3711,12 +4010,16 @@ class TradingOrchestrator:
                 # Fetch daily indicators from engine (SMA/EMA/RSI on daily timeframe)
                 if self._indicator_engine:
                     try:
-                        daily_indicators = self._indicator_engine.get_daily_indicators(symbol)
+                        daily_indicators = self._indicator_engine.get_daily_indicators(
+                            symbol
+                        )
                         # Add with daily_ prefix for multi-timeframe clarity
                         for key, value in daily_indicators.items():
                             indicators[f"daily_{key}"] = value
                     except (ValidationError, KeyError, AttributeError) as e:
-                        logger.debug(f"Failed to fetch daily indicators for {symbol}: {e}")
+                        logger.debug(
+                            f"Failed to fetch daily indicators for {symbol}: {e}"
+                        )
 
                 context = EntryContext(
                     market_data=enriched,
@@ -3729,7 +4032,9 @@ class TradingOrchestrator:
                         "regime_confidence": self._current_regime_confidence,
                         "market_state": self._current_regime,
                         "symbol_metadata": meta,
-                        "accumulation_candidates": getattr(self, "_accumulation_candidates", {}),
+                        "accumulation_candidates": getattr(
+                            self, "_accumulation_candidates", {}
+                        ),
                         "dip_candidates": getattr(self, "_dip_candidates", {}),
                         "daily_watchlist": self._daily_watchlist,
                     },
@@ -3785,13 +4090,17 @@ class TradingOrchestrator:
         # Always publish status periodically, even with no positions
         if self._state_publisher:
             import time as _time_mod
+
             now = _time_mod.monotonic()
             if now - self._state_publisher._last_status_publish >= 5.0:
                 self._state_publisher._last_status_publish = now
                 self._state_publisher.publish_status(self.get_status())
 
             # Save candle cache periodically for crash recovery
-            if now - self._last_candle_cache_save >= self.config.candle_cache_save_interval:
+            if (
+                now - self._last_candle_cache_save
+                >= self.config.candle_cache_save_interval
+            ):
                 self._last_candle_cache_save = now
                 try:
                     self._save_candle_cache_to_redis()
@@ -3826,7 +4135,9 @@ class TradingOrchestrator:
 
                 # Immediate flush for state transitions (no throttle)
                 if self._state_publisher:
-                    self._state_publisher.publish_positions_update(positions, throttle=0)
+                    self._state_publisher.publish_positions_update(
+                        positions, throttle=0
+                    )
 
             # Publish position updates to Redis (throttled to 2s)
             if self._state_publisher and positions:
@@ -3870,18 +4181,28 @@ class TradingOrchestrator:
                             indicators = resolver.collect_exit_indicators(symbol)
                         else:
                             # Backward-safe fallback (resolve from required keys without hardcoded timeframes).
-                            logger.warning("Indicator resolver not initialized; using fallback instantiation in exit hot path")
+                            logger.warning(
+                                "Indicator resolver not initialized; using fallback instantiation in exit hot path"
+                            )
                             try:
-                                from shared.indicators.resolver import StreamingIndicatorResolver
+                                from shared.indicators.resolver import (
+                                    StreamingIndicatorResolver,
+                                )
 
                                 fallback_resolver = StreamingIndicatorResolver(
                                     engine=self._indicator_engine,
-                                    required_keys=tuple(self._strategy_manager.required_indicators),
+                                    required_keys=tuple(
+                                        self._strategy_manager.required_indicators
+                                    ),
                                 )
-                                indicators = fallback_resolver.collect_exit_indicators(symbol)
+                                indicators = fallback_resolver.collect_exit_indicators(
+                                    symbol
+                                )
                             except (ValidationError, KeyError, AttributeError):
                                 # Fallback to basic indicators if resolver fails
-                                indicators = self._indicator_engine.get_indicators(symbol)
+                                indicators = self._indicator_engine.get_indicators(
+                                    symbol
+                                )
                         if indicators:
                             data[symbol] = {**data[symbol], **indicators}
 
@@ -3897,7 +4218,11 @@ class TradingOrchestrator:
             signals = await self._strategy_manager.check_exits(
                 positions=positions,
                 market_data=data,
-                market_state=MarketStateAdapter(self._current_regime) if self._current_regime else None,
+                market_state=(
+                    MarketStateAdapter(self._current_regime)
+                    if self._current_regime
+                    else None
+                ),
             )
 
             # Execute exit orders (bounded parallelism)
@@ -3943,11 +4268,15 @@ class TradingOrchestrator:
         async with self._get_symbol_lock(signal.code):
             # Re-check global position limit under lock
             if not self._position_tracker.can_open_position(signal.code):
-                logger.debug(f"Position limit reached, skipping entry for {signal.code}")
+                logger.debug(
+                    f"Position limit reached, skipping entry for {signal.code}"
+                )
                 return
 
             # Risk management check - portfolio-level limits
-            if self._risk_manager and not self._risk_manager.can_open_position(self.config.asset_class):
+            if self._risk_manager and not self._risk_manager.can_open_position(
+                self.config.asset_class
+            ):
                 logger.warning(
                     f"Risk manager blocked entry for {signal.code} "
                     f"(asset_class={self.config.asset_class})"
@@ -3968,7 +4297,9 @@ class TradingOrchestrator:
                             f"일일 손익: {risk_state.daily_pnl_pct:.2f}%\n"
                         )
                         if risk_state.is_blocked:
-                            alert_message += f"차단 사유: {risk_state.block_reason.name}\n"
+                            alert_message += (
+                                f"차단 사유: {risk_state.block_reason.name}\n"
+                            )
                         await self._notify(alert_message)
                     except (NetworkError, OSError, ConnectionError, TimeoutError) as e:
                         logger.error(f"Failed to send risk block alert: {e}")
@@ -3984,7 +4315,9 @@ class TradingOrchestrator:
                     strategy_max = getattr(sizer_config, "max_positions", None)
                     if strategy_max is not None:
                         current_count = len(
-                            self._position_tracker.get_positions_by_strategy(strategy_name)
+                            self._position_tracker.get_positions_by_strategy(
+                                strategy_name
+                            )
                         )
                         if current_count >= strategy_max:
                             logger.info(
@@ -4018,7 +4351,9 @@ class TradingOrchestrator:
                         signal.code,
                     )
                 elif execution_meta.get("blocked_reason"):
-                    blocked_reason = str(execution_meta.get("blocked_reason") or "unknown")
+                    blocked_reason = str(
+                        execution_meta.get("blocked_reason") or "unknown"
+                    )
                     if self._metrics:
                         self._metrics.record_signal(
                             "rejected",
@@ -4035,7 +4370,9 @@ class TradingOrchestrator:
                     )
 
             except (APIError, NetworkError, InfrastructureError, ValidationError) as e:
-                logger.error(f"Entry execution failed for {signal.code}: {e}", exc_info=True)
+                logger.error(
+                    f"Entry execution failed for {signal.code}: {e}", exc_info=True
+                )
 
     async def _submit_entry_order(
         self,
@@ -4087,12 +4424,20 @@ class TradingOrchestrator:
     ) -> tuple[bool, float, dict[str, Any]]:
         controller = self._futures_slippage_controller
         if controller is None:
-            return False, 0.0, {"mode": "slippage_guard", "blocked_reason": "controller_missing"}
+            return (
+                False,
+                0.0,
+                {"mode": "slippage_guard", "blocked_reason": "controller_missing"},
+            )
 
         is_buy = not is_short
         code = signal.code
         signal_price = float(signal.price)
-        signal_ts = signal.timestamp if isinstance(signal.timestamp, datetime) else datetime.now()
+        signal_ts = (
+            signal.timestamp
+            if isinstance(signal.timestamp, datetime)
+            else datetime.now()
+        )
 
         quote_payload = await self._get_quote_payload(code)
         cross_payload: dict[str, Any] | None = None
@@ -4129,7 +4474,9 @@ class TradingOrchestrator:
         # Passive entry: limit at opposite best quote.
         passive_price = float(decision.target_price or signal_price)
         latest_quote = await self._get_quote_payload(code)
-        current_touch_price = float(latest_quote.get("ask_price_1" if is_buy else "bid_price_1", passive_price))
+        current_touch_price = float(
+            latest_quote.get("ask_price_1" if is_buy else "bid_price_1", passive_price)
+        )
         is_filled, fill_price, filled_qty, venue = self._normalize_entry_order_result(
             await self._place_entry_order(
                 code=code,
@@ -4178,14 +4525,16 @@ class TradingOrchestrator:
             return False, 0.0, execution_meta
 
         retry_market_price = float(retry_decision.target_price or signal_price)
-        filled_retry, fill_retry, retry_filled_qty, retry_venue = self._normalize_entry_order_result(
-            await self._place_entry_order(
-                code=code,
-                is_short=is_short,
-                quantity=quantity,
-                order_type="market",
-                limit_price=None,
-                market_price=retry_market_price,
+        filled_retry, fill_retry, retry_filled_qty, retry_venue = (
+            self._normalize_entry_order_result(
+                await self._place_entry_order(
+                    code=code,
+                    is_short=is_short,
+                    quantity=quantity,
+                    order_type="market",
+                    limit_price=None,
+                    market_price=retry_market_price,
+                )
             )
         )
         execution_meta["filled_qty"] = int(retry_filled_qty)
@@ -4282,7 +4631,9 @@ class TradingOrchestrator:
                 order_type=PaperOrderType.MARKET,
             )
             is_filled = bool(getattr(order, "filled", True))
-            fill_price = float(getattr(order, "fill_price", market_price) or market_price)
+            fill_price = float(
+                getattr(order, "fill_price", market_price) or market_price
+            )
             venue = getattr(order, "venue", "KRX")
             return is_filled, fill_price, (quantity if is_filled else 0), venue
 
@@ -4291,11 +4642,19 @@ class TradingOrchestrator:
 
             side = OrderSide.SELL if is_short else OrderSide.BUY
             req_type = OrderType.LIMIT if order_type == "limit" else OrderType.MARKET
-            req_price = float(limit_price) if (req_type == OrderType.LIMIT and limit_price) else None
+            req_price = (
+                float(limit_price)
+                if (req_type == OrderType.LIMIT and limit_price)
+                else None
+            )
 
             # Select execution venue using VenueRouter
             selected_venue = self._select_execution_venue(
-                code=code, side=side, order_type=req_type, quantity=quantity, price=req_price,
+                code=code,
+                side=side,
+                order_type=req_type,
+                quantity=quantity,
+                price=req_price,
             )
 
             resp = await self._order_executor.execute_order(
@@ -4312,18 +4671,35 @@ class TradingOrchestrator:
             filled_qty = int(getattr(resp, "filled_qty", 0) or 0)
             filled_price = float(getattr(resp, "filled_price", 0.0) or 0.0)
             venue_attr = getattr(resp, "venue", selected_venue)
-            resp_venue = venue_attr.value if hasattr(venue_attr, "value") else str(venue_attr)
+            resp_venue = (
+                venue_attr.value if hasattr(venue_attr, "value") else str(venue_attr)
+            )
 
             # Partial fills must be tracked even when broker final status is
             # timeout/cancel to avoid orphan live positions.
             if filled_qty > 0:
-                return True, float(filled_price or fallback_price), max(0, filled_qty), resp_venue
+                return (
+                    True,
+                    float(filled_price or fallback_price),
+                    max(0, filled_qty),
+                    resp_venue,
+                )
 
             if bool(resp.success):
                 if req_type == OrderType.MARKET:
-                    return True, float(filled_price or fallback_price), quantity, resp_venue
+                    return (
+                        True,
+                        float(filled_price or fallback_price),
+                        quantity,
+                        resp_venue,
+                    )
                 if self.config.asset_class != "futures":
-                    return True, float(filled_price or fallback_price), quantity, resp_venue
+                    return (
+                        True,
+                        float(filled_price or fallback_price),
+                        quantity,
+                        resp_venue,
+                    )
                 if filled_price > 0:
                     return True, float(filled_price), quantity, resp_venue
 
@@ -4404,7 +4780,9 @@ class TradingOrchestrator:
                     f"code={signal.code}, strategy={signal.strategy}"
                 )
             except Exception as e:
-                logger.error(f"Failed to record entry in regime tracker: {e}", exc_info=True)
+                logger.error(
+                    f"Failed to record entry in regime tracker: {e}", exc_info=True
+                )
 
         self.total_trades += 1
         self._sync_open_positions_metric()
@@ -4473,7 +4851,8 @@ class TradingOrchestrator:
             tick_size = 0.02
             if (
                 self._futures_slippage_controller is not None
-                and getattr(self._futures_slippage_controller, "config", None) is not None
+                and getattr(self._futures_slippage_controller, "config", None)
+                is not None
             ):
                 tick_size = float(self._futures_slippage_controller.config.tick_size)
 
@@ -4612,7 +4991,6 @@ class TradingOrchestrator:
     def _collect_exit_indicators(self, code, price):
         return self._collect_indicator_snapshot(code, price)
 
-
     async def _execute_exit(self, signal: ExitSignal):
         """Execute exit order with lock for thread-safety."""
         if not self._position_tracker:
@@ -4628,19 +5006,27 @@ class TradingOrchestrator:
 
             try:
                 close_is_buy = position.side == PositionSide.SHORT
-                exit_quantity = signal.quantity if signal.quantity > 0 else position.quantity
+                exit_quantity = (
+                    signal.quantity if signal.quantity > 0 else position.quantity
+                )
 
                 is_filled, fill_price = await self._submit_exit_order(
                     signal.code, close_is_buy, exit_quantity, signal.exit_price
                 )
 
                 if is_filled:
-                    await self._process_filled_exit(position, signal, fill_price, exit_quantity, close_is_buy)
+                    await self._process_filled_exit(
+                        position, signal, fill_price, exit_quantity, close_is_buy
+                    )
 
             except (APIError, NetworkError, InfrastructureError, ValidationError) as e:
-                logger.error(f"Exit execution failed for {signal.code}: {e}", exc_info=True)
+                logger.error(
+                    f"Exit execution failed for {signal.code}: {e}", exc_info=True
+                )
 
-    async def _submit_exit_order(self, code: str, is_buy: bool, quantity: int, price: float) -> tuple[bool, float]:
+    async def _submit_exit_order(
+        self, code: str, is_buy: bool, quantity: int, price: float
+    ) -> tuple[bool, float]:
         """Submit exit order to appropriate broker."""
         if self.config.paper_trading and self._paper_broker:
             # Paper trading
@@ -4668,7 +5054,10 @@ class TradingOrchestrator:
 
             # Select execution venue using VenueRouter
             selected_venue = self._select_execution_venue(
-                code=code, side=side, order_type=OrderType.MARKET, quantity=quantity,
+                code=code,
+                side=side,
+                order_type=OrderType.MARKET,
+                quantity=quantity,
             )
 
             resp = await self._order_executor.execute_order(
@@ -4687,9 +5076,15 @@ class TradingOrchestrator:
             # Mock execution
             return True, price
 
-    async def _process_filled_exit(self, position, signal, fill_price, exit_quantity, close_is_buy):
+    async def _process_filled_exit(
+        self, position, signal, fill_price, exit_quantity, close_is_buy
+    ):
         """Handle post-exit logic: tracker update, logging, telemetry."""
-        reason_str = signal.reason.value if hasattr(signal.reason, "value") else str(signal.reason)
+        reason_str = (
+            signal.reason.value
+            if hasattr(signal.reason, "value")
+            else str(signal.reason)
+        )
 
         # Close position
         closed = self._position_tracker.close_position(
@@ -4706,7 +5101,9 @@ class TradingOrchestrator:
         if self._regime_tracker:
             try:
                 # Extract entry regime from position metadata
-                entry_regime = closed.metadata.get("entry_regime") if closed.metadata else None
+                entry_regime = (
+                    closed.metadata.get("entry_regime") if closed.metadata else None
+                )
                 if entry_regime:
                     self._regime_tracker.record_exit(
                         regime=entry_regime,
@@ -4726,7 +5123,9 @@ class TradingOrchestrator:
                         "skipping regime performance tracking"
                     )
             except Exception as e:
-                logger.error(f"Failed to record exit in regime tracker: {e}", exc_info=True)
+                logger.error(
+                    f"Failed to record exit in regime tracker: {e}", exc_info=True
+                )
 
         # Position.current_price is set to exit_price on close,
         # so unrealized_pnl effectively equals realized PnL.
@@ -4739,19 +5138,41 @@ class TradingOrchestrator:
 
         strategy_name = signal.strategy or closed.strategy or ""
         holding_mins = getattr(signal, "holding_minutes", None) or 0
-        self._log_exit(name, signal.code, fill_price, exit_quantity, reason_str, pnl, pnl_pct, close_is_buy, strategy_name, holding_mins)
+        self._log_exit(
+            name,
+            signal.code,
+            fill_price,
+            exit_quantity,
+            reason_str,
+            pnl,
+            pnl_pct,
+            close_is_buy,
+            strategy_name,
+            holding_mins,
+        )
 
         # Collect snapshot
         indicators = self._collect_exit_indicators(signal.code, fill_price)
 
         # Telemetry
-        self._record_exit_telemetry(closed, signal, fill_price, exit_quantity, reason_str, pnl, pnl_pct, indicators)
+        self._record_exit_telemetry(
+            closed,
+            signal,
+            fill_price,
+            exit_quantity,
+            reason_str,
+            pnl,
+            pnl_pct,
+            indicators,
+        )
 
         # Publish
         if self._state_publisher:
             self._state_publisher.publish_position_closed(closed)
             self._state_publisher.publish_signal(signal, "exit", True)
-            self._metrics.record_trade(pnl=pnl, win=(pnl >= 0), strategy=getattr(signal, "strategy", "default"))
+            self._metrics.record_trade(
+                pnl=pnl, win=(pnl >= 0), strategy=getattr(signal, "strategy", "default")
+            )
 
         # Persist selected strategy trades to ClickHouse (fire-and-forget)
         strategy = getattr(signal, "strategy", getattr(closed, "strategy", ""))
@@ -4766,13 +5187,27 @@ class TradingOrchestrator:
         if self._mock_mirror:
             side = "BUY" if close_is_buy else "SELL"
             task = asyncio.create_task(
-                self._mock_mirror.mirror_exit(signal.code, side, exit_quantity, fill_price),
+                self._mock_mirror.mirror_exit(
+                    signal.code, side, exit_quantity, fill_price
+                ),
                 name="mock_mirror_exit",
             )
             self._pending_notify_tasks.add(task)
             task.add_done_callback(self._on_notify_done)
 
-    def _log_exit(self, name, code, price, qty, reason, pnl, pnl_pct, is_buy, strategy="", holding_minutes=0):
+    def _log_exit(
+        self,
+        name,
+        code,
+        price,
+        qty,
+        reason,
+        pnl,
+        pnl_pct,
+        is_buy,
+        strategy="",
+        holding_minutes=0,
+    ):
         """Log and notify exit."""
         pnl_emoji = "🟢" if pnl >= 0 else "🔴"
         side_str = "숏 청산" if is_buy else "롱 청산"
@@ -4809,11 +5244,17 @@ class TradingOrchestrator:
                     snapshot["bb_position"] = (price - bl) / (bu - bl)
         return snapshot
 
-    def _record_exit_telemetry(self, closed, signal, price, qty, reason, pnl, pnl_pct, indicators):
+    def _record_exit_telemetry(
+        self, closed, signal, price, qty, reason, pnl, pnl_pct, indicators
+    ):
         """Append trade event to training data."""
         peak_pnl_pct = 0.0
         if signal.high_since_entry and closed.entry_price:
-            peak_pnl_pct = (signal.high_since_entry - closed.entry_price) / closed.entry_price * 100
+            peak_pnl_pct = (
+                (signal.high_since_entry - closed.entry_price)
+                / closed.entry_price
+                * 100
+            )
 
         self._append_training_trade_event(
             {
@@ -4844,7 +5285,9 @@ class TradingOrchestrator:
                 "high_since_entry": signal.high_since_entry,
                 "holding_minutes": signal.holding_minutes,
                 "peak_pnl_pct": peak_pnl_pct,
-                "metadata": closed.metadata if isinstance(closed.metadata, dict) else {},
+                "metadata": (
+                    closed.metadata if isinstance(closed.metadata, dict) else {}
+                ),
             }
         )
 
@@ -4854,7 +5297,9 @@ class TradingOrchestrator:
         metadata = getattr(signal, "metadata", {}) or {}
         if not isinstance(metadata, dict):
             return "long"
-        direction = metadata.get("signal_direction") or metadata.get("direction") or "long"
+        direction = (
+            metadata.get("signal_direction") or metadata.get("direction") or "long"
+        )
         direction = str(direction).strip().lower()
         return "short" if direction == "short" else "long"
 
@@ -4872,7 +5317,10 @@ class TradingOrchestrator:
             return min(signal.quantity, MAX_ORDER_QUANTITY)
 
         # Prefer strategy-defined sizer (YAML position config), fallback to fixed amount.
-        if self._strategy_manager and signal.strategy in self._strategy_manager.strategies:
+        if (
+            self._strategy_manager
+            and signal.strategy in self._strategy_manager.strategies
+        ):
             try:
                 strategy = self._strategy_manager.strategies[signal.strategy]
                 balance = self._get_account_balance()
@@ -4881,7 +5329,11 @@ class TradingOrchestrator:
                 multiplier = 1.0
                 original_amount = None
                 sizer_cfg = getattr(strategy.position_sizer, "config", None)
-                if self._adaptive_sizing and sizer_cfg and hasattr(sizer_cfg, "fixed_amount"):
+                if (
+                    self._adaptive_sizing
+                    and sizer_cfg
+                    and hasattr(sizer_cfg, "fixed_amount")
+                ):
                     multiplier = self._adaptive_sizing.get_multiplier(signal.strategy)
                     if multiplier != 1.0:
                         original_amount = sizer_cfg.fixed_amount
@@ -4891,7 +5343,11 @@ class TradingOrchestrator:
                     qty = strategy.calculate_position_size(
                         signal=signal,
                         account_balance=balance,
-                        current_positions=self._position_tracker.positions if self._position_tracker else [],
+                        current_positions=(
+                            self._position_tracker.positions
+                            if self._position_tracker
+                            else []
+                        ),
                     )
                 finally:
                     # Restore original amount
@@ -4910,7 +5366,11 @@ class TradingOrchestrator:
 
         # Fallback: config-based fixed order amount.
         order_amount = float(self.config.order_amount_per_trade)
-        return calc_order_quantity(order_amount=order_amount, price=signal.price, max_quantity=MAX_ORDER_QUANTITY)
+        return calc_order_quantity(
+            order_amount=order_amount,
+            price=signal.price,
+            max_quantity=MAX_ORDER_QUANTITY,
+        )
 
     def _get_account_balance(self) -> float:
         """Best-effort account balance/equity for sizing."""
@@ -4983,13 +5443,21 @@ class TradingOrchestrator:
             try:
                 success = await notifier.send(message)
                 if not success:
-                    logger.warning(f"Failed to send telegram notification: {message[:50]}...")
+                    logger.warning(
+                        f"Failed to send telegram notification: {message[:50]}..."
+                    )
             finally:
                 await notifier.close()
 
         except ImportError:
             logger.debug("TelegramNotifier not available")
-        except (NetworkError, OSError, ConnectionError, TimeoutError, ConfigurationError) as e:
+        except (
+            NetworkError,
+            OSError,
+            ConnectionError,
+            TimeoutError,
+            ConfigurationError,
+        ) as e:
             logger.error(f"Notification error: {e}")
 
     def get_status(self) -> dict[str, Any]:
@@ -5024,7 +5492,9 @@ class TradingOrchestrator:
                 "session_count": self.session_count,
                 "total_trades": self.total_trades,
                 "total_pnl": self.total_pnl,
-                "entry_slippage_count": int(self._entry_slippage_stats.get("count", 0.0)),
+                "entry_slippage_count": int(
+                    self._entry_slippage_stats.get("count", 0.0)
+                ),
                 "entry_avg_adverse_ticks": float(
                     self._entry_slippage_stats.get("avg_adverse_ticks", 0.0)
                 ),

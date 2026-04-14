@@ -65,6 +65,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+RISK_STATE_KEY = "risk:portfolio:state"
+RISK_STATE_TTL_SECONDS = 86400
+
 
 class RiskManager:
     """Portfolio-level risk manager with cross-asset tracking
@@ -130,6 +133,7 @@ class RiskManager:
         """
         if "state" in data:
             self.state = RiskState.from_dict(data["state"])
+            self._last_reset_date = self.state.last_reset_date
 
         if "metrics" in data:
             self.metrics = PortfolioMetrics.from_dict(data["metrics"])
@@ -156,6 +160,8 @@ class RiskManager:
         Returns:
             True if position can be opened, False otherwise
         """
+        self._check_and_reset_daily()
+
         # Check if trading is blocked
         if self.state.is_blocked:
             logger.warning(
@@ -226,6 +232,8 @@ class RiskManager:
         Args:
             positions_by_asset: Dict mapping asset_class to list of Position objects
         """
+        self._check_and_reset_daily()
+
         # Update portfolio metrics
         self.metrics.update_from_positions(
             positions_by_asset, self.config.initial_capital
@@ -321,7 +329,10 @@ class RiskManager:
             Drawdown percentage (e.g., 9.09 for 9.09% drawdown)
         """
         # Use test attributes if set, otherwise use state values
-        if self._peak_portfolio_value is not None and self._current_portfolio_value is not None:
+        if (
+            self._peak_portfolio_value is not None
+            and self._current_portfolio_value is not None
+        ):
             peak = self._peak_portfolio_value
             current = self._current_portfolio_value
         else:
@@ -363,6 +374,20 @@ class RiskManager:
 
         # Reset daily state
         self.state.reset_daily(self.config.initial_capital)
+
+        # Reset drawdown baseline to the new session starting value.
+        baseline_value = (
+            self.metrics.portfolio_value
+            if self.metrics.portfolio_value > 0
+            else self.config.initial_capital
+        )
+        self.state.peak_portfolio_value = baseline_value
+        self.state.current_portfolio_value = baseline_value
+        self.state.drawdown_pct = 0.0
+        self.state.drawdown_level = DrawdownLevel.SAFE
+        self._peak_portfolio_value = baseline_value
+        self._current_portfolio_value = baseline_value
+        self._last_reset_date = self.state.last_reset_date
 
         # Auto-unblock if configured
         if self.config.monitoring.auto_unblock_on_reset and self.state.is_blocked:
@@ -458,7 +483,9 @@ class RiskManager:
             is_critical: Whether this is a critical alert (bypasses time restrictions)
         """
         if notifier is None:
-            logger.debug(f"Telegram notifier not configured, skipping alert: {alert_type}")
+            logger.debug(
+                f"Telegram notifier not configured, skipping alert: {alert_type}"
+            )
             return
 
         # Format alert message with header
@@ -495,8 +522,11 @@ class RiskManager:
             state_data = self._serialize_state()
 
             # Store in Redis as JSON string
-            key = "risk:portfolio:state"
-            redis_client.set(key, json.dumps(state_data))
+            redis_client.set(
+                RISK_STATE_KEY,
+                json.dumps(state_data),
+                ex=RISK_STATE_TTL_SECONDS,
+            )
 
             logger.debug(
                 f"Risk state saved to Redis: daily_pnl={self.state.daily_pnl:.2f}, "
@@ -528,8 +558,7 @@ class RiskManager:
             redis_client = RedisClient.get_client()
 
             # Load from Redis
-            key = "risk:portfolio:state"
-            raw_data = redis_client.get(key)
+            raw_data = redis_client.get(RISK_STATE_KEY)
 
             if not raw_data:
                 logger.info("No risk state found in Redis (fresh start)")
@@ -538,6 +567,7 @@ class RiskManager:
             # Deserialize state from JSON
             state_data = json.loads(raw_data)
             self._deserialize_state(state_data)
+            self._check_and_reset_daily()
 
             logger.info(
                 f"Risk state loaded from Redis: daily_pnl={self.state.daily_pnl:.2f}, "

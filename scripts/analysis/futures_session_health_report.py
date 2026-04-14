@@ -74,6 +74,9 @@ class MatrixSummary:
     spread_block_ratio: float
     top_profile: str
     top_profile_score: float
+    abnormal_termination_count: int
+    unmatched_entries: int
+    incomplete_profiles: list[str]
 
 
 @dataclass
@@ -288,7 +291,9 @@ def _compute_trade_summary(rows: list[TradeRow]) -> TradeSummary:
         gross_win=round(gross_win, 2),
         gross_loss=round(gross_loss, 2),
         eod_count=eod_count,
-        eod_ratio=round((eod_count / trade_count * 100.0) if trade_count > 0 else 0.0, 2),
+        eod_ratio=round(
+            (eod_count / trade_count * 100.0) if trade_count > 0 else 0.0, 2
+        ),
         late_eod_count=late_eod_count,
         slippage_coverage_count=slippage_coverage_count,
         slippage_coverage_ratio=round(slippage_coverage_ratio, 2),
@@ -315,6 +320,9 @@ def _load_matrix_summary(run_dir: str) -> MatrixSummary:
             spread_block_ratio=0.0,
             top_profile="",
             top_profile_score=0.0,
+            abnormal_termination_count=0,
+            unmatched_entries=0,
+            incomplete_profiles=[],
         )
 
     root = Path(run_dir)
@@ -335,6 +343,9 @@ def _load_matrix_summary(run_dir: str) -> MatrixSummary:
             spread_block_ratio=0.0,
             top_profile="",
             top_profile_score=0.0,
+            abnormal_termination_count=0,
+            unmatched_entries=0,
+            incomplete_profiles=[],
         )
 
     latest = candidates[-1]
@@ -351,6 +362,9 @@ def _load_matrix_summary(run_dir: str) -> MatrixSummary:
     blocks_depth = 0
     blocks_vol = 0
     blocks_cross = 0
+    abnormal_termination_count = 0
+    unmatched_entries = 0
+    incomplete_profiles: list[str] = []
 
     top_profile = ""
     top_profile_score = 0.0
@@ -370,9 +384,21 @@ def _load_matrix_summary(run_dir: str) -> MatrixSummary:
         blocks_depth += int(row.get("blocks_insufficient_depth", 0) or 0)
         blocks_vol += int(row.get("blocks_volatility_cooldown", 0) or 0)
         blocks_cross += int(row.get("blocks_cross_asset_wide_spread", 0) or 0)
+        abnormal_termination_count += int(bool(row.get("abnormal_termination", False)))
+        unmatched_entries += int(row.get("unmatched_entries", 0) or 0)
+        if (
+            bool(row.get("abnormal_termination", False))
+            or int(row.get("unmatched_entries", 0) or 0) > 0
+            or int(row.get("entries", 0) or 0) != int(row.get("exits", 0) or 0)
+        ):
+            profile = str(row.get("profile", "")).strip()
+            if profile:
+                incomplete_profiles.append(profile)
 
     fill_rate = (entries / signals * 100.0) if signals > 0 else 0.0
-    spread_block_ratio = (blocks_wide / blocked_total * 100.0) if blocked_total > 0 else 0.0
+    spread_block_ratio = (
+        (blocks_wide / blocked_total * 100.0) if blocked_total > 0 else 0.0
+    )
 
     return MatrixSummary(
         found=True,
@@ -389,6 +415,9 @@ def _load_matrix_summary(run_dir: str) -> MatrixSummary:
         spread_block_ratio=round(spread_block_ratio, 2),
         top_profile=top_profile,
         top_profile_score=round(top_profile_score, 4),
+        abnormal_termination_count=abnormal_termination_count,
+        unmatched_entries=unmatched_entries,
+        incomplete_profiles=incomplete_profiles,
     )
 
 
@@ -468,13 +497,32 @@ def _derive_issues(
                 f"Execution fill rate is low ({matrix_summary.fill_rate:.1f}%) "
                 f"for {matrix_summary.signals} signals."
             )
-        if matrix_summary.spread_block_ratio >= 80.0 and matrix_summary.blocked_total >= 10:
+        if (
+            matrix_summary.spread_block_ratio >= 80.0
+            and matrix_summary.blocked_total >= 10
+        ):
             issues.append(
                 f"Wide-spread blocks dominate guard rejects "
                 f"({matrix_summary.spread_block_ratio:.1f}% of blocked entries)."
             )
+        if matrix_summary.abnormal_termination_count > 0:
+            issues.append(
+                f"{matrix_summary.abnormal_termination_count} matrix profile runs ended abnormally."
+            )
+        if matrix_summary.unmatched_entries > 0:
+            issues.append(
+                f"Matrix logs show {matrix_summary.unmatched_entries} unmatched entries without a paired exit."
+            )
+        if matrix_summary.incomplete_profiles:
+            issues.append(
+                "Incomplete matrix profiles detected: "
+                + ", ".join(matrix_summary.incomplete_profiles[:5])
+            )
 
-    if redis_summary.open_positions_count > 0 and redis_summary.state.lower() == "stopped":
+    if (
+        redis_summary.open_positions_count > 0
+        and redis_summary.state.lower() == "stopped"
+    ):
         issues.append(
             f"Redis shows {redis_summary.open_positions_count} open positions while state=stopped."
         )
@@ -509,7 +557,8 @@ async def _send_issue_notification(report: HealthReport, md_path: Path) -> bool:
         f"date: <code>{report.report_date}</code>\n"
         f"trades: <code>{t.trade_count}</code>, pnl: <code>{t.total_pnl}</code>, win_rate: <code>{t.win_rate:.1f}%</code>\n"
         f"eod_ratio: <code>{t.eod_ratio:.1f}%</code>, slippage_coverage: <code>{t.slippage_coverage_ratio:.1f}%</code>\n"
-        f"fill_rate: <code>{m.fill_rate:.1f}%</code>, spread_block_ratio: <code>{m.spread_block_ratio:.1f}%</code>\n\n"
+        f"fill_rate: <code>{m.fill_rate:.1f}%</code>, spread_block_ratio: <code>{m.spread_block_ratio:.1f}%</code>\n"
+        f"abnormal_runs: <code>{m.abnormal_termination_count}</code>, unmatched_entries: <code>{m.unmatched_entries}</code>\n\n"
         f"<b>Issues</b>\n{issue_lines}\n\n"
         f"report: <code>{md_path}</code>"
     )
@@ -600,6 +649,8 @@ def _to_markdown(report: HealthReport) -> str:
             f"- Fill rate: `{m.fill_rate:.2f}%`",
             f"- Blocked total: `{m.blocked_total}`",
             f"- Wide spread blocks: `{m.blocks_wide_spread}` ({m.spread_block_ratio:.2f}%)",
+            f"- Abnormal terminations: `{m.abnormal_termination_count}`",
+            f"- Unmatched entries: `{m.unmatched_entries}`",
             f"- Top profile: `{m.top_profile}` (score={m.top_profile_score})",
             "",
             "## Redis State",

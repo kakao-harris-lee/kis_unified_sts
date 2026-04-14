@@ -100,6 +100,9 @@ class DataProviderConfig:
     # Failover: Data staleness threshold in seconds (trigger failover if no data)
     staleness_threshold_seconds: float = 10.0
 
+    # Failover: Limit per-cycle REST polling scope to avoid rate-limit storms.
+    rest_fallback_max_symbols: int | None = None
+
     # Failover: Send Telegram alerts on failover/recovery
     send_telegram_alerts: bool = True
 
@@ -142,6 +145,20 @@ class DataProviderConfig:
                 f"and {MAX_CACHE_TTL_SECONDS}, got {self.rest_poll_interval_seconds}"
             )
 
+        if not (MIN_CACHE_TTL_SECONDS <= self.staleness_threshold_seconds <= MAX_CACHE_TTL_SECONDS):
+            raise ValueError(
+                f"staleness_threshold_seconds must be between {MIN_CACHE_TTL_SECONDS} "
+                f"and {MAX_CACHE_TTL_SECONDS}, got {self.staleness_threshold_seconds}"
+            )
+
+        if self.rest_fallback_max_symbols is not None and not (
+            MIN_BATCH_SIZE <= self.rest_fallback_max_symbols <= MAX_BATCH_SIZE
+        ):
+            raise ValueError(
+                f"rest_fallback_max_symbols must be between {MIN_BATCH_SIZE} "
+                f"and {MAX_BATCH_SIZE}, got {self.rest_fallback_max_symbols}"
+            )
+
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> DataProviderConfig:
         """Create config from dict with validation.
@@ -162,6 +179,8 @@ class DataProviderConfig:
         mock_seed = data.get("mock_seed")
         health_check_interval = data.get("health_check_interval_seconds", 5.0)
         rest_poll_interval = data.get("rest_poll_interval_seconds", 5.0)
+        staleness_threshold = data.get("staleness_threshold_seconds", 10.0)
+        rest_fallback_max_symbols = data.get("rest_fallback_max_symbols")
         send_telegram_alerts = data.get("send_telegram_alerts", True)
 
         # Type validation
@@ -175,6 +194,12 @@ class DataProviderConfig:
             raise TypeError(f"health_check_interval_seconds must be numeric, got {type(health_check_interval)}")
         if not isinstance(rest_poll_interval, (int, float)):
             raise TypeError(f"rest_poll_interval_seconds must be numeric, got {type(rest_poll_interval)}")
+        if not isinstance(staleness_threshold, (int, float)):
+            raise TypeError(f"staleness_threshold_seconds must be numeric, got {type(staleness_threshold)}")
+        if rest_fallback_max_symbols is not None and not isinstance(rest_fallback_max_symbols, int):
+            raise TypeError(
+                f"rest_fallback_max_symbols must be int or None, got {type(rest_fallback_max_symbols)}"
+            )
         if not isinstance(send_telegram_alerts, bool):
             raise TypeError(f"send_telegram_alerts must be bool, got {type(send_telegram_alerts)}")
 
@@ -185,6 +210,8 @@ class DataProviderConfig:
             mock_seed=mock_seed,
             health_check_interval_seconds=float(health_check_interval),
             rest_poll_interval_seconds=float(rest_poll_interval),
+            staleness_threshold_seconds=float(staleness_threshold),
+            rest_fallback_max_symbols=rest_fallback_max_symbols,
             send_telegram_alerts=bool(send_telegram_alerts),
         )
 
@@ -485,7 +512,14 @@ class MarketDataProvider:
                     exc_info=True,
                 )
 
-        # Fallback: Generate mock data (for testing/paper trading)
+        if source_candidates:
+            logger.warning(
+                "All configured market data sources failed for %d symbols; preserving existing cache",
+                len(symbols),
+            )
+            return
+
+        # Fallback: Generate mock data only when no real source is configured.
         for symbol in symbols:
             self._cache[symbol] = MarketDataCache(
                 symbol=symbol,
@@ -532,6 +566,13 @@ class MarketDataProvider:
                     logger.warning(f"Timeout fetching {symbol}")
                 except (NetworkError, APIError) as e:
                     logger.warning(f"Error fetching {symbol}: {e}")
+                except Exception as e:
+                    logger.warning(
+                        "Unexpected error fetching %s: %s: %s",
+                        symbol,
+                        type(e).__name__,
+                        e,
+                    )
             return result
 
         # Batch fetch in groups (respect API rate limits)
@@ -556,6 +597,14 @@ class MarketDataProvider:
                     return (symbol, None)
                 except (NetworkError, APIError) as e:
                     logger.warning(f"Error fetching {symbol}: {e}")
+                    return (symbol, None)
+                except Exception as e:
+                    logger.warning(
+                        "Unexpected error fetching %s: %s: %s",
+                        symbol,
+                        type(e).__name__,
+                        e,
+                    )
                     return (symbol, None)
 
             # Execute fetches in parallel with staggered starts (50ms apart)
@@ -657,19 +706,13 @@ class MarketDataProvider:
                 # Check if we're in WebSocket mode (no need to check if in fallback)
                 if self._current_mode != DataSourceMode.WEBSOCKET:
                     logger.debug("Health check: in REST fallback mode, checking for recovery")
-                    # Check if WebSocket is healthy again for recovery
-                    if hasattr(self._data_source, "is_healthy"):
-                        try:
-                            is_healthy = (
-                                await self._data_source.is_healthy()
-                                if asyncio.iscoroutinefunction(self._data_source.is_healthy)
-                                else self._data_source.is_healthy()
-                            )
-                            if is_healthy:
-                                logger.info("WebSocket is healthy again, attempting recovery")
-                                await self._recover_to_websocket()
-                        except Exception as e:
-                            logger.debug(f"Error checking WebSocket health for recovery: {e}")
+                    try:
+                        is_healthy, _ = await self._check_data_source_health()
+                        if is_healthy:
+                            logger.info("WebSocket is healthy again, attempting recovery")
+                            await self._recover_to_websocket()
+                    except Exception as e:
+                        logger.debug(f"Error checking WebSocket health for recovery: {e}")
                     continue
 
                 # We're in WebSocket mode, check health
@@ -677,32 +720,7 @@ class MarketDataProvider:
                     logger.debug("Health check: no data source configured (using mock data)")
                     continue
 
-                # Get detailed health status if available
-                health_status = None
-                if hasattr(self._data_source, "get_health_status"):
-                    try:
-                        health_status = (
-                            await self._data_source.get_health_status()
-                            if asyncio.iscoroutinefunction(self._data_source.get_health_status)
-                            else self._data_source.get_health_status()
-                        )
-                        logger.debug(f"Health check: data source status = {health_status}")
-                    except Exception as e:
-                        logger.warning(f"Error getting health status: {e}")
-
-                # Check if data source is healthy
-                is_healthy = True
-                if hasattr(self._data_source, "is_healthy"):
-                    try:
-                        is_healthy = (
-                            await self._data_source.is_healthy()
-                            if asyncio.iscoroutinefunction(self._data_source.is_healthy)
-                            else self._data_source.is_healthy()
-                        )
-                        logger.debug(f"Health check: is_healthy = {is_healthy}")
-                    except Exception as e:
-                        logger.warning(f"Error checking is_healthy: {e}")
-                        is_healthy = False
+                is_healthy, health_status = await self._check_data_source_health()
 
                 # Trigger failover if unhealthy
                 if not is_healthy:
@@ -718,6 +736,64 @@ class MarketDataProvider:
             except Exception as e:
                 logger.error(f"Error in health check loop: {type(e).__name__}: {e}", exc_info=True)
                 # Continue checking despite errors
+
+    async def _check_data_source_health(self) -> tuple[bool, dict[str, Any] | None]:
+        """Evaluate source health using provider-level failover semantics."""
+        if self._data_source is None:
+            return True, None
+
+        health_status = await self._get_data_source_health_status()
+        if health_status is not None:
+            logger.debug(f"Health check: data source status = {health_status}")
+
+            if health_status.get("running") is False or health_status.get("connected") is False:
+                return False, health_status
+
+            staleness = health_status.get("staleness_seconds")
+            if staleness is None:
+                return False, health_status
+
+            fresh_symbol_count = health_status.get("fresh_symbol_count")
+            symbol_count = health_status.get("symbol_count")
+            if (
+                isinstance(fresh_symbol_count, int)
+                and isinstance(symbol_count, int)
+                and symbol_count > 0
+                and fresh_symbol_count <= 0
+            ):
+                return False, health_status
+
+            return staleness < self.config.staleness_threshold_seconds, health_status
+
+        is_healthy = True
+        if hasattr(self._data_source, "is_healthy"):
+            try:
+                is_healthy = (
+                    await self._data_source.is_healthy()
+                    if asyncio.iscoroutinefunction(self._data_source.is_healthy)
+                    else self._data_source.is_healthy()
+                )
+                logger.debug(f"Health check: is_healthy = {is_healthy}")
+            except Exception as e:
+                logger.warning(f"Error checking is_healthy: {e}")
+                is_healthy = False
+
+        return is_healthy, None
+
+    async def _get_data_source_health_status(self) -> dict[str, Any] | None:
+        """Fetch structured health status from the primary data source when available."""
+        if self._data_source is None or not hasattr(self._data_source, "get_health_status"):
+            return None
+
+        try:
+            return (
+                await self._data_source.get_health_status()
+                if asyncio.iscoroutinefunction(self._data_source.get_health_status)
+                else self._data_source.get_health_status()
+            )
+        except Exception as e:
+            logger.warning(f"Error getting health status: {e}")
+            return None
 
     async def _failover_to_rest(self):
         """Fail over from WebSocket to REST polling mode.
@@ -793,18 +869,32 @@ class MarketDataProvider:
                     await asyncio.sleep(self.config.rest_poll_interval_seconds)
                     continue
 
-                # Fetch all tracked symbols via KIS client (or data source)
+                if (
+                    self._kis_client is not None
+                    and getattr(self._kis_client, "is_rate_limited", False)
+                ):
+                    logger.debug("REST poll cycle: skipping while KIS client is rate-limited")
+                    await asyncio.sleep(self.config.rest_poll_interval_seconds)
+                    continue
+
+                poll_symbols = self._select_rest_poll_symbols()
+                if not poll_symbols:
+                    logger.debug("REST poll cycle: no symbols selected for fetch")
+                    await asyncio.sleep(self.config.rest_poll_interval_seconds)
+                    continue
+
+                # Fetch selected tracked symbols via KIS client
                 # This uses existing _fetch_batch which:
                 # - Handles rate limiting via staggered requests
                 # - Updates cache with fresh data
-                # - Falls back to mock data if needed
-                logger.debug(f"REST poll cycle: fetching {len(self.symbols)} symbols")
+                # - Preserves existing cache if the REST source fails
+                logger.debug(f"REST poll cycle: fetching {len(poll_symbols)} symbols")
 
                 async with self._lock:
-                    await self._fetch_batch(self.symbols)
+                    await self._fetch_batch(poll_symbols)
 
                 logger.debug(
-                    f"REST poll cycle: successfully fetched {len(self.symbols)} symbols"
+                    f"REST poll cycle: successfully fetched {len(poll_symbols)} symbols"
                 )
 
                 # Sleep until next poll interval
@@ -847,18 +937,11 @@ class MarketDataProvider:
             logger.warning("Cannot recover to WebSocket: no data source configured")
             return
 
-        # Check if data source is healthy
-        is_healthy = False
-        if hasattr(self._data_source, "is_healthy"):
-            try:
-                is_healthy = (
-                    await self._data_source.is_healthy()
-                    if asyncio.iscoroutinefunction(self._data_source.is_healthy)
-                    else self._data_source.is_healthy()
-                )
-            except Exception as e:
-                logger.warning(f"Error checking WebSocket health during recovery: {e}")
-                return
+        try:
+            is_healthy, _ = await self._check_data_source_health()
+        except Exception as e:
+            logger.warning(f"Error checking WebSocket health during recovery: {e}")
+            return
 
         if not is_healthy:
             logger.debug("WebSocket not healthy, cannot recover yet")
@@ -905,3 +988,21 @@ class MarketDataProvider:
         self._cache.clear()
         self._last_batch_fetch = None
         logger.info("Cache cleared")
+
+    def _select_rest_poll_symbols(self) -> list[str]:
+        """Choose the stalest cached symbols first during REST fallback."""
+        if not self.symbols:
+            return []
+
+        max_symbols = self.config.rest_fallback_max_symbols
+        if max_symbols is None or max_symbols >= len(self.symbols):
+            return list(self.symbols)
+
+        return sorted(
+            self.symbols,
+            key=lambda symbol: (
+                self._cache[symbol].fetched_at
+                if symbol in self._cache
+                else datetime.min
+            ),
+        )[:max_symbols]

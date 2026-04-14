@@ -99,6 +99,7 @@ class RLMPPOConfig:
     paper_hold_override_max_gap: float | None = None
     paper_hold_override_min_entry_prob: float | None = None
     paper_hold_override_min_confidence: float | None = None
+    hold_override_respects_directional_thresholds: bool = True
     risk_off_long_block_enabled: bool = True
     risk_off_change_threshold: float = -0.02
     risk_off_regime_block_enabled: bool = True
@@ -148,14 +149,17 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
 
     def _validate_config(self) -> None:
         """설정 유효성 검증"""
-        assert 0.0 <= self.config.min_confidence <= 1.0, (
-            "min_confidence must be between 0.0 and 1.0"
-        )
+        assert (
+            0.0 <= self.config.min_confidence <= 1.0
+        ), "min_confidence must be between 0.0 and 1.0"
         for key, value in (
             ("long_min_confidence", self.config.long_min_confidence),
             ("short_min_confidence", self.config.short_min_confidence),
             ("backtest_long_min_confidence", self.config.backtest_long_min_confidence),
-            ("backtest_short_min_confidence", self.config.backtest_short_min_confidence),
+            (
+                "backtest_short_min_confidence",
+                self.config.backtest_short_min_confidence,
+            ),
             ("paper_min_confidence", self.config.paper_min_confidence),
             ("paper_long_min_confidence", self.config.paper_long_min_confidence),
             ("paper_short_min_confidence", self.config.paper_short_min_confidence),
@@ -188,30 +192,32 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
             if value is None:
                 continue
             assert 0.0 <= value <= 1.0, f"{key} must be between 0.0 and 1.0"
-        assert 0.0 <= self.config.hold_override_max_gap <= 1.0, (
-            "hold_override_max_gap must be between 0.0 and 1.0"
-        )
-        assert 0.0 <= self.config.hold_override_min_entry_prob <= 1.0, (
-            "hold_override_min_entry_prob must be between 0.0 and 1.0"
-        )
-        assert 0.0 <= self.config.hold_override_min_confidence <= 1.0, (
-            "hold_override_min_confidence must be between 0.0 and 1.0"
-        )
-        assert 0.0 <= self.config.backtest_hold_override_min_confidence <= 1.0, (
-            "backtest_hold_override_min_confidence must be between 0.0 and 1.0"
-        )
-        assert self.config.adaptive_confidence_metric in {"atr_ratio", "atr", "bb_width"}, (
-            "adaptive_confidence_metric must be one of atr_ratio/atr/bb_width"
-        )
-        assert self.config.adaptive_confidence_trigger >= 0.0, (
-            "adaptive_confidence_trigger must be non-negative"
-        )
-        assert 0.0 <= self.config.adaptive_confidence_backtest_boost <= 1.0, (
-            "adaptive_confidence_backtest_boost must be between 0.0 and 1.0"
-        )
-        assert 0.0 <= self.config.adaptive_confidence_live_boost <= 1.0, (
-            "adaptive_confidence_live_boost must be between 0.0 and 1.0"
-        )
+        assert (
+            0.0 <= self.config.hold_override_max_gap <= 1.0
+        ), "hold_override_max_gap must be between 0.0 and 1.0"
+        assert (
+            0.0 <= self.config.hold_override_min_entry_prob <= 1.0
+        ), "hold_override_min_entry_prob must be between 0.0 and 1.0"
+        assert (
+            0.0 <= self.config.hold_override_min_confidence <= 1.0
+        ), "hold_override_min_confidence must be between 0.0 and 1.0"
+        assert (
+            0.0 <= self.config.backtest_hold_override_min_confidence <= 1.0
+        ), "backtest_hold_override_min_confidence must be between 0.0 and 1.0"
+        assert self.config.adaptive_confidence_metric in {
+            "atr_ratio",
+            "atr",
+            "bb_width",
+        }, "adaptive_confidence_metric must be one of atr_ratio/atr/bb_width"
+        assert (
+            self.config.adaptive_confidence_trigger >= 0.0
+        ), "adaptive_confidence_trigger must be non-negative"
+        assert (
+            0.0 <= self.config.adaptive_confidence_backtest_boost <= 1.0
+        ), "adaptive_confidence_backtest_boost must be between 0.0 and 1.0"
+        assert (
+            0.0 <= self.config.adaptive_confidence_live_boost <= 1.0
+        ), "adaptive_confidence_live_boost must be between 0.0 and 1.0"
         for key, value in (
             (
                 "adaptive_confidence_backtest_boost_long",
@@ -233,66 +239,66 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
             if value is None:
                 continue
             assert 0.0 <= value <= 1.0, f"{key} must be between 0.0 and 1.0"
-        assert 0.0 <= self.config.adaptive_hold_confidence_backtest_boost <= 1.0, (
-            "adaptive_hold_confidence_backtest_boost must be between 0.0 and 1.0"
-        )
-        assert 0.0 <= self.config.adaptive_hold_confidence_live_boost <= 1.0, (
-            "adaptive_hold_confidence_live_boost must be between 0.0 and 1.0"
-        )
-        assert 0.0 <= self.config.adaptive_confidence_cap <= 1.0, (
-            "adaptive_confidence_cap must be between 0.0 and 1.0"
-        )
-        assert self.config.skip_market_open_minutes >= 0, (
-            "skip_market_open_minutes must be non-negative"
-        )
-        assert self.config.skip_market_close_minutes >= 0, (
-            "skip_market_close_minutes must be non-negative"
-        )
+        assert (
+            0.0 <= self.config.adaptive_hold_confidence_backtest_boost <= 1.0
+        ), "adaptive_hold_confidence_backtest_boost must be between 0.0 and 1.0"
+        assert (
+            0.0 <= self.config.adaptive_hold_confidence_live_boost <= 1.0
+        ), "adaptive_hold_confidence_live_boost must be between 0.0 and 1.0"
+        assert (
+            0.0 <= self.config.adaptive_confidence_cap <= 1.0
+        ), "adaptive_confidence_cap must be between 0.0 and 1.0"
+        assert (
+            self.config.skip_market_open_minutes >= 0
+        ), "skip_market_open_minutes must be non-negative"
+        assert (
+            self.config.skip_market_close_minutes >= 0
+        ), "skip_market_close_minutes must be non-negative"
         if self.config.night_skip_market_open_minutes is not None:
-            assert self.config.night_skip_market_open_minutes >= 0, (
-                "night_skip_market_open_minutes must be non-negative"
-            )
+            assert (
+                self.config.night_skip_market_open_minutes >= 0
+            ), "night_skip_market_open_minutes must be non-negative"
         if self.config.night_skip_market_close_minutes is not None:
-            assert self.config.night_skip_market_close_minutes >= 0, (
-                "night_skip_market_close_minutes must be non-negative"
-            )
+            assert (
+                self.config.night_skip_market_close_minutes >= 0
+            ), "night_skip_market_close_minutes must be non-negative"
         if self.config.paper_skip_market_open_minutes is not None:
-            assert self.config.paper_skip_market_open_minutes >= 0, (
-                "paper_skip_market_open_minutes must be non-negative"
-            )
+            assert (
+                self.config.paper_skip_market_open_minutes >= 0
+            ), "paper_skip_market_open_minutes must be non-negative"
         if self.config.paper_skip_market_close_minutes is not None:
-            assert self.config.paper_skip_market_close_minutes >= 0, (
-                "paper_skip_market_close_minutes must be non-negative"
-            )
+            assert (
+                self.config.paper_skip_market_close_minutes >= 0
+            ), "paper_skip_market_close_minutes must be non-negative"
         if self.config.paper_night_skip_market_open_minutes is not None:
-            assert self.config.paper_night_skip_market_open_minutes >= 0, (
-                "paper_night_skip_market_open_minutes must be non-negative"
-            )
+            assert (
+                self.config.paper_night_skip_market_open_minutes >= 0
+            ), "paper_night_skip_market_open_minutes must be non-negative"
         if self.config.paper_night_skip_market_close_minutes is not None:
-            assert self.config.paper_night_skip_market_close_minutes >= 0, (
-                "paper_night_skip_market_close_minutes must be non-negative"
-            )
-        assert self.config.eod_hard_block_minutes >= 0, (
-            "eod_hard_block_minutes must be non-negative"
-        )
+            assert (
+                self.config.paper_night_skip_market_close_minutes >= 0
+            ), "paper_night_skip_market_close_minutes must be non-negative"
+        assert (
+            self.config.eod_hard_block_minutes >= 0
+        ), "eod_hard_block_minutes must be non-negative"
         if self.config.night_eod_hard_block_minutes is not None:
-            assert self.config.night_eod_hard_block_minutes >= 0, (
-                "night_eod_hard_block_minutes must be non-negative"
-            )
+            assert (
+                self.config.night_eod_hard_block_minutes >= 0
+            ), "night_eod_hard_block_minutes must be non-negative"
         if self.config.paper_eod_hard_block_minutes is not None:
-            assert self.config.paper_eod_hard_block_minutes >= 0, (
-                "paper_eod_hard_block_minutes must be non-negative"
-            )
+            assert (
+                self.config.paper_eod_hard_block_minutes >= 0
+            ), "paper_eod_hard_block_minutes must be non-negative"
         if self.config.paper_night_eod_hard_block_minutes is not None:
-            assert self.config.paper_night_eod_hard_block_minutes >= 0, (
-                "paper_night_eod_hard_block_minutes must be non-negative"
-            )
-        assert self.config.risk_off_change_threshold <= 0.0, (
-            "risk_off_change_threshold must be <= 0.0"
-        )
-        assert 0.0 <= self.config.risk_off_hold_override_max_long_advantage <= 1.0, (
-            "risk_off_hold_override_max_long_advantage must be between 0.0 and 1.0"
-        )
+            assert (
+                self.config.paper_night_eod_hard_block_minutes >= 0
+            ), "paper_night_eod_hard_block_minutes must be non-negative"
+        assert (
+            self.config.risk_off_change_threshold <= 0.0
+        ), "risk_off_change_threshold must be <= 0.0"
+        assert (
+            0.0 <= self.config.risk_off_hold_override_max_long_advantage <= 1.0
+        ), "risk_off_hold_override_max_long_advantage must be between 0.0 and 1.0"
         if self.config.risk_off_regime_keywords:
             assert all(
                 isinstance(item, str) and item.strip()
@@ -324,7 +330,9 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
             switching_config = ModelSwitchingConfig(
                 min_confidence=switching_cfg_dict.get("min_confidence", 0.7),
                 cooldown_minutes=switching_cfg_dict.get("cooldown_minutes", 60),
-                min_consecutive_detections=switching_cfg_dict.get("min_consecutive_detections", 3),
+                min_consecutive_detections=switching_cfg_dict.get(
+                    "min_consecutive_detections", 3
+                ),
             )
 
             # Extract default model
@@ -352,9 +360,7 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
                     )
                     selector.register(regime_state, model_mapping)
                 except (KeyError, ValueError) as e:
-                    logger.warning(
-                        f"Failed to register regime {regime_name}: {e}"
-                    )
+                    logger.warning(f"Failed to register regime {regime_name}: {e}")
                     continue
 
             self._model_selector = selector
@@ -364,7 +370,9 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
             return selector
 
         except Exception as e:
-            logger.error(f"Failed to initialize AdaptiveModelSelector: {e}", exc_info=True)
+            logger.error(
+                f"Failed to initialize AdaptiveModelSelector: {e}", exc_info=True
+            )
             return None
 
     @property
@@ -406,8 +414,12 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
         # 시간 필터 (기본: 실시간만 적용, 옵션으로 백테스트에도 적용 가능)
         is_backtest = bool(context.metadata.get("is_backtest"))
         is_paper = bool(context.metadata.get("paper_trading")) and not is_backtest
-        enforce_time_filter = (not is_backtest) or self.config.apply_time_filter_in_backtest
-        if enforce_time_filter and not self._is_trading_time(context.timestamp, is_paper=is_paper):
+        enforce_time_filter = (
+            not is_backtest
+        ) or self.config.apply_time_filter_in_backtest
+        if enforce_time_filter and not self._is_trading_time(
+            context.timestamp, is_paper=is_paper
+        ):
             return None
 
         # Regime-aware model selection
@@ -566,9 +578,8 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
                 reasons.append(f"regime:{regime_matches}")
 
         day_change = self._extract_day_change_ratio(context.market_data)
-        if (
-            day_change is not None
-            and day_change <= float(self.config.risk_off_change_threshold)
+        if day_change is not None and day_change <= float(
+            self.config.risk_off_change_threshold
         ):
             reasons.append(f"day_change:{day_change:.4f}")
 
@@ -577,7 +588,9 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
         return False, ""
 
     def _match_risk_off_regime(self, context: EntryContext) -> str:
-        keywords = [k.upper().strip() for k in self.config.risk_off_regime_keywords if k.strip()]
+        keywords = [
+            k.upper().strip() for k in self.config.risk_off_regime_keywords if k.strip()
+        ]
         if not keywords:
             return ""
 
@@ -671,7 +684,9 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
             and short_prob >= min_entry_prob
         ):
             long_advantage = long_prob - short_prob
-            if long_advantage <= float(self.config.risk_off_hold_override_max_long_advantage):
+            if long_advantage <= float(
+                self.config.risk_off_hold_override_max_long_advantage
+            ):
                 best_action, best_prob = 2, short_prob
         if best_prob < min_entry_prob:
             return None
@@ -716,10 +731,7 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
         risk_off: bool,
     ) -> float:
         if risk_off and action == 2:
-            if (
-                is_paper
-                and self.config.risk_off_paper_short_min_confidence is not None
-            ):
+            if is_paper and self.config.risk_off_paper_short_min_confidence is not None:
                 return float(self.config.risk_off_paper_short_min_confidence)
             if (
                 is_backtest
@@ -730,12 +742,25 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
                 return float(self.config.risk_off_short_min_confidence)
 
         if override_reason:
-            if is_paper and self.config.paper_hold_override_min_confidence is not None:
-                return float(self.config.paper_hold_override_min_confidence)
-            return (
-                self.config.backtest_hold_override_min_confidence
-                if is_backtest
-                else self.config.hold_override_min_confidence
+            override_threshold = (
+                float(self.config.paper_hold_override_min_confidence)
+                if is_paper
+                and self.config.paper_hold_override_min_confidence is not None
+                else (
+                    self.config.backtest_hold_override_min_confidence
+                    if is_backtest
+                    else self.config.hold_override_min_confidence
+                )
+            )
+            if not self.config.hold_override_respects_directional_thresholds:
+                return override_threshold
+            return max(
+                override_threshold,
+                self._resolve_directional_threshold_floor(
+                    is_backtest=is_backtest,
+                    is_paper=is_paper,
+                    action=action,
+                ),
             )
         if is_paper:
             if action == 0 and self.config.paper_long_min_confidence is not None:
@@ -760,7 +785,50 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
             )
             if directional is not None:
                 return float(directional)
-        return float(self.config.backtest_min_confidence if is_backtest else self.config.min_confidence)
+        return float(
+            self.config.backtest_min_confidence
+            if is_backtest
+            else self.config.min_confidence
+        )
+
+    def _resolve_directional_threshold_floor(
+        self,
+        *,
+        is_backtest: bool,
+        is_paper: bool,
+        action: int,
+    ) -> float:
+        floor = float(
+            self.config.backtest_min_confidence
+            if is_backtest
+            else self.config.min_confidence
+        )
+        if is_paper:
+            if action == 0 and self.config.paper_long_min_confidence is not None:
+                floor = max(floor, float(self.config.paper_long_min_confidence))
+            elif action == 2 and self.config.paper_short_min_confidence is not None:
+                floor = max(floor, float(self.config.paper_short_min_confidence))
+            if self.config.paper_min_confidence is not None:
+                floor = max(floor, float(self.config.paper_min_confidence))
+            return floor
+
+        if action == 0:
+            directional = (
+                self.config.backtest_long_min_confidence
+                if is_backtest
+                else self.config.long_min_confidence
+            )
+            if directional is not None:
+                floor = max(floor, float(directional))
+        elif action == 2:
+            directional = (
+                self.config.backtest_short_min_confidence
+                if is_backtest
+                else self.config.short_min_confidence
+            )
+            if directional is not None:
+                floor = max(floor, float(directional))
+        return floor
 
     def _resolve_effective_threshold(
         self,
@@ -803,7 +871,9 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
         )
         return effective, f"adaptive_high_vol:{regime_metric:.6f}", regime_metric
 
-    def _resolve_directional_adaptive_boost(self, *, action: int, is_backtest: bool) -> float:
+    def _resolve_directional_adaptive_boost(
+        self, *, action: int, is_backtest: bool
+    ) -> float:
         if action == 0:
             directional = (
                 self.config.adaptive_confidence_backtest_boost_long
@@ -945,7 +1015,12 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
                         "futures", model_mapping.strategy_profile
                     )
                     # Extract model_path from entry.params
-                    return profile_config.get("strategy", {}).get("entry", {}).get("params", {}).get("model_path")
+                    return (
+                        profile_config.get("strategy", {})
+                        .get("entry", {})
+                        .get("params", {})
+                        .get("model_path")
+                    )
                 except Exception as e:
                     logger.warning(
                         f"Failed to load strategy profile {model_mapping.strategy_profile}: {e}"
@@ -1004,7 +1079,9 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
             contracts = getattr(pos, "quantity", 0) / max(env_cfg.max_contracts, 1)
             # Position.unrealized_pnl lacks contract_multiplier; match training env
             raw_pnl = getattr(pos, "unrealized_pnl", 0.0)
-            unrealized_pnl = (raw_pnl * env_cfg.contract_multiplier) / env_cfg.initial_balance
+            unrealized_pnl = (
+                raw_pnl * env_cfg.contract_multiplier
+            ) / env_cfg.initial_balance
 
         derived = derive_features_from_ohlcv(context.indicators, context.market_data)
         scaler = self._load_scaler()
@@ -1086,7 +1163,8 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
         if self.config.night_session_enabled:
             night_skip_open = (
                 int(self.config.paper_night_skip_market_open_minutes)
-                if is_paper and self.config.paper_night_skip_market_open_minutes is not None
+                if is_paper
+                and self.config.paper_night_skip_market_open_minutes is not None
                 else int(
                     self.config.night_skip_market_open_minutes
                     if self.config.night_skip_market_open_minutes is not None
@@ -1095,7 +1173,8 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
             )
             night_skip_close = (
                 int(self.config.paper_night_skip_market_close_minutes)
-                if is_paper and self.config.paper_night_skip_market_close_minutes is not None
+                if is_paper
+                and self.config.paper_night_skip_market_close_minutes is not None
                 else int(
                     self.config.night_skip_market_close_minutes
                     if self.config.night_skip_market_close_minutes is not None
@@ -1111,7 +1190,8 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
                     if self.config.night_eod_hard_block_minutes is not None
                     else (
                         self.config.paper_eod_hard_block_minutes
-                        if is_paper and self.config.paper_eod_hard_block_minutes is not None
+                        if is_paper
+                        and self.config.paper_eod_hard_block_minutes is not None
                         else self.config.eod_hard_block_minutes
                     )
                 )
@@ -1130,7 +1210,13 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
                 )
             )
 
-        for session_open, session_close, skip_open, skip_close, hard_close_block in sessions:
+        for (
+            session_open,
+            session_close,
+            skip_open,
+            skip_close,
+            hard_close_block,
+        ) in sessions:
             if self._is_within_session(
                 current_minute=current_minute,
                 session_open=session_open,
@@ -1143,8 +1229,12 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
         return False
 
     @staticmethod
-    def _parse_session_time(value: str, *, default_hour: int, default_minute: int) -> time:
-        hour, minute = parse_hhmm(value, default_hour=default_hour, default_minute=default_minute)
+    def _parse_session_time(
+        value: str, *, default_hour: int, default_minute: int
+    ) -> time:
+        hour, minute = parse_hhmm(
+            value, default_hour=default_hour, default_minute=default_minute
+        )
         return time(hour=hour, minute=minute)
 
     @staticmethod
@@ -1164,7 +1254,9 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
         if open_minute <= close_minute:
             in_raw_session = open_minute <= current_minute <= close_minute
         else:
-            in_raw_session = current_minute >= open_minute or current_minute <= close_minute
+            in_raw_session = (
+                current_minute >= open_minute or current_minute <= close_minute
+            )
         if not in_raw_session:
             return False
 

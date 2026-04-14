@@ -147,11 +147,20 @@ def test_is_trading_time_hard_eod_block_applies_in_paper():
     )
 
     # 11 minutes to close -> allowed
-    assert strategy._is_trading_time(datetime(2026, 2, 12, 15, 34, 0), is_paper=True) is True
+    assert (
+        strategy._is_trading_time(datetime(2026, 2, 12, 15, 34, 0), is_paper=True)
+        is True
+    )
     # 10 minutes to close -> blocked by hard gate
-    assert strategy._is_trading_time(datetime(2026, 2, 12, 15, 35, 0), is_paper=True) is False
+    assert (
+        strategy._is_trading_time(datetime(2026, 2, 12, 15, 35, 0), is_paper=True)
+        is False
+    )
     # live/backtest path unaffected by paper hard gate in this config
-    assert strategy._is_trading_time(datetime(2026, 2, 12, 15, 35, 0), is_paper=False) is True
+    assert (
+        strategy._is_trading_time(datetime(2026, 2, 12, 15, 35, 0), is_paper=False)
+        is True
+    )
 
 
 def test_is_trading_time_skip_close_boundary_is_exclusive_in_paper():
@@ -169,8 +178,14 @@ def test_is_trading_time_skip_close_boundary_is_exclusive_in_paper():
         )
     )
 
-    assert strategy._is_trading_time(datetime(2026, 2, 12, 15, 14, 0), is_paper=True) is True
-    assert strategy._is_trading_time(datetime(2026, 2, 12, 15, 15, 0), is_paper=True) is False
+    assert (
+        strategy._is_trading_time(datetime(2026, 2, 12, 15, 14, 0), is_paper=True)
+        is True
+    )
+    assert (
+        strategy._is_trading_time(datetime(2026, 2, 12, 15, 15, 0), is_paper=True)
+        is False
+    )
 
 
 @pytest.mark.asyncio
@@ -209,6 +224,90 @@ async def test_generate_overrides_hold_to_entry_when_gap_small(monkeypatch):
     assert signal.metadata.get("signal_direction") == "long"
     assert signal.metadata.get("rl_override_reason") == "hold_override"
     assert signal.confidence == pytest.approx(0.40)
+
+
+@pytest.mark.asyncio
+async def test_generate_hold_override_respects_paper_directional_threshold_by_default(
+    monkeypatch,
+):
+    strategy = RLMPPOEntry(
+        RLMPPOConfig(
+            min_confidence=0.3,
+            paper_min_confidence=0.40,
+            paper_long_min_confidence=0.42,
+            paper_enable_hold_override=True,
+            paper_hold_override_max_gap=0.35,
+            paper_hold_override_min_entry_prob=0.20,
+            paper_hold_override_min_confidence=0.25,
+        )
+    )
+    strategy._is_trading_time = lambda _ts, **_kwargs: True
+    strategy._load_model = lambda: SimpleNamespace(
+        predict=lambda *_args, **_kwargs: (4, None)
+    )
+    strategy._build_observation = lambda _ctx: np.zeros(31, dtype=np.float32)
+    monkeypatch.setattr(
+        "shared.strategy.entry.rl_mppo.get_action_probabilities",
+        lambda *_args, **_kwargs: {0: 0.34, 2: 0.20, 4: 0.36},
+    )
+
+    context = EntryContext(
+        market_data={
+            "code": "A01603",
+            "name": "KOSPI200 Futures",
+            "close": 101.5,
+        },
+        indicators={},
+        current_positions=[],
+        timestamp=datetime(2026, 2, 12, 10, 5, 0),
+        metadata={"paper_trading": True},
+    )
+
+    signal = await strategy.generate(context)
+    assert signal is None
+
+
+@pytest.mark.asyncio
+async def test_generate_hold_override_can_relax_directional_threshold_when_disabled(
+    monkeypatch,
+):
+    strategy = RLMPPOEntry(
+        RLMPPOConfig(
+            min_confidence=0.3,
+            paper_min_confidence=0.40,
+            paper_long_min_confidence=0.42,
+            paper_enable_hold_override=True,
+            paper_hold_override_max_gap=0.35,
+            paper_hold_override_min_entry_prob=0.20,
+            paper_hold_override_min_confidence=0.25,
+            hold_override_respects_directional_thresholds=False,
+        )
+    )
+    strategy._is_trading_time = lambda _ts, **_kwargs: True
+    strategy._load_model = lambda: SimpleNamespace(
+        predict=lambda *_args, **_kwargs: (4, None)
+    )
+    strategy._build_observation = lambda _ctx: np.zeros(31, dtype=np.float32)
+    monkeypatch.setattr(
+        "shared.strategy.entry.rl_mppo.get_action_probabilities",
+        lambda *_args, **_kwargs: {0: 0.34, 2: 0.20, 4: 0.36},
+    )
+
+    context = EntryContext(
+        market_data={
+            "code": "A01603",
+            "name": "KOSPI200 Futures",
+            "close": 101.5,
+        },
+        indicators={},
+        current_positions=[],
+        timestamp=datetime(2026, 2, 12, 10, 5, 0),
+        metadata={"paper_trading": True},
+    )
+
+    signal = await strategy.generate(context)
+    assert signal is not None
+    assert signal.metadata.get("rl_override_reason") == "hold_override"
 
 
 @pytest.mark.asyncio
@@ -309,7 +408,9 @@ async def test_generate_adaptive_threshold_keeps_base_in_normal_volatility(monke
     signal = await strategy.generate(context)
     assert signal is not None
     assert signal.metadata.get("rl_threshold") == pytest.approx(0.35)
-    assert str(signal.metadata.get("rl_threshold_reason", "")).startswith("adaptive_normal:")
+    assert str(signal.metadata.get("rl_threshold_reason", "")).startswith(
+        "adaptive_normal:"
+    )
 
 
 @pytest.mark.asyncio
