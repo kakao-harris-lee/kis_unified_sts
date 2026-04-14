@@ -57,12 +57,17 @@ async def main():
     path = save_watchlist(items, output_dir="output/llm", filename_prefix="watchlist")
     logger.info(f"Saved: {path}")
 
-    # Optional Telegram
+    # Optional Telegram — briefing 채널로 발송
     try:
-        from shared.notification import TelegramNotifier
+        from shared.notification import notifier_for_domain
 
-        notifier = TelegramNotifier()
-        await notifier.send_message(_render_watchlist_message(items), is_critical=True)
+        notifier = notifier_for_domain("briefing")
+        if notifier is None:
+            logger.warning("Briefing Telegram channel not configured; watchlist alert skipped")
+        else:
+            await notifier.send_message(
+                _render_watchlist_message(items), is_critical=True
+            )
     except Exception as e:
         logger.warning(f"Telegram notify skipped: {e}")
 

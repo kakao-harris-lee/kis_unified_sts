@@ -7,7 +7,7 @@ from typing import Optional
 
 from shared.calendar import is_market_open_today
 from shared.llm import run_unified_analysis
-from shared.notification import TelegramNotifier
+from shared.notification import notifier_for_domain
 
 
 def configure_logger(name: str) -> logging.Logger:
@@ -29,14 +29,18 @@ async def run_unified_job(
         logger.info("Market closed today. Skipping.")
         return
 
-    notifier = TelegramNotifier()
-    if pre_telegram_message:
+    notifier = notifier_for_domain("briefing")
+    if notifier is None:
+        logger.warning(
+            "Briefing Telegram channel not configured; running analysis without notifications"
+        )
+    elif pre_telegram_message:
         await notifier.send_message(pre_telegram_message, is_critical=True)
 
     stock_plans, futures_plan, _ = await run_unified_analysis(
         notifier=notifier,
         mode="all",
-        send_telegram=True,
+        send_telegram=notifier is not None,
     )
     logger.info(
         "Complete: %s stocks, futures=%s",

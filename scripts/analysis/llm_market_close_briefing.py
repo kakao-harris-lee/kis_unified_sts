@@ -180,7 +180,7 @@ async def main():
         logger.info("Market closed today. Skipping.")
         return
 
-    from shared.notification import TelegramNotifier
+    from shared.notification import notifier_for_domain
     from shared.streaming.trading_state import TradingStateReader
 
     today = datetime.now().strftime("%Y-%m-%d (%a)")
@@ -218,7 +218,12 @@ async def main():
 
     message = "\n".join(parts)
 
-    notifier = TelegramNotifier()
+    notifier = notifier_for_domain("briefing")
+    if notifier is None:
+        logger.warning(
+            "Briefing Telegram channel not configured; market close briefing skipped"
+        )
+        return
     await notifier.send_message(message, is_critical=True)
     logger.info("Market close briefing sent")
 

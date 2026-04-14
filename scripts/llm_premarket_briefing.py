@@ -42,16 +42,21 @@ async def main():
         return
 
     try:
-        # Import notifier if available
+        # Import notifier if available — briefing 채널로 발송
         notifier = None
         try:
-            from shared.notification import TelegramNotifier
+            from shared.notification import notifier_for_domain
 
-            notifier = TelegramNotifier()
-            await notifier.send_message(
-                "<b>🌅 장전 최종 브리핑</b>\n━━━━━━━━━━━━━━━━━━━━",
-                is_critical=True,
-            )
+            notifier = notifier_for_domain("briefing")
+            if notifier is None:
+                logger.warning(
+                    "Briefing Telegram channel not configured; running without notifications"
+                )
+            else:
+                await notifier.send_message(
+                    "<b>🌅 장전 최종 브리핑</b>\n━━━━━━━━━━━━━━━━━━━━",
+                    is_critical=True,
+                )
         except ImportError:
             logger.warning("TelegramNotifier not available, running without notifications")
 

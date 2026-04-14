@@ -65,9 +65,12 @@ async def _notify_new_stocks(
         score = quality.get(code, 0)
         lines.append(f"• {name} ({code}) — 품질 {score:.0%}")
 
-    from shared.notification import TelegramNotifier
+    from shared.notification import notifier_for_domain
 
-    notifier = TelegramNotifier()
+    notifier = notifier_for_domain("briefing")
+    if notifier is None:
+        logger.warning("Briefing Telegram channel not configured; intraday alert skipped")
+        return
     await notifier.send_message("\n".join(lines))
     logger.info(f"Telegram alert sent for {len(added)} new stocks: {sorted(added)}")
 

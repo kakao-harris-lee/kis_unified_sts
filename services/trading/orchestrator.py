@@ -5417,28 +5417,46 @@ class TradingOrchestrator:
             logger.warning(f"Notification task failed: {exc}")
 
     async def _notify(self, message: str):
-        """알림 전송"""
+        """알림 전송
+
+        도메인(asset_class)별 채널로 라우팅한다:
+        - 우선순위: config.telegram_token/chat_id (TradingConfig factory 주입값)
+          → SecretsManager.telegram_token(domain)
+        - 도메인 토큰이 전혀 없으면 알림을 건너뛴다. generic TELEGRAM_BOT_TOKEN으로
+          silent fallback 하지 않는다(선물 메시지가 주식 채널로 새는 것을 방지).
+        """
         if not self.config.enable_telegram:
             logger.info(f"Notification (telegram disabled): {message}")
             return
 
         try:
             from services.monitoring.notifier import TelegramConfig, TelegramNotifier
+            from shared.notification.telegram import resolve_domain_credentials
 
-            # 환경변수 또는 config에서 토큰 로드
-            config = TelegramConfig.from_env()
+            domain = (
+                self.config.asset_class
+                if self.config.asset_class in ("stock", "futures")
+                else None
+            )
 
-            # config에 토큰이 있으면 우선 사용
-            if self.config.telegram_token and self.config.telegram_chat_id:
-                config = TelegramConfig(
-                    token=self.config.telegram_token,
-                    chat_id=self.config.telegram_chat_id,
+            # 1) TradingConfig factory 주입값이 최우선
+            token = self.config.telegram_token
+            chat_id = self.config.telegram_chat_id
+
+            # 2) 주입값이 없으면 도메인별 env에서 strict 조회 (legacy fallback 없음)
+            if not token or not chat_id:
+                env_token, env_chat = resolve_domain_credentials(domain)
+                token = token or env_token
+                chat_id = chat_id or env_chat
+
+            if not token or not chat_id:
+                logger.warning(
+                    "Telegram not configured for domain=%s, skipping notification",
+                    domain,
                 )
-
-            if not config.is_configured:
-                logger.warning("Telegram not configured, skipping notification")
                 return
 
+            config = TelegramConfig(token=token, chat_id=chat_id)
             notifier = TelegramNotifier(config)
             try:
                 success = await notifier.send(message)
