@@ -1,7 +1,7 @@
 """Virtual broker for paper trading."""
 import logging
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional, Callable, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -29,6 +29,7 @@ class VirtualBroker:
     - Position tracking
     - P&L calculation
     - Commission simulation
+    - Price freshness guards (when config supplied with max_price_staleness_seconds > 0)
     """
 
     def __init__(
@@ -37,12 +38,22 @@ class VirtualBroker:
         commission_rate: float = 0.00015,  # 0.015%
         slippage_rate: float = 0.0001,     # 0.01%
         slippage_model: Optional["SlippageModel"] = None,
+        config: Optional["PaperTradingConfig"] = None,  # type: ignore[name-defined]
     ):
+        # If a config is provided, its values take precedence
+        if config is not None:
+            from shared.paper.config import PaperTradingConfig as _PTC
+            assert isinstance(config, _PTC), "VirtualBroker config must be a PaperTradingConfig"
+            initial_balance = config.initial_balance
+            commission_rate = config.commission_rate
+            slippage_rate = config.slippage_rate
+
         self.initial_balance = initial_balance
         self.balance = initial_balance
         self.commission_rate = commission_rate
         self.slippage_rate = slippage_rate
         self.slippage_model = slippage_model
+        self.config = config  # May be None for legacy callers
 
         self.positions: Dict[str, VirtualPosition] = {}
         self.orders: List[VirtualOrder] = []
@@ -57,10 +68,11 @@ class VirtualBroker:
         symbol: str,
         side: OrderSide,
         quantity: int,
-        price: float,
+        price: float = 0.0,
         order_type: OrderType = OrderType.MARKET,
         market_price: float | None = None,
         orderbook: Optional["OrderBookSnapshot"] = None,
+        price_source_time: Optional[datetime] = None,
     ) -> VirtualOrder:
         """Submit and execute order.
 
@@ -72,7 +84,67 @@ class VirtualBroker:
             order_type: Order type (MARKET/LIMIT)
             market_price: Current market price (used for LIMIT order execution check)
             orderbook: Order book snapshot for realistic slippage calculation
+            price_source_time: When the market price was sampled. Required (and must be
+                fresh) when ``config.max_price_staleness_seconds > 0``; otherwise the
+                order is rejected with an appropriate rejection_reason.
+
+        Returns:
+            VirtualOrder — filled or rejected (check ``order.filled`` and
+            ``order.rejection_reason``).
         """
+        # ── Price freshness guard ──────────────────────────────────────────────
+        if self.config is not None and self.config.max_price_staleness_seconds > 0:
+            effective_price = price if price else (market_price or 0.0)
+            if price_source_time is None:
+                order = VirtualOrder(
+                    order_id=f"VO-{uuid.uuid4().hex[:8].upper()}",
+                    symbol=symbol,
+                    side=side,
+                    order_type=order_type,
+                    quantity=quantity,
+                    price=effective_price,
+                    timestamp=datetime.now(),
+                )
+                order.filled = False
+                order.rejection_reason = "missing_price_source_time"
+                logger.warning(
+                    "Paper order rejected (no price_source_time): %s %s",
+                    symbol, side.value,
+                )
+                self.orders.append(order)
+                return order
+
+            now = datetime.now(timezone.utc)
+            pst = price_source_time
+            if pst.tzinfo is None:
+                pst = pst.replace(tzinfo=timezone.utc)
+            age_seconds = (now - pst).total_seconds()
+            if age_seconds > self.config.max_price_staleness_seconds:
+                order = VirtualOrder(
+                    order_id=f"VO-{uuid.uuid4().hex[:8].upper()}",
+                    symbol=symbol,
+                    side=side,
+                    order_type=order_type,
+                    quantity=quantity,
+                    price=effective_price,
+                    timestamp=datetime.now(),
+                )
+                order.filled = False
+                order.rejection_reason = "stale_price"
+                logger.warning(
+                    "Paper order rejected (stale price, age=%.1fs): %s @ %s",
+                    age_seconds, symbol, market_price,
+                )
+                self.orders.append(order)
+                return order
+        # ── End freshness guard ────────────────────────────────────────────────
+
+        # Normalise: callers may pass market_price without setting price (e.g.
+        # when price_source_time is also supplied). For MARKET orders, use
+        # market_price as the execution price when price is absent/zero.
+        if order_type == OrderType.MARKET and not price and market_price:
+            price = market_price
+
         order_id = f"VO-{uuid.uuid4().hex[:8].upper()}"
 
         if order_type == OrderType.LIMIT and price <= 0:
@@ -359,3 +431,7 @@ class VirtualBroker:
             'total_pnl': total_pnl,
             'open_positions': len(self.positions),
         }
+
+
+# Backwards-compat alias — code that imported PaperBroker still works.
+PaperBroker = VirtualBroker
