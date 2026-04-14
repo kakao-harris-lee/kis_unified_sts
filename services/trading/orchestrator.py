@@ -2946,11 +2946,25 @@ class TradingOrchestrator:
         )
 
     async def _close_intraday_positions(self, data):
-        """Force close non-swing positions at EOD."""
+        """Force close non-swing positions at EOD.
+
+        Policy (CLAUDE.md):
+        - asset_class='stock': EOD 전량 청산 금지. 전략 시그널 기반 청산만 허용.
+          → no-op.
+        - asset_class='futures': RL 전략은 자체 EOD 안전장치(rl_mppo_exit)를 가지므로
+          여기서는 그 외 legacy intraday 전략만 청산.
+        """
+        if self.config.asset_class == "stock":
+            logger.debug(
+                "EOD intraday force-close skipped: asset_class=stock policy forbids it"
+            )
+            return
+
         intraday_positions = [
             pos
             for pos in self._position_tracker.positions
             if pos.strategy not in self.SWING_STRATEGIES
+            and not pos.strategy.startswith("rl_")
         ]
         for pos in intraday_positions:
             price_data = data.get(pos.code, {})
