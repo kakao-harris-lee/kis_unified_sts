@@ -1139,6 +1139,7 @@ class TradingOrchestrator:
                 database=db_name,
                 batch_size=int(pt_cfg.get("batch_size", 50)),
                 flush_interval_seconds=float(pt_cfg.get("flush_interval_seconds", 5.0)),
+                asset_class=self.config.asset_class,
             )
         )
 
@@ -1852,21 +1853,31 @@ class TradingOrchestrator:
             logger.warning(f"Failed to ensure DB schema: {e}")
 
     async def _persist_closed_position(self, closed, strategy: str):
-        """Persist a closed position to ClickHouse (fire-and-forget safe).
+        """Persist a closed position to ClickHouse with asset-class routing.
 
-        All strategies are recorded to rl_trades (universal table).
-        Swing strategies are additionally recorded to swing_positions (legacy).
+        - asset_class='stock' → market.stock_trades (모든 주식 전략)
+                             + market.swing_positions (SWING_STRATEGIES만, state 추적용)
+        - asset_class='futures' + strategy.startswith('rl_') → kospi.rl_trades
+        - 그 외 → no-op (로그만)
         """
         try:
             if not self._position_tracker:
                 return
             strategy = str(strategy or "")
-            if strategy in self.SWING_STRATEGIES:
-                await self._position_tracker.save_closed_to_db(closed)
-            # Record all trades to rl_trades (universal trade history)
-            await self._position_tracker.save_rl_trade_to_db(
-                closed, self.config.asset_class
-            )
+            if self.config.asset_class == "stock":
+                await self._position_tracker.save_stock_trade_to_db(closed)
+                if strategy in self.SWING_STRATEGIES:
+                    await self._position_tracker.save_closed_to_db(closed)
+            elif self.config.asset_class == "futures" and strategy.startswith("rl_"):
+                await self._position_tracker.save_rl_trade_to_db(
+                    closed, self.config.asset_class
+                )
+            else:
+                logger.debug(
+                    "persist skipped: asset_class=%s strategy=%s",
+                    self.config.asset_class,
+                    strategy,
+                )
         except (InfrastructureError, OSError, ConnectionError) as e:
             logger.warning(
                 f"Failed to persist closed position {getattr(closed, 'id', '?')[:8]}: {e}"
@@ -2935,11 +2946,25 @@ class TradingOrchestrator:
         )
 
     async def _close_intraday_positions(self, data):
-        """Force close non-swing positions at EOD."""
+        """Force close non-swing positions at EOD.
+
+        Policy (CLAUDE.md):
+        - asset_class='stock': EOD 전량 청산 금지. 전략 시그널 기반 청산만 허용.
+          → no-op.
+        - asset_class='futures': RL 전략은 자체 EOD 안전장치(rl_mppo_exit)를 가지므로
+          여기서는 그 외 legacy intraday 전략만 청산.
+        """
+        if self.config.asset_class == "stock":
+            logger.debug(
+                "EOD intraday force-close skipped: asset_class=stock policy forbids it"
+            )
+            return
+
         intraday_positions = [
             pos
             for pos in self._position_tracker.positions
             if pos.strategy not in self.SWING_STRATEGIES
+            and not pos.strategy.startswith("rl_")
         ]
         for pos in intraday_positions:
             price_data = data.get(pos.code, {})
@@ -5174,9 +5199,11 @@ class TradingOrchestrator:
                 pnl=pnl, win=(pnl >= 0), strategy=getattr(signal, "strategy", "default")
             )
 
-        # Persist selected strategy trades to ClickHouse (fire-and-forget)
+        # Persist to ClickHouse (asset-class routed; details in _persist_closed_position)
         strategy = getattr(signal, "strategy", getattr(closed, "strategy", ""))
-        if strategy in self.SWING_STRATEGIES or strategy.startswith("rl_"):
+        if self.config.asset_class == "stock" or (
+            self.config.asset_class == "futures" and strategy.startswith("rl_")
+        ):
             task = asyncio.create_task(
                 self._persist_closed_position(closed, strategy), name="persist_closed"
             )

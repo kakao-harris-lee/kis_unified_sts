@@ -107,7 +107,35 @@ SCHEMAS = {
         PARTITION BY toYYYYMM(exit_date)
         ORDER BY (asset_class, strategy, exit_date, id)
         TTL exit_date + INTERVAL 180 DAY
-        COMMENT 'Closed RL trade records for performance analytics'
+        COMMENT 'Closed futures RL trade records. Stocks use stock_trades (separate table).'
+    """,
+    "stock_trades": """
+        CREATE TABLE IF NOT EXISTS {database}.stock_trades (
+            id String,
+            code String,
+            name String,
+            side LowCardinality(String) DEFAULT 'long',
+            strategy LowCardinality(String),
+            execution_venue LowCardinality(String) DEFAULT 'KRX',
+            entry_date DateTime,
+            entry_price Float64,
+            exit_date DateTime,
+            exit_price Float64,
+            quantity Int32,
+            pnl Float64,
+            pnl_pct Float64,
+            commission Float64 DEFAULT 0.0,
+            slippage Float64 DEFAULT 0.0,
+            hold_seconds UInt32,
+            exit_reason LowCardinality(String),
+            exit_state LowCardinality(String) DEFAULT '',
+            metadata_json String,
+            created_at DateTime DEFAULT now()
+        ) ENGINE = MergeTree()
+        PARTITION BY toYYYYMM(exit_date)
+        ORDER BY (strategy, exit_date, id)
+        TTL exit_date + INTERVAL 180 DAY
+        COMMENT 'Closed stock trade records (paper + live). Separate from rl_trades which is futures-only.'
     """,
     "rl_drift_metrics": """
         CREATE TABLE IF NOT EXISTS {database}.rl_drift_metrics (

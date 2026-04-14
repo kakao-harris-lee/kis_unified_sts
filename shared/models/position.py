@@ -101,14 +101,21 @@ class Position:
 
     @property
     def profit_rate(self) -> float:
-        """현재 수익률 (비율, 예: 0.05 = 5%)"""
+        """현재/실현 수익률 (비율).
+
+        - exit_price가 설정된 청산된 포지션: exit_price 기준으로 실현 수익률 반환
+        - 미청산 포지션: current_price 기준으로 미실현 수익률 반환
+        - entry_price가 0 이하이면 0 반환(경계값 보호)
+        """
         if self.entry_price <= 0:
             return 0.0
 
+        reference = self.exit_price if self.exit_price is not None else self.current_price
+
         if self.side == PositionSide.LONG:
-            return (self.current_price - self.entry_price) / self.entry_price
+            return (reference - self.entry_price) / self.entry_price
         else:  # SHORT
-            return (self.entry_price - self.current_price) / self.entry_price
+            return (self.entry_price - reference) / self.entry_price
 
     @property
     def profit_pct(self) -> float:
