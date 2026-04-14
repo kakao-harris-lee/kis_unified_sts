@@ -1,0 +1,18 @@
+{
+  "train_source_distribution": {
+    "real": 19569
+  },
+  "validation_source_distribution": {
+    "real": 9193
+  },
+  "test_source_distribution": {
+    "real": 11033
+  },
+  "rules": {
+    "bootstrap_mode": false,
+    "test_is_real_only": true,
+    "real_catalog_authentic": true,
+    "real_catalog_source_mode": "clickhouse",
+    "final_selection_allowed": true
+  }
+}

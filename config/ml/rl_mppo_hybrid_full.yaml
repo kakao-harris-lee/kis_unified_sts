@@ -1,0 +1,196 @@
+# RL Maskable PPO - Hybrid full training profile
+# Hybrid manifest 기반 장시간 재학습 전용 설정.
+
+# === Gymnasium 환경 ===
+env:
+  initial_balance: 100_000_000   # 1억 (KOSPI200 선물 1계약 증거금 ~6천만)
+  commission_rate: 0.00003       # CostConfig.futures() 와 동일
+  tick_size: 0.05
+  tick_value: 250_000
+  contract_multiplier: 250_000
+  max_contracts: 1
+  slippage: 0.0                  # Phase 3 슬리피지 학습 실패 → 0으로 복원
+  margin_rate: 0.15              # 증거금률 (선물 위탁증거금 ~15%)
+
+  # 상태 공간
+  n_market_features: 25          # 기술적 지표 수
+  n_aux_features: 0              # 보조 피처 수 (TFT probs=3, 0이면 비활성)
+  n_position_features: 6         # position(3) + time(3)
+
+# === TFT 보조 피처 ===
+tft_aux:
+  enabled: false                   # true면 TFT 방향 확률을 obs에 추가
+  model_path: models/futures/tft/tft_cls_best
+  lookback: 60
+  features: [prob_up_1m, prob_up_5m, prob_up_15m]
+
+  # 장 운영시간 (KST)
+  market_open: "09:00"
+  market_close: "15:45"
+
+# === 보상함수 가중치 (Phase 4: 보상 재조정) ===
+reward:
+  w_profit: 10.0                    # 수익 시그널 2배 강화
+  w_cost: 0.3                       # 진입 이중 패널티 완화 (w_profit에도 cost 포함)
+  w_risk: 0.0                       # 미실현 손실 패널티 제거 (조기 청산 방지)
+  w_mtm: 0.0                        # MTM 제거 (보상 해킹 원인)
+  inaction_penalty: 0.0              # 제거 (과매매 원인)
+  reward_scale: 100.0
+  max_loss: -5_000_000
+  loss_penalty_coeff: 2.0
+
+# === M-PPO 하이퍼파라미터 ===
+mppo:
+  learning_rate: 0.0001
+  gamma: 0.999                      # 장 마감 수익 반영 (0.999^405=0.67 vs 0.99^405=0.017)
+  gae_lambda: 0.95
+  clip_range: 0.2
+  ent_coef: 0.05                    # 탐색 유지하되 수렴 촉진 (0.1→0.05)
+  vf_coef: 0.5
+  max_grad_norm: 0.5
+  n_steps: 2048
+  batch_size: 64
+  n_epochs: 10
+  total_timesteps: 5_000_000
+  policy_kwargs:
+    net_arch:
+      pi: [256, 256]
+      vf: [256, 256]
+
+# === 비교 모델 ===
+dqn:
+  learning_rate: 0.0001
+  gamma: 0.99
+  buffer_size: 100_000
+  learning_starts: 10_000
+  batch_size: 64
+  target_update_interval: 1000
+  exploration_fraction: 0.1
+  exploration_final_eps: 0.05
+  total_timesteps: 5_000_000
+
+a2c:
+  learning_rate: 0.0007
+  gamma: 0.99
+  gae_lambda: 0.95
+  ent_coef: 0.01
+  vf_coef: 0.5
+  n_steps: 5
+  total_timesteps: 5_000_000
+
+ppo:
+  learning_rate: 0.0001
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_range: 0.2
+  ent_coef: 0.01
+  vf_coef: 0.5
+  n_steps: 2048
+  batch_size: 64
+  n_epochs: 10
+  total_timesteps: 5_000_000
+
+sac:
+  learning_rate: 0.0003
+  gamma: 0.99
+  buffer_size: 100_000
+  tau: 0.005
+  ent_coef: auto
+  batch_size: 64
+  total_timesteps: 5_000_000
+
+ma_cross:
+  short_window: 5
+  long_window: 20
+
+# === 슬리피지 실험 ===
+slippage_test_values: [0.00, 0.05, 0.10, 0.15, 0.20]
+
+# === 데이터 ===
+data:
+  source: clickhouse
+  database: kospi
+  table: kospi200f_1m
+  symbol: "101S6000"                # RL 학습 데이터는 KOSPI200 선물(연결선물) 사용
+  train_ratio: 0.8                  # 80% train, 20% test
+  min_bars_per_day: 300             # 최소 바 수 (불완전 일자 제외)
+  mirror_augmentation: true         # 가격 미러링 증강 (LONG/SHORT 균형 학습)
+  quality:
+    enabled: true
+    reject_duplicate_datetime: true
+    require_monotonic_datetime: true
+    max_zero_volume_ratio: 0.95
+    max_zero_volume_price_move_ratio: 0.20
+
+# === 학습 관리 ===
+training:
+  eval_freq: 10_000
+  checkpoint_freq: 50_000
+  tensorboard_log: "./results/rl/hybrid_full/tensorboard/"
+  save_dir: "./models/futures/rl/hybrid_full/"
+
+# === Hierarchical RL ===
+hierarchical:
+  bars_per_step: 15                # 15분봉 = 15개 1분봉
+  high_level_timesteps: 500_000    # High-level 학습 타임스텝 (sequential mode)
+
+  # 학습 모드
+  training_mode: sequential        # sequential (순차 학습) | joint (동시 학습)
+  joint_timesteps: 5_000_000       # Joint training 총 타임스텝
+  joint_update_ratio: 15           # Joint training에서 low:high 업데이트 비율 (15:1 = 15분:1분)
+
+  risk_budgets:                    # 행동별 리스크 예산 (0~1 스케일)
+    aggressive: 1.0                # 풀 사이즈
+    neutral: 0.5                   # 절반
+    defensive: 0.0                 # 거래 금지
+  high_level:
+    learning_rate: 0.0003
+    gamma: 0.99
+    n_steps: 128
+    batch_size: 32
+    n_epochs: 10
+    ent_coef: 0.05
+  directional_bias:
+    enabled: false                   # 방향 바이어스 활성화
+    mode: neutral                    # neutral, long_bias, short_bias
+    strength: 0.3                    # 바이어스 강도 (0.0~1.0)
+    long_threshold: 0.6              # LONG 선호 시 확률 임계값
+    short_threshold: 0.6             # SHORT 선호 시 확률 임계값
+    adaptive: false                  # 시장 조건에 따른 동적 조정
+    regime_signals:                  # Regime 기반 바이어스 (adaptive=true일 때)
+      use_trend: true                # 추세 지표 사용
+      use_volatility: true           # 변동성 지표 사용
+      lookback_bars: 60              # 회고 기간 (분봉 기준)
+
+# === Kelly Position Sizing ===
+position_sizing:
+  enabled: true
+  fraction: 0.5                    # Half-Kelly (full Kelly는 과도하게 공격적)
+  min_trades: 10                   # 최소 거래 수 (이전까지 default 승률/손익비 사용)
+  min_scale: 0.2                   # 최소 스케일 (이하면 거래 스킵)
+  max_scale: 1.0                   # 최대 스케일
+  default_win_rate: 0.45           # 초기 추정 승률 (MPPO Phase 4: 45.1%)
+  default_wl_ratio: 1.83           # 초기 추정 손익비 (MPPO Phase 4: 1.83)
+
+# === Paper Trading (legacy paper_trader.py 전용) ===
+# 오케스트레이터 경로(sts rl paper)는 이 설정을 사용하지 않음.
+# 심볼은 get_front_month_code(product="mini")로 매 시작 시 자동 감지.
+paper:
+  symbol: ""                      # 비우면 legacy도 mini 근월물 자동 감지
+  warmup_bars: 200             # ClickHouse에서 로드할 과거 분봉 수
+  force_close_time: "15:35"    # 강제 청산 시각 (KST)
+  telegram_notify: true        # 텔레그램 알림 활성화
+  log_dir: "./results/rl/paper/"
+
+# === Drift Monitoring ===
+drift_monitoring:
+  enabled: true                                 # 드리프트 모니터링 활성화
+  kl_threshold: 0.1                             # KL divergence 임계값
+  psi_threshold: 0.2                            # PSI (Population Stability Index) 임계값
+  confidence_shift_threshold: 0.15              # 모델 신뢰도 변화 임계값
+  sharpe_degradation_threshold: -0.5            # Sharpe ratio 저하 임계값
+  win_rate_degradation_threshold: -0.1          # 승률 저하 임계값 (10%p)
+  reference_window_days: 30                     # 기준 분포 수집 기간 (일)
+  alert_cooldown_minutes: 60                    # 알림 쿨다운 시간 (분)
+  log_to_clickhouse: true                       # ClickHouse에 드리프트 메트릭 기록
+  expose_prometheus: true                       # Prometheus 메트릭 노출

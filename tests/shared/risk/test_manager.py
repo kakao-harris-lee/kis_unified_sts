@@ -43,7 +43,7 @@ def manager(basic_config):
 def sample_positions():
     """Create sample positions for testing"""
     return {
-        'stock': [
+        "stock": [
             Position(
                 id="POS-001",
                 code="005930",
@@ -63,7 +63,7 @@ def sample_positions():
                 current_price=122000,
             ),
         ],
-        'futures': [
+        "futures": [
             Position(
                 id="POS-003",
                 code="101S6000",
@@ -101,13 +101,13 @@ class TestCanOpenPosition:
 
     def test_can_open_position_when_clear(self, manager):
         """Test position can be opened when all limits are clear"""
-        assert manager.can_open_position('stock') is True
-        assert manager.can_open_position('futures') is True
+        assert manager.can_open_position("stock") is True
+        assert manager.can_open_position("futures") is True
 
     def test_cannot_open_when_blocked(self, manager):
         """Test position blocked when trading is manually blocked"""
         manager.block_trading(BlockReason.MANUAL)
-        assert manager.can_open_position('stock') is False
+        assert manager.can_open_position("stock") is False
         assert manager.state.is_blocked is True
 
     def test_cannot_open_when_daily_loss_limit_breached(self, manager):
@@ -116,40 +116,42 @@ class TestCanOpenPosition:
         manager._daily_pnl = -600_000  # -6% of 10M
         manager._initial_capital = 10_000_000
 
-        result = manager.can_open_position('stock')
+        result = manager.can_open_position("stock")
 
         assert result is False
         assert manager.state.is_blocked is True
         assert manager.state.block_reason == BlockReason.DAILY_LOSS_LIMIT
 
-    def test_cannot_open_when_max_total_positions_reached(self, manager, sample_positions):
+    def test_cannot_open_when_max_total_positions_reached(
+        self, manager, sample_positions
+    ):
         """Test position blocked when max total positions reached"""
         # Set max to current count
         manager.config.max_total_positions = 3
         manager.update_positions(sample_positions)
 
-        assert manager.can_open_position('stock') is False
+        assert manager.can_open_position("stock") is False
 
     def test_cannot_open_when_asset_limit_reached(self, manager, sample_positions):
         """Test position blocked when per-asset limit reached"""
         # Set stock limit to current count
-        manager.config.asset_limits['stock'].max_positions = 2
+        manager.config.asset_limits["stock"].max_positions = 2
         manager.update_positions(sample_positions)
 
-        assert manager.can_open_position('stock') is False
-        assert manager.can_open_position('futures') is True  # Futures still OK
+        assert manager.can_open_position("stock") is False
+        assert manager.can_open_position("futures") is True  # Futures still OK
 
     def test_cannot_open_when_critical_drawdown(self, manager):
         """Test position blocked when critical drawdown reached"""
         manager.state.drawdown_level = DrawdownLevel.CRITICAL
 
-        assert manager.can_open_position('stock') is False
+        assert manager.can_open_position("stock") is False
 
     def test_can_open_with_warning_drawdown(self, manager):
         """Test position allowed with warning level drawdown"""
         manager.state.drawdown_level = DrawdownLevel.WARNING
 
-        assert manager.can_open_position('stock') is True
+        assert manager.can_open_position("stock") is True
 
     def test_asset_limits_not_configured(self, manager):
         """Test fail-open behavior when asset limits not configured"""
@@ -157,7 +159,7 @@ class TestCanOpenPosition:
         manager.config.asset_limits.clear()
 
         # Should still allow position (fail-open)
-        assert manager.can_open_position('crypto') is True
+        assert manager.can_open_position("crypto") is True
 
 
 class TestUpdatePositions:
@@ -168,10 +170,12 @@ class TestUpdatePositions:
         manager.update_positions(sample_positions)
 
         assert manager.metrics.total_positions == 3
-        assert manager.metrics.exposure_by_asset['stock'].position_count == 2
-        assert manager.metrics.exposure_by_asset['futures'].position_count == 1
+        assert manager.metrics.exposure_by_asset["stock"].position_count == 2
+        assert manager.metrics.exposure_by_asset["futures"].position_count == 1
 
-    def test_update_positions_calculates_unrealized_pnl(self, manager, sample_positions):
+    def test_update_positions_calculates_unrealized_pnl(
+        self, manager, sample_positions
+    ):
         """Test unrealized P&L calculation"""
         manager.update_positions(sample_positions)
 
@@ -180,7 +184,9 @@ class TestUpdatePositions:
         # Total: 25000
         assert manager.metrics.total_unrealized_pnl == 25000
 
-    def test_update_positions_calculates_portfolio_value(self, manager, sample_positions):
+    def test_update_positions_calculates_portfolio_value(
+        self, manager, sample_positions
+    ):
         """Test portfolio value calculation"""
         manager.update_positions(sample_positions)
 
@@ -361,13 +367,21 @@ class TestDailyReset:
         # Set some state
         manager.state.daily_pnl = 100_000
         manager.state.daily_pnl_pct = 1.0
-        manager.state.alerts_sent.add('test_alert')
+        manager.state.alerts_sent.add("test_alert")
+        manager.state.peak_portfolio_value = 10_500_000
+        manager.state.current_portfolio_value = 10_000_000
+        manager.state.drawdown_pct = 4.76
+        manager.metrics.portfolio_value = 9_900_000
 
         manager.reset_daily()
 
         assert manager.state.daily_pnl == 0.0
         assert manager.state.daily_pnl_pct == 0.0
         assert len(manager.state.alerts_sent) == 0
+        assert manager.state.peak_portfolio_value == 9_900_000
+        assert manager.state.current_portfolio_value == 9_900_000
+        assert manager.state.drawdown_pct == 0.0
+        assert manager.state.drawdown_level == DrawdownLevel.SAFE
 
     def test_reset_daily_auto_unblock(self, manager):
         """Test auto-unblock on daily reset"""
@@ -430,9 +444,9 @@ class TestSerialization:
 
         data = manager.to_dict()
 
-        assert 'state' in data
-        assert 'metrics' in data
-        assert data['state']['daily_pnl'] == 25000
+        assert "state" in data
+        assert "metrics" in data
+        assert data["state"]["daily_pnl"] == 25000
 
     def test_from_dict(self, basic_config, sample_positions):
         """Test deserialization from dict"""
@@ -457,26 +471,26 @@ class TestSerialization:
 
         data = manager._serialize_state()
 
-        assert 'state' in data
-        assert 'metrics' in data
-        assert isinstance(data['state'], dict)
-        assert isinstance(data['metrics'], dict)
+        assert "state" in data
+        assert "metrics" in data
+        assert isinstance(data["state"], dict)
+        assert isinstance(data["metrics"], dict)
 
     def test_deserialize_state_internal(self, manager):
         """Test internal _deserialize_state method"""
         data = {
-            'state': {
-                'daily_pnl': 50000,
-                'is_blocked': True,
-                'block_reason': 'manual',
-                'drawdown_level': 'warning',
-                'last_reset_date': date.today().isoformat(),
-                'last_updated': datetime.now().isoformat(),
+            "state": {
+                "daily_pnl": 50000,
+                "is_blocked": True,
+                "block_reason": "manual",
+                "drawdown_level": "warning",
+                "last_reset_date": date.today().isoformat(),
+                "last_updated": datetime.now().isoformat(),
             },
-            'metrics': {
-                'total_positions': 5,
-                'total_exposure': 1000000,
-                'portfolio_value': 10500000,
+            "metrics": {
+                "total_positions": 5,
+                "total_exposure": 1000000,
+                "portfolio_value": 10500000,
             },
         }
 
@@ -485,6 +499,7 @@ class TestSerialization:
         assert manager.state.daily_pnl == 50000
         assert manager.state.is_blocked is True
         assert manager.metrics.total_positions == 5
+        assert manager._last_reset_date == date.today()
 
 
 class TestRedisPersistence:
@@ -496,7 +511,7 @@ class TestRedisPersistence:
         manager.update_positions(sample_positions)
 
         # Mock Redis client
-        with patch('shared.streaming.client.RedisClient') as mock_redis_class:
+        with patch("shared.streaming.client.RedisClient") as mock_redis_class:
             mock_client = MagicMock()
             mock_redis_class.get_client.return_value = mock_client
 
@@ -506,12 +521,13 @@ class TestRedisPersistence:
             mock_client.set.assert_called_once()
             call_args = mock_client.set.call_args
             key = call_args[0][0]
-            assert key == 'risk:portfolio:state'
+            assert key == "risk:portfolio:state"
+            assert call_args[1]["ex"] == 86400
 
     @pytest.mark.asyncio
     async def test_save_to_redis_error_handling(self, manager):
         """Test save error handling doesn't raise"""
-        with patch('shared.streaming.client.RedisClient') as mock_redis_class:
+        with patch("shared.streaming.client.RedisClient") as mock_redis_class:
             mock_redis_class.get_client.side_effect = Exception("Redis error")
 
             # Should not raise
@@ -523,20 +539,20 @@ class TestRedisPersistence:
         import json
 
         state_data = {
-            'state': {
-                'daily_pnl': 75000,
-                'is_blocked': False,
-                'drawdown_level': 'safe',
-                'last_reset_date': date.today().isoformat(),
-                'last_updated': datetime.now().isoformat(),
+            "state": {
+                "daily_pnl": 75000,
+                "is_blocked": False,
+                "drawdown_level": "safe",
+                "last_reset_date": date.today().isoformat(),
+                "last_updated": datetime.now().isoformat(),
             },
-            'metrics': {
-                'total_positions': 2,
-                'portfolio_value': 10075000,
+            "metrics": {
+                "total_positions": 2,
+                "portfolio_value": 10075000,
             },
         }
 
-        with patch('shared.streaming.client.RedisClient') as mock_redis_class:
+        with patch("shared.streaming.client.RedisClient") as mock_redis_class:
             mock_client = MagicMock()
             mock_client.get.return_value = json.dumps(state_data)
             mock_redis_class.get_client.return_value = mock_client
@@ -550,7 +566,7 @@ class TestRedisPersistence:
     @pytest.mark.asyncio
     async def test_load_from_redis_no_data(self, manager):
         """Test load when no data exists in Redis"""
-        with patch('shared.streaming.client.RedisClient') as mock_redis_class:
+        with patch("shared.streaming.client.RedisClient") as mock_redis_class:
             mock_client = MagicMock()
             mock_client.get.return_value = None
             mock_redis_class.get_client.return_value = mock_client
@@ -562,7 +578,7 @@ class TestRedisPersistence:
     @pytest.mark.asyncio
     async def test_load_from_redis_error_handling(self, manager):
         """Test load error handling doesn't raise"""
-        with patch('shared.streaming.client.RedisClient') as mock_redis_class:
+        with patch("shared.streaming.client.RedisClient") as mock_redis_class:
             mock_redis_class.get_client.side_effect = Exception("Redis error")
 
             result = await manager.load_from_redis()
@@ -579,10 +595,7 @@ class TestTelegramAlerts:
         mock_notifier = AsyncMock()
 
         await manager.send_alert(
-            mock_notifier,
-            'DAILY_LOSS_LIMIT',
-            'Test alert message',
-            is_critical=True
+            mock_notifier, "DAILY_LOSS_LIMIT", "Test alert message", is_critical=True
         )
 
         mock_notifier.send_message.assert_called_once()
@@ -591,11 +604,7 @@ class TestTelegramAlerts:
     async def test_send_alert_no_notifier(self, manager):
         """Test alert with no notifier configured"""
         # Should not raise
-        await manager.send_alert(
-            None,
-            'TEST_ALERT',
-            'Test message'
-        )
+        await manager.send_alert(None, "TEST_ALERT", "Test message")
 
     @pytest.mark.asyncio
     async def test_send_alert_error_handling(self, manager):
@@ -604,11 +613,7 @@ class TestTelegramAlerts:
         mock_notifier.send_message.side_effect = Exception("Telegram error")
 
         # Should not raise
-        await manager.send_alert(
-            mock_notifier,
-            'TEST_ALERT',
-            'Test message'
-        )
+        await manager.send_alert(mock_notifier, "TEST_ALERT", "Test message")
 
 
 class TestGetters:
@@ -639,7 +644,7 @@ class TestEdgeCases:
     def test_positions_with_zero_quantity(self, manager):
         """Test handling positions with zero quantity"""
         positions = {
-            'stock': [
+            "stock": [
                 Position(
                     id="POS-001",
                     code="005930",
@@ -661,7 +666,7 @@ class TestEdgeCases:
     def test_positions_with_short_side(self, manager):
         """Test handling short positions"""
         positions = {
-            'futures': [
+            "futures": [
                 Position(
                     id="POS-001",
                     code="101S6000",
@@ -682,7 +687,7 @@ class TestEdgeCases:
     def test_very_large_position_count(self, manager):
         """Test with many positions"""
         positions = {
-            'stock': [
+            "stock": [
                 Position(
                     id=f"POS-{i:03d}",
                     code=f"{i:06d}",
@@ -703,7 +708,7 @@ class TestEdgeCases:
     def test_negative_unrealized_pnl(self, manager):
         """Test with losing positions"""
         positions = {
-            'stock': [
+            "stock": [
                 Position(
                     id="POS-001",
                     code="005930",

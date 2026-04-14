@@ -340,11 +340,79 @@ _default_notifier: Optional[TelegramNotifier] = None
 
 
 def get_telegram_notifier() -> TelegramNotifier:
-    """Get or create default TelegramNotifier instance"""
+    """Get or create default TelegramNotifier instance
+
+    Warning:
+        기본 생성자는 generic TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID 를 읽는다.
+        .env에서 generic 변수가 TELEGRAM_STOCK_*에 aliasing 된 경우 주식 채널로
+        메시지가 전송되므로 도메인(futures/briefing)이 필요하면
+        `notifier_for_domain()`을 사용해야 한다.
+    """
     global _default_notifier
     if _default_notifier is None:
         _default_notifier = TelegramNotifier()
     return _default_notifier
+
+
+_DOMAIN_ENV_KEYS: dict[str, tuple[str, str]] = {
+    "stock": ("TELEGRAM_STOCK_BOT_TOKEN", "TELEGRAM_STOCK_CHAT_ID"),
+    "futures": ("TELEGRAM_FUTURES_BOT_TOKEN", "TELEGRAM_FUTURES_CHAT_ID"),
+    "briefing": ("TELEGRAM_BRIEFING_BOT_TOKEN", "TELEGRAM_BRIEFING_CHAT_ID"),
+}
+
+
+def resolve_domain_credentials(domain: Optional[str]) -> tuple[str, str]:
+    """도메인별 Telegram 자격증명을 엄격하게 조회한다(legacy fallback 없음).
+
+    의도적으로 SecretsManager의 legacy fallback을 사용하지 않는다 —
+    generic TELEGRAM_BOT_TOKEN은 .env에서 TELEGRAM_STOCK_*에 aliasing 되어 있어,
+    futures/briefing 도메인이 legacy로 떨어지면 주식 채널로 메시지가 새기 때문.
+
+    Args:
+        domain: "stock", "futures", "briefing". 그 외 값은 generic을 사용.
+
+    Returns:
+        (bot_token, chat_id). 설정되지 않았으면 빈 문자열.
+    """
+    if domain in _DOMAIN_ENV_KEYS:
+        token_key, chat_key = _DOMAIN_ENV_KEYS[domain]
+    else:
+        token_key, chat_key = "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"
+    return os.environ.get(token_key, ""), os.environ.get(chat_key, "")
+
+
+def notifier_for_domain(
+    domain: Optional[str],
+    *,
+    notification_start: str = "08:30",
+    notification_end: str = "15:40",
+    critical_always: bool = True,
+) -> Optional[TelegramNotifier]:
+    """도메인별 TelegramNotifier 생성 (legacy fallback 없음).
+
+    Args:
+        domain: "stock", "futures", "briefing", or None for legacy generic token.
+                (None일 경우 TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID 사용.)
+
+    Returns:
+        자격증명이 유효하면 TelegramNotifier, 아니면 None.
+    """
+    bot_token, chat_id = resolve_domain_credentials(domain)
+
+    if not bot_token or not chat_id:
+        logger.warning(
+            "Telegram credentials missing for domain=%s; notifier not created",
+            domain,
+        )
+        return None
+
+    return TelegramNotifier(
+        bot_token=bot_token,
+        chat_id=chat_id,
+        notification_start=notification_start,
+        notification_end=notification_end,
+        critical_always=critical_always,
+    )
 
 
 async def send_telegram(message: str, is_critical: bool = False):

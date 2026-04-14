@@ -159,7 +159,9 @@ class KISFuturesPriceFeed:
                 merged.append(symbol)
 
         self._symbols = merged[: self._max_symbols]
-        self._auxiliary_symbols = [symbol for symbol in self._symbols if symbol not in symbols]
+        self._auxiliary_symbols = [
+            symbol for symbol in self._symbols if symbol not in symbols
+        ]
         if self._running:
             logger.warning("Futures feed update_symbols while running is not supported")
 
@@ -193,9 +195,7 @@ class KISFuturesPriceFeed:
             logger.error(f"[FuturesPriceFeed] Thread start failed: {e}")
             self._running = False
             raise
-        logger.info(
-            f"[FuturesPriceFeed] Started with {len(self._symbols)} symbols"
-        )
+        logger.info(f"[FuturesPriceFeed] Started with {len(self._symbols)} symbols")
 
     async def stop(self) -> None:
         if not self._running:
@@ -264,7 +264,9 @@ class KISFuturesPriceFeed:
 
         payload: dict[str, Any] | None = None
         if trade_price > 0:
-            open_price = float(tick.open_price) if tick.open_price is not None else trade_price
+            open_price = (
+                float(tick.open_price) if tick.open_price is not None else trade_price
+            )
             day_high_price = (
                 float(tick.high_price) if tick.high_price is not None else trade_price
             )
@@ -314,8 +316,6 @@ class KISFuturesPriceFeed:
                 merged.update(payload)
                 self._prices[tick.symbol] = merged
 
-            self._last_tick_ts = tick.timestamp
-
             if not self._first_tick_logged and payload is not None:
                 self._first_tick_logged = True
                 logger.info(
@@ -348,8 +348,13 @@ class KISFuturesPriceFeed:
                 self._tick_callback(tick.symbol, payload, ts)
             except Exception as e:
                 logger.debug(f"[FuturesPriceFeed] Tick callback error: {e}")
+                return
 
-    def _log_orderbook_staleness(self, *, symbol: str, trade_price: float, ts: float) -> None:
+        self._last_tick_ts = tick.timestamp
+
+    def _log_orderbook_staleness(
+        self, *, symbol: str, trade_price: float, ts: float
+    ) -> None:
         if self._orderbook_stale_threshold <= 0:
             return
         with self._prices_lock:

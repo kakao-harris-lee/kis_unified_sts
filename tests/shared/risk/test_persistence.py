@@ -133,7 +133,9 @@ async def test_save_and_load_basic_state(basic_config, redis_cleanup):
 
 @pytest.mark.skipif(not redis_available(), reason="Redis not available")
 @pytest.mark.asyncio
-async def test_save_and_load_with_positions(basic_config, sample_positions, redis_cleanup):
+async def test_save_and_load_with_positions(
+    basic_config, sample_positions, redis_cleanup
+):
     """Test saving and loading risk state with position data."""
     from shared.risk.manager import RiskManager
 
@@ -282,7 +284,9 @@ async def test_concurrent_save_operations(basic_config, redis_cleanup):
 
 @pytest.mark.skipif(not redis_available(), reason="Redis not available")
 @pytest.mark.asyncio
-async def test_asset_exposure_persistence(basic_config, sample_positions, redis_cleanup):
+async def test_asset_exposure_persistence(
+    basic_config, sample_positions, redis_cleanup
+):
     """Test per-asset exposure metrics are persisted correctly."""
     from shared.risk.manager import RiskManager
 
@@ -351,13 +355,17 @@ async def test_redis_key_format(basic_config, redis_cleanup, redis_url):
     data = json.loads(raw_data)
     assert "state" in data
     assert "metrics" in data
+    ttl = r.ttl("risk:portfolio:state")
+    assert 0 < ttl <= 86400
 
     r.close()
 
 
 @pytest.mark.skipif(not redis_available(), reason="Redis not available")
 @pytest.mark.asyncio
-async def test_state_recovery_after_restart(basic_config, sample_positions, redis_cleanup):
+async def test_state_recovery_after_restart(
+    basic_config, sample_positions, redis_cleanup
+):
     """Test simulating process restart and state recovery."""
     from shared.risk.manager import RiskManager
     from shared.risk.models import BlockReason
@@ -396,7 +404,7 @@ async def test_state_recovery_after_restart(basic_config, sample_positions, redi
 @pytest.mark.skipif(not redis_available(), reason="Redis not available")
 @pytest.mark.asyncio
 async def test_date_serialization(basic_config, redis_cleanup):
-    """Test that date and datetime fields are serialized correctly."""
+    """Test that stale persisted reset dates are normalized on load."""
     from shared.risk.manager import RiskManager
 
     # Create manager with specific dates
@@ -410,7 +418,7 @@ async def test_date_serialization(basic_config, redis_cleanup):
     manager2 = RiskManager(basic_config)
     await manager2.load_from_redis()
 
-    assert manager2.state.last_reset_date == test_date
+    assert manager2.state.last_reset_date == date.today()
     assert isinstance(manager2.state.last_updated, datetime)
 
 

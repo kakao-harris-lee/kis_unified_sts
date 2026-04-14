@@ -148,6 +148,7 @@ class KISStockPriceFeed:
         # Price cache: {symbol: price_dict}
         self._prices: dict[str, dict[str, Any]] = {}
         self._prices_lock = threading.Lock()
+        self._symbol_tick_ts: dict[str, float] = {}
 
         # WebSocket state
         self._ws: Optional[websocket.WebSocketApp] = None
@@ -259,6 +260,7 @@ class KISStockPriceFeed:
         self._subscribed.clear()
         with self._prices_lock:
             self._prices.clear()
+            self._symbol_tick_ts.clear()
         logger.info(
             f"[StockPriceFeed] Stopped (processed {self._tick_count} ticks)"
         )
@@ -279,6 +281,7 @@ class KISStockPriceFeed:
                 self._subscribed.discard(sym)
                 with self._prices_lock:
                     self._prices.pop(sym, None)
+                    self._symbol_tick_ts.pop(sym, None)
 
             for sym in to_add:
                 self._send_sub(sym)
@@ -341,6 +344,17 @@ class KISStockPriceFeed:
         """
         with self._prices_lock:
             cached_symbols = list(self._prices.keys())
+            fresh_symbol_count = 0
+            stale_symbol_count = 0
+            now = time.time()
+            for symbol in self._subscribed:
+                last_symbol_tick = self._symbol_tick_ts.get(symbol)
+                if last_symbol_tick is None:
+                    stale_symbol_count += 1
+                elif now - last_symbol_tick < self._stale_threshold:
+                    fresh_symbol_count += 1
+                else:
+                    stale_symbol_count += 1
 
         staleness = self.get_staleness_seconds()
 
@@ -352,6 +366,9 @@ class KISStockPriceFeed:
             "is_healthy": self.is_healthy(),
             "symbol_count": len(self._subscribed),
             "cached_symbols": cached_symbols,
+            "fresh_symbol_count": fresh_symbol_count,
+            "stale_symbol_count": stale_symbol_count,
+            "stale_threshold_seconds": self._stale_threshold,
             "tick_count": self._tick_count,
             "dropped_count": self._dropped_count,
         }
@@ -422,6 +439,7 @@ class KISStockPriceFeed:
         self._connected.clear()
         with self._prices_lock:
             self._prices.clear()  # Invalidate stale cache
+            self._symbol_tick_ts.clear()
 
         if self._running:
             threading.Thread(
@@ -515,6 +533,7 @@ class KISStockPriceFeed:
                             self._tick_count += 1
                             ts = parsed.get("timestamp")
                             self._last_tick_ts = ts if ts is not None else time.time()
+                            self._symbol_tick_ts[parsed["code"]] = self._last_tick_ts
                         # Per-tick callback (outside lock to prevent deadlock)
                         if self._tick_callback:
                             try:

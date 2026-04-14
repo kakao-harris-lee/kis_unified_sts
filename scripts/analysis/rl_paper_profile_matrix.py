@@ -32,6 +32,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 PROFILE_RE = re.compile(r"Strategy:\s+([A-Za-z0-9_\-]+)")
 MATRIX_PROFILE_RE = re.compile(r"^\[matrix\]\s+profile=(.+)$")
+MATRIX_EXIT_CODE_RE = re.compile(r"^\[matrix\]\s+exit_code=([+-]?\d+)\s*$")
 ENTRY_SIGNALS_RE = re.compile(r"Entry signals:\s*(\d+)")
 BLOCK_RE = re.compile(r"Entry blocked by execution guard:\s+\S+\s+([^\s]+)")
 SLIPPAGE_RE = re.compile(r"slippage=([+-]?\d+(?:\.\d+)?)t")
@@ -139,6 +140,7 @@ def parse_paper_log(log_path: Path, profile: str | None = None) -> dict[str, Any
     pnl_pcts: list[float] = []
     pending_entry_times: list[datetime] = []
     hold_seconds: list[float] = []
+    exit_code: int | None = None
 
     with log_path.open(encoding="utf-8", errors="replace") as fp:
         for line in fp:
@@ -153,6 +155,10 @@ def parse_paper_log(log_path: Path, profile: str | None = None) -> dict[str, Any
             if match:
                 entry_signals += int(match.group(1))
 
+            match = MATRIX_EXIT_CODE_RE.search(line.strip())
+            if match:
+                exit_code = int(match.group(1))
+
             if "Entry executed:" in line:
                 entries += 1
                 if line_ts is not None:
@@ -161,7 +167,9 @@ def parse_paper_log(log_path: Path, profile: str | None = None) -> dict[str, Any
             match = BLOCK_RE.search(line)
             if match:
                 raw_reason = match.group(1).strip()
-                reason = raw_reason.split(":", 1)[0] if ":" in raw_reason else raw_reason
+                reason = (
+                    raw_reason.split(":", 1)[0] if ":" in raw_reason else raw_reason
+                )
                 block_counts[reason] = block_counts.get(reason, 0) + 1
 
             match = SLIPPAGE_RE.search(line)
@@ -183,6 +191,9 @@ def parse_paper_log(log_path: Path, profile: str | None = None) -> dict[str, Any
     fill_rate = (entries / attempts) if attempts > 0 else 0.0
     signal_exec_rate = (entries / entry_signals) if entry_signals > 0 else 0.0
     win_rate = (wins / exits) if exits > 0 else 0.0
+    unmatched_entries = len(pending_entry_times)
+    timed_out = exit_code == 124
+    abnormal_termination = exit_code is not None and exit_code not in (0, 124)
 
     metrics: dict[str, Any] = {
         "profile": profile or _infer_profile(log_path),
@@ -207,6 +218,10 @@ def parse_paper_log(log_path: Path, profile: str | None = None) -> dict[str, Any
         "win_rate": round(win_rate, 4),
         "avg_pnl_pct": round(mean(pnl_pcts), 4) if pnl_pcts else 0.0,
         "total_pnl_pct": round(sum(pnl_pcts), 4),
+        "unmatched_entries": int(unmatched_entries),
+        "exit_code": exit_code,
+        "timed_out": bool(timed_out),
+        "abnormal_termination": bool(abnormal_termination),
     }
     metrics["uptrend_score"] = _compute_uptrend_score(metrics)
     return metrics
@@ -237,6 +252,10 @@ def _write_summary(rows: list[dict[str, Any]], output_dir: Path) -> tuple[Path, 
         "avg_hold_seconds",
         "avg_slippage_ticks",
         "avg_slippage_ticks_abs",
+        "unmatched_entries",
+        "exit_code",
+        "timed_out",
+        "abnormal_termination",
         "log_file",
     ]
 
@@ -330,7 +349,9 @@ def _run_profile(
         fp.write(f"[matrix] model={model}\n")
         fp.write(f"[matrix] duration_minutes={duration_minutes}\n")
         if env_overrides:
-            fp.write(f"[matrix] env_overrides={json.dumps(env_overrides, ensure_ascii=False)}\n")
+            fp.write(
+                f"[matrix] env_overrides={json.dumps(env_overrides, ensure_ascii=False)}\n"
+            )
         fp.write(f"[matrix] command={' '.join(cmd)}\n")
         fp.flush()
 
@@ -442,7 +463,7 @@ def main() -> int:
                 dry_run=bool(args.dry_run),
             )
             log_entries.append((profile_label, log_path))
-            timed_out = (code == 124)
+            timed_out = code == 124
             print(
                 f"  exit_code={code}"
                 + (" (timeout as expected)" if timed_out else "")

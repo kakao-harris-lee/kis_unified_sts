@@ -87,4 +87,5 @@ failover:
   health_check_interval_seconds: 5.0  # WebSocket 연결 상태 확인 간격 (초)
   staleness_threshold_seconds: 10.0   # 데이터 stale 판단 임계값 (초, 이 시간 동안 데이터 없으면 failover)
   rest_poll_interval_seconds: 5.0     # REST fallback 시 polling 간격 (초)
+  rest_fallback_max_symbols: 20       # REST fallback 1회 polling 최대 심볼 수
   send_telegram_alerts: true     # Failover 및 복구 시 Telegram 알림 전송 여부

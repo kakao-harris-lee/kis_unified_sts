@@ -1,0 +1,31 @@
+{
+  "manifest_version": 1,
+  "train": {
+    "path": "/home/deploy/project/kis_unified_sts/artifacts/datasets/hybrid/train.parquet",
+    "rows": 19569,
+    "days": 119
+  },
+  "validation": {
+    "path": "/home/deploy/project/kis_unified_sts/artifacts/datasets/hybrid/validation.parquet",
+    "rows": 9193,
+    "days": 25
+  },
+  "test": {
+    "path": "/home/deploy/project/kis_unified_sts/artifacts/datasets/hybrid/test.parquet",
+    "rows": 11033,
+    "days": 27
+  },
+  "rules": {
+    "bootstrap_mode": false,
+    "test_is_real_only": true,
+    "real_catalog_authentic": true,
+    "real_catalog_source_mode": "clickhouse",
+    "final_selection_allowed": true
+  },
+  "mixing": {
+    "train_real_weight": 0.6,
+    "train_synthetic_weight": 0.4,
+    "train_transfer_weight": 0.2,
+    "shuffle_seed": 42
+  }
+}

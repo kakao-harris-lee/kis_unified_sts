@@ -180,15 +180,26 @@ class RetrainingPipeline:
         )
         self.challenger_path.mkdir(parents=True, exist_ok=True)
 
-        # Initialize Telegram notifier
+        # Initialize Telegram notifier — 선물 RL 재학습 파이프라인은
+        # TELEGRAM_FUTURES_* 채널로 고정한다(주식 채널로 누수 방지).
         self._notifier = None
         notification_config = self.config.get("notifications", {})
         telegram_config = notification_config.get("telegram", {})
         if telegram_config.get("enabled", False):
             try:
-                from shared.notification.telegram import TelegramNotifier
-                self._notifier = TelegramNotifier()
-                logger.info("Telegram notifications enabled for retraining pipeline")
+                from shared.notification.telegram import notifier_for_domain
+
+                self._notifier = notifier_for_domain("futures")
+                if self._notifier is None:
+                    logger.warning(
+                        "Futures Telegram credentials missing "
+                        "(TELEGRAM_FUTURES_BOT_TOKEN / TELEGRAM_FUTURES_CHAT_ID). "
+                        "Retraining notifications disabled."
+                    )
+                else:
+                    logger.info(
+                        "Telegram notifications enabled for retraining pipeline (futures channel)"
+                    )
             except ImportError:
                 logger.warning("python-telegram-bot not installed. Notifications disabled.")
             except Exception as e:
