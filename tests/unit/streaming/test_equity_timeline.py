@@ -27,6 +27,14 @@ class _FakePipeline:
         self._ops.append(("hincrby", key, field, amount))
         return self
 
+    def lpush(self, key: str, *values):
+        self._ops.append(("lpush", key, *values))
+        return self
+
+    def ltrim(self, key: str, start: int, end: int):
+        self._ops.append(("ltrim", key, start, end))
+        return self
+
     def expire(self, key: str, ttl: int):
         self._ops.append(("expire", key, ttl))
         return self
@@ -42,17 +50,27 @@ class _FakePipeline:
                 _, key, field, amount = op
                 bucket = self._r._hashes.setdefault(key, {})
                 bucket[field] = str(int(bucket.get(field, 0)) + amount)
+            elif kind == "lpush":
+                _, key, *values = op
+                lst = self._r._lists.setdefault(key, [])
+                for v in values:
+                    lst.insert(0, v)
+            elif kind == "ltrim":
+                _, key, start, end = op
+                lst = self._r._lists.get(key, [])
+                self._r._lists[key] = lst[start : end + 1]
             elif kind == "expire":
                 pass  # TTL not relevant for unit tests
         return []
 
 
 class _FakeRedis:
-    """Minimal Redis double supporting hashes, sorted sets, and pipeline."""
+    """Minimal Redis double supporting hashes, sorted sets, lists, and pipeline."""
 
     def __init__(self) -> None:
         self._hashes: dict[str, dict[str, str]] = {}
         self._zsets: dict[str, dict[str, float]] = {}  # key -> {member: score}
+        self._lists: dict[str, list[str]] = {}
 
     def pipeline(self, transaction: bool = False) -> _FakePipeline:
         return _FakePipeline(self)
@@ -91,6 +109,19 @@ class _FakeRedis:
             return []
         return members[start : end + 1]
 
+    # -- List ------------------------------------------------------------------
+
+    def lrange(self, key: str, start: int, end: int) -> list[str]:
+        lst = self._lists.get(key, [])
+        n = len(lst)
+        if end < 0:
+            end = n + end
+        else:
+            end = min(end, n - 1)
+        if start > end:
+            return []
+        return lst[start : end + 1]
+
     # -- Generic ---------------------------------------------------------------
 
     def expire(self, key: str, ttl: int) -> None:
@@ -104,6 +135,12 @@ class _FakeRedis:
 @pytest.fixture
 def fake_redis():
     return _FakeRedis()
+
+
+# Expose the underlying fake_redis as redis_client for direct inspection in tests
+@pytest.fixture
+def redis_client(fake_redis):
+    return fake_redis
 
 
 @pytest.fixture
@@ -226,3 +263,38 @@ def test_orchestrator_record_running_totals_helper_increments_publisher():
     assert call.kwargs["win"] is True
     # pnl = (71000-70000)*10 = 10000 (using unrealized_pnl property)
     assert call.kwargs["pnl"] == pytest.approx(10000.0)
+
+
+# ---------------------------------------------------------------------------
+# Tests: publish_signal uses tz-aware signal.timestamp
+# ---------------------------------------------------------------------------
+
+def test_publish_signal_uses_signal_timestamp(publisher, redis_client):
+    """publish_signal must serialize the signal's own tz-aware timestamp,
+    not a fresh naive datetime.now() at publish time.
+    """
+    from datetime import datetime, timezone
+    from shared.models.signal import Signal, SignalType
+
+    tz_utc_15_30 = datetime(2026, 4, 15, 15, 30, 0, tzinfo=timezone.utc)
+    sig = Signal(
+        code="005930",
+        name="SAMSUNG",
+        signal_type=SignalType.ENTRY,
+        strategy="momentum_breakout",
+        price=70000.0,
+        timestamp=tz_utc_15_30,
+    )
+    publisher.publish_signal(sig, signal_type="entry", executed=True)
+
+    key = f"trading:stock:signals"
+    raw = redis_client.lrange(key, 0, 0)
+    assert raw, "publish_signal should push to signals LIST"
+    payload = json.loads(raw[0])
+    stored_ts_str = payload["timestamp"]
+    assert "+00:00" in stored_ts_str or stored_ts_str.endswith("Z"), (
+        f"Stored timestamp must be tz-aware ISO, got: {stored_ts_str!r}"
+    )
+    # Parse back and confirm equality with the source signal.timestamp
+    stored_ts = datetime.fromisoformat(stored_ts_str)
+    assert stored_ts == tz_utc_15_30

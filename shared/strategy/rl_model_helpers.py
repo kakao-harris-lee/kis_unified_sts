@@ -68,9 +68,21 @@ def load_rl_scaler(scaler_path: str, model_path: str) -> Any | None:
     """StandardScaler 로드 (캐시).
 
     scaler_path가 비어있으면 model_path 기준 자동 탐색.
+
+    Override priority (highest → lowest):
+      1. RL_MPPO_SCALER_PATH env var (opt-in mini-fit scaler for live trading)
+      2. scaler_path argument (from strategy config / YAML scaler_path_override)
+      3. Auto-detect: model_path parent/../scaler.joblib (production default)
     """
-    effective_path = scaler_path.strip() if scaler_path else ""
-    if not effective_path:
+    # 1. Env var override (highest priority — runtime opt-in for mini-fit scaler)
+    env_override = os.getenv("RL_MPPO_SCALER_PATH", "").strip()
+    if env_override:
+        effective_path = env_override
+    # 2. Explicit scaler_path argument
+    elif scaler_path.strip():
+        effective_path = scaler_path.strip()
+    # 3. Auto-detect from model path
+    else:
         model_override = os.getenv("RL_MPPO_MODEL_PATH", "").strip()
         resolved_model = Path(model_override or model_path).resolve()
         effective_path = str(resolved_model.parent.parent / "scaler.joblib")

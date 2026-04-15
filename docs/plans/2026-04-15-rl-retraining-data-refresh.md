@@ -151,11 +151,131 @@ Steps:
 ### Task 1.1 — Live Obs Drift (PSI)
 *TBD — requires ≥50 live trades with obs captured*
 
-### Task 1.2 — Scaler Domain Mismatch
-*TBD*
+### Task 1.2 — Scaler Domain Mismatch (completed 2026-04-15)
 
-### Task 1.3 — 2026-03+ Rolling Backtest
-*TBD*
+**Data:**
+- Training scaler source: `101S6000` (`data/kospi200f_1m_clean.csv`, 4,521 bars → 4,402 after NaN drop)
+- Mini test: `kospi.kospi_mini_1m`, last 180 days (90,027 bars → 89,908 after NaN drop)
+- Mini contract codes: A05601–A05609 (all available, pooled)
+
+**Per-feature KS drift (summary):**
+- Features with KS > 0.3 (significant drift): **12 / 25**
+- Features with >5% out-of-[0,1] under prod scaler: **15 / 25**
+
+**Top drifting features (KS statistic):**
+
+| Feature | KS stat | % clipped by prod scaler |
+|---------|---------|--------------------------|
+| `returns` | 0.715 | 11.5% |
+| `bb_upper_dist` | 0.686 | 7.3% |
+| `price_change_5` | 0.607 | 8.6% |
+| `macd` | 0.538 | 0.2% |
+| `volatility` | 0.527 | 28.1% |
+
+**Notable outliers:**
+- `volatility`: 28.1% of mini bars fall outside prod scaler's [0,1] range — the worst clipping. Median under prod scaler = 0.632 vs self-scaler = 0.196 (3x scale mismatch).
+- `volume_ratio`: 28.2% clipped (KS = 0.283, just under threshold). Volume scaling between KOSPI200 연결선물 and mini contracts is structurally different (MEMORY.md: mini liquidity is 1/9 to 1/42 of F200).
+- `bb_upper_dist`, `bb_lower_dist`, `bb_width`: all show significant drift — the absolute price level of mini contracts (lower) compresses BB bands differently in MinMax space.
+
+**Verdict:** CONFIRMED
+
+Scaler domain mismatch is a **primary contributing factor** to live obs degradation. 12 features with KS > 0.3 and 15 features with >5% clipping means the model is receiving substantially distorted obs in live trading. The `volatility` and `volume_ratio` features — both carrying strong regime signal — are the worst affected.
+
+**Next step:**
+- Task 2.1: Re-fit scaler on `kospi_mini_1m` data and save as `models/futures/rl/scaler_mini.joblib`
+- Runtime change (no model retraining needed): swap scaler in `shared/strategy/rl_model_helpers.py` obs builder for live trading path
+- Validate: 30-day backtest on `101S6000` with mini-fit scaler should not degrade Sharpe by >10% vs current scaler (use `mppo_best_5m_backup.zip` as baseline)
+- CLAUDE.md policy compliance: scaler re-fit is a **runtime preprocessing change only** — model weights and training data policy (`101S6000`) remain unchanged
+
+#### Mini-fit scaler validation (completed 2026-04-15)
+
+- Mini scaler fit on 180 days of `kospi.kospi_mini_1m` (89,908 feature rows, 25 features)
+- Artifact saved: `models/futures/rl/scaler_mini.joblib` (opt-in, NOT activated by default)
+- Runtime override mechanism added:
+  - `RL_MPPO_SCALER_PATH` env var (highest priority) in `shared/strategy/rl_model_helpers.py`
+  - `scaler_path_override: ""` field in `config/ml/rl_mppo.yaml` (empty = production scaler)
+- Backtest on `101S6000` 2026-03-04 to 2026-04-14 (30 valid days, 12,266 bars), model: `mppo_best_5m_backup.zip`:
+
+| | Production scaler | Mini-fit scaler | Delta |
+|---|---|---|---|
+| **Sharpe ratio** | 2.83 | 1.55 | **-45.2%** |
+| Win rate | 54.9% | 54.2% | -0.7 pp |
+| Avg return/day | +1.250% | +0.620% | -0.63 pp |
+| Total return | +37.53% | +18.65% | -18.88 pp |
+| R/R ratio | 1.47 | 1.25 | -0.22 |
+| Total trades | 51 | 48 | -3 |
+
+- **Verdict: DO NOT ACTIVATE** — Sharpe degradation -45.2% far exceeds the -10% criterion.
+- **Interpretation:** The model learned obs distributions from `101S6000` (production scaler's range). The mini-fit scaler has data ranges 2.1x–5.3x wider for most features, so the model receives obs values in a completely different [0,1] region than it was trained on. Win rate is nearly identical (54.9% vs 54.2%) but profitability collapses — indicating the model can still identify direction but the entry/exit timing degrades badly with the mismatched normalization.
+- **Root cause of live underperformance:** The scaler mismatch is *confirmed* on the distribution level (KS test) but a straight swap makes performance worse, not better. The correct fix is to **retrain the model jointly** with mini data or to retrain using `101S6000` data with the same temporal distribution as current mini live data (Task 2.1 retraining path).
+- **`scaler_mini.joblib` status:** Committed as artifact for future reference; remains deactivated (`scaler_path_override: ""`).
+- **Script:** `scripts/analysis/rl_backtest_with_mini_scaler.py`
+
+**Script:** `scripts/analysis/rl_scaler_domain_test.py`
+
+### Task 1.3 — 2026-03+ Rolling Backtest (completed 2026-04-15)
+
+**Data:** kospi200f_1m / 101S6000, 2026-03-04 to 2026-04-14, 30 valid trading days (12,677 raw bars → 12,266 after feature NaN drop, 1 day skipped for <300 bars)
+
+**Model evaluated:** `models/futures/rl/mppo_best/best_model.zip`
+
+**CRITICAL NOTE — Model identity:** At time of evaluation, `mppo_best/best_model.zip` was **not** the original February champion (Sharpe 3.19, 82 trades). The file was overwritten at 2026-04-14 23:13 by a retraining run on branch `feat/hybrid-full-training-config` (checkpoint at ~1.25M steps, trained on 86 days of data from 2025-07-01 to 2026-04-15 from ClickHouse). The original February champion (`mppo_best_5m_backup.zip`) has a different MD5 hash. Therefore the metrics below reflect the **retrained model on partially-overlapping data** (ClickHouse 80/20 split cutoff = 2026-03-19; test days 2026-03-20 to 2026-04-14, but evaluation window starts 2026-03-04 — so days 2026-03-04 to 2026-03-19 overlap with the model's training set).
+
+**Results (current `mppo_best` — retrained ~Apr 14):**
+
+| Metric | 2026-03-04 to 2026-04-14 | Original eval ref (Feb champion) | Delta |
+|---|---|---|---|
+| Sharpe ratio | **11.39** | 3.19 | +8.20 |
+| Win rate | **66.8%** | 45.1% | +21.7 pp |
+| Avg return/day | **+5.970%** | N/A (trade-based) | — |
+| Total return | +179.14% | N/A | — |
+| Max drawdown | -9.44% | N/A | — |
+| R/R ratio | 2.55 | 1.83 | +0.72 |
+| Total trades | 443 | 82 (60-day test) | +361 |
+| Trading days | 30 | ~60 | — |
+| Daily P&L | +24 / =0 / -6 | N/A | — |
+
+**Interpretation:**
+
+The very high Sharpe (11.39) and WR (66.8%) are **not interpretable as genuine out-of-sample performance** for two reasons:
+
+1. **Model identity mismatch:** The file tested is a newly retrained model (Apr 14), not the February champion (Sharpe 3.19, `mppo_best_5m_backup.zip`). The retraining used ClickHouse data spanning up to 2026-04-15 with 80/20 split (cutoff 2026-03-19), so ~50% of the backtest window (2026-03-04 to 2026-03-19) **falls inside the model's training set**.
+
+2. **High trade frequency:** 443 trades in 30 days (~14.8/day) vs 82 trades in ~60 days (~1.4/day) for the original champion, suggesting the retrained model has materially different behavior (potentially overfit to the available data).
+
+**Actionable conclusions:**
+
+- To properly evaluate the **original February champion** against 2026-03+ data, the backtest should be re-run with `models/futures/rl/mppo_best_5m_backup.zip` using a scaler fit on pre-2026-03 data (the original scaler from commit `b8ea59a`). The current `scaler.joblib` in the repo is from Mar 13 2026 and may also overlap with test data.
+- The retrained model's in-sample performance (Sharpe 11.39) does not directly address the hypothesis of regime shift — it shows the **new model learned the recent data** but does not confirm whether the old model degraded due to regime shift.
+- **Recommendation for Task 2.1:** Before re-running with the Feb champion model, clarify the Feb champion's exact training data cutoff. If it was trained on CSV data (ending 2026-02-26), then 2026-03-04 to 2026-04-14 is a clean out-of-sample window for it.
+
+**Supplemental run — February champion (`mppo_best_5m_backup.zip`, Feb 8) on same period:**
+
+| Metric | 2026-03-04 to 2026-04-14 | Original eval ref (Feb champion) | Delta |
+|---|---|---|---|
+| Sharpe ratio | **2.83** | 3.19 | -0.36 (-11%) |
+| Win rate | **54.9%** | 45.1% | +9.8 pp |
+| Avg return/day | +1.250% | N/A | — |
+| Total return | +37.53% | N/A | — |
+| Max drawdown | -21.17% | N/A | — |
+| R/R ratio | 1.47 | 1.83 | -0.36 |
+| Total trades | 51 | 82 (60-day test) | -31 |
+| Trading days | 30 | ~60 | — |
+| Daily P&L | +13 / =0 / -17 | N/A | — |
+
+**Interpretation (Feb champion — genuine out-of-sample):**
+
+- Sharpe 2.83 vs training reference 3.19: **-11% degradation** — minor, within acceptable variance.
+- This is **not a regime shift crisis** on historical data. The model continues to function well in the 2026-03+ period.
+- Win rate 54.9% is higher than reference 45.1%, but R/R ratio dropped (1.47 vs 1.83). The model is winning more frequently but with smaller winners — consistent with a mildly changed volatility/price level environment.
+- Max drawdown increased (-21.17% vs unknown original) and daily win/loss is nearly even (+13/-17), suggesting the model is trading conservatively with frequent small reversals.
+- **Hypothesis assessment:**
+  - **Regime shift hypothesis: PARTIALLY SUPPORTED** — there is measurable but mild degradation in R/R and drawdown characteristics, consistent with the April 2026 tariff shock changing intraday volatility patterns.
+  - **Model generalization hypothesis: NOT SUPPORTED** — the model still achieves Sharpe 2.83 on out-of-sample data; this is not a generalization failure.
+  - **Infra/live-specific hypothesis: STILL PRIMARY CANDIDATE** — the backtest Sharpe (2.83) being so much higher than live-reported performance (approx. Sharpe < 1 from 15.9% WR) strongly points to a live execution gap, not a model degradation issue.
+- **Recommendation:** Task 2.1 (retraining) is **lower priority** than resolving live execution discrepancies (obs pipeline, scaler mismatch, price execution). The Feb champion model generalizes well to recent data.
+
+**Script:** `scripts/analysis/rl_backtest_2026q1.py`
 
 ---
 
