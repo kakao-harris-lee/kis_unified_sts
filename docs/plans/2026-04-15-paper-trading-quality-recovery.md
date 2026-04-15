@@ -1505,6 +1505,42 @@ OK: sample scaled obs within [0,1] range
 
 ---
 
+### Task 2.4 — Hold Override State Audit (2026-04-15)
+
+**Objective:** Verify that the HOLD override (near-HOLD forced entry) remains disabled as of commit `50a99f7` "fix: disable rl mppo hold override by default".
+
+**Findings:**
+
+1. **Default state — DISABLED ✅**
+   - `RLMPPOConfig.enable_hold_override: bool = False` (line 77 in `shared/strategy/entry/rl_mppo.py`)
+   - Config file `config/strategies/futures/rl_mppo.yaml` line 34: `enable_hold_override: false` with comment "기본값 비활성 — near-HOLD 강제 진입 방지"
+   - Paper override: `paper_enable_hold_override: false` (line 39 in config)
+   - Unit test confirms: `test_default_config_disables_hold_override()` asserts `RLMPPOConfig().enable_hold_override is False`
+
+2. **Callers setting to True: NONE**
+   - Grep for `enable_hold_override = True` in codebase: no matches found
+   - Paper config `paper_enable_hold_override: false` (config file default), optional override `paper_enable_hold_override: bool | None = None` not used anywhere
+
+3. **HOLD action forcing paths: NONE**
+   - Action 4 is correctly reserved for HOLD (per CLAUDE.md 5개 액션 정의)
+   - Line 468 in `shared/strategy/entry/rl_mppo.py`: `if action == 4: # HOLD` → simply returns existing signal, does not force new action
+   - No `force_action = 4` or action override to HOLD found anywhere in entry/exit/helpers modules
+   - `_maybe_override_hold()` method (line 648) only activates when `enable_hold_override=True`, which is false
+
+4. **Git commit verification:**
+   - Commit `50a99f7` (2026-04-14 18:13) changed:
+     - `enable_hold_override: true` → `false` in `config/strategies/futures/rl_mppo.yaml` line 34
+     - `enable_hold_override: bool = True` → `False` in `shared/strategy/entry/rl_mppo.py` line 77
+     - Added test `test_default_config_disables_hold_override()` to verify default
+
+**Verdict:** ✅ **NO ACTION NEEDED**
+
+Hold override is **completely disabled** by default, with no active code paths that enable it. The 2026-04-14 fix is intact and verified. The config and unit test both confirm the disabled state.
+
+**Next task:** Task 2.5 (Findings-driven consolidation fix).
+
+---
+
 ## Self-Review Checklist
 
 - [x] Phase 1 scope: paper broker price guards only (no live broker changes)
