@@ -17,7 +17,7 @@ import json
 import logging
 import os
 import time as _time
-from datetime import datetime
+from datetime import date, datetime, timezone
 from typing import Any
 
 import redis
@@ -34,10 +34,14 @@ _KEY_TRADES = "trading:{asset}:trades"
 _KEY_SIGNALS = "trading:{asset}:signals"
 _KEY_CANDLE_CACHE = "trading:{asset}:candle_cache"
 _KEY_MARKET_CONTEXT = "trading:{asset}:market_context"
+_KEY_RUNNING_TOTALS = "trading:{asset}:running_totals"
+_KEY_EQUITY_TIMELINE = "trading:{asset}:equity_timeline"
 
 MAX_TRADES = 500
 MAX_SIGNALS = 200
 STATUS_TTL_SECONDS = 86400  # 24h — auto-expire if orchestrator dies
+RUNNING_TOTALS_TTL_SECONDS = 60 * 60 * 24 * 30   # 30 days
+EQUITY_TIMELINE_TTL_SECONDS = 60 * 60 * 24 * 400  # ~13 months
 
 
 def _key(template: str, asset: str) -> str:
@@ -328,6 +332,62 @@ class TradingStatePublisher:
             "exit_reason": getattr(pos, "exit_reason", None) or "",
         }
 
+    # -- Cross-session cumulative counters ------------------------------------
+
+    def increment_running_totals(
+        self, *, pnl: float, trades: int = 1, win: bool = False
+    ) -> None:
+        """Increment session-independent cumulative counters in Redis.
+
+        Uses HINCRBYFLOAT / HINCRBY so concurrent updates are atomic.
+        The key persists for 30 days; each update resets the TTL.
+        """
+        try:
+            r = _get_redis()
+            key = _key(_KEY_RUNNING_TOTALS, self._asset)
+            pipe = r.pipeline(transaction=False)
+            pipe.hincrbyfloat(key, "total_pnl", pnl)
+            pipe.hincrby(key, "total_trades", trades)
+            if win:
+                pipe.hincrby(key, "total_wins", 1)
+            pipe.expire(key, RUNNING_TOTALS_TTL_SECONDS)
+            pipe.execute()
+        except Exception:
+            logger.debug("Failed to increment running totals in Redis", exc_info=True)
+
+    def publish_equity_snapshot(
+        self,
+        *,
+        as_of: date,
+        cash_balance: float,
+        open_positions_value: float,
+        closed_pnl: float,
+    ) -> None:
+        """Append one daily equity datapoint to a sorted set keyed by date.
+
+        Score = UTC midnight timestamp of *as_of*, so ``ZRANGE`` returns
+        entries in chronological order.  Writing the same date twice
+        overwrites the previous entry (ZADD upsert semantics).
+        """
+        try:
+            r = _get_redis()
+            key = _key(_KEY_EQUITY_TIMELINE, self._asset)
+            total_equity = cash_balance + open_positions_value + closed_pnl
+            snapshot = {
+                "date": as_of.isoformat(),
+                "cash_balance": cash_balance,
+                "open_positions_value": open_positions_value,
+                "closed_pnl": closed_pnl,
+                "total_equity": total_equity,
+            }
+            score = datetime.combine(as_of, datetime.min.time()).replace(
+                tzinfo=timezone.utc
+            ).timestamp()
+            r.zadd(key, {json.dumps(snapshot): score})
+            r.expire(key, EQUITY_TIMELINE_TTL_SECONDS)
+        except Exception:
+            logger.debug("Failed to publish equity snapshot to Redis", exc_info=True)
+
 
 # ---------------------------------------------------------------------------
 # Reader (used by dashboard)
@@ -467,3 +527,46 @@ class TradingStateReader:
         except Exception:
             logger.debug("Failed to read market context from Redis", exc_info=True)
             return None
+
+    # -- Cross-session cumulative counters ------------------------------------
+
+    def get_running_totals(self) -> dict[str, float]:
+        """Return cumulative session-independent counters.
+
+        Returns:
+            dict with keys ``total_pnl`` (float), ``total_trades`` (int),
+            ``total_wins`` (int).  All values default to zero when the key
+            has not been written yet.
+        """
+        try:
+            r = _get_redis()
+            key = _key(_KEY_RUNNING_TOTALS, self._asset)
+            raw = r.hgetall(key) or {}
+            return {
+                "total_pnl": float(raw.get("total_pnl", 0.0) or 0.0),
+                "total_trades": int(raw.get("total_trades", 0) or 0),
+                "total_wins": int(raw.get("total_wins", 0) or 0),
+            }
+        except Exception:
+            logger.debug("Failed to read running totals from Redis", exc_info=True)
+            return {"total_pnl": 0.0, "total_trades": 0, "total_wins": 0}
+
+    def get_equity_timeline(self, days: int = 30) -> list[dict]:
+        """Return recent daily equity snapshots in chronological order.
+
+        Args:
+            days: Maximum number of most-recent entries to return.
+
+        Returns:
+            List of dicts with keys ``date``, ``cash_balance``,
+            ``open_positions_value``, ``closed_pnl``, ``total_equity``.
+            Oldest entry first.
+        """
+        try:
+            r = _get_redis()
+            key = _key(_KEY_EQUITY_TIMELINE, self._asset)
+            raw = r.zrange(key, -days, -1, withscores=False) or []
+            return [json.loads(s) for s in raw]
+        except Exception:
+            logger.debug("Failed to read equity timeline from Redis", exc_info=True)
+            return []
