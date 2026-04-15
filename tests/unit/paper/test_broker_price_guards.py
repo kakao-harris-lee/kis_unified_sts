@@ -110,3 +110,59 @@ async def test_orchestrator_passes_price_source_time_to_broker(monkeypatch):
     broker.submit_order.assert_awaited_once()
     kwargs = broker.submit_order.await_args.kwargs
     assert kwargs["price_source_time"] == source_time
+
+
+@pytest.mark.asyncio
+async def test_price_deviation_rejected_when_above_threshold(broker):
+    """Reference median 대비 10% 초과 편차 시 체결 거부."""
+    now = datetime.now(timezone.utc)
+    # Seed history with prices near 70000
+    broker.record_price_observation("005930", 70000.0, now - timedelta(seconds=30))
+    broker.record_price_observation("005930", 70100.0, now - timedelta(seconds=20))
+    broker.record_price_observation("005930", 69900.0, now - timedelta(seconds=10))
+
+    order = await broker.submit_order(
+        symbol="005930",
+        side=OrderSide.BUY,
+        quantity=10,
+        order_type=OrderType.MARKET,
+        market_price=50000.0,  # ~28.6% below median 70000
+        price_source_time=now,
+    )
+    assert order.filled is False
+    assert order.rejection_reason == "price_deviation"
+
+
+@pytest.mark.asyncio
+async def test_price_deviation_accepted_without_history(broker):
+    """Reference history가 없으면 guard 적용 불가 → 통과."""
+    now = datetime.now(timezone.utc)
+    order = await broker.submit_order(
+        symbol="NEWCODE",
+        side=OrderSide.BUY,
+        quantity=10,
+        order_type=OrderType.MARKET,
+        market_price=50000.0,
+        price_source_time=now,
+    )
+    assert order.filled is True
+
+
+@pytest.mark.asyncio
+async def test_price_deviation_ignores_stale_observations(broker):
+    """Lookback window 바깥 관측은 무시."""
+    now = datetime.now(timezone.utc)
+    # Only stale observations (older than reference_price_lookback_minutes=5)
+    broker.record_price_observation("005930", 70000.0, now - timedelta(minutes=10))
+    broker.record_price_observation("005930", 70000.0, now - timedelta(minutes=7))
+
+    order = await broker.submit_order(
+        symbol="005930",
+        side=OrderSide.BUY,
+        quantity=10,
+        order_type=OrderType.MARKET,
+        market_price=50000.0,  # would deviate if history was used
+        price_source_time=now,
+    )
+    # No fresh reference → guard allows
+    assert order.filled is True

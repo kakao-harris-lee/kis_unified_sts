@@ -1,7 +1,9 @@
 """Virtual broker for paper trading."""
 import logging
 import uuid
-from datetime import datetime, timezone
+from collections import defaultdict, deque
+from datetime import datetime, timedelta, timezone
+from statistics import median
 from typing import Dict, List, Optional, Callable, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -62,6 +64,54 @@ class VirtualBroker:
         # Callbacks
         self.on_fill: Optional[Callable] = None
         self.on_trade_close: Optional[Callable] = None
+
+        # Price observation history for deviation guard (maxlen caps memory usage)
+        self._price_history: dict[str, deque[tuple[datetime, float]]] = defaultdict(
+            lambda: deque(maxlen=256)
+        )
+
+    def record_price_observation(
+        self, symbol: str, price: float, ts: datetime
+    ) -> None:
+        """Record observed market price for use as deviation-guard reference.
+
+        Called by the orchestrator from its tick handler per symbol.
+        Only the last ``reference_price_lookback_minutes`` window of observations
+        is considered at guard time.
+        """
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        self._price_history[symbol].append((ts, price))
+
+    def _check_price_deviation(
+        self, symbol: str, proposed_price: float, now: datetime
+    ) -> bool:
+        """Return True if proposed_price is within deviation threshold, else False.
+
+        - Returns True when deviation check is disabled (pct<=0 or lookback<=0)
+        - Returns True when there is no reference data in the lookback window
+        """
+        if self.config is None:
+            return True
+        if (
+            self.config.max_price_deviation_pct <= 0
+            or self.config.reference_price_lookback_minutes <= 0
+        ):
+            return True
+        history = self._price_history.get(symbol)
+        if not history:
+            return True
+        cutoff = now - timedelta(
+            minutes=self.config.reference_price_lookback_minutes
+        )
+        recent_prices = [p for ts, p in history if ts >= cutoff]
+        if not recent_prices:
+            return True
+        ref = median(recent_prices)
+        if ref <= 0:
+            return True
+        deviation = abs(proposed_price - ref) / ref
+        return deviation <= self.config.max_price_deviation_pct
 
     async def submit_order(
         self,
@@ -138,6 +188,30 @@ class VirtualBroker:
                 self.orders.append(order)
                 return order
         # ── End freshness guard ────────────────────────────────────────────────
+
+        # ── Price deviation guard ─────────────────────────────────────────────
+        if self.config is not None and market_price is not None:
+            now_dev = datetime.now(timezone.utc)
+            if not self._check_price_deviation(symbol, market_price, now_dev):
+                effective_price = price if price else (market_price or 0.0)
+                order = VirtualOrder(
+                    order_id=f"VO-{uuid.uuid4().hex[:8].upper()}",
+                    symbol=symbol,
+                    side=side,
+                    order_type=order_type,
+                    quantity=quantity,
+                    price=effective_price,
+                    timestamp=datetime.now(),
+                )
+                order.filled = False
+                order.rejection_reason = "price_deviation"
+                logger.warning(
+                    "Paper order rejected (price deviation): %s proposed=%.2f",
+                    symbol, market_price,
+                )
+                self.orders.append(order)
+                return order
+        # ── End deviation guard ───────────────────────────────────────────────
 
         # Normalise: callers may pass market_price without setting price (e.g.
         # when price_source_time is also supplied). For MARKET orders, use

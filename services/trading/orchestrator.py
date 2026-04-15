@@ -1291,6 +1291,18 @@ class TradingOrchestrator:
                                 )
                     self._indicator_engine.on_tick(symbol, data, ts)
 
+                if self._paper_broker is not None:
+                    try:
+                        tick_price = float(data.get("close", 0.0) or 0.0)
+                        if tick_price > 0:
+                            self._paper_broker.record_price_observation(
+                                symbol=symbol,
+                                price=tick_price,
+                                ts=ts if ts.tzinfo is not None else ts.replace(tzinfo=timezone.utc),
+                            )
+                    except (AttributeError, ValueError, TypeError) as e:
+                        logger.debug("record_price_observation skipped (futures): %s", e)
+
                 if self._futures_slippage_controller:
                     try:
                         price = float(data.get("close", 0.0) or 0.0)
@@ -1323,6 +1335,18 @@ class TradingOrchestrator:
                         if raw_vol > 0:
                             self._indicator_engine.set_volume_baseline(symbol, raw_vol)
                     self._indicator_engine.on_tick(symbol, data, ts)
+
+                if self._paper_broker is not None:
+                    try:
+                        tick_price = float(data.get("close", 0.0) or 0.0)
+                        if tick_price > 0:
+                            self._paper_broker.record_price_observation(
+                                symbol=symbol,
+                                price=tick_price,
+                                ts=ts if ts.tzinfo is not None else ts.replace(tzinfo=timezone.utc),
+                            )
+                    except (AttributeError, ValueError, TypeError) as e:
+                        logger.debug("record_price_observation skipped (stock): %s", e)
 
                 if self._tick_stream_publisher:
                     monitor_data = dict(data)
