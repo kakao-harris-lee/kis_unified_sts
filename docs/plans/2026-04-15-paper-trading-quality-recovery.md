@@ -1470,6 +1470,41 @@ OK: sample scaled obs within [0,1] range
 
 ---
 
+### Task 2.3 — Profile Matrix Audit (2026-04-14)
+
+**Objective:** Identify whether the RL profile matrix is a net-negative contributor driving the ~-0.95/trade mean PnL observed over 30 days.
+
+**30-day per-profile PnL (`kospi.rl_trades`, last 30 days):**
+
+| Strategy | Trades | Total PnL | Avg PnL | Win% | Std |
+|---|---|---|---|---|---|
+| `rl_mppo_profile_asym_long_strict` | 235 | -208.6 | -0.89 | 3.0% | 0.58 |
+| `rl_mppo` (baseline) | 214 | -150.3 | -0.70 | 15.9% | 1.13 |
+| `rl_mppo_profile_uptrend_spike_guard` | 53 | -49.6 | -0.94 | 3.8% | 0.92 |
+
+**Profile breakdown:**
+- Total trades: 502 across 3 strategies
+- Profile variant trades: 288 / 502 = 57.4% of all trades
+- Note: `rl_mppo_spread6/7/8` profiles listed in cron config did not appear in 30-day window (either not run recently or merged into baseline)
+
+**Decision: DISABLE MATRIX — revert cron to single `rl_mppo` baseline**
+
+**Rationale:**
+1. All 3 strategies are net-negative. Even the baseline `rl_mppo` is losing (consistent with broader model performance degradation noted in Task 2.0 / regime-shift hypothesis).
+2. Profile variants are significantly **worse** than baseline: win rate 3-4% vs 15.9% for `rl_mppo`. The `asym_long_strict` variant alone burned -208.6 PnL on 235 trades.
+3. Profile variants contributed 57% of trades in 30 days — they dominate the aggregate -0.89 avg PnL metric that triggered this investigation.
+4. Matrix was designed for hyperparameter exploration, not production; given the current out-of-distribution regime, running inferior variants burns capital with no offsetting benefit.
+5. No profile variant outperforms baseline → there is no "keep one variant" outcome to preserve.
+
+**Changes made:**
+- `scripts/cron/rl_paper.sh`: `RL_PAPER_MATRIX_ENABLED` default changed from `1` → `0`
+- Matrix can still be re-enabled via env var `RL_PAPER_MATRIX_ENABLED=1` without code change
+- No changes to `config/ml/rl_mppo.yaml` (no profile-level toggle exists there; control is exclusively via cron env var)
+
+**Next step (Task 2.5 Path B):** Monitor 5 trading days of single-profile `rl_mppo` performance. Compare pre/post win rate and avg PnL via `kospi.rl_trades`.
+
+---
+
 ## Self-Review Checklist
 
 - [x] Phase 1 scope: paper broker price guards only (no live broker changes)
