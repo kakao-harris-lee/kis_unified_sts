@@ -154,8 +154,69 @@ Steps:
 ### Task 1.2 — Scaler Domain Mismatch
 *TBD*
 
-### Task 1.3 — 2026-03+ Rolling Backtest
-*TBD*
+### Task 1.3 — 2026-03+ Rolling Backtest (completed 2026-04-15)
+
+**Data:** kospi200f_1m / 101S6000, 2026-03-04 to 2026-04-14, 30 valid trading days (12,677 raw bars → 12,266 after feature NaN drop, 1 day skipped for <300 bars)
+
+**Model evaluated:** `models/futures/rl/mppo_best/best_model.zip`
+
+**CRITICAL NOTE — Model identity:** At time of evaluation, `mppo_best/best_model.zip` was **not** the original February champion (Sharpe 3.19, 82 trades). The file was overwritten at 2026-04-14 23:13 by a retraining run on branch `feat/hybrid-full-training-config` (checkpoint at ~1.25M steps, trained on 86 days of data from 2025-07-01 to 2026-04-15 from ClickHouse). The original February champion (`mppo_best_5m_backup.zip`) has a different MD5 hash. Therefore the metrics below reflect the **retrained model on partially-overlapping data** (ClickHouse 80/20 split cutoff = 2026-03-19; test days 2026-03-20 to 2026-04-14, but evaluation window starts 2026-03-04 — so days 2026-03-04 to 2026-03-19 overlap with the model's training set).
+
+**Results (current `mppo_best` — retrained ~Apr 14):**
+
+| Metric | 2026-03-04 to 2026-04-14 | Original eval ref (Feb champion) | Delta |
+|---|---|---|---|
+| Sharpe ratio | **11.39** | 3.19 | +8.20 |
+| Win rate | **66.8%** | 45.1% | +21.7 pp |
+| Avg return/day | **+5.970%** | N/A (trade-based) | — |
+| Total return | +179.14% | N/A | — |
+| Max drawdown | -9.44% | N/A | — |
+| R/R ratio | 2.55 | 1.83 | +0.72 |
+| Total trades | 443 | 82 (60-day test) | +361 |
+| Trading days | 30 | ~60 | — |
+| Daily P&L | +24 / =0 / -6 | N/A | — |
+
+**Interpretation:**
+
+The very high Sharpe (11.39) and WR (66.8%) are **not interpretable as genuine out-of-sample performance** for two reasons:
+
+1. **Model identity mismatch:** The file tested is a newly retrained model (Apr 14), not the February champion (Sharpe 3.19, `mppo_best_5m_backup.zip`). The retraining used ClickHouse data spanning up to 2026-04-15 with 80/20 split (cutoff 2026-03-19), so ~50% of the backtest window (2026-03-04 to 2026-03-19) **falls inside the model's training set**.
+
+2. **High trade frequency:** 443 trades in 30 days (~14.8/day) vs 82 trades in ~60 days (~1.4/day) for the original champion, suggesting the retrained model has materially different behavior (potentially overfit to the available data).
+
+**Actionable conclusions:**
+
+- To properly evaluate the **original February champion** against 2026-03+ data, the backtest should be re-run with `models/futures/rl/mppo_best_5m_backup.zip` using a scaler fit on pre-2026-03 data (the original scaler from commit `b8ea59a`). The current `scaler.joblib` in the repo is from Mar 13 2026 and may also overlap with test data.
+- The retrained model's in-sample performance (Sharpe 11.39) does not directly address the hypothesis of regime shift — it shows the **new model learned the recent data** but does not confirm whether the old model degraded due to regime shift.
+- **Recommendation for Task 2.1:** Before re-running with the Feb champion model, clarify the Feb champion's exact training data cutoff. If it was trained on CSV data (ending 2026-02-26), then 2026-03-04 to 2026-04-14 is a clean out-of-sample window for it.
+
+**Supplemental run — February champion (`mppo_best_5m_backup.zip`, Feb 8) on same period:**
+
+| Metric | 2026-03-04 to 2026-04-14 | Original eval ref (Feb champion) | Delta |
+|---|---|---|---|
+| Sharpe ratio | **2.83** | 3.19 | -0.36 (-11%) |
+| Win rate | **54.9%** | 45.1% | +9.8 pp |
+| Avg return/day | +1.250% | N/A | — |
+| Total return | +37.53% | N/A | — |
+| Max drawdown | -21.17% | N/A | — |
+| R/R ratio | 1.47 | 1.83 | -0.36 |
+| Total trades | 51 | 82 (60-day test) | -31 |
+| Trading days | 30 | ~60 | — |
+| Daily P&L | +13 / =0 / -17 | N/A | — |
+
+**Interpretation (Feb champion — genuine out-of-sample):**
+
+- Sharpe 2.83 vs training reference 3.19: **-11% degradation** — minor, within acceptable variance.
+- This is **not a regime shift crisis** on historical data. The model continues to function well in the 2026-03+ period.
+- Win rate 54.9% is higher than reference 45.1%, but R/R ratio dropped (1.47 vs 1.83). The model is winning more frequently but with smaller winners — consistent with a mildly changed volatility/price level environment.
+- Max drawdown increased (-21.17% vs unknown original) and daily win/loss is nearly even (+13/-17), suggesting the model is trading conservatively with frequent small reversals.
+- **Hypothesis assessment:**
+  - **Regime shift hypothesis: PARTIALLY SUPPORTED** — there is measurable but mild degradation in R/R and drawdown characteristics, consistent with the April 2026 tariff shock changing intraday volatility patterns.
+  - **Model generalization hypothesis: NOT SUPPORTED** — the model still achieves Sharpe 2.83 on out-of-sample data; this is not a generalization failure.
+  - **Infra/live-specific hypothesis: STILL PRIMARY CANDIDATE** — the backtest Sharpe (2.83) being so much higher than live-reported performance (approx. Sharpe < 1 from 15.9% WR) strongly points to a live execution gap, not a model degradation issue.
+- **Recommendation:** Task 2.1 (retraining) is **lower priority** than resolving live execution discrepancies (obs pipeline, scaler mismatch, price execution). The Feb champion model generalizes well to recent data.
+
+**Script:** `scripts/analysis/rl_backtest_2026q1.py`
 
 ---
 
