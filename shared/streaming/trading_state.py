@@ -59,6 +59,19 @@ def _get_redis() -> redis.Redis:
     return RedisClient.get_client()
 
 
+def _tz_aware_iso(dt: datetime | None) -> str:
+    """Return a tz-aware ISO-8601 string for *dt*.
+
+    If *dt* is None, falls back to the current UTC time.
+    If *dt* is naive (no tzinfo), assumes UTC and attaches it.
+    """
+    if dt is None:
+        dt = datetime.now(timezone.utc)
+    elif dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.isoformat()
+
+
 # ---------------------------------------------------------------------------
 # Publisher (used by orchestrator)
 # ---------------------------------------------------------------------------
@@ -173,7 +186,7 @@ class TradingStatePublisher:
                 "strategy": getattr(signal, "strategy", ""),
                 "price": float(getattr(signal, "price", 0) or getattr(signal, "exit_price", 0) or 0),
                 "confidence": float(getattr(signal, "confidence", 0) or 0),
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": _tz_aware_iso(getattr(signal, "timestamp", None)),
                 "executed": executed,
                 "reason": (
                     getattr(signal, "reason", "").value
@@ -305,7 +318,7 @@ class TradingStatePublisher:
             "current_price": pos.current_price,
             "unrealized_pnl": getattr(pos, "unrealized_pnl", 0.0),
             "pnl_pct": getattr(pos, "profit_pct", 0.0),
-            "entry_time": pos.entry_time.isoformat() if isinstance(pos.entry_time, datetime) else str(pos.entry_time),
+            "entry_time": _tz_aware_iso(pos.entry_time) if isinstance(pos.entry_time, datetime) else str(pos.entry_time),
             "strategy": getattr(pos, "strategy", ""),
             "state": pos.state.value if hasattr(pos.state, "value") else str(pos.state),
             "highest_price": getattr(pos, "highest_price", pos.entry_price),
@@ -327,8 +340,8 @@ class TradingStatePublisher:
             "pnl": getattr(pos, "unrealized_pnl", 0.0),
             "pnl_pct": getattr(pos, "profit_pct", 0.0),
             "strategy": getattr(pos, "strategy", ""),
-            "entry_time": pos.entry_time.isoformat() if isinstance(pos.entry_time, datetime) else str(pos.entry_time),
-            "exit_time": datetime.now().isoformat(),
+            "entry_time": _tz_aware_iso(pos.entry_time) if isinstance(pos.entry_time, datetime) else str(pos.entry_time),
+            "exit_time": _tz_aware_iso(getattr(pos, "exit_time", None)),
             "exit_reason": getattr(pos, "exit_reason", None) or "",
         }
 
