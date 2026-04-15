@@ -1541,6 +1541,16 @@ Hold override is **completely disabled** by default, with no active code paths t
 
 ---
 
+### Task 2.5 — Consolidation Decision (2026-04-15)
+
+- **Path A (obs drift)**: Not applicable — parity test (Task 2.2) confirmed training=runtime obs builders produce identical output. Not the bug.
+- **Path B (profile matrix)**: Executed in Task 2.3 (commit cd1fb57). Matrix disabled; expected to remove ~57% of losing trades attributable to weaker profiles. Monitor 5 trading days for win rate / avg PnL recovery.
+- **Path C (deeper retraining)**: Required. Baseline `rl_mppo` alone has 15.9% win rate / avg -0.70 PnL/trade — net-negative performance persists even without profile matrix noise. This matches the regime-shift / stale-model hypothesis. Created follow-up plan at `docs/plans/2026-04-15-rl-retraining-data-refresh.md`.
+
+**Phase 2 exit:** Profile matrix disabled (immediate bleed reduction). Deeper model retraining tracked separately in the follow-up plan. No further action required in this plan.
+
+---
+
 ## Self-Review Checklist
 
 - [x] Phase 1 scope: paper broker price guards only (no live broker changes)
