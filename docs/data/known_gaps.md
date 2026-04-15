@@ -1,5 +1,21 @@
 # Known Data Gaps
 
+## 2026-04-14 — 선물 RL 챔피언 모델 덮어쓰기 사고 (복원 완료)
+
+- **영향 파일**: `models/futures/rl/mppo_best/best_model.zip`
+- **사고 시각**: 2026-04-14 23:13 KST
+- **원인**: `feat/hybrid-full-training-config` 브랜치의 실험적 hybrid 학습 run이 프로덕션 챔피언 경로를 덮어씀. 같은 종류의 사고는 2026-02-15 TFT 실험 중에도 발생한 적 있음 (MEMORY.md 참조).
+- **탐지**: 2026-04-15, `scripts/analysis/rl_backtest_2026q1.py` 실행 중 MD5 불일치 감지 — 현재 `best_model.zip` (`a0db54f6...`) ≠ `mppo_best_5m_backup.zip` (`16e85532...`)
+- **영향**: Task 1.3 rolling backtest에서 Sharpe/WR 수치가 신뢰할 수 없게 됨 → Task 1.3 최종 측정은 `mppo_best_5m_backup.zip`로 재수행
+- **복구 (2026-04-15 18:35)**:
+  1. 덮어씌워진 모델을 `models/futures/rl/mppo_best/best_model_overwritten_20260414_2313.zip`로 보존
+  2. `cp models/futures/rl/mppo_best_5m_backup.zip models/futures/rl/mppo_best/best_model.zip`
+  3. MD5 확인: `16e855323a5dd50e4ce6f28bf5042974` (Feb 챔피언 일치)
+- **재발 방지 제안**:
+  - 학습 스크립트에서 `mppo_best/` 경로 write 시 경고/차단 (hybrid 등 실험은 `mppo_challenger/`, `mppo_experiment_*/`로 한정)
+  - `models/futures/rl/mppo_best/best_model.zip`에 파일 권한 `r--r--r--` 적용 후 의도적 promote 시에만 쓰기 권한 부여
+  - PR 머지 시 모델 경로 변경 감지 hook (pre-commit) 추가
+
 ## 2026-03-11 ~ 2026-04-14 — 주식 모의투자 DB 누락
 
 - **테이블**: `market.stock_trades` (신규 도입), 구 범주로는 `market.rl_trades`에 기록될 수 있었음
