@@ -151,8 +151,43 @@ Steps:
 ### Task 1.1 — Live Obs Drift (PSI)
 *TBD — requires ≥50 live trades with obs captured*
 
-### Task 1.2 — Scaler Domain Mismatch
-*TBD*
+### Task 1.2 — Scaler Domain Mismatch (completed 2026-04-15)
+
+**Data:**
+- Training scaler source: `101S6000` (`data/kospi200f_1m_clean.csv`, 4,521 bars → 4,402 after NaN drop)
+- Mini test: `kospi.kospi_mini_1m`, last 180 days (90,027 bars → 89,908 after NaN drop)
+- Mini contract codes: A05601–A05609 (all available, pooled)
+
+**Per-feature KS drift (summary):**
+- Features with KS > 0.3 (significant drift): **12 / 25**
+- Features with >5% out-of-[0,1] under prod scaler: **15 / 25**
+
+**Top drifting features (KS statistic):**
+
+| Feature | KS stat | % clipped by prod scaler |
+|---------|---------|--------------------------|
+| `returns` | 0.715 | 11.5% |
+| `bb_upper_dist` | 0.686 | 7.3% |
+| `price_change_5` | 0.607 | 8.6% |
+| `macd` | 0.538 | 0.2% |
+| `volatility` | 0.527 | 28.1% |
+
+**Notable outliers:**
+- `volatility`: 28.1% of mini bars fall outside prod scaler's [0,1] range — the worst clipping. Median under prod scaler = 0.632 vs self-scaler = 0.196 (3x scale mismatch).
+- `volume_ratio`: 28.2% clipped (KS = 0.283, just under threshold). Volume scaling between KOSPI200 연결선물 and mini contracts is structurally different (MEMORY.md: mini liquidity is 1/9 to 1/42 of F200).
+- `bb_upper_dist`, `bb_lower_dist`, `bb_width`: all show significant drift — the absolute price level of mini contracts (lower) compresses BB bands differently in MinMax space.
+
+**Verdict:** CONFIRMED
+
+Scaler domain mismatch is a **primary contributing factor** to live obs degradation. 12 features with KS > 0.3 and 15 features with >5% clipping means the model is receiving substantially distorted obs in live trading. The `volatility` and `volume_ratio` features — both carrying strong regime signal — are the worst affected.
+
+**Next step:**
+- Task 2.1: Re-fit scaler on `kospi_mini_1m` data and save as `models/futures/rl/scaler_mini.joblib`
+- Runtime change (no model retraining needed): swap scaler in `shared/strategy/rl_model_helpers.py` obs builder for live trading path
+- Validate: 30-day backtest on `101S6000` with mini-fit scaler should not degrade Sharpe by >10% vs current scaler (use `mppo_best_5m_backup.zip` as baseline)
+- CLAUDE.md policy compliance: scaler re-fit is a **runtime preprocessing change only** — model weights and training data policy (`101S6000`) remain unchanged
+
+**Script:** `scripts/analysis/rl_scaler_domain_test.py`
 
 ### Task 1.3 — 2026-03+ Rolling Backtest (completed 2026-04-15)
 
