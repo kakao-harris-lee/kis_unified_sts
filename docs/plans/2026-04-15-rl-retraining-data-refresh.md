@@ -187,6 +187,30 @@ Scaler domain mismatch is a **primary contributing factor** to live obs degradat
 - Validate: 30-day backtest on `101S6000` with mini-fit scaler should not degrade Sharpe by >10% vs current scaler (use `mppo_best_5m_backup.zip` as baseline)
 - CLAUDE.md policy compliance: scaler re-fit is a **runtime preprocessing change only** — model weights and training data policy (`101S6000`) remain unchanged
 
+#### Mini-fit scaler validation (completed 2026-04-15)
+
+- Mini scaler fit on 180 days of `kospi.kospi_mini_1m` (89,908 feature rows, 25 features)
+- Artifact saved: `models/futures/rl/scaler_mini.joblib` (opt-in, NOT activated by default)
+- Runtime override mechanism added:
+  - `RL_MPPO_SCALER_PATH` env var (highest priority) in `shared/strategy/rl_model_helpers.py`
+  - `scaler_path_override: ""` field in `config/ml/rl_mppo.yaml` (empty = production scaler)
+- Backtest on `101S6000` 2026-03-04 to 2026-04-14 (30 valid days, 12,266 bars), model: `mppo_best_5m_backup.zip`:
+
+| | Production scaler | Mini-fit scaler | Delta |
+|---|---|---|---|
+| **Sharpe ratio** | 2.83 | 1.55 | **-45.2%** |
+| Win rate | 54.9% | 54.2% | -0.7 pp |
+| Avg return/day | +1.250% | +0.620% | -0.63 pp |
+| Total return | +37.53% | +18.65% | -18.88 pp |
+| R/R ratio | 1.47 | 1.25 | -0.22 |
+| Total trades | 51 | 48 | -3 |
+
+- **Verdict: DO NOT ACTIVATE** — Sharpe degradation -45.2% far exceeds the -10% criterion.
+- **Interpretation:** The model learned obs distributions from `101S6000` (production scaler's range). The mini-fit scaler has data ranges 2.1x–5.3x wider for most features, so the model receives obs values in a completely different [0,1] region than it was trained on. Win rate is nearly identical (54.9% vs 54.2%) but profitability collapses — indicating the model can still identify direction but the entry/exit timing degrades badly with the mismatched normalization.
+- **Root cause of live underperformance:** The scaler mismatch is *confirmed* on the distribution level (KS test) but a straight swap makes performance worse, not better. The correct fix is to **retrain the model jointly** with mini data or to retrain using `101S6000` data with the same temporal distribution as current mini live data (Task 2.1 retraining path).
+- **`scaler_mini.joblib` status:** Committed as artifact for future reference; remains deactivated (`scaler_path_override: ""`).
+- **Script:** `scripts/analysis/rl_backtest_with_mini_scaler.py`
+
 **Script:** `scripts/analysis/rl_scaler_domain_test.py`
 
 ### Task 1.3 — 2026-03+ Rolling Backtest (completed 2026-04-15)
