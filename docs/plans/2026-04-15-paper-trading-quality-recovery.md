@@ -1455,6 +1455,21 @@ OK: sample scaled obs within [0,1] range
 
 ---
 
+### Task 2.2 — Obs Builder Parity (2026-04-15)
+
+- **Parity test outcome: PASS**
+- Runtime obs builder (`derive_features_from_ohlcv`) produces the same 25 raw market features as the training `RLFeatureCalculator.calculate()` path — both call the identical `RLFeatureCalculator` under the hood.
+- `build_rl_observation` market feature portion (dims 0-24) also matches training features exactly when scaler is bypassed.
+- Obs structure confirmed: `[scaled_market (25)] + [position_side, contracts, unrealized_pnl (3)] + [sin/cos time (3)] = 31 dims`.
+- **Conclusion: obs builder code path is NOT the source of the live-vs-training performance gap.**
+  - The raw feature computation is numerically identical between training and runtime.
+  - The MinMaxScaler (Task 2.1) is dimensionally consistent (25 dims, finite values).
+  - Remaining suspects: (1) scaler was fit on `101S6000` (연결선물) but live trading uses `A05xxx` (mini, different price/volume levels) → `volume_ratio`, `atr`, `ma_ratio_*` may be out-of-distribution at inference time; (2) market regime shift (April 2026 tariff shock / KOSPI200 ~905-935 vs training era ~350-400).
+- **Test file:** `tests/unit/ml/rl/test_obs_builder_parity.py` (5 tests, all pass)
+- **Next task:** Task 2.3 (Profile matrix audit + decision)
+
+---
+
 ## Self-Review Checklist
 
 - [x] Phase 1 scope: paper broker price guards only (no live broker changes)
