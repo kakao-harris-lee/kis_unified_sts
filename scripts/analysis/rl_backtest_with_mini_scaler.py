@@ -15,7 +15,6 @@ Usage:
 from __future__ import annotations
 
 import logging
-import os
 import sys
 from pathlib import Path
 
@@ -51,14 +50,9 @@ MIN_BARS_PER_DAY = 300
 
 def load_data() -> pd.DataFrame:
     """Load 2026-03+ OHLCV data from ClickHouse."""
-    from clickhouse_driver import Client as CHSyncClient
+    from shared.db.utils import clickhouse_client_from_env
 
-    client = CHSyncClient(
-        host=os.getenv("CLICKHOUSE_HOST", "localhost"),
-        port=int(os.getenv("CLICKHOUSE_NATIVE_PORT", os.getenv("CLICKHOUSE_PORT", "9000"))),
-        user=os.getenv("CLICKHOUSE_USER", "default"),
-        password=os.getenv("CLICKHOUSE_PASSWORD", "@1tidh6ls6ls"),
-    )
+    client = clickhouse_client_from_env(database=DATABASE)
 
     query = f"""
         SELECT datetime, open, high, low, close, volume

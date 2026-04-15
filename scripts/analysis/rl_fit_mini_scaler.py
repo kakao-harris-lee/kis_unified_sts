@@ -14,7 +14,6 @@ Usage:
 from __future__ import annotations
 
 import logging
-import os
 import sys
 from pathlib import Path
 
@@ -37,14 +36,9 @@ DAYS = 180
 
 def load_mini_bars(days: int = DAYS) -> pd.DataFrame:
     """Load recent kospi_mini_1m OHLCV bars from ClickHouse."""
-    from clickhouse_driver import Client as CHSyncClient
+    from shared.db.utils import clickhouse_client_from_env
 
-    client = CHSyncClient(
-        host=os.getenv("CLICKHOUSE_HOST", "localhost"),
-        port=int(os.getenv("CLICKHOUSE_NATIVE_PORT", os.getenv("CLICKHOUSE_PORT", "9000"))),
-        user=os.getenv("CLICKHOUSE_USER", "default"),
-        password=os.getenv("CLICKHOUSE_PASSWORD", "@1tidh6ls6ls"),
-    )
+    client = clickhouse_client_from_env(database="kospi")
 
     query = f"""
         SELECT datetime, open, high, low, close, volume
