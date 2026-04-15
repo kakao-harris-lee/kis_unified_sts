@@ -41,6 +41,7 @@ class VirtualOrder:
     filled: bool = False
     fill_price: Optional[float] = None
     fill_time: Optional[datetime] = None
+    rejection_reason: str = ""
 
     @property
     def is_market_order(self) -> bool:

@@ -1,7 +1,9 @@
 """Virtual broker for paper trading."""
 import logging
 import uuid
-from datetime import datetime
+from collections import defaultdict, deque
+from datetime import datetime, timedelta, timezone
+from statistics import median
 from typing import Dict, List, Optional, Callable, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -29,6 +31,7 @@ class VirtualBroker:
     - Position tracking
     - P&L calculation
     - Commission simulation
+    - Price freshness guards (when config supplied with max_price_staleness_seconds > 0)
     """
 
     def __init__(
@@ -37,12 +40,22 @@ class VirtualBroker:
         commission_rate: float = 0.00015,  # 0.015%
         slippage_rate: float = 0.0001,     # 0.01%
         slippage_model: Optional["SlippageModel"] = None,
+        config: Optional["PaperTradingConfig"] = None,  # type: ignore[name-defined]
     ):
+        # If a config is provided, its values take precedence
+        if config is not None:
+            from shared.paper.config import PaperTradingConfig as _PTC
+            assert isinstance(config, _PTC), "VirtualBroker config must be a PaperTradingConfig"
+            initial_balance = config.initial_balance
+            commission_rate = config.commission_rate
+            slippage_rate = config.slippage_rate
+
         self.initial_balance = initial_balance
         self.balance = initial_balance
         self.commission_rate = commission_rate
         self.slippage_rate = slippage_rate
         self.slippage_model = slippage_model
+        self.config = config  # May be None for legacy callers
 
         self.positions: Dict[str, VirtualPosition] = {}
         self.orders: List[VirtualOrder] = []
@@ -52,15 +65,64 @@ class VirtualBroker:
         self.on_fill: Optional[Callable] = None
         self.on_trade_close: Optional[Callable] = None
 
+        # Price observation history for deviation guard (maxlen caps memory usage)
+        self._price_history: dict[str, deque[tuple[datetime, float]]] = defaultdict(
+            lambda: deque(maxlen=256)
+        )
+
+    def record_price_observation(
+        self, symbol: str, price: float, ts: datetime
+    ) -> None:
+        """Record observed market price for use as deviation-guard reference.
+
+        Called by the orchestrator from its tick handler per symbol.
+        Only the last ``reference_price_lookback_minutes`` window of observations
+        is considered at guard time.
+        """
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        self._price_history[symbol].append((ts, price))
+
+    def _check_price_deviation(
+        self, symbol: str, proposed_price: float, now: datetime
+    ) -> bool:
+        """Return True if proposed_price is within deviation threshold, else False.
+
+        - Returns True when deviation check is disabled (pct<=0 or lookback<=0)
+        - Returns True when there is no reference data in the lookback window
+        """
+        if self.config is None:
+            return True
+        if (
+            self.config.max_price_deviation_pct <= 0
+            or self.config.reference_price_lookback_minutes <= 0
+        ):
+            return True
+        history = self._price_history.get(symbol)
+        if not history:
+            return True
+        cutoff = now - timedelta(
+            minutes=self.config.reference_price_lookback_minutes
+        )
+        recent_prices = [p for ts, p in history if ts >= cutoff]
+        if not recent_prices:
+            return True
+        ref = median(recent_prices)
+        if ref <= 0:
+            return True
+        deviation = abs(proposed_price - ref) / ref
+        return deviation <= self.config.max_price_deviation_pct
+
     async def submit_order(
         self,
         symbol: str,
         side: OrderSide,
         quantity: int,
-        price: float,
+        price: float = 0.0,
         order_type: OrderType = OrderType.MARKET,
         market_price: float | None = None,
         orderbook: Optional["OrderBookSnapshot"] = None,
+        price_source_time: Optional[datetime] = None,
     ) -> VirtualOrder:
         """Submit and execute order.
 
@@ -72,7 +134,94 @@ class VirtualBroker:
             order_type: Order type (MARKET/LIMIT)
             market_price: Current market price (used for LIMIT order execution check)
             orderbook: Order book snapshot for realistic slippage calculation
+            price_source_time: When the market price was sampled. Required (and must be
+                fresh) when ``config.max_price_staleness_seconds > 0``; otherwise the
+                order is rejected with an appropriate rejection_reason.
+
+        Returns:
+            VirtualOrder — filled or rejected (check ``order.filled`` and
+            ``order.rejection_reason``).
         """
+        # ── Price freshness guard ──────────────────────────────────────────────
+        if self.config is not None and self.config.max_price_staleness_seconds > 0:
+            effective_price = price if price else (market_price or 0.0)
+            if price_source_time is None:
+                order = VirtualOrder(
+                    order_id=f"VO-{uuid.uuid4().hex[:8].upper()}",
+                    symbol=symbol,
+                    side=side,
+                    order_type=order_type,
+                    quantity=quantity,
+                    price=effective_price,
+                    timestamp=datetime.now(),
+                )
+                order.filled = False
+                order.rejection_reason = "missing_price_source_time"
+                logger.warning(
+                    "Paper order rejected (no price_source_time): %s %s",
+                    symbol, side.value,
+                )
+                self.orders.append(order)
+                return order
+
+            now = datetime.now(timezone.utc)
+            pst = price_source_time
+            if pst.tzinfo is None:
+                # Treat naive timestamps as local time and convert to UTC.
+                # Using .replace(tzinfo=...) would silently mislabel e.g. KST as UTC
+                # and make the age computation wrong by the UTC offset.
+                pst = pst.astimezone(timezone.utc)
+            age_seconds = (now - pst).total_seconds()
+            if age_seconds > self.config.max_price_staleness_seconds:
+                order = VirtualOrder(
+                    order_id=f"VO-{uuid.uuid4().hex[:8].upper()}",
+                    symbol=symbol,
+                    side=side,
+                    order_type=order_type,
+                    quantity=quantity,
+                    price=effective_price,
+                    timestamp=datetime.now(),
+                )
+                order.filled = False
+                order.rejection_reason = "stale_price"
+                logger.warning(
+                    "Paper order rejected (stale price, age=%.1fs): %s @ %s",
+                    age_seconds, symbol, market_price,
+                )
+                self.orders.append(order)
+                return order
+        # ── End freshness guard ────────────────────────────────────────────────
+
+        # ── Price deviation guard ─────────────────────────────────────────────
+        if self.config is not None and market_price is not None:
+            now_dev = datetime.now(timezone.utc)
+            if not self._check_price_deviation(symbol, market_price, now_dev):
+                effective_price = price if price else (market_price or 0.0)
+                order = VirtualOrder(
+                    order_id=f"VO-{uuid.uuid4().hex[:8].upper()}",
+                    symbol=symbol,
+                    side=side,
+                    order_type=order_type,
+                    quantity=quantity,
+                    price=effective_price,
+                    timestamp=datetime.now(),
+                )
+                order.filled = False
+                order.rejection_reason = "price_deviation"
+                logger.warning(
+                    "Paper order rejected (price deviation): %s proposed=%.2f",
+                    symbol, market_price,
+                )
+                self.orders.append(order)
+                return order
+        # ── End deviation guard ───────────────────────────────────────────────
+
+        # Normalise: callers may pass market_price without setting price (e.g.
+        # when price_source_time is also supplied). For MARKET orders, use
+        # market_price as the execution price when price is absent/zero.
+        if order_type == OrderType.MARKET and not price and market_price:
+            price = market_price
+
         order_id = f"VO-{uuid.uuid4().hex[:8].upper()}"
 
         if order_type == OrderType.LIMIT and price <= 0:
@@ -359,3 +508,7 @@ class VirtualBroker:
             'total_pnl': total_pnl,
             'open_positions': len(self.positions),
         }
+
+
+# Backwards-compat alias — code that imported PaperBroker still works.
+PaperBroker = VirtualBroker

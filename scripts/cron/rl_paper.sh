@@ -144,8 +144,10 @@ print('1' if is_trading_day(date.today()) else '0')
     export PROMETHEUS_PORT="${RL_PAPER_PROMETHEUS_PORT:-9092}"
     log "Prometheus metrics port: $PROMETHEUS_PORT"
 
-    # Matrix mode defaults to enabled.
-    RL_PAPER_MATRIX_ENABLED=${RL_PAPER_MATRIX_ENABLED:-1}
+    # Matrix mode defaults to disabled (2026-04-14: 30-day PnL audit showed all profile
+    # variants net-negative with win rates 3-4% vs baseline 15.9%; matrix was primary
+    # noise source. Revert to single rl_mppo until a profile beats baseline).
+    RL_PAPER_MATRIX_ENABLED=${RL_PAPER_MATRIX_ENABLED:-0}
     RL_PAPER_MATRIX_MODEL=${RL_PAPER_MATRIX_MODEL:-mppo_best}
     RL_PAPER_MATRIX_PROFILES=${RL_PAPER_MATRIX_PROFILES:-"rl_mppo_spread6,rl_mppo_spread7,rl_mppo_spread8,rl_mppo_profile_asym_long_strict,rl_mppo_profile_uptrend_spike_guard"}
     if [ -z "${RL_PAPER_MATRIX_DURATION_MINUTES:-}" ]; then

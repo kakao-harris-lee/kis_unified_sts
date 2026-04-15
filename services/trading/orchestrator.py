@@ -29,7 +29,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 from datetime import time as dt_time
 from enum import Enum
 from pathlib import Path
@@ -1291,6 +1291,18 @@ class TradingOrchestrator:
                                 )
                     self._indicator_engine.on_tick(symbol, data, ts)
 
+                if self._paper_broker is not None:
+                    try:
+                        tick_price = float(data.get("close", 0.0) or 0.0)
+                        if tick_price > 0:
+                            self._paper_broker.record_price_observation(
+                                symbol=symbol,
+                                price=tick_price,
+                                ts=ts if ts.tzinfo is not None else ts.replace(tzinfo=timezone.utc),
+                            )
+                    except (AttributeError, ValueError, TypeError) as e:
+                        logger.debug("record_price_observation skipped (futures): %s", e)
+
                 if self._futures_slippage_controller:
                     try:
                         price = float(data.get("close", 0.0) or 0.0)
@@ -1324,6 +1336,18 @@ class TradingOrchestrator:
                             self._indicator_engine.set_volume_baseline(symbol, raw_vol)
                     self._indicator_engine.on_tick(symbol, data, ts)
 
+                if self._paper_broker is not None:
+                    try:
+                        tick_price = float(data.get("close", 0.0) or 0.0)
+                        if tick_price > 0:
+                            self._paper_broker.record_price_observation(
+                                symbol=symbol,
+                                price=tick_price,
+                                ts=ts if ts.tzinfo is not None else ts.replace(tzinfo=timezone.utc),
+                            )
+                    except (AttributeError, ValueError, TypeError) as e:
+                        logger.debug("record_price_observation skipped (stock): %s", e)
+
                 if self._tick_stream_publisher:
                     monitor_data = dict(data)
                     if not str(monitor_data.get("name", "")).strip():
@@ -1340,11 +1364,32 @@ class TradingOrchestrator:
         if self.config.paper_trading:
             try:
                 from shared.paper import VirtualBroker
+                from shared.paper.config import PaperTradingConfig
+                from shared.config.loader import ConfigLoader
 
+                # Load paper broker guard parameters from execution.yaml
+                exec_cfg = ConfigLoader.load("execution.yaml") or {}
+                paper_broker_cfg = exec_cfg.get("paper_broker", {}) or {}
+
+                paper_config = PaperTradingConfig(
+                    initial_balance=self.config.initial_capital,
+                    commission_rate=self.config.paper_commission_rate,
+                    slippage_rate=self.config.paper_slippage_rate,
+                    max_price_staleness_seconds=float(
+                        paper_broker_cfg.get("max_price_staleness_seconds", 30.0)
+                    ),
+                    max_price_deviation_pct=float(
+                        paper_broker_cfg.get("max_price_deviation_pct", 0.10)
+                    ),
+                    reference_price_lookback_minutes=int(
+                        paper_broker_cfg.get("reference_price_lookback_minutes", 5)
+                    ),
+                )
                 self._paper_broker = VirtualBroker(
                     initial_balance=self.config.initial_capital,
                     commission_rate=self.config.paper_commission_rate,
                     slippage_rate=self.config.paper_slippage_rate,
+                    config=paper_config,
                 )
                 logger.info("Paper broker (VirtualBroker) initialized")
             except (ValidationError, ValueError, TypeError) as e:
@@ -1882,6 +1927,21 @@ class TradingOrchestrator:
             logger.warning(
                 f"Failed to persist closed position {getattr(closed, 'id', '?')[:8]}: {e}"
             )
+
+    def _record_running_totals(self, closed_position) -> None:
+        """Publish cross-session cumulative counters on each close.
+
+        Idempotent per close event (increments only; no session reset).
+        """
+        if self._state_publisher is None:
+            return
+        try:
+            pnl = getattr(closed_position, "unrealized_pnl", 0.0) or 0.0
+            self._state_publisher.increment_running_totals(
+                pnl=float(pnl), trades=1, win=bool(pnl > 0),
+            )
+        except (AttributeError, ValueError, TypeError) as e:
+            logger.debug("record_running_totals skipped: %s", e)
 
     ACCUMULATION_REDIS_KEY = "system:accumulation:latest"
 
@@ -2980,6 +3040,7 @@ class TradingOrchestrator:
                 self.total_pnl += closed.unrealized_pnl
                 if self._state_publisher:
                     self._state_publisher.publish_position_closed(closed)
+                    self._record_running_totals(closed)
         self._sync_open_positions_metric()
 
     async def _cleanup_resources(self):
@@ -4356,7 +4417,12 @@ class TradingOrchestrator:
                 is_short = direction == "short"
 
                 is_filled, fill_price, execution_meta = await self._submit_entry_order(
-                    signal.code, is_short, quantity, signal.price, signal=signal
+                    signal.code,
+                    is_short,
+                    quantity,
+                    signal.price,
+                    signal=signal,
+                    price_source_time=getattr(signal, "timestamp", None),
                 )
                 execution_meta = execution_meta or {}
                 filled_qty = int(execution_meta.get("filled_qty", quantity) or 0)
@@ -4406,6 +4472,7 @@ class TradingOrchestrator:
         quantity: int,
         price: float,
         signal: Signal | None = None,
+        price_source_time: datetime | None = None,
     ) -> tuple[bool, float, dict[str, Any]]:
         """Submit entry order to broker."""
         if (
@@ -4426,6 +4493,7 @@ class TradingOrchestrator:
             order_type="market",
             limit_price=None,
             market_price=price,
+            price_source_time=price_source_time,
         )
         return (
             is_filled,
@@ -4479,7 +4547,7 @@ class TradingOrchestrator:
             signal_timestamp=signal_ts,
             quote_payload=quote_payload,
             cross_asset_payload=cross_payload,
-            now=datetime.now(),
+            now=datetime.now(timezone.utc),
         )
         execution_meta: dict[str, Any] = {
             "mode": "slippage_guard",
@@ -4538,7 +4606,7 @@ class TradingOrchestrator:
             is_buy=is_buy,
             signal_price=signal_price,
             quote_payload=retry_payload,
-            now=datetime.now(),
+            now=datetime.now(timezone.utc),
         )
         execution_meta["transitions"] += self._serialize_state_transitions(
             retry_decision.transitions
@@ -4625,6 +4693,7 @@ class TradingOrchestrator:
         order_type: str,
         limit_price: float | None,
         market_price: float,
+        price_source_time: datetime | None = None,
     ) -> tuple[bool, float, int, str]:
         if self.config.paper_trading and self._paper_broker:
             try:
@@ -4642,6 +4711,7 @@ class TradingOrchestrator:
                     price=float(limit_price or market_price),
                     order_type=PaperOrderType.LIMIT,
                     market_price=market_price,
+                    price_source_time=price_source_time,
                 )
                 is_filled = bool(getattr(order, "filled", False))
                 fill_price = float(getattr(order, "fill_price", 0.0) or 0.0)
@@ -4654,6 +4724,7 @@ class TradingOrchestrator:
                 quantity=quantity,
                 price=market_price,
                 order_type=PaperOrderType.MARKET,
+                price_source_time=price_source_time,
             )
             is_filled = bool(getattr(order, "filled", True))
             fill_price = float(
@@ -4767,6 +4838,7 @@ class TradingOrchestrator:
             "exit_trail_activation_atr",
             "exit_trail_atr_multiplier",
             "exit_max_hold_days",
+            "obs",  # RL obs vector for live-vs-train drift diagnostics
         ):
             if key in signal_meta:
                 pos_metadata[key] = signal_meta[key]
@@ -5194,6 +5266,7 @@ class TradingOrchestrator:
         # Publish
         if self._state_publisher:
             self._state_publisher.publish_position_closed(closed)
+            self._record_running_totals(closed)
             self._state_publisher.publish_signal(signal, "exit", True)
             self._metrics.record_trade(
                 pnl=pnl, win=(pnl >= 0), strategy=getattr(signal, "strategy", "default")

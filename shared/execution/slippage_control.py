@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 from collections import deque
 from dataclasses import dataclass, field
-from datetime import datetime, time, timedelta
+from datetime import datetime, time, timedelta, timezone
 from enum import Enum
 from typing import Any
 
@@ -207,7 +207,7 @@ def parse_orderbook_snapshot(
     if close <= 0:
         close = (ask + bid) / 2.0
 
-    timestamp = _parse_timestamp(payload.get("timestamp")) or now or datetime.now()
+    timestamp = _parse_timestamp(payload.get("timestamp")) or now or datetime.now(timezone.utc)
 
     return OrderBookSnapshot(
         symbol=symbol,
@@ -253,7 +253,7 @@ class FuturesSlippageController:
         """Register trade tick for volatility baseline."""
         if price <= 0:
             return
-        ts = timestamp or datetime.now()
+        ts = timestamp or datetime.now(timezone.utc)
 
         previous = self._last_trade_price.get(symbol)
         self._last_trade_price[symbol] = price
@@ -291,14 +291,15 @@ class FuturesSlippageController:
         now: datetime | None = None,
     ) -> EntryDecision:
         """Evaluate entry filters and produce passive-limit execution decision."""
-        ts = now or datetime.now()
+        ts = now or datetime.now(timezone.utc)
         transitions = [
             StateTransition(state=ExecutionState.NEW, at=ts),
             StateTransition(state=ExecutionState.FILTERING, at=ts),
         ]
 
         stale_seconds = max(0.1, self.config.max_signal_age_seconds)
-        signal_age = (ts - signal_timestamp).total_seconds()
+        sig_ts = signal_timestamp.astimezone(timezone.utc) if signal_timestamp.tzinfo is None else signal_timestamp
+        signal_age = (ts - sig_ts).total_seconds()
         if signal_age > stale_seconds:
             return self._block(
                 reason=f"stale_signal:{signal_age:.2f}s",
@@ -407,7 +408,7 @@ class FuturesSlippageController:
         now: datetime | None = None,
     ) -> EntryDecision:
         """Evaluate timeout path: retry once at market or cancel."""
-        ts = now or datetime.now()
+        ts = now or datetime.now(timezone.utc)
         transitions = [
             StateTransition(state=ExecutionState.PASSIVE_TIMEOUT, at=ts),
         ]
@@ -549,17 +550,22 @@ def _parse_timestamp(value: Any) -> datetime | None:
         return None
 
     if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value.astimezone(timezone.utc)
         return value
 
     if isinstance(value, (int, float)):
         try:
-            return datetime.fromtimestamp(float(value))
+            return datetime.fromtimestamp(float(value), tz=timezone.utc)
         except (TypeError, OSError, ValueError):
             return None
 
     if isinstance(value, str):
         try:
-            return datetime.fromisoformat(value)
+            dt = datetime.fromisoformat(value)
+            if dt.tzinfo is None:
+                dt = dt.astimezone(timezone.utc)
+            return dt
         except ValueError:
             return None
 
