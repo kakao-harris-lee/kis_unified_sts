@@ -1340,11 +1340,22 @@ class TradingOrchestrator:
         if self.config.paper_trading:
             try:
                 from shared.paper import VirtualBroker
+                from shared.paper.config import PaperTradingConfig
 
+                paper_config = PaperTradingConfig(
+                    initial_balance=self.config.initial_capital,
+                    commission_rate=self.config.paper_commission_rate,
+                    slippage_rate=self.config.paper_slippage_rate,
+                    # Guard defaults (YAML override in Task 1.4)
+                    max_price_staleness_seconds=30.0,
+                    max_price_deviation_pct=0.10,
+                    reference_price_lookback_minutes=5,
+                )
                 self._paper_broker = VirtualBroker(
                     initial_balance=self.config.initial_capital,
                     commission_rate=self.config.paper_commission_rate,
                     slippage_rate=self.config.paper_slippage_rate,
+                    config=paper_config,
                 )
                 logger.info("Paper broker (VirtualBroker) initialized")
             except (ValidationError, ValueError, TypeError) as e:
@@ -4356,7 +4367,12 @@ class TradingOrchestrator:
                 is_short = direction == "short"
 
                 is_filled, fill_price, execution_meta = await self._submit_entry_order(
-                    signal.code, is_short, quantity, signal.price, signal=signal
+                    signal.code,
+                    is_short,
+                    quantity,
+                    signal.price,
+                    signal=signal,
+                    price_source_time=getattr(signal, "timestamp", None),
                 )
                 execution_meta = execution_meta or {}
                 filled_qty = int(execution_meta.get("filled_qty", quantity) or 0)
@@ -4406,6 +4422,7 @@ class TradingOrchestrator:
         quantity: int,
         price: float,
         signal: Signal | None = None,
+        price_source_time: datetime | None = None,
     ) -> tuple[bool, float, dict[str, Any]]:
         """Submit entry order to broker."""
         if (
@@ -4426,6 +4443,7 @@ class TradingOrchestrator:
             order_type="market",
             limit_price=None,
             market_price=price,
+            price_source_time=price_source_time,
         )
         return (
             is_filled,
@@ -4625,6 +4643,7 @@ class TradingOrchestrator:
         order_type: str,
         limit_price: float | None,
         market_price: float,
+        price_source_time: datetime | None = None,
     ) -> tuple[bool, float, int, str]:
         if self.config.paper_trading and self._paper_broker:
             try:
@@ -4642,6 +4661,7 @@ class TradingOrchestrator:
                     price=float(limit_price or market_price),
                     order_type=PaperOrderType.LIMIT,
                     market_price=market_price,
+                    price_source_time=price_source_time,
                 )
                 is_filled = bool(getattr(order, "filled", False))
                 fill_price = float(getattr(order, "fill_price", 0.0) or 0.0)
@@ -4654,6 +4674,7 @@ class TradingOrchestrator:
                 quantity=quantity,
                 price=market_price,
                 order_type=PaperOrderType.MARKET,
+                price_source_time=price_source_time,
             )
             is_filled = bool(getattr(order, "filled", True))
             fill_price = float(

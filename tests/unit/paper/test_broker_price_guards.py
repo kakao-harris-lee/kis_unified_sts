@@ -68,3 +68,45 @@ async def test_missing_source_time_rejected_in_strict_mode(broker):
     )
     assert order.filled is False
     assert order.rejection_reason == "missing_price_source_time"
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_passes_price_source_time_to_broker(monkeypatch):
+    """_place_entry_order passes price_source_time to broker.submit_order."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from services.trading.orchestrator import TradingConfig, TradingOrchestrator
+
+    cfg = TradingConfig(
+        asset_class="stock",
+        strategy_name="momentum_breakout",
+        initial_capital=100_000_000.0,
+        order_amount_per_trade=1_000_000.0,
+        paper_trading=True,
+    )
+    orch = TradingOrchestrator(cfg)
+
+    # Inject a mock broker (so we don't rely on real VirtualBroker init side-effects)
+    broker = MagicMock()
+    fake_order = MagicMock()
+    fake_order.filled = True
+    fake_order.fill_price = 70000.0
+    fake_order.venue = "KRX"
+    broker.submit_order = AsyncMock(return_value=fake_order)
+    orch._paper_broker = broker
+
+    source_time = datetime(2026, 4, 15, 10, 0, 0, tzinfo=timezone.utc)
+
+    await orch._place_entry_order(
+        code="005930",
+        is_short=False,
+        quantity=10,
+        order_type="market",
+        limit_price=None,
+        market_price=70000.0,
+        price_source_time=source_time,
+    )
+
+    broker.submit_order.assert_awaited_once()
+    kwargs = broker.submit_order.await_args.kwargs
+    assert kwargs["price_source_time"] == source_time
