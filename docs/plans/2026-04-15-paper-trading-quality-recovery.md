@@ -1371,6 +1371,59 @@ For 5 trading days after merge, daily check:
 
 ---
 
+## Phase 2 Investigation Findings
+
+### Task 2.0 — Live vs Train Obs Drift Diagnostic
+
+**Date:** 2026-04-15 (run during feat/hybrid-full-training-config → fix/paper-trading-quality-recovery)
+
+**Precondition check:** Live obs NOT captured in existing trades.
+
+`kospi.rl_trades.metadata_json` examined for last 14 days (500 rows) — the `obs` key was absent from all records. The metadata only contained: `snapshot_id`, `llm_quality`, `realtime_score`, `risk_flags`, `entry_signal_confidence`, `signal_direction`, `execution`, `entry_regime`.
+
+**Root cause:** The orchestrator's `_process_filled_entry` selectively forwards only 4 specific keys from `signal.metadata` into `pos_metadata`:
+- `exit_stop_atr_multiplier`
+- `exit_trail_activation_atr`
+- `exit_trail_atr_multiplier`
+- `exit_max_hold_days`
+
+`RLMPPOEntry.generate()` built the obs and passed it to the model, but never stored it in `signal.metadata`. Consequently, obs was never captured in position metadata or persisted to ClickHouse.
+
+**Fixes applied (this task):**
+
+1. **`shared/strategy/entry/rl_mppo.py`** — Added `"obs": obs.tolist()` to `meta_common` dict at the point after model prediction, before `Signal` construction. The obs is the full 31-dim vector that was passed to `model.predict()`.
+
+2. **`services/trading/orchestrator.py`** — Added `"obs"` to the forwarding key list in `_process_filled_entry` so it flows from `signal.metadata` → `pos_metadata` → `position.metadata` → `kospi.rl_trades.metadata_json`.
+
+**Diagnostic script run:**
+
+```
+Exit code: 2 (NO LIVE OBS CAPTURED)
+Live obs samples: 0
+Message: metadata_json does not contain 'obs' key.
+```
+
+This is expected — the obs capture patch was applied in this task. Existing historical trades do not have obs data.
+
+**Next steps:**
+
+- Wait for ≥50 new RL trades to accumulate after the obs-capture patch is deployed (typically 1-3 trading days at current rl_mppo cadence)
+- Re-run: `python scripts/analysis/rl_live_vs_train_obs_drift.py --live-days 7`
+- Expected output: PSI table across 25 market features (dims 0-24 of the 31-dim obs vector)
+
+**Features to watch for drift:**
+- `returns`, `ma_ratio_5/10/20` — sensitive to market regime shift
+- `bb_position`, `rsi` — normalization-sensitive; scaler drift would appear here
+- `volume_ratio` — futures mini vs 연결선물 liquidity difference may cause drift
+- `atr` — market volatility regime changes (tariff shock, policy changes)
+
+**Top-3 suspected causes (pre-diagnostic hypotheses):**
+1. **Scaler mismatch** — scaler was fit on `kospi200f_1m` (연결선물 101S6000) but live trading uses KOSPI200 mini (A05xxx). Price levels differ; volume levels differ significantly (1/9~1/42 ratio). Features like `volume_ratio` and `atr` may show large PSI.
+2. **Obs builder skip** — if `IndicatorEngine` does not inject all 25 `RL_FEATURE_COLUMNS` into `indicators`, the `build_rl_observation` fallback fills missing features with `0.0`, causing systematic mean suppression and PSI inflation.
+3. **Market regime drift** — the model was trained on 14 months of data ending Feb 2026. The April 2026 market environment (global tariff uncertainty, KOSPI200 level ~905-935 vs training mean ~350-400) may represent an out-of-distribution regime for several ratio features.
+
+---
+
 ## Self-Review Checklist
 
 - [x] Phase 1 scope: paper broker price guards only (no live broker changes)

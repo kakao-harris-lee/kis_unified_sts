@@ -4822,6 +4822,7 @@ class TradingOrchestrator:
             "exit_trail_activation_atr",
             "exit_trail_atr_multiplier",
             "exit_max_hold_days",
+            "obs",  # RL obs vector for live-vs-train drift diagnostics
         ):
             if key in signal_meta:
                 pos_metadata[key] = signal_meta[key]

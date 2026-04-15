@@ -528,6 +528,7 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
             "rl_regime_metric": regime_metric,
             "rl_risk_off": risk_off,
             "rl_risk_off_reason": risk_off_reason,
+            "obs": obs.tolist(),
         }
 
         # 행동 → Signal 변환
