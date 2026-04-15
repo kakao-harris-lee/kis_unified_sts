@@ -167,7 +167,10 @@ class VirtualBroker:
             now = datetime.now(timezone.utc)
             pst = price_source_time
             if pst.tzinfo is None:
-                pst = pst.replace(tzinfo=timezone.utc)
+                # Treat naive timestamps as local time and convert to UTC.
+                # Using .replace(tzinfo=...) would silently mislabel e.g. KST as UTC
+                # and make the age computation wrong by the UTC offset.
+                pst = pst.astimezone(timezone.utc)
             age_seconds = (now - pst).total_seconds()
             if age_seconds > self.config.max_price_staleness_seconds:
                 order = VirtualOrder(

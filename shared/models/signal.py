@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 
@@ -80,7 +80,7 @@ class Signal:
     price: float = 0.0
     quantity: int = 0
     confidence: float = 0.5
-    timestamp: datetime = field(default_factory=datetime.now)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -121,7 +121,7 @@ class ExitSignal:
     profit_pct: float = 0.0
     confidence: float = 0.5
     priority: int = 3
-    timestamp: datetime = field(default_factory=datetime.now)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     stage: str = ""
     high_since_entry: float = 0.0
     holding_minutes: int = 0

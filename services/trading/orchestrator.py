@@ -29,7 +29,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 from datetime import time as dt_time
 from enum import Enum
 from pathlib import Path
@@ -4547,7 +4547,7 @@ class TradingOrchestrator:
             signal_timestamp=signal_ts,
             quote_payload=quote_payload,
             cross_asset_payload=cross_payload,
-            now=datetime.now(),
+            now=datetime.now(timezone.utc),
         )
         execution_meta: dict[str, Any] = {
             "mode": "slippage_guard",
@@ -4606,7 +4606,7 @@ class TradingOrchestrator:
             is_buy=is_buy,
             signal_price=signal_price,
             quote_payload=retry_payload,
-            now=datetime.now(),
+            now=datetime.now(timezone.utc),
         )
         execution_meta["transitions"] += self._serialize_state_transitions(
             retry_decision.transitions

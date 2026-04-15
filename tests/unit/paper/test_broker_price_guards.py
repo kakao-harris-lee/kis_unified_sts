@@ -166,3 +166,47 @@ async def test_price_deviation_ignores_stale_observations(broker):
     )
     # No fresh reference → guard allows
     assert order.filled is True
+
+
+@pytest.mark.asyncio
+async def test_fresh_naive_local_time_accepted(broker):
+    """Naive datetime.now() (local time) must be interpreted as local, not UTC.
+
+    Regression for PR #120 timezone bug: if the broker mislabeled naive as UTC
+    on a KST server, a fresh signal would be treated as 9h in the future (negative
+    age) and the guard would silently always pass. Confirms the fix uses
+    astimezone(timezone.utc) which correctly handles naive-as-local.
+    """
+    # Use naive datetime.now() — what Signal.timestamp produced before the fix
+    naive_now = datetime.now()
+    order = await broker.submit_order(
+        symbol="005930",
+        side=OrderSide.BUY,
+        quantity=10,
+        order_type=OrderType.MARKET,
+        market_price=70000.0,
+        price_source_time=naive_now,
+    )
+    # Must accept (age ~= 0 seconds)
+    assert order.filled is True
+    assert order.rejection_reason == ""
+
+
+@pytest.mark.asyncio
+async def test_stale_naive_local_time_rejected(broker):
+    """Naive datetime 60s in the past must reject as stale_price.
+
+    Before the fix, this would have age ~ -9h (negative) on KST server
+    and silently pass — confirming the guard was dead code.
+    """
+    naive_stale = datetime.now() - timedelta(seconds=60)
+    order = await broker.submit_order(
+        symbol="005930",
+        side=OrderSide.BUY,
+        quantity=10,
+        order_type=OrderType.MARKET,
+        market_price=70000.0,
+        price_source_time=naive_stale,
+    )
+    assert order.filled is False
+    assert order.rejection_reason == "stale_price"
