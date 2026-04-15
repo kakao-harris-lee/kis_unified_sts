@@ -1928,6 +1928,21 @@ class TradingOrchestrator:
                 f"Failed to persist closed position {getattr(closed, 'id', '?')[:8]}: {e}"
             )
 
+    def _record_running_totals(self, closed_position) -> None:
+        """Publish cross-session cumulative counters on each close.
+
+        Idempotent per close event (increments only; no session reset).
+        """
+        if self._state_publisher is None:
+            return
+        try:
+            pnl = getattr(closed_position, "unrealized_pnl", 0.0) or 0.0
+            self._state_publisher.increment_running_totals(
+                pnl=float(pnl), trades=1, win=bool(pnl > 0),
+            )
+        except (AttributeError, ValueError, TypeError) as e:
+            logger.debug("record_running_totals skipped: %s", e)
+
     ACCUMULATION_REDIS_KEY = "system:accumulation:latest"
 
     def _refresh_accumulation_candidates(self) -> bool:
@@ -3025,6 +3040,7 @@ class TradingOrchestrator:
                 self.total_pnl += closed.unrealized_pnl
                 if self._state_publisher:
                     self._state_publisher.publish_position_closed(closed)
+                    self._record_running_totals(closed)
         self._sync_open_positions_metric()
 
     async def _cleanup_resources(self):
@@ -5250,6 +5266,7 @@ class TradingOrchestrator:
         # Publish
         if self._state_publisher:
             self._state_publisher.publish_position_closed(closed)
+            self._record_running_totals(closed)
             self._state_publisher.publish_signal(signal, "exit", True)
             self._metrics.record_trade(
                 pnl=pnl, win=(pnl >= 0), strategy=getattr(signal, "strategy", "default")

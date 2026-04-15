@@ -182,3 +182,47 @@ def test_equity_timeline_multiple_days_sorted(publisher, reader):
 def test_equity_timeline_empty_when_no_data(reader):
     timeline = reader.get_equity_timeline(days=30)
     assert timeline == []
+
+
+# ---------------------------------------------------------------------------
+# Tests: orchestrator running totals integration
+# ---------------------------------------------------------------------------
+
+def test_orchestrator_record_running_totals_helper_increments_publisher():
+    """_record_running_totals calls publisher.increment_running_totals with pnl/win."""
+    from unittest.mock import MagicMock
+    from datetime import datetime
+
+    from services.trading.orchestrator import TradingConfig, TradingOrchestrator
+    from shared.models.position import Position, PositionSide
+
+    cfg = TradingConfig(
+        asset_class="stock",
+        strategy_name="momentum_breakout",
+        initial_capital=100_000_000.0,
+        order_amount_per_trade=1_000_000.0,
+    )
+    orch = TradingOrchestrator(cfg)
+    orch._state_publisher = MagicMock()
+
+    closed = Position(
+        id="p1",
+        code="005930",
+        name="TEST",
+        strategy="momentum_breakout",
+        side=PositionSide.LONG,
+        entry_price=70000.0,
+        quantity=10,
+        entry_time=datetime(2026, 4, 15, 9, 0),
+    )
+    closed.exit_price = 71000.0
+    closed.current_price = 71000.0  # orchestrator sets this on close
+
+    orch._record_running_totals(closed)
+
+    orch._state_publisher.increment_running_totals.assert_called_once()
+    call = orch._state_publisher.increment_running_totals.call_args
+    assert call.kwargs["trades"] == 1
+    assert call.kwargs["win"] is True
+    # pnl = (71000-70000)*10 = 10000 (using unrealized_pnl property)
+    assert call.kwargs["pnl"] == pytest.approx(10000.0)
