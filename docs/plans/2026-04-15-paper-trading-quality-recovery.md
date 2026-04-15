@@ -1424,6 +1424,37 @@ This is expected — the obs capture patch was applied in this task. Existing hi
 
 ---
 
+### Task 2.1 — Scaler Audit (2026-04-15)
+
+**Objective:** Validate `models/futures/rl/scaler.joblib` against current `RL_FEATURE_COLUMNS` (expected 25 dims per CLAUDE.md error note).
+
+**Script created:** `scripts/analysis/rl_scaler_audit.py`
+
+**Audit Results:**
+
+```
+Scaler type: MinMaxScaler
+Scaler n_features_in_ = 25
+RL_FEATURE_COLUMNS    = 25
+OK: dimensions match
+OK: scaler values finite, scale_ > 0
+Sample scaled obs: min=0.000 max=1.000 |z|_max=1.000
+OK: sample scaled obs within [0,1] range
+```
+
+**Verdict:** ✅ **SCALER IS CONSISTENT**
+
+- Dimensions: 25 (matches current RL_FEATURE_COLUMNS, NOT 31 as stated in CLAUDE.md)
+- Bounds: MinMaxScaler with proper [0,1] normalization
+- Finite values: mean_ and scale_ all valid
+- End-to-end test: sample observation from `data/kospi200f_1m_clean.csv` → RLFeatureCalculator → scaler produces values in [0,1]
+
+**Note:** CLAUDE.md line "31차원 obs" is incorrect — actual obs is 25 dims (10 base + 15 RL extra features). Regime features (3 dims) are optional and not included in scaler training.
+
+**Next task:** Task 2.2 (Obs builder parity regression test).
+
+---
+
 ## Self-Review Checklist
 
 - [x] Phase 1 scope: paper broker price guards only (no live broker changes)
