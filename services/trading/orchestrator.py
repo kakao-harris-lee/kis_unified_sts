@@ -1365,15 +1365,25 @@ class TradingOrchestrator:
             try:
                 from shared.paper import VirtualBroker
                 from shared.paper.config import PaperTradingConfig
+                from shared.config.loader import ConfigLoader
+
+                # Load paper broker guard parameters from execution.yaml
+                exec_cfg = ConfigLoader.load("execution.yaml") or {}
+                paper_broker_cfg = exec_cfg.get("paper_broker", {}) or {}
 
                 paper_config = PaperTradingConfig(
                     initial_balance=self.config.initial_capital,
                     commission_rate=self.config.paper_commission_rate,
                     slippage_rate=self.config.paper_slippage_rate,
-                    # Guard defaults (YAML override in Task 1.4)
-                    max_price_staleness_seconds=30.0,
-                    max_price_deviation_pct=0.10,
-                    reference_price_lookback_minutes=5,
+                    max_price_staleness_seconds=float(
+                        paper_broker_cfg.get("max_price_staleness_seconds", 30.0)
+                    ),
+                    max_price_deviation_pct=float(
+                        paper_broker_cfg.get("max_price_deviation_pct", 0.10)
+                    ),
+                    reference_price_lookback_minutes=int(
+                        paper_broker_cfg.get("reference_price_lookback_minutes", 5)
+                    ),
                 )
                 self._paper_broker = VirtualBroker(
                     initial_balance=self.config.initial_capital,

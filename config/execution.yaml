@@ -151,3 +151,17 @@ futures_slippage_control:
     cross_asset:
       enabled: ${FUTURES_PAPER_CROSS_ASSET_ENABLED:false}
       max_spread_ticks: ${FUTURES_PAPER_CROSS_ASSET_MAX_SPREAD_TICKS:6}
+
+# Paper trading broker price guard configuration
+# Applied to VirtualBroker to validate fill prices against recent market data
+paper_broker:
+  # Price source freshness guard — reject fills whose price source time
+  # is older than this many seconds (0 disables guard)
+  max_price_staleness_seconds: 30.0
+
+  # Price deviation guard — reject fills deviating more than this fraction
+  # from reference median price (0 disables guard)
+  max_price_deviation_pct: 0.10
+
+  # Lookback window (minutes) for computing reference median price
+  reference_price_lookback_minutes: 5
