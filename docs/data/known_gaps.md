@@ -12,7 +12,9 @@
   2. `cp models/futures/rl/mppo_best_5m_backup.zip models/futures/rl/mppo_best/best_model.zip`
   3. MD5 확인: `16e855323a5dd50e4ce6f28bf5042974` (Feb 챔피언 일치)
 - **재발 방지 제안**:
-  - 학습 스크립트에서 `mppo_best/` 경로 write 시 경고/차단 (hybrid 등 실험은 `mppo_challenger/`, `mppo_experiment_*/`로 한정)
+  - ✅ **Implemented (2026-04-15):** `shared/ml/rl/model_paths.py::check_save_path` —
+    `scripts/training/train_rl.py`는 `mppo_best/` 경로에 쓰려면 `--promote` 플래그 필수.
+    실험은 `mppo_challenger/` 또는 `mppo_experiment_<tag>/` 사용.
   - `models/futures/rl/mppo_best/best_model.zip`에 파일 권한 `r--r--r--` 적용 후 의도적 promote 시에만 쓰기 권한 부여
   - PR 머지 시 모델 경로 변경 감지 hook (pre-commit) 추가
 
