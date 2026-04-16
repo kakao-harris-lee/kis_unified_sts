@@ -79,7 +79,7 @@ def load_rl_scaler(scaler_path: str, model_path: str) -> Any | None:
     if env_override:
         effective_path = env_override
     # 2. Explicit scaler_path argument
-    elif scaler_path.strip():
+    elif scaler_path and scaler_path.strip():
         effective_path = scaler_path.strip()
     # 3. Auto-detect from model path
     else:
