@@ -34,6 +34,7 @@ sys.path.insert(0, str(project_root))
 
 from shared.config import ConfigLoader
 from shared.ml.rl.features import RLFeatureCalculator, RL_FEATURE_COLUMNS
+from shared.ml.rl.model_paths import check_save_path, RLPathGuardError
 
 logger = logging.getLogger(__name__)
 
@@ -504,6 +505,15 @@ def main():
         action="store_true",
         help="Scaler만 저장 (학습/평가 건너뛰기)",
     )
+    parser.add_argument(
+        "--promote",
+        action="store_true",
+        help=(
+            "프로덕션 챔피언 경로(mppo_best/)에 쓰기를 허용. "
+            "의도적 promote 시에만 사용. "
+            "실험은 mppo_challenger/ 또는 mppo_experiment_<tag>/ 사용."
+        ),
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -526,9 +536,21 @@ def main():
     train_aux, test_aux = precompute_tft_aux(args.config)
 
     if not args.evaluate_only:
-        from shared.ml.rl.trainer import RLTrainer
+        from shared.ml.rl.trainer import RLTrainer, ALGO_REGISTRY
 
         trainer = RLTrainer(config_path=args.config)
+
+        # 챔피언 경로 쓰기 가드: mppo_best/ 경로는 --promote 없이 쓰기 불가
+        # (2026-04-14 사고 재발 방지 — docs/data/known_gaps.md 참조)
+        promote_flag = bool(getattr(args, "promote", False))
+        algos_to_check = list(ALGO_REGISTRY) if args.algo == "all" else [args.algo]
+        for _algo in algos_to_check:
+            effective_path = trainer.save_dir / f"{_algo}_best"
+            try:
+                check_save_path(effective_path, promote=promote_flag)
+            except RLPathGuardError as e:
+                logger.error(str(e))
+                sys.exit(2)
 
         if args.algo == "all":
             models = trainer.train_all(
