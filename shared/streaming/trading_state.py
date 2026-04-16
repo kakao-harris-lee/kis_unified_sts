@@ -110,7 +110,11 @@ class TradingStatePublisher:
     # -- Positions ------------------------------------------------------------
 
     def publish_position_opened(self, position: Any) -> None:
-        """Add a newly opened position to the positions hash."""
+        """Publish a position-open event.
+
+        Uses `position.entry_time` for the timestamp field (not wall-clock).
+        If entry_time is naive, it is assumed to be UTC.
+        """
         try:
             r = _get_redis()
             key = _key(_KEY_POSITIONS, self._asset)
@@ -123,7 +127,12 @@ class TradingStatePublisher:
             logger.debug("Failed to publish position open", exc_info=True)
 
     def publish_position_closed(self, position: Any) -> None:
-        """Remove from positions hash and push to trades list."""
+        """Push a position-close event to `trading:{asset}:trades` LIST.
+
+        Uses `position.exit_time` for the timestamp (fallback to utcnow if
+        exit_time is unset). Naive timestamps are assumed to be UTC.
+        LIST is capped at 500 entries.
+        """
         try:
             r = _get_redis()
             pos_key = _key(_KEY_POSITIONS, self._asset)
@@ -173,7 +182,15 @@ class TradingStatePublisher:
         signal_type: str,
         executed: bool,
     ) -> None:
-        """Push a signal event to the signals list."""
+        """Push a trading signal to `trading:{asset}:signals` LIST.
+
+        The signal's own timestamp is serialized (not wall-clock at publish time)
+        so downstream consumers see the actual signal generation time. If the
+        signal's timestamp is naive, it is assumed to be UTC (see _tz_aware_iso).
+
+        TTL: LIST is capped at 200 entries and refreshed to STATUS_TTL_SECONDS
+        on every write.
+        """
         try:
             r = _get_redis()
             key = _key(_KEY_SIGNALS, self._asset)
