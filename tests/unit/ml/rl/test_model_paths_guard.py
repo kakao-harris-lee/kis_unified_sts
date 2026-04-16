@@ -51,3 +51,34 @@ class TestCheckSavePath:
 
     def test_production_champion_dir_constant(self):
         assert PRODUCTION_CHAMPION_DIR == Path("models/futures/rl/mppo_best/")
+
+    def test_nested_under_challenger_allowed(self):
+        """트레이너가 save_dir에 `{algo}_best` 서브디렉토리를 덧붙여도 OK.
+
+        이 케이스가 없으면 `save_dir=mppo_challenger/`로 설정해도
+        `effective_path = mppo_challenger/mppo_best`가 되어 Unknown으로 거부됨.
+        """
+        check_save_path(
+            Path("models/futures/rl/mppo_challenger/mppo_best"),
+            promote=False,
+        )
+
+    def test_nested_under_experiment_allowed(self):
+        check_save_path(
+            Path("models/futures/rl/mppo_experiment_retrain_2026_04/mppo_best"),
+            promote=False,
+        )
+
+    def test_nested_under_champion_rejected_without_promote(self):
+        """mppo_best/ 하위 경로 쓰기도 --promote 필수."""
+        with pytest.raises(RLPathGuardError, match="production champion"):
+            check_save_path(
+                Path("models/futures/rl/mppo_best/sub_run"),
+                promote=False,
+            )
+
+    def test_nested_under_champion_allowed_with_promote(self):
+        check_save_path(
+            Path("models/futures/rl/mppo_best/sub_run"),
+            promote=True,
+        )

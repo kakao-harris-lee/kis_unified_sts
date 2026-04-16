@@ -25,11 +25,23 @@ CHALLENGER_DIR = Path("models/futures/rl/mppo_challenger/")
 EXPERIMENT_PREFIX = "mppo_experiment_"
 
 
+def _is_under(child: Path, parent: Path) -> bool:
+    """Return True if child == parent or child is strictly inside parent."""
+    try:
+        child.relative_to(parent)
+        return True
+    except ValueError:
+        return False
+
+
 def check_save_path(save_dir: Path, *, promote: bool = False) -> None:
     """Validate that save_dir is an approved RL model write target.
 
     Args:
         save_dir: Directory where the training run will write best_model.zip.
+                 May be either the approved directory itself or any subdirectory
+                 under it (e.g. ``mppo_challenger/mppo_best`` is allowed because
+                 ``mppo_challenger`` is approved).
         promote: True only when operator explicitly passes --promote at CLI.
                  Required to write to the production champion directory.
 
@@ -39,20 +51,28 @@ def check_save_path(save_dir: Path, *, promote: bool = False) -> None:
     resolved = Path(save_dir).resolve()
     champion_resolved = PRODUCTION_CHAMPION_DIR.resolve()
     challenger_resolved = CHALLENGER_DIR.resolve()
+    rl_root = champion_resolved.parent  # models/futures/rl/
 
-    if resolved == champion_resolved:
+    # Champion path: writes anywhere under mppo_best/ require --promote.
+    if _is_under(resolved, champion_resolved):
         if not promote:
             raise RLPathGuardError(
-                f"Refusing to write to production champion path {save_dir}. "
+                f"Refusing to write under production champion path {save_dir}. "
                 f"Use --promote to explicitly promote, or pick "
                 f"{CHALLENGER_DIR} / {EXPERIMENT_PREFIX}<tag>/ for experiments."
             )
         return
 
-    if resolved == challenger_resolved:
+    # Challenger path: writes anywhere under mppo_challenger/ OK.
+    if _is_under(resolved, challenger_resolved):
         return
 
-    if resolved.name.startswith(EXPERIMENT_PREFIX) and resolved.parent == champion_resolved.parent:
+    # Experiment path: direct sibling (mppo_experiment_<tag>) or anywhere under it.
+    try:
+        rel = resolved.relative_to(rl_root)
+    except ValueError:
+        rel = None
+    if rel is not None and rel.parts and rel.parts[0].startswith(EXPERIMENT_PREFIX):
         return
 
     raise RLPathGuardError(
