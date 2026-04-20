@@ -282,3 +282,43 @@ The very high Sharpe (11.39) and WR (66.8%) are **not interpretable as genuine o
 ## Status
 
 **PLAN-ONLY.** Implementation is a follow-up PR. Parent plan: `docs/plans/2026-04-15-paper-trading-quality-recovery.md` (Task 2.5 decision).
+
+### Task 2.1 — Latest Data Retraining (completed 2026-04-16)
+
+**Config:** `config/ml/rl_mppo_challenger_2026_04.yaml`
+- Data: ClickHouse `kospi.kospi200f_1m`, symbol `101S6000`, 193 days total, 86 valid
+- Mirror augmentation: 68 → 136 train days, 18 test days
+- Hyperparameters: identical to production champion (rl_mppo.yaml)
+- Timesteps: 5,000,000 (took 1h 52m on CPU at ~744 FPS)
+
+**Training trajectory:**
+- Early eval reward: 17-63 (timesteps 10K-60K)
+- Mid-training: 30-85 (reward stabilized)
+- End-of-training: avg ~55-65 reward/episode, positive
+
+**Artifacts:**
+- Best model: `models/futures/rl/mppo_challenger/mppo_best/best_model.zip` (saved at timestep ~4.8M)
+- Final model: `models/futures/rl/mppo_challenger/mppo_final.zip`
+- Scaler: `models/futures/rl/mppo_challenger/scaler.joblib` (re-fit on latest data)
+
+**Rolling backtest (2026-03-04 to 2026-04-14, production scaler):**
+
+| Metric | Champion | Challenger | Delta |
+|---|---|---|---|
+| Sharpe | 14.91 | 13.25 | -11% |
+| Win rate | 56.8% | 52.8% | -4.0pp |
+| R/R ratio | — | 1.70 | — |
+| Max drawdown | — | -5.14% | — |
+| Trades | — | 2,174 | — |
+| Daily P&L | — | +24/-6 | — |
+
+**Assessment:**
+- Challenger passes Phase 3 Task 3.1 quantitative gates (Sharpe > 1.5, WR > 40%, avg PnL > 0)
+- Challenger is slightly weaker than champion (-11% Sharpe, -4pp WR)
+- Both models show very high Sharpe (14-15) under the backtest evaluator — this may overstate real-world performance (evaluation methodology note)
+- **Recommendation:** proceed to Phase 3 Task 3.2 paper A/B (5-day live comparison) before promotion decision
+
+**Next steps:**
+- Deploy challenger as `RL_MPPO_MODEL_PATH=models/futures/rl/mppo_challenger/mppo_best/best_model.zip` for one of two parallel sessions
+- Compare vs champion over 5 trading days
+- Promote only if challenger avg PnL > 0 in live paper
