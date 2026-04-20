@@ -1,0 +1,81 @@
+from unittest.mock import AsyncMock
+
+import fakeredis.aioredis
+import pytest
+
+from shared.news.base import NewsItem
+from shared.news.publisher import ClickHouseNewsWriter, NewsStreamPublisher
+
+
+def _item(news_id="x"):
+    return NewsItem(
+        news_id=news_id,
+        source="yonhap",
+        published_at_ms=1_000_000,
+        received_at_ms=1_000_100,
+        title="T",
+        body="B",
+        url="u",
+        source_version="yonhap-v1",
+        lang="ko",
+        keywords=["kw1"],
+    )
+
+
+@pytest.fixture
+def redis():
+    return fakeredis.aioredis.FakeRedis()
+
+
+@pytest.mark.asyncio
+async def test_publisher_xadd_produces_entry(redis):
+    pub = NewsStreamPublisher(redis, stream="stream:news.raw", maxlen=100)
+    await pub.publish(_item("a"))
+    entries = await redis.xrange("stream:news.raw")
+    assert len(entries) == 1
+    msg_id, fields = entries[0]
+    # Redis returns bytes by default
+    assert fields[b"news_id"] == b"a"
+    assert fields[b"source"] == b"yonhap"
+
+
+@pytest.mark.asyncio
+async def test_publisher_serializes_keywords_as_json(redis):
+    pub = NewsStreamPublisher(redis, stream="stream:news.raw", maxlen=100)
+    await pub.publish(_item("a"))
+    entries = await redis.xrange("stream:news.raw")
+    fields = entries[0][1]
+    assert b"keywords_json" in fields
+    assert fields[b"keywords_json"] == b'["kw1"]'
+
+
+@pytest.mark.asyncio
+async def test_publisher_respects_maxlen(redis):
+    pub = NewsStreamPublisher(redis, stream="stream:news.raw", maxlen=2)
+    for i in range(5):
+        await pub.publish(_item(f"id_{i}"))
+    entries = await redis.xrange("stream:news.raw")
+    assert len(entries) <= 2
+
+
+@pytest.mark.asyncio
+async def test_ch_writer_batches_and_flushes_on_size():
+    ch_client = AsyncMock()
+    writer = ClickHouseNewsWriter(ch_client, batch_size=3, flush_interval_seconds=60)
+    await writer.enqueue(_item("a"))
+    await writer.enqueue(_item("b"))
+    ch_client.execute.assert_not_awaited()
+    await writer.enqueue(_item("c"))
+    # 3 items triggered flush
+    ch_client.execute.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_ch_writer_flush_explicit():
+    ch_client = AsyncMock()
+    writer = ClickHouseNewsWriter(ch_client, batch_size=100, flush_interval_seconds=60)
+    await writer.enqueue(_item("a"))
+    await writer.flush()
+    ch_client.execute.assert_awaited_once()
+    call_sql = ch_client.execute.await_args.args[0]
+    assert "INSERT INTO kospi.news_raw" in call_sql
