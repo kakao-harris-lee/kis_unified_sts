@@ -99,7 +99,9 @@ def _main() -> int:
     config = ClickHouseConfig.from_env()
     ch_client = get_clickhouse_client(config)
     sync_client = ch_client.get_sync_client()
-    runner = MigrationRunner(client=sync_client, migrations_dir=Path(args.migrations_dir))
+    runner = MigrationRunner(
+        client=sync_client, migrations_dir=Path(args.migrations_dir)
+    )
     applied = runner.apply_all()
     print(f"applied: {applied}")
     return 0
