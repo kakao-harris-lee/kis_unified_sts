@@ -5124,7 +5124,11 @@ class TradingOrchestrator:
     async def _submit_exit_order(
         self, code: str, is_buy: bool, quantity: int, price: float
     ) -> tuple[bool, float]:
-        """Submit exit order to appropriate broker."""
+        """Submit exit order to appropriate broker.
+
+        Exit orders use wall-clock UTC as price_source_time because the exit
+        price is the current market quote at signal time (not a cached snapshot).
+        """
         if self.config.paper_trading and self._paper_broker:
             # Paper trading
             try:
@@ -5138,6 +5142,7 @@ class TradingOrchestrator:
                 side=PaperOrderSide.BUY if is_buy else PaperOrderSide.SELL,
                 quantity=quantity,
                 price=price,
+                price_source_time=datetime.now(timezone.utc),
             )
             is_filled = bool(getattr(order, "filled", True))
             fill_price = float(getattr(order, "fill_price", price) or price)
