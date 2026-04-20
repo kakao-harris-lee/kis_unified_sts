@@ -8,6 +8,11 @@ import logging
 import signal
 from typing import Any
 
+from services.monitoring.metrics import (
+    record_news_collected,
+    record_news_duplicate,
+    record_news_error,
+)
 from shared.news.base import NewsSource
 from shared.news.dedupe import NewsDedupe
 from shared.news.publisher import ClickHouseNewsWriter, NewsStreamPublisher
@@ -65,15 +70,18 @@ class NewsCollectorDaemon:
             try:
                 async for item in source.fetch():
                     if await self.dedupe.is_duplicate(item.news_id):
+                        record_news_duplicate(source.name)
                         continue
                     await self.dedupe.mark_seen(item.news_id)
                     await self.publisher.publish(
                         item, max_body_chars=self.body_truncate_chars
                     )
+                    record_news_collected(source.name)
                     await self.ch_writer.enqueue(item)
             except asyncio.CancelledError:
                 raise
             except Exception:
+                record_news_error(source.name, "fetch_cycle")
                 logger.exception("source=%s fetch cycle failed", source.name)
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(

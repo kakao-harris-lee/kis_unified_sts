@@ -11,6 +11,8 @@ import sys
 from datetime import UTC, datetime
 from typing import Any
 
+from services.monitoring.metrics import record_macro_collected
+
 logger = logging.getLogger(__name__)
 
 
@@ -74,6 +76,7 @@ async def collect_us_session(
     snap = await yahoo_source.fetch_us_close_snapshot()
     await _publish_snapshot(redis, stream, maxlen, snap)
     await _write_ch(ch_client, snap)
+    record_macro_collected(snap.session)
     return 0
 
 
@@ -88,6 +91,7 @@ async def collect_fx_session(
     snap = await ecos_source.fetch_fx_snapshot()
     await _publish_snapshot(redis, stream, maxlen, snap)
     await _write_ch(ch_client, snap)
+    record_macro_collected(snap.session)
     return 0
 
 
