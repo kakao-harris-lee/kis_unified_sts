@@ -93,10 +93,13 @@ def _main() -> int:
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s"
     )
-    from shared.db.client import ClickHouseClient  # type: ignore
+    from shared.db.client import get_clickhouse_client
+    from shared.db.config import ClickHouseConfig  # type: ignore
 
-    client = ClickHouseClient.get_instance().sync_client
-    runner = MigrationRunner(client=client, migrations_dir=Path(args.migrations_dir))
+    config = ClickHouseConfig.from_env()
+    ch_client = get_clickhouse_client(config)
+    sync_client = ch_client.get_sync_client()
+    runner = MigrationRunner(client=sync_client, migrations_dir=Path(args.migrations_dir))
     applied = runner.apply_all()
     print(f"applied: {applied}")
     return 0
