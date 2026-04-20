@@ -1,21 +1,22 @@
 # Phase 1 — 데이터 인프라 (Week 1-2)
 
-**Status:** Draft (needs user review)
+**Status:** Approved (2026-04-20, Q1-Q6 확정 반영)
 **Parent:** `docs/plans/2026-04-20-futures-paradigm-master.md`
 **Target branch:** `feat/futures-paradigm-phase1`
-**Depends on:** 마스터 spec의 Q1-Q4 답변 확정
 **Blocks:** Phase 2, 3
+
+**주요 변경 (2026-04-20):** Q1-D 결정으로 `foreign_flow_collector`, `stream:foreign.flow.raw`, `investor_flow_raw`, `shared/flow/`, `config/flow_sources.yaml` 모두 삭제. Q3 결정으로 Investing.com 소스 삭제.
 
 ---
 
 ## 1. 목표
 
-원본 지침서 §2 ~ §4, §6, §10의 **수집/저장 레이어** 만 구현한다. 스코어링/시그널 생성/주문은 건드리지 않는다. Phase 1 완료 시 신규 시스템은 "읽기 전용 데이터 수집기"로만 동작한다.
+원본 지침서 §2 ~ §4, §10의 **수집/저장 레이어** 만 구현한다 (§6 외국인 수급은 Q1-D로 drop). 스코어링/시그널 생성/주문은 건드리지 않는다. Phase 1 완료 시 신규 시스템은 "읽기 전용 데이터 수집기"로만 동작한다.
 
 **완료 정의:**
-- 4개 신규 서비스 데몬이 24시간 무중단으로 동작
-- 6개 ClickHouse 테이블에 실데이터 적재 (스코어 전 raw만)
-- 5개 Redis stream이 publish/consumer group 준비 완료
+- 2개 신규 서비스 (news_collector 데몬 + macro_overnight 배치) 48시간 무중단 동작
+- 5개 ClickHouse 테이블에 실데이터 적재 (scored 전 raw만)
+- 4개 Redis stream이 publish/consumer group 준비 완료
 - 기존 `rl_mppo` 운용은 **영향 없음** (사이드카 방식)
 
 ---
@@ -26,13 +27,14 @@
 
 | Stream | Publisher | Consumer (Phase 2+) | Maxlen | Approx Volume |
 |--------|-----------|---------------------|--------|---------------|
-| `stream:news.raw` | `news_collector` | `news_scorer` | 100,000 | 500-2,000/일 |
-| `stream:foreign.flow.raw` | `foreign_flow_collector` | `foreign_flow_aggregator` | 50,000 | 50-100/일 (10분 단위) |
-| `stream:macro.overnight` | `macro_overnight_collector` | `decision_engine` | 5,000 | 20-50/일 |
+| `stream:news.raw` | `news_collector` | `news_scorer` (P2) | 100,000 | 500-2,000/일 |
+| `stream:macro.overnight` | `macro_overnight_collector` | `decision_engine` (P3) | 5,000 | ~20/일 |
 | `stream:signal.candidate` | (Phase 3) | (Phase 3) | 10,000 | TBD |
 | `stream:signal.final` | (Phase 3) | (Phase 3) | 10,000 | TBD |
 
-**정의만 하고 publish는 Phase 3에서 시작하는 스트림**: `stream:signal.*`, `stream:order.*`, `stream:risk.event`. Phase 1은 타입/스키마만 확정.
+**정의만 하고 publish는 Phase 3/4에서 시작하는 스트림**: `stream:signal.*`, `stream:order.*`, `stream:risk.event`. Phase 1은 타입/스키마만 확정.
+
+**삭제 (Q1-D):** ~~`stream:foreign.flow.raw`~~ — Setup B drop으로 불필요.
 
 ### 2.2 `stream:news.raw` 메시지 스키마 (확정)
 
@@ -56,28 +58,7 @@
 - 본문 길이 제한: UTF-8 2,000자 초과 시 절단 + `...[truncated]` 추가
 - 결측 필드: `published_at_ms`는 `received_at_ms`로 폴백, 로그에 기록
 
-### 2.3 `stream:foreign.flow.raw` 메시지 스키마 (확정)
-
-**마스터 Q1 결정 전제: KRX Open API 기반 10분 지연 허용.**
-
-```python
-{
-    "ts_ms": int,                         # 데이터 시점 (예: 09:00~09:09 구간의 09:10 발표)
-    "received_at_ms": int,
-    "source": str,                        # "krx_openapi_v1"|"kiwoom_v1"
-    "asset_class": str,                   # "futures"|"stocks_aggregate"
-    "symbol": str,                        # "101S6000" (선물) 또는 "KOSPI200_INDEX"
-    "foreign_net_contracts": int,         # 순매수 (+=매수 우위)
-    "institution_net_contracts": int,
-    "individual_net_contracts": int,
-    "cumulative_foreign_today": int,
-    "bucket_minutes": int,                # 10 (KRX) | 1 (키움)
-}
-```
-
-**금지:** KIS `H0STCNT0` 틱을 쪼개 투자자별을 추정하지 않는다 (데이터 부재 — 마스터 §Q1).
-
-### 2.4 `stream:macro.overnight` 메시지 스키마 (확정)
+### 2.3 `stream:macro.overnight` 메시지 스키마 (확정)
 
 ```python
 {
@@ -108,7 +89,7 @@
 - `overnight_us_close`: 매일 06:30 KST (미국장 마감 06:00 EDT + 여유)
 - `overnight_eurex_close`: 매일 06:00 KST (Eurex KOSPI 야간 05:00 KST 마감)
 
-### 2.5 Consumer Group 규약
+### 2.4 Consumer Group 규약
 
 - Group 이름: `"{service}-v1"` (예: `"news_scorer-v1"`). 버전 업 시 `-v2`로 신규 생성 (offset 리셋).
 - Consumer 이름: `"{service}-{hostname}-{pid}"` — 재시작 시 재사용 가능.
@@ -148,24 +129,9 @@ ORDER BY (published_at, news_id)
 PARTITION BY toYYYYMM(published_at)
 TTL toDateTime(published_at) + INTERVAL 2 YEAR;
 
--- 2. 외국인/기관/개인 수급 (10분 단위 또는 소스별)
-CREATE TABLE IF NOT EXISTS kospi.investor_flow_raw (
-    ts DateTime64(3, 'UTC'),
-    received_at DateTime64(3, 'UTC'),
-    source LowCardinality(String),
-    asset_class LowCardinality(String),
-    symbol LowCardinality(String),
-    foreign_net_contracts Int32,
-    institution_net_contracts Int32,
-    individual_net_contracts Int32,
-    cumulative_foreign_today Int32,
-    bucket_minutes UInt8
-) ENGINE = MergeTree()
-ORDER BY (symbol, ts)
-PARTITION BY toYYYYMM(ts)
-TTL toDateTime(ts) + INTERVAL 1 YEAR;
+-- (삭제됨: investor_flow_raw — Q1-D 결정)
 
--- 3. 매크로 야간 스냅샷
+-- 2. 매크로 야간 스냅샷
 CREATE TABLE IF NOT EXISTS kospi.macro_overnight (
     ts DateTime64(3, 'UTC'),
     session LowCardinality(String),
@@ -186,14 +152,14 @@ ORDER BY (session, toDate(ts))
 PARTITION BY toYYYYMM(ts)
 TTL toDateTime(ts) + INTERVAL 5 YEAR;
 
--- 4. 마이그레이션 이력
+-- 3. 마이그레이션 이력
 CREATE TABLE IF NOT EXISTS kospi.schema_migrations (
     version String,
     applied_at DateTime DEFAULT now(),
     checksum String
 ) ENGINE = MergeTree() ORDER BY version;
 
--- 5. (스키마 예약) 시그널 전체 이력 — Phase 3에서 채움 시작
+-- 4. (스키마 예약) 시그널 전체 이력 — Phase 3에서 채움 시작
 CREATE TABLE IF NOT EXISTS kospi.signals_all (
     signal_id String,
     generated_at DateTime64(3, 'UTC'),
@@ -211,7 +177,7 @@ ORDER BY (generated_at, signal_id)
 PARTITION BY toYYYYMM(generated_at)
 TTL toDateTime(generated_at) + INTERVAL 5 YEAR;
 
--- 6. (스키마 예약) 일일 성과 — Phase 4에서 채움 시작
+-- 5. (스키마 예약) 일일 성과 — Phase 4에서 채움 시작
 CREATE TABLE IF NOT EXISTS kospi.daily_performance (
     trade_date Date,
     n_signals UInt16,
@@ -235,7 +201,6 @@ ORDER BY trade_date;
 | 테이블 | TTL | 이유 |
 |--------|-----|------|
 | `news_raw` | 2년 | 과거 이벤트 분석 |
-| `investor_flow_raw` | 1년 | 백테스트 충분 |
 | `macro_overnight` | 5년 | 저용량, 장기 상관 분석 |
 | `signals_all` | 5년 | Edge 추적 |
 | `daily_performance` | 무기한 | 연간 P&L |
@@ -252,10 +217,8 @@ kis_unified_sts/
 │   ├── news_collector/
 │   │   ├── __init__.py
 │   │   └── main.py                 # 데몬 엔트리포인트
-│   ├── foreign_flow_collector/
-│   │   └── main.py
 │   └── macro_overnight_collector/
-│       └── main.py
+│       └── main.py                 # cron 호출용 배치 스크립트
 ├── shared/
 │   ├── news/                       # 신규 모듈
 │   │   ├── __init__.py
@@ -266,13 +229,7 @@ kis_unified_sts/
 │   │       ├── dart.py             # DART 공시 Open API (기존 DARTDataCollector 재활용)
 │   │       ├── yonhap.py           # 연합뉴스 RSS
 │   │       ├── reuters.py          # Reuters Korea RSS
-│   │       ├── investing.py        # Investing.com API
 │   │       └── mk_adapter.py       # 기존 MKStockNewsCollector를 NewsSource 인터페이스로 어댑트
-│   ├── flow/                       # 신규 모듈
-│   │   ├── __init__.py
-│   │   ├── base.py                 # FlowSource ABC
-│   │   └── sources/
-│   │       └── krx_openapi.py      # KRX 투자자별 매매동향 (10분 지연)
 │   └── macro/                      # 신규 모듈
 │       ├── __init__.py
 │       └── sources/
@@ -280,9 +237,10 @@ kis_unified_sts/
 │           └── ecos.py             # 한국은행 ECOS API (USDKRW)
 └── config/
     ├── news_sources.yaml           # 신규
-    ├── flow_sources.yaml           # 신규
     └── macro_sources.yaml          # 신규
 ```
+
+**삭제됨 (Q1-D, Q3 결정):** `services/foreign_flow_collector/`, `shared/flow/`, `config/flow_sources.yaml`, `shared/news/sources/investing.py`.
 
 ### 4.2 Source 인터페이스 (계약)
 
@@ -393,34 +351,14 @@ class NewsCollectorDaemon:
 | 소스 | 방식 | 주요 이슈 | 기존 자산 |
 |------|------|-----------|----------|
 | DART | `DARTDataCollector` 재활용 + 공시 뉴스 매핑 | 30초 polling, rcept_no 중복 제거 | `shared/llm/collectors.py:585` |
-| Yonhap | RSS `https://www.yna.co.kr/rss/economy.xml` | robots.txt 준수, 10초 간격 | 신규 |
+| Yonhap | RSS `https://www.yna.co.kr/rss/economy.xml` | robots.txt 준수, 60초 간격 | 신규 |
 | Reuters | RSS `https://kr.reuters.com/rss/businessNews` | 영어/한국어 혼재, `lang` 태깅 | 신규 |
-| Investing | Investing.com API (계약 필요) | API key 필수, Q4 결정 | 신규 |
 | MK | `MKStockNewsCollector` 어댑트 | 기존 keyword-sentiment 제거, raw만 발행 | `collectors.py:798` |
 
-**한국경제 / Naver Finance는 Phase 1에서 제외** (마스터 §Q3) — Phase 2 이후 재고.
+**삭제 (Q3):** ~~Investing.com~~ — API 계약 없음.
+**한국경제 / Naver Finance는 Phase 1에서 제외** — Phase 2 이후 재고.
 
-### 4.6 Foreign Flow Collector
-
-**KRX Open API 전용, 10분 지연 허용.**
-
-```python
-# shared/flow/sources/krx_openapi.py
-class KRXInvestorFlowSource(FlowSource):
-    name = "krx_openapi"
-    poll_interval_seconds = 60     # 1분마다 갱신 체크, 실제 데이터는 10분 단위
-    version = "v1"
-
-    async def fetch(self) -> AsyncIterator[FlowItem]:
-        # KRX 투자자별 매매동향 API 호출
-        # endpoint: http://data.krx.co.kr/...
-        # 응답에서 외국인 순매수 파싱 후 yield
-        ...
-```
-
-**Phase 1에서는 KOSPI200 지수 대리지표 먼저 수집**, 선물 체결기준 투자자별 데이터는 Phase 2에서 추가 검토 (API 가용성 확인 필요).
-
-### 4.7 Macro Overnight Collector
+### 4.6 Macro Overnight Collector
 
 **Cron 방식** (데몬보다 단순). 기존 `scripts/cron/` 패턴 재사용.
 
@@ -460,32 +398,13 @@ news_collector:
       enabled: true
       poll_interval_seconds: 120
       rss_url: "https://kr.reuters.com/rss/businessNews"
-    investing:
-      enabled: false          # Q4 결정 후 활성
-      poll_interval_seconds: 30
-      api_key_env: "INVESTING_API_KEY"
     mk:
       enabled: true
       poll_interval_seconds: 180
       mode: "adapter"         # 기존 MKStockNewsCollector 어댑트
 ```
 
-### 5.2 `config/flow_sources.yaml`
-
-```yaml
-foreign_flow_collector:
-  redis_stream: "stream:foreign.flow.raw"
-  redis_maxlen: 50000
-  sources:
-    krx_openapi:
-      enabled: true
-      poll_interval_seconds: 60
-      api_key_env: "KRX_API_KEY"
-      symbols: ["KOSPI200_INDEX"]
-      bucket_minutes: 10
-```
-
-### 5.3 `config/macro_sources.yaml`
+### 5.2 `config/macro_sources.yaml`
 
 ```yaml
 macro_overnight_collector:
@@ -506,9 +425,9 @@ macro_overnight_collector:
       provider: "ecos"
 ```
 
-### 5.4 `ServiceConfigBase` 적용
+### 5.3 `ServiceConfigBase` 적용
 
-세 파일 모두 `shared/config/base.py`의 `ServiceConfigBase`를 상속한 Pydantic 모델로 로드. YAML 키 + env override 조합.
+두 파일 모두 `shared/config/base.py`의 `ServiceConfigBase`를 상속한 Pydantic 모델로 로드. YAML 키 + env override 조합.
 
 ---
 
@@ -539,7 +458,6 @@ news_duplicates_total{source}       Counter
 news_errors_total{source, kind}     Counter
 news_publish_lag_seconds{source}    Histogram
 news_stream_length{stream}          Gauge
-flow_collected_total{source}        Counter
 macro_collected_total{session}      Counter
 ```
 
@@ -559,13 +477,14 @@ macro_collected_total{session}      Counter
 - `tests/unit/news/test_dedupe.py`
 - `tests/unit/news/test_sources/test_dart.py` (mock 공시 응답)
 - `tests/unit/news/test_sources/test_yonhap.py` (mock RSS)
-- `tests/unit/flow/test_krx_source.py`
+- `tests/unit/news/test_sources/test_reuters.py`
 - `tests/unit/macro/test_yahoo.py`
+- `tests/unit/macro/test_ecos.py`
 
 ### 8.2 통합 테스트
 
 - `tests/integration/test_news_collector_e2e.py` — fakeredis + fakeclickhouse로 종단
-- `tests/integration/test_flow_collector_e2e.py`
+- `tests/integration/test_macro_overnight_e2e.py`
 
 ### 8.3 장기 연속 테스트
 
@@ -576,11 +495,10 @@ macro_collected_total{session}      Counter
 
 ## 9. 운영 & 배포
 
-### 9.1 systemd unit (신규 3개)
+### 9.1 systemd unit (신규 2개)
 
 ```
-/etc/systemd/system/kis-news-collector.service
-/etc/systemd/system/kis-foreign-flow.service
+/etc/systemd/system/kis-news-collector.service       # long-running daemon
 /etc/systemd/system/kis-macro-overnight.service      # oneshot + timer
 ```
 
@@ -609,24 +527,23 @@ macro_collected_total{session}      Counter
 
 아래 **모두** 만족해야 Phase 2 착수:
 
-- [ ] 마이그레이션 `V1` 적용, 6개 테이블 존재
-- [ ] 3개 서비스 데몬 48시간 연속 가동 (systemd restart 카운트 0)
+- [ ] 마이그레이션 `V1` 적용, 5개 테이블 존재 (`news_raw`, `macro_overnight`, `schema_migrations`, `signals_all`, `daily_performance`)
+- [ ] `news_collector` 데몬 48시간 연속 가동 (systemd restart 카운트 0)
+- [ ] 매크로 cron 2회/일 실행 (US close + FX)
 - [ ] 각 스트림 실데이터 적재 확인:
   - `stream:news.raw`: 최소 500건/영업일
-  - `stream:foreign.flow.raw`: 최소 20건/영업일
-  - `stream:macro.overnight`: 매일 2건 (US + Eurex)
-- [ ] ClickHouse `news_raw`, `investor_flow_raw`, `macro_overnight` 적재 count 스트림 XADD와 ±1% 일치
+  - `stream:macro.overnight`: 매일 최소 1건 (US), FX 15분 간격
+- [ ] ClickHouse `news_raw`, `macro_overnight` 적재 count 스트림 XADD와 ±1% 일치
 - [ ] 단위 테스트 커버리지 ≥ 80% (신규 모듈 한정)
 - [ ] 기존 `rl_mppo` 운용 지표 변화 없음 (P&L, latency 확인)
 
 ---
 
-## 11. 미결정 사항 (Phase 1 내 결정 필요)
+## 11. 미결정 사항 (Phase 1 구현 단계에서 결정)
 
-1. **Investing.com API 계약 체결 여부** (Q3 연계) — 없으면 `enabled: false` 출시.
-2. **Eurex KOSPI 야간 데이터 소스** — EUREX 공식 웹은 스크래핑 부담. 대안: KRX 야간 세션 재개 시점 확인.
-3. **KRX Open API key 재발급** — 기존 `KRX_API_KEY`가 장중 투자자별 매매동향 엔드포인트 지원 여부 검증.
-4. **systemd vs docker-compose** — 기존 서비스가 어느 쪽인지 확인 후 통일.
+1. **Eurex KOSPI 야간 데이터 소스** — 당분간 수집 제외. Phase 3 이전 KRX 야간 세션 데이터 재검토.
+2. **systemd vs docker-compose** — 기존 서비스가 어느 쪽인지 확인 후 통일.
+3. **ECOS API 인증** — 한국은행 ECOS Open API key 발급 (기존 `KRX_API_KEY`와 별개).
 
 ---
 
@@ -641,14 +558,12 @@ macro_collected_total{session}      Counter
 5. Yonhap + Reuters RSS sources
 6. MK 어댑터 (기존 reuse)
 7. `services/news_collector/main.py` 데몬
-8. `shared/flow/base.py` + KRX source
-9. `services/foreign_flow_collector/main.py` 데몬
-10. `shared/macro/` + Yahoo/ECOS sources
-11. `scripts/cron/macro_overnight.sh`
-12. Prometheus 메트릭 + Grafana 패널
-13. systemd units + 배포
-14. 24h 연속 검증
-15. Phase 1 완료 게이트 체크
+8. `shared/macro/` + Yahoo/ECOS sources
+9. `scripts/cron/macro_overnight.sh`
+10. Prometheus 메트릭 + Grafana 패널
+11. systemd units + 배포
+12. 48h 연속 검증
+13. Phase 1 완료 게이트 체크
 
 각 단계는 별도 PR로 분리 (작은 단위, 리뷰 가능).
 
