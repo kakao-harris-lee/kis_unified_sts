@@ -47,7 +47,7 @@ _CH_INSERT = (
 
 async def _write_ch(ch_client: Any, snap) -> None:
     row = (
-        datetime.fromtimestamp(snap.ts_ms / 1000, tz=UTC),
+        datetime.fromtimestamp(snap.ts_ms / 1000, tz=UTC).replace(tzinfo=None),
         snap.session,
         snap.sp500_close or 0.0,
         snap.sp500_change_pct or 0.0,
@@ -100,6 +100,7 @@ async def _cli(session_kind: str) -> int:
     import redis.asyncio as aioredis
 
     from shared.db.client import AsyncClickHouseClient
+    from shared.db.config import ClickHouseConfig
     from shared.macro.sources.ecos import ECOSSource
     from shared.macro.sources.yahoo import YahooMacroSource
 
@@ -107,7 +108,7 @@ async def _cli(session_kind: str) -> int:
     maxlen = 5000
     redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/1")
     r = aioredis.from_url(redis_url)
-    ch = AsyncClickHouseClient()
+    ch = AsyncClickHouseClient(ClickHouseConfig.from_env(database="kospi"))
     await ch.connect()
 
     try:

@@ -54,12 +54,12 @@ All checkboxes must be ✅ before Phase 2 begins.
 
 - [ ] US session fired at 06:30 KST on a weekday:
   ```bash
-  grep "macro_overnight.sh us" /var/log/syslog | tail
+  tail -40 logs/macro-us.log
   ```
 
 - [ ] FX session fires every 15 minutes during weekdays:
   ```bash
-  tail -40 /var/log/kis-macro-fx.log
+  tail -40 logs/macro-fx.log
   ```
 
 ## 4. Redis stream volume (weekday window)

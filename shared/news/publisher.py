@@ -62,8 +62,12 @@ class ClickHouseNewsWriter:
         row = (
             item.news_id,
             item.source,
-            datetime.fromtimestamp(item.published_at_ms / 1000, tz=UTC),
-            datetime.fromtimestamp(item.received_at_ms / 1000, tz=UTC),
+            datetime.fromtimestamp(item.published_at_ms / 1000, tz=UTC).replace(
+                tzinfo=None
+            ),
+            datetime.fromtimestamp(item.received_at_ms / 1000, tz=UTC).replace(
+                tzinfo=None
+            ),
             item.title,
             item.body,
             item.url,
