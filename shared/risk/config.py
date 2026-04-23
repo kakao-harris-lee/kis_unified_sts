@@ -11,13 +11,21 @@ Usage:
 
     # Load from dict
     config = RiskConfig.from_dict(yaml_data)
+
+Futures-specific risk config (Phase 3):
+    from shared.risk.config import FuturesRiskConfig, load_trading_windows
+
+    config = FuturesRiskConfig.from_yaml()
+    windows = load_trading_windows()
 """
 
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass, field
-from typing import Any
+from pathlib import Path
+from typing import Any, ClassVar
 
 logger = logging.getLogger(__name__)
 
@@ -136,9 +144,7 @@ class AssetLimits:
             )
 
         if not (
-            MIN_POSITION_SIZE_PCT
-            <= self.max_position_size_pct
-            <= MAX_POSITION_SIZE_PCT
+            MIN_POSITION_SIZE_PCT <= self.max_position_size_pct <= MAX_POSITION_SIZE_PCT
         ):
             raise ValueError(
                 f"max_position_size_pct must be between {MIN_POSITION_SIZE_PCT} "
@@ -285,16 +291,12 @@ class NotificationEvents:
     def from_dict(cls, data: dict[str, Any]) -> NotificationEvents:
         """Create from dict."""
         return cls(
-            daily_loss_limit_breached=bool(
-                data.get("daily_loss_limit_breached", True)
-            ),
+            daily_loss_limit_breached=bool(data.get("daily_loss_limit_breached", True)),
             drawdown_threshold_crossed=bool(
                 data.get("drawdown_threshold_crossed", True)
             ),
             position_limit_reached=bool(data.get("position_limit_reached", True)),
-            exposure_limit_approached=bool(
-                data.get("exposure_limit_approached", True)
-            ),
+            exposure_limit_approached=bool(data.get("exposure_limit_approached", True)),
             trading_blocked=bool(data.get("trading_blocked", True)),
             trading_unblocked=bool(data.get("trading_unblocked", True)),
         )
@@ -396,9 +398,7 @@ class RiskConfig:
     # Sub-configurations
     drawdown: DrawdownConfig = field(default_factory=DrawdownConfig)
     asset_limits: dict[str, AssetLimits] = field(default_factory=dict)
-    position_sizing: PositionSizingConfig = field(
-        default_factory=PositionSizingConfig
-    )
+    position_sizing: PositionSizingConfig = field(default_factory=PositionSizingConfig)
     monitoring: MonitoringConfig = field(default_factory=MonitoringConfig)
     notifications: NotificationConfig = field(default_factory=NotificationConfig)
     redis: RedisConfig = field(default_factory=RedisConfig)
@@ -518,3 +518,115 @@ class RiskConfig:
             raise ValueError(f"No limits configured for asset class: {asset_class}")
 
         return self.asset_limits[asset_class]
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: Futures intraday risk config (ServiceConfigBase-based)
+# ---------------------------------------------------------------------------
+
+from pydantic import Field  # noqa: E402 — deferred import to avoid circular issues
+
+from shared.config.base import ServiceConfigBase  # noqa: E402
+
+
+class FuturesRiskConfig(ServiceConfigBase):
+    """Futures intraday risk parameters for the Phase 3 RiskFilterLayer.
+
+    Loaded from ``config/risk.yaml`` under the ``risk:`` section.
+
+    Attributes:
+        account_equity_krw: Account equity in KRW (used for MDD calculations).
+        daily_mdd_limit_pct: Max daily drawdown as a fraction of equity (e.g. 0.03 = 3%).
+        weekly_mdd_limit_pct: Max weekly drawdown as a fraction of equity (e.g. 0.07 = 7%).
+        max_position_risk_pct: Max risk per trade as a fraction of equity (e.g. 0.015 = 1.5%).
+        max_daily_trades: Maximum number of trades allowed per session day.
+        max_position_size_contracts: Hard cap on contracts per order.
+        consecutive_loss_soft_threshold: After this many consecutive losses,
+            position size is halved (soft reduction, not a hard block).
+        consecutive_loss_hard_threshold: After this many consecutive losses,
+            all new entries are rejected until reset.
+        max_spread_ticks: Maximum bid-ask spread in ticks; signals are rejected
+            above this threshold.
+    """
+
+    _default_config_file: ClassVar[str] = "risk.yaml"
+    _default_section: ClassVar[str] = "risk"
+    _env_prefix: ClassVar[str] = "RISK_"
+
+    account_equity_krw: int = Field(
+        default=5_000_000,
+        description="Account equity in KRW",
+    )
+    daily_mdd_limit_pct: float = Field(
+        default=0.03,
+        description="Max daily MDD as fraction of equity (e.g. 0.03 = 3%)",
+    )
+    weekly_mdd_limit_pct: float = Field(
+        default=0.07,
+        description="Max weekly MDD as fraction of equity (e.g. 0.07 = 7%)",
+    )
+    max_position_risk_pct: float = Field(
+        default=0.015,
+        description="Max risk per trade as fraction of equity (e.g. 0.015 = 1.5%)",
+    )
+    max_daily_trades: int = Field(
+        default=3,
+        description="Maximum number of trades allowed per session day",
+    )
+    max_position_size_contracts: int = Field(
+        default=2,
+        description="Hard cap on contracts per order",
+    )
+    consecutive_loss_soft_threshold: int = Field(
+        default=4,
+        description="Consecutive losses before position size is halved",
+    )
+    consecutive_loss_hard_threshold: int = Field(
+        default=6,
+        description="Consecutive losses before all new entries are rejected",
+    )
+    max_spread_ticks: int = Field(
+        default=2,
+        description="Max bid-ask spread in ticks; signals above this are rejected",
+    )
+
+
+def load_trading_windows(path: str | None = None) -> list[str]:
+    """Load the ``trading_windows`` list from ``config/risk.yaml``.
+
+    The ``trading_windows`` key lives at the top level of ``risk.yaml``
+    (sibling of the ``risk:`` section), so it is read separately from
+    :class:`FuturesRiskConfig` which only extracts the ``risk:`` section.
+
+    Args:
+        path: Absolute or config-relative path to the YAML file.
+              If *None*, resolves via :class:`~shared.config.loader.ConfigLoader`
+              using the default ``risk.yaml`` filename.
+
+    Returns:
+        List of trading window strings in ``"HH:MM-HH:MM"`` KST format,
+        e.g. ``["09:00-10:30", "14:30-15:20"]``.
+        Returns an empty list if the key is absent.
+    """
+    import yaml
+
+    from shared.config.loader import ConfigLoader
+
+    if path is None:
+        # Resolve via ConfigLoader (respects KIS_CONFIG_DIR env var)
+        env_config_dir = os.environ.get("KIS_CONFIG_DIR")
+        if env_config_dir and Path(env_config_dir) != ConfigLoader.get_config_dir():
+            ConfigLoader.set_config_dir(env_config_dir)
+        raw_data = ConfigLoader.load("risk.yaml")
+    elif os.path.isabs(str(path)):
+        if not os.path.exists(path):
+            return []
+        with open(path, encoding="utf-8") as f:
+            raw_data = yaml.safe_load(f) or {}
+    else:
+        raw_data = ConfigLoader.load(path)
+
+    if not isinstance(raw_data, dict):
+        return []
+    windows = raw_data.get("trading_windows", [])
+    return list(windows) if windows else []

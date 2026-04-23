@@ -1,0 +1,14 @@
+risk:
+  account_equity_krw: 5000000
+  daily_mdd_limit_pct: 0.03
+  weekly_mdd_limit_pct: 0.07
+  max_position_risk_pct: 0.015
+  max_daily_trades: 3
+  max_position_size_contracts: 2
+  consecutive_loss_soft_threshold: 4
+  consecutive_loss_hard_threshold: 6
+  max_spread_ticks: 2
+
+trading_windows:
+  - "09:00-10:30"
+  - "14:30-15:20"
