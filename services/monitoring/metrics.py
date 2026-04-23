@@ -657,3 +657,79 @@ def record_macro_collected(session: str) -> None:
     """매크로 스냅샷 수집 완료 카운터 기록."""
     if HAS_PROMETHEUS:
         _macro_collected.labels(session=session).inc()
+
+
+# ---- Phase 2 (futures paradigm): news scoring metrics ----
+if HAS_PROMETHEUS:
+    news_scored_total = _Counter(
+        "news_scored_total",
+        "Total news items successfully scored",
+        ["version", "category"],
+    )
+    news_scoring_duration_seconds = _Histogram(
+        "news_scoring_duration_seconds",
+        "Scoring latency per item in seconds",
+        ["version"],
+        buckets=(0.1, 0.5, 1.0, 2.0, 3.0, 5.0, 10.0),
+    )
+    news_scoring_errors_total = _Counter(
+        "news_scoring_errors_total",
+        "Scoring errors by kind",
+        ["kind"],
+    )
+    news_scoring_fallback_total = _Counter(
+        "news_scoring_fallback_total",
+        "Fallback scorer invocations by reason",
+        ["reason"],
+    )
+    news_scoring_cost_usd_today = _Gauge(
+        "news_scoring_cost_usd_today",
+        "Cumulative LLM cost in USD for the current calendar day",
+    )
+    news_scorer_backlog = _Gauge(
+        "news_scorer_backlog",
+        "Consumer-group pending (XPENDING) message count",
+    )
+else:
+    news_scored_total = None
+    news_scoring_duration_seconds = None
+    news_scoring_errors_total = None
+    news_scoring_fallback_total = None
+    news_scoring_cost_usd_today = None
+    news_scorer_backlog = None
+
+
+def record_news_scored(version: str, category: str) -> None:
+    """Score성공 카운터 기록."""
+    if HAS_PROMETHEUS and news_scored_total is not None:
+        news_scored_total.labels(version=version, category=category).inc()
+
+
+def record_news_scoring_duration(version: str, seconds: float) -> None:
+    """Scoring 소요 시간 히스토그램 기록."""
+    if HAS_PROMETHEUS and news_scoring_duration_seconds is not None:
+        news_scoring_duration_seconds.labels(version=version).observe(seconds)
+
+
+def record_news_scoring_error(kind: str) -> None:
+    """Scoring 에러 카운터 기록."""
+    if HAS_PROMETHEUS and news_scoring_errors_total is not None:
+        news_scoring_errors_total.labels(kind=kind).inc()
+
+
+def record_news_scoring_fallback(reason: str) -> None:
+    """Fallback 사용 카운터 기록."""
+    if HAS_PROMETHEUS and news_scoring_fallback_total is not None:
+        news_scoring_fallback_total.labels(reason=reason).inc()
+
+
+def record_news_scoring_cost(usd: float) -> None:
+    """당일 누적 LLM 비용(USD) 게이지 기록."""
+    if HAS_PROMETHEUS and news_scoring_cost_usd_today is not None:
+        news_scoring_cost_usd_today.set(usd)
+
+
+def record_news_scorer_backlog(count: int) -> None:
+    """Consumer-group 미처리 메시지 수 게이지 기록."""
+    if HAS_PROMETHEUS and news_scorer_backlog is not None:
+        news_scorer_backlog.set(count)
