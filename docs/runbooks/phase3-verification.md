@@ -77,6 +77,39 @@ the gate is almost entirely backtest + static-analysis checks.
 > volume=2 phantoms) is still worth doing, but this filter unblocks
 > the empirical gate in the meantime.
 
+### First real-data run (2026-04-23)
+
+Walk-forward on filtered `kospi200f_1m_ch_101S6000.csv`, 4-mo IS / 2-mo OOS, 1 fold:
+
+| Config | IS trades / EV | OOS trades / EV | Gate |
+|--------|----------------|------------------|------|
+| defaults            | 15 / 34.3  | 32 / 23.2 | ✅ |
+| Optuna-tuned Setup A| 6 / 7.1    | 5 / 41.8  | ✅ |
+
+Both configurations formally pass the `OOS EV ≥ 0.5 × IS EV AND OOS > 0`
+rule, but on a 1-fold split so the statistical weight is low. Full-data run
+(no split): 289 Setup A trades, 17.3 % win rate, 50 wins / 95 losses /
+144 time-or-EOD exits, mean EV 12.5 ticks.
+
+**Open concerns that warrant follow-up before production:**
+1. **Only 1 WF fold** — 6 months of data isn't enough for the planned
+   4×2 cadence. Need ≥ 12 months for multiple OOS folds.
+2. **EV looks too high.** 12.5 ticks/trade is ~25× the spec gate. Either
+   Setup A really works or the 0.7 % residual bad bars in the filtered
+   data are over-crediting wins. A `volume ≥ 100` sweep for a single
+   fold would stress-test this.
+3. **Setup C fires zero trades** in the 296-day window. Root cause:
+   our `kospi200f_1m` data is day-session only (09:00-15:30 KST) but
+   FOMC/CPI/NFP announcements all land during overnight hours; the
+   15-min Setup C reaction window closes before the next KST session
+   opens. Needs spec rework — either widen `window_minutes` to 480+
+   so the day-session open captures overnight reaction, or define a
+   "day-session open reaction" setup variant specifically for KR markets.
+4. **Harness audit (commit 4f61a4d)** uncovered 4 bugs on first real
+   run — session-crossing exits, gap-through-stop mislabelling, and
+   the missing data-quality validation. Treat any future harness
+   change as a suspect until re-validated.
+
 - [ ] Run harness on `data/kospi200f_1m_clean.csv` (6 months):
   ```bash
   # See scripts/walk_forward_phase3.py for the orchestration pattern.

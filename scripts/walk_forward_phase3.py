@@ -47,11 +47,18 @@ from shared.backtest.macro_history import (  # noqa: E402
     make_macro_provider,
 )
 from shared.backtest.market_context_replay import MarketContextReplay  # noqa: E402
+from shared.decision.context import (  # noqa: E402
+    ScheduledEvent,
+    load_scheduled_events,
+)
 from shared.decision.setups.event_reaction import (  # noqa: E402
     EventTradeTracker,
     SetupCEventReaction,
 )
-from shared.decision.setups.gap_reversion import SetupAGapReversion  # noqa: E402
+from shared.decision.setups.gap_reversion import (  # noqa: E402
+    SetupAConfig,
+    SetupAGapReversion,
+)
 from shared.execution.contract_spec import ContractSpecRegistry  # noqa: E402
 from shared.macro.base import MacroSnapshot  # noqa: E402
 from shared.risk.layer import RiskFilterLayer  # noqa: E402
@@ -85,12 +92,13 @@ def _run_on_window(
     setup_c: SetupCEventReaction,
     macro_provider=None,
     min_volume: int = 0,
+    scheduled_events: list[ScheduledEvent] | None = None,
 ) -> HarnessResult:
     replay = MarketContextReplay(
         df=df,
         symbol=symbol,
         macro_snapshot=macro,
-        scheduled_events=[],
+        scheduled_events=scheduled_events or [],
         contract_spec=spec,
         macro_provider=macro_provider,
         min_volume=min_volume,
@@ -150,11 +158,30 @@ def run(args: argparse.Namespace) -> int:
 
     registry = ContractSpecRegistry.from_yaml("config/execution.yaml")
     spec = registry.specs[args.contract]
-    # Default params from YAML; Optuna tuning is a follow-up wire-in via
-    # scripts/optimize_decision_engine.py. Phase 3 gate measures raw default
-    # performance first; tuning is optional if default fails.
-    setup_a = SetupAGapReversion()
+
+    # Setup A: defaults from YAML unless an Optuna JSON is supplied.
+    setup_a_cfg: SetupAConfig | None = None
+    if args.setup_a_params:
+        with open(args.setup_a_params) as f:
+            optuna_result = json.load(f)
+        setup_a_cfg = SetupAConfig(**optuna_result["best_params"])
+        logger.info(
+            "loaded Setup A params from %s: %s",
+            args.setup_a_params,
+            optuna_result["best_params"],
+        )
+    setup_a = (
+        SetupAGapReversion(config=setup_a_cfg) if setup_a_cfg else SetupAGapReversion()
+    )
     setup_c = SetupCEventReaction(tracker=EventTradeTracker())
+
+    # Load scheduled events (Setup C needs them to fire).
+    scheduled_events: list[ScheduledEvent] = []
+    if args.events:
+        scheduled_events = load_scheduled_events(args.events)
+        logger.info(
+            "loaded %d scheduled events from %s", len(scheduled_events), args.events
+        )
 
     # Neutral fallback snapshot used when macro is disabled or a specific
     # session date lookup misses.
@@ -186,6 +213,7 @@ def run(args: argparse.Namespace) -> int:
             setup_c,
             macro_provider,
             args.min_volume,
+            scheduled_events,
         )
         oos_result = _run_on_window(
             oos_df,
@@ -196,6 +224,7 @@ def run(args: argparse.Namespace) -> int:
             setup_c,
             macro_provider,
             args.min_volume,
+            scheduled_events,
         )
 
         is_setup_agg = _aggregate(is_result)
@@ -264,6 +293,19 @@ def main() -> int:
         default=30,
         help="Drop bars with volume below this threshold before replay "
         "(default 30 — tuned to strip phantom prints on KOSPI200 futures).",
+    )
+    p.add_argument(
+        "--events",
+        default="config/scheduled_events.yaml",
+        help="Path to scheduled events YAML (Setup C needs this to fire). "
+        "Set empty string to disable.",
+    )
+    p.add_argument(
+        "--setup-a-params",
+        default=None,
+        help="Optional path to an Optuna JSON (e.g. results/optuna_a.json). "
+        "If given, Setup A uses the best_params from that file instead of "
+        "YAML defaults.",
     )
     return run(p.parse_args())
 
