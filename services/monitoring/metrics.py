@@ -25,7 +25,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from shared.monitoring.drift_metrics import DriftMetrics
@@ -321,7 +321,9 @@ class MetricsCollector:
             self.prom_signals_total.labels(strategy=name, type="exit")
             self.prom_signals_total.labels(strategy=name, type="rejected")
 
-        logger.info("Registered %d strategies for Prometheus metrics", len(strategy_names))
+        logger.info(
+            "Registered %d strategies for Prometheus metrics", len(strategy_names)
+        )
 
     def record_trade(
         self,
@@ -422,7 +424,7 @@ class MetricsCollector:
         self,
         *,
         strategy: str,
-        drift_metrics: "DriftMetrics",
+        drift_metrics: DriftMetrics,
     ) -> None:
         """RL 모델 드리프트 메트릭 기록.
 
@@ -435,14 +437,14 @@ class MetricsCollector:
 
         try:
             # KL divergence 기록
-            self.prom_rl_kl_divergence.labels(
-                strategy=strategy, metric_type="kl"
-            ).set(float(drift_metrics.kl_divergence))
+            self.prom_rl_kl_divergence.labels(strategy=strategy, metric_type="kl").set(
+                float(drift_metrics.kl_divergence)
+            )
 
             # PSI 기록
-            self.prom_rl_kl_divergence.labels(
-                strategy=strategy, metric_type="psi"
-            ).set(float(drift_metrics.psi_score))
+            self.prom_rl_kl_divergence.labels(strategy=strategy, metric_type="psi").set(
+                float(drift_metrics.psi_score)
+            )
 
             # Confidence 분포 메트릭 기록
             self.prom_rl_observation_mean_drift.labels(strategy=strategy).set(
@@ -491,7 +493,9 @@ class MetricsCollector:
             self.prom_market_data_staleness.set(staleness_seconds)
             self.prom_market_data_staleness_hist.observe(staleness_seconds)
 
-    def record_websocket_staleness(self, feed: str, staleness_seconds: float | None) -> None:
+    def record_websocket_staleness(
+        self, feed: str, staleness_seconds: float | None
+    ) -> None:
         """WebSocket tick staleness 기록 (stock/futures)."""
         if staleness_seconds is None:
             return
@@ -536,10 +540,14 @@ class MetricsCollector:
         if HAS_PROMETHEUS:
             self.prom_venue_order_count.labels(venue=venue).set(count)
 
-    def record_venue_price_improvement(self, venue: str, improvement_bps: float) -> None:
+    def record_venue_price_improvement(
+        self, venue: str, improvement_bps: float
+    ) -> None:
         """Venue별 가격 개선(basis points) 기록"""
         if HAS_PROMETHEUS:
-            self.prom_venue_price_improvement_bps.labels(venue=venue).set(improvement_bps)
+            self.prom_venue_price_improvement_bps.labels(venue=venue).set(
+                improvement_bps
+            )
 
     def get_metrics(self) -> TradingMetrics:
         """메트릭 조회"""
@@ -584,3 +592,68 @@ def get_metrics_collector() -> MetricsCollector:
     if _metrics_collector is None:
         _metrics_collector = MetricsCollector()
     return _metrics_collector
+
+
+# ---- Phase 1 (futures paradigm): news & macro metrics ----
+if HAS_PROMETHEUS:
+    from prometheus_client import Counter as _Counter
+    from prometheus_client import Gauge as _Gauge
+    from prometheus_client import Histogram as _Histogram
+
+    _news_collected = _Counter(
+        "news_collected_total", "News items collected", ["source"]
+    )
+    _news_duplicates = _Counter(
+        "news_duplicates_total", "News items skipped as duplicates", ["source"]
+    )
+    _news_errors = _Counter(
+        "news_errors_total", "News collector errors", ["source", "kind"]
+    )
+    _news_publish_lag = _Histogram(
+        "news_publish_lag_seconds",
+        "Seconds between published_at and XADD",
+        ["source"],
+        buckets=(0.1, 0.5, 1, 2, 5, 10, 30, 60, 120, 300),
+    )
+    _news_stream_len = _Gauge(
+        "news_stream_length", "Current XLEN of news stream", ["stream"]
+    )
+    _macro_collected = _Counter(
+        "macro_collected_total", "Macro snapshots collected", ["session"]
+    )
+
+
+def record_news_collected(source: str) -> None:
+    """뉴스 수집 완료 카운터 기록."""
+    if HAS_PROMETHEUS:
+        _news_collected.labels(source=source).inc()
+
+
+def record_news_duplicate(source: str) -> None:
+    """뉴스 중복 스킵 카운터 기록."""
+    if HAS_PROMETHEUS:
+        _news_duplicates.labels(source=source).inc()
+
+
+def record_news_error(source: str, kind: str) -> None:
+    """뉴스 수집 에러 카운터 기록."""
+    if HAS_PROMETHEUS:
+        _news_errors.labels(source=source, kind=kind).inc()
+
+
+def record_news_publish_lag(source: str, seconds: float) -> None:
+    """뉴스 발행 지연 히스토그램 기록."""
+    if HAS_PROMETHEUS:
+        _news_publish_lag.labels(source=source).observe(seconds)
+
+
+def record_news_stream_length(stream: str, length: int) -> None:
+    """뉴스 Redis 스트림 현재 길이 기록."""
+    if HAS_PROMETHEUS:
+        _news_stream_len.labels(stream=stream).set(length)
+
+
+def record_macro_collected(session: str) -> None:
+    """매크로 스냅샷 수집 완료 카운터 기록."""
+    if HAS_PROMETHEUS:
+        _macro_collected.labels(session=session).inc()

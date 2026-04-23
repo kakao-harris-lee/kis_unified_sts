@@ -1,0 +1,25 @@
+news_collector:
+  redis_stream: "stream:news.raw"
+  redis_maxlen: 100000
+  clickhouse_batch_size: 50
+  clickhouse_flush_interval_seconds: 10
+  body_truncate_chars: 2000
+  dedupe:
+    memory_size: 20000
+    redis_ttl_days: 7
+  sources:
+    dart:
+      enabled: true
+      poll_interval_seconds: 30
+    yonhap:
+      enabled: true
+      poll_interval_seconds: 60
+      rss_url: "https://www.yna.co.kr/rss/economy.xml"
+    reuters:
+      enabled: true
+      poll_interval_seconds: 120
+      rss_url: "https://kr.reuters.com/rss/businessNews"
+    mk:
+      enabled: true
+      poll_interval_seconds: 180
+      mode: "adapter"

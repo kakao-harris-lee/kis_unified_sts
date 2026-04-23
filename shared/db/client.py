@@ -1,15 +1,19 @@
 """ClickHouse client with singleton pattern."""
-import logging
+
 import asyncio
+import logging
 import ssl
 import threading
-from typing import Optional, List, AsyncGenerator, ClassVar, TYPE_CHECKING
+from collections.abc import AsyncGenerator
 from datetime import date, datetime
+from typing import TYPE_CHECKING, ClassVar, Optional
 
 from clickhouse_driver import Client as SyncClient
+
 try:
     from aiochclient import ChClient
     from aiohttp import ClientSession, TCPConnector
+
     HAS_ASYNC = True
 except ImportError:
     HAS_ASYNC = False
@@ -17,9 +21,10 @@ except ImportError:
         from aiochclient import ChClient
         from aiohttp import ClientSession, TCPConnector
 
+from shared.monitoring.drift_metrics import DriftMetrics
+
 from .config import ClickHouseConfig
 from .models import DailyCandle, MinuteCandle
-from shared.monitoring.drift_metrics import DriftMetrics
 
 logger = logging.getLogger(__name__)
 
@@ -258,7 +263,7 @@ class ClickHouseClient:
         during singleton initialization in multi-threaded environments.
     """
 
-    _instance: ClassVar[Optional['ClickHouseClient']] = None
+    _instance: ClassVar[Optional["ClickHouseClient"]] = None
     _lock: ClassVar[threading.Lock] = threading.Lock()
 
     def __new__(cls, config: ClickHouseConfig = None):
@@ -286,7 +291,7 @@ class ClickHouseClient:
                 raise ValueError("Config required for first initialization")
 
             self.config = config
-            self._sync_client: Optional[SyncClient] = None
+            self._sync_client: SyncClient | None = None
             self._initialized = True
 
             logger.info(f"ClickHouseClient (Sync) initialized: {self.config}")
@@ -344,7 +349,9 @@ class ClickHouseClient:
             params = self._build_connection_params()
             self._sync_client = SyncClient(**params)
             protocol = "TLS" if self.config.secure else "plain"
-            logger.info(f"Connected to ClickHouse (Sync, {protocol}): {self.config.host}:{self.config.port}")
+            logger.info(
+                f"Connected to ClickHouse (Sync, {protocol}): {self.config.host}:{self.config.port}"
+            )
         return self._sync_client
 
     def disconnect(self):
@@ -377,7 +384,7 @@ class ClickHouseClient:
             logger.error(f"Failed to init schema: {e}")
             return False
 
-    def insert_daily_candles(self, candles: List[DailyCandle]) -> int:
+    def insert_daily_candles(self, candles: list[DailyCandle]) -> int:
         """Batch insert daily candles."""
         if not candles:
             return 0
@@ -387,7 +394,7 @@ class ClickHouseClient:
             client.execute(
                 f"INSERT INTO {self.config.database}.daily_candles "
                 "(code, date, open, high, low, close, volume, value, change_rate) VALUES",
-                data
+                data,
             )
             return len(candles)
         except Exception as e:
@@ -395,11 +402,8 @@ class ClickHouseClient:
             return 0
 
     def get_daily_candles(
-        self,
-        code: str,
-        start_date: date,
-        end_date: date
-    ) -> List[DailyCandle]:
+        self, code: str, start_date: date, end_date: date
+    ) -> list[DailyCandle]:
         try:
             client = self.get_sync_client()
             result = client.execute(
@@ -409,14 +413,14 @@ class ClickHouseClient:
                 WHERE code = %(code)s AND date >= %(start)s AND date <= %(end)s
                 ORDER BY date ASC
                 """,
-                {"code": code, "start": start_date, "end": end_date}
+                {"code": code, "start": start_date, "end": end_date},
             )
             return [_daily_candle_from_row(r) for r in result]
         except Exception as e:
             logger.error(f"Failed to get daily candles: {e}")
             return []
 
-    def insert_minute_candles(self, candles: List[MinuteCandle]) -> int:
+    def insert_minute_candles(self, candles: list[MinuteCandle]) -> int:
         if not candles:
             return 0
         try:
@@ -425,14 +429,14 @@ class ClickHouseClient:
             client.execute(
                 f"INSERT INTO {self.config.database}.minute_candles "
                 "(code, datetime, open, high, low, close, volume, value) VALUES",
-                data
+                data,
             )
             return len(candles)
         except Exception as e:
             logger.error(f"Failed to insert minute candles: {e}")
             return 0
 
-    def insert_drift_metrics(self, metrics: List[DriftMetrics]) -> int:
+    def insert_drift_metrics(self, metrics: list[DriftMetrics]) -> int:
         """Batch insert drift metrics."""
         if not metrics:
             return 0
@@ -443,14 +447,16 @@ class ClickHouseClient:
                 f"INSERT INTO {self.config.database}.rl_drift_metrics "
                 "(timestamp, code, strategy, kl_divergence, psi_score, confidence_mean, "
                 "confidence_std, sharpe_5d, sharpe_20d, win_rate_5d, win_rate_20d) VALUES",
-                data
+                data,
             )
             return len(metrics)
         except Exception as e:
             logger.error(f"Failed to insert drift metrics: {e}")
             return 0
 
-    def get_minute_candles(self, code: str, start: datetime, end: datetime) -> List[MinuteCandle]:
+    def get_minute_candles(
+        self, code: str, start: datetime, end: datetime
+    ) -> list[MinuteCandle]:
         try:
             client = self.get_sync_client()
             result = client.execute(
@@ -460,7 +466,7 @@ class ClickHouseClient:
                 WHERE code = %(code)s AND datetime >= %(start)s AND datetime <= %(end)s
                 ORDER BY datetime ASC
                 """,
-                {"code": code, "start": start, "end": end}
+                {"code": code, "start": start, "end": end},
             )
             return [_minute_candle_from_row(r) for r in result]
         except Exception as e:
@@ -473,13 +479,15 @@ class AsyncClickHouseClient:
 
     def __init__(self, config: ClickHouseConfig = None):
         if not HAS_ASYNC:
-            raise ImportError("aiochclient not installed. Please install 'aiochclient' and 'aiohttp'.")
+            raise ImportError(
+                "aiochclient not installed. Please install 'aiochclient' and 'aiohttp'."
+            )
         self.config = config or ClickHouseConfig()
-        self._session: Optional[ClientSession] = None
-        self._client: Optional[ChClient] = None
+        self._session: ClientSession | None = None
+        self._client: ChClient | None = None
         self._initialized: bool = False
 
-    def _build_ssl_context(self) -> Optional[ssl.SSLContext]:
+    def _build_ssl_context(self) -> ssl.SSLContext | None:
         """Build SSL context for async client.
 
         Returns:
@@ -505,8 +513,7 @@ class AsyncClickHouseClient:
         # Load client certificate and key for mutual TLS
         if self.config.client_cert and self.config.client_key:
             ssl_context.load_cert_chain(
-                certfile=self.config.client_cert,
-                keyfile=self.config.client_key
+                certfile=self.config.client_cert, keyfile=self.config.client_key
             )
 
         return ssl_context
@@ -535,7 +542,9 @@ class AsyncClickHouseClient:
                 self._session = session
                 self._initialized = True
                 protocol_desc = "HTTPS/TLS" if self.config.secure else "HTTP"
-                logger.info(f"Connected to ClickHouse (Async, {protocol_desc}): {self.config.host}:{self.config.http_port}")
+                logger.info(
+                    f"Connected to ClickHouse (Async, {protocol_desc}): {self.config.host}:{self.config.http_port}"
+                )
             except Exception:
                 await session.close()
                 raise
@@ -547,7 +556,7 @@ class AsyncClickHouseClient:
         # 1. Close ChClient first (if it has close method)
         if self._client is not None:
             try:
-                if hasattr(self._client, 'close'):
+                if hasattr(self._client, "close"):
                     close_method = self._client.close
                     if asyncio.iscoroutinefunction(close_method):
                         await close_method()
@@ -591,7 +600,14 @@ class AsyncClickHouseClient:
             await self.connect()
         return self._client  # type: ignore
 
-    async def insert_daily_candles(self, candles: List[DailyCandle]) -> int:
+    async def execute(self, sql: str, *rows) -> None:
+        client = await self.get_client()
+        if len(rows) == 1 and isinstance(rows[0], list):
+            await client.execute(sql, *rows[0])
+        else:
+            await client.execute(sql, *rows)
+
+    async def insert_daily_candles(self, candles: list[DailyCandle]) -> int:
         if not candles:
             return 0
         try:
@@ -601,14 +617,16 @@ class AsyncClickHouseClient:
             await client.execute(
                 f"INSERT INTO {self.config.database}.daily_candles "
                 "(code, date, open, high, low, close, volume, value, change_rate) VALUES",
-                *data
+                *data,
             )
             return len(candles)
         except Exception as e:
             logger.error(f"Async insert daily failed: {e}")
             return 0
 
-    async def get_daily_candles(self, code: str, start: date, end: date) -> List[DailyCandle]:
+    async def get_daily_candles(
+        self, code: str, start: date, end: date
+    ) -> list[DailyCandle]:
         try:
             client = await self.get_client()
             # aiochclient params syntax is {name:Type}
@@ -619,14 +637,14 @@ class AsyncClickHouseClient:
                 WHERE code = {{code:String}} AND date >= {{start:Date}} AND date <= {{end:Date}}
                 ORDER BY date ASC
                 """,
-                {"code": code, "start": start, "end": end}
+                {"code": code, "start": start, "end": end},
             )
             return [_daily_candle_from_row(r) for r in result]
         except Exception as e:
             logger.error(f"Async get daily failed: {e}")
             return []
 
-    async def insert_minute_candles(self, candles: List[MinuteCandle]) -> int:
+    async def insert_minute_candles(self, candles: list[MinuteCandle]) -> int:
         if not candles:
             return 0
         try:
@@ -635,14 +653,16 @@ class AsyncClickHouseClient:
             await client.execute(
                 f"INSERT INTO {self.config.database}.minute_candles "
                 "(code, datetime, open, high, low, close, volume, value) VALUES",
-                *data
+                *data,
             )
             return len(candles)
         except Exception as e:
             logger.error(f"Async insert minute failed: {e}")
             return 0
 
-    async def get_minute_candles(self, code: str, start: datetime, end: datetime) -> List[MinuteCandle]:
+    async def get_minute_candles(
+        self, code: str, start: datetime, end: datetime
+    ) -> list[MinuteCandle]:
         try:
             client = await self.get_client()
             result = await client.fetch(
@@ -652,7 +672,7 @@ class AsyncClickHouseClient:
                 WHERE code = {{code:String}} AND datetime >= {{start:DateTime}} AND datetime <= {{end:DateTime}}
                 ORDER BY datetime ASC
                 """,
-                {"code": code, "start": start, "end": end}
+                {"code": code, "start": start, "end": end},
             )
             return [_minute_candle_from_row(r) for r in result]
         except Exception as e:
@@ -661,7 +681,8 @@ class AsyncClickHouseClient:
 
 
 # Factory function for legacy sync singleton
-_client_instance: Optional[ClickHouseClient] = None
+_client_instance: ClickHouseClient | None = None
+
 
 def get_clickhouse_client(config: ClickHouseConfig = None) -> ClickHouseClient:
     """Get ClickHouse client singleton (Sync)."""
@@ -670,8 +691,11 @@ def get_clickhouse_client(config: ClickHouseConfig = None) -> ClickHouseClient:
         _client_instance = ClickHouseClient(config)
     return _client_instance
 
+
 # FastAPI dependency factory
-async def get_async_db(config: ClickHouseConfig = None) -> AsyncGenerator[AsyncClickHouseClient, None]:
+async def get_async_db(
+    config: ClickHouseConfig = None,
+) -> AsyncGenerator[AsyncClickHouseClient, None]:
     """Dependency for FastAPI.
 
     Usage:

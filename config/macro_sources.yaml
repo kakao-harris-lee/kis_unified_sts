@@ -1,0 +1,13 @@
+macro_overnight_collector:
+  redis_stream: "stream:macro.overnight"
+  redis_maxlen: 5000
+  sessions:
+    overnight_us_close:
+      cron: "30 6 * * 1-5"
+      indices: ["sp500", "nasdaq", "vix", "dxy", "us10y"]
+      provider: "yahoo"
+    overnight_fx:
+      cron: "*/15 * * * 1-5"
+      indices: ["usdkrw"]
+      provider: "ecos"
+  # overnight_eurex_close deferred — see spec §11
