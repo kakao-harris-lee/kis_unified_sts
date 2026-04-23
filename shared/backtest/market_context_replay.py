@@ -22,8 +22,8 @@ Bars before index 60 are skipped (warmup period required for ATR computation).
 
 from __future__ import annotations
 
-from collections.abc import Iterator
-from dataclasses import dataclass
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass, field
 from datetime import date
 from zoneinfo import ZoneInfo
 
@@ -95,6 +95,10 @@ class MarketContextReplay:
     macro_snapshot: MacroSnapshot | None
     scheduled_events: list[ScheduledEvent]
     contract_spec: ContractSpec
+    # Optional per-session macro lookup.  When provided, takes precedence over
+    # the single ``macro_snapshot`` for every context (look up by the bar's KST
+    # date).  Missing dates fall back to ``macro_snapshot``.
+    macro_provider: Callable[[date], MacroSnapshot | None] | None = field(default=None)
 
     # Computed at construction time; None until first iter_contexts() call
     _atr_series: np.ndarray | None = None
@@ -255,6 +259,13 @@ class MarketContextReplay:
             # ATR at this bar
             atr_14 = float(atr_arr[i])
 
+            if self.macro_provider is not None:
+                macro = self.macro_provider(d)
+                if macro is None:
+                    macro = self.macro_snapshot
+            else:
+                macro = self.macro_snapshot
+
             ctx = MarketContext(
                 now=ts_kst.to_pydatetime(),
                 symbol=self.symbol,
@@ -267,7 +278,7 @@ class MarketContextReplay:
                 last_15min_high=last_15min_high,
                 last_15min_low=last_15min_low,
                 current_spread_ticks=_STUB_SPREAD_TICKS,
-                macro_overnight=self.macro_snapshot,
+                macro_overnight=macro,
                 scheduled_events=list(self.scheduled_events),
             )
             yield ctx

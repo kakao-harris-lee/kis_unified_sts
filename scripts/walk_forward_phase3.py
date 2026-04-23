@@ -42,6 +42,10 @@ from shared.backtest.decision_harness import (  # noqa: E402
     BacktestDecisionHarness,
     HarnessResult,
 )
+from shared.backtest.macro_history import (  # noqa: E402
+    fetch_macro_history,
+    make_macro_provider,
+)
 from shared.backtest.market_context_replay import MarketContextReplay  # noqa: E402
 from shared.decision.setups.event_reaction import (  # noqa: E402
     EventTradeTracker,
@@ -79,6 +83,7 @@ def _run_on_window(
     spec,
     setup_a: SetupAGapReversion,
     setup_c: SetupCEventReaction,
+    macro_provider=None,
 ) -> HarnessResult:
     replay = MarketContextReplay(
         df=df,
@@ -86,6 +91,7 @@ def _run_on_window(
         macro_snapshot=macro,
         scheduled_events=[],
         contract_spec=spec,
+        macro_provider=macro_provider,
     )
     harness = BacktestDecisionHarness(
         setups=[setup_a, setup_c],
@@ -148,9 +154,8 @@ def run(args: argparse.Namespace) -> int:
     setup_a = SetupAGapReversion()
     setup_c = SetupCEventReaction(tracker=EventTradeTracker())
 
-    # Phase 1 retroactive macro: in a real run, pull yfinance history here
-    # and attach a per-day MacroSnapshot. For gate-verification smoke, a
-    # neutral snapshot is acceptable.
+    # Neutral fallback snapshot used when macro is disabled or a specific
+    # session date lookup misses.
     macro = MacroSnapshot(
         ts_ms=0,
         session="overnight_us_close",
@@ -158,10 +163,24 @@ def run(args: argparse.Namespace) -> int:
         nasdaq_change_pct=0.0,
     )
 
+    # Retroactive per-day macro via yfinance (spec §8.1) unless --skip-macro.
+    macro_provider = None
+    if not args.skip_macro:
+        data_start = pd.to_datetime(df["timestamp"]).min().date()
+        data_end = pd.to_datetime(df["timestamp"]).max().date()
+        logger.info("fetching yfinance macro history for %s → %s", data_start, data_end)
+        history = fetch_macro_history(data_start, data_end)
+        logger.info("got %d daily macro snapshots", len(history))
+        macro_provider = make_macro_provider(history)
+
     results: list[FoldResult] = []
     for idx, (is_df, oos_df) in enumerate(folds):
-        is_result = _run_on_window(is_df, args.symbol, macro, spec, setup_a, setup_c)
-        oos_result = _run_on_window(oos_df, args.symbol, macro, spec, setup_a, setup_c)
+        is_result = _run_on_window(
+            is_df, args.symbol, macro, spec, setup_a, setup_c, macro_provider
+        )
+        oos_result = _run_on_window(
+            oos_df, args.symbol, macro, spec, setup_a, setup_c, macro_provider
+        )
 
         is_setup_agg = _aggregate(is_result)
         oos_setup_agg = _aggregate(oos_result)
@@ -217,6 +236,12 @@ def main() -> int:
     p.add_argument("--is-months", type=int, default=4)
     p.add_argument("--oos-months", type=int, default=2)
     p.add_argument("--out", default="results/phase3_wf.json")
+    p.add_argument(
+        "--skip-macro",
+        action="store_true",
+        help="Skip yfinance retroactive macro fetch (uses neutral snapshot — "
+        "Setup A will never fire; useful for offline smoke-testing only).",
+    )
     return run(p.parse_args())
 
 
