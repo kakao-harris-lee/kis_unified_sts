@@ -165,3 +165,20 @@ paper_broker:
 
   # Lookback window (minutes) for computing reference median price
   reference_price_lookback_minutes: 5
+
+# KOSPI200 선물 계약 스펙 (계약당 승수, 틱 크기, 수수료)
+# 모든 계약 상수는 여기서 로드 — 코드에 하드코딩 금지
+futures_contract_spec:
+  kospi200_mini:
+    multiplier_krw_per_point: 50000      # KRW per index point (mini = 50,000)
+    tick_size_points: 0.02               # minimum price movement (index points)
+    tick_value_krw: 1000                 # tick_size_points × multiplier_krw_per_point
+    commission_rate: 0.00003             # 0.003% per side (KIS futures rate)
+    symbol_prefix: "A05"                 # KIS symbol prefix for KOSPI200 mini futures
+
+  kospi200_full:
+    multiplier_krw_per_point: 250000     # KRW per index point (full = 250,000)
+    tick_size_points: 0.05               # minimum price movement (index points)
+    tick_value_krw: 12500                # tick_size_points × multiplier_krw_per_point
+    commission_rate: 0.00003             # 0.003% per side (KIS futures rate)
+    symbol_prefix: "101"                 # KIS symbol prefix for KOSPI200 full futures (연결선물)
