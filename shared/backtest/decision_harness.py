@@ -29,6 +29,7 @@ Slippage is deducted from entry as an additional adverse tick cost.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import date
 
 import numpy as np
 import pandas as pd
@@ -186,6 +187,20 @@ class BacktestDecisionHarness:
         closes = df["close"].to_numpy(dtype=float)
         ts_col = df["timestamp"]
 
+        # KST session date per bar — used in _simulate_fill to bound fills
+        # and exits to the same trading session as the signal. Without this,
+        # a signal near EOD gets "filled" at the next trading session's
+        # open (multi-hour gap) and its exit can drift across weekends,
+        # massively inflating ticks_net.
+        session_dates: list[date] = []
+        for i in range(n):
+            ts = pd.Timestamp(ts_col.iloc[i])
+            if ts.tzinfo is None:
+                ts = ts.tz_localize("Asia/Seoul")
+            else:
+                ts = ts.tz_convert("Asia/Seoul")
+            session_dates.append(ts.date())
+
         # iter_contexts yields bars at positions WARMUP_BARS..n-1 (skipping those
         # with no prev_close, i.e. the first session day).  We zip with the
         # bar index to know which row in df we are at.
@@ -236,6 +251,7 @@ class BacktestDecisionHarness:
                     lows=lows,
                     closes=closes,
                     ts_col=ts_col,
+                    session_dates=session_dates,
                     n=n,
                 )
                 if trade is not None:
@@ -269,17 +285,37 @@ class BacktestDecisionHarness:
         lows: np.ndarray,
         closes: np.ndarray,
         ts_col: pd.Series,
+        session_dates: list[date] | None = None,
         n: int,
     ) -> TradeRecord | None:
         """Simulate trade entry and exit, returning a TradeRecord.
 
-        Entry: next bar's open ± slippage (adverse direction).
-        Exit: iterate forward bars checking stop/target/expiry.
+        Entry: next bar's open ± slippage (adverse direction).  Fill is
+        skipped (returns None) if the next bar is in a different trading
+        session than the signal bar — a signal at session close cannot
+        legitimately execute at the next session's open hours later.
+
+        Exit: iterate forward bars checking stop/target/expiry.  The loop
+        terminates at the end of the signal's session even if stop/target
+        were not hit ("eod_exit"), preventing a single trade from
+        accumulating days of price drift.
         """
         fill_bar = signal_bar_idx + 1
         if fill_bar >= n:
             # No next bar — cannot fill
             return None
+
+        # Session-boundary check: intraday-only — drop fills that would
+        # straddle a session break.
+        if (
+            session_dates is not None
+            and session_dates[fill_bar] != session_dates[signal_bar_idx]
+        ):
+            return None
+
+        signal_session = (
+            session_dates[signal_bar_idx] if session_dates is not None else None
+        )
 
         fill_open = opens[fill_bar]
         is_long = signal.direction == "long"
@@ -290,6 +326,18 @@ class BacktestDecisionHarness:
         else:
             fill_price = fill_open - self._slippage  # sell lower for shorts
 
+        # Sanity check: if the fill price is already past the stop loss,
+        # the next-bar open gapped beyond our protection. Treat this as
+        # "cannot fill" (operator would not actually submit the order).
+        # Without this the exit loop immediately "hits" the stop and
+        # labels it a loss, but the tick math is positive (because we
+        # filled favorable of the stop) — producing a ±huge-ticks win
+        # mislabelled as loss.
+        if is_long and fill_price <= signal.stop_loss:
+            return None
+        if not is_long and fill_price >= signal.stop_loss:
+            return None
+
         stop = signal.stop_loss
         target = signal.take_profit
         valid_until = signal.valid_until
@@ -298,7 +346,15 @@ class BacktestDecisionHarness:
         exit_reason: str | None = None
 
         # Iterate bars after the fill bar to find exit
+        last_same_session_idx = fill_bar
         for j in range(fill_bar + 1, n):
+            # Stop at session boundary — force EOD close on the last same-session bar.
+            if signal_session is not None and session_dates[j] != signal_session:
+                exit_price = closes[last_same_session_idx]
+                exit_reason = "eod_exit"
+                break
+            last_same_session_idx = j
+
             bar_high = highs[j]
             bar_low = lows[j]
             bar_close = closes[j]
@@ -344,8 +400,9 @@ class BacktestDecisionHarness:
                     break
 
         if exit_price is None:
-            # Ran out of data — close at last available bar's close
-            exit_price = closes[n - 1]
+            # Ran out of bars without hitting stop/target/expiry/EOD.
+            # Fall back to the last same-session close (never cross a session boundary).
+            exit_price = closes[last_same_session_idx]
             exit_reason = "time_exit"
 
         # Compute P&L in ticks

@@ -118,6 +118,33 @@ class MarketContextReplay:
         if missing:
             raise ValueError(f"DataFrame missing required columns: {missing}")
 
+        # Data-quality sanity: if >2% of 1-min bars have >2% return, the
+        # data is probably reconstructed from mis-aggregated ticks or
+        # contract-stitched without price adjustment. Any Setup A
+        # evaluation on such data will be noise, not signal.
+        import logging
+        import warnings
+
+        log = logging.getLogger(__name__)
+        df = self.df
+        if len(df) >= 100:
+            ret = df["close"].pct_change().abs()
+            big = (ret > 0.02).sum()
+            big_pct = 100 * big / len(df)
+            max_ret = ret.max()
+            if big_pct > 2.0 or max_ret > 0.10:
+                msg = (
+                    f"DataFrame has suspect quality: "
+                    f"{big_pct:.1f}% of 1-min bars move >2% "
+                    f"(max single-bar move {max_ret:.1%}). Typical clean "
+                    f"KOSPI200 futures data is <0.5%. Backtest numbers on "
+                    f"this data are unreliable; regenerate from ClickHouse "
+                    f"or filter corrupted bars before trusting Optuna/WF "
+                    f"results."
+                )
+                log.warning(msg)
+                warnings.warn(msg, stacklevel=2)
+
     # ------------------------------------------------------------------
     # Pre-computation (runs once at construction time)
     # ------------------------------------------------------------------

@@ -49,6 +49,32 @@ the gate is almost entirely backtest + static-analysis checks.
 
 ## 4. 6-month backtest per Setup
 
+> ⚠ **Data blocker (discovered 2026-04-23).** No clean 6-month
+> KOSPI200 futures 1-minute dataset currently exists in the repo:
+>
+> | File | Status |
+> |------|--------|
+> | `data/kospi200f_1m_clean.csv` | clean, but **only 17 days** |
+> | `data/kospi200f_1m_rebuilt_from_a01_*.csv` | 347 days but **>11 % of bars move >2 % in one minute** — phantom prints / contract-stitch artifacts |
+> | ClickHouse `kospi.kospi200f_1m` (code=`101S6000`) | 296 days but phantom `volume=2` bars at recurring clock times every day |
+>
+> The replay now warns when the input DataFrame shows >2 % of bars
+> exceeding 2 % 1-min returns. Until clean long-horizon data exists,
+> Setup A backtest numbers are **not trustworthy** — Optuna/WF EVs
+> on the rebuilt file (e.g. "+98 ticks/trade") are data artifacts,
+> not strategy edge.
+>
+> **Before the Phase 3 gate can close, the data pipeline needs:**
+> 1. ClickHouse `kospi200f_1m` cleaned of phantom-print rows
+>    (filter `volume > N`, or fix the ingestion's tick → minute
+>    aggregator)
+> 2. OR a manually-vetted 6-month+ export to CSV
+> 3. OR switch the Phase 3 empirical evaluation to KOSPI200 mini
+>    (`A05...`) if that table is clean
+>
+> Until then: Phase 3 **code** is reviewed + merged; Phase 3
+> **empirical gate** (items §4 and §5) is **blocked on data**.
+
 - [ ] Run harness on `data/kospi200f_1m_clean.csv` (6 months):
   ```bash
   # See scripts/walk_forward_phase3.py for the orchestration pattern.
