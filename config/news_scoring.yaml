@@ -1,0 +1,32 @@
+# config/news_scoring.yaml
+news_scorer:
+  consumer_group: "news_scorer-v1"
+  worker_id_prefix: "scorer"
+  batch_size: 10
+  xread_block_ms: 5000
+  input_stream: "stream:news.raw"
+  output_stream: "stream:news.scored"
+  output_stream_maxlen: 100000
+  ch_batch_size: 20
+  ch_flush_interval_seconds: 10
+
+  scorer:
+    provider: "openai"
+    model: "gpt-4o-mini"
+    version: "gpt-4o-mini-v1"
+    temperature: 0.0
+    max_tokens: 250
+    timeout_seconds: 5.0
+    retries: 2
+    api_key_env: "OPENAI_API_KEY"
+
+  budget:
+    daily_usd_limit: 5.0
+    alert_threshold_pct: 0.8
+
+  fallback:
+    on_timeout: "neutral"        # neutral | skip
+    on_json_error: "neutral"
+    on_budget_exceeded: "skip"
+
+  body_truncate_chars: 2000
