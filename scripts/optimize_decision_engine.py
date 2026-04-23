@@ -125,6 +125,8 @@ def main() -> int:
     args = p.parse_args()
 
     df = pd.read_csv(args.data)
+    if "timestamp" not in df.columns and "datetime" in df.columns:
+        df = df.rename(columns={"datetime": "timestamp"})
     df["timestamp"] = pd.to_datetime(df["timestamp"])
 
     registry = ContractSpecRegistry.from_yaml("config/execution.yaml")

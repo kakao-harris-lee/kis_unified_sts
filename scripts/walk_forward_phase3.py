@@ -120,10 +120,25 @@ def run(args: argparse.Namespace) -> int:
         level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s"
     )
     df = pd.read_csv(args.data)
+    # Project CSV files conventionally use 'datetime'; the harness expects 'timestamp'.
+    if "timestamp" not in df.columns and "datetime" in df.columns:
+        df = df.rename(columns={"datetime": "timestamp"})
     folds = _split_folds(df, args.is_months, args.oos_months)
     logger.info(
         "built %d folds (is=%dm, oos=%dm)", len(folds), args.is_months, args.oos_months
     )
+    if not folds:
+        span = (
+            pd.to_datetime(df["timestamp"]).max()
+            - pd.to_datetime(df["timestamp"]).min()
+        )
+        logger.error(
+            "No folds produced — data span is only %s but --is-months + --oos-months "
+            "needs at least %d months. Either supply a longer CSV or shrink the window.",
+            span,
+            args.is_months + args.oos_months,
+        )
+        return 2
 
     registry = ContractSpecRegistry.from_yaml("config/execution.yaml")
     spec = registry.specs[args.contract]
