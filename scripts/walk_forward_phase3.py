@@ -84,6 +84,7 @@ def _run_on_window(
     setup_a: SetupAGapReversion,
     setup_c: SetupCEventReaction,
     macro_provider=None,
+    min_volume: int = 0,
 ) -> HarnessResult:
     replay = MarketContextReplay(
         df=df,
@@ -92,6 +93,7 @@ def _run_on_window(
         scheduled_events=[],
         contract_spec=spec,
         macro_provider=macro_provider,
+        min_volume=min_volume,
     )
     harness = BacktestDecisionHarness(
         setups=[setup_a, setup_c],
@@ -176,10 +178,24 @@ def run(args: argparse.Namespace) -> int:
     results: list[FoldResult] = []
     for idx, (is_df, oos_df) in enumerate(folds):
         is_result = _run_on_window(
-            is_df, args.symbol, macro, spec, setup_a, setup_c, macro_provider
+            is_df,
+            args.symbol,
+            macro,
+            spec,
+            setup_a,
+            setup_c,
+            macro_provider,
+            args.min_volume,
         )
         oos_result = _run_on_window(
-            oos_df, args.symbol, macro, spec, setup_a, setup_c, macro_provider
+            oos_df,
+            args.symbol,
+            macro,
+            spec,
+            setup_a,
+            setup_c,
+            macro_provider,
+            args.min_volume,
         )
 
         is_setup_agg = _aggregate(is_result)
@@ -241,6 +257,13 @@ def main() -> int:
         action="store_true",
         help="Skip yfinance retroactive macro fetch (uses neutral snapshot — "
         "Setup A will never fire; useful for offline smoke-testing only).",
+    )
+    p.add_argument(
+        "--min-volume",
+        type=int,
+        default=30,
+        help="Drop bars with volume below this threshold before replay "
+        "(default 30 — tuned to strip phantom prints on KOSPI200 futures).",
     )
     return run(p.parse_args())
 

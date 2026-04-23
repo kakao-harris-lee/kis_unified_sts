@@ -66,7 +66,7 @@ logger = logging.getLogger(__name__)
 
 
 def _objective_a(
-    trial: optuna.Trial, df: pd.DataFrame, symbol: str, spec, macro_provider
+    trial: optuna.Trial, df: pd.DataFrame, symbol: str, spec, macro_provider, min_volume
 ) -> float:
     cfg = SetupAConfig(
         min_kr_gap_pct=trial.suggest_float("min_kr_gap_pct", 0.2, 0.6),
@@ -75,11 +75,11 @@ def _objective_a(
         stop_atr_mult=trial.suggest_float("stop_atr_mult", 1.0, 2.5),
     )
     setup = SetupAGapReversion(config=cfg)
-    return _run_and_score([setup], df, symbol, spec, macro_provider)
+    return _run_and_score([setup], df, symbol, spec, macro_provider, min_volume)
 
 
 def _objective_c(
-    trial: optuna.Trial, df: pd.DataFrame, symbol: str, spec, macro_provider
+    trial: optuna.Trial, df: pd.DataFrame, symbol: str, spec, macro_provider, min_volume
 ) -> float:
     cfg = SetupCConfig(
         breakout_buffer_atr_mult=trial.suggest_float(
@@ -89,10 +89,10 @@ def _objective_c(
         min_impact_tier=trial.suggest_int("min_impact_tier", 1, 3),
     )
     setup = SetupCEventReaction(config=cfg, tracker=EventTradeTracker())
-    return _run_and_score([setup], df, symbol, spec, macro_provider)
+    return _run_and_score([setup], df, symbol, spec, macro_provider, min_volume)
 
 
-def _run_and_score(setups, df, symbol, spec, macro_provider) -> float:
+def _run_and_score(setups, df, symbol, spec, macro_provider, min_volume) -> float:
     replay = MarketContextReplay(
         df=df,
         symbol=symbol,
@@ -105,6 +105,7 @@ def _run_and_score(setups, df, symbol, spec, macro_provider) -> float:
         scheduled_events=[],
         contract_spec=spec,
         macro_provider=macro_provider,
+        min_volume=min_volume,
     )
     harness = BacktestDecisionHarness(
         setups=setups,
@@ -137,6 +138,13 @@ def main() -> int:
         help="Skip yfinance retroactive macro fetch (offline mode — "
         "Setup A will receive a neutral snapshot and never fire).",
     )
+    p.add_argument(
+        "--min-volume",
+        type=int,
+        default=30,
+        help="Drop bars with volume below this threshold before replay "
+        "(default 30 — tuned to strip phantom prints on KOSPI200 futures).",
+    )
     args = p.parse_args()
 
     df = pd.read_csv(args.data)
@@ -159,7 +167,7 @@ def main() -> int:
     study = optuna.create_study(direction="maximize")
     objective = _objective_a if args.setup == "a" else _objective_c
     study.optimize(
-        lambda t: objective(t, df, args.symbol, spec, macro_provider),
+        lambda t: objective(t, df, args.symbol, spec, macro_provider, args.min_volume),
         n_trials=args.trials,
     )
 

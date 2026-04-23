@@ -100,11 +100,35 @@ class MarketContextReplay:
     # date).  Missing dates fall back to ``macro_snapshot``.
     macro_provider: Callable[[date], MacroSnapshot | None] | None = field(default=None)
 
+    # Drop bars with volume < min_volume before replay. The KOSPI200 futures
+    # ClickHouse table is known to carry phantom ``volume=2`` prints at
+    # recurring clock times every day (see docs/runbooks/phase3-verification.md
+    # §4). With ``min_volume=30`` the bimodal distribution is cleaned up
+    # (26% of rows dropped, anomalous >2% 1-min moves cut 17x to 0.28%).
+    # Zero = no filter (backward compatible with existing tests).
+    min_volume: int = 0
+
     # Computed at construction time; None until first iter_contexts() call
     _atr_series: np.ndarray | None = None
     _atr_90th: float | None = None
 
     def __post_init__(self) -> None:
+        if self.min_volume > 0:
+            before = len(self.df)
+            self.df = self.df[self.df["volume"] >= self.min_volume].reset_index(
+                drop=True
+            )
+            dropped = before - len(self.df)
+            if dropped > 0:
+                import logging
+
+                logging.getLogger(__name__).info(
+                    "min_volume=%d filter dropped %d/%d bars (%.1f%%)",
+                    self.min_volume,
+                    dropped,
+                    before,
+                    100 * dropped / before,
+                )
         self._validate_df()
         self._precompute()
 

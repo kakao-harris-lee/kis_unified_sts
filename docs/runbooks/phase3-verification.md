@@ -64,16 +64,18 @@ the gate is almost entirely backtest + static-analysis checks.
 > on the rebuilt file (e.g. "+98 ticks/trade") are data artifacts,
 > not strategy edge.
 >
-> **Before the Phase 3 gate can close, the data pipeline needs:**
-> 1. ClickHouse `kospi200f_1m` cleaned of phantom-print rows
->    (filter `volume > N`, or fix the ingestion's tick → minute
->    aggregator)
-> 2. OR a manually-vetted 6-month+ export to CSV
-> 3. OR switch the Phase 3 empirical evaluation to KOSPI200 mini
->    (`A05...`) if that table is clean
+> **Mitigation applied (2026-04-23):** `MarketContextReplay.min_volume`
+> filter drops bars below a volume threshold at load time. A `volume ≥ 30`
+> threshold cuts anomalous >2 % 1-min moves from 4.7 % → 0.28 % while
+> preserving 74 % of bars (~296 days). Both `walk_forward_phase3.py` and
+> `optimize_decision_engine.py` accept `--min-volume N` (default 30).
 >
-> Until then: Phase 3 **code** is reviewed + merged; Phase 3
-> **empirical gate** (items §4 and §5) is **blocked on data**.
+> Fresh ClickHouse export: `data/kospi200f_1m_ch_101S6000.csv` (51 K bars,
+> 2025-07 → 2026-04). Run with `--min-volume 30` for trustworthy numbers.
+>
+> A full fix (upstream tick → minute aggregator stops emitting
+> volume=2 phantoms) is still worth doing, but this filter unblocks
+> the empirical gate in the meantime.
 
 - [ ] Run harness on `data/kospi200f_1m_clean.csv` (6 months):
   ```bash
