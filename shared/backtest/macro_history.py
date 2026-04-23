@@ -57,7 +57,21 @@ def fetch_macro_history(
         date whose overnight window sees the fetched US close).
     """
     import pandas as pd
-    import yfinance as yf  # lazy import — only needed for live backtests
+
+    try:
+        import yfinance as yf  # lazy import — only needed for live backtests
+    except ModuleNotFoundError as exc:
+        raise ModuleNotFoundError(
+            "yfinance is required for retroactive macro backfill but is not "
+            "importable. It IS declared in pyproject.toml; the most likely "
+            "cause is that you are running the system Python rather than the "
+            "project venv.\n\n"
+            "Fix:\n"
+            "  source .venv/bin/activate && python scripts/...\n"
+            "or run the script via the venv Python directly:\n"
+            "  .venv/bin/python scripts/...\n"
+            "or pass --skip-macro to bypass macro (Setup A will never fire)."
+        ) from exc
 
     tickers = tickers or _DEFAULT_TICKERS
     # Fetch a cushion of 7 days before start so the first KR session has a prior close.
