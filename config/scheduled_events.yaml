@@ -1,0 +1,18 @@
+# Macro event calendar — updated manually at the start of each month.
+# impact_tier: 1 = top tier (FOMC, CPI), 2 = medium, 3 = minor
+# scheduled_at: UTC ISO 8601 (append Z). KST = UTC+9.
+events:
+  - event_id: "fomc_2026_may"
+    event_type: "FOMC_rate_decision"
+    scheduled_at: "2026-05-01T03:00:00Z"   # UTC 03:00 = KST 12:00
+    impact_tier: 1
+
+  - event_id: "us_cpi_2026_05"
+    event_type: "US_CPI"
+    scheduled_at: "2026-05-13T12:30:00Z"   # UTC 12:30 = KST 21:30
+    impact_tier: 1
+
+  - event_id: "bok_2026_may"
+    event_type: "BOK_rate_decision"
+    scheduled_at: "2026-05-23T00:00:00Z"   # UTC 00:00 = KST 09:00
+    impact_tier: 1
