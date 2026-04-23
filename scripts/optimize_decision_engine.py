@@ -24,30 +24,39 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import sys
 from pathlib import Path
 
-import pandas as pd
+# Allow direct `python scripts/optimize_decision_engine.py` execution.
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+import pandas as pd  # noqa: E402
 
 try:
-    import optuna
+    import optuna  # noqa: E402
 except ImportError as exc:
     raise SystemExit(
         "optuna is not installed. `pip install optuna` (or use the"
         " project optimization extra)."
     ) from exc
 
-from shared.backtest.decision_harness import BacktestDecisionHarness
-from shared.backtest.market_context_replay import MarketContextReplay
-from shared.decision.setups.event_reaction import (
+from shared.backtest.decision_harness import BacktestDecisionHarness  # noqa: E402
+from shared.backtest.market_context_replay import MarketContextReplay  # noqa: E402
+from shared.decision.setups.event_reaction import (  # noqa: E402
     EventTradeTracker,
     SetupCConfig,
     SetupCEventReaction,
 )
-from shared.decision.setups.gap_reversion import SetupAConfig, SetupAGapReversion
-from shared.execution.contract_spec import ContractSpecRegistry
-from shared.macro.base import MacroSnapshot
-from shared.risk.layer import RiskFilterLayer
-from shared.risk.state import RiskStateSnapshot
+from shared.decision.setups.gap_reversion import (  # noqa: E402
+    SetupAConfig,
+    SetupAGapReversion,
+)
+from shared.execution.contract_spec import ContractSpecRegistry  # noqa: E402
+from shared.macro.base import MacroSnapshot  # noqa: E402
+from shared.risk.layer import RiskFilterLayer  # noqa: E402
+from shared.risk.state import RiskStateSnapshot  # noqa: E402
 
 logger = logging.getLogger(__name__)
 

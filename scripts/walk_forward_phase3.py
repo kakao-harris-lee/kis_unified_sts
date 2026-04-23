@@ -27,25 +27,31 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-import pandas as pd
+# Allow direct `python scripts/walk_forward_phase3.py` execution.
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
-from shared.backtest.decision_harness import (
+import pandas as pd  # noqa: E402
+
+from shared.backtest.decision_harness import (  # noqa: E402
     BacktestDecisionHarness,
     HarnessResult,
 )
-from shared.backtest.market_context_replay import MarketContextReplay
-from shared.decision.setups.event_reaction import (
+from shared.backtest.market_context_replay import MarketContextReplay  # noqa: E402
+from shared.decision.setups.event_reaction import (  # noqa: E402
     EventTradeTracker,
     SetupCEventReaction,
 )
-from shared.decision.setups.gap_reversion import SetupAGapReversion
-from shared.execution.contract_spec import ContractSpecRegistry
-from shared.macro.base import MacroSnapshot
-from shared.risk.layer import RiskFilterLayer
-from shared.risk.state import RiskStateSnapshot
+from shared.decision.setups.gap_reversion import SetupAGapReversion  # noqa: E402
+from shared.execution.contract_spec import ContractSpecRegistry  # noqa: E402
+from shared.macro.base import MacroSnapshot  # noqa: E402
+from shared.risk.layer import RiskFilterLayer  # noqa: E402
+from shared.risk.state import RiskStateSnapshot  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
