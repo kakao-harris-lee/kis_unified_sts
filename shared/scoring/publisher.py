@@ -98,7 +98,14 @@ class ScoredPublisher:
             await self.flush()
 
     async def flush(self) -> None:
-        """Flush any buffered rows to ClickHouse immediately."""
+        """Flush any buffered rows to ClickHouse immediately.
+
+        Re-raises on ClickHouse failure so `publish()` (its only caller that
+        matters for the consumer-group invariant) propagates the error and
+        the daemon can leave the source message pending for redelivery.
+        Swallowing here would XACK successful stream-XADD's while the CH
+        row is lost — a Redis/CH split-brain we never recover from.
+        """
         async with self._lock:
             if not self._buffer:
                 return
@@ -107,4 +114,7 @@ class ScoredPublisher:
         try:
             await self.ch.execute(_CH_INSERT, rows)
         except Exception:
-            logger.exception("news_scored flush failed; dropping %d rows", len(rows))
+            logger.exception(
+                "news_scored flush failed; %d rows pending redelivery", len(rows)
+            )
+            raise

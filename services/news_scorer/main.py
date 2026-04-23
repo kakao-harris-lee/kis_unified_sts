@@ -308,7 +308,11 @@ async def _build_and_run() -> int:
     await ch_client.connect()
 
     openai_client = AsyncOpenAI(api_key=os.environ[cfg.scorer.api_key_env])
-    budget = DailyBudget(redis_client, daily_usd_limit=cfg.budget.daily_usd_limit)
+    budget = DailyBudget(
+        redis_client,
+        daily_usd_limit=cfg.budget.daily_usd_limit,
+        key_prefix=cfg.budget.key_prefix,
+    )
     llm = LLMScorer(
         client=openai_client,
         budget=budget,

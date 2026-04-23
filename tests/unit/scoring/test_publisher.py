@@ -158,3 +158,41 @@ async def test_stream_fields_are_scalar_strings(redis):
     import json
 
     assert json.loads(fields[b"keywords_json"]) == ["fomc"]
+
+
+@pytest.mark.asyncio
+async def test_flush_reraises_clickhouse_failure(redis):
+    """CH failures MUST propagate so the daemon leaves the source message pending.
+
+    The consumer-group invariant (see services/news_scorer/main.py module
+    docstring "Publisher failure → NO XACK") only holds if publish()/flush()
+    actually raise on CH errors. Swallowing would cause XADD-succeeded +
+    CH-failed + XACK → unrecoverable Redis/CH split-brain.
+    """
+    ch = AsyncMock()
+    ch.execute.side_effect = RuntimeError("clickhouse down")
+    pub = ScoredPublisher(
+        redis=redis,
+        ch_client=ch,
+        stream=_STREAM,
+        maxlen=100,
+        ch_batch_size=1,
+    )
+    with pytest.raises(RuntimeError, match="clickhouse down"):
+        await pub.publish(_item("ch_fail"))
+
+
+@pytest.mark.asyncio
+async def test_explicit_flush_reraises_clickhouse_failure(redis):
+    ch = AsyncMock()
+    pub = ScoredPublisher(
+        redis=redis,
+        ch_client=ch,
+        stream=_STREAM,
+        maxlen=100,
+        ch_batch_size=10,  # no auto-flush
+    )
+    await pub.publish(_item("a"))
+    ch.execute.side_effect = RuntimeError("clickhouse down")
+    with pytest.raises(RuntimeError, match="clickhouse down"):
+        await pub.flush()

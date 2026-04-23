@@ -23,6 +23,7 @@ news_scorer:
   budget:
     daily_usd_limit: 5.0
     alert_threshold_pct: 0.8
+    key_prefix: "scorer:cost"    # Redis key namespace; override per-env if needed
 
   fallback:
     on_timeout: "neutral"        # neutral | skip

@@ -283,3 +283,29 @@ async def test_daemon_processes_multiple_messages() -> None:
 
     pending = await redis.xpending("stream:news.raw", "news_scorer-v1")
     assert pending["pending"] == 0
+
+
+@pytest.mark.asyncio
+async def test_daemon_does_not_ack_on_clickhouse_failure() -> None:
+    """Publisher failure (ClickHouse down) → NO XACK (message stays pending).
+
+    Enforces the main.py error taxonomy: "Publisher failure → NO XACK (leave
+    pending)". Prior to this regression test, ScoredPublisher.flush() silently
+    swallowed CH errors, causing publish() to return normally, _process to
+    XACK, and the row to be lost (Redis stream XADD succeeded; CH insert did
+    not) — an unrecoverable Redis/CH split-brain.
+    """
+    redis = fakeredis.aioredis.FakeRedis()
+    await _seed_raw(redis, "n1")
+
+    scorer = _FakeScorer(outcomes=["ok"])
+    fallback = _FakeScorer(outcomes=["ok"])
+
+    ch = AsyncMock()
+    ch.execute.side_effect = RuntimeError("clickhouse down")
+    daemon = _make_daemon(redis, scorer, fallback, ch=ch)
+    await _run_daemon_briefly(daemon)
+
+    # The message must remain pending for redelivery.
+    pending = await redis.xpending("stream:news.raw", "news_scorer-v1")
+    assert pending["pending"] == 1

@@ -28,6 +28,7 @@ class _ScorerSection(BaseModel):
 class _BudgetSection(BaseModel):
     daily_usd_limit: float = 5.0
     alert_threshold_pct: float = 0.8
+    key_prefix: str = "scorer:cost"
 
 
 class _FallbackSection(BaseModel):

@@ -29,6 +29,18 @@ class TestConfigDefaults:
         c = NewsScorerConfig()
         assert c.budget.daily_usd_limit == 5.0
 
+    def test_budget_key_prefix_default(self) -> None:
+        c = NewsScorerConfig()
+        assert c.budget.key_prefix == "scorer:cost"
+
+    def test_budget_key_prefix_yaml_override(self, tmp_path) -> None:
+        p = tmp_path / "news_scoring.yaml"
+        p.write_text(
+            "news_scorer:\n" "  budget:\n" "    key_prefix: env1:scorer:cost\n"
+        )
+        c = NewsScorerConfig.from_yaml(str(p))
+        assert c.budget.key_prefix == "env1:scorer:cost"
+
     def test_fallback_on_timeout_default(self) -> None:
         c = NewsScorerConfig()
         assert c.fallback.on_timeout == "neutral"

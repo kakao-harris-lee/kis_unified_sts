@@ -19,9 +19,7 @@ Monkeypatched surfaces:
 
 from __future__ import annotations
 
-import asyncio
-import os
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -55,6 +53,7 @@ def _make_scorer_cfg() -> MagicMock:
     cfg.scorer.api_key_env = "OPENAI_API_KEY"
     # budget sub-section
     cfg.budget.daily_usd_limit = 5.0
+    cfg.budget.key_prefix = "scorer:cost"
     return cfg
 
 
@@ -402,3 +401,57 @@ def test_main_propagates_nonzero_exit(monkeypatch: pytest.MonkeyPatch) -> None:
     rc = main()
 
     assert rc == 42
+
+
+# ---------------------------------------------------------------------------
+# YAML-driven DailyBudget wiring
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_build_and_run_passes_budget_key_prefix_from_yaml(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """cfg.budget.key_prefix must flow through to DailyBudget(...)."""
+    cfg = _make_scorer_cfg()
+    cfg.budget.key_prefix = "staging:scorer:cost"
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-unit")
+    monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/1")
+    monkeypatch.setattr(
+        "shared.scoring.config.NewsScorerConfig.from_yaml",
+        classmethod(lambda _cls, *_a, **_kw: cfg),
+    )
+    monkeypatch.setattr("redis.asyncio.from_url", lambda *_a, **_kw: AsyncMock())
+    monkeypatch.setattr(
+        "shared.db.config.ClickHouseConfig.from_env",
+        classmethod(lambda _cls, **_kw: MagicMock()),
+    )
+    monkeypatch.setattr(
+        "shared.db.client.AsyncClickHouseClient",
+        lambda *_a, **_kw: AsyncMock(),
+    )
+    monkeypatch.setattr("openai.AsyncOpenAI", lambda *_a, **_kw: AsyncMock())
+    monkeypatch.setattr(
+        "shared.scoring.fallback.FallbackScorer",
+        lambda *_a, **_kw: MagicMock(),
+    )
+    monkeypatch.setattr(
+        "shared.scoring.llm_scorer.LLMScorer",
+        lambda *_a, **_kw: MagicMock(),
+    )
+
+    captured_kwargs: list[dict] = []
+
+    def _capture_budget(*_a, **kwargs):
+        captured_kwargs.append(kwargs)
+        return MagicMock()
+
+    monkeypatch.setattr("shared.scoring.budget.DailyBudget", _capture_budget)
+    monkeypatch.setattr(NewsScorerDaemon, "run", _instant_run)
+
+    await _build_and_run()
+
+    assert len(captured_kwargs) == 1
+    assert captured_kwargs[0]["daily_usd_limit"] == 5.0
+    assert captured_kwargs[0]["key_prefix"] == "staging:scorer:cost"
