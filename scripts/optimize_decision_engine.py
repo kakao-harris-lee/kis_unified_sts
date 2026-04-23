@@ -43,6 +43,10 @@ except ImportError as exc:
     ) from exc
 
 from shared.backtest.decision_harness import BacktestDecisionHarness  # noqa: E402
+from shared.backtest.macro_history import (  # noqa: E402
+    fetch_macro_history,
+    make_macro_provider,
+)
 from shared.backtest.market_context_replay import MarketContextReplay  # noqa: E402
 from shared.decision.setups.event_reaction import (  # noqa: E402
     EventTradeTracker,
@@ -61,7 +65,9 @@ from shared.risk.state import RiskStateSnapshot  # noqa: E402
 logger = logging.getLogger(__name__)
 
 
-def _objective_a(trial: optuna.Trial, df: pd.DataFrame, symbol: str, spec) -> float:
+def _objective_a(
+    trial: optuna.Trial, df: pd.DataFrame, symbol: str, spec, macro_provider
+) -> float:
     cfg = SetupAConfig(
         min_kr_gap_pct=trial.suggest_float("min_kr_gap_pct", 0.2, 0.6),
         retrace_min=trial.suggest_float("retrace_min", 0.25, 0.40),
@@ -69,10 +75,12 @@ def _objective_a(trial: optuna.Trial, df: pd.DataFrame, symbol: str, spec) -> fl
         stop_atr_mult=trial.suggest_float("stop_atr_mult", 1.0, 2.5),
     )
     setup = SetupAGapReversion(config=cfg)
-    return _run_and_score([setup], df, symbol, spec)
+    return _run_and_score([setup], df, symbol, spec, macro_provider)
 
 
-def _objective_c(trial: optuna.Trial, df: pd.DataFrame, symbol: str, spec) -> float:
+def _objective_c(
+    trial: optuna.Trial, df: pd.DataFrame, symbol: str, spec, macro_provider
+) -> float:
     cfg = SetupCConfig(
         breakout_buffer_atr_mult=trial.suggest_float(
             "breakout_buffer_atr_mult", 0.2, 1.0
@@ -81,10 +89,10 @@ def _objective_c(trial: optuna.Trial, df: pd.DataFrame, symbol: str, spec) -> fl
         min_impact_tier=trial.suggest_int("min_impact_tier", 1, 3),
     )
     setup = SetupCEventReaction(config=cfg, tracker=EventTradeTracker())
-    return _run_and_score([setup], df, symbol, spec)
+    return _run_and_score([setup], df, symbol, spec, macro_provider)
 
 
-def _run_and_score(setups, df, symbol, spec) -> float:
+def _run_and_score(setups, df, symbol, spec, macro_provider) -> float:
     replay = MarketContextReplay(
         df=df,
         symbol=symbol,
@@ -96,6 +104,7 @@ def _run_and_score(setups, df, symbol, spec) -> float:
         ),
         scheduled_events=[],
         contract_spec=spec,
+        macro_provider=macro_provider,
     )
     harness = BacktestDecisionHarness(
         setups=setups,
@@ -122,6 +131,12 @@ def main() -> int:
     p.add_argument("--contract", default="kospi200_mini")
     p.add_argument("--trials", type=int, default=50)
     p.add_argument("--out", default="results/optuna_phase3.json")
+    p.add_argument(
+        "--skip-macro",
+        action="store_true",
+        help="Skip yfinance retroactive macro fetch (offline mode — "
+        "Setup A will receive a neutral snapshot and never fire).",
+    )
     args = p.parse_args()
 
     df = pd.read_csv(args.data)
@@ -132,9 +147,21 @@ def main() -> int:
     registry = ContractSpecRegistry.from_yaml("config/execution.yaml")
     spec = registry.specs[args.contract]
 
+    macro_provider = None
+    if not args.skip_macro:
+        data_start = df["timestamp"].min().date()
+        data_end = df["timestamp"].max().date()
+        logger.info("fetching yfinance macro history for %s → %s", data_start, data_end)
+        history = fetch_macro_history(data_start, data_end)
+        logger.info("got %d daily macro snapshots", len(history))
+        macro_provider = make_macro_provider(history)
+
     study = optuna.create_study(direction="maximize")
     objective = _objective_a if args.setup == "a" else _objective_c
-    study.optimize(lambda t: objective(t, df, args.symbol, spec), n_trials=args.trials)
+    study.optimize(
+        lambda t: objective(t, df, args.symbol, spec, macro_provider),
+        n_trials=args.trials,
+    )
 
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     Path(args.out).write_text(
