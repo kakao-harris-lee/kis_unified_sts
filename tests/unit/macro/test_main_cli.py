@@ -42,6 +42,12 @@ def _patch_external_clients(monkeypatch):
         "shared.db.config.ClickHouseConfig.from_env",
         classmethod(lambda _cls, database=None: MagicMock()),  # noqa: ARG005
     )
+    from shared.macro.config import MacroCollectorConfig
+
+    monkeypatch.setattr(
+        "shared.macro.config.MacroCollectorConfig.from_yaml",
+        classmethod(lambda _cls, *_a, **_kw: MacroCollectorConfig()),
+    )
     return fake_ch
 
 

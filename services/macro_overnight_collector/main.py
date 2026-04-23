@@ -15,6 +15,8 @@ from services.monitoring.metrics import record_macro_collected
 
 logger = logging.getLogger(__name__)
 
+_STREAM_TTL_SECONDS = 86400  # Project Redis TTL policy (memory: stream keys 24h)
+
 
 async def _publish_snapshot(redis: Any, stream: str, maxlen: int, snap) -> None:
     payload = {
@@ -35,6 +37,7 @@ async def _publish_snapshot(redis: Any, stream: str, maxlen: int, snap) -> None:
     }
     fields = {k: ("" if v is None else str(v)) for k, v in payload.items()}
     await redis.xadd(stream, fields, maxlen=maxlen, approximate=True)
+    await redis.expire(stream, _STREAM_TTL_SECONDS)
 
 
 _CH_INSERT = (
@@ -101,11 +104,13 @@ async def _cli(session_kind: str) -> int:
 
     from shared.db.client import AsyncClickHouseClient
     from shared.db.config import ClickHouseConfig
+    from shared.macro.config import MacroCollectorConfig
     from shared.macro.sources.ecos import ECOSSource
     from shared.macro.sources.yahoo import YahooMacroSource
 
-    stream = "stream:macro.overnight"
-    maxlen = 5000
+    cfg = MacroCollectorConfig.from_yaml()
+    stream = cfg.redis_stream
+    maxlen = cfg.redis_maxlen
     redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/1")
     r = aioredis.from_url(redis_url)
     ch = AsyncClickHouseClient(ClickHouseConfig.from_env(database="kospi"))

@@ -32,7 +32,7 @@ news_collector:
       poll_interval_seconds: 180
       mode: "adapter"
         """.strip())
-    cfg = NewsCollectorConfig.from_yaml_path(str(yaml))
+    cfg = NewsCollectorConfig.from_yaml(str(yaml))
     assert cfg.redis_stream == "stream:news.raw"
     assert cfg.sources.yonhap.enabled is True
     assert cfg.sources.reuters.enabled is False
@@ -45,4 +45,4 @@ def test_missing_required_key_raises(tmp_path):
     yaml = tmp_path / "bad.yaml"
     yaml.write_text("news_collector:\n  redis_stream: x\n")
     with pytest.raises(ValidationError):
-        NewsCollectorConfig.from_yaml_path(str(yaml))
+        NewsCollectorConfig.from_yaml(str(yaml))

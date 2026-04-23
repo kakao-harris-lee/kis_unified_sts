@@ -13,6 +13,9 @@ from shared.news.base import NewsItem
 logger = logging.getLogger(__name__)
 
 
+_STREAM_TTL_SECONDS = 86400  # Project Redis TTL policy (memory: stream keys 24h)
+
+
 class NewsStreamPublisher:
     """Minimal publisher targeting stream:news.raw.
 
@@ -37,6 +40,7 @@ class NewsStreamPublisher:
         msg_id = await self.redis.xadd(
             self.stream, fields, maxlen=self.maxlen, approximate=True
         )
+        await self.redis.expire(self.stream, _STREAM_TTL_SECONDS)
         return msg_id.decode() if isinstance(msg_id, bytes) else str(msg_id)
 
 

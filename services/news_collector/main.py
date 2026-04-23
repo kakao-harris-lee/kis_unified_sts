@@ -108,7 +108,7 @@ async def _build_and_run_from_config() -> int:
     from shared.news.sources.reuters import ReutersRSSSource
     from shared.news.sources.yonhap import YonhapRSSSource
 
-    cfg = NewsCollectorConfig.from_yaml_path("config/news_sources.yaml")
+    cfg = NewsCollectorConfig.from_yaml()
     redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/1")
     redis_client = aioredis.from_url(redis_url)
 

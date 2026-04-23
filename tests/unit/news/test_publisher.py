@@ -59,6 +59,15 @@ async def test_publisher_respects_maxlen(redis):
 
 
 @pytest.mark.asyncio
+async def test_publisher_sets_stream_ttl(redis):
+    """Project Redis TTL policy: every XADD must be followed by expire(key, 86400)."""
+    pub = NewsStreamPublisher(redis, stream="stream:news.raw", maxlen=100)
+    await pub.publish(_item("a"))
+    ttl = await redis.ttl("stream:news.raw")
+    assert 0 < ttl <= 86400
+
+
+@pytest.mark.asyncio
 async def test_ch_writer_batches_and_flushes_on_size():
     ch_client = AsyncMock()
     writer = ClickHouseNewsWriter(ch_client, batch_size=3, flush_interval_seconds=60)

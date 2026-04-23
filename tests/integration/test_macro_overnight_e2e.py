@@ -38,6 +38,8 @@ async def test_collect_us_session_publishes_and_writes():
     assert len(entries) == 1
     assert entries[0][1][b"session"] == b"overnight_us_close"
     ch.execute.assert_awaited()
+    ttl = await redis.ttl("stream:macro.overnight")
+    assert 0 < ttl <= 86400
 
 
 @pytest.mark.asyncio

@@ -99,8 +99,8 @@ async def test_build_and_run_all_sources_enabled(monkeypatch):
     cfg = _make_cfg()
 
     monkeypatch.setattr(
-        "shared.news.config.NewsCollectorConfig.from_yaml_path",
-        classmethod(lambda _cls, _path: cfg),
+        "shared.news.config.NewsCollectorConfig.from_yaml",
+        classmethod(lambda _cls, *_a, **_kw: cfg),
     )
     monkeypatch.setattr(
         "redis.asyncio.from_url",
@@ -169,8 +169,8 @@ async def test_build_and_run_dart_mk_import_error(monkeypatch):
     cfg = _make_cfg(yonhap=False, reuters=False, dart=True, mk=True)
 
     monkeypatch.setattr(
-        "shared.news.config.NewsCollectorConfig.from_yaml_path",
-        classmethod(lambda _cls, _path: cfg),
+        "shared.news.config.NewsCollectorConfig.from_yaml",
+        classmethod(lambda _cls, *_a, **_kw: cfg),
     )
     monkeypatch.setattr(
         "redis.asyncio.from_url",

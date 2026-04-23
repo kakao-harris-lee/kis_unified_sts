@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import ClassVar
 
-import yaml
 from pydantic import BaseModel, Field
+
+from shared.config.base import ServiceConfigBase
 
 
 class DedupeConfig(BaseModel):
@@ -41,7 +42,10 @@ class SourcesConfig(BaseModel):
     mk: MKSourceConfig
 
 
-class NewsCollectorConfig(BaseModel):
+class NewsCollectorConfig(ServiceConfigBase):
+    _default_config_file: ClassVar[str] = "news_sources.yaml"
+    _default_section: ClassVar[str] = "news_collector"
+
     redis_stream: str
     redis_maxlen: int = Field(default=100000, gt=0)
     clickhouse_batch_size: int = Field(default=50, gt=0)
@@ -49,8 +53,3 @@ class NewsCollectorConfig(BaseModel):
     body_truncate_chars: int = Field(default=2000, gt=0)
     dedupe: DedupeConfig
     sources: SourcesConfig
-
-    @classmethod
-    def from_yaml_path(cls, path: str) -> NewsCollectorConfig:
-        data = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
-        return cls.model_validate(data["news_collector"])
