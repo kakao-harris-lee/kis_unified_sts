@@ -61,6 +61,7 @@ from shared.decision.setups.gap_reversion import (  # noqa: E402
 )
 from shared.execution.contract_spec import ContractSpecRegistry  # noqa: E402
 from shared.macro.base import MacroSnapshot  # noqa: E402
+from shared.risk.config import FuturesRiskConfig, load_trading_windows  # noqa: E402
 from shared.risk.layer import RiskFilterLayer  # noqa: E402
 from shared.risk.state import RiskStateSnapshot  # noqa: E402
 
@@ -90,6 +91,7 @@ def _run_on_window(
     spec,
     setup_a: SetupAGapReversion,
     setup_c: SetupCEventReaction,
+    filter_layer: RiskFilterLayer,
     macro_provider=None,
     min_volume: int = 0,
     scheduled_events: list[ScheduledEvent] | None = None,
@@ -105,7 +107,7 @@ def _run_on_window(
     )
     harness = BacktestDecisionHarness(
         setups=[setup_a, setup_c],
-        filter_layer=RiskFilterLayer(filters=[]),
+        filter_layer=filter_layer,
         state=RiskStateSnapshot(),
         tick_size_points=spec.tick_size_points,
     )
@@ -183,6 +185,20 @@ def run(args: argparse.Namespace) -> int:
             "loaded %d scheduled events from %s", len(scheduled_events), args.events
         )
 
+    # Risk filter layer — all 8 filters, config-driven.
+    if args.skip_risk_filters:
+        filter_layer = RiskFilterLayer(filters=[])
+        logger.info("--skip-risk-filters: running backtest WITHOUT risk filtering")
+    else:
+        risk_cfg = FuturesRiskConfig.from_yaml()
+        trading_windows = load_trading_windows()
+        filter_layer = RiskFilterLayer.from_config(
+            risk_cfg, trading_windows=trading_windows
+        )
+        logger.info(
+            "loaded %d risk filters from config/risk.yaml", len(filter_layer._filters)
+        )
+
     # Neutral fallback snapshot used when macro is disabled or a specific
     # session date lookup misses.
     macro = MacroSnapshot(
@@ -211,6 +227,7 @@ def run(args: argparse.Namespace) -> int:
             spec,
             setup_a,
             setup_c,
+            filter_layer,
             macro_provider,
             args.min_volume,
             scheduled_events,
@@ -222,6 +239,7 @@ def run(args: argparse.Namespace) -> int:
             spec,
             setup_a,
             setup_c,
+            filter_layer,
             macro_provider,
             args.min_volume,
             scheduled_events,
@@ -306,6 +324,13 @@ def main() -> int:
         help="Optional path to an Optuna JSON (e.g. results/optuna_a.json). "
         "If given, Setup A uses the best_params from that file instead of "
         "YAML defaults.",
+    )
+    p.add_argument(
+        "--skip-risk-filters",
+        action="store_true",
+        help="Run backtest with no risk filters (empty RiskFilterLayer). "
+        "Useful for measuring raw Setup EV before filter drag. "
+        "Production runs should always use the full config-driven filter set.",
     )
     return run(p.parse_args())
 

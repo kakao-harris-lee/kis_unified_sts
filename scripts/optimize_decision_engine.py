@@ -59,6 +59,7 @@ from shared.decision.setups.gap_reversion import (  # noqa: E402
 )
 from shared.execution.contract_spec import ContractSpecRegistry  # noqa: E402
 from shared.macro.base import MacroSnapshot  # noqa: E402
+from shared.risk.config import FuturesRiskConfig, load_trading_windows  # noqa: E402
 from shared.risk.layer import RiskFilterLayer  # noqa: E402
 from shared.risk.state import RiskStateSnapshot  # noqa: E402
 
@@ -66,7 +67,13 @@ logger = logging.getLogger(__name__)
 
 
 def _objective_a(
-    trial: optuna.Trial, df: pd.DataFrame, symbol: str, spec, macro_provider, min_volume
+    trial: optuna.Trial,
+    df: pd.DataFrame,
+    symbol: str,
+    spec,
+    macro_provider,
+    min_volume,
+    filter_layer: RiskFilterLayer,
 ) -> float:
     cfg = SetupAConfig(
         min_kr_gap_pct=trial.suggest_float("min_kr_gap_pct", 0.2, 0.6),
@@ -75,11 +82,19 @@ def _objective_a(
         stop_atr_mult=trial.suggest_float("stop_atr_mult", 1.0, 2.5),
     )
     setup = SetupAGapReversion(config=cfg)
-    return _run_and_score([setup], df, symbol, spec, macro_provider, min_volume)
+    return _run_and_score(
+        [setup], df, symbol, spec, macro_provider, min_volume, filter_layer
+    )
 
 
 def _objective_c(
-    trial: optuna.Trial, df: pd.DataFrame, symbol: str, spec, macro_provider, min_volume
+    trial: optuna.Trial,
+    df: pd.DataFrame,
+    symbol: str,
+    spec,
+    macro_provider,
+    min_volume,
+    filter_layer: RiskFilterLayer,
 ) -> float:
     cfg = SetupCConfig(
         breakout_buffer_atr_mult=trial.suggest_float(
@@ -89,10 +104,14 @@ def _objective_c(
         min_impact_tier=trial.suggest_int("min_impact_tier", 1, 3),
     )
     setup = SetupCEventReaction(config=cfg, tracker=EventTradeTracker())
-    return _run_and_score([setup], df, symbol, spec, macro_provider, min_volume)
+    return _run_and_score(
+        [setup], df, symbol, spec, macro_provider, min_volume, filter_layer
+    )
 
 
-def _run_and_score(setups, df, symbol, spec, macro_provider, min_volume) -> float:
+def _run_and_score(
+    setups, df, symbol, spec, macro_provider, min_volume, filter_layer
+) -> float:
     replay = MarketContextReplay(
         df=df,
         symbol=symbol,
@@ -109,7 +128,7 @@ def _run_and_score(setups, df, symbol, spec, macro_provider, min_volume) -> floa
     )
     harness = BacktestDecisionHarness(
         setups=setups,
-        filter_layer=RiskFilterLayer(filters=[]),
+        filter_layer=filter_layer,
         state=RiskStateSnapshot(),
         tick_size_points=spec.tick_size_points,
     )
@@ -145,6 +164,13 @@ def main() -> int:
         help="Drop bars with volume below this threshold before replay "
         "(default 30 — tuned to strip phantom prints on KOSPI200 futures).",
     )
+    p.add_argument(
+        "--with-risk-filters",
+        action="store_true",
+        help="Wire the full 8-filter RiskFilterLayer during the search. "
+        "Default is empty filters so the objective measures raw Setup EV "
+        "unaffected by filter drag; filter tuning is a separate concern.",
+    )
     args = p.parse_args()
 
     df = pd.read_csv(args.data)
@@ -164,10 +190,22 @@ def main() -> int:
         logger.info("got %d daily macro snapshots", len(history))
         macro_provider = make_macro_provider(history)
 
+    if args.with_risk_filters:
+        risk_cfg = FuturesRiskConfig.from_yaml()
+        trading_windows = load_trading_windows()
+        filter_layer = RiskFilterLayer.from_config(
+            risk_cfg, trading_windows=trading_windows
+        )
+        logger.info("using %d risk filters during search", len(filter_layer._filters))
+    else:
+        filter_layer = RiskFilterLayer(filters=[])
+
     study = optuna.create_study(direction="maximize")
     objective = _objective_a if args.setup == "a" else _objective_c
     study.optimize(
-        lambda t: objective(t, df, args.symbol, spec, macro_provider, args.min_volume),
+        lambda t: objective(
+            t, df, args.symbol, spec, macro_provider, args.min_volume, filter_layer
+        ),
         n_trials=args.trials,
     )
 

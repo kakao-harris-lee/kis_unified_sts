@@ -14,18 +14,20 @@ Historical Data Backfill Module
     await backfill(days=180)
     await collect_today()
 """
-import os
+
 import asyncio
 import logging
+import os
 import re
 from datetime import date, datetime, timedelta
-from typing import List, Tuple, Set, Dict, Any, Optional
+from typing import Any
 
-import httpx
 import clickhouse_connect
+import httpx
 
 from shared.config.secrets import SecretsManager
 from shared.config.tls import get_clickhouse_tls_params
+
 from .calendar import get_trading_days_range, is_after_market_close
 from .futures import get_active_codes_for_date
 
@@ -36,21 +38,24 @@ logger = logging.getLogger(__name__)
 # Configuration
 # =============================================================================
 
-def _get_clickhouse_config() -> Dict[str, Any]:
+
+def _get_clickhouse_config() -> dict[str, Any]:
     """Get ClickHouse configuration from environment."""
     tls_params = get_clickhouse_tls_params()
 
     return {
         "host": os.getenv("CLICKHOUSE_HOST", "localhost"),
         "port": int(os.getenv("CLICKHOUSE_PORT", "8123")),
-        "database": os.getenv("CLICKHOUSE_FUTURES_DATABASE", os.getenv("CLICKHOUSE_DATABASE", "kospi")),
+        "database": os.getenv(
+            "CLICKHOUSE_FUTURES_DATABASE", os.getenv("CLICKHOUSE_DATABASE", "kospi")
+        ),
         "user": os.getenv("CLICKHOUSE_USER", "default"),
         "password": os.getenv("CLICKHOUSE_PASSWORD", ""),
         **tls_params,
     }
 
 
-def _get_kis_config() -> Dict[str, str]:
+def _get_kis_config() -> dict[str, str]:
     """Get KIS API configuration from environment."""
     return {
         "app_key": SecretsManager.kis_app_key("futures") or "",
@@ -67,14 +72,15 @@ def _get_index_symbol() -> str:
 # KIS API Token Management
 # =============================================================================
 
+
 class KISToken:
     """한국투자증권 API 토큰 관리 (도메인별 분리)"""
 
-    _instances: Dict[str, "KISToken"] = {}
+    _instances: dict[str, "KISToken"] = {}
 
     def __init__(self, domain: str = "futures"):
         self._domain = domain
-        self._token: Optional[str] = None
+        self._token: str | None = None
         self._expires_at: float = 0
         self._cache_path = os.path.expanduser(f"~/.cache/kis_token_{domain}.json")
         self._load_cache()
@@ -99,10 +105,11 @@ class KISToken:
     def _load_cache(self) -> None:
         """Load cached token if present and valid."""
         import json
+
         try:
             if not self._cache_path or not os.path.exists(self._cache_path):
                 return
-            with open(self._cache_path, "r", encoding="utf-8") as f:
+            with open(self._cache_path, encoding="utf-8") as f:
                 data = json.load(f)
             token = data.get("access_token")
             expires_at = data.get("expires_at", 0)
@@ -115,6 +122,7 @@ class KISToken:
     def _save_cache(self) -> None:
         """Persist token to cache for reuse across runs."""
         import json
+
         if not self._cache_path or not self._token:
             return
         os.makedirs(os.path.dirname(self._cache_path), exist_ok=True)
@@ -127,8 +135,9 @@ class KISToken:
 
     def _refresh(self):
         """토큰 갱신"""
-        import requests
         import time
+
+        import requests
 
         # 도메인에 따라 키 선택
         app_key = SecretsManager.kis_app_key(self._domain) or ""
@@ -156,11 +165,14 @@ class KISToken:
         self._expires_at = time.time() + expires_in
         self._save_cache()
 
-        logger.info(f"[KISToken:{self._domain}] Token refreshed, expires in {expires_in}s")
+        logger.info(
+            f"[KISToken:{self._domain}] Token refreshed, expires in {expires_in}s"
+        )
 
     def is_token_valid(self) -> bool:
         """Check if current token is valid."""
         import time
+
         return bool(self._token and time.time() < self._expires_at - 60)
 
     def refresh_token(self) -> bool:
@@ -182,6 +194,7 @@ def _get_token(domain: str = "futures") -> KISToken:
 # Rate Limiter
 # =============================================================================
 
+
 class RateLimiter:
     """API Rate Limiter (requests per second)"""
 
@@ -200,10 +213,10 @@ class RateLimiter:
             self._next_allowed = now + self._min_interval
 
 
-_semaphore: Optional[asyncio.Semaphore] = None
-_rate_limiter: Optional[RateLimiter] = None
-_semaphore_loop: Optional[asyncio.AbstractEventLoop] = None
-_rate_limiter_loop: Optional[asyncio.AbstractEventLoop] = None
+_semaphore: asyncio.Semaphore | None = None
+_rate_limiter: RateLimiter | None = None
+_semaphore_loop: asyncio.AbstractEventLoop | None = None
+_rate_limiter_loop: asyncio.AbstractEventLoop | None = None
 
 
 def _get_semaphore() -> asyncio.Semaphore:
@@ -228,13 +241,14 @@ def _get_rate_limiter() -> RateLimiter:
 # API Fetching
 # =============================================================================
 
+
 async def fetch_minute_async(
     client: httpx.AsyncClient,
     code: str,
     date_str: str,
     max_retries: int = 3,
     max_pages: int = 20,
-) -> Tuple[str, str, dict]:
+) -> tuple[str, str, dict]:
     """
     Fetch minute data asynchronously with rate limiting and retry.
 
@@ -286,7 +300,11 @@ async def fetch_minute_async(
                 resp = await client.get(url, headers=headers, params=params)
 
                 if not resp.text or resp.text.strip() == "":
-                    return (code, date_str, {"error": f"empty response (status {resp.status_code})"})
+                    return (
+                        code,
+                        date_str,
+                        {"error": f"empty response (status {resp.status_code})"},
+                    )
 
                 try:
                     data = resp.json()
@@ -317,7 +335,9 @@ async def fetch_minute_async(
                     page_params = dict(params)
                     page_params["FID_INPUT_HOUR_1"] = cursor_hour
                     await _get_rate_limiter().wait()
-                    page_resp = await client.get(url, headers=headers, params=page_params)
+                    page_resp = await client.get(
+                        url, headers=headers, params=page_params
+                    )
 
                     if not page_resp.text or page_resp.text.strip() == "":
                         break
@@ -354,11 +374,17 @@ async def fetch_minute_async(
                 data["output2"] = merged_rows
                 return (code, date_str, data)
 
-            except (httpx.RemoteProtocolError, httpx.ReadTimeout, httpx.ConnectError) as e:
+            except (
+                httpx.RemoteProtocolError,
+                httpx.ReadTimeout,
+                httpx.ConnectError,
+            ) as e:
                 last_error = e
                 if attempt < max_retries - 1:
                     wait_time = (attempt + 1) * 2
-                    logger.warning(f"Retry {attempt + 1}/{max_retries} for {code} {date_str}: {e}")
+                    logger.warning(
+                        f"Retry {attempt + 1}/{max_retries} for {code} {date_str}: {e}"
+                    )
                     await asyncio.sleep(wait_time)
                 continue
 
@@ -374,7 +400,7 @@ async def fetch_index_minute_async(
     index_symbol: str,
     date_str: str,
     max_retries: int = 3,
-) -> Tuple[str, str, dict]:
+) -> tuple[str, str, dict]:
     """
     Fetch KOSPI200 index minute data asynchronously.
 
@@ -418,12 +444,20 @@ async def fetch_index_minute_async(
                 resp = await client.get(url, headers=headers, params=params)
 
                 if not resp.text or resp.text.strip() == "":
-                    return (index_symbol, date_str, {"error": f"empty response (status {resp.status_code})"})
+                    return (
+                        index_symbol,
+                        date_str,
+                        {"error": f"empty response (status {resp.status_code})"},
+                    )
 
                 try:
                     data = resp.json()
                 except Exception as json_err:
-                    return (index_symbol, date_str, {"error": f"json parse: {json_err}"})
+                    return (
+                        index_symbol,
+                        date_str,
+                        {"error": f"json parse: {json_err}"},
+                    )
 
                 if data.get("rt_cd") != "0":
                     msg = data.get("msg1", "Unknown error")
@@ -431,11 +465,17 @@ async def fetch_index_minute_async(
 
                 return (index_symbol, date_str, data)
 
-            except (httpx.RemoteProtocolError, httpx.ReadTimeout, httpx.ConnectError) as e:
+            except (
+                httpx.RemoteProtocolError,
+                httpx.ReadTimeout,
+                httpx.ConnectError,
+            ) as e:
                 last_error = e
                 if attempt < max_retries - 1:
                     wait_time = (attempt + 1) * 2
-                    logger.warning(f"Retry {attempt + 1}/{max_retries} for {index_symbol} {date_str}: {e}")
+                    logger.warning(
+                        f"Retry {attempt + 1}/{max_retries} for {index_symbol} {date_str}: {e}"
+                    )
                     await asyncio.sleep(wait_time)
                 continue
 
@@ -446,7 +486,7 @@ async def fetch_index_minute_async(
     return (index_symbol, date_str, {"error": str(last_error)})
 
 
-def _first_present(item: Dict[str, Any], keys: List[str], default: Any = None) -> Any:
+def _first_present(item: dict[str, Any], keys: list[str], default: Any = None) -> Any:
     """Get first present value from dict."""
     for k in keys:
         v = item.get(k)
@@ -455,7 +495,7 @@ def _first_present(item: Dict[str, Any], keys: List[str], default: Any = None) -
     return default
 
 
-def parse_ohlcv(code: str, date_str: str, data: dict) -> List[Tuple]:
+def parse_ohlcv(code: str, date_str: str, data: dict) -> list[tuple]:
     """
     Parse API response to OHLCV rows.
 
@@ -467,8 +507,10 @@ def parse_ohlcv(code: str, date_str: str, data: dict) -> List[Tuple]:
     Returns:
         List of tuples (code, datetime, open, high, low, close, volume)
     """
-    tick_rows: List[Tuple[datetime, float, float, float, float, int]] = []
-    output = data.get("output2", []) or data.get("output1", []) or data.get("output", [])
+    tick_rows: list[tuple[datetime, float, float, float, float, int]] = []
+    output = (
+        data.get("output2", []) or data.get("output1", []) or data.get("output", [])
+    )
 
     if not output:
         return []
@@ -509,7 +551,14 @@ def parse_ohlcv(code: str, date_str: str, data: dict) -> List[Tuple]:
             )
             c = _first_present(
                 item,
-                ["futs_prpr", "close", "stck_prpr", "stck_clpr", "bstp_nmix_prpr", "prpr"],
+                [
+                    "futs_prpr",
+                    "close",
+                    "stck_prpr",
+                    "stck_clpr",
+                    "bstp_nmix_prpr",
+                    "prpr",
+                ],
                 0,
             )
             v = _first_present(item, ["cntg_vol", "acml_vol", "volume"], 0)
@@ -532,7 +581,7 @@ def parse_ohlcv(code: str, date_str: str, data: dict) -> List[Tuple]:
 
     # Normalize raw ticks/seconds to 1-minute OHLCV bars.
     tick_rows.sort(key=lambda row: row[0])
-    minute_bars: Dict[datetime, List[float | int]] = {}
+    minute_bars: dict[datetime, list[float | int]] = {}
     for dt, o, h, l, c, v in tick_rows:
         minute_dt = dt.replace(second=0, microsecond=0)
         if minute_dt not in minute_bars:
@@ -546,16 +595,37 @@ def parse_ohlcv(code: str, date_str: str, data: dict) -> List[Tuple]:
         bar[3] = c  # close: last tick in minute
         bar[4] = int(bar[4]) + int(v)  # volume sum
 
-    rows: List[Tuple] = []
+    # Drop phantom-print bars before persistence. KIS's tick feed emits
+    # off-market volume=2 quotes at recurring clock times (09:22, 11:01,
+    # 11:40, ...) with prices that are not representative of the traded
+    # market. Bars below this threshold are almost certainly phantoms on
+    # liquid KOSPI200 front-month futures where the real minute median
+    # volume is 700+. See docs/runbooks/phase3-verification.md §4.
+    min_ingest_volume = int(os.getenv("KIS_MINUTE_BAR_MIN_VOLUME", "10"))
+
+    rows: list[tuple] = []
+    dropped = 0
     for minute_dt in sorted(minute_bars.keys()):
         o, h, l, c, v = minute_bars[minute_dt]
+        if int(v) < min_ingest_volume:
+            dropped += 1
+            continue
         rows.append((code, minute_dt, float(o), float(h), float(l), float(c), int(v)))
+    if dropped > 0:
+        logger.debug(
+            "parse_ohlcv(%s, %s): dropped %d phantom bars (volume < %d)",
+            code,
+            date_str,
+            dropped,
+            min_ingest_volume,
+        )
     return rows
 
 
 # =============================================================================
 # Database Operations
 # =============================================================================
+
 
 def get_db_client(database: str = None):
     """Get ClickHouse client."""
@@ -614,7 +684,7 @@ def ensure_kospi200_index_table(client=None):
     ensure_table(client, table_name="kospi200_index_1m")
 
 
-def insert_batch(client, rows: List[Tuple], table_name: str = "kospi_mini_1m"):
+def insert_batch(client, rows: list[tuple], table_name: str = "kospi_mini_1m"):
     """Batch insert OHLCV data."""
     if not rows:
         return
@@ -622,8 +692,12 @@ def insert_batch(client, rows: List[Tuple], table_name: str = "kospi_mini_1m"):
     values = []
     for row in rows:
         code, dt, open_, high, low, close, volume = row
-        dt_str = dt.strftime('%Y-%m-%d %H:%M:%S') if hasattr(dt, 'strftime') else str(dt)
-        values.append(f"('{code}', '{dt_str}', {open_}, {high}, {low}, {close}, {volume})")
+        dt_str = (
+            dt.strftime("%Y-%m-%d %H:%M:%S") if hasattr(dt, "strftime") else str(dt)
+        )
+        values.append(
+            f"('{code}', '{dt_str}', {open_}, {high}, {low}, {close}, {volume})"
+        )
 
     sql = f"""
         INSERT INTO {table_name} (code, datetime, open, high, low, close, volume)
@@ -637,7 +711,7 @@ def _load_continuous_source_rows(
     start: date,
     end: date,
     table_name: str = "kospi200f_1m",
-) -> List[Tuple[str, datetime, float, float, float, float, int]]:
+) -> list[tuple[str, datetime, float, float, float, float, int]]:
     """Load A01* full-size futures rows for continuous-contract reconstruction."""
     result = client.query(
         f"""
@@ -661,30 +735,38 @@ def _load_continuous_source_rows(
 
 
 def _build_continuous_rows(
-    rows: List[Tuple[str, datetime, float, float, float, float, int]],
-) -> List[Tuple[str, datetime, float, float, float, float, int]]:
+    rows: list[tuple[str, datetime, float, float, float, float, int]],
+) -> list[tuple[str, datetime, float, float, float, float, int]]:
     """Build 101S6000 rows by selecting the dominant contract for each day."""
     if not rows:
         return []
 
-    daily_volume: Dict[date, Dict[str, int]] = {}
+    daily_volume: dict[date, dict[str, int]] = {}
     for code, dt, _open, _high, _low, _close, volume in rows:
         daily_contracts = daily_volume.setdefault(dt.date(), {})
         daily_contracts[code] = daily_contracts.get(code, 0) + int(volume or 0)
 
-    dominant_contract_by_day: Dict[date, str] = {}
+    dominant_contract_by_day: dict[date, str] = {}
     for day, contract_volume in daily_volume.items():
         dominant_contract_by_day[day] = sorted(
             contract_volume.items(),
             key=lambda item: (-item[1], item[0]),
         )[0][0]
 
-    rebuilt_rows: List[Tuple[str, datetime, float, float, float, float, int]] = []
+    rebuilt_rows: list[tuple[str, datetime, float, float, float, float, int]] = []
     for code, dt, open_, high, low, close, volume in rows:
         if dominant_contract_by_day.get(dt.date()) != code:
             continue
         rebuilt_rows.append(
-            ("101S6000", dt, float(open_), float(high), float(low), float(close), int(volume))
+            (
+                "101S6000",
+                dt,
+                float(open_),
+                float(high),
+                float(low),
+                float(close),
+                int(volume),
+            )
         )
 
     return rebuilt_rows
@@ -699,7 +781,9 @@ def rebuild_continuous_kospi200f(
     verbose: bool = True,
 ) -> int:
     """Rebuild continuous KOSPI200 futures code 101S6000 from A01* contracts."""
-    source_rows = _load_continuous_source_rows(client, start, end, table_name=table_name)
+    source_rows = _load_continuous_source_rows(
+        client, start, end, table_name=table_name
+    )
     rebuilt_rows = _build_continuous_rows(source_rows)
     if not rebuilt_rows:
         if verbose:
@@ -731,7 +815,7 @@ def get_collected_pairs_in_range(
     start: date,
     end: date,
     table_name: str = "kospi_mini_1m",
-) -> Set[Tuple[str, date]]:
+) -> set[tuple[str, date]]:
     """Get collected (code, date) pairs for a date range."""
     result = client.query(
         f"""
@@ -744,7 +828,7 @@ def get_collected_pairs_in_range(
     return {(row[0], row[1]) for row in result.result_rows}
 
 
-def get_data_status(days: int = 30) -> Dict[str, Any]:
+def get_data_status(days: int = 30) -> dict[str, Any]:
     """Get data collection status summary."""
     end = date.today()
     start = end - timedelta(days=days)
@@ -774,7 +858,9 @@ def get_data_status(days: int = 30) -> Dict[str, Any]:
                     """,
                     parameters={"start": start, "end": end},
                 )
-                row = result.result_rows[0] if result.result_rows else (0, 0, None, None)
+                row = (
+                    result.result_rows[0] if result.result_rows else (0, 0, None, None)
+                )
                 status["tables"][table_name] = {
                     "rows": row[0],
                     "days_collected": row[1],
@@ -821,7 +907,7 @@ def load_futures_minute_from_clickhouse(
 
     db_client = get_db_client()
     conditions = ["code = %(code)s"]
-    params: Dict[str, Any] = {"code": code}
+    params: dict[str, Any] = {"code": code}
     if start_date:
         conditions.append("datetime >= %(start)s")
         params["start"] = start_date
@@ -863,11 +949,12 @@ def load_futures_minute_from_clickhouse(
 # Backfill Functions
 # =============================================================================
 
+
 async def collect_batch(
     client: httpx.AsyncClient,
     db_client,
-    tasks: List[Tuple[str, date]],
-    table_name: str = "kospi_mini_1m"
+    tasks: list[tuple[str, date]],
+    table_name: str = "kospi_mini_1m",
 ) -> int:
     """
     Collect a batch of (code, date) combinations.
@@ -896,7 +983,9 @@ async def collect_batch(
 
     if all_rows:
         insert_batch(db_client, all_rows, table_name=table_name)
-        print(f"Inserted {len(all_rows)} rows from {len(tasks)} tasks into {table_name}")
+        print(
+            f"Inserted {len(all_rows)} rows from {len(tasks)} tasks into {table_name}"
+        )
 
     return len(all_rows)
 
@@ -904,7 +993,7 @@ async def collect_batch(
 async def collect_index_batch(
     client: httpx.AsyncClient,
     db_client,
-    tasks: List[Tuple[str, date]],
+    tasks: list[tuple[str, date]],
     table_name: str = "kospi200_index_1m",
 ) -> int:
     """
@@ -923,14 +1012,18 @@ async def collect_index_batch(
     all_rows = []
     for symbol, date_str, data in results:
         if "error" in data:
-            logger.warning(f"Index fetch failed for {symbol} {date_str}: {data['error']}")
+            logger.warning(
+                f"Index fetch failed for {symbol} {date_str}: {data['error']}"
+            )
             continue
         rows = parse_ohlcv(symbol, date_str, data)
         all_rows.extend(rows)
 
     if all_rows:
         insert_batch(db_client, all_rows, table_name=table_name)
-        print(f"Inserted {len(all_rows)} rows from {len(tasks)} tasks into {table_name}")
+        print(
+            f"Inserted {len(all_rows)} rows from {len(tasks)} tasks into {table_name}"
+        )
 
     return len(all_rows)
 
@@ -957,7 +1050,7 @@ async def backfill(days: int = 365, verbose: bool = True, resume: bool = True):
     db_client = get_db_client()
     ensure_table(db_client)
 
-    collected: Set[Tuple[str, date]] = set()
+    collected: set[tuple[str, date]] = set()
     if resume:
         try:
             collected = get_collected_pairs_in_range(db_client, start, end)
@@ -1027,6 +1120,7 @@ async def collect_today(verbose: bool = True):
 # KOSPI 200 Index Backfill
 # =============================================================================
 
+
 async def backfill_kospi200_index(
     days: int = 365,
     verbose: bool = True,
@@ -1049,7 +1143,7 @@ async def backfill_kospi200_index(
     db_client = get_db_client()
     ensure_kospi200_index_table(db_client)
 
-    collected_dates: Set[date] = set()
+    collected_dates: set[date] = set()
     if resume:
         try:
             result = db_client.query(
@@ -1079,7 +1173,9 @@ async def backfill_kospi200_index(
                 print(f"{idx}/{len(trading_days_iter)} {day}")
 
             tasks = [(index_symbol, day)]
-            rows = await collect_index_batch(client, db_client, tasks, table_name="kospi200_index_1m")
+            rows = await collect_index_batch(
+                client, db_client, tasks, table_name="kospi200_index_1m"
+            )
             total_rows += rows
 
     if verbose:
@@ -1109,7 +1205,9 @@ async def collect_today_kospi200_index(verbose: bool = True):
     tasks = [(_get_index_symbol(), today)]
 
     async with httpx.AsyncClient(timeout=30.0) as client:
-        rows = await collect_index_batch(client, db_client, tasks, table_name="kospi200_index_1m")
+        rows = await collect_index_batch(
+            client, db_client, tasks, table_name="kospi200_index_1m"
+        )
 
     if verbose:
         print(f"Today's KOSPI 200 Index collection complete. Rows: {rows}")
@@ -1121,14 +1219,15 @@ async def collect_today_kospi200_index(verbose: bool = True):
 # KOSPI 200 Futures (Full-Size) Backfill
 # =============================================================================
 
-def _get_kospi200f_codes_for_date(target_date: date) -> List[str]:
+
+def _get_kospi200f_codes_for_date(target_date: date) -> list[str]:
     """
     Get active KOSPI 200 Futures (full-size) codes for a specific date.
 
     KOSPI 200 Futures have quarterly expiry (Mar, Jun, Sep, Dec).
     Uses legacy A01 prefix format.
     """
-    from .futures import get_expiry_date, KOSPI200_LEGACY_PREFIX
+    from .futures import KOSPI200_LEGACY_PREFIX, get_expiry_date
 
     codes = []
     # KOSPI200 Futures are quarterly: Mar(3), Jun(6), Sep(9), Dec(12)
@@ -1179,7 +1278,7 @@ async def backfill_kospi200f(
     ensure_kospi200f_table(db_client)
 
     # Check what we already have
-    collected: Set[Tuple[str, date]] = set()
+    collected: set[tuple[str, date]] = set()
     if resume:
         try:
             collected = get_collected_pairs_in_range(
@@ -1207,9 +1306,13 @@ async def backfill_kospi200f(
 
             total_tasks += len(day_tasks)
             if verbose:
-                print(f"{idx}/{len(trading_days_iter)} {day} codes={[c for c, _ in day_tasks]}")
+                print(
+                    f"{idx}/{len(trading_days_iter)} {day} codes={[c for c, _ in day_tasks]}"
+                )
 
-            rows = await collect_batch(client, db_client, day_tasks, table_name="kospi200f_1m")
+            rows = await collect_batch(
+                client, db_client, day_tasks, table_name="kospi200f_1m"
+            )
             total_rows += rows
 
     rebuilt_rows = rebuild_continuous_kospi200f(
