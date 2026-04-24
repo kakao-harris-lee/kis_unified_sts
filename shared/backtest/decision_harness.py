@@ -30,6 +30,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -89,9 +90,11 @@ class TradeRecord:
     stop: float
     target: float
     exit_price: float
-    exit_reason: str  # "win" | "loss" | "time_exit"
-    ticks_net: float  # net P&L in ticks (positive = profit)
+    exit_reason: str  # "win" | "loss" | "time_exit" | "eod_exit"
+    ticks_net: float  # net P&L in ticks (positive = profit), per contract
     layer_result: LayerResult
+    size_contracts: int = 1  # contracts sized by the injected PositionSizer
+    ticks_net_total: float = 0.0  # ticks_net × size_contracts (for portfolio P&L)
 
 
 @dataclass
@@ -140,7 +143,27 @@ class BacktestDecisionHarness:
         filter_layer: RiskFilterLayer,
         state: RiskStateSnapshot,
         tick_size_points: float,
+        *,
+        sizer: Any | None = None,
+        account_equity_krw: float = 0.0,
     ) -> None:
+        """Instantiate the harness.
+
+        Args:
+            setups: Setup instances to evaluate on each bar.
+            filter_layer: RiskFilterLayer applied to every candidate.
+            state: Initial RiskStateSnapshot (immutable in the harness).
+            tick_size_points: Tick size for slippage + P&L conversion.
+            sizer: Optional PositionSizer (e.g.
+                :class:`~shared.strategy.position.sizers.FixedFractionalFuturesSizer`).
+                When provided, :meth:`PositionSizer.calculate` is invoked per
+                accepted signal and the returned contract count populates
+                ``TradeRecord.size_contracts`` + ``ticks_net_total``.
+                When ``None`` (backtest-before-sizing mode), every trade is
+                recorded at ``size_contracts=1``.
+            account_equity_krw: Account equity passed to the sizer. Only
+                consulted when ``sizer`` is provided.
+        """
         if tick_size_points <= 0:
             raise ValueError(f"tick_size_points must be > 0, got {tick_size_points}")
         self._setups = list(setups)
@@ -148,6 +171,8 @@ class BacktestDecisionHarness:
         self._state = state
         self._tick_size = tick_size_points
         self._slippage = self._SLIPPAGE_MULT * tick_size_points
+        self._sizer = sizer
+        self._account_equity_krw = account_equity_krw
 
     # ------------------------------------------------------------------
     # Public API
@@ -255,8 +280,30 @@ class BacktestDecisionHarness:
                     n=n,
                 )
                 if trade is not None:
+                    # Size the trade. When no sizer is injected we record 1
+                    # contract per fill (pre-sizing backtest mode); otherwise
+                    # the sizer turns signal + equity + state into a contract
+                    # count and we apply the RiskFilterLayer's size_multiplier.
+                    if self._sizer is not None:
+                        raw_size = self._sizer.calculate(
+                            signal=candidate,
+                            account_balance=self._account_equity_krw,
+                            current_positions=[],
+                            market_context=None,
+                        )
+                        scaled = int(
+                            max(1, round(raw_size * layer_result.size_multiplier))
+                        )
+                        trade.size_contracts = scaled
+                    else:
+                        trade.size_contracts = 1
+                    trade.ticks_net_total = trade.ticks_net * trade.size_contracts
+
                     result.trades.append(trade)
-                    # Update per-setup stats
+                    # Update per-setup stats. total_ticks is kept per-contract
+                    # so SetupStats.ev_ticks remains comparable to the Phase 3
+                    # spec gate (EV > 0.5 tick). Portfolio-level ticks are
+                    # available by summing TradeRecord.ticks_net_total.
                     stats = result.per_setup.setdefault(
                         candidate.setup_type, SetupStats()
                     )
@@ -266,7 +313,7 @@ class BacktestDecisionHarness:
                         stats.wins += 1
                     elif trade.exit_reason == "loss":
                         stats.losses += 1
-                    # time_exit counts as a trade but not win or loss in stats
+                    # time_exit / eod_exit count as trades but not win or loss
 
         return result
 

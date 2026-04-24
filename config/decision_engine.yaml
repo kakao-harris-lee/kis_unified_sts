@@ -16,7 +16,14 @@ setup_a_gap_reversion:
 
 setup_c_event_reaction:
   enabled: true
-  window_minutes: 15             # look-back window after an event (minutes)
+  # Window covers overnight US macro → next KST day-session open.
+  # FOMC 14:00 ET (≈ 03:00 KST) → KR session opens 09:00 KST → 6 h later.
+  # US CPI / NFP 08:30 ET (≈ 21:30 KST) → KR next session ≈ 12 h later.
+  # Spec default was 15 minutes (matches US futures post-release breakouts).
+  # 720 minutes (12 h) catches the first KR-session breakout after either
+  # announcement window while remaining short enough that BOK (09:00 KST)
+  # still only triggers on the same trading day.
+  window_minutes: 720
   breakout_buffer_atr_mult: 0.5  # breakout must be within this many ATRs of the 15-min high/low
   target_atr_mult: 2.5           # take-profit = entry ± target_atr_mult × ATR14
   signal_ttl_minutes: 30
