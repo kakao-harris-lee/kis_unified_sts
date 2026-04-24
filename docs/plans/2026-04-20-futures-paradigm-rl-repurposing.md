@@ -198,3 +198,118 @@ rl_aux_skipped_pnl                Gauge (skip했으면 어땠을지 EV)
 - 주식 RL 확장 (선물 전용)
 - 계층적 RL 보조 필터 (현재 단일 계약, 무의미)
 - 메인 trader 역할 부활 (단방향 전환 — 돌아가지 않음)
+
+---
+
+## 10. Pre-implementation review (2026-04-25)
+
+Phase 3 구현 + Optuna 튜닝 결과를 반영한 본 spec의 risks/assumptions 점검:
+
+### 10.1 Setup C 데이터 부족 위험 (HIGH)
+
+§3.4는 "3개월에 Setup별 ~30-60 trades 예상"이라 가정하지만, 실측 Phase 3
+데이터로 추정하면:
+
+- Setup A (tuned): 160 trades / 296일 ≈ **~16/month**  → 3개월 ~48 trades ✓
+- Setup C (tuned): 9 trades / 296일 ≈ **~0.9/month** → 3개월 ~3 trades ✗
+
+Setup C는 샘플이 극단적으로 적어 MLP 필터 학습 불가능. 다음 중 하나 필요:
+
+- **(권장)** Setup A 전용 RL aux로 시작, Setup C는 규칙 + 수동 검토만
+- Setup C를 학습 제외하고 무조건 PASS시키는 pass-through 경로 명시
+- Setup C 활성화를 6-12개월 축적 후로 연기
+
+§2 활성화 게이트에 **"Setup별 trade 수 ≥ 50"** 조건 추가 권장.
+
+### 10.2 Counterfactual PnL은 이미 기록됨 (opportunity)
+
+§3.4 "Skip된 시그널 → counterfactual PnL (백테스트로 추정, 노이즈 표시)"를
+복잡하게 만들 필요 없음. Phase 3의 `signals_all`은 이미:
+
+- `executed=0` + `skip_reason`으로 **filter-rejected 시그널을 모두 기록**
+- `TradeRecord`는 simulated fill을 실행함 — fill이 없더라도 stop/target
+  hypothetical 계산은 harness에서 이미 한다
+
+**단순화 제안:** RL aux dataset = `signals_all JOIN order_fills` ON
+signal_id. skip된 시그널의 counterfactual은 harness replay로 재계산
+(yfinance macro + phantom-filtered CH data로 bit-exact 재현 가능).
+`signals_all.rl_aux_prediction` 컬럼 추가만으로 충분.
+
+### 10.3 런타임 feature 생성 경로 미명시 (MEDIUM)
+
+§3.3 state에 포함된 다음 필드들은 **어디서 어떻게 계산되는지 미지정**:
+
+| Feature | 어디서 오는가 | Phase 현재 상태 |
+|---------|-------------|----------------|
+| `recent_5d_winrate` | 롤링 5-day PnL window | **미구현** — Phase 4에 `jobs/weekly_edge_review.py`가 유사 쿼리 있으나 실시간용 아님 |
+| `current_daily_pnl_pct` | `RiskState.daily_pnl_krw / account_equity_krw` | ✅ Phase 3 완료 |
+| `consecutive_losses` | `RiskState.consecutive_losses` | ✅ Phase 3 완료 |
+| `minutes_since_macro_event` | `MarketContext.find_recent_event()` 역산 | ✅ 가능하나 Phase 4에서 helper 필요 |
+
+**권장:** §4.1 Stage 1 시작 전에 `shared/ml/auxiliary_filter/features.py`에
+각 필드의 source-of-truth를 명시 + Phase 4 runtime에 필요한 feature
+producer를 등록한다.
+
+### 10.4 Fallback behavior 미지정 (HIGH for production safety)
+
+§4.1은 "실시간: 시그널이 risk_filter 통과하면 **fallback PASS** + RL
+prediction 로깅"이라 하나 **RL 모델 inference 실패 시**(모델 파일 missing,
+GPU 없음, torch import error 등) 동작이 명시되지 않음. 다음 추가 권장:
+
+> **Fallback rule (inference failure):** if `predictor.predict()` raises
+> or times out (>50 ms), log `rl_aux_decision = "error_pass"` and let
+> the signal through. Never block on a broken auxiliary filter.
+
+### 10.5 Stage 3 활성화 임계값이 하드코딩 후보 (LOW)
+
+§4.3 `confidence_threshold: 0.6` — YAML인 건 맞지만, 단일 threshold는
+too coarse. Setup별로 다를 수 있으니:
+
+```yaml
+# config/rl_auxiliary.yaml
+rl_auxiliary:
+  enabled: true
+  per_setup_threshold:
+    A_gap_reversion: 0.60
+    C_event_reaction: 0.75      # Setup C는 샘플 적어 보수적
+```
+
+### 10.6 ClickHouse 마이그레이션 V-number 지정 (LOW)
+
+§6.1 `ALTER TABLE kospi.signals_all` 추가 컬럼 2개. 현재 V1(Phase 1) +
+V2(Phase 2 news_scored). Phase 4가 V3(order_fills), RL spec는 **V5 혹은
+V6**로 번호 할당 필요 (Phase 4/5가 V3/V4 점유).
+
+### 10.7 Stage 4 gate 기준 미정의 (MEDIUM)
+
+§4.4 "Phase 5의 rl_mppo 병행 paper가 3개월 이상 신 시스템 대비
+underperform 시점" — metric 미정. 다음 기준 제안:
+
+```
+rl_mppo가 3개월 누적 rolling window에서
+  (a) Sharpe이 규칙 시스템 대비 < 70%  AND
+  (b) MDD가 규칙 시스템 대비 > 130%
+두 조건 모두 만족할 때 메인 운용 중단.
+단일 조건만 만족 시 추가 1개월 관찰 연장.
+```
+
+### 10.8 완료 게이트 조건 업데이트 권장
+
+§8 "완료" 정의에 다음 추가:
+
+- **비활성화 경로 시한:** Stage 2 개선 없음 결론 나면 `disabled.md` +
+  **6개월 후 재시도 cron으로 자동 대기 리마인더** (기다리지 않으면 잊음)
+
+### 10.9 의존성 timeline
+
+Master plan 기준 RL spec 착수 가능 시점:
+
+- Phase 4 완료 (Week 6) + Phase 5 Gate 3 (Week 7-9) + 3개월 EV+
+- **= 현 시점 + 약 5-6개월 (2026-09 이후)**
+- Setup C 데이터 축적 (§10.1)을 반영하면 **2026-12 이후**가 현실적
+
+---
+
+**리뷰 요약:** spec 자체는 잘 구성돼 있음. 주요 보강 포인트는 (a) Setup C
+데이터 부족 대응, (b) 런타임 feature producer 명시, (c) inference failure
+fallback rule. Stage 1 착수 전 §10.1-§10.4 반영한 v2 draft 권장.
