@@ -121,6 +121,34 @@ rule, but on a 1-fold split so the statistical weight is low. Full-data run
    config — resolves PR #128's "YAML exists but no runtime caller"
    finding.
 
+### Tuned A + C, full 296-day run with real filters (2026-04-24)
+
+Optuna 50-trial tune of each Setup (wired through `--setup-a-params` /
+`--setup-c-params` + scheduled events + risk filters):
+
+| Setup | Trades | Win rate | EV ticks/trade | Wins / Losses / Time-exits |
+|-------|--------|----------|----------------|----------------------------|
+| Setup A (tuned)            | 160 | 16.9 % | 29.28 | 27 / 39 / 94  |
+| Setup C (tuned)            |   9 | 88.9 % | 98.16 |  8 /  0 /  1  |
+| **Combined**               | 169 |        |       | filtered 8/177 by RiskLayer |
+
+Walk-forward (4-mo IS / 2-mo OOS, 1 fold):
+
+| Config | IS trades/EV | OOS trades/EV | Win rate IS/OOS | Gate |
+|--------|--------------|---------------|-----------------|------|
+| YAML defaults (A+C)         | 16 / 30.7 | 33 / 19.8 |  6 % / 15 % | ✅ |
+| Tuned A + Tuned C           |  7 / 22.7 |  7 / 24.8 | 29 % / 29 % | ✅ |
+
+Both configurations formally pass `OOS EV ≥ 0.5 × IS EV AND OOS > 0`.
+The tuned configuration has more selective params → fewer but
+higher-quality trades (win-rate more than doubles) and shows no
+over-fitting signal (OOS EV > IS EV).
+
+Remaining caveats unchanged: 1 WF fold, 0.7 % residual bad bars,
+Setup C's 9-trade sample is too small to draw statistical conclusions
+from despite the dramatic win rate. Phase 3 **code** is complete;
+empirical gate sign-off awaits ≥12-month data + multi-fold WF.
+
 - [ ] Run harness on `data/kospi200f_1m_clean.csv` (6 months):
   ```bash
   # See scripts/walk_forward_phase3.py for the orchestration pattern.

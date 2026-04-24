@@ -53,6 +53,7 @@ from shared.decision.context import (  # noqa: E402
 )
 from shared.decision.setups.event_reaction import (  # noqa: E402
     EventTradeTracker,
+    SetupCConfig,
     SetupCEventReaction,
 )
 from shared.decision.setups.gap_reversion import (  # noqa: E402
@@ -175,7 +176,20 @@ def run(args: argparse.Namespace) -> int:
     setup_a = (
         SetupAGapReversion(config=setup_a_cfg) if setup_a_cfg else SetupAGapReversion()
     )
-    setup_c = SetupCEventReaction(tracker=EventTradeTracker())
+
+    # Setup C: YAML default window_minutes=720 (overnight-event reach).
+    # Optuna JSON overrides the other params if provided.
+    setup_c_cfg = SetupCConfig.from_yaml()
+    if args.setup_c_params:
+        with open(args.setup_c_params) as f:
+            optuna_result_c = json.load(f)
+        overrides = optuna_result_c["best_params"]
+        # Preserve the YAML-driven window_minutes when the Optuna search did
+        # not tune it (the current search only varies buffer/target/tier).
+        update = {**setup_c_cfg.model_dump(), **overrides}
+        setup_c_cfg = SetupCConfig(**update)
+        logger.info("loaded Setup C params from %s: %s", args.setup_c_params, overrides)
+    setup_c = SetupCEventReaction(config=setup_c_cfg, tracker=EventTradeTracker())
 
     # Load scheduled events (Setup C needs them to fire).
     scheduled_events: list[ScheduledEvent] = []
@@ -324,6 +338,13 @@ def main() -> int:
         help="Optional path to an Optuna JSON (e.g. results/optuna_a.json). "
         "If given, Setup A uses the best_params from that file instead of "
         "YAML defaults.",
+    )
+    p.add_argument(
+        "--setup-c-params",
+        default=None,
+        help="Optional path to an Optuna JSON (e.g. results/optuna_c.json). "
+        "Merges best_params over the YAML defaults (preserving "
+        "window_minutes from YAML since the Optuna search does not tune it).",
     )
     p.add_argument(
         "--skip-risk-filters",
