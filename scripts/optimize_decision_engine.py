@@ -48,6 +48,10 @@ from shared.backtest.macro_history import (  # noqa: E402
     make_macro_provider,
 )
 from shared.backtest.market_context_replay import MarketContextReplay  # noqa: E402
+from shared.decision.context import (  # noqa: E402
+    ScheduledEvent,
+    load_scheduled_events,
+)
 from shared.decision.setups.event_reaction import (  # noqa: E402
     EventTradeTracker,
     SetupCConfig,
@@ -74,6 +78,7 @@ def _objective_a(
     macro_provider,
     min_volume,
     filter_layer: RiskFilterLayer,
+    scheduled_events: list[ScheduledEvent],
 ) -> float:
     cfg = SetupAConfig(
         min_kr_gap_pct=trial.suggest_float("min_kr_gap_pct", 0.2, 0.6),
@@ -83,7 +88,14 @@ def _objective_a(
     )
     setup = SetupAGapReversion(config=cfg)
     return _run_and_score(
-        [setup], df, symbol, spec, macro_provider, min_volume, filter_layer
+        [setup],
+        df,
+        symbol,
+        spec,
+        macro_provider,
+        min_volume,
+        filter_layer,
+        scheduled_events,
     )
 
 
@@ -95,8 +107,12 @@ def _objective_c(
     macro_provider,
     min_volume,
     filter_layer: RiskFilterLayer,
+    scheduled_events: list[ScheduledEvent],
 ) -> float:
     cfg = SetupCConfig(
+        # Keep the wide window_minutes (for KR-session overnight events —
+        # default YAML value is 720 but SetupCConfig Python default is 15).
+        window_minutes=720,
         breakout_buffer_atr_mult=trial.suggest_float(
             "breakout_buffer_atr_mult", 0.2, 1.0
         ),
@@ -105,12 +121,26 @@ def _objective_c(
     )
     setup = SetupCEventReaction(config=cfg, tracker=EventTradeTracker())
     return _run_and_score(
-        [setup], df, symbol, spec, macro_provider, min_volume, filter_layer
+        [setup],
+        df,
+        symbol,
+        spec,
+        macro_provider,
+        min_volume,
+        filter_layer,
+        scheduled_events,
     )
 
 
 def _run_and_score(
-    setups, df, symbol, spec, macro_provider, min_volume, filter_layer
+    setups,
+    df,
+    symbol,
+    spec,
+    macro_provider,
+    min_volume,
+    filter_layer,
+    scheduled_events,
 ) -> float:
     replay = MarketContextReplay(
         df=df,
@@ -121,7 +151,7 @@ def _run_and_score(
             sp500_change_pct=0.0,
             nasdaq_change_pct=0.0,
         ),
-        scheduled_events=[],
+        scheduled_events=scheduled_events,
         contract_spec=spec,
         macro_provider=macro_provider,
         min_volume=min_volume,
@@ -171,6 +201,12 @@ def main() -> int:
         "Default is empty filters so the objective measures raw Setup EV "
         "unaffected by filter drag; filter tuning is a separate concern.",
     )
+    p.add_argument(
+        "--events",
+        default="config/scheduled_events.yaml",
+        help="Scheduled-events YAML (required for Setup C to fire). "
+        "Set empty string to disable.",
+    )
     args = p.parse_args()
 
     df = pd.read_csv(args.data)
@@ -200,11 +236,25 @@ def main() -> int:
     else:
         filter_layer = RiskFilterLayer(filters=[])
 
+    scheduled_events: list[ScheduledEvent] = []
+    if args.events:
+        scheduled_events = load_scheduled_events(args.events)
+        logger.info(
+            "loaded %d scheduled events from %s", len(scheduled_events), args.events
+        )
+
     study = optuna.create_study(direction="maximize")
     objective = _objective_a if args.setup == "a" else _objective_c
     study.optimize(
         lambda t: objective(
-            t, df, args.symbol, spec, macro_provider, args.min_volume, filter_layer
+            t,
+            df,
+            args.symbol,
+            spec,
+            macro_provider,
+            args.min_volume,
+            filter_layer,
+            scheduled_events,
         ),
         n_trials=args.trials,
     )

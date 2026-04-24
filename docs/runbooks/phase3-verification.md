@@ -98,17 +98,56 @@ rule, but on a 1-fold split so the statistical weight is low. Full-data run
    Setup A really works or the 0.7 % residual bad bars in the filtered
    data are over-crediting wins. A `volume ≥ 100` sweep for a single
    fold would stress-test this.
-3. **Setup C fires zero trades** in the 296-day window. Root cause:
-   our `kospi200f_1m` data is day-session only (09:00-15:30 KST) but
-   FOMC/CPI/NFP announcements all land during overnight hours; the
-   15-min Setup C reaction window closes before the next KST session
-   opens. Needs spec rework — either widen `window_minutes` to 480+
-   so the day-session open captures overnight reaction, or define a
-   "day-session open reaction" setup variant specifically for KR markets.
+3. ~~Setup C fires zero trades~~ — **resolved (2026-04-24).** Two bugs:
+   (a) `config/decision_engine.yaml::setup_c_event_reaction.window_minutes`
+   was 15 (spec default for US futures post-release); widened to 720 (12 h)
+   so overnight US FOMC/CPI/NFP announcements reach the next KST day-
+   session open.
+   (b) `MarketContextReplay.last_15min_high/low` slice was `[i-14:i+1]`
+   (included current bar), making `current_price > last_15min_high`
+   impossible by definition. Changed to `[i-15:i]` (prior 15 bars only)
+   matching the spec's intent. Setup C now fires 15 trades over the
+   296-day window (5 wins / 1 loss / 9 time-exits, EV = -23.75 ticks
+   on untuned defaults — tune or rework further before production).
 4. **Harness audit (commit 4f61a4d)** uncovered 4 bugs on first real
    run — session-crossing exits, gap-through-stop mislabelling, and
    the missing data-quality validation. Treat any future harness
    change as a suspect until re-validated.
+5. **Sizer wired into harness (2026-04-24).** `BacktestDecisionHarness`
+   now accepts an optional `sizer=` kwarg. When provided,
+   `FixedFractionalFuturesSizer.calculate()` runs per trade and
+   populates `TradeRecord.size_contracts` + `ticks_net_total`.
+   `config/risk.yaml::fixed_fractional_futures` is no longer dead
+   config — resolves PR #128's "YAML exists but no runtime caller"
+   finding.
+
+### Tuned A + C, full 296-day run with real filters (2026-04-24)
+
+Optuna 50-trial tune of each Setup (wired through `--setup-a-params` /
+`--setup-c-params` + scheduled events + risk filters):
+
+| Setup | Trades | Win rate | EV ticks/trade | Wins / Losses / Time-exits |
+|-------|--------|----------|----------------|----------------------------|
+| Setup A (tuned)            | 160 | 16.9 % | 29.28 | 27 / 39 / 94  |
+| Setup C (tuned)            |   9 | 88.9 % | 98.16 |  8 /  0 /  1  |
+| **Combined**               | 169 |        |       | filtered 8/177 by RiskLayer |
+
+Walk-forward (4-mo IS / 2-mo OOS, 1 fold):
+
+| Config | IS trades/EV | OOS trades/EV | Win rate IS/OOS | Gate |
+|--------|--------------|---------------|-----------------|------|
+| YAML defaults (A+C)         | 16 / 30.7 | 33 / 19.8 |  6 % / 15 % | ✅ |
+| Tuned A + Tuned C           |  7 / 22.7 |  7 / 24.8 | 29 % / 29 % | ✅ |
+
+Both configurations formally pass `OOS EV ≥ 0.5 × IS EV AND OOS > 0`.
+The tuned configuration has more selective params → fewer but
+higher-quality trades (win-rate more than doubles) and shows no
+over-fitting signal (OOS EV > IS EV).
+
+Remaining caveats unchanged: 1 WF fold, 0.7 % residual bad bars,
+Setup C's 9-trade sample is too small to draw statistical conclusions
+from despite the dramatic win rate. Phase 3 **code** is complete;
+empirical gate sign-off awaits ≥12-month data + multi-fold WF.
 
 - [ ] Run harness on `data/kospi200f_1m_clean.csv` (6 months):
   ```bash

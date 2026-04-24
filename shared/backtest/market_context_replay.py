@@ -302,10 +302,19 @@ class MarketContextReplay:
             else:
                 vwap = float(closes[i])
 
-            # last_15min_high / last_15min_low: trailing 15 bars (i-14..i)
-            start_15 = max(0, i - 14)
-            last_15min_high = float(highs[start_15 : i + 1].max())
-            last_15min_low = float(lows[start_15 : i + 1].min())
+            # last_15min_high / last_15min_low: PRIOR 15 bars (i-15..i-1)
+            # — exclude the current bar so Setup C's breakout condition
+            # ``current_price > last_15min_high`` can actually be true
+            # (if we included bar i, high[i] >= close[i] = current_price
+            # would make the strict inequality unreachable).
+            start_15 = max(0, i - 15)
+            if start_15 < i:
+                last_15min_high = float(highs[start_15:i].max())
+                last_15min_low = float(lows[start_15:i].min())
+            else:
+                # No prior bars available — use current as a safe fallback.
+                last_15min_high = float(highs[i])
+                last_15min_low = float(lows[i])
 
             # ATR at this bar
             atr_14 = float(atr_arr[i])
