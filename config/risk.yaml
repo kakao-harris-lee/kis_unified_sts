@@ -12,3 +12,11 @@ risk:
 trading_windows:
   - "09:00-10:30"
   - "14:30-15:20"
+
+# Position sizer parameters for SizerRegistry[fixed_fractional_futures].
+# Mirrors the "risk" section above for the fields a sizer actually needs,
+# separated so the sizer config is independently overridable.
+fixed_fractional_futures:
+  max_position_risk_pct: 0.015
+  max_position_size: 2
+  soft_reduce_threshold: 4

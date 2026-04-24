@@ -16,10 +16,11 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
-from pydantic import BaseModel, Field
+from pydantic import Field
 
+from shared.config.base import ServiceConfigBase
 from shared.strategy.base import PositionSizer
 from shared.strategy.registry import SizerRegistry
 
@@ -237,14 +238,21 @@ class RiskBasedSizer(PositionSizer[RiskBasedSizerConfig]):
 # =============================================================================
 
 
-class FixedFractionalFuturesConfig(BaseModel):
+class FixedFractionalFuturesConfig(ServiceConfigBase):
     """선물 고정 비율 사이저 설정
 
     Attributes:
         max_position_risk_pct: 계좌 대비 최대 리스크 비율 (예: 0.015 = 1.5%)
         max_position_size: 최대 계약 수 (계좌 크기 무관 상한)
         soft_reduce_threshold: 연속 손실 횟수 도달 시 포지션 절반으로 축소
+
+    Loaded from ``config/risk.yaml`` under the ``fixed_fractional_futures``
+    section when using ``from_yaml()``. Field defaults match the values
+    previously hardcoded in the Phase 3 spec §7.
     """
+
+    _default_config_file: ClassVar[str] = "risk.yaml"
+    _default_section: ClassVar[str] = "fixed_fractional_futures"
 
     max_position_risk_pct: float = Field(
         default=0.015, description="Maximum risk as fraction of equity per trade"
@@ -258,7 +266,10 @@ class FixedFractionalFuturesConfig(BaseModel):
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> FixedFractionalFuturesConfig:
-        """딕셔너리에서 생성"""
+        """딕셔너리에서 생성 — 기존 코드 호환용 shim.
+
+        Prefer :meth:`from_yaml` for new callers.
+        """
         return cls(**{k: v for k, v in data.items() if k in cls.model_fields})
 
 

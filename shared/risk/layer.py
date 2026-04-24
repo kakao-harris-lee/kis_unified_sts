@@ -23,6 +23,7 @@ filter requires I/O, without changing the public sync API.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -30,6 +31,7 @@ from shared.risk.filters.base import FilterResult, RiskFilter
 
 if TYPE_CHECKING:
     from shared.decision.signal import Signal
+    from shared.risk.config import FuturesRiskConfig
     from shared.risk.state import RiskStateSnapshot
 
 
@@ -78,6 +80,85 @@ class RiskFilterLayer:
 
     def __init__(self, filters: list[RiskFilter]) -> None:
         self._filters: list[RiskFilter] = list(filters)
+
+    @classmethod
+    def from_config(
+        cls,
+        config: FuturesRiskConfig,
+        trading_windows: list[str],
+        *,
+        current_atr_provider: Callable[[], float] | None = None,
+        current_spread_provider: Callable[[], float] | None = None,
+        has_open_position_provider: Callable[[str], bool] | None = None,
+    ) -> RiskFilterLayer:
+        """Build a fully-wired RiskFilterLayer from a FuturesRiskConfig + providers.
+
+        All 8 Phase 3 filters are assembled in the spec §6.1 order:
+
+        1. :class:`TradingHoursFilter` — KST trading-window whitelist.
+        2. :class:`DailyMDDFilter`.
+        3. :class:`WeeklyMDDFilter`.
+        4. :class:`ConsecutiveLossFilter` (may return size_multiplier=0.5).
+        5. :class:`DailyTradeCountFilter`.
+        6. :class:`VolatilityFilter` — uses ``current_atr_provider`` if given,
+           else a stub that returns 0.0 (never rejects on volatility).
+        7. :class:`SpreadFilter` — uses ``current_spread_provider`` if given,
+           else a stub that returns 0.0 (never rejects on spread).
+        8. :class:`OpenPositionFilter` — uses ``has_open_position_provider``
+           if given, else a stub that always returns False (never rejects
+           for duplicate positions).
+
+        The stubs let the backtest run the layer in a reproducible way
+        without wiring real position / ATR / LOB sources; Phase 4 overrides
+        them with live providers.
+        """
+        from shared.risk.filters.consecutive_loss import ConsecutiveLossFilter
+        from shared.risk.filters.daily_mdd import DailyMDDFilter
+        from shared.risk.filters.daily_trade_count import DailyTradeCountFilter
+        from shared.risk.filters.open_position import OpenPositionFilter
+        from shared.risk.filters.spread import SpreadFilter
+        from shared.risk.filters.trading_hours import TradingHoursFilter
+        from shared.risk.filters.volatility import VolatilityFilter
+        from shared.risk.filters.weekly_mdd import WeeklyMDDFilter
+
+        if current_atr_provider is None:
+
+            def current_atr_provider() -> float:
+                return 0.0
+
+        if current_spread_provider is None:
+
+            def current_spread_provider() -> float:
+                return 0.0
+
+        if has_open_position_provider is None:
+
+            def has_open_position_provider(_symbol: str) -> bool:
+                return False
+
+        filters: list[RiskFilter] = [
+            TradingHoursFilter(trading_windows=trading_windows),
+            DailyMDDFilter(
+                account_equity_krw=config.account_equity_krw,
+                daily_mdd_limit_pct=config.daily_mdd_limit_pct,
+            ),
+            WeeklyMDDFilter(
+                account_equity_krw=config.account_equity_krw,
+                weekly_mdd_limit_pct=config.weekly_mdd_limit_pct,
+            ),
+            ConsecutiveLossFilter(
+                soft_threshold=config.consecutive_loss_soft_threshold,
+                hard_threshold=config.consecutive_loss_hard_threshold,
+            ),
+            DailyTradeCountFilter(max_daily_trades=config.max_daily_trades),
+            VolatilityFilter(current_atr_provider=current_atr_provider),
+            SpreadFilter(
+                max_spread_ticks=config.max_spread_ticks,
+                current_spread_provider=current_spread_provider,
+            ),
+            OpenPositionFilter(has_open_position_provider=has_open_position_provider),
+        ]
+        return cls(filters=filters)
 
     def evaluate(
         self,

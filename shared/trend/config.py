@@ -1,31 +1,25 @@
 """Trend engine configuration."""
 
-import logging
-
 from pydantic import BaseModel, ConfigDict, Field
-
-logger = logging.getLogger(__name__)
 
 
 def _load_default_mini_multiplier() -> int:
     """Load KOSPI200 mini multiplier from ContractSpecRegistry.
 
     Delegates to config/execution.yaml so there is a single source of truth.
-    Falls back to 50000 (mini multiplier) when the config file is unreadable.
+    Raises (does not silently fall back) when the registry is unreadable or
+    missing the ``kospi200_mini`` key — a misconfigured deployment must fail
+    loudly rather than run with phantom contract math.
     """
-    try:
-        from shared.execution.contract_spec import ContractSpecRegistry
+    from shared.execution.contract_spec import ContractSpecRegistry
 
-        registry = ContractSpecRegistry.from_yaml("config/execution.yaml")
-        spec = registry.specs.get("kospi200_mini")
-        if spec is not None:
-            return spec.multiplier_krw_per_point
-    except Exception as exc:  # noqa: BLE001
-        logger.warning(
-            "Could not load mini multiplier from registry: %s; using fallback 50000",
-            exc,
+    registry = ContractSpecRegistry.from_yaml("config/execution.yaml")
+    spec = registry.specs.get("kospi200_mini")
+    if spec is None:
+        raise KeyError(
+            "config/execution.yaml::futures_contract_spec.kospi200_mini missing"
         )
-    return 50000  # defensive fallback
+    return spec.multiplier_krw_per_point
 
 
 class TechnicalConfig(BaseModel):
