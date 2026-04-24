@@ -1,28 +1,30 @@
 """Cross-asset 리스크 관리 프레임워크."""
 
-from shared.risk.manager import RiskManager
 from shared.risk.config import (
-    RiskConfig,
-    DrawdownThresholds,
-    DrawdownConfig,
     AssetLimits,
-    PositionSizingConfig,
+    DrawdownConfig,
+    DrawdownThresholds,
+    FuturesRiskConfig,
     MonitoringConfig,
     NotificationConfig,
+    PositionSizingConfig,
     RedisConfig,
+    RiskConfig,
+    load_trading_windows,
 )
+from shared.risk.manager import RiskManager
 from shared.risk.models import (
-    RiskState,
-    DrawdownLevel,
-    BlockReason,
     AssetExposure,
+    BlockReason,
+    DrawdownLevel,
     PortfolioMetrics,
+    RiskState,
 )
 
 __all__ = [
     # Manager
     "RiskManager",
-    # Config
+    # Config (portfolio-level)
     "RiskConfig",
     "DrawdownThresholds",
     "DrawdownConfig",
@@ -31,6 +33,9 @@ __all__ = [
     "MonitoringConfig",
     "NotificationConfig",
     "RedisConfig",
+    # Config (futures intraday — Phase 3)
+    "FuturesRiskConfig",
+    "load_trading_windows",
     # Models
     "RiskState",
     "DrawdownLevel",

@@ -16,14 +16,19 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
+
+from pydantic import BaseModel, Field
 
 from shared.strategy.base import PositionSizer
+from shared.strategy.registry import SizerRegistry
 
 if TYPE_CHECKING:
+    from shared.execution.contract_spec import ContractSpec
     from shared.llm.market_context import MarketContext
     from shared.models.position import Position
     from shared.models.signal import Signal
+    from shared.risk.state import RiskStateSnapshot
 
 logger = logging.getLogger(__name__)
 
@@ -72,10 +77,10 @@ class FixedSizer(PositionSizer[FixedSizerConfig]):
 
     def calculate(
         self,
-        signal: "Signal",
+        signal: Signal,
         account_balance: float,
-        current_positions: list["Position"],
-        market_context: Optional["MarketContext"] = None,
+        current_positions: list[Position],
+        market_context: MarketContext | None = None,
     ) -> int:
         """포지션 크기 계산
 
@@ -169,10 +174,10 @@ class RiskBasedSizer(PositionSizer[RiskBasedSizerConfig]):
 
     def calculate(
         self,
-        signal: "Signal",
+        signal: Signal,
         account_balance: float,
-        current_positions: list["Position"],
-        market_context: Optional["MarketContext"] = None,
+        current_positions: list[Position],
+        market_context: MarketContext | None = None,
     ) -> int:
         """포지션 크기 계산
 
@@ -225,3 +230,116 @@ class RiskBasedSizer(PositionSizer[RiskBasedSizerConfig]):
             f"stop={stop_loss_pct:.1f}%, qty={quantity}"
         )
         return quantity
+
+
+# =============================================================================
+# Fixed Fractional Futures Sizer
+# =============================================================================
+
+
+class FixedFractionalFuturesConfig(BaseModel):
+    """선물 고정 비율 사이저 설정
+
+    Attributes:
+        max_position_risk_pct: 계좌 대비 최대 리스크 비율 (예: 0.015 = 1.5%)
+        max_position_size: 최대 계약 수 (계좌 크기 무관 상한)
+        soft_reduce_threshold: 연속 손실 횟수 도달 시 포지션 절반으로 축소
+    """
+
+    max_position_risk_pct: float = Field(
+        default=0.015, description="Maximum risk as fraction of equity per trade"
+    )
+    max_position_size: int = Field(
+        default=2, description="Hard cap on contracts regardless of equity"
+    )
+    soft_reduce_threshold: int = Field(
+        default=4, description="Consecutive losses that trigger 50% position reduction"
+    )
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> FixedFractionalFuturesConfig:
+        """딕셔너리에서 생성"""
+        return cls(**{k: v for k, v in data.items() if k in cls.model_fields})
+
+
+@SizerRegistry.register("fixed_fractional_futures")
+class FixedFractionalFuturesSizer(PositionSizer["FixedFractionalFuturesConfig"]):
+    """선물 계약용 고정 비율 포지션 사이저
+
+    진입가와 손절가 간 거리를 기반으로 계약당 리스크(KRW)를 계산하고,
+    계좌 자산 대비 최대 리스크 비율에 맞게 계약 수를 결정한다.
+
+    Args:
+        config: FixedFractionalFuturesConfig 설정 객체
+        contract_spec: 선물 계약 스펙 (승수, 틱 크기 등)
+        state_snapshot: 리스크 상태 스냅샷 (연속 손실 감지용, 선택적)
+
+    Formula:
+        stop_distance_points = |entry_price - stop_loss|
+        krw_per_contract = stop_distance_points × multiplier_krw_per_point
+        target_risk_krw = account_equity_krw × max_position_risk_pct
+        raw_size = target_risk_krw / max(krw_per_contract, 1.0)
+        size = clamp(int(raw_size), 1, max_position_size)
+        if consecutive_losses >= soft_reduce_threshold:
+            size = max(1, size // 2)
+    """
+
+    CONFIG_CLASS = FixedFractionalFuturesConfig
+
+    def __init__(
+        self,
+        config: FixedFractionalFuturesConfig,
+        contract_spec: ContractSpec | None = None,
+        state_snapshot: RiskStateSnapshot | None = None,
+    ) -> None:
+        super().__init__(config)
+        self.spec = contract_spec
+        self.state = state_snapshot
+
+    def calculate(
+        self,
+        signal: Signal,
+        account_balance: float,
+        current_positions: list[Position],  # noqa: ARG002
+        market_context: MarketContext | None = None,  # noqa: ARG002
+    ) -> int:
+        """선물 포지션 계약 수 계산
+
+        Args:
+            signal: 진입 시그널 (entry_price, stop_loss 필드 사용)
+            account_balance: 계좌 자산 총액 (KRW)
+            current_positions: 현재 보유 포지션 (미사용, 인터페이스 호환용)
+            market_context: LLM 시장 분석 컨텍스트 (미사용, 인터페이스 호환용)
+
+        Returns:
+            계약 수 (최소 1, 최대 max_position_size)
+        """
+        c = self.config
+
+        # 손절 거리 계산 (포인트 단위)
+        stop_distance_points = abs(signal.entry_price - signal.stop_loss)
+
+        # 계약당 리스크 (KRW)
+        multiplier = self.spec.multiplier_krw_per_point if self.spec is not None else 1
+        krw_per_contract = stop_distance_points * multiplier
+
+        # 목표 리스크 금액 (KRW)
+        target_risk_krw = account_balance * c.max_position_risk_pct
+
+        # 계약 수 계산 (0 나눗셈 방지를 위해 1.0 하한)
+        raw_size = target_risk_krw / max(krw_per_contract, 1.0)
+        size = max(1, min(int(raw_size), c.max_position_size))
+
+        # 연속 손실 감지 시 절반으로 축소
+        if (
+            self.state is not None
+            and self.state.consecutive_losses >= c.soft_reduce_threshold
+        ):
+            size = max(1, size // 2)
+
+        logger.debug(
+            f"FixedFractionalFuturesSizer: stop_dist={stop_distance_points:.4f}pts, "
+            f"krw/contract={krw_per_contract:,.0f}, target_risk={target_risk_krw:,.0f}, "
+            f"raw={raw_size:.2f} → size={size}"
+        )
+        return size

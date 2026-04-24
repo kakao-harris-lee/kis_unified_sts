@@ -1,0 +1,173 @@
+# Macro event calendar — updated manually at the start of each month.
+# impact_tier: 1 = top tier (FOMC, CPI, NFP), 2 = medium (BOK, PPI), 3 = minor
+# scheduled_at: UTC ISO 8601 (append Z). KST = UTC+9.
+#
+# Historical entries (2025-07 onward) used for Phase 3 backtest evaluation of
+# Setup C. Release times are the announcement moments (not the KST session
+# when impact lands — the Setup C window_minutes parameter handles latency).
+#
+# Sources:
+# - FOMC: federalreserve.gov/monetarypolicy/fomccalendars.htm
+# - US CPI: bls.gov/schedule/news_release/cpi.htm (8:30 ET = 12:30 or 13:30 UTC DST)
+# - US NFP: bls.gov/schedule/news_release/empsit.htm (8:30 ET)
+# - BOK: bok.or.kr (09:00 KST = 00:00 UTC)
+
+events:
+
+  # -------------------------------------------------------------- 2025 H2
+  - event_id: "fomc_2025_jul"
+    event_type: "FOMC_rate_decision"
+    scheduled_at: "2025-07-30T18:00:00Z"   # 14:00 ET
+    impact_tier: 1
+  - event_id: "us_cpi_2025_jul"
+    event_type: "US_CPI"
+    scheduled_at: "2025-07-15T12:30:00Z"
+    impact_tier: 1
+  - event_id: "us_nfp_2025_jul"
+    event_type: "US_NFP"
+    scheduled_at: "2025-07-03T12:30:00Z"   # early release, July 4 holiday
+    impact_tier: 1
+  - event_id: "bok_2025_jul"
+    event_type: "BOK_rate_decision"
+    scheduled_at: "2025-07-10T01:00:00Z"
+    impact_tier: 2
+
+  - event_id: "us_cpi_2025_aug"
+    event_type: "US_CPI"
+    scheduled_at: "2025-08-12T12:30:00Z"
+    impact_tier: 1
+  - event_id: "us_nfp_2025_aug"
+    event_type: "US_NFP"
+    scheduled_at: "2025-08-01T12:30:00Z"
+    impact_tier: 1
+  - event_id: "bok_2025_aug"
+    event_type: "BOK_rate_decision"
+    scheduled_at: "2025-08-28T01:00:00Z"
+    impact_tier: 2
+
+  - event_id: "fomc_2025_sep"
+    event_type: "FOMC_rate_decision"
+    scheduled_at: "2025-09-17T18:00:00Z"
+    impact_tier: 1
+  - event_id: "us_cpi_2025_sep"
+    event_type: "US_CPI"
+    scheduled_at: "2025-09-11T12:30:00Z"
+    impact_tier: 1
+  - event_id: "us_nfp_2025_sep"
+    event_type: "US_NFP"
+    scheduled_at: "2025-09-05T12:30:00Z"
+    impact_tier: 1
+
+  - event_id: "us_cpi_2025_oct"
+    event_type: "US_CPI"
+    scheduled_at: "2025-10-15T12:30:00Z"
+    impact_tier: 1
+  - event_id: "us_nfp_2025_oct"
+    event_type: "US_NFP"
+    scheduled_at: "2025-10-03T12:30:00Z"
+    impact_tier: 1
+  - event_id: "bok_2025_oct"
+    event_type: "BOK_rate_decision"
+    scheduled_at: "2025-10-23T01:00:00Z"
+    impact_tier: 2
+
+  - event_id: "fomc_2025_oct_nov"
+    event_type: "FOMC_rate_decision"
+    scheduled_at: "2025-10-29T18:00:00Z"
+    impact_tier: 1
+  - event_id: "us_cpi_2025_nov"
+    event_type: "US_CPI"
+    scheduled_at: "2025-11-13T13:30:00Z"   # post DST: 08:30 ET = 13:30 UTC
+    impact_tier: 1
+  - event_id: "us_nfp_2025_nov"
+    event_type: "US_NFP"
+    scheduled_at: "2025-11-07T13:30:00Z"
+    impact_tier: 1
+  - event_id: "bok_2025_nov"
+    event_type: "BOK_rate_decision"
+    scheduled_at: "2025-11-27T01:00:00Z"
+    impact_tier: 2
+
+  - event_id: "fomc_2025_dec"
+    event_type: "FOMC_rate_decision"
+    scheduled_at: "2025-12-10T19:00:00Z"
+    impact_tier: 1
+  - event_id: "us_cpi_2025_dec"
+    event_type: "US_CPI"
+    scheduled_at: "2025-12-10T13:30:00Z"
+    impact_tier: 1
+  - event_id: "us_nfp_2025_dec"
+    event_type: "US_NFP"
+    scheduled_at: "2025-12-05T13:30:00Z"
+    impact_tier: 1
+
+  # -------------------------------------------------------------- 2026 H1
+  - event_id: "fomc_2026_jan"
+    event_type: "FOMC_rate_decision"
+    scheduled_at: "2026-01-28T19:00:00Z"
+    impact_tier: 1
+  - event_id: "us_cpi_2026_jan"
+    event_type: "US_CPI"
+    scheduled_at: "2026-01-14T13:30:00Z"
+    impact_tier: 1
+  - event_id: "us_nfp_2026_jan"
+    event_type: "US_NFP"
+    scheduled_at: "2026-01-09T13:30:00Z"
+    impact_tier: 1
+  - event_id: "bok_2026_jan"
+    event_type: "BOK_rate_decision"
+    scheduled_at: "2026-01-15T01:00:00Z"
+    impact_tier: 2
+
+  - event_id: "us_cpi_2026_feb"
+    event_type: "US_CPI"
+    scheduled_at: "2026-02-11T13:30:00Z"
+    impact_tier: 1
+  - event_id: "us_nfp_2026_feb"
+    event_type: "US_NFP"
+    scheduled_at: "2026-02-06T13:30:00Z"
+    impact_tier: 1
+  - event_id: "bok_2026_feb"
+    event_type: "BOK_rate_decision"
+    scheduled_at: "2026-02-26T01:00:00Z"
+    impact_tier: 2
+
+  - event_id: "fomc_2026_mar"
+    event_type: "FOMC_rate_decision"
+    scheduled_at: "2026-03-18T18:00:00Z"
+    impact_tier: 1
+  - event_id: "us_cpi_2026_mar"
+    event_type: "US_CPI"
+    scheduled_at: "2026-03-11T12:30:00Z"
+    impact_tier: 1
+  - event_id: "us_nfp_2026_mar"
+    event_type: "US_NFP"
+    scheduled_at: "2026-03-06T13:30:00Z"
+    impact_tier: 1
+
+  - event_id: "us_cpi_2026_apr"
+    event_type: "US_CPI"
+    scheduled_at: "2026-04-10T12:30:00Z"
+    impact_tier: 1
+  - event_id: "us_nfp_2026_apr"
+    event_type: "US_NFP"
+    scheduled_at: "2026-04-03T12:30:00Z"
+    impact_tier: 1
+  - event_id: "bok_2026_apr"
+    event_type: "BOK_rate_decision"
+    scheduled_at: "2026-04-09T01:00:00Z"
+    impact_tier: 2
+
+  # -------------------------------------------------------------- forward
+  - event_id: "fomc_2026_may"
+    event_type: "FOMC_rate_decision"
+    scheduled_at: "2026-05-01T03:00:00Z"
+    impact_tier: 1
+  - event_id: "us_cpi_2026_may"
+    event_type: "US_CPI"
+    scheduled_at: "2026-05-13T12:30:00Z"
+    impact_tier: 1
+  - event_id: "bok_2026_may"
+    event_type: "BOK_rate_decision"
+    scheduled_at: "2026-05-23T00:00:00Z"
+    impact_tier: 1

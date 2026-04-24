@@ -1,0 +1,23 @@
+# Decision Engine configuration — Setup A & Setup C parameters.
+# All numeric thresholds are loaded from this file; no hardcoded values in code.
+# See: docs/plans/2026-04-20-futures-paradigm-phase3-decision-engine.md §4.2 §5.2
+
+setup_a_gap_reversion:
+  enabled: true
+  valid_minutes_min: 10          # minutes after 09:00 KST open (inclusive)
+  valid_minutes_max: 90
+  min_sp500_gap_pct: 0.5         # minimum absolute S&P 500 overnight gap (%)
+  min_kr_gap_pct: 0.3            # minimum absolute Korean open gap vs prev close (%)
+  retrace_min: 0.30              # minimum retrace fraction of the gap
+  retrace_max: 0.55              # maximum retrace fraction of the gap
+  stop_atr_mult: 1.5             # hard stop = entry ± stop_atr_mult × ATR14
+  target_gap_fill_ratio: 0.9     # take-profit = fill this fraction of the gap
+  signal_ttl_minutes: 10         # signal validity window in minutes
+
+setup_c_event_reaction:
+  enabled: true
+  window_minutes: 15             # look-back window after an event (minutes)
+  breakout_buffer_atr_mult: 0.5  # breakout must be within this many ATRs of the 15-min high/low
+  target_atr_mult: 2.5           # take-profit = entry ± target_atr_mult × ATR14
+  signal_ttl_minutes: 30
+  min_impact_tier: 2             # ignore events with impact_tier > this value (higher = less important)

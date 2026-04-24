@@ -733,3 +733,90 @@ def record_news_scorer_backlog(count: int) -> None:
     """Consumer-group 미처리 메시지 수 게이지 기록."""
     if HAS_PROMETHEUS and news_scorer_backlog is not None:
         news_scorer_backlog.set(count)
+
+
+# ---- Phase 3 (futures paradigm): decision-engine metrics ----
+if HAS_PROMETHEUS:
+    signal_candidate_total = _Counter(
+        "signal_candidate_total",
+        "Signal candidates evaluated before filtering",
+        ["setup"],
+    )
+    signal_final_total = _Counter(
+        "signal_final_total",
+        "Signals that passed all filters and were emitted",
+        ["setup"],
+    )
+    signal_rejected_total = _Counter(
+        "signal_rejected_total",
+        "Signals rejected by a specific filter",
+        ["setup", "filter"],
+    )
+    signal_generator_duration_seconds = _Histogram(
+        "signal_generator_duration_seconds",
+        "Setup evaluation latency in seconds",
+        ["setup"],
+        buckets=(0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5),
+    )
+    risk_state_daily_pnl_pct = _Gauge(
+        "risk_state_daily_pnl_pct",
+        "Current session daily PnL as a percentage of capital",
+    )
+    risk_state_consecutive_losses = _Gauge(
+        "risk_state_consecutive_losses",
+        "Number of consecutive losing trades in the current session",
+    )
+    risk_state_daily_trade_count = _Gauge(
+        "risk_state_daily_trade_count",
+        "Number of trades executed in the current session",
+    )
+else:
+    signal_candidate_total = None
+    signal_final_total = None
+    signal_rejected_total = None
+    signal_generator_duration_seconds = None
+    risk_state_daily_pnl_pct = None
+    risk_state_consecutive_losses = None
+    risk_state_daily_trade_count = None
+
+
+def record_signal_candidate(setup: str) -> None:
+    """시그널 후보 평가 카운터 기록."""
+    if HAS_PROMETHEUS and signal_candidate_total is not None:
+        signal_candidate_total.labels(setup=setup).inc()
+
+
+def record_signal_final(setup: str) -> None:
+    """최종 시그널 발행 카운터 기록."""
+    if HAS_PROMETHEUS and signal_final_total is not None:
+        signal_final_total.labels(setup=setup).inc()
+
+
+def record_signal_rejected(setup: str, filter: str) -> None:
+    """시그널 필터링 기각 카운터 기록."""
+    if HAS_PROMETHEUS and signal_rejected_total is not None:
+        signal_rejected_total.labels(setup=setup, filter=filter).inc()
+
+
+def record_signal_generator_duration(setup: str, seconds: float) -> None:
+    """셋업 평가 소요 시간 히스토그램 기록."""
+    if HAS_PROMETHEUS and signal_generator_duration_seconds is not None:
+        signal_generator_duration_seconds.labels(setup=setup).observe(seconds)
+
+
+def record_risk_state_daily_pnl_pct(value: float) -> None:
+    """당일 PnL 비율(%) 게이지 기록."""
+    if HAS_PROMETHEUS and risk_state_daily_pnl_pct is not None:
+        risk_state_daily_pnl_pct.set(value)
+
+
+def record_risk_state_consecutive_losses(value: int) -> None:
+    """연속 손실 횟수 게이지 기록."""
+    if HAS_PROMETHEUS and risk_state_consecutive_losses is not None:
+        risk_state_consecutive_losses.set(value)
+
+
+def record_risk_state_daily_trade_count(value: int) -> None:
+    """당일 거래 횟수 게이지 기록."""
+    if HAS_PROMETHEUS and risk_state_daily_trade_count is not None:
+        risk_state_daily_trade_count.set(value)
