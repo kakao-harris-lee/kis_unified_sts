@@ -1,0 +1,19 @@
+[Unit]
+Description=KIS Order Router (Phase 4, passive limit + pseudo-OCO)
+After=network-online.target redis-server.service kis-risk-filter.service
+Wants=network-online.target
+Requires=redis-server.service kis-risk-filter.service
+
+[Service]
+Type=simple
+User=deploy
+WorkingDirectory=/home/deploy/project/kis_unified_sts
+EnvironmentFile=/home/deploy/project/kis_unified_sts/.env
+ExecStart=/home/deploy/project/kis_unified_sts/.venv/bin/python -m services.order_router.main
+Restart=on-failure
+RestartSec=10s
+TimeoutStopSec=30s
+KillSignal=SIGTERM
+
+[Install]
+WantedBy=multi-user.target
