@@ -51,13 +51,24 @@ class SignalsAllWriter:
         layer_result: LayerResult,
         *,
         executed: bool = False,
+        signal_id: str | None = None,
     ) -> None:
+        """Buffer one signal+result row for ``kospi.signals_all``.
+
+        Args:
+            signal_id: When the caller has a stable identifier (Phase 4 streaming
+                pipeline: the UUID minted by ``decision_engine`` and threaded
+                through ``risk_filter`` → ``order_router`` → ``order_fills``),
+                pass it through so spec §5.3 ``signals_all JOIN order_fills ON
+                signal_id`` actually matches. Backtest harness callers without
+                a pre-existing id fall through to a fresh ``uuid4`` per row.
+        """
         generated_at = signal.generated_at
         if generated_at.tzinfo is not None:
             generated_at = generated_at.astimezone(UTC).replace(tzinfo=None)
 
         row = (
-            str(uuid.uuid4()),
+            signal_id if signal_id is not None else str(uuid.uuid4()),
             generated_at,
             signal.setup_type,
             signal.direction,
