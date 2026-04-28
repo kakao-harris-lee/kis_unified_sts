@@ -121,7 +121,7 @@ class KISFuturesAdapter:
         # _send_kis_futures_order returns an OrderResponse — defer to its
         # return shape rather than assuming the executor's internals.
         response = await self.executor._send_kis_futures_order(
-            request, is_mock=self.executor.config.kis_market != "real"
+            request, is_mock=self.executor.config.trading_mode != "REAL"
         )
         order_id = response.order_no or ""
 
@@ -141,7 +141,11 @@ class KISFuturesAdapter:
         self._fills[order_id] = _StashedFill(fill=fill, placed_at_ms=placed_at_ms)
         return order_id
 
-    async def await_fill(self, order_id: str, timeout_seconds: int) -> Fill | None:  # noqa: ARG002
+    async def await_fill(
+        self,
+        order_id: str,
+        timeout_seconds: int,  # noqa: ARG002 — honored by executor internally
+    ) -> Fill | None:
         """Return the stashed fill (or None if missed). ``timeout_seconds``
         is honored by ``_send_kis_futures_order`` itself; this method is
         synchronous in practice.
@@ -165,7 +169,7 @@ class KISFuturesAdapter:
             await self.executor._cancel_futures_order(
                 order_no=order_id,
                 cancel_quantity=0,  # 0 = cancel all remaining
-                is_mock=self.executor.config.kis_market != "real",
+                is_mock=self.executor.config.trading_mode != "REAL",
                 is_night=False,
             )
             return True

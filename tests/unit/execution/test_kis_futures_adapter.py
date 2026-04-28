@@ -25,7 +25,7 @@ def feed():
 @pytest.fixture
 def executor():
     e = AsyncMock()
-    e.config = SimpleNamespace(kis_market="mock")
+    e.config = SimpleNamespace(trading_mode="MOCK")
     e._send_kis_futures_order = AsyncMock(
         return_value=SimpleNamespace(
             success=True,

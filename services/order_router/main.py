@@ -231,6 +231,8 @@ async def _build_and_run() -> int:
 
     from services.kill_switch.config import KillSwitchConfig
     from services.order_router.config import Phase4ExecutionConfig
+    from shared.collector.historical.futures import get_front_month_code
+    from shared.config.loader import ConfigLoader
     from shared.db.client import AsyncClickHouseClient
     from shared.db.config import ClickHouseConfig
     from shared.execution.config import ExecutionConfig
@@ -243,7 +245,8 @@ async def _build_and_run() -> int:
     from shared.execution.kis_futures_adapter import KISFuturesAdapter
     from shared.execution.passive_maker import PassiveMaker
     from shared.execution.pseudo_oco import PseudoOCO
-    from shared.kis.futures_feed import FuturesPriceFeed
+    from shared.kis.auth import KISAuthConfig
+    from shared.kis.futures_feed import KISFuturesPriceFeed
 
     redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/1")
     redis_client = aioredis.from_url(redis_url)
@@ -256,21 +259,35 @@ async def _build_and_run() -> int:
     kill_config = KillSwitchConfig.from_yaml()
 
     contract_specs = ContractSpecRegistry.from_yaml("config/execution.yaml")
-    spec = resolve_contract_spec("A05603", contract_specs)
+    # Auto-detect front-month KOSPI200 mini contract — handles quarterly
+    # rollover without code change (CLAUDE.md / MEMORY.md RL Symbol Policy).
+    symbol = get_front_month_code(product="mini")
+    spec = resolve_contract_spec(symbol, contract_specs)
 
     fill_logger = FillLogger(
         redis=redis_client,
         ch_client=ch_client,
         stream="stream:order.fill",
-        maxlen=10_000,
-        ch_batch_size=10,
+        maxlen=phase4_config.final_stream_maxlen,
+        ch_batch_size=10,  # spec §5.2 — kept here as a buffer-tuning constant
     )
 
-    execution_config = ExecutionConfig.from_yaml()
+    # ExecutionConfig is a plain Pydantic BaseModel (not ServiceConfigBase),
+    # so we go through ConfigLoader → constructor manually.
+    execution_section = ConfigLoader.load("execution.yaml").get("execution", {})
+    execution_config = ExecutionConfig(**execution_section)
     order_executor = OrderExecutor(execution_config)
     await order_executor.initialize()
 
-    futures_feed = FuturesPriceFeed(config={"orderbook_stale_threshold_seconds": 3.0})
+    # Futures-side KIS auth — this is the order-placement account.
+    kis_auth = KISAuthConfig(
+        app_key=os.environ.get("KIS_FUTURES_APP_KEY", ""),
+        app_secret=os.environ.get("KIS_FUTURES_APP_SECRET", ""),
+        is_real=os.environ.get("KIS_FUTURES_MARKET", "real").lower() == "real",
+    )
+    futures_feed = KISFuturesPriceFeed(config=kis_auth)
+    futures_feed.update_symbols([symbol])
+    await futures_feed.start()
 
     kis_adapter = KISFuturesAdapter(
         order_executor=order_executor,
@@ -304,6 +321,7 @@ async def _build_and_run() -> int:
         await daemon.run()
     finally:
         await fill_logger.flush()
+        await futures_feed.stop()
         await redis_client.aclose()
         await ch_client.close()
     return 0
