@@ -182,3 +182,14 @@ futures_contract_spec:
     tick_value_krw: 12500                # tick_size_points × multiplier_krw_per_point
     commission_rate: 0.00003             # 0.003% per side (KIS futures rate)
     symbol_prefix: "101"                 # KIS symbol prefix for KOSPI200 full futures (연결선물)
+
+# Phase 4 — passive maker + force-close timings (spec §3.2 / §4.3).
+# Loaded by services.order_router._build_and_run via Phase4ExecutionConfig.
+phase4_execution:
+  passive_timeout_seconds: 30          # PassiveMaker._wait_for_fill timeout
+  eod_kst_hour: 15                     # ForceCloseExecutor EOD KST hour
+  eod_kst_minute: 10                   # ForceCloseExecutor EOD KST minute
+  base_quantity: 1                     # OrderRouterDaemon base contracts per signal
+  final_stream_maxlen: 10000           # stream:signal.final XADD MAXLEN ~
+  xread_block_ms: 2000                 # XREADGROUP block (idle wait)
+  xread_batch_size: 10                 # XREADGROUP COUNT

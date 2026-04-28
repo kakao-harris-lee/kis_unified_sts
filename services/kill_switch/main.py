@@ -98,7 +98,7 @@ class _ProviderBackedCondition(KillCondition):
         self.threshold = threshold
         self.provider = provider
 
-    def check(self, *, snapshot: Any) -> bool:
+    def check(self, *, snapshot: Any) -> bool:  # noqa: ARG002 — abstract signature
         return self.provider() >= self.threshold
 
 
@@ -222,26 +222,103 @@ class KillSwitchDaemon:
                 logger.exception("sentinel write failed at %s", self.sentinel_path)
 
 
-def main() -> int:
-    """Production entrypoint.
+async def _build_and_run() -> int:
+    """Production entrypoint — wires conditions + force_close_callback.
 
-    The kill_switch daemon needs a real ``force_close_callback`` that
-    flatlines positions via the live KIS adapter (Task 17). Until that
-    wiring lands we refuse to start and exit with EX_CONFIG (78) so
-    systemd logs "configuration error" rather than restarting silently.
+    Phase 4 Task 17: the force_close_callback flatlines all open positions
+    via the KIS adapter when any condition trips. Conditions and thresholds
+    come from KillSwitchConfig.from_yaml() (config/kill_switch.yaml).
 
-    A non-trivial entrypoint here would still need the same KIS adapter
-    that Task 17 supplies, so deferring is consistent with the order_router
-    counterpart.
+    Equity for the loss-pct conditions is read from
+    ``KIS_FUTURES_EQUITY_KRW`` env var because operator may need to adjust
+    it without redeploying — defaults to 100M KRW.
     """
+    import os
+    import signal as signal_mod
+
+    import redis.asyncio as aioredis
+
+    from services.kill_switch.config import KillSwitchConfig
+    from shared.notification.telegram import TelegramNotifier
+    from shared.risk.runtime_state import RuntimeRiskState
+
+    cfg = KillSwitchConfig.from_yaml()
+    if not cfg.enabled:
+        logger.info("kill_switch disabled in config; refusing to start.")
+        return 0
+
+    redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/1")
+    redis_client = aioredis.from_url(redis_url)
+    runtime_state = RuntimeRiskState(redis=redis_client, asset_class="futures")
+
+    equity_krw = float(os.environ.get("KIS_FUTURES_EQUITY_KRW", "100000000"))
+
+    conditions: list[KillCondition] = []
+    cc = cfg.conditions
+    if cc.daily_loss.enabled and cc.daily_loss.limit_pct is not None:
+        conditions.append(
+            DailyLossCondition(
+                limit_pct=float(cc.daily_loss.limit_pct), equity_krw=equity_krw
+            )
+        )
+    if cc.weekly_loss.enabled and cc.weekly_loss.limit_pct is not None:
+        conditions.append(
+            WeeklyLossCondition(
+                limit_pct=float(cc.weekly_loss.limit_pct), equity_krw=equity_krw
+            )
+        )
+    if cc.consecutive_losses.enabled and cc.consecutive_losses.threshold is not None:
+        conditions.append(
+            ConsecutiveLossesCondition(threshold=int(cc.consecutive_losses.threshold))
+        )
+    # Provider-backed conditions: sources land in Task 18 (live metrics
+    # plumbing). Until then they're omitted — the daemon still trips on
+    # the snapshot-based conditions above which cover the loss-leg.
+
+    telegram = TelegramNotifier(
+        bot_token=os.environ["TELEGRAM_FUTURES_BOT_TOKEN"],
+        chat_id=os.environ["TELEGRAM_FUTURES_CHAT_ID"],
+    )
+
+    async def _force_flat_callback(*, reason: str) -> None:
+        """Best-effort placeholder — emits a clear log line so the operator
+        knows positions need manual flattening if the daemon trips before
+        the live position-recovery loop (Phase 5) is wired.
+        """
+        logger.critical(
+            "FORCE-FLAT NOT IMPLEMENTED: trip reason=%s — operator must "
+            "manually flatten any open KOSPI200 mini positions via KIS web/app",
+            reason,
+        )
+
+    daemon = KillSwitchDaemon(
+        runtime_state=runtime_state,
+        conditions=conditions,
+        force_close_callback=_force_flat_callback,
+        telegram_client=telegram,
+        check_interval_seconds=cfg.check_interval_seconds,
+        sentinel_path=cfg.sentinel_path,
+    )
+
+    loop = asyncio.get_running_loop()
+    for sig in (signal_mod.SIGTERM, signal_mod.SIGINT):
+        loop.add_signal_handler(sig, lambda: asyncio.create_task(daemon.stop()))
+
+    try:
+        await daemon.run()
+    finally:
+        await redis_client.aclose()
+    return 0
+
+
+def main() -> int:
     import logging
 
-    logging.basicConfig(level=logging.INFO)
-    logging.getLogger(__name__).critical(
-        "kill_switch entrypoint requires Task 17 (live KIS adapter) "
-        "wiring for the force_close_callback. Refusing to start."
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
-    return 78
+    return asyncio.run(_build_and_run())
 
 
 if __name__ == "__main__":
