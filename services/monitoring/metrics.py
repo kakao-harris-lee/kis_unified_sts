@@ -820,3 +820,108 @@ def record_risk_state_daily_trade_count(value: int) -> None:
     """당일 거래 횟수 게이지 기록."""
     if HAS_PROMETHEUS and risk_state_daily_trade_count is not None:
         risk_state_daily_trade_count.set(value)
+
+
+# ---- Phase 4 (execution): order/fill/slippage/kill-switch metrics ----
+if HAS_PROMETHEUS:
+    order_placed_total = _Counter(
+        "order_placed_total",
+        "Orders placed (any state)",
+        ["setup", "order_type"],
+    )
+    order_filled_total = _Counter(
+        "order_filled_total",
+        "Orders that filled successfully",
+        ["setup", "order_type", "venue"],
+    )
+    order_missed_total = _Counter(
+        "order_missed_total",
+        "Orders that missed (passive timeout, cancel, error)",
+        ["setup", "reason"],
+    )
+    order_slippage_ticks = _Histogram(
+        "order_slippage_ticks",
+        "Slippage in ticks against the trader (positive = adverse)",
+        ["setup"],
+        buckets=(0.0, 0.1, 0.2, 0.5, 1.0, 2.0, 5.0),
+    )
+    order_latency_ms = _Histogram(
+        "order_latency_ms",
+        "Order request → fill latency in milliseconds",
+        ["setup", "stage"],
+        buckets=(50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000),
+    )
+    kill_switch_triggered_total = _Counter(
+        "kill_switch_triggered_total",
+        "Kill switch trips by reason",
+        ["reason"],
+    )
+    kill_switch_condition_value = _Gauge(
+        "kill_switch_condition_value",
+        "Current value of each monitored kill-switch condition",
+        ["name"],
+    )
+    risk_state_daily_pnl_krw = _Gauge(
+        "risk_state_daily_pnl_krw",
+        "Current session daily PnL in KRW",
+    )
+    risk_state_weekly_pnl_krw = _Gauge(
+        "risk_state_weekly_pnl_krw",
+        "Current rolling weekly PnL in KRW",
+    )
+else:
+    order_placed_total = None
+    order_filled_total = None
+    order_missed_total = None
+    order_slippage_ticks = None
+    order_latency_ms = None
+    kill_switch_triggered_total = None
+    kill_switch_condition_value = None
+    risk_state_daily_pnl_krw = None
+    risk_state_weekly_pnl_krw = None
+
+
+def record_order_placed(setup: str, order_type: str) -> None:
+    if HAS_PROMETHEUS and order_placed_total is not None:
+        order_placed_total.labels(setup=setup, order_type=order_type).inc()
+
+
+def record_order_filled(setup: str, order_type: str, venue: str = "KRX") -> None:
+    if HAS_PROMETHEUS and order_filled_total is not None:
+        order_filled_total.labels(setup=setup, order_type=order_type, venue=venue).inc()
+
+
+def record_order_missed(setup: str, reason: str) -> None:
+    if HAS_PROMETHEUS and order_missed_total is not None:
+        order_missed_total.labels(setup=setup, reason=reason).inc()
+
+
+def record_order_slippage_ticks(setup: str, ticks: float) -> None:
+    if HAS_PROMETHEUS and order_slippage_ticks is not None:
+        order_slippage_ticks.labels(setup=setup).observe(ticks)
+
+
+def record_order_latency_ms(setup: str, stage: str, latency_ms: float) -> None:
+    """Stage in {'request', 'fill'}."""
+    if HAS_PROMETHEUS and order_latency_ms is not None:
+        order_latency_ms.labels(setup=setup, stage=stage).observe(latency_ms)
+
+
+def record_kill_switch_triggered(reason: str) -> None:
+    if HAS_PROMETHEUS and kill_switch_triggered_total is not None:
+        kill_switch_triggered_total.labels(reason=reason).inc()
+
+
+def record_kill_switch_condition_value(name: str, value: float) -> None:
+    if HAS_PROMETHEUS and kill_switch_condition_value is not None:
+        kill_switch_condition_value.labels(name=name).set(value)
+
+
+def record_risk_state_daily_pnl_krw(value: float) -> None:
+    if HAS_PROMETHEUS and risk_state_daily_pnl_krw is not None:
+        risk_state_daily_pnl_krw.set(value)
+
+
+def record_risk_state_weekly_pnl_krw(value: float) -> None:
+    if HAS_PROMETHEUS and risk_state_weekly_pnl_krw is not None:
+        risk_state_weekly_pnl_krw.set(value)
