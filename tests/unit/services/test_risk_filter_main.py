@@ -36,7 +36,7 @@ class _StubLayer(RiskFilterLayer):
         super().__init__(filters=[])
         self._result = result
 
-    def evaluate(self, signal, snapshot):  # type: ignore[override]
+    def evaluate(self, signal, snapshot):  # type: ignore[override]  # noqa: ARG002
         return self._result
 
 
@@ -187,6 +187,28 @@ async def test_xack_after_both_writes(redis, signals_writer):
         assert int(pending.get("pending", 0)) == 0
     elif pending:
         assert int(pending[0]) == 0
+
+
+@pytest.mark.asyncio
+async def test_signal_id_threaded_to_signals_writer(redis, signals_writer):
+    """signals_all rows must use the stream signal_id, not a fresh uuid (spec §5.3)."""
+    layer = _StubLayer(LayerResult(passed=True, skip_reason=None, size_multiplier=1.0))
+    daemon = _make_daemon(redis=redis, signals_writer=signals_writer, layer=layer)
+    sig = _signal("long")
+    fields = sig.to_stream_dict()
+    fields["signal_id"] = "sig-tracing-99"
+    await redis.xadd(CANDIDATE_STREAM, fields)
+
+    async def _stop_after():
+        await asyncio.sleep(0.05)
+        await daemon.stop()
+
+    import asyncio
+
+    await asyncio.gather(daemon.run(), _stop_after())
+
+    kwargs = signals_writer.enqueue.call_args.kwargs
+    assert kwargs["signal_id"] == "sig-tracing-99"
 
 
 def test_signal_from_stream_fields_round_trip():

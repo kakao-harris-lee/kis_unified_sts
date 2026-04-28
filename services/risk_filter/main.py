@@ -151,8 +151,17 @@ class RiskFilterDaemon:
             return
 
         # Audit row first — every candidate, accepted or rejected.
+        # Thread the stream signal_id so kospi.signals_all rows match the
+        # later kospi.order_fills row on signal_id (spec §5.3 reconciliation
+        # JOIN). SignalsAllWriter falls back to a fresh uuid for backtest
+        # harness callers without a pre-existing id.
         try:
-            await self.signals_writer.enqueue(signal, result, executed=result.passed)
+            await self.signals_writer.enqueue(
+                signal,
+                result,
+                executed=result.passed,
+                signal_id=signal_id,
+            )
         except Exception:
             logger.exception(
                 "signals_all enqueue failed signal_id=%s; leaving pending", signal_id

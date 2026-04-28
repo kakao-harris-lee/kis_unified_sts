@@ -7,13 +7,23 @@ Phase 4 Task 12 — reads filtered :class:`Signal`s from
 wired into PassiveMaker).
 
 This is the only daemon that holds wallet authority — every other Phase 4
-component reads/audits, but the order_router places real orders. Kill
-switch (Task 13) signals shutdown via a sentinel; we honor that by exiting
-the run loop without accepting new messages.
+component reads/audits, but the order_router places real orders. The
+kill_switch daemon (Task 13) writes a sentinel file on trigger; we honor
+it by:
+
+  1. **On startup**: refusing to enter the consume loop when the sentinel
+     already exists — the previous trip has not been operator-cleared yet.
+  2. **Per loop iteration**: re-checking the sentinel before each
+     ``xreadgroup`` so a mid-session trip drains pre-trip messages without
+     placing further orders.
+
+Operator clears the sentinel via ``scripts/kill_switch_clear.sh`` before
+the next start.
 
 Error taxonomy:
 - Parse error                   → XACK (poison-pill drop)
-- PassiveMaker raises           → NO XACK (retry)
+- PassiveMaker raises           → NO XACK (retry — beware of double-fill;
+                                  see PR #134 review note on idempotency)
 - PseudoOCO.register_bracket    → NO XACK (entry filled but bracket not
                                   registered → caller must reconcile)
 """
@@ -23,6 +33,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+from pathlib import Path
 from typing import Any
 
 from services.risk_filter.main import _signal_from_stream_fields
@@ -62,6 +73,7 @@ class OrderRouterDaemon:
         batch_size: int,
         passive_timeout_seconds: int,
         base_quantity: int = 1,
+        kill_switch_sentinel_path: str | None = None,
     ) -> None:
         self.redis = redis
         self.passive_maker = passive_maker
@@ -74,15 +86,43 @@ class OrderRouterDaemon:
         self.batch_size = batch_size
         self.passive_timeout_seconds = passive_timeout_seconds
         self.base_quantity = base_quantity
+        self.sentinel_path = (
+            Path(kill_switch_sentinel_path) if kill_switch_sentinel_path else None
+        )
         self._stop = asyncio.Event()
+        self.refused_due_to_sentinel: bool = False
+
+    def _sentinel_present(self) -> bool:
+        return self.sentinel_path is not None and self.sentinel_path.exists()
 
     async def run(self) -> None:
+        # Startup guard: refuse to consume if the kill switch tripped previously
+        # and an operator has not yet run scripts/kill_switch_clear.sh.
+        if self._sentinel_present():
+            self.refused_due_to_sentinel = True
+            logger.critical(
+                "Kill switch sentinel exists at %s — refusing to start. "
+                "Run scripts/kill_switch_clear.sh after operator review.",
+                self.sentinel_path,
+            )
+            return
+
         with contextlib.suppress(Exception):
             await self.redis.xgroup_create(
                 self.final_stream, self.consumer_group, id="0", mkstream=True
             )
 
         while not self._stop.is_set():
+            # Per-iteration guard: a mid-session trip must drain pre-trip
+            # messages without placing further orders.
+            if self._sentinel_present():
+                self.refused_due_to_sentinel = True
+                logger.critical(
+                    "Kill switch sentinel appeared at %s during run; exiting.",
+                    self.sentinel_path,
+                )
+                return
+
             try:
                 messages = await self.redis.xreadgroup(
                     groupname=self.consumer_group,

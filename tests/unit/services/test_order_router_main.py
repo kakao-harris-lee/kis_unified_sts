@@ -80,7 +80,7 @@ def pseudo_oco(fill_logger):
     return PseudoOCO(fill_logger=fill_logger)
 
 
-def _make_daemon(*, redis, kis, fill_logger, pseudo_oco):
+def _make_daemon(*, redis, kis, fill_logger, pseudo_oco, sentinel_path=None):
     from shared.execution.passive_maker import PassiveMaker
 
     passive = PassiveMaker(kis_client=kis, fill_logger=fill_logger)
@@ -95,6 +95,7 @@ def _make_daemon(*, redis, kis, fill_logger, pseudo_oco):
         xread_block_ms=10,
         batch_size=10,
         passive_timeout_seconds=5,
+        kill_switch_sentinel_path=sentinel_path,
     )
 
 
@@ -172,6 +173,71 @@ async def test_xack_after_successful_route(redis, kis, fill_logger, pseudo_oco):
         assert int(pending.get("pending", 0)) == 0
     elif pending:
         assert int(pending[0]) == 0
+
+
+@pytest.mark.asyncio
+async def test_sentinel_present_at_startup_refuses_to_run(
+    tmp_path, redis, kis, fill_logger, pseudo_oco
+):
+    sentinel = tmp_path / "tripped"
+    sentinel.write_text("kill_switch tripped")
+
+    daemon = _make_daemon(
+        redis=redis,
+        kis=kis,
+        fill_logger=fill_logger,
+        pseudo_oco=pseudo_oco,
+        sentinel_path=str(sentinel),
+    )
+    await _publish_final(redis, _signal("long"))
+
+    # run() should return immediately without consuming
+    await daemon.run()
+
+    assert daemon.refused_due_to_sentinel is True
+    kis.place_futures_order.assert_not_awaited()
+    fill_logger.log_fill.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_sentinel_appearing_mid_run_stops_consumption(
+    tmp_path, redis, kis, fill_logger, pseudo_oco
+):
+    sentinel = tmp_path / "tripped"
+
+    daemon = _make_daemon(
+        redis=redis,
+        kis=kis,
+        fill_logger=fill_logger,
+        pseudo_oco=pseudo_oco,
+        sentinel_path=str(sentinel),
+    )
+
+    async def _trip_after_a_moment():
+        # Let the loop iterate once with no messages, then trip
+        await asyncio.sleep(0.03)
+        sentinel.write_text("trip")
+
+    await asyncio.gather(daemon.run(), _trip_after_a_moment())
+    assert daemon.refused_due_to_sentinel is True
+
+
+@pytest.mark.asyncio
+async def test_no_sentinel_path_runs_normally(redis, kis, fill_logger, pseudo_oco):
+    """sentinel_path=None disables the guard — back-compat for tests/other callers."""
+    daemon = _make_daemon(
+        redis=redis,
+        kis=kis,
+        fill_logger=fill_logger,
+        pseudo_oco=pseudo_oco,
+        sentinel_path=None,
+    )
+    await _publish_final(redis, _signal("long"))
+
+    await _run_one_batch(daemon)
+
+    kis.place_futures_order.assert_awaited_once()
+    assert daemon.refused_due_to_sentinel is False
 
 
 @pytest.mark.asyncio
