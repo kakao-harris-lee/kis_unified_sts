@@ -141,7 +141,7 @@ class TestMaterialiseRows:
     the INNER-JOIN aggregate skips zero-fill setups."""
 
     def test_zero_fill_setups_get_n_zero_rows(self):
-        from jobs.weekly_edge_review import _KNOWN_SETUPS, _materialise_rows
+        from jobs.weekly_edge_review import _materialise_rows
 
         # SQL produced only one of the two known setups
         result = _materialise_rows([("A_gap_reversion", 10, 0.2, 0.4, 500_000, 0.55)])
@@ -149,14 +149,12 @@ class TestMaterialiseRows:
         assert "A_gap_reversion" in setups
         assert setups["A_gap_reversion"].n == 10
         # The OTHER known setup must appear with n=0
-        for s in _KNOWN_SETUPS:
-            assert s in setups
         c = setups["C_event_reaction"]
         assert c.n == 0
         assert c.pnl_krw == 0.0
 
     def test_no_duplicate_when_all_setups_present(self):
-        from jobs.weekly_edge_review import _KNOWN_SETUPS, _materialise_rows
+        from jobs.weekly_edge_review import _materialise_rows
 
         result = _materialise_rows(
             [
@@ -164,6 +162,14 @@ class TestMaterialiseRows:
                 ("C_event_reaction", 5, 0.3, 0.5, 200_000, 0.40),
             ]
         )
-        names = [r.setup_type for r in result]
-        assert sorted(names) == sorted(_KNOWN_SETUPS)
+        names = sorted(r.setup_type for r in result)
+        assert names == ["A_gap_reversion", "C_event_reaction"]
         assert len(result) == 2
+
+    def test_known_setups_param_overrides_default(self):
+        from jobs.weekly_edge_review import _materialise_rows
+
+        result = _materialise_rows([], known_setups=["X", "Y", "Z"])
+        names = sorted(r.setup_type for r in result)
+        assert names == ["X", "Y", "Z"]
+        assert all(r.n == 0 for r in result)

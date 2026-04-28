@@ -215,29 +215,126 @@ class OrderRouterDaemon:
         await self.redis.xack(self.final_stream, self.consumer_group, msg_id)
 
 
-def main() -> int:
-    """Production entrypoint.
+async def _build_and_run() -> int:
+    """Production entrypoint — wires KIS adapter + PassiveMaker + PseudoOCO.
 
-    The order_router needs a real KIS futures adapter — this is the wallet-
-    authority component, so we refuse to launch with a stub. Task 17 wires
-    ``shared/execution/executor.py:place_passive_limit_futures`` to the live
-    KIS client and supplies the real ``PassiveMaker``/``PseudoOCO`` plus
-    contract spec. Until then, the systemd unit is intentionally not
-    operational. Exiting with code 78 (EX_CONFIG) signals systemd to log
-    "configuration error" rather than restart.
-
-    Once Task 17 lands, replace this with a proper ``_build_and_run`` that
-    constructs PassiveMaker/PseudoOCO from a live KIS client + Redis-backed
-    FillLogger and calls ``asyncio.run(daemon.run())``.
+    Phase 4 Task 17 (KIS adapter) + config loaders close the prior PR #135
+    "EX_CONFIG stub" deferral. The kill_switch sentinel path is read from
+    KillSwitchConfig so the order_router refuses to start under the same
+    path the kill_switch daemon writes to.
     """
+    import os
+    import signal as signal_mod
+    import socket
+
+    import redis.asyncio as aioredis
+
+    from services.kill_switch.config import KillSwitchConfig
+    from services.order_router.config import Phase4ExecutionConfig
+    from shared.collector.historical.futures import get_front_month_code
+    from shared.config.loader import ConfigLoader
+    from shared.db.client import AsyncClickHouseClient
+    from shared.db.config import ClickHouseConfig
+    from shared.execution.config import ExecutionConfig
+    from shared.execution.contract_spec import (
+        ContractSpecRegistry,
+        resolve_contract_spec,
+    )
+    from shared.execution.executor import OrderExecutor
+    from shared.execution.fill_logger import FillLogger
+    from shared.execution.kis_futures_adapter import KISFuturesAdapter
+    from shared.execution.passive_maker import PassiveMaker
+    from shared.execution.pseudo_oco import PseudoOCO
+    from shared.kis.auth import KISAuthConfig
+    from shared.kis.futures_feed import KISFuturesPriceFeed
+
+    redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/1")
+    redis_client = aioredis.from_url(redis_url)
+
+    ch_config = ClickHouseConfig.from_env(database="kospi")
+    ch_client = AsyncClickHouseClient(ch_config)
+    await ch_client.connect()
+
+    phase4_config = Phase4ExecutionConfig.from_yaml()
+    kill_config = KillSwitchConfig.from_yaml()
+
+    contract_specs = ContractSpecRegistry.from_yaml("config/execution.yaml")
+    # Auto-detect front-month KOSPI200 mini contract — handles quarterly
+    # rollover without code change (CLAUDE.md / MEMORY.md RL Symbol Policy).
+    symbol = get_front_month_code(product="mini")
+    spec = resolve_contract_spec(symbol, contract_specs)
+
+    fill_logger = FillLogger(
+        redis=redis_client,
+        ch_client=ch_client,
+        stream="stream:order.fill",
+        maxlen=phase4_config.final_stream_maxlen,
+        ch_batch_size=10,  # spec §5.2 — kept here as a buffer-tuning constant
+    )
+
+    # ExecutionConfig is a plain Pydantic BaseModel (not ServiceConfigBase),
+    # so we go through ConfigLoader → constructor manually.
+    execution_section = ConfigLoader.load("execution.yaml").get("execution", {})
+    execution_config = ExecutionConfig(**execution_section)
+    order_executor = OrderExecutor(execution_config)
+    await order_executor.initialize()
+
+    # Futures-side KIS auth — this is the order-placement account.
+    kis_auth = KISAuthConfig(
+        app_key=os.environ.get("KIS_FUTURES_APP_KEY", ""),
+        app_secret=os.environ.get("KIS_FUTURES_APP_SECRET", ""),
+        is_real=os.environ.get("KIS_FUTURES_MARKET", "real").lower() == "real",
+    )
+    futures_feed = KISFuturesPriceFeed(config=kis_auth)
+    futures_feed.update_symbols([symbol])
+    await futures_feed.start()
+
+    kis_adapter = KISFuturesAdapter(
+        order_executor=order_executor,
+        futures_price_feed=futures_feed,
+    )
+
+    passive_maker = PassiveMaker(kis_client=kis_adapter, fill_logger=fill_logger)
+    pseudo_oco = PseudoOCO(fill_logger=fill_logger)
+
+    worker_id = f"order-router-{socket.gethostname()}-{os.getpid()}"
+    daemon = OrderRouterDaemon(
+        redis=redis_client,
+        passive_maker=passive_maker,
+        pseudo_oco=pseudo_oco,
+        contract_spec=spec,
+        final_stream="stream:signal.final",
+        consumer_group="order_router",
+        worker_id=worker_id,
+        xread_block_ms=phase4_config.xread_block_ms,
+        batch_size=phase4_config.xread_batch_size,
+        passive_timeout_seconds=phase4_config.passive_timeout_seconds,
+        base_quantity=phase4_config.base_quantity,
+        kill_switch_sentinel_path=kill_config.sentinel_path,
+    )
+
+    loop = asyncio.get_running_loop()
+    for sig in (signal_mod.SIGTERM, signal_mod.SIGINT):
+        loop.add_signal_handler(sig, lambda: asyncio.create_task(daemon.stop()))
+
+    try:
+        await daemon.run()
+    finally:
+        await fill_logger.flush()
+        await futures_feed.stop()
+        await redis_client.aclose()
+        await ch_client.close()
+    return 0
+
+
+def main() -> int:
     import logging
 
-    logging.basicConfig(level=logging.INFO)
-    logging.getLogger(__name__).critical(
-        "order_router entrypoint requires Task 17 (live KIS adapter) "
-        "wiring before it can run. Refusing to start."
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
-    return 78
+    return asyncio.run(_build_and_run())
 
 
 if __name__ == "__main__":

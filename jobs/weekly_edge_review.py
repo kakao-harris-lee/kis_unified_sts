@@ -14,65 +14,91 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, ClassVar
+
+from pydantic import Field
+
+from shared.config.base import ServiceConfigBase
 
 logger = logging.getLogger(__name__)
 
-# Spec §5.3 — realized PnL needs (exit_price - entry_price) per signal.
-# Self-JOIN on signal_id between the entry fill (trade_role='entry') and the
-# exit fill (stop_loss/take_profit/force_close). Direction taken from
-# kospi.signals_all so the sign is the entry direction, not the closing side.
-_QUERY_CURRENT_WEEK = """
-WITH
-    entries AS (
-        SELECT signal_id, filled_price AS entry_price, quantity
-        FROM kospi.order_fills
-        WHERE trade_role = 'entry'
-          AND filled_at >= now() - INTERVAL 8 DAY
-    ),
-    exits AS (
-        SELECT signal_id, filled_price AS exit_price, slippage_ticks
-        FROM kospi.order_fills
-        WHERE trade_role IN ('stop_loss', 'take_profit', 'force_close')
-          AND filled_at >= now() - INTERVAL 7 DAY
+
+class WeeklyEdgeReviewConfig(ServiceConfigBase):
+    """Alert thresholds + window sizes for the weekly edge review job.
+
+    Loaded from ``config/weekly_edge_review.yaml`` under the
+    ``weekly_edge_review`` section. Closes the PR #135 review finding that
+    operational thresholds (0.5 tick, 7-day window) were hardcoded.
+    """
+
+    _default_config_file: ClassVar[str] = "weekly_edge_review.yaml"
+    _default_section: ClassVar[str] = "weekly_edge_review"
+
+    current_window_days: int = Field(default=7, ge=1)
+    prev_window_days: int = Field(default=14, ge=2)
+    slippage_alert_ticks: float = Field(default=0.5, ge=0)
+    known_setups: list[str] = Field(
+        default_factory=lambda: ["A_gap_reversion", "C_event_reaction"]
     )
-SELECT
-    s.setup_type,
-    count() AS n,
-    avg(x.slippage_ticks) AS avg_slip,
-    quantile(0.95)(x.slippage_ticks) AS p95_slip,
-    sum(
-        (x.exit_price - e.entry_price) * e.quantity
-        * if(s.direction = 'long', 1, -1)
-    ) AS pnl_krw,
-    avg(if((x.exit_price - e.entry_price) * if(s.direction = 'long', 1, -1) > 0, 1, 0)) AS win_rate
-FROM kospi.signals_all s
-INNER JOIN entries e ON s.signal_id = e.signal_id
-INNER JOIN exits x ON s.signal_id = x.signal_id
-WHERE s.generated_at >= now() - INTERVAL 7 DAY
-GROUP BY s.setup_type
-"""
 
-# Prev-week: count only filled signals (matching CURRENT_WEEK semantics) so
-# the no_trades_2w alert compares like-for-like. Returns one row per setup
-# that had >= 1 fill last week; setups with zero fills do NOT appear here,
-# which is what the alert wants — it's checking for n=0 in BOTH lists.
-_QUERY_PREV_WEEK = """
-SELECT
-    s.setup_type,
-    count() AS n
-FROM kospi.signals_all s
-INNER JOIN kospi.order_fills o ON s.signal_id = o.signal_id
-WHERE s.generated_at >= now() - INTERVAL 14 DAY
-  AND s.generated_at < now() - INTERVAL 7 DAY
-  AND o.trade_role = 'entry'
-GROUP BY s.setup_type
-"""
 
-# Setups expected in production. Used to materialise n=0 rows when an
-# INNER-JOIN-based aggregate skips the row entirely. Phase 4 spec §5.3
-# alert "Setup A/C 중 하나가 2주 연속 trades = 0" requires the comparison.
-_KNOWN_SETUPS = ("A_gap_reversion", "C_event_reaction")
+def _build_current_week_query(window_days: int) -> str:
+    """Spec §5.3 — realized PnL = (exit_price - entry_price) per signal.
+
+    Self-JOIN on signal_id between the entry fill and the exit fill. The
+    ``window_days`` is interpolated rather than parameterised because
+    aiochclient/CH does not accept bind parameters in INTERVAL clauses.
+    Bounds-checked by ``WeeklyEdgeReviewConfig`` (``ge=1``) so injection is
+    not a vector here.
+    """
+    entry_lookback_days = window_days + 1  # entries can fill up to a day before signal
+    return f"""
+    WITH
+        entries AS (
+            SELECT signal_id, filled_price AS entry_price, quantity
+            FROM kospi.order_fills
+            WHERE trade_role = 'entry'
+              AND filled_at >= now() - INTERVAL {entry_lookback_days} DAY
+        ),
+        exits AS (
+            SELECT signal_id, filled_price AS exit_price, slippage_ticks
+            FROM kospi.order_fills
+            WHERE trade_role IN ('stop_loss', 'take_profit', 'force_close')
+              AND filled_at >= now() - INTERVAL {window_days} DAY
+        )
+    SELECT
+        s.setup_type,
+        count() AS n,
+        avg(x.slippage_ticks) AS avg_slip,
+        quantile(0.95)(x.slippage_ticks) AS p95_slip,
+        sum(
+            (x.exit_price - e.entry_price) * e.quantity
+            * if(s.direction = 'long', 1, -1)
+        ) AS pnl_krw,
+        avg(if((x.exit_price - e.entry_price) * if(s.direction = 'long', 1, -1) > 0, 1, 0)) AS win_rate
+    FROM kospi.signals_all s
+    INNER JOIN entries e ON s.signal_id = e.signal_id
+    INNER JOIN exits x ON s.signal_id = x.signal_id
+    WHERE s.generated_at >= now() - INTERVAL {window_days} DAY
+    GROUP BY s.setup_type
+    """
+
+
+def _build_prev_week_query(prev_window_days: int, current_window_days: int) -> str:
+    """Prev-week count of filled signals — INNER JOIN to entry fills so the
+    semantics match :func:`_build_current_week_query`.
+    """
+    return f"""
+    SELECT
+        s.setup_type,
+        count() AS n
+    FROM kospi.signals_all s
+    INNER JOIN kospi.order_fills o ON s.signal_id = o.signal_id
+    WHERE s.generated_at >= now() - INTERVAL {prev_window_days} DAY
+      AND s.generated_at < now() - INTERVAL {current_window_days} DAY
+      AND o.trade_role = 'entry'
+    GROUP BY s.setup_type
+    """
 
 
 @dataclass(frozen=True)
@@ -92,7 +118,11 @@ class Alert:
     message: str
 
 
-def _materialise_rows(query_result: list) -> list[EdgeRow]:
+def _materialise_rows(
+    query_result: list,
+    *,
+    known_setups: list[str] | tuple[str, ...] = ("A_gap_reversion", "C_event_reaction"),
+) -> list[EdgeRow]:
     """Convert raw query rows to EdgeRow + emit n=0 rows for setups missing
     from the INNER-JOIN aggregate. Without this, ``no_trades_2w`` could not
     fire because the SQL would silently drop zero-fill setups.
@@ -111,7 +141,7 @@ def _materialise_rows(query_result: list) -> list[EdgeRow]:
             )
         )
         seen.add(str(r[0]))
-    for setup in _KNOWN_SETUPS:
+    for setup in known_setups:
         if setup not in seen:
             rows.append(
                 EdgeRow(
@@ -127,11 +157,14 @@ def _materialise_rows(query_result: list) -> list[EdgeRow]:
 
 
 def classify_alerts(
-    rows: list[EdgeRow], *, prev_week_rows: list[EdgeRow]
+    rows: list[EdgeRow],
+    *,
+    prev_week_rows: list[EdgeRow],
+    slippage_alert_ticks: float = 0.5,
 ) -> list[Alert]:
     """Per spec §5.3 alert thresholds:
     - Negative EV (pnl_krw < 0)
-    - Average slippage > 0.5 tick
+    - Average slippage > slippage_alert_ticks (default 0.5 tick)
     - Two consecutive weeks with n=0 for the same setup
     """
     prev_n = {r.setup_type: r.n for r in prev_week_rows}
@@ -148,14 +181,15 @@ def classify_alerts(
                     ),
                 )
             )
-        if row.avg_slip > 0.5:
+        if row.avg_slip > slippage_alert_ticks:
             alerts.append(
                 Alert(
                     kind="slippage",
                     setup_type=row.setup_type,
                     message=(
                         f"{row.setup_type}: avg slippage {row.avg_slip:.2f} ticks "
-                        f"(p95 {row.p95_slip:.2f}) — exceeds 0.5 tick threshold"
+                        f"(p95 {row.p95_slip:.2f}) — exceeds "
+                        f"{slippage_alert_ticks:.2f} tick threshold"
                     ),
                 )
             )
@@ -195,18 +229,25 @@ class WeeklyEdgeReviewJob:
         *,
         ch_client: Any,
         telegram_client: Any,
+        config: WeeklyEdgeReviewConfig | None = None,
     ) -> None:
         self.ch = ch_client
         self.telegram = telegram_client
+        self.config = config or WeeklyEdgeReviewConfig()
 
     async def run(self) -> None:
+        current_query = _build_current_week_query(self.config.current_window_days)
+        prev_query = _build_prev_week_query(
+            prev_window_days=self.config.prev_window_days,
+            current_window_days=self.config.current_window_days,
+        )
         try:
-            current = await self.ch.fetch(_QUERY_CURRENT_WEEK)
+            current = await self.ch.fetch(current_query)
         except Exception:
             logger.exception("weekly_edge_review: current-week query failed")
             return
         try:
-            prev = await self.ch.fetch(_QUERY_PREV_WEEK)
+            prev = await self.ch.fetch(prev_query)
         except Exception:
             logger.exception("weekly_edge_review: prev-week query failed")
             prev = []
@@ -219,7 +260,7 @@ class WeeklyEdgeReviewJob:
             logger.info("weekly_edge_review: no data either week — skipping telegram")
             return
 
-        rows = _materialise_rows(current)
+        rows = _materialise_rows(current, known_setups=self.config.known_setups)
         # prev returns (setup_type, n) tuples — only the count matters.
         prev_rows = [
             EdgeRow(
@@ -233,7 +274,11 @@ class WeeklyEdgeReviewJob:
             for r in prev
         ]
 
-        alerts = classify_alerts(rows, prev_week_rows=prev_rows)
+        alerts = classify_alerts(
+            rows,
+            prev_week_rows=prev_rows,
+            slippage_alert_ticks=self.config.slippage_alert_ticks,
+        )
         msg = format_telegram_message(rows, alerts=alerts)
         # 05:00 KST cron is outside TelegramNotifier's default 08:30–15:40
         # active window. is_critical=True bypasses that gate so the weekly
@@ -245,8 +290,7 @@ class WeeklyEdgeReviewJob:
 
 
 async def _build_and_run() -> int:
-    """Wire the job from environment + run once. Cron fires this daily at
-    Mon 05:00 KST per ``scripts/cron/weekly_edge_review.sh``."""
+    """Wire the job from environment + run once. Cron fires this Mon 05:00 KST."""
     import os
 
     from shared.db.client import AsyncClickHouseClient
@@ -262,7 +306,10 @@ async def _build_and_run() -> int:
         chat_id=os.environ["TELEGRAM_FUTURES_CHAT_ID"],
     )
 
-    job = WeeklyEdgeReviewJob(ch_client=ch_client, telegram_client=telegram)
+    config = WeeklyEdgeReviewConfig.from_yaml()
+    job = WeeklyEdgeReviewJob(
+        ch_client=ch_client, telegram_client=telegram, config=config
+    )
     try:
         await job.run()
     finally:
