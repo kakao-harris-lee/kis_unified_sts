@@ -1,0 +1,203 @@
+"""Tests for services/risk_filter/main.py — Phase 4 Task 11."""
+
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock
+
+import fakeredis.aioredis
+import pytest
+
+from services.risk_filter.main import RiskFilterDaemon, _signal_from_stream_fields
+from shared.decision.signal import Signal
+from shared.risk.layer import LayerResult, RiskFilterLayer
+
+CANDIDATE_STREAM = "stream:signal.candidate"
+FINAL_STREAM = "stream:signal.final"
+GROUP = "risk_filter"
+
+
+def _signal(direction: str = "long") -> Signal:
+    return Signal(
+        setup_type="A_gap_reversion",
+        direction=direction,
+        symbol="A05603",
+        entry_price=331.20,
+        stop_loss=330.50,
+        take_profit=332.50,
+        confidence=0.85,
+        valid_until=datetime(2026, 4, 28, 6, 0, tzinfo=UTC),
+        generated_at=datetime(2026, 4, 28, 5, 0, tzinfo=UTC),
+    )
+
+
+class _StubLayer(RiskFilterLayer):
+    """Test-only RiskFilterLayer that returns a fixed LayerResult."""
+
+    def __init__(self, result: LayerResult) -> None:
+        super().__init__(filters=[])
+        self._result = result
+
+    def evaluate(self, signal, snapshot):  # type: ignore[override]
+        return self._result
+
+
+@pytest.fixture
+def redis():
+    return fakeredis.aioredis.FakeRedis(db=1)
+
+
+@pytest.fixture
+def signals_writer():
+    return AsyncMock()
+
+
+def _make_daemon(*, redis, signals_writer, layer):
+    runtime_state = AsyncMock()
+    runtime_state.snapshot = AsyncMock(return_value=AsyncMock())
+    return RiskFilterDaemon(
+        redis=redis,
+        layer=layer,
+        signals_writer=signals_writer,
+        runtime_state=runtime_state,
+        candidate_stream=CANDIDATE_STREAM,
+        final_stream=FINAL_STREAM,
+        consumer_group=GROUP,
+        worker_id="test-worker",
+        final_maxlen=1000,
+        xread_block_ms=10,
+        batch_size=10,
+    )
+
+
+async def _publish_candidate(redis, signal: Signal) -> None:
+    fields = signal.to_stream_dict()
+    fields["signal_id"] = "sig-1"
+    await redis.xadd(CANDIDATE_STREAM, fields)
+
+
+@pytest.mark.asyncio
+async def test_signal_passes_filter_publishes_to_final(redis, signals_writer):
+    layer = _StubLayer(LayerResult(passed=True, skip_reason=None, size_multiplier=1.0))
+    daemon = _make_daemon(redis=redis, signals_writer=signals_writer, layer=layer)
+    sig = _signal("long")
+    await _publish_candidate(redis, sig)
+
+    # Run one batch then stop
+    import asyncio
+
+    async def _stop_after():
+        await asyncio.sleep(0.05)
+        await daemon.stop()
+
+    await asyncio.gather(daemon.run(), _stop_after())
+
+    # Final stream got the entry
+    entries = await redis.xrange(FINAL_STREAM)
+    assert len(entries) == 1
+    fields = entries[0][1]
+    assert fields[b"setup_type"] == b"A_gap_reversion"
+    assert fields[b"direction"] == b"long"
+    # Signals-all row written
+    signals_writer.enqueue.assert_awaited_once()
+    kwargs = signals_writer.enqueue.call_args
+    # First positional is the Signal, second is the LayerResult
+    assert kwargs.args[0].setup_type == "A_gap_reversion"
+    assert kwargs.kwargs["executed"] is True
+
+
+@pytest.mark.asyncio
+async def test_signal_rejected_writes_signals_all_no_final(redis, signals_writer):
+    layer = _StubLayer(
+        LayerResult(passed=False, skip_reason="trading_hours", size_multiplier=0.0)
+    )
+    daemon = _make_daemon(redis=redis, signals_writer=signals_writer, layer=layer)
+    await _publish_candidate(redis, _signal("long"))
+
+    import asyncio
+
+    async def _stop_after():
+        await asyncio.sleep(0.05)
+        await daemon.stop()
+
+    await asyncio.gather(daemon.run(), _stop_after())
+
+    # No entry in final stream
+    final_entries = await redis.xrange(FINAL_STREAM)
+    assert final_entries == []
+    # signals_all still gets the row (rejected, executed=False)
+    signals_writer.enqueue.assert_awaited_once()
+    assert signals_writer.enqueue.call_args.kwargs["executed"] is False
+
+
+@pytest.mark.asyncio
+async def test_final_stream_carries_size_multiplier_and_signal_id(
+    redis, signals_writer
+):
+    layer = _StubLayer(LayerResult(passed=True, skip_reason=None, size_multiplier=0.5))
+    daemon = _make_daemon(redis=redis, signals_writer=signals_writer, layer=layer)
+    await _publish_candidate(redis, _signal("long"))
+
+    import asyncio
+
+    async def _stop_after():
+        await asyncio.sleep(0.05)
+        await daemon.stop()
+
+    await asyncio.gather(daemon.run(), _stop_after())
+
+    fields = (await redis.xrange(FINAL_STREAM))[0][1]
+    assert float(fields[b"size_multiplier"]) == 0.5
+    assert fields[b"signal_id"] == b"sig-1"
+
+
+@pytest.mark.asyncio
+async def test_final_stream_has_ttl(redis, signals_writer):
+    layer = _StubLayer(LayerResult(passed=True, skip_reason=None, size_multiplier=1.0))
+    daemon = _make_daemon(redis=redis, signals_writer=signals_writer, layer=layer)
+    await _publish_candidate(redis, _signal("long"))
+
+    import asyncio
+
+    async def _stop_after():
+        await asyncio.sleep(0.05)
+        await daemon.stop()
+
+    await asyncio.gather(daemon.run(), _stop_after())
+
+    ttl = await redis.ttl(FINAL_STREAM)
+    assert 0 < ttl <= 86400
+
+
+@pytest.mark.asyncio
+async def test_xack_after_both_writes(redis, signals_writer):
+    layer = _StubLayer(LayerResult(passed=True, skip_reason=None, size_multiplier=1.0))
+    daemon = _make_daemon(redis=redis, signals_writer=signals_writer, layer=layer)
+    await _publish_candidate(redis, _signal("long"))
+
+    import asyncio
+
+    async def _stop_after():
+        await asyncio.sleep(0.05)
+        await daemon.stop()
+
+    await asyncio.gather(daemon.run(), _stop_after())
+
+    pending = await redis.xpending(CANDIDATE_STREAM, GROUP)
+    # Pending = 0 means all messages acked.
+    if isinstance(pending, dict):
+        assert int(pending.get("pending", 0)) == 0
+    elif pending:
+        assert int(pending[0]) == 0
+
+
+def test_signal_from_stream_fields_round_trip():
+    sig = _signal("short")
+    fields = sig.to_stream_dict()
+    fields["signal_id"] = "sig-99"
+    encoded = {k.encode(): v.encode() for k, v in fields.items()}
+
+    parsed_id, parsed = _signal_from_stream_fields(encoded)
+    assert parsed_id == "sig-99"
+    assert parsed.setup_type == "A_gap_reversion"
+    assert parsed.direction == "short"
+    assert parsed.entry_price == 331.20
+    assert parsed.confidence == 0.85
