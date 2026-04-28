@@ -90,10 +90,11 @@ class TestWeeklyEdgeReviewJob:
     @pytest.mark.asyncio
     async def test_run_queries_ch_and_sends_telegram(self):
         ch_client = AsyncMock()
-        # Fetch returns rows: (setup_type, n, avg_slip, p95_slip, pnl_krw, win_rate)
+        # current week returns 6-tuple per the materialise_rows contract
+        # prev week returns 2-tuple (setup_type, n) — entry-only count
         ch_client.fetch.side_effect = [
-            [("A_gap_reversion", 10, 0.2, 0.4, 500_000, 0.55)],  # current week
-            [("A_gap_reversion", 8, 0.25, 0.45, 300_000, 0.50)],  # prev week
+            [("A_gap_reversion", 10, 0.2, 0.4, 500_000, 0.55)],
+            [("A_gap_reversion", 8)],
         ]
         telegram = AsyncMock()
         job = WeeklyEdgeReviewJob(ch_client=ch_client, telegram_client=telegram)
@@ -106,6 +107,23 @@ class TestWeeklyEdgeReviewJob:
         assert "A_gap_reversion" in msg
 
     @pytest.mark.asyncio
+    async def test_telegram_uses_is_critical_to_bypass_05_kst_gate(self):
+        """05:00 KST cron is outside TelegramNotifier's 08:30-15:40 window;
+        is_critical=True must be set so the gate doesn't drop the message."""
+        ch_client = AsyncMock()
+        ch_client.fetch.side_effect = [
+            [("A_gap_reversion", 10, 0.2, 0.4, 500_000, 0.55)],
+            [("A_gap_reversion", 8)],
+        ]
+        telegram = AsyncMock()
+        job = WeeklyEdgeReviewJob(ch_client=ch_client, telegram_client=telegram)
+
+        await job.run()
+
+        kwargs = telegram.send_message.call_args.kwargs
+        assert kwargs.get("is_critical") is True
+
+    @pytest.mark.asyncio
     async def test_run_does_not_send_when_no_data(self):
         ch_client = AsyncMock()
         ch_client.fetch.side_effect = [[], []]
@@ -116,3 +134,36 @@ class TestWeeklyEdgeReviewJob:
 
         # No data → no telegram (avoid empty noise spam)
         telegram.send_message.assert_not_awaited()
+
+
+class TestMaterialiseRows:
+    """Phase 4 spec §5.3 'no_trades_2w' alert requires n=0 rows even when
+    the INNER-JOIN aggregate skips zero-fill setups."""
+
+    def test_zero_fill_setups_get_n_zero_rows(self):
+        from jobs.weekly_edge_review import _KNOWN_SETUPS, _materialise_rows
+
+        # SQL produced only one of the two known setups
+        result = _materialise_rows([("A_gap_reversion", 10, 0.2, 0.4, 500_000, 0.55)])
+        setups = {r.setup_type: r for r in result}
+        assert "A_gap_reversion" in setups
+        assert setups["A_gap_reversion"].n == 10
+        # The OTHER known setup must appear with n=0
+        for s in _KNOWN_SETUPS:
+            assert s in setups
+        c = setups["C_event_reaction"]
+        assert c.n == 0
+        assert c.pnl_krw == 0.0
+
+    def test_no_duplicate_when_all_setups_present(self):
+        from jobs.weekly_edge_review import _KNOWN_SETUPS, _materialise_rows
+
+        result = _materialise_rows(
+            [
+                ("A_gap_reversion", 10, 0.2, 0.4, 500_000, 0.55),
+                ("C_event_reaction", 5, 0.3, 0.5, 200_000, 0.40),
+            ]
+        )
+        names = [r.setup_type for r in result]
+        assert sorted(names) == sorted(_KNOWN_SETUPS)
+        assert len(result) == 2

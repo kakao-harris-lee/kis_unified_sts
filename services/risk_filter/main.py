@@ -189,3 +189,74 @@ class RiskFilterDaemon:
                 return
 
         await self.redis.xack(self.candidate_stream, self.consumer_group, msg_id)
+
+
+async def _build_and_run() -> int:
+    """Production entrypoint. Wires Redis + ClickHouse + RiskFilterLayer + runs."""
+    import os
+    import signal as signal_mod
+    import socket
+
+    import redis.asyncio as aioredis
+
+    from shared.backtest.signals_writer import SignalsAllWriter
+    from shared.db.client import AsyncClickHouseClient
+    from shared.db.config import ClickHouseConfig
+    from shared.risk.config import FuturesRiskConfig, load_trading_windows
+    from shared.risk.layer import RiskFilterLayer
+    from shared.risk.runtime_state import RuntimeRiskState
+
+    redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/1")
+    redis_client = aioredis.from_url(redis_url)
+
+    ch_config = ClickHouseConfig.from_env(database="kospi")
+    ch_client = AsyncClickHouseClient(ch_config)
+    await ch_client.connect()
+
+    risk_config = FuturesRiskConfig.from_yaml()
+    trading_windows = load_trading_windows()
+    layer = RiskFilterLayer.from_config(risk_config, trading_windows)
+    runtime_state = RuntimeRiskState(redis=redis_client, asset_class="futures")
+    signals_writer = SignalsAllWriter(ch_client=ch_client, batch_size=10)
+
+    worker_id = f"risk-filter-{socket.gethostname()}-{os.getpid()}"
+    daemon = RiskFilterDaemon(
+        redis=redis_client,
+        layer=layer,
+        signals_writer=signals_writer,
+        runtime_state=runtime_state,
+        candidate_stream="stream:signal.candidate",
+        final_stream="stream:signal.final",
+        consumer_group="risk_filter",
+        worker_id=worker_id,
+        final_maxlen=10_000,
+        xread_block_ms=2000,
+        batch_size=10,
+    )
+
+    loop = asyncio.get_running_loop()
+    for sig in (signal_mod.SIGTERM, signal_mod.SIGINT):
+        loop.add_signal_handler(sig, lambda: asyncio.create_task(daemon.stop()))
+
+    try:
+        await daemon.run()
+    finally:
+        await redis_client.aclose()
+        await ch_client.close()
+    return 0
+
+
+def main() -> int:
+    import logging
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
+    return asyncio.run(_build_and_run())
+
+
+if __name__ == "__main__":
+    import sys
+
+    sys.exit(main())

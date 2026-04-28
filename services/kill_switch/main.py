@@ -220,3 +220,31 @@ class KillSwitchDaemon:
                 )
             except Exception:
                 logger.exception("sentinel write failed at %s", self.sentinel_path)
+
+
+def main() -> int:
+    """Production entrypoint.
+
+    The kill_switch daemon needs a real ``force_close_callback`` that
+    flatlines positions via the live KIS adapter (Task 17). Until that
+    wiring lands we refuse to start and exit with EX_CONFIG (78) so
+    systemd logs "configuration error" rather than restarting silently.
+
+    A non-trivial entrypoint here would still need the same KIS adapter
+    that Task 17 supplies, so deferring is consistent with the order_router
+    counterpart.
+    """
+    import logging
+
+    logging.basicConfig(level=logging.INFO)
+    logging.getLogger(__name__).critical(
+        "kill_switch entrypoint requires Task 17 (live KIS adapter) "
+        "wiring for the force_close_callback. Refusing to start."
+    )
+    return 78
+
+
+if __name__ == "__main__":
+    import sys
+
+    sys.exit(main())
