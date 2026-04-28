@@ -1,0 +1,19 @@
+[Unit]
+Description=KIS Risk Filter (Phase 4, candidate → final stream + signals_all)
+After=network-online.target redis-server.service kis-decision-engine.service
+Wants=network-online.target
+Requires=redis-server.service kis-decision-engine.service
+
+[Service]
+Type=simple
+User=deploy
+WorkingDirectory=/home/deploy/project/kis_unified_sts
+EnvironmentFile=/home/deploy/project/kis_unified_sts/.env
+ExecStart=/home/deploy/project/kis_unified_sts/.venv/bin/python -m services.risk_filter.main
+Restart=on-failure
+RestartSec=10s
+TimeoutStopSec=30s
+KillSignal=SIGTERM
+
+[Install]
+WantedBy=multi-user.target

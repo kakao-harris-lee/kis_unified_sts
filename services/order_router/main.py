@@ -213,3 +213,34 @@ class OrderRouterDaemon:
             return
 
         await self.redis.xack(self.final_stream, self.consumer_group, msg_id)
+
+
+def main() -> int:
+    """Production entrypoint.
+
+    The order_router needs a real KIS futures adapter — this is the wallet-
+    authority component, so we refuse to launch with a stub. Task 17 wires
+    ``shared/execution/executor.py:place_passive_limit_futures`` to the live
+    KIS client and supplies the real ``PassiveMaker``/``PseudoOCO`` plus
+    contract spec. Until then, the systemd unit is intentionally not
+    operational. Exiting with code 78 (EX_CONFIG) signals systemd to log
+    "configuration error" rather than restart.
+
+    Once Task 17 lands, replace this with a proper ``_build_and_run`` that
+    constructs PassiveMaker/PseudoOCO from a live KIS client + Redis-backed
+    FillLogger and calls ``asyncio.run(daemon.run())``.
+    """
+    import logging
+
+    logging.basicConfig(level=logging.INFO)
+    logging.getLogger(__name__).critical(
+        "order_router entrypoint requires Task 17 (live KIS adapter) "
+        "wiring before it can run. Refusing to start."
+    )
+    return 78
+
+
+if __name__ == "__main__":
+    import sys
+
+    sys.exit(main())

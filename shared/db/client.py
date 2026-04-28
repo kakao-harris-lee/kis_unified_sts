@@ -607,6 +607,21 @@ class AsyncClickHouseClient:
         else:
             await client.execute(sql, *rows)
 
+    async def fetch(self, sql: str, *args) -> list:
+        """Execute a SELECT query and return rows.
+
+        Thin wrapper that delegates to the underlying ``aiochclient.ChClient.fetch``,
+        materialising rows so the caller doesn't need to know about the cursor
+        protocol. Returns a list of tuples (or aiochclient ``Record``s, which
+        index-access compatibly).
+
+        Used by ad-hoc reporting jobs (e.g. ``jobs.weekly_edge_review``) that
+        need raw query rows. The streaming daemons use ``execute()`` for
+        INSERTs and don't read query results.
+        """
+        client = await self.get_client()
+        return await client.fetch(sql, *args)
+
     async def insert_daily_candles(self, candles: list[DailyCandle]) -> int:
         if not candles:
             return 0

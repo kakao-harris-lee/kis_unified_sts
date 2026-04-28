@@ -105,3 +105,66 @@ class DecisionEngineDaemon:
             approximate=True,
         )
         await self.redis.expire(self.candidate_stream, _STREAM_TTL_SECONDS)
+
+
+async def _build_and_run() -> int:
+    """Production entrypoint. Wires Redis + a stub context_provider and runs.
+
+    The full live MarketContext builder (KIS bars + macro + scheduled events)
+    lands with Task 17. Until then this entrypoint exists so systemd can
+    actually start the unit; the daemon polls and gets ``None`` from the
+    stub provider, emitting no signals — visible behaviour matches "no
+    upstream data" rather than the previous silent exit-0.
+    """
+    import os
+    import signal as signal_mod
+
+    import redis.asyncio as aioredis
+
+    redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/1")
+    redis_client = aioredis.from_url(redis_url)
+
+    async def _stub_context_provider():
+        # Live builder lands in Task 17. Until then, emit nothing.
+        return None
+
+    # Setup imports — defer to runtime so unit tests don't pay for them.
+    from shared.decision.setups.event_reaction import SetupCEventReaction
+    from shared.decision.setups.gap_reversion import SetupAGapReversion
+
+    setups = [SetupAGapReversion(), SetupCEventReaction()]
+
+    daemon = DecisionEngineDaemon(
+        redis=redis_client,
+        setups=setups,
+        context_provider=_stub_context_provider,
+        candidate_stream="stream:signal.candidate",
+        candidate_maxlen=10_000,
+        tick_interval_seconds=60.0,
+    )
+
+    loop = asyncio.get_running_loop()
+    for sig in (signal_mod.SIGTERM, signal_mod.SIGINT):
+        loop.add_signal_handler(sig, lambda: asyncio.create_task(daemon.stop()))
+
+    try:
+        await daemon.run()
+    finally:
+        await redis_client.aclose()
+    return 0
+
+
+def main() -> int:
+    import logging
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
+    return asyncio.run(_build_and_run())
+
+
+if __name__ == "__main__":
+    import sys
+
+    sys.exit(main())
