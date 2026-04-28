@@ -136,10 +136,31 @@ class TestIsEOD:
 class TestSlippageLogging:
     @pytest.mark.asyncio
     async def test_slippage_recorded_against_entry_price(self, executor, fill_logger):
-        # Position entered at 331.20; market close fills at 331.10 (long → -10 bps)
+        # Position entered at 331.20; market SELL closes long at 331.10.
+        # The trader is selling 5 ticks below entry — that is adverse, so
+        # slippage_ticks must be POSITIVE (per tick_math sign convention).
         await executor.close_for_eod(position=_position("long"), now_ms=10_000)
         log = fill_logger.log_fill.call_args.kwargs
         assert log["filled_price"] == 331.10
         assert log["requested_price"] == 331.20
-        # long, filled below entry → -5 ticks (improvement)
+        # long entry, closing SELL fills below entry → +5 ticks adverse
+        assert log["slippage_ticks"] == pytest.approx(5.0)
+
+    @pytest.mark.asyncio
+    async def test_slippage_short_entry_close_below_entry(self, kis, fill_logger):
+        # Short entered at 331.20; market BUY closes at 331.10 (5 ticks favorable).
+        # Closing BUY filling below entry is favorable → -5 ticks (improvement).
+        kis.await_fill.return_value = type(
+            "F",
+            (),
+            {
+                "order_id": "MKT-1",
+                "price": 331.10,
+                "quantity": 1,
+                "filled_at_ms": 5000,
+            },
+        )()
+        executor = ForceCloseExecutor(kis_client=kis, fill_logger=fill_logger)
+        await executor.close_for_eod(position=_position("short"), now_ms=10_000)
+        log = fill_logger.log_fill.call_args.kwargs
         assert log["slippage_ticks"] == pytest.approx(-5.0)

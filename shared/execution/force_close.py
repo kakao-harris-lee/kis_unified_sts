@@ -114,7 +114,7 @@ class ForceCloseExecutor:
         slippage_ticks = _compute_slippage_ticks(
             requested=position.entry_price,
             filled=fill.price,
-            direction=position.direction,
+            direction=closing_side,
             tick_size=position.tick_size_points,
         )
         await self.fill_logger.log_fill(
