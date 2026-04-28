@@ -1,0 +1,28 @@
+# Phase 4 Kill Switch Configuration
+# Spec: docs/plans/2026-04-20-futures-paradigm-phase4-execution.md §6.1
+# Loaded by: services/kill_switch/main.py via KillSwitchConfig.from_yaml()
+
+kill_switch:
+  enabled: true
+  check_interval_seconds: 30
+  force_flat_on_trigger: true
+  sentinel_path: "/var/run/kis_kill_switch.tripped"
+  conditions:
+    daily_loss:
+      enabled: true
+      limit_pct: 0.03            # daily realised+unrealised loss / equity
+    weekly_loss:
+      enabled: true
+      limit_pct: 0.07
+    consecutive_losses:
+      enabled: true
+      threshold: 6
+    api_error_rate_5min:
+      enabled: true
+      threshold: 0.2             # 20% of recent KIS calls erroring
+    news_pipeline_lag_seconds:
+      enabled: true
+      threshold: 300             # 5 minutes
+    clickhouse_insert_fail_rate:
+      enabled: true
+      threshold: 0.1             # 10% of inserts failing in 5-min window
