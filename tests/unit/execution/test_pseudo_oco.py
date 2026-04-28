@@ -191,3 +191,51 @@ class TestExpiry:
 
         expired = await oco.check_expiry(now_ms=valid_until_ms - 1)
         assert expired == []
+
+    @pytest.mark.asyncio
+    async def test_expiry_uses_supplied_market_price(self, oco, fill_logger):
+        """Daemon supplies real market quote → that price lands in audit row."""
+        sig = _signal("long")
+        valid_until_ms = int(sig.valid_until.timestamp() * 1000)
+        await oco.register_bracket(signal=sig, signal_id="sig-1", fill=_fill())
+
+        await oco.check_expiry(now_ms=valid_until_ms + 1, market_price=331.05)
+
+        log = fill_logger.log_fill.call_args.kwargs
+        # NOT the target_price (333.00) — uses the actual market quote.
+        assert log["filled_price"] == 331.05
+
+    @pytest.mark.asyncio
+    async def test_expiry_falls_back_to_target_price_when_no_market_price(
+        self, oco, fill_logger
+    ):
+        """Harness path with no market_price uses target_price as documented."""
+        sig = _signal("long")
+        valid_until_ms = int(sig.valid_until.timestamp() * 1000)
+        await oco.register_bracket(signal=sig, signal_id="sig-1", fill=_fill())
+
+        await oco.check_expiry(now_ms=valid_until_ms + 1)
+
+        log = fill_logger.log_fill.call_args.kwargs
+        assert log["filled_price"] == 333.00
+
+
+class TestCloseFailureSafety:
+    @pytest.mark.asyncio
+    async def test_log_fill_failure_does_not_cause_duplicate_on_retick(self, oco):
+        """If log_fill raises (CH outage), the handle must NOT re-fire on next tick."""
+        # First call raises, second would be the duplicate we're guarding against
+        oco.fill_logger.log_fill = AsyncMock(side_effect=RuntimeError("ch down"))
+        await oco.register_bracket(
+            signal=_signal("long"), signal_id="sig-1", fill=_fill()
+        )
+
+        with pytest.raises(RuntimeError):
+            await oco.on_tick(symbol="A05603", price=329.0, now_ms=2000)
+
+        # Reset side_effect so a duplicate fire would succeed
+        oco.fill_logger.log_fill = AsyncMock()
+        # Second tick at an even-lower price — must not refire
+        fired = await oco.on_tick(symbol="A05603", price=328.0, now_ms=3000)
+        assert fired == []
+        oco.fill_logger.log_fill.assert_not_awaited()

@@ -146,18 +146,31 @@ class PseudoOCO:
                 del self._handles[handle_id]
         return fired
 
-    async def check_expiry(self, *, now_ms: int) -> list[OCOHandle]:
+    async def check_expiry(
+        self, *, now_ms: int, market_price: float | None = None
+    ) -> list[OCOHandle]:
+        """Force-close any handles whose ``valid_until_ms`` has elapsed.
+
+        Args:
+            now_ms: Current epoch ms.
+            market_price: Real-time market quote at expiry. The order_router
+                daemon (Task 12) supplies this from its live feed; tests can
+                pass it explicitly. If ``None``, the bracket's target_price
+                is used as a fallback — only valid for harness scenarios that
+                don't care about the audit price.
+        """
         expired: list[OCOHandle] = []
         for handle_id in list(self._handles.keys()):
             handle = self._handles[handle_id]
             if handle.state is not OCOState.ACTIVE:
                 continue
             if handle.valid_until_ms is not None and now_ms >= handle.valid_until_ms:
-                # Force-close at last-known target proxy (entry fill price).
-                # Real router supplies a market quote; harness uses entry price.
+                fill_price = (
+                    market_price if market_price is not None else handle.target_price
+                )
                 await self._close(
                     handle,
-                    fill_price=handle.target_price,  # placeholder; daemon overrides
+                    fill_price=fill_price,
                     now_ms=now_ms,
                     trade_role="force_close",
                     order_type="market",
@@ -177,6 +190,15 @@ class PseudoOCO:
         order_type: str,
         new_state: OCOState,
     ) -> None:
+        # State transitions BEFORE the I/O so a re-raised CH failure inside
+        # log_fill cannot leave the handle ACTIVE for a duplicate fire on the
+        # next tick. The Phase 2 ScoredPublisher invariant (re-raise on CH
+        # failure → caller leaves source pending for redelivery) still holds:
+        # the handle is removed from active state, log_fill propagates, the
+        # daemon sees the exception and leaves the OCO bracket message
+        # unacked. On retry the daemon re-registers; without this ordering
+        # the in-memory state would record the close twice.
+        handle.state = new_state
         await self.fill_logger.log_fill(
             signal_id=handle.signal_id,
             order_id=f"{handle.handle_id}-{trade_role}",
@@ -193,7 +215,6 @@ class PseudoOCO:
             venue=self.venue,
             trade_role=trade_role,
         )
-        handle.state = new_state
 
     @property
     def active_handles(self) -> list[OCOHandle]:
