@@ -153,9 +153,14 @@ def _run_one_bootstrap(
     else:
         layer = RiskFilterLayer(filters=[])
 
-    macro_provider = (
-        make_macro_provider(fetch_macro_history()) if args.with_macro else None
-    )
+    if args.with_macro:
+        ts_min = pd.to_datetime(sample_df["timestamp"]).min().date()
+        ts_max = pd.to_datetime(sample_df["timestamp"]).max().date()
+        macro_provider = make_macro_provider(
+            fetch_macro_history(start=ts_min, end=ts_max)
+        )
+    else:
+        macro_provider = None
     scheduled = (
         load_scheduled_events("config/scheduled_events.yaml")
         if args.with_events

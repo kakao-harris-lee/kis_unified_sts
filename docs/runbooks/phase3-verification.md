@@ -206,6 +206,72 @@ real paper signals with the existing backtest into a single
 checkpoint. The runbook above documents the operational flow; the
 bootstrap script implements rule 1 directly.
 
+### First production bootstrap run — 2026-04-29
+
+n=100 samples on `data/kospi200f_1m_full.csv` (52,320 bars,
+2025-07-01 → 2026-04-28 from `kospi.kospi200f_1m`/`101S6000`),
+4-mo IS / 2-mo OOS, --with-macro --with-events --with-risk-filters,
+--min-volume 30, untuned defaults, seed=42:
+
+```
+IS  EV  median=  0.000  p05= -85.167  p95=  96.756  mean=  -4.86
+OOS EV  median=  0.000  p05=-103.919  p95=  89.292  mean= -11.11
+Rule 1 (OOS p05 > 0):       FAIL
+Rule 2 (OOS median ≥ 0.5×IS): PASS (0.0 ≥ 0.0)
+Overall:                    FAIL
+```
+
+Honest interpretation:
+- Median = 0 across 100 samples means **most bootstrap iterations have
+  zero or near-zero trades**. Setup A's macro+gap thresholds are not met
+  often when the price path is reshuffled.
+- The mean OOS is negative (-11 ticks) — when trades do fire, the average
+  outcome is losing.
+- The 14-month single-fold WF that previously passed the gate
+  (OOS EV +19.8 / +24.8 ticks) was a **lucky alignment of macro events
+  with one specific KOSPI200 price realization**. The bootstrap
+  distribution shows the strategy's true variance.
+- Result file: `results/phase3_bootstrap_n100.json`.
+
+**Conclusion**: backtest-only provisional sign-off via the bootstrap
+gate is **NOT achievable** with current Setup A defaults. Phase 3 sign-off
+must come from Path 3 (paper-data accumulation) rather than Path 1
+(bootstrap-only).
+
+### Revised path to Phase 3 sign-off
+
+Given the bootstrap result, the recommended sequence is:
+
+1. **Phase 4 paper deployment with conservative ladder** (operator):
+   - Deploy `kis-decision-engine`, `kis-risk-filter`, `kis-order-router`,
+     `kis-kill-switch` per Phase 4 verification runbook.
+   - Use Phase 4 Task 17 wired entrypoints (PR #136 merged).
+   - Limit `phase4_execution.base_quantity` to 1 contract.
+2. **Accumulate 60-90 days of real paper signals/fills** (calendar wait):
+   - `kospi.signals_all` collects every candidate.
+   - `kospi.order_fills` collects every fill.
+   - Weekly Edge Review job (`jobs/weekly_edge_review.py`) reports.
+3. **Concurrent: re-tune Setup A on the existing 10-month data** (now):
+   - Run `scripts/optimize_decision_engine.py` with longer Optuna trials.
+   - Re-run bootstrap on tuned params; update this runbook with results.
+4. **Final sign-off (after 60-90 days)**:
+   - Combine paper signals/fills with backtest into one dataset.
+   - Re-run bootstrap with paper data; recency-weight 1.5×.
+   - Pass criteria: bootstrap rule 1+2 on combined data, AND paper PnL
+     median > 0 over the 60-90 day window, AND paper Sharpe > 0.5.
+
+**Sensitivity gate** (`scripts/walk_forward_sensitivity.py`) is now
+available as a corroborating check — if Setup A is re-tuned, run it to
+validate that the new params don't sit in a narrow parameter neighborhood.
+
+```bash
+python scripts/walk_forward_sensitivity.py \
+    --data data/kospi200f_1m_full.csv \
+    --is-months 4 --oos-months 2 --pct 0.20 \
+    --with-macro --with-events --with-risk-filters \
+    --out results/phase3_sensitivity.json
+```
+
 - [ ] Run harness on `data/kospi200f_1m_clean.csv` (6 months):
   ```bash
   # See scripts/walk_forward_phase3.py for the orchestration pattern.
