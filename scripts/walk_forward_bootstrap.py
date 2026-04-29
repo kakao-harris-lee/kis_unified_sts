@@ -120,14 +120,18 @@ def _run_one_bootstrap(
     sample has insufficient span for any fold.
     """
     # Lazy imports — defer heavy modules until we actually need them.
+    import json as _json
+
     from scripts.walk_forward_phase3 import _aggregate, _run_on_window
     from shared.backtest.macro_history import fetch_macro_history, make_macro_provider
     from shared.decision.context import load_scheduled_events
     from shared.decision.setups.event_reaction import (
         EventTradeTracker,
+        SetupCConfig,
         SetupCEventReaction,
     )
     from shared.decision.setups.gap_reversion import (
+        SetupAConfig,
         SetupAGapReversion,
     )
     from shared.execution.contract_spec import ContractSpecRegistry
@@ -141,9 +145,27 @@ def _run_one_bootstrap(
     registry = ContractSpecRegistry.from_yaml("config/execution.yaml")
     spec = registry.specs[args.contract]
 
-    setup_a = SetupAGapReversion()
+    # Optional tuned-params overrides — mirror walk_forward_phase3.run.
+    setup_a_cfg: SetupAConfig | None = None
+    if args.setup_a_params:
+        with open(args.setup_a_params) as f:
+            optuna_a = _json.load(f)
+        setup_a_cfg = SetupAConfig(**optuna_a["best_params"])
+    setup_a = (
+        SetupAGapReversion(config=setup_a_cfg) if setup_a_cfg else SetupAGapReversion()
+    )
+
     setup_c_tracker = EventTradeTracker()
-    setup_c = SetupCEventReaction(tracker=setup_c_tracker)
+    setup_c_cfg: SetupCConfig | None = None
+    if args.setup_c_params:
+        with open(args.setup_c_params) as f:
+            optuna_c = _json.load(f)
+        setup_c_cfg = SetupCConfig(**optuna_c["best_params"])
+    setup_c = (
+        SetupCEventReaction(config=setup_c_cfg, tracker=setup_c_tracker)
+        if setup_c_cfg
+        else SetupCEventReaction(tracker=setup_c_tracker)
+    )
 
     # Risk filter: optional — same flag the standard walk-forward uses
     if args.with_risk_filters:
@@ -342,6 +364,18 @@ def main() -> int:
         "--with-risk-filters",
         action="store_true",
         help="Apply 8-filter RiskFilterLayer (default: skip)",
+    )
+    parser.add_argument(
+        "--setup-a-params",
+        type=str,
+        default=None,
+        help="Path to Optuna JSON with tuned Setup A params (best_params section).",
+    )
+    parser.add_argument(
+        "--setup-c-params",
+        type=str,
+        default=None,
+        help="Path to Optuna JSON with tuned Setup C params (best_params section).",
     )
     parser.add_argument("--out", default="results/phase3_bootstrap.json")
     args = parser.parse_args()
