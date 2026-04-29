@@ -146,8 +146,65 @@ over-fitting signal (OOS EV > IS EV).
 
 Remaining caveats unchanged: 1 WF fold, 0.7 % residual bad bars,
 Setup C's 9-trade sample is too small to draw statistical conclusions
-from despite the dramatic win rate. Phase 3 **code** is complete;
-empirical gate sign-off awaits ≥12-month data + multi-fold WF.
+from despite the dramatic win rate. Phase 3 **code** is complete.
+
+### Empirical gate — alternative path (replaces ≥12-month calendar wait)
+
+The original gate "≥12 months clean data with N folds" was calendar-bound;
+the system has ~14 months of clean `101S6000` data today but the
+4-mo IS / 2-mo OOS cadence still produces 1 fold. Rather than wait
+another year, the gate is replaced with a three-pronged path:
+
+**1. Block bootstrap on existing data (no calendar wait).**
+`scripts/walk_forward_bootstrap.py` runs Politis-Romano stationary block
+bootstrap on the existing 14-month dataset, generating N synthetic
+samples that preserve serial correlation. Walk-forward runs on each.
+Aggregate OOS EV across all bootstrap iterations.
+
+  Pass criteria:
+  - **Rule 1**: OOS EV 5 % quantile > 0 (≥95 % of bootstrap iterations
+    produced a non-negative-edge OOS).
+  - **Rule 2**: OOS EV median ≥ 0.5 × IS EV median.
+
+  Smoke run (operator):
+  ```bash
+  python scripts/walk_forward_bootstrap.py \
+      --data data/kospi200f_1m_clean.csv \
+      --n-samples 20 \
+      --is-months 4 --oos-months 2 \
+      --with-macro --with-events --with-risk-filters \
+      --out results/phase3_bootstrap_smoke.json
+  ```
+
+  Production run (200 samples, ~3-7 hours, schedule on a quiet day):
+  ```bash
+  python scripts/walk_forward_bootstrap.py \
+      --data data/kospi200f_1m_clean.csv \
+      --n-samples 200 --seed 42 \
+      --with-macro --with-events --with-risk-filters \
+      --out results/phase3_bootstrap.json
+  ```
+
+  Provisional sign-off: bootstrap gate passes → Phase 3 may move into
+  Phase 4 paper deployment without waiting for additional calendar data.
+
+**2. Bayesian / multi-fold sensitivity (corroborating).**
+For tuned configs, perturb the top 3 params (`gap_threshold`,
+`vwap_distance_ticks`, `entry_window_minutes`) by ±20 % and rerun
+walk-forward. Pass if ≥80 % of perturbations show OOS EV > 0. This
+catches over-fit configs that only work in a narrow parameter neighborhood.
+
+**3. Paper-data fold-in (final sign-off, ~60-90 days).**
+After Phase 4 paper has been live for 60-90 days (Task 20), combine the
+real paper signals with the existing backtest into a single
+~16-17-month dataset. Re-run walk-forward; recency-weight paper folds
+1.5×. Final sign-off requires:
+  - Bootstrap gate still passes on combined data.
+  - Paper p&l sign matches backtest p&l sign per Setup.
+
+**Provisional → final sign-off transition** is a Weekly Edge Review
+checkpoint. The runbook above documents the operational flow; the
+bootstrap script implements rule 1 directly.
 
 - [ ] Run harness on `data/kospi200f_1m_clean.csv` (6 months):
   ```bash
