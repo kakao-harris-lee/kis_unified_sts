@@ -292,15 +292,41 @@ by ±20 % around the tuned baseline. 7 configs (1 baseline + 6 perturbations)
 across most parameter neighbourhoods around the tuned point. Result file:
 `results/phase3_sensitivity_tuned.json`.
 
+### Setup C re-tune + combined A+C bootstrap — 2026-04-29
+
+`scripts/optimize_decision_engine.py --setup c --trials 100`:
+
+```
+breakout_buffer_atr_mult: 0.7709  (vs default 0.5)
+target_atr_mult:          2.1076  (vs default 2.0)
+min_impact_tier:          2       (vs default 1)
+best_value:               +28.10 ticks/trade
+```
+
+Bootstrap n=100 with both tuned A + tuned C:
+
+```
+IS  EV mean=+2.30  median=0.00  p05= -69  p95=+101
+OOS EV mean=-11.78  median=0.00  p05=-141  p95=+160
+Rule 1 (OOS p05 > 0): FAIL  (Rule 2 PASS only because both medians 0)
+```
+
+Adding Setup C to the bootstrap doesn't materially change the result —
+Setup C contributes very few trades because event windows are sparse and
+bootstrap rarely samples the relevant macro-event sessions consecutively.
+Setup A still dominates the per-sample outcome distribution. Result file:
+`results/phase3_bootstrap_n100_tuned_ac.json`.
+
 ### Phase 3 status determination — 2026-04-29
 
 | Gate | Result |
 |------|--------|
 | 1-fold WF (untuned) | ✅ PASS (OOS EV +19.8/+24.8) |
-| 1-fold WF (tuned)   | ✅ PASS (OOS EV +9.7) |
-| ±20 % sensitivity (tuned) | ✅ PASS (6/7 = 86 %) |
+| 1-fold WF (tuned A) | ✅ PASS (OOS EV +9.7) |
+| ±20 % sensitivity (tuned A) | ✅ PASS (6/7 = 86 %) |
 | Bootstrap n=100 (untuned) | ❌ FAIL (Rule 1: OOS p05=-104) |
-| Bootstrap n=100 (tuned)   | ❌ FAIL (Rule 1: OOS p05=-141) |
+| Bootstrap n=100 (tuned A) | ❌ FAIL (Rule 1: OOS p05=-141) |
+| Bootstrap n=100 (tuned A + tuned C) | ❌ FAIL (Rule 1: OOS p05=-141) |
 
 **Determination**: Phase 3 has **conditional provisional sign-off**.
 Backtest evidence is mixed — passes single-fold + sensitivity gates but
@@ -328,11 +354,32 @@ Given the bootstrap result, the recommended sequence is:
 3. **Concurrent: re-tune Setup A on the existing 10-month data** (now):
    - Run `scripts/optimize_decision_engine.py` with longer Optuna trials.
    - Re-run bootstrap on tuned params; update this runbook with results.
-4. **Final sign-off (after 60-90 days)**:
-   - Combine paper signals/fills with backtest into one dataset.
-   - Re-run bootstrap with paper data; recency-weight 1.5×.
-   - Pass criteria: bootstrap rule 1+2 on combined data, AND paper PnL
-     median > 0 over the 60-90 day window, AND paper Sharpe > 0.5.
+4. **Final sign-off (after 60-90 days)** — run
+   `scripts/walk_forward_paper_foldin.py`:
+
+   ```bash
+   set -a && source .env && set +a
+   python scripts/walk_forward_paper_foldin.py \
+       --paper-since 2026-05-01 \
+       --data data/kospi200f_1m_full.csv \
+       --setup-a-params results/optuna_a_full10mo.json \
+       --setup-c-params results/optuna_c_full10mo.json \
+       --with-macro --with-events --with-risk-filters \
+       --n-samples 100 \
+       --paper-sharpe-min 0.5 \
+       --out results/phase3_final_signoff.json
+   ```
+
+   The script:
+   - Pulls paper trades from `kospi.signals_all` × `kospi.order_fills`
+     (entry + exit fills INNER-JOIN'd on signal_id).
+   - Computes per-trade `pnl_ticks = (exit - entry) / tick × direction_sign`.
+   - Evaluates four rules:
+     - **Rule 1** (bootstrap): OOS EV 5 % quantile > 0
+     - **Rule 2** (bootstrap): OOS EV median ≥ 0.5 × IS EV median
+     - **Rule 3** (paper): paper PnL median > 0
+     - **Rule 4** (paper): paper Sharpe per-trade > 0.5
+   - Final sign-off requires ALL four rules pass.
 
 **Sensitivity gate** (`scripts/walk_forward_sensitivity.py`) is now
 available as a corroborating check — if Setup A is re-tuned, run it to
