@@ -92,7 +92,19 @@ def run(args: argparse.Namespace) -> int:
         logger.error("no folds — data span insufficient")
         return 2
 
-    base_cfg = SetupAConfig().model_dump()
+    if args.setup_a_params:
+        import json as _json
+
+        with open(args.setup_a_params) as f:
+            optuna_a = _json.load(f)
+        # Merge tuned best_params over defaults so untouched fields stay sane.
+        base_cfg = SetupAConfig(**optuna_a["best_params"]).model_dump()
+        logger.info(
+            "loaded tuned Setup A params from %s as perturbation base",
+            args.setup_a_params,
+        )
+    else:
+        base_cfg = SetupAConfig().model_dump()
     perturbed = _perturb_combinations(base_cfg, args.pct)
     logger.info(
         "running %d configs (1 base + %d perturbations) × %d folds",
@@ -219,6 +231,12 @@ def main() -> int:
     parser.add_argument("--with-macro", action="store_true")
     parser.add_argument("--with-events", action="store_true")
     parser.add_argument("--with-risk-filters", action="store_true")
+    parser.add_argument(
+        "--setup-a-params",
+        type=str,
+        default=None,
+        help="Path to Optuna JSON; if given, perturbation centres on tuned params.",
+    )
     parser.add_argument("--out", default="results/phase3_sensitivity.json")
     args = parser.parse_args()
     return run(args)

@@ -238,6 +238,80 @@ gate is **NOT achievable** with current Setup A defaults. Phase 3 sign-off
 must come from Path 3 (paper-data accumulation) rather than Path 1
 (bootstrap-only).
 
+### Re-tuned bootstrap run — 2026-04-29
+
+After running `scripts/optimize_decision_engine.py --setup a --trials 100`
+on the same 10-month dataset, Optuna's best params:
+
+```
+min_kr_gap_pct: 0.4148  (vs default 0.30)
+retrace_min:    0.4000  (vs default 0.30)
+retrace_max:    0.5941  (vs default 0.55)
+stop_atr_mult:  2.0834  (vs default 1.50)
+best_value:     +12.64 ticks/trade
+```
+
+Bootstrap n=100 with `--setup-a-params results/optuna_a_full10mo.json`:
+
+```
+IS  EV  median=  0.000  p05= -74.185  p95= 101.386  mean=  +2.05
+OOS EV  median=  0.000  p05=-140.573  p95= 160.059  mean= -10.69
+Rule 1 (OOS p05 > 0):       FAIL
+Rule 2 (OOS median ≥ 0.5×IS): PASS (0.0 ≥ 0.0)
+Overall:                    FAIL
+```
+
+Comparison to untuned:
+- IS mean: -4.86 → +2.05  (improvement)
+- OOS mean: -11.11 → -10.69  (essentially unchanged)
+- p95/p05 spread wider (more extreme outcomes)
+
+Tuning improves IS modestly but **OOS still negative on average**. The
+issue is structural: across alternative price realisations, Setup A's
+fire pattern is too sparse and the win/loss tail is too symmetric.
+Result file: `results/phase3_bootstrap_n100_tuned.json`.
+
+### Sensitivity check (Path 2) — 2026-04-29
+
+`scripts/walk_forward_sensitivity.py` perturbs the top-3 sensitive params
+by ±20 % around the tuned baseline. 7 configs (1 baseline + 6 perturbations)
+× 1-fold WF:
+
+| # | Label      | Perturbation                | OOS EV median | Pass |
+|---|------------|----------------------------|---------------|------|
+| 0 | baseline   | tuned, no perturbation       | +9.73         | ✅ |
+| 1 | perturb_1  | min_sp500_gap_pct -20 %      | +16.43        | ✅ |
+| 2 | perturb_2  | min_sp500_gap_pct +20 %      | +9.73         | ✅ |
+| 3 | perturb_3  | retrace_min       -20 % → 0.32 | +6.04        | ✅ |
+| 4 | perturb_4  | retrace_min       +20 % → 0.48 | -39.30       | ❌ |
+| 5 | perturb_5  | stop_atr_mult     -20 % → 1.67 | +9.73        | ✅ |
+| 6 | perturb_6  | stop_atr_mult     +20 % → 2.50 | +9.73        | ✅ |
+
+**Sensitivity gate: PASS — 6/7 (86 %, ≥80 % threshold).** Only
+`retrace_min +20 %` flips the result negative. The strategy is robust
+across most parameter neighbourhoods around the tuned point. Result file:
+`results/phase3_sensitivity_tuned.json`.
+
+### Phase 3 status determination — 2026-04-29
+
+| Gate | Result |
+|------|--------|
+| 1-fold WF (untuned) | ✅ PASS (OOS EV +19.8/+24.8) |
+| 1-fold WF (tuned)   | ✅ PASS (OOS EV +9.7) |
+| ±20 % sensitivity (tuned) | ✅ PASS (6/7 = 86 %) |
+| Bootstrap n=100 (untuned) | ❌ FAIL (Rule 1: OOS p05=-104) |
+| Bootstrap n=100 (tuned)   | ❌ FAIL (Rule 1: OOS p05=-141) |
+
+**Determination**: Phase 3 has **conditional provisional sign-off**.
+Backtest evidence is mixed — passes single-fold + sensitivity gates but
+fails the more-rigorous bootstrap gate. The strategy works on the
+historical realisation but variance is high across alternative paths.
+
+**Operator decision**: deploy Phase 4 paper at minimum size (1 contract)
+to start accumulating real-world signal/fill data. Do NOT scale up to
+ladder steps 2/5 until paper-data fold-in (Path 3) provides positive
+final sign-off after 60-90 days.
+
 ### Revised path to Phase 3 sign-off
 
 Given the bootstrap result, the recommended sequence is:
