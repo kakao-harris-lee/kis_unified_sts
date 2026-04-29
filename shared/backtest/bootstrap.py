@@ -117,13 +117,15 @@ def stationary_block_bootstrap(
     n_obs = len(df_sorted)
     rng = np.random.default_rng(seed)
 
-    # Pre-compute the synthetic timestamp index — every bootstrap sample
-    # uses the same monotonic minute sequence starting at the original
-    # min(timestamp). This keeps ATR/VWAP/spread computations consistent.
-    base_ts = pd.to_datetime(df_sorted[timestamp_column].iloc[0])
-    synthetic_ts = pd.date_range(
-        start=base_ts, periods=n_obs, freq="1min", name=timestamp_column
-    )
+    # Pre-compute the synthetic timestamp index — REUSE the original sorted
+    # timestamps so the bootstrap sample preserves the calendar span and
+    # the bar-density distribution (off-session gaps, weekends, holidays).
+    # A naive 1-minute-cadence date_range would compress 52K bars across
+    # 10 months into ~36 calendar days, which breaks
+    # ``walk_forward_phase3._split_folds`` window arithmetic that uses
+    # ``DateOffset(months=...)``.
+    synthetic_ts = pd.to_datetime(df_sorted[timestamp_column]).reset_index(drop=True)
+    synthetic_ts.name = timestamp_column
 
     samples: list[pd.DataFrame] = []
     for _ in range(n_samples):

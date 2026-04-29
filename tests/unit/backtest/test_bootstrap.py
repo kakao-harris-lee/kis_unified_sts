@@ -56,21 +56,25 @@ def test_different_seeds_produce_different_samples():
     assert not a[0].equals(b[0])
 
 
-def test_synthetic_timestamps_are_monotonic_and_consecutive():
+def test_synthetic_timestamps_are_monotonic():
+    """Bootstrap reuses the original timestamps in their sorted order, so
+    monotonicity is preserved but cadence may have gaps (matches source)."""
     df = _ohlcv()
     out = stationary_block_bootstrap(df, n_samples=2, seed=42)
     for s in out:
         ts = s["timestamp"]
         assert ts.is_monotonic_increasing
-        deltas = ts.diff().dropna().unique()
-        assert len(deltas) == 1
-        assert deltas[0] == pd.Timedelta(minutes=1)
 
 
-def test_synthetic_start_matches_source_min():
-    df = _ohlcv(start="2026-04-15 09:00:00")
-    out = stationary_block_bootstrap(df, n_samples=1, seed=0)
-    assert out[0]["timestamp"].iloc[0] == pd.Timestamp("2026-04-15 09:00:00")
+def test_synthetic_timestamps_match_source_distribution():
+    """Calendar span + bar-density of bootstrap must equal source — required
+    so DateOffset(months=N)-based fold splitting produces the same number
+    of folds the original would."""
+    df = _ohlcv()
+    out = stationary_block_bootstrap(df, n_samples=1, seed=42)
+    src_ts = pd.to_datetime(df["timestamp"]).reset_index(drop=True)
+    sample_ts = out[0]["timestamp"].reset_index(drop=True)
+    pd.testing.assert_series_equal(src_ts, sample_ts, check_names=False)
 
 
 def test_resampled_values_drawn_from_source():
