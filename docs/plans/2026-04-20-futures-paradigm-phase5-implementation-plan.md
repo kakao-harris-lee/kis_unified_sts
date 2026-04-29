@@ -9,7 +9,10 @@
 **Tech stack:** Python 3.11+, existing scripts infra (`scripts/cron/`), Grafana JSON + provisioning config, `shared/notification/telegram.py` (reuse for Edge Review delivery).
 
 **Parent spec:** `docs/plans/2026-04-20-futures-paradigm-phase5-rollout.md`
-**Depends on:** Phase 4 completion gate passed (2-week paper uptime + 20 fills + slippage ≤ 0.4 tick + kill-switch drill green).
+**Depends on:**
+  1. Phase 4 completion gate passed (2-week paper uptime + 20 fills + slippage ≤ 0.4 tick + kill-switch drill green), AND
+  2. **Phase 3 final sign-off** (not just provisional) — produced by `scripts/walk_forward_paper_foldin.py` after 60-90 days of Phase 4 paper accumulation. As of 2026-04-29 Phase 3 has only **conditional provisional sign-off** (bootstrap gate fails on backtest alone); ladder progression must NOT begin until the paper-foldin script reports all four gates pass. See `docs/runbooks/phase3-verification.md` § "Phase 3 status determination".
+
 **Blocks:** none — last phase of the futures paradigm except optional RL repurposing.
 
 ---

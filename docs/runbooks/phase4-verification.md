@@ -4,7 +4,18 @@ Two-week paper-uptime gate per `docs/plans/2026-04-20-futures-paradigm-phase4-ex
 
 ## Pre-flight
 
-- [ ] Phase 3 empirical sign-off complete (≥12 months clean data accumulated, OOS gate passed)
+- [ ] Phase 3 has at minimum **conditional provisional sign-off** per
+      `docs/runbooks/phase3-verification.md` § "Phase 3 status determination".
+      The original "≥12 months clean data + OOS gate" requirement was
+      replaced by the three-pronged path (bootstrap + sensitivity + paper
+      fold-in). As of 2026-04-29 the bootstrap gate fails on backtest
+      alone — paper deployment is therefore the **primary** evidence
+      source for final sign-off.
+- [ ] **Conservative ladder enforced** — `phase4_execution.base_quantity`
+      in `config/execution.yaml` must be **1** (one contract). Do NOT
+      raise this until Phase 3 final sign-off via
+      `scripts/walk_forward_paper_foldin.py` passes. Phase 5's 1→2→5
+      ladder explicitly gates on this.
 - [ ] `rl_mppo` paper account & keys are SEPARATE from Phase 4 paper account (avoid double-entry on the same KOSPI200 mini contract)
 - [ ] `KIS_FUTURES_*` credentials configured for Phase 4 paper account
 - [ ] `TELEGRAM_FUTURES_*` configured for kill-switch alerts
