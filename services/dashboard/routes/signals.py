@@ -1,12 +1,12 @@
 """Signals endpoints."""
+
 import os
-from datetime import datetime, timedelta
-from typing import List, Optional
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
-from shared.exceptions import InfrastructureError, ValidationError
+from shared.exceptions import InfrastructureError
 
 router = APIRouter(prefix="/api/signals", tags=["signals"])
 
@@ -28,7 +28,7 @@ class SignalResponse(BaseModel):
 class SignalListResponse(BaseModel):
     """Signal list response."""
 
-    signals: List[SignalResponse]
+    signals: list[SignalResponse]
     total: int
     page: int
     limit: int
@@ -37,13 +37,14 @@ class SignalListResponse(BaseModel):
 class SignalHistoryResponse(BaseModel):
     """Signal history response."""
 
-    history: List[dict]
+    history: list[dict]
     total_signals: int
     days: int
 
 
 def _get_reader():
     from shared.streaming.trading_state import TradingStateReader
+
     asset = os.environ.get("TRADING_ASSET_CLASS", "stock")
     return TradingStateReader(asset)
 
@@ -57,8 +58,20 @@ def _load_signals() -> list[dict]:
         return []
 
 
-def _to_signal_response(s: dict) -> Optional[SignalResponse]:
+def _to_signal_response(s: dict) -> SignalResponse | None:
     try:
+        # Always emit tz-aware UTC timestamps so callers (e.g.
+        # /history's cutoff comparison) can mix freely without
+        # "can't compare offset-naive and offset-aware" crashes.
+        if "timestamp" in s:
+            ts = datetime.fromisoformat(s["timestamp"])
+            ts = (
+                ts.replace(tzinfo=UTC)
+                if ts.tzinfo is None
+                else ts.astimezone(UTC)
+            )
+        else:
+            ts = datetime.now(UTC)
         return SignalResponse(
             id=s.get("id", ""),
             symbol=s.get("symbol", ""),
@@ -67,7 +80,7 @@ def _to_signal_response(s: dict) -> Optional[SignalResponse]:
             strategy=s.get("strategy", ""),
             price=float(s.get("price", 0)),
             confidence=float(s.get("confidence", 0)),
-            timestamp=datetime.fromisoformat(s["timestamp"]) if "timestamp" in s else datetime.now(),
+            timestamp=ts,
             executed=bool(s.get("executed", False)),
         )
     except (ValueError, TypeError, KeyError):
@@ -77,8 +90,8 @@ def _to_signal_response(s: dict) -> Optional[SignalResponse]:
 
 @router.get("", response_model=SignalListResponse)
 async def get_signals(
-    strategy: Optional[str] = Query(None, description="Filter by strategy"),
-    side: Optional[str] = Query(None, description="Filter by side (BUY/SELL)"),
+    strategy: str | None = Query(None, description="Filter by strategy"),
+    side: str | None = Query(None, description="Filter by side (BUY/SELL)"),
     limit: int = Query(50, ge=1, le=100, description="Number of signals"),
     page: int = Query(1, ge=1, description="Page number"),
 ):
@@ -109,7 +122,8 @@ async def get_signal_history(
     signals = [_to_signal_response(s) for s in raw]
     signals = [s for s in signals if s is not None]
 
-    cutoff = datetime.now() - timedelta(days=days)
+    # _to_signal_response always emits tz-aware UTC; cutoff must match.
+    cutoff = datetime.now(UTC) - timedelta(days=days)
     recent = [s for s in signals if s.timestamp >= cutoff]
 
     history: dict[str, dict] = {}

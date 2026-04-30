@@ -3,6 +3,8 @@
 Adds project root to sys.path for module imports.
 Loads .env for integration tests that need infrastructure credentials.
 """
+
+import os
 import sys
 from pathlib import Path
 
@@ -17,9 +19,17 @@ _env_file = project_root / ".env"
 if _env_file.exists():
     try:
         from dotenv import load_dotenv
+
         load_dotenv(_env_file, override=False)
     except ImportError:
         pass
+
+# Cap MLflow's HTTP retry budget for tests so dashboard tests don't spend
+# 4+ minutes retrying against an unreachable tracking server. Default is 7
+# retries with exponential backoff. Set BEFORE any test imports MLflow so
+# the env var is read at client construction.
+os.environ.setdefault("MLFLOW_HTTP_REQUEST_MAX_RETRIES", "1")
+os.environ.setdefault("MLFLOW_HTTP_REQUEST_TIMEOUT", "5")
 
 
 def pytest_configure(config):
@@ -45,6 +55,7 @@ def _clean_prometheus_registry():
     """
     try:
         from prometheus_client import REGISTRY
+
         # Snapshot metric names registered before the test
         names_before = set(REGISTRY._names_to_collectors.keys())
     except ImportError:
@@ -81,6 +92,7 @@ def _reset_config_loader_singleton():
     yield
     try:
         from shared.config.loader import ConfigLoader
+
         # Reset singleton so next test re-initializes with correct config dir
         ConfigLoader._instance = None
         ConfigLoader._config_dir = None
