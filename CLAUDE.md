@@ -25,13 +25,24 @@
   - KOSPI200 미니: 계약 단위 1/5로 리스크 관리에 유리
   - 비율 기반 지표(BB, RSI, BB bandwidth)는 두 상품 간 전이 가능 확인 완료
   - 미니의 낮은 유동성(F200 대비 1/9~1/42)은 인지하고 수용
-- **현재 운용 전략**: `rl_mppo` (Maskable PPO, long/short intraday)
-- **운용 경로 표준**: `TradingOrchestrator` 경로를 사용한다.
+- **현재 운용 전략**:
+  - `rl_mppo` (Maskable PPO, long/short intraday) — **메인 (Phase 5 Gate 3 사이 병행 후 Phase 5 완료 시 별도 계좌로 전환 예정)**
+  - **Phase 5 paradigm setups (paper / Gate 3 진입 전까지 paper-only)**: Setup A (gap reversion), Setup C (volatility breakout) — `services/decision_engine/`, `services/risk_filter/`, `services/order_router/` 파이프라인. 활성화 게이트는 `docs/runbooks/phase5-verification.md` 참조.
+- **계약 명세**: `config/execution.yaml ::futures_contract_spec` (multiplier 50_000 KRW/pt, tick 0.02pt, tick_value 1_000 KRW)
+- **운용 경로 표준**: `TradingOrchestrator` 경로를 사용한다 (`rl_mppo`). Phase 5 paradigm은 systemd 단위로 분리 (`kis-decision-engine`, `kis-risk-filter`, `kis-order-router`, `kis-kill-switch`).
+- **Phase 5 운영 런북**:
+  - `docs/runbooks/futures-paradigm-operations.md` — 일일 운영 체크리스트
+  - `docs/runbooks/futures-paradigm-rollback.md` — 비상 롤백 절차
+  - `docs/runbooks/phase5-verification.md` — Gate 1–4 검증 게이트
+  - `docs/runbooks/futures-legal-review.md` — Gate 2 법무/세무 검토
+  - `docs/runbooks/futures-paradigm-failure-modes.md` — Phase 4부터 유지 중인 실패 모드 매트릭스
+- **Live-mode 게이트**: `config/futures_live.yaml::enabled` (기본 `false`) + Redis 플래그 `futures:live:suspended`. `shared/execution/live_mode_guard.py` 참조. order_router는 매 시그널 처리 전 두 조건을 검사하고 suspended 면 XACK skip한다.
 - **핵심 합의 사항**
   - 진입/청산 방향은 `signal_direction` 기준으로 처리한다.
   - 선물 paper/live 모두 숏 진입 및 숏 청산(BUY to cover)을 지원해야 한다.
   - RL 입력은 학습 스펙과 동일해야 한다(31차원 obs, scaler 적용, code->dict market_data + OHLCV 기반 피처 복원).
   - 선물 청산은 **학습된 RL 정책**(`rl_mppo_exit`)을 사용한다. 규칙 기반 `three_stage`는 주식 전용이다.
+  - **Phase 5 Setup A/C 활성화는 Gate 1-3 통과 + 운영자 서면 승인이 선행되어야 한다**. 코드는 사전 작성 완료(PR #142–#149) 상태이며, 실거래 전환 시점에만 `futures_live.enabled: true` + `redis-cli -n 1 del futures:live:suspended` 절차를 거친다.
 
 #### 주식 (Stock)
 
