@@ -38,6 +38,7 @@ from typing import Any
 
 from services.risk_filter.main import _signal_from_stream_fields
 from shared.execution.contract_spec import ContractSpec
+from shared.execution.live_mode_guard import LiveModeGuard
 from shared.execution.passive_maker import PassiveMaker
 from shared.execution.pseudo_oco import PseudoOCO
 
@@ -74,6 +75,7 @@ class OrderRouterDaemon:
         passive_timeout_seconds: int,
         base_quantity: int = 1,
         kill_switch_sentinel_path: str | None = None,
+        live_mode_guard: LiveModeGuard | None = None,
     ) -> None:
         self.redis = redis
         self.passive_maker = passive_maker
@@ -89,8 +91,10 @@ class OrderRouterDaemon:
         self.sentinel_path = (
             Path(kill_switch_sentinel_path) if kill_switch_sentinel_path else None
         )
+        self.live_mode_guard = live_mode_guard
         self._stop = asyncio.Event()
         self.refused_due_to_sentinel: bool = False
+        self.live_suspended_count: int = 0
 
     def _sentinel_present(self) -> bool:
         return self.sentinel_path is not None and self.sentinel_path.exists()
@@ -161,6 +165,23 @@ class OrderRouterDaemon:
         quantity = _resolve_quantity(
             base_quantity=self.base_quantity, size_multiplier=size_multiplier
         )
+
+        # Live-mode guard (Phase 5 Task 5): consult BEFORE submitting the
+        # order. Suspended → XACK as skip (no retry; the signal is consumed).
+        # Disabled-by-default config makes this a no-op until Gate 2 flips
+        # `futures_live.enabled: true`.
+        if (
+            self.live_mode_guard is not None
+            and await self.live_mode_guard.is_live_suspended(self.redis)
+        ):
+            self.live_suspended_count += 1
+            logger.warning(
+                "live_mode suspended; skipping signal_id=%s symbol=%s",
+                signal_id,
+                signal.symbol,
+            )
+            await self.redis.xack(self.final_stream, self.consumer_group, msg_id)
+            return
 
         # Place passive limit + log fill
         try:
@@ -243,6 +264,7 @@ async def _build_and_run() -> int:
     from shared.execution.executor import OrderExecutor
     from shared.execution.fill_logger import FillLogger
     from shared.execution.kis_futures_adapter import KISFuturesAdapter
+    from shared.execution.live_mode_guard import LiveModeGuard
     from shared.execution.passive_maker import PassiveMaker
     from shared.execution.pseudo_oco import PseudoOCO
     from shared.kis.auth import KISAuthConfig
@@ -257,6 +279,7 @@ async def _build_and_run() -> int:
 
     phase4_config = Phase4ExecutionConfig.from_yaml()
     kill_config = KillSwitchConfig.from_yaml()
+    live_guard = LiveModeGuard.from_yaml()
 
     contract_specs = ContractSpecRegistry.from_yaml("config/execution.yaml")
     # Auto-detect front-month KOSPI200 mini contract — handles quarterly
@@ -311,6 +334,7 @@ async def _build_and_run() -> int:
         passive_timeout_seconds=phase4_config.passive_timeout_seconds,
         base_quantity=phase4_config.base_quantity,
         kill_switch_sentinel_path=kill_config.sentinel_path,
+        live_mode_guard=live_guard,
     )
 
     loop = asyncio.get_running_loop()

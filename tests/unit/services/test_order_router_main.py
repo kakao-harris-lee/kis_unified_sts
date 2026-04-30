@@ -80,7 +80,9 @@ def pseudo_oco(fill_logger):
     return PseudoOCO(fill_logger=fill_logger)
 
 
-def _make_daemon(*, redis, kis, fill_logger, pseudo_oco, sentinel_path=None):
+def _make_daemon(
+    *, redis, kis, fill_logger, pseudo_oco, sentinel_path=None, live_mode_guard=None
+):
     from shared.execution.passive_maker import PassiveMaker
 
     passive = PassiveMaker(kis_client=kis, fill_logger=fill_logger)
@@ -96,6 +98,7 @@ def _make_daemon(*, redis, kis, fill_logger, pseudo_oco, sentinel_path=None):
         batch_size=10,
         passive_timeout_seconds=5,
         kill_switch_sentinel_path=sentinel_path,
+        live_mode_guard=live_mode_guard,
     )
 
 
@@ -256,3 +259,101 @@ async def test_size_multiplier_scales_quantity(redis, kis, fill_logger, pseudo_o
     # base_quantity (default 1) × 0.5 → 0; floors to at least 1 contract
     kwargs = kis.place_futures_order.call_args.kwargs
     assert kwargs["quantity"] >= 1
+
+
+# -----------------------------------------------------------------------------
+# Phase 5 Task 5 — LiveModeGuard wiring
+# -----------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_live_mode_disabled_skips_order_and_xacks(
+    redis, kis, fill_logger, pseudo_oco
+):
+    """enabled=False → every signal is xack-skipped, no order placed."""
+    from shared.execution.live_mode_guard import LiveModeGuard
+
+    guard = LiveModeGuard(enabled=False)
+    daemon = _make_daemon(
+        redis=redis,
+        kis=kis,
+        fill_logger=fill_logger,
+        pseudo_oco=pseudo_oco,
+        live_mode_guard=guard,
+    )
+    await _publish_final(redis, _signal("long"))
+
+    await _run_one_batch(daemon)
+
+    kis.place_futures_order.assert_not_awaited()
+    fill_logger.log_fill.assert_not_awaited()
+    assert daemon.live_suspended_count == 1
+    # Suspended signals are XACK'd (consumed, no retry)
+    pending = await redis.xpending(FINAL_STREAM, GROUP)
+    if isinstance(pending, dict):
+        assert int(pending.get("pending", 0)) == 0
+    elif pending:
+        assert int(pending[0]) == 0
+
+
+@pytest.mark.asyncio
+async def test_live_mode_redis_flag_skips_order(redis, kis, fill_logger, pseudo_oco):
+    """enabled=True + Redis suspend flag set → signal skipped."""
+    from shared.execution.live_mode_guard import LiveModeGuard
+
+    guard = LiveModeGuard(enabled=True, suspend_key="futures:live:suspended")
+    await redis.set("futures:live:suspended", "1")
+    daemon = _make_daemon(
+        redis=redis,
+        kis=kis,
+        fill_logger=fill_logger,
+        pseudo_oco=pseudo_oco,
+        live_mode_guard=guard,
+    )
+    await _publish_final(redis, _signal("long"))
+
+    await _run_one_batch(daemon)
+
+    kis.place_futures_order.assert_not_awaited()
+    assert daemon.live_suspended_count == 1
+
+
+@pytest.mark.asyncio
+async def test_live_mode_enabled_no_flag_routes_normally(
+    redis, kis, fill_logger, pseudo_oco
+):
+    """enabled=True, no Redis flag → behaves like no guard at all."""
+    from shared.execution.live_mode_guard import LiveModeGuard
+
+    guard = LiveModeGuard(enabled=True)
+    daemon = _make_daemon(
+        redis=redis,
+        kis=kis,
+        fill_logger=fill_logger,
+        pseudo_oco=pseudo_oco,
+        live_mode_guard=guard,
+    )
+    await _publish_final(redis, _signal("long"))
+
+    await _run_one_batch(daemon)
+
+    kis.place_futures_order.assert_awaited_once()
+    assert daemon.live_suspended_count == 0
+
+
+@pytest.mark.asyncio
+async def test_live_mode_guard_none_back_compat(redis, kis, fill_logger, pseudo_oco):
+    """live_mode_guard=None preserves Phase-4 behaviour (no suspend check)."""
+    daemon = _make_daemon(
+        redis=redis,
+        kis=kis,
+        fill_logger=fill_logger,
+        pseudo_oco=pseudo_oco,
+        live_mode_guard=None,
+    )
+    await _publish_final(redis, _signal("long"))
+
+    await _run_one_batch(daemon)
+
+    kis.place_futures_order.assert_awaited_once()
+    assert daemon.live_suspended_count == 0
