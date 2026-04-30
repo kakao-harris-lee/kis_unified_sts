@@ -3,7 +3,7 @@
 **Status:** Draft
 **Parent:** `docs/plans/2026-04-20-futures-paradigm-master.md`
 **Target branch:** `feat/futures-paradigm-phase4`
-**Depends on:** Phase 3 완료 게이트 통과
+**Depends on:** Phase 3 **conditional provisional sign-off** (the original "Phase 3 완료 게이트 통과 — ≥12-month clean data" requirement was replaced 2026-04-29 by the three-pronged path: bootstrap + sensitivity + paper-data fold-in). See `docs/runbooks/phase3-verification.md` § "Phase 3 status determination" for current state — Phase 4 paper may deploy under conditional provisional, but Phase 5 ladder progression requires **final** sign-off via `scripts/walk_forward_paper_foldin.py` after 60-90 days of Phase 4 paper accumulation.
 **Blocks:** Phase 5
 
 ---
