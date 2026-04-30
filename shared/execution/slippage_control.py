@@ -151,15 +151,25 @@ class SlippageControlConfig:
         if not isinstance(data, dict):
             return cls()
 
-        volatility = data.get("volatility", {}) if isinstance(data.get("volatility"), dict) else {}
-        cross_asset = data.get("cross_asset", {}) if isinstance(data.get("cross_asset"), dict) else {}
+        volatility = (
+            data.get("volatility", {})
+            if isinstance(data.get("volatility"), dict)
+            else {}
+        )
+        cross_asset = (
+            data.get("cross_asset", {})
+            if isinstance(data.get("cross_asset"), dict)
+            else {}
+        )
 
         blocked = _parse_windows(data.get("blocked_time_windows"))
         events = _parse_windows(data.get("event_time_windows"))
         if not events:
             events = _parse_windows(data.get("event_blackout_windows"))
 
-        retry_policy_raw = str(data.get("retry_policy", RetryPolicy.MARKET_ONCE.value)).strip().lower()
+        retry_policy_raw = (
+            str(data.get("retry_policy", RetryPolicy.MARKET_ONCE.value)).strip().lower()
+        )
         if retry_policy_raw not in {item.value for item in RetryPolicy}:
             retry_policy_raw = RetryPolicy.MARKET_ONCE.value
 
@@ -175,7 +185,9 @@ class SlippageControlConfig:
             volatility_window_ticks=int(volatility.get("window_ticks", 20)),
             volatility_spike_multiplier=float(volatility.get("spike_multiplier", 2.5)),
             volatility_cooldown_seconds=float(volatility.get("cooldown_seconds", 2.0)),
-            cross_asset_enabled=_to_bool(cross_asset.get("enabled", True), default=True),
+            cross_asset_enabled=_to_bool(
+                cross_asset.get("enabled", True), default=True
+            ),
             cross_asset_symbol=str(cross_asset.get("reference_symbol", "101S6000")),
             cross_asset_max_spread_ticks=int(cross_asset.get("max_spread_ticks", 2)),
             blocked_time_windows=blocked,
@@ -207,7 +219,9 @@ def parse_orderbook_snapshot(
     if close <= 0:
         close = (ask + bid) / 2.0
 
-    timestamp = _parse_timestamp(payload.get("timestamp")) or now or datetime.now(timezone.utc)
+    timestamp = (
+        _parse_timestamp(payload.get("timestamp")) or now or datetime.now(timezone.utc)
+    )
 
     return OrderBookSnapshot(
         symbol=symbol,
@@ -254,6 +268,13 @@ class FuturesSlippageController:
         if price <= 0:
             return
         ts = timestamp or datetime.now(timezone.utc)
+        # `_cooldown_until` is later compared against UTC-aware ts in
+        # `evaluate_entry`. Normalize here so a naive caller doesn't poison
+        # the dict with mixed-tz values.
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        else:
+            ts = ts.astimezone(timezone.utc)
 
         previous = self._last_trade_price.get(symbol)
         self._last_trade_price[symbol] = price
@@ -291,14 +312,25 @@ class FuturesSlippageController:
         now: datetime | None = None,
     ) -> EntryDecision:
         """Evaluate entry filters and produce passive-limit execution decision."""
+        # Defensive tz normalization: callers historically passed naive
+        # `datetime.now()` for the `now` arg and naive `signal_timestamp`s.
+        # All arithmetic happens in UTC; naive inputs are interpreted as UTC.
         ts = now or datetime.now(timezone.utc)
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        else:
+            ts = ts.astimezone(timezone.utc)
         transitions = [
             StateTransition(state=ExecutionState.NEW, at=ts),
             StateTransition(state=ExecutionState.FILTERING, at=ts),
         ]
 
         stale_seconds = max(0.1, self.config.max_signal_age_seconds)
-        sig_ts = signal_timestamp.astimezone(timezone.utc) if signal_timestamp.tzinfo is None else signal_timestamp
+        sig_ts = (
+            signal_timestamp.replace(tzinfo=timezone.utc)
+            if signal_timestamp.tzinfo is None
+            else signal_timestamp.astimezone(timezone.utc)
+        )
         signal_age = (ts - sig_ts).total_seconds()
         if signal_age > stale_seconds:
             return self._block(
@@ -308,7 +340,9 @@ class FuturesSlippageController:
             )
 
         if self._is_blocked_time(ts.time()):
-            return self._block(reason="blocked_time_window", at=ts, transitions=transitions)
+            return self._block(
+                reason="blocked_time_window", at=ts, transitions=transitions
+            )
 
         cooldown_until = self._cooldown_until.get(symbol)
         if cooldown_until and ts < cooldown_until:
@@ -321,7 +355,9 @@ class FuturesSlippageController:
 
         quote = parse_orderbook_snapshot(symbol, quote_payload, now=ts)
         if quote is None:
-            return self._block(reason="orderbook_unavailable", at=ts, transitions=transitions)
+            return self._block(
+                reason="orderbook_unavailable", at=ts, transitions=transitions
+            )
 
         # Keep volatility baseline up-to-date even when evaluation is sparse.
         self.register_trade_tick(symbol, quote.last_price, timestamp=ts)
@@ -349,7 +385,9 @@ class FuturesSlippageController:
 
         if self.config.cross_asset_enabled:
             cross_symbol = self.config.cross_asset_symbol
-            cross_quote = parse_orderbook_snapshot(cross_symbol, cross_asset_payload, now=ts)
+            cross_quote = parse_orderbook_snapshot(
+                cross_symbol, cross_asset_payload, now=ts
+            )
             if cross_quote is None:
                 return self._block(
                     reason=f"cross_asset_unavailable:{cross_symbol}",
@@ -415,7 +453,9 @@ class FuturesSlippageController:
 
         if self.config.retry_policy == RetryPolicy.ABORT:
             transitions.append(
-                StateTransition(state=ExecutionState.CANCELLED, at=ts, reason="retry_policy_abort")
+                StateTransition(
+                    state=ExecutionState.CANCELLED, at=ts, reason="retry_policy_abort"
+                )
             )
             return EntryDecision(
                 action=ExecutionAction.CANCEL,
@@ -427,7 +467,9 @@ class FuturesSlippageController:
         quote = parse_orderbook_snapshot(symbol, quote_payload, now=ts)
         if quote is None:
             transitions.append(
-                StateTransition(state=ExecutionState.CANCELLED, at=ts, reason="retry_no_orderbook")
+                StateTransition(
+                    state=ExecutionState.CANCELLED, at=ts, reason="retry_no_orderbook"
+                )
             )
             return EntryDecision(
                 action=ExecutionAction.CANCEL,
@@ -487,7 +529,9 @@ class FuturesSlippageController:
         spread_ticks: float | None = None,
         deviation_ticks: float | None = None,
     ) -> EntryDecision:
-        transitions.append(StateTransition(state=ExecutionState.BLOCKED, at=at, reason=reason))
+        transitions.append(
+            StateTransition(state=ExecutionState.BLOCKED, at=at, reason=reason)
+        )
         return EntryDecision(
             action=ExecutionAction.BLOCK,
             state=ExecutionState.BLOCKED,
@@ -528,7 +572,9 @@ def _parse_hhmm(value: str) -> time:
     try:
         hour_str, minute_str = value.split(":")
         return time(hour=int(hour_str), minute=int(minute_str))
-    except Exception as exc:  # pragma: no cover - guarded by config validation at runtime
+    except (
+        Exception
+    ) as exc:  # pragma: no cover - guarded by config validation at runtime
         raise ValueError(f"Invalid HH:MM time format: {value!r}") from exc
 
 
@@ -551,8 +597,8 @@ def _parse_timestamp(value: Any) -> datetime | None:
 
     if isinstance(value, datetime):
         if value.tzinfo is None:
-            return value.astimezone(timezone.utc)
-        return value
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
 
     if isinstance(value, (int, float)):
         try:
@@ -564,6 +610,8 @@ def _parse_timestamp(value: Any) -> datetime | None:
         try:
             dt = datetime.fromisoformat(value)
             if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            else:
                 dt = dt.astimezone(timezone.utc)
             return dt
         except ValueError:
