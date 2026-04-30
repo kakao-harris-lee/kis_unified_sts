@@ -36,7 +36,7 @@ and the Grafana dashboards in `monitoring/grafana/dashboards/`.
 |----------|--------|
 | Mon 06:00 KST | Review Telegram-delivered Weekly Edge Review (`scripts/analysis/weekly_edge_review.py`). Look for ACTIONS sections — they only appear when something is actionable. |
 | Mon 09:00 KST | If Weekly Edge Review flagged a setup as `pause` or `retune`, follow the runbook section in the report. |
-| Quarterly (last Sat) | Run rollback drill (see `futures-paradigm-rollback.md` § Drill cadence). |
+| Twice-yearly (Apr + Oct, last Sat) | Run rollback drill: `bash scripts/drills/rollback_drill.sh`. Output to `reports/drills/rollback_YYYYMMDD.txt`. See `futures-paradigm-rollback.md` § Drill cadence. |
 
 ## Common operator commands
 
