@@ -3,7 +3,11 @@
 **Status:** Draft
 **Parent:** `docs/plans/2026-04-20-futures-paradigm-master.md`
 **Target branch:** `feat/futures-paradigm-phase5`
-**Depends on:** Phase 4 완료 게이트 통과
+**Depends on:**
+1. Phase 4 완료 게이트 통과 (2주 paper uptime + 20 fills + slippage ≤ 0.4 tick + kill-switch drill green)
+2. **Phase 3 final sign-off** — `scripts/walk_forward_paper_foldin.py` reports all four rules pass (bootstrap rule 1+2, paper rule 3+4) after 60-90 days of Phase 4 paper accumulation. The original "Phase 3 12개월 clean data 게이트" was replaced 2026-04-29 by this conditional/final two-step path; see `docs/runbooks/phase3-verification.md` § "Phase 3 status determination".
+
+Gate 3 ladder progression (1→2→5 contracts) is gated on **final** sign-off, not the conditional provisional that allows Gate 1 paper extension.
 **Blocks:** (최종)
 
 ---
@@ -32,7 +36,7 @@ Phase 4의 페이퍼 검증을 바탕으로 **1계약 소액 실전** 으로 전
 - [ ] 기록 승률 및 EV가 백테스트의 ±20% 이내 유지
 - [ ] Kill switch 오탐 0회
 
-미달 시: Phase 3 파라미터 재튜닝 → Phase 4 페이퍼 재시작.
+미달 시: Phase 3 파라미터 재튜닝 (`scripts/optimize_decision_engine.py`) → 재-bootstrap (`scripts/walk_forward_bootstrap.py`) → 통과하면 Phase 4 페이퍼 재시작. (2026-04-29 update: Phase 3 sign-off는 더 이상 12개월 calendar gate가 아니라 conditional + final two-step path. Gate 1 fallback 시점에는 보통 "재튜닝" 만으로는 부족하고, 추가 paper 데이터 누적이 필요하다는 점을 인지할 것.)
 
 ### 2.2 Gate 2 — 소액 실전 준비
 
