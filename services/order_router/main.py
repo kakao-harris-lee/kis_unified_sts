@@ -33,6 +33,8 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+from datetime import UTC, datetime, timedelta, timezone
+from datetime import time as dt_time
 from pathlib import Path
 from typing import Any
 
@@ -43,6 +45,37 @@ from shared.execution.passive_maker import PassiveMaker
 from shared.execution.pseudo_oco import PseudoOCO
 
 logger = logging.getLogger(__name__)
+
+# Phase 5 Gate-3 daily-trade counter lives in Redis under
+# `order_router:daily_trades:YYYY-MM-DD` (KST date). Expires at the next
+# KST midnight via TTL — restart-safe, multi-worker-safe (INCR is atomic).
+_DAILY_TRADE_KEY_PREFIX = "order_router:daily_trades:"
+_KST = timezone(timedelta(hours=9))
+
+
+def _kst_date_key(now: datetime | None = None) -> str:
+    """KST-date suffix for the daily-trade counter (e.g. ``2026-05-01``).
+
+    The Phase 5 plan §2.3 daily-trade cap is "per trading day" by Korean
+    convention. Using the KST date prevents 09:00–15:30 sessions from
+    being split across UTC days.
+    """
+    ref = now or datetime.now(UTC)
+    return ref.astimezone(_KST).date().isoformat()
+
+
+def _seconds_until_next_kst_midnight(now: datetime | None = None) -> int:
+    """TTL for the daily counter — wraps to 0 at next 00:00 KST.
+
+    Caps at 86_400 just in case clock-skew makes the math return >24h.
+    Floors at 60 so the counter never expires within the same minute.
+    """
+    ref = (now or datetime.now(UTC)).astimezone(_KST)
+    next_midnight = datetime.combine(
+        ref.date() + timedelta(days=1), dt_time.min, tzinfo=_KST
+    )
+    delta = int((next_midnight - ref).total_seconds())
+    return max(60, min(delta, 86_400))
 
 
 def _resolve_quantity(*, base_quantity: int, size_multiplier: float) -> int:
@@ -76,6 +109,7 @@ class OrderRouterDaemon:
         base_quantity: int = 1,
         kill_switch_sentinel_path: str | None = None,
         live_mode_guard: LiveModeGuard | None = None,
+        locked_symbol: str | None = None,
     ) -> None:
         self.redis = redis
         self.passive_maker = passive_maker
@@ -92,9 +126,14 @@ class OrderRouterDaemon:
             Path(kill_switch_sentinel_path) if kill_switch_sentinel_path else None
         )
         self.live_mode_guard = live_mode_guard
+        self.locked_symbol = locked_symbol
         self._stop = asyncio.Event()
         self.refused_due_to_sentinel: bool = False
         self.live_suspended_count: int = 0
+        # Phase 5 Gate-3 cap counters (observability + tests)
+        self.symbol_lock_blocked_count: int = 0
+        self.daily_trade_blocked_count: int = 0
+        self.position_size_capped_count: int = 0
 
     def _sentinel_present(self) -> bool:
         return self.sentinel_path is not None and self.sentinel_path.exists()
@@ -182,6 +221,79 @@ class OrderRouterDaemon:
             )
             await self.redis.xack(self.final_stream, self.consumer_group, msg_id)
             return
+
+        # Phase 5 Gate-3 hard caps (futures_live.yaml). Defense-in-depth
+        # alongside risk_filter — these caps are stricter than risk.yaml's
+        # caps and only matter once `futures_live.enabled: true` AND the
+        # caps are actually exceeded. With guard=None or guard.enabled=False,
+        # all checks below short-circuit to "allow".
+        guard = self.live_mode_guard
+
+        # Symbol lock — Gate-3 only allows the front-month KOSPI200 mini.
+        if (
+            guard is not None
+            and guard.symbol_lock_enabled
+            and self.locked_symbol is not None
+            and signal.symbol != self.locked_symbol
+        ):
+            self.symbol_lock_blocked_count += 1
+            logger.warning(
+                "symbol_lock: signal.symbol=%s != locked=%s; skipping signal_id=%s",
+                signal.symbol,
+                self.locked_symbol,
+                signal_id,
+            )
+            await self.redis.xack(self.final_stream, self.consumer_group, msg_id)
+            return
+
+        # Position-size cap — clamp quantity. risk_filter's
+        # ConsecutiveLossFilter may have already halved size; we still cap
+        # at the Gate-3 ceiling (default 1).
+        if guard is not None and quantity > guard.max_position_size_contracts:
+            self.position_size_capped_count += 1
+            logger.warning(
+                "position_size_cap: signal=%s quantity %d → %d (gate3)",
+                signal_id,
+                quantity,
+                guard.max_position_size_contracts,
+            )
+            quantity = guard.max_position_size_contracts
+
+        # Daily-trade-count cap — atomic Redis INCR. Counted at order
+        # placement (not fill), which slightly over-counts on
+        # passive-timeout cancels. That's the intended bias for a
+        # defensive rail: budget burns when we *try*, not just when we
+        # succeed. Counter expires at next KST midnight (TTL set on first
+        # INCR of the day).
+        if guard is not None:
+            counter_key = f"{_DAILY_TRADE_KEY_PREFIX}{_kst_date_key()}"
+            try:
+                count = await self.redis.incr(counter_key)
+                if int(count) == 1:
+                    await self.redis.expire(
+                        counter_key, _seconds_until_next_kst_midnight()
+                    )
+            except Exception:
+                # Fail-open on Redis errors here — kill_switch sentinel +
+                # live-mode-guard are the primary safety nets; double-counting
+                # via this cap when Redis is flapping would over-restrict.
+                logger.exception(
+                    "daily_trade counter INCR failed; allowing signal_id=%s",
+                    signal_id,
+                )
+            else:
+                if int(count) > guard.max_daily_trades:
+                    self.daily_trade_blocked_count += 1
+                    logger.warning(
+                        "daily_trade_cap: count=%d > max=%d; skipping signal_id=%s",
+                        int(count),
+                        guard.max_daily_trades,
+                        signal_id,
+                    )
+                    await self.redis.xack(
+                        self.final_stream, self.consumer_group, msg_id
+                    )
+                    return
 
         # Place passive limit + log fill
         try:
@@ -335,6 +447,7 @@ async def _build_and_run() -> int:
         base_quantity=phase4_config.base_quantity,
         kill_switch_sentinel_path=kill_config.sentinel_path,
         live_mode_guard=live_guard,
+        locked_symbol=symbol,  # auto-detected front-month mini
     )
 
     loop = asyncio.get_running_loop()
