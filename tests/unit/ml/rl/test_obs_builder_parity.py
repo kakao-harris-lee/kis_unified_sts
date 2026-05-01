@@ -13,6 +13,7 @@ Architecture recap (confirmed by Task 2.1):
 """
 from __future__ import annotations
 
+from datetime import UTC
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -22,7 +23,10 @@ import pytest
 
 from shared.ml.rl.features import RL_FEATURE_COLUMNS, RLFeatureCalculator
 from shared.strategy import rl_model_helpers
-from shared.strategy.rl_model_helpers import build_rl_observation, derive_features_from_ohlcv
+from shared.strategy.rl_model_helpers import (
+    build_rl_observation,
+    derive_features_from_ohlcv,
+)
 
 SAMPLE_CSV = Path(__file__).resolve().parents[4] / "data" / "kospi200f_1m_clean.csv"
 
@@ -173,7 +177,7 @@ def test_derive_features_short_circuits_when_all_present(recent_bars):
 
 def test_build_rl_observation_shape(recent_bars, mock_env_config):
     """build_rl_observation returns 31-dim obs (25 market + 3 position + 3 time)."""
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     calc = RLFeatureCalculator()
     feat_df = calc.calculate(recent_bars.copy())
@@ -187,7 +191,7 @@ def test_build_rl_observation_shape(recent_bars, mock_env_config):
         position_side=0.0,
         contracts=0.0,
         unrealized_pnl=0.0,
-        timestamp=datetime(2026, 4, 14, 10, 30, 0, tzinfo=timezone.utc),
+        timestamp=datetime(2026, 4, 14, 10, 30, 0, tzinfo=UTC),
         scaler=None,  # no scaling — test raw obs shape
         env_config=mock_env_config,
         ohlcv_derived=None,
@@ -206,7 +210,7 @@ def test_build_rl_observation_market_part_matches_training(recent_bars, mock_env
 
     This is the end-to-end parity test: training obs vs full runtime pipeline.
     """
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     # Training path: raw features
     calc = RLFeatureCalculator()
@@ -223,7 +227,7 @@ def test_build_rl_observation_market_part_matches_training(recent_bars, mock_env
         position_side=0.0,
         contracts=0.0,
         unrealized_pnl=0.0,
-        timestamp=datetime(2026, 4, 14, 10, 30, 0, tzinfo=timezone.utc),
+        timestamp=datetime(2026, 4, 14, 10, 30, 0, tzinfo=UTC),
         scaler=None,  # no scaling → market part should be identical to trainer_row
         env_config=mock_env_config,
         ohlcv_derived=None,

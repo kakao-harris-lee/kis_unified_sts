@@ -1,7 +1,7 @@
 """VirtualBroker price guard — freshness + deviation 회귀 테스트."""
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -26,7 +26,7 @@ def broker():
 @pytest.mark.asyncio
 async def test_fresh_price_accepted(broker):
     """price_source_time이 현재 시각 기준 30초 이내면 체결 성공."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     order = await broker.submit_order(
         symbol="005930",
         side=OrderSide.BUY,
@@ -42,7 +42,7 @@ async def test_fresh_price_accepted(broker):
 @pytest.mark.asyncio
 async def test_stale_price_rejected(broker):
     """price_source_time이 30초를 초과하면 체결 거부 (reason='stale_price')."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     order = await broker.submit_order(
         symbol="005930",
         side=OrderSide.BUY,
@@ -95,7 +95,7 @@ async def test_orchestrator_passes_price_source_time_to_broker(monkeypatch):
     broker.submit_order = AsyncMock(return_value=fake_order)
     orch._paper_broker = broker
 
-    source_time = datetime(2026, 4, 15, 10, 0, 0, tzinfo=timezone.utc)
+    source_time = datetime(2026, 4, 15, 10, 0, 0, tzinfo=UTC)
 
     await orch._place_entry_order(
         code="005930",
@@ -115,7 +115,7 @@ async def test_orchestrator_passes_price_source_time_to_broker(monkeypatch):
 @pytest.mark.asyncio
 async def test_price_deviation_rejected_when_above_threshold(broker):
     """Reference median 대비 10% 초과 편차 시 체결 거부."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     # Seed history with prices near 70000
     broker.record_price_observation("005930", 70000.0, now - timedelta(seconds=30))
     broker.record_price_observation("005930", 70100.0, now - timedelta(seconds=20))
@@ -136,7 +136,7 @@ async def test_price_deviation_rejected_when_above_threshold(broker):
 @pytest.mark.asyncio
 async def test_price_deviation_accepted_without_history(broker):
     """Reference history가 없으면 guard 적용 불가 → 통과."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     order = await broker.submit_order(
         symbol="NEWCODE",
         side=OrderSide.BUY,
@@ -151,7 +151,7 @@ async def test_price_deviation_accepted_without_history(broker):
 @pytest.mark.asyncio
 async def test_price_deviation_ignores_stale_observations(broker):
     """Lookback window 바깥 관측은 무시."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     # Only stale observations (older than reference_price_lookback_minutes=5)
     broker.record_price_observation("005930", 70000.0, now - timedelta(minutes=10))
     broker.record_price_observation("005930", 70000.0, now - timedelta(minutes=7))

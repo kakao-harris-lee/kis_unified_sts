@@ -29,7 +29,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, date, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from datetime import time as dt_time
 from enum import Enum
 from pathlib import Path
@@ -38,38 +38,37 @@ from typing import TYPE_CHECKING, Any, Callable, Protocol
 import pandas as pd
 import yaml
 
+from services.monitoring.metrics import get_metrics_collector
+from services.trading.data_provider import DataProviderConfig, MarketDataProvider
 from services.trading.pipeline import TradingPipeline
-from services.trading.data_provider import MarketDataProvider, DataProviderConfig
 from services.trading.position_tracker import PositionTracker, PositionTrackerConfig
 from services.trading.strategy_manager import StrategyManager, StrategyManagerConfig
-from services.monitoring.metrics import get_metrics_collector
-from shared.models.position import Position, PositionSide, PositionState
-from shared.models.signal import Signal, ExitSignal
 from shared.config.loader import ConfigLoader
 from shared.db.config import ClickHouseConfig
-from shared.strategy.base import EntryContext, MarketStateAdapter
-from shared.utils.calc import calc_order_quantity
-from shared.risk.manager import RiskManager
-from shared.risk.config import RiskConfig
-from shared.risk.models import DrawdownLevel
-from shared.regime.performance_tracker import (
-    RegimePerformanceTracker,
-    RegimePerformanceConfig,
-)
 from shared.exceptions import (
+    APIError,
     ConfigurationError,
+    InfrastructureError,
     InvalidConfigError,
     MissingConfigError,
     NetworkError,
-    WebSocketDisconnectError,
-    InfrastructureError,
-    APIError,
     ValidationError,
-    TypeConversionError,
+    WebSocketDisconnectError,
 )
-from shared.execution.venue_router import VenueRouter, MarketData, RoutingDecision
 from shared.execution.config import ATSRoutingConfig
 from shared.execution.models import ExecutionVenue
+from shared.execution.venue_router import VenueRouter
+from shared.models.position import Position, PositionSide, PositionState
+from shared.models.signal import ExitSignal, Signal
+from shared.regime.performance_tracker import (
+    RegimePerformanceConfig,
+    RegimePerformanceTracker,
+)
+from shared.risk.config import RiskConfig
+from shared.risk.manager import RiskManager
+from shared.risk.models import DrawdownLevel
+from shared.strategy.base import EntryContext, MarketStateAdapter
+from shared.utils.calc import calc_order_quantity
 
 try:
     # Optional: only used when paper_trading=True
@@ -546,8 +545,8 @@ class TradingOrchestrator:
         if config.regime_detection_mode == "adaptive":
             try:
                 from shared.regime.adaptive_detector import (
-                    AdaptiveRegimeDetector,
                     AdaptiveRegimeConfig,
+                    AdaptiveRegimeDetector,
                 )
 
                 # Load adaptive regime config
@@ -1298,7 +1297,7 @@ class TradingOrchestrator:
                             self._paper_broker.record_price_observation(
                                 symbol=symbol,
                                 price=tick_price,
-                                ts=ts if ts.tzinfo is not None else ts.replace(tzinfo=timezone.utc),
+                                ts=ts if ts.tzinfo is not None else ts.replace(tzinfo=UTC),
                             )
                     except (AttributeError, ValueError, TypeError) as e:
                         logger.debug("record_price_observation skipped (futures): %s", e)
@@ -1343,7 +1342,7 @@ class TradingOrchestrator:
                             self._paper_broker.record_price_observation(
                                 symbol=symbol,
                                 price=tick_price,
-                                ts=ts if ts.tzinfo is not None else ts.replace(tzinfo=timezone.utc),
+                                ts=ts if ts.tzinfo is not None else ts.replace(tzinfo=UTC),
                             )
                     except (AttributeError, ValueError, TypeError) as e:
                         logger.debug("record_price_observation skipped (stock): %s", e)
@@ -1363,9 +1362,9 @@ class TradingOrchestrator:
         # Paper broker (if paper trading)
         if self.config.paper_trading:
             try:
+                from shared.config.loader import ConfigLoader
                 from shared.paper import VirtualBroker
                 from shared.paper.config import PaperTradingConfig
-                from shared.config.loader import ConfigLoader
 
                 # Load paper broker guard parameters from execution.yaml
                 exec_cfg = ConfigLoader.load("execution.yaml") or {}
@@ -4547,7 +4546,7 @@ class TradingOrchestrator:
             signal_timestamp=signal_ts,
             quote_payload=quote_payload,
             cross_asset_payload=cross_payload,
-            now=datetime.now(timezone.utc),
+            now=datetime.now(UTC),
         )
         execution_meta: dict[str, Any] = {
             "mode": "slippage_guard",
@@ -4606,7 +4605,7 @@ class TradingOrchestrator:
             is_buy=is_buy,
             signal_price=signal_price,
             quote_payload=retry_payload,
-            now=datetime.now(timezone.utc),
+            now=datetime.now(UTC),
         )
         execution_meta["transitions"] += self._serialize_state_transitions(
             retry_decision.transitions
@@ -5142,7 +5141,7 @@ class TradingOrchestrator:
                 side=PaperOrderSide.BUY if is_buy else PaperOrderSide.SELL,
                 quantity=quantity,
                 price=price,
-                price_source_time=datetime.now(timezone.utc),
+                price_source_time=datetime.now(UTC),
             )
             is_filled = bool(getattr(order, "filled", True))
             fill_price = float(getattr(order, "fill_price", price) or price)

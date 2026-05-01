@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import subprocess
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -73,7 +73,7 @@ def build_baseline_snapshot(
     Returns:
         Serializable baseline snapshot dictionary.
     """
-    ts = generated_at or datetime.now(timezone.utc)
+    ts = generated_at or datetime.now(UTC)
     data_cfg = dict(source_config.get("data", {}) or {})
 
     return {

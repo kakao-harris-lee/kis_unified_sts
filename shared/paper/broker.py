@@ -2,22 +2,22 @@
 import logging
 import uuid
 from collections import defaultdict, deque
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from statistics import median
-from typing import Dict, List, Optional, Callable, TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable, Dict, List, Optional
 
 if TYPE_CHECKING:
-    from shared.execution.slippage_model import SlippageModel
     from shared.execution.slippage_control import OrderBookSnapshot
+    from shared.execution.slippage_model import SlippageModel
 
 from .models import (
-    VirtualOrder,
-    VirtualPosition,
-    TradeRecord,
+    InsufficientBalanceError,
     OrderSide,
     OrderType,
     PositionSide,
-    InsufficientBalanceError,
+    TradeRecord,
+    VirtualOrder,
+    VirtualPosition,
 )
 
 logger = logging.getLogger(__name__)
@@ -80,7 +80,7 @@ class VirtualBroker:
         is considered at guard time.
         """
         if ts.tzinfo is None:
-            ts = ts.replace(tzinfo=timezone.utc)
+            ts = ts.replace(tzinfo=UTC)
         self._price_history[symbol].append((ts, price))
 
     def _check_price_deviation(
@@ -164,13 +164,13 @@ class VirtualBroker:
                 self.orders.append(order)
                 return order
 
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             pst = price_source_time
             if pst.tzinfo is None:
                 # Treat naive timestamps as local time and convert to UTC.
                 # Using .replace(tzinfo=...) would silently mislabel e.g. KST as UTC
                 # and make the age computation wrong by the UTC offset.
-                pst = pst.astimezone(timezone.utc)
+                pst = pst.astimezone(UTC)
             age_seconds = (now - pst).total_seconds()
             if age_seconds > self.config.max_price_staleness_seconds:
                 order = VirtualOrder(
@@ -194,7 +194,7 @@ class VirtualBroker:
 
         # ── Price deviation guard ─────────────────────────────────────────────
         if self.config is not None and market_price is not None:
-            now_dev = datetime.now(timezone.utc)
+            now_dev = datetime.now(UTC)
             if not self._check_price_deviation(symbol, market_price, now_dev):
                 effective_price = price if price else (market_price or 0.0)
                 order = VirtualOrder(

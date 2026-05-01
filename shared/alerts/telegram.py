@@ -1,12 +1,12 @@
 """Telegram alert service."""
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Optional
 
 from shared.http import AsyncSessionMixin
 
-from .models import Alert, AlertLevel, AlertConfig
+from .models import Alert, AlertConfig, AlertLevel
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +82,7 @@ class TelegramAlertService(AsyncSessionMixin):
         """Check if alert should be sent (rate limiting)."""
         # Check rate limit
         if self._last_sent:
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             elapsed = (now - self._last_sent).total_seconds()
             if elapsed < self.config.rate_limit_seconds:
                 # Allow critical alerts to bypass rate limit
@@ -120,7 +120,7 @@ class TelegramAlertService(AsyncSessionMixin):
             session = await self._get_session()
             async with session.post(url, json=payload) as resp:
                 if resp.status == 200:
-                    self._last_sent = datetime.now(timezone.utc)
+                    self._last_sent = datetime.now(UTC)
                     alert.sent = True
                     logger.info(f"Alert sent: {alert.title}")
                     return True

@@ -2,13 +2,12 @@
 from __future__ import annotations
 
 import json
-from datetime import date
+from datetime import UTC, date
 
 import pytest
 
 from shared.streaming import trading_state
 from shared.streaming.trading_state import TradingStatePublisher, TradingStateReader
-
 
 # ---------------------------------------------------------------------------
 # Minimal fake-Redis (pipeline + sorted set + hash)
@@ -227,8 +226,8 @@ def test_equity_timeline_empty_when_no_data(reader):
 
 def test_orchestrator_record_running_totals_helper_increments_publisher():
     """_record_running_totals calls publisher.increment_running_totals with pnl/win."""
-    from unittest.mock import MagicMock
     from datetime import datetime
+    from unittest.mock import MagicMock
 
     from services.trading.orchestrator import TradingConfig, TradingOrchestrator
     from shared.models.position import Position, PositionSide
@@ -273,10 +272,11 @@ def test_publish_signal_uses_signal_timestamp(publisher, redis_client):
     """publish_signal must serialize the signal's own tz-aware timestamp,
     not a fresh naive datetime.now() at publish time.
     """
-    from datetime import datetime, timezone
+    from datetime import datetime
+
     from shared.models.signal import Signal, SignalType
 
-    tz_utc_15_30 = datetime(2026, 4, 15, 15, 30, 0, tzinfo=timezone.utc)
+    tz_utc_15_30 = datetime(2026, 4, 15, 15, 30, 0, tzinfo=UTC)
     sig = Signal(
         code="005930",
         name="SAMSUNG",
