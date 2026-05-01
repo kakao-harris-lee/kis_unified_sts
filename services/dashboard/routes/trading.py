@@ -1,12 +1,31 @@
 """Trading status and control endpoints."""
+
 import os
-from datetime import datetime
-from typing import List
+from datetime import UTC, datetime
 
 from fastapi import APIRouter
 from pydantic import BaseModel
 
 from shared.exceptions import InfrastructureError
+
+
+def _parse_tz_aware(value: str | None) -> datetime:
+    """Parse an ISO timestamp into tz-aware UTC, or fall back to now(UTC).
+
+    Same convention as services/dashboard/routes/signals.py and trades.py
+    — the dashboard emits tz-aware UTC throughout so downstream
+    comparisons never hit "can't compare offset-naive and offset-aware".
+    """
+    if value is None:
+        return datetime.now(UTC)
+    try:
+        ts = datetime.fromisoformat(value)
+    except (ValueError, TypeError):
+        return datetime.now(UTC)
+    if ts.tzinfo is None:
+        return ts.replace(tzinfo=UTC)
+    return ts.astimezone(UTC)
+
 
 router = APIRouter(prefix="/api/trading", tags=["trading"])
 
@@ -16,7 +35,7 @@ class TradingStatus(BaseModel):
 
     is_running: bool
     market_status: str
-    active_strategies: List[str]
+    active_strategies: list[str]
     total_positions: int
     total_pnl: float
     unrealized_pnl: float
@@ -44,6 +63,7 @@ class PositionResponse(BaseModel):
 def _get_reader():
     """Get TradingStateReader for the configured asset class."""
     from shared.streaming.trading_state import TradingStateReader
+
     asset = os.environ.get("TRADING_ASSET_CLASS", "stock")
     return TradingStateReader(asset)
 
@@ -69,7 +89,7 @@ async def get_trading_status():
             closed_trades=0,
             closed_pnl=0.0,
             closed_win_rate=0.0,
-            last_update=datetime.now(),
+            last_update=datetime.now(UTC),
         )
 
     state = status.get("state", "stopped").lower()
@@ -115,17 +135,33 @@ async def get_trading_status():
         is_running=state in ("running", "waiting"),
         market_status=status.get("regime") or "unknown",
         active_strategies=strategies,
-        total_positions=positions.get("open_positions", 0) if isinstance(positions, dict) else 0,
+        total_positions=(
+            positions.get("open_positions", 0) if isinstance(positions, dict) else 0
+        ),
         total_pnl=float(stats.get("total_pnl", 0)),
-        unrealized_pnl=float(positions.get("unrealized_pnl", 0)) if isinstance(positions, dict) else 0.0,
-        closed_trades=int(positions.get("closed_count", 0)) if isinstance(positions, dict) else 0,
-        closed_pnl=float(positions.get("closed_pnl", 0)) if isinstance(positions, dict) else 0.0,
-        closed_win_rate=float(positions.get("closed_win_rate", 0)) if isinstance(positions, dict) else 0.0,
-        last_update=datetime.fromisoformat(start_time) if start_time else datetime.now(),
+        unrealized_pnl=(
+            float(positions.get("unrealized_pnl", 0))
+            if isinstance(positions, dict)
+            else 0.0
+        ),
+        closed_trades=(
+            int(positions.get("closed_count", 0)) if isinstance(positions, dict) else 0
+        ),
+        closed_pnl=(
+            float(positions.get("closed_pnl", 0))
+            if isinstance(positions, dict)
+            else 0.0
+        ),
+        closed_win_rate=(
+            float(positions.get("closed_win_rate", 0))
+            if isinstance(positions, dict)
+            else 0.0
+        ),
+        last_update=_parse_tz_aware(start_time),
     )
 
 
-@router.get("/positions", response_model=List[PositionResponse])
+@router.get("/positions", response_model=list[PositionResponse])
 async def get_positions():
     """Get all open positions."""
     try:
@@ -138,18 +174,20 @@ async def get_positions():
     result = []
     for p in positions:
         try:
-            result.append(PositionResponse(
-                code=p.get("code", ""),
-                name=p.get("name", ""),
-                side=p.get("side", "long"),
-                quantity=int(p.get("quantity", 0)),
-                entry_price=float(p.get("entry_price", 0)),
-                current_price=float(p.get("current_price", 0)),
-                unrealized_pnl=float(p.get("unrealized_pnl", 0)),
-                pnl_pct=float(p.get("pnl_pct", 0)),
-                entry_time=datetime.fromisoformat(p["entry_time"]) if "entry_time" in p else datetime.now(),
-                strategy=p.get("strategy", ""),
-            ))
+            result.append(
+                PositionResponse(
+                    code=p.get("code", ""),
+                    name=p.get("name", ""),
+                    side=p.get("side", "long"),
+                    quantity=int(p.get("quantity", 0)),
+                    entry_price=float(p.get("entry_price", 0)),
+                    current_price=float(p.get("current_price", 0)),
+                    unrealized_pnl=float(p.get("unrealized_pnl", 0)),
+                    pnl_pct=float(p.get("pnl_pct", 0)),
+                    entry_time=_parse_tz_aware(p.get("entry_time")),
+                    strategy=p.get("strategy", ""),
+                )
+            )
         except (ValueError, TypeError, KeyError):
             # Invalid position data - skip this record
             continue

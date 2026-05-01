@@ -1,13 +1,32 @@
 """Trades endpoints."""
+
 import asyncio
 import os
-from datetime import datetime
-from typing import List, Optional
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from shared.exceptions import InfrastructureError
+
+
+def _parse_tz_aware(value: str | None) -> datetime:
+    """Parse an ISO timestamp into tz-aware UTC, or fall back to now(UTC).
+
+    Same convention as services/dashboard/routes/signals.py — the dashboard
+    emits tz-aware UTC throughout so downstream comparisons (statistics,
+    history, etc.) never hit "can't compare offset-naive and offset-aware".
+    """
+    if value is None:
+        return datetime.now(UTC)
+    try:
+        ts = datetime.fromisoformat(value)
+    except (ValueError, TypeError):
+        return datetime.now(UTC)
+    if ts.tzinfo is None:
+        return ts.replace(tzinfo=UTC)
+    return ts.astimezone(UTC)
+
 
 router = APIRouter(prefix="/api/trades", tags=["trades"])
 
@@ -31,7 +50,7 @@ class TradeResponse(BaseModel):
 class TradeListResponse(BaseModel):
     """Trade list response."""
 
-    trades: List[TradeResponse]
+    trades: list[TradeResponse]
     total: int
     page: int
     limit: int
@@ -63,6 +82,7 @@ class StrategyPerformance(BaseModel):
 
 def _get_reader():
     from shared.streaming.trading_state import TradingStateReader
+
     asset = os.environ.get("TRADING_ASSET_CLASS", "stock")
     return TradingStateReader(asset)
 
@@ -77,7 +97,7 @@ def _load_trades() -> list[dict]:
         return []
 
 
-def _to_trade_response(t: dict) -> Optional[TradeResponse]:
+def _to_trade_response(t: dict) -> TradeResponse | None:
     try:
         return TradeResponse(
             id=t.get("id", ""),
@@ -89,8 +109,8 @@ def _to_trade_response(t: dict) -> Optional[TradeResponse]:
             pnl=float(t.get("pnl", 0)),
             pnl_pct=float(t.get("pnl_pct", 0)),
             strategy=t.get("strategy", ""),
-            entry_time=datetime.fromisoformat(t["entry_time"]) if "entry_time" in t else datetime.now(),
-            exit_time=datetime.fromisoformat(t["exit_time"]) if "exit_time" in t else datetime.now(),
+            entry_time=_parse_tz_aware(t.get("entry_time")),
+            exit_time=_parse_tz_aware(t.get("exit_time")),
         )
     except (ValueError, TypeError, KeyError):
         # Invalid trade data - skip this record
@@ -99,8 +119,8 @@ def _to_trade_response(t: dict) -> Optional[TradeResponse]:
 
 @router.get("", response_model=TradeListResponse)
 async def get_trades(
-    strategy: Optional[str] = Query(None, description="Filter by strategy"),
-    symbol: Optional[str] = Query(None, description="Filter by symbol"),
+    strategy: str | None = Query(None, description="Filter by strategy"),
+    symbol: str | None = Query(None, description="Filter by symbol"),
     limit: int = Query(50, ge=1, le=100, description="Number of trades"),
     page: int = Query(1, ge=1, description="Page number"),
 ):
@@ -131,9 +151,15 @@ async def get_trade_statistics():
 
     if not trades:
         return TradeStatistics(
-            total_trades=0, winning_trades=0, losing_trades=0,
-            win_rate=0.0, total_pnl=0.0, avg_pnl=0.0,
-            max_win=0.0, max_loss=0.0, profit_factor=0.0,
+            total_trades=0,
+            winning_trades=0,
+            losing_trades=0,
+            win_rate=0.0,
+            total_pnl=0.0,
+            avg_pnl=0.0,
+            max_win=0.0,
+            max_loss=0.0,
+            profit_factor=0.0,
         )
 
     winning = [t for t in trades if t.pnl > 0]
@@ -155,7 +181,7 @@ async def get_trade_statistics():
     )
 
 
-@router.get("/by-strategy", response_model=List[StrategyPerformance])
+@router.get("/by-strategy", response_model=list[StrategyPerformance])
 async def get_trades_by_strategy():
     """Get trade performance grouped by strategy."""
     raw = _load_trades()
@@ -189,6 +215,7 @@ async def get_trades_by_strategy():
 # ClickHouse DB endpoints
 # ---------------------------------------------------------------------------
 
+
 def _query_ch(sql: str, params: dict | None = None) -> tuple[list, list]:
     """Execute a ClickHouse query and return (rows, column_types)."""
     from clickhouse_driver import Client as SyncClient
@@ -196,7 +223,9 @@ def _query_ch(sql: str, params: dict | None = None) -> tuple[list, list]:
     from shared.db.config import ClickHouseConfig
 
     cfg = ClickHouseConfig.from_env()
-    client = SyncClient(host=cfg.host, port=cfg.port, user=cfg.user, password=cfg.password)
+    client = SyncClient(
+        host=cfg.host, port=cfg.port, user=cfg.user, password=cfg.password
+    )
     try:
         return client.execute(sql, params or {}, with_column_types=True)
     finally:
@@ -219,14 +248,16 @@ def _empty_db_stats() -> dict[str, float]:
 @router.get("/rl/statistics")
 async def get_db_rl_statistics(
     asset_class: str = Query("futures"),
-    strategy: Optional[str] = Query(None),
+    strategy: str | None = Query(None),
 ):
     """Aggregate statistics from ClickHouse rl_trades table."""
     from shared.db.config import ClickHouseConfig
 
     asset_class = str(asset_class or "").strip().lower() or "futures"
     if asset_class not in {"stock", "futures", "all"}:
-        raise HTTPException(status_code=400, detail="asset_class must be stock, futures, or all")
+        raise HTTPException(
+            status_code=400, detail="asset_class must be stock, futures, or all"
+        )
 
     db = ClickHouseConfig.from_env().database
     where_clauses = []
@@ -261,14 +292,16 @@ async def get_db_rl_statistics(
     except InfrastructureError as e:
         raise HTTPException(status_code=503, detail=f"ClickHouse unavailable: {e}")
     except Exception as e:
-        raise HTTPException(status_code=503, detail=f"Database error: {type(e).__name__}")
+        raise HTTPException(
+            status_code=503, detail=f"Database error: {type(e).__name__}"
+        )
 
 
 @router.get("/rl")
 async def get_db_rl_trades(
     asset_class: str = Query("futures"),
-    strategy: Optional[str] = Query(None),
-    code: Optional[str] = Query(None),
+    strategy: str | None = Query(None),
+    code: str | None = Query(None),
     limit: int = Query(100, ge=1, le=500),
 ):
     """Recent RL closed trades from ClickHouse rl_trades table."""
@@ -276,7 +309,9 @@ async def get_db_rl_trades(
 
     asset_class = str(asset_class or "").strip().lower() or "futures"
     if asset_class not in {"stock", "futures", "all"}:
-        raise HTTPException(status_code=400, detail="asset_class must be stock, futures, or all")
+        raise HTTPException(
+            status_code=400, detail="asset_class must be stock, futures, or all"
+        )
 
     db = ClickHouseConfig.from_env().database
     where_clauses = []
@@ -308,4 +343,6 @@ async def get_db_rl_trades(
     except InfrastructureError as e:
         raise HTTPException(status_code=503, detail=f"ClickHouse unavailable: {e}")
     except Exception as e:
-        raise HTTPException(status_code=503, detail=f"Database error: {type(e).__name__}")
+        raise HTTPException(
+            status_code=503, detail=f"Database error: {type(e).__name__}"
+        )

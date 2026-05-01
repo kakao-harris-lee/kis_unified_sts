@@ -1,6 +1,23 @@
 """Test trading status endpoints."""
+
+from datetime import timedelta
+
 import pytest
 from httpx import ASGITransport, AsyncClient
+
+
+def test_parse_tz_aware_round_trip_through_naive():
+    """Same contract as trades.py: tz-aware UTC out, regardless of input."""
+    from services.dashboard.routes.trading import _parse_tz_aware
+
+    naive = _parse_tz_aware("2026-05-01T09:00:00")
+    assert naive.tzinfo is not None and naive.utcoffset() == timedelta(0)
+
+    aware = _parse_tz_aware("2026-05-01T18:00:00+09:00")
+    assert aware.tzinfo is not None and aware.hour == 9
+
+    fallback = _parse_tz_aware(None)
+    assert fallback.tzinfo is not None and fallback.utcoffset() == timedelta(0)
 
 
 @pytest.mark.asyncio
