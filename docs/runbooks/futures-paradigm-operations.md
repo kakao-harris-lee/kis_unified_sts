@@ -11,6 +11,7 @@ and the Grafana dashboards in `monitoring/grafana/dashboards/`.
 - [ ] No kill-switch sentinel: `! test -f /var/run/kis_kill_switch.tripped`
 - [ ] No position-recovery sentinel: `! test -f /var/run/kis_position_recovery.tripped`
 - [ ] Live-mode guard state matches intent: `redis-cli -n 1 get futures:live:suspended` returns `(nil)` for "live runs", or `1` for "paused"
+- [ ] Daily-trade counter from prior session expired (or absent): `redis-cli -n 1 get "order_router:daily_trades:$(TZ=Asia/Seoul date +%Y-%m-%d)"` returns `(nil)` at session start
 - [ ] Grafana **Futures Paradigm — Risk** dashboard: all 6 condition tiles green
 - [ ] Last 1h fills count sane on **Futures Paradigm — Overview** (no runaway order rate)
 
@@ -59,6 +60,13 @@ bash scripts/recover_positions_clear.sh
 
 # Tail order_router logs
 journalctl -u kis-order-router -f --since "1h ago"
+
+# Inspect today's Gate-3 daily-trade counter (KST date)
+redis-cli -n 1 get "order_router:daily_trades:$(TZ=Asia/Seoul date +%Y-%m-%d)"
+
+# Reset counter mid-day (use only with explicit reason — burns the audit
+# trail of how many orders we've placed today)
+redis-cli -n 1 del "order_router:daily_trades:$(TZ=Asia/Seoul date +%Y-%m-%d)"
 ```
 
 ## Escalation
