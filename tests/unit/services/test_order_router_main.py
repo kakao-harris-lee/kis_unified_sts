@@ -81,7 +81,14 @@ def pseudo_oco(fill_logger):
 
 
 def _make_daemon(
-    *, redis, kis, fill_logger, pseudo_oco, sentinel_path=None, live_mode_guard=None
+    *,
+    redis,
+    kis,
+    fill_logger,
+    pseudo_oco,
+    sentinel_path=None,
+    live_mode_guard=None,
+    locked_symbol=None,
 ):
     from shared.execution.passive_maker import PassiveMaker
 
@@ -99,6 +106,7 @@ def _make_daemon(
         passive_timeout_seconds=5,
         kill_switch_sentinel_path=sentinel_path,
         live_mode_guard=live_mode_guard,
+        locked_symbol=locked_symbol,
     )
 
 
@@ -357,3 +365,247 @@ async def test_live_mode_guard_none_back_compat(redis, kis, fill_logger, pseudo_
 
     kis.place_futures_order.assert_awaited_once()
     assert daemon.live_suspended_count == 0
+
+
+# -----------------------------------------------------------------------------
+# Phase 5 Gate-3 hard caps (symbol_lock / max_position_size / max_daily_trades)
+# -----------------------------------------------------------------------------
+
+
+def _signal_with_symbol(symbol: str, direction: str = "long") -> Signal:
+    """_signal() with a custom symbol (Signal is frozen, so build fresh)."""
+    return Signal(
+        setup_type="A_gap_reversion",
+        direction=direction,
+        symbol=symbol,
+        entry_price=331.20,
+        stop_loss=330.50,
+        take_profit=332.50,
+        confidence=0.85,
+        valid_until=datetime(2026, 4, 28, 6, 0, tzinfo=UTC),
+        generated_at=datetime(2026, 4, 28, 5, 0, tzinfo=UTC),
+    )
+
+
+@pytest.mark.asyncio
+async def test_symbol_lock_blocks_non_locked_symbol(
+    redis, kis, fill_logger, pseudo_oco
+):
+    """symbol_lock_enabled + signal.symbol mismatch → XACK skip."""
+    from shared.execution.live_mode_guard import LiveModeGuard
+
+    guard = LiveModeGuard(enabled=True, symbol_lock_enabled=True)
+    daemon = _make_daemon(
+        redis=redis,
+        kis=kis,
+        fill_logger=fill_logger,
+        pseudo_oco=pseudo_oco,
+        live_mode_guard=guard,
+        locked_symbol="A05603",  # front-month mini
+    )
+    # Signal for a different (e.g. expired) contract code
+    await _publish_final(redis, _signal_with_symbol("A05604"))
+
+    await _run_one_batch(daemon)
+
+    kis.place_futures_order.assert_not_awaited()
+    assert daemon.symbol_lock_blocked_count == 1
+
+
+@pytest.mark.asyncio
+async def test_symbol_lock_disabled_allows_other_symbols(
+    redis, kis, fill_logger, pseudo_oco
+):
+    """symbol_lock_enabled=False → mismatched symbol still routes."""
+    from shared.execution.live_mode_guard import LiveModeGuard
+
+    guard = LiveModeGuard(enabled=True, symbol_lock_enabled=False)
+    daemon = _make_daemon(
+        redis=redis,
+        kis=kis,
+        fill_logger=fill_logger,
+        pseudo_oco=pseudo_oco,
+        live_mode_guard=guard,
+        locked_symbol="A05603",
+    )
+    await _publish_final(redis, _signal_with_symbol("A05604"))
+
+    await _run_one_batch(daemon)
+
+    kis.place_futures_order.assert_awaited_once()
+    assert daemon.symbol_lock_blocked_count == 0
+
+
+@pytest.mark.asyncio
+async def test_symbol_lock_no_locked_symbol_is_noop(
+    redis, kis, fill_logger, pseudo_oco
+):
+    """locked_symbol=None disables the gate even with symbol_lock_enabled=True."""
+    from shared.execution.live_mode_guard import LiveModeGuard
+
+    guard = LiveModeGuard(enabled=True, symbol_lock_enabled=True)
+    daemon = _make_daemon(
+        redis=redis,
+        kis=kis,
+        fill_logger=fill_logger,
+        pseudo_oco=pseudo_oco,
+        live_mode_guard=guard,
+        locked_symbol=None,  # not configured → can't enforce
+    )
+    await _publish_final(redis, _signal("long"))
+
+    await _run_one_batch(daemon)
+
+    kis.place_futures_order.assert_awaited_once()
+    assert daemon.symbol_lock_blocked_count == 0
+
+
+@pytest.mark.asyncio
+async def test_position_size_cap_clamps_quantity(redis, kis, fill_logger, pseudo_oco):
+    """max_position_size_contracts=1 caps a 2-contract signal to 1."""
+    from shared.execution.live_mode_guard import LiveModeGuard
+    from shared.execution.passive_maker import PassiveMaker
+
+    guard = LiveModeGuard(enabled=True, max_position_size_contracts=1)
+    # Build daemon with base_quantity=2 so the un-capped quantity exceeds the cap.
+    passive = PassiveMaker(kis_client=kis, fill_logger=fill_logger)
+    daemon = OrderRouterDaemon(
+        redis=redis,
+        passive_maker=passive,
+        pseudo_oco=pseudo_oco,
+        contract_spec=_spec(),
+        final_stream=FINAL_STREAM,
+        consumer_group=GROUP,
+        worker_id="test-worker",
+        xread_block_ms=10,
+        batch_size=10,
+        passive_timeout_seconds=5,
+        base_quantity=2,
+        live_mode_guard=guard,
+    )
+    await _publish_final(redis, _signal("long"))
+
+    await _run_one_batch(daemon)
+
+    kwargs = kis.place_futures_order.call_args.kwargs
+    assert kwargs["quantity"] == 1
+    assert daemon.position_size_capped_count == 1
+
+
+@pytest.mark.asyncio
+async def test_daily_trade_cap_blocks_after_max_reached(
+    redis, kis, fill_logger, pseudo_oco
+):
+    """max_daily_trades=2 → 3rd signal of the day is XACK-skipped."""
+    from shared.execution.live_mode_guard import LiveModeGuard
+
+    guard = LiveModeGuard(enabled=True, max_daily_trades=2)
+    daemon = _make_daemon(
+        redis=redis,
+        kis=kis,
+        fill_logger=fill_logger,
+        pseudo_oco=pseudo_oco,
+        live_mode_guard=guard,
+    )
+    # Publish 3 signals
+    for i in range(3):
+        await _publish_final(redis, _signal("long"), signal_id=f"sig-{i}")
+
+    await _run_one_batch(daemon)
+
+    # First 2 placed, 3rd blocked
+    assert kis.place_futures_order.await_count == 2
+    assert daemon.daily_trade_blocked_count == 1
+
+
+@pytest.mark.asyncio
+async def test_daily_trade_counter_sets_ttl_on_first_incr(
+    redis, kis, fill_logger, pseudo_oco
+):
+    """First INCR of the day → TTL set so the counter expires at next KST midnight."""
+    from services.order_router.main import _DAILY_TRADE_KEY_PREFIX, _kst_date_key
+    from shared.execution.live_mode_guard import LiveModeGuard
+
+    guard = LiveModeGuard(enabled=True, max_daily_trades=10)
+    daemon = _make_daemon(
+        redis=redis,
+        kis=kis,
+        fill_logger=fill_logger,
+        pseudo_oco=pseudo_oco,
+        live_mode_guard=guard,
+    )
+    await _publish_final(redis, _signal("long"))
+
+    await _run_one_batch(daemon)
+
+    counter_key = f"{_DAILY_TRADE_KEY_PREFIX}{_kst_date_key()}"
+    ttl = await redis.ttl(counter_key)
+    # TTL must be set (>0) and ≤ 24h
+    assert 0 < ttl <= 86_400
+
+
+@pytest.mark.asyncio
+async def test_daily_trade_redis_failure_fails_open(
+    redis, kis, fill_logger, pseudo_oco
+):
+    """Redis INCR failure → log + allow (kill_switch is the primary safety net)."""
+    from unittest.mock import patch
+
+    from shared.execution.live_mode_guard import LiveModeGuard
+
+    guard = LiveModeGuard(enabled=True, max_daily_trades=2)
+    daemon = _make_daemon(
+        redis=redis,
+        kis=kis,
+        fill_logger=fill_logger,
+        pseudo_oco=pseudo_oco,
+        live_mode_guard=guard,
+    )
+    await _publish_final(redis, _signal("long"))
+
+    # Patch the INCR call to raise; xadd / xreadgroup / xack still work.
+    original_incr = redis.incr
+
+    async def _broken_incr(*a, **kw):
+        raise Exception("simulated redis outage")
+
+    with patch.object(redis, "incr", side_effect=_broken_incr):
+        await _run_one_batch(daemon)
+
+    # Fail-open: order still placed
+    kis.place_futures_order.assert_awaited_once()
+    assert daemon.daily_trade_blocked_count == 0
+    # Restore for any later tests using the same fixture
+    redis.incr = original_incr
+
+
+def test_kst_date_key_format():
+    """KST-date helper returns ISO YYYY-MM-DD."""
+    from datetime import datetime
+
+    from services.order_router.main import _kst_date_key
+
+    # 2026-04-30 23:00 UTC = 2026-05-01 08:00 KST
+    utc_ts = datetime(2026, 4, 30, 23, 0, tzinfo=UTC)
+    assert _kst_date_key(utc_ts) == "2026-05-01"
+
+
+def test_seconds_until_next_kst_midnight_floors_at_60():
+    """At 23:59:59 KST, TTL still ≥ 60s (no zero-second TTL)."""
+    from datetime import datetime
+
+    from services.order_router.main import _seconds_until_next_kst_midnight
+
+    # 2026-05-01 14:59:59 UTC = 2026-05-01 23:59:59 KST
+    utc_ts = datetime(2026, 5, 1, 14, 59, 59, tzinfo=UTC)
+    assert _seconds_until_next_kst_midnight(utc_ts) >= 60
+
+
+def test_seconds_until_next_kst_midnight_caps_at_24h():
+    """TTL is bounded to ≤ 86400s even on weird clock skew."""
+    from datetime import datetime
+
+    from services.order_router.main import _seconds_until_next_kst_midnight
+
+    utc_ts = datetime(2026, 5, 1, 0, 0, tzinfo=UTC)
+    assert _seconds_until_next_kst_midnight(utc_ts) <= 86_400
