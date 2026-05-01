@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 from collections import deque
 from dataclasses import dataclass, field
-from datetime import datetime, time, timedelta, timezone
+from datetime import UTC, datetime, time, timedelta
 from enum import Enum
 from typing import Any
 
@@ -220,7 +220,7 @@ def parse_orderbook_snapshot(
         close = (ask + bid) / 2.0
 
     timestamp = (
-        _parse_timestamp(payload.get("timestamp")) or now or datetime.now(timezone.utc)
+        _parse_timestamp(payload.get("timestamp")) or now or datetime.now(UTC)
     )
 
     return OrderBookSnapshot(
@@ -267,14 +267,14 @@ class FuturesSlippageController:
         """Register trade tick for volatility baseline."""
         if price <= 0:
             return
-        ts = timestamp or datetime.now(timezone.utc)
+        ts = timestamp or datetime.now(UTC)
         # `_cooldown_until` is later compared against UTC-aware ts in
         # `evaluate_entry`. Normalize here so a naive caller doesn't poison
         # the dict with mixed-tz values.
         if ts.tzinfo is None:
-            ts = ts.replace(tzinfo=timezone.utc)
+            ts = ts.replace(tzinfo=UTC)
         else:
-            ts = ts.astimezone(timezone.utc)
+            ts = ts.astimezone(UTC)
 
         previous = self._last_trade_price.get(symbol)
         self._last_trade_price[symbol] = price
@@ -315,11 +315,11 @@ class FuturesSlippageController:
         # Defensive tz normalization: callers historically passed naive
         # `datetime.now()` for the `now` arg and naive `signal_timestamp`s.
         # All arithmetic happens in UTC; naive inputs are interpreted as UTC.
-        ts = now or datetime.now(timezone.utc)
+        ts = now or datetime.now(UTC)
         if ts.tzinfo is None:
-            ts = ts.replace(tzinfo=timezone.utc)
+            ts = ts.replace(tzinfo=UTC)
         else:
-            ts = ts.astimezone(timezone.utc)
+            ts = ts.astimezone(UTC)
         transitions = [
             StateTransition(state=ExecutionState.NEW, at=ts),
             StateTransition(state=ExecutionState.FILTERING, at=ts),
@@ -327,9 +327,9 @@ class FuturesSlippageController:
 
         stale_seconds = max(0.1, self.config.max_signal_age_seconds)
         sig_ts = (
-            signal_timestamp.replace(tzinfo=timezone.utc)
+            signal_timestamp.replace(tzinfo=UTC)
             if signal_timestamp.tzinfo is None
-            else signal_timestamp.astimezone(timezone.utc)
+            else signal_timestamp.astimezone(UTC)
         )
         signal_age = (ts - sig_ts).total_seconds()
         if signal_age > stale_seconds:
@@ -446,7 +446,7 @@ class FuturesSlippageController:
         now: datetime | None = None,
     ) -> EntryDecision:
         """Evaluate timeout path: retry once at market or cancel."""
-        ts = now or datetime.now(timezone.utc)
+        ts = now or datetime.now(UTC)
         transitions = [
             StateTransition(state=ExecutionState.PASSIVE_TIMEOUT, at=ts),
         ]
@@ -597,12 +597,12 @@ def _parse_timestamp(value: Any) -> datetime | None:
 
     if isinstance(value, datetime):
         if value.tzinfo is None:
-            return value.replace(tzinfo=timezone.utc)
-        return value.astimezone(timezone.utc)
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
 
     if isinstance(value, (int, float)):
         try:
-            return datetime.fromtimestamp(float(value), tz=timezone.utc)
+            return datetime.fromtimestamp(float(value), tz=UTC)
         except (TypeError, OSError, ValueError):
             return None
 
@@ -610,9 +610,9 @@ def _parse_timestamp(value: Any) -> datetime | None:
         try:
             dt = datetime.fromisoformat(value)
             if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
+                dt = dt.replace(tzinfo=UTC)
             else:
-                dt = dt.astimezone(timezone.utc)
+                dt = dt.astimezone(UTC)
             return dt
         except ValueError:
             return None

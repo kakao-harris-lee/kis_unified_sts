@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from shared.ml.rl.baseline_snapshot import (
@@ -40,7 +40,7 @@ def test_build_baseline_snapshot_includes_core_sections(tmp_path: Path):
         },
         source_config_path="ml/rl_mppo.yaml",
         repo_root=tmp_path,
-        generated_at=datetime(2026, 3, 10, tzinfo=timezone.utc),
+        generated_at=datetime(2026, 3, 10, tzinfo=UTC),
         git_sha="abc123",
         experiment_name="phase0_test",
     )
@@ -80,7 +80,7 @@ def test_render_and_write_baseline_snapshot(tmp_path: Path):
         },
         source_config_path="ml/rl_mppo.yaml",
         repo_root=tmp_path,
-        generated_at=datetime(2026, 3, 10, tzinfo=timezone.utc),
+        generated_at=datetime(2026, 3, 10, tzinfo=UTC),
         git_sha="abc123",
     )
 

@@ -17,7 +17,7 @@ import json
 import logging
 import os
 import time as _time
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from typing import Any
 
 import redis
@@ -66,9 +66,9 @@ def _tz_aware_iso(dt: datetime | None) -> str:
     If *dt* is naive (no tzinfo), assumes UTC and attaches it.
     """
     if dt is None:
-        dt = datetime.now(timezone.utc)
+        dt = datetime.now(UTC)
     elif dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
+        dt = dt.replace(tzinfo=UTC)
     return dt.isoformat()
 
 
@@ -411,7 +411,7 @@ class TradingStatePublisher:
                 "total_equity": total_equity,
             }
             score = datetime.combine(as_of, datetime.min.time()).replace(
-                tzinfo=timezone.utc
+                tzinfo=UTC
             ).timestamp()
             r.zadd(key, {json.dumps(snapshot): score})
             r.expire(key, EQUITY_TIMELINE_TTL_SECONDS)
