@@ -1,7 +1,8 @@
 # LLM-primary 의사결정 + RL 축소 통합 계획
 
-**Status**: Draft v1 — 운영자 검토 필요
+**Status**: v2 — 운영자 §7 결정 반영 완료, Phase 0 착수 가능
 **Created**: 2026-05-03
+**Updated**: 2026-05-03 (운영자 결정 반영, v1 → v2)
 **Author**: 엔지니어링 (운영자 결정 반영)
 **Parent**: `docs/plans/2026-04-20-futures-paradigm-master.md`
 **Related**:
@@ -70,13 +71,15 @@
 
 ### 2.3 LLM 의사결정 관여 확장
 
-| 단계 | LLM 출력 | 의사결정 영향 |
-|------|---------|--------------|
-| 현재 (주식) | universe quality score (배치) | fusion_ranker 0.35 가중 |
-| 현재 (선물) | premarket/intraday/close briefing | 사람만 봄, 시스템 직접 사용 X |
-| **Phase 1 (목표)** | `MarketContext.regime/risk_score/risk_mode` 정기 갱신 | Setup A/C **threshold 동적 조정** + RL action mask 보조 |
-| **Phase 2** | LLM-기반 setup confidence override | risk_filter `block` 결정에 LLM veto 권한 |
-| **Phase 3** | LLM-기반 size scaler | `llm_adaptive_sizer` 선물 적용 |
+운영자 §7-1 결정: **권한 범위 모두 부여** — threshold + veto + size scaling을 모두 LLM이 행사 가능. 단, 안전상 Phase 1 안에서 1.1 → 1.2 → 1.3 순서로 점진 도입.
+
+| 단계 | LLM 출력 | 의사결정 영향 | 운영자 권한 |
+|------|---------|--------------|-----------|
+| 현재 (주식) | universe quality score (배치) | fusion_ranker 0.35 가중 | 기존 |
+| 현재 (선물) | premarket/intraday/close briefing | 사람만 봄, 시스템 직접 사용 X | 기존 |
+| **Phase 1.1** | `MarketContext.regime/risk_score/risk_mode` 1h 갱신 | Setup A/C **threshold 동적 조정** | ✅ |
+| **Phase 1.2** | LLM-기반 setup confidence override | `risk_filter`의 `block` 결정에 LLM **veto 권한** | ✅ |
+| **Phase 1.3** | LLM-기반 size scaler | `llm_adaptive_sizer` 선물 적용 | ✅ |
 
 ---
 
@@ -122,28 +125,47 @@
 
 **Exit**: paper validation 데이터 클린 + 운영자가 Phase 1 착수 승인.
 
-### Phase 1 — LLM 컨텍스트 → Setup A/C 직접 주입 (2–3주)
+### Phase 1 — LLM 컨텍스트 → Setup A/C 직접 주입 (3–4주, 1.1 → 1.2 → 1.3 순서)
 
-**목표**: LLM `MarketContext`를 Setup A/C 규칙의 threshold/필터에 연결
+**목표**: LLM `MarketContext`를 Setup A/C 규칙의 threshold/필터/사이즈에 연결.
+운영자 §7-1: 권한 모두 부여. 안전상 점진 도입.
+운영자 §7-2: 갱신 주기 **1h**. on-demand 추가 갱신은 Setup signal 발생 시에만.
 
-- [ ] `services/decision_engine/main.py`에 `LLMContextProvider("futures")` 주입 (현재 stock만 사용)
+#### Phase 1.1 — Threshold tuning (1주)
+- [ ] `services/trading/llm_context_provider.py` — `asset_class="futures"` 분기 추가
+- [ ] `services/decision_engine/main.py`에 `LLMContextProvider("futures")` 주입
+- [ ] LLM 컨텍스트 갱신 주기 **1h** + Setup signal trigger 시 on-demand
 - [ ] Setup A (gap reversion):
   - `risk_mode == RISK_OFF` + `risk_score > 75` → entry confidence threshold ×1.3
   - `regime IN [BEAR_STRONG, BEAR_MODERATE]` → long-bias 차단, short-only
 - [ ] Setup C (volatility breakout):
   - `regime == BULL_STRONG` + `risk_mode == RISK_ON` → ATR breakout multiplier ↓ (관대)
-  - `confidence < 0.4` (LLM 자체 신뢰도) → setup C signal pass-through 무시
-- [ ] `config/strategies/futures/setup_a.yaml`, `setup_c.yaml` 신규 (Setup별 LLM-aware threshold 값)
-- [ ] 신규 단위 테스트:
-  - LLM 컨텍스트 부재 시 fallback (graceful degradation)
-  - regime별 threshold 조정 작동
-  - `MarketContext.confidence < 0.3`이면 LLM override skip
+- [ ] `config/strategies/futures/setup_a.yaml`, `setup_c.yaml` 신규
+- [ ] 단위 테스트: LLM 부재 fallback, regime별 threshold 조정, `confidence < 0.3` skip
 
-**측정 지표**:
-- Setup A/C signal/day vs LLM 컨텍스트 정합성
-- LLM-veto된 signal의 counterfactual PnL (`signals_all.executed=0` + `skip_reason=llm_veto`)
+#### Phase 1.2 — Veto 권한 (1주)
+- [ ] `services/risk_filter/main.py` — LLM veto 입력 추가
+  - `MarketContext.confidence ≥ 0.6` AND (`overall_signal == STRONG_BEARISH` for long entry / `STRONG_BULLISH` for short entry) → setup signal `block` with `skip_reason=llm_veto`
+  - veto는 entry만, exit/stop은 LLM이 막을 수 없음 (안전)
+- [ ] `signals_all`에 `executed=0 + skip_reason=llm_veto`로 기록 (counterfactual 측정용)
+- [ ] 단위 테스트: veto 발화 조건, exit는 veto 대상 아님
 
-**Exit**: paper에서 Setup A 일 평균 ≥ 1 trade, Setup C 주 평균 ≥ 1 trade. LLM-veto된 신호의 counterfactual PnL이 실행분보다 통계적으로 나쁘지 않음.
+#### Phase 1.3 — Size scaling (1주)
+- [ ] `shared/strategy/position/llm_adaptive_sizer.py`를 선물 신호 경로에 연결
+  - `risk_score ≤ 30` → quantity ×1.0 (만점)
+  - `30 < risk_score ≤ 60` → quantity ×0.7
+  - `60 < risk_score ≤ 80` → quantity ×0.4
+  - `risk_score > 80` → quantity ×0 (entry skip, exit/stop은 정상)
+- [ ] Phase 5 ladder caps(`futures_live.max_position_size_contracts`)는 항상 우선 — LLM size는 그 안에서만
+- [ ] 단위 테스트: ladder cap이 LLM scale을 압도하는 케이스, scale 0일 때 entry skip
+
+#### Phase 1 종합 paper validation (1주)
+- [ ] paper 1주 후 측정 지표:
+  - Setup A/C signal/day vs LLM regime 정합성
+  - LLM-veto signals의 counterfactual PnL (실행분과 비교)
+  - Size scaling이 적용된 trades 평균 손실 vs 미적용 케이스 (synthetic)
+
+**Exit**: paper에서 Setup A 일 평균 ≥ 1 trade, Setup C 주 평균 ≥ 1 trade. LLM-veto된 신호의 counterfactual PnL이 실행분보다 통계적으로 나쁘지 않음. Size scaling이 평균 trade PnL을 악화시키지 않음.
 
 ### Phase 2 — RL 메인 → shadow 강등 (1주)
 
@@ -161,16 +183,28 @@
 
 **Exit**: Phase 5 Gate 1 게이트(2주 paper extension) Setup A/C 기반으로 누적, RL 매매 0건 확인.
 
-### Phase 3 — Phase 5 Gate 2/3 (운영자 영역, 2–6주)
+### Phase 3 — Phase 5 Gate 2/3 (운영자 영역, 빠른 진입 정책)
 
-**목표**: 운영자 게이트 통과 후 실거래 1계약 진입
+**목표**: 운영자 게이트 통과 후 실거래 1계약 진입.
+운영자 §7-5 결정: **빠르게 진입** — Phase 2(RL shadow 강등)와 **병행** 진행. Phase 1.1 완료 + paper 1주 안정성 확인 후 즉시 Gate 2 운영자 영역 시작.
 
-- [ ] PR #158이 정비한 `futures-legal-review.md` §1–6 운영자 작성 (KIS counsel/세무사)
-- [ ] `config/futures_live.yaml::enabled: true` 플립 (운영자 명시 액션)
-- [ ] systemd 4개 unit production install
-- [ ] Gate 3: 1계약 × 14일 검증 (`docs/runbooks/phase5-verification.md` §Gate 3)
+| 트랙 | 시작 시점 | 종료 조건 |
+|------|---------|---------|
+| Track A — 운영자 게이트 | Phase 1.1 완료 + paper 1주 | Gate 3 14일 통과 |
+| Track B — 엔지니어링 (Phase 1.2/1.3, Phase 2) | 동일 시점, 병렬 | Phase 2 exit |
+
+#### Track A 작업 (운영자 + 엔지니어링 보조)
+- [ ] **즉시 시작**: `futures-legal-review.md` §1–6 운영자 작성 (KIS counsel/세무사) — PR #158이 정비한 항목 그대로 채움
+- [ ] KIS Real-account API smoke test (production TR ID, balance, WebSocket on real)
+- [ ] 증거금 입금 (≈ 2M KRW)
+- [ ] position-recovery 드릴 (Redis 키 인위 삭제 → sentinel/Telegram 발생 검증)
+- [ ] systemd 4개 unit production install (`kis-decision-engine`, `kis-risk-filter`, `kis-order-router`, `kis-kill-switch`)
+- [ ] `config/futures_live.yaml::enabled: true` 플립 (운영자 명시 액션, 위 모두 완료 후)
+- [ ] Gate 3: 1계약 × 14일 (`docs/runbooks/phase5-verification.md` §Gate 3)
 
 **Exit**: 14일 Gate 3 조건 충족 + 운영자 서면 승인.
+
+**병행 안전장치**: Track B의 Phase 1.2/1.3이 Track A의 Gate 3 윈도우 중 발생할 수 있음 — Gate 3 14일 측정 윈도우 동안 LLM 권한 확장(veto/size)을 새로 활성화하지 않음. Phase 1.2/1.3은 paper에서만 검증 후 Gate 4로 도입.
 
 ### Phase 4 — RL aux 필터 활성화 검토 (Phase 3 후 +3개월)
 
@@ -220,62 +254,55 @@
 
 ---
 
-## 7. 결정 필요 사항 (운영자)
+## 7. 운영자 결정 (2026-05-03 확정)
 
-이 계획서를 작업으로 진입시키기 전 운영자 답변 필요:
-
-1. **LLM 의사결정 권한 범위**:
-   - (a) threshold 조정만 — 안전, 보수적
-   - (b) (a) + setup signal veto — 중간
-   - (c) (b) + size scaling — 적극
-   - 본 계획은 **(a) → (b) → (c) 점진 도입**을 가정. 동의?
-
-2. **Phase 1 LLM 컨텍스트 갱신 주기**:
-   - 1시간 (현재 intraday refresh와 동일, 비용 ↓)
-   - 15분 (좀 더 반응성, 비용 ↑)
-   - 본 계획은 **1시간 기본 + Setup signal 발생 시 on-demand 추가 갱신** 가정. 동의?
-
-3. **RL shadow 보존 기간**:
-   - 3개월 / 6개월 / 영구. 본 계획은 **6개월** 가정.
-
-4. **Phase 4 RL aux 활성화 조건**:
-   - v2 계획 그대로(EV+ 3개월) / 단축(2개월) / 단축 + LLM-aware 변수 추가
-   - 본 계획은 **v2 그대로**.
-
-5. **Phase 5 Gate 2/3 진입 시기 결정권**:
-   - Phase 0–2 결과를 보고 운영자가 결정
-   - 자동 trigger 없음 — 사람-결정 게이트
+| # | 항목 | 결정 | 본 계획 반영 |
+|---|------|------|------------|
+| 1 | LLM 의사결정 권한 범위 | **모두** (threshold + veto + size) | §2.3, Phase 1.1 → 1.2 → 1.3 점진 도입 |
+| 2 | LLM 컨텍스트 갱신 주기 | **1h** (+ Setup signal trigger 시 on-demand) | Phase 1.1 작업 항목 |
+| 3 | RL shadow 보존 기간 | **6개월** | §5 위험 완화 + Phase 2 |
+| 4 | Phase 4 RL aux 활성화 조건 | **v2 계획 그대로** (EV+ 3개월, Setup별 trade ≥ 50) | Phase 4 |
+| 5 | Gate 2/3 진입 시점 | **빠르게 진입** — Phase 2와 병행 | Phase 3 Track A/B 분리 |
 
 ---
 
 ## 8. 작업 분해 (Phase 1 상세)
 
-Phase 1만 사전 분해 (Phase 2+는 Phase 1 결과 보고 다시 분해):
+Phase 1만 사전 분해. Phase 2/3은 Phase 1 결과 보고 다시 분해.
 
-### 1.1 LLMContextProvider 선물 도입 (3일)
-- `services/trading/llm_context_provider.py` — `asset_class="futures"` 분기 추가
-- `config/llm.yaml` 선물 전용 prompt template
-- 단위 테스트
+### Phase 1.1 — Threshold tuning (1주)
+- **1.1-a** (1일): `services/trading/llm_context_provider.py` — `asset_class="futures"` 분기 + 선물 prompt template (`config/llm.yaml`)
+- **1.1-b** (2일): `LLMContextPublisher` 1h 갱신 주기 + Setup signal on-demand trigger
+- **1.1-c** (2일): `services/decision_engine/main.py` — `LLMContextProvider("futures")` 주입 + Setup A 분기에 regime/risk_score 기반 threshold scaling
+- **1.1-d** (1일): Setup C 분기 (동일 구조)
+- **1.1-e** (1일): `config/strategies/futures/setup_a.yaml`, `setup_c.yaml` 신규 + 단위 테스트 (LLM 부재 fallback, regime별 조정, `confidence < 0.3` skip)
 
-### 1.2 Setup A LLM-aware threshold (5일)
-- `services/decision_engine/main.py` — Setup A 분기에 MarketContext 주입
-- `config/strategies/futures/setup_a.yaml` 신규 (LLM-aware threshold 값)
-- regime/risk_score 기반 threshold scaling
-- 통합 테스트 (LLM mock + Setup signal generation)
+### Phase 1.2 — Veto 권한 (1주)
+- **1.2-a** (2일): `services/risk_filter/main.py` — LLM veto 입력 + entry-only 가드 (exit/stop은 veto 대상 아님)
+- **1.2-b** (1일): `signals_all.executed=0 + skip_reason=llm_veto` 기록 + 테이블 마이그레이션 (필요 시)
+- **1.2-c** (1일): Telegram alert (veto 발화 시 — 운영자 가시성)
+- **1.2-d** (1일): 단위/통합 테스트
 
-### 1.3 Setup C LLM-aware threshold (5일)
-- 1.2와 동일 구조, Setup C 분기
+### Phase 1.3 — Size scaling (1주)
+- **1.3-a** (2일): `shared/strategy/position/llm_adaptive_sizer.py` 선물 신호 경로 연결
+- **1.3-b** (1일): Phase 5 ladder cap 우선순위 보장 (`futures_live.max_position_size_contracts`가 항상 hard cap)
+- **1.3-c** (1일): 단위 테스트 (ladder cap 우선, scale 0 → entry skip)
 
-### 1.4 graceful degradation + 모니터링 (3일)
-- LLM stale → safe defaults
-- Grafana panel: "LLM regime distribution" + "Setup signals by regime"
-- Telegram alert: LLM context staleness > 30min
+### Phase 1 종합 (1주)
+- **paper validation**: 1주 paper 가동 후 측정 지표 수집
+- **graceful degradation 검증**: LLM API 인위 중단 → safe defaults 동작
+- **Grafana panel 추가**: "LLM regime distribution" + "Setup signals by regime" + "Veto rate" + "Size scale factor"
+- **Telegram alert**: LLM context staleness > 30min, veto 발화
 
-### 1.5 paper validation (5일)
-- 1주 paper 가동 후 측정 지표 수집
-- 운영자 보고
+**Phase 1 총 ~4주** (1.1-1.3 병렬 가능 영역 있어 단축 여지 있음).
 
-**Phase 1 총 ~3주** (병렬 가능 영역 있어 단축 여지 있음).
+### Phase 3 Track A 동시 시작 작업 (운영자 + 엔지니어링 보조)
+Phase 1.1 완료 + paper 1주 안정성 확인 즉시 (운영자 §7-5 결정):
+- 운영자: `futures-legal-review.md` §1–6 작성 (KIS counsel/세무사)
+- 엔지니어링: KIS Real-account smoke test 스크립트 + position-recovery drill 스크립트 정비
+- 운영자: 증거금 입금 + commission rate 갱신
+- 엔지니어링: systemd 4개 unit 배포 패키지 (production install 안내 문서)
+- 운영자: `config/futures_live.yaml::enabled: true` 플립 + Gate 3 14일 모니터링
 
 ---
 
@@ -283,6 +310,7 @@ Phase 1만 사전 분해 (Phase 2+는 Phase 1 결과 보고 다시 분해):
 
 | 일자 | 변경 |
 |------|------|
-| 2026-05-03 | v1 초안 작성 (이 문서) |
-| TBD | 운영자 §7 결정 → v2 |
+| 2026-05-03 | v1 초안 작성 |
+| 2026-05-03 | **v2** — 운영자 §7 결정 5건 반영. Phase 1을 1.1/1.2/1.3 분해, Phase 3을 Phase 2와 병행 Track A/B 분리 |
 | TBD | Phase 0 시작 (PR #159 머지 후) |
+| TBD | Phase 1.1 시작 + Phase 3 Track A 동시 출발 |
