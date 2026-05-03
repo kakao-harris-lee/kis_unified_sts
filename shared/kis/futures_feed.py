@@ -11,8 +11,9 @@ import asyncio
 import logging
 import threading
 import time
-from datetime import datetime
-from typing import Any, Callable, Optional
+from collections.abc import Callable
+from datetime import UTC, datetime
+from typing import Any
 
 from shared.collector.models import TickData
 from shared.config.loader import ConfigLoader
@@ -83,7 +84,7 @@ class KISFuturesPriceFeed:
         self._symbols: list[str] = []
         self._auxiliary_symbols: list[str] = []
         self._running = False
-        self._thread: Optional[threading.Thread] = None
+        self._thread: threading.Thread | None = None
         self._first_tick_logged = False
         self._first_orderbook_logged = False
 
@@ -340,10 +341,15 @@ class KISFuturesPriceFeed:
             )
 
         if self._tick_callback:
+            # tz-aware UTC: tick.timestamp is a Unix epoch (UTC seconds);
+            # downstream (indicator_engine, paper_broker, slippage_control)
+            # treats incoming ts as authoritative and compares against
+            # tz-aware UTC. Naive datetimes here cascade into "can't compare
+            # offset-naive and offset-aware" inside pipeline retries.
             try:
-                ts = datetime.fromtimestamp(tick.timestamp)
+                ts = datetime.fromtimestamp(tick.timestamp, UTC)
             except (OSError, ValueError, TypeError):
-                ts = datetime.now()
+                ts = datetime.now(UTC)
             try:
                 self._tick_callback(tick.symbol, payload, ts)
             except Exception as e:

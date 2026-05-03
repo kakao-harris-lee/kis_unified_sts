@@ -28,8 +28,9 @@ import logging
 import queue
 import threading
 import time
-from datetime import datetime
-from typing import Any, Callable, Optional
+from collections.abc import Callable
+from datetime import UTC, datetime
+from typing import Any
 
 import websocket
 from Crypto.Cipher import AES
@@ -64,7 +65,7 @@ def _load_feed_config() -> dict[str, Any]:
         return {}
 
 
-def _parse_stock_trade(data: str) -> Optional[dict[str, Any]]:
+def _parse_stock_trade(data: str) -> dict[str, Any] | None:
     """Parse H0STCNT0 stock trade data into price dict.
 
     Returns dict compatible with MarketDataSource protocol (same schema
@@ -151,18 +152,18 @@ class KISStockPriceFeed:
         self._symbol_tick_ts: dict[str, float] = {}
 
         # WebSocket state
-        self._ws: Optional[websocket.WebSocketApp] = None
-        self._ws_thread: Optional[threading.Thread] = None
-        self._proc_thread: Optional[threading.Thread] = None
+        self._ws: websocket.WebSocketApp | None = None
+        self._ws_thread: threading.Thread | None = None
+        self._proc_thread: threading.Thread | None = None
         self._running = False
         self._connected = threading.Event()
 
         # Approval key for WebSocket subscription
-        self._approval_key: Optional[str] = None
+        self._approval_key: str | None = None
 
         # AES decryption
-        self._aes_key: Optional[bytes] = None
-        self._aes_iv: Optional[bytes] = None
+        self._aes_key: bytes | None = None
+        self._aes_iv: bytes | None = None
 
         # Message queue
         self._queue: queue.Queue = queue.Queue(maxsize=queue_maxsize)
@@ -536,12 +537,13 @@ class KISStockPriceFeed:
                             self._symbol_tick_ts[parsed["code"]] = self._last_tick_ts
                         # Per-tick callback (outside lock to prevent deadlock)
                         if self._tick_callback:
+                            # tz-aware UTC: see futures_feed.py for rationale.
                             try:
                                 tick_ts = datetime.fromtimestamp(
-                                    parsed.get("timestamp", time.time())
+                                    parsed.get("timestamp", time.time()), UTC
                                 )
                             except (OSError, ValueError, TypeError):
-                                tick_ts = datetime.now()
+                                tick_ts = datetime.now(UTC)
                             try:
                                 self._tick_callback(parsed["code"], parsed, tick_ts)
                             except Exception as e:

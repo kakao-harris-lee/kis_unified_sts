@@ -21,7 +21,7 @@ import asyncio
 import logging
 import random
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
@@ -226,8 +226,14 @@ class MarketDataCache:
     indicators: dict[str, float] = field(default_factory=dict)
 
     def is_stale(self, ttl_seconds: float) -> bool:
-        """Check if cache is stale"""
-        age = (datetime.now() - self.fetched_at).total_seconds()
+        """Check if cache is stale (tz-aware-safe)."""
+        fetched = self.fetched_at
+        if fetched.tzinfo is None:
+            now = datetime.now()
+        else:
+            now = datetime.now(UTC)
+            fetched = fetched.astimezone(UTC)
+        age = (now - fetched).total_seconds()
         return age > ttl_seconds
 
 
@@ -562,7 +568,7 @@ class MarketDataProvider:
                     )
                     if price_data:
                         result[symbol] = price_data
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     logger.warning(f"Timeout fetching {symbol}")
                 except (NetworkError, APIError) as e:
                     logger.warning(f"Error fetching {symbol}: {e}")
@@ -592,7 +598,7 @@ class MarketDataProvider:
                         timeout=self.config.fetch_timeout_seconds,
                     )
                     return (symbol, price_data)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     logger.warning(f"Timeout fetching {symbol}")
                     return (symbol, None)
                 except (NetworkError, APIError) as e:
@@ -617,7 +623,7 @@ class MarketDataProvider:
                     asyncio.gather(*tasks, return_exceptions=True),
                     timeout=batch_timeout,
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.error(f"Batch fetch timeout after {batch_timeout}s for {len(batch)} symbols")
                 results = []  # Skip this batch on timeout
 
@@ -961,7 +967,7 @@ class MarketDataProvider:
                     await asyncio.wait_for(self._fallback_poll_task, timeout=1.0)
                 except asyncio.CancelledError:
                     pass
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     logger.warning("REST polling task did not cancel within timeout")
                 logger.info("Stopped REST polling task")
             except Exception as e:
