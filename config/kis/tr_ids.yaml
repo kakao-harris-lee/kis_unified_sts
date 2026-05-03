@@ -1,0 +1,41 @@
+# KIS API TR ID 단일 출처 (Single Source of Truth)
+#
+# Phase 5 Gate-2 prep: 운영자가 KIS 계좌 매니저와 함께 각 행을 검증한 뒤
+# config/futures_live.yaml::enabled 를 true 로 플립한다.
+# Spec: docs/runbooks/futures-legal-review.md §3
+#
+# 키 이름은 shared/execution/tr_ids.py 의 _DEFAULTS 와 1:1 매핑된다.
+# 이 파일이 없거나 일부 키가 누락되면 ExecutionConfig 의 default 값이 사용된다.
+
+kis_tr_ids:
+  stock:
+    # KRX 정규 시장 (주식 현물)
+    krx:
+      buy_mock: "VTTC0802U"
+      buy_real: "TTTC0802U"
+      sell_mock: "VTTC0801U"
+      sell_real: "TTTC0801U"
+    # ATS (대체거래소 — 넥스트레이드, 2025-03 출범)
+    ats:
+      buy_mock: "VTTC0852U"
+      buy_real: "TTTC0852U"
+      sell_mock: "VTTC0851U"
+      sell_real: "TTTC0851U"
+
+  # 국내선물옵션 (KOSPI200 선물 / mini)
+  futures:
+    # 주문 제출
+    order:
+      day_mock: "VTTO1101U"
+      day_real: "TTTO1101U"
+      night_real: "STTN1101U"
+    # 주문 취소
+    cancel:
+      day_mock: "VTTO1103U"
+      day_real: "TTTO1103U"
+      night_real: "STTN1103U"
+    # 체결 조회
+    inquire:
+      day_mock: "VTTO5201R"
+      day_real: "TTTO5201R"
+      night_real: "STTN5201R"

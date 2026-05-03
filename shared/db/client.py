@@ -111,8 +111,8 @@ SCHEMAS = {
         ) ENGINE = MergeTree()
         PARTITION BY toYYYYMM(exit_date)
         ORDER BY (asset_class, strategy, exit_date, id)
-        TTL exit_date + INTERVAL 180 DAY
-        COMMENT 'Closed futures RL trade records. Stocks use stock_trades (separate table).'
+        TTL exit_date + INTERVAL 5 YEAR
+        COMMENT 'Closed futures RL trade records. Stocks use stock_trades (separate table). 5-year retention matches order_fills (Phase 5 legal-review §5).'
     """,
     "stock_trades": """
         CREATE TABLE IF NOT EXISTS {database}.stock_trades (
