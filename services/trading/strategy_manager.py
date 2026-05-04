@@ -27,13 +27,18 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from shared.exceptions import ConfigurationError, TradingSystemError
 from shared.models.position import Position
 from shared.models.signal import ExitSignal, Signal
-from shared.strategy.base import EntryContext, ExitContext, MarketStateProtocol, TradingStrategy
+from shared.strategy.base import (
+    EntryContext,
+    ExitContext,
+    MarketStateProtocol,
+    TradingStrategy,
+)
 from shared.strategy.filters import CostFilter, CostFilterConfig
 from shared.strategy.registry import (
     StrategyFactory,
@@ -588,7 +593,9 @@ class StrategyManager:
         if not self.config.dedupe_by_symbol:
             return signals
 
-        now = datetime.now()
+        # tz-aware UTC. _recent_signals values are stored from this `now`
+        # below, so subsequent comparisons stay consistent within this dict.
+        now = datetime.now(UTC)
         result = []
 
         for signal in signals:

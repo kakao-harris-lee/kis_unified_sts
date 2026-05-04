@@ -30,7 +30,7 @@ import logging
 import math
 from collections import deque
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from shared.exceptions import ValidationError
@@ -73,7 +73,9 @@ class CandleAccumulator:
         timestamp: datetime | None = None,
     ) -> Candle | None:
         """Process a tick. Returns a completed candle when the minute boundary changes."""
-        ts = timestamp or datetime.now()
+        # tz-aware UTC by default. Caller-supplied ts MAY be tz-naive; we
+        # store as-is but the staleness guard normalizes both sides.
+        ts = timestamp or datetime.now(UTC)
         self.last_tick_ts = ts
         minute = ts.hour * 100 + ts.minute
 
@@ -319,8 +321,8 @@ class StreamingIndicatorEngine:
                 delta_volume = raw_volume
             self._last_cumulative_volume[symbol] = raw_volume
 
-        # Resolve timestamp once for all consumers
-        ts = timestamp or datetime.now()
+        # Resolve timestamp once for all consumers (tz-aware UTC by default).
+        ts = timestamp or datetime.now(UTC)
 
         acc = self._accumulators.get(symbol)
         if acc is None:
@@ -633,10 +635,19 @@ class StreamingIndicatorEngine:
         if acc is None or len(acc.candles) < self.bb_period:
             return {}
 
-        # Staleness guard: reject indicators from symbols with no recent ticks
+        # Staleness guard: reject indicators from symbols with no recent ticks.
+        # Normalize both sides to UTC tz-aware so a legacy tz-mixed pair
+        # (e.g., naive on_tick fallback + tz-aware caller) doesn't raise
+        # "can't compare offset-naive and offset-aware" inside the
+        # pipeline retry loop, silently dropping signals.
         if acc.last_tick_ts is not None and self._staleness_seconds > 0:
-            _now = now or datetime.now()
-            age = (_now - acc.last_tick_ts).total_seconds()
+            last_ts = acc.last_tick_ts
+            if last_ts.tzinfo is None:
+                last_ts = last_ts.replace(tzinfo=UTC)
+            _now = now or datetime.now(UTC)
+            if _now.tzinfo is None:
+                _now = _now.replace(tzinfo=UTC)
+            age = (_now - last_ts).total_seconds()
             if age > self._staleness_seconds:
                 logger.warning(
                     "Indicator data stale for %s (%.0fs since last tick, "

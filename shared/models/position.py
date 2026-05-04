@@ -6,9 +6,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
-from typing import Any, Optional
+from typing import Any
 
 
 class PositionState(Enum):
@@ -78,9 +78,9 @@ class Position:
 
     # 청산 관련
     exit_triggered: bool = False
-    exit_reason: Optional[str] = None
-    exit_price: Optional[float] = None
-    exit_time: Optional[datetime] = None
+    exit_reason: str | None = None
+    exit_price: float | None = None
+    exit_time: datetime | None = None
 
     def __post_init__(self):
         # 초기 최고/최저가 설정
@@ -130,10 +130,26 @@ class Position:
         else:  # SHORT
             return (self.entry_price - self.current_price) * self.quantity
 
+    def _hold_seconds(self) -> float:
+        """tz-aware-safe duration since entry_time.
+
+        ``entry_time`` may be tz-aware (constructed via ``datetime.now(UTC)``)
+        or tz-naive (legacy callers passing ``datetime.now()``). Subtracting
+        a tz-mismatched ``datetime.now()`` raises ``TypeError``; this helper
+        normalizes both sides to UTC.
+        """
+        entry = self.entry_time
+        if entry.tzinfo is None:
+            now = datetime.now()
+        else:
+            now = datetime.now(UTC)
+            entry = entry.astimezone(UTC)
+        return (now - entry).total_seconds()
+
     def get_hold_duration(self) -> float:
         """보유 시간 (분)"""
-        return (datetime.now() - self.entry_time).total_seconds() / 60
+        return self._hold_seconds() / 60
 
     def get_hold_duration_seconds(self) -> float:
         """보유 시간 (초)"""
-        return (datetime.now() - self.entry_time).total_seconds()
+        return self._hold_seconds()

@@ -28,12 +28,13 @@ import json
 import logging
 import os
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from datetime import time as dt_time
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 import pandas as pd
 import yaml
@@ -126,7 +127,7 @@ def default_holiday_loader(
             )
             return holidays
 
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             data = yaml.safe_load(f)
 
         if not isinstance(data, dict):
@@ -2831,7 +2832,7 @@ class TradingOrchestrator:
                     logger.info(
                         f"Prewarm {symbol}: {len(daily_candles)} daily candles seeded"
                     )
-            except (asyncio.TimeoutError, Exception) as e:
+            except (TimeoutError, Exception) as e:
                 logger.warning(f"Prewarm failed for {symbol}: {e}")
         logger.info(
             f"Prewarm complete: {redis_hits} from Redis, "
@@ -2939,7 +2940,7 @@ class TradingOrchestrator:
 
         try:
             await asyncio.wait_for(self._stop_impl(), timeout=timeout)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.error(f"Graceful shutdown timed out after {timeout}s, forcing...")
             # Force Redis flush as last resort with retry
             await self._flush_positions_with_retry(max_retries=3)
@@ -3211,7 +3212,7 @@ class TradingOrchestrator:
 
         await self.stop()
 
-    def _load_pipeline_config(self) -> "PipelineConfig | None":
+    def _load_pipeline_config(self) -> PipelineConfig | None:
         """Load pipeline configuration from pipeline.yaml.
 
         Returns ``None`` on any parse/validation failure so TradingPipeline falls
@@ -4035,7 +4036,9 @@ class TradingOrchestrator:
 
             self._metrics.record_signal_evaluation()
 
-            now = datetime.now()
+            # tz-aware UTC. EntryContext.timestamp flows into signal.timestamp
+            # and downstream slippage / dedupe / pipeline retry comparisons.
+            now = datetime.now(UTC)
 
             # Check entries per symbol (Entry strategies expect single-symbol market_data).
             async def check_symbol(symbol: str) -> list[Signal]:
@@ -4528,7 +4531,7 @@ class TradingOrchestrator:
         signal_ts = (
             signal.timestamp
             if isinstance(signal.timestamp, datetime)
-            else datetime.now()
+            else datetime.now(UTC)
         )
 
         quote_payload = await self._get_quote_payload(code)
@@ -5498,7 +5501,7 @@ class TradingOrchestrator:
             path = os.path.join(self._llm_training_data_dir, "trade_outcomes.jsonl")
             with open(path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(row, ensure_ascii=False, default=str) + "\n")
-        except (OSError, IOError, TypeError, ValueError) as e:
+        except (OSError, TypeError, ValueError) as e:
             logger.debug(f"Failed to append training trade event: {e}")
 
     def _schedule_notify(self, message: str) -> None:

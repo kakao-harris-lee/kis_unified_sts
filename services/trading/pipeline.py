@@ -18,10 +18,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Callable, Coroutine
+from typing import TYPE_CHECKING, Any
 
 from shared.exceptions import TradingSystemError
 from shared.resilience import CircuitBreaker
@@ -126,10 +127,19 @@ async def with_retry(
         except Exception as e:
             # NOTE: Intentionally broad exception handler for generic retry logic.
             # Callers can pass any async function and we retry on any error.
+            # exc_info=True is critical: silent retry warnings hid a tz-naive
+            # vs tz-aware datetime comparison for 18 days of paper trading
+            # (2026-04-15 → 2026-05-03). Always emit the traceback so the
+            # next regression is diagnosable from logs alone.
             last_error = e
             if attempt < max_retries:
                 logger.warning(
-                    f"Retry {attempt + 1}/{max_retries} after {current_delay}s: {e}"
+                    "Retry %s/%s after %ss: %s",
+                    attempt + 1,
+                    max_retries,
+                    current_delay,
+                    e,
+                    exc_info=True,
                 )
                 await asyncio.sleep(current_delay)
                 current_delay *= backoff
@@ -163,7 +173,7 @@ class TradingPipeline:
         entry_handler: Callable | None = None,
         monitoring_handler: Callable | None = None,
         exit_handler: Callable | None = None,
-        config: "PipelineConfig | None" = None,
+        config: PipelineConfig | None = None,
     ):
         """
         Args:
