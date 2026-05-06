@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from types import SimpleNamespace
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import pytest
@@ -11,6 +12,8 @@ import pytest
 from shared.strategy.base import EntryContext
 from shared.strategy.entry.rl_mppo import RLMPPOConfig, RLMPPOEntry
 from shared.strategy.rl_model_helpers import derive_features_from_ohlcv
+
+KST = ZoneInfo("Asia/Seoul")
 
 
 def test_build_observation_has_expected_shape():
@@ -165,6 +168,44 @@ def test_is_trading_time_hard_eod_block_applies_in_paper():
         strategy._is_trading_time(datetime(2026, 2, 12, 15, 35, 0), is_paper=False)
         is True
     )
+
+
+def test_is_trading_time_normalizes_utc_aware_to_kst():
+    """Regression: PR #159 made EntryContext.timestamp tz-aware UTC, but
+    _is_trading_time compared KST hour-of-day against the UTC value, so
+    every cycle was rejected as out-of-session and the RL model never loaded.
+
+    Verify that naive-KST and tz-aware-UTC representations of the same wall
+    clock instant return the same trading-time verdict.
+    """
+    strategy = RLMPPOEntry(
+        RLMPPOConfig(
+            day_session_enabled=True,
+            day_market_open="09:00",
+            day_market_close="15:45",
+            skip_market_open_minutes=0,
+            skip_market_close_minutes=0,
+            night_session_enabled=False,
+        )
+    )
+
+    # 10:20 KST is within day session
+    naive_kst = datetime(2026, 5, 6, 10, 20, 0)
+    aware_kst = datetime(2026, 5, 6, 10, 20, 0, tzinfo=KST)
+    aware_utc = datetime(2026, 5, 6, 1, 20, 0, tzinfo=UTC)  # same instant
+
+    assert strategy._is_trading_time(naive_kst) is True
+    assert strategy._is_trading_time(aware_kst) is True
+    assert strategy._is_trading_time(aware_utc) is True
+
+    # 03:00 KST is outside day session (whether naive, KST-aware, or UTC-aware)
+    out_naive = datetime(2026, 5, 6, 3, 0, 0)
+    out_aware_kst = datetime(2026, 5, 6, 3, 0, 0, tzinfo=KST)
+    out_aware_utc = datetime(2026, 5, 5, 18, 0, 0, tzinfo=UTC)  # same instant
+
+    assert strategy._is_trading_time(out_naive) is False
+    assert strategy._is_trading_time(out_aware_kst) is False
+    assert strategy._is_trading_time(out_aware_utc) is False
 
 
 def test_is_trading_time_skip_close_boundary_is_exclusive_in_paper():

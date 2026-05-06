@@ -17,6 +17,7 @@ from zoneinfo import ZoneInfo
 
 from shared.ml.base import get_device
 from shared.strategy.base import EntryContext, EntrySignalGenerator
+from shared.strategy.market_time import to_kst
 from shared.strategy.registry import EntryRegistry
 from shared.strategy.rl_model_helpers import (
     build_rl_observation,
@@ -1125,9 +1126,9 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
         """거래 가능 시간 확인
 
         주/야간 세션별로 장 시작 후 skip_open, 장 마감 전 skip_close를 적용한다.
+        Session 비교는 KST 기준이므로 입력 timestamp를 KST로 정규화한다.
         """
-        if timestamp.tzinfo is None:
-            timestamp = timestamp.replace(tzinfo=KST)
+        timestamp = to_kst(timestamp)
 
         current_minute = timestamp.hour * 60 + timestamp.minute
         day_skip_open = (
