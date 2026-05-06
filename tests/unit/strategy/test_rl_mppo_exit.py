@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import numpy as np
@@ -151,3 +151,32 @@ async def test_hard_stop_bypasses_min_hold(monkeypatch):
     assert should_exit is True
     assert signal is not None
     assert signal.reason == ExitReason.STOP_LOSS
+
+
+def test_is_eod_normalizes_utc_aware_to_kst():
+    """Regression: PR #159 routes tz-aware UTC timestamps through to _is_eod,
+    which only handled the naive case and would incorrectly compare UTC
+    hour-of-day against the KST EOD threshold (15:35), causing EOD safety
+    close to never fire and forcing positions to be held past market close.
+    """
+    strategy = _make_exit_strategy(
+        RLMPPOExitConfig(eod_close_hour=15, eod_close_minute=35)
+    )
+
+    # 15:35 KST = 06:35 UTC (the EOD trigger instant)
+    naive_kst = datetime(2026, 5, 6, 15, 35, 0)
+    aware_kst = datetime(2026, 5, 6, 15, 35, 0, tzinfo=KST)
+    aware_utc = datetime(2026, 5, 6, 6, 35, 0, tzinfo=UTC)
+
+    assert strategy._is_eod(naive_kst) is True
+    assert strategy._is_eod(aware_kst) is True
+    assert strategy._is_eod(aware_utc) is True
+
+    # 10:00 KST = 01:00 UTC (well before EOD)
+    early_naive = datetime(2026, 5, 6, 10, 0, 0)
+    early_aware_kst = datetime(2026, 5, 6, 10, 0, 0, tzinfo=KST)
+    early_aware_utc = datetime(2026, 5, 6, 1, 0, 0, tzinfo=UTC)
+
+    assert strategy._is_eod(early_naive) is False
+    assert strategy._is_eod(early_aware_kst) is False
+    assert strategy._is_eod(early_aware_utc) is False

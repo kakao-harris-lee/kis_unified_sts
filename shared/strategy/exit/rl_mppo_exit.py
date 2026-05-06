@@ -26,7 +26,7 @@ from shared.models.position import Position, PositionSide
 from shared.models.signal import ExitReason, ExitSignal
 from shared.strategy.base import ExitContext, ExitSignalGenerator, MarketStateProtocol
 from shared.strategy.market_data import get_price_from_snapshot, get_symbol_snapshot
-from shared.strategy.market_time import now_kst
+from shared.strategy.market_time import now_kst, to_kst
 from shared.strategy.rl_model_helpers import (
     build_rl_observation,
     derive_features_from_ohlcv,
@@ -355,8 +355,7 @@ class RLMPPOExit(ExitSignalGenerator[RLMPPOExitConfig]):
         return (current_price - position.entry_price) / position.entry_price
 
     def _is_eod(self, timestamp: datetime) -> bool:
-        if timestamp.tzinfo is None:
-            timestamp = timestamp.replace(tzinfo=KST)
+        timestamp = to_kst(timestamp)
         t = timestamp.time()
         from datetime import time as dt_time
 
