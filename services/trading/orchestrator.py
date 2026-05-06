@@ -4580,6 +4580,7 @@ class TradingOrchestrator:
                 order_type="limit",
                 limit_price=passive_price,
                 market_price=current_touch_price,
+                price_source_time=signal_ts,
             )
         )
         execution_meta["submit_price"] = passive_price
@@ -4629,6 +4630,7 @@ class TradingOrchestrator:
                     order_type="market",
                     limit_price=None,
                     market_price=retry_market_price,
+                    price_source_time=signal_ts,
                 )
             )
         )
