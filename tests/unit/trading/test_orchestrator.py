@@ -464,6 +464,82 @@ class TestTradingOrchestrator:
         assert orch._place_entry_order.await_count == 2
 
     @pytest.mark.asyncio
+    async def test_submit_entry_order_forwards_signal_timestamp_as_price_source_time(self):
+        """Regression: slippage-controlled futures path must forward
+        signal.timestamp to _place_entry_order so paper broker's freshness
+        guard can validate the price snapshot age. Without this, every entry
+        order is rejected with `missing_price_source_time` once signals start
+        flowing again (observed after PR #159 + #161 unblocked the entry
+        pipeline).
+        """
+        from datetime import UTC, datetime
+
+        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from shared.execution.slippage_control import (
+            FuturesSlippageController,
+            SlippageControlConfig,
+        )
+        from shared.models.signal import Signal
+
+        config = TradingConfig.futures(strategy_name="rl_mppo")
+        config.paper_trading = True
+        orch = TradingOrchestrator(config)
+        orch._futures_slippage_controller = FuturesSlippageController(
+            SlippageControlConfig.from_dict(
+                {
+                    "enabled": True,
+                    "tick_size": 0.02,
+                    "max_spread_ticks": 1,
+                    "min_depth_multiplier": 1.0,
+                    "passive_timeout_seconds": 0.01,
+                    "retry_policy": "market_once",
+                    "cross_asset": {"enabled": False},
+                }
+            )
+        )
+        orch._get_quote_payload = AsyncMock(
+            return_value={
+                "bid_price_1": 330.48,
+                "ask_price_1": 330.50,
+                "bid_qty_1": 20.0,
+                "ask_qty_1": 20.0,
+                "close": 330.49,
+                "timestamp": 1700000000.0,
+            }
+        )
+        orch._place_entry_order = AsyncMock(
+            side_effect=[
+                (False, 0.0, 0, "KRX"),  # passive limit not filled
+                (True, 330.50, 1, "KRX"),  # market retry filled
+            ]
+        )
+
+        signal_ts = datetime(2026, 5, 6, 11, 33, 50, tzinfo=UTC)
+        signal = Signal(
+            code="A05603",
+            strategy="rl_mppo",
+            price=330.49,
+            confidence=0.8,
+            timestamp=signal_ts,
+        )
+
+        await orch._submit_entry_order(
+            code=signal.code,
+            is_short=False,
+            quantity=1,
+            price=signal.price,
+            signal=signal,
+        )
+
+        # Both attempts (initial passive + retry market) must forward
+        # signal.timestamp as price_source_time.
+        assert orch._place_entry_order.await_count == 2
+        for call in orch._place_entry_order.await_args_list:
+            assert call.kwargs["price_source_time"] == signal_ts, (
+                f"price_source_time not forwarded; got {call.kwargs.get('price_source_time')!r}"
+            )
+
+    @pytest.mark.asyncio
     async def test_submit_entry_order_does_not_retry_on_partial_fill_signal(self):
         """부분체결 감지 시 재시도 없이 부분 수량만 반영한다."""
         from services.trading.orchestrator import TradingOrchestrator, TradingConfig
