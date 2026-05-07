@@ -706,6 +706,7 @@ def _setup_a_adapter_with_llm_tuning(
     min_context_confidence: float = 0.3,
     risk_off_threshold: float = 75.0,
     risk_off_confidence_multiplier: float = 1.3,
+    min_signal_confidence: float = 0.0,
     long_blocked_regimes: list[str] | None = None,
     short_blocked_regimes: list[str] | None = None,
 ) -> SetupAEntryAdapter:
@@ -722,6 +723,7 @@ def _setup_a_adapter_with_llm_tuning(
         min_context_confidence=min_context_confidence,
         risk_off_threshold=risk_off_threshold,
         risk_off_confidence_multiplier=risk_off_confidence_multiplier,
+        min_signal_confidence=min_signal_confidence,
         long_blocked_regimes=long_blocked_regimes,
         short_blocked_regimes=short_blocked_regimes,
     )
@@ -938,6 +940,51 @@ class TestSetupALLMTuning:
         assert result_raw is not None
         # With risk_score below threshold, confidence should be unchanged
         assert abs(result_with_llm.confidence - result_raw.confidence) < 1e-9
+
+    @pytest.mark.asyncio
+    async def test_min_signal_confidence_drops_below_floor(self):
+        """When min_signal_confidence > scaled confidence, signal is dropped
+        with skip_reason=llm_threshold_unmet (drop branch is reachable).
+
+        Penalty mode (multiplier 0.3) + Setup A base confidence in [0.5, 1.0]
+        → scaled in [0.15, 0.30].  Floor 0.5 → all scaled values < floor → drop.
+        """
+        adapter = _setup_a_adapter_with_llm_tuning(
+            enabled=True,
+            risk_off_threshold=75.0,
+            risk_off_confidence_multiplier=0.3,  # aggressive penalty
+            min_signal_confidence=0.5,           # higher floor than max scaled
+        )
+        llm_ctx = _llm_context(
+            regime="NEUTRAL",
+            risk_mode_name="RISK_OFF",
+            risk_score=80.0,
+            confidence=0.8,
+        )
+        context = _gap_down_context(market_context=llm_ctx)
+        result = await adapter.generate(context)
+        # Even at base confidence 1.0: 1.0 * 0.3 = 0.3 < 0.5 floor → must drop
+        assert result is None, "min_signal_confidence floor must drop scaled signal"
+
+    @pytest.mark.asyncio
+    async def test_min_signal_confidence_zero_default_does_not_drop(self):
+        """min_signal_confidence=0.0 (default) never drops, even with penalty multiplier."""
+        adapter = _setup_a_adapter_with_llm_tuning(
+            enabled=True,
+            risk_off_threshold=75.0,
+            risk_off_confidence_multiplier=0.3,  # penalty
+            min_signal_confidence=0.0,           # no floor (default)
+        )
+        llm_ctx = _llm_context(
+            regime="NEUTRAL",
+            risk_mode_name="RISK_OFF",
+            risk_score=80.0,
+            confidence=0.8,
+        )
+        context = _gap_down_context(market_context=llm_ctx)
+        result = await adapter.generate(context)
+        assert result is not None, "Default floor 0.0 must not drop the signal"
+        assert result.confidence > 0.0
 
     @pytest.mark.asyncio
     async def test_llm_tuning_disabled_ignores_bear_regime(self):

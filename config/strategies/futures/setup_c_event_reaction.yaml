@@ -38,11 +38,15 @@ strategy:
       # Impact tier filter: 1 = top tier, 3 = minor; default=2 skips tier-3 events
       min_impact_tier: 2
 
-      # Phase 1.1 LLM-aware threshold tuning
-      # operator must flip enabled: true after Gate 1-3 paper-rollout validation
+      # Phase 1.1 LLM-aware threshold tuning (INNER gate).
+      # NOTE: This is the inner gate — see strategy.enabled (line 14) for
+      # the OUTER gate that controls whether Setup C runs at all.
+      # Operator must flip strategy.enabled: true after Gate 1-3
+      # paper-rollout validation; llm_tuning.enabled below toggles only
+      # whether the LLM scaling kicks in inside Setup C.
       llm_tuning:
-        enabled: true                            # opt-in switch
-        min_context_confidence: 0.3             # below this, skip LLM adjustment
+        enabled: true                            # inner switch (LLM scaling on/off)
+        min_context_confidence: 0.3              # below this, skip LLM adjustment
         bull_strong_regime: "BULL_STRONG"
         atr_loose_factor: 0.8
         long_blocked_regimes: ["BEAR_STRONG", "BEAR_MODERATE"]

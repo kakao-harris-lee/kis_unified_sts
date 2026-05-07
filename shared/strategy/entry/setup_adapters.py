@@ -125,6 +125,21 @@ class LLMTuningConfig(BaseModel):
         default_factory=list,
         description="Regime labels where short signals are dropped",
     )
+    # Shared confidence floor — applied AFTER any RISK_OFF scaling.  With the
+    # default risk_off_confidence_multiplier=1.3 (boost), a non-zero floor only
+    # rejects already-low base confidences.  If operators tune the multiplier
+    # below 1.0 (penalty mode), this floor enforces a hard drop threshold so
+    # the multiplied value cannot collapse signals silently.  Default 0.0
+    # means "no floor" (matches Setup A's own [0.5, 1.0] confidence range).
+    min_signal_confidence: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Minimum confidence floor after LLM scaling. Signals whose adjusted "
+            "confidence falls below this are dropped with skip_reason=llm_threshold_unmet."
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -702,6 +717,7 @@ class SetupAEntryAdapter(EntrySignalGenerator[SetupAEntryConfig]):
                     decision_signal=decision_signal,
                     llm_ctx=llm_ctx,
                     tuning=tuning,
+                    min_signal_confidence=tuning.min_signal_confidence,
                 )
                 if skip_reason is not None:
                     return None
@@ -739,13 +755,20 @@ class SetupCEntryAdapter(EntrySignalGenerator[SetupCEntryConfig]):
     ``context.market_context`` is ``None``, or when its ``confidence`` field
     is below ``llm_tuning.min_context_confidence``.
 
-    Phase 1.0 notes
-    ---------------
-    * The in-memory :class:`~shared.decision.setups.event_reaction.EventTradeTracker`
-      persists only for the lifetime of this adapter instance.  A Redis-backed
-      tracker will be introduced in a later phase when live paper-trading requires
-      cross-process deduplication.
-    * ``enabled: false`` in the default YAML — no production behaviour change.
+    Two-level gating
+    ----------------
+    There are TWO independent enable flags:
+
+    * ``strategy.enabled`` (outer, default ``false``) — gates the entire Setup
+      C strategy.  Operator flips to ``true`` only after Gate 1-3
+      paper-rollout validation per the Phase 5 verification runbook.
+    * ``llm_tuning.enabled`` (inner, default ``true`` in YAML, ``false`` in the
+      Pydantic class default) — gates only the LLM threshold adjustments
+      *within* Setup C.  When the outer ``strategy.enabled`` is still
+      ``false``, the inner flag is moot.  Once operators flip the outer
+      flag, the inner flag's YAML value (``true``) immediately arms LLM
+      tuning; toggle it to ``false`` to exercise Setup C without LLM
+      influence.
     """
 
     CONFIG_CLASS = SetupCEntryConfig
