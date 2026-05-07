@@ -23,9 +23,8 @@ Design notes
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, ClassVar, Optional
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from pydantic import Field
 
@@ -248,7 +247,7 @@ def _decision_signal_to_orchestrator_signal(
     *,
     strategy_name: str,
     timestamp: datetime,
-) -> "OrchestratorSignal":
+) -> OrchestratorSignal:
     """Convert a :class:`shared.decision.signal.Signal` to a :class:`shared.models.signal.Signal`.
 
     The ``timestamp`` argument is the authoritative tz-aware UTC timestamp from
@@ -275,6 +274,22 @@ def _decision_signal_to_orchestrator_signal(
 
     direction = decision_signal.direction  # "long" or "short"
 
+    valid_until = getattr(decision_signal, "valid_until", None)
+    metadata: dict[str, Any] = {
+        "signal_direction": direction,
+        "direction": direction,
+        "setup_type": decision_signal.setup_type,
+        "stop_loss": decision_signal.stop_loss,
+        "take_profit": decision_signal.take_profit,
+        "reason_tags": list(decision_signal.reason_tags),
+    }
+    # Preserve the decision-engine TTL so downstream consumers (risk filter,
+    # orchestrator) can drop stale signals without re-deriving the deadline.
+    # Phase 1.0: not yet read by orchestrator entry guards, but Phase 1.1+
+    # threshold/veto logic and any future decision-engine bridge will need it.
+    if valid_until is not None:
+        metadata["valid_until"] = valid_until
+
     return OrchestratorSignal(
         code=decision_signal.symbol,
         name=decision_signal.symbol,
@@ -283,14 +298,7 @@ def _decision_signal_to_orchestrator_signal(
         price=decision_signal.entry_price,
         confidence=decision_signal.confidence,
         timestamp=timestamp,
-        metadata={
-            "signal_direction": direction,
-            "direction": direction,
-            "setup_type": decision_signal.setup_type,
-            "stop_loss": decision_signal.stop_loss,
-            "take_profit": decision_signal.take_profit,
-            "reason_tags": list(decision_signal.reason_tags),
-        },
+        metadata=metadata,
     )
 
 
@@ -318,7 +326,10 @@ class SetupAEntryAdapter(EntrySignalGenerator[SetupAEntryConfig]):
 
     def __init__(self, config: SetupAEntryConfig) -> None:
         super().__init__(config)
-        from shared.decision.setups.gap_reversion import SetupAConfig, SetupAGapReversion
+        from shared.decision.setups.gap_reversion import (
+            SetupAConfig,
+            SetupAGapReversion,
+        )
 
         # Build a SetupAConfig from our config fields (mirrors field names 1:1).
         setup_cfg = SetupAConfig(
@@ -369,7 +380,7 @@ class SetupAEntryAdapter(EntrySignalGenerator[SetupAEntryConfig]):
         """
         return ["atr", "prev_close", "vwap"]
 
-    async def generate(self, context: EntryContext) -> Optional["OrchestratorSignal"]:
+    async def generate(self, context: EntryContext) -> OrchestratorSignal | None:
         """Generate an entry signal by delegating to :class:`SetupAGapReversion`.
 
         Args:
@@ -421,7 +432,10 @@ class SetupCEntryAdapter(EntrySignalGenerator[SetupCEntryConfig]):
 
     def __init__(self, config: SetupCEntryConfig) -> None:
         super().__init__(config)
-        from shared.decision.setups.event_reaction import SetupCConfig, SetupCEventReaction
+        from shared.decision.setups.event_reaction import (
+            SetupCConfig,
+            SetupCEventReaction,
+        )
 
         setup_cfg = SetupCConfig(
             enabled=config.enabled,
@@ -462,7 +476,7 @@ class SetupCEntryAdapter(EntrySignalGenerator[SetupCEntryConfig]):
         """
         return ["atr", "last_15min_high", "last_15min_low"]
 
-    async def generate(self, context: EntryContext) -> Optional["OrchestratorSignal"]:
+    async def generate(self, context: EntryContext) -> OrchestratorSignal | None:
         """Generate an entry signal by delegating to :class:`SetupCEventReaction`.
 
         Args:

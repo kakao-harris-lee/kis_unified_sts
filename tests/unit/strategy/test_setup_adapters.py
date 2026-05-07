@@ -21,13 +21,12 @@ Setup C specific:
 
 from __future__ import annotations
 
-import asyncio
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
 import pytest
 
-from shared.decision.context import MarketContext, ScheduledEvent
+from shared.decision.context import ScheduledEvent
 from shared.macro.base import MacroSnapshot
 from shared.strategy.base import EntryContext
 from shared.strategy.entry.setup_adapters import (
@@ -258,6 +257,15 @@ class TestSetupAEntryAdapterHappyPath:
         assert result.signal_type.value == "entry"
         assert result.price > 0.0
         assert result.confidence >= 0.5
+        # decision-engine signal carries a TTL (ctx.now + signal_ttl_minutes);
+        # adapter must propagate it so downstream consumers (Phase 1.1+ veto,
+        # any future decision-engine bridge) can drop stale signals.
+        assert "valid_until" in result.metadata
+        valid_until = result.metadata["valid_until"]
+        assert valid_until is not None
+        assert valid_until > result.timestamp, (
+            "valid_until must be in the future relative to signal timestamp"
+        )
 
     @pytest.mark.asyncio
     async def test_signal_timestamp_is_tz_aware_utc(self):
