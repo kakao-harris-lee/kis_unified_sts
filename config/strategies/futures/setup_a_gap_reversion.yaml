@@ -42,8 +42,23 @@ strategy:
       # Signal validity
       signal_ttl_minutes: 10
 
-      # Phase 1.1 placeholder — leave empty; LLM-tuning parameters will be added here
-      llm_tuning: {}
+      # Phase 1.1 LLM-aware threshold tuning (INNER gate).
+      # NOTE: This is the inner gate — see strategy.enabled (line 14) for
+      # the OUTER gate that controls whether Setup A runs at all.
+      # Operator must flip strategy.enabled: true after Gate 1-3
+      # paper-rollout validation; llm_tuning.enabled below toggles only
+      # whether the LLM scaling kicks in inside Setup A.
+      llm_tuning:
+        enabled: true                            # inner switch (LLM scaling on/off)
+        min_context_confidence: 0.3              # below this, skip LLM adjustment
+        risk_off_threshold: 75
+        risk_off_confidence_multiplier: 1.3
+        # Hard floor on adjusted confidence — drop signals below this even
+        # after scaling.  Default 0.0 = no floor.  Useful when operators
+        # tune risk_off_confidence_multiplier < 1.0 (penalty mode).
+        min_signal_confidence: 0.0
+        long_blocked_regimes: ["BEAR_STRONG", "BEAR_MODERATE"]
+        short_blocked_regimes: []
 
   exit:
     # Use the RL-based exit policy, consistent with all futures strategies.
