@@ -368,7 +368,16 @@ class LLMContextPublisher:
         if self._refresh_lock is None:
             self._refresh_lock = asyncio.Lock()
 
-        if self._refresh_lock.locked():
+        # Atomic try-acquire: a separate ``locked()`` check + ``async with``
+        # is racy — two callers can both observe the lock as free before
+        # either has acquired it, then run the analysis sequentially under
+        # the same lock instead of one returning False.  ``wait_for`` with a
+        # tiny timeout collapses the check-and-acquire into a single step:
+        # the second caller's acquire times out and returns False without
+        # queueing.
+        try:
+            await asyncio.wait_for(self._refresh_lock.acquire(), timeout=0.001)
+        except (TimeoutError, asyncio.TimeoutError):
             logger.debug(
                 "LLMContextPublisher.request_refresh: refresh already in-flight "
                 "(asset=%s) — skipping duplicate call",
@@ -376,7 +385,7 @@ class LLMContextPublisher:
             )
             return False
 
-        async with self._refresh_lock:
+        try:
             logger.info(
                 "LLMContextPublisher.request_refresh: on-demand analysis triggered "
                 "(asset=%s)",
@@ -401,6 +410,8 @@ class LLMContextPublisher:
                     exc_info=True,
                 )
                 return True  # Lock was acquired; analysis was attempted
+        finally:
+            self._refresh_lock.release()
 
     def publish_to_redis(self, context: MarketContext) -> None:
         """Publish MarketContext to Redis.
