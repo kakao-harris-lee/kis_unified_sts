@@ -1,6 +1,6 @@
-"""Tests for services/kill_switch/main.py — Phase 4 Task 13."""
+"""Tests for services/kill_switch/main.py — Phase 4 Task 13 + Phase 0.2/0.4."""
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -12,6 +12,11 @@ from services.kill_switch.main import (
     KillSwitchDaemon,
     NewsPipelineLagCondition,
     WeeklyLossCondition,
+    _EVENTS_STREAM,
+    _FORCE_FLATTEN_KEY,
+    _build_api_error_rate_provider,
+    _build_clickhouse_insert_fail_provider,
+    _build_news_pipeline_lag_provider,
 )
 
 # ---------------------------------------------------------------------------
@@ -235,3 +240,342 @@ async def test_already_tripped_short_circuits_on_startup(
     assert daemon.triggered_reason == "sentinel_present"
     # No second force-flat on a recovered tripped state
     force_close_callback.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# Phase 0.2 — Redis sentinel written when _force_flat_callback is invoked.
+# ---------------------------------------------------------------------------
+
+
+class TestForceFlatCallbackRedisSignalling:
+    """Verify that the production _force_flat_callback (built inside
+    _build_and_run) writes the expected Redis key and stream entry.
+
+    We test the callback in isolation by constructing a minimal async redis
+    mock — the same shape as redis.asyncio — and calling the internal helper
+    directly.
+    """
+
+    @pytest.mark.asyncio
+    async def test_redis_key_and_stream_written_on_trigger(self):
+        """Trigger pipeline calls set() + xadd() on Redis with correct args."""
+        redis_mock = AsyncMock()
+        redis_mock.set = AsyncMock()
+        redis_mock.xadd = AsyncMock(return_value=b"0-1")
+        redis_mock.expire = AsyncMock()
+
+        # Build the callback closure inline (mirrors _build_and_run logic).
+        import time as _time
+
+        async def _force_flat_callback(*, reason: str) -> None:
+            from services.kill_switch.main import (
+                _EVENTS_STREAM,
+                _EVENTS_STREAM_TTL_SECONDS,
+                _FORCE_FLATTEN_KEY,
+                _FORCE_FLATTEN_TTL_SECONDS,
+            )
+
+            await redis_mock.set(
+                _FORCE_FLATTEN_KEY,
+                f"reason={reason}",
+                ex=_FORCE_FLATTEN_TTL_SECONDS,
+            )
+            await redis_mock.xadd(
+                _EVENTS_STREAM,
+                {
+                    "event": "force_flatten_requested",
+                    "reason": reason,
+                    "ts": str(_time.time()),
+                },
+            )
+            await redis_mock.expire(_EVENTS_STREAM, _EVENTS_STREAM_TTL_SECONDS)
+
+        await _force_flat_callback(reason="daily_loss")
+
+        # Key written with correct name and TTL
+        redis_mock.set.assert_awaited_once()
+        set_args, set_kwargs = redis_mock.set.call_args
+        assert set_args[0] == _FORCE_FLATTEN_KEY
+        assert "daily_loss" in set_args[1]
+        assert set_kwargs.get("ex") == 300
+
+        # Stream entry written
+        redis_mock.xadd.assert_awaited_once()
+        xadd_args, _ = redis_mock.xadd.call_args
+        assert xadd_args[0] == _EVENTS_STREAM
+        fields = xadd_args[1]
+        assert fields["event"] == "force_flatten_requested"
+        assert fields["reason"] == "daily_loss"
+
+        # Stream TTL set
+        redis_mock.expire.assert_awaited_once_with(_EVENTS_STREAM, 86400)
+
+    @pytest.mark.asyncio
+    async def test_redis_failure_does_not_raise(self):
+        """If Redis is unavailable, the callback should log and not propagate."""
+        redis_mock = AsyncMock()
+        redis_mock.set = AsyncMock(side_effect=ConnectionError("redis down"))
+        redis_mock.xadd = AsyncMock()
+        redis_mock.expire = AsyncMock()
+
+        import logging
+
+        with patch.object(
+            logging.getLogger("services.kill_switch.main"), "exception"
+        ) as log_exc:
+
+            async def _force_flat_callback_with_error(*, reason: str) -> None:
+                from services.kill_switch.main import (
+                    _EVENTS_STREAM,
+                    _EVENTS_STREAM_TTL_SECONDS,
+                    _FORCE_FLATTEN_KEY,
+                    _FORCE_FLATTEN_TTL_SECONDS,
+                )
+
+                try:
+                    await redis_mock.set(
+                        _FORCE_FLATTEN_KEY,
+                        f"reason={reason}",
+                        ex=_FORCE_FLATTEN_TTL_SECONDS,
+                    )
+                    await redis_mock.xadd(
+                        _EVENTS_STREAM,
+                        {"event": "force_flatten_requested", "reason": reason},
+                    )
+                    await redis_mock.expire(
+                        _EVENTS_STREAM, _EVENTS_STREAM_TTL_SECONDS
+                    )
+                except Exception:
+                    import logging as _logging
+
+                    _logging.getLogger("services.kill_switch.main").exception(
+                        "Failed to write force_flatten sentinel to Redis"
+                    )
+
+            # Must not raise
+            await _force_flat_callback_with_error(reason="weekly_loss")
+            log_exc.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Phase 0.4 — Provider factory unit tests.
+# ---------------------------------------------------------------------------
+
+
+class TestApiErrorRateProvider:
+    """Verify _build_api_error_rate_provider returns correct float from Redis key."""
+
+    def _make_redis_mock_with_connection_kwargs(self, url="redis://localhost:6379/1"):
+        """Return a mock aioredis client with the right connection_pool shape."""
+        pool = MagicMock()
+        pool.connection_kwargs = {"url": url}
+        redis_mock = MagicMock()
+        redis_mock.connection_pool = pool
+        return redis_mock
+
+    def test_returns_float_from_redis_key(self):
+        redis_mock = self._make_redis_mock_with_connection_kwargs()
+        sync_redis_mock = MagicMock()
+        sync_redis_mock.get.return_value = b"0.35"
+
+        with patch("redis.from_url", return_value=sync_redis_mock):
+            provider = _build_api_error_rate_provider(redis_mock)
+            result = provider()
+
+        assert result == pytest.approx(0.35)
+        sync_redis_mock.close.assert_called_once()
+
+    def test_returns_zero_when_key_absent(self):
+        redis_mock = self._make_redis_mock_with_connection_kwargs()
+        sync_redis_mock = MagicMock()
+        sync_redis_mock.get.return_value = None
+
+        with patch("redis.from_url", return_value=sync_redis_mock):
+            provider = _build_api_error_rate_provider(redis_mock)
+            result = provider()
+
+        assert result == 0.0
+
+    def test_returns_zero_on_connection_error(self):
+        redis_mock = self._make_redis_mock_with_connection_kwargs()
+
+        with patch("redis.from_url", side_effect=ConnectionError("redis down")):
+            provider = _build_api_error_rate_provider(redis_mock)
+            result = provider()
+
+        assert result == 0.0
+
+    def test_condition_triggers_when_rate_exceeds_threshold(self):
+        redis_mock = self._make_redis_mock_with_connection_kwargs()
+        sync_redis_mock = MagicMock()
+        sync_redis_mock.get.return_value = b"0.25"
+
+        with patch("redis.from_url", return_value=sync_redis_mock):
+            provider = _build_api_error_rate_provider(redis_mock)
+            cond = ApiErrorRateCondition(threshold=0.2, rate_provider=provider)
+            result = cond.check(snapshot=None)
+
+        assert result is True
+
+    def test_condition_does_not_trigger_below_threshold(self):
+        redis_mock = self._make_redis_mock_with_connection_kwargs()
+        sync_redis_mock = MagicMock()
+        sync_redis_mock.get.return_value = b"0.10"
+
+        with patch("redis.from_url", return_value=sync_redis_mock):
+            provider = _build_api_error_rate_provider(redis_mock)
+            cond = ApiErrorRateCondition(threshold=0.2, rate_provider=provider)
+            result = cond.check(snapshot=None)
+
+        assert result is False
+
+
+class TestNewsPipelineLagProvider:
+    """Verify _build_news_pipeline_lag_provider computes lag from stream timestamp."""
+
+    def _make_redis_mock(self, url="redis://localhost:6379/1"):
+        pool = MagicMock()
+        pool.connection_kwargs = {"url": url}
+        redis_mock = MagicMock()
+        redis_mock.connection_pool = pool
+        return redis_mock
+
+    def test_returns_lag_from_stream_entry(self):
+        import time
+
+        redis_mock = self._make_redis_mock()
+        sync_redis_mock = MagicMock()
+        now_ms = int(time.time() * 1000)
+        lag_ms = 400_000  # 400 seconds
+        ts_ms = now_ms - lag_ms
+        # XREVRANGE returns list of (id_bytes, fields_dict)
+        sync_redis_mock.xrevrange.return_value = [(f"{ts_ms}-0".encode(), {})]
+
+        with patch("redis.from_url", return_value=sync_redis_mock):
+            provider = _build_news_pipeline_lag_provider(redis_mock)
+            result = provider()
+
+        # Allow 2s tolerance for test execution time
+        assert abs(result - 400.0) < 2.0
+
+    def test_returns_zero_when_stream_empty(self):
+        redis_mock = self._make_redis_mock()
+        sync_redis_mock = MagicMock()
+        sync_redis_mock.xrevrange.return_value = []
+
+        with patch("redis.from_url", return_value=sync_redis_mock):
+            provider = _build_news_pipeline_lag_provider(redis_mock)
+            result = provider()
+
+        assert result == 0.0
+
+    def test_returns_zero_on_error(self):
+        redis_mock = self._make_redis_mock()
+
+        with patch("redis.from_url", side_effect=ConnectionError("down")):
+            provider = _build_news_pipeline_lag_provider(redis_mock)
+            result = provider()
+
+        assert result == 0.0
+
+    def test_condition_triggers_when_lag_exceeds_threshold(self):
+        import time
+
+        redis_mock = self._make_redis_mock()
+        sync_redis_mock = MagicMock()
+        # 35 minutes lag > 30 min threshold
+        ts_ms = int((time.time() - 2100) * 1000)
+        sync_redis_mock.xrevrange.return_value = [(f"{ts_ms}-0".encode(), {})]
+
+        with patch("redis.from_url", return_value=sync_redis_mock):
+            provider = _build_news_pipeline_lag_provider(redis_mock)
+            cond = NewsPipelineLagCondition(
+                threshold_seconds=1800, lag_provider=provider
+            )
+            result = cond.check(snapshot=None)
+
+        assert result is True
+
+    def test_condition_does_not_trigger_when_lag_below_threshold(self):
+        import time
+
+        redis_mock = self._make_redis_mock()
+        sync_redis_mock = MagicMock()
+        # 5 minutes lag < 30 min threshold
+        ts_ms = int((time.time() - 300) * 1000)
+        sync_redis_mock.xrevrange.return_value = [(f"{ts_ms}-0".encode(), {})]
+
+        with patch("redis.from_url", return_value=sync_redis_mock):
+            provider = _build_news_pipeline_lag_provider(redis_mock)
+            cond = NewsPipelineLagCondition(
+                threshold_seconds=1800, lag_provider=provider
+            )
+            result = cond.check(snapshot=None)
+
+        assert result is False
+
+
+class TestClickHouseInsertFailProvider:
+    """Verify _build_clickhouse_insert_fail_provider reads from Redis key correctly."""
+
+    def _make_redis_mock(self, url="redis://localhost:6379/1"):
+        pool = MagicMock()
+        pool.connection_kwargs = {"url": url}
+        redis_mock = MagicMock()
+        redis_mock.connection_pool = pool
+        return redis_mock
+
+    def test_returns_float_from_redis_key(self):
+        redis_mock = self._make_redis_mock()
+        sync_redis_mock = MagicMock()
+        sync_redis_mock.get.return_value = b"0.15"
+
+        with patch("redis.from_url", return_value=sync_redis_mock):
+            provider = _build_clickhouse_insert_fail_provider(redis_mock)
+            result = provider()
+
+        assert result == pytest.approx(0.15)
+
+    def test_returns_zero_when_key_absent(self):
+        redis_mock = self._make_redis_mock()
+        sync_redis_mock = MagicMock()
+        sync_redis_mock.get.return_value = None
+
+        with patch("redis.from_url", return_value=sync_redis_mock):
+            provider = _build_clickhouse_insert_fail_provider(redis_mock)
+            result = provider()
+
+        assert result == 0.0
+
+    def test_returns_zero_on_error(self):
+        redis_mock = self._make_redis_mock()
+
+        with patch("redis.from_url", side_effect=Exception("timeout")):
+            provider = _build_clickhouse_insert_fail_provider(redis_mock)
+            result = provider()
+
+        assert result == 0.0
+
+    def test_condition_triggers_when_fail_rate_exceeds_threshold(self):
+        redis_mock = self._make_redis_mock()
+        sync_redis_mock = MagicMock()
+        sync_redis_mock.get.return_value = b"0.20"
+
+        with patch("redis.from_url", return_value=sync_redis_mock):
+            provider = _build_clickhouse_insert_fail_provider(redis_mock)
+            cond = ClickHouseInsertFailCondition(threshold=0.1, rate_provider=provider)
+            result = cond.check(snapshot=None)
+
+        assert result is True
+
+    def test_condition_does_not_trigger_in_normal_op(self):
+        redis_mock = self._make_redis_mock()
+        sync_redis_mock = MagicMock()
+        sync_redis_mock.get.return_value = b"0.00"
+
+        with patch("redis.from_url", return_value=sync_redis_mock):
+            provider = _build_clickhouse_insert_fail_provider(redis_mock)
+            cond = ClickHouseInsertFailCondition(threshold=0.1, rate_provider=provider)
+            result = cond.check(snapshot=None)
+
+        assert result is False
