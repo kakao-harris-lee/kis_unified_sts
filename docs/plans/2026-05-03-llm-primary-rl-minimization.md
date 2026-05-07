@@ -1,11 +1,12 @@
 # LLM-primary 의사결정 + RL 축소 통합 계획
 
-**Status**: v3 — 통합 아키텍처(Adapter 패턴) 확정, 사전 정비 작업 추가, Phase 1.0 신설
+**Status**: v3.1 — code review 정정 패치 적용 (§8 1.2-a 타겟 정정, §3.1 PR #158 상태 정정, 명명/citation 일관성 수정)
 **Created**: 2026-05-03
 **Updated**:
 - 2026-05-03 (v1 초안)
 - 2026-05-03 (v2 — 운영자 §7 결정 5건 반영, Phase 1을 1.1/1.2/1.3 분해, Phase 3을 Phase 2와 병행)
-- 2026-05-07 (**v3 — 코드베이스 점검 결과 반영**: §2.4 Adapter 통합 결정, §4 Phase 0 사전 정비 작업 추가, Phase 1.0 신설, §1.1 PR #159/#161/#162 머지 + paper validation 결과 반영)
+- 2026-05-07 (v3 — 코드베이스 점검 결과 반영: §2.4 Adapter 통합 결정, §4 Phase 0 사전 정비 작업 추가, Phase 1.0 신설, §1.1 PR #159/#161/#162 머지 + paper validation 결과 반영)
+- 2026-05-07 (**v3.1 — code review 피드백 반영**: §8 Phase 1.2-a를 strategy_manager로 정정 (§2.4 Adapter 결정 일관성), §3.1 PR #158 OPEN으로 정정, §1.3 모듈 수 정렬, §5 Setup C 출처 인용 정정, §2.2 Phase A/B → Phase 2/4 명명 정렬)
 
 **Author**: 엔지니어링 (운영자 결정 반영)
 **Parent**: `docs/plans/2026-04-20-futures-paradigm-master.md`
@@ -48,7 +49,7 @@
 ### 1.3 결정 근거
 
 1. **RL 실증 부진**: Apr 1–15 220+ trades 모두 마이크로 손실 — 모델이 가격 변동을 충분히 capture 하지 못하고 비용에 잡힘
-2. **LLM 인프라 성숙**: 14개 모듈 + briefing 3종 + scoring/regime/sentiment 등 의사결정 보조 가능 출력이 이미 갖춰짐
+2. **LLM 인프라 성숙**: 16+ 모듈 (`shared/llm/`) + briefing 3종 + scoring/regime/sentiment 등 의사결정 보조 가능 출력이 이미 갖춰짐
 3. **RL 학습 데이터 한계**: 선물 연결선물(101S6000) ~98K bars로 학습, mini 도메인 mismatch 흔적 — 추가 학습보다 RL 의존을 낮추는 것이 운영 안정성에 유리
 4. **Phase 5 paradigm 정합**: Setup A(gap reversion)/Setup C(volatility breakout)는 **규칙 기반 + 시장컨텍스트 의존**이라 LLM 보강과 자연스럽게 결합
 
@@ -82,12 +83,14 @@ WebSocket tick (futures_feed.py, tz-aware UTC)
 
 ### 2.2 RL 위치 변동
 
+§4의 Phase 0/1/2/3/4 numbering과 일치하도록 명명. Phase 2가 RL shadow 강등, Phase 4가 RL aux 활성화 검토.
+
 | 시점 | 역할 | 활성화 |
 |------|------|--------|
 | 현재 | 선물 메인 의사결정자 (5-action) | `enabled: true` |
-| **Phase A (4–6주)** | shadow-only — 거래 미참여, 신호만 로깅 비교 | `enabled: false`, paper logging만 |
-| **Phase B (3개월 후)** | 보조 필터 (v2 계획 §3.2) — Setup signal에 PASS/SKIP | enable trigger: v2 §2 게이트 |
-| **장기 (6개월+)** | (조건부) 폐지 또는 재학습 | 운영자 결정 |
+| **§4 Phase 2 (Phase 1 종료 후, 1주)** | shadow-only — 거래 미참여, 신호만 로깅 비교 | `enabled: true` + `shadow_mode: true`, paper logging만 |
+| **§4 Phase 4 (Phase 3 종료 +3개월)** | 보조 필터 (v2 계획 §3.2) — Setup signal에 PASS/SKIP | enable trigger: v2 §2 게이트 (`signals_all` 누적 trade ≥ 50, 3개월 EV+) |
+| **장기 (6개월+)** | (조건부) 폐지 또는 재학습 | 운영자 결정 (RL shadow 보존 기간 §7-3 결정 = 6개월) |
 
 ### 2.3 LLM 의사결정 관여 확장
 
@@ -150,17 +153,17 @@ WebSocket tick (futures_feed.py, tz-aware UTC)
 
 ## 3. 진행 중 작업과의 정합
 
-### 3.1 머지 완료 PR (v3 업데이트)
+### 3.1 PR 상태 (v3.1 업데이트, 2026-05-07 기준)
 
-| PR | 머지 | 내용 |
+| PR | 상태 | 내용 |
 |----|------|------|
-| **#158** `chore/phase5-gate2-prep` | ✅ 5/3 | Gate-2 사전 정비 (EOD 표기, night session, rl_trades TTL, TR ID 외부화) |
-| **#159** `fix/paper-tz-aware-hot-path` | ✅ 5/4 | tz-naive→aware 핫패스 수정 + retry exc_info |
-| **#161** `fix/rl-mppo-utc-trading-time` | ✅ 5/6 | `_is_trading_time` / `_is_eod` UTC→KST 변환 누락 — PR #159 후 발견된 회귀 |
-| **#162** `fix/futures-slippage-price-source-time` | ✅ 5/6 | slippage 경로의 `price_source_time` 누락 — paper broker `missing_price_source_time` 거부 차단 해소 |
-| **#160** `docs/llm-primary-rl-minimization-plan` (이 문서) | OPEN | v3 갱신 중 |
+| **#158** `chore/phase5-gate2-prep` | OPEN | Gate-2 사전 정비 (EOD 표기, night session, rl_trades TTL, TR ID 외부화) — Phase 0.1에서 머지 진행 |
+| **#159** `fix/paper-tz-aware-hot-path` | ✅ 5/4 머지 (c37214f) | tz-naive→aware 핫패스 수정 + retry exc_info |
+| **#160** `docs/llm-primary-rl-minimization-plan` (이 문서) | OPEN | v3.1 갱신 중 |
+| **#161** `fix/rl-mppo-utc-trading-time` | ✅ 5/6 머지 (4b7cf7f) | `_is_trading_time` / `_is_eod` UTC→KST 변환 누락 — PR #159 후 발견된 회귀 |
+| **#162** `fix/futures-slippage-price-source-time` | ✅ 5/6 머지 (2071b00) | slippage 경로의 `price_source_time` 누락 — paper broker `missing_price_source_time` 거부 차단 해소 |
 
-5/7 paper validation: 3개 fix가 모두 작동 확인, 첫 거래 2건 발생(둘 다 손실, §1.1 기록). 본 계획 Phase 0의 "1주 paper validation"은 자료가 충분히 모인 상태로 간주 — Phase 0 추가 정비 작업(§4 Phase 0)을 거쳐 Phase 1.0 착수 가능.
+5/7 paper validation: 3개 머지 fix(#159/#161/#162)가 모두 작동 확인, 첫 거래 2건 발생(둘 다 손실, §1.1 기록). PR #158은 별도로 Phase 0.1에서 머지 후 운영자 legal-review.md 검토 가능 상태로 진입.
 
 ### 3.2 기존 v2 계획과의 합치
 
@@ -356,7 +359,7 @@ WebSocket tick (futures_feed.py, tz-aware UTC)
 | **LLM 환각 / 형식 오류** | 잘못된 regime → 잘못된 threshold | `strict_json_schema: true` 검증 + 파싱 실패 시 직전 Redis snapshot 재사용. 30분 이상 갱신 실패 시 fallback (fixed defaults), Telegram 알림 |
 | **RL 폐지 후 재학습 불가** | 모델 자산 손실 | Phase 2의 shadow logger 유지 — 인퍼런스 결과는 6개월간 보관, 재학습 시 reference 사용 |
 | **LLM 컨텍스트 stale** (예: API 다운) | regime 정보 없이 거래 | `MarketContext.confidence < 0.3` 자동 감지 → 그날 신규 진입 정지(safe-by-default), 보유 포지션은 기존 룰대로 청산 |
-| **Setup C 저빈도** (Phase 3 §10.1: ~0.9 trade/mo) | trade 수 부족 → 통계적 검증 어려움 | v2 계획대로 **Setup A 단독 시작**, Setup C는 RL aux 활성화 대기 경로 |
+| **Setup C 저빈도** (`rl-repurposing-v1.md` §10.1: ~0.9 trade/mo) | trade 수 부족 → 통계적 검증 어려움 | v2 계획대로 **Setup A 단독 시작**, Setup C는 RL aux 활성화 대기 경로 |
 | **운영자 게이트 미통과** | Phase 3 진입 막힘 | Phase 0–2는 게이트와 독립 — paper-only 검증으로 가치 입증 후 운영자에게 결정 자료 제공 |
 
 ---
@@ -427,7 +430,7 @@ Phase 0/1만 사전 분해. Phase 2/3은 Phase 1 결과 보고 다시 분해.
 - **1.1-e** (1일): `setup_a_gap_reversion.yaml`/`setup_c_event_reaction.yaml`에 `llm_tuning` 섹션 + 단위 테스트 (LLM 부재 fallback, regime별 조정, `confidence < 0.3` skip)
 
 ### Phase 1.2 — Veto 권한 (1주)
-- **1.2-a** (2일): `services/risk_filter/main.py` — LLM veto 입력 + entry-only 가드 (exit/stop은 veto 대상 아님)
+- **1.2-a** (2일): `services/trading/strategy_manager.py::_apply_llm_veto()` (또는 adapter 내부) — LLM veto 입력 + entry-only 가드 (exit/stop은 veto 대상 아님). §2.4 Adapter 패턴 결정에 따라 standalone `services/risk_filter/main.py`가 아닌 orchestrator 경로에 통합
 - **1.2-b** (1일): `signals_all.executed=0 + skip_reason=llm_veto` 기록 + 테이블 마이그레이션 (필요 시)
 - **1.2-c** (1일): Telegram alert (veto 발화 시 — 운영자 가시성)
 - **1.2-d** (1일): 단위/통합 테스트
@@ -464,6 +467,7 @@ Phase 1.1 완료 + paper 1주 안정성 확인 즉시 (운영자 §7-5 결정):
 | 2026-05-04 | PR #159 머지 (tz-aware 핫패스 fix) |
 | 2026-05-06 | PR #161 머지 (`_is_trading_time` UTC→KST 회귀 fix), PR #162 머지 (slippage `price_source_time` 누락 fix) |
 | 2026-05-07 | 5/7 paper validation: 3 fix 모두 작동, 2건 체결(둘 다 손실 -2.75/-3.35) — Apr 1-15 micro-loss 패턴 재확인 |
-| 2026-05-07 | **v3 — 코드베이스 점검 결과 반영**. §2.4 통합 아키텍처(Adapter 패턴) 확정, §4 Phase 0 사전 정비(kill_switch flatten / 3 stub conditions / RL shadow logging) 추가, Phase 1.0(Adapter 구현) 신설, §8 작업분해 갱신. Phase 5 standalone daemons은 Phase 4까지 deferred |
+| 2026-05-07 | v3 — 코드베이스 점검 결과 반영. §2.4 통합 아키텍처(Adapter 패턴) 확정, §4 Phase 0 사전 정비(kill_switch flatten / 3 stub conditions / RL shadow logging) 추가, Phase 1.0(Adapter 구현) 신설, §8 작업분해 갱신. Phase 5 standalone daemons은 Phase 4까지 deferred |
+| 2026-05-07 | **v3.1** — code review 피드백 5건 정정. §8 1.2-a 타겟을 `services/risk_filter/main.py`(잘못)에서 `services/trading/strategy_manager.py`로 정정 (§2.4 일관성). §3.1 PR #158 상태 ✅ → OPEN 정정. §1.3 모듈 수 14→16+ 정렬. §5 Setup C citation Phase 3 §10.1 → rl-repurposing-v1 §10.1. §2.2 Phase A/B → §4 Phase 2/4 명명 정렬 |
 | TBD | Phase 0 사전 정비 시작 |
 | TBD | Phase 1.0 (Adapter) → Phase 1.1 → 1.2 → 1.3 + Phase 3 Track A 병행 |
