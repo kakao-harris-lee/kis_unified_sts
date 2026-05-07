@@ -49,6 +49,13 @@ logger = logging.getLogger(__name__)
 _MAX_BUFFER_SIZE: int = 10_000
 _pending_shadow_predictions: deque[dict[str, Any]] = deque(maxlen=_MAX_BUFFER_SIZE)
 
+# Counters for batches dropped due to ClickHouse insert failures. Shadow data
+# is best-effort by design (see flush_rl_shadow_predictions docstring); these
+# metrics let operators detect persistent CH issues without silently corrupting
+# the counterfactual dataset.
+_dropped_batch_count: int = 0
+_dropped_row_count: int = 0
+
 
 def record_shadow_prediction(payload: dict[str, Any]) -> None:
     """Append a shadow-mode prediction payload to the in-memory buffer.
@@ -79,6 +86,16 @@ def pending_count() -> int:
     return len(_pending_shadow_predictions)
 
 
+def dropped_counts() -> tuple[int, int]:
+    """Return ``(dropped_batches, dropped_rows)`` since process start.
+
+    Operators / Prometheus exporters use these to detect persistent ClickHouse
+    insert failures.  Non-zero values mean shadow predictions were lost; zero
+    on a long-running process means flush has been reliable.
+    """
+    return _dropped_batch_count, _dropped_row_count
+
+
 async def flush_rl_shadow_predictions(ch_client: Any) -> int:
     """Drain the buffer and insert rows into ``kospi.rl_shadow_predictions``.
 
@@ -95,19 +112,29 @@ async def flush_rl_shadow_predictions(ch_client: Any) -> int:
     Returns:
         Number of rows flushed (0 if buffer was empty or insert failed).
 
-    Note:
-        The function is idempotent with respect to failures: if the insert
-        raises, the rows are **re-queued** at the front of the buffer so they
-        are not silently lost.  This trades write-once semantics for
-        at-least-once delivery; duplicates can appear if the process restarts
-        after a partial flush.
+    Delivery semantics: **best-effort**.  If the ClickHouse insert raises, the
+    drained batch is dropped and ``_dropped_batch_count`` /
+    ``_dropped_row_count`` are incremented (read via :func:`dropped_counts`).
+
+    Re-queueing the failed batch (via ``appendleft``) was rejected because the
+    buffer is bounded by ``maxlen=10_000``.  During the ``asyncio.to_thread``
+    insert window, concurrent producers append new rows to the deque.  On
+    failure, ``appendleft``-ing 10_000 old rows would push those newly-arrived
+    rows off the right end of the bounded deque — silently corrupting the
+    counterfactual dataset.  Shadow data is for offline analysis where
+    occasional batch loss is acceptable provided it is **observable**.  Use
+    :func:`dropped_counts` (and Prometheus alerting on a non-zero rate) to
+    catch persistent CH issues.
     """
     import asyncio
+
+    global _dropped_batch_count, _dropped_row_count
 
     if not _pending_shadow_predictions:
         return 0
 
-    # Drain current buffer atomically (popleft until empty)
+    # Drain current buffer (popleft is GIL-protected; concurrent producers may
+    # append during this loop and will be picked up on the next flush call).
     rows: list[dict[str, Any]] = []
     while _pending_shadow_predictions:
         rows.append(_pending_shadow_predictions.popleft())
@@ -120,13 +147,20 @@ async def flush_rl_shadow_predictions(ch_client: Any) -> int:
         logger.info("rl_shadow: flushed %d rows to kospi.rl_shadow_predictions", len(rows))
         return len(rows)
     except Exception as exc:
+        # Best-effort: drop the batch + record the loss.  Re-queueing would
+        # corrupt newer producer rows under bounded-deque semantics (see
+        # docstring).  Operators detect persistent issues via dropped_counts().
+        _dropped_batch_count += 1
+        _dropped_row_count += len(rows)
         logger.error(
-            "rl_shadow: flush failed (%s); re-queueing %d rows", exc, len(rows), exc_info=True
+            "rl_shadow: flush failed (%s); dropping batch of %d rows "
+            "(total dropped batches=%d rows=%d)",
+            exc,
+            len(rows),
+            _dropped_batch_count,
+            _dropped_row_count,
+            exc_info=True,
         )
-        # Re-queue at front to avoid silent data loss.
-        # deque.extendleft reverses order, so extend from a reversed list.
-        for row in reversed(rows):
-            _pending_shadow_predictions.appendleft(row)
         return 0
 
 

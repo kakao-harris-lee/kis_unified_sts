@@ -858,6 +858,62 @@ async def test_shadow_mode_suppresses_below_confidence_threshold(monkeypatch):
     assert shadow_logger.pending_count() == 0, "Below-threshold action must not be buffered"
 
 
+@pytest.mark.asyncio
+async def test_flush_failure_drops_batch_without_corrupting_buffer():
+    """When ClickHouse insert fails, the failed batch is dropped (best-effort)
+    and the dropped counters increment.  Re-queueing was intentionally removed
+    because the bounded deque(maxlen=10_000) would silently push newer rows
+    off the right end if appendleft restored 10k old rows during a concurrent
+    producer window.
+    """
+    import shared.strategy.rl_shadow_logger as shadow_logger
+
+    # Reset module state
+    shadow_logger._pending_shadow_predictions.clear()
+    shadow_logger._dropped_batch_count = 0
+    shadow_logger._dropped_row_count = 0
+
+    # Buffer some rows, then fail the flush
+    for i in range(5):
+        shadow_logger.record_shadow_prediction(
+            {"ts": datetime(2026, 5, 7, 10, i, 0, tzinfo=UTC), "symbol": "A05605", "action": 0}
+        )
+    assert shadow_logger.pending_count() == 5
+
+    class FailingClient:
+        def execute(self, query, data):
+            raise RuntimeError("simulated CH outage")
+
+    flushed = await shadow_logger.flush_rl_shadow_predictions(FailingClient())
+
+    assert flushed == 0, "Failed flush returns 0"
+    assert shadow_logger.pending_count() == 0, "Failed batch must NOT be re-queued"
+    dropped_batches, dropped_rows = shadow_logger.dropped_counts()
+    assert dropped_batches == 1
+    assert dropped_rows == 5
+
+    # Subsequent successful flush should work normally
+    captured: list = []
+
+    class GoodClient:
+        def execute(self, query, data):
+            captured.append((query, data))
+
+    shadow_logger.record_shadow_prediction(
+        {"ts": datetime(2026, 5, 7, 11, 0, 0, tzinfo=UTC), "symbol": "A05605", "action": 0}
+    )
+    flushed = await shadow_logger.flush_rl_shadow_predictions(GoodClient())
+    assert flushed == 1
+    assert len(captured) == 1
+    # Dropped counters persist across successful flush
+    assert shadow_logger.dropped_counts() == (1, 5)
+
+    # Cleanup
+    shadow_logger._pending_shadow_predictions.clear()
+    shadow_logger._dropped_batch_count = 0
+    shadow_logger._dropped_row_count = 0
+
+
 def test_derive_features_from_ohlcv():
     bars = []
     price = 100.0
