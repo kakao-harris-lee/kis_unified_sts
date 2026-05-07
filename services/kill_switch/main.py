@@ -326,7 +326,9 @@ async def _build_and_run() -> int:
         conditions.append(
             NewsPipelineLagCondition(
                 threshold_seconds=float(cc.news_pipeline_lag_seconds.threshold),
-                lag_provider=_build_news_pipeline_lag_provider(redis_client),
+                lag_provider=_build_news_pipeline_lag_provider(
+                    redis_client, cc.news_pipeline_lag_seconds.stream_key
+                ),
             )
         )
 
@@ -477,21 +479,23 @@ def _build_api_error_rate_provider(
 
 def _build_news_pipeline_lag_provider(
     redis_client: Any,
+    stream_key: str,
 ) -> Callable[[], float]:
     """Return a synchronous callable that returns the news pipeline lag in seconds.
 
-    Data source: Redis stream ``stream:news.raw`` (see config/news_sources.yaml).
-    Reads the timestamp of the last message appended to the stream (via XREVRANGE)
-    and returns ``now - last_message_ts``.  If the stream is empty or unreachable
-    the provider returns 0.0 (never triggers).
+    Args:
+        redis_client: redis.asyncio.Redis instance providing connection metadata.
+        stream_key: Redis stream key to inspect, sourced from
+            ``KillSwitchConfig.conditions.news_pipeline_lag_seconds.stream_key``.
+            Default in YAML: ``stream:news.raw`` (matches
+            ``config/news_sources.yaml::redis_stream``).  Operators override
+            via YAML if the deployment uses a different key.
 
-    TODO(Phase 3 Track A): Validate that the stream key matches the live
-    deployment's news collector config (``config/news_sources.yaml::redis_stream``).
-    Adjust ``_NEWS_STREAM_KEY`` via config if the deployment uses a different name.
+    Reads the timestamp of the last message appended to the stream (via
+    XREVRANGE) and returns ``now - last_message_ts``.  If the stream is empty
+    or unreachable the provider returns 0.0 (never triggers).
     """
     import redis as sync_redis  # type: ignore[import-untyped]
-
-    _NEWS_STREAM_KEY = "stream:news.raw"
 
     def _provider() -> float:
         try:
@@ -504,7 +508,7 @@ def _build_news_pipeline_lag_provider(
                 url = f"redis://{host}:{port}/{db}"
             r = sync_redis.from_url(url, socket_timeout=1.0)
             # XREVRANGE returns at most 1 entry: [(id, {fields})]
-            entries = r.xrevrange(_NEWS_STREAM_KEY, count=1)
+            entries = r.xrevrange(stream_key, count=1)
             r.close()
             if not entries:
                 # Stream empty or not yet created — no lag to report.
@@ -517,7 +521,7 @@ def _build_news_pipeline_lag_provider(
         except Exception:
             logger.debug(
                 "news_pipeline_lag provider: error reading %s — returning 0.0",
-                _NEWS_STREAM_KEY,
+                stream_key,
                 exc_info=True,
             )
             return 0.0

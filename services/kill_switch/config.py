@@ -21,13 +21,25 @@ class _ConditionToggle(BaseModel):
     threshold: float | None = None
 
 
+class _NewsPipelineLagToggle(_ConditionToggle):
+    """News-pipeline lag condition with the source Redis stream key.
+
+    The stream key was previously hardcoded inside
+    ``_build_news_pipeline_lag_provider`` (CLAUDE.md "No Hardcoding" violation).
+    Operators can now point the kill switch at a different ingest stream
+    without code changes.
+    """
+
+    stream_key: str = Field(default="stream:news.raw")
+
+
 class _ConditionsBlock(BaseModel):
     daily_loss: _ConditionToggle = Field(default_factory=_ConditionToggle)
     weekly_loss: _ConditionToggle = Field(default_factory=_ConditionToggle)
     consecutive_losses: _ConditionToggle = Field(default_factory=_ConditionToggle)
     api_error_rate_5min: _ConditionToggle = Field(default_factory=_ConditionToggle)
-    news_pipeline_lag_seconds: _ConditionToggle = Field(
-        default_factory=_ConditionToggle
+    news_pipeline_lag_seconds: _NewsPipelineLagToggle = Field(
+        default_factory=_NewsPipelineLagToggle
     )
     clickhouse_insert_fail_rate: _ConditionToggle = Field(
         default_factory=_ConditionToggle

@@ -39,6 +39,9 @@ kill_switch:
     news_pipeline_lag_seconds:
       enabled: true
       threshold: 1800            # 30 minutes — conservative default per plan §4 Phase 0.4
+      # Redis stream key inspected for lag computation. Must match the news
+      # collector's output stream (canonical: config/news_sources.yaml::redis_stream).
+      stream_key: "stream:news.raw"
     clickhouse_insert_fail_rate:
       enabled: true
       threshold: 0.1             # 10% of inserts failing in 5-min window (fraction 0–1)

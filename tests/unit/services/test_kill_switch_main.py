@@ -452,7 +452,7 @@ class TestNewsPipelineLagProvider:
         sync_redis_mock.xrevrange.return_value = [(f"{ts_ms}-0".encode(), {})]
 
         with patch("redis.from_url", return_value=sync_redis_mock):
-            provider = _build_news_pipeline_lag_provider(redis_mock)
+            provider = _build_news_pipeline_lag_provider(redis_mock, "stream:news.raw")
             result = provider()
 
         # Allow 2s tolerance for test execution time
@@ -464,7 +464,7 @@ class TestNewsPipelineLagProvider:
         sync_redis_mock.xrevrange.return_value = []
 
         with patch("redis.from_url", return_value=sync_redis_mock):
-            provider = _build_news_pipeline_lag_provider(redis_mock)
+            provider = _build_news_pipeline_lag_provider(redis_mock, "stream:news.raw")
             result = provider()
 
         assert result == 0.0
@@ -473,7 +473,7 @@ class TestNewsPipelineLagProvider:
         redis_mock = self._make_redis_mock()
 
         with patch("redis.from_url", side_effect=ConnectionError("down")):
-            provider = _build_news_pipeline_lag_provider(redis_mock)
+            provider = _build_news_pipeline_lag_provider(redis_mock, "stream:news.raw")
             result = provider()
 
         assert result == 0.0
@@ -488,7 +488,7 @@ class TestNewsPipelineLagProvider:
         sync_redis_mock.xrevrange.return_value = [(f"{ts_ms}-0".encode(), {})]
 
         with patch("redis.from_url", return_value=sync_redis_mock):
-            provider = _build_news_pipeline_lag_provider(redis_mock)
+            provider = _build_news_pipeline_lag_provider(redis_mock, "stream:news.raw")
             cond = NewsPipelineLagCondition(
                 threshold_seconds=1800, lag_provider=provider
             )
@@ -506,7 +506,7 @@ class TestNewsPipelineLagProvider:
         sync_redis_mock.xrevrange.return_value = [(f"{ts_ms}-0".encode(), {})]
 
         with patch("redis.from_url", return_value=sync_redis_mock):
-            provider = _build_news_pipeline_lag_provider(redis_mock)
+            provider = _build_news_pipeline_lag_provider(redis_mock, "stream:news.raw")
             cond = NewsPipelineLagCondition(
                 threshold_seconds=1800, lag_provider=provider
             )
