@@ -35,14 +35,14 @@ schedule from regular capital gains). Operator must confirm:
 The mock server uses simulation TR IDs. Real-account submission requires
 the production TR IDs in `config/kis/tr_ids.yaml`. Confirm:
 
-- [ ] Production TR IDs verified for: futures order place, modify, cancel, balance query, fill query
+- [ ] Production TR IDs verified for: futures order place, modify, cancel, balance query, fill query — **canonical source: `config/kis/tr_ids.yaml`** (loaded by `shared/execution/tr_ids.py::tr_id()` and consumed via `ExecutionConfig` `default_factory` fields). Diff this file against the KIS account-manager spreadsheet.
 - [ ] Real-account API key registered to the same KIS account (no cross-account drift)
 - [ ] WebSocket session works in real (not just mock) — `H0IFASP0` quote feed connects + receives live ticks
 - [ ] Single-account-only assumption holds — no shared account between automated trading and manual desk activity (would corrupt position state)
 
 ## 4. Trading session compliance
 
-- [ ] Day-session window 09:00–15:30 KST hardcoded EOD-flat (15:14 close logic) verified — no after-hours fills
+- [ ] Day-session window 09:00–15:30 KST stock / 09:00–15:45 KST futures, EOD-flat at 15:15 KST (`eod_close_hour=15, eod_close_minute=15` in `shared/strategy/exit/{three_stage,williams_r_exit,atr_dynamic,rl_mppo_exit}.py`) — verified, no after-hours fills
 - [ ] Night session (`야간 18:00–05:00`) explicitly disabled in `config/market_schedule.yaml` — confirm
 - [ ] Holiday calendar source: `services/trading/holiday_cache.py` → KIS official 휴장일 — last refresh date: <YYYY-MM-DD>
 
@@ -52,7 +52,7 @@ Some jurisdictions require automated trading to retain order/fill audit
 trails for N years. Confirm the operator's obligation and our implementation:
 
 - [ ] Required retention period: <N years>
-- [ ] Implementation: `kospi.order_fills` TTL = 5 years (V3 migration); `kospi.rl_trades` TTL = <verify>
+- [ ] Implementation: `kospi.order_fills` TTL = 5 years (V3 migration); `kospi.rl_trades` TTL = 5 years (V4 migration, aligned with order_fills)
 - [ ] Audit-bundle-on-demand: `reports/incidents/<ts>/` (rollback runbook §5) — sufficient for a regulator request? <yes/no — note any gap>
 
 ## 6. Sign-off

@@ -7,7 +7,7 @@ YAML 설정 파일의 Pydantic 검증 스키마.
 from __future__ import annotations
 
 import os
-from typing import Literal, Optional
+from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -18,7 +18,7 @@ class KISAuthSchema(BaseModel):
     app_key: str = Field(default="", description="KIS API 앱 키")
     app_secret: str = Field(default="", description="KIS API 앱 시크릿")
     is_real: bool = Field(default=True, description="실전투자 여부")
-    token_cache_dir: Optional[str] = Field(
+    token_cache_dir: str | None = Field(
         default=None, description="토큰 캐시 디렉토리"
     )
     token_expiry_buffer_seconds: int = Field(
@@ -146,10 +146,24 @@ class TradingHoursConfig(BaseModel):
     close: str = Field(default="15:30", description="거래 종료 시간")
 
 
+class NightSessionConfig(BaseModel):
+    """야간 세션 설정 (선물)"""
+
+    enabled: bool = Field(
+        default=False,
+        description="야간 세션 거래 허용 여부 (기본 False — 명시적 활성화 필요)",
+    )
+    open: str = Field(default="18:00", description="야간 세션 시작 시간")
+    close: str = Field(default="05:00", description="야간 세션 종료 시간 (다음날)")
+
+
 class MarketHoursConfig(BaseModel):
     """자산별 시장 시간 설정"""
 
     regular: TradingHoursConfig = Field(default_factory=TradingHoursConfig)
+    night: NightSessionConfig | None = Field(
+        default=None, description="야간 세션 (선물 전용; 미설정 시 비활성)"
+    )
 
 
 class MarketScheduleConfig(BaseModel):
@@ -162,7 +176,8 @@ class MarketScheduleConfig(BaseModel):
     )
     futures: MarketHoursConfig = Field(
         default_factory=lambda: MarketHoursConfig(
-            regular=TradingHoursConfig(open="09:00", close="15:45")
+            regular=TradingHoursConfig(open="09:00", close="15:45"),
+            night=NightSessionConfig(enabled=False, open="18:00", close="05:00"),
         )
     )
     pre_market_buffer: int = Field(default=5, description="장 시작 전 준비 시간 (분)")

@@ -22,7 +22,7 @@ and the Grafana dashboards in `monitoring/grafana/dashboards/`.
 
 ## 15:30 — EOD flat verification
 
-- [ ] All futures positions closed by 15:14 (EOD close logic). Check: `clickhouse-client --query "SELECT count() FROM kospi.swing_positions WHERE asset_class='futures' AND status='open'"` → 0
+- [ ] All futures positions closed by 15:15 (EOD close logic — `eod_close_hour=15, eod_close_minute=15` in exit configs, executed before futures market close at 15:45). Check: `clickhouse-client --query "SELECT count() FROM kospi.swing_positions WHERE asset_class='futures' AND status='open'"` → 0
 - [ ] If non-zero: investigate before next session. Manual close: `python -m scripts.trading.flatten_all --confirm --reason eod_manual`
 - [ ] Today PnL recorded: see **Overview → Today PnL**
 

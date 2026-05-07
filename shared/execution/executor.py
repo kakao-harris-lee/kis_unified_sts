@@ -324,6 +324,28 @@ class OrderExecutor:
         venue = order.venue if order.venue else ExecutionVenue.KRX.value
 
         is_night = self._is_night_session()
+        # Phase 5 legal-review §4: night session is disabled by default.
+        # `config/market_schedule.yaml::futures.night.enabled` must be true
+        # AND the operator must complete the night-session compliance review
+        # before night orders are accepted. Fail-closed otherwise.
+        if is_night:
+            from shared.strategy.market_time import is_futures_night_session_enabled
+
+            if not is_futures_night_session_enabled():
+                logger.warning(
+                    "night session refused: code=%s qty=%s "
+                    "(market_schedule.yaml::futures.night.enabled is false)",
+                    order.code,
+                    order.quantity,
+                )
+                return OrderResponse(
+                    success=False,
+                    message=(
+                        "Night session disabled in "
+                        "config/market_schedule.yaml::futures.night.enabled"
+                    ),
+                    venue=venue,
+                )
         tr_id = self._resolve_futures_order_tr_id(is_mock=is_mock, is_night=is_night)
 
         headers = await self._build_auth_headers(tr_id=tr_id)

@@ -1,9 +1,10 @@
 """Order execution configuration."""
 import re
 from enum import Enum
-from typing import Dict, List
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from .tr_ids import tr_id
 
 
 class TradingMode(str, Enum):
@@ -117,7 +118,7 @@ class ATSRoutingConfig(BaseModel):
     )
 
     # Rule 5: Time-of-day preferences
-    time_of_day_preferences: Dict[str, str] = Field(
+    time_of_day_preferences: dict[str, str] = Field(
         default_factory=dict,
         description="Time window preferences (HH:MM-HH:MM -> KRX|ATS|AUTO)"
     )
@@ -128,7 +129,7 @@ class ATSRoutingConfig(BaseModel):
         ge=0.0,
         description="Minimum market cap for ATS routing"
     )
-    excluded_sectors: List[str] = Field(
+    excluded_sectors: list[str] = Field(
         default_factory=list,
         description="Excluded sectors (e.g. ['금융', '보험'])"
     )
@@ -151,7 +152,7 @@ class ATSRoutingConfig(BaseModel):
 
     @field_validator("time_of_day_preferences")
     @classmethod
-    def validate_time_preferences(cls, v: Dict[str, str]) -> Dict[str, str]:
+    def validate_time_preferences(cls, v: dict[str, str]) -> dict[str, str]:
         """Validate time window format and venue values."""
         import re as regex_module
 
@@ -324,45 +325,81 @@ class ExecutionConfig(BaseModel):
         description="KIS 실전투자 API base URL"
     )
 
-    # KIS TR codes for order types (KRX)
-    tr_code_buy_mock: str = Field(default="VTTC0802U", description="TR code for mock buy order")
-    tr_code_buy_real: str = Field(default="TTTC0802U", description="TR code for real buy order")
-    tr_code_sell_mock: str = Field(default="VTTC0801U", description="TR code for mock sell order")
-    tr_code_sell_real: str = Field(default="TTTC0801U", description="TR code for real sell order")
+    # KIS TR codes (single source of truth: config/kis/tr_ids.yaml).
+    # default_factory loads the YAML-merged value at instance construction;
+    # missing keys fall back to the baked _DEFAULTS in shared/execution/tr_ids.py.
+    # See docs/runbooks/futures-legal-review.md §3 for the operator audit.
+    tr_code_buy_mock: str = Field(
+        default_factory=lambda: tr_id("stock_krx_buy_mock"),
+        description="TR code for mock buy order",
+    )
+    tr_code_buy_real: str = Field(
+        default_factory=lambda: tr_id("stock_krx_buy_real"),
+        description="TR code for real buy order",
+    )
+    tr_code_sell_mock: str = Field(
+        default_factory=lambda: tr_id("stock_krx_sell_mock"),
+        description="TR code for mock sell order",
+    )
+    tr_code_sell_real: str = Field(
+        default_factory=lambda: tr_id("stock_krx_sell_real"),
+        description="TR code for real sell order",
+    )
 
     # KIS TR codes for ATS orders
-    tr_code_ats_buy_mock: str = Field(default="VTTC0852U", description="TR code for ATS mock buy order")
-    tr_code_ats_buy_real: str = Field(default="TTTC0852U", description="TR code for ATS real buy order")
-    tr_code_ats_sell_mock: str = Field(default="VTTC0851U", description="TR code for ATS mock sell order")
-    tr_code_ats_sell_real: str = Field(default="TTTC0851U", description="TR code for ATS real sell order")
+    tr_code_ats_buy_mock: str = Field(
+        default_factory=lambda: tr_id("stock_ats_buy_mock"),
+        description="TR code for ATS mock buy order",
+    )
+    tr_code_ats_buy_real: str = Field(
+        default_factory=lambda: tr_id("stock_ats_buy_real"),
+        description="TR code for ATS real buy order",
+    )
+    tr_code_ats_sell_mock: str = Field(
+        default_factory=lambda: tr_id("stock_ats_sell_mock"),
+        description="TR code for ATS mock sell order",
+    )
+    tr_code_ats_sell_real: str = Field(
+        default_factory=lambda: tr_id("stock_ats_sell_real"),
+        description="TR code for ATS real sell order",
+    )
 
     # Futures order TR IDs (KIS [국내선물옵션] 주문/계좌 기준)
     futures_tr_code_order_day_mock: str = Field(
-        default="VTTO1101U", description="Futures day order TR code for mock"
+        default_factory=lambda: tr_id("futures_order_day_mock"),
+        description="Futures day order TR code for mock",
     )
     futures_tr_code_order_day_real: str = Field(
-        default="TTTO1101U", description="Futures day order TR code for real"
+        default_factory=lambda: tr_id("futures_order_day_real"),
+        description="Futures day order TR code for real",
     )
     futures_tr_code_order_night_real: str = Field(
-        default="STTN1101U", description="Futures night order TR code for real"
+        default_factory=lambda: tr_id("futures_order_night_real"),
+        description="Futures night order TR code for real",
     )
 
     futures_tr_code_cancel_day_mock: str = Field(
-        default="VTTO1103U", description="Futures day cancel TR code for mock"
+        default_factory=lambda: tr_id("futures_cancel_day_mock"),
+        description="Futures day cancel TR code for mock",
     )
     futures_tr_code_cancel_day_real: str = Field(
-        default="TTTO1103U", description="Futures day cancel TR code for real"
+        default_factory=lambda: tr_id("futures_cancel_day_real"),
+        description="Futures day cancel TR code for real",
     )
     futures_tr_code_cancel_night_real: str = Field(
-        default="STTN1103U", description="Futures night cancel TR code for real"
+        default_factory=lambda: tr_id("futures_cancel_night_real"),
+        description="Futures night cancel TR code for real",
     )
 
     futures_tr_code_inquire_day_mock: str = Field(
-        default="VTTO5201R", description="Futures day fill inquiry TR code for mock"
+        default_factory=lambda: tr_id("futures_inquire_day_mock"),
+        description="Futures day fill inquiry TR code for mock",
     )
     futures_tr_code_inquire_day_real: str = Field(
-        default="TTTO5201R", description="Futures day fill inquiry TR code for real"
+        default_factory=lambda: tr_id("futures_inquire_day_real"),
+        description="Futures day fill inquiry TR code for real",
     )
     futures_tr_code_inquire_night_real: str = Field(
-        default="STTN5201R", description="Futures night fill inquiry TR code for real"
+        default_factory=lambda: tr_id("futures_inquire_night_real"),
+        description="Futures night fill inquiry TR code for real",
     )
