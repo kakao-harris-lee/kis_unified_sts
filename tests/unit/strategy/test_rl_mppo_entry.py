@@ -731,6 +731,133 @@ async def test_generate_blocks_long_signal_in_bear_regime(monkeypatch):
     assert signal is None
 
 
+@pytest.mark.asyncio
+async def test_shadow_mode_does_not_emit_signal(monkeypatch):
+    """With shadow_mode=True, should_enter returns None and a payload is buffered.
+
+    The RL model returns action=0 (LONG_ENTRY) with confidence 0.90, which
+    exceeds min_confidence=0.50.  Under normal operation this would produce a
+    Signal(BUY).  In shadow_mode the Signal must be suppressed (return None)
+    while the prediction payload is appended to the shadow buffer.
+    """
+    import shared.strategy.rl_shadow_logger as shadow_logger
+
+    # Clear buffer before test
+    shadow_logger._pending_shadow_predictions.clear()
+
+    strategy = RLMPPOEntry(RLMPPOConfig(min_confidence=0.50, shadow_mode=True))
+    strategy._is_trading_time = lambda _ts, **_kwargs: True
+    strategy._load_model = lambda: SimpleNamespace(
+        predict=lambda *_args, **_kwargs: (0, None)
+    )
+    strategy._build_observation = lambda _ctx: np.zeros(31, dtype=np.float32)
+    monkeypatch.setattr(
+        "shared.strategy.entry.rl_mppo.get_action_probabilities",
+        lambda *_args, **_kwargs: {0: 0.90, 2: 0.05, 4: 0.05},
+    )
+
+    context = EntryContext(
+        market_data={
+            "code": "A05603",
+            "name": "KOSPI200 미니선물",
+            "close": 380.0,
+        },
+        indicators={},
+        current_positions=[],
+        timestamp=datetime(2026, 5, 4, 10, 0, 0, tzinfo=UTC),
+        metadata={"regime": "BULL", "risk_mode": "NEUTRAL"},
+    )
+
+    signal = await strategy.generate(context)
+
+    # Signal must be suppressed
+    assert signal is None, "shadow_mode=True must not emit a Signal"
+
+    # Exactly one payload must be buffered
+    assert shadow_logger.pending_count() == 1, "Expected 1 buffered shadow prediction"
+
+    payload = shadow_logger._pending_shadow_predictions[0]
+    assert payload["symbol"] == "A05603"
+    assert payload["action"] == 0
+    assert abs(payload["confidence"] - 0.90) < 1e-4
+    assert isinstance(payload["action_probs"], dict)
+    assert payload["regime"] == "BULL"
+
+    # Clean up
+    shadow_logger._pending_shadow_predictions.clear()
+
+
+@pytest.mark.asyncio
+async def test_shadow_mode_false_emits_signal_normally(monkeypatch):
+    """With shadow_mode=False (default), a qualifying action still emits a Signal."""
+    import shared.strategy.rl_shadow_logger as shadow_logger
+
+    shadow_logger._pending_shadow_predictions.clear()
+
+    strategy = RLMPPOEntry(RLMPPOConfig(min_confidence=0.50, shadow_mode=False))
+    strategy._is_trading_time = lambda _ts, **_kwargs: True
+    strategy._load_model = lambda: SimpleNamespace(
+        predict=lambda *_args, **_kwargs: (0, None)
+    )
+    strategy._build_observation = lambda _ctx: np.zeros(31, dtype=np.float32)
+    monkeypatch.setattr(
+        "shared.strategy.entry.rl_mppo.get_action_probabilities",
+        lambda *_args, **_kwargs: {0: 0.80, 2: 0.10, 4: 0.10},
+    )
+
+    context = EntryContext(
+        market_data={
+            "code": "A05603",
+            "name": "KOSPI200 미니선물",
+            "close": 380.0,
+        },
+        indicators={},
+        current_positions=[],
+        timestamp=datetime(2026, 5, 4, 10, 0, 0, tzinfo=UTC),
+    )
+
+    signal = await strategy.generate(context)
+
+    assert signal is not None, "shadow_mode=False must emit a Signal"
+    assert signal.metadata.get("signal_direction") == "long"
+    # Buffer must remain empty — shadow_mode=False never writes to it
+    assert shadow_logger.pending_count() == 0
+
+
+@pytest.mark.asyncio
+async def test_shadow_mode_suppresses_below_confidence_threshold(monkeypatch):
+    """Shadow mode must not buffer a payload when confidence is below threshold.
+
+    The confidence filter runs before the shadow-mode branch, so low-confidence
+    actions are dropped entirely — no payload is recorded in the buffer.
+    """
+    import shared.strategy.rl_shadow_logger as shadow_logger
+
+    shadow_logger._pending_shadow_predictions.clear()
+
+    strategy = RLMPPOEntry(RLMPPOConfig(min_confidence=0.70, shadow_mode=True))
+    strategy._is_trading_time = lambda _ts, **_kwargs: True
+    strategy._load_model = lambda: SimpleNamespace(
+        predict=lambda *_args, **_kwargs: (0, None)
+    )
+    strategy._build_observation = lambda _ctx: np.zeros(31, dtype=np.float32)
+    monkeypatch.setattr(
+        "shared.strategy.entry.rl_mppo.get_action_probabilities",
+        lambda *_args, **_kwargs: {0: 0.55, 2: 0.30, 4: 0.15},
+    )
+
+    context = EntryContext(
+        market_data={"code": "A05603", "name": "KOSPI200 미니선물", "close": 380.0},
+        indicators={},
+        current_positions=[],
+        timestamp=datetime(2026, 5, 4, 10, 0, 0, tzinfo=UTC),
+    )
+
+    signal = await strategy.generate(context)
+    assert signal is None
+    assert shadow_logger.pending_count() == 0, "Below-threshold action must not be buffered"
+
+
 def test_derive_features_from_ohlcv():
     bars = []
     price = 100.0

@@ -59,6 +59,17 @@ strategy:
         - "BEARISH"
         - "SIDEWAYS_DOWN"
 
+      # Shadow mode (Phase 0.3 — LLM-primary RL-minimization plan).
+      # When true: inference runs fully (confidence filter included) but
+      # no Signal is emitted and no order is placed.  Predictions are
+      # buffered in memory and flushed to kospi.rl_shadow_predictions
+      # (ClickHouse V6 migration) for counterfactual analysis vs Setup A/C.
+      # Default: false (normal live execution).
+      shadow_mode: false
+      #
+      # To enable shadow mode (operator must set explicitly):
+      #   shadow_mode: true
+
   exit:
     type: rl_mppo_exit               # RL 학습된 청산 정책
     params:
