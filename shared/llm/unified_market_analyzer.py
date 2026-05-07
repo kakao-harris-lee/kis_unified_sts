@@ -95,16 +95,26 @@ class UnifiedMarketAnalyzer:
         # 출력 디렉토리 생성
         os.makedirs(self.config.output_dir, exist_ok=True)
 
-    def run_analysis(self, mode: str = "all", verbose: bool = True) -> MarketAnalysis:
-        """
-        시장 분석 실행
+    def run_analysis(
+        self,
+        mode: str = "all",
+        verbose: bool = True,
+        prompt_addendum: str = "",
+    ) -> MarketAnalysis:
+        """시장 분석 실행.
 
         Args:
-            mode: 분석 모드 ("all", "etf", "futures", "options", "bonds", "indices")
-            verbose: 상세 출력 여부
+            mode: 분석 모드 ("all", "etf", "futures", "options", "bonds", "indices").
+            verbose: 상세 출력 여부.
+            prompt_addendum: Optional extra text appended to the LLM system prompt.
+                When non-empty, it is injected after the base system prompt so the
+                LLM focuses on a specific asset class or trading context.  Loaded
+                from ``config/llm.yaml::futures.prompt_addendum`` by
+                :class:`~services.trading.llm_context_publisher.LLMContextPublisher`
+                when ``asset_class="futures"``.
 
         Returns:
-            MarketAnalysis 결과
+            MarketAnalysis 결과.
         """
         self._print_header(mode, verbose)
 
@@ -122,7 +132,8 @@ class UnifiedMarketAnalyzer:
         if verbose:
             print("\n[LLM] Running AI analysis...")
         llm_summary, llm_strategy, key_points = self._run_llm_analysis(
-            etf_flows, futures, options, bonds, indices, technical
+            etf_flows, futures, options, bonds, indices, technical,
+            prompt_addendum=prompt_addendum,
         )
 
         analysis = self._build_market_analysis(
@@ -343,8 +354,21 @@ class UnifiedMarketAnalyzer:
         bonds: Optional[BondData],
         indices: List[IndexData],
         technical: dict,
+        prompt_addendum: str = "",
     ) -> Tuple[str, str, List[str]]:
-        """LLM 기반 분석"""
+        """LLM 기반 분석.
+
+        Args:
+            etf_flows: ETF sector flow data.
+            futures: Futures market data.
+            options: Options market data.
+            bonds: Bond market data.
+            indices: Index data.
+            technical: Technical indicator summary dict.
+            prompt_addendum: Optional extra text appended to the base system prompt.
+                Non-empty values override the generic analysis framing with an
+                asset-class-specific focus (e.g., futures intraday risk/regime).
+        """
         if not self.llm_client:
             return self._fallback_analysis(etf_flows, futures, options, bonds, indices)
 
@@ -354,10 +378,17 @@ class UnifiedMarketAnalyzer:
         )
 
         try:
-            system_prompt = (
+            base_system_prompt = (
                 "당신은 전문 시장 분석가입니다. "
                 "주어진 데이터를 바탕으로 간결하고 핵심적인 분석을 제공합니다. "
                 "반드시 JSON 형식으로 응답하세요."
+            )
+            # Append futures-specific (or other asset-class) focus instructions
+            # when provided. The addendum is config-driven from
+            # config/llm.yaml::futures.prompt_addendum — never hardcoded here.
+            addendum = (prompt_addendum or "").strip()
+            system_prompt = (
+                f"{base_system_prompt}\n\n{addendum}" if addendum else base_system_prompt
             )
             user_prompt = f"""다음 시장 데이터를 분석해주세요:
 

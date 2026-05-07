@@ -117,6 +117,50 @@ def test_llm_config_defaults_llm_scoring():
     assert cfg.stock_llm_scoring_temperature == 0.2
 
 
+def test_llm_config_defaults_futures_prompt_addendum():
+    """futures_prompt_addendum defaults to empty string."""
+    cfg = LLMConfig()
+    assert cfg.futures_prompt_addendum == ""
+
+
+def test_llm_config_from_yaml_loads_futures_prompt_addendum(tmp_path):
+    """from_yaml() loads futures.prompt_addendum into futures_prompt_addendum field."""
+    cfg_path = tmp_path / "llm.yaml"
+    addendum_text = (
+        "You are analyzing for KOSPI200 futures intraday trading.\n"
+        "Focus on regime and risk_score."
+    )
+    cfg_path.write_text(
+        f"""
+futures:
+  weight_global: 0.4
+  prompt_addendum: |
+    {addendum_text.replace(chr(10), chr(10) + "    ")}
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    cfg = LLMConfig.from_yaml(cfg_path)
+    # Strip for comparison since YAML block scalars may include trailing newline
+    assert cfg.futures_prompt_addendum.strip() != ""
+    assert "KOSPI200" in cfg.futures_prompt_addendum
+
+
+def test_llm_config_from_yaml_futures_prompt_addendum_absent_defaults_empty(tmp_path):
+    """futures.prompt_addendum absent → futures_prompt_addendum is empty string."""
+    cfg_path = tmp_path / "llm.yaml"
+    cfg_path.write_text(
+        """
+futures:
+  weight_global: 0.4
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    cfg = LLMConfig.from_yaml(cfg_path)
+    assert cfg.futures_prompt_addendum == ""
+
+
 # normalize_scoring_payload tests
 
 

@@ -84,11 +84,28 @@ futures:
   stop_loss_pt: 3.0         # 손절 포인트
   take_profit_pt: 5.0       # 익절 포인트
 
+  # Futures-specific LLM prompt addendum (Phase 1.1-a)
+  # Injected as additional system prompt context when LLMContextPublisher is
+  # initialized with asset_class="futures". Focuses the LLM on KOSPI200 futures
+  # intraday regime/risk classification rather than stock universe quality scoring.
+  # All fields must remain config-driven — do NOT hardcode in Python.
+  prompt_addendum: |
+    You are analyzing for **KOSPI200 futures intraday trading**.
+    Output regime classification (BULL_STRONG/BULL_MODERATE/NEUTRAL/BEAR_MODERATE/BEAR_STRONG/SIDEWAYS_UP/SIDEWAYS_DOWN),
+    overall_signal (STRONG_BULLISH/BULLISH/NEUTRAL/BEARISH/STRONG_BEARISH),
+    risk_mode (RISK_ON/NEUTRAL/RISK_OFF), risk_score (0-100, higher = more risk),
+    and confidence (0-1) appropriate for **futures** position sizing & threshold tuning.
+    Focus on: KOSPI200 macro regime, day-session volatility, event-driven moves,
+    intraday momentum, and institutional futures flow — NOT individual stock quality scoring.
+
 market_context_publisher:
   # LLM 시장 분석 결과를 Redis에 주기적으로 발행
   enabled: true                      # 백그라운드 발행 활성화
   run_on_startup: true               # 시작 시 즉시 분석 실행
-  analysis_interval_minutes: 30      # 분석 실행 주기 (분)
+  # Operator §7-2 decision (2026-05-03): 1h interval (was 30 min).
+  # On-demand refresh is triggered by Setup A/C signal arrival via
+  # LLMContextPublisher.request_refresh() (Phase 1.1-b).
+  analysis_interval_minutes: 60      # 분석 실행 주기 (분) — §7-2 결정: 1h
   redis_ttl_seconds: 7200            # Redis 캐시 TTL (2시간)
 
 notification:

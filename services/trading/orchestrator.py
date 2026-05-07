@@ -1079,7 +1079,7 @@ class TradingOrchestrator:
             logger.info(
                 "LLM context publisher initialized "
                 "(interval=%d min, redis_ttl=%d sec)",
-                publisher_config.get("analysis_interval_minutes", 30),
+                publisher_config.get("analysis_interval_minutes", 60),
                 publisher_config.get("redis_ttl_seconds", 7200),
             )
         except (ConfigurationError, InvalidConfigError, MissingConfigError) as e:
@@ -3431,7 +3431,7 @@ class TradingOrchestrator:
             publisher_config = llm_yaml.get("market_context_publisher", {})
 
             run_on_startup = publisher_config.get("run_on_startup", True)
-            interval_minutes = publisher_config.get("analysis_interval_minutes", 30)
+            interval_minutes = publisher_config.get("analysis_interval_minutes", 60)
 
             # Run initial analysis on startup if configured
             if run_on_startup:
