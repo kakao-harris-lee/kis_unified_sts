@@ -8,13 +8,28 @@ Architecture:
     MarketAnalysis → MarketContext conversion
     MarketContext → Redis (via TradingStatePublisher pattern)
 
+Futures-specific behaviour (Phase 1.1-a/b):
+    When ``asset_class="futures"`` the publisher injects a futures-focused
+    LLM prompt addendum loaded from ``config/llm.yaml::futures.prompt_addendum``.
+    This steers the LLM toward KOSPI200 macro/regime classification and intraday
+    risk scoring rather than stock-universe quality scoring.
+
+    The periodic analysis interval is 1 h (``analysis_interval_minutes: 60``,
+    operator §7-2 decision 2026-05-03).  Additionally, Setup A/C signal adapters
+    can request an immediate refresh via ``request_refresh()`` — the method
+    serialises concurrent calls so at most one analysis runs at a time.
+
 Usage:
     publisher = LLMContextPublisher("stock")
     context = await publisher.run_analysis()
+
+    # On-demand refresh (e.g. from Setup A/C adapter):
+    refreshed = await publisher.request_refresh()
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from datetime import datetime
@@ -66,13 +81,34 @@ class LLMContextPublisher:
         self.config = config or LLMConfig.from_env()
         self.analyzer = UnifiedMarketAnalyzer(self.config)
 
+        # Futures-specific prompt addendum (Phase 1.1-a).
+        # Non-empty only when asset_class="futures" and the YAML key is set.
+        # Loaded from config/llm.yaml::futures.prompt_addendum — never hardcoded.
+        self._prompt_addendum: str = (
+            (self.config.futures_prompt_addendum or "").strip()
+            if asset_class == "futures"
+            else ""
+        )
+        if self._prompt_addendum:
+            logger.info(
+                "LLMContextPublisher: futures prompt addendum loaded (%d chars)",
+                len(self._prompt_addendum),
+            )
+
+        # On-demand refresh lock (Phase 1.1-b).
+        # Serialises concurrent request_refresh() calls so at most one analysis
+        # is in-flight at a time; does not block the periodic loop.
+        self._refresh_lock: Optional[asyncio.Lock] = None
+
         # Setup Prometheus metrics (optional)
         if HAS_PROMETHEUS:
             self._setup_prometheus_metrics()
 
         logger.info(
-            f"LLMContextPublisher initialized for {asset_class} "
-            f"(provider={self.config.llm_provider}, model={self.config.model})"
+            "LLMContextPublisher initialized for %s (provider=%s, model=%s)",
+            asset_class,
+            self.config.llm_provider,
+            self.config.model,
         )
 
     def _setup_prometheus_metrics(self):
@@ -105,6 +141,10 @@ class LLMContextPublisher:
         It runs the full UnifiedMarketAnalyzer pipeline and converts the result
         to a MarketContext object suitable for strategy consumption.
 
+        When ``asset_class="futures"`` a futures-focused prompt addendum is
+        injected (config-driven from ``config/llm.yaml::futures.prompt_addendum``)
+        to steer the LLM toward KOSPI200 intraday regime/risk classification.
+
         Args:
             mode: Analysis mode ("all", "etf", "futures", "options", "bonds", "indices").
                   Default "all" runs comprehensive analysis.
@@ -114,10 +154,16 @@ class LLMContextPublisher:
             Never raises exceptions (fire-and-forget pattern).
         """
         try:
-            logger.debug(f"Running LLM market analysis (mode={mode})...")
+            logger.debug("Running LLM market analysis (mode=%s, asset=%s)...", mode, self.asset_class)
 
-            # Run unified market analysis (verbose=False for production)
-            market_analysis = self.analyzer.run_analysis(mode=mode, verbose=False)
+            # Run unified market analysis (verbose=False for production).
+            # Pass the futures-specific prompt addendum when applicable — empty
+            # string is a safe no-op for stock mode (UnifiedMarketAnalyzer ignores it).
+            market_analysis = self.analyzer.run_analysis(
+                mode=mode,
+                verbose=False,
+                prompt_addendum=self._prompt_addendum,
+            )
 
             # Convert to MarketContext
             market_context = self._convert_analysis(market_analysis)
@@ -291,6 +337,70 @@ class LLMContextPublisher:
 
         # Cap at 1.0
         return min(1.0, confidence)
+
+    async def request_refresh(self) -> bool:
+        """Request an immediate (on-demand) market analysis refresh.
+
+        Called by Setup A/C signal adapters when a new setup signal arrives,
+        so the LLM context is freshened before threshold tuning decisions are
+        made (Phase 1.1-b, operator §7-2 decision).
+
+        The method is idempotent under concurrency: if a refresh is already
+        in-flight the call returns ``False`` immediately rather than queueing
+        another analysis.  This prevents thundering-herd behaviour when multiple
+        setup signals fire in quick succession.
+
+        The asyncio.Lock is created lazily on the first call so that the method
+        is safe to use from any event loop.
+
+        Returns:
+            ``True`` if a fresh analysis was triggered and completed (or
+            attempted) by this call, ``False`` if a refresh was already in
+            progress and this call was skipped.
+
+        Note:
+            This method does *not* block the periodic background loop — the
+            loop uses its own ``asyncio.sleep`` cadence and is unaffected by
+            on-demand refreshes.
+        """
+        # Lazy lock initialisation — asyncio.Lock must be created inside a
+        # running event loop, which is guaranteed here since this is async.
+        if self._refresh_lock is None:
+            self._refresh_lock = asyncio.Lock()
+
+        if self._refresh_lock.locked():
+            logger.debug(
+                "LLMContextPublisher.request_refresh: refresh already in-flight "
+                "(asset=%s) — skipping duplicate call",
+                self.asset_class,
+            )
+            return False
+
+        async with self._refresh_lock:
+            logger.info(
+                "LLMContextPublisher.request_refresh: on-demand analysis triggered "
+                "(asset=%s)",
+                self.asset_class,
+            )
+            try:
+                market_context = await self.run_analysis()
+                if market_context:
+                    self.publish_to_redis(market_context)
+                    logger.info(
+                        "LLMContextPublisher.request_refresh: context refreshed "
+                        "(asset=%s, regime=%s, confidence=%.2f)",
+                        self.asset_class,
+                        market_context.regime,
+                        market_context.confidence,
+                    )
+                return True
+            except Exception as e:
+                logger.debug(
+                    "LLMContextPublisher.request_refresh: analysis failed: %s",
+                    e,
+                    exc_info=True,
+                )
+                return True  # Lock was acquired; analysis was attempted
 
     def publish_to_redis(self, context: MarketContext) -> None:
         """Publish MarketContext to Redis.

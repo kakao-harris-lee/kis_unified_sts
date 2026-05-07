@@ -177,6 +177,14 @@ class LLMConfig(ServiceConfigBase):
     )
 
     # 선물 분석 가중치
+    futures_prompt_addendum: str = Field(
+        default="",
+        description=(
+            "Futures-specific LLM prompt addendum injected when asset_class='futures'. "
+            "Loaded from config/llm.yaml::futures.prompt_addendum. "
+            "Empty string disables the addendum."
+        ),
+    )
     futures_weight_global: float = Field(
         default=0.35, description="Global market weight"
     )
@@ -591,6 +599,7 @@ class LLMConfig(ServiceConfigBase):
                 "llm_scoring_temperature", 0.2
             ),
             # Futures settings
+            "futures_prompt_addendum": futures_config.get("prompt_addendum", ""),
             "futures_weight_global": futures_config.get("weight_global", 0.35),
             "futures_weight_flow": futures_config.get("weight_flow", 0.30),
             "futures_weight_technical": futures_config.get("weight_technical", 0.20),
