@@ -411,6 +411,17 @@ def register_builtin_components() -> None:
     except ImportError:
         logger.debug("RLMPPOEntry not available")
 
+    try:
+        from shared.strategy.entry.setup_adapters import (
+            SetupAEntryAdapter,
+            SetupCEntryAdapter,
+        )
+
+        EntryRegistry.register_class("setup_a_gap_reversion", SetupAEntryAdapter)
+        EntryRegistry.register_class("setup_c_event_reaction", SetupCEntryAdapter)
+    except ImportError:
+        logger.debug("Setup adapters (SetupAEntryAdapter, SetupCEntryAdapter) not available")
+
     # Exit 전략 등록
     try:
         from shared.strategy.exit.three_stage import ThreeStageExit
