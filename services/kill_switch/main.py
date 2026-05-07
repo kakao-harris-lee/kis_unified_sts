@@ -17,12 +17,31 @@ already handled. An operator must explicitly clear the sentinel.
 Spec §6 lists six standard conditions, all implemented as :class:`KillCondition`
 subclasses below. Conditions take their data from a runtime state snapshot
 or an injected provider callable; tests verify each in isolation.
+
+Phase 0.2 (LLM-primary plan §4) — ``_force_flat_callback`` now writes a
+Redis sentinel key ``kill_switch:force_flatten:requested`` (TTL 300 s) and
+appends to the ``kill_switch:events`` stream so that any consuming process
+(TradingOrchestrator / order_router) can detect the request and act on it.
+
+  **Consumer follow-up (deferred)**: ``TradingOrchestrator`` must poll
+  ``kill_switch:force_flatten:requested`` on each heartbeat tick and call
+  its own ``flatten_all()`` method when the key is present. That wiring is
+  tracked as a separate task per the plan (§4 Phase 0.2-a follow-up) and
+  intentionally not included here to keep this PR focused on the
+  *signalling side only*. Until the consumer is wired, the sentinel remains
+  a best-effort alert; operator manual intervention is still required.
+
+Phase 0.4 (LLM-primary plan §4) — all three provider-backed conditions
+(``ApiErrorRateCondition``, ``NewsPipelineLagCondition``,
+``ClickHouseInsertFailCondition``) are now instantiated in ``_build_and_run()``
+with callable providers that read from the appropriate observability sources.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -31,6 +50,12 @@ from typing import Any
 from shared.risk.runtime_state import RuntimeRiskState
 
 logger = logging.getLogger(__name__)
+
+# Redis key / stream constants (centralised here; never hard-code in callers).
+_FORCE_FLATTEN_KEY = "kill_switch:force_flatten:requested"
+_FORCE_FLATTEN_TTL_SECONDS = 300
+_EVENTS_STREAM = "kill_switch:events"
+_EVENTS_STREAM_TTL_SECONDS = 86400  # 24 h — consistent with project TTL policy
 
 
 # ---------------------------------------------------------------------------
@@ -232,6 +257,16 @@ async def _build_and_run() -> int:
     Equity for the loss-pct conditions is read from
     ``KIS_FUTURES_EQUITY_KRW`` env var because operator may need to adjust
     it without redeploying — defaults to 100M KRW.
+
+    Phase 0.2 (LLM-primary plan): ``_force_flat_callback`` now writes
+    ``kill_switch:force_flatten:requested`` (TTL 300 s) to Redis and publishes
+    to the ``kill_switch:events`` stream.  The TradingOrchestrator consumer
+    side is a **deferred follow-up task** — see module docstring.
+
+    Phase 0.4 (LLM-primary plan): all six KillConditions are instantiated.
+    The three provider-backed conditions read from available observability
+    sources; where a live metric source does not yet exist, the provider
+    returns 0.0 (safe default, will never trigger) and logs a TODO.
     """
     import os
     import signal as signal_mod
@@ -271,9 +306,42 @@ async def _build_and_run() -> int:
         conditions.append(
             ConsecutiveLossesCondition(threshold=int(cc.consecutive_losses.threshold))
         )
-    # Provider-backed conditions: sources land in Task 18 (live metrics
-    # plumbing). Until then they're omitted — the daemon still trips on
-    # the snapshot-based conditions above which cover the loss-leg.
+
+    # ------------------------------------------------------------------
+    # Phase 0.4: provider-backed conditions (all 3 wired).
+    # ------------------------------------------------------------------
+
+    if cc.api_error_rate_5min.enabled and cc.api_error_rate_5min.threshold is not None:
+        conditions.append(
+            ApiErrorRateCondition(
+                threshold=float(cc.api_error_rate_5min.threshold),
+                rate_provider=_build_api_error_rate_provider(redis_client),
+            )
+        )
+
+    if (
+        cc.news_pipeline_lag_seconds.enabled
+        and cc.news_pipeline_lag_seconds.threshold is not None
+    ):
+        conditions.append(
+            NewsPipelineLagCondition(
+                threshold_seconds=float(cc.news_pipeline_lag_seconds.threshold),
+                lag_provider=_build_news_pipeline_lag_provider(
+                    redis_client, cc.news_pipeline_lag_seconds.stream_key
+                ),
+            )
+        )
+
+    if (
+        cc.clickhouse_insert_fail_rate.enabled
+        and cc.clickhouse_insert_fail_rate.threshold is not None
+    ):
+        conditions.append(
+            ClickHouseInsertFailCondition(
+                threshold=float(cc.clickhouse_insert_fail_rate.threshold),
+                rate_provider=_build_clickhouse_insert_fail_provider(redis_client),
+            )
+        )
 
     telegram = TelegramNotifier(
         bot_token=os.environ["TELEGRAM_FUTURES_BOT_TOKEN"],
@@ -281,15 +349,58 @@ async def _build_and_run() -> int:
     )
 
     async def _force_flat_callback(*, reason: str) -> None:
-        """Best-effort placeholder — emits a clear log line so the operator
-        knows positions need manual flattening if the daemon trips before
-        the live position-recovery loop (Phase 5) is wired.
+        """Phase 0.2 signalling-side implementation.
+
+        Writes a Redis sentinel key so the TradingOrchestrator (or any other
+        consumer running in a sibling process) can detect the flatten request
+        and act on it.
+
+        **Consumer follow-up (deferred)**: TradingOrchestrator must poll
+        ``kill_switch:force_flatten:requested`` on its heartbeat loop and
+        call ``flatten_all()`` when the key is present. That wiring is NOT
+        included in this PR and is tracked as a separate task. Until then,
+        operator manual intervention is the last line of defence.
+
+        Data written:
+          - Redis key  ``kill_switch:force_flatten:requested`` (TTL 300 s)
+            Value: ``reason=<reason>`` — safe to read with a simple GET.
+          - Redis stream  ``kill_switch:events``  (TTL 24 h)
+            Fields: ``event=force_flatten_requested``, ``reason=<reason>``,
+            ``ts=<unix_timestamp>``.
         """
         logger.critical(
-            "FORCE-FLAT NOT IMPLEMENTED: trip reason=%s — operator must "
-            "manually flatten any open KOSPI200 mini positions via KIS web/app",
+            "FORCE-FLAT SIGNALLED via Redis: trip reason=%s — "
+            "TradingOrchestrator consumer follow-up required; "
+            "operator must verify positions are flat if consumer not yet wired.",
             reason,
         )
+        try:
+            # Key: simple sentinel for polling consumers.
+            await redis_client.set(
+                _FORCE_FLATTEN_KEY,
+                f"reason={reason}",
+                ex=_FORCE_FLATTEN_TTL_SECONDS,
+            )
+            # Stream: event log for audit trail and reactive consumers.
+            await redis_client.xadd(
+                _EVENTS_STREAM,
+                {
+                    "event": "force_flatten_requested",
+                    "reason": reason,
+                    "ts": str(time.time()),
+                },
+            )
+            await redis_client.expire(_EVENTS_STREAM, _EVENTS_STREAM_TTL_SECONDS)
+            logger.info(
+                "force_flatten sentinel written: key=%s stream=%s",
+                _FORCE_FLATTEN_KEY,
+                _EVENTS_STREAM,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to write force_flatten sentinel to Redis; "
+                "operator MUST manually flatten KOSPI200 mini positions via KIS web/app"
+            )
 
     daemon = KillSwitchDaemon(
         runtime_state=runtime_state,
@@ -309,6 +420,159 @@ async def _build_and_run() -> int:
     finally:
         await redis_client.aclose()
     return 0
+
+
+# ---------------------------------------------------------------------------
+# Provider factories for Phase 0.4 provider-backed conditions.
+# ---------------------------------------------------------------------------
+
+
+def _build_api_error_rate_provider(
+    redis_client: Any,
+) -> Callable[[], float]:
+    """Return a synchronous callable that reads the 5-minute KIS API error rate.
+
+    Data source: Redis key ``kill_switch:metrics:api_error_rate_5min``
+    written by the KIS client rate-limiter (``shared/kis/client.py``).
+    The key holds a float string (fraction 0–1) representing the proportion
+    of KIS REST calls that errored in the last 5-minute window.
+
+    TODO(Phase 3 Track A): ``shared/kis/client.py`` must write this key on
+    each rate-limiter tick (EGW00201 / 5xx count / total call count rolling
+    window). Until that instrumentation is added the key will be absent and
+    this provider returns 0.0 (never triggers).
+    """
+    import redis as sync_redis  # type: ignore[import-untyped]
+
+    _METRIC_KEY = "kill_switch:metrics:api_error_rate_5min"
+
+    def _provider() -> float:
+        try:
+            # redis.asyncio client does not expose synchronous get; use the
+            # connection pool's underlying sync path via a temporary sync client
+            # built from the same URL. This is called at most every
+            # ``check_interval_seconds`` so the overhead is acceptable.
+            url: str = str(redis_client.connection_pool.connection_kwargs.get("url", ""))
+            if not url:
+                # Fallback: reconstruct URL from kwargs
+                kwargs = redis_client.connection_pool.connection_kwargs
+                host = kwargs.get("host", "localhost")
+                port = kwargs.get("port", 6379)
+                db = kwargs.get("db", 1)
+                url = f"redis://{host}:{port}/{db}"
+            r = sync_redis.from_url(url, socket_timeout=1.0)
+            raw = r.get(_METRIC_KEY)
+            r.close()
+            if raw is None:
+                return 0.0
+            return float(raw)
+        except Exception:
+            logger.debug(
+                "api_error_rate provider: could not read %s — returning 0.0",
+                _METRIC_KEY,
+                exc_info=True,
+            )
+            return 0.0
+
+    return _provider
+
+
+def _build_news_pipeline_lag_provider(
+    redis_client: Any,
+    stream_key: str,
+) -> Callable[[], float]:
+    """Return a synchronous callable that returns the news pipeline lag in seconds.
+
+    Args:
+        redis_client: redis.asyncio.Redis instance providing connection metadata.
+        stream_key: Redis stream key to inspect, sourced from
+            ``KillSwitchConfig.conditions.news_pipeline_lag_seconds.stream_key``.
+            Default in YAML: ``stream:news.raw`` (matches
+            ``config/news_sources.yaml::redis_stream``).  Operators override
+            via YAML if the deployment uses a different key.
+
+    Reads the timestamp of the last message appended to the stream (via
+    XREVRANGE) and returns ``now - last_message_ts``.  If the stream is empty
+    or unreachable the provider returns 0.0 (never triggers).
+    """
+    import redis as sync_redis  # type: ignore[import-untyped]
+
+    def _provider() -> float:
+        try:
+            kwargs = redis_client.connection_pool.connection_kwargs
+            url: str = kwargs.get("url", "")
+            if not url:
+                host = kwargs.get("host", "localhost")
+                port = kwargs.get("port", 6379)
+                db = kwargs.get("db", 1)
+                url = f"redis://{host}:{port}/{db}"
+            r = sync_redis.from_url(url, socket_timeout=1.0)
+            # XREVRANGE returns at most 1 entry: [(id, {fields})]
+            entries = r.xrevrange(stream_key, count=1)
+            r.close()
+            if not entries:
+                # Stream empty or not yet created — no lag to report.
+                return 0.0
+            msg_id: bytes = entries[0][0]
+            # Redis stream ID format: "<unix_ms>-<seq>"
+            ts_ms = int(msg_id.split(b"-")[0])
+            lag_seconds = time.time() - ts_ms / 1000.0
+            return max(0.0, lag_seconds)
+        except Exception:
+            logger.debug(
+                "news_pipeline_lag provider: error reading %s — returning 0.0",
+                stream_key,
+                exc_info=True,
+            )
+            return 0.0
+
+    return _provider
+
+
+def _build_clickhouse_insert_fail_provider(
+    redis_client: Any,
+) -> Callable[[], float]:
+    """Return a synchronous callable for the ClickHouse insert failure rate.
+
+    Data source: Redis key ``kill_switch:metrics:clickhouse_insert_fail_rate``
+    written by ``services/trading/position_tracker.py`` when its RL-trades
+    batch flush encounters errors.  The key holds a float string (fraction 0–1)
+    representing the proportion of ClickHouse inserts that failed in the last
+    5-minute rolling window.
+
+    TODO(Phase 3 Track A): ``services/trading/position_tracker.py`` must write
+    this key after each batch flush attempt (failed_count / total_count rolling
+    window). Until that instrumentation is added the key will be absent and
+    this provider returns 0.0 (never triggers).
+    """
+    import redis as sync_redis  # type: ignore[import-untyped]
+
+    _METRIC_KEY = "kill_switch:metrics:clickhouse_insert_fail_rate"
+
+    def _provider() -> float:
+        try:
+            kwargs = redis_client.connection_pool.connection_kwargs
+            url: str = kwargs.get("url", "")
+            if not url:
+                host = kwargs.get("host", "localhost")
+                port = kwargs.get("port", 6379)
+                db = kwargs.get("db", 1)
+                url = f"redis://{host}:{port}/{db}"
+            r = sync_redis.from_url(url, socket_timeout=1.0)
+            raw = r.get(_METRIC_KEY)
+            r.close()
+            if raw is None:
+                return 0.0
+            return float(raw)
+        except Exception:
+            logger.debug(
+                "clickhouse_insert_fail provider: could not read %s — returning 0.0",
+                _METRIC_KEY,
+                exc_info=True,
+            )
+            return 0.0
+
+    return _provider
 
 
 def main() -> int:
