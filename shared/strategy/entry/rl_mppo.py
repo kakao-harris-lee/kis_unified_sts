@@ -123,6 +123,10 @@ class RLMPPOConfig:
     # Regime-aware adaptive model selection
     regime_adaptive_enabled: bool = False
     regime_model_mapping_path: str = "regime_model_mapping.yaml"
+    # Shadow mode: run inference + log payload but suppress Signal emission.
+    # Used during Phase 0.3 (LLM-primary plan) to demote RL to an observer role
+    # while Setup A/C drives live execution.  Set true via YAML params or env.
+    shadow_mode: bool = False
 
 
 @EntryRegistry.register("rl_mppo")
@@ -513,6 +517,51 @@ class RLMPPOEntry(EntrySignalGenerator[RLMPPOConfig]):
             logger.debug(
                 f"RL action {action} confidence {confidence:.3f} "
                 f"below threshold {threshold:.3f} ({threshold_reason})"
+            )
+            return None
+
+        # ------------------------------------------------------------------
+        # Shadow mode: record inference payload but suppress Signal emission.
+        # When shadow_mode=True the RL model acts as a silent observer:
+        # full inference runs (including confidence filtering above) but no
+        # Signal is returned, so no order is placed.
+        # ------------------------------------------------------------------
+        if self.config.shadow_mode:
+            from shared.strategy.rl_shadow_logger import record_shadow_prediction
+
+            regime_raw = context.metadata.get("regime") or context.market_data.get(
+                "regime", ""
+            )
+            risk_mode_raw = context.metadata.get("risk_mode") or context.market_data.get(
+                "risk_mode", ""
+            )
+            risk_score_raw = context.metadata.get("risk_score") or context.market_data.get(
+                "risk_score", 0.0
+            )
+            shadow_payload: dict[str, Any] = {
+                "ts": context.timestamp,
+                "symbol": context.market_data.get("code", ""),
+                "action": action,
+                "confidence": confidence,
+                "action_probs": {
+                    str(k): float(v) for k, v in action_probs.items()
+                },
+                "regime": str(regime_raw) if regime_raw else "",
+                "risk_mode": str(risk_mode_raw) if risk_mode_raw else "",
+                "risk_score": float(risk_score_raw) if risk_score_raw else 0.0,
+                "action_masks": action_masks.tolist()
+                if hasattr(action_masks, "tolist")
+                else list(action_masks),
+                "executed_setup_id": str(
+                    context.metadata.get("executed_setup_id", "")
+                ),
+            }
+            record_shadow_prediction(shadow_payload)
+            logger.debug(
+                "rl_shadow: suppressed Signal for symbol=%s action=%s confidence=%.3f",
+                shadow_payload["symbol"],
+                action,
+                confidence,
             )
             return None
 
