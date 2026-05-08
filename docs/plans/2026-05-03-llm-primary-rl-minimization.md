@@ -1,6 +1,6 @@
 # LLM-primary 의사결정 + RL 축소 통합 계획
 
-**Status**: v3.7 — Phase 0 + Phase 1 (1.0/1.1/1.2/1.3) + Phase 2 + §10.2 (Counterfactual + 주간 cron + Grafana 대시보드 + 일일 검증) + V4/V5 ClickHouse migrations + §10.3 인프라 정비 + Phase 2 observability(Prometheus 알림) 완료. kill_switch 6/6 + shadow_loggers 4 알림 + 일일 4-gate 자동 검증 모두 가동. Phase 2 자동 운영 + 검증 100% 준비.
+**Status**: v3.8 — Phase 0 + Phase 1 (1.0/1.1/1.2/1.3) + Phase 2 + §10.2 (Counterfactual + 주간 cron + Grafana 대시보드 + 일일 검증 + 운영자 startup runbook) + V4/V5 ClickHouse migrations + §10.3 인프라 정비 + Phase 2 observability(Prometheus 알림) + CI 정상화 모두 완료. kill_switch 6/6 + shadow_loggers 4 알림 + 일일 4-gate 자동 검증 + main CI test/lint/type-check 모두 green. Phase 2 자동 운영 + 검증 + CI 신호 100% 준비.
 **Created**: 2026-05-03
 **Updated**:
 - 2026-05-03 (v1 초안)
@@ -13,6 +13,7 @@
 - 2026-05-08 (**v3.5 — Phase 2 paper validation 인프라 가동 완료**: PR #180 (Grafana 대시보드 `llm-primary-phase2-monitoring.json` 7-panel) 머지 + V4 (rl_trades TTL 5y) + V5 (rl_shadow_predictions CREATE) ClickHouse migrations 적용 (V1–V3 → V1–V5). Phase 2 데이터 누적 인프라 100% 준비. 다음 평일 08:55 KST 재시작 시 RL shadow logger flush + dashboard 패널 데이터 표시 가능. §3.1 PR 표 + §9 추적 + §10.2 갱신)
 - 2026-05-08 (**v3.6 — Phase 2 observability + 주간 자동화 완료**: PR #182 (rl_shadow_logger 12 단위 테스트 — V5 schema 매핑 회귀 가드), #183 (두 logger의 stale "follow-up" docstring 정정), #184 (Counterfactual 주간 cron 등록 + OHLCV 스키마 버그 픽스), #185 (`clickhouse_client_from_env` 8123→9000 fallback), #186 (shadow_loggers Prometheus 5 metrics + 4 alerts) 머지. crontab 등록(매주 월 07:00 KST), Prometheus 컨테이너 재시작으로 4 알림 활성. Phase 2 자동 운영 인프라 100% 준비.)
 - 2026-05-08 (**v3.7 — Phase 2 일일 자동 검증 완료**: PR #188 (`scripts/analysis/phase2_daily_verification.py` + cron) 머지. 매일 16:00 KST (월-금) 4-gate 자동 검증: rl_shadow_predictions > 0, rl_trades == 0 (shadow_mode invariant), Setup A signals >= 1, shadow_logger dropped_batches == 0 (Prometheus 호출, outage 시 gate 생략). PASS/FAIL Telegram 브리핑 채널 자동 보고. 1주/2주 누적 검증이 daily 누적으로 자동 완성. 12 단위 테스트.)
+- 2026-05-08 (**v3.8 — 운영자 startup runbook + CI 신호 정상화 완료**: PR #190 (Phase 2 startup runbook), #191 (CI test collection 16 ImportErrors → 0 — sibling test dir `__init__.py` 충돌), #192 (orchestrator 시간 의존성), #193 (retraining pipeline TELEGRAM env 독립), #194 (perf 테스트 main job 제외), #195 (ATS routing AUTO band time 고정) 6건 머지. main CI test/lint/type-check 모두 처음으로 green. 향후 PR CI 신호 신뢰 가능. Phase 2 cutover 운영자 진입점 문서 + 자동화된 functional CI까지 모두 준비.)
 
 **Author**: 엔지니어링 (운영자 결정 반영)
 **Parent**: `docs/plans/2026-04-20-futures-paradigm-master.md`
@@ -159,7 +160,7 @@ WebSocket tick (futures_feed.py, tz-aware UTC)
 
 ## 3. 진행 중 작업과의 정합
 
-### 3.1 PR 상태 (v3.7 업데이트, 2026-05-08 기준)
+### 3.1 PR 상태 (v3.8 업데이트, 2026-05-08 기준)
 
 #### 3.1.1 인프라/회귀 fix (paper validation 단계)
 
@@ -228,6 +229,25 @@ WebSocket tick (futures_feed.py, tz-aware UTC)
 | **#186** `feat/shadow-loggers-prometheus-alerts` | ✅ 5/8 머지 (7e352bf) | §10.2 observability — 5 Prometheus Gauge (label `logger=rl_shadow|llm_veto`): `pending_rows`, `dropped_batches_total`, `dropped_rows_total`, `last_flush_rows`, `last_flush_unix_seconds`. `_shadow_loggers_flush_loop`이 매 tick 발행 (실패 시에도 publish 보장 — silent failure 감지의 핵심). 4 알림: `ShadowLoggerBatchesDropped` (critical, 10m), `ShadowLoggerFlushStale` (warning, > 10m), `ShadowLoggerBufferFillingUp` (warning, > 5,000 rows / 5m), `ShadowLoggerBufferNearOverflow` (critical, > 9,000 rows / 1m). `sts-prometheus` 컨테이너 재시작으로 즉시 활성. 19 테스트(16 기존 + 3 신규) |
 | **#187** `docs/plan-v3.6-phase2-observability` | ✅ 5/8 머지 (7719b7a) | v3.6 plan — §3.1.8 신설(PR #182–#186 batch), §3.1.9 운영 영향 갱신 |
 | **#188** `feat/phase2-daily-verification` | ✅ 5/8 머지 (fc2b3be) | §10.2 일일 자동 검증 — `scripts/analysis/phase2_daily_verification.py` + cron(`0 16 * * 1-5`). 4-gate 검증: (1) `rl_shadow_predictions today > 0` (RL inference 가동), (2) `rl_trades today == 0` (shadow_mode invariant), (3) `setup_a_signals_today >= 1` (Setup A 활성), (4) `shadow_logger_dropped_batches == 0` (Prometheus 호출, outage 시 gate 생략 — 모니터링 outage가 검증 fail시키지 않도록). PASS/FAIL Telegram 브리핑 채널 자동 보고. 12 단위 테스트. End-to-end smoke (pre-Phase-2 상태) → 의도대로 FAIL 보고로 정확성 검증 |
+| **#189** `docs/plan-v3.7-daily-verification` | ✅ 5/8 머지 (e7275ff) | v3.7 plan — §10.2 일일 자동 검증 완료 추적, §10.2 체크박스 7개 모두 [x] 전환 |
+| **#190** `docs/phase2-startup-runbook` | ✅ 5/8 머지 (24c857d) | `docs/runbooks/phase2-startup.md` — 월요일 08:55 KST cutover 운영자 진입점. Pre-flight check (Fri EOD 5 명령) + Day-of (Mon 08:55 / 16:00 / 16:30 KST) + Troubleshooting + Rollback + EOW 1 review. Verification 중 발견한 두 정정 사항(`clickhouse-client` `--user` 명시, EntryRegistry 어댑터 등록명 `setup_a_gap_reversion`) 반영 |
+
+#### 3.1.10 CI 신호 정상화 (PR #191–#195 batch, 2026-05-08)
+
+수 주째 사실상 noise였던 CI test job 결과를 신뢰 가능한 신호로 회복. 본 batch 이전엔 모든 PR이 `ModuleNotFoundError: No module named 'execution.test_*'` (~14건)로 collection-level fail.
+
+| PR | 상태 | 내용 |
+|----|------|------|
+| **#191** `fix/ci-test-collection-execution-collision` | ✅ 5/8 머지 (5bfdafd) | sibling test dir의 `__init__.py` 충돌 제거 — `tests/execution/__init__.py`(1 파일) + `tests/unit/execution/__init__.py`(14 파일) 둘 다 top-level `execution` 패키지 등록 → `tests/unit/scripts/analysis/__init__.py`도 real `scripts/analysis/` namespace package와 충돌. 3개 colliding `__init__.py` 삭제 → PEP 420 namespace package로 변환. importlib stub 우회로 제거하고 직접 import로 단순화 |
+| **#192** `fix/test-orchestrator-signal-timestamp-freshness` | ✅ 5/8 머지 (c8e2f73) | `test_submit_entry_order_forwards_signal_timestamp_as_price_source_time` 시간 의존성 제거 — 하드코딩된 `signal_ts = datetime(2026, 5, 6, ...)`이 `SlippageControlConfig.max_signal_age_seconds=2.0` 초과 → controller가 stale_signal로 차단 → `await_count == 2` assertion 실패. `now() - 100ms`로 전환 |
+| **#193** `fix/test-retraining-pipeline-notifier-env-independent` | ✅ 5/8 머지 (3435877) | `test_full_pipeline_promotion_rejected` + `test_rollback_mechanism` TELEGRAM env 의존성 제거 — `notifier_for_domain("futures")`가 CI(env 없음)에서 None 반환 → `_send_*_notification` early-return → `mock_telegram.called == False`. `notifier_for_domain` mock 추가하여 `_notifier`가 항상 non-None |
+| **#194** `fix/ci-test-skip-performance-suite` | ✅ 5/8 머지 (c5d9367) | `tests/performance/test_redis_load.py` p99 latency assertions(10ms / 50ms)이 GitHub Actions Redis sidecar에서 환경 의존 → main `test` job에서 `--ignore=tests/performance` 추가. 별도 `performance` job(PRs to main + 주간 스케줄)이 baseline regression check 유지 |
+| **#195** `fix/test-ats-routing-time-fragile` | ✅ 5/8 머지 (df309ba) | `test_venue_router_selection`이 production `config/execution.yaml::time_of_day_preferences` 시간대 매치 — CI 11:35 UTC가 `11:30-13:00: KRX` 영역에 단락 → liquidity 체크 전 fail. `current_time=auto_band_time` (10:00 = AUTO 영역) 명시로 단축 회피 |
+
+##### Production 영향
+- main CI 처음으로 완전 green: test/lint/type-check 모두 success (검증: run 25553809803)
+- `tests/performance/`는 별도 job에서만 실행 (정책대로 분리)
+- 향후 PR 신호 신뢰 가능 — collection-level noise 0
 
 ##### Production 운영 절차 적용
 - 매주 월 07:00 KST: `0 7 * * 1 .../counterfactual_weekly.sh`
@@ -575,6 +595,9 @@ Phase 1.1 완료 + paper 1주 안정성 확인 즉시 (운영자 §7-5 결정):
 | 2026-05-08 | **v3.6** — Phase 2 운영 자동화 100% 준비. 다음 평일 cron 사이클부터 ClickHouse 누적 + Prometheus 자동 알림 + 매주 월 counterfactual Telegram 리포트. §3.1.8 신설(PR #182–#186), §3.1.9 운영 영향 갱신, §9 history 갱신. |
 | 2026-05-08 | **§10.2 일일 자동 검증** 완료: PR #188 (`scripts/analysis/phase2_daily_verification.py` + cron `0 16 * * 1-5`) 머지. 4-gate 자동 검증 + PASS/FAIL Telegram 자동 보고. Plan §10.2의 첫 거래일 검증 / 1주 누적 / 2주 누적 모두 daily 결과 누적으로 자동 완성. crontab 등록 + end-to-end smoke 통과. |
 | 2026-05-08 | **v3.7** — Phase 2 일일 자동 검증 완료. §10.2 모든 자동화 항목 100% 완료([x]). 운영자는 별도 명령 없이 매일 Telegram으로 PASS/FAIL 수신. §3.1 PR 표 + §10.2 체크박스 + §9 history 갱신. |
+| 2026-05-08 | **운영자 startup runbook**: PR #190 (`docs/runbooks/phase2-startup.md`) 머지. 월요일 08:55 KST cutover 진입점 문서. Pre-flight + Day-of + Troubleshooting + Rollback. |
+| 2026-05-08 | **CI 신호 정상화 batch**: PR #191–#195 5건 머지. 사전 빨간불(16 collection ImportErrors)이던 test job을 처음으로 green으로 회복. 주요 fix: sibling test dir `__init__.py` 충돌 제거, 시간/환경 의존성 제거, `tests/performance/` 별도 job 분리. main CI 완전 green 검증(run 25553809803). |
+| 2026-05-08 | **v3.8** — 운영자 startup runbook + CI 신호 정상화 완료. §3.1.10 신설(PR #191–#195), §3.1.8에 #189/#190 추가, §9 history 갱신. Phase 2 자동 운영 + 검증 + CI 신호까지 모두 100% 준비. |
 | TBD | Phase 1 paper validation (1주) — Setup A/C 신호 발생률, LLM-veto counterfactual PnL, size scaling trade PnL 비교 |
 | TBD | Phase 3 Track A — 운영자 게이트 (legal review §1-6, KIS Real smoke test, 증거금, position-recovery drill, kill-switch unit 설치, `futures_live.enabled: true` 플립, Gate 3 14일 1계약 운용) |
 | TBD | Phase 4 (+3개월) — `signals_all` 누적 trade ≥ 50 + EV+ 3개월 → RL aux 활성 / 폐지 / 재학습 결정 |
