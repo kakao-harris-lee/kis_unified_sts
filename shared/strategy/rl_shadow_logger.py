@@ -15,10 +15,13 @@ Design notes:
       an explicit lock.
     - **Bounded buffer**: ``maxlen=10_000`` prevents unbounded growth if the
       orchestrator flush is delayed.
-    - **Orchestrator wiring (follow-up)**: The orchestrator does *not* yet call
-      ``flush_rl_shadow_predictions()`` automatically.  A follow-up PR should
-      schedule a periodic flush (e.g., every ``batch_flush_interval_seconds``
-      seconds) aligned with the existing ``position_tracker`` auto-flush task.
+    - **Orchestrator wiring**: ``TradingOrchestrator._shadow_loggers_flush_loop``
+      drains this buffer every ``flush_interval_seconds`` (default 60s, see
+      ``config/shadow_loggers.yaml``).  A final drain runs in
+      ``_shadow_loggers_final_flush`` on shutdown when
+      ``final_flush_on_stop: true`` (default).  Each logger's flush is wrapped
+      in its own try/except so a failure in one does not skip the other.
+      Tests: ``tests/unit/trading/test_shadow_loggers_flush.py``.
 
 Example:
 
@@ -29,7 +32,7 @@ Example:
         record_shadow_prediction(payload)
         return None  # no Signal emitted
 
-        # In TradingOrchestrator (follow-up wiring):
+        # Direct flush (e.g. tests, ad-hoc operator scripts):
         from shared.strategy.rl_shadow_logger import flush_rl_shadow_predictions
         await flush_rl_shadow_predictions(ch_client)
 """

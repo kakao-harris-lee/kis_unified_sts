@@ -19,10 +19,14 @@ Design notes:
     - **Counterfactual analysis**: persisted rows let operators compare
       counterfactual PnL of vetoed signals vs. signals that were allowed through
       (Phase 1 paper validation §6 of the LLM-primary RL-minimization plan).
-    - **Orchestrator wiring (follow-up)**: the orchestrator does *not* yet call
-      ``flush_llm_veto_events()`` automatically.  A follow-up PR should schedule
-      a periodic flush aligned with the existing ``position_tracker`` auto-flush
-      task.
+    - **Orchestrator wiring**: ``TradingOrchestrator._shadow_loggers_flush_loop``
+      drains this buffer every ``flush_interval_seconds`` (default 60s, see
+      ``config/shadow_loggers.yaml``).  A final drain runs in
+      ``_shadow_loggers_final_flush`` on shutdown when
+      ``final_flush_on_stop: true`` (default).  Each logger's flush is wrapped
+      in its own try/except so a failure here does not skip the rl_shadow
+      flush on the same tick (and vice versa).
+      Tests: ``tests/unit/trading/test_shadow_loggers_flush.py``.
 
 Required payload keys for the ClickHouse flush:
     ``ts``              (datetime, tz-aware UTC)
@@ -42,7 +46,7 @@ Example:
         record_veto(payload)
         return None  # no Signal emitted
 
-        # In TradingOrchestrator (follow-up wiring):
+        # Direct flush (e.g. tests, ad-hoc operator scripts):
         from shared.strategy.llm_veto_logger import flush_llm_veto_events
         await flush_llm_veto_events(ch_client)
 """
