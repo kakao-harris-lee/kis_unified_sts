@@ -1,6 +1,6 @@
 # LLM-primary 의사결정 + RL 축소 통합 계획
 
-**Status**: v3.4 — Phase 0 + Phase 1 (1.0/1.1/1.2/1.3) + Phase 2 + §10.2 Counterfactual 분석 스크립트 + §10.3 인프라 정비 완료. kill_switch 6/6 conditions 실데이터 가동. Phase 4 Gate 입력 도구 준비 완료.
+**Status**: v3.5 — Phase 0 + Phase 1 (1.0/1.1/1.2/1.3) + Phase 2 + §10.2 Counterfactual + §10.2 Grafana 대시보드 + V4/V5 ClickHouse migrations 적용 + §10.3 인프라 정비 완료. kill_switch 6/6 conditions 실데이터 가동. Phase 2 paper validation 인프라 100% 가동 가능.
 **Created**: 2026-05-03
 **Updated**:
 - 2026-05-03 (v1 초안)
@@ -10,6 +10,7 @@
 - 2026-05-08 (v3.2 — 마이그레이션 실행 진행 상황 반영: PR #158 + #163-#171 9건 머지로 Phase 0/1/2 완료. RL은 shadow_mode로 강등, Setup A/C 활성. §10 신설 — Phase 3+ 후속 작업 정리)
 - 2026-05-08 (**v3.3 — §10.3 인프라 정비 완료**: PR #173 (KIS API error rate writer) + #174 (CH insert fail rate writer) 머지. kill_switch ApiErrorRateCondition / ClickHouseInsertFailCondition이 0.0 stub → 실데이터로 전환. §3.1 PR 표 + §9 추적 + §10.3 갱신)
 - 2026-05-08 (**v3.4 — §10.2 Counterfactual 분석 스크립트 완료**: PR #178 머지 — `scripts/analysis/setup_vs_rl_shadow_counterfactual.py` (Phase 4 Gate 입력 도구). RL shadow 예측을 가상 long/short trade로 재구성, Setup A/C 실제 체결 trade와 비교, 4-cell confusion matrix + per-day breakdown. PR #178 review (BLOCK 6건) — confidence filter는 entry-only만 (exit는 RL 안전장치 보존), Phase 4 gate thresholds → YAML 이전, EOD-estimated count surface, inverted window ValueError 등 모두 반영. §3.1 PR 표 + §9 추적 + §10.2 갱신)
+- 2026-05-08 (**v3.5 — Phase 2 paper validation 인프라 가동 완료**: PR #180 (Grafana 대시보드 `llm-primary-phase2-monitoring.json` 7-panel) 머지 + V4 (rl_trades TTL 5y) + V5 (rl_shadow_predictions CREATE) ClickHouse migrations 적용 (V1–V3 → V1–V5). Phase 2 데이터 누적 인프라 100% 준비. 다음 평일 08:55 KST 재시작 시 RL shadow logger flush + dashboard 패널 데이터 표시 가능. §3.1 PR 표 + §9 추적 + §10.2 갱신)
 
 **Author**: 엔지니어링 (운영자 결정 반영)
 **Parent**: `docs/plans/2026-04-20-futures-paradigm-master.md`
@@ -156,7 +157,7 @@ WebSocket tick (futures_feed.py, tz-aware UTC)
 
 ## 3. 진행 중 작업과의 정합
 
-### 3.1 PR 상태 (v3.4 업데이트, 2026-05-08 기준)
+### 3.1 PR 상태 (v3.5 업데이트, 2026-05-08 기준)
 
 #### 3.1.1 인프라/회귀 fix (paper validation 단계)
 
@@ -208,6 +209,8 @@ WebSocket tick (futures_feed.py, tz-aware UTC)
 | PR | 상태 | 내용 |
 |----|------|------|
 | **#178** `feat/phase10-2-counterfactual-script` | ✅ 5/8 머지 (eb64750) | §10.2 — `scripts/analysis/setup_vs_rl_shadow_counterfactual.py` (RL shadow 예측을 가상 long/short trade로 재구성, Setup A/C 실제 체결 trade와 비교, 4-cell confusion matrix + per-day breakdown, table/json/csv 출력); review BLOCK 6건 반영 — confidence filter는 entry-only (RL exit 안전장치 보존), Phase 4 gate thresholds → `config/ml/rl_mppo.yaml::phase4_gates`, `--commission-bps`/`--slippage-ticks` 기본값 None (config fallback), `start_date > end_date` ValueError 검증, EOD-estimated count via `AggregateStat.eod_estimated_count` |
+| **#179** `docs/plan-v3.4-counterfactual-complete` | ✅ 5/8 머지 (d45c35b) | v3.4 plan — §10.2 Counterfactual 완료 추적 |
+| **#180** `feat/llm-primary-monitoring-dashboard` | ✅ 5/8 머지 (9fed723) | §10.2 — Grafana `llm-primary-phase2-monitoring.json` (7 panels: Setup A/C signals/day, RL shadow distribution, LLM veto rate, Setup-vs-RL 14d comparison, Phase 4 gate counts, kill_switch state) |
 
 #### 3.1.8 운영 영향 (다음 cron 사이클부터)
 
@@ -537,6 +540,9 @@ Phase 1.1 완료 + paper 1주 안정성 확인 즉시 (운영자 §7-5 결정):
 | 2026-05-08 | **§10.3 DRY follow-up** 완료: PR #176 (`RollingRateTracker` base class), #177 (error_rate.py docstring cleanup) 머지. ~140 LOC duplicate 제거. |
 | 2026-05-08 | **§10.2 Counterfactual 도구** 완료: PR #178 (`scripts/analysis/setup_vs_rl_shadow_counterfactual.py`) 머지. Phase 4 Gate 입력 분석 도구 — RL shadow vs Setup A/C 4-cell confusion matrix + per-day PnL breakdown. Review BLOCK 6건 반영 (entry-only confidence filter, Phase 4 thresholds → YAML, ValueError on inverted window 등). |
 | 2026-05-08 | **v3.4** — §10.2 Counterfactual 분석 스크립트 완료. §3.1.7 신설, §10.2 체크박스 완료, §9 history 갱신. Phase 4 Gate 도달 시 사용 가능. |
+| 2026-05-08 | **§10.2 Grafana 대시보드** 완료: PR #180 (`monitoring/grafana/dashboards/llm-primary-phase2-monitoring.json` 7-panel) 머지. PR #171 deferred follow-up. ClickHouse 데이터소스 활용. |
+| 2026-05-08 | **V4/V5 ClickHouse migrations 적용**: V4 (rl_trades TTL 5y), V5 (rl_shadow_predictions CREATE TABLE) 운영 production에 적용 (직접 SQL + schema_migrations 백필). V1–V3 → V1–V5. Phase 2 RL shadow logger flush 가능 상태. |
+| 2026-05-08 | **v3.5** — Phase 2 paper validation 인프라 100% 가동 가능. 다음 평일 08:55 KST 재시작 시 RL shadow logger → ClickHouse 데이터 누적 → dashboard 패널 표시. §3.1/§9/§10.2 갱신. |
 | TBD | Phase 1 paper validation (1주) — Setup A/C 신호 발생률, LLM-veto counterfactual PnL, size scaling trade PnL 비교 |
 | TBD | Phase 3 Track A — 운영자 게이트 (legal review §1-6, KIS Real smoke test, 증거금, position-recovery drill, kill-switch unit 설치, `futures_live.enabled: true` 플립, Gate 3 14일 1계약 운용) |
 | TBD | Phase 4 (+3개월) — `signals_all` 누적 trade ≥ 50 + EV+ 3개월 → RL aux 활성 / 폐지 / 재학습 결정 |
@@ -572,7 +578,7 @@ PR #171이 운영을 활성화했으므로 다음 거래일부터 Phase 1 paper 
   - Telegram veto alerts (조건 충족 시)
 - [ ] **1주 누적 (5 거래일)**: Setup A daily ≥ 1, Setup C 주 ≥ 1, LLM-veto counterfactual PnL 비교
 - [ ] **2주 누적**: 시스템 안정성 (pipeline retry 경고/일, kill_switch 오발화 0)
-- [ ] **Grafana 대시보드** (Phase 2 PR #171 deferred follow-up): "Setup A/C signals/day" + "RL shadow LONG/SHORT/HOLD distribution" + "LLM regime → setup conversion rate" + "Counterfactual PnL"
+- [x] **Grafana 대시보드** (Phase 2 PR #171 deferred follow-up) — ✅ PR #180 머지 (9fed723): `monitoring/grafana/dashboards/llm-primary-phase2-monitoring.json` (7 panels: Setup A/C signals/day, RL shadow LONG/SHORT/HOLD distribution, LLM veto rate, Setup-vs-RL 14d directional comparison, Phase 4 gate counts (≥1000 / ≥50), kill_switch state)
 - [x] **Counterfactual 분석 스크립트** (Phase 4 입력) — ✅ PR #178 머지 (eb64750): `scripts/analysis/setup_vs_rl_shadow_counterfactual.py` 작성 완료. RL shadow 예측을 가상 long/short trade로 재구성, Setup A/C 실제 체결 trade와 비교, 4-cell confusion matrix + per-day breakdown, table/json/csv 출력. Phase 4 gate thresholds (50, 1000)는 `config/ml/rl_mppo.yaml::phase4_gates`에서 로드. Phase 4 Gate 도달 시 사용
 
 ### 10.3 인프라 정비 follow-ups (✅ v3.3에서 핵심 항목 완료)
