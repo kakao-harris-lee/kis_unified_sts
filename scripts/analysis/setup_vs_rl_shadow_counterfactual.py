@@ -138,6 +138,50 @@ def _load_min_confidence() -> float:
         return 0.5
 
 
+# Documented fallbacks for Phase 4 gate (v3.3 plan §10.4 / v2 §3.2).  These
+# are LAST-RESORT defaults if config/ml/rl_mppo.yaml lacks the phase4_gates
+# section — the YAML is the source of truth.
+_PHASE4_GATE_FALLBACKS: dict[str, int] = {
+    "setup_executed_target": 50,           # v2 plan §3.2 statistical-significance floor
+    "rl_shadow_predictions_target": 1000,  # plan §10.4 minimum sample size
+}
+
+
+def _load_phase4_gate_targets() -> dict[str, int]:
+    """Load Phase 4 gate thresholds from rl_mppo.yaml::phase4_gates.
+
+    Returns:
+        Dict with ``setup_executed_target`` and ``rl_shadow_predictions_target``.
+        Falls back to documented defaults from v3.3 plan §10.4 / v2 §3.2 if
+        the section is missing — see ``_PHASE4_GATE_FALLBACKS``.
+
+    The YAML may override individual fields; missing keys default to the
+    fallback values, matching CLAUDE.md "no hardcoding" by making the
+    targets editable without touching code.
+    """
+    try:
+        # ml/rl_mppo.yaml is loaded by ConfigLoader directly (it lives in
+        # config/ml/, not config/strategies/).
+        cfg = ConfigLoader.load("ml/rl_mppo.yaml")
+        gates = cfg.get("phase4_gates", {})
+        return {
+            "setup_executed_target": int(
+                gates.get(
+                    "setup_executed_target",
+                    _PHASE4_GATE_FALLBACKS["setup_executed_target"],
+                )
+            ),
+            "rl_shadow_predictions_target": int(
+                gates.get(
+                    "rl_shadow_predictions_target",
+                    _PHASE4_GATE_FALLBACKS["rl_shadow_predictions_target"],
+                )
+            ),
+        }
+    except Exception:
+        return dict(_PHASE4_GATE_FALLBACKS)
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Data classes
 # ──────────────────────────────────────────────────────────────────────────────
@@ -219,6 +263,12 @@ class AggregateStat:
     avg_pnl_krw: float
     win_rate: float
     max_drawdown_krw: float
+    # Number of trades whose exit price was estimated via the EOD close
+    # fallback (Setup A/C trades with no recorded exit).  Operators
+    # reading aggregate PnL should know what fraction is approximation
+    # vs actual-exit measurement.  Always 0 for RL shadow trades
+    # (they always have an explicit LONG_EXIT/SHORT_EXIT in the predictions).
+    eod_estimated_count: int = 0
 
 
 @dataclass
@@ -272,20 +322,29 @@ def _fetch_shadow_predictions(
     symbol: str,
     start_dt: datetime,
     end_dt: datetime,
-    min_confidence: float,
+    min_confidence: float,  # noqa: ARG001 — kept for API stability; filter is applied in reconstruct_rl_trades, not at the DB level
 ) -> pd.DataFrame:
     """Fetch RL shadow predictions from ClickHouse.
+
+    The ``min_confidence`` parameter is intentionally NOT applied at the DB
+    level.  Per the RL safety design (CLAUDE.md "RL 청산 안전장치"), exits
+    fire regardless of confidence — filtering at the query level would drop
+    low-confidence LONG_EXIT/SHORT_EXIT rows and produce phantom orphan
+    positions in :func:`reconstruct_rl_trades`, distorting Phase 4 gate
+    metrics.  The filter is applied to entry actions only, inside
+    :func:`reconstruct_rl_trades`.
 
     Args:
         client: clickhouse_driver.Client instance.
         symbol: Futures contract symbol (e.g. '101S6000').
         start_dt: Window start (UTC-aware datetime).
         end_dt: Window end (UTC-aware datetime, exclusive).
-        min_confidence: Minimum action probability to include.
+        min_confidence: Threaded through for entry-only filtering downstream.
 
     Returns:
         DataFrame with columns: ts, symbol, action, confidence, regime,
-        risk_mode, risk_score, executed_setup_id.
+        risk_mode, risk_score, executed_setup_id (ALL actions, ALL
+        confidences — entry-only confidence gate is downstream).
     """
     rows = client.execute(
         """
@@ -295,14 +354,12 @@ def _fetch_shadow_predictions(
         WHERE symbol = %(sym)s
           AND ts >= %(start)s
           AND ts < %(end)s
-          AND confidence >= %(min_conf)s
         ORDER BY ts
         """,
         {
             "sym": symbol,
             "start": start_dt.replace(tzinfo=None),
             "end": end_dt.replace(tzinfo=None),
-            "min_conf": min_confidence,
         },
     )
     if not rows:
@@ -522,12 +579,18 @@ def reconstruct_rl_trades(
     commission_bps: float,
     slippage_ticks: float,
     tick_size: float,
+    min_confidence: float = 0.0,
 ) -> list[ShadowTrade]:
     """Walk shadow predictions chronologically and build virtual trades.
 
     Matching rule: LONG_ENTRY (0) opens a long; the *next* LONG_EXIT (1)
     for the same symbol closes it.  Same for SHORT_ENTRY (2) / SHORT_EXIT (3).
     Orphan entries (no subsequent exit) are emitted as open trades.
+
+    **Confidence gating**: ``min_confidence`` is applied to ENTRY actions
+    only.  Exits fire regardless of confidence per the RL safety design
+    (CLAUDE.md "RL 청산 안전장치"); filtering exits by confidence would
+    create phantom orphan positions and distort Phase 4 gate metrics.
 
     Args:
         shadow: Shadow predictions DataFrame (ts, symbol, action, confidence,
@@ -537,6 +600,8 @@ def reconstruct_rl_trades(
         commission_bps: Commission bps per side.
         slippage_ticks: Adverse slippage ticks per side.
         tick_size: Tick size in index points.
+        min_confidence: Minimum confidence for entry actions; default 0.0
+            keeps every entry.  Exits are not filtered.
 
     Returns:
         List of ShadowTrade objects (closed and open).
@@ -551,9 +616,13 @@ def reconstruct_rl_trades(
         symbol: str = str(row["symbol"])
         regime: str = str(row.get("regime", ""))
         risk_mode: str = str(row.get("risk_mode", ""))
+        confidence: float = float(row.get("confidence", 0.0))
 
         if action in (_ACTION_LONG_ENTRY, _ACTION_SHORT_ENTRY):
             direction = "long" if action == _ACTION_LONG_ENTRY else "short"
+            # Entry-only confidence gate (exits NEVER filtered — see docstring).
+            if confidence < min_confidence:
+                continue
             # Skip if we already have an open position in this direction
             if direction in open_pos:
                 continue
@@ -688,11 +757,18 @@ def reconstruct_setup_trades(
 # Aggregate stats
 # ──────────────────────────────────────────────────────────────────────────────
 
-def _compute_agg(trades_pnl: list[float | None]) -> AggregateStat:
+def _compute_agg(
+    trades_pnl: list[float | None],
+    eod_flags: list[bool] | None = None,
+) -> AggregateStat:
     """Compute aggregate statistics from a list of PnL values.
 
     Args:
         trades_pnl: PnL per trade in KRW (None = open / excluded).
+        eod_flags: Optional parallel list of ``is_eod_est`` flags.  Used to
+            count how many of the included trades had their exit price
+            estimated via the EOD close fallback (relevant for Setup A/C
+            trades; always all-False or None for RL shadow trades).
 
     Returns:
         AggregateStat dataclass.
@@ -704,6 +780,15 @@ def _compute_agg(trades_pnl: list[float | None]) -> AggregateStat:
     gross = sum(closed)
     avg = gross / len(closed) if closed else 0.0
     win_rate = len(wins) / len(closed) if closed else 0.0
+
+    # Count EOD-estimated trades among CLOSED ones (PnL not None).
+    eod_count = 0
+    if eod_flags is not None and len(eod_flags) == len(trades_pnl):
+        eod_count = sum(
+            1
+            for p, e in zip(trades_pnl, eod_flags, strict=True)
+            if p is not None and e
+        )
 
     # Max drawdown via equity curve
     max_dd = 0.0
@@ -725,6 +810,7 @@ def _compute_agg(trades_pnl: list[float | None]) -> AggregateStat:
         avg_pnl_krw=avg,
         win_rate=win_rate,
         max_drawdown_krw=max_dd,
+        eod_estimated_count=eod_count,
     )
 
 
@@ -829,24 +915,40 @@ def run_analysis(
     start_date: date,
     end_date: date,
     symbol: str,
-    commission_bps: float,
-    slippage_ticks: float,
+    commission_bps: float | None,
+    slippage_ticks: float | None,
 ) -> CounterfactualReport:
     """Execute the full counterfactual analysis.
 
     Args:
         start_date: Analysis window start (inclusive).
-        end_date: Analysis window end (inclusive).
+        end_date: Analysis window end (inclusive). Must be >= start_date.
         symbol: Futures symbol (default '101S6000').
-        commission_bps: Commission per side in basis points.
-        slippage_ticks: Adverse slippage ticks per side.
+        commission_bps: Commission per side in bps. ``None`` → use config
+            (``futures_contract_spec.kospi200_mini.commission_rate``); any
+            explicit float (incl. ``_DEFAULT_COMMISSION_BPS``) overrides.
+        slippage_ticks: Adverse slippage ticks per side. ``None`` → use
+            ``_DEFAULT_SLIPPAGE_TICKS``; any explicit float overrides.
 
     Returns:
         CounterfactualReport dataclass with all results populated.
+
+    Raises:
+        ValueError: If ``start_date > end_date`` (inverted window).
     """
+    # Window validation: an inverted window would silently produce an empty
+    # report and mislead operators into thinking "no data" when they meant
+    # the inverse.  Fail loudly instead.
+    if start_date > end_date:
+        raise ValueError(
+            f"start_date ({start_date}) must be <= end_date ({end_date}); "
+            "inverted window would produce a misleading empty report"
+        )
+
     # Load contract spec from config
     multiplier_krw = float(_DEFAULT_MULTIPLIER_KRW)
     tick_size = float(_DEFAULT_TICK_SIZE)
+    cfg_commission_bps: float | None = None
     try:
         spec = _load_contract_spec()
         multiplier_krw = float(spec.get("multiplier_krw_per_point", multiplier_krw))
@@ -854,11 +956,18 @@ def run_analysis(
         # commission_rate in config is a fraction (0.00003), convert to bps
         # (1 bps = 0.0001, so 0.00003 = 0.3 bps)
         cfg_commission_bps = float(spec.get("commission_rate", 0.00003)) * 10_000.0
-        # Only use config value if caller did not override (default check)
-        if commission_bps == _DEFAULT_COMMISSION_BPS:
-            commission_bps = cfg_commission_bps
     except Exception as exc:
         logger.warning("Could not load contract spec from config: %s — using defaults", exc)
+
+    # Resolve None defaults to config / fallback.  An explicit numeric value
+    # passed by the caller (incl. _DEFAULT_COMMISSION_BPS / _DEFAULT_SLIPPAGE_TICKS)
+    # is honoured — only None triggers the config lookup.
+    if commission_bps is None:
+        commission_bps = (
+            cfg_commission_bps if cfg_commission_bps is not None else _DEFAULT_COMMISSION_BPS
+        )
+    if slippage_ticks is None:
+        slippage_ticks = _DEFAULT_SLIPPAGE_TICKS
 
     min_confidence = _load_min_confidence()
     start_dt, end_dt = _window_dt(start_date, end_date)
@@ -880,7 +989,13 @@ def run_analysis(
     )
 
     rl_trades = reconstruct_rl_trades(
-        shadow, bars, multiplier_krw, commission_bps, slippage_ticks, tick_size
+        shadow,
+        bars,
+        multiplier_krw,
+        commission_bps,
+        slippage_ticks,
+        tick_size,
+        min_confidence=min_confidence,
     )
     setup_trades = reconstruct_setup_trades(
         signals, bars, multiplier_krw, commission_bps, slippage_ticks, tick_size
@@ -891,15 +1006,23 @@ def run_analysis(
         t.pnl_krw if t.executed and t.pnl_krw is not None else None
         for t in setup_trades
     ]
+    # RL shadow trades always have explicit LONG_EXIT/SHORT_EXIT predictions
+    # (no EOD fallback used) — pass all-False flags for clarity.
+    rl_eod_flags = [False] * len(rl_pnl_list)
+    setup_eod_flags = [t.is_eod_est for t in setup_trades]
 
-    rl_agg = _compute_agg(rl_pnl_list)
-    setup_agg = _compute_agg(setup_pnl_list)
+    rl_agg = _compute_agg(rl_pnl_list, eod_flags=rl_eod_flags)
+    setup_agg = _compute_agg(setup_pnl_list, eod_flags=setup_eod_flags)
     agreement = _compute_agreement(shadow, signals)
     per_day = _compute_per_day(rl_trades, setup_trades, start_date, end_date)
 
     setup_executed = sum(1 for t in setup_trades if t.executed)
-    setup_target = 50  # §10.4 / v2 §3.2
-    rl_shadow_target = 1_000  # §10.4
+    # Phase 4 gate thresholds — config-driven per CLAUDE.md "no hardcoding".
+    # Loaded from config/ml/rl_mppo.yaml::phase4_gates section with documented
+    # fallbacks if absent.  Values trace to v3.3 plan §10.4 / v2 §3.2.
+    gate_cfg = _load_phase4_gate_targets()
+    setup_target = gate_cfg["setup_executed_target"]
+    rl_shadow_target = gate_cfg["rl_shadow_predictions_target"]
     phase4_gate = Phase4GateProgress(
         setup_executed_trades=setup_executed,
         setup_target=setup_target,
@@ -1176,18 +1299,22 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--commission-bps",
         type=float,
-        default=_DEFAULT_COMMISSION_BPS,
+        default=None,  # None → use config; explicit value (incl. 1.0) overrides
         help=(
-            "Commission in bps per side. Default reads from "
-            "config/execution.yaml::futures_contract_spec.kospi200_mini.commission_rate; "
-            "falls back to 1.0 bps."
+            f"Commission in bps per side. Default (None) reads from "
+            f"config/execution.yaml::futures_contract_spec.kospi200_mini.commission_rate; "
+            f"config falls back to {_DEFAULT_COMMISSION_BPS:.1f} bps if absent. "
+            f"Pass an explicit value (including {_DEFAULT_COMMISSION_BPS:.1f}) to override config."
         ),
     )
     parser.add_argument(
         "--slippage-ticks",
         type=float,
-        default=_DEFAULT_SLIPPAGE_TICKS,
-        help="Adverse slippage ticks per side (default: 1.0 tick = 0.02 pt).",
+        default=None,  # None → use default constant; explicit value overrides
+        help=(
+            f"Adverse slippage ticks per side. Default (None) uses "
+            f"{_DEFAULT_SLIPPAGE_TICKS:.1f} tick (= 0.02 pt). Pass explicit value to override."
+        ),
     )
     parser.add_argument(
         "--log-level",

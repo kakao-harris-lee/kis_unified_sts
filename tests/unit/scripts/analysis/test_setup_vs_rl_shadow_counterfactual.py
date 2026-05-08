@@ -437,6 +437,31 @@ class TestDirectionAgreement:
         assert m.short_short == 1
         assert m.agreement_count == 1
 
+    def test_disagree_short_long(self):
+        """4번째 셀: RL=short, Setup=long (반대 방향) — 이전 테스트 누락 보완."""
+        shadow = _make_shadow_df([
+            {
+                "ts": "2026-05-01T11:00:00+00:00", "symbol": "101S6000",
+                "action": 2, "confidence": 0.7, "regime": "BEAR",
+                "risk_mode": "normal", "risk_score": 30.0, "executed_setup_id": "",
+            },
+        ])
+        signals = _make_signals_df([
+            {
+                "signal_id": "s4", "generated_at": "2026-05-01T11:00:00+00:00",
+                "setup_type": "A_gap_reversion", "direction": "long",
+                "entry_price": 380.0, "stop_loss": 378.0, "take_profit": 384.0,
+                "confidence": 0.62, "executed": 1, "skip_reason": "",
+            },
+        ])
+        m = _compute_agreement(shadow, signals)
+        assert m.short_long == 1
+        assert m.long_long == 0
+        assert m.short_short == 0
+        assert m.long_short == 0
+        assert m.agreement_count == 0
+        assert m.agreement_pct == pytest.approx(0.0)
+
     def test_no_overlap_empty_matrix(self):
         shadow = _make_shadow_df([
             {
@@ -698,6 +723,93 @@ class TestEmptyWindow:
         output = _render_table(report)
         assert isinstance(output, str)
         assert len(output) > 0
+
+    def test_inverted_window_raises_valueerror(self):
+        """start_date > end_date → ValueError, not silent empty report.
+
+        Regression: an inverted window previously produced "no trades"
+        which operators could mistake for genuinely empty data.
+        """
+        with pytest.raises(ValueError, match="start_date.*<= end_date"):
+            run_analysis(
+                start_date=date(2026, 5, 8),
+                end_date=date(2026, 5, 1),  # inverted
+                symbol="101S6000",
+                commission_bps=0.3,
+                slippage_ticks=1.0,
+            )
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Tests: Confidence filter is entry-only (regression for PR #178 BLOCK)
+# ──────────────────────────────────────────────────────────────────────────────
+
+class TestConfidenceFilterEntryOnly:
+    """The min_confidence filter must NOT drop low-confidence EXIT actions.
+
+    Regression: filtering exits would create phantom orphan positions and
+    distort Phase 4 gate metrics.  Per RL safety design, exits fire
+    regardless of confidence (CLAUDE.md "RL 청산 안전장치").
+    """
+
+    def test_low_confidence_exit_still_closes_position(self):
+        """LONG_ENTRY at conf=0.7 (passes) + LONG_EXIT at conf=0.1 — the
+        trade must still close, NOT be left as an open orphan if the
+        confidence filter were (incorrectly) applied to exits too.
+        """
+        shadow = _make_shadow_df([
+            {
+                "ts": "2026-05-01T09:15:00+00:00", "symbol": "101S6000",
+                "action": 0, "confidence": 0.7, "regime": "BULL",
+                "risk_mode": "normal", "risk_score": 20.0, "executed_setup_id": "",
+            },
+            {
+                "ts": "2026-05-01T09:30:00+00:00", "symbol": "101S6000",
+                "action": 1, "confidence": 0.1, "regime": "BULL",
+                "risk_mode": "normal", "risk_score": 20.0, "executed_setup_id": "",
+            },
+        ])
+        bars = _make_bars("2026-05-01", n_bars=60, base_price=380.0, step=0.05)
+        trades = reconstruct_rl_trades(
+            shadow,
+            bars,
+            multiplier_krw=_MULTIPLIER,
+            commission_bps=_COMMISSION_BPS,
+            slippage_ticks=_SLIPPAGE_TICKS,
+            tick_size=_TICK_SIZE,
+            min_confidence=0.5,
+        )
+        assert len(trades) == 1
+        assert trades[0].is_open is False
+        assert trades[0].exit_price is not None
+
+    def test_low_confidence_entry_is_skipped(self):
+        """LONG_ENTRY at conf=0.4 (below threshold) → skipped. The
+        subsequent LONG_EXIT has nothing to close, so 0 trades.
+        """
+        shadow = _make_shadow_df([
+            {
+                "ts": "2026-05-01T09:15:00+00:00", "symbol": "101S6000",
+                "action": 0, "confidence": 0.4, "regime": "BULL",
+                "risk_mode": "normal", "risk_score": 20.0, "executed_setup_id": "",
+            },
+            {
+                "ts": "2026-05-01T09:30:00+00:00", "symbol": "101S6000",
+                "action": 1, "confidence": 0.9, "regime": "BULL",
+                "risk_mode": "normal", "risk_score": 20.0, "executed_setup_id": "",
+            },
+        ])
+        bars = _make_bars("2026-05-01", n_bars=60, base_price=380.0, step=0.05)
+        trades = reconstruct_rl_trades(
+            shadow,
+            bars,
+            multiplier_krw=_MULTIPLIER,
+            commission_bps=_COMMISSION_BPS,
+            slippage_ticks=_SLIPPAGE_TICKS,
+            tick_size=_TICK_SIZE,
+            min_confidence=0.5,
+        )
+        assert trades == []
 
 
 # ──────────────────────────────────────────────────────────────────────────────
