@@ -261,6 +261,35 @@ class MetricsCollector:
             "trading_signal_evaluations_total",
             "Total signal evaluation cycles",
         )
+        # Shadow loggers (Phase 2 paper validation — see
+        # shared/strategy/{rl_shadow,llm_veto}_logger.py).  These metrics
+        # let operators detect persistent CH flush failures that would
+        # silently drop counterfactual data.
+        self.prom_shadow_logger_pending = Gauge(
+            "trading_shadow_logger_pending_rows",
+            "Rows currently buffered awaiting next flush",
+            ["logger"],
+        )
+        self.prom_shadow_logger_dropped_batches = Gauge(
+            "trading_shadow_logger_dropped_batches_total",
+            "Cumulative batches dropped due to ClickHouse insert failure",
+            ["logger"],
+        )
+        self.prom_shadow_logger_dropped_rows = Gauge(
+            "trading_shadow_logger_dropped_rows_total",
+            "Cumulative rows dropped due to ClickHouse insert failure",
+            ["logger"],
+        )
+        self.prom_shadow_logger_last_flush_rows = Gauge(
+            "trading_shadow_logger_last_flush_rows",
+            "Rows successfully flushed in the most recent tick",
+            ["logger"],
+        )
+        self.prom_shadow_logger_last_flush_unix = Gauge(
+            "trading_shadow_logger_last_flush_unix_seconds",
+            "Unix timestamp of the most recent flush attempt (success or fail)",
+            ["logger"],
+        )
         self.prom_rl_kl_divergence = Gauge(
             "trading_rl_kl_divergence",
             "RL model KL divergence for observation distribution drift",
@@ -534,6 +563,43 @@ class MetricsCollector:
         """Signal evaluation cycle 기록"""
         if HAS_PROMETHEUS:
             self.prom_signal_evaluations.inc()
+
+    def record_shadow_logger_state(
+        self,
+        *,
+        logger: str,
+        pending_rows: int,
+        dropped_batches: int,
+        dropped_rows: int,
+        last_flush_rows: int,
+        last_flush_unix: float,
+    ) -> None:
+        """Record shadow logger flush state for Prometheus alerting.
+
+        Args:
+            logger: Logger name label — "rl_shadow" or "llm_veto".
+            pending_rows: ``pending_count()`` from the logger module.
+            dropped_batches: First element of ``dropped_counts()``.
+            dropped_rows: Second element of ``dropped_counts()``.
+            last_flush_rows: Rows actually flushed in the most recent tick.
+            last_flush_unix: Unix timestamp of the most recent flush attempt
+                (success OR failure — staleness alerting wants to know if
+                the loop itself stopped firing).
+        """
+        if HAS_PROMETHEUS:
+            self.prom_shadow_logger_pending.labels(logger=logger).set(pending_rows)
+            self.prom_shadow_logger_dropped_batches.labels(logger=logger).set(
+                dropped_batches
+            )
+            self.prom_shadow_logger_dropped_rows.labels(logger=logger).set(
+                dropped_rows
+            )
+            self.prom_shadow_logger_last_flush_rows.labels(logger=logger).set(
+                last_flush_rows
+            )
+            self.prom_shadow_logger_last_flush_unix.labels(logger=logger).set(
+                last_flush_unix
+            )
 
     def record_venue_order_count(self, venue: str, count: int) -> None:
         """Venue별 주문 수 기록"""
