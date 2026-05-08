@@ -451,14 +451,16 @@ def _fetch_minute_bars(
     Returns:
         DataFrame indexed by ts (UTC), columns: open, high, low, close, volume.
     """
+    # Schema: kospi.kospi200f_1m uses (code, datetime) not (symbol, ts).
+    # Alias to ts/symbol so downstream code keeps the canonical naming.
     rows = client.execute(
         """
-        SELECT ts, open, high, low, close, volume
+        SELECT datetime AS ts, open, high, low, close, volume
         FROM kospi.kospi200f_1m
-        WHERE symbol = %(sym)s
-          AND ts >= %(start)s
-          AND ts < %(end)s
-        ORDER BY ts
+        WHERE code = %(sym)s
+          AND datetime >= %(start)s
+          AND datetime < %(end)s
+        ORDER BY datetime
         """,
         {
             "sym": symbol,
