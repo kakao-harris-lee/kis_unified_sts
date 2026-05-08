@@ -12,14 +12,19 @@ Design decisions
   write implementation lives in ``shared/observability/rate_tracker.py``
   (§10.3 DRY follow-up).  This class adds only KIS-specific concerns:
   singleton access and the ``record_error()`` alias.
-* **asyncio.Lock for snapshot** — KIS client calls ``record_error`` from
-  asyncio tasks inside a single event loop, so we keep the original
-  ``asyncio.Lock`` for the snapshot step (injected via ``lock_factory``).
-  The base defaults to ``threading.Lock``, which also works; either is
-  correct here.
+* **Lock primitive** — uses the base class default ``threading.Lock``.
+  KIS client calls ``record_error`` from asyncio tasks inside a single
+  event loop, where ``threading.Lock`` is functionally equivalent to
+  ``asyncio.Lock`` (the GIL serialises every short critical section
+  without re-entry).  If a future use case needs an asyncio-aware lock,
+  inject one via the base class ``lock_factory`` parameter.
 * **TTL semantics** — ``ErrorRateConfig`` has no explicit ``redis_ttl_seconds``
   field; the base computes ``2 × window_seconds`` automatically when the
   attribute is ``None``.
+* **Enabled gate** — when ``config.enabled is False`` the inherited
+  ``record_success`` / ``record_failure`` are true no-ops (no append, no
+  publish).  Production configs ship ``enabled: true`` so this is
+  effectively dead code, but tests cover the opt-out path.
 """
 
 from __future__ import annotations
