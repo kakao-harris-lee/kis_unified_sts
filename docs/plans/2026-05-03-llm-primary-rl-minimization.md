@@ -1,6 +1,6 @@
 # LLM-primary 의사결정 + RL 축소 통합 계획
 
-**Status**: v3.5 — Phase 0 + Phase 1 (1.0/1.1/1.2/1.3) + Phase 2 + §10.2 Counterfactual + §10.2 Grafana 대시보드 + V4/V5 ClickHouse migrations 적용 + §10.3 인프라 정비 완료. kill_switch 6/6 conditions 실데이터 가동. Phase 2 paper validation 인프라 100% 가동 가능.
+**Status**: v3.6 — Phase 0 + Phase 1 (1.0/1.1/1.2/1.3) + Phase 2 + §10.2 (Counterfactual + 주간 cron + Grafana 대시보드) + V4/V5 ClickHouse migrations + §10.3 인프라 정비 + Phase 2 observability(Prometheus 알림) 완료. kill_switch 6/6 + shadow_loggers 4 알림 모두 가동. Phase 2 paper validation 인프라 + 자동 알림 100% 준비.
 **Created**: 2026-05-03
 **Updated**:
 - 2026-05-03 (v1 초안)
@@ -11,6 +11,7 @@
 - 2026-05-08 (**v3.3 — §10.3 인프라 정비 완료**: PR #173 (KIS API error rate writer) + #174 (CH insert fail rate writer) 머지. kill_switch ApiErrorRateCondition / ClickHouseInsertFailCondition이 0.0 stub → 실데이터로 전환. §3.1 PR 표 + §9 추적 + §10.3 갱신)
 - 2026-05-08 (**v3.4 — §10.2 Counterfactual 분석 스크립트 완료**: PR #178 머지 — `scripts/analysis/setup_vs_rl_shadow_counterfactual.py` (Phase 4 Gate 입력 도구). RL shadow 예측을 가상 long/short trade로 재구성, Setup A/C 실제 체결 trade와 비교, 4-cell confusion matrix + per-day breakdown. PR #178 review (BLOCK 6건) — confidence filter는 entry-only만 (exit는 RL 안전장치 보존), Phase 4 gate thresholds → YAML 이전, EOD-estimated count surface, inverted window ValueError 등 모두 반영. §3.1 PR 표 + §9 추적 + §10.2 갱신)
 - 2026-05-08 (**v3.5 — Phase 2 paper validation 인프라 가동 완료**: PR #180 (Grafana 대시보드 `llm-primary-phase2-monitoring.json` 7-panel) 머지 + V4 (rl_trades TTL 5y) + V5 (rl_shadow_predictions CREATE) ClickHouse migrations 적용 (V1–V3 → V1–V5). Phase 2 데이터 누적 인프라 100% 준비. 다음 평일 08:55 KST 재시작 시 RL shadow logger flush + dashboard 패널 데이터 표시 가능. §3.1 PR 표 + §9 추적 + §10.2 갱신)
+- 2026-05-08 (**v3.6 — Phase 2 observability + 주간 자동화 완료**: PR #182 (rl_shadow_logger 12 단위 테스트 — V5 schema 매핑 회귀 가드), #183 (두 logger의 stale "follow-up" docstring 정정), #184 (Counterfactual 주간 cron 등록 + OHLCV 스키마 버그 픽스), #185 (`clickhouse_client_from_env` 8123→9000 fallback), #186 (shadow_loggers Prometheus 5 metrics + 4 alerts) 머지. crontab 등록(매주 월 07:00 KST), Prometheus 컨테이너 재시작으로 4 알림 활성. Phase 2 자동 운영 인프라 100% 준비.)
 
 **Author**: 엔지니어링 (운영자 결정 반영)
 **Parent**: `docs/plans/2026-04-20-futures-paradigm-master.md`
@@ -157,7 +158,7 @@ WebSocket tick (futures_feed.py, tz-aware UTC)
 
 ## 3. 진행 중 작업과의 정합
 
-### 3.1 PR 상태 (v3.5 업데이트, 2026-05-08 기준)
+### 3.1 PR 상태 (v3.6 업데이트, 2026-05-08 기준)
 
 #### 3.1.1 인프라/회귀 fix (paper validation 단계)
 
@@ -211,16 +212,36 @@ WebSocket tick (futures_feed.py, tz-aware UTC)
 | **#178** `feat/phase10-2-counterfactual-script` | ✅ 5/8 머지 (eb64750) | §10.2 — `scripts/analysis/setup_vs_rl_shadow_counterfactual.py` (RL shadow 예측을 가상 long/short trade로 재구성, Setup A/C 실제 체결 trade와 비교, 4-cell confusion matrix + per-day breakdown, table/json/csv 출력); review BLOCK 6건 반영 — confidence filter는 entry-only (RL exit 안전장치 보존), Phase 4 gate thresholds → `config/ml/rl_mppo.yaml::phase4_gates`, `--commission-bps`/`--slippage-ticks` 기본값 None (config fallback), `start_date > end_date` ValueError 검증, EOD-estimated count via `AggregateStat.eod_estimated_count` |
 | **#179** `docs/plan-v3.4-counterfactual-complete` | ✅ 5/8 머지 (d45c35b) | v3.4 plan — §10.2 Counterfactual 완료 추적 |
 | **#180** `feat/llm-primary-monitoring-dashboard` | ✅ 5/8 머지 (9fed723) | §10.2 — Grafana `llm-primary-phase2-monitoring.json` (7 panels: Setup A/C signals/day, RL shadow distribution, LLM veto rate, Setup-vs-RL 14d comparison, Phase 4 gate counts, kill_switch state) |
+| **#181** `docs/plan-v3.5-dashboard-migrations` | ✅ 5/8 머지 (5e4f6a6) | v3.5 plan — §10.2 Grafana 대시보드 + V4/V5 ClickHouse migrations 적용 추적 |
 
-#### 3.1.8 운영 영향 (다음 cron 사이클부터)
+#### 3.1.8 §10.2 Phase 2 observability (PR #182–#186 batch, 2026-05-08)
 
-PR #171 + #173 + #174 머지로 다음 평일 08:55 KST 재시작 시:
+본 batch는 Phase 2 paper validation 시작 직전 자동 운영 인프라를 마무리:
+
+| PR | 상태 | 내용 |
+|----|------|------|
+| **#182** `feat/rl-shadow-logger-tests` | ✅ 5/8 머지 (0de72b3) | `shared/strategy/rl_shadow_logger.py` 0% → 12 단위 테스트. **V5 schema 매핑 회귀 가드** 포함 (insert tuple 길이 == V5 컬럼 수, 위치 인자 순서 = V5 schema 순서, action_probs 키 stringify, action_masks bool→int 코어션) |
+| **#183** `docs/shadow-logger-orchestrator-wiring` | ✅ 5/8 머지 (b1890de) | `rl_shadow_logger.py` / `llm_veto_logger.py`의 stale "follow-up wiring" docstring 정정 — 실제로는 PR #171에서 이미 wiring 완료 (`_shadow_loggers_flush_loop` 60s, `_shadow_loggers_final_flush` shutdown drain). 향후 readers 혼동 방지 |
+| **#184** `feat/counterfactual-cron-weekly` | ✅ 5/8 머지 (d23ea91) | §10.2 cron — `scripts/analysis/counterfactual_weekly_report.py` 래퍼 + `scripts/cron/counterfactual_weekly.sh` (매주 월 07:00 KST), 이전 ISO 주(Mon-Sun) 윈도우, JSON 아카이브, Telegram 브리핑 채널 요약. **부수 버그 픽스**: PR #178의 OHLCV 쿼리가 `ts`/`symbol`로 작성되었으나 실제 `kospi200f_1m` 스키마는 `datetime`/`code` — production 첫 실행 시 즉시 크래시했을 것. 12 단위 테스트 추가 |
+| **#185** `fix/clickhouse-native-port-fallback` | ✅ 5/8 머지 (bb8d94c) | **부수 발견 버그 픽스** — `shared/db/utils.py::clickhouse_client_from_env`이 `CLICKHOUSE_PORT=8123`(HTTP)을 native protocol에 그대로 사용하여 connect 즉시 크래시. `shared/db/config.py::ClickHouseConfig.from_env`은 이미 8123→9000 fallback 로직 보유 — DRY 일치를 위해 `utils.py`에 동일 로직 적용. 6 단위 테스트(기존 3 + 신규 3) |
+| **#186** `feat/shadow-loggers-prometheus-alerts` | ✅ 5/8 머지 (7e352bf) | §10.2 observability — 5 Prometheus Gauge (label `logger=rl_shadow|llm_veto`): `pending_rows`, `dropped_batches_total`, `dropped_rows_total`, `last_flush_rows`, `last_flush_unix_seconds`. `_shadow_loggers_flush_loop`이 매 tick 발행 (실패 시에도 publish 보장 — silent failure 감지의 핵심). 4 알림: `ShadowLoggerBatchesDropped` (critical, 10m), `ShadowLoggerFlushStale` (warning, > 10m), `ShadowLoggerBufferFillingUp` (warning, > 5,000 rows / 5m), `ShadowLoggerBufferNearOverflow` (critical, > 9,000 rows / 1m). `sts-prometheus` 컨테이너 재시작으로 즉시 활성. 19 테스트(16 기존 + 3 신규) |
+
+##### Production 운영 절차 적용
+- crontab 등록: `0 7 * * 1 /home/deploy/project/kis_unified_sts/scripts/cron/counterfactual_weekly.sh` (백업: `logs/crontab_backups/crontab_20260508_171426.bak`)
+- 첫 실행: 2026-05-11 (월) 07:00 KST
+- Prometheus reload: `sts-prometheus` 컨테이너 재시작 → `/api/v1/rules` 응답에 `shadow_loggers` 그룹 4 룰 active
+
+#### 3.1.9 운영 영향 (다음 cron 사이클부터)
+
+PR #171 + #173 + #174 + #182–#186 머지로 다음 평일 08:55 KST 재시작 시:
 - ✅ Setup A/C 진입 활성 (LLM threshold + veto + size 모두 적용, paper-only since `futures_live.enabled: false`)
 - ✅ RL inference 계속 → `kospi.rl_shadow_predictions` 누적 (counterfactual 분석용)
 - ❌ RL trades 0건 (shadow_mode=True)
 - ✅ kill_switch 안전망 + Telegram alerts 활성
-- ✅ shadow_loggers 60s flush → ClickHouse
+- ✅ shadow_loggers 60s flush → ClickHouse + **Prometheus 알림 자동 활성**
 - ✅ **kill_switch 6/6 conditions 모두 실데이터** — ApiErrorRate / NewsPipelineLag / ClickHouseInsertFail 포함
+- ✅ **shadow_loggers 4 알림 자동 활성** — Phase 2 데이터 손실 위험 사실상 0
+- ✅ **첫 주간 counterfactual 리포트** — 2026-05-11 (월) 07:00 KST 자동 실행 → Telegram 브리핑 채널
 
 ### 3.2 기존 v2 계획과의 합치
 
@@ -543,6 +564,8 @@ Phase 1.1 완료 + paper 1주 안정성 확인 즉시 (운영자 §7-5 결정):
 | 2026-05-08 | **§10.2 Grafana 대시보드** 완료: PR #180 (`monitoring/grafana/dashboards/llm-primary-phase2-monitoring.json` 7-panel) 머지. PR #171 deferred follow-up. ClickHouse 데이터소스 활용. |
 | 2026-05-08 | **V4/V5 ClickHouse migrations 적용**: V4 (rl_trades TTL 5y), V5 (rl_shadow_predictions CREATE TABLE) 운영 production에 적용 (직접 SQL + schema_migrations 백필). V1–V3 → V1–V5. Phase 2 RL shadow logger flush 가능 상태. |
 | 2026-05-08 | **v3.5** — Phase 2 paper validation 인프라 100% 가동 가능. 다음 평일 08:55 KST 재시작 시 RL shadow logger → ClickHouse 데이터 누적 → dashboard 패널 표시. §3.1/§9/§10.2 갱신. |
+| 2026-05-08 | **§10.2 Phase 2 observability batch** 완료: PR #182 (shadow logger 회귀 가드 12 테스트), #183 (stale docstring 정정), #184 (counterfactual 주간 cron + OHLCV 스키마 버그 픽스), #185 (`clickhouse_client_from_env` 8123→9000 fallback), #186 (shadow_loggers Prometheus 5 metrics + 4 alerts) 5건 연속 머지. crontab 등록 + Prometheus 컨테이너 재시작으로 production에 즉시 활성. |
+| 2026-05-08 | **v3.6** — Phase 2 운영 자동화 100% 준비. 다음 평일 cron 사이클부터 ClickHouse 누적 + Prometheus 자동 알림 + 매주 월 counterfactual Telegram 리포트. §3.1.8 신설(PR #182–#186), §3.1.9 운영 영향 갱신, §9 history 갱신. |
 | TBD | Phase 1 paper validation (1주) — Setup A/C 신호 발생률, LLM-veto counterfactual PnL, size scaling trade PnL 비교 |
 | TBD | Phase 3 Track A — 운영자 게이트 (legal review §1-6, KIS Real smoke test, 증거금, position-recovery drill, kill-switch unit 설치, `futures_live.enabled: true` 플립, Gate 3 14일 1계약 운용) |
 | TBD | Phase 4 (+3개월) — `signals_all` 누적 trade ≥ 50 + EV+ 3개월 → RL aux 활성 / 폐지 / 재학습 결정 |
