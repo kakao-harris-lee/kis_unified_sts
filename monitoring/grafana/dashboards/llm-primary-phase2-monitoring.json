@@ -1,0 +1,312 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "LLM-primary Phase 2 monitoring (PR #171 deferred follow-up). Tracks Setup A/C signal flow, RL shadow inference distribution, LLM veto activity, and Setup-vs-RL directional agreement. Counterfactual PnL aggregates are produced by scripts/analysis/setup_vs_rl_shadow_counterfactual.py — link in the dashboard description rather than embedded since the script is a per-window batch tool, not a streaming source.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisLabel": "signals/day",
+            "axisPlacement": "auto",
+            "drawStyle": "bars",
+            "fillOpacity": 70,
+            "gradientMode": "none",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "normal" }
+          },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 0 },
+      "id": 1,
+      "options": {
+        "legend": { "calcs": ["sum", "mean"], "displayMode": "table", "placement": "right", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+          "rawSql": "SELECT toDate(generated_at, 'Asia/Seoul') AS t, concat(setup_type, '_', if(executed = 1, 'executed', 'skipped')) AS series, count() AS c FROM kospi.signals_all WHERE setup_type IN ('A','C') AND generated_at >= now() - INTERVAL 30 DAY GROUP BY t, setup_type, executed ORDER BY t",
+          "format": 1,
+          "queryType": "sql",
+          "refId": "A"
+        }
+      ],
+      "title": "Setup A/C signals/day (30d) — executed vs skipped",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "hideFrom": { "legend": false, "tooltip": false, "viz": false } },
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 0 },
+      "id": 2,
+      "options": {
+        "displayLabels": ["name", "percent"],
+        "legend": { "displayMode": "table", "placement": "right", "showLegend": true, "values": ["value", "percent"] },
+        "pieType": "donut",
+        "reduceOptions": { "calcs": ["sum"], "fields": "", "values": false },
+        "tooltip": { "mode": "single", "sort": "none" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+          "rawSql": "SELECT multiIf(action = 0, 'LONG_ENTRY', action = 1, 'LONG_EXIT', action = 2, 'SHORT_ENTRY', action = 3, 'SHORT_EXIT', action = 4, 'HOLD', concat('UNKNOWN_', toString(action))) AS label, count() AS c FROM kospi.rl_shadow_predictions WHERE ts >= now() - INTERVAL 7 DAY GROUP BY label ORDER BY c DESC",
+          "format": 1,
+          "queryType": "sql",
+          "refId": "A"
+        }
+      ],
+      "title": "RL shadow action distribution (7d)",
+      "type": "piechart"
+    },
+    {
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.2 },
+              { "color": "red", "value": 0.5 }
+            ]
+          },
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 9 },
+      "id": 3,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+          "rawSql": "SELECT countIf(skip_reason = 'llm_veto') / nullIf(count(), 0) AS veto_rate FROM kospi.signals_all WHERE setup_type IN ('A','C') AND generated_at >= now() - INTERVAL 7 DAY",
+          "format": 0,
+          "queryType": "sql",
+          "refId": "A"
+        }
+      ],
+      "title": "LLM veto rate — Setup A/C (7d)",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisLabel": "signals",
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "none" }
+          },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 16, "x": 8, "y": 9 },
+      "id": 4,
+      "options": {
+        "legend": { "calcs": ["sum"], "displayMode": "table", "placement": "right", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+          "rawSql": "SELECT toDate(ts, 'Asia/Seoul') AS t, 'rl_long_entry' AS series, countIf(action = 0) AS c FROM kospi.rl_shadow_predictions WHERE ts >= now() - INTERVAL 14 DAY GROUP BY t UNION ALL SELECT toDate(ts, 'Asia/Seoul') AS t, 'rl_short_entry' AS series, countIf(action = 2) AS c FROM kospi.rl_shadow_predictions WHERE ts >= now() - INTERVAL 14 DAY GROUP BY t UNION ALL SELECT toDate(generated_at, 'Asia/Seoul') AS t, concat('setup_', setup_type, '_executed') AS series, countIf(executed = 1) AS c FROM kospi.signals_all WHERE setup_type IN ('A','C') AND generated_at >= now() - INTERVAL 14 DAY GROUP BY t, setup_type ORDER BY t",
+          "format": 1,
+          "queryType": "sql",
+          "refId": "A"
+        }
+      ],
+      "title": "RL entry signals vs Setup A/C executed (14d)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 100 },
+              { "color": "green", "value": 1000 }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 17 },
+      "id": 5,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+          "rawSql": "SELECT count() AS shadow_rows FROM kospi.rl_shadow_predictions WHERE ts >= now() - INTERVAL 7 DAY",
+          "format": 0,
+          "queryType": "sql",
+          "refId": "A"
+        }
+      ],
+      "title": "RL shadow predictions (7d) — Phase 4 gate ≥ 1000",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 10 },
+              { "color": "green", "value": 50 }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 6, "w": 6, "x": 6, "y": 17 },
+      "id": 6,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+          "rawSql": "SELECT countIf(setup_type IN ('A','C') AND executed = 1) AS executed_count FROM kospi.signals_all WHERE generated_at >= now() - INTERVAL 30 DAY",
+          "format": 0,
+          "queryType": "sql",
+          "refId": "A"
+        }
+      ],
+      "title": "Setup A/C executed (30d) — Phase 4 gate ≥ 50",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "red", "value": 1 }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 17 },
+      "id": 7,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "kill_switch_triggered",
+          "refId": "A",
+          "legendFormat": "kill_switch"
+        }
+      ],
+      "title": "Kill-switch state (0=clear, 1=triggered)",
+      "type": "stat"
+    }
+  ],
+  "refresh": "1m",
+  "schemaVersion": 38,
+  "style": "dark",
+  "tags": ["llm-primary", "phase2", "futures", "monitoring"],
+  "templating": { "list": [] },
+  "time": { "from": "now-7d", "to": "now" },
+  "timepicker": {},
+  "timezone": "Asia/Seoul",
+  "title": "LLM-primary Phase 2 — Setup A/C + RL shadow Monitoring",
+  "uid": "llm-primary-phase2-monitoring",
+  "version": 1,
+  "weekStart": ""
+}
