@@ -48,6 +48,9 @@ from shared.models.position import Position, PositionSide, PositionState
 from shared.utils.calc import validate_price
 
 if TYPE_CHECKING:
+    from services.trading.ch_insert_fail_tracker import (  # noqa: F401
+        ClickHouseInsertFailTracker,
+    )
     from shared.models.signal import Signal
 
 logger = logging.getLogger(__name__)
@@ -266,11 +269,21 @@ class PositionTracker:
         self,
         config: PositionTrackerConfig | None = None,
         uuid_generator: Callable[[], str] | None = None,
+        redis_client: Any | None = None,
+        ch_fail_tracker: ClickHouseInsertFailTracker | None = None,
     ):
         """
         Args:
             config: Tracker configuration
             uuid_generator: Optional UUID generator for testing (default: uuid4)
+            redis_client: Optional async Redis client (DB 1) used to auto-build
+                a :class:`ClickHouseInsertFailTracker` when ``ch_fail_tracker``
+                is not supplied explicitly.  When both are ``None`` the CH
+                failure rate is not tracked.
+            ch_fail_tracker: Pre-built
+                :class:`~services.trading.ch_insert_fail_tracker.ClickHouseInsertFailTracker`
+                instance.  Injected directly during tests; in production the
+                tracker is built automatically from ``redis_client``.
         """
         self.config = config or PositionTrackerConfig()
 
@@ -302,6 +315,11 @@ class PositionTracker:
 
         # Auto-flush background task
         self._auto_flush_task: asyncio.Task | None = None
+
+        # ClickHouse insert failure rate tracker (Phase 3 Track A observability)
+        self._ch_fail_tracker: ClickHouseInsertFailTracker | None = (
+            ch_fail_tracker or self._build_ch_fail_tracker(redis_client)
+        )
 
         logger.info(
             f"PositionTracker initialized: max_positions={self.config.max_positions}"
@@ -798,6 +816,54 @@ class PositionTracker:
         """Generate unique position ID using injected generator."""
         return self._uuid_generator()
 
+    @staticmethod
+    def _build_ch_fail_tracker(
+        redis_client: Any | None,
+    ) -> ClickHouseInsertFailTracker | None:
+        """Build a :class:`ClickHouseInsertFailTracker` from config + Redis client.
+
+        Reads ``clickhouse_insert_fail_rate`` section from
+        ``config/streaming.yaml`` via :class:`~shared.config.loader.ConfigLoader`.
+        Returns ``None`` when:
+
+        - ``redis_client`` is ``None`` (no Redis available).
+        - The config section is absent.
+        - ``enabled: false`` in config.
+
+        Args:
+            redis_client: Async Redis client bound to DB 1, or ``None``.
+
+        Returns:
+            A :class:`ClickHouseInsertFailTracker` ready to be started, or
+            ``None`` when tracking is not available/configured.
+        """
+        if redis_client is None:
+            logger.debug("No Redis client — CH insert fail tracking disabled")
+            return None
+
+        try:
+            from services.trading.ch_insert_fail_tracker import (
+                ChInsertFailTrackerConfig,
+                ClickHouseInsertFailTracker,
+            )
+            from shared.config.loader import ConfigLoader
+
+            raw = ConfigLoader.load("streaming.yaml")
+            section = raw.get("clickhouse_insert_fail_rate", {})
+            cfg = ChInsertFailTrackerConfig.from_dict(section)
+
+            if not cfg.enabled:
+                logger.debug("CH insert fail tracking disabled by config")
+                return None
+
+            return ClickHouseInsertFailTracker(cfg, redis_client)
+        except Exception:
+            logger.debug(
+                "Could not build ChInsertFailTracker — tracking disabled",
+                exc_info=True,
+            )
+            return None
+
     def _record_event(self, event_type: str, position_id: str, details: dict[str, Any]):
         """Record position event.
 
@@ -1286,13 +1352,37 @@ class PositionTracker:
 
             await asyncio.to_thread(_sync_flush)
             logger.info(f"Flushed {len(rows)} {label} batch to DB")
+
+            # Observability: record successful CH insert (Phase 3 Track A)
+            if self._ch_fail_tracker is not None:
+                self._ch_fail_tracker.record_success()
+
             return len(rows), pending_list
 
-        except InfrastructureError as e:
-            # Re-enqueue rows so they are retried on the next flush
+        except Exception as e:
+            # Catch BOTH InfrastructureError (wrapped CH errors) AND raw
+            # clickhouse_driver exceptions (ServerException, NetworkError,
+            # SocketTimeoutError, etc.) so the kill_switch fail-rate metric
+            # reflects every failure mode, not just the wrapped subset.
+            # Re-enqueue rows so they are retried on the next flush.
             async with self._batch_lock:
                 pending_list.extend(rows)
-            logger.error(f"Failed to flush {label} batch: {e}")
+
+            # Distinguish wrapped vs raw for log clarity (InfrastructureError
+            # is the project's normalised exception; raw clickhouse_driver
+            # errors are upstream).
+            if isinstance(e, InfrastructureError):
+                logger.error(f"Failed to flush {label} batch: {e}")
+            else:
+                logger.error(
+                    f"Failed to flush {label} batch (raw {type(e).__name__}): {e}",
+                    exc_info=True,
+                )
+
+            # Observability: record failed CH insert (Phase 3 Track A)
+            if self._ch_fail_tracker is not None:
+                self._ch_fail_tracker.record_failure()
+
             return 0, pending_list
 
     async def _flush_swing_positions_batch(self) -> int:
@@ -1409,6 +1499,13 @@ class PositionTracker:
         self._auto_flush_task = loop.create_task(_auto_flush_loop())
         logger.info("Auto-flush task created")
 
+        # Start CH insert fail rate publish loop (Phase 3 Track A observability)
+        if self._ch_fail_tracker is not None:
+            loop.create_task(
+                self._ch_fail_tracker.start(),
+                name="ch_insert_fail_tracker_start",
+            )
+
     async def stop_auto_flush(self) -> None:
         """Stop the auto-flush background task and flush remaining positions.
 
@@ -1437,6 +1534,10 @@ class PositionTracker:
                 f"Final flush on shutdown: {swing_count} swing positions, "
                 f"{rl_count} RL trades"
             )
+
+        # Stop CH insert fail tracker publish loop (Phase 3 Track A observability)
+        if self._ch_fail_tracker is not None:
+            await self._ch_fail_tracker.stop()
 
     @staticmethod
     def _calc_realized_pnl(position: Position) -> float:
