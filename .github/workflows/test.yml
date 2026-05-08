@@ -42,8 +42,13 @@ jobs:
           pip install prometheus-client clickhouse-connect gymnasium
 
       - name: Run tests
+        # tests/performance/ is excluded here because the dedicated
+        # `performance` job below runs them with proper Redis isolation
+        # (DB 0) and a regression-baseline check.  Latency p99
+        # assertions in those tests are environment-dependent and
+        # shouldn't block functional CI.
         run: |
-          pytest tests/ -v --cov=shared --cov=services --cov=domains --cov-report=xml --cov-report=term-missing
+          pytest tests/ --ignore=tests/performance -v --cov=shared --cov=services --cov=domains --cov-report=xml --cov-report=term-missing
         env:
           REDIS_URL: redis://localhost:6379/1
           ENVIRONMENT: test
