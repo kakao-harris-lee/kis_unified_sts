@@ -17,6 +17,10 @@ KIS Unified Trading Platform은 한국투자증권 API를 활용한 알고리즘
 - **모의투자 (Paper Trading)**: 가상 브로커를 통한 전략 검증
 - **모니터링**: Prometheus 메트릭, Grafana 대시보드, Telegram 알림
 
+### 프로젝트 현황 (Project Status)
+
+오랜만에 돌아온 운영자/엔지니어를 위한 한눈 대시보드: [docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md) — 현재 phase, active 전략, 자동화 스케줄, blocking risks, 미완 작업.
+
 ### 운영 런북 (Runbooks)
 
 `docs/runbooks/` 디렉토리에 운영 런북 모음. 상황별로 다음을 참조:
