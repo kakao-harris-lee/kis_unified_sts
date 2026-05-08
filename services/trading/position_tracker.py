@@ -1359,11 +1359,25 @@ class PositionTracker:
 
             return len(rows), pending_list
 
-        except InfrastructureError as e:
-            # Re-enqueue rows so they are retried on the next flush
+        except Exception as e:
+            # Catch BOTH InfrastructureError (wrapped CH errors) AND raw
+            # clickhouse_driver exceptions (ServerException, NetworkError,
+            # SocketTimeoutError, etc.) so the kill_switch fail-rate metric
+            # reflects every failure mode, not just the wrapped subset.
+            # Re-enqueue rows so they are retried on the next flush.
             async with self._batch_lock:
                 pending_list.extend(rows)
-            logger.error(f"Failed to flush {label} batch: {e}")
+
+            # Distinguish wrapped vs raw for log clarity (InfrastructureError
+            # is the project's normalised exception; raw clickhouse_driver
+            # errors are upstream).
+            if isinstance(e, InfrastructureError):
+                logger.error(f"Failed to flush {label} batch: {e}")
+            else:
+                logger.error(
+                    f"Failed to flush {label} batch (raw {type(e).__name__}): {e}",
+                    exc_info=True,
+                )
 
             # Observability: record failed CH insert (Phase 3 Track A)
             if self._ch_fail_tracker is not None:
