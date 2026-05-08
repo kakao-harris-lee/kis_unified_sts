@@ -22,21 +22,25 @@ tables; a raised exception means the entire batch was rejected.  We
 therefore model each batch flush as a single event rather than tracking
 individual rows.
 
-TODO(follow-up): Once ``shared/observability/rate_tracker.py`` is extracted
-(planned in the §10.3-A parallel PR for KIS API error rate), this class
-should be refactored to extend that shared base class to eliminate the
-duplicated rolling-window logic.
+DRY note
+--------
+This class extends :class:`~shared.observability.rate_tracker.RollingRateTracker`
+(extracted in §10.3 follow-up) to share the lifecycle management
+(``start`` / ``stop`` / ``_publish_loop``).  The rolling-window computation
+is overridden here because tests inject ``_Event`` dataclass objects with
+``datetime`` timestamps, which differ from the base class's
+``(monotonic_float, bool)`` tuple representation.
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
-import threading
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
+
+from shared.observability.rate_tracker import RollingRateTracker
 
 logger = logging.getLogger(__name__)
 
@@ -120,12 +124,22 @@ class _Event:
     success: bool = field(compare=False)
 
 
-class ClickHouseInsertFailTracker:
+class ClickHouseInsertFailTracker(RollingRateTracker):
     """Rolling-window ClickHouse insert failure rate tracker.
 
+    Extends :class:`~shared.observability.rate_tracker.RollingRateTracker` to
+    share the lifecycle management (``start`` / ``stop`` / ``_publish_loop``).
+    The rolling-window computation uses ``datetime``-stamped :class:`_Event`
+    objects so that tests can inject back-dated events directly into
+    ``_window``.
+
     Thread-safe: ``record_success`` / ``record_failure`` are protected by a
-    ``threading.Lock`` so they can be called from both sync executor threads
-    (``asyncio.to_thread``) and the async task that publishes to Redis.
+    ``threading.Lock`` (inherited from the base) so they can be called from
+    both sync executor threads (``asyncio.to_thread``) and the async task
+    that publishes to Redis.
+
+    Redis writes are performed via the injected ``redis_client`` (async API)
+    rather than the base class's lazy synchronous ``RedisClient.get_client()``.
 
     Usage::
 
@@ -154,12 +168,11 @@ class ClickHouseInsertFailTracker:
                 (``await client.set(...)`` style).  Must be connected to
                 Redis DB 1.
         """
-        self._config = config
+        super().__init__(config, logger_name="ChInsertFailTracker")
         self._redis = redis_client
-        self._lock = threading.Lock()
-        # deque has no bound so we manage eviction manually in _evict_old
+        # Own deque using _Event objects (datetime timestamps) so that tests
+        # can inject back-dated _Event instances directly.
         self._window: deque[_Event] = deque()
-        self._publish_task: asyncio.Task[None] | None = None
 
     # ------------------------------------------------------------------
     # Public recording API (sync, thread-safe)
@@ -189,8 +202,20 @@ class ClickHouseInsertFailTracker:
     # Rate computation
     # ------------------------------------------------------------------
 
+    def current_rate(self) -> float:
+        """Compute the failure rate over the configured rolling window.
+
+        Returns:
+            Float in [0.0, 1.0].  Returns ``0.0`` when the window is empty
+            or the tracker is disabled.
+        """
+        return self.current_fail_rate()
+
     def current_fail_rate(self) -> float:
         """Compute the failure rate over the configured rolling window.
+
+        Backward-compatible alias for :meth:`current_rate` — preserved for
+        all call sites and tests that use ``current_fail_rate()``.
 
         Returns:
             Float in [0.0, 1.0].  Returns ``0.0`` when the window is empty
@@ -209,64 +234,15 @@ class ClickHouseInsertFailTracker:
         return failures / len(events)
 
     # ------------------------------------------------------------------
-    # Lifecycle
+    # Redis write — async injected client
     # ------------------------------------------------------------------
-
-    async def start(self) -> None:
-        """Start the background Redis publish loop.
-
-        Safe to call multiple times (idempotent when already running).
-        """
-        if not self._config.enabled:
-            logger.debug("ChInsertFailTracker disabled — not starting publish loop")
-            return
-        if self._publish_task is not None and not self._publish_task.done():
-            return  # already running
-        self._publish_task = asyncio.get_event_loop().create_task(
-            self._publish_loop(),
-            name="ch_insert_fail_publish",
-        )
-        logger.info(
-            "ChInsertFailTracker publish loop started "
-            f"(interval={self._config.publish_interval_seconds}s, "
-            f"window={self._config.window_seconds}s, "
-            f"key={self._config.redis_key})"
-        )
-
-    async def stop(self) -> None:
-        """Cancel the publish loop and do a final Redis write.
-
-        Safe to call when never started or already stopped.
-        """
-        import contextlib
-
-        if self._publish_task is not None and not self._publish_task.done():
-            self._publish_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._publish_task
-            self._publish_task = None
-
-        if self._config.enabled:
-            await self._write_to_redis()
-
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
-    def _evict_old(self) -> None:
-        """Remove events older than ``window_seconds`` from the left of the deque.
-
-        Must be called while ``self._lock`` is held.
-        """
-        cutoff = datetime.now().timestamp() - self._config.window_seconds
-        while self._window and self._window[0].timestamp.timestamp() < cutoff:
-            self._window.popleft()
 
     async def _write_to_redis(self) -> None:
-        """Write current fail rate to Redis (async).
+        """Write current fail rate to Redis (async injected client).
 
-        Failures are swallowed and logged at DEBUG so the caller is never
-        interrupted.
+        Overrides the base class implementation to use the injected async
+        Redis client (``await self._redis.set(...)``).  Failures are
+        swallowed and logged at DEBUG so the caller is never interrupted.
         """
         if not self._config.enabled:
             return
@@ -288,17 +264,15 @@ class ClickHouseInsertFailTracker:
                 exc_info=True,
             )
 
-    async def _publish_loop(self) -> None:
-        """Background coroutine that periodically publishes the fail rate."""
-        while True:
-            try:
-                await asyncio.sleep(self._config.publish_interval_seconds)
-                await self._write_to_redis()
-            except asyncio.CancelledError:
-                logger.debug("ChInsertFailTracker publish loop cancelled")
-                raise
-            except Exception:
-                logger.debug(
-                    "ChInsertFailTracker publish loop error — continuing",
-                    exc_info=True,
-                )
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _evict_old(self) -> None:
+        """Remove events older than ``window_seconds`` from the left of the deque.
+
+        Must be called while ``self._lock`` is held.
+        """
+        cutoff = datetime.now().timestamp() - self._config.window_seconds
+        while self._window and self._window[0].timestamp.timestamp() < cutoff:
+            self._window.popleft()
