@@ -66,7 +66,22 @@ strategy:
     params: {}
 
   position:
-    type: fixed
+    # Phase 1.3: multi-tier LLM-aware sizing replaces the previous fixed sizer.
+    # base_quantity mirrors the old fixed.quantity (1 contract).
+    # max_quantity_cap mirrors futures_live.max_position_size_contracts (default 1).
+    # The order_router independently enforces the same cap (defense in depth).
+    type: llm_adaptive
     params:
-      quantity: 1
+      base_quantity: 1       # Pre-scaling size (contracts); mirrors former fixed.quantity
+      max_quantity_cap: 1    # Hard cap (contracts); mirrors futures_live.max_position_size_contracts
+
+      # Phase 1.3 multi-tier risk-score scaling.
+      # Evaluated in order; first tier whose upper_bound >= risk_score wins.
+      # scale=0.0 means "skip entry" (exit/stop logic is unaffected).
+      # Set tiers: [] to revert to legacy single-threshold mode for testing.
+      tiers:
+        - [30, 1.0]   # risk_score <= 30  → ×1.0 (full size)
+        - [60, 0.7]   # risk_score <= 60  → ×0.7
+        - [80, 0.4]   # risk_score <= 80  → ×0.4
+        - [100, 0.0]  # risk_score <= 100 → ×0.0 (entry skip)
 
