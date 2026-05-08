@@ -17,6 +17,7 @@ import aiohttp
 from shared.config.loader import ConfigLoader
 from shared.http import AsyncSessionMixin
 from shared.kis.auth import KISAuthConfig, KISAuthManager
+from shared.kis.error_rate import KISApiErrorRateTracker
 
 logger = logging.getLogger(__name__)
 
@@ -196,6 +197,7 @@ class KISClient(AsyncSessionMixin):
                 # Detect rate limit error and apply backoff
                 if "EGW00201" in text:
                     self._rate_limiter.penalty()
+                KISApiErrorRateTracker.get_instance().record_error()
                 logger.error(f"KIS API Error {response.status} for {symbol}: {text}")
                 raise Exception(f"KIS API Error {response.status}")
 
@@ -206,6 +208,7 @@ class KISClient(AsyncSessionMixin):
                 raise Exception(f"KIS Logic Error: {msg}")
 
             self._rate_limiter.reset_backoff()
+            KISApiErrorRateTracker.get_instance().record_success()
             output = data.get("output", {})
 
             # Map KIS output fields to our standard schema
@@ -250,6 +253,7 @@ class KISClient(AsyncSessionMixin):
                 text = await response.text()
                 if "EGW00201" in text:
                     self._rate_limiter.penalty()
+                KISApiErrorRateTracker.get_instance().record_error()
                 logger.error(f"KIS Futures API Error {response.status} for {symbol}: {text}")
                 raise Exception(f"KIS API Error {type}")
 
@@ -260,6 +264,7 @@ class KISClient(AsyncSessionMixin):
                 raise Exception(f"KIS Logic Error: {msg}")
 
             self._rate_limiter.reset_backoff()
+            KISApiErrorRateTracker.get_instance().record_success()
             # FHMIF10000000 returns output1 (price), output2/3 (index info)
             output = data.get("output1", {})
 
@@ -326,6 +331,7 @@ class KISClient(AsyncSessionMixin):
                     text = await response.text()
                     if "EGW00201" in text:
                         self._rate_limiter.penalty()
+                    KISApiErrorRateTracker.get_instance().record_error()
                     return []
 
                 data = await response.json()
@@ -333,6 +339,7 @@ class KISClient(AsyncSessionMixin):
                     return []
 
                 self._rate_limiter.reset_backoff()
+                KISApiErrorRateTracker.get_instance().record_success()
                 rows = data.get("output2", [])
                 candles: list[dict[str, Any]] = []
                 for row in rows[:count]:
@@ -352,6 +359,7 @@ class KISClient(AsyncSessionMixin):
 
         except Exception as e:
             logger.debug(f"Failed to fetch minute bars for {symbol}: {e}")
+            KISApiErrorRateTracker.get_instance().record_error()
             return []
 
     async def _get_futures_minute_bars(
@@ -392,6 +400,7 @@ class KISClient(AsyncSessionMixin):
                     text = await response.text()
                     if "EGW00201" in text:
                         self._rate_limiter.penalty()
+                    KISApiErrorRateTracker.get_instance().record_error()
                     return []
 
                 data = await response.json()
@@ -399,6 +408,7 @@ class KISClient(AsyncSessionMixin):
                     return []
 
                 self._rate_limiter.reset_backoff()
+                KISApiErrorRateTracker.get_instance().record_success()
                 rows = data.get("output2", [])
                 candles: list[dict[str, Any]] = []
 
@@ -426,6 +436,7 @@ class KISClient(AsyncSessionMixin):
 
         except Exception as e:
             logger.debug(f"Failed to fetch futures bars for {symbol}: {e}")
+            KISApiErrorRateTracker.get_instance().record_error()
             return []
 
     # ------------------------------------------------------------------
@@ -484,6 +495,7 @@ class KISClient(AsyncSessionMixin):
                     text = await response.text()
                     if "EGW00201" in text:
                         self._rate_limiter.penalty()
+                    KISApiErrorRateTracker.get_instance().record_error()
                     logger.error(f"Stock balance inquiry failed ({response.status}): {text}")
                     return []
 
@@ -493,6 +505,7 @@ class KISClient(AsyncSessionMixin):
                     return []
 
                 self._rate_limiter.reset_backoff()
+                KISApiErrorRateTracker.get_instance().record_success()
                 positions = []
                 for item in data.get("output1", []):
                     qty = int(item.get("hldg_qty", 0))
@@ -511,6 +524,7 @@ class KISClient(AsyncSessionMixin):
 
         except Exception as e:
             logger.warning(f"Stock balance inquiry exception: {e}")
+            KISApiErrorRateTracker.get_instance().record_error()
             return []
 
     async def get_futures_balance(self, account_no: str = "") -> list[dict[str, Any]]:
@@ -564,6 +578,7 @@ class KISClient(AsyncSessionMixin):
                     text = await response.text()
                     if "EGW00201" in text:
                         self._rate_limiter.penalty()
+                    KISApiErrorRateTracker.get_instance().record_error()
                     logger.error(f"Futures balance inquiry failed ({response.status}): {text}")
                     return []
 
@@ -573,6 +588,7 @@ class KISClient(AsyncSessionMixin):
                     return []
 
                 self._rate_limiter.reset_backoff()
+                KISApiErrorRateTracker.get_instance().record_success()
                 positions = []
                 for item in data.get("output1", []):
                     qty = int(item.get("cblc_qty", 0))
@@ -593,6 +609,7 @@ class KISClient(AsyncSessionMixin):
 
         except Exception as e:
             logger.warning(f"Futures balance inquiry exception: {e}")
+            KISApiErrorRateTracker.get_instance().record_error()
             return []
 
     # ------------------------------------------------------------------
@@ -675,6 +692,7 @@ class KISClient(AsyncSessionMixin):
                     text = await response.text()
                     if "EGW00201" in text:
                         self._rate_limiter.penalty()
+                    KISApiErrorRateTracker.get_instance().record_error()
                     logger.error(
                         f"ATS order failed ({response.status}) for {symbol}: {text}"
                     )
@@ -695,6 +713,7 @@ class KISClient(AsyncSessionMixin):
                     }
 
                 self._rate_limiter.reset_backoff()
+                KISApiErrorRateTracker.get_instance().record_success()
                 output = data.get("output", {})
                 order_no = str(output.get("ODNO") or output.get("odno") or "").strip()
 
@@ -704,7 +723,8 @@ class KISClient(AsyncSessionMixin):
                     "message": data.get("msg1", "Success"),
                 }
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
+            KISApiErrorRateTracker.get_instance().record_error()
             logger.error(f"ATS order timeout for {symbol}")
             return {
                 "success": False,
@@ -712,6 +732,7 @@ class KISClient(AsyncSessionMixin):
                 "message": "Request timeout",
             }
         except Exception as e:
+            KISApiErrorRateTracker.get_instance().record_error()
             logger.warning(f"ATS order exception for {symbol}: {e}")
             return {
                 "success": False,
