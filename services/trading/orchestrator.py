@@ -709,6 +709,14 @@ class TradingOrchestrator:
         )
         self._last_candle_cache_save: float = 0.0
 
+        # Kill-switch consumer loop (Phase 0.2-c).
+        # Polls Redis sentinel key and calls PositionTracker.close_all() on trip.
+        self._kill_switch_consumer_task: asyncio.Task | None = None
+        # Last kill-switch events stream entry-id seen by this process.
+        # Initialised at startup to the current stream tip so pre-existing
+        # events from prior sessions do NOT re-trigger flatten on restart.
+        self._ks_last_seen_event_id: str | None = None
+
         logger.info(
             f"TradingOrchestrator initialized: "
             f"{config.asset_class}/{config.strategy_name}"
@@ -748,6 +756,9 @@ class TradingOrchestrator:
 
         # Start LLM context publisher loop (if enabled)
         await self._start_llm_context_publisher()
+
+        # Start kill-switch consumer loop (Phase 0.2-c)
+        await self._start_kill_switch_consumer()
 
         # 파이프라인 생성 및 시작
         self.pipeline = self._create_pipeline()
@@ -3419,6 +3430,362 @@ class TradingOrchestrator:
             self._llm_context_task.cancel()
             await asyncio.gather(self._llm_context_task, return_exceptions=True)
             self._llm_context_task = None
+
+        # Stop kill-switch consumer task (Phase 0.2-c)
+        if self._kill_switch_consumer_task:
+            self._kill_switch_consumer_task.cancel()
+            await asyncio.gather(
+                self._kill_switch_consumer_task, return_exceptions=True
+            )
+            self._kill_switch_consumer_task = None
+
+    # ------------------------------------------------------------------
+    # Kill-switch consumer loop (Phase 0.2-c)
+    # ------------------------------------------------------------------
+
+    async def _start_kill_switch_consumer(self) -> None:
+        """Start the background kill-switch sentinel polling loop.
+
+        Loads config from ``kill_switch_consumer`` section of
+        ``config/kill_switch.yaml`` and spawns :meth:`_kill_switch_consumer_loop`
+        as an asyncio task.
+
+        On startup the loop optionally records the current tip of the
+        ``kill_switch:events`` stream so that a sentinel written *before* this
+        process started does NOT trigger a flatten (``ignore_pre_startup_events``).
+        """
+        try:
+            from services.kill_switch.config import KillSwitchConsumerConfig
+
+            ks_cfg = KillSwitchConsumerConfig.from_yaml()
+        except (InvalidConfigError, MissingConfigError, OSError) as e:
+            logger.warning(
+                "kill_switch_consumer config not loaded (%s) — using defaults", e
+            )
+            from services.kill_switch.config import KillSwitchConsumerConfig
+
+            ks_cfg = KillSwitchConsumerConfig()
+        except Exception as e:
+            logger.error(
+                "Unexpected error loading kill_switch_consumer config: %s", e,
+                exc_info=True,
+            )
+            from services.kill_switch.config import KillSwitchConsumerConfig
+
+            ks_cfg = KillSwitchConsumerConfig()
+
+        # Initialise last-seen event id at the current stream tip so a
+        # pre-existing event does not trigger flatten on restart.
+        if ks_cfg.ignore_pre_startup_events:
+            try:
+                from shared.streaming.client import RedisClient
+
+                redis_client = RedisClient.get_client()
+                entries = redis_client.xrevrange(ks_cfg.events_stream, count=1)
+                if entries:
+                    self._ks_last_seen_event_id = entries[0][0]
+                    logger.info(
+                        "kill_switch consumer startup: last-seen event id=%s "
+                        "(pre-startup events ignored)",
+                        self._ks_last_seen_event_id,
+                    )
+                else:
+                    # Stream empty; initialise to sentinel "0-0" so any future
+                    # event id will compare as newer.
+                    self._ks_last_seen_event_id = "0-0"
+                    logger.info(
+                        "kill_switch consumer startup: events stream empty; "
+                        "last-seen initialised to 0-0"
+                    )
+            except (InfrastructureError, OSError, ConnectionError) as e:
+                logger.warning(
+                    "kill_switch consumer: failed to read startup event id (%s); "
+                    "last-seen remains None — pre-startup events WILL trigger flatten",
+                    e,
+                )
+                self._ks_last_seen_event_id = None
+        else:
+            # Deliberately include pre-startup events (testing / forced re-check).
+            self._ks_last_seen_event_id = None
+
+        self._kill_switch_consumer_task = asyncio.create_task(
+            self._kill_switch_consumer_loop(ks_cfg),
+            name="kill_switch_consumer_loop",
+        )
+        logger.info(
+            "kill_switch consumer loop started (poll=%.1fs, sentinel=%s)",
+            ks_cfg.poll_interval_seconds,
+            ks_cfg.sentinel_key,
+        )
+
+    async def _kill_switch_consumer_loop(self, ks_cfg: Any) -> None:  # noqa: ANN401
+        """Poll Redis for the kill-switch sentinel and flatten positions on detection.
+
+        Idempotency design:
+        - Reads the latest entry id from ``ks_cfg.events_stream``.
+        - Compares it with ``self._ks_last_seen_event_id`` (set at startup to
+          the stream tip, so pre-startup events are skipped when
+          ``ignore_pre_startup_events=True``).
+        - Only if a *new* event id is found, in this order:
+            1. Calls :meth:`_kill_switch_flatten_all` which iterates open
+               positions and submits broker exits via
+               :meth:`_submit_exit_order` (paper VirtualBroker or live
+               OrderExecutor — handles LONG→SELL and SHORT→BUY-to-cover).
+               Note: this does NOT call ``PositionTracker.close_all()``
+               directly because that helper has no broker integration.
+            2. Updates ``_ks_last_seen_event_id`` *before* DEL so that if
+               the DEL fails we still won't re-trigger on the next tick
+               (DEL failure is acceptable; the sentinel TTL will reap it).
+            3. DELs the sentinel key (best-effort cleanup within TTL window).
+            4. Sends a Telegram alert.
+        - Redis errors are logged and silently retried on the next tick;
+          they do NOT crash the orchestrator. ``redis.exceptions.ConnectionError``
+          is also caught explicitly because it does NOT inherit from the
+          builtin ``ConnectionError``.
+
+        Args:
+            ks_cfg: :class:`services.kill_switch.config.KillSwitchConsumerConfig`
+                instance supplying poll_interval_seconds, sentinel_key, and
+                events_stream.
+        """
+        logger.info("kill_switch consumer loop running")
+
+        while self._market_data_running:
+            try:
+                await asyncio.sleep(ks_cfg.poll_interval_seconds)
+
+                from shared.streaming.client import RedisClient
+
+                redis_client = RedisClient.get_client()
+
+                # Fast path: check sentinel key presence first.
+                sentinel_val = redis_client.get(ks_cfg.sentinel_key)
+                if not sentinel_val:
+                    # No sentinel — nothing to do on this tick.
+                    continue
+
+                # Sentinel present.  Now check the events stream to enforce
+                # the idempotency / pre-startup filter.
+                entries = redis_client.xrevrange(ks_cfg.events_stream, count=1)
+                if not entries:
+                    # Stream empty but sentinel exists — edge case (sentinel
+                    # written without a stream entry, e.g. in tests).  Treat
+                    # the sentinel itself as a trigger if last-seen is None.
+                    if self._ks_last_seen_event_id is not None:
+                        logger.debug(
+                            "kill_switch sentinel present but events stream empty "
+                            "and last-seen is set — skipping (pre-startup guard)"
+                        )
+                        continue
+                    latest_event_id = None
+                else:
+                    latest_event_id = entries[0][0]
+
+                # Idempotency / pre-startup check.
+                if latest_event_id is not None and (
+                    self._ks_last_seen_event_id is not None
+                    and latest_event_id <= self._ks_last_seen_event_id
+                ):
+                    # No new event since last time we handled (or since startup).
+                    logger.debug(
+                        "kill_switch sentinel present but no new event "
+                        "(latest=%s, last_seen=%s) — skipping",
+                        latest_event_id,
+                        self._ks_last_seen_event_id,
+                    )
+                    continue
+
+                # --- New event detected: execute flatten ---
+                logger.critical(
+                    "KILL-SWITCH CONSUMER TRIGGERED: sentinel=%s event_id=%s — "
+                    "flattening all open positions",
+                    ks_cfg.sentinel_key,
+                    latest_event_id,
+                )
+
+                flat_count = await self._kill_switch_flatten_all()
+
+                # Update last-seen *before* DEL so that if DEL fails we still
+                # won't re-trigger on the next tick.
+                self._ks_last_seen_event_id = latest_event_id
+
+                # DEL sentinel key (best-effort cleanup within TTL window).
+                try:
+                    redis_client.delete(ks_cfg.sentinel_key)
+                    logger.info(
+                        "kill_switch consumer: sentinel key deleted (key=%s)",
+                        ks_cfg.sentinel_key,
+                    )
+                except (InfrastructureError, OSError, ConnectionError) as del_err:
+                    logger.warning(
+                        "kill_switch consumer: failed to DEL sentinel key: %s",
+                        del_err,
+                    )
+
+                # Telegram alert (fire-and-forget, same pattern as existing notifications).
+                await self._notify(
+                    f"KILL-SWITCH FLATTEN EXECUTED\n"
+                    f"Asset: {self.config.asset_class}\n"
+                    f"Positions flattened: {flat_count}\n"
+                    f"Event id: {latest_event_id}\n"
+                    f"Sentinel: {sentinel_val}"
+                )
+
+            except asyncio.CancelledError:
+                logger.info("kill_switch consumer loop cancelled")
+                break
+            except (InfrastructureError, OSError, ConnectionError) as e:
+                # Redis transient error — log and retry on next tick.
+                logger.warning(
+                    "kill_switch consumer: Redis error (%s) — retrying on next tick",
+                    e,
+                )
+            except Exception as e:
+                # `redis.exceptions.ConnectionError` does NOT inherit from the
+                # builtin `ConnectionError`, so we catch it here by name and
+                # downgrade to a warning instead of treating it as an unexpected
+                # crash. Other unexpected exceptions still log at ERROR with
+                # full traceback so operators can investigate.
+                if e.__class__.__module__.startswith("redis"):
+                    logger.warning(
+                        "kill_switch consumer: redis-client error (%s.%s: %s) — "
+                        "retrying on next tick",
+                        e.__class__.__module__,
+                        e.__class__.__name__,
+                        e,
+                    )
+                else:
+                    logger.error(
+                        "kill_switch consumer: unexpected error (%s) — "
+                        "retrying on next tick",
+                        e,
+                        exc_info=True,
+                    )
+
+        logger.info("kill_switch consumer loop exited")
+
+    async def _kill_switch_flatten_all(self) -> int:
+        """Submit market exit orders for every open position and update tracking.
+
+        This is the execution side of the kill-switch consumer. It mirrors the
+        logic used in :meth:`_execute_exit` / :meth:`_process_filled_exit` but
+        operates on ALL open positions simultaneously without requiring an
+        :class:`~shared.models.signal.ExitSignal` from the strategy pipeline.
+
+        Handles both LONG (SELL) and SHORT (BUY-to-cover) positions.
+
+        Returns:
+            Number of positions for which exit orders were submitted (or mock-
+            filled if no broker is configured).
+        """
+        if not self._position_tracker:
+            logger.warning(
+                "kill_switch flatten_all: no position tracker — cannot submit orders"
+            )
+            return 0
+
+        async with self._market_data_lock:
+            market_data = dict(self._market_data_snapshot)
+
+        positions_snapshot = list(self._position_tracker.positions)
+        if not positions_snapshot:
+            logger.info("kill_switch flatten_all: no open positions")
+            return 0
+
+        flat_count = 0
+        for position in positions_snapshot:
+            # Determine exit price from latest market snapshot.
+            price_data = market_data.get(position.code, {})
+            if isinstance(price_data, dict):
+                exit_price = float(price_data.get("close") or position.current_price)
+            elif price_data:
+                exit_price = float(price_data)
+            else:
+                exit_price = float(position.current_price)
+
+            if exit_price <= 0:
+                logger.warning(
+                    "kill_switch flatten_all: %s — invalid price %.2f, "
+                    "using last known price %.2f",
+                    position.code,
+                    exit_price,
+                    position.current_price,
+                )
+                exit_price = float(position.current_price) or 1.0
+
+            # SHORT position → BUY to cover; LONG position → SELL.
+            close_is_buy = position.side == PositionSide.SHORT
+
+            try:
+                is_filled, fill_price = await self._submit_exit_order(
+                    position.code,
+                    close_is_buy,
+                    position.quantity,
+                    exit_price,
+                )
+            except Exception as exc:
+                logger.error(
+                    "kill_switch flatten_all: order submission failed for %s: %s",
+                    position.code,
+                    exc,
+                    exc_info=True,
+                )
+                # PHANTOM-RISK fallback: tracker-side close prevents the local
+                # state from showing a stale position, but if the broker truly
+                # rejected the exit the broker may still hold the position
+                # open — creating a tracker-vs-broker mismatch ("phantom").
+                # This is a deliberate trade-off: in an emergency we prefer a
+                # clean tracker over a dangling local entry, on the assumption
+                # that the operator will reconcile via the daily Edge Review
+                # script (`scripts/analysis/recover_positions.py`) and the
+                # critical-level alert below. If you're in this branch on
+                # live, MANUALLY VERIFY the broker side immediately.
+                is_filled, fill_price = True, exit_price
+
+            if is_filled:
+                closed = self._position_tracker.close_position(
+                    position_id=position.id,
+                    exit_price=fill_price,
+                    reason="KILL_SWITCH",
+                )
+                if closed:
+                    flat_count += 1
+                    pnl = getattr(closed, "unrealized_pnl", 0.0) or 0.0
+                    self.total_pnl += pnl
+                    self.total_trades += 1
+                    if self._state_publisher:
+                        self._state_publisher.publish_position_closed(closed)
+                        self._record_running_totals(closed)
+                    strategy = getattr(closed, "strategy", "") or ""
+                    asyncio.create_task(
+                        self._persist_closed_position(closed, strategy),
+                        name=f"ks_persist_{getattr(closed, 'id', 'x')[:8]}",
+                    )
+                    logger.info(
+                        "kill_switch flatten_all: closed %s %s qty=%d @ %.4f "
+                        "(side=%s close_is_buy=%s pnl=%+.0f)",
+                        position.code,
+                        position.id[:8],
+                        position.quantity,
+                        fill_price,
+                        position.side.value,
+                        close_is_buy,
+                        pnl,
+                    )
+            else:
+                logger.error(
+                    "kill_switch flatten_all: exit order NOT filled for %s — "
+                    "position may still be open; operator verification required",
+                    position.code,
+                )
+
+        self._sync_open_positions_metric()
+        logger.critical(
+            "kill_switch flatten_all: complete — %d/%d positions flattened",
+            flat_count,
+            len(positions_snapshot),
+        )
+        return flat_count
 
     async def _start_llm_context_publisher(self) -> None:
         """Start LLM context publisher background task."""
