@@ -3995,6 +3995,8 @@ class TradingOrchestrator:
             interval_seconds: How often to flush (loaded from
                 ``config/shadow_loggers.yaml`` ``flush_interval_seconds``).
         """
+        from shared.strategy import llm_veto_logger as veto_mod
+        from shared.strategy import rl_shadow_logger as rl_mod
         from shared.strategy.llm_veto_logger import flush_llm_veto_events
         from shared.strategy.rl_shadow_logger import flush_rl_shadow_predictions
 
@@ -4039,6 +4041,34 @@ class TradingOrchestrator:
                     e,
                     exc_info=True,
                 )
+
+            # Publish per-logger health to Prometheus (always, not just on
+            # success) so a stuck flush loop is visible via the
+            # last_flush_unix gauge staleness alert.
+            now_unix = time.time()
+            try:
+                rl_dropped_batches, rl_dropped_rows = rl_mod.dropped_counts()
+                self._metrics.record_shadow_logger_state(
+                    logger="rl_shadow",
+                    pending_rows=rl_mod.pending_count(),
+                    dropped_batches=rl_dropped_batches,
+                    dropped_rows=rl_dropped_rows,
+                    last_flush_rows=rl_count,
+                    last_flush_unix=now_unix,
+                )
+                veto_dropped_batches, veto_dropped_rows = veto_mod.dropped_counts()
+                self._metrics.record_shadow_logger_state(
+                    logger="llm_veto",
+                    pending_rows=veto_mod.pending_count(),
+                    dropped_batches=veto_dropped_batches,
+                    dropped_rows=veto_dropped_rows,
+                    last_flush_rows=veto_count,
+                    last_flush_unix=now_unix,
+                )
+            except Exception as e:
+                # Metric publishing is best-effort — never let it kill the
+                # flush loop.
+                logger.debug("shadow_loggers metric publish failed: %s", e)
 
             if rl_count or veto_count:
                 logger.info(

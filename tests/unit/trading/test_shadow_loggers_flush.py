@@ -540,3 +540,205 @@ class TestShadowLoggersFinalFlush:
         all_messages = " ".join(r.message for r in caplog.records)
         assert "rl_shadow=12" in all_messages
         assert "veto=4" in all_messages
+
+
+# ---------------------------------------------------------------------------
+# Tests: Prometheus metric publishing
+# ---------------------------------------------------------------------------
+
+
+class TestPrometheusMetricPublishing:
+    """The loop publishes per-logger health gauges every tick.
+
+    These tests verify the wiring between the orchestrator loop and
+    ``MetricsCollector.record_shadow_logger_state``.
+    """
+
+    @pytest.mark.asyncio()
+    async def test_metrics_published_each_tick(self) -> None:
+        """rl_shadow and llm_veto metrics are both published each tick."""
+        stub = _stub()
+        stub._shadow_loggers_ch_client = _ch()
+        stub._metrics = MagicMock()
+
+        rl_flush = AsyncMock(return_value=7)
+        veto_flush = AsyncMock(return_value=3)
+
+        tick = 0
+
+        async def _one_then_cancel(delay: float) -> None:  # noqa: ARG001
+            nonlocal tick
+            tick += 1
+            if tick >= 2:
+                raise asyncio.CancelledError()
+
+        with (
+            patch(
+                "shared.strategy.rl_shadow_logger.flush_rl_shadow_predictions",
+                rl_flush,
+            ),
+            patch(
+                "shared.strategy.llm_veto_logger.flush_llm_veto_events",
+                veto_flush,
+            ),
+            patch(
+                "shared.strategy.rl_shadow_logger.pending_count",
+                return_value=42,
+            ),
+            patch(
+                "shared.strategy.rl_shadow_logger.dropped_counts",
+                return_value=(1, 5),
+            ),
+            patch(
+                "shared.strategy.llm_veto_logger.pending_count",
+                return_value=8,
+            ),
+            patch(
+                "shared.strategy.llm_veto_logger.dropped_counts",
+                return_value=(0, 0),
+            ),
+            patch("asyncio.sleep", side_effect=_one_then_cancel),
+        ):
+            await _loop_fn(stub, 0.001)
+
+        # Both loggers published exactly once on the single completed tick
+        assert stub._metrics.record_shadow_logger_state.call_count == 2
+
+        calls = {
+            call.kwargs["logger"]: call.kwargs
+            for call in stub._metrics.record_shadow_logger_state.call_args_list
+        }
+        assert "rl_shadow" in calls
+        assert "llm_veto" in calls
+
+        rl = calls["rl_shadow"]
+        assert rl["pending_rows"] == 42
+        assert rl["dropped_batches"] == 1
+        assert rl["dropped_rows"] == 5
+        assert rl["last_flush_rows"] == 7
+        assert rl["last_flush_unix"] > 0
+
+        veto = calls["llm_veto"]
+        assert veto["pending_rows"] == 8
+        assert veto["dropped_batches"] == 0
+        assert veto["dropped_rows"] == 0
+        assert veto["last_flush_rows"] == 3
+
+    @pytest.mark.asyncio()
+    async def test_metrics_published_even_on_flush_failure(self) -> None:
+        """Per-tick metric publish runs even if one flush raised — operators
+        can detect persistent failures via the dropped-batches counter.
+        """
+        stub = _stub()
+        stub._shadow_loggers_ch_client = _ch()
+        stub._metrics = MagicMock()
+
+        rl_flush = AsyncMock(side_effect=RuntimeError("CH down"))
+        veto_flush = AsyncMock(return_value=0)
+
+        tick = 0
+
+        async def _one_then_cancel(delay: float) -> None:  # noqa: ARG001
+            nonlocal tick
+            tick += 1
+            if tick >= 2:
+                raise asyncio.CancelledError()
+
+        with (
+            patch(
+                "shared.strategy.rl_shadow_logger.flush_rl_shadow_predictions",
+                rl_flush,
+            ),
+            patch(
+                "shared.strategy.llm_veto_logger.flush_llm_veto_events",
+                veto_flush,
+            ),
+            patch(
+                "shared.strategy.rl_shadow_logger.pending_count",
+                return_value=100,
+            ),
+            patch(
+                "shared.strategy.rl_shadow_logger.dropped_counts",
+                return_value=(3, 90),
+            ),
+            patch(
+                "shared.strategy.llm_veto_logger.pending_count",
+                return_value=0,
+            ),
+            patch(
+                "shared.strategy.llm_veto_logger.dropped_counts",
+                return_value=(0, 0),
+            ),
+            patch("asyncio.sleep", side_effect=_one_then_cancel),
+        ):
+            await _loop_fn(stub, 0.001)
+
+        # Both loggers' state was still published (regression guard for
+        # CH-down silent-failure mode).
+        assert stub._metrics.record_shadow_logger_state.call_count == 2
+        rl = next(
+            c.kwargs
+            for c in stub._metrics.record_shadow_logger_state.call_args_list
+            if c.kwargs["logger"] == "rl_shadow"
+        )
+        # The 3-batch / 90-row drop counts surface in the gauge so the
+        # ShadowLoggerBatchesDropped alert can fire.
+        assert rl["dropped_batches"] == 3
+        assert rl["dropped_rows"] == 90
+
+    @pytest.mark.asyncio()
+    async def test_metric_publish_failure_does_not_kill_loop(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """If MetricsCollector raises, the loop continues + logs at DEBUG."""
+        stub = _stub()
+        stub._shadow_loggers_ch_client = _ch()
+        stub._metrics = MagicMock()
+        stub._metrics.record_shadow_logger_state.side_effect = RuntimeError(
+            "prometheus broken"
+        )
+
+        rl_flush = AsyncMock(return_value=0)
+        veto_flush = AsyncMock(return_value=0)
+
+        tick = 0
+
+        async def _one_then_cancel(delay: float) -> None:  # noqa: ARG001
+            nonlocal tick
+            tick += 1
+            if tick >= 2:
+                raise asyncio.CancelledError()
+
+        with (
+            patch(
+                "shared.strategy.rl_shadow_logger.flush_rl_shadow_predictions",
+                rl_flush,
+            ),
+            patch(
+                "shared.strategy.llm_veto_logger.flush_llm_veto_events",
+                veto_flush,
+            ),
+            patch(
+                "shared.strategy.rl_shadow_logger.pending_count",
+                return_value=0,
+            ),
+            patch(
+                "shared.strategy.rl_shadow_logger.dropped_counts",
+                return_value=(0, 0),
+            ),
+            patch(
+                "shared.strategy.llm_veto_logger.pending_count",
+                return_value=0,
+            ),
+            patch(
+                "shared.strategy.llm_veto_logger.dropped_counts",
+                return_value=(0, 0),
+            ),
+            patch("asyncio.sleep", side_effect=_one_then_cancel),
+            caplog.at_level(logging.DEBUG, logger="services.trading.orchestrator"),
+        ):
+            await _loop_fn(stub, 0.001)
+
+        # Loop returned normally despite metric raise
+        debug_msgs = [r.message for r in caplog.records if r.levelname == "DEBUG"]
+        assert any("metric publish failed" in m for m in debug_msgs)
