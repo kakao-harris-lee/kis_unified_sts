@@ -1,6 +1,13 @@
 # LLM-primary 의사결정 + RL 축소 통합 계획
 
-**Status**: v3.9 — Phase 0 + Phase 1 (1.0/1.1/1.2/1.3) + Phase 2 + §10.2 (Counterfactual + 주간 cron + Grafana 대시보드 + 일일 검증 + 운영자 startup runbook + pre-flight check 자동화) + V4/V5 ClickHouse migrations + §10.3 인프라 정비 + Phase 2 observability(Prometheus 알림) + CI 정상화 모두 완료. kill_switch 6/6 + shadow_loggers 4 알림 + 일일 4-gate 자동 검증 + 8-check pre-flight 자동화 + main CI 모두 green. Phase 2 cutover 자동화 100% 완성.
+**Status**: **v4.0 — Phase 2 cutover READY**. 모든 엔지니어링 / 자동화 / 문서 / CI / 운영 도구 완료. 운영자는 Friday EOD pre-flight 한 번 실행 외 어떤 수동 작업도 필요 없음. 다음 마일스톤은 Phase 2 가동 후(2026-05-11 Mon 08:55 KST) 거래일 데이터 누적 + Phase 3 Track A (운영자 영역) + Phase 4 (3개월 후).
+
+**v4.0 시점 인프라 요약** (수동 작업 0):
+- **자동 cron 4건**: orchestrator restart (08:55), daily verification (16:00 평일), weekly counterfactual (월 07:00), reports rotation (일 04:00)
+- **실시간 Prometheus 알림 10건**: kill_switch 6/6 + shadow_loggers 4
+- **운영자 도구**: 8-gate pre-flight check (Fri EOD 한번 실행)
+- **참조 문서**: PROJECT_STATUS.md (60초 dashboard) + Phase 2 startup runbook + master plan v4.0
+- **CI**: test/lint/type-check 모두 green
 **Created**: 2026-05-03
 **Updated**:
 - 2026-05-03 (v1 초안)
@@ -15,6 +22,7 @@
 - 2026-05-08 (**v3.7 — Phase 2 일일 자동 검증 완료**: PR #188 (`scripts/analysis/phase2_daily_verification.py` + cron) 머지. 매일 16:00 KST (월-금) 4-gate 자동 검증: rl_shadow_predictions > 0, rl_trades == 0 (shadow_mode invariant), Setup A signals >= 1, shadow_logger dropped_batches == 0 (Prometheus 호출, outage 시 gate 생략). PASS/FAIL Telegram 브리핑 채널 자동 보고. 1주/2주 누적 검증이 daily 누적으로 자동 완성. 12 단위 테스트.)
 - 2026-05-08 (**v3.8 — 운영자 startup runbook + CI 신호 정상화 완료**: PR #190 (Phase 2 startup runbook), #191 (CI test collection 16 ImportErrors → 0 — sibling test dir `__init__.py` 충돌), #192 (orchestrator 시간 의존성), #193 (retraining pipeline TELEGRAM env 독립), #194 (perf 테스트 main job 제외), #195 (ATS routing AUTO band time 고정) 6건 머지. main CI test/lint/type-check 모두 처음으로 green. 향후 PR CI 신호 신뢰 가능. Phase 2 cutover 운영자 진입점 문서 + 자동화된 functional CI까지 모두 준비.)
 - 2026-05-08 (**v3.9 — Pre-flight check 자동화 완료**: PR #197 (`scripts/analysis/phase2_preflight_check.py` + cron wrapper) 머지. 운영자가 Friday EOD에 5개 수동 명령 대신 한 번의 스크립트 실행으로 8개 항목 (CH migrations / shadow_mode / Setup A·C enabled / futures_live disabled / crontab / Prometheus 알림 / Telegram creds) 자동 검증. End-to-end smoke ALL 8 PASS. 부수 발견: `futures_live.yaml` 중첩 구조 (`futures_live: { enabled: false }`) 첫 구현 정정. 20 단위 테스트. Phase 2 cutover 자동화 100% 완성.)
+- 2026-05-08 (**v4.0 — Phase 2 cutover READY (major milestone)**: PR #199 (README runbook 인덱스 확장), #200 (`docs/PROJECT_STATUS.md` 60초 dashboard), #201 (`reports/` 자동 rotation + Sun 04:00 KST cron) 3건 머지로 운영 인프라 마지막 폴리시. v4.0은 Phase 2 cutover 직전의 모든 엔지니어링/자동화/문서/CI/운영도구가 완성된 상태를 표시하는 major version. 다음 진행은 거래일 데이터 누적(2026-05-11 이후) → Phase 3 Track A (운영자) → Phase 4 (+3개월).)
 
 **Author**: 엔지니어링 (운영자 결정 반영)
 **Parent**: `docs/plans/2026-04-20-futures-paradigm-master.md`
@@ -161,7 +169,7 @@ WebSocket tick (futures_feed.py, tz-aware UTC)
 
 ## 3. 진행 중 작업과의 정합
 
-### 3.1 PR 상태 (v3.9 업데이트, 2026-05-08 기준)
+### 3.1 PR 상태 (v4.0 업데이트, 2026-05-08 기준)
 
 #### 3.1.1 인프라/회귀 fix (paper validation 단계)
 
@@ -262,6 +270,32 @@ WebSocket tick (futures_feed.py, tz-aware UTC)
 1. **Friday EOD**: `bash scripts/cron/phase2_preflight_check.sh` → ALL 8 PASS 확인
 2. ALL PASS이면 그대로 주말 → **Mon 08:55 KST 자동 cutover**
 3. FAIL 시 detail action 따라 수정 후 재실행
+
+#### 3.1.12 운영 인프라 폴리시 (PR #199–#201 batch, 2026-05-08)
+
+Phase 2 cutover 직전의 마지막 운영 인프라 정비 — 운영자/엔지니어 onboarding 비용 절감 + 디스크 위생.
+
+| PR | 상태 | 내용 |
+|----|------|------|
+| **#199** `docs/readme-runbook-index` | ✅ 5/8 머지 (e67103d) | README.md 운영 런북 섹션 — 10개 runbook 표 + 사용 시점 안내 + Phase 2 자동화 도구(pre-flight/daily/weekly) 표. `phase2-startup.md`를 첫 행에 (다음 2주 가장 자주 참조). 모든 링크 + 스크립트 경로 존재 검증 |
+| **#200** `docs/project-status-dashboard` | ✅ 5/8 머지 (4d9ca1a) | `docs/PROJECT_STATUS.md` 60초 dashboard — Current Phase, Active Strategies (오늘 vs cutover 이후), Automation Schedule (8개), Key Recent Decisions, What Could Block Phase 2 (위험/완화/감지), Open Items, Key References. Master plan 1000+ 줄 읽지 않고도 상태 파악 가능. README 진입점에 링크 추가 |
+| **#201** `feat/reports-rotation` | ✅ 5/8 머지 (655cb10) | `scripts/maintenance/rotate_reports.py` + Sun 04:00 KST cron. 정책: daily_verification (gzip 30d / delete 730d), counterfactual (gzip 365d / delete 1825d — `rl_trades` TTL 일치), drills (gzip 90d / 영구 보존). Dry-run 기본, `--apply`로 실행. `*.gz` gzip 후보 제외, 기존 .gz 덮어쓰지 않음(audit trail 보존). 9 단위 테스트 + production smoke 통과 |
+
+##### v4.0 시점별 자동화 매트릭스
+
+| 시점 | 작업 | 위치 |
+|------|------|------|
+| Fri EOD (수동, 한 번) | 8-gate pre-flight | PR #197 |
+| Mon-Fri 08:55 KST | orchestrator restart | watchdog cron (이전) |
+| 매분 (장중) | RL inference + Setup A/C 평가 | PR #163–#171 |
+| 60s (장중) | shadow_loggers flush + Prometheus 메트릭 | PR #171 + #186 |
+| 실시간 | shadow_loggers 4 알림 | PR #186 |
+| 실시간 | kill_switch 6 알림 | PR #173 + #174 |
+| Mon-Fri 16:00 KST | daily 4-gate verification | PR #188 |
+| Mon 07:00 KST | weekly counterfactual | PR #184 |
+| Sun 04:00 KST | reports rotation | PR #201 |
+
+운영자가 cutover 전후 어떤 명령도 수동으로 실행하지 않아도 됨. 단 한 번의 Friday EOD 점검만 필요.
 
 ##### Production 운영 절차 적용
 - 매주 월 07:00 KST: `0 7 * * 1 .../counterfactual_weekly.sh`
@@ -614,6 +648,8 @@ Phase 1.1 완료 + paper 1주 안정성 확인 즉시 (운영자 §7-5 결정):
 | 2026-05-08 | **v3.8** — 운영자 startup runbook + CI 신호 정상화 완료. §3.1.10 신설(PR #191–#195), §3.1.8에 #189/#190 추가, §9 history 갱신. Phase 2 자동 운영 + 검증 + CI 신호까지 모두 100% 준비. |
 | 2026-05-08 | **§10.2 Pre-flight check 자동화**: PR #197 (`scripts/analysis/phase2_preflight_check.py` + cron wrapper) 머지. 운영자 Friday EOD 5명령 → 1 명령. 8 항목 자동 검증 + production smoke ALL PASS. |
 | 2026-05-08 | **v3.9** — Phase 2 cutover 자동화 100% 완성. §3.1.11 신설(PR #197), §9 history 갱신. 운영자가 cutover 전후 단 한 번도 수동 검증할 필요 없음. |
+| 2026-05-08 | **운영 인프라 폴리시 batch**: PR #199 (README runbook 인덱스), #200 (PROJECT_STATUS.md dashboard), #201 (reports rotation cron) 3건 머지. 마지막 운영 인프라 정비 — onboarding 비용 절감 + 디스크 위생. |
+| 2026-05-08 | **v4.0 (major milestone)** — Phase 2 cutover READY. 모든 엔지니어링/자동화/문서/CI/운영도구 완성. §3.1.12 신설(PR #199–#201), 시점별 자동화 매트릭스 추가, §9 history 갱신. 다음 진행은 거래일 데이터 누적(2026-05-11~) → Phase 3 Track A → Phase 4 (3개월 후). |
 | TBD | Phase 1 paper validation (1주) — Setup A/C 신호 발생률, LLM-veto counterfactual PnL, size scaling trade PnL 비교 |
 | TBD | Phase 3 Track A — 운영자 게이트 (legal review §1-6, KIS Real smoke test, 증거금, position-recovery drill, kill-switch unit 설치, `futures_live.enabled: true` 플립, Gate 3 14일 1계약 운용) |
 | TBD | Phase 4 (+3개월) — `signals_all` 누적 trade ≥ 50 + EV+ 3개월 → RL aux 활성 / 폐지 / 재학습 결정 |
