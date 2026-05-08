@@ -59,16 +59,21 @@ strategy:
         - "BEARISH"
         - "SIDEWAYS_DOWN"
 
-      # Shadow mode (Phase 0.3 — LLM-primary RL-minimization plan).
-      # When true: inference runs fully (confidence filter included) but
-      # no Signal is emitted and no order is placed.  Predictions are
-      # buffered in memory and flushed to kospi.rl_shadow_predictions
-      # (ClickHouse V5 migration) for counterfactual analysis vs Setup A/C.
-      # Default: false (normal live execution).
-      shadow_mode: false
+      # Shadow mode (Phase 2 — LLM-primary RL-minimization plan).
+      # Phase 2 DEMOTES RL from primary decision-maker to counterfactual
+      # observer: inference runs fully (confidence filter included) but no
+      # Signal is emitted and no order is placed.  Predictions are buffered
+      # in memory and flushed to kospi.rl_shadow_predictions (ClickHouse V5)
+      # every 60 s by the orchestrator shadow_loggers_flush_loop.
+      # Setup A (gap reversion) and Setup C (event reaction) are the NEW
+      # primary entry strategies, activated simultaneously in this PR.
+      # Operator §7-3 decision: shadow logs retained for 6 months for
+      # counterfactual PnL analysis vs Setup A/C signals.
+      shadow_mode: true
       #
-      # To enable shadow mode (operator must set explicitly):
-      #   shadow_mode: true
+      # To restore RL as primary entry (rollback):
+      #   shadow_mode: false
+      # (Setup A/C will compete; disable those strategies separately if needed)
 
   exit:
     type: rl_mppo_exit               # RL 학습된 청산 정책
