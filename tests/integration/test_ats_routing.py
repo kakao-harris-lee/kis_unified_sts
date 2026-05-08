@@ -82,8 +82,18 @@ def test_venue_router_selection():
         venue=ExecutionVenue.KRX,
     )
 
+    # Pin current_time to 10:00 (an AUTO time band per the production
+    # config) so the test isn't subject to wall-clock-driven time-of-day
+    # preferences.  Without this, runners executing during a 'KRX'-
+    # preferred window (e.g. 11:30–13:00 UTC = lunch) short-circuit
+    # before reaching the liquidity / price-improvement checks the
+    # rest of this test exercises.
+    auto_band_time = datetime(2026, 5, 8, 10, 0, 0)
+
     # Test case 1: No market data (should use default venue)
-    decision = router.select_venue(order, market_data=None)
+    decision = router.select_venue(
+        order, market_data=None, current_time=auto_band_time
+    )
     # Without market data, router uses default venue preference
     assert decision.venue in [ExecutionVenue.KRX, ExecutionVenue.ATS]
 
@@ -99,7 +109,9 @@ def test_venue_router_selection():
         ats_bid_qty=500.0,
         ats_ask_qty=500.0,
     )
-    decision = router.select_venue(order, market_data=market_data)
+    decision = router.select_venue(
+        order, market_data=market_data, current_time=auto_band_time
+    )
     # Should consider ATS for price improvement
     assert decision.venue in [ExecutionVenue.KRX, ExecutionVenue.ATS]
     assert decision.price_improvement_bps is not None
@@ -116,7 +128,9 @@ def test_venue_router_selection():
         ats_bid_qty=5.0,  # Very low depth
         ats_ask_qty=5.0,   # Very low depth
     )
-    decision = router.select_venue(order, market_data=market_data_low_liquidity)
+    decision = router.select_venue(
+        order, market_data=market_data_low_liquidity, current_time=auto_band_time
+    )
     # Should prefer KRX due to liquidity
     assert decision.venue == ExecutionVenue.KRX
     assert "liquidity" in decision.reason.lower() or "depth" in decision.reason.lower()
