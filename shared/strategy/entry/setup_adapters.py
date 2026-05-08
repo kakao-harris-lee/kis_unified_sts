@@ -32,6 +32,30 @@ All three adjustments are skipped when:
     (low-confidence LLM output — treated as unavailable).
   * ``llm_tuning.enabled`` is ``False`` (opt-out switch).
 
+Phase 1.2 — LLM veto authority (entry-only)
+---------------------------------------------
+After Phase 1.1 threshold tuning, both adapters apply an additional LLM
+**veto** gate before emitting any entry signal.  When the LLM has high
+confidence in an overall market signal that directly opposes the candidate
+entry direction, the signal is dropped entirely.
+
+* Long candidate + ``overall_signal == veto_long_block_signal`` (default
+  ``"STRONG_BEARISH"``) + ``confidence >= veto_min_confidence`` → **veto**.
+* Short candidate + ``overall_signal == veto_short_block_signal`` (default
+  ``"STRONG_BULLISH"``) + ``confidence >= veto_min_confidence`` → **veto**.
+
+Vetoed signals are:
+1. Buffered via :mod:`shared.strategy.llm_veto_logger` (mirrors
+   ``rl_shadow_logger``) for counterfactual ClickHouse flush (follow-up PR).
+2. Sent to the futures Telegram channel so operators have immediate visibility.
+3. Returned as ``None`` (signal dropped, no orchestrator emission).
+
+The veto is **ENTRY-ONLY**.  Exit / stop signals never reach this helper.
+
+Both ``llm_tuning.enabled`` (master) AND ``llm_tuning.veto_enabled`` must be
+``True`` for the veto to apply.  Operators can disable the veto independently
+of threshold/sizing adjustments by setting ``veto_enabled: false``.
+
 Design notes
 ------------
 * Both configs are Pydantic ``ServiceConfigBase`` subclasses so they can be
@@ -138,6 +162,40 @@ class LLMTuningConfig(BaseModel):
         description=(
             "Minimum confidence floor after LLM scaling. Signals whose adjusted "
             "confidence falls below this are dropped with skip_reason=llm_threshold_unmet."
+        ),
+    )
+    # Phase 1.2 — LLM veto authority fields
+    veto_enabled: bool = Field(
+        default=True,
+        description=(
+            "Enable/disable LLM veto independently of threshold/size adjustments. "
+            "Requires the master ``enabled`` flag to also be True. "
+            "Set to False to exercise Phase 1.1 threshold tuning without veto authority."
+        ),
+    )
+    veto_min_confidence: float = Field(
+        default=0.6,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Minimum LLM context confidence required to trigger a veto. "
+            "Below this threshold the veto is skipped even if the overall_signal "
+            "is opposing (treats low-confidence LLM output as unavailable)."
+        ),
+    )
+    veto_long_block_signal: str = Field(
+        default="STRONG_BEARISH",
+        description=(
+            "overall_signal value that triggers a veto for long entry candidates. "
+            "Configurable so operators can tune the opposing signal threshold "
+            "(e.g. 'BEARISH' for a stricter veto, 'STRONG_BEARISH' for a looser one)."
+        ),
+    )
+    veto_short_block_signal: str = Field(
+        default="STRONG_BULLISH",
+        description=(
+            "overall_signal value that triggers a veto for short entry candidates. "
+            "Configurable so operators can tune the opposing signal threshold."
         ),
     )
 
@@ -577,6 +635,190 @@ def _apply_llm_tuning_setup_c(
 
 
 # ---------------------------------------------------------------------------
+# Phase 1.2 — LLM veto helper
+# ---------------------------------------------------------------------------
+
+
+def _apply_llm_veto(
+    decision_signal: Any,
+    llm_ctx: Any,
+    tuning: LLMTuningConfig,
+    *,
+    setup_name: str,
+    symbol: str,
+    ts: datetime,
+) -> tuple[bool, str | None]:
+    """Evaluate whether the LLM has high-confidence authority to veto an entry signal.
+
+    This helper is **ENTRY-ONLY**.  Exit and stop signals must never reach it.
+
+    The veto fires when ALL of the following hold:
+
+    1. ``tuning.enabled`` is ``True`` (master switch).
+    2. ``tuning.veto_enabled`` is ``True`` (veto sub-switch).
+    3. ``llm_ctx.confidence >= tuning.veto_min_confidence``.
+    4. ``direction == "long"``  AND ``overall_signal == tuning.veto_long_block_signal``
+       OR ``direction == "short"`` AND ``overall_signal == tuning.veto_short_block_signal``.
+
+    When the veto fires the caller should:
+    1. Record the event via :func:`shared.strategy.llm_veto_logger.record_veto`.
+    2. Send a Telegram alert (futures channel).
+    3. Return ``None`` (drop the signal).
+
+    Args:
+        decision_signal: Raw decision-engine signal (must have ``.direction``
+            and ``.confidence`` attributes).
+        llm_ctx: LLM MarketContext (never ``None`` here — caller must guard).
+            Must have ``.confidence``, ``.regime``, and ``.overall_signal``
+            attributes (duck-typed for test isolation).
+        tuning: Typed LLM tuning configuration.
+        setup_name: Registry name of the setup (e.g. ``"setup_a_gap_reversion"``).
+        symbol: Instrument symbol (for logging / buffer payload).
+        ts: Tz-aware UTC timestamp from the orchestrator tick (PR #159 contract).
+
+    Returns:
+        ``(should_veto, reason)`` where ``reason`` is ``"llm_veto"`` on veto
+        or ``None`` when the signal passes through.
+    """
+    if not tuning.enabled or not tuning.veto_enabled:
+        return False, None
+
+    if float(llm_ctx.confidence) < tuning.veto_min_confidence:
+        return False, None
+
+    direction: str = str(decision_signal.direction)
+    # MarketSignal is an Enum whose .value is a Korean string (e.g. "강한 하락").
+    # Normalise to .name (e.g. "STRONG_BEARISH") so YAML config values like
+    # "STRONG_BEARISH" / "STRONG_BULLISH" compare correctly.  Same pattern as
+    # the risk_mode normalisation in Phase 1.1 _apply_llm_tuning_setup_a.
+    overall_signal_raw = getattr(llm_ctx, "overall_signal", "")
+    overall_signal: str = (
+        overall_signal_raw.name
+        if hasattr(overall_signal_raw, "name")
+        else str(overall_signal_raw)
+    )
+    regime: str = str(llm_ctx.regime)
+
+    veto_triggered = (
+        (direction == "long" and overall_signal == tuning.veto_long_block_signal)
+        or (direction == "short" and overall_signal == tuning.veto_short_block_signal)
+    )
+
+    if not veto_triggered:
+        return False, None
+
+    logger.info(
+        "LLM veto: %s %s signal dropped — overall_signal=%s confidence=%.3f "
+        "veto_min_confidence=%.3f setup=%s symbol=%s",
+        direction,
+        setup_name,
+        overall_signal,
+        float(llm_ctx.confidence),
+        tuning.veto_min_confidence,
+        setup_name,
+        symbol,
+    )
+
+    # Ensure ts is tz-aware UTC (PR #159 contract).
+    from datetime import UTC
+
+    ts = ts.replace(tzinfo=UTC) if ts.tzinfo is None else ts.astimezone(UTC)
+
+    # Buffer the veto event for counterfactual ClickHouse flush (follow-up PR).
+    from shared.strategy.llm_veto_logger import record_veto
+
+    record_veto(
+        {
+            "ts": ts,
+            "symbol": symbol,
+            "direction": direction,
+            "regime": regime,
+            "overall_signal": overall_signal,
+            "confidence": float(llm_ctx.confidence),
+            "setup": setup_name,
+        }
+    )
+
+    # Send Telegram alert (futures channel) — fire-and-forget; failures are
+    # logged internally by the notifier and must not block the hot path.
+    _send_veto_alert_background(
+        symbol=symbol,
+        direction=direction,
+        regime=regime,
+        overall_signal=overall_signal,
+        confidence=float(llm_ctx.confidence),
+        setup_name=setup_name,
+        ts=ts,
+    )
+
+    return True, "llm_veto"
+
+
+def _send_veto_alert_background(
+    *,
+    symbol: str,
+    direction: str,
+    regime: str,
+    overall_signal: str,
+    confidence: float,
+    setup_name: str,
+    ts: datetime,
+) -> None:
+    """Schedule a Telegram veto alert without blocking the caller.
+
+    Creates an asyncio task if a running event loop is available; otherwise
+    logs only.  The alert is sent to the ``futures`` channel so operators have
+    immediate visibility when the LLM blocks an otherwise-tradable signal.
+
+    Args:
+        symbol: Instrument symbol.
+        direction: Candidate entry direction (``"long"`` or ``"short"``).
+        regime: LLM market regime string.
+        overall_signal: The opposing overall_signal that triggered the veto.
+        confidence: LLM context confidence at veto time.
+        setup_name: Registry name of the setup.
+        ts: Tz-aware UTC datetime of the vetoed tick.
+    """
+    import asyncio
+
+    from shared.notification.telegram import notifier_for_domain
+
+    notifier = notifier_for_domain("futures")
+    if notifier is None:
+        logger.debug("llm_veto Telegram alert skipped — futures notifier unavailable")
+        return
+
+    ts_str = ts.strftime("%Y-%m-%d %H:%M:%S UTC")
+    msg = (
+        f"<b>LLM Veto</b> — entry blocked\n"
+        f"Setup: {setup_name}\n"
+        f"Symbol: {symbol}\n"
+        f"Direction: {direction}\n"
+        f"Regime: {regime}\n"
+        f"Overall signal: {overall_signal}\n"
+        f"LLM confidence: {confidence:.2f}\n"
+        f"Time: {ts_str}"
+    )
+
+    async def _send() -> None:
+        try:
+            await notifier.send_message(msg, is_critical=True)
+        except Exception as exc:
+            logger.warning("llm_veto Telegram alert failed: %s", exc)
+
+    try:
+        loop = asyncio.get_running_loop()
+        loop.create_task(_send())
+    except RuntimeError:
+        # No running event loop (e.g. during tests or synchronous callers).
+        logger.debug(
+            "llm_veto Telegram alert not scheduled — no running event loop; "
+            "message: %s",
+            msg,
+        )
+
+
+# ---------------------------------------------------------------------------
 # Adapters
 # ---------------------------------------------------------------------------
 
@@ -713,6 +955,7 @@ class SetupAEntryAdapter(EntrySignalGenerator[SetupAEntryConfig]):
                     tuning.min_context_confidence,
                 )
             else:
+                # Phase 1.1-c: direction gating + risk-score confidence scaling.
                 adjusted_confidence, skip_reason = _apply_llm_tuning_setup_a(
                     decision_signal=decision_signal,
                     llm_ctx=llm_ctx,
@@ -722,6 +965,25 @@ class SetupAEntryAdapter(EntrySignalGenerator[SetupAEntryConfig]):
                 if skip_reason is not None:
                     return None
                 confidence_override = adjusted_confidence
+
+                # Phase 1.2: LLM veto authority — applied AFTER threshold tuning,
+                # BEFORE signal emission.  Entry signals only; never veto exits.
+                symbol = str(
+                    (context.market_data or {}).get(
+                        "code",
+                        (context.market_data or {}).get("symbol", ""),
+                    )
+                )
+                should_veto, _veto_reason = _apply_llm_veto(
+                    decision_signal=decision_signal,
+                    llm_ctx=llm_ctx,
+                    tuning=tuning,
+                    setup_name=self.name,
+                    symbol=symbol,
+                    ts=ts,
+                )
+                if should_veto:
+                    return None
 
         return _decision_signal_to_orchestrator_signal(
             decision_signal,
@@ -867,6 +1129,7 @@ class SetupCEntryAdapter(EntrySignalGenerator[SetupCEntryConfig]):
                     tuning.min_context_confidence,
                 )
             else:
+                # Phase 1.1-d: direction gating + ATR loose-factor confidence boost.
                 adjusted_confidence, skip_reason = _apply_llm_tuning_setup_c(
                     decision_signal=decision_signal,
                     llm_ctx=llm_ctx,
@@ -875,6 +1138,25 @@ class SetupCEntryAdapter(EntrySignalGenerator[SetupCEntryConfig]):
                 if skip_reason is not None:
                     return None
                 confidence_override = adjusted_confidence
+
+                # Phase 1.2: LLM veto authority — applied AFTER threshold tuning,
+                # BEFORE signal emission.  Entry signals only; never veto exits.
+                symbol = str(
+                    (context.market_data or {}).get(
+                        "code",
+                        (context.market_data or {}).get("symbol", ""),
+                    )
+                )
+                should_veto, _veto_reason = _apply_llm_veto(
+                    decision_signal=decision_signal,
+                    llm_ctx=llm_ctx,
+                    tuning=tuning,
+                    setup_name=self.name,
+                    symbol=symbol,
+                    ts=ts,
+                )
+                if should_veto:
+                    return None
 
         return _decision_signal_to_orchestrator_signal(
             decision_signal,
