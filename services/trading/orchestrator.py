@@ -770,6 +770,22 @@ class TradingOrchestrator:
         # Start shadow-loggers periodic flush loop (Phase 2)
         await self._start_shadow_loggers_flush()
 
+        # Start KIS API error-rate publish loop (§10.3-A) — singleton tracker
+        # publishes to Redis kill_switch:metrics:api_error_rate_5min so the
+        # kill-switch consumer's ApiErrorRateCondition reads real data
+        # instead of the 0.0 stub fallback.
+        try:
+            from shared.kis.error_rate import KISApiErrorRateTracker
+
+            await KISApiErrorRateTracker.get_instance().start()
+        except Exception as e:
+            logger.warning(
+                "kis_api_error_rate tracker start failed (%s) — "
+                "kill_switch ApiErrorRateCondition will read 0.0 fallback",
+                e,
+                exc_info=True,
+            )
+
         # 파이프라인 생성 및 시작
         self.pipeline = self._create_pipeline()
         await self.pipeline.start()
@@ -3013,6 +3029,18 @@ class TradingOrchestrator:
         # Final flush of shadow-logger buffers to ClickHouse (Phase 2).
         # Must run before _cleanup_resources() so the CH client is still valid.
         await self._shadow_loggers_final_flush()
+
+        # Stop KIS API error-rate tracker (§10.3-A) — cancels publish loop
+        # and writes the final rate to Redis before cleanup.
+        try:
+            from shared.kis.error_rate import KISApiErrorRateTracker
+
+            await KISApiErrorRateTracker.get_instance().stop()
+        except Exception as e:
+            logger.warning(
+                "kis_api_error_rate tracker stop failed (%s) — proceeding with cleanup",
+                e,
+            )
 
         await self._cleanup_resources()
 
