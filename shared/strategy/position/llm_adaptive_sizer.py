@@ -329,17 +329,27 @@ class LLMAdaptiveSizer(RiskBasedSizer):
 
         # 4. tier_scale 적용 후 confidence/risk_mode 추가 스케일링
         #    티어가 이미 레짐 리스크를 반영하므로 risk_score 단일-임계값은 적용 안 함.
+        #
+        # 주의 (Gate-3 ladder 상호작용):
+        #    base_quantity=1, max_quantity_cap=1 (현재 paper rollout 구성)에서는
+        #    confidence/risk_mode가 부스트 방향이면 cap이 흡수, 페널티 방향이면
+        #    int(0.x) → 0이 되어 진입 스킵된다. 두 경로 모두 안전.
+        #
+        #    Gate-3 ladder가 base_quantity를 2 이상으로 끌어올리면, RISK_OFF +
+        #    낮은 confidence 조합이 `tier_scale * conf * mode` 누적으로
+        #    예기치 않게 0으로 수렴할 수 있다. 운영자는 ladder 상승 시점에
+        #    enable_confidence_scaling / enable_risk_mode_scaling 플래그를 끄거나
+        #    base_quantity와 cap을 동기화해 의도된 사이즈가 보장되는지
+        #    재검증해야 한다.
         confidence_mult = self._calculate_confidence_multiplier(market_context)
         risk_mode_mult = self._calculate_risk_mode_multiplier(market_context)
 
         total_multiplier = tier_scale * confidence_mult * risk_mode_mult
         adjusted_quantity = int(base_quantity * total_multiplier)
 
-        # 5. 최소 수량 보장 (티어 스케일이 0보다 크면 최소 1)
-        if adjusted_quantity == 0 and total_multiplier > 0:
-            # total_multiplier가 0이 아니지만 int 변환으로 0이 된 경우
-            # → 반올림하면 최소 1이 되어야 하므로 그대로 0 유지 (수량 부족)
-            pass
+        # 5. int 절단으로 0이 된 경우는 수량 부족으로 그대로 진입 스킵.
+        #    (별도 보강 로직은 두지 않는다 — base_quantity 또는 cap이 너무
+        #    낮다는 신호이므로 운영자가 YAML을 조정해야 한다.)
 
         # 6. max_quantity_cap 적용 (방어선 #1)
         adjusted_quantity = self._apply_cap(adjusted_quantity)
@@ -357,18 +367,23 @@ class LLMAdaptiveSizer(RiskBasedSizer):
         """risk_score에 해당하는 티어 scale_multiplier를 반환한다.
 
         티어를 순서대로 평가하여 risk_score <= upper_bound인 첫 번째 티어를 선택한다.
-        어떤 티어에도 해당하지 않으면 1.0을 반환한다 (비규제 구간).
+        **어떤 티어에도 해당하지 않으면 0.0을 반환**한다 — fail-safe로 진입을
+        스킵한다. 이는 운영자가 ``[[30, 1.0], [60, 0.7], [80, 0.4], [100, 0.0]]``처럼
+        100까지 명시적으로 정의했을 때 risk_score > 100 이라는 비정상 입력에
+        대해 안전하게 대응하기 위함이다. 만약 운영자가 의도적으로 "최상위
+        구간을 풀-사이즈"로 두고 싶다면 마지막 티어의 upper_bound를
+        ``float("inf")``로 설정하거나, ``[[..., 1.0]]``처럼 catch-all을 끝에 추가해야 한다.
 
         Args:
             risk_score: 현재 LLM risk_score (0-100)
 
         Returns:
-            해당 티어의 scale_multiplier
+            해당 티어의 scale_multiplier (매칭 없을 시 0.0 fail-safe)
         """
         for upper_bound, scale in self.config.tiers:
             if risk_score <= upper_bound:
                 return scale
-        # 마지막 티어보다 높은 risk_score → 0.0 (진입 스킵 폴백)
+        # 마지막 티어보다 높은 risk_score → 0.0 (진입 스킵 폴백, fail-safe)
         logger.debug(
             f"LLMAdaptiveSizer: risk_score={risk_score:.1f} exceeds all tier "
             f"upper_bounds; falling back to 0.0 (entry skip)"
