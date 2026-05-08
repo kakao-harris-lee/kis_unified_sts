@@ -3526,16 +3526,22 @@ class TradingOrchestrator:
         - Compares it with ``self._ks_last_seen_event_id`` (set at startup to
           the stream tip, so pre-startup events are skipped when
           ``ignore_pre_startup_events=True``).
-        - Only if a *new* event id is found:
-            1. Calls ``PositionTracker.close_all()`` (synchronous — runs in
-               the event loop without blocking the hot path because this task
-               itself is low-frequency).
-            2. Sends a Telegram alert.
-            3. DELs the sentinel key to prevent duplicate triggers within
-               the 300-second TTL window.
-            4. Updates ``_ks_last_seen_event_id`` so subsequent ticks skip.
+        - Only if a *new* event id is found, in this order:
+            1. Calls :meth:`_kill_switch_flatten_all` which iterates open
+               positions and submits broker exits via
+               :meth:`_submit_exit_order` (paper VirtualBroker or live
+               OrderExecutor — handles LONG→SELL and SHORT→BUY-to-cover).
+               Note: this does NOT call ``PositionTracker.close_all()``
+               directly because that helper has no broker integration.
+            2. Updates ``_ks_last_seen_event_id`` *before* DEL so that if
+               the DEL fails we still won't re-trigger on the next tick
+               (DEL failure is acceptable; the sentinel TTL will reap it).
+            3. DELs the sentinel key (best-effort cleanup within TTL window).
+            4. Sends a Telegram alert.
         - Redis errors are logged and silently retried on the next tick;
-          they do NOT crash the orchestrator.
+          they do NOT crash the orchestrator. ``redis.exceptions.ConnectionError``
+          is also caught explicitly because it does NOT inherit from the
+          builtin ``ConnectionError``.
 
         Args:
             ks_cfg: :class:`services.kill_switch.config.KillSwitchConsumerConfig`
@@ -3635,13 +3641,26 @@ class TradingOrchestrator:
                     e,
                 )
             except Exception as e:
-                # Unexpected error — log but do NOT crash orchestrator.
-                logger.error(
-                    "kill_switch consumer: unexpected error (%s) — "
-                    "retrying on next tick",
-                    e,
-                    exc_info=True,
-                )
+                # `redis.exceptions.ConnectionError` does NOT inherit from the
+                # builtin `ConnectionError`, so we catch it here by name and
+                # downgrade to a warning instead of treating it as an unexpected
+                # crash. Other unexpected exceptions still log at ERROR with
+                # full traceback so operators can investigate.
+                if e.__class__.__module__.startswith("redis"):
+                    logger.warning(
+                        "kill_switch consumer: redis-client error (%s.%s: %s) — "
+                        "retrying on next tick",
+                        e.__class__.__module__,
+                        e.__class__.__name__,
+                        e,
+                    )
+                else:
+                    logger.error(
+                        "kill_switch consumer: unexpected error (%s) — "
+                        "retrying on next tick",
+                        e,
+                        exc_info=True,
+                    )
 
         logger.info("kill_switch consumer loop exited")
 
@@ -3711,7 +3730,16 @@ class TradingOrchestrator:
                     exc,
                     exc_info=True,
                 )
-                # Still attempt tracker-side close so the position doesn't linger.
+                # PHANTOM-RISK fallback: tracker-side close prevents the local
+                # state from showing a stale position, but if the broker truly
+                # rejected the exit the broker may still hold the position
+                # open — creating a tracker-vs-broker mismatch ("phantom").
+                # This is a deliberate trade-off: in an emergency we prefer a
+                # clean tracker over a dangling local entry, on the assumption
+                # that the operator will reconcile via the daily Edge Review
+                # script (`scripts/analysis/recover_positions.py`) and the
+                # critical-level alert below. If you're in this branch on
+                # live, MANUALLY VERIFY the broker side immediately.
                 is_filled, fill_price = True, exit_price
 
             if is_filled:
