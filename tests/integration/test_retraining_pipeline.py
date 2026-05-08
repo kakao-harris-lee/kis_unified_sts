@@ -219,11 +219,27 @@ class TestRetrainingPipelineIntegration:
         self.mock_mlflow.log_metric = Mock()
         self.mock_mlflow.log_artifact = Mock()
 
-        # Patch Telegram
+        # Patch Telegram.  We patch BOTH:
+        # 1) asyncio.run inside the pipeline module (intercepts the actual
+        #    call point — `mock_telegram.called` asserts in tests check
+        #    this).
+        # 2) notifier_for_domain so RetrainingPipeline.__init__ always
+        #    sets `self._notifier` to a non-None mock regardless of
+        #    TELEGRAM_FUTURES_BOT_TOKEN env state.  Without (2), CI
+        #    (which has no Telegram credentials) returns None from
+        #    notifier_for_domain → `_notifier` stays None →
+        #    `_send_*_notification` early-returns → asyncio.run never
+        #    fires → `mock_telegram.called` fails.
         self.telegram_patcher = patch(
             "shared.ml.rl.retraining_pipeline.asyncio.run"
         )
         self.mock_telegram = self.telegram_patcher.start()
+
+        self.notifier_patcher = patch(
+            "shared.notification.telegram.notifier_for_domain",
+            return_value=Mock(send_message=Mock()),
+        )
+        self.mock_notifier_factory = self.notifier_patcher.start()
 
         yield
 
@@ -231,6 +247,7 @@ class TestRetrainingPipelineIntegration:
         self.config_patcher.stop()
         self.mlflow_patcher.stop()
         self.telegram_patcher.stop()
+        self.notifier_patcher.stop()
 
     def test_pipeline_initialization(self):
         """Test pipeline initializes with correct config."""
