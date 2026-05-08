@@ -6,7 +6,7 @@
 This is a quick-orientation dashboard for an operator or engineer returning to
 the project.  For full plan detail see
 [docs/plans/2026-05-03-llm-primary-rl-minimization.md](plans/2026-05-03-llm-primary-rl-minimization.md)
-(currently v3.9).
+(currently v4.0).
 
 ---
 
@@ -72,7 +72,7 @@ The cutover itself is a process restart triggered by the existing
 
 ## Key References
 
-- **Plan (master)**: [docs/plans/2026-05-03-llm-primary-rl-minimization.md](plans/2026-05-03-llm-primary-rl-minimization.md) — currently v3.9, full PR table in §3.1
+- **Plan (master)**: [docs/plans/2026-05-03-llm-primary-rl-minimization.md](plans/2026-05-03-llm-primary-rl-minimization.md) — currently v4.0, full PR table in §3.1
 - **Phase 2 startup runbook**: [docs/runbooks/phase2-startup.md](runbooks/phase2-startup.md)
 - **All runbooks**: [README.md § 운영 런북](../README.md#운영-런북-runbooks)
 - **CLAUDE.md (Claude Code instructions)**: [../CLAUDE.md](../CLAUDE.md)
