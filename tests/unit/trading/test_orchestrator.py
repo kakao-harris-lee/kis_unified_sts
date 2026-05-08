@@ -472,7 +472,7 @@ class TestTradingOrchestrator:
         flowing again (observed after PR #159 + #161 unblocked the entry
         pipeline).
         """
-        from datetime import UTC, datetime
+        from datetime import UTC, datetime, timedelta
 
         from services.trading.orchestrator import TradingOrchestrator, TradingConfig
         from shared.execution.slippage_control import (
@@ -514,7 +514,11 @@ class TestTradingOrchestrator:
             ]
         )
 
-        signal_ts = datetime(2026, 5, 6, 11, 33, 50, tzinfo=UTC)
+        # Signal timestamp must be fresh (within
+        # SlippageControlConfig.max_signal_age_seconds=2.0); a hard-coded
+        # past timestamp made this test time-fragile and broke as soon
+        # as the wall clock moved past the deadline.
+        signal_ts = datetime.now(UTC) - timedelta(milliseconds=100)
         signal = Signal(
             code="A05603",
             strategy="rl_mppo",
