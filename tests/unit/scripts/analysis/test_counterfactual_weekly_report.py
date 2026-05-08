@@ -13,63 +13,23 @@ Test coverage
 
 from __future__ import annotations
 
-import importlib.util
 import json
-import sys
 from datetime import UTC, date, datetime
 from pathlib import Path
 
-# Pytest's test collection creates a `tests.unit.scripts.analysis` package
-# which masks the real `scripts.analysis` namespace package.  Mirror the
-# importlib pattern used by test_setup_vs_rl_shadow_counterfactual.py to
-# load both modules by file path instead.
-_REPO_ROOT = Path(__file__).resolve().parents[4]
-if str(_REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(_REPO_ROOT))
-
-
-def _load(name: str, relpath: str):
-    path = _REPO_ROOT / relpath
-    spec = importlib.util.spec_from_file_location(name, path)
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[name] = mod
-    spec.loader.exec_module(mod)
-    return mod
-
-
-# Load the dataclass module first so the wrapper's `from scripts.analysis.X
-# import ...` (executed at top level in the wrapper) can reuse the same
-# instances by aliasing.
-_cf_script = _load(
-    "cf_script_for_weekly",
-    "scripts/analysis/setup_vs_rl_shadow_counterfactual.py",
+from scripts.analysis.counterfactual_weekly_report import (
+    _archive_path,
+    _format_telegram_message,
+    _resolve_window,
+    _write_archive,
 )
-sys.modules["scripts.analysis.setup_vs_rl_shadow_counterfactual"] = _cf_script
-# `scripts` and `scripts.analysis` may not exist yet under pytest's rootdir;
-# ModuleType-based stubs let the wrapper's `from scripts.analysis...` import
-# resolve to the file we already loaded above.
-import types  # noqa: E402
-
-if "scripts" not in sys.modules:
-    sys.modules["scripts"] = types.ModuleType("scripts")
-if "scripts.analysis" not in sys.modules:
-    sys.modules["scripts.analysis"] = types.ModuleType("scripts.analysis")
-sys.modules["scripts.analysis"].setup_vs_rl_shadow_counterfactual = _cf_script
-
-_wrapper = _load(
-    "cf_weekly_under_test", "scripts/analysis/counterfactual_weekly_report.py"
+from scripts.analysis.setup_vs_rl_shadow_counterfactual import (
+    AggregateStat,
+    AgreementMatrix,
+    CounterfactualReport,
+    PerDayStat,
+    Phase4GateProgress,
 )
-
-_archive_path = _wrapper._archive_path
-_format_telegram_message = _wrapper._format_telegram_message
-_resolve_window = _wrapper._resolve_window
-_write_archive = _wrapper._write_archive
-
-AgreementMatrix = _cf_script.AgreementMatrix
-AggregateStat = _cf_script.AggregateStat
-CounterfactualReport = _cf_script.CounterfactualReport
-PerDayStat = _cf_script.PerDayStat
-Phase4GateProgress = _cf_script.Phase4GateProgress
 
 # ---------------------------------------------------------------------------
 # _resolve_window

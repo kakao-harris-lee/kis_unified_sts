@@ -16,48 +16,20 @@ Test coverage
 
 from __future__ import annotations
 
-import importlib.util
 import json
-import sys
-import types
 from datetime import UTC, date, datetime
 from pathlib import Path
 from unittest.mock import MagicMock
 
-# Pytest's test collection masks the real `scripts.analysis` namespace
-# package; mirror the importlib pattern from the other analysis tests.
-_REPO_ROOT = Path(__file__).resolve().parents[4]
-if str(_REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(_REPO_ROOT))
-
-
-def _load(name: str, relpath: str):
-    path = _REPO_ROOT / relpath
-    spec = importlib.util.spec_from_file_location(name, path)
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[name] = mod
-    spec.loader.exec_module(mod)
-    return mod
-
-
-# Stub the `scripts.analysis` namespace so absolute imports inside the
-# script-under-test resolve under pytest.
-if "scripts" not in sys.modules:
-    sys.modules["scripts"] = types.ModuleType("scripts")
-if "scripts.analysis" not in sys.modules:
-    sys.modules["scripts.analysis"] = types.ModuleType("scripts.analysis")
-
-_mod = _load(
-    "p2dv_under_test", "scripts/analysis/phase2_daily_verification.py"
+import scripts.analysis.phase2_daily_verification as _mod
+from scripts.analysis.phase2_daily_verification import (
+    DailyReport,
+    GateResult,
+    _format_telegram,
+    _trading_day_bounds,
+    _write_archive,
+    evaluate_gates,
 )
-
-DailyReport = _mod.DailyReport
-GateResult = _mod.GateResult
-_format_telegram = _mod._format_telegram
-_trading_day_bounds = _mod._trading_day_bounds
-_write_archive = _mod._write_archive
-evaluate_gates = _mod.evaluate_gates
-
 
 # ---------------------------------------------------------------------------
 # _trading_day_bounds
