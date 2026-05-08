@@ -687,12 +687,22 @@ def _apply_llm_veto(
         return False, None
 
     direction: str = str(decision_signal.direction)
-    overall_signal: str = str(getattr(llm_ctx, "overall_signal", ""))
+    # MarketSignal is an Enum whose .value is a Korean string (e.g. "강한 하락").
+    # Normalise to .name (e.g. "STRONG_BEARISH") so YAML config values like
+    # "STRONG_BEARISH" / "STRONG_BULLISH" compare correctly.  Same pattern as
+    # the risk_mode normalisation in Phase 1.1 _apply_llm_tuning_setup_a.
+    overall_signal_raw = getattr(llm_ctx, "overall_signal", "")
+    overall_signal: str = (
+        overall_signal_raw.name
+        if hasattr(overall_signal_raw, "name")
+        else str(overall_signal_raw)
+    )
     regime: str = str(llm_ctx.regime)
 
-    veto_triggered = False
-    if direction == "long" and overall_signal == tuning.veto_long_block_signal or direction == "short" and overall_signal == tuning.veto_short_block_signal:
-        veto_triggered = True
+    veto_triggered = (
+        (direction == "long" and overall_signal == tuning.veto_long_block_signal)
+        or (direction == "short" and overall_signal == tuning.veto_short_block_signal)
+    )
 
     if not veto_triggered:
         return False, None

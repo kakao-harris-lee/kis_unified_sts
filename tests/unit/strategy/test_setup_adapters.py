@@ -1241,6 +1241,40 @@ class TestSetupALLMVeto:
     """Phase 1.2: LLM veto authority for Setup A (entry-only)."""
 
     @pytest.mark.asyncio
+    async def test_real_marketsignal_enum_normalised_via_name(self):
+        """Regression: production MarketContext.overall_signal is a real
+        MarketSignal Enum whose .value is a Korean string ("강한 하락"). The
+        veto comparison must use enum.name ("STRONG_BEARISH") so YAML
+        config values like ``veto_long_block_signal: "STRONG_BEARISH"``
+        match. With ``str(enum)`` (the original v1.2 implementation) the
+        comparison resolved to ``"MarketSignal.STRONG_BEARISH" == "STRONG_BEARISH"``
+        which never matched, silently disabling production veto.
+        """
+        import shared.strategy.llm_veto_logger as veto_logger
+        from shared.llm.data_classes import MarketSignal
+
+        veto_logger._pending_veto_events.clear()
+
+        adapter = _setup_a_adapter_with_veto(
+            veto_min_confidence=0.6,
+            veto_long_block_signal="STRONG_BEARISH",
+        )
+        # Use the real Enum, not a SimpleNamespace string — this is what the
+        # production LLMContextProvider actually emits.
+        llm_ctx = _llm_context_with_overall(
+            confidence=0.8,
+            overall_signal=MarketSignal.STRONG_BEARISH,
+        )
+        context = _gap_up_context(market_context=llm_ctx)
+        result = await adapter.generate(context)
+
+        assert result is None, "Veto must fire when overall_signal is the real Enum value"
+        assert veto_logger.pending_count() >= 1
+        event = veto_logger._pending_veto_events[-1]
+        # Buffered overall_signal should be the .name string, not str(enum)
+        assert event["overall_signal"] == "STRONG_BEARISH"
+
+    @pytest.mark.asyncio
     async def test_confidence_below_threshold_no_veto(self):
         """LLM confidence < veto_min_confidence → veto skipped, signal passes."""
         adapter = _setup_a_adapter_with_veto(veto_min_confidence=0.6)
