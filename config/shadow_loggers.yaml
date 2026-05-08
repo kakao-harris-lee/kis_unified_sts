@@ -1,0 +1,24 @@
+# Shadow Loggers flush configuration
+#
+# Controls the TradingOrchestrator background task that periodically drains the
+# in-memory buffers of shared.strategy.rl_shadow_logger and
+# shared.strategy.llm_veto_logger into ClickHouse.
+#
+# Added in Phase 2 of the LLM-primary RL-minimization plan (PR #171).
+# Both loggers buffer predictions/veto-events in a bounded deque
+# (maxlen=10_000) and write to ClickHouse only on an explicit flush call.
+#
+# ClickHouse tables flushed by this task:
+#   kospi.rl_shadow_predictions  — RL shadow inference counterfactual dataset
+#   kospi.signals_all            — LLM-vetoed entry signals (executed=0)
+
+shadow_loggers:
+  # How often (seconds) to drain both in-memory buffers to ClickHouse.
+  # 60 s is a good default: low enough to limit data loss window, high
+  # enough to avoid excessive ClickHouse insert overhead.
+  flush_interval_seconds: 60.0
+
+  # When true, perform a final blocking flush in TradingOrchestrator.stop()
+  # so in-flight buffer rows reach ClickHouse before the process exits.
+  # Operators should leave this true; it adds negligible shutdown latency.
+  final_flush_on_stop: true

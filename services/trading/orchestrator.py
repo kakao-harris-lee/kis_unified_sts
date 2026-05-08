@@ -717,6 +717,13 @@ class TradingOrchestrator:
         # events from prior sessions do NOT re-trigger flatten on restart.
         self._ks_last_seen_event_id: str | None = None
 
+        # Shadow-loggers flush loop (Phase 2 — LLM-primary RL-minimization plan).
+        # Periodically drains shared.strategy.rl_shadow_logger and
+        # shared.strategy.llm_veto_logger buffers into ClickHouse.
+        self._shadow_loggers_flush_task: asyncio.Task | None = None
+        # Reusable ClickHouse client for the flush loop (created at task start).
+        self._shadow_loggers_ch_client: Any | None = None
+
         logger.info(
             f"TradingOrchestrator initialized: "
             f"{config.asset_class}/{config.strategy_name}"
@@ -759,6 +766,9 @@ class TradingOrchestrator:
 
         # Start kill-switch consumer loop (Phase 0.2-c)
         await self._start_kill_switch_consumer()
+
+        # Start shadow-loggers periodic flush loop (Phase 2)
+        await self._start_shadow_loggers_flush()
 
         # 파이프라인 생성 및 시작
         self.pipeline = self._create_pipeline()
@@ -3000,6 +3010,10 @@ class TradingOrchestrator:
         except (InfrastructureError, OSError, ConnectionError) as e:
             logger.warning(f"Candle cache save on shutdown failed: {e}")
 
+        # Final flush of shadow-logger buffers to ClickHouse (Phase 2).
+        # Must run before _cleanup_resources() so the CH client is still valid.
+        await self._shadow_loggers_final_flush()
+
         await self._cleanup_resources()
 
         self.state = TradingState.STOPPED
@@ -3439,6 +3453,16 @@ class TradingOrchestrator:
             )
             self._kill_switch_consumer_task = None
 
+        # Stop shadow-loggers flush task (Phase 2).
+        # The final buffer drain happens in _shadow_loggers_final_flush()
+        # called from _stop_impl() after this method returns.
+        if self._shadow_loggers_flush_task:
+            self._shadow_loggers_flush_task.cancel()
+            await asyncio.gather(
+                self._shadow_loggers_flush_task, return_exceptions=True
+            )
+            self._shadow_loggers_flush_task = None
+
     # ------------------------------------------------------------------
     # Kill-switch consumer loop (Phase 0.2-c)
     # ------------------------------------------------------------------
@@ -3861,6 +3885,217 @@ class TradingOrchestrator:
                 logger.error(f"Error in LLM context publisher loop: {e}", exc_info=True)
                 # Continue loop despite errors (fire-and-forget pattern)
                 await asyncio.sleep(60)  # Wait 1 minute before retry on error
+
+    # ------------------------------------------------------------------
+    # Shadow-loggers periodic flush (Phase 2 — LLM-primary RL minimization)
+    # ------------------------------------------------------------------
+
+    async def _start_shadow_loggers_flush(self) -> None:
+        """Start the background periodic flush task for shadow-mode loggers.
+
+        Loads ``config/shadow_loggers.yaml`` for ``flush_interval_seconds``.
+        Builds a reusable ClickHouse sync client (one per process, reused
+        across flush cycles to avoid connection overhead).  Spawns
+        :meth:`_shadow_loggers_flush_loop` as an asyncio task.
+
+        If the config file is absent or malformed, falls back to the default
+        60-second interval with a WARNING rather than crashing the orchestrator.
+        """
+        try:
+            sl_yaml = ConfigLoader.load("shadow_loggers.yaml")
+            sl_cfg = sl_yaml.get("shadow_loggers", {})
+        except (InvalidConfigError, MissingConfigError, OSError) as e:
+            logger.warning(
+                "shadow_loggers config not loaded (%s) — using defaults", e
+            )
+            sl_cfg = {}
+
+        flush_interval = float(sl_cfg.get("flush_interval_seconds", 60.0))
+        # Cache final_flush_on_stop at startup so shutdown does NOT re-read
+        # the YAML (file may be unreachable mid-shutdown, and re-reading is
+        # wasted I/O when the value was already known at start time).
+        self._shadow_loggers_final_flush_enabled = bool(
+            sl_cfg.get("final_flush_on_stop", True)
+        )
+
+        # Build a reusable ClickHouse client (mirroring the pattern used in
+        # _fetch_candles_from_clickhouse — Native driver, DB=kospi).
+        try:
+            from clickhouse_driver import Client as CHSyncClient
+
+            ch_cfg = ClickHouseConfig.from_env(
+                database=os.getenv("CLICKHOUSE_FUTURES_DATABASE", "kospi")
+            )
+            self._shadow_loggers_ch_client = CHSyncClient(
+                host=ch_cfg.host,
+                port=ch_cfg.port,
+                user=ch_cfg.user,
+                password=ch_cfg.password,
+                database=ch_cfg.database,
+            )
+        except Exception as e:
+            logger.warning(
+                "shadow_loggers: ClickHouse client init failed (%s) — "
+                "flush loop will not start; shadow data will remain in buffer",
+                e,
+                exc_info=True,
+            )
+            return
+
+        self._shadow_loggers_flush_task = asyncio.create_task(
+            self._shadow_loggers_flush_loop(flush_interval),
+            name="shadow_loggers_flush_loop",
+        )
+        logger.info(
+            "shadow_loggers flush loop started (interval=%.1fs)", flush_interval
+        )
+
+    async def _shadow_loggers_flush_loop(self, interval_seconds: float) -> None:
+        """Periodically drain both shadow-logger in-memory buffers to ClickHouse.
+
+        Called by :meth:`_start_shadow_loggers_flush`.  Runs until cancelled
+        by :meth:`_stop_market_data_loop`.  The final in-flight buffer drain
+        is handled separately by :meth:`_shadow_loggers_final_flush` which
+        runs after this task is cancelled (in :meth:`_stop_impl`).
+
+        **Independence invariant**: each logger's flush runs in its own
+        try/except block so a failure in one does NOT skip the other on
+        the same tick. Without this, an `rl_shadow` flush exception would
+        silently leave the LLM veto buffer growing until shutdown.
+
+        Args:
+            interval_seconds: How often to flush (loaded from
+                ``config/shadow_loggers.yaml`` ``flush_interval_seconds``).
+        """
+        from shared.strategy.llm_veto_logger import flush_llm_veto_events
+        from shared.strategy.rl_shadow_logger import flush_rl_shadow_predictions
+
+        logger.info("shadow_loggers flush loop running (interval=%.1fs)", interval_seconds)
+
+        while True:
+            try:
+                await asyncio.sleep(interval_seconds)
+            except asyncio.CancelledError:
+                logger.info("shadow_loggers flush loop cancelled")
+                break
+
+            # Independent try/except per logger so one failure does not
+            # cascade into skipping the other (best-effort + observable).
+            rl_count = 0
+            veto_count = 0
+
+            try:
+                rl_count = await flush_rl_shadow_predictions(
+                    self._shadow_loggers_ch_client
+                )
+            except asyncio.CancelledError:
+                logger.info("shadow_loggers flush loop cancelled mid-rl-flush")
+                break
+            except Exception as e:
+                logger.warning(
+                    "shadow_loggers rl_shadow flush error (%s) — retrying on next tick",
+                    e,
+                    exc_info=True,
+                )
+
+            try:
+                veto_count = await flush_llm_veto_events(
+                    self._shadow_loggers_ch_client
+                )
+            except asyncio.CancelledError:
+                logger.info("shadow_loggers flush loop cancelled mid-veto-flush")
+                break
+            except Exception as e:
+                logger.warning(
+                    "shadow_loggers llm_veto flush error (%s) — retrying on next tick",
+                    e,
+                    exc_info=True,
+                )
+
+            if rl_count or veto_count:
+                logger.info(
+                    "shadow_loggers flush: rl_shadow=%d veto=%d rows",
+                    rl_count,
+                    veto_count,
+                )
+            else:
+                logger.debug(
+                    "shadow_loggers flush: no pending rows (rl_shadow=0 veto=0)"
+                )
+
+    async def _shadow_loggers_final_flush(self) -> None:
+        """Drain remaining shadow-logger buffer rows to ClickHouse on shutdown.
+
+        Called from :meth:`_stop_impl` **after** the periodic flush task is
+        cancelled by :meth:`_stop_market_data_loop`.  Respects the cached
+        ``_shadow_loggers_final_flush_enabled`` flag (set at startup from
+        ``config/shadow_loggers.yaml::final_flush_on_stop``); if the flag is
+        false or the CH client was never initialised, this is a no-op.
+
+        **Independence invariant**: the rl_shadow and llm_veto final
+        flushes run in independent try/except blocks so a failure in one
+        does NOT lose the other's buffer at shutdown.
+        """
+        if not getattr(self, "_shadow_loggers_final_flush_enabled", True):
+            logger.debug(
+                "shadow_loggers final flush skipped (final_flush_on_stop=false)"
+            )
+            return
+
+        if self._shadow_loggers_ch_client is None:
+            logger.debug("shadow_loggers final flush skipped (CH client not initialised)")
+            return
+
+        rl_count = 0
+        veto_count = 0
+        try:
+            from shared.strategy.rl_shadow_logger import flush_rl_shadow_predictions
+
+            try:
+                rl_count = await flush_rl_shadow_predictions(
+                    self._shadow_loggers_ch_client
+                )
+            except Exception as e:
+                logger.warning(
+                    "shadow_loggers final flush rl_shadow failed (%s) — "
+                    "some rl_shadow rows may be lost",
+                    e,
+                    exc_info=True,
+                )
+
+            from shared.strategy.llm_veto_logger import flush_llm_veto_events
+
+            try:
+                veto_count = await flush_llm_veto_events(
+                    self._shadow_loggers_ch_client
+                )
+            except Exception as e:
+                logger.warning(
+                    "shadow_loggers final flush llm_veto failed (%s) — "
+                    "some veto rows may be lost",
+                    e,
+                    exc_info=True,
+                )
+
+            logger.info(
+                "shadow_loggers final flush on stop: rl_shadow=%d veto=%d rows",
+                rl_count,
+                veto_count,
+            )
+        finally:
+            # Close the CH client cleanly (mirrors the disconnect pattern at
+            # _fetch_candles_from_clickhouse) so socket/connection resources
+            # are released before resource cleanup.
+            client = self._shadow_loggers_ch_client
+            self._shadow_loggers_ch_client = None
+            if client is not None:
+                try:
+                    client.disconnect()
+                except Exception as e:
+                    logger.debug(
+                        "shadow_loggers final flush: CH client disconnect error (%s) — ignoring",
+                        e,
+                    )
 
     async def _market_data_loop(self, interval: float) -> None:
         logger.info(
