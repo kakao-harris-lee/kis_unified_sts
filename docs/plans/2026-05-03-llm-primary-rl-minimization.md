@@ -1,6 +1,6 @@
 # LLM-primary 의사결정 + RL 축소 통합 계획
 
-**Status**: v3.3 — Phase 0 + Phase 1 (1.0/1.1/1.2/1.3) + Phase 2 + §10.3 인프라 정비 모두 완료. kill_switch 6/6 conditions 실데이터 가동 — Phase 3 Track A 의존성 해소.
+**Status**: v3.4 — Phase 0 + Phase 1 (1.0/1.1/1.2/1.3) + Phase 2 + §10.2 Counterfactual 분석 스크립트 + §10.3 인프라 정비 완료. kill_switch 6/6 conditions 실데이터 가동. Phase 4 Gate 입력 도구 준비 완료.
 **Created**: 2026-05-03
 **Updated**:
 - 2026-05-03 (v1 초안)
@@ -9,6 +9,7 @@
 - 2026-05-07 (v3.1 — code review 피드백 반영: §8 Phase 1.2-a를 strategy_manager로 정정 (§2.4 Adapter 결정 일관성), §3.1 PR #158 OPEN으로 정정, §1.3 모듈 수 정렬, §5 Setup C 출처 인용 정정, §2.2 Phase A/B → Phase 2/4 명명 정렬)
 - 2026-05-08 (v3.2 — 마이그레이션 실행 진행 상황 반영: PR #158 + #163-#171 9건 머지로 Phase 0/1/2 완료. RL은 shadow_mode로 강등, Setup A/C 활성. §10 신설 — Phase 3+ 후속 작업 정리)
 - 2026-05-08 (**v3.3 — §10.3 인프라 정비 완료**: PR #173 (KIS API error rate writer) + #174 (CH insert fail rate writer) 머지. kill_switch ApiErrorRateCondition / ClickHouseInsertFailCondition이 0.0 stub → 실데이터로 전환. §3.1 PR 표 + §9 추적 + §10.3 갱신)
+- 2026-05-08 (**v3.4 — §10.2 Counterfactual 분석 스크립트 완료**: PR #178 머지 — `scripts/analysis/setup_vs_rl_shadow_counterfactual.py` (Phase 4 Gate 입력 도구). RL shadow 예측을 가상 long/short trade로 재구성, Setup A/C 실제 체결 trade와 비교, 4-cell confusion matrix + per-day breakdown. PR #178 review (BLOCK 6건) — confidence filter는 entry-only만 (exit는 RL 안전장치 보존), Phase 4 gate thresholds → YAML 이전, EOD-estimated count surface, inverted window ValueError 등 모두 반영. §3.1 PR 표 + §9 추적 + §10.2 갱신)
 
 **Author**: 엔지니어링 (운영자 결정 반영)
 **Parent**: `docs/plans/2026-04-20-futures-paradigm-master.md`
@@ -155,7 +156,7 @@ WebSocket tick (futures_feed.py, tz-aware UTC)
 
 ## 3. 진행 중 작업과의 정합
 
-### 3.1 PR 상태 (v3.3 업데이트, 2026-05-08 기준)
+### 3.1 PR 상태 (v3.4 업데이트, 2026-05-08 기준)
 
 #### 3.1.1 인프라/회귀 fix (paper validation 단계)
 
@@ -198,8 +199,17 @@ WebSocket tick (futures_feed.py, tz-aware UTC)
 | **#172** `docs/plan-v3-2-phase-completion` | ✅ 5/8 머지 (269034b) | v3.2 plan — Phase 0/1/2 완료 추적 + §10 신설 |
 | **#173** `feat/phase10-3-kis-api-error-rate` | ✅ 5/8 머지 (e807c30) | §10.3-A — `KISApiErrorRateTracker` singleton + `shared/kis/error_rate.py` (rolling deque, 5min window, 10s publish to Redis DB 1 `kill_switch:metrics:api_error_rate_5min`); 6 KIS REST 메서드에 `record_success/error()` 호출 wired; orchestrator lifecycle 통합 |
 | **#174** `feat/phase10-3-clickhouse-insert-fail-rate` | ✅ 5/8 머지 (e08e348) | §10.3-B — `ClickHouseInsertFailTracker` + `services/trading/ch_insert_fail_tracker.py` (5min window, 10s publish to Redis DB 1 `kill_switch:metrics:clickhouse_insert_fail_rate`); `PositionTracker._flush_batch`에 `record_success/failure()` wired (raw clickhouse_driver 예외 포함); auto-flush lifecycle 통합 |
+| **#175** `docs/plan-v3-3-phase10-3-complete` | ✅ 5/8 머지 (2028ca1) | v3.3 plan — §10.3 인프라 정비 완료 추적 |
+| **#176** `refactor/observability-rolling-rate-tracker` | ✅ 5/8 머지 (656c615) | §10.3 DRY follow-up — `RollingRateTracker` base class extraction (~140 LOC duplicate eliminated) |
+| **#177** `docs/error-rate-module-docstring-cleanup` | ✅ 5/8 머지 (7ed6061) | §10.3 docstring cleanup — `shared/kis/error_rate.py` module docstring corrected |
 
-#### 3.1.6 운영 영향 (다음 cron 사이클부터)
+#### 3.1.7 §10.2 Counterfactual 분석 도구 (Phase 4 Gate 입력)
+
+| PR | 상태 | 내용 |
+|----|------|------|
+| **#178** `feat/phase10-2-counterfactual-script` | ✅ 5/8 머지 (eb64750) | §10.2 — `scripts/analysis/setup_vs_rl_shadow_counterfactual.py` (RL shadow 예측을 가상 long/short trade로 재구성, Setup A/C 실제 체결 trade와 비교, 4-cell confusion matrix + per-day breakdown, table/json/csv 출력); review BLOCK 6건 반영 — confidence filter는 entry-only (RL exit 안전장치 보존), Phase 4 gate thresholds → `config/ml/rl_mppo.yaml::phase4_gates`, `--commission-bps`/`--slippage-ticks` 기본값 None (config fallback), `start_date > end_date` ValueError 검증, EOD-estimated count via `AggregateStat.eod_estimated_count` |
+
+#### 3.1.8 운영 영향 (다음 cron 사이클부터)
 
 PR #171 + #173 + #174 머지로 다음 평일 08:55 KST 재시작 시:
 - ✅ Setup A/C 진입 활성 (LLM threshold + veto + size 모두 적용, paper-only since `futures_live.enabled: false`)
@@ -524,6 +534,9 @@ Phase 1.1 완료 + paper 1주 안정성 확인 즉시 (운영자 §7-5 결정):
 | 2026-05-08 | **§10.3-A** 완료: PR #173 (KIS API error-rate tracker + Redis writer + orchestrator lifecycle wiring). kill_switch ApiErrorRateCondition 실데이터로 전환. |
 | 2026-05-08 | **§10.3-B** 완료: PR #174 (ClickHouseInsertFailTracker + Redis writer + PositionTracker._flush_batch broaden exception). kill_switch ClickHouseInsertFailCondition 실데이터로 전환. |
 | 2026-05-08 | **v3.3** — §10.3 핵심 인프라 정비 완료 (kill_switch 6/6 conditions 모두 실데이터 가동). §3.1.5/§3.1.6 신설, §10.3 체크리스트 갱신. Phase 3 Track A 의존성 해소. |
+| 2026-05-08 | **§10.3 DRY follow-up** 완료: PR #176 (`RollingRateTracker` base class), #177 (error_rate.py docstring cleanup) 머지. ~140 LOC duplicate 제거. |
+| 2026-05-08 | **§10.2 Counterfactual 도구** 완료: PR #178 (`scripts/analysis/setup_vs_rl_shadow_counterfactual.py`) 머지. Phase 4 Gate 입력 분석 도구 — RL shadow vs Setup A/C 4-cell confusion matrix + per-day PnL breakdown. Review BLOCK 6건 반영 (entry-only confidence filter, Phase 4 thresholds → YAML, ValueError on inverted window 등). |
+| 2026-05-08 | **v3.4** — §10.2 Counterfactual 분석 스크립트 완료. §3.1.7 신설, §10.2 체크박스 완료, §9 history 갱신. Phase 4 Gate 도달 시 사용 가능. |
 | TBD | Phase 1 paper validation (1주) — Setup A/C 신호 발생률, LLM-veto counterfactual PnL, size scaling trade PnL 비교 |
 | TBD | Phase 3 Track A — 운영자 게이트 (legal review §1-6, KIS Real smoke test, 증거금, position-recovery drill, kill-switch unit 설치, `futures_live.enabled: true` 플립, Gate 3 14일 1계약 운용) |
 | TBD | Phase 4 (+3개월) — `signals_all` 누적 trade ≥ 50 + EV+ 3개월 → RL aux 활성 / 폐지 / 재학습 결정 |
@@ -560,7 +573,7 @@ PR #171이 운영을 활성화했으므로 다음 거래일부터 Phase 1 paper 
 - [ ] **1주 누적 (5 거래일)**: Setup A daily ≥ 1, Setup C 주 ≥ 1, LLM-veto counterfactual PnL 비교
 - [ ] **2주 누적**: 시스템 안정성 (pipeline retry 경고/일, kill_switch 오발화 0)
 - [ ] **Grafana 대시보드** (Phase 2 PR #171 deferred follow-up): "Setup A/C signals/day" + "RL shadow LONG/SHORT/HOLD distribution" + "LLM regime → setup conversion rate" + "Counterfactual PnL"
-- [ ] **Counterfactual 분석 스크립트** (Phase 4 입력): `scripts/analysis/setup_vs_rl_shadow_counterfactual.py` — Setup A/C가 채택하지 않은 RL shadow 신호의 paper PnL 추적
+- [x] **Counterfactual 분석 스크립트** (Phase 4 입력) — ✅ PR #178 머지 (eb64750): `scripts/analysis/setup_vs_rl_shadow_counterfactual.py` 작성 완료. RL shadow 예측을 가상 long/short trade로 재구성, Setup A/C 실제 체결 trade와 비교, 4-cell confusion matrix + per-day breakdown, table/json/csv 출력. Phase 4 gate thresholds (50, 1000)는 `config/ml/rl_mppo.yaml::phase4_gates`에서 로드. Phase 4 Gate 도달 시 사용
 
 ### 10.3 인프라 정비 follow-ups (✅ v3.3에서 핵심 항목 완료)
 
