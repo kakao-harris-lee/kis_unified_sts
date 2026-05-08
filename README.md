@@ -19,8 +19,31 @@ KIS Unified Trading Platform은 한국투자증권 API를 활용한 알고리즘
 
 ### 운영 런북 (Runbooks)
 
-- 선물 RL 데이터 신뢰 구간/모델 교체 기준:
-  [docs/futures_rl_data_trust_runbook.md](docs/futures_rl_data_trust_runbook.md)
+`docs/runbooks/` 디렉토리에 운영 런북 모음. 상황별로 다음을 참조:
+
+| Runbook | 사용 시점 |
+|---------|----------|
+| [phase2-startup.md](docs/runbooks/phase2-startup.md) | **Phase 2 paper validation 첫 거래일 cutover** (Mon 08:55 KST). 사전 점검 + 당일 절차 + 트러블슈팅 + 롤백. |
+| [futures-paradigm-operations.md](docs/runbooks/futures-paradigm-operations.md) | Phase 5 paradigm **일일 운영 체크리스트** (post-Phase 2 정상 가동 시). |
+| [futures-paradigm-rollback.md](docs/runbooks/futures-paradigm-rollback.md) | **비상 롤백** 절차 (Phase 5 → Phase 4 paper-only). |
+| [futures-paradigm-failure-modes.md](docs/runbooks/futures-paradigm-failure-modes.md) | 알려진 **장애 모드 매트릭스** — symptom / root cause / mitigation. |
+| [futures-legal-review.md](docs/runbooks/futures-legal-review.md) | Phase 5 Gate-2 **법무/세무 검토** 체크리스트. |
+| [phase1-verification.md](docs/runbooks/phase1-verification.md) | Phase 1 (data infra) 검증 게이트. |
+| [phase2-verification.md](docs/runbooks/phase2-verification.md) | Phase 2 (scoring) 검증 게이트. |
+| [phase3-verification.md](docs/runbooks/phase3-verification.md) | Phase 3 (decision engine) 검증 게이트. |
+| [phase4-verification.md](docs/runbooks/phase4-verification.md) | Phase 4 (execution) 검증 게이트 — **2-week paper-uptime gate**. |
+| [phase5-verification.md](docs/runbooks/phase5-verification.md) | Phase 5 (rollout) 게이트 1–4. |
+
+기타:
+- 선물 RL 데이터 신뢰 구간/모델 교체 기준: [docs/futures_rl_data_trust_runbook.md](docs/futures_rl_data_trust_runbook.md)
+
+#### Phase 2 운영 자동화 도구
+
+| 명령 | 시점 | 역할 |
+|------|------|------|
+| `bash scripts/cron/phase2_preflight_check.sh` | Fri EOD (수동) | Phase 2 cutover 전 8개 항목 자동 검증 (CH migrations, shadow_mode, Setup A·C, futures_live, crontab, Prometheus, Telegram) |
+| `phase2_daily_verification.sh` (cron `0 16 * * 1-5`) | Mon-Fri 16:00 KST | 4-gate 일일 검증, PASS/FAIL Telegram |
+| `counterfactual_weekly.sh` (cron `0 7 * * 1`) | Mon 07:00 KST | 이전 ISO 주(Mon-Sun) Setup A/C vs RL shadow counterfactual 리포트 |
 
 ## 빠른 시작 (Quick Start)
 
