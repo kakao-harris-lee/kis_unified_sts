@@ -3911,6 +3911,12 @@ class TradingOrchestrator:
             sl_cfg = {}
 
         flush_interval = float(sl_cfg.get("flush_interval_seconds", 60.0))
+        # Cache final_flush_on_stop at startup so shutdown does NOT re-read
+        # the YAML (file may be unreachable mid-shutdown, and re-reading is
+        # wasted I/O when the value was already known at start time).
+        self._shadow_loggers_final_flush_enabled = bool(
+            sl_cfg.get("final_flush_on_stop", True)
+        )
 
         # Build a reusable ClickHouse client (mirroring the pattern used in
         # _fetch_candles_from_clickhouse — Native driver, DB=kospi).
@@ -3952,6 +3958,11 @@ class TradingOrchestrator:
         is handled separately by :meth:`_shadow_loggers_final_flush` which
         runs after this task is cancelled (in :meth:`_stop_impl`).
 
+        **Independence invariant**: each logger's flush runs in its own
+        try/except block so a failure in one does NOT skip the other on
+        the same tick. Without this, an `rl_shadow` flush exception would
+        silently leave the LLM veto buffer growing until shutdown.
+
         Args:
             interval_seconds: How often to flush (loaded from
                 ``config/shadow_loggers.yaml`` ``flush_interval_seconds``).
@@ -3964,79 +3975,127 @@ class TradingOrchestrator:
         while True:
             try:
                 await asyncio.sleep(interval_seconds)
-
-                rl_count = await flush_rl_shadow_predictions(
-                    self._shadow_loggers_ch_client
-                )
-                veto_count = await flush_llm_veto_events(
-                    self._shadow_loggers_ch_client
-                )
-
-                if rl_count or veto_count:
-                    logger.info(
-                        "shadow_loggers flush: rl_shadow=%d veto=%d rows",
-                        rl_count,
-                        veto_count,
-                    )
-                else:
-                    logger.debug(
-                        "shadow_loggers flush: no pending rows (rl_shadow=0 veto=0)"
-                    )
-
             except asyncio.CancelledError:
                 logger.info("shadow_loggers flush loop cancelled")
                 break
+
+            # Independent try/except per logger so one failure does not
+            # cascade into skipping the other (best-effort + observable).
+            rl_count = 0
+            veto_count = 0
+
+            try:
+                rl_count = await flush_rl_shadow_predictions(
+                    self._shadow_loggers_ch_client
+                )
+            except asyncio.CancelledError:
+                logger.info("shadow_loggers flush loop cancelled mid-rl-flush")
+                break
             except Exception as e:
-                # Non-fatal: log and retry on next tick.  Shadow data is
-                # best-effort; a transient CH issue must not crash the
-                # orchestrator.
                 logger.warning(
-                    "shadow_loggers flush loop error (%s) — retrying on next tick",
+                    "shadow_loggers rl_shadow flush error (%s) — retrying on next tick",
                     e,
                     exc_info=True,
+                )
+
+            try:
+                veto_count = await flush_llm_veto_events(
+                    self._shadow_loggers_ch_client
+                )
+            except asyncio.CancelledError:
+                logger.info("shadow_loggers flush loop cancelled mid-veto-flush")
+                break
+            except Exception as e:
+                logger.warning(
+                    "shadow_loggers llm_veto flush error (%s) — retrying on next tick",
+                    e,
+                    exc_info=True,
+                )
+
+            if rl_count or veto_count:
+                logger.info(
+                    "shadow_loggers flush: rl_shadow=%d veto=%d rows",
+                    rl_count,
+                    veto_count,
+                )
+            else:
+                logger.debug(
+                    "shadow_loggers flush: no pending rows (rl_shadow=0 veto=0)"
                 )
 
     async def _shadow_loggers_final_flush(self) -> None:
         """Drain remaining shadow-logger buffer rows to ClickHouse on shutdown.
 
         Called from :meth:`_stop_impl` **after** the periodic flush task is
-        cancelled by :meth:`_stop_market_data_loop`.  Respects
-        ``final_flush_on_stop`` from ``config/shadow_loggers.yaml``; if the
-        flag is false or the CH client was never initialised, this is a no-op.
-        """
-        try:
-            sl_yaml = ConfigLoader.load("shadow_loggers.yaml")
-            sl_cfg = sl_yaml.get("shadow_loggers", {})
-        except Exception:
-            sl_cfg = {}
+        cancelled by :meth:`_stop_market_data_loop`.  Respects the cached
+        ``_shadow_loggers_final_flush_enabled`` flag (set at startup from
+        ``config/shadow_loggers.yaml::final_flush_on_stop``); if the flag is
+        false or the CH client was never initialised, this is a no-op.
 
-        if not sl_cfg.get("final_flush_on_stop", True):
-            logger.debug("shadow_loggers final flush skipped (final_flush_on_stop=false)")
+        **Independence invariant**: the rl_shadow and llm_veto final
+        flushes run in independent try/except blocks so a failure in one
+        does NOT lose the other's buffer at shutdown.
+        """
+        if not getattr(self, "_shadow_loggers_final_flush_enabled", True):
+            logger.debug(
+                "shadow_loggers final flush skipped (final_flush_on_stop=false)"
+            )
             return
 
         if self._shadow_loggers_ch_client is None:
             logger.debug("shadow_loggers final flush skipped (CH client not initialised)")
             return
 
+        rl_count = 0
+        veto_count = 0
         try:
-            from shared.strategy.llm_veto_logger import flush_llm_veto_events
             from shared.strategy.rl_shadow_logger import flush_rl_shadow_predictions
 
-            rl_count = await flush_rl_shadow_predictions(self._shadow_loggers_ch_client)
-            veto_count = await flush_llm_veto_events(self._shadow_loggers_ch_client)
+            try:
+                rl_count = await flush_rl_shadow_predictions(
+                    self._shadow_loggers_ch_client
+                )
+            except Exception as e:
+                logger.warning(
+                    "shadow_loggers final flush rl_shadow failed (%s) — "
+                    "some rl_shadow rows may be lost",
+                    e,
+                    exc_info=True,
+                )
+
+            from shared.strategy.llm_veto_logger import flush_llm_veto_events
+
+            try:
+                veto_count = await flush_llm_veto_events(
+                    self._shadow_loggers_ch_client
+                )
+            except Exception as e:
+                logger.warning(
+                    "shadow_loggers final flush llm_veto failed (%s) — "
+                    "some veto rows may be lost",
+                    e,
+                    exc_info=True,
+                )
+
             logger.info(
                 "shadow_loggers final flush on stop: rl_shadow=%d veto=%d rows",
                 rl_count,
                 veto_count,
             )
-        except Exception as e:
-            logger.warning(
-                "shadow_loggers final flush failed (%s) — some buffer rows may be lost",
-                e,
-                exc_info=True,
-            )
         finally:
+            # Close the CH client cleanly (mirrors the disconnect pattern at
+            # _fetch_candles_from_clickhouse) so socket/connection resources
+            # are released before resource cleanup.
+            client = self._shadow_loggers_ch_client
             self._shadow_loggers_ch_client = None
+            if client is not None:
+                try:
+                    client.disconnect()
+                except Exception as e:
+                    logger.debug(
+                        "shadow_loggers final flush: CH client disconnect error (%s) — ignoring",
+                        e,
+                    )
 
     async def _market_data_loop(self, interval: float) -> None:
         logger.info(

@@ -57,6 +57,10 @@ class _Stub:
     def __init__(self) -> None:
         self._shadow_loggers_flush_task: asyncio.Task | None = None
         self._shadow_loggers_ch_client: Any | None = None
+        # final_flush_on_stop is now cached at startup by
+        # _start_shadow_loggers_flush; tests that call _shadow_loggers_final_flush
+        # directly should set this attribute to control the gate.
+        self._shadow_loggers_final_flush_enabled: bool = True
 
 
 def _stub() -> _Stub:
@@ -282,8 +286,55 @@ class TestShadowLoggersFlushLoop:
 
         # rl flush was called (and failed) on both ticks
         assert rl_call_count >= 1
+        # The independent try/except now logs the rl-specific message
         assert any(
-            "shadow_loggers flush loop error" in r.message for r in caplog.records
+            "shadow_loggers rl_shadow flush error" in r.message
+            for r in caplog.records
+        )
+
+    @pytest.mark.asyncio()
+    async def test_independent_flushes_per_tick(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Regression: rl_shadow flush failure on tick must NOT skip llm_veto
+        flush on the same tick.  The previous shared try/except would silently
+        drop veto buffer rows whenever rl_shadow raised.
+        """
+        stub = _stub()
+        stub._shadow_loggers_ch_client = _ch()
+
+        async def _bad_rl(_client: Any) -> int:
+            raise RuntimeError("rl_shadow CH dropped")
+
+        veto_flush = AsyncMock(return_value=4)
+
+        tick = 0
+
+        async def _two_ticks(delay: float) -> None:  # noqa: ARG001
+            nonlocal tick
+            tick += 1
+            if tick >= 3:
+                raise asyncio.CancelledError()
+
+        with (
+            patch(
+                "shared.strategy.rl_shadow_logger.flush_rl_shadow_predictions",
+                side_effect=_bad_rl,
+            ),
+            patch(
+                "shared.strategy.llm_veto_logger.flush_llm_veto_events",
+                veto_flush,
+            ),
+            patch("asyncio.sleep", side_effect=_two_ticks),
+            caplog.at_level(logging.WARNING, logger="services.trading.orchestrator"),
+        ):
+            await _loop_fn(stub, 0.001)
+
+        # llm_veto MUST have been called at least once even though rl_shadow
+        # raised on every tick. Without independent try/except this would be 0.
+        assert veto_flush.await_count >= 1, (
+            "Independence invariant violated: rl_shadow failure prevented "
+            "llm_veto flush within the same tick"
         )
 
     @pytest.mark.asyncio()
@@ -359,19 +410,20 @@ class TestShadowLoggersFinalFlush:
 
     @pytest.mark.asyncio()
     async def test_skipped_when_flag_false(self) -> None:
-        """final_flush_on_stop=false → no flushing performed."""
+        """final_flush_on_stop=false → no flushing performed.
+
+        The flag is cached at startup (in _start_shadow_loggers_flush) so
+        the final-flush method reads it from the instance attribute, not
+        from the YAML.  Tests set it directly.
+        """
         stub = _stub()
         stub._shadow_loggers_ch_client = _ch()
+        stub._shadow_loggers_final_flush_enabled = False
 
-        sl_yaml = {"shadow_loggers": {"final_flush_on_stop": False}}
         rl_flush = AsyncMock(return_value=0)
         veto_flush = AsyncMock(return_value=0)
 
         with (
-            patch(
-                "services.trading.orchestrator.ConfigLoader.load",
-                return_value=sl_yaml,
-            ),
             patch(
                 "shared.strategy.rl_shadow_logger.flush_rl_shadow_predictions",
                 rl_flush,
@@ -419,35 +471,40 @@ class TestShadowLoggersFinalFlush:
     async def test_exception_logged_not_raised(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """Exception during final flush → WARNING logged, not re-raised."""
+        """Exception during final flush → WARNING logged, not re-raised.
+
+        With independent try/except per logger, an rl_shadow failure must
+        not prevent the llm_veto flush from running.  Verify the WARNING
+        identifies the specific logger (rl_shadow) that failed.
+        """
         stub = _stub()
         stub._shadow_loggers_ch_client = _ch()
-
-        sl_yaml = {"shadow_loggers": {"final_flush_on_stop": True}}
+        stub._shadow_loggers_final_flush_enabled = True
 
         async def _bad(_client: Any) -> int:
             raise OSError("CH dropped")
 
+        veto_flush = AsyncMock(return_value=0)
         with (
-            patch(
-                "services.trading.orchestrator.ConfigLoader.load",
-                return_value=sl_yaml,
-            ),
             patch(
                 "shared.strategy.rl_shadow_logger.flush_rl_shadow_predictions",
                 side_effect=_bad,
             ),
             patch(
                 "shared.strategy.llm_veto_logger.flush_llm_veto_events",
-                AsyncMock(return_value=0),
+                veto_flush,
             ),
             caplog.at_level(logging.WARNING, logger="services.trading.orchestrator"),
         ):
             await _final_fn(stub)  # must NOT raise
 
+        # Specific rl_shadow failure logged (not the legacy generic message)
         assert any(
-            "shadow_loggers final flush failed" in r.message for r in caplog.records
+            "shadow_loggers final flush rl_shadow failed" in r.message
+            for r in caplog.records
         )
+        # Independence invariant: llm_veto flush still ran despite rl failure
+        veto_flush.assert_awaited_once()
         # CH client nulled in finally block even on exception
         assert stub._shadow_loggers_ch_client is None
 
