@@ -51,6 +51,13 @@ strategy:
         atr_loose_factor: 0.8
         long_blocked_regimes: ["BEAR_STRONG", "BEAR_MODERATE"]
         short_blocked_regimes: []
+        # Phase 1.2 — LLM veto authority (entry signals only; exit/stop never vetoed)
+        # Requires master enabled=true above.  Set veto_enabled=false to disable
+        # veto independently of threshold/size adjustments.
+        veto_enabled: true
+        veto_min_confidence: 0.6          # LLM confidence threshold to activate veto
+        veto_long_block_signal: "STRONG_BEARISH"   # opposing signal that blocks longs
+        veto_short_block_signal: "STRONG_BULLISH"  # opposing signal that blocks shorts
 
   exit:
     # Use the RL-based exit policy, consistent with all futures strategies.

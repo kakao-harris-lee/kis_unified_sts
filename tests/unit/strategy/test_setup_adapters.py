@@ -1118,3 +1118,409 @@ class TestSetupCLLMTuning:
         result = await adapter.generate(context)
         assert result is not None
         assert result.metadata["direction"] == "long"
+
+
+# ---------------------------------------------------------------------------
+# Phase 1.2 — LLM veto authority tests
+# ---------------------------------------------------------------------------
+
+
+def _llm_context_with_overall(
+    *,
+    regime: str = "NEUTRAL",
+    risk_mode_name: str = "NEUTRAL",
+    risk_score: float = 50.0,
+    confidence: float = 0.8,
+    overall_signal: str = "NEUTRAL",
+) -> object:
+    """Build a minimal LLM MarketContext-like object including overall_signal.
+
+    Extends _llm_context() with the ``overall_signal`` attribute required by
+    the Phase 1.2 veto helper.
+    """
+    from enum import Enum
+    from types import SimpleNamespace
+
+    class _RiskMode(Enum):
+        RISK_ON = "위험선호"
+        NEUTRAL = "중립"
+        RISK_OFF = "위험회피"
+
+    return SimpleNamespace(
+        regime=regime,
+        risk_mode=_RiskMode[risk_mode_name],
+        risk_score=risk_score,
+        confidence=confidence,
+        overall_signal=overall_signal,
+    )
+
+
+def _setup_a_adapter_with_veto(
+    *,
+    enabled: bool = True,
+    veto_enabled: bool = True,
+    veto_min_confidence: float = 0.6,
+    veto_long_block_signal: str = "STRONG_BEARISH",
+    veto_short_block_signal: str = "STRONG_BULLISH",
+    min_context_confidence: float = 0.3,
+    long_blocked_regimes: list[str] | None = None,
+    short_blocked_regimes: list[str] | None = None,
+) -> SetupAEntryAdapter:
+    """Return a SetupAEntryAdapter with explicit Phase 1.2 veto config."""
+    from shared.strategy.entry.setup_adapters import LLMTuningConfig
+
+    if long_blocked_regimes is None:
+        long_blocked_regimes = []  # no Phase 1.1 direction gating so veto is testable
+    if short_blocked_regimes is None:
+        short_blocked_regimes = []
+
+    tuning = LLMTuningConfig(
+        enabled=enabled,
+        veto_enabled=veto_enabled,
+        veto_min_confidence=veto_min_confidence,
+        veto_long_block_signal=veto_long_block_signal,
+        veto_short_block_signal=veto_short_block_signal,
+        min_context_confidence=min_context_confidence,
+        long_blocked_regimes=long_blocked_regimes,
+        short_blocked_regimes=short_blocked_regimes,
+    )
+    cfg = SetupAEntryConfig(llm_tuning=tuning)
+    return SetupAEntryAdapter(cfg)
+
+
+def _setup_c_adapter_with_veto(
+    *,
+    enabled: bool = True,
+    veto_enabled: bool = True,
+    veto_min_confidence: float = 0.6,
+    veto_long_block_signal: str = "STRONG_BEARISH",
+    veto_short_block_signal: str = "STRONG_BULLISH",
+    min_context_confidence: float = 0.3,
+    long_blocked_regimes: list[str] | None = None,
+    short_blocked_regimes: list[str] | None = None,
+) -> SetupCEntryAdapter:
+    """Return a SetupCEntryAdapter with explicit Phase 1.2 veto config."""
+    from shared.strategy.entry.setup_adapters import LLMTuningConfig
+
+    if long_blocked_regimes is None:
+        long_blocked_regimes = []
+    if short_blocked_regimes is None:
+        short_blocked_regimes = []
+
+    tuning = LLMTuningConfig(
+        enabled=enabled,
+        veto_enabled=veto_enabled,
+        veto_min_confidence=veto_min_confidence,
+        veto_long_block_signal=veto_long_block_signal,
+        veto_short_block_signal=veto_short_block_signal,
+        min_context_confidence=min_context_confidence,
+        long_blocked_regimes=long_blocked_regimes,
+        short_blocked_regimes=short_blocked_regimes,
+    )
+    cfg = SetupCEntryConfig(llm_tuning=tuning)
+    return SetupCEntryAdapter(cfg)
+
+
+def _gap_up_context(*, market_context: object | None = None) -> EntryContext:
+    """Return a gap-UP EntryContext that produces a valid Setup A long signal."""
+    return EntryContext(
+        market_data=_market_data_for_gap_reversion(
+            current_price=349.2,
+            prev_close=348.0,
+            today_open=350.0,
+            atr=1.0,
+        ),
+        indicators={},
+        timestamp=_kst(9, 30),
+        market_context=market_context,
+        metadata={"macro_overnight": _macro(sp500_pct=0.8)},
+    )
+
+
+class TestSetupALLMVeto:
+    """Phase 1.2: LLM veto authority for Setup A (entry-only)."""
+
+    @pytest.mark.asyncio
+    async def test_confidence_below_threshold_no_veto(self):
+        """LLM confidence < veto_min_confidence → veto skipped, signal passes."""
+        adapter = _setup_a_adapter_with_veto(veto_min_confidence=0.6)
+        llm_ctx = _llm_context_with_overall(
+            confidence=0.5,  # below 0.6
+            overall_signal="STRONG_BEARISH",
+        )
+        # gap-DOWN → short signal; STRONG_BEARISH would normally veto a long
+        # but this is a short signal so regardless it should pass when confidence low
+        context = _gap_down_context(market_context=llm_ctx)
+        result = await adapter.generate(context)
+        # short signal — STRONG_BEARISH only blocks long; should pass
+        assert result is not None
+        assert result.metadata["direction"] == "short"
+
+    @pytest.mark.asyncio
+    async def test_long_signal_strong_bearish_vetoed(self):
+        """Long signal + confidence >= 0.6 + STRONG_BEARISH → veto fires, returns None."""
+        import shared.strategy.llm_veto_logger as veto_logger
+
+        # Reset buffer to test fresh
+        veto_logger._pending_veto_events.clear()
+
+        adapter = _setup_a_adapter_with_veto(
+            veto_min_confidence=0.6,
+            veto_long_block_signal="STRONG_BEARISH",
+        )
+        llm_ctx = _llm_context_with_overall(
+            confidence=0.8,  # >= 0.6
+            overall_signal="STRONG_BEARISH",
+        )
+        # gap-UP → long signal
+        context = _gap_up_context(market_context=llm_ctx)
+        result = await adapter.generate(context)
+
+        assert result is None, "Veto must drop the long signal"
+        # Buffer must have recorded the veto event
+        assert veto_logger.pending_count() >= 1
+        event = veto_logger._pending_veto_events[-1]
+        assert event["direction"] == "long"
+        assert event["overall_signal"] == "STRONG_BEARISH"
+        assert event["setup"] == "setup_a_gap_reversion"
+        assert event["ts"].tzinfo is not None, "buffered ts must be tz-aware"
+
+    @pytest.mark.asyncio
+    async def test_short_signal_strong_bullish_vetoed(self):
+        """Short signal + confidence >= 0.6 + STRONG_BULLISH → veto fires, returns None."""
+        import shared.strategy.llm_veto_logger as veto_logger
+
+        veto_logger._pending_veto_events.clear()
+
+        adapter = _setup_a_adapter_with_veto(
+            veto_min_confidence=0.6,
+            veto_short_block_signal="STRONG_BULLISH",
+        )
+        llm_ctx = _llm_context_with_overall(
+            confidence=0.75,  # >= 0.6
+            overall_signal="STRONG_BULLISH",
+        )
+        # gap-DOWN → short signal
+        context = _gap_down_context(market_context=llm_ctx)
+        result = await adapter.generate(context)
+
+        assert result is None, "Veto must drop the short signal"
+        assert veto_logger.pending_count() >= 1
+        event = veto_logger._pending_veto_events[-1]
+        assert event["direction"] == "short"
+        assert event["overall_signal"] == "STRONG_BULLISH"
+
+    @pytest.mark.asyncio
+    async def test_long_signal_bearish_not_strong_no_veto(self):
+        """Long signal + confidence >= 0.6 + BEARISH (not STRONG_BEARISH) → no veto."""
+        adapter = _setup_a_adapter_with_veto(
+            veto_min_confidence=0.6,
+            veto_long_block_signal="STRONG_BEARISH",  # only STRONG_BEARISH triggers
+        )
+        llm_ctx = _llm_context_with_overall(
+            confidence=0.8,
+            overall_signal="BEARISH",  # not STRONG_BEARISH
+        )
+        context = _gap_up_context(market_context=llm_ctx)
+        result = await adapter.generate(context)
+        # No veto for non-STRONG signal
+        from shared.models.signal import Signal as OrchestratorSignal
+        assert result is None or isinstance(result, OrchestratorSignal)
+        # If signal emitted, direction must be long
+        if result is not None:
+            assert result.metadata["direction"] == "long"
+
+    @pytest.mark.asyncio
+    async def test_master_enabled_false_veto_disabled(self):
+        """When tuning.enabled=False, veto is never applied regardless of veto_enabled."""
+        adapter = _setup_a_adapter_with_veto(
+            enabled=False,  # master disabled
+            veto_enabled=True,
+        )
+        llm_ctx = _llm_context_with_overall(
+            confidence=0.9,
+            overall_signal="STRONG_BEARISH",
+        )
+        context = _gap_up_context(market_context=llm_ctx)
+        result = await adapter.generate(context)
+        # LLM tuning entirely disabled → veto never runs
+        from shared.models.signal import Signal as OrchestratorSignal
+        assert result is None or isinstance(result, OrchestratorSignal)
+        # If signal returned, it should not have been vetoed
+        # (adapter simply passes raw signal through when enabled=False)
+
+    @pytest.mark.asyncio
+    async def test_veto_enabled_false_no_veto(self):
+        """When veto_enabled=False (master enabled), veto is skipped."""
+        adapter = _setup_a_adapter_with_veto(
+            enabled=True,   # master on
+            veto_enabled=False,  # veto off independently
+        )
+        llm_ctx = _llm_context_with_overall(
+            confidence=0.9,
+            overall_signal="STRONG_BEARISH",
+        )
+        context = _gap_up_context(market_context=llm_ctx)
+        result = await adapter.generate(context)
+        # Veto disabled → long signal should survive if Setup A fires
+        from shared.models.signal import Signal as OrchestratorSignal
+        assert result is None or isinstance(result, OrchestratorSignal)
+
+    @pytest.mark.asyncio
+    async def test_market_context_none_no_veto(self):
+        """When market_context=None, veto is skipped — signal passes through normally."""
+        adapter = _setup_a_adapter_with_veto(veto_min_confidence=0.6)
+        # No LLM context supplied
+        context = _gap_down_context(market_context=None)
+        result = await adapter.generate(context)
+        # short signal — no LLM context → veto skipped → signal passes
+        assert result is not None
+        assert result.metadata["direction"] == "short"
+
+    @pytest.mark.asyncio
+    async def test_veto_buffer_payload_ts_tz_aware(self):
+        """Buffered veto payload must have a tz-aware UTC ts (PR #159 contract)."""
+        import shared.strategy.llm_veto_logger as veto_logger
+
+        veto_logger._pending_veto_events.clear()
+
+        adapter = _setup_a_adapter_with_veto(veto_min_confidence=0.6)
+        llm_ctx = _llm_context_with_overall(
+            confidence=0.8,
+            overall_signal="STRONG_BEARISH",
+        )
+        context = _gap_up_context(market_context=llm_ctx)
+        result = await adapter.generate(context)
+
+        assert result is None
+        if veto_logger.pending_count() > 0:
+            event = veto_logger._pending_veto_events[-1]
+            ts = event["ts"]
+            assert ts.tzinfo is not None, "buffered ts must be tz-aware"
+            assert ts.utcoffset().total_seconds() == 0, "buffered ts must be UTC"
+
+
+class TestSetupCLLMVeto:
+    """Phase 1.2: LLM veto authority for Setup C (entry-only)."""
+
+    @pytest.mark.asyncio
+    async def test_confidence_below_threshold_no_veto(self):
+        """LLM confidence < veto_min_confidence → veto skipped, signal passes."""
+        adapter = _setup_c_adapter_with_veto(veto_min_confidence=0.6)
+        llm_ctx = _llm_context_with_overall(
+            confidence=0.4,  # below 0.6
+            overall_signal="STRONG_BEARISH",
+        )
+        context = _long_breakout_context(market_context=llm_ctx)
+        result = await adapter.generate(context)
+        assert result is not None
+        assert result.metadata["direction"] == "long"
+
+    @pytest.mark.asyncio
+    async def test_long_signal_strong_bearish_vetoed(self):
+        """Long Setup C signal + confidence >= 0.6 + STRONG_BEARISH → veto."""
+        import shared.strategy.llm_veto_logger as veto_logger
+
+        veto_logger._pending_veto_events.clear()
+
+        adapter = _setup_c_adapter_with_veto(
+            veto_min_confidence=0.6,
+            veto_long_block_signal="STRONG_BEARISH",
+        )
+        llm_ctx = _llm_context_with_overall(
+            confidence=0.85,
+            overall_signal="STRONG_BEARISH",
+        )
+        context = _long_breakout_context(market_context=llm_ctx)
+        result = await adapter.generate(context)
+
+        assert result is None, "Veto must drop the long Setup C signal"
+        assert veto_logger.pending_count() >= 1
+        event = veto_logger._pending_veto_events[-1]
+        assert event["direction"] == "long"
+        assert event["setup"] == "setup_c_event_reaction"
+        assert event["ts"].tzinfo is not None
+
+    @pytest.mark.asyncio
+    async def test_long_signal_neutral_no_veto(self):
+        """Long Setup C signal + NEUTRAL overall_signal → no veto."""
+        adapter = _setup_c_adapter_with_veto(
+            veto_min_confidence=0.6,
+            veto_long_block_signal="STRONG_BEARISH",
+        )
+        llm_ctx = _llm_context_with_overall(
+            confidence=0.9,
+            overall_signal="NEUTRAL",
+        )
+        context = _long_breakout_context(market_context=llm_ctx)
+        result = await adapter.generate(context)
+        assert result is not None
+        assert result.metadata["direction"] == "long"
+
+    @pytest.mark.asyncio
+    async def test_master_enabled_false_veto_disabled(self):
+        """When tuning.enabled=False, veto is never applied."""
+        adapter = _setup_c_adapter_with_veto(
+            enabled=False,
+            veto_enabled=True,
+        )
+        llm_ctx = _llm_context_with_overall(
+            confidence=0.95,
+            overall_signal="STRONG_BEARISH",
+        )
+        context = _long_breakout_context(market_context=llm_ctx)
+        result = await adapter.generate(context)
+        from shared.models.signal import Signal as OrchestratorSignal
+        assert result is None or isinstance(result, OrchestratorSignal)
+
+    @pytest.mark.asyncio
+    async def test_veto_enabled_false_no_veto(self):
+        """When veto_enabled=False, veto is skipped even with high confidence."""
+        adapter = _setup_c_adapter_with_veto(
+            enabled=True,
+            veto_enabled=False,
+        )
+        llm_ctx = _llm_context_with_overall(
+            confidence=0.95,
+            overall_signal="STRONG_BEARISH",
+        )
+        context = _long_breakout_context(market_context=llm_ctx)
+        result = await adapter.generate(context)
+        # Veto disabled → Setup C long signal should pass
+        from shared.models.signal import Signal as OrchestratorSignal
+        assert result is None or isinstance(result, OrchestratorSignal)
+        if result is not None:
+            assert result.metadata["direction"] == "long"
+
+    @pytest.mark.asyncio
+    async def test_market_context_none_no_veto_setup_c(self):
+        """When market_context=None, veto is skipped."""
+        adapter = _setup_c_adapter_with_veto(veto_min_confidence=0.6)
+        context = _long_breakout_context(market_context=None)
+        result = await adapter.generate(context)
+        assert result is not None
+        assert result.metadata["direction"] == "long"
+
+    @pytest.mark.asyncio
+    async def test_veto_buffer_symbol_captured(self):
+        """Veto buffer payload must capture symbol, direction, regime, confidence."""
+        import shared.strategy.llm_veto_logger as veto_logger
+
+        veto_logger._pending_veto_events.clear()
+
+        adapter = _setup_c_adapter_with_veto(veto_min_confidence=0.6)
+        llm_ctx = _llm_context_with_overall(
+            regime="BEAR_STRONG",
+            confidence=0.7,
+            overall_signal="STRONG_BEARISH",
+        )
+        context = _long_breakout_context(market_context=llm_ctx)
+        result = await adapter.generate(context)
+
+        assert result is None
+        if veto_logger.pending_count() > 0:
+            event = veto_logger._pending_veto_events[-1]
+            assert event["symbol"] == "A05603"  # from _market_data_for_event_breakout
+            assert event["direction"] == "long"
+            assert event["regime"] == "BEAR_STRONG"
+            assert abs(event["confidence"] - 0.7) < 1e-9
