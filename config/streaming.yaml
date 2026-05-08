@@ -81,6 +81,13 @@ data_provider:
   batch_size: 20                 # 배치 당 최대 심볼 수
   fetch_timeout_seconds: 5.0     # 데이터 조회 타임아웃 (초)
 
+# KIS REST API Error Rate Tracker 설정 (§10.3-A, kill-switch feed for PR #164)
+kis_api_error_rate:
+  enabled: true                                         # opt-in switch — set false to disable Redis writes
+  window_seconds: 300                                   # 5-minute rolling window
+  publish_interval_seconds: 10                          # how often to write to Redis (seconds)
+  redis_key: "kill_switch:metrics:api_error_rate_5min"  # target key (DB 1)
+
 # WebSocket Failover with REST Fallback 설정
 failover:
   enabled: true                  # WebSocket 실패 시 REST API로 자동 전환 활성화
