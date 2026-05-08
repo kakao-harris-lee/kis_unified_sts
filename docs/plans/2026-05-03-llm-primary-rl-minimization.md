@@ -1,13 +1,14 @@
 # LLM-primary 의사결정 + RL 축소 통합 계획
 
-**Status**: v3.2 — Phase 0 + Phase 1 (1.0/1.1/1.2/1.3) + Phase 2 모두 구현 완료, Setup A/C paper rollout 활성화. Phase 3 Track A (운영자 게이트) + Phase 4 (RL aux 결정) 대기.
+**Status**: v3.3 — Phase 0 + Phase 1 (1.0/1.1/1.2/1.3) + Phase 2 + §10.3 인프라 정비 모두 완료. kill_switch 6/6 conditions 실데이터 가동 — Phase 3 Track A 의존성 해소.
 **Created**: 2026-05-03
 **Updated**:
 - 2026-05-03 (v1 초안)
 - 2026-05-03 (v2 — 운영자 §7 결정 5건 반영, Phase 1을 1.1/1.2/1.3 분해, Phase 3을 Phase 2와 병행)
 - 2026-05-07 (v3 — 코드베이스 점검 결과 반영: §2.4 Adapter 통합 결정, §4 Phase 0 사전 정비 작업 추가, Phase 1.0 신설, §1.1 PR #159/#161/#162 머지 + paper validation 결과 반영)
 - 2026-05-07 (v3.1 — code review 피드백 반영: §8 Phase 1.2-a를 strategy_manager로 정정 (§2.4 Adapter 결정 일관성), §3.1 PR #158 OPEN으로 정정, §1.3 모듈 수 정렬, §5 Setup C 출처 인용 정정, §2.2 Phase A/B → Phase 2/4 명명 정렬)
-- 2026-05-08 (**v3.2 — 마이그레이션 실행 진행 상황 반영**: PR #158 + #163-#171 9건 머지로 Phase 0/1/2 완료. RL은 shadow_mode로 강등 (Setup A/C 활성), 운영 변경은 다음 cron 사이클부터 효력. §3.1 PR 표 + §9 추적 갱신, §10 신설 — Phase 3+ 후속 작업 정리)
+- 2026-05-08 (v3.2 — 마이그레이션 실행 진행 상황 반영: PR #158 + #163-#171 9건 머지로 Phase 0/1/2 완료. RL은 shadow_mode로 강등, Setup A/C 활성. §10 신설 — Phase 3+ 후속 작업 정리)
+- 2026-05-08 (**v3.3 — §10.3 인프라 정비 완료**: PR #173 (KIS API error rate writer) + #174 (CH insert fail rate writer) 머지. kill_switch ApiErrorRateCondition / ClickHouseInsertFailCondition이 0.0 stub → 실데이터로 전환. §3.1 PR 표 + §9 추적 + §10.3 갱신)
 
 **Author**: 엔지니어링 (운영자 결정 반영)
 **Parent**: `docs/plans/2026-04-20-futures-paradigm-master.md`
@@ -154,7 +155,7 @@ WebSocket tick (futures_feed.py, tz-aware UTC)
 
 ## 3. 진행 중 작업과의 정합
 
-### 3.1 PR 상태 (v3.2 업데이트, 2026-05-08 기준)
+### 3.1 PR 상태 (v3.3 업데이트, 2026-05-08 기준)
 
 #### 3.1.1 인프라/회귀 fix (paper validation 단계)
 
@@ -190,14 +191,23 @@ WebSocket tick (futures_feed.py, tz-aware UTC)
 |----|------|------|
 | **#171** `feat/phase-2-rl-shadow-demotion` | ✅ 5/8 머지 (6e881ff) | Phase 2 — `_shadow_loggers_flush_loop` (60s 주기, 두 logger 독립 try/except, final flush on stop) + 운영 YAML 플립: `rl_mppo.shadow_mode: true`, `setup_a/c.strategy.enabled: true` |
 
-#### 3.1.5 운영 영향 (다음 cron 사이클부터)
+#### 3.1.5 §10.3 인프라 정비 — kill_switch 실데이터 unblock
 
-PR #171 머지로 다음 평일 08:55 KST 재시작 시:
+| PR | 상태 | 내용 |
+|----|------|------|
+| **#172** `docs/plan-v3-2-phase-completion` | ✅ 5/8 머지 (269034b) | v3.2 plan — Phase 0/1/2 완료 추적 + §10 신설 |
+| **#173** `feat/phase10-3-kis-api-error-rate` | ✅ 5/8 머지 (e807c30) | §10.3-A — `KISApiErrorRateTracker` singleton + `shared/kis/error_rate.py` (rolling deque, 5min window, 10s publish to Redis DB 1 `kill_switch:metrics:api_error_rate_5min`); 6 KIS REST 메서드에 `record_success/error()` 호출 wired; orchestrator lifecycle 통합 |
+| **#174** `feat/phase10-3-clickhouse-insert-fail-rate` | ✅ 5/8 머지 (e08e348) | §10.3-B — `ClickHouseInsertFailTracker` + `services/trading/ch_insert_fail_tracker.py` (5min window, 10s publish to Redis DB 1 `kill_switch:metrics:clickhouse_insert_fail_rate`); `PositionTracker._flush_batch`에 `record_success/failure()` wired (raw clickhouse_driver 예외 포함); auto-flush lifecycle 통합 |
+
+#### 3.1.6 운영 영향 (다음 cron 사이클부터)
+
+PR #171 + #173 + #174 머지로 다음 평일 08:55 KST 재시작 시:
 - ✅ Setup A/C 진입 활성 (LLM threshold + veto + size 모두 적용, paper-only since `futures_live.enabled: false`)
 - ✅ RL inference 계속 → `kospi.rl_shadow_predictions` 누적 (counterfactual 분석용)
 - ❌ RL trades 0건 (shadow_mode=True)
 - ✅ kill_switch 안전망 + Telegram alerts 활성
 - ✅ shadow_loggers 60s flush → ClickHouse
+- ✅ **kill_switch 6/6 conditions 모두 실데이터** — ApiErrorRate / NewsPipelineLag / ClickHouseInsertFail 포함
 
 ### 3.2 기존 v2 계획과의 합치
 
@@ -511,6 +521,9 @@ Phase 1.1 완료 + paper 1주 안정성 확인 즉시 (운영자 §7-5 결정):
 | 2026-05-08 | **Phase 1.2** 완료: PR #169 (LLM veto authority entry-only + Telegram alert + best-effort logger; production enum-vs-str 회귀 정정). |
 | 2026-05-08 | **Phase 2** 완료: PR #171 (shadow loggers flush loop + 운영 YAML 플립 — `rl_mppo.shadow_mode: true`, Setup A/C `strategy.enabled: true`). 다음 cron 사이클부터 효력. |
 | 2026-05-08 | **v3.2** — Phase 0/1/2 마이그레이션 완료. §3.1/§9 갱신. §10 신설 (Phase 3+ 후속 작업). |
+| 2026-05-08 | **§10.3-A** 완료: PR #173 (KIS API error-rate tracker + Redis writer + orchestrator lifecycle wiring). kill_switch ApiErrorRateCondition 실데이터로 전환. |
+| 2026-05-08 | **§10.3-B** 완료: PR #174 (ClickHouseInsertFailTracker + Redis writer + PositionTracker._flush_batch broaden exception). kill_switch ClickHouseInsertFailCondition 실데이터로 전환. |
+| 2026-05-08 | **v3.3** — §10.3 핵심 인프라 정비 완료 (kill_switch 6/6 conditions 모두 실데이터 가동). §3.1.5/§3.1.6 신설, §10.3 체크리스트 갱신. Phase 3 Track A 의존성 해소. |
 | TBD | Phase 1 paper validation (1주) — Setup A/C 신호 발생률, LLM-veto counterfactual PnL, size scaling trade PnL 비교 |
 | TBD | Phase 3 Track A — 운영자 게이트 (legal review §1-6, KIS Real smoke test, 증거금, position-recovery drill, kill-switch unit 설치, `futures_live.enabled: true` 플립, Gate 3 14일 1계약 운용) |
 | TBD | Phase 4 (+3개월) — `signals_all` 누적 trade ≥ 50 + EV+ 3개월 → RL aux 활성 / 폐지 / 재학습 결정 |
@@ -549,13 +562,14 @@ PR #171이 운영을 활성화했으므로 다음 거래일부터 Phase 1 paper 
 - [ ] **Grafana 대시보드** (Phase 2 PR #171 deferred follow-up): "Setup A/C signals/day" + "RL shadow LONG/SHORT/HOLD distribution" + "LLM regime → setup conversion rate" + "Counterfactual PnL"
 - [ ] **Counterfactual 분석 스크립트** (Phase 4 입력): `scripts/analysis/setup_vs_rl_shadow_counterfactual.py` — Setup A/C가 채택하지 않은 RL shadow 신호의 paper PnL 추적
 
-### 10.3 인프라 정비 follow-ups
+### 10.3 인프라 정비 follow-ups (✅ v3.3에서 핵심 항목 완료)
 
-PR #163/#164에서 deferred한 항목 — Phase 3 Track A 시작 전 필수.
+PR #163/#164에서 deferred한 항목 — Phase 3 Track A 시작 전 필수. **2026-05-08 기준 메트릭 writer 2건 모두 완료**, kill_switch ApiErrorRate / ClickHouseInsertFail conditions가 0.0 stub에서 실데이터로 전환되어 Phase 3 Track A 의존성이 해소됨.
 
-- [ ] **shadow_loggers ClickHouse persistence 검증** (PR #171 머지 후 첫 사이클): `kospi.rl_shadow_predictions` + LLM veto 누적 row count, dropped batch counter (Prometheus 대시보드 추가 권장)
-- [ ] **`shared/kis/client.py`에 `kill_switch:metrics:api_error_rate_5min` writer 추가** (PR #164 stub provider이 현재 0.0 반환 중) — 5분 윈도우 EWMA로 KIS API error rate 발행
-- [ ] **`services/trading/position_tracker.py`에 `kill_switch:metrics:clickhouse_insert_fail_rate` writer 추가** — 배치 flush 실패 카운터를 5분 윈도우로 발행
+- [ ] **shadow_loggers ClickHouse persistence 검증** (PR #171 머지 후 첫 사이클): `kospi.rl_shadow_predictions` + LLM veto 누적 row count, dropped batch counter (Prometheus 대시보드 추가 권장) — 다음 거래일 첫 검증에서 확인
+- [x] **`shared/kis/error_rate.py` `KISApiErrorRateTracker` (PR #173, e807c30)** — 5분 rolling window, 10s 마다 Redis DB 1 `kill_switch:metrics:api_error_rate_5min` 발행. 6개 KIS REST 메서드(EGW00201, HTTPX 예외, TimeoutError 모두 포함)에 `record_success/error()` 호출 wired. orchestrator start/stop lifecycle 통합 (fail-soft try/except).
+- [x] **`services/trading/ch_insert_fail_tracker.py` `ClickHouseInsertFailTracker` (PR #174, e08e348)** — 5분 rolling window, 10s 마다 Redis DB 1 `kill_switch:metrics:clickhouse_insert_fail_rate` 발행. `PositionTracker._flush_batch`의 `except Exception` 분기로 raw `clickhouse_driver` 예외(ServerException, NetworkError 등) 포함. auto-flush lifecycle 통합.
+- [ ] **DRY follow-up** (PR #173/#174 둘 다 TODO 표시): `shared/observability/rate_tracker.py` 베이스 클래스 추출 — 두 tracker가 동일한 rolling-window + Redis publish 패턴을 공유하므로 공통화 여지 있음. 운영 검증 후 안전한 시점에 진행.
 - [ ] **`PositionTracker.flatten_all()` (PR #170에서 사용 안 함)** — 현재 `_kill_switch_flatten_all`이 직접 per-position 청산. 향후 PositionTracker에 broker 연결 헬퍼를 두는 리팩토링 검토
 
 ### 10.4 향후 검토 (Phase 4 이후)
