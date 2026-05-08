@@ -1,12 +1,13 @@
 # LLM-primary 의사결정 + RL 축소 통합 계획
 
-**Status**: v3.1 — code review 정정 패치 적용 (§8 1.2-a 타겟 정정, §3.1 PR #158 상태 정정, 명명/citation 일관성 수정)
+**Status**: v3.2 — Phase 0 + Phase 1 (1.0/1.1/1.2/1.3) + Phase 2 모두 구현 완료, Setup A/C paper rollout 활성화. Phase 3 Track A (운영자 게이트) + Phase 4 (RL aux 결정) 대기.
 **Created**: 2026-05-03
 **Updated**:
 - 2026-05-03 (v1 초안)
 - 2026-05-03 (v2 — 운영자 §7 결정 5건 반영, Phase 1을 1.1/1.2/1.3 분해, Phase 3을 Phase 2와 병행)
 - 2026-05-07 (v3 — 코드베이스 점검 결과 반영: §2.4 Adapter 통합 결정, §4 Phase 0 사전 정비 작업 추가, Phase 1.0 신설, §1.1 PR #159/#161/#162 머지 + paper validation 결과 반영)
-- 2026-05-07 (**v3.1 — code review 피드백 반영**: §8 Phase 1.2-a를 strategy_manager로 정정 (§2.4 Adapter 결정 일관성), §3.1 PR #158 OPEN으로 정정, §1.3 모듈 수 정렬, §5 Setup C 출처 인용 정정, §2.2 Phase A/B → Phase 2/4 명명 정렬)
+- 2026-05-07 (v3.1 — code review 피드백 반영: §8 Phase 1.2-a를 strategy_manager로 정정 (§2.4 Adapter 결정 일관성), §3.1 PR #158 OPEN으로 정정, §1.3 모듈 수 정렬, §5 Setup C 출처 인용 정정, §2.2 Phase A/B → Phase 2/4 명명 정렬)
+- 2026-05-08 (**v3.2 — 마이그레이션 실행 진행 상황 반영**: PR #158 + #163-#171 9건 머지로 Phase 0/1/2 완료. RL은 shadow_mode로 강등 (Setup A/C 활성), 운영 변경은 다음 cron 사이클부터 효력. §3.1 PR 표 + §9 추적 갱신, §10 신설 — Phase 3+ 후속 작업 정리)
 
 **Author**: 엔지니어링 (운영자 결정 반영)
 **Parent**: `docs/plans/2026-04-20-futures-paradigm-master.md`
@@ -153,17 +154,50 @@ WebSocket tick (futures_feed.py, tz-aware UTC)
 
 ## 3. 진행 중 작업과의 정합
 
-### 3.1 PR 상태 (v3.1 업데이트, 2026-05-07 기준)
+### 3.1 PR 상태 (v3.2 업데이트, 2026-05-08 기준)
+
+#### 3.1.1 인프라/회귀 fix (paper validation 단계)
 
 | PR | 상태 | 내용 |
 |----|------|------|
-| **#158** `chore/phase5-gate2-prep` | OPEN | Gate-2 사전 정비 (EOD 표기, night session, rl_trades TTL, TR ID 외부화) — Phase 0.1에서 머지 진행 |
-| **#159** `fix/paper-tz-aware-hot-path` | ✅ 5/4 머지 (c37214f) | tz-naive→aware 핫패스 수정 + retry exc_info |
-| **#160** `docs/llm-primary-rl-minimization-plan` (이 문서) | OPEN | v3.1 갱신 중 |
-| **#161** `fix/rl-mppo-utc-trading-time` | ✅ 5/6 머지 (4b7cf7f) | `_is_trading_time` / `_is_eod` UTC→KST 변환 누락 — PR #159 후 발견된 회귀 |
-| **#162** `fix/futures-slippage-price-source-time` | ✅ 5/6 머지 (2071b00) | slippage 경로의 `price_source_time` 누락 — paper broker `missing_price_source_time` 거부 차단 해소 |
+| **#158** `chore/phase5-gate2-prep` | ✅ 5/7 머지 (82ab9fc) | Gate-2 사전 정비 — Phase 0.1 |
+| **#159** `fix/paper-tz-aware-hot-path` | ✅ 5/4 머지 (c37214f) | tz-naive→aware 핫패스 + retry exc_info |
+| **#160** `docs/llm-primary-rl-minimization-plan` | ✅ 5/7 머지 (914b4e8) | v3.1 plan |
+| **#161** `fix/rl-mppo-utc-trading-time` | ✅ 5/6 머지 (4b7cf7f) | `_is_trading_time` / `_is_eod` UTC→KST |
+| **#162** `fix/futures-slippage-price-source-time` | ✅ 5/6 머지 (2071b00) | slippage `price_source_time` 누락 |
 
-5/7 paper validation: 3개 머지 fix(#159/#161/#162)가 모두 작동 확인, 첫 거래 2건 발생(둘 다 손실, §1.1 기록). PR #158은 별도로 Phase 0.1에서 머지 후 운영자 legal-review.md 검토 가능 상태로 진입.
+#### 3.1.2 Phase 0 — 사전 정비
+
+| PR | 상태 | 내용 |
+|----|------|------|
+| **#163** `feat/rl-shadow-mode` | ✅ 5/7 머지 (9788f6a) | Phase 0.3 — `RLMPPOEntry::shadow_mode` + V5 ClickHouse migration `kospi.rl_shadow_predictions` (6개월 TTL) + best-effort flush + dropped 카운터 |
+| **#164** `feat/kill-switch-flatten-and-conditions` | ✅ 5/7 머지 (6066b76) | Phase 0.2 (signaling-side) + Phase 0.4 — `_force_flat_callback` Redis 시그널, 3 conditions wired, news_pipeline_lag stream key 외부화 |
+| **#170** `feat/phase-0-2-kill-switch-consumer` | ✅ 5/8 머지 (17424e8) | Phase 0.2-c — orchestrator polls `kill_switch:force_flatten:requested` → `_kill_switch_flatten_all` (per-position market exits, idempotency via stream event id, Telegram alert) |
+
+#### 3.1.3 Phase 1 — LLM 의사결정 통합
+
+| PR | 상태 | 내용 |
+|----|------|------|
+| **#165** `feat/setup-adapters-phase1-0` | ✅ 5/7 머지 (5de0533) | Phase 1.0 — `SetupAEntryAdapter` / `SetupCEntryAdapter` (EntryRegistry 등록) + 2 YAML configs (`enabled: false` 초기) |
+| **#166** `feat/phase-1-1-llm-publisher-futures` | ✅ 5/7 머지 (7fd3377) | Phase 1.1-a/b — `LLMConfig.futures_prompt_addendum`, `LLMContextPublisher` futures 분기, `analysis_interval_minutes: 30→60` (운영자 §7-2), `request_refresh()` atomic try-acquire |
+| **#167** `feat/phase-1-1-setup-llm-tuning` | ✅ 5/7 머지 (274d55a) | Phase 1.1-c/d/e — `LLMTuningConfig` (regime/risk_score/confidence 기반 threshold scaling), Setup A/C YAML `llm_tuning` 섹션, `RiskMode.name` 정규화 |
+| **#168** `feat/phase-1-3-llm-size-scaling` | ✅ 5/7 머지 (2e31368) | Phase 1.3 — multi-tier sizer (risk_score 30/60/80 → ×1.0/0.7/0.4/0), `max_quantity_cap` (defense in depth), backward compat via `tiers: []` empty fallthrough |
+| **#169** `feat/phase-1-2-llm-veto` | ✅ 5/8 머지 (b5b4020) | Phase 1.2 — `_apply_llm_veto` (entry-only, exit/stop 비-veto), `LLMTuningConfig.veto_*` 4 필드, `MarketSignal.name` 정규화 (실제 enum 회귀 fix), `llm_veto_logger` 버퍼 (best-effort + dropped) |
+
+#### 3.1.4 Phase 2 — RL shadow 강등
+
+| PR | 상태 | 내용 |
+|----|------|------|
+| **#171** `feat/phase-2-rl-shadow-demotion` | ✅ 5/8 머지 (6e881ff) | Phase 2 — `_shadow_loggers_flush_loop` (60s 주기, 두 logger 독립 try/except, final flush on stop) + 운영 YAML 플립: `rl_mppo.shadow_mode: true`, `setup_a/c.strategy.enabled: true` |
+
+#### 3.1.5 운영 영향 (다음 cron 사이클부터)
+
+PR #171 머지로 다음 평일 08:55 KST 재시작 시:
+- ✅ Setup A/C 진입 활성 (LLM threshold + veto + size 모두 적용, paper-only since `futures_live.enabled: false`)
+- ✅ RL inference 계속 → `kospi.rl_shadow_predictions` 누적 (counterfactual 분석용)
+- ❌ RL trades 0건 (shadow_mode=True)
+- ✅ kill_switch 안전망 + Telegram alerts 활성
+- ✅ shadow_loggers 60s flush → ClickHouse
 
 ### 3.2 기존 v2 계획과의 합치
 
@@ -469,5 +503,63 @@ Phase 1.1 완료 + paper 1주 안정성 확인 즉시 (운영자 §7-5 결정):
 | 2026-05-07 | 5/7 paper validation: 3 fix 모두 작동, 2건 체결(둘 다 손실 -2.75/-3.35) — Apr 1-15 micro-loss 패턴 재확인 |
 | 2026-05-07 | v3 — 코드베이스 점검 결과 반영. §2.4 통합 아키텍처(Adapter 패턴) 확정, §4 Phase 0 사전 정비(kill_switch flatten / 3 stub conditions / RL shadow logging) 추가, Phase 1.0(Adapter 구현) 신설, §8 작업분해 갱신. Phase 5 standalone daemons은 Phase 4까지 deferred |
 | 2026-05-07 | **v3.1** — code review 피드백 5건 정정. §8 1.2-a 타겟을 `services/risk_filter/main.py`(잘못)에서 `services/trading/strategy_manager.py`로 정정 (§2.4 일관성). §3.1 PR #158 상태 ✅ → OPEN 정정. §1.3 모듈 수 14→16+ 정렬. §5 Setup C citation Phase 3 §10.1 → rl-repurposing-v1 §10.1. §2.2 Phase A/B → §4 Phase 2/4 명명 정렬 |
-| TBD | Phase 0 사전 정비 시작 |
-| TBD | Phase 1.0 (Adapter) → Phase 1.1 → 1.2 → 1.3 + Phase 3 Track A 병행 |
+| 2026-05-07 | PR #158 (Gate-2 prep), #160 (v3.1 plan) 머지 |
+| 2026-05-07 | **Phase 0** 완료: PR #163 (RL shadow_mode + V5 CH), #164 (kill_switch signaling + 3 conditions), #170 (kill_switch consumer wiring) 머지. flatten 안전망 작동 검증. |
+| 2026-05-07 | **Phase 1.0** 완료: PR #165 (Setup A/C adapters + EntryRegistry, `enabled: false` 초기). |
+| 2026-05-07 | **Phase 1.1** 완료: PR #166 (publisher futures + 1h + on-demand request_refresh), #167 (Setup A/C threshold scaling, MarketSignal/RiskMode `.name` 정규화). |
+| 2026-05-07 | **Phase 1.3** 완료: PR #168 (multi-tier sizer 30/60/80 → ×1.0/0.7/0.4/0 + cap defense). |
+| 2026-05-08 | **Phase 1.2** 완료: PR #169 (LLM veto authority entry-only + Telegram alert + best-effort logger; production enum-vs-str 회귀 정정). |
+| 2026-05-08 | **Phase 2** 완료: PR #171 (shadow loggers flush loop + 운영 YAML 플립 — `rl_mppo.shadow_mode: true`, Setup A/C `strategy.enabled: true`). 다음 cron 사이클부터 효력. |
+| 2026-05-08 | **v3.2** — Phase 0/1/2 마이그레이션 완료. §3.1/§9 갱신. §10 신설 (Phase 3+ 후속 작업). |
+| TBD | Phase 1 paper validation (1주) — Setup A/C 신호 발생률, LLM-veto counterfactual PnL, size scaling trade PnL 비교 |
+| TBD | Phase 3 Track A — 운영자 게이트 (legal review §1-6, KIS Real smoke test, 증거금, position-recovery drill, kill-switch unit 설치, `futures_live.enabled: true` 플립, Gate 3 14일 1계약 운용) |
+| TBD | Phase 4 (+3개월) — `signals_all` 누적 trade ≥ 50 + EV+ 3개월 → RL aux 활성 / 폐지 / 재학습 결정 |
+
+---
+
+## 10. Phase 3+ 후속 작업 (v3.2 신설)
+
+Phase 0/1/2가 모두 머지된 시점(2026-05-08)에 식별된 follow-up 작업. 우선순위는 **운영자 영역(Track A) > 모니터링/검증 > 인프라 정비** 순.
+
+### 10.1 운영자 영역 (Track A — Phase 3)
+
+Phase 5 verification 런북 (`docs/runbooks/phase5-verification.md`)의 Gate 1-3 절차 그대로:
+
+- [ ] `futures-legal-review.md` §1–6 운영자 작성 (KIS counsel + 세무사)
+- [ ] KIS Real-account API smoke test (production TR ID, balance 조회, WebSocket on real)
+- [ ] 증거금 입금 (≈ 2M KRW)
+- [ ] position-recovery 드릴 (Redis 키 인위 삭제 → sentinel/Telegram 검증)
+- [ ] systemd `kis-kill-switch` unit 프로덕션 설치 (§2.4 결정으로 4개 중 1개만 설치)
+- [ ] `config/futures_live.yaml::enabled: true` 플립 + Redis flag `futures:live:suspended` 삭제
+- [ ] Gate 3: 1계약 × 14일 paper-aligned live 운용 (`docs/runbooks/phase5-verification.md` §Gate 3)
+
+**Block 조건**: §10.3 provider instrumentation 완료 (kill_switch api_error/ch_insert_fail conditions 의 metric writer가 production 데이터를 발행해야 알 수 있음).
+
+### 10.2 검증 / 모니터링 (Phase 1 paper validation)
+
+PR #171이 운영을 활성화했으므로 다음 거래일부터 Phase 1 paper validation 데이터가 누적됨.
+
+- [ ] **첫 거래일 검증** (다음 평일 08:55–15:40 KST):
+  - `kospi.rl_shadow_predictions` row count > 0 (RL inference 가동)
+  - `kospi.signals_all` Setup A signal ≥ 1 (Setup A 일평균 목표)
+  - `kospi.rl_trades` row count = 0 (shadow_mode 효과)
+  - Telegram veto alerts (조건 충족 시)
+- [ ] **1주 누적 (5 거래일)**: Setup A daily ≥ 1, Setup C 주 ≥ 1, LLM-veto counterfactual PnL 비교
+- [ ] **2주 누적**: 시스템 안정성 (pipeline retry 경고/일, kill_switch 오발화 0)
+- [ ] **Grafana 대시보드** (Phase 2 PR #171 deferred follow-up): "Setup A/C signals/day" + "RL shadow LONG/SHORT/HOLD distribution" + "LLM regime → setup conversion rate" + "Counterfactual PnL"
+- [ ] **Counterfactual 분석 스크립트** (Phase 4 입력): `scripts/analysis/setup_vs_rl_shadow_counterfactual.py` — Setup A/C가 채택하지 않은 RL shadow 신호의 paper PnL 추적
+
+### 10.3 인프라 정비 follow-ups
+
+PR #163/#164에서 deferred한 항목 — Phase 3 Track A 시작 전 필수.
+
+- [ ] **shadow_loggers ClickHouse persistence 검증** (PR #171 머지 후 첫 사이클): `kospi.rl_shadow_predictions` + LLM veto 누적 row count, dropped batch counter (Prometheus 대시보드 추가 권장)
+- [ ] **`shared/kis/client.py`에 `kill_switch:metrics:api_error_rate_5min` writer 추가** (PR #164 stub provider이 현재 0.0 반환 중) — 5분 윈도우 EWMA로 KIS API error rate 발행
+- [ ] **`services/trading/position_tracker.py`에 `kill_switch:metrics:clickhouse_insert_fail_rate` writer 추가** — 배치 flush 실패 카운터를 5분 윈도우로 발행
+- [ ] **`PositionTracker.flatten_all()` (PR #170에서 사용 안 함)** — 현재 `_kill_switch_flatten_all`이 직접 per-position 청산. 향후 PositionTracker에 broker 연결 헬퍼를 두는 리팩토링 검토
+
+### 10.4 향후 검토 (Phase 4 이후)
+
+- [ ] Phase 4 결과에 따른 RL 폐지 / 재학습 / aux 활성화 결정 (운영자 §7-4 결정 그대로)
+- [ ] §2.4에서 deferred한 Phase 5 standalone daemons 3개 (`kis-decision-engine`, `kis-risk-filter`, `kis-order-router`) 설치 검토 — orchestrator 경로 통합으로 대체된 상태이므로 운영 안정성 입증 후 폐기 결정 가능
+- [ ] LLM-primary 의사결정의 stock 영역 확장 검토 (현재는 futures만 적용; stock universe quality scoring은 별도 fusion_ranker로 이미 적용 중)
