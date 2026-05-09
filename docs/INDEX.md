@@ -46,6 +46,7 @@ For "what's the project doing right now?" → [PROJECT_STATUS.md](PROJECT_STATUS
 | [DAILY_SCANNER_VERIFICATION.md](DAILY_SCANNER_VERIFICATION.md) | `scripts/daily_indicator_scanner.py` 검증 절차. |
 | [SYNTHETIC_CALIBRATION_AUTOMATION.md](SYNTHETIC_CALIBRATION_AUTOMATION.md) | 합성 calibration 자동화 (dev runner + 프로덕션 cron). |
 | [futures_rl_data_trust_runbook.md](futures_rl_data_trust_runbook.md) | KOSPI 200 선물 RL 데이터 신뢰 구간 운영. |
+| [CI_PARALLEL_NOTES.md](CI_PARALLEL_NOTES.md) | `pytest-xdist` 로컬 사용 가이드 + parallel-unsafe 테스트 목록 (CI는 serial 유지). |
 
 ## 📁 Sub-directories
 
