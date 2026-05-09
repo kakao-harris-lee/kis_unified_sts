@@ -21,6 +21,8 @@ KIS Unified Trading Platform은 한국투자증권 API를 활용한 알고리즘
 
 오랜만에 돌아온 운영자/엔지니어를 위한 한눈 대시보드: [docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md) — 현재 phase, active 전략, 자동화 스케줄, blocking risks, 미완 작업.
 
+전체 문서 인덱스 (architecture / strategy / operations 카테고리화): [docs/INDEX.md](docs/INDEX.md).
+
 ### 운영 런북 (Runbooks)
 
 `docs/runbooks/` 디렉토리에 운영 런북 모음. 상황별로 다음을 참조:
