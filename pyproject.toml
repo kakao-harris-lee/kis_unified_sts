@@ -91,6 +91,7 @@ dev = [
     "pytest-asyncio>=0.21",
     "pytest-cov>=4.1",
     "pytest-mock>=3.12",
+    "pytest-xdist>=3.5",  # Optional local parallel runs: `pytest -n auto`. NOT enabled in CI — see docs/CI_PARALLEL_NOTES.md.
     "hypothesis>=6.100",  # Property-based testing
     "aioresponses>=0.7.6",  # Mock aiohttp responses
     "fakeredis>=2.23.0",  # Mock Redis
