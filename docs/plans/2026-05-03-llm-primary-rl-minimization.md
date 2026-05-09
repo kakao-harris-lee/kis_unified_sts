@@ -1,6 +1,6 @@
 # LLM-primary 의사결정 + RL 축소 통합 계획
 
-**Status**: **v4.1 — Phase 2 cutover READY + plans 디렉토리 정비 완료**. 모든 엔지니어링 / 자동화 / 문서 / CI / 운영 도구 완료. 운영자는 Friday EOD pre-flight 한 번 실행 외 어떤 수동 작업도 필요 없음. `docs/plans/`는 Active 4 / Reference 17 / Archive 22로 카테고리화 (INDEX.md 참조). 다음 마일스톤은 Phase 2 가동 후(2026-05-11 Mon 08:55 KST) 거래일 데이터 누적 + Phase 3 Track A (운영자 영역) + Phase 4 (3개월 후).
+**Status**: **v4.2 — Phase 2 cutover READY + docs 전체 정비 완료**. 모든 엔지니어링 / 자동화 / 문서 / CI / 운영 도구 완료. 운영자는 Friday EOD pre-flight 한 번 실행 외 어떤 수동 작업도 필요 없음. 문서 인덱스 통일: `docs/INDEX.md` (top-level docs 카테고리화) + `docs/plans/INDEX.md` (Active 4 / Reference 17 / Archive 22). 다음 마일스톤은 Phase 2 가동 후(2026-05-11 Mon 08:55 KST) 거래일 데이터 누적 + Phase 3 Track A (운영자 영역) + Phase 4 (3개월 후).
 
 **v4.0 시점 인프라 요약** (수동 작업 0):
 - **자동 cron 4건**: orchestrator restart (08:55), daily verification (16:00 평일), weekly counterfactual (월 07:00), reports rotation (일 04:00)
@@ -24,6 +24,7 @@
 - 2026-05-08 (**v3.9 — Pre-flight check 자동화 완료**: PR #197 (`scripts/analysis/phase2_preflight_check.py` + cron wrapper) 머지. 운영자가 Friday EOD에 5개 수동 명령 대신 한 번의 스크립트 실행으로 8개 항목 (CH migrations / shadow_mode / Setup A·C enabled / futures_live disabled / crontab / Prometheus 알림 / Telegram creds) 자동 검증. End-to-end smoke ALL 8 PASS. 부수 발견: `futures_live.yaml` 중첩 구조 (`futures_live: { enabled: false }`) 첫 구현 정정. 20 단위 테스트. Phase 2 cutover 자동화 100% 완성.)
 - 2026-05-08 (**v4.0 — Phase 2 cutover READY (major milestone)**: PR #199 (README runbook 인덱스 확장), #200 (`docs/PROJECT_STATUS.md` 60초 dashboard), #201 (`reports/` 자동 rotation + Sun 04:00 KST cron) 3건 머지로 운영 인프라 마지막 폴리시. v4.0은 Phase 2 cutover 직전의 모든 엔지니어링/자동화/문서/CI/운영도구가 완성된 상태를 표시하는 major version. 다음 진행은 거래일 데이터 누적(2026-05-11 이후) → Phase 3 Track A (운영자) → Phase 4 (+3개월).)
 - 2026-05-09 (**v4.1 — `docs/plans/` 정리 완료**: PR #203 머지 — 43개 plan 파일을 Active 4 / Reference 17 / Archive 22로 분류. 보수적 참조 검색(`docs/`, README, CLAUDE.md, 모든 코드, YAML)으로 0 references인 22개만 `archive/` 디렉토리로 git mv (history 보존, rename 100% 감지). `docs/plans/INDEX.md` 신설로 카테고리화 + "How to add a new plan" 가이드 포함. PROJECT_STATUS.md Key References에 INDEX 링크 추가. 신규 onboarding 시 master plan 즉시 발견 가능.)
+- 2026-05-09 (**v4.2 — `docs/` 전체 정비 완료**: PR #205 머지 — `docs/plans/`와 동일 패턴을 top-level `docs/`에 적용. 0 references doc 4개 중 stale snapshot 2개(`HYBRID_PIPELINE_TRUST_STATUS.md` 2026-03-12, `STOCK_STRATEGY_DEPLOYMENT_STATUS.md` 2026-03-09)를 `docs/archive/`로 이동, operational/SLA 2개(`SYNTHETIC_CALIBRATION_AUTOMATION.md`, `performance_slas.md`)는 살아있는 문서로 보존. `docs/INDEX.md` 신설로 18개 top-level docs를 6개 카테고리(Project status / Architecture & API / Strategy & paper trading / Operations / Sub-directories / Archive)로 분류 + "How to add a new doc" 가이드. README "프로젝트 현황"에 INDEX 링크 추가.)
 
 **Author**: 엔지니어링 (운영자 결정 반영)
 **Parent**: `docs/plans/2026-04-20-futures-paradigm-master.md`
@@ -170,7 +171,7 @@ WebSocket tick (futures_feed.py, tz-aware UTC)
 
 ## 3. 진행 중 작업과의 정합
 
-### 3.1 PR 상태 (v4.1 업데이트, 2026-05-09 기준)
+### 3.1 PR 상태 (v4.2 업데이트, 2026-05-09 기준)
 
 #### 3.1.1 인프라/회귀 fix (paper validation 단계)
 
@@ -310,6 +311,19 @@ Phase 2 cutover 직전의 마지막 운영 인프라 정비 — 운영자/엔지
 - 신규 onboarding 시 \`docs/plans/INDEX.md\` 한 페이지로 master plan + 활성 plan 즉시 발견
 - 추후 plan 추가 시 hygiene 가이드 (Active → Reference → Archive 자연 이행) 명시
 - 모든 기존 citation은 Reference-tier로 유지되므로 broken link 0
+
+#### 3.1.14 `docs/` top-level 정비 (2026-05-09)
+
+§3.1.13의 패턴을 top-level `docs/`에도 동일 적용. 카테고리 INDEX 통일.
+
+| PR | 상태 | 내용 |
+|----|------|------|
+| **#205** `chore/docs-cleanup` | ✅ 5/9 머지 (5799213) | 0 references doc 4개 중 stale snapshot 2개(`HYBRID_PIPELINE_TRUST_STATUS.md` 2026-03-12, `STOCK_STRATEGY_DEPLOYMENT_STATUS.md` 2026-03-09)를 `docs/archive/`로 이동, operational/SLA 2개(`SYNTHETIC_CALIBRATION_AUTOMATION.md`, `performance_slas.md`)는 보존. `docs/INDEX.md` 신설 — 18개 top-level docs를 6개 카테고리로 분류 (Project status / Architecture & API / Strategy & paper trading / Operations / Sub-directories / Archive) + "How to add a new doc" 가이드. README "프로젝트 현황"에 INDEX 링크 추가 |
+
+##### 효과
+- 신규 onboarding 흐름 통일: `README.md` → `docs/INDEX.md` (top-level) → `docs/plans/INDEX.md` (plans) → 원하는 doc
+- `docs/plans/INDEX.md`와 `docs/INDEX.md`가 동일 패턴으로 통일 (Active / Reference / Archive + "How to add" 가이드)
+- 0 broken link, history 보존
 
 ##### Production 운영 절차 적용
 - 매주 월 07:00 KST: `0 7 * * 1 .../counterfactual_weekly.sh`
@@ -665,6 +679,7 @@ Phase 1.1 완료 + paper 1주 안정성 확인 즉시 (운영자 §7-5 결정):
 | 2026-05-08 | **운영 인프라 폴리시 batch**: PR #199 (README runbook 인덱스), #200 (PROJECT_STATUS.md dashboard), #201 (reports rotation cron) 3건 머지. 마지막 운영 인프라 정비 — onboarding 비용 절감 + 디스크 위생. |
 | 2026-05-08 | **v4.0 (major milestone)** — Phase 2 cutover READY. 모든 엔지니어링/자동화/문서/CI/운영도구 완성. §3.1.12 신설(PR #199–#201), 시점별 자동화 매트릭스 추가, §9 history 갱신. 다음 진행은 거래일 데이터 누적(2026-05-11~) → Phase 3 Track A → Phase 4 (3개월 후). |
 | 2026-05-09 | **v4.1** — `docs/plans/` 정비 완료. PR #203 머지로 43개 plan을 Active 4 / Reference 17 / Archive 22로 분류 + INDEX.md 신설. §3.1.13 신설, §9 history 갱신. 신규 onboarding cost 절감. |
+| 2026-05-09 | **v4.2** — `docs/` 전체 정비 완료. PR #205 머지로 stale snapshot 2개 archive + `docs/INDEX.md` 신설(18 docs → 6 카테고리). §3.1.14 신설, §9 history 갱신. `docs/INDEX.md` + `docs/plans/INDEX.md` 동일 패턴으로 통일. |
 | TBD | Phase 1 paper validation (1주) — Setup A/C 신호 발생률, LLM-veto counterfactual PnL, size scaling trade PnL 비교 |
 | TBD | Phase 3 Track A — 운영자 게이트 (legal review §1-6, KIS Real smoke test, 증거금, position-recovery drill, kill-switch unit 설치, `futures_live.enabled: true` 플립, Gate 3 14일 1계약 운용) |
 | TBD | Phase 4 (+3개월) — `signals_all` 누적 trade ≥ 50 + EV+ 3개월 → RL aux 활성 / 폐지 / 재학습 결정 |
