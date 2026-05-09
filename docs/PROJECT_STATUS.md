@@ -1,12 +1,12 @@
 # Project Status — KIS Unified Trading Platform
 
-**Last updated**: 2026-05-08
+**Last updated**: 2026-05-09
 **Update cadence**: After every plan version bump (v3.x → v3.y) or operational milestone.
 
 This is a quick-orientation dashboard for an operator or engineer returning to
 the project.  For full plan detail see
 [docs/plans/2026-05-03-llm-primary-rl-minimization.md](plans/2026-05-03-llm-primary-rl-minimization.md)
-(currently v4.0).
+(currently v4.1).
 
 ---
 
@@ -72,7 +72,7 @@ The cutover itself is a process restart triggered by the existing
 
 ## Key References
 
-- **Plan (master)**: [docs/plans/2026-05-03-llm-primary-rl-minimization.md](plans/2026-05-03-llm-primary-rl-minimization.md) — currently v4.0, full PR table in §3.1
+- **Plan (master)**: [docs/plans/2026-05-03-llm-primary-rl-minimization.md](plans/2026-05-03-llm-primary-rl-minimization.md) — currently v4.1, full PR table in §3.1
 - **All plans index**: [docs/plans/INDEX.md](plans/INDEX.md) — categorized Active / Reference / Archive
 - **Phase 2 startup runbook**: [docs/runbooks/phase2-startup.md](runbooks/phase2-startup.md)
 - **All runbooks**: [README.md § 운영 런북](../README.md#운영-런북-runbooks)
