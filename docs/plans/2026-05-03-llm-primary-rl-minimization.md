@@ -1,6 +1,6 @@
 # LLM-primary 의사결정 + RL 축소 통합 계획
 
-**Status**: **v4.3 — Phase 2 cutover READY + 로컬 CI 속도 옵션 추가**. 모든 엔지니어링 / 자동화 / 문서 / CI / 운영 도구 완료. 운영자는 Friday EOD pre-flight 한 번 실행 외 어떤 수동 작업도 필요 없음. 문서 인덱스 통일 + `pytest-xdist` 로컬 opt-in (CI는 안정 유지). 다음 마일스톤은 Phase 2 가동 후(2026-05-11 Mon 08:55 KST) 거래일 데이터 누적 + Phase 3 Track A (운영자 영역) + Phase 4 (3개월 후).
+**Status**: **v4.4 — Phase 2 cutover READY + memory/dashboard 정비 완료**. 모든 엔지니어링 / 자동화 / 문서 / CI / 운영 도구 완료. 운영자는 Friday EOD pre-flight 한 번 실행 외 어떤 수동 작업도 필요 없음. 문서 인덱스 통일 + `pytest-xdist` 로컬 opt-in + memory 264→63줄 인덱스화 + PROJECT_STATUS.md 41-PR 단계별 표. 다음 마일스톤은 Phase 2 가동 후(2026-05-11 Mon 08:55 KST) 거래일 데이터 누적 + Phase 3 Track A (운영자 영역) + Phase 4 (3개월 후).
 
 **v4.0 시점 인프라 요약** (수동 작업 0):
 - **자동 cron 4건**: orchestrator restart (08:55), daily verification (16:00 평일), weekly counterfactual (월 07:00), reports rotation (일 04:00)
@@ -26,6 +26,7 @@
 - 2026-05-09 (**v4.1 — `docs/plans/` 정리 완료**: PR #203 머지 — 43개 plan 파일을 Active 4 / Reference 17 / Archive 22로 분류. 보수적 참조 검색(`docs/`, README, CLAUDE.md, 모든 코드, YAML)으로 0 references인 22개만 `archive/` 디렉토리로 git mv (history 보존, rename 100% 감지). `docs/plans/INDEX.md` 신설로 카테고리화 + "How to add a new plan" 가이드 포함. PROJECT_STATUS.md Key References에 INDEX 링크 추가. 신규 onboarding 시 master plan 즉시 발견 가능.)
 - 2026-05-09 (**v4.2 — `docs/` 전체 정비 완료**: PR #205 머지 — `docs/plans/`와 동일 패턴을 top-level `docs/`에 적용. 0 references doc 4개 중 stale snapshot 2개(`HYBRID_PIPELINE_TRUST_STATUS.md` 2026-03-12, `STOCK_STRATEGY_DEPLOYMENT_STATUS.md` 2026-03-09)를 `docs/archive/`로 이동, operational/SLA 2개(`SYNTHETIC_CALIBRATION_AUTOMATION.md`, `performance_slas.md`)는 살아있는 문서로 보존. `docs/INDEX.md` 신설로 18개 top-level docs를 6개 카테고리(Project status / Architecture & API / Strategy & paper trading / Operations / Sub-directories / Archive)로 분류 + "How to add a new doc" 가이드. README "프로젝트 현황"에 INDEX 링크 추가.)
 - 2026-05-09 (**v4.3 — CI 속도 최적화 조사 + 로컬 opt-in 추가**: PR #207 머지 — `pytest-xdist` 로컬 사용 가능. 측정 결과 8m38s → 5m28s (-36%) 시간 절약 가능하나 2개 parallel-unsafe 테스트(`test_circuit_breaker_properties::test_config_round_trip` Hypothesis worker DB race + `test_graceful_shutdown::test_sigterm_during_trading` 실 Redis + 글로벌 signal handler 공유)에서 random fail 발생. Pre-cutover 직전 CI 신호 신뢰도(PR #191–#195 정상화) > 3분 절약 → CI workflow 미수정, dev dep만 추가. `docs/CI_PARALLEL_NOTES.md` 신설로 사용 가이드 + recommended path forward 문서화. cutover 안정 후 Hypothesis worker DB 격리 + Redis 격리 → 5회 연속 smoke 통과 후 CI 활성화 가능.)
+- 2026-05-10 (**v4.4 — Memory 인덱스화 + PROJECT_STATUS.md 41-PR 단계별 표**: PR #209 머지로 `docs/PROJECT_STATUS.md` "Recent PRs" 섹션을 1문단 요약 → 41 PR 4단계 그룹화 (Phase 2 wiring + §10.2 tooling + Startup runbook + Documentation polish + Production verification) + 각 PR 한 줄 설명. 동시에 user auto-memory 정리 (repo 외부): MEMORY.md 264→63줄로 trim, 3개 신규 topic file (`infrastructure.md`, `stock_pipeline.md`, `futures_rl_decisions.md`)로 verbose 내용 분리, 200줄 한도 한참 아래로. 운영자/엔지니어 onboarding 효율 추가 개선. + Day 3 production verification: `rotate_reports.sh`가 cron 등록 후 첫 자동 실행(Sun 04:00 KST) exit=0으로 정상 동작 확인.)
 
 **Author**: 엔지니어링 (운영자 결정 반영)
 **Parent**: `docs/plans/2026-04-20-futures-paradigm-master.md`
@@ -172,7 +173,7 @@ WebSocket tick (futures_feed.py, tz-aware UTC)
 
 ## 3. 진행 중 작업과의 정합
 
-### 3.1 PR 상태 (v4.3 업데이트, 2026-05-09 기준)
+### 3.1 PR 상태 (v4.4 업데이트, 2026-05-10 기준)
 
 #### 3.1.1 인프라/회귀 fix (paper validation 단계)
 
@@ -338,6 +339,22 @@ CI test job 속도 최적화 가능성 측정 + parallel 안전성 평가.
 - 개발자 로컬 feedback loop 36% 단축 가능 (`pytest tests/ -n auto`)
 - CI는 안정 유지 (방금 정상화한 PR #191–#195 결과 보호)
 - 향후 CI parallel 활성화 작업 단계가 문서화됨
+
+#### 3.1.16 Memory 인덱스화 + PROJECT_STATUS.md 41-PR 표 (2026-05-10)
+
+오늘 세션 누적 41 PR 시점에서 PROJECT_STATUS.md "Recent PRs" 섹션이 1문단 요약만 있어 underserve. + user auto-memory MEMORY.md가 264줄로 200줄 한도 초과 상태.
+
+| PR | 상태 | 내용 |
+|----|------|------|
+| **#209** `docs/project-status-recent-prs` | ✅ 5/10 머지 (2bc659d) | `docs/PROJECT_STATUS.md` "Recent PRs" 1문단 → 41 PR 4단계 그룹화 + 각 한 줄 설명. 단계: Phase 2 wiring(#168-#177) / §10.2 tooling(#178-#189) / Startup runbook + CI 정상화(#190-#202) / Documentation polish(#203-#208) / Production verification(Day 3 rotation cron first-fire) |
+
+##### 부수 작업 (repo 외부 — user auto-memory)
+- MEMORY.md 264줄 → 63줄 (200줄 한도 한참 아래)
+- 신규 3 topic files: `infrastructure.md` (45줄), `stock_pipeline.md` (126줄), `futures_rl_decisions.md` (75줄)
+- MEMORY.md를 진정한 인덱스로 변환 — 도메인별 한 줄 요약 + topic file 링크
+
+##### Day 3 production verification (2026-05-10)
+- `rotate_reports.sh` cron 등록 후 **첫 자동 실행** Sun 04:00 KST에 exit=0으로 정상 동작 (no-op as expected)
 
 ##### Production 운영 절차 적용
 - 매주 월 07:00 KST: `0 7 * * 1 .../counterfactual_weekly.sh`
@@ -695,6 +712,7 @@ Phase 1.1 완료 + paper 1주 안정성 확인 즉시 (운영자 §7-5 결정):
 | 2026-05-09 | **v4.1** — `docs/plans/` 정비 완료. PR #203 머지로 43개 plan을 Active 4 / Reference 17 / Archive 22로 분류 + INDEX.md 신설. §3.1.13 신설, §9 history 갱신. 신규 onboarding cost 절감. |
 | 2026-05-09 | **v4.2** — `docs/` 전체 정비 완료. PR #205 머지로 stale snapshot 2개 archive + `docs/INDEX.md` 신설(18 docs → 6 카테고리). §3.1.14 신설, §9 history 갱신. `docs/INDEX.md` + `docs/plans/INDEX.md` 동일 패턴으로 통일. |
 | 2026-05-09 | **v4.3** — CI 속도 최적화 조사 + 로컬 opt-in 완료. PR #207 머지로 pytest-xdist dev dep 추가 (CI 미수정, 36% 시간 절약 가능하나 2개 race 발견 → cutover 후 수정 예정). §3.1.15 신설, §9 history 갱신. |
+| 2026-05-10 | **v4.4** — Memory 인덱스화 + PROJECT_STATUS.md 41-PR 단계별 표 완료. PR #209 머지로 dashboard 추적 갱신 + 부수 작업으로 user auto-memory MEMORY.md를 264→63줄로 trim (3 topic files 분리). Day 3 production verification: rotation cron 첫 자동 실행 정상. §3.1.16 신설, §9 history 갱신. |
 | TBD | Phase 1 paper validation (1주) — Setup A/C 신호 발생률, LLM-veto counterfactual PnL, size scaling trade PnL 비교 |
 | TBD | Phase 3 Track A — 운영자 게이트 (legal review §1-6, KIS Real smoke test, 증거금, position-recovery drill, kill-switch unit 설치, `futures_live.enabled: true` 플립, Gate 3 14일 1계약 운용) |
 | TBD | Phase 4 (+3개월) — `signals_all` 누적 trade ≥ 50 + EV+ 3개월 → RL aux 활성 / 폐지 / 재학습 결정 |
