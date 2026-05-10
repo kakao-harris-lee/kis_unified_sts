@@ -1,6 +1,6 @@
 # LLM-primary 의사결정 + RL 축소 통합 계획
 
-**Status**: **v4.5 — Phase 2 cutover READY + Telegram 도메인 라우팅 hardening 완료**. 모든 엔지니어링 / 자동화 / 문서 / CI / 운영 도구 완료. 운영자는 Friday EOD pre-flight 한 번 실행 외 어떤 수동 작업도 필요 없음. 문서/메모리 인덱스 통일 + Telegram stock/futures/briefing 채널 silent leak 차단(no legacy fallback). 다음 마일스톤은 Phase 2 가동 후(2026-05-11 Mon 08:55 KST) 거래일 데이터 누적 + Phase 3 Track A (운영자 영역) + Phase 4 (3개월 후).
+**Status**: **v4.6 — Phase 2 cutover READY + Telegram 라우팅 footgun 완전 제거**. 모든 엔지니어링 / 자동화 / 문서 / CI / 운영 도구 완료. 운영자는 Friday EOD pre-flight 한 번 실행 외 어떤 수동 작업도 필요 없음. Telegram 라우팅: active 4 사이트 fix + dormant 2 footgun에 deprecation 가드. 다음 마일스톤은 Phase 2 가동 후(2026-05-11 Mon 08:55 KST) 거래일 데이터 누적 + Phase 3 Track A (운영자 영역) + Phase 4 (3개월 후).
 
 **v4.0 시점 인프라 요약** (수동 작업 0):
 - **자동 cron 4건**: orchestrator restart (08:55), daily verification (16:00 평일), weekly counterfactual (월 07:00), reports rotation (일 04:00)
@@ -28,6 +28,7 @@
 - 2026-05-09 (**v4.3 — CI 속도 최적화 조사 + 로컬 opt-in 추가**: PR #207 머지 — `pytest-xdist` 로컬 사용 가능. 측정 결과 8m38s → 5m28s (-36%) 시간 절약 가능하나 2개 parallel-unsafe 테스트(`test_circuit_breaker_properties::test_config_round_trip` Hypothesis worker DB race + `test_graceful_shutdown::test_sigterm_during_trading` 실 Redis + 글로벌 signal handler 공유)에서 random fail 발생. Pre-cutover 직전 CI 신호 신뢰도(PR #191–#195 정상화) > 3분 절약 → CI workflow 미수정, dev dep만 추가. `docs/CI_PARALLEL_NOTES.md` 신설로 사용 가이드 + recommended path forward 문서화. cutover 안정 후 Hypothesis worker DB 격리 + Redis 격리 → 5회 연속 smoke 통과 후 CI 활성화 가능.)
 - 2026-05-10 (**v4.4 — Memory 인덱스화 + PROJECT_STATUS.md 41-PR 단계별 표**: PR #209 머지로 `docs/PROJECT_STATUS.md` "Recent PRs" 섹션을 1문단 요약 → 41 PR 4단계 그룹화 (Phase 2 wiring + §10.2 tooling + Startup runbook + Documentation polish + Production verification) + 각 PR 한 줄 설명. 동시에 user auto-memory 정리 (repo 외부): MEMORY.md 264→63줄로 trim, 3개 신규 topic file (`infrastructure.md`, `stock_pipeline.md`, `futures_rl_decisions.md`)로 verbose 내용 분리, 200줄 한도 한참 아래로. 운영자/엔지니어 onboarding 효율 추가 개선. + Day 3 production verification: `rotate_reports.sh`가 cron 등록 후 첫 자동 실행(Sun 04:00 KST) exit=0으로 정상 동작 확인.)
 - 2026-05-10 (**v4.5 — Telegram 도메인 라우팅 hardening**: PR #211 머지 — 운영자가 보고한 "선물/주식 메시지 혼재" 이슈 수정. Root cause: `.env`의 `TELEGRAM_BOT_TOKEN=${TELEGRAM_STOCK_BOT_TOKEN}` aliasing + 4 사이트의 silent legacy fallback. 수정 4 사이트: (1) `services/trading/orchestrator.py` failover alerts — `SecretsManager.telegram_token(domain)` (legacy fallback 有) → `resolve_domain_credentials()` (no fallback), (2) `services/screener.py` — `TelegramConfig.from_env()` → `resolve_domain_credentials("stock")` 명시, (3) `shared/scanner/accumulation.py` — `TelegramConfig()` 기본값 → `resolve_domain_credentials("stock")` 명시 + early return, (4) `scripts/llm_nightly_analysis.py` — `TelegramNotifier()` no-arg → `notifier_for_domain("briefing")`. 회귀 가드: `TestNoSilentLegacyFallback` 3 tests 추가. 14 notification 테스트 통과.)
+- 2026-05-10 (**v4.6 — Telegram 라우팅 footgun 완전 제거**: PR #213 머지로 v4.5 audit에서 발견된 dormant footgun 2건 제거. (1) `shared/notification/telegram.py::get_telegram_notifier()` + `send_telegram()` — `DeprecationWarning` 추가, `notifier_for_domain()` 권고. (2) `shared/alerts/models.py::AlertConfig.from_env()` — `domain` keyword 추가 (명시 시 strict, no fallback). Active caller 0이지만 미래 잘못된 wiring 시 즉시 경고로 발견. BC 유지, 40 tests pass.)
 
 **Author**: 엔지니어링 (운영자 결정 반영)
 **Parent**: `docs/plans/2026-04-20-futures-paradigm-master.md`
@@ -174,7 +175,7 @@ WebSocket tick (futures_feed.py, tz-aware UTC)
 
 ## 3. 진행 중 작업과의 정합
 
-### 3.1 PR 상태 (v4.5 업데이트, 2026-05-10 기준)
+### 3.1 PR 상태 (v4.6 업데이트, 2026-05-10 기준)
 
 #### 3.1.1 인프라/회귀 fix (paper validation 단계)
 
@@ -370,6 +371,19 @@ CI test job 속도 최적화 가능성 측정 + parallel 안전성 평가.
 
 ##### 운영자 후속
 `TELEGRAM_FUTURES_CHAT_ID`를 다른 chat ID로 분리하면 텔레그램 UI에서 stock/futures가 별도 대화창으로 분리됨. 현재는 모두 5940357912로 동일하여 같은 대화창에 도착(코드는 정확하나 chat 자체가 같음).
+
+#### 3.1.18 Telegram dormant footgun deprecation (2026-05-10)
+
+§3.1.17 audit 후속. Active 사이트는 #211에서 모두 fix됐으나 dormant footgun 2건 (active caller 0이지만 미래 wiring 위험)에 deprecation 가드 추가.
+
+| PR | 상태 | 내용 |
+|----|------|------|
+| **#213** `fix/telegram-deprecate-generic-apis` | ✅ 5/10 머지 (400a3fd) | 2 dormant footgun에 deprecation/strict 가드: (1) `shared/notification/telegram.py::get_telegram_notifier()` + `send_telegram()` — `DeprecationWarning` 추가, `notifier_for_domain()` 권고 메시지. (2) `shared/alerts/models.py::AlertConfig.from_env()` — `domain` keyword 추가 (명시 시 `resolve_domain_credentials()` strict, 미명시 시 BC 유지를 위해 legacy 동작). 40 notification + alerts tests pass, 0 새 ruff 이슈 |
+
+##### Why deprecate-not-remove
+- BC 유지: 외부 스크립트 import 시 동작 유지
+- pytest 경고 노출 → 미래 잘못 사용 시 즉시 발견
+- `notifier_for_domain()` 명확한 마이그레이션 안내
 
 ##### Production 운영 절차 적용
 - 매주 월 07:00 KST: `0 7 * * 1 .../counterfactual_weekly.sh`
@@ -729,6 +743,7 @@ Phase 1.1 완료 + paper 1주 안정성 확인 즉시 (운영자 §7-5 결정):
 | 2026-05-09 | **v4.3** — CI 속도 최적화 조사 + 로컬 opt-in 완료. PR #207 머지로 pytest-xdist dev dep 추가 (CI 미수정, 36% 시간 절약 가능하나 2개 race 발견 → cutover 후 수정 예정). §3.1.15 신설, §9 history 갱신. |
 | 2026-05-10 | **v4.4** — Memory 인덱스화 + PROJECT_STATUS.md 41-PR 단계별 표 완료. PR #209 머지로 dashboard 추적 갱신 + 부수 작업으로 user auto-memory MEMORY.md를 264→63줄로 trim (3 topic files 분리). Day 3 production verification: rotation cron 첫 자동 실행 정상. §3.1.16 신설, §9 history 갱신. |
 | 2026-05-10 | **v4.5** — Telegram 도메인 라우팅 hardening 완료. PR #211 머지로 4 사이트의 silent legacy fallback 제거 (orchestrator failover / screener / accumulation scanner / llm_nightly_analysis). 운영자 보고("선물/주식 메시지 혼재") root cause 해결. 회귀 가드 3 tests 추가. §3.1.17 신설, §9 history 갱신. |
+| 2026-05-10 | **v4.6** — Telegram 라우팅 footgun 완전 제거. PR #213 머지로 dormant footgun 2건(`get_telegram_notifier()` + `send_telegram()`, `AlertConfig.from_env()`)에 deprecation/strict 가드 추가. Active caller 0이지만 미래 wiring 위험 차단. §3.1.18 신설, §9 history 갱신. |
 | TBD | Phase 1 paper validation (1주) — Setup A/C 신호 발생률, LLM-veto counterfactual PnL, size scaling trade PnL 비교 |
 | TBD | Phase 3 Track A — 운영자 게이트 (legal review §1-6, KIS Real smoke test, 증거금, position-recovery drill, kill-switch unit 설치, `futures_live.enabled: true` 플립, Gate 3 14일 1계약 운용) |
 | TBD | Phase 4 (+3개월) — `signals_all` 누적 trade ≥ 50 + EV+ 3개월 → RL aux 활성 / 폐지 / 재학습 결정 |

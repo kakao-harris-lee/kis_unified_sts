@@ -6,7 +6,7 @@
 This is a quick-orientation dashboard for an operator or engineer returning to
 the project.  For full plan detail see
 [docs/plans/2026-05-03-llm-primary-rl-minimization.md](plans/2026-05-03-llm-primary-rl-minimization.md)
-(currently v4.5).
+(currently v4.6).
 
 ---
 
@@ -72,7 +72,7 @@ The cutover itself is a process restart triggered by the existing
 
 ## Key References
 
-- **Plan (master)**: [docs/plans/2026-05-03-llm-primary-rl-minimization.md](plans/2026-05-03-llm-primary-rl-minimization.md) — currently v4.5, full PR table in §3.1
+- **Plan (master)**: [docs/plans/2026-05-03-llm-primary-rl-minimization.md](plans/2026-05-03-llm-primary-rl-minimization.md) — currently v4.6, full PR table in §3.1
 - **All plans index**: [docs/plans/INDEX.md](plans/INDEX.md) — categorized Active / Reference / Archive
 - **Phase 2 startup runbook**: [docs/runbooks/phase2-startup.md](runbooks/phase2-startup.md)
 - **All runbooks**: [README.md § 운영 런북](../README.md#운영-런북-runbooks)
@@ -124,7 +124,7 @@ Total: **41 PRs (#168–#208)** assembled over 2 days. Live list: `git log --one
 - **#205** — archive 2 stale snapshots + `docs/INDEX.md`
 - **#206** — plan v4.1 → v4.2
 - **#207** — pytest-xdist as opt-in dev tool (CI keeps serial; 2 parallel-unsafe tests documented for post-cutover fix)
-- **#208** — plan v4.2 → v4.5
+- **#208** — plan v4.2 → v4.6
 
 ### Production verification (Day 3)
 - 2026-05-10 04:00 KST: `rotate_reports.sh` first-fired automatically (exit=0, no-op as expected — no files past retention threshold yet)
