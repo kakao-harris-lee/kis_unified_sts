@@ -12,7 +12,6 @@ from shared.notification.telegram import (
     resolve_domain_credentials,
 )
 
-
 DOMAIN_ENV_KEYS = [
     "TELEGRAM_BOT_TOKEN",
     "TELEGRAM_CHAT_ID",
@@ -110,3 +109,48 @@ class TestNotifierForDomain:
 
         tokens = {stock.token, futures.token, briefing.token}  # type: ignore[union-attr]
         assert tokens == {"STK_TOK", "FUT_TOK", "BRF_TOK"}
+
+
+class TestNoSilentLegacyFallback:
+    """The .env in this repo aliases TELEGRAM_BOT_TOKEN=${TELEGRAM_STOCK_BOT_TOKEN}.
+
+    A futures/briefing domain that resolves to legacy as a fallback would
+    silently leak messages to the stock channel.  These regression tests
+    pin the no-fallback behaviour of resolve_domain_credentials and
+    notifier_for_domain.
+    """
+
+    def test_futures_with_only_legacy_set_returns_empty(self, monkeypatch):
+        """If TELEGRAM_FUTURES_* is unset and only TELEGRAM_BOT_TOKEN is
+        present, futures must NOT fall back to it.  Returning ('', '')
+        is the right outcome — caller will refuse to create the notifier
+        and log a clear "credentials missing" warning instead of leaking.
+        """
+        monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "LEGACY_STOCK_ALIASED_TOKEN")
+        monkeypatch.setenv("TELEGRAM_CHAT_ID", "LEGACY_STOCK_ALIASED_CHAT")
+        # TELEGRAM_FUTURES_* intentionally NOT set
+        token, chat_id = resolve_domain_credentials("futures")
+        assert token == ""
+        assert chat_id == ""
+        assert notifier_for_domain("futures") is None
+
+    def test_briefing_with_only_legacy_set_returns_empty(self, monkeypatch):
+        monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "LEGACY_TOKEN")
+        monkeypatch.setenv("TELEGRAM_CHAT_ID", "LEGACY_CHAT")
+        token, chat_id = resolve_domain_credentials("briefing")
+        assert token == ""
+        assert chat_id == ""
+        assert notifier_for_domain("briefing") is None
+
+    def test_partial_futures_creds_still_no_fallback(self, monkeypatch):
+        """Only TELEGRAM_FUTURES_BOT_TOKEN set (no chat_id) — partial
+        config must NOT trigger legacy fallback for the missing chat_id.
+        """
+        monkeypatch.setenv("TELEGRAM_FUTURES_BOT_TOKEN", "FUT_TOK")
+        monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "LEGACY_TOK")
+        monkeypatch.setenv("TELEGRAM_CHAT_ID", "LEGACY_CHAT")
+        # TELEGRAM_FUTURES_CHAT_ID NOT set
+        token, chat_id = resolve_domain_credentials("futures")
+        assert token == "FUT_TOK"
+        assert chat_id == ""  # NOT "LEGACY_CHAT"
+        assert notifier_for_domain("futures") is None  # incomplete creds → None

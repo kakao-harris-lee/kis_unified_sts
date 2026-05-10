@@ -1009,24 +1009,24 @@ class TradingOrchestrator:
         send_telegram_alerts = bool(failover_cfg.get("send_telegram_alerts", True))
         if self.config.enable_telegram and send_telegram_alerts:
             try:
-                from shared.config.secrets import SecretsManager
-                from shared.notification.telegram import TelegramNotifier
+                from shared.notification.telegram import (
+                    TelegramNotifier,
+                    resolve_domain_credentials,
+                )
 
                 domain = (
                     self.config.asset_class
                     if self.config.asset_class in ("stock", "futures")
                     else None
                 )
-                bot_token = (
-                    self.config.telegram_token
-                    or SecretsManager.telegram_token(domain)
-                    or ""
-                )
-                chat_id = (
-                    self.config.telegram_chat_id
-                    or SecretsManager.telegram_chat_id(domain)
-                    or ""
-                )
+                # Use resolve_domain_credentials (NOT SecretsManager.telegram_token)
+                # to avoid the silent legacy fallback to TELEGRAM_BOT_TOKEN.
+                # If futures env is empty for any reason, the legacy fallback
+                # would route futures alerts to the stock channel because
+                # `.env` aliases TELEGRAM_BOT_TOKEN=${TELEGRAM_STOCK_BOT_TOKEN}.
+                env_token, env_chat = resolve_domain_credentials(domain)
+                bot_token = self.config.telegram_token or env_token
+                chat_id = self.config.telegram_chat_id or env_chat
                 if bot_token and chat_id:
                     telegram_notifier = TelegramNotifier(
                         bot_token=bot_token,

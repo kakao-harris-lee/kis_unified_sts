@@ -436,11 +436,18 @@ async def run_screener(config: ScreenerConfig) -> None:
     notify_interval = max(0.0, config.notify_interval_seconds)
     notifier: TelegramNotifier | None = None
     if config.telegram_enabled:
-        tg_cfg = TelegramConfig.from_env()
-        if tg_cfg.is_configured:
-            notifier = TelegramNotifier(tg_cfg)
+        # Screener is stock-only: route explicitly to TELEGRAM_STOCK_*.
+        # Avoids the silent fallback `TelegramConfig.from_env()` would do
+        # if TELEGRAM_BOT_TOKEN happened to be unset / pointed elsewhere.
+        from shared.notification.telegram import resolve_domain_credentials
+
+        token, chat_id = resolve_domain_credentials("stock")
+        if token and chat_id:
+            notifier = TelegramNotifier(TelegramConfig(token=token, chat_id=chat_id))
         else:
-            logger.warning("Screener telegram enabled but credentials missing")
+            logger.warning(
+                "Screener telegram enabled but TELEGRAM_STOCK_* credentials missing"
+            )
 
     # Pre-load previous-day volumes for opening_volume_surge strategy.
     prev_vol_cache = PrevDayVolumeCache()

@@ -528,24 +528,39 @@ class AccumulationScanner:
         if candidates:
             await self.publish_candidates(candidates)
 
-            # Optional Telegram notification
+            # Optional Telegram notification — accumulation scanner is
+            # stock-side only.  Route explicitly to TELEGRAM_STOCK_* to
+            # avoid the legacy fallback that `TelegramConfig()` defaults
+            # to (`TELEGRAM_BOT_TOKEN`).
             try:
                 from services.monitoring.notifier import (
                     TelegramConfig,
                     TelegramNotifier,
                 )
+                from shared.notification.telegram import (
+                    resolve_domain_credentials,
+                )
 
-                notifier = TelegramNotifier(TelegramConfig())
-                top_5 = candidates[:5]
-                message = f"📊 Accumulation Scan ({datetime.now().strftime('%Y-%m-%d')})\n\n"
-                message += f"Found {len(candidates)} candidates\n\n"
-                message += "Top 5:\n"
-                for c in top_5:
-                    message += f"• {c.code} ({c.name}): {c.score}\n"
-                    message += f"  OBV:{c.obv_score:.0f} RVOL:{c.rvol_score:.0f} "
-                    message += f"COMP:{c.compression_score:.0f} RS:{c.strength_score:.0f}\n"
+                token, chat_id = resolve_domain_credentials("stock")
+                if not token or not chat_id:
+                    logger.debug(
+                        "Accumulation scanner: TELEGRAM_STOCK_* missing, "
+                        "skipping notification"
+                    )
+                else:
+                    notifier = TelegramNotifier(
+                        TelegramConfig(token=token, chat_id=chat_id)
+                    )
+                    top_5 = candidates[:5]
+                    message = f"📊 Accumulation Scan ({datetime.now().strftime('%Y-%m-%d')})\n\n"
+                    message += f"Found {len(candidates)} candidates\n\n"
+                    message += "Top 5:\n"
+                    for c in top_5:
+                        message += f"• {c.code} ({c.name}): {c.score}\n"
+                        message += f"  OBV:{c.obv_score:.0f} RVOL:{c.rvol_score:.0f} "
+                        message += f"COMP:{c.compression_score:.0f} RS:{c.strength_score:.0f}\n"
 
-                await notifier.send(message)
+                    await notifier.send(message)
             except ImportError:
                 logger.debug("Telegram notifier not available")
             except Exception as e:
