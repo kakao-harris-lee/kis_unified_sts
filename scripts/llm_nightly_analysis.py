@@ -32,15 +32,23 @@ async def main():
     logger.info("LLM Nightly Analysis Started")
 
     try:
-        # Import notifier if available
+        # Import notifier if available — LLM nightly analysis is the
+        # full-portfolio briefing (stock + futures), so it MUST go to
+        # TELEGRAM_BRIEFING_* (not the legacy `TELEGRAM_BOT_TOKEN`,
+        # which `.env` aliases to TELEGRAM_STOCK_*).
         notifier = None
         try:
-            from shared.notification import TelegramNotifier
+            from shared.notification import notifier_for_domain
 
-            notifier = TelegramNotifier(
+            notifier = notifier_for_domain(
+                "briefing",
                 notification_start="00:00",
                 notification_end="23:59",
             )
+            if notifier is None:
+                logger.warning(
+                    "TELEGRAM_BRIEFING_* credentials missing; running without notifications"
+                )
         except ImportError:
             logger.warning("TelegramNotifier not available, running without notifications")
 
