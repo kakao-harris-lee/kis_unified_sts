@@ -42,26 +42,36 @@ class AlertConfig:
     rate_limit_seconds: int = 60
 
     @classmethod
-    def from_env(cls, **overrides) -> "AlertConfig":
+    def from_env(
+        cls, *, domain: Optional[str] = None, **overrides
+    ) -> "AlertConfig":
         """Create config loading credentials from environment variables.
 
-        This is the recommended way to create AlertConfig for production.
-        Credentials are loaded from:
-        - TELEGRAM_BOT_TOKEN
-        - TELEGRAM_CHAT_ID
-        - EMAIL_PASSWORD
-
         Args:
+            domain: ``"stock"`` / ``"futures"`` / ``"briefing"`` to read
+                domain-specific Telegram credentials (TELEGRAM_<DOMAIN>_*).
+                Strict — no legacy fallback to TELEGRAM_BOT_TOKEN, since
+                this repo's ``.env`` aliases the legacy keys to the stock
+                channel and that would silently leak futures/briefing
+                messages.  Pass ``None`` only for legacy single-domain
+                deployments.
             **overrides: Override any field (e.g., rate_limit_seconds=30)
 
         Returns:
-            AlertConfig with credentials loaded from environment
+            AlertConfig with credentials loaded from environment.
         """
         from shared.config.secrets import SecretsManager
+        from shared.notification.telegram import resolve_domain_credentials
+
+        if domain is not None:
+            tok, chat = resolve_domain_credentials(domain)
+        else:
+            tok = SecretsManager.telegram_token()
+            chat = SecretsManager.telegram_chat_id()
 
         return cls(
-            telegram_token=overrides.get("telegram_token", SecretsManager.telegram_token()),
-            telegram_chat_id=overrides.get("telegram_chat_id", SecretsManager.telegram_chat_id()),
+            telegram_token=overrides.get("telegram_token", tok),
+            telegram_chat_id=overrides.get("telegram_chat_id", chat),
             email_smtp_host=overrides.get("email_smtp_host"),
             email_smtp_port=overrides.get("email_smtp_port", 587),
             email_username=overrides.get("email_username"),
