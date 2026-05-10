@@ -1,6 +1,6 @@
 # Project Status — KIS Unified Trading Platform
 
-**Last updated**: 2026-05-09
+**Last updated**: 2026-05-10
 **Update cadence**: After every plan version bump (v3.x → v3.y) or operational milestone.
 
 This is a quick-orientation dashboard for an operator or engineer returning to
@@ -79,14 +79,52 @@ The cutover itself is a process restart triggered by the existing
 - **CLAUDE.md (Claude Code instructions)**: [../CLAUDE.md](../CLAUDE.md)
 - **Grafana — Phase 2 monitoring**: dashboard UID `llm-primary-phase2-monitoring`
 
-## Recent PRs (last 14 days)
+## Recent PRs (Phase 2 cutover assembly: 2026-05-08~09)
 
-See `git log --oneline --since='14 days ago' main` for the full list.  Phase
-2 cutover was assembled across PRs #158–#199 (~40 PRs over 6 days).
+Total: **41 PRs (#168–#208)** assembled over 2 days. Live list: `git log --oneline --since='14 days ago' main`.
 
-Highlights:
-- #158 (Gate-2 prep) → #171 (Phase 2 wiring)
-- #173/#174 (kill_switch real-data conditions)
-- #178 (Counterfactual analysis script) + #180 (Grafana dashboard) + #184 (weekly cron) + #186 (Prometheus alerts) + #188 (daily verification) + #197 (pre-flight check)
-- #190 (Phase 2 startup runbook) + #199 (README index)
-- #191–#195 (CI signal restoration batch)
+### Phase 2 wiring + kill_switch (Day 1)
+- **#168/#169/#170/#171** — multi-tier LLM size scaling, LLM veto authority, kill-switch consumer, shadow-logger flush + demote RL + activate Setup A/C
+- **#172** — plan v3.1 → v3.2 tracking
+- **#173/#174** — KIS API error rate + ClickHouse insert fail trackers (kill_switch 6/6 conditions on real data)
+- **#175** — plan v3.2 → v3.3
+- **#176/#177** — DRY refactor: `RollingRateTracker` base class + docstring cleanup
+
+### §10.2 Counterfactual + monitoring tooling (Day 1)
+- **#178** — counterfactual analysis script (Setup A/C vs RL shadow)
+- **#179** — plan v3.3 → v3.4
+- **#180** — Grafana dashboard `llm-primary-phase2-monitoring` (7 panels)
+- **#181** — plan v3.4 → v3.5 (V4/V5 ClickHouse migrations applied to production)
+- **#182/#183** — `rl_shadow_logger` unit tests + stale docstring cleanup
+- **#184** — counterfactual weekly cron + OHLCV schema bug fix
+- **#185** — `clickhouse_client_from_env` 8123 → 9000 native port fallback (DRY with config)
+- **#186** — Prometheus 5 metrics + 4 alerts for shadow loggers
+- **#187** — plan v3.5 → v3.6
+- **#188** — Phase 2 daily verification cron (4 gates)
+- **#189** — plan v3.6 → v3.7
+
+### Phase 2 startup runbook + CI signal restoration (Day 1→2)
+- **#190** — `docs/runbooks/phase2-startup.md`
+- **#191** — unbreak CI test collection (16 ImportErrors → 0; sibling test dir `__init__.py` collision)
+- **#192** — fix time-fragile test_orchestrator
+- **#193** — fix retraining pipeline TELEGRAM env independence
+- **#194** — exclude `tests/performance/` from main test job
+- **#195** — fix time-fragile test_ats_routing AUTO band
+- **#196** — plan v3.7 → v3.8
+- **#197** — pre-flight check (8-gate operator-run)
+- **#198** — plan v3.8 → v3.9
+- **#199** — README runbook index expanded
+- **#200** — `docs/PROJECT_STATUS.md` 60s dashboard
+- **#201** — `reports/` rotation cron (Sun 04:00 KST)
+- **#202** — plan v3.9 → v4.0 (major milestone — Phase 2 cutover READY)
+
+### Documentation polish (Day 2)
+- **#203** — archive 22 completed plans + `docs/plans/INDEX.md`
+- **#204** — plan v4.0 → v4.1
+- **#205** — archive 2 stale snapshots + `docs/INDEX.md`
+- **#206** — plan v4.1 → v4.2
+- **#207** — pytest-xdist as opt-in dev tool (CI keeps serial; 2 parallel-unsafe tests documented for post-cutover fix)
+- **#208** — plan v4.2 → v4.3
+
+### Production verification (Day 3)
+- 2026-05-10 04:00 KST: `rotate_reports.sh` first-fired automatically (exit=0, no-op as expected — no files past retention threshold yet)
