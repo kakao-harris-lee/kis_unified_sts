@@ -340,14 +340,25 @@ _default_notifier: Optional[TelegramNotifier] = None
 
 
 def get_telegram_notifier() -> TelegramNotifier:
-    """Get or create default TelegramNotifier instance
+    """Get or create default TelegramNotifier instance.
 
-    Warning:
-        기본 생성자는 generic TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID 를 읽는다.
-        .env에서 generic 변수가 TELEGRAM_STOCK_*에 aliasing 된 경우 주식 채널로
-        메시지가 전송되므로 도메인(futures/briefing)이 필요하면
-        `notifier_for_domain()`을 사용해야 한다.
+    .. deprecated::
+        Use :func:`notifier_for_domain` (``"stock"`` / ``"futures"`` /
+        ``"briefing"``) instead.  This function reads the generic
+        ``TELEGRAM_BOT_TOKEN`` / ``TELEGRAM_CHAT_ID`` env, which this
+        repo's ``.env`` aliases to ``TELEGRAM_STOCK_*``.  Calling from
+        a futures or briefing context will silently leak messages to
+        the stock channel.
     """
+    import warnings
+
+    warnings.warn(
+        "get_telegram_notifier() reads generic TELEGRAM_BOT_TOKEN; "
+        "futures/briefing callers will silently leak to the stock "
+        "channel.  Use notifier_for_domain('stock'|'futures'|'briefing').",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     global _default_notifier
     if _default_notifier is None:
         _default_notifier = TelegramNotifier()
@@ -416,6 +427,21 @@ def notifier_for_domain(
 
 
 async def send_telegram(message: str, is_critical: bool = False):
-    """Convenience function to send telegram message"""
+    """Convenience function to send telegram message.
+
+    .. deprecated::
+        Use :func:`notifier_for_domain` and call ``send_message`` on
+        the returned notifier — this convenience function inherits the
+        generic-env footgun from :func:`get_telegram_notifier`.
+    """
+    import warnings
+
+    warnings.warn(
+        "send_telegram() inherits get_telegram_notifier()'s generic-env "
+        "footgun (futures/briefing callers leak to stock channel).  Use "
+        "notifier_for_domain(domain).send_message(...) instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     notifier = get_telegram_notifier()
     await notifier.send_message(message, is_critical=is_critical)
