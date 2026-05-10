@@ -1,6 +1,6 @@
 # LLM-primary 의사결정 + RL 축소 통합 계획
 
-**Status**: **v4.4 — Phase 2 cutover READY + memory/dashboard 정비 완료**. 모든 엔지니어링 / 자동화 / 문서 / CI / 운영 도구 완료. 운영자는 Friday EOD pre-flight 한 번 실행 외 어떤 수동 작업도 필요 없음. 문서 인덱스 통일 + `pytest-xdist` 로컬 opt-in + memory 264→63줄 인덱스화 + PROJECT_STATUS.md 41-PR 단계별 표. 다음 마일스톤은 Phase 2 가동 후(2026-05-11 Mon 08:55 KST) 거래일 데이터 누적 + Phase 3 Track A (운영자 영역) + Phase 4 (3개월 후).
+**Status**: **v4.5 — Phase 2 cutover READY + Telegram 도메인 라우팅 hardening 완료**. 모든 엔지니어링 / 자동화 / 문서 / CI / 운영 도구 완료. 운영자는 Friday EOD pre-flight 한 번 실행 외 어떤 수동 작업도 필요 없음. 문서/메모리 인덱스 통일 + Telegram stock/futures/briefing 채널 silent leak 차단(no legacy fallback). 다음 마일스톤은 Phase 2 가동 후(2026-05-11 Mon 08:55 KST) 거래일 데이터 누적 + Phase 3 Track A (운영자 영역) + Phase 4 (3개월 후).
 
 **v4.0 시점 인프라 요약** (수동 작업 0):
 - **자동 cron 4건**: orchestrator restart (08:55), daily verification (16:00 평일), weekly counterfactual (월 07:00), reports rotation (일 04:00)
@@ -27,6 +27,7 @@
 - 2026-05-09 (**v4.2 — `docs/` 전체 정비 완료**: PR #205 머지 — `docs/plans/`와 동일 패턴을 top-level `docs/`에 적용. 0 references doc 4개 중 stale snapshot 2개(`HYBRID_PIPELINE_TRUST_STATUS.md` 2026-03-12, `STOCK_STRATEGY_DEPLOYMENT_STATUS.md` 2026-03-09)를 `docs/archive/`로 이동, operational/SLA 2개(`SYNTHETIC_CALIBRATION_AUTOMATION.md`, `performance_slas.md`)는 살아있는 문서로 보존. `docs/INDEX.md` 신설로 18개 top-level docs를 6개 카테고리(Project status / Architecture & API / Strategy & paper trading / Operations / Sub-directories / Archive)로 분류 + "How to add a new doc" 가이드. README "프로젝트 현황"에 INDEX 링크 추가.)
 - 2026-05-09 (**v4.3 — CI 속도 최적화 조사 + 로컬 opt-in 추가**: PR #207 머지 — `pytest-xdist` 로컬 사용 가능. 측정 결과 8m38s → 5m28s (-36%) 시간 절약 가능하나 2개 parallel-unsafe 테스트(`test_circuit_breaker_properties::test_config_round_trip` Hypothesis worker DB race + `test_graceful_shutdown::test_sigterm_during_trading` 실 Redis + 글로벌 signal handler 공유)에서 random fail 발생. Pre-cutover 직전 CI 신호 신뢰도(PR #191–#195 정상화) > 3분 절약 → CI workflow 미수정, dev dep만 추가. `docs/CI_PARALLEL_NOTES.md` 신설로 사용 가이드 + recommended path forward 문서화. cutover 안정 후 Hypothesis worker DB 격리 + Redis 격리 → 5회 연속 smoke 통과 후 CI 활성화 가능.)
 - 2026-05-10 (**v4.4 — Memory 인덱스화 + PROJECT_STATUS.md 41-PR 단계별 표**: PR #209 머지로 `docs/PROJECT_STATUS.md` "Recent PRs" 섹션을 1문단 요약 → 41 PR 4단계 그룹화 (Phase 2 wiring + §10.2 tooling + Startup runbook + Documentation polish + Production verification) + 각 PR 한 줄 설명. 동시에 user auto-memory 정리 (repo 외부): MEMORY.md 264→63줄로 trim, 3개 신규 topic file (`infrastructure.md`, `stock_pipeline.md`, `futures_rl_decisions.md`)로 verbose 내용 분리, 200줄 한도 한참 아래로. 운영자/엔지니어 onboarding 효율 추가 개선. + Day 3 production verification: `rotate_reports.sh`가 cron 등록 후 첫 자동 실행(Sun 04:00 KST) exit=0으로 정상 동작 확인.)
+- 2026-05-10 (**v4.5 — Telegram 도메인 라우팅 hardening**: PR #211 머지 — 운영자가 보고한 "선물/주식 메시지 혼재" 이슈 수정. Root cause: `.env`의 `TELEGRAM_BOT_TOKEN=${TELEGRAM_STOCK_BOT_TOKEN}` aliasing + 4 사이트의 silent legacy fallback. 수정 4 사이트: (1) `services/trading/orchestrator.py` failover alerts — `SecretsManager.telegram_token(domain)` (legacy fallback 有) → `resolve_domain_credentials()` (no fallback), (2) `services/screener.py` — `TelegramConfig.from_env()` → `resolve_domain_credentials("stock")` 명시, (3) `shared/scanner/accumulation.py` — `TelegramConfig()` 기본값 → `resolve_domain_credentials("stock")` 명시 + early return, (4) `scripts/llm_nightly_analysis.py` — `TelegramNotifier()` no-arg → `notifier_for_domain("briefing")`. 회귀 가드: `TestNoSilentLegacyFallback` 3 tests 추가. 14 notification 테스트 통과.)
 
 **Author**: 엔지니어링 (운영자 결정 반영)
 **Parent**: `docs/plans/2026-04-20-futures-paradigm-master.md`
@@ -173,7 +174,7 @@ WebSocket tick (futures_feed.py, tz-aware UTC)
 
 ## 3. 진행 중 작업과의 정합
 
-### 3.1 PR 상태 (v4.4 업데이트, 2026-05-10 기준)
+### 3.1 PR 상태 (v4.5 업데이트, 2026-05-10 기준)
 
 #### 3.1.1 인프라/회귀 fix (paper validation 단계)
 
@@ -355,6 +356,20 @@ CI test job 속도 최적화 가능성 측정 + parallel 안전성 평가.
 
 ##### Day 3 production verification (2026-05-10)
 - `rotate_reports.sh` cron 등록 후 **첫 자동 실행** Sun 04:00 KST에 exit=0으로 정상 동작 (no-op as expected)
+
+#### 3.1.17 Telegram 도메인 라우팅 hardening (2026-05-10)
+
+운영자가 "선물/주식 메시지 혼재" 보고. 코드 audit 결과 4 사이트의 silent legacy fallback이 root cause로 식별됨. 모두 수정 + 회귀 가드 추가.
+
+| PR | 상태 | 내용 |
+|----|------|------|
+| **#211** `fix/telegram-domain-routing` | ✅ 5/10 머지 (1840e7b) | 4 사이트의 generic env silent fallback 제거: (1) `services/trading/orchestrator.py:1020-1028` failover alerts — `SecretsManager.telegram_token(domain)` (legacy fallback 有) → `resolve_domain_credentials()` (no fallback), (2) `services/screener.py:439` — `TelegramConfig.from_env()` → `resolve_domain_credentials("stock")` 명시, (3) `shared/scanner/accumulation.py:538` — `TelegramConfig()` 기본값 → `resolve_domain_credentials("stock")` 명시 + early return, (4) `scripts/llm_nightly_analysis.py:40` — `TelegramNotifier()` no-arg → `notifier_for_domain("briefing")`. 회귀 가드: `TestNoSilentLegacyFallback` 3 tests (futures-only-legacy → empty / briefing-only-legacy → empty / partial-creds → no fallback). 14/14 notification tests pass |
+
+##### Root cause 요약
+`.env`이 `TELEGRAM_BOT_TOKEN=${TELEGRAM_STOCK_BOT_TOKEN}`으로 alias → generic env 사용 시 STOCK 채널로 누수. SecretsManager의 legacy fallback (`or cls.get(legacy_key)`)이 이를 silent하게 활용했음.
+
+##### 운영자 후속
+`TELEGRAM_FUTURES_CHAT_ID`를 다른 chat ID로 분리하면 텔레그램 UI에서 stock/futures가 별도 대화창으로 분리됨. 현재는 모두 5940357912로 동일하여 같은 대화창에 도착(코드는 정확하나 chat 자체가 같음).
 
 ##### Production 운영 절차 적용
 - 매주 월 07:00 KST: `0 7 * * 1 .../counterfactual_weekly.sh`
@@ -713,6 +728,7 @@ Phase 1.1 완료 + paper 1주 안정성 확인 즉시 (운영자 §7-5 결정):
 | 2026-05-09 | **v4.2** — `docs/` 전체 정비 완료. PR #205 머지로 stale snapshot 2개 archive + `docs/INDEX.md` 신설(18 docs → 6 카테고리). §3.1.14 신설, §9 history 갱신. `docs/INDEX.md` + `docs/plans/INDEX.md` 동일 패턴으로 통일. |
 | 2026-05-09 | **v4.3** — CI 속도 최적화 조사 + 로컬 opt-in 완료. PR #207 머지로 pytest-xdist dev dep 추가 (CI 미수정, 36% 시간 절약 가능하나 2개 race 발견 → cutover 후 수정 예정). §3.1.15 신설, §9 history 갱신. |
 | 2026-05-10 | **v4.4** — Memory 인덱스화 + PROJECT_STATUS.md 41-PR 단계별 표 완료. PR #209 머지로 dashboard 추적 갱신 + 부수 작업으로 user auto-memory MEMORY.md를 264→63줄로 trim (3 topic files 분리). Day 3 production verification: rotation cron 첫 자동 실행 정상. §3.1.16 신설, §9 history 갱신. |
+| 2026-05-10 | **v4.5** — Telegram 도메인 라우팅 hardening 완료. PR #211 머지로 4 사이트의 silent legacy fallback 제거 (orchestrator failover / screener / accumulation scanner / llm_nightly_analysis). 운영자 보고("선물/주식 메시지 혼재") root cause 해결. 회귀 가드 3 tests 추가. §3.1.17 신설, §9 history 갱신. |
 | TBD | Phase 1 paper validation (1주) — Setup A/C 신호 발생률, LLM-veto counterfactual PnL, size scaling trade PnL 비교 |
 | TBD | Phase 3 Track A — 운영자 게이트 (legal review §1-6, KIS Real smoke test, 증거금, position-recovery drill, kill-switch unit 설치, `futures_live.enabled: true` 플립, Gate 3 14일 1계약 운용) |
 | TBD | Phase 4 (+3개월) — `signals_all` 누적 trade ≥ 50 + EV+ 3개월 → RL aux 활성 / 폐지 / 재학습 결정 |
