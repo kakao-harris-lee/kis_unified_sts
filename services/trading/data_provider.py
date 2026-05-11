@@ -100,6 +100,18 @@ class DataProviderConfig:
     # Failover: Data staleness threshold in seconds (trigger failover if no data)
     staleness_threshold_seconds: float = 10.0
 
+    # Failover: Minimum fresh-symbol ratio (fresh / subscribed).  Trigger
+    # failover when ratio drops below this even if some symbols still tick.
+    # Catches the silent-stall case where most symbols stop ticking but
+    # health check's `_last_tick_ts` still looks fresh because of a few
+    # noisy symbols (observed 2026-05-11: 13:09–13:35 KST stock orchestrator
+    # had 0 fresh trade-target symbols but health check passed because
+    # non-universe dip-candidate symbols kept producing ticks).
+    # Set to 0.0 to disable (legacy behaviour: only fail when ALL symbols
+    # are stale).  Default 0.5 = require at least half the subscribed
+    # symbols to be fresh.
+    min_fresh_ratio: float = 0.5
+
     # Failover: Limit per-cycle REST polling scope to avoid rate-limit storms.
     rest_fallback_max_symbols: int | None = None
 
@@ -765,9 +777,26 @@ class MarketDataProvider:
                 isinstance(fresh_symbol_count, int)
                 and isinstance(symbol_count, int)
                 and symbol_count > 0
-                and fresh_symbol_count <= 0
             ):
-                return False, health_status
+                # Hard failure: ALL symbols stale.
+                if fresh_symbol_count <= 0:
+                    return False, health_status
+                # Silent-stall guard: too few fresh symbols even though
+                # overall `_last_tick_ts` looks recent.  See
+                # DataProviderConfig.min_fresh_ratio for context.
+                min_ratio = self.config.min_fresh_ratio
+                if min_ratio > 0.0:
+                    fresh_ratio = fresh_symbol_count / symbol_count
+                    if fresh_ratio < min_ratio:
+                        logger.warning(
+                            "Silent-stall guard: fresh_ratio=%.2f (%d/%d) < %.2f, "
+                            "marking unhealthy",
+                            fresh_ratio,
+                            fresh_symbol_count,
+                            symbol_count,
+                            min_ratio,
+                        )
+                        return False, health_status
 
             return staleness < self.config.staleness_threshold_seconds, health_status
 
