@@ -39,8 +39,11 @@ and active since the same day.
 ## Pre-flight check (Friday EOD before the Monday cutover)
 
 **One-command shortcut**: `bash scripts/cron/phase2_preflight_check.sh`
-runs all 8 checks below (5 from this section + crontab + Prometheus +
-Telegram credentials).  Exit code 0 if every critical check passes.
+runs all 9 checks below (5 from this section + crontab + Prometheus +
+Telegram credentials + **strategies_loadable_futures runtime check** —
+PR #216 regression guard for the 2026-05-11 cutover blocker where YAML
+said `enabled: true` but the orchestrator silently loaded only
+`rl_mppo`).  Exit code 0 if every critical check passes.
 JSON output: `python -m scripts.analysis.phase2_preflight_check --json`.
 
 Or run the individual checks below if you prefer to inspect each
