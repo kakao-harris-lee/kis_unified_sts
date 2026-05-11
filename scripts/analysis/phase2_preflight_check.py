@@ -360,6 +360,87 @@ def _check_prometheus_alerts(report: PreflightReport) -> None:
         ))
 
 
+_EXPECTED_FUTURES_STRATEGIES: frozenset[str] = frozenset(
+    {"rl_mppo", "setup_a_gap_reversion", "setup_c_event_reaction"}
+)
+
+
+def _check_strategies_loadable(report: PreflightReport) -> None:
+    """Verify StrategyManager would actually load the 3 Phase 2 strategies.
+
+    Regression guard for the 2026-05-11 cutover blocker (PR #215):
+    Setup A/C had ``strategy.enabled: true`` in their YAML but `sts rl
+    paper` defaulted to `--strategy rl_mppo`, which forced the
+    orchestrator to load just one strategy.  The pre-flight YAML-only
+    check (`strategy_enabled_setup_a/c`) passed, but the runtime
+    orchestrator silently dropped Setup A/C — observed only after
+    market hours when 0 signals had fired.
+
+    This check runs the same `enabled_only=True` discovery the
+    orchestrator uses (`StrategyFactory.create_all`) so the gate passes
+    iff the orchestrator would actually instantiate all 3 strategies.
+    """
+    try:
+        from shared.strategy.registry import (
+            StrategyFactory,
+            register_builtin_components,
+        )
+
+        register_builtin_components()
+        strategies = StrategyFactory.create_all(
+            asset_class="futures",
+            enabled_only=True,
+        )
+        loaded = {s.name for s in strategies}
+    except Exception as e:
+        report.checks.append(CheckResult(
+            name="strategies_loadable_futures",
+            status="FAIL",
+            observed=f"StrategyFactory.create_all raised: {e}",
+            expected=f"all of {sorted(_EXPECTED_FUTURES_STRATEGIES)} instantiated",
+            detail=(
+                "Cannot determine which strategies would load.  Check "
+                "config/strategies/futures/*.yaml for syntax errors and "
+                "ensure all referenced entry/exit/sizer types are registered."
+            ),
+        ))
+        return
+
+    missing = _EXPECTED_FUTURES_STRATEGIES - loaded
+    extra = loaded - _EXPECTED_FUTURES_STRATEGIES
+    if missing:
+        report.checks.append(CheckResult(
+            name="strategies_loadable_futures",
+            status="FAIL",
+            observed=f"loaded={sorted(loaded)} missing={sorted(missing)}",
+            expected=f"all of {sorted(_EXPECTED_FUTURES_STRATEGIES)}",
+            detail=(
+                "Phase 2 cutover requires rl_mppo (shadow) + Setup A/C "
+                "(primary) all three loaded.  Verify each YAML's "
+                "`strategy.enabled: true` AND that no runtime override "
+                "(e.g. `sts rl paper --strategy <name>`) restricts loading."
+            ),
+        ))
+    elif extra:
+        report.checks.append(CheckResult(
+            name="strategies_loadable_futures",
+            status="WARN",
+            observed=f"loaded={sorted(loaded)} extra={sorted(extra)}",
+            expected=f"exactly {sorted(_EXPECTED_FUTURES_STRATEGIES)}",
+            detail=(
+                "Unexpected strategy enabled.  Check whether the extra "
+                "strategy's risk profile is intentional for Phase 2."
+            ),
+        ))
+    else:
+        report.checks.append(CheckResult(
+            name="strategies_loadable_futures",
+            status="PASS",
+            observed=f"loaded={sorted(loaded)}",
+            expected=f"all of {sorted(_EXPECTED_FUTURES_STRATEGIES)}",
+        ))
+
+
 def _check_telegram_credentials(report: PreflightReport) -> None:
     """TELEGRAM_BRIEFING_* (or fallback TELEGRAM_FUTURES_*) creds present."""
     bot_token = os.environ.get("TELEGRAM_BRIEFING_BOT_TOKEN") or os.environ.get(
@@ -434,6 +515,7 @@ def run() -> PreflightReport:
     _check_shadow_mode(report)
     _check_setup_strategies_enabled(report)
     _check_futures_live_disabled(report)
+    _check_strategies_loadable(report)
     _check_crontab_entries(report)
     _check_prometheus_alerts(report)
     _check_telegram_credentials(report)

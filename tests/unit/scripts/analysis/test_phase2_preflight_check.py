@@ -311,3 +311,78 @@ class TestOutputRenderers:
         assert len(parsed["checks"]) == 2
         assert parsed["checks"][0]["name"] == "a"
         assert parsed["checks"][1]["status"] == "FAIL"
+
+
+# ---------------------------------------------------------------------------
+# _check_strategies_loadable — regression guard for 2026-05-11 cutover blocker
+# ---------------------------------------------------------------------------
+
+
+class TestStrategiesLoadable:
+    """Regression guard for PR #215: pre-flight YAML check passed but
+    StrategyFactory loaded only rl_mppo because `sts rl paper`
+    defaulted to `--strategy rl_mppo`.  Setup A/C silently dropped.
+    This gate runs the same loader the orchestrator uses.
+    """
+
+    class _FakeStrategy:
+        def __init__(self, name: str):
+            self.name = name
+
+    def _patch_loader(self, monkeypatch, strategies_or_exception):
+        from shared.strategy.registry import StrategyFactory
+
+        if isinstance(strategies_or_exception, Exception):
+            def patched(asset_class, enabled_only):
+                raise strategies_or_exception
+        else:
+            def patched(asset_class, enabled_only):
+                return [self._FakeStrategy(n) for n in strategies_or_exception]
+
+        monkeypatch.setattr(StrategyFactory, "create_all", staticmethod(patched))
+
+    def test_all_three_loaded_passes(self, monkeypatch):
+        self._patch_loader(monkeypatch, [
+            "rl_mppo", "setup_a_gap_reversion", "setup_c_event_reaction",
+        ])
+        report = PreflightReport()
+        _mod._check_strategies_loadable(report)
+        assert report.checks[0].status == "PASS"
+
+    def test_only_rl_mppo_loaded_fails(self, monkeypatch):
+        """Reproduces 2026-05-11 cutover blocker — setup A/C not loaded."""
+        self._patch_loader(monkeypatch, ["rl_mppo"])
+        report = PreflightReport()
+        _mod._check_strategies_loadable(report)
+        assert report.checks[0].status == "FAIL"
+        assert "setup_a_gap_reversion" in report.checks[0].observed
+        assert "setup_c_event_reaction" in report.checks[0].observed
+
+    def test_one_setup_missing_fails(self, monkeypatch):
+        self._patch_loader(monkeypatch, ["rl_mppo", "setup_a_gap_reversion"])
+        report = PreflightReport()
+        _mod._check_strategies_loadable(report)
+        assert report.checks[0].status == "FAIL"
+        assert "setup_c_event_reaction" in report.checks[0].observed
+
+    def test_extra_strategy_warns_not_fails(self, monkeypatch):
+        """Unexpected extra strategy is WARN (not blocking) — operator
+        may have intentionally enabled an experimental strategy.
+        """
+        self._patch_loader(monkeypatch, [
+            "rl_mppo",
+            "setup_a_gap_reversion",
+            "setup_c_event_reaction",
+            "experimental_strategy",
+        ])
+        report = PreflightReport()
+        _mod._check_strategies_loadable(report)
+        assert report.checks[0].status == "WARN"
+        assert "experimental_strategy" in report.checks[0].observed
+
+    def test_loader_exception_fails(self, monkeypatch):
+        self._patch_loader(monkeypatch, ValueError("bad config"))
+        report = PreflightReport()
+        _mod._check_strategies_loadable(report)
+        assert report.checks[0].status == "FAIL"
+        assert "raised" in report.checks[0].observed
