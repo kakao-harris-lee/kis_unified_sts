@@ -2418,9 +2418,15 @@ def rl_slippage(model: str, retrain: bool, config: str):
 @click.option("--config", "-c", default="ml/rl_mppo.yaml", help="Config file path")
 @click.option(
     "--strategy",
-    default="rl_mppo",
+    default=None,
     show_default=True,
-    help="Futures strategy profile name",
+    help=(
+        "Futures strategy profile name.  Default (None) loads ALL "
+        "strategies whose `strategy.enabled: true` in "
+        "`config/strategies/futures/*.yaml` (Phase 2 cutover: rl_mppo "
+        "shadow + Setup A/C primary).  Pass an explicit name to load "
+        "only that single strategy (legacy single-profile mode)."
+    ),
 )
 @click.option(
     "--symbol",
