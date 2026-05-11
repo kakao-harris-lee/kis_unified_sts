@@ -1,6 +1,6 @@
 # LLM-primary 의사결정 + RL 축소 통합 계획
 
-**Status**: **v4.6 — Phase 2 cutover READY + Telegram 라우팅 footgun 완전 제거**. 모든 엔지니어링 / 자동화 / 문서 / CI / 운영 도구 완료. 운영자는 Friday EOD pre-flight 한 번 실행 외 어떤 수동 작업도 필요 없음. Telegram 라우팅: active 4 사이트 fix + dormant 2 footgun에 deprecation 가드. 다음 마일스톤은 Phase 2 가동 후(2026-05-11 Mon 08:55 KST) 거래일 데이터 누적 + Phase 3 Track A (운영자 영역) + Phase 4 (3개월 후).
+**Status**: **v4.7 — Phase 2 cutover LIVE (incident 발생 + 복구 + 회귀 가드 완료)**. 2026-05-11 첫 거래일 cutover blocker (`sts rl paper --strategy rl_mppo` CLI default가 single-strategy mode 강제 → Setup A/C 사일런트 드롭)를 운영자 보고로 발견. 즉시 fix(PR #215) + 회귀 가드(PR #216 9th pre-flight gate). RL은 정상 shadow_mode (5519+ rows). Setup A는 오늘 윈도우 미스(09:10–10:30, 10:48 복구) — 일시적 1-day 영향. 내일(2026-05-12) 08:55 KST cron 자동 가동 시 새 코드로 정상 작동 예상. 다음 마일스톤은 Phase 3 Track A (운영자 영역) + Phase 4 (3개월 후).
 
 **v4.0 시점 인프라 요약** (수동 작업 0):
 - **자동 cron 4건**: orchestrator restart (08:55), daily verification (16:00 평일), weekly counterfactual (월 07:00), reports rotation (일 04:00)
@@ -29,6 +29,7 @@
 - 2026-05-10 (**v4.4 — Memory 인덱스화 + PROJECT_STATUS.md 41-PR 단계별 표**: PR #209 머지로 `docs/PROJECT_STATUS.md` "Recent PRs" 섹션을 1문단 요약 → 41 PR 4단계 그룹화 (Phase 2 wiring + §10.2 tooling + Startup runbook + Documentation polish + Production verification) + 각 PR 한 줄 설명. 동시에 user auto-memory 정리 (repo 외부): MEMORY.md 264→63줄로 trim, 3개 신규 topic file (`infrastructure.md`, `stock_pipeline.md`, `futures_rl_decisions.md`)로 verbose 내용 분리, 200줄 한도 한참 아래로. 운영자/엔지니어 onboarding 효율 추가 개선. + Day 3 production verification: `rotate_reports.sh`가 cron 등록 후 첫 자동 실행(Sun 04:00 KST) exit=0으로 정상 동작 확인.)
 - 2026-05-10 (**v4.5 — Telegram 도메인 라우팅 hardening**: PR #211 머지 — 운영자가 보고한 "선물/주식 메시지 혼재" 이슈 수정. Root cause: `.env`의 `TELEGRAM_BOT_TOKEN=${TELEGRAM_STOCK_BOT_TOKEN}` aliasing + 4 사이트의 silent legacy fallback. 수정 4 사이트: (1) `services/trading/orchestrator.py` failover alerts — `SecretsManager.telegram_token(domain)` (legacy fallback 有) → `resolve_domain_credentials()` (no fallback), (2) `services/screener.py` — `TelegramConfig.from_env()` → `resolve_domain_credentials("stock")` 명시, (3) `shared/scanner/accumulation.py` — `TelegramConfig()` 기본값 → `resolve_domain_credentials("stock")` 명시 + early return, (4) `scripts/llm_nightly_analysis.py` — `TelegramNotifier()` no-arg → `notifier_for_domain("briefing")`. 회귀 가드: `TestNoSilentLegacyFallback` 3 tests 추가. 14 notification 테스트 통과.)
 - 2026-05-10 (**v4.6 — Telegram 라우팅 footgun 완전 제거**: PR #213 머지로 v4.5 audit에서 발견된 dormant footgun 2건 제거. (1) `shared/notification/telegram.py::get_telegram_notifier()` + `send_telegram()` — `DeprecationWarning` 추가, `notifier_for_domain()` 권고. (2) `shared/alerts/models.py::AlertConfig.from_env()` — `domain` keyword 추가 (명시 시 strict, no fallback). Active caller 0이지만 미래 잘못된 wiring 시 즉시 경고로 발견. BC 유지, 40 tests pass.)
+- 2026-05-11 (**v4.7 — Phase 2 cutover LIVE 첫 거래일 incident + 즉시 복구 + 회귀 가드**: 운영자 보고("선물 급등 중인데 거래 0건")로 cutover blocker 발견. Root cause: `sts rl paper`의 CLI default `--strategy rl_mppo`가 single-strategy mode 강제 → orchestrator가 `strategy_names = ["rl_mppo"] if name else None` 분기로 Setup A/C 미로드. PR #211 daily verification gate 4개는 모두 PASS (YAML enabled, shadow_mode 등) 상태였지만 runtime loading 실패 미감지. 즉시 조치 3단계: (1) 진단 — Redis status `strategies=["rl_mppo"]`만 노출, ClickHouse 5519 shadow rows + 0 setup signals + 0 trades 확인. (2) PR #215 — CLI default `"rl_mppo"` → `None`, 머지 후 production graceful stop + restart with new code → `strategies=["rl_mppo", "setup_a_gap_reversion", "setup_c_event_reaction"]` 3개 모두 로드 검증. (3) PR #216 — 9th pre-flight gate `strategies_loadable_futures` 추가, `StrategyFactory.create_all(asset_class="futures", enabled_only=True)` 실제 호출하여 runtime 시뮬레이션 (YAML 체크와 분리). 5 negative tests로 이번 시나리오 정확히 재현. Setup A 윈도우(09:10–10:30) 미스로 오늘 1-day 영향 — 내일 08:55 KST 자동 가동 시 정상 작동 예상.)
 
 **Author**: 엔지니어링 (운영자 결정 반영)
 **Parent**: `docs/plans/2026-04-20-futures-paradigm-master.md`
@@ -175,7 +176,7 @@ WebSocket tick (futures_feed.py, tz-aware UTC)
 
 ## 3. 진행 중 작업과의 정합
 
-### 3.1 PR 상태 (v4.6 업데이트, 2026-05-10 기준)
+### 3.1 PR 상태 (v4.7 업데이트, 2026-05-11 기준)
 
 #### 3.1.1 인프라/회귀 fix (paper validation 단계)
 
@@ -384,6 +385,41 @@ CI test job 속도 최적화 가능성 측정 + parallel 안전성 평가.
 - BC 유지: 외부 스크립트 import 시 동작 유지
 - pytest 경고 노출 → 미래 잘못 사용 시 즉시 발견
 - `notifier_for_domain()` 명확한 마이그레이션 안내
+
+#### 3.1.19 Phase 2 cutover LIVE incident: Setup A/C 사일런트 드롭 (2026-05-11)
+
+**시점**: 2026-05-11 (월) 첫 거래일 cutover. 운영자 보고 "코스피 선물 급등 중인데 거래 0건" 으로 발견.
+
+##### Root cause
+`sts rl paper` CLI default `--strategy rl_mppo`가 single-strategy mode 강제. `services/trading/orchestrator.py:1129-1131`:
+```python
+strategy_names = ([self.config.strategy_name] if self.config.strategy_name else None)
+```
+→ `strategy_name="rl_mppo"`이면 `["rl_mppo"]` 단일 → Setup A/C 미로드. YAML `strategy.enabled: true` 무관.
+
+##### 진단 데이터 (10:48 KST 시점)
+- ✅ RL inference 정상: `kospi.rl_shadow_predictions` 5519 rows
+- ✅ shadow_mode invariant: `rl_trades_today=0`
+- ❌ **Setup A/C signals: 0** (8 pre-flight gates는 모두 PASS였음)
+- ❌ Redis status `strategies=["rl_mppo"]` 단일
+
+##### 즉시 조치 PR
+
+| PR | 상태 | 내용 |
+|----|------|------|
+| **#215** `fix/sts-rl-paper-default-multistrategy` | ✅ 5/11 머지 (e23b1a4) | CLI default `"rl_mppo"` → `None`. Production graceful stop + restart with new code → `strategies=["rl_mppo", "setup_a_gap_reversion", "setup_c_event_reaction"]` 3 모두 로드 검증 (Redis status). 중복 process 정리 (manual restart PID + cron-managed PID 공존). |
+| **#216** `feat/preflight-strategies-loadable-gate` | ✅ 5/11 머지 (20b7a13) | 9th pre-flight gate `strategies_loadable_futures` 추가. `StrategyFactory.create_all(asset_class="futures", enabled_only=True)` 호출하여 orchestrator runtime 동작 시뮬레이션 (YAML 체크와 분리). 5 negative tests (only rl_mppo / 1 missing / 4번째 strategy WARN / loader exception) 추가, 25 preflight tests pass. Runbook(`docs/runbooks/phase2-startup.md`) 업데이트 (8 → 9 checks) |
+
+##### 1-day 영향
+- Setup A 윈도우 (`valid_minutes_min: 10, valid_minutes_max: 90` = 09:10–10:30 KST) — 복구 시점(10:48)이 18분 늦음
+- 오늘은 Setup A 발화 불가능
+- Setup C는 macro 이벤트 기반 — 오늘 이벤트 없으면 정상적으로 0
+- 16:00 daily verification에서 `setup_a_signals_today >= 1` gate FAIL 예상하지만 일시적
+- 내일(2026-05-12 화) 08:55 KST cron 자동 가동 시 새 코드로 09:00부터 정상 작동 예상
+
+##### 교훈 / 회귀 가드
+- **Pre-flight gate 차이**: 기존 8 gate는 YAML 검증만 — runtime 동작과 괴리 있음. PR #216의 `strategies_loadable_futures` gate가 동일한 패턴 미래 차단.
+- **CLI default change BC**: `sts rl paper --strategy rl_mppo` 명시 호출하던 외부 스크립트는 영향 없음. default 의존하던 cron만 영향 (의도된 변경).
 
 ##### Production 운영 절차 적용
 - 매주 월 07:00 KST: `0 7 * * 1 .../counterfactual_weekly.sh`
@@ -744,6 +780,7 @@ Phase 1.1 완료 + paper 1주 안정성 확인 즉시 (운영자 §7-5 결정):
 | 2026-05-10 | **v4.4** — Memory 인덱스화 + PROJECT_STATUS.md 41-PR 단계별 표 완료. PR #209 머지로 dashboard 추적 갱신 + 부수 작업으로 user auto-memory MEMORY.md를 264→63줄로 trim (3 topic files 분리). Day 3 production verification: rotation cron 첫 자동 실행 정상. §3.1.16 신설, §9 history 갱신. |
 | 2026-05-10 | **v4.5** — Telegram 도메인 라우팅 hardening 완료. PR #211 머지로 4 사이트의 silent legacy fallback 제거 (orchestrator failover / screener / accumulation scanner / llm_nightly_analysis). 운영자 보고("선물/주식 메시지 혼재") root cause 해결. 회귀 가드 3 tests 추가. §3.1.17 신설, §9 history 갱신. |
 | 2026-05-10 | **v4.6** — Telegram 라우팅 footgun 완전 제거. PR #213 머지로 dormant footgun 2건(`get_telegram_notifier()` + `send_telegram()`, `AlertConfig.from_env()`)에 deprecation/strict 가드 추가. Active caller 0이지만 미래 wiring 위험 차단. §3.1.18 신설, §9 history 갱신. |
+| 2026-05-11 | **v4.7** — Phase 2 cutover LIVE 첫 거래일 incident 발견 + 즉시 복구 + 회귀 가드. 운영자 보고 → 진단(strategies=["rl_mppo"]만 로드) → PR #215 (CLI default fix) → restart 후 3 strategies 로드 검증 → PR #216 (9th pre-flight gate `strategies_loadable_futures`로 runtime 시뮬레이션). 1-day 영향(Setup A 윈도우 미스)이지만 내일부터 정상 가동 예상. §3.1.19 신설, §9 history 갱신. |
 | TBD | Phase 1 paper validation (1주) — Setup A/C 신호 발생률, LLM-veto counterfactual PnL, size scaling trade PnL 비교 |
 | TBD | Phase 3 Track A — 운영자 게이트 (legal review §1-6, KIS Real smoke test, 증거금, position-recovery drill, kill-switch unit 설치, `futures_live.enabled: true` 플립, Gate 3 14일 1계약 운용) |
 | TBD | Phase 4 (+3개월) — `signals_all` 누적 trade ≥ 50 + EV+ 3개월 → RL aux 활성 / 폐지 / 재학습 결정 |
