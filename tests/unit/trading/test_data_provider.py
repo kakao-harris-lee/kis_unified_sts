@@ -936,3 +936,145 @@ class TestFailoverLogic:
         provider._cache["C"] = MarketDataCache("C", {"close": 1}, now - timedelta(seconds=1))
 
         assert provider._select_rest_poll_symbols() == ["B", "A"]
+
+
+class TestSilentStallGuard:
+    """Regression: 2026-05-11 stock orchestrator stalled silently 13:09–13:35 KST.
+
+    All 21 trade-target symbols stopped ticking but a few non-universe
+    dip-candidate symbols kept producing ticks, keeping `_last_tick_ts`
+    fresh.  The legacy `fresh_symbol_count <= 0` check returned healthy
+    because `fresh_symbol_count` was > 0 (some symbols ticking).  No
+    failover triggered → IndicatorEngine got 800s+ stale data → 0 signals
+    → 0 trades for ~30 min.
+
+    Fix (PR #218): add `min_fresh_ratio` config (default 0.5) so the
+    health check fails when fewer than half the subscribed symbols are
+    fresh, even if the overall `_last_tick_ts` is recent.
+    """
+
+    @pytest.mark.asyncio
+    async def test_silent_stall_triggers_failover(self):
+        """Repro of 2026-05-11 incident: 5 of 40 symbols fresh, but
+        `_last_tick_ts` very recent.  Old behaviour: healthy.  New:
+        unhealthy via min_fresh_ratio guard.
+        """
+        from services.trading.data_provider import (
+            DataProviderConfig,
+            MarketDataProvider,
+        )
+
+        provider = MarketDataProvider(
+            config=DataProviderConfig(
+                staleness_threshold_seconds=10.0,
+                min_fresh_ratio=0.5,
+            )
+        )
+
+        # Stub data source that returns the silent-stall pattern
+        class _StaleDataSource:
+            async def get_health_status(self):
+                return {
+                    "running": True,
+                    "connected": True,
+                    "staleness_seconds": 0.5,  # overall recent
+                    "symbol_count": 40,
+                    "fresh_symbol_count": 5,  # only 5/40 = 12.5% fresh
+                    "stale_symbol_count": 35,
+                }
+
+        provider._data_source = _StaleDataSource()
+        is_healthy, status = await provider._check_data_source_health()
+        assert is_healthy is False
+        assert status["fresh_symbol_count"] == 5
+
+    @pytest.mark.asyncio
+    async def test_above_threshold_remains_healthy(self):
+        """30 of 40 symbols fresh (75%) > 50% threshold → healthy."""
+        from services.trading.data_provider import (
+            DataProviderConfig,
+            MarketDataProvider,
+        )
+
+        provider = MarketDataProvider(
+            config=DataProviderConfig(
+                staleness_threshold_seconds=10.0,
+                min_fresh_ratio=0.5,
+            )
+        )
+
+        class _MostlyFreshSource:
+            async def get_health_status(self):
+                return {
+                    "running": True,
+                    "connected": True,
+                    "staleness_seconds": 0.5,
+                    "symbol_count": 40,
+                    "fresh_symbol_count": 30,
+                    "stale_symbol_count": 10,
+                }
+
+        provider._data_source = _MostlyFreshSource()
+        is_healthy, _ = await provider._check_data_source_health()
+        assert is_healthy is True
+
+    @pytest.mark.asyncio
+    async def test_min_fresh_ratio_zero_disables_guard(self):
+        """min_fresh_ratio=0.0 reverts to legacy behaviour (ALL stale only)."""
+        from services.trading.data_provider import (
+            DataProviderConfig,
+            MarketDataProvider,
+        )
+
+        provider = MarketDataProvider(
+            config=DataProviderConfig(
+                staleness_threshold_seconds=10.0,
+                min_fresh_ratio=0.0,  # disable
+            )
+        )
+
+        class _PartialSource:
+            async def get_health_status(self):
+                return {
+                    "running": True,
+                    "connected": True,
+                    "staleness_seconds": 0.5,
+                    "symbol_count": 40,
+                    "fresh_symbol_count": 5,  # would fail under default
+                    "stale_symbol_count": 35,
+                }
+
+        provider._data_source = _PartialSource()
+        is_healthy, _ = await provider._check_data_source_health()
+        # With guard disabled: only ALL-stale (fresh==0) triggers fail
+        assert is_healthy is True
+
+    @pytest.mark.asyncio
+    async def test_zero_fresh_still_fails_under_legacy(self):
+        """Hard failure (fresh=0) still fails even with guard disabled."""
+        from services.trading.data_provider import (
+            DataProviderConfig,
+            MarketDataProvider,
+        )
+
+        provider = MarketDataProvider(
+            config=DataProviderConfig(
+                staleness_threshold_seconds=10.0,
+                min_fresh_ratio=0.0,
+            )
+        )
+
+        class _AllStaleSource:
+            async def get_health_status(self):
+                return {
+                    "running": True,
+                    "connected": True,
+                    "staleness_seconds": 0.5,
+                    "symbol_count": 40,
+                    "fresh_symbol_count": 0,  # ALL stale
+                    "stale_symbol_count": 40,
+                }
+
+        provider._data_source = _AllStaleSource()
+        is_healthy, _ = await provider._check_data_source_health()
+        assert is_healthy is False
