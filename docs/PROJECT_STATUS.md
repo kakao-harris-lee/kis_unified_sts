@@ -1,12 +1,12 @@
 # Project Status — KIS Unified Trading Platform
 
-**Last updated**: 2026-05-10
+**Last updated**: 2026-05-11
 **Update cadence**: After every plan version bump (v3.x → v3.y) or operational milestone.
 
 This is a quick-orientation dashboard for an operator or engineer returning to
 the project.  For full plan detail see
 [docs/plans/2026-05-03-llm-primary-rl-minimization.md](plans/2026-05-03-llm-primary-rl-minimization.md)
-(currently v4.8).
+(currently v4.9).
 
 ---
 
@@ -14,11 +14,12 @@ the project.  For full plan detail see
 
 **Phase 2 paper validation — LIVE since 2026-05-11 (Mon) 08:55 KST.**
 
-2026-05-11 두 건 incident 발견 + 복구:
+2026-05-11 세 건 incident/audit 발견 + 복구:
 - **선물 cutover blocker** (10:48 복구) — `sts rl paper --strategy rl_mppo` CLI default가 single-strategy mode 강제. Fix: PR #215/#216 (CLI default → None + 9th pre-flight gate)
 - **주식 silent-stall** (13:35 복구) — 13:09–13:35 active universe 모두 stale인데 `fresh_count > 0`이라 health check 통과. Fix: PR #218 (`min_fresh_ratio` 0.5 default + 4 regression tests)
+- **Grafana 대시보드 silent-broken** (operator audit) — `futures-paradigm-overview` 7 패널이 deprecated `kospi.rl_signals` 테이블 + 잘못된 `today(tz)` 시그니처 + `swing_positions` schema 불일치로 silent error. Fix: PR #220 (7 쿼리 fix + 2 stale 대시보드 archive)
 
-Impact: 1-day 영향 (선물 Setup A window 미스 + 주식 26분 stall). 내일(2026-05-12 화) 08:55 KST 자동 가동 시 두 fix 모두 적용된 정상 운영 예상.
+Impact: 1-day 영향 (선물 Setup A window 미스 + 주식 26분 stall + 대시보드는 데이터 미생성 — 운영 가시성만 영향). 내일(2026-05-12 화) 08:55 KST 자동 가동 시 모든 fix 적용된 정상 운영 예상.
 
 내일부터 정상 자동 운영 흐름 — operator는 daily verification Telegram만 모니터링.
 
@@ -76,7 +77,7 @@ Impact: 1-day 영향 (선물 Setup A window 미스 + 주식 26분 stall). 내일
 
 ## Key References
 
-- **Plan (master)**: [docs/plans/2026-05-03-llm-primary-rl-minimization.md](plans/2026-05-03-llm-primary-rl-minimization.md) — currently v4.8, full PR table in §3.1
+- **Plan (master)**: [docs/plans/2026-05-03-llm-primary-rl-minimization.md](plans/2026-05-03-llm-primary-rl-minimization.md) — currently v4.9, full PR table in §3.1
 - **All plans index**: [docs/plans/INDEX.md](plans/INDEX.md) — categorized Active / Reference / Archive
 - **Phase 2 startup runbook**: [docs/runbooks/phase2-startup.md](runbooks/phase2-startup.md)
 - **All runbooks**: [README.md § 운영 런북](../README.md#운영-런북-runbooks)
@@ -132,3 +133,10 @@ Total: **41 PRs (#168–#208)** assembled over 2 days. Live list: `git log --one
 
 ### Production verification (Day 3)
 - 2026-05-10 04:00 KST: `rotate_reports.sh` first-fired automatically (exit=0, no-op as expected — no files past retention threshold yet)
+
+### Phase 2 cutover LIVE incidents + Grafana cleanup (Day 4, 2026-05-11)
+- **#215** — `sts rl paper` CLI default `--strategy` "rl_mppo" → `None` (multi-strategy unblock)
+- **#216** — 9th pre-flight gate `strategies_loadable_futures` (runtime simulation, not just YAML)
+- **#218** — `data_provider` `min_fresh_ratio` 0.5 default (silent-stall guard) + 4 regression tests
+- **#220** — Grafana cleanup: 7 SQL fixes in `futures-paradigm-overview.json` + archive 2 stale dashboards + dashboard README inventory
+- plan v4.6 → v4.9 across the day (3 silent-failure patterns documented)
