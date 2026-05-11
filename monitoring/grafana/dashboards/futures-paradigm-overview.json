@@ -50,7 +50,7 @@
       "targets": [
         {
           "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
-          "rawSql": "SELECT sum(pnl * 50000) AS today_pnl FROM kospi.rl_trades WHERE asset_class = 'futures' AND toDate(exit_date, 'Asia/Seoul') = today('Asia/Seoul')",
+          "rawSql": "SELECT sum(pnl * 50000) AS today_pnl FROM kospi.rl_trades WHERE asset_class = 'futures' AND toDate(exit_date, 'Asia/Seoul') = toDate(now(), 'Asia/Seoul')",
           "format": 0,
           "queryType": "sql",
           "refId": "A",
@@ -88,7 +88,7 @@
       "targets": [
         {
           "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
-          "rawSql": "SELECT count() AS open_positions FROM kospi.swing_positions WHERE asset_class = 'futures' AND status = 'open'",
+          "rawSql": "SELECT count() AS open_positions FROM kospi.swing_positions WHERE is_open = 1 AND strategy IN ('setup_a_gap_reversion','setup_c_event_reaction','rl_mppo')",
           "format": 0,
           "queryType": "sql",
           "refId": "A",
@@ -126,7 +126,7 @@
       "targets": [
         {
           "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
-          "rawSql": "SELECT count() AS today_signals FROM kospi.rl_signals WHERE asset_class = 'futures' AND toDate(generated_at, 'Asia/Seoul') = today('Asia/Seoul')",
+          "rawSql": "SELECT count() AS today_signals FROM kospi.signals_all WHERE setup_type IN ('A','C') AND toDate(generated_at, 'Asia/Seoul') = toDate(now(), 'Asia/Seoul')",
           "format": 0,
           "queryType": "sql",
           "refId": "A",
@@ -164,7 +164,7 @@
       "targets": [
         {
           "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
-          "rawSql": "SELECT count() AS today_fills FROM kospi.order_fills WHERE toDate(filled_at, 'Asia/Seoul') = today('Asia/Seoul')",
+          "rawSql": "SELECT count() AS today_fills FROM kospi.order_fills WHERE toDate(filled_at, 'Asia/Seoul') = toDate(now(), 'Asia/Seoul')",
           "format": 0,
           "queryType": "sql",
           "refId": "A",
@@ -211,7 +211,7 @@
       "targets": [
         {
           "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
-          "rawSql": "SELECT toStartOfHour(generated_at) AS t, setup_type, count() AS c FROM kospi.rl_signals WHERE asset_class = 'futures' AND generated_at >= now() - INTERVAL 24 HOUR GROUP BY t, setup_type ORDER BY t",
+          "rawSql": "SELECT toStartOfHour(generated_at) AS t, setup_type, count() AS c FROM kospi.signals_all WHERE setup_type IN ('A','C') AND generated_at >= now() - INTERVAL 24 HOUR GROUP BY t, setup_type ORDER BY t",
           "format": 1,
           "queryType": "sql",
           "refId": "A",
@@ -296,7 +296,7 @@
       "targets": [
         {
           "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
-          "rawSql": "SELECT signal_id, symbol, side, strategy, entry_price, round((now() - entry_date) / 60, 1) AS hold_min, status FROM kospi.swing_positions WHERE asset_class = 'futures' AND status = 'open' ORDER BY entry_date DESC",
+          "rawSql": "SELECT id, code, name, side, strategy, entry_price, round((now() - entry_date) / 60, 1) AS hold_min, current_state FROM kospi.swing_positions WHERE is_open = 1 AND strategy IN ('setup_a_gap_reversion','setup_c_event_reaction','rl_mppo') ORDER BY entry_date DESC",
           "format": 1,
           "queryType": "sql",
           "refId": "A",
