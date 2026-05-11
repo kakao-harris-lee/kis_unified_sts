@@ -1,6 +1,6 @@
 # LLM-primary 의사결정 + RL 축소 통합 계획
 
-**Status**: **v4.7 — Phase 2 cutover LIVE (incident 발생 + 복구 + 회귀 가드 완료)**. 2026-05-11 첫 거래일 cutover blocker (`sts rl paper --strategy rl_mppo` CLI default가 single-strategy mode 강제 → Setup A/C 사일런트 드롭)를 운영자 보고로 발견. 즉시 fix(PR #215) + 회귀 가드(PR #216 9th pre-flight gate). RL은 정상 shadow_mode (5519+ rows). Setup A는 오늘 윈도우 미스(09:10–10:30, 10:48 복구) — 일시적 1-day 영향. 내일(2026-05-12) 08:55 KST cron 자동 가동 시 새 코드로 정상 작동 예상. 다음 마일스톤은 Phase 3 Track A (운영자 영역) + Phase 4 (3개월 후).
+**Status**: **v4.8 — Phase 2 cutover LIVE: 2 incidents 복구 + 2 회귀 가드**. 2026-05-11 첫 거래일에 두 건 incident 발생: (1) 선물 cutover blocker (CLI default single-strategy 강제) → PR #215/#216 fix. (2) 주식 silent-stall (13:09–13:35, fresh_symbol_count > 0이지만 active universe 모두 stale) → PR #218 fix + 4 regression tests. RL shadow 정상 누적. Setup A 오늘 발화 윈도우 미스, Setup C는 macro 이벤트 의존. 내일(2026-05-12) 08:55 KST 자동 가동 시 두 fix 모두 적용된 정상 운영 예상. 다음 마일스톤은 Phase 3 Track A (운영자 영역) + Phase 4 (3개월 후).
 
 **v4.0 시점 인프라 요약** (수동 작업 0):
 - **자동 cron 4건**: orchestrator restart (08:55), daily verification (16:00 평일), weekly counterfactual (월 07:00), reports rotation (일 04:00)
@@ -30,6 +30,7 @@
 - 2026-05-10 (**v4.5 — Telegram 도메인 라우팅 hardening**: PR #211 머지 — 운영자가 보고한 "선물/주식 메시지 혼재" 이슈 수정. Root cause: `.env`의 `TELEGRAM_BOT_TOKEN=${TELEGRAM_STOCK_BOT_TOKEN}` aliasing + 4 사이트의 silent legacy fallback. 수정 4 사이트: (1) `services/trading/orchestrator.py` failover alerts — `SecretsManager.telegram_token(domain)` (legacy fallback 有) → `resolve_domain_credentials()` (no fallback), (2) `services/screener.py` — `TelegramConfig.from_env()` → `resolve_domain_credentials("stock")` 명시, (3) `shared/scanner/accumulation.py` — `TelegramConfig()` 기본값 → `resolve_domain_credentials("stock")` 명시 + early return, (4) `scripts/llm_nightly_analysis.py` — `TelegramNotifier()` no-arg → `notifier_for_domain("briefing")`. 회귀 가드: `TestNoSilentLegacyFallback` 3 tests 추가. 14 notification 테스트 통과.)
 - 2026-05-10 (**v4.6 — Telegram 라우팅 footgun 완전 제거**: PR #213 머지로 v4.5 audit에서 발견된 dormant footgun 2건 제거. (1) `shared/notification/telegram.py::get_telegram_notifier()` + `send_telegram()` — `DeprecationWarning` 추가, `notifier_for_domain()` 권고. (2) `shared/alerts/models.py::AlertConfig.from_env()` — `domain` keyword 추가 (명시 시 strict, no fallback). Active caller 0이지만 미래 잘못된 wiring 시 즉시 경고로 발견. BC 유지, 40 tests pass.)
 - 2026-05-11 (**v4.7 — Phase 2 cutover LIVE 첫 거래일 incident + 즉시 복구 + 회귀 가드**: 운영자 보고("선물 급등 중인데 거래 0건")로 cutover blocker 발견. Root cause: `sts rl paper`의 CLI default `--strategy rl_mppo`가 single-strategy mode 강제 → orchestrator가 `strategy_names = ["rl_mppo"] if name else None` 분기로 Setup A/C 미로드. PR #211 daily verification gate 4개는 모두 PASS (YAML enabled, shadow_mode 등) 상태였지만 runtime loading 실패 미감지. 즉시 조치 3단계: (1) 진단 — Redis status `strategies=["rl_mppo"]`만 노출, ClickHouse 5519 shadow rows + 0 setup signals + 0 trades 확인. (2) PR #215 — CLI default `"rl_mppo"` → `None`, 머지 후 production graceful stop + restart with new code → `strategies=["rl_mppo", "setup_a_gap_reversion", "setup_c_event_reaction"]` 3개 모두 로드 검증. (3) PR #216 — 9th pre-flight gate `strategies_loadable_futures` 추가, `StrategyFactory.create_all(asset_class="futures", enabled_only=True)` 실제 호출하여 runtime 시뮬레이션 (YAML 체크와 분리). 5 negative tests로 이번 시나리오 정확히 재현. Setup A 윈도우(09:10–10:30) 미스로 오늘 1-day 영향 — 내일 08:55 KST 자동 가동 시 정상 작동 예상.)
+- 2026-05-11 (**v4.8 — 주식 silent-stall 복구 + 회귀 가드**: 운영자 요청으로 주식 거래 상황 점검 중 두 번째 incident 발견. 13:09–13:35 KST 동안 주식 orchestrator silent stall — WebSocket connection healthy로 보고됐지만 active trade-target 21 symbol 전부 800s+ stale, 거래 0건. Root cause: `_check_data_source_health()`의 `fresh_symbol_count <= 0` 조건이 일부 symbol(LLM이 mid-session 추가한 dip candidates)만 ticking인 silent-stall 시나리오를 통과시킴. Overall `_last_tick_ts`는 fresh로 보이고 `fresh > 0`이라 healthy 판정 → failover 미트리거. 즉시 조치: (1) cron script restart로 즉시 복구 (13:35 38 symbols re-subscribe 검증). (2) PR #218 — `DataProviderConfig.min_fresh_ratio` (default 0.5) 추가. fresh ratio < 50%이면 unhealthy 판정 → automatic failover. 4 regression tests (silent_stall_triggers_failover / above_threshold_remains_healthy / min_fresh_ratio_zero_disables_guard / zero_fresh_still_fails_under_legacy). 52/52 data_provider tests pass. 내일 08:55 KST 자동 가동 시 두 incident fix 모두 적용된 정상 운영 예상.)
 
 **Author**: 엔지니어링 (운영자 결정 반영)
 **Parent**: `docs/plans/2026-04-20-futures-paradigm-master.md`
@@ -176,7 +177,7 @@ WebSocket tick (futures_feed.py, tz-aware UTC)
 
 ## 3. 진행 중 작업과의 정합
 
-### 3.1 PR 상태 (v4.7 업데이트, 2026-05-11 기준)
+### 3.1 PR 상태 (v4.8 업데이트, 2026-05-11 기준)
 
 #### 3.1.1 인프라/회귀 fix (paper validation 단계)
 
@@ -420,6 +421,50 @@ strategy_names = ([self.config.strategy_name] if self.config.strategy_name else 
 ##### 교훈 / 회귀 가드
 - **Pre-flight gate 차이**: 기존 8 gate는 YAML 검증만 — runtime 동작과 괴리 있음. PR #216의 `strategies_loadable_futures` gate가 동일한 패턴 미래 차단.
 - **CLI default change BC**: `sts rl paper --strategy rl_mppo` 명시 호출하던 외부 스크립트는 영향 없음. default 의존하던 cron만 영향 (의도된 변경).
+
+#### 3.1.20 주식 silent-stall incident: data_provider health check fresh-ratio guard (2026-05-11)
+
+**시점**: 2026-05-11 (월) 13:09–13:35 KST. §3.1.19 selectfutures 이슈 직후 운영자가 주식 거래 상황 점검 요청 → 두 번째 incident 발견.
+
+##### Root cause
+`services/trading/data_provider.py::_check_data_source_health()`의 unhealthy 조건이 silent-stall 시나리오를 통과시킴:
+
+```python
+if fresh_symbol_count <= 0:  # 하드 페일: 모든 stale일 때만
+    return False, health_status
+return staleness < threshold, health_status  # _last_tick_ts 기준
+```
+
+오늘 시나리오:
+- 09:00 — WebSocket 21 trade-target subscribe
+- 13:00 — LLM이 17 dip candidates 추가 (총 38 subscribed)
+- 13:09 — 21 trade-target stop ticking (KIS-side issue), 17 dip candidates 일부 계속 ticking
+- `fresh_symbol_count` > 0 (dip candidates 일부) → legacy guard 통과
+- `_last_tick_ts` 최근 (dip candidates에서 옴) → staleness check 통과 → healthy
+- 그러나 active universe 평가 시 IndicatorEngine이 800s+ stale 경고 → 시그널 0건 → 거래 0건
+
+##### 진단 데이터 (13:33 KST)
+- ✅ Process alive (PID 1739257), pipeline executions 100% success
+- ✅ 4 strategies loaded (daily_pullback / momentum_breakout / vr_composite / trend_pullback)
+- ✅ universe 20 + fusion targets 21 정상 publish
+- ❌ data_provider: `total_symbols=51, fresh_count=0, stale_count=209`
+- ❌ IndicatorEngine: `Indicator data stale for 018880 (800s since last tick, threshold 180s)` 매분 반복
+- ❌ Pipeline metrics: `total_signals: 0, total_orders: 0` (16342 entry executions)
+
+##### 즉시 조치 PR
+
+| PR | 상태 | 내용 |
+|----|------|------|
+| **#218** `fix/data-provider-fresh-ratio-health-check` | ✅ 5/11 머지 (8b1c01e) | `DataProviderConfig.min_fresh_ratio` (default 0.5) 추가. fresh ratio < 50%이면 unhealthy 판정 → automatic failover. `min_fresh_ratio: 0.0`으로 legacy 동작 복원 가능. 4 regression tests (silent_stall_triggers_failover / above_threshold_remains_healthy / min_fresh_ratio_zero_disables_guard / zero_fresh_still_fails_under_legacy). 즉시 cron script restart로 복구 후 PR 머지 |
+
+##### 1-day 영향
+- 13:09–13:35 (~26분) 주식 거래 0건 (silent stall)
+- 13:35 manual restart 후 38 symbols re-subscribe → 시장 마감(15:30)까지 정상 거래 가능
+- 내일 08:55 KST 자동 가동 시 새 코드의 min_fresh_ratio guard 자동 적용
+
+##### 교훈 / 회귀 가드
+- **Health check 조건의 다층화**: 단일 binary 조건(`<=0`)은 partial-stall 미감지. Ratio 기반 가드 추가가 silent-stall 차단의 표준 패턴이 됨.
+- **선물(§3.1.19) + 주식(§3.1.20) 모두 silent-failure mode**: 둘 다 같은 day에 발견 — system observability 갭이 패턴화됨. 향후 같은 종류 incident에 대한 audit 필요 가능.
 
 ##### Production 운영 절차 적용
 - 매주 월 07:00 KST: `0 7 * * 1 .../counterfactual_weekly.sh`
@@ -781,6 +826,7 @@ Phase 1.1 완료 + paper 1주 안정성 확인 즉시 (운영자 §7-5 결정):
 | 2026-05-10 | **v4.5** — Telegram 도메인 라우팅 hardening 완료. PR #211 머지로 4 사이트의 silent legacy fallback 제거 (orchestrator failover / screener / accumulation scanner / llm_nightly_analysis). 운영자 보고("선물/주식 메시지 혼재") root cause 해결. 회귀 가드 3 tests 추가. §3.1.17 신설, §9 history 갱신. |
 | 2026-05-10 | **v4.6** — Telegram 라우팅 footgun 완전 제거. PR #213 머지로 dormant footgun 2건(`get_telegram_notifier()` + `send_telegram()`, `AlertConfig.from_env()`)에 deprecation/strict 가드 추가. Active caller 0이지만 미래 wiring 위험 차단. §3.1.18 신설, §9 history 갱신. |
 | 2026-05-11 | **v4.7** — Phase 2 cutover LIVE 첫 거래일 incident 발견 + 즉시 복구 + 회귀 가드. 운영자 보고 → 진단(strategies=["rl_mppo"]만 로드) → PR #215 (CLI default fix) → restart 후 3 strategies 로드 검증 → PR #216 (9th pre-flight gate `strategies_loadable_futures`로 runtime 시뮬레이션). 1-day 영향(Setup A 윈도우 미스)이지만 내일부터 정상 가동 예상. §3.1.19 신설, §9 history 갱신. |
+| 2026-05-11 | **v4.8** — 주식 silent-stall incident 발견 + 즉시 복구 + 회귀 가드. 운영자가 주식 거래 상황 점검 요청 → 13:09–13:35 silent stall 발견 (active universe 800s+ stale, 그러나 health check `fresh_count > 0`이라 healthy 판정). cron script restart로 즉시 복구 → PR #218 (`min_fresh_ratio` 0.5 default). 4 regression tests. 두 incident(선물 §3.1.19 + 주식 §3.1.20) 모두 silent-failure 패턴 — system observability 갭 패턴화. §3.1.20 신설, §9 history 갱신. |
 | TBD | Phase 1 paper validation (1주) — Setup A/C 신호 발생률, LLM-veto counterfactual PnL, size scaling trade PnL 비교 |
 | TBD | Phase 3 Track A — 운영자 게이트 (legal review §1-6, KIS Real smoke test, 증거금, position-recovery drill, kill-switch unit 설치, `futures_live.enabled: true` 플립, Gate 3 14일 1계약 운용) |
 | TBD | Phase 4 (+3개월) — `signals_all` 누적 trade ≥ 50 + EV+ 3개월 → RL aux 활성 / 폐지 / 재학습 결정 |
