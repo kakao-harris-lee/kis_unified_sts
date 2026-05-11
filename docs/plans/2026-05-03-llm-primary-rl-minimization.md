@@ -1,6 +1,6 @@
 # LLM-primary 의사결정 + RL 축소 통합 계획
 
-**Status**: **v4.8 — Phase 2 cutover LIVE: 2 incidents 복구 + 2 회귀 가드**. 2026-05-11 첫 거래일에 두 건 incident 발생: (1) 선물 cutover blocker (CLI default single-strategy 강제) → PR #215/#216 fix. (2) 주식 silent-stall (13:09–13:35, fresh_symbol_count > 0이지만 active universe 모두 stale) → PR #218 fix + 4 regression tests. RL shadow 정상 누적. Setup A 오늘 발화 윈도우 미스, Setup C는 macro 이벤트 의존. 내일(2026-05-12) 08:55 KST 자동 가동 시 두 fix 모두 적용된 정상 운영 예상. 다음 마일스톤은 Phase 3 Track A (운영자 영역) + Phase 4 (3개월 후).
+**Status**: **v4.9 — Phase 2 cutover LIVE: 2 incidents 복구 + 2 회귀 가드 + Grafana 대시보드 정리**. 2026-05-11 첫 거래일에 두 건 incident 발생: (1) 선물 cutover blocker (CLI default single-strategy 강제) → PR #215/#216 fix. (2) 주식 silent-stall (13:09–13:35, fresh_symbol_count > 0이지만 active universe 모두 stale) → PR #218 fix + 4 regression tests. 추가로 운영자 요청으로 (3) Grafana 대시보드 audit → `futures-paradigm-overview` 7 패널 silent-broken (deprecated `rl_signals` 테이블 + 잘못된 `today(tz)` + swing_positions schema 불일치) → PR #220 fix + 2 stale 대시보드 archive. RL shadow 정상 누적. Setup A 오늘 발화 윈도우 미스, Setup C는 macro 이벤트 의존. 내일(2026-05-12) 08:55 KST 자동 가동 시 모든 fix 적용된 정상 운영 예상. 다음 마일스톤은 Phase 3 Track A (운영자 영역) + Phase 4 (3개월 후).
 
 **v4.0 시점 인프라 요약** (수동 작업 0):
 - **자동 cron 4건**: orchestrator restart (08:55), daily verification (16:00 평일), weekly counterfactual (월 07:00), reports rotation (일 04:00)
@@ -177,7 +177,7 @@ WebSocket tick (futures_feed.py, tz-aware UTC)
 
 ## 3. 진행 중 작업과의 정합
 
-### 3.1 PR 상태 (v4.8 업데이트, 2026-05-11 기준)
+### 3.1 PR 상태 (v4.9 업데이트, 2026-05-11 기준)
 
 #### 3.1.1 인프라/회귀 fix (paper validation 단계)
 
@@ -473,6 +473,35 @@ return staleness < threshold, health_status  # _last_tick_ts 기준
 - 첫 weekly 실행: 2026-05-11 (월) 07:00 KST
 - 첫 daily 실행: 2026-05-11 (월) 16:00 KST
 - Prometheus reload: `sts-prometheus` 컨테이너 재시작 → `/api/v1/rules` 응답에 `shadow_loggers` 그룹 4 룰 active
+
+#### 3.1.21 Grafana 대시보드 정리 — 깨진 쿼리 fix + stale 대시보드 archive (2026-05-11)
+
+운영자 요청 ("선물 운영 결과를 확인할수 있는 grafana 대시보드 정리가 필요해. 불필요한 부분은 제거하고. 효율적으로 개선 하자.") → 10개 대시보드 audit 후 3 issue 발견 + 일괄 정리.
+
+##### 발견된 issue 5건
+
+| Issue | 위치 | 원인 |
+|-------|------|------|
+| `kospi.rl_signals` 테이블 미존재 (CH Code 60 UNKNOWN_TABLE) | `futures-paradigm-overview.json` lines 129/214 | Phase 2에서 `rl_signals` deprecated, `signals_all`로 대체됐으나 대시보드 미갱신 |
+| `today('Asia/Seoul')` 인자 잘못됨 (CH Code 42) — `today()`는 인자를 받지 않음 | `futures-paradigm-overview.json` lines 53/129/167 | 작성 시점 CH 함수 시그니처 오해 |
+| `swing_positions.{asset_class, status, symbol, signal_id}` 컬럼 미존재 (CH Code 47) | `futures-paradigm-overview.json` lines 91/299 | 대시보드 가정한 스키마와 production 스키마 불일치 — 실제로는 `is_open` / `code` / `id` / `current_state` |
+| 매트릭스 프로필 비교 사용 안 함 (단일 production 프로필) | `rl-paper-matrix-realtime.json` | 의미 상실 |
+| Gate 3 진입 전 (live ladder 미가동, `futures_live.enabled: false`) | `futures-paradigm-live-ladder.json` | 표시할 데이터 없음 |
+
+##### 즉시 조치 PR
+
+| PR | 상태 | 내용 |
+|----|------|------|
+| **#220** `chore/grafana-cleanup` | 🟡 OPEN | 7 쿼리 fix (`rl_signals` → `signals_all`, `today(tz)` → `toDate(now(), tz)`, swing_positions schema 정합) + 2 stale 대시보드 archive (`futures-paradigm-live-ladder` / `rl-paper-matrix-realtime`) + `phase5-readme.md`에 Active/Archived 인벤토리 명시. 모든 패널 production CH 실행 검증 완료 |
+
+##### 운영 영향
+- `futures-paradigm-overview` 대시보드 7개 패널 모두 production data 반영 가능 (이전에는 silent error로 모두 빈 차트)
+- Phase 2 운영 가시성 즉시 향상: Today Signals (Setup A/C), Today Fills, Signal Count by Setup (24h) 패널 정상 표시
+- Gate 3 진입 시점에 `live-ladder` archive에서 복원하여 재가동
+
+##### 교훈
+- **대시보드는 코드와 동일하게 검증 대상**: ClickHouse 쿼리 silent error는 빈 패널만 남기고 알림 없음. CI에서 raw SQL 실행 smoke test가 있다면 조기 발견 가능했음 (잠재 follow-up).
+- **데이터소스 deprecation 시 dependent 자산 audit 필수**: `rl_signals` deprecation 후 1개월간 패널이 깨진 상태로 방치됨 (operator 발견 전).
 
 #### 3.1.9 운영 영향 (다음 cron 사이클부터)
 
@@ -827,6 +856,7 @@ Phase 1.1 완료 + paper 1주 안정성 확인 즉시 (운영자 §7-5 결정):
 | 2026-05-10 | **v4.6** — Telegram 라우팅 footgun 완전 제거. PR #213 머지로 dormant footgun 2건(`get_telegram_notifier()` + `send_telegram()`, `AlertConfig.from_env()`)에 deprecation/strict 가드 추가. Active caller 0이지만 미래 wiring 위험 차단. §3.1.18 신설, §9 history 갱신. |
 | 2026-05-11 | **v4.7** — Phase 2 cutover LIVE 첫 거래일 incident 발견 + 즉시 복구 + 회귀 가드. 운영자 보고 → 진단(strategies=["rl_mppo"]만 로드) → PR #215 (CLI default fix) → restart 후 3 strategies 로드 검증 → PR #216 (9th pre-flight gate `strategies_loadable_futures`로 runtime 시뮬레이션). 1-day 영향(Setup A 윈도우 미스)이지만 내일부터 정상 가동 예상. §3.1.19 신설, §9 history 갱신. |
 | 2026-05-11 | **v4.8** — 주식 silent-stall incident 발견 + 즉시 복구 + 회귀 가드. 운영자가 주식 거래 상황 점검 요청 → 13:09–13:35 silent stall 발견 (active universe 800s+ stale, 그러나 health check `fresh_count > 0`이라 healthy 판정). cron script restart로 즉시 복구 → PR #218 (`min_fresh_ratio` 0.5 default). 4 regression tests. 두 incident(선물 §3.1.19 + 주식 §3.1.20) 모두 silent-failure 패턴 — system observability 갭 패턴화. §3.1.20 신설, §9 history 갱신. |
+| 2026-05-11 | **v4.9** — Grafana 대시보드 정리 (3번째 silent-failure 발견). 운영자 요청 "선물 운영 결과 grafana 대시보드 정리" → 10개 대시보드 audit → `futures-paradigm-overview` 7 패널 모두 silent-broken 발견: (a) `kospi.rl_signals` 테이블 미존재 (deprecated, `signals_all`로 대체됨), (b) `today('Asia/Seoul')` 인자 잘못됨 (CH 함수 시그니처), (c) `swing_positions` schema 불일치 (`asset_class`/`status`/`symbol`/`signal_id` 컬럼 미존재). PR #220 — 7 쿼리 fix + 2 stale 대시보드 archive (`futures-paradigm-live-ladder` pre-Gate3, `rl-paper-matrix-realtime` 단일 프로필) + `phase5-readme.md` Active/Archived 인벤토리. 모든 패널 production CH 실행 검증. 같은 day에 3번째 silent-failure 패턴 — 대시보드도 코드와 동일하게 검증 필요. §3.1.21 신설, §9 history 갱신. |
 | TBD | Phase 1 paper validation (1주) — Setup A/C 신호 발생률, LLM-veto counterfactual PnL, size scaling trade PnL 비교 |
 | TBD | Phase 3 Track A — 운영자 게이트 (legal review §1-6, KIS Real smoke test, 증거금, position-recovery drill, kill-switch unit 설치, `futures_live.enabled: true` 플립, Gate 3 14일 1계약 운용) |
 | TBD | Phase 4 (+3개월) — `signals_all` 누적 trade ≥ 50 + EV+ 3개월 → RL aux 활성 / 폐지 / 재학습 결정 |
