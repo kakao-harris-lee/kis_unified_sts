@@ -436,7 +436,7 @@ sts paper start --strategy bb_reversion --asset stock
 | 스크립트 | 시간 | 설명 |
 |--------|------|------|
 | `scripts/analysis/llm_nightly_analysis.py` | 21:00 | 익일 트레이딩 분석 |
-| `scripts/analysis/llm_premarket_briefing.py` | 08:30 | 장전 최종 브리핑 |
+| `scripts/llm_premarket_briefing.py` | 06:30 | 장전 최종 브리핑 (분석 ~1.5h, 08:00–08:30 완료) |
 | `scripts/analysis/llm_market_close_briefing.py` | 15:30 | 장 마감 요약 |
 
 ---
