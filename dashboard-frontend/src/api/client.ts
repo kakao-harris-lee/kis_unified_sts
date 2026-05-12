@@ -97,6 +97,12 @@ export const metricsApi = {
   getVenue: () => apiClient.get('/api/metrics/venue'),
 };
 
+// Fills API (Phase 2)
+export const fillsApi = {
+  getRecent: (params?: { asset_class?: string; limit?: number }) =>
+    apiClient.get('/api/trades/fills', { params }),
+}
+
 // Health API (Phase 1 backend)
 export const healthApi = {
   getSummary: (params?: { asset_class?: string }) =>

@@ -296,6 +296,57 @@ async def get_db_rl_statistics(
         )
 
 
+@router.get("/fills")
+async def get_recent_fills(
+    asset_class: str = Query(default="futures"),
+    limit: int = Query(default=10, ge=1, le=100),
+) -> dict:
+    """Recent order fills from ClickHouse ``kospi.order_fills``.
+
+    The ``order_fills`` table itself does not carry an ``asset_class`` column
+    (it was introduced in Phase 4 for futures). Until a multi-asset variant
+    lands, all rows are treated as ``futures``; the ``asset_class`` filter
+    short-circuits the query for non-futures requests unless ``all``.
+
+    ``trade_role`` is normalized to ``entry`` / ``exit`` for UI consumption —
+    ``stop_loss``/``take_profit``/``force_close`` all collapse to ``exit``.
+
+    Returns ``{"fills": []}`` if ClickHouse is unavailable so the cockpit
+    panel degrades gracefully.
+    """
+    asset = _normalize_asset_class(asset_class)
+    if asset == "stock":
+        # order_fills currently only holds futures fills.
+        return {"fills": []}
+
+    sql = (
+        "SELECT signal_id, symbol, side, filled_price, quantity, "
+        "filled_at, trade_role "
+        "FROM kospi.order_fills "
+        "ORDER BY filled_at DESC "
+        "LIMIT %(limit)s"
+    )
+    try:
+        loop = asyncio.get_running_loop()
+        rows, columns = await loop.run_in_executor(
+            None, _query_ch, sql, {"limit": limit}
+        )
+        col_names = [c[0] for c in columns]
+        fills = []
+        for row in rows:
+            rec = dict(zip(col_names, row))
+            role = rec.get("trade_role", "")
+            rec["trade_role"] = "entry" if role == "entry" else "exit"
+            rec["asset_class"] = "futures"
+            if isinstance(rec.get("filled_at"), datetime):
+                rec["filled_at"] = rec["filled_at"].isoformat()
+            fills.append(rec)
+        return {"fills": fills}
+    except Exception:
+        # ClickHouse unavailable or query error — return empty for graceful UI degrade.
+        return {"fills": []}
+
+
 @router.get("/rl")
 async def get_db_rl_trades(
     asset_class: str = Query("futures"),
