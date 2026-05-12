@@ -112,3 +112,8 @@ export const healthApi = {
     apiClient.get('/api/health/data-freshness', { params }),
   getKillSwitch: () => apiClient.get('/api/health/kill-switch'),
 }
+
+// Kill Switch API (Phase 2)
+export const killSwitchApi = {
+  trigger: () => apiClient.post('/api/trading/kill-switch'),
+}
