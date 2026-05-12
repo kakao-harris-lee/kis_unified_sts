@@ -30,10 +30,10 @@ export const tradingApi = {
 
 // Signals API
 export const signalsApi = {
-  getSignals: (params?: { strategy?: string; side?: string; limit?: number }) =>
+  getSignals: (params?: { asset_class?: string; strategy?: string; side?: string; limit?: number }) =>
     apiClient.get('/api/signals', { params }),
-  getHistory: (days?: number) =>
-    apiClient.get('/api/signals/history', { params: { days } }),
+  getHistory: (params?: { asset_class?: string; days?: number }) =>
+    apiClient.get('/api/signals/history', { params }),
 };
 
 // Trades API
