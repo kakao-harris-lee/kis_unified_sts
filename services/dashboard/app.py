@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import os
+from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -59,6 +60,10 @@ OPENAPI_TAGS = [
         "name": "metrics",
         "description": "Performance and execution venue metrics",
     },
+    {
+        "name": "health",
+        "description": "Operational health and observability endpoints",
+    },
 ]
 
 
@@ -110,12 +115,42 @@ def create_app(
     # Initialize strategy registries
     register_builtin_components()
 
+    @asynccontextmanager
+    async def _lifespan(app: FastAPI):
+        # Startup: spawn WebSocket publisher (Redis pubsub + periodic ticks)
+        publisher = None
+        try:
+            from services.dashboard.websocket import ws_manager
+            from services.dashboard.websocket_publisher import WebSocketPublisher
+
+            publisher = WebSocketPublisher(manager=ws_manager)
+            await publisher.start()
+            app.state.ws_publisher = publisher
+            logger.info("WebSocket publisher started")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("WebSocket publisher failed to start: %s", exc)
+            app.state.ws_publisher = None
+
+        try:
+            yield
+        finally:
+            # Shutdown: stop publisher
+            publisher = getattr(app.state, "ws_publisher", None)
+            if publisher is not None:
+                try:
+                    await publisher.stop()
+                    logger.info("WebSocket publisher stopped")
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("WebSocket publisher shutdown error: %s", exc)
+                app.state.ws_publisher = None
+
     app = FastAPI(
         title=title,
         description="Real-time trading dashboard for KIS unified platform",
         version="1.0.0",
         debug=debug,
         openapi_tags=OPENAPI_TAGS,
+        lifespan=_lifespan,
     )
 
     # Load CORS configuration (never uses wildcard origins)
@@ -165,6 +200,7 @@ def _register_routes(app: FastAPI) -> None:
     from services.dashboard.routes import (
         backtest,
         experiments,
+        health,
         metrics,
         signals,
         strategies,
@@ -181,6 +217,7 @@ def _register_routes(app: FastAPI) -> None:
     app.include_router(experiments.router)
     app.include_router(strategies.router)
     app.include_router(metrics.router, tags=["metrics"])
+    app.include_router(health.router)
 
     # WebSocket endpoint
     @app.websocket("/ws")

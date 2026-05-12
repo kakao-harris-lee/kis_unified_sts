@@ -144,6 +144,20 @@ class WebSocketManager:
         for conn in disconnected:
             self.disconnect(conn)
 
+    async def broadcast_topic(
+        self, topic: str, payload: Dict[str, Any], asset_class: str = "all"
+    ) -> None:
+        """Send a {topic, asset_class, payload} message to all subscribers of `topic`."""
+        message = {"topic": topic, "asset_class": asset_class, "payload": payload}
+        subscribers = list(self._subscriptions.get(topic, []))
+        if not subscribers:
+            return
+        for ws in subscribers:
+            try:
+                await ws.send_json(message)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("WS broadcast failed for topic=%s: %s", topic, e)
+
     def get_connection_count(self) -> int:
         """Get total number of active connections."""
         return len(self.active_connections)
