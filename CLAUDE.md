@@ -100,6 +100,19 @@ if pnl_pct >= self.config.exit.breakeven_threshold:
 | `HolidayCache` | 장 휴일/거래일 캐시 | `services/trading/holiday_cache.py` |
 | `TradingPipeline` | 데이터 파이프라인 + Pre-market ClickHouse warmup | `services/trading/pipeline.py` |
 
+#### 운영 대시보드 (Dashboard)
+
+React 프론트엔드 (port 8001, FastAPI 정적 호스팅) — 실시간 운영 모니터링 단일 화면.
+
+- `/` — Cockpit (HeaderBar + Positions + Signals/Fills + Quick Actions)
+- `/positions`, `/signals`, `/trades` — drill-down 페이지 (모바일 카드/sheet 패턴)
+- **자산군 탭** (선물/주식/통합): URL `?asset=` + localStorage 동기화, 모든 페이지 공통
+- **모바일 KILL SWITCH**: slide-to-confirm (90% threshold). STOP 버튼은 데스크탑 전용 (오작동 방지)
+- **백테스트/MLflow는 CLI 전용** (UI 제거됨 — Phase 5)
+- **Grafana ops 대시보드는 archive** (`monitoring/grafana/dashboards/archive/`) — raw debugging용으로만 유지
+
+설계 + 구현 plan: `docs/superpowers/specs/2026-05-12-dashboard-redesign-design.md`, `docs/superpowers/plans/2026-05-12-dashboard-redesign.md`.
+
 #### RL 선물 운용 규칙
 
 - `sts rl paper` 명령은 `TradingOrchestrator`를 사용한다.

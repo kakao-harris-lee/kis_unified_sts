@@ -55,10 +55,6 @@ export const strategiesApi = {
     apiClient.get('/api/strategies', { params }),
 };
 
-// Metrics API
-export const metricsApi = {
-  getVenue: () => apiClient.get('/api/metrics/venue'),
-};
 
 // Fills API (Phase 2)
 export const fillsApi = {
