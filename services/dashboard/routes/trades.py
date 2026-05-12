@@ -248,27 +248,20 @@ def _empty_db_stats() -> dict[str, float]:
     }
 
 
-@router.get("/rl/statistics")
-async def get_db_rl_statistics(
-    asset_class: str = Query("futures"),
-    strategy: str | None = Query(None),
-):
-    """Aggregate statistics from ClickHouse rl_trades table."""
-    from shared.db.config import ClickHouseConfig
-
-    asset_class = _normalize_asset_class(asset_class)
-
-    db = ClickHouseConfig.from_env().database
-    where_clauses = []
+def _build_rl_statistics_sql(
+    asset_class: str, strategy: str | None
+) -> tuple[str, dict]:
+    """SELECT for aggregate stats from one asset's trades table."""
+    db, table, has_ac = _TRADES_SOURCE[asset_class]
+    where = []
     params: dict = {}
-    if asset_class != "all":
-        where_clauses.append("asset_class = %(asset_class)s")
+    if has_ac:
+        where.append("asset_class = %(asset_class)s")
         params["asset_class"] = asset_class
     if strategy:
-        where_clauses.append("strategy = %(strategy)s")
+        where.append("strategy = %(strategy)s")
         params["strategy"] = strategy
-
-    where_sql = f" WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+    where_sql = f" WHERE {' AND '.join(where)}" if where else ""
     sql = (
         f"SELECT count() as total_trades, "
         f"countIf(pnl > 0) as winning_trades, "
@@ -278,16 +271,57 @@ async def get_db_rl_statistics(
         f"if(count() > 0, round(avg(pnl), 2), 0) as avg_pnl, "
         f"ifNull(max(pnl), 0) as max_win, "
         f"ifNull(min(pnl), 0) as max_loss "
-        f"FROM {db}.rl_trades "
-        f"{where_sql}"
+        f"FROM {db}.{table}{where_sql}"
     )
-    try:
+    return sql, params
+
+
+@router.get("/rl/statistics")
+async def get_db_rl_statistics(
+    asset_class: str = Query("futures"),
+    strategy: str | None = Query(None),
+):
+    """Aggregate statistics from per-asset ClickHouse trades tables."""
+    asset_class = _normalize_asset_class(asset_class)
+
+    async def _execute(sql: str, params: dict) -> dict:
         loop = asyncio.get_running_loop()
         rows, columns = await loop.run_in_executor(None, _query_ch, sql, params)
         col_names = [c[0] for c in columns]
         if rows and rows[0][0] > 0:
             return dict(zip(col_names, rows[0]))
         return _empty_db_stats()
+
+    try:
+        if asset_class in _TRADES_SOURCE:
+            sql, params = _build_rl_statistics_sql(asset_class, strategy)
+            return await _execute(sql, params)
+
+        # asset_class == "all": merge counts from both asset tables.
+        merged: dict = _empty_db_stats()
+        wins = losses = total = 0
+        sum_pnl = 0.0
+        max_win = float("-inf")
+        max_loss = float("inf")
+        for ac in _TRADES_SOURCE:
+            sql, params = _build_rl_statistics_sql(ac, strategy)
+            part = await _execute(sql, params)
+            total += part.get("total_trades", 0)
+            wins += part.get("winning_trades", 0)
+            losses += part.get("losing_trades", 0)
+            sum_pnl += float(part.get("total_pnl", 0) or 0)
+            if part.get("total_trades", 0) > 0:
+                max_win = max(max_win, float(part.get("max_win", 0) or 0))
+                max_loss = min(max_loss, float(part.get("max_loss", 0) or 0))
+        merged["total_trades"] = total
+        merged["winning_trades"] = wins
+        merged["losing_trades"] = losses
+        merged["win_rate"] = round(wins / total * 100, 2) if total > 0 else 0
+        merged["total_pnl"] = sum_pnl
+        merged["avg_pnl"] = round(sum_pnl / total, 2) if total > 0 else 0
+        merged["max_win"] = 0 if max_win == float("-inf") else max_win
+        merged["max_loss"] = 0 if max_loss == float("inf") else max_loss
+        return merged
     except InfrastructureError as e:
         raise HTTPException(status_code=503, detail=f"ClickHouse unavailable: {e}")
     except Exception as e:
@@ -347,6 +381,56 @@ async def get_recent_fills(
         return {"fills": []}
 
 
+# Trades source routing per asset_class.
+#   - futures: kospi.rl_trades (has asset_class column)
+#   - stock:   market.stock_trades (no asset_class column — implicit)
+# Why split DBs+tables: legacy schemas evolved separately; futures uses RL paper
+# pipeline writing to kospi.rl_trades, stock uses the orchestrator writing to
+# market.stock_trades. Phase 7 plan §4 calls this out as deferred follow-up;
+# this helper does the runtime routing so the Cockpit shows both.
+_TRADES_SOURCE: dict[str, tuple[str, str, bool]] = {
+    # asset_class -> (database, table, has_asset_class_column)
+    "futures": ("kospi", "rl_trades", True),
+    "stock": ("market", "stock_trades", False),
+}
+
+
+def _build_rl_trades_sql(
+    asset_class: str,
+    strategy: str | None,
+    code: str | None,
+    limit: int,
+) -> tuple[str, dict]:
+    """Build the SELECT for one asset class. Caller composes ALL/UNION cases."""
+    db, table, has_ac = _TRADES_SOURCE[asset_class]
+    where = []
+    params: dict = {}
+    if has_ac:
+        # Futures table is multi-asset; pin to this asset_class.
+        where.append("asset_class = %(asset_class)s")
+        params["asset_class"] = asset_class
+    if strategy:
+        where.append("strategy = %(strategy)s")
+        params["strategy"] = strategy
+    if code:
+        where.append("code = %(code)s")
+        params["code"] = code
+    where_sql = f"WHERE {' AND '.join(where)}" if where else ""
+    # Normalize the SELECT so both tables expose the same column set.
+    # `asset_class` is materialized as a literal when missing.
+    asset_select = (
+        "asset_class" if has_ac else f"'{asset_class}' AS asset_class"
+    )
+    sql = (
+        f"SELECT id, {asset_select}, code, name, strategy, side, "
+        f"entry_date, entry_price, exit_date, exit_price, quantity, "
+        f"pnl, pnl_pct, hold_seconds, exit_reason "
+        f"FROM {db}.{table} {where_sql} "
+        f"ORDER BY exit_date DESC LIMIT {int(limit)}"
+    )
+    return sql, params
+
+
 @router.get("/rl")
 async def get_db_rl_trades(
     asset_class: str = Query("futures"),
@@ -354,38 +438,32 @@ async def get_db_rl_trades(
     code: str | None = Query(None),
     limit: int = Query(100, ge=1, le=500),
 ):
-    """Recent RL closed trades from ClickHouse rl_trades table."""
-    from shared.db.config import ClickHouseConfig
+    """Recent closed trades from per-asset ClickHouse tables.
 
+    Stock and futures live in different (database, table) pairs with slightly
+    different schemas. This route normalizes the row shape across both so the
+    frontend doesn't have to special-case.
+    """
     asset_class = _normalize_asset_class(asset_class)
 
-    db = ClickHouseConfig.from_env().database
-    where_clauses = []
-    params: dict = {"limit": limit}
-    if asset_class != "all":
-        where_clauses.append("asset_class = %(asset_class)s")
-        params["asset_class"] = asset_class
-    if strategy:
-        where_clauses.append("strategy = %(strategy)s")
-        params["strategy"] = strategy
-    if code:
-        where_clauses.append("code = %(code)s")
-        params["code"] = code
-
-    where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
-    sql = (
-        f"SELECT id, asset_class, code, name, strategy, side, entry_date, entry_price, "
-        f"exit_date, exit_price, quantity, pnl, pnl_pct, hold_seconds, exit_reason "
-        f"FROM {db}.rl_trades "
-        f"{where_sql} "
-        f"ORDER BY exit_date DESC "
-        f"LIMIT %(limit)s"
-    )
-    try:
+    async def _execute(sql: str, params: dict):
         loop = asyncio.get_running_loop()
         rows, columns = await loop.run_in_executor(None, _query_ch, sql, params)
         col_names = [c[0] for c in columns]
         return [dict(zip(col_names, row)) for row in rows]
+
+    try:
+        if asset_class in _TRADES_SOURCE:
+            sql, params = _build_rl_trades_sql(asset_class, strategy, code, limit)
+            return await _execute(sql, params)
+
+        # asset_class == "all": query both, sort+truncate in app layer.
+        merged: list[dict] = []
+        for ac in _TRADES_SOURCE:
+            sql, params = _build_rl_trades_sql(ac, strategy, code, limit)
+            merged.extend(await _execute(sql, params))
+        merged.sort(key=lambda r: r.get("exit_date") or "", reverse=True)
+        return merged[:limit]
     except InfrastructureError as e:
         raise HTTPException(status_code=503, detail=f"ClickHouse unavailable: {e}")
     except Exception as e:
