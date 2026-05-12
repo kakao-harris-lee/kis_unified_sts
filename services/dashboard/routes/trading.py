@@ -236,3 +236,26 @@ async def stop_trading(
     """Stop trading system (placeholder — orchestrator runs as CLI)."""
     _normalize_asset_class(asset_class)
     return {"status": "use CLI: sts trade stop"}
+
+
+@router.post("/kill-switch")
+async def trigger_kill_switch() -> dict:
+    """Manually trigger kill switch from dashboard UI.
+
+    Publishes ``kill_switch:force_flatten:requested`` on Redis so the
+    kill-switch service flattens all positions. If Redis is unavailable
+    we return ``triggered: false`` instead of raising — the UI should
+    surface the error but the API itself must not blow up.
+    """
+    try:
+        from shared.streaming.client import RedisClient
+
+        redis = RedisClient.get_client()
+        redis.publish("kill_switch:force_flatten:requested", "manual_dashboard")
+        return {"triggered": True, "at": datetime.now(UTC).isoformat()}
+    except Exception as e:  # noqa: BLE001 — keep UI resilient on infra failure
+        return {
+            "triggered": False,
+            "error": str(e),
+            "at": datetime.now(UTC).isoformat(),
+        }

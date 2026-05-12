@@ -18,18 +18,22 @@ if (apiKey) {
 
 // Trading API
 export const tradingApi = {
-  getStatus: () => apiClient.get('/api/trading/status'),
-  getPositions: () => apiClient.get('/api/trading/positions'),
-  startTrading: () => apiClient.post('/api/trading/start'),
-  stopTrading: () => apiClient.post('/api/trading/stop'),
+  getStatus: (params?: { asset_class?: string }) =>
+    apiClient.get('/api/trading/status', { params }),
+  getPositions: (params?: { asset_class?: string }) =>
+    apiClient.get('/api/trading/positions', { params }),
+  startTrading: (params?: { asset_class?: string }) =>
+    apiClient.post('/api/trading/start', null, { params }),
+  stopTrading: (params?: { asset_class?: string }) =>
+    apiClient.post('/api/trading/stop', null, { params }),
 };
 
 // Signals API
 export const signalsApi = {
-  getSignals: (params?: { strategy?: string; side?: string; limit?: number }) =>
+  getSignals: (params?: { asset_class?: string; strategy?: string; side?: string; limit?: number }) =>
     apiClient.get('/api/signals', { params }),
-  getHistory: (days?: number) =>
-    apiClient.get('/api/signals/history', { params: { days } }),
+  getHistory: (params?: { asset_class?: string; days?: number }) =>
+    apiClient.get('/api/signals/history', { params }),
 };
 
 // Trades API
@@ -92,3 +96,24 @@ export const strategiesApi = {
 export const metricsApi = {
   getVenue: () => apiClient.get('/api/metrics/venue'),
 };
+
+// Fills API (Phase 2)
+export const fillsApi = {
+  getRecent: (params?: { asset_class?: string; limit?: number }) =>
+    apiClient.get('/api/trades/fills', { params }),
+}
+
+// Health API (Phase 1 backend)
+export const healthApi = {
+  getSummary: (params?: { asset_class?: string }) =>
+    apiClient.get('/api/health/summary', { params }),
+  getProcess: () => apiClient.get('/api/health/process'),
+  getDataFreshness: (params?: { asset_class?: string }) =>
+    apiClient.get('/api/health/data-freshness', { params }),
+  getKillSwitch: () => apiClient.get('/api/health/kill-switch'),
+}
+
+// Kill Switch API (Phase 2)
+export const killSwitchApi = {
+  trigger: () => apiClient.post('/api/trading/kill-switch'),
+}

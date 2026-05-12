@@ -78,6 +78,52 @@ async def test_trades_statistics():
 
 
 @pytest.mark.asyncio
+async def test_trades_fills_returns_empty_on_ch_failure(monkeypatch):
+    """``/api/trades/fills`` returns ``{"fills": []}`` when ClickHouse is unavailable.
+
+    The route swallows any ClickHouse failure so the cockpit panel degrades
+    gracefully instead of surfacing a 503. We patch the sync ``_query_ch``
+    helper to raise — this exercises the except branch without needing a
+    real ClickHouse cluster in CI.
+    """
+    from services.dashboard import routes as _routes  # noqa: F401  (force import)
+    from services.dashboard.app import create_app
+    from services.dashboard.routes import trades as trades_route
+
+    def _boom(*_args, **_kwargs):
+        raise RuntimeError("ClickHouse unavailable")
+
+    monkeypatch.setattr(trades_route, "_query_ch", _boom)
+
+    app = create_app()
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/api/trades/fills")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data == {"fills": []}
+
+
+@pytest.mark.asyncio
+async def test_trades_fills_stock_short_circuits():
+    """``asset_class=stock`` returns empty without touching ClickHouse.
+
+    The ``order_fills`` table only contains futures fills (Phase 4 scope),
+    so the route short-circuits non-futures asset classes.
+    """
+    from services.dashboard.app import create_app
+
+    app = create_app()
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/api/trades/fills?asset_class=stock")
+
+    assert response.status_code == 200
+    assert response.json() == {"fills": []}
+
+
+@pytest.mark.asyncio
 async def test_trades_by_strategy():
     """Test trades by strategy endpoint."""
     from services.dashboard.app import create_app
