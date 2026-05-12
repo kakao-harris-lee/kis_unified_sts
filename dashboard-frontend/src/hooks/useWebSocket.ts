@@ -15,7 +15,7 @@ export function useWebSocketInvalidation() {
     const connect = () => {
       if (stopped) return
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-      ws = new WebSocket(`${protocol}//${window.location.host}/ws/v1`)
+      ws = new WebSocket(`${protocol}//${window.location.host}/ws`)
 
       ws.onopen = () => {
         reconnectIdx = 0
