@@ -1,6 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { BrowserRouter, Routes, Route, NavLink } from 'react-router-dom';
-import Dashboard from './pages/Dashboard';
+import { BrowserRouter, Routes, Route, NavLink, Navigate } from 'react-router-dom';
 import Cockpit from './pages/Cockpit';
 import Positions from './pages/Positions';
 import Signals from './pages/Signals';
@@ -51,9 +50,6 @@ function AppInner() {
                   </span>
                   <div className="flex space-x-4">
                     <NavLink to="/" end className={navClassName}>
-                      Dashboard
-                    </NavLink>
-                    <NavLink to="/cockpit" className={navClassName}>
                       Cockpit
                     </NavLink>
                     <NavLink to="/positions" className={navClassName}>
@@ -82,8 +78,9 @@ function AppInner() {
 
           <main className="max-w-7xl mx-auto px-4 py-8">
             <Routes>
-              <Route path="/" element={<Dashboard />} />
-              <Route path="/cockpit" element={<Cockpit />} />
+              <Route path="/" element={<Cockpit />} />
+              <Route path="/cockpit" element={<Navigate to="/" replace />} />
+              <Route path="/dashboard" element={<Navigate to="/" replace />} />
               <Route path="/positions" element={<Positions />} />
               <Route path="/signals" element={<Signals />} />
               <Route path="/trades" element={<Trades />} />
