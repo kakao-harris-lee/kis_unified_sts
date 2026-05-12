@@ -1,47 +1,46 @@
-# Phase 5 Futures Paradigm — Grafana Dashboards
+# Grafana Dashboards — Archived
 
-Dashboards auto-loaded by the existing provisioning at
-`monitoring/grafana/provisioning/dashboards/dashboard.yaml`
-(no YAML changes required).
+**Status (as of 2026-05-12)**: All operational dashboards are archived.
+
+The React Cockpit at `http://localhost:8001/` is now the single operational pane for stock + futures monitoring. See `docs/superpowers/specs/2026-05-12-dashboard-redesign-design.md` and `docs/superpowers/plans/2026-05-12-dashboard-redesign.md` for the redesign rationale.
 
 ## Active
 
-| File | UID | Purpose |
-|------|-----|---------|
-| `futures-paradigm-overview.json` | `futures-paradigm-overview` | Today PnL / open positions / signal & fill counts (24h) / open-position table |
-| `futures-paradigm-risk.json` | `futures-paradigm-risk` | Daily/weekly MDD gauges, consecutive-loss counter, six kill-switch condition gauges, kill-switch trip timeline |
-| `llm-primary-phase2-monitoring.json` | `llm-primary-phase2-monitoring` | Phase 2 cutover — RL shadow vs Setup A/C counterfactual, LLM veto rate, kill-switch state |
-| `trading-overview.json` | — | Cross-asset trading overview (stock + futures) |
-| `signal-monitoring.json` | — | Live signal feed (entry/exit) across strategies |
-| `stream-realtime.json` | — | WebSocket stream health & freshness |
-| `system-health.json` | — | Process / Redis / ClickHouse / API liveness |
-| `futures-trade-history.json` | — | Historical futures trade tape |
+(empty — all moved to `archive/`)
 
 ## Archived (`archive/`)
 
 | File | Reason |
 |------|--------|
-| `futures-paradigm-live-ladder.json` | Pre-Gate 3 only; Phase 5 has not entered live ladder (`futures_live.enabled: false`). Restore from archive when Gate 3 opens. |
-| `rl-paper-matrix-realtime.json` | Matrix profile comparison no longer used — single production profile. |
+| `futures-paradigm-overview.json` | Replaced by Cockpit `/` |
+| `futures-paradigm-risk.json` | Risk indicators absorbed into Cockpit `GlobalIndicators` + kill-switch state |
+| `futures-trade-history.json` | Replaced by `/trades` drill-down |
+| `llm-primary-phase2-monitoring.json` | Phase 2 cutover counterfactual still tracked via cron/Telegram; no live dashboard needed |
+| `signal-monitoring.json` | Replaced by `/signals` drill-down + Cockpit `SignalsListCompact` |
+| `trading-overview.json` | Replaced by Cockpit `/` |
+| `stream-realtime.json` | Replaced by Cockpit `GlobalIndicators` data-freshness indicator |
+| `system-health.json` | Replaced by Cockpit `GlobalIndicators` process indicator |
+| `futures-paradigm-live-ladder.json` | Pre-Gate 3 only; restore when live ladder opens |
+| `rl-paper-matrix-realtime.json` | Matrix profile comparison unused — single production profile |
 
-## Data sources
+## Restoration (raw debugging)
+
+To re-enable any archived dashboard temporarily for raw ClickHouse / Prometheus debugging:
+
+```bash
+git mv monitoring/grafana/dashboards/archive/<name>.json monitoring/grafana/dashboards/<name>.json
+# Grafana provisioning auto-reloads
+```
+
+To make permanent, commit the move and revert when no longer needed.
+
+## Data sources (unchanged)
 
 - ClickHouse (`uid: clickhouse`) — `kospi.rl_trades`, `kospi.swing_positions`, `kospi.signals_all`, `kospi.order_fills`, `kospi.rl_shadow_predictions`
-- Prometheus (`uid: prometheus`) — `risk_state_*`, `kill_switch_condition_value{name="..."}`, `kill_switch_triggered_total`, `trading_errors_total`, `trading_signals_total`, `shadow_logger_*`
-
-Note: `kospi.rl_signals` was deprecated; queries use `kospi.signals_all` filtered by `setup_type IN ('A','C')` for the Phase 2 LLM-primary paradigm.
-
-## When to consult which
-
-- **Operations (intraday)**: `overview` for "what's happening right now"; `risk` for "are we within limits"
-- **Phase 2 cutover monitoring**: `llm-primary-phase2-monitoring`
-- **Post-incident review**: `risk` (kill-switch panels) + `system-health`
-- **Gate 3 progression** (when activated): restore `live-ladder` from archive
+- Prometheus (`uid: prometheus`) — `risk_state_*`, `kill_switch_condition_value`, `kill_switch_triggered_total`, `trading_errors_total`, `trading_signals_total`, `shadow_logger_*`
 
 ## Edits
 
-`allowUiUpdates: true` is set in `dashboard.yaml`, so on-the-fly edits in
-the Grafana UI persist *until* the next file change — then the JSON on
-disk wins. Treat dashboard JSON as code: edit, commit, deploy.
+Treat dashboard JSON as code. `allowUiUpdates: true` is set in `dashboard.yaml` so on-the-fly Grafana UI edits persist *until* the next file change — then the JSON on disk wins.
 
-Spec: `docs/plans/2026-04-20-futures-paradigm-phase5-implementation-plan.md` Task 6.
+Spec: `docs/superpowers/specs/2026-05-12-dashboard-redesign-design.md`
