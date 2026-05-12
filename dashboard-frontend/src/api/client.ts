@@ -49,47 +49,10 @@ export const tradesApi = {
     apiClient.get('/api/trades/rl', { params }),
 };
 
-// Backtest API
-export const backtestApi = {
-  list: () => apiClient.get('/api/backtest'),
-  run: (params: {
-    asset_class: string;
-    strategy: string;
-    symbol: string;
-    start_date: string;
-    end_date: string;
-    initial_capital: number;
-    params?: Record<string, unknown>;
-  }) => apiClient.post('/api/backtest/run', params),
-  getResult: (runId: string) => apiClient.get(`/api/backtest/${runId}`),
-};
-
-// Experiments API
-export const experimentsApi = {
-  list: () => apiClient.get('/api/experiments'),
-  getRuns: (experimentId: string, params?: { status?: string; limit?: number }) =>
-    apiClient.get(`/api/experiments/${experimentId}/runs`, { params }),
-  getBest: (experimentId: string, metric?: string) =>
-    apiClient.get(`/api/experiments/${experimentId}/best`, { params: { metric } }),
-};
-
 // Strategies API
 export const strategiesApi = {
   list: (params?: { asset_class?: string; enabled_only?: boolean }) =>
     apiClient.get('/api/strategies', { params }),
-  get: (asset: string, name: string) =>
-    apiClient.get(`/api/strategies/${asset}/${name}`),
-  save: (data: {
-    asset_class: string;
-    name: string;
-    config: Record<string, unknown>;
-  }) => apiClient.post('/api/strategies', data),
-  validate: (data: {
-    asset_class: string;
-    config: Record<string, unknown>;
-  }) => apiClient.post('/api/strategies/validate', data),
-  schema: (params: { entry_type?: string; exit_type?: string; position_type?: string }) =>
-    apiClient.get('/api/strategies/schema', { params }),
 };
 
 // Metrics API
