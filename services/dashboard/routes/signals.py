@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
+from services.dashboard.routes.trading import _normalize_asset_class
 from shared.exceptions import InfrastructureError
 
 router = APIRouter(prefix="/api/signals", tags=["signals"])
@@ -65,11 +66,7 @@ def _to_signal_response(s: dict) -> SignalResponse | None:
         # "can't compare offset-naive and offset-aware" crashes.
         if "timestamp" in s:
             ts = datetime.fromisoformat(s["timestamp"])
-            ts = (
-                ts.replace(tzinfo=UTC)
-                if ts.tzinfo is None
-                else ts.astimezone(UTC)
-            )
+            ts = ts.replace(tzinfo=UTC) if ts.tzinfo is None else ts.astimezone(UTC)
         else:
             ts = datetime.now(UTC)
         return SignalResponse(
@@ -94,8 +91,10 @@ async def get_signals(
     side: str | None = Query(None, description="Filter by side (BUY/SELL)"),
     limit: int = Query(50, ge=1, le=100, description="Number of signals"),
     page: int = Query(1, ge=1, description="Page number"),
+    asset_class: str = Query(default="futures"),
 ):
     """Get list of signals with optional filters."""
+    _normalize_asset_class(asset_class)
     raw = _load_signals()
     signals = [_to_signal_response(s) for s in raw]
     signals = [s for s in signals if s is not None]

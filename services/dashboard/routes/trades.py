@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
+from services.dashboard.routes.trading import _normalize_asset_class
 from shared.exceptions import InfrastructureError
 
 
@@ -123,8 +124,10 @@ async def get_trades(
     symbol: str | None = Query(None, description="Filter by symbol"),
     limit: int = Query(50, ge=1, le=100, description="Number of trades"),
     page: int = Query(1, ge=1, description="Page number"),
+    asset_class: str = Query(default="futures"),
 ):
     """Get list of trades with optional filters."""
+    _normalize_asset_class(asset_class)
     raw = _load_trades()
     trades = [_to_trade_response(t) for t in raw]
     trades = [t for t in trades if t is not None]
@@ -253,11 +256,7 @@ async def get_db_rl_statistics(
     """Aggregate statistics from ClickHouse rl_trades table."""
     from shared.db.config import ClickHouseConfig
 
-    asset_class = str(asset_class or "").strip().lower() or "futures"
-    if asset_class not in {"stock", "futures", "all"}:
-        raise HTTPException(
-            status_code=400, detail="asset_class must be stock, futures, or all"
-        )
+    asset_class = _normalize_asset_class(asset_class)
 
     db = ClickHouseConfig.from_env().database
     where_clauses = []
@@ -307,11 +306,7 @@ async def get_db_rl_trades(
     """Recent RL closed trades from ClickHouse rl_trades table."""
     from shared.db.config import ClickHouseConfig
 
-    asset_class = str(asset_class or "").strip().lower() or "futures"
-    if asset_class not in {"stock", "futures", "all"}:
-        raise HTTPException(
-            status_code=400, detail="asset_class must be stock, futures, or all"
-        )
+    asset_class = _normalize_asset_class(asset_class)
 
     db = ClickHouseConfig.from_env().database
     where_clauses = []
