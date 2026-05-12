@@ -18,6 +18,8 @@ import ErrorMessage from '../components/ErrorMessage';
 import SideBadge from '../components/SideBadge';
 import StatCard from '../components/StatCard';
 import StrategySelect from '../components/StrategySelect';
+import HeaderBar from '../components/HeaderBar';
+import { useAssetClass } from '../contexts/AssetClassContext';
 
 interface Trade {
   id: string;
@@ -89,7 +91,9 @@ interface DbOpenPosition {
 type TabType = 'live' | 'history';
 
 function LiveTab() {
+  const { selectedAsset } = useAssetClass();
   const [strategyFilter, setStrategyFilter] = useState<string>('');
+  const [chartCollapsed, setChartCollapsed] = useState<boolean>(true);
 
   const {
     data: tradesData,
@@ -99,7 +103,7 @@ function LiveTab() {
     dataUpdatedAt: tradesUpdatedAt,
     isRefetching: tradesRefetching,
   } = useQuery<TradesResponse>({
-    queryKey: ['trades', strategyFilter],
+    queryKey: ['trades', selectedAsset, strategyFilter],
     queryFn: () =>
       tradesApi
         .getTrades({
@@ -115,7 +119,7 @@ function LiveTab() {
     error: strategyError,
     refetch: refetchStrategy,
   } = useQuery<StrategyStats[]>({
-    queryKey: ['trades-by-strategy'],
+    queryKey: ['trades-by-strategy', selectedAsset],
     queryFn: () => tradesApi.getByStrategy().then((r) => r.data),
     refetchInterval: 10000,
   });
@@ -163,7 +167,19 @@ function LiveTab() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      {/* Mobile chart toggle */}
+      <div className="sm:hidden">
+        <button
+          onClick={() => setChartCollapsed((v) => !v)}
+          className="w-full px-4 py-2 bg-gray-800 border border-gray-600 rounded text-sm text-gray-200"
+        >
+          📊 {chartCollapsed ? '차트 보기' : '차트 숨기기'}
+        </button>
+      </div>
+
+      <div
+        className={`${chartCollapsed ? 'hidden' : 'block'} sm:block grid grid-cols-1 lg:grid-cols-2 gap-6`}
+      >
         <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
           <h3 className="text-lg font-medium mb-4">Cumulative P&L (%)</h3>
           {tradesLoading ? (
@@ -340,6 +356,8 @@ function LiveTab() {
 }
 
 function HistoryTab() {
+  const { selectedAsset } = useAssetClass();
+
   const {
     data: stats,
     isLoading: statsLoading,
@@ -348,9 +366,9 @@ function HistoryTab() {
     dataUpdatedAt: statsUpdatedAt,
     isRefetching: statsRefetching,
   } = useQuery<DbStats>({
-    queryKey: ['db-statistics'],
+    queryKey: ['db-statistics', selectedAsset],
     queryFn: async () => {
-      const r = await tradesApi.getRlStatistics();
+      const r = await tradesApi.getRlStatistics({ asset_class: selectedAsset });
       return r.data;
     },
     refetchInterval: 30000,
@@ -362,9 +380,9 @@ function HistoryTab() {
     error: tradesError,
     refetch: refetchTrades,
   } = useQuery<DbTrade[]>({
-    queryKey: ['db-trades'],
+    queryKey: ['db-trades', selectedAsset],
     queryFn: async () => {
-      const r = await tradesApi.getRlTrades({ limit: 100 });
+      const r = await tradesApi.getRlTrades({ asset_class: selectedAsset, limit: 100 });
       return Array.isArray(r.data) ? r.data : [];
     },
     refetchInterval: 30000,
@@ -376,8 +394,11 @@ function HistoryTab() {
     error: positionsError,
     refetch: refetchPositions,
   } = useQuery<DbOpenPosition[]>({
-    queryKey: ['db-open-positions'],
-    queryFn: () => tradingApi.getPositions().then((r) => Array.isArray(r.data) ? r.data : []),
+    queryKey: ['db-open-positions', selectedAsset],
+    queryFn: () =>
+      tradingApi
+        .getPositions({ asset_class: selectedAsset })
+        .then((r) => (Array.isArray(r.data) ? r.data : [])),
     refetchInterval: 10000,
   });
 
@@ -408,7 +429,7 @@ function HistoryTab() {
   if (isLoading) {
     return (
       <div className="space-y-6">
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-4">
           {Array.from({ length: 4 }).map((_, idx) => (
             <div key={idx} className="bg-gray-800 rounded-lg p-4 border border-gray-700">
               <div className="h-4 bg-gray-700 rounded animate-pulse w-20 mb-2" />
@@ -435,7 +456,7 @@ function HistoryTab() {
 
       {/* Stats Cards */}
       {stats && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-4">
           <StatCard title="Total Trades" value={String(stats.total_trades)} />
           <StatCard
             title="Win Rate"
@@ -701,35 +722,40 @@ function Trades() {
   const [activeTab, setActiveTab] = useState<TabType>('live');
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Trade History</h1>
-        <div className="flex rounded-lg overflow-hidden border border-gray-600">
-          <button
-            onClick={() => setActiveTab('live')}
-            className={`px-4 py-2 text-sm font-medium transition-colors ${
-              activeTab === 'live'
-                ? 'bg-blue-600 text-white'
-                : 'bg-gray-800 text-gray-400 hover:text-white'
-            }`}
-          >
-            Live (Redis)
-          </button>
-          <button
-            onClick={() => setActiveTab('history')}
-            className={`px-4 py-2 text-sm font-medium transition-colors ${
-              activeTab === 'history'
-                ? 'bg-blue-600 text-white'
-                : 'bg-gray-800 text-gray-400 hover:text-white'
-            }`}
-          >
-            History (DB)
-          </button>
+    <>
+      <HeaderBar />
+      <div className="max-w-[1400px] mx-auto px-2 sm:px-4 lg:px-6 pt-2 pb-24 lg:pb-2">
+        <div className="space-y-6">
+          <div className="flex items-center justify-between">
+            <h1 className="text-2xl font-bold">Trade History</h1>
+            <div className="flex rounded-lg overflow-hidden border border-gray-600">
+              <button
+                onClick={() => setActiveTab('live')}
+                className={`px-4 py-2 text-sm font-medium transition-colors ${
+                  activeTab === 'live'
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-gray-800 text-gray-400 hover:text-white'
+                }`}
+              >
+                Live (Redis)
+              </button>
+              <button
+                onClick={() => setActiveTab('history')}
+                className={`px-4 py-2 text-sm font-medium transition-colors ${
+                  activeTab === 'history'
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-gray-800 text-gray-400 hover:text-white'
+                }`}
+              >
+                History (DB)
+              </button>
+            </div>
+          </div>
+
+          {activeTab === 'live' ? <LiveTab /> : <HistoryTab />}
         </div>
       </div>
-
-      {activeTab === 'live' ? <LiveTab /> : <HistoryTab />}
-    </div>
+    </>
   );
 }
 
