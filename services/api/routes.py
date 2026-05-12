@@ -726,68 +726,26 @@ async def run_backtest(
     _background_tasks: BackgroundTasks,
     _api_key: Annotated[str | None, Depends(require_trading_permission)] = None,
 ):
-    """백테스트 실행 (인증 필요)"""
-    logger.info(f"Backtest requested: {request_body.strategy}")
+    """백테스트 실행 (인증 필요).
 
-    try:
-        from services.dashboard.routes.backtest import (
-            SUPPORTED_STRATEGIES,
-            IndicatorSignalStrategy,
-            _compute_indicators,
-            _fetch_ohlcv,
-            _parse_date_range,
-            _resolve_strategy_params,
-        )
-        from shared.backtest import BacktestConfig, BacktestEngine
-
-        strategy = request_body.strategy.strip()
-        asset_class = request_body.asset_class.value
-
-        if strategy not in SUPPORTED_STRATEGIES:
-            raise HTTPException(status_code=400, detail=f"Unsupported strategy: {strategy}")
-
-        start, end = _parse_date_range(request_body.start_date, request_body.end_date)
-        params = _resolve_strategy_params(asset_class, strategy, None)
-
-        # Use first available symbol from data, or require data_path
-        symbol = getattr(request_body, "data_path", None) or "DEFAULT"
-        df = _fetch_ohlcv(asset_class, symbol, start, end, params)
-        if df.empty:
-            return {"success": False, "message": "No data found", "run_id": None, "result": None}
-
-        df = _compute_indicators(df, strategy, params)
-
-        capital = request_body.capital
-        if asset_class == "stock":
-            config = BacktestConfig.stock(initial_capital=capital)
-        else:
-            config = BacktestConfig.futures(initial_capital=capital)
-
-        engine = BacktestEngine(IndicatorSignalStrategy(strategy, params), config)
-        result = engine.run(df)
-
-        return {
-            "success": True,
-            "message": "Backtest completed",
-            "run_id": None,
-            "result": {
-                "total_trades": result.total_trades,
-                "win_rate": round(result.win_rate, 2),
-                "total_return_pct": round(result.total_return_pct, 2),
-                "max_drawdown_pct": round(result.max_drawdown_pct, 2),
-                "sharpe_ratio": round(result.sharpe_ratio, 2),
-                "final_capital": round(result.final_capital, 0),
-            },
-        }
-
-    except HTTPException:
-        raise
-    except (TradingSystemError, ValueError, ImportError) as e:
-        # TradingSystemError: any trading system error during backtest
-        # ValueError: invalid parameters or data
-        # ImportError: missing optional dependencies
-        logger.error(f"Backtest failed: {e}", exc_info=True)
-        return {"success": False, "message": sanitize_error_message(e), "run_id": None, "result": None}
+    Phase 5 (dashboard redesign): the ad-hoc HTTP backtest pathway was
+    removed alongside the dashboard's deprecated backtest UI. Backtests
+    now run exclusively through the CLI (``sts backtest run``) so that
+    runs are reproducible from version-controlled inputs and tracked in
+    MLflow. The endpoint is preserved as a 410 stub to surface a clear
+    error to any lingering API client.
+    """
+    logger.info(
+        "Backtest HTTP endpoint invoked but is disabled: %s", request_body.strategy
+    )
+    raise HTTPException(
+        status_code=410,
+        detail=(
+            "HTTP backtest endpoint removed in dashboard Phase 5. "
+            "Use the CLI instead: 'sts backtest run --strategy <name> "
+            "--asset <stock|futures> --data <path>'."
+        ),
+    )
 
 
 @router.get(

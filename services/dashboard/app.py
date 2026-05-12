@@ -45,14 +45,6 @@ OPENAPI_TAGS = [
         "description": "Trade history and performance statistics",
     },
     {
-        "name": "backtest",
-        "description": "Backtesting operations and results",
-    },
-    {
-        "name": "experiments",
-        "description": "MLflow experiment tracking",
-    },
-    {
         "name": "strategies",
         "description": "Strategy configuration management",
     },
@@ -198,8 +190,6 @@ def _register_routes(app: FastAPI) -> None:
     from fastapi import WebSocket
 
     from services.dashboard.routes import (
-        backtest,
-        experiments,
         health,
         metrics,
         signals,
@@ -213,8 +203,6 @@ def _register_routes(app: FastAPI) -> None:
     app.include_router(trading.router)
     app.include_router(signals.router)
     app.include_router(trades.router)
-    app.include_router(backtest.router)
-    app.include_router(experiments.router)
     app.include_router(strategies.router)
     app.include_router(metrics.router, tags=["metrics"])
     app.include_router(health.router)
