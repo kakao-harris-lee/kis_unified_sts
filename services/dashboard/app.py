@@ -59,6 +59,10 @@ OPENAPI_TAGS = [
         "name": "metrics",
         "description": "Performance and execution venue metrics",
     },
+    {
+        "name": "health",
+        "description": "Operational health and observability endpoints",
+    },
 ]
 
 
@@ -165,6 +169,7 @@ def _register_routes(app: FastAPI) -> None:
     from services.dashboard.routes import (
         backtest,
         experiments,
+        health,
         metrics,
         signals,
         strategies,
@@ -181,6 +186,7 @@ def _register_routes(app: FastAPI) -> None:
     app.include_router(experiments.router)
     app.include_router(strategies.router)
     app.include_router(metrics.router, tags=["metrics"])
+    app.include_router(health.router)
 
     # WebSocket endpoint
     @app.websocket("/ws")
