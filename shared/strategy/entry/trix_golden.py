@@ -18,6 +18,9 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime, time, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
+
+_KST = ZoneInfo("Asia/Seoul")
 
 import pandas as pd
 
@@ -258,32 +261,34 @@ class TrixGoldenEntry(EntrySignalGenerator[TrixGoldenConfig]):
 
     def _is_trading_time(self, now: datetime) -> bool:
         """Check if current time is within trading window."""
+        # Market hour filters use KST; context.timestamp is UTC-aware (PR #159).
+        now_kst = now.astimezone(_KST) if now.tzinfo is not None else now.replace(tzinfo=_KST)
         open_dt = datetime.combine(
-            now.date(),
+            now_kst.date(),
             time(self.config.market_open_hour, self.config.market_open_minute),
-            tzinfo=now.tzinfo,
+            tzinfo=_KST,
         )
         close_dt = datetime.combine(
-            now.date(),
+            now_kst.date(),
             time(self.config.market_close_hour, self.config.market_close_minute),
-            tzinfo=now.tzinfo,
+            tzinfo=_KST,
         )
 
-        if now < open_dt or now >= close_dt:
+        if now_kst < open_dt or now_kst >= close_dt:
             return False
 
         if self.config.skip_market_open_minutes > 0:
             open_cutoff = open_dt + timedelta(
                 minutes=self.config.skip_market_open_minutes
             )
-            if now < open_cutoff:
+            if now_kst < open_cutoff:
                 return False
 
         if self.config.skip_market_close_minutes > 0:
             close_cutoff = close_dt - timedelta(
                 minutes=self.config.skip_market_close_minutes
             )
-            if now >= close_cutoff:
+            if now_kst >= close_cutoff:
                 return False
 
         return True
