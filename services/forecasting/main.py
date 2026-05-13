@@ -186,6 +186,13 @@ def _install_signal_handlers(
             # or non-main threads). Best-effort installation.
             logger.warning("Could not install handler for signal %s", sig)
 
+    # SIGUSR1 → reload HAR-RV model from Redis (refit is performed externally
+    # by scripts/forecasting/refit_har_rv.py which writes forecast:vol:model).
+    try:
+        loop.add_signal_handler(signal.SIGUSR1, service._try_load_model_from_redis)
+    except (NotImplementedError, RuntimeError):
+        logger.warning("Could not install handler for signal SIGUSR1")
+
 
 async def _main() -> None:
     from clickhouse_driver import Client

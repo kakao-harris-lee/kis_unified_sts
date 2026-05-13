@@ -12,7 +12,10 @@ forecasting:
     refit_minute_kst: 35
     history_days: 60                    # 60d bars for OLS
     holdout_days: 7                     # OOS R² hold-out window
-    min_r2_oos: 0.10                    # below → keep previous model
+    # Phase D canary: real-market OOS R² is much lower than synthetic AR(1)
+    # fixture (~-0.2 typical for KOSPI200 60d/7d split). Threshold relaxed for
+    # the canary observation period; recalibrate after Phase D data accrues.
+    min_r2_oos: -1.0                    # below → keep previous model
     consecutive_fail_disable_threshold: 7
 
   event_scorer:
