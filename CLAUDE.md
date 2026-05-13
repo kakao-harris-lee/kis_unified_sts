@@ -489,6 +489,29 @@ gh pr create --title "..." --body "..."
 
 모든 PR 전 `pytest tests/ -v` 실행.
 
+### 5. 타임존 규칙 — KST 필수
+
+**`context.timestamp`는 UTC-aware (`datetime.now(UTC)`)이다** (PR #159 이후). 시간 필터를 비교하기 전에 반드시 KST로 변환해야 한다.
+
+```python
+# ❌ 금지 — UTC 시각을 한국 장시간 설정과 직접 비교
+if now < datetime.combine(now.date(), time(9, 0), tzinfo=now.tzinfo):
+    return None  # 09:00 UTC = 18:00 KST → 한국 장중에 항상 차단됨
+
+# ✅ 권장 — KST로 변환 후 비교
+from zoneinfo import ZoneInfo
+_KST = ZoneInfo("Asia/Seoul")
+
+now_kst = now.astimezone(_KST) if now.tzinfo is not None else now.replace(tzinfo=_KST)
+open_dt = datetime.combine(now_kst.date(), time(9, 0), tzinfo=_KST)
+if now_kst < open_dt:
+    return None
+```
+
+**한국 장시간**: 09:00–15:30 KST = **00:00–06:30 UTC**. UTC 기준 `time(9, 0)`은 18:00 KST로 장 종료 후이므로 장중 진입이 전부 차단된다.
+
+레퍼런스 구현: `shared/strategy/entry/opening_volume_surge.py`, `shared/strategy/entry/momentum_breakout.py`
+
 ---
 
 ## 📝 코드 스타일
