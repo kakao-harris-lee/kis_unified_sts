@@ -1,0 +1,51 @@
+# Event impact taxonomy — rule-based scoring for known event types.
+# Score: 0-100, magnitude only (direction handled by Setup A/C entry logic).
+
+events:
+  - key: FOMC_RATE_DECISION
+    impact_score: 90
+    aliases: ["FOMC", "Fed rate decision", "federal reserve"]
+    description: "US Fed FOMC rate decision (top-tier macro)"
+  - key: BOK_RATE_DECISION
+    impact_score: 85
+    aliases: ["BOK", "Korean rate decision", "한국은행"]
+    description: "Bank of Korea rate decision"
+  - key: US_CPI_RELEASE
+    impact_score: 80
+    aliases: ["CPI", "consumer price index"]
+    description: "US CPI release (FOMC input)"
+  - key: US_NFP_RELEASE
+    impact_score: 75
+    aliases: ["NFP", "non-farm payrolls", "employment situation"]
+    description: "US non-farm payrolls"
+  - key: KR_CPI_RELEASE
+    impact_score: 60
+    aliases: ["Korean CPI", "한국 CPI"]
+    description: "Korea CPI release"
+  - key: KOSPI200_EARNINGS_TOP10
+    impact_score: 55
+    aliases: ["Samsung earnings", "SK Hynix earnings", "Hyundai earnings"]
+    description: "Top-10 KOSPI200 component earnings"
+  - key: US_GDP_RELEASE
+    impact_score: 50
+    aliases: ["US GDP", "GDP advance estimate"]
+    description: "US GDP release"
+  - key: KR_GDP_RELEASE
+    impact_score: 45
+    aliases: ["Korean GDP"]
+    description: "Korea GDP release"
+  - key: KOSPI200_REBALANCE
+    impact_score: 70
+    aliases: ["KOSPI200 rebalance", "index rebalancing"]
+    description: "KOSPI200 quarterly index rebalance"
+  - key: KRX_TRADING_HALT
+    impact_score: 95
+    aliases: ["trading halt", "circuit breaker"]
+    description: "KRX trading halt / sidecar / circuit breaker"
+  - key: GEOPOLITICAL_KOREA
+    impact_score: 70
+    aliases: ["DPRK missile", "North Korea", "geopolitical"]
+    description: "Korea-related geopolitical event"
+
+# Floor for matched-but-unweighted events
+unknown_match_score: 40
