@@ -66,6 +66,16 @@ strategy:
         veto_long_block_signal: "STRONG_BEARISH"   # opposing signal that blocks longs
         veto_short_block_signal: "STRONG_BULLISH"  # opposing signal that blocks shorts
 
+      # Phase 5 forecast integration (default off — gated activation per Phase D)
+      forecast_integration:
+        enabled: false                       # feature flag
+        buffer_vol_mult: 0.5
+        target_vol_mult: 2.5
+        min_event_impact_score: 60
+        vol_baseline_window_days: 30
+        stale_forecast_fallback: "atr"
+        inverse_vol_position_size: true
+
   exit:
     # Use the RL-based exit policy, consistent with all futures strategies.
     type: rl_mppo_exit
