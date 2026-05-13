@@ -101,12 +101,13 @@ class OrderExecutor:
                 circuit_breaker_timeout=config.circuit_breaker_timeout,
             )
 
-        # Account parsing
+        # Account parsing — strip dash so "50110648-01" → prefix="50110648", suffix="01"
         self.account_prefix = ""
         self.account_suffix = ""
-        if config.account_no and len(config.account_no) >= 10:
-            self.account_prefix = config.account_no[:8]
-            self.account_suffix = config.account_no[8:10]
+        clean_no = config.account_no.replace("-", "") if config.account_no else ""
+        if clean_no and len(clean_no) >= 10:
+            self.account_prefix = clean_no[:8]
+            self.account_suffix = clean_no[8:10]
 
     async def initialize(self) -> None:
         """Initialize HTTP session with connection pooling.
