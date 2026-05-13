@@ -323,3 +323,74 @@ async def get_health_summary(
         _summary_cache["asset"] = asset
 
     return payload
+
+
+# ---------------------------------------------------------------------------
+# Forecasting service health
+# ---------------------------------------------------------------------------
+
+
+def _coerce_redis_text(value: Any) -> str | None:
+    """Decode bytes or pass through str. Returns None for other types."""
+    if value is None:
+        return None
+    if isinstance(value, bytes):
+        try:
+            return value.decode("utf-8", errors="ignore")
+        except Exception:  # noqa: BLE001
+            return None
+    if isinstance(value, str):
+        return value
+    return None
+
+
+@router.get("/forecasting")
+async def get_forecasting_health() -> dict[str, Any]:
+    """Forecasting service health (model + publish freshness)."""
+    redis = _get_redis_client()
+    forecast_raw = None
+    model_raw = None
+    if redis is not None:
+        try:
+            forecast_raw = redis.get("forecast:vol:current")
+        except Exception:  # noqa: BLE001
+            forecast_raw = None
+        try:
+            model_raw = redis.get("forecast:vol:model")
+        except Exception:  # noqa: BLE001
+            model_raw = None
+
+    forecast_text = _coerce_redis_text(forecast_raw)
+    model_text = _coerce_redis_text(model_raw)
+
+    forecast_fresh = forecast_text is not None
+    forecast_age_s = -1
+    if forecast_text is not None:
+        try:
+            d = json.loads(forecast_text)
+            asof = datetime.fromisoformat(d["asof"])
+            forecast_age_s = int((datetime.now(UTC) - asof).total_seconds())
+        except Exception:  # noqa: BLE001
+            forecast_age_s = -1
+
+    model_loaded = model_text is not None
+    model_r2_oos = None
+    model_last_refit = None
+    if model_text is not None:
+        try:
+            d = json.loads(model_text)
+            coeffs = d.get("coefficients", {}) if isinstance(d, dict) else {}
+            model_r2_oos = coeffs.get("r2_oos")
+            model_last_refit = coeffs.get("fit_date")
+        except Exception:  # noqa: BLE001
+            pass
+
+    return {
+        "service_alive": forecast_age_s >= 0 and forecast_age_s < 300,
+        "forecast_fresh": forecast_fresh,
+        "forecast_age_s": forecast_age_s,
+        "model_loaded": model_loaded,
+        "model_last_refit": model_last_refit,
+        "model_r2_oos": model_r2_oos,
+        "checked_at": datetime.now(UTC).isoformat(),
+    }

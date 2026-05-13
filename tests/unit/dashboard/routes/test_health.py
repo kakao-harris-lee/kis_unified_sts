@@ -108,3 +108,18 @@ class TestHealthSummary:
         a = client.get("/api/health/summary").json()
         b = client.get("/api/health/summary").json()
         assert a["checked_at"] == b["checked_at"]
+
+
+class TestForecastingHealth:
+    def test_returns_service_status(self, client):
+        res = client.get("/api/health/forecasting")
+        assert res.status_code == 200
+        body = res.json()
+        assert {
+            "service_alive",
+            "forecast_fresh",
+            "forecast_age_s",
+            "model_loaded",
+            "model_last_refit",
+            "model_r2_oos",
+        } <= set(body.keys())
