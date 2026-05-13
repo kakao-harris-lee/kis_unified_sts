@@ -12,6 +12,13 @@ execution:
   futures_fill_check_timeout_seconds: 1.0
   futures_auto_cancel_unfilled: true
 
+# 유동성 부족 포지션 자동 청산 — 틱 수신 없는 포지션 타임아웃 강제 청산
+stale_position:
+  enabled: true
+  timeout_seconds: 600        # 10분 이상 틱 없으면 청산 (IndicatorEngine stale 180s + 버퍼)
+  min_holding_seconds: 120    # 진입 후 최소 2분은 대기 (진입 직후 스프레드 안정화)
+  asset_classes: [stock]      # 주식만 적용 (선물은 유동성 충분)
+
 # Position tracker batch insert settings
 position_tracker:
   batch_size: 50                  # Number of closed positions to batch before flush

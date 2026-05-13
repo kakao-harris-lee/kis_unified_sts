@@ -60,7 +60,7 @@ from shared.execution.config import ATSRoutingConfig
 from shared.execution.models import ExecutionVenue
 from shared.execution.venue_router import VenueRouter
 from shared.models.position import Position, PositionSide, PositionState
-from shared.models.signal import ExitSignal, Signal
+from shared.models.signal import ExitReason, ExitSignal, Signal
 from shared.regime.performance_tracker import (
     RegimePerformanceConfig,
     RegimePerformanceTracker,
@@ -4973,6 +4973,13 @@ class TradingOrchestrator:
                 ),
             )
 
+            # Stale-timeout liquidation: force-close positions with no tick data
+            stale_signals = self._check_stale_position_exits(positions, data)
+            if stale_signals:
+                # Only add stale signals for positions not already scheduled for exit
+                exiting_ids = {s.position_id for s in signals}
+                signals = signals + [s for s in stale_signals if s.position_id not in exiting_ids]
+
             # Execute exit orders (bounded parallelism)
             async def run_exit(signal: ExitSignal) -> None:
                 queued = getattr(self._order_semaphore, "_value", 0) <= 0
@@ -4996,6 +5003,82 @@ class TradingOrchestrator:
         except (NetworkError, APIError, InfrastructureError, ValidationError) as e:
             logger.error(f"Exit handler failed: {e}", exc_info=True)
             return []
+
+    def _check_stale_position_exits(
+        self,
+        positions: list,
+        market_data: dict,
+    ) -> list[ExitSignal]:
+        """유동성 부족으로 틱이 없는 포지션을 강제 청산.
+
+        execution.yaml::stale_position 설정 기반.
+        IndicatorEngine의 last_tick_ts 를 통해 마지막 틱 수신 시각을 조회하고,
+        timeout_seconds 초과 시 STALE_TIMEOUT 사유로 ExitSignal 생성.
+        """
+        if not self._indicator_engine:
+            return []
+
+        try:
+            cfg = ConfigLoader.load("execution.yaml").get("stale_position", {})
+        except Exception:
+            cfg = {}
+
+        if not cfg.get("enabled", True):
+            return []
+
+        timeout_sec: float = float(cfg.get("timeout_seconds", 600))
+        min_holding_sec: float = float(cfg.get("min_holding_seconds", 120))
+        asset_classes: list = cfg.get("asset_classes", ["stock"])
+
+        if self.config.asset_class not in asset_classes:
+            return []
+
+        now = datetime.now(UTC)
+        signals: list[ExitSignal] = []
+
+        for position in positions:
+            code = position.code
+
+            # 최소 보유 시간 미충족 시 스킵
+            try:
+                holding_sec = (now - position.entry_time).total_seconds() if position.entry_time else 0.0
+                if holding_sec < min_holding_sec:
+                    continue
+            except (TypeError, AttributeError):
+                continue
+
+            tick_age = self._indicator_engine.get_tick_age_seconds(code, now=now)
+            if tick_age is None or tick_age < timeout_sec:
+                continue
+
+            # 마지막 알려진 가격 사용 (시장가 제출 — 브로커가 체결가 결정)
+            last_price = market_data.get(code, {}).get("close", position.current_price)
+
+            logger.warning(
+                f"Stale timeout: {code} ({position.name}) — "
+                f"no tick for {tick_age:.0f}s (threshold={timeout_sec:.0f}s), "
+                f"forcing liquidation at ~{last_price:.0f}"
+            )
+
+            signals.append(
+                ExitSignal(
+                    code=code,
+                    name=position.name,
+                    position_id=position.id,
+                    reason=ExitReason.STALE_TIMEOUT,
+                    strategy=position.strategy,
+                    current_price=last_price,
+                    exit_price=last_price,
+                    entry_price=position.entry_price,
+                    confidence=1.0,
+                    priority=1,  # 최우선 청산
+                    timestamp=now,
+                    quantity=position.quantity,
+                    metadata={"tick_age_seconds": tick_age, "timeout_seconds": timeout_sec},
+                )
+            )
+
+        return signals
 
     # -------------------------------------------------------------------------
     # Order Execution

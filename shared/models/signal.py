@@ -52,6 +52,9 @@ class ExitReason(Enum):
     # RL model-based
     RL_EXIT = "rl_exit"  # RL 모델 청산 시그널
 
+    # Liquidity-based
+    STALE_TIMEOUT = "stale_timeout"  # 유동성 부족 — 틱 수신 없음 타임아웃 청산
+
     # Manual
     MANUAL_CLOSE = "manual_close"  # 수동 청산
     FORCE_CLOSE = "force_close"  # 강제 청산
