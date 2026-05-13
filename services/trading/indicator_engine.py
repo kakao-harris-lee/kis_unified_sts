@@ -574,6 +574,19 @@ class StreamingIndicatorEngine:
             return False
         return len(acc.candles) >= self.bb_period
 
+    def get_tick_age_seconds(self, symbol: str, now: datetime | None = None) -> float | None:
+        """Return seconds elapsed since last tick for symbol, or None if never seen."""
+        acc = self._accumulators.get(symbol)
+        if acc is None or acc.last_tick_ts is None:
+            return None
+        last_ts = acc.last_tick_ts
+        if last_ts.tzinfo is None:
+            last_ts = last_ts.replace(tzinfo=UTC)
+        _now = (now or datetime.now(UTC))
+        if _now.tzinfo is None:
+            _now = _now.replace(tzinfo=UTC)
+        return (_now - last_ts).total_seconds()
+
     def warmup_progress(self, symbol: str) -> float:
         """Return warmup progress as a ratio in [0.0, 1.0]."""
         acc = self._accumulators.get(symbol)
