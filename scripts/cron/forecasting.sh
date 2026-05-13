@@ -38,15 +38,34 @@ start_service() {
 }
 
 refit_service() {
-  log "Triggering HAR-RV refit (signal SIGUSR1 to container)"
+  cd "$PROJECT_DIR"
+  log "Running standalone HAR-RV refit"
+  # The container shares the same shared/ modules; run the fit in-container so
+  # it reads the same config and writes to the same Redis/ClickHouse instances
+  # the daemon will read back.
   CID=$(docker ps -q -f name=kis-forecasting)
-  if [ -z "$CID" ]; then
-    log "ERROR: container not running; cannot refit"
-    exit 1
+  if [ -n "$CID" ]; then
+    docker exec "$CID" python /app/scripts/forecasting/refit_har_rv.py \
+      >> "$LOG_FILE" 2>&1
+    rc=$?
+    if [ "$rc" -ne 0 ]; then
+      log "ERROR: refit script exited $rc"
+      exit "$rc"
+    fi
+    log "Refit completed — signalling daemon to reload model"
+    docker kill -s SIGUSR1 "$CID" >> "$LOG_FILE" 2>&1
+  else
+    # No daemon — run via venv on host so the cron job still produces a model
+    # in Redis/ClickHouse. Daemon will load it on next start.
+    "$PROJECT_DIR/.venv/bin/python" \
+      "$PROJECT_DIR/scripts/forecasting/refit_har_rv.py" >> "$LOG_FILE" 2>&1
+    rc=$?
+    if [ "$rc" -ne 0 ]; then
+      log "ERROR: host refit script exited $rc"
+      exit "$rc"
+    fi
+    log "Refit completed (daemon offline — model saved to Redis)"
   fi
-  # Service main listens for SIGUSR1 to refit immediately
-  docker kill -s SIGUSR1 "$CID" >> "$LOG_FILE" 2>&1
-  log "Refit signal sent"
 }
 
 stop_service() {

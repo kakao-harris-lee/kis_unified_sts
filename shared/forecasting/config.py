@@ -11,7 +11,10 @@ class HARRVConfig(BaseModel):
     refit_minute_kst: int = Field(default=35, ge=0, le=59)
     history_days: int = Field(default=60, ge=22)  # min for monthly RV component
     holdout_days: int = Field(default=7, ge=1)
-    min_r2_oos: float = Field(default=0.10, ge=0.0, le=1.0)
+    # Allow negative thresholds: real-market OOS R² over 7d hold-out is often
+    # negative (HAR-RV is a weak short-horizon predictor outside high-vol
+    # regimes), and the canary needs to operate even when the fit is poor.
+    min_r2_oos: float = Field(default=0.10, ge=-1.0, le=1.0)
     consecutive_fail_disable_threshold: int = Field(default=7, ge=1)
 
 
