@@ -1071,7 +1071,11 @@ class SetupCEntryAdapter(EntrySignalGenerator[SetupCEntryConfig]):
 
     CONFIG_CLASS = SetupCEntryConfig
 
-    def __init__(self, config: SetupCEntryConfig) -> None:
+    def __init__(
+        self,
+        config: SetupCEntryConfig,
+        forecast_client: Any | None = None,
+    ) -> None:
         super().__init__(config)
         from shared.decision.setups.event_reaction import (
             SetupCConfig,
@@ -1087,6 +1091,46 @@ class SetupCEntryAdapter(EntrySignalGenerator[SetupCEntryConfig]):
             min_impact_tier=config.min_impact_tier,
         )
         self._setup = SetupCEventReaction(config=setup_cfg)
+        # Phase 5 forecast integration — optional ForecastClient (default off).
+        # When provided AND config.forecast_integration.enabled is True, the
+        # adapter consumes 15-min vol forecast + event impact scores to derive
+        # breakout buffer/target dynamically.
+        self._forecast_client = forecast_client
+
+    def _derive_thresholds(
+        self, forecast: Any | None, atr: float
+    ) -> tuple[float, float]:
+        """Return ``(breakout_buffer, target_distance)`` in price units.
+
+        When ``forecast_integration.enabled`` is True and a fresh
+        :class:`~shared.forecasting.models.VolForecast` is supplied, derive
+        thresholds from ``forecast.forecast_atr_equivalent`` (15-min vol ATR).
+        Otherwise fall back to the legacy ATR-based config
+        (``breakout_buffer_atr_mult`` × atr, ``target_atr_mult`` × atr).
+        """
+        fi = self.config.forecast_integration
+        if fi.enabled and forecast is not None:
+            buffer = fi.buffer_vol_mult * forecast.forecast_atr_equivalent
+            target = fi.target_vol_mult * forecast.forecast_atr_equivalent
+            return (buffer, target)
+        return (
+            atr * self.config.breakout_buffer_atr_mult,
+            atr * self.config.target_atr_mult,
+        )
+
+    def _event_passes_filter(self, event_score: Any | None) -> bool:
+        """Return ``True`` if ``event_score`` meets the impact threshold.
+
+        Returns ``True`` when:
+        * ``forecast_integration.enabled`` is False (legacy tier filter
+          remains the gate); OR
+        * ``event_score`` is ``None`` (let the legacy tier filter decide); OR
+        * ``event_score.impact_score >= min_event_impact_score``.
+        """
+        fi = self.config.forecast_integration
+        if not fi.enabled or event_score is None:
+            return True
+        return event_score.impact_score >= fi.min_event_impact_score
 
     def _validate_config(self) -> None:
         """Validate config fields.
