@@ -71,7 +71,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from pydantic import BaseModel, Field
 
@@ -201,6 +201,34 @@ class LLMTuningConfig(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Phase 5 forecast integration configs (default off)
+# ---------------------------------------------------------------------------
+
+
+class SetupAForecastIntegrationConfig(BaseModel):
+    """Phase 5 forecast integration for Setup A (default off)."""
+
+    enabled: bool = Field(default=False)
+    gap_threshold_vol_mult: float = Field(default=1.0, gt=0.0, le=10.0)
+    retracement_buffer_vol_mult: float = Field(default=0.3, gt=0.0, le=10.0)
+    max_gap_for_reversion_vol_mult: float = Field(default=4.0, gt=0.0, le=20.0)
+    use_event_impact_for_size: bool = Field(default=True)
+    min_event_impact_score: int = Field(default=50, ge=0, le=100)
+
+
+class SetupCForecastIntegrationConfig(BaseModel):
+    """Phase 5 forecast integration for Setup C (default off)."""
+
+    enabled: bool = Field(default=False)
+    buffer_vol_mult: float = Field(default=0.5, gt=0.0, le=10.0)
+    target_vol_mult: float = Field(default=2.5, gt=0.0, le=20.0)
+    min_event_impact_score: int = Field(default=60, ge=0, le=100)
+    vol_baseline_window_days: int = Field(default=30, ge=5, le=365)
+    stale_forecast_fallback: Literal["atr", "skip"] = Field(default="atr")
+    inverse_vol_position_size: bool = Field(default=True)
+
+
+# ---------------------------------------------------------------------------
 # Config helpers
 # ---------------------------------------------------------------------------
 
@@ -250,6 +278,10 @@ class SetupAEntryConfig(ServiceConfigBase):
         default_factory=LLMTuningConfig,
         description="Phase 1.1 LLM-threshold tuning parameters",
     )
+    forecast_integration: SetupAForecastIntegrationConfig = Field(
+        default_factory=SetupAForecastIntegrationConfig,
+        description="Phase 5 forecast integration (default off — gated activation)",
+    )
 
 
 class SetupCEntryConfig(ServiceConfigBase):
@@ -292,6 +324,10 @@ class SetupCEntryConfig(ServiceConfigBase):
     llm_tuning: LLMTuningConfig = Field(
         default_factory=LLMTuningConfig,
         description="Phase 1.1 LLM-threshold tuning parameters",
+    )
+    forecast_integration: SetupCForecastIntegrationConfig = Field(
+        default_factory=SetupCForecastIntegrationConfig,
+        description="Phase 5 forecast integration (default off — gated activation)",
     )
 
 
@@ -851,7 +887,11 @@ class SetupAEntryAdapter(EntrySignalGenerator[SetupAEntryConfig]):
 
     CONFIG_CLASS = SetupAEntryConfig
 
-    def __init__(self, config: SetupAEntryConfig) -> None:
+    def __init__(
+        self,
+        config: SetupAEntryConfig,
+        forecast_client: Any | None = None,
+    ) -> None:
         super().__init__(config)
         from shared.decision.setups.gap_reversion import (
             SetupAConfig,
@@ -872,6 +912,63 @@ class SetupAEntryAdapter(EntrySignalGenerator[SetupAEntryConfig]):
             signal_ttl_minutes=config.signal_ttl_minutes,
         )
         self._setup = SetupAGapReversion(config=setup_cfg)
+        # Phase 5 forecast integration — optional ForecastClient (default off).
+        # When provided AND config.forecast_integration.enabled is True, the
+        # adapter consumes 15-min vol forecast + event impact scores to derive
+        # gap threshold + reversion range dynamically and scale position size.
+        self._forecast_client = forecast_client
+
+    def _derive_gap_threshold_pct(self, forecast: Any | None) -> float:
+        """Return the gap entry threshold in percent units.
+
+        When forecast integration is enabled and a fresh
+        :class:`~shared.forecasting.models.VolForecast` is supplied, the
+        threshold is scaled by the forecast's annualized vol percent:
+        ``gap_threshold_vol_mult × forecast.forecast_pct``.
+
+        Otherwise fall back to the existing config ``min_kr_gap_pct`` (Korean
+        open gap vs prev close — the primary gap input for Setup A).
+        """
+        fi = self.config.forecast_integration
+        if fi.enabled and forecast is not None:
+            return fi.gap_threshold_vol_mult * forecast.forecast_pct
+        return self.config.min_kr_gap_pct
+
+    def _gap_within_reversion_range(
+        self, gap_pct: float, forecast: Any | None
+    ) -> bool:
+        """Return True if ``gap_pct`` is within the reversion-acceptable range.
+
+        When forecast integration is enabled and a fresh forecast is supplied,
+        reject gaps larger than ``max_gap_for_reversion_vol_mult ×
+        forecast.forecast_pct`` (extreme gaps are unlikely to mean-revert and
+        should defer to event-driven setups instead).
+
+        When forecast integration is off or no forecast is available, return
+        True (let the existing retrace_min/max gating handle the call).
+        """
+        fi = self.config.forecast_integration
+        if not fi.enabled or forecast is None:
+            return True
+        max_pct = fi.max_gap_for_reversion_vol_mult * forecast.forecast_pct
+        return gap_pct <= max_pct
+
+    def _compute_event_size_mult(self, event_score: Any | None) -> float:
+        """Return a position-size multiplier in (0, 1] based on event impact.
+
+        Strong events (high ``impact_score``) imply elevated overreaction risk,
+        so size is reduced: ``mult = 1 / (1 + impact_score / 100)``.
+
+        Returns 1.0 (no scaling) when forecast integration is off, when the
+        ``use_event_impact_for_size`` toggle is off, or when no event score is
+        supplied.
+        """
+        fi = self.config.forecast_integration
+        if not fi.enabled or not fi.use_event_impact_for_size:
+            return 1.0
+        if event_score is None:
+            return 1.0
+        return 1.0 / (1.0 + event_score.impact_score / 100.0)
 
     def _validate_config(self) -> None:
         """Validate config fields.
@@ -1035,7 +1132,11 @@ class SetupCEntryAdapter(EntrySignalGenerator[SetupCEntryConfig]):
 
     CONFIG_CLASS = SetupCEntryConfig
 
-    def __init__(self, config: SetupCEntryConfig) -> None:
+    def __init__(
+        self,
+        config: SetupCEntryConfig,
+        forecast_client: Any | None = None,
+    ) -> None:
         super().__init__(config)
         from shared.decision.setups.event_reaction import (
             SetupCConfig,
@@ -1051,6 +1152,46 @@ class SetupCEntryAdapter(EntrySignalGenerator[SetupCEntryConfig]):
             min_impact_tier=config.min_impact_tier,
         )
         self._setup = SetupCEventReaction(config=setup_cfg)
+        # Phase 5 forecast integration — optional ForecastClient (default off).
+        # When provided AND config.forecast_integration.enabled is True, the
+        # adapter consumes 15-min vol forecast + event impact scores to derive
+        # breakout buffer/target dynamically.
+        self._forecast_client = forecast_client
+
+    def _derive_thresholds(
+        self, forecast: Any | None, atr: float
+    ) -> tuple[float, float]:
+        """Return ``(breakout_buffer, target_distance)`` in price units.
+
+        When ``forecast_integration.enabled`` is True and a fresh
+        :class:`~shared.forecasting.models.VolForecast` is supplied, derive
+        thresholds from ``forecast.forecast_atr_equivalent`` (15-min vol ATR).
+        Otherwise fall back to the legacy ATR-based config
+        (``breakout_buffer_atr_mult`` × atr, ``target_atr_mult`` × atr).
+        """
+        fi = self.config.forecast_integration
+        if fi.enabled and forecast is not None:
+            buffer = fi.buffer_vol_mult * forecast.forecast_atr_equivalent
+            target = fi.target_vol_mult * forecast.forecast_atr_equivalent
+            return (buffer, target)
+        return (
+            atr * self.config.breakout_buffer_atr_mult,
+            atr * self.config.target_atr_mult,
+        )
+
+    def _event_passes_filter(self, event_score: Any | None) -> bool:
+        """Return ``True`` if ``event_score`` meets the impact threshold.
+
+        Returns ``True`` when:
+        * ``forecast_integration.enabled`` is False (legacy tier filter
+          remains the gate); OR
+        * ``event_score`` is ``None`` (let the legacy tier filter decide); OR
+        * ``event_score.impact_score >= min_event_impact_score``.
+        """
+        fi = self.config.forecast_integration
+        if not fi.enabled or event_score is None:
+            return True
+        return event_score.impact_score >= fi.min_event_impact_score
 
     def _validate_config(self) -> None:
         """Validate config fields.

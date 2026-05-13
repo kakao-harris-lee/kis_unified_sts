@@ -148,6 +148,69 @@ def _count_llm_vetoes(client: Any, start_utc: datetime, end_utc: datetime) -> in
     return int(rows[0][0]) if rows else 0
 
 
+# ---------------------------------------------------------------------------
+# Phase C — forecasting gates (5/6/7)
+# ---------------------------------------------------------------------------
+
+
+def _count_har_rv_refits(
+    client: Any, start_utc: datetime, end_utc: datetime
+) -> int:
+    """Gate 5 helper — HAR-RV daily refit row count for the trading day.
+
+    Expected: >= 1 (refit runs once per trading day per
+    docs/superpowers/plans/2026-05-13-forecast-aware-paradigm.md).
+    """
+    rows = client.execute(
+        "SELECT count() FROM kospi.har_rv_fits "
+        "WHERE fit_date >= %(start)s AND fit_date < %(end)s",
+        {"start": _ch_naive(start_utc), "end": _ch_naive(end_utc)},
+    )
+    return int(rows[0][0]) if rows else 0
+
+
+def _count_vol_forecasts(
+    client: Any, start_utc: datetime, end_utc: datetime
+) -> int:
+    """Gate 6 helper — vol forecast row count for the trading day.
+
+    Expected: >= 100 (forecast publisher emits ~390 rows during a full
+    KOSPI session; 100 is a comfortable floor that tolerates short
+    sessions, holidays, and brief publisher restarts).
+    """
+    rows = client.execute(
+        "SELECT count() FROM kospi.vol_forecasts "
+        "WHERE asof >= %(start)s AND asof < %(end)s",
+        {"start": _ch_naive(start_utc), "end": _ch_naive(end_utc)},
+    )
+    return int(rows[0][0]) if rows else 0
+
+
+def _event_scorer_fallback_rate(
+    client: Any, start_utc: datetime, end_utc: datetime
+) -> tuple[float, int, int]:
+    """Gate 7 helper — LLM fallback ratio for event scoring.
+
+    Returns ``(fallback_rate, llm_failures, llm_total)``.  A high rate of
+    ``UNKNOWN_LLM_SCORED`` + ``impact_score == 50`` rows (the deterministic
+    LLM-failure fallback signature) means the LLM event scorer is stuck.
+    """
+    rows = client.execute(
+        "SELECT countIf(source = 'llm' "
+        "                AND event_type = 'UNKNOWN_LLM_SCORED' "
+        "                AND impact_score = 50) AS llm_failures, "
+        "       countIf(source = 'llm') AS llm_total "
+        "FROM kospi.event_scores "
+        "WHERE asof >= %(start)s AND asof < %(end)s",
+        {"start": _ch_naive(start_utc), "end": _ch_naive(end_utc)},
+    )
+    if not rows or rows[0][1] == 0:
+        return (0.0, 0, 0)
+    failures = int(rows[0][0])
+    total = int(rows[0][1])
+    return (failures / total, failures, total)
+
+
 def _phase4_setup_executed_30d(client: Any) -> int:
     rows = client.execute(
         "SELECT countIf(executed = 1) FROM kospi.signals_all "
@@ -261,6 +324,91 @@ def evaluate_gates(
                     f"failures lost Phase 4 data."
                 ),
             ))
+
+    # ------------------------------------------------------------------
+    # Phase C forecasting gates (5/6/7) — verify the forecast-aware
+    # paradigm runtime is healthy.  These gates are tolerant of an
+    # entirely-cold deployment (forecast tables absent / empty): the
+    # ClickHouse queries are wrapped in try/except so a missing table
+    # surfaces as a FAIL with detail rather than crashing the whole
+    # verification run.
+    # ------------------------------------------------------------------
+
+    # Gate 5 — HAR-RV refit ran today
+    try:
+        har_rv_count = _count_har_rv_refits(client, start_utc, end_utc)
+        report.gates.append(GateResult(
+            name="har_rv_refit_today",
+            passed=har_rv_count >= 1,
+            actual=har_rv_count,
+            expected=">= 1",
+            detail="HAR-RV daily refit should produce >= 1 row per trading day.",
+        ))
+    except Exception as exc:
+        report.gates.append(GateResult(
+            name="har_rv_refit_today",
+            passed=False,
+            actual=0,
+            expected=">= 1",
+            detail=f"ClickHouse query failed: {exc}",
+        ))
+
+    # Gate 6 — vol forecast publisher active during the session
+    try:
+        forecast_count = _count_vol_forecasts(client, start_utc, end_utc)
+        report.gates.append(GateResult(
+            name="forecast_publish_active",
+            passed=forecast_count >= 100,
+            actual=forecast_count,
+            expected=">= 100",
+            detail=(
+                "Forecast publisher emits ~390 rows per full session; "
+                "<100 indicates the daemon stalled or never started."
+            ),
+        ))
+    except Exception as exc:
+        report.gates.append(GateResult(
+            name="forecast_publish_active",
+            passed=False,
+            actual=0,
+            expected=">= 100",
+            detail=f"ClickHouse query failed: {exc}",
+        ))
+
+    # Gate 7 — event scorer not stuck in deterministic LLM-failure fallback
+    try:
+        fallback_rate, llm_failures, llm_total = _event_scorer_fallback_rate(
+            client, start_utc, end_utc
+        )
+        if llm_total == 0:
+            # No LLM-sourced events today → treat as PASS (healthy idle).
+            report.gates.append(GateResult(
+                name="event_scorer_healthy",
+                passed=True,
+                actual=0.0,
+                expected="< 0.5 (or 0 LLM calls)",
+                detail="No LLM-sourced events today — gate auto-passes.",
+            ))
+        else:
+            report.gates.append(GateResult(
+                name="event_scorer_healthy",
+                passed=fallback_rate < 0.5,
+                actual=fallback_rate,
+                expected="< 0.5",
+                detail=(
+                    f"LLM event scorer fallback rate {fallback_rate:.2%} "
+                    f"({llm_failures}/{llm_total}). ≥50% means the LLM "
+                    f"path is stuck in UNKNOWN_LLM_SCORED fallback."
+                ),
+            ))
+    except Exception as exc:
+        report.gates.append(GateResult(
+            name="event_scorer_healthy",
+            passed=False,
+            actual=0.0,
+            expected="< 0.5",
+            detail=f"ClickHouse query failed: {exc}",
+        ))
 
     # Informational metrics
     report.info["setup_c_signals_today"] = _count_setup_signals(
