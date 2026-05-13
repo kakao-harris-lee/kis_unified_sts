@@ -32,33 +32,39 @@ def _query_setup_pnl(ch_client, window_days: int = 7) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=["exit_date", "pnl", "side", "code"])
 
 
+RL_SHADOW_PROXY_CODE = "101S6000"
+"""KOSPI200 futures (continuous) used as price proxy for mini-future shadow predictions.
+
+RL was trained on 101S6000 per project convention, and mini bars (A05xxx) are not
+ingested into kospi200f_1m. Both products track the same index — percentage moves
+are functionally equivalent — so 101S6000 is the canonical proxy series."""
+
+
 def _query_rl_shadow_pnl(ch_client, window_days: int = 7) -> pd.DataFrame:
     """Synthetic 'would-be' PnL from RL shadow predictions.
 
     Per spec section 6 - Phase F validation. Uses kospi.rl_shadow_predictions
-    joined with subsequent realized 15m return as proxy PnL.
+    with RL_SHADOW_PROXY_CODE bars as the proxy price series.
     """
     cutoff = datetime.now(UTC) - timedelta(days=window_days)
-    # Schema note: kospi.kospi200f_1m uses columns (code, datetime), not (symbol, timestamp).
-    # rl_shadow_predictions.symbol is matched to kospi200f_1m.code.
-    # ClickHouse does not support correlated scalar subqueries, so we use ASOF JOIN
-    # which finds the nearest row at-or-after the prediction timestamp.
+    # ClickHouse ASOF JOIN requires ≥1 equi-join column, so we materialize the
+    # proxy code on both sides as a synthetic join key.
     rows = ch_client.execute(
         "WITH preds AS ("
-        "  SELECT ts, action, symbol, ts AS entry_ts, ts + INTERVAL 15 MINUTE AS exit_ts "
+        "  SELECT ts, action, %(proxy)s AS code, "
+        "         ts AS entry_ts, ts + INTERVAL 15 MINUTE AS exit_ts "
         "  FROM kospi.rl_shadow_predictions "
         "  WHERE ts >= %(c)s AND action != 4"
         "), "
         "bars AS ("
-        "  SELECT code, datetime, close FROM kospi.kospi200f_1m"
+        "  SELECT code, datetime, close FROM kospi.kospi200f_1m "
+        "  WHERE code = %(proxy)s"
         ") "
         "SELECT p.ts, p.action, eb.close AS entry_close, xb.close AS exit_close "
         "FROM preds p "
-        "ASOF LEFT JOIN bars eb "
-        "  ON p.symbol = eb.code AND p.entry_ts <= eb.datetime "
-        "ASOF LEFT JOIN bars xb "
-        "  ON p.symbol = xb.code AND p.exit_ts <= xb.datetime",
-        {"c": cutoff},
+        "ASOF LEFT JOIN bars eb ON p.code = eb.code AND p.entry_ts <= eb.datetime "
+        "ASOF LEFT JOIN bars xb ON p.code = xb.code AND p.exit_ts <= xb.datetime",
+        {"c": cutoff, "proxy": RL_SHADOW_PROXY_CODE},
     )
     df = pd.DataFrame(rows, columns=["ts", "action", "entry_close", "exit_close"])
     if df.empty:
@@ -99,7 +105,7 @@ def _format_report(setup_df: pd.DataFrame, rl_df: pd.DataFrame, window_days: int
     r_sharpe = _sharpe(rl_df["pnl"]) if not rl_df.empty else 0
     r_mdd = _max_drawdown(rl_df["pnl"]) if not rl_df.empty else 0
 
-    if r_sharpe == 0:
+    if setup_df.empty or rl_df.empty or r_sharpe == 0:
         decision = "INSUFFICIENT_DATA"
     else:
         sharpe_ratio = s_sharpe / r_sharpe
