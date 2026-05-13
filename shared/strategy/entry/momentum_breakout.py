@@ -20,6 +20,9 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime, time, timedelta
 from typing import Dict, Optional
+from zoneinfo import ZoneInfo
+
+_KST = ZoneInfo("Asia/Seoul")
 
 from shared.config.mixins import ConfigMixin
 from shared.models.signal import Signal, SignalType
@@ -171,6 +174,8 @@ class MomentumBreakoutEntry(EntrySignalGenerator[MomentumBreakoutConfig]):
                 return None
 
         now = context.timestamp
+        # Market hour filters use KST; context.timestamp is UTC-aware (PR #159).
+        now_kst = now.astimezone(_KST) if now.tzinfo is not None else now.replace(tzinfo=_KST)
 
         # --- Detect trend mode ---
         is_trend_mode = (
@@ -185,24 +190,24 @@ class MomentumBreakoutEntry(EntrySignalGenerator[MomentumBreakoutConfig]):
 
         # --- Time filters ---
         open_dt = datetime.combine(
-            now.date(),
+            now_kst.date(),
             time(self.config.market_open_hour, self.config.market_open_minute),
-            tzinfo=now.tzinfo,
+            tzinfo=_KST,
         )
         close_dt = datetime.combine(
-            now.date(),
+            now_kst.date(),
             time(self.config.market_close_hour, self.config.market_close_minute),
-            tzinfo=now.tzinfo,
+            tzinfo=_KST,
         )
 
-        if now < open_dt:
+        if now_kst < open_dt:
             return None
         if self.config.skip_market_open_minutes > 0:
-            if now < open_dt + timedelta(minutes=self.config.skip_market_open_minutes):
+            if now_kst < open_dt + timedelta(minutes=self.config.skip_market_open_minutes):
                 logger.debug(f"{code}: Skipping market open window")
                 return None
         if self.config.skip_market_close_minutes > 0:
-            if now >= close_dt - timedelta(minutes=self.config.skip_market_close_minutes):
+            if now_kst >= close_dt - timedelta(minutes=self.config.skip_market_close_minutes):
                 logger.debug(f"{code}: Skipping market close window")
                 return None
 
