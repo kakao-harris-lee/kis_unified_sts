@@ -71,7 +71,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from pydantic import BaseModel, Field
 
@@ -201,6 +201,34 @@ class LLMTuningConfig(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Phase 5 forecast integration configs (default off)
+# ---------------------------------------------------------------------------
+
+
+class SetupAForecastIntegrationConfig(BaseModel):
+    """Phase 5 forecast integration for Setup A (default off)."""
+
+    enabled: bool = Field(default=False)
+    gap_threshold_vol_mult: float = Field(default=1.0, gt=0.0, le=10.0)
+    retracement_buffer_vol_mult: float = Field(default=0.3, gt=0.0, le=10.0)
+    max_gap_for_reversion_vol_mult: float = Field(default=4.0, gt=0.0, le=20.0)
+    use_event_impact_for_size: bool = Field(default=True)
+    min_event_impact_score: int = Field(default=50, ge=0, le=100)
+
+
+class SetupCForecastIntegrationConfig(BaseModel):
+    """Phase 5 forecast integration for Setup C (default off)."""
+
+    enabled: bool = Field(default=False)
+    buffer_vol_mult: float = Field(default=0.5, gt=0.0, le=10.0)
+    target_vol_mult: float = Field(default=2.5, gt=0.0, le=20.0)
+    min_event_impact_score: int = Field(default=60, ge=0, le=100)
+    vol_baseline_window_days: int = Field(default=30, ge=5, le=365)
+    stale_forecast_fallback: Literal["atr", "skip"] = Field(default="atr")
+    inverse_vol_position_size: bool = Field(default=True)
+
+
+# ---------------------------------------------------------------------------
 # Config helpers
 # ---------------------------------------------------------------------------
 
@@ -250,6 +278,10 @@ class SetupAEntryConfig(ServiceConfigBase):
         default_factory=LLMTuningConfig,
         description="Phase 1.1 LLM-threshold tuning parameters",
     )
+    forecast_integration: SetupAForecastIntegrationConfig = Field(
+        default_factory=SetupAForecastIntegrationConfig,
+        description="Phase 5 forecast integration (default off — gated activation)",
+    )
 
 
 class SetupCEntryConfig(ServiceConfigBase):
@@ -292,6 +324,10 @@ class SetupCEntryConfig(ServiceConfigBase):
     llm_tuning: LLMTuningConfig = Field(
         default_factory=LLMTuningConfig,
         description="Phase 1.1 LLM-threshold tuning parameters",
+    )
+    forecast_integration: SetupCForecastIntegrationConfig = Field(
+        default_factory=SetupCForecastIntegrationConfig,
+        description="Phase 5 forecast integration (default off — gated activation)",
     )
 
 
