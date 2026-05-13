@@ -887,7 +887,11 @@ class SetupAEntryAdapter(EntrySignalGenerator[SetupAEntryConfig]):
 
     CONFIG_CLASS = SetupAEntryConfig
 
-    def __init__(self, config: SetupAEntryConfig) -> None:
+    def __init__(
+        self,
+        config: SetupAEntryConfig,
+        forecast_client: Any | None = None,
+    ) -> None:
         super().__init__(config)
         from shared.decision.setups.gap_reversion import (
             SetupAConfig,
@@ -908,6 +912,63 @@ class SetupAEntryAdapter(EntrySignalGenerator[SetupAEntryConfig]):
             signal_ttl_minutes=config.signal_ttl_minutes,
         )
         self._setup = SetupAGapReversion(config=setup_cfg)
+        # Phase 5 forecast integration — optional ForecastClient (default off).
+        # When provided AND config.forecast_integration.enabled is True, the
+        # adapter consumes 15-min vol forecast + event impact scores to derive
+        # gap threshold + reversion range dynamically and scale position size.
+        self._forecast_client = forecast_client
+
+    def _derive_gap_threshold_pct(self, forecast: Any | None) -> float:
+        """Return the gap entry threshold in percent units.
+
+        When forecast integration is enabled and a fresh
+        :class:`~shared.forecasting.models.VolForecast` is supplied, the
+        threshold is scaled by the forecast's annualized vol percent:
+        ``gap_threshold_vol_mult × forecast.forecast_pct``.
+
+        Otherwise fall back to the existing config ``min_kr_gap_pct`` (Korean
+        open gap vs prev close — the primary gap input for Setup A).
+        """
+        fi = self.config.forecast_integration
+        if fi.enabled and forecast is not None:
+            return fi.gap_threshold_vol_mult * forecast.forecast_pct
+        return self.config.min_kr_gap_pct
+
+    def _gap_within_reversion_range(
+        self, gap_pct: float, forecast: Any | None
+    ) -> bool:
+        """Return True if ``gap_pct`` is within the reversion-acceptable range.
+
+        When forecast integration is enabled and a fresh forecast is supplied,
+        reject gaps larger than ``max_gap_for_reversion_vol_mult ×
+        forecast.forecast_pct`` (extreme gaps are unlikely to mean-revert and
+        should defer to event-driven setups instead).
+
+        When forecast integration is off or no forecast is available, return
+        True (let the existing retrace_min/max gating handle the call).
+        """
+        fi = self.config.forecast_integration
+        if not fi.enabled or forecast is None:
+            return True
+        max_pct = fi.max_gap_for_reversion_vol_mult * forecast.forecast_pct
+        return gap_pct <= max_pct
+
+    def _compute_event_size_mult(self, event_score: Any | None) -> float:
+        """Return a position-size multiplier in (0, 1] based on event impact.
+
+        Strong events (high ``impact_score``) imply elevated overreaction risk,
+        so size is reduced: ``mult = 1 / (1 + impact_score / 100)``.
+
+        Returns 1.0 (no scaling) when forecast integration is off, when the
+        ``use_event_impact_for_size`` toggle is off, or when no event score is
+        supplied.
+        """
+        fi = self.config.forecast_integration
+        if not fi.enabled or not fi.use_event_impact_for_size:
+            return 1.0
+        if event_score is None:
+            return 1.0
+        return 1.0 / (1.0 + event_score.impact_score / 100.0)
 
     def _validate_config(self) -> None:
         """Validate config fields.
