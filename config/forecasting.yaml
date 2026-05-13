@@ -1,0 +1,22 @@
+# Forecasting service configuration
+# See: docs/superpowers/specs/2026-05-13-forecast-aware-paradigm-design.md
+
+forecasting:
+  publisher_enabled: true               # master switch; off → service idles
+  forecast_loop_interval_seconds: 60
+  forecast_redis_ttl_seconds: 120
+  horizon_minutes: 15                   # matches Setup C event window
+
+  har_rv:
+    refit_hour_kst: 15
+    refit_minute_kst: 35
+    history_days: 60                    # 60d bars for OLS
+    holdout_days: 7                     # OOS R² hold-out window
+    min_r2_oos: 0.10                    # below → keep previous model
+    consecutive_fail_disable_threshold: 7
+
+  event_scorer:
+    default_ttl_minutes: 30
+    rule_first: true                    # try rule-based before LLM
+    llm_fallback_enabled: true
+    neutral_score_on_failure: 50        # 0-100, on dual failure
