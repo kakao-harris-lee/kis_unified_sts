@@ -66,9 +66,9 @@ strategy:
         veto_long_block_signal: "STRONG_BEARISH"   # opposing signal that blocks longs
         veto_short_block_signal: "STRONG_BULLISH"  # opposing signal that blocks shorts
 
-      # Phase 5 forecast integration (default off — gated activation per Phase D)
+      # Phase 5 forecast integration — Phase D canary activated 2026-05-13
       forecast_integration:
-        enabled: false                       # feature flag
+        enabled: true                        # feature flag
         buffer_vol_mult: 0.5
         target_vol_mult: 2.5
         min_event_impact_score: 60
