@@ -1,0 +1,27 @@
+# Dockerfile.forecasting
+FROM python:3.11-slim
+
+LABEL maintainer="kis_unified_sts"
+LABEL description="KIS Forecasting Service (HAR-RV + event impact)"
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY pyproject.toml README.md ./
+COPY shared/ ./shared/
+COPY services/ ./services/
+
+RUN pip install --upgrade pip && pip install .
+
+COPY config/ ./config/
+
+RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
+USER appuser
+
+CMD ["python", "-m", "services.forecasting.main"]

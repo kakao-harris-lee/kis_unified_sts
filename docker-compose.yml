@@ -121,6 +121,39 @@ services:
         max-file: "3"
 
   # =============================================================================
+  # Forecasting daemon (HAR-RV vol + event impact scoring)
+  # =============================================================================
+  forecasting:
+    build:
+      context: .
+      dockerfile: Dockerfile.forecasting
+    container_name: kis-forecasting
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      - REDIS_HOST=host.docker.internal
+      - REDIS_PORT=6379
+      - REDIS_DB=1
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - CLICKHOUSE_HOST=host.docker.internal
+      - CLICKHOUSE_PORT=9000
+      - CLICKHOUSE_USER=${CLICKHOUSE_USER:-default}
+      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD:-}
+      - CLICKHOUSE_STOCK_DATABASE=kospi
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+    volumes:
+      - ./config:/app/config:ro
+      - ./logs:/app/logs
+    networks:
+      - trading-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # =============================================================================
   # Redis (상태 캐시, 세션)
   # =============================================================================
   redis:
