@@ -26,10 +26,11 @@
   - 비율 기반 지표(BB, RSI, BB bandwidth)는 두 상품 간 전이 가능 확인 완료
   - 미니의 낮은 유동성(F200 대비 1/9~1/42)은 인지하고 수용
 - **현재 운용 전략**:
-  - `rl_mppo` (Maskable PPO, long/short intraday) — **메인 (Phase 5 Gate 3 사이 병행 후 Phase 5 완료 시 별도 계좌로 전환 예정)**
-  - **Phase 5 paradigm setups (paper / Gate 3 진입 전까지 paper-only)**: Setup A (gap reversion), Setup C (volatility breakout) — `services/decision_engine/`, `services/risk_filter/`, `services/order_router/` 파이프라인. 활성화 게이트는 `docs/runbooks/phase5-verification.md` 참조.
+  - **Setup A (gap reversion) + Setup C (volatility breakout)** — primary, paper-only (Phase 5 Gate 3 진입 전까지). `services/decision_engine/`, `services/risk_filter/`, `services/order_router/` 파이프라인. 활성화 게이트는 `docs/runbooks/phase5-verification.md` 참조.
+  - **향후**: Williams %R / RSI / MACD 등 명시적 기술 지표 기반 신규 전략 추가 예정 (2026-05-15 운영 결정).
+  - **`rl_mppo` — DEPRECATED 2026-05-15** (Phase 2 cutover 후 매 cycle 시그널 0건 누적, shadow logging도 종료). `config/strategies/futures/rl_mppo.yaml::enabled: false`. 코드 경로(`RLMPPOEntry/RLMPPOExit/rl_model_helpers`)는 즉시 제거하지 않고 retraining 옵션 보존.
 - **계약 명세**: `config/execution.yaml ::futures_contract_spec` (multiplier 50_000 KRW/pt, tick 0.02pt, tick_value 1_000 KRW)
-- **운용 경로 표준**: `TradingOrchestrator` 경로를 사용한다 (`rl_mppo`). Phase 5 paradigm은 systemd 단위로 분리 (`kis-decision-engine`, `kis-risk-filter`, `kis-order-router`, `kis-kill-switch`).
+- **운용 경로 표준**: `TradingOrchestrator` 경로를 사용한다 (Setup A/C). Phase 5 paradigm은 systemd 단위로 분리 (`kis-decision-engine`, `kis-risk-filter`, `kis-order-router`, `kis-kill-switch`).
 - **Phase 5 운영 런북**:
   - `docs/runbooks/futures-paradigm-operations.md` — 일일 운영 체크리스트
   - `docs/runbooks/futures-paradigm-rollback.md` — 비상 롤백 절차
@@ -40,8 +41,8 @@
 - **핵심 합의 사항**
   - 진입/청산 방향은 `signal_direction` 기준으로 처리한다.
   - 선물 paper/live 모두 숏 진입 및 숏 청산(BUY to cover)을 지원해야 한다.
-  - RL 입력은 학습 스펙과 동일해야 한다(31차원 obs, scaler 적용, code->dict market_data + OHLCV 기반 피처 복원).
-  - 선물 청산은 **학습된 RL 정책**(`rl_mppo_exit`)을 사용한다. 규칙 기반 `three_stage`는 주식 전용이다.
+  - ~~RL 입력은 학습 스펙과 동일해야 한다(31차원 obs, scaler 적용, code->dict market_data + OHLCV 기반 피처 복원).~~ (RL_mppo DEPRECATED 2026-05-15)
+  - 선물 청산은 Setup A/C 전략 자체의 청산 로직을 사용한다. ~~`rl_mppo_exit`~~ DEPRECATED. 규칙 기반 `three_stage`는 주식 전용이다.
   - **Phase 5 Setup A/C 활성화는 Gate 1-3 통과 + 운영자 서면 승인이 선행되어야 한다**. 코드는 사전 작성 완료(PR #142–#149) 상태이며, 실거래 전환 시점에만 `futures_live.enabled: true` + `redis-cli -n 1 del futures:live:suspended` 절차를 거친다.
 
 #### 주식 (Stock)
@@ -113,10 +114,12 @@ React 프론트엔드 (port 8001, FastAPI 정적 호스팅) — 실시간 운영
 
 설계 + 구현 plan: `docs/superpowers/specs/2026-05-12-dashboard-redesign-design.md`, `docs/superpowers/plans/2026-05-12-dashboard-redesign.md`.
 
-#### RL 선물 운용 규칙
+#### RL 선물 운용 규칙 — **DEPRECATED 2026-05-15**
 
-- `sts rl paper` 명령은 `TradingOrchestrator`를 사용한다.
-- `rl_mppo` 전략의 모델 경로 오버라이드는 `RL_MPPO_MODEL_PATH` 환경변수를 사용한다.
+> RL_mppo는 Phase 2 cutover 후 매 cycle 시그널 0건 누적으로 **2026-05-15 deprecate**됨. 아래 규칙은 retraining/복귀 옵션을 위해 보존하지만 운영 경로에서는 사용하지 않는다. `config/strategies/futures/rl_mppo.yaml::enabled: false`. 선물 시그널은 Setup A/C 및 향후 추가될 지표 기반(Williams %R / RSI / MACD) 전략으로 처리한다.
+
+- ~~`sts rl paper` 명령은 `TradingOrchestrator`를 사용한다.~~ Setup A/C도 동일 orchestrator 경로 사용 (`sts trade start --asset futures`).
+- `rl_mppo` 전략의 모델 경로 오버라이드는 `RL_MPPO_MODEL_PATH` 환경변수를 사용한다. (retraining 시 참조용)
 - 오케스트레이터는 RL 전략에 대해 `IndicatorEngine`의 최근 분봉(OHLCV)을 주입하여 피처 계산을 보조한다.
 - **진입/청산 모두 RL 모델**: entry(`RLMPPOEntry`) + exit(`RLMPPOExit`)가 동일 모델의 5개 액션(LONG_ENTRY=0, LONG_EXIT=1, SHORT_ENTRY=2, SHORT_EXIT=3, HOLD=4)을 사용한다.
 - **공유 헬퍼**: `shared/strategy/rl_model_helpers.py` — 모델 캐시, obs 빌더, confidence 계산을 entry/exit이 공유. 모듈 레벨 캐시로 ~50MB 메모리 절약.

@@ -283,25 +283,26 @@ def evaluate_gates(
         generated_at=datetime.now(UTC).isoformat(),
     )
 
-    # Gate 1 — RL shadow predictions > 0
-    rl_shadow = _count_rl_shadow_rows(client, start_utc, end_utc)
-    report.gates.append(GateResult(
-        name="rl_shadow_predictions_today",
-        passed=rl_shadow > 0,
-        actual=rl_shadow,
-        expected="> 0",
-        detail="RL inference loop should have written rows during the session.",
-    ))
-
-    # Gate 2 — RL trades today == 0 (shadow_mode invariant)
+    # RL_mppo는 v4.10 (2026-05-15)에 deprecate됨. shadow predictions/trades 게이트는
+    # 운영 회귀 가드용으로 보존하되 expectation을 뒤집어 부재를 검증한다.
+    # - rl_shadow_predictions_today: 정상 운영에서는 0이어야 함 (shadow 비활성)
+    #   기존 PASS 조건이 "> 0"였지만 deprecate 이후 0이 정상. 게이트를 폐지.
+    # - rl_trades_today_is_zero: 여전히 0이어야 함 (RL 코드 경로 재활성화 시 즉시 감지)
     rl_trades = _count_rl_trades(client, start_utc, end_utc)
     report.gates.append(GateResult(
         name="rl_trades_today_is_zero",
         passed=rl_trades == 0,
         actual=rl_trades,
         expected="== 0",
-        detail="shadow_mode=true must prevent any actual RL trade from firing.",
+        detail=(
+            "RL_mppo deprecated 2026-05-15 — should never produce trades. "
+            "Non-zero indicates strategy was accidentally re-enabled."
+        ),
     ))
+    # rl_shadow_predictions count는 info로만 노출 (deprecate 추세 모니터링).
+    report.info["rl_shadow_predictions_today"] = _count_rl_shadow_rows(
+        client, start_utc, end_utc
+    )
 
     # Gate 3 — Setup A signal count >= 1
     setup_a = _count_setup_signals(client, start_utc, end_utc, "A")

@@ -1,11 +1,25 @@
-# RL M-PPO 전략 설정 (선물 전용)
-# 학습된 M-PPO 모델을 Entry + Exit SignalGenerator로 래핑
+# RL M-PPO 전략 설정 (선물 전용) — **DEPRECATED (2026-05-15)**
+#
+# 운영 결정 (2026-05-15):
+#   Phase 2 cutover 이후 6 영업일 운영 결과 — Setup A/C는 정상 평가되지만
+#   rl_mppo는 매 cycle HOLD bias 또는 confidence < threshold로 시그널 0건
+#   ("Signal cycle: 0 signals from [rl_mppo, ...]"). 4월/5월 모델 재학습으로도
+#   회복되지 않았고 shadow logging은 6개월 누적 가치 대비 운영 부담이 크다고
+#   판단.
+#
+# 후속 방향:
+#   선물 시그널은 Williams %R / RSI / MACD 등 명시적 기술 지표 기반 전략으로
+#   재구성. setup_a_gap_reversion + setup_c_event_reaction (primary) +
+#   향후 추가 지표 전략으로 운영.
+#
+# 코드 경로(RLMPPOEntry / RLMPPOExit / rl_model_helpers)는 retraining 옵션을
+# 위해 즉시 삭제하지 않음. enabled=false로 strategy_manager가 로드하지 않음.
 
 strategy:
   name: rl_mppo
   asset_class: futures
-  enabled: true
-  description: "Maskable PPO RL agent for KOSPI200 futures intraday trading"
+  enabled: false  # DEPRECATED 2026-05-15 — see header
+  description: "[DEPRECATED 2026-05-15] Maskable PPO RL agent for KOSPI200 futures intraday trading"
 
   entry:
     type: rl_mppo

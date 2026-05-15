@@ -99,20 +99,23 @@ def _stub_client(
 class TestEvaluateGates:
     def test_all_gates_pass(self):
         report = evaluate_gates(
-            client=_stub_client(rl_shadow=100, rl_trades=0, setup_a=3),
+            # rl_shadow=0이 정상 — RL deprecate 후 shadow 미생성
+            client=_stub_client(rl_shadow=0, rl_trades=0, setup_a=3),
             trading_date=date(2026, 5, 11),
             prometheus_url=None,
         )
         assert report.all_passed
         names = [g.name for g in report.gates]
-        assert "rl_shadow_predictions_today" in names
+        # RL_mppo deprecate (v4.10) 이후 shadow_predictions 게이트는 폐지 (info만 노출)
+        assert "rl_shadow_predictions_today" not in names
         assert "rl_trades_today_is_zero" in names
         assert "setup_a_signals_today" in names
 
-    def test_shadow_mode_violation_fails(self):
-        """shadow_mode=true must prevent rl_trades — non-zero is critical."""
+    def test_rl_trades_violation_fails(self):
+        """RL_mppo deprecated 후에도 rl_trades > 0이면 즉시 알람 — 실수로
+        enabled=true 복귀하거나 코드 경로가 살아 돌아온 시그널."""
         report = evaluate_gates(
-            client=_stub_client(rl_shadow=100, rl_trades=5, setup_a=3),
+            client=_stub_client(rl_shadow=0, rl_trades=5, setup_a=3),
             trading_date=date(2026, 5, 11),
             prometheus_url=None,
         )
@@ -123,18 +126,18 @@ class TestEvaluateGates:
         assert rl_trades_gate.passed is False
         assert rl_trades_gate.actual == 5
 
-    def test_rl_inference_dead_fails(self):
-        """No shadow rows → either inference loop dead or DB unreachable."""
+    def test_rl_shadow_count_exposed_as_info(self):
+        """deprecate 후에도 shadow row count는 info로 추적 (regression 감지용)."""
         report = evaluate_gates(
-            client=_stub_client(rl_shadow=0, rl_trades=0, setup_a=3),
+            client=_stub_client(rl_shadow=42, rl_trades=0, setup_a=3),
             trading_date=date(2026, 5, 11),
             prometheus_url=None,
         )
-        assert not report.all_passed
-        gate = next(
-            g for g in report.gates if g.name == "rl_shadow_predictions_today"
-        )
-        assert gate.passed is False
+        # 게이트가 아니라 info로 노출
+        assert report.info.get("rl_shadow_predictions_today") == 42
+        # 게이트 목록에는 없어야 함
+        gate_names = [g.name for g in report.gates]
+        assert "rl_shadow_predictions_today" not in gate_names
 
     def test_setup_a_missing_fails(self):
         report = evaluate_gates(
