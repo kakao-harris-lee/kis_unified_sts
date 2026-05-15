@@ -6330,6 +6330,56 @@ class TradingOrchestrator:
         ) as e:
             logger.error(f"Notification error: {e}")
 
+    def _get_account_summary(self) -> dict[str, Any] | None:
+        """Paper broker의 현금/equity/실현손익을 status 응답용으로 묶는다.
+
+        Live 모드 또는 broker 미연결 시 None.  KIS 선물 모의서버는 잔고조회
+        (CTFO6118R) 미지원이므로 이 헬퍼는 paper engine 전용이다.
+
+        ``get_status()``는 observability path라 broker 측 일시 오류로 status
+        전체를 깨면 안 된다 — broker 호출에서 어떤 예외가 발생해도 흡수하고
+        ``None``을 돌려준다 (status 응답에 ``account`` 키가 빠지는 형태).
+        """
+        broker = self._paper_broker
+        if broker is None:
+            return None
+
+        summary: dict[str, Any] = {}
+        if hasattr(broker, "get_summary"):
+            try:
+                raw = broker.get_summary() or {}
+                summary["initial_balance"] = float(raw.get("initial_balance", 0.0))
+                summary["balance"] = float(raw.get("balance", 0.0))
+                summary["equity"] = float(raw.get("equity", summary["balance"]))
+                summary["realized_pnl"] = float(raw.get("total_pnl", 0.0))
+                summary["open_positions"] = int(raw.get("open_positions", 0))
+            except Exception as exc:
+                logger.warning(f"paper broker get_summary() failed: {exc}")
+                summary = {}
+
+        if not summary:
+            try:
+                balance = getattr(broker, "balance", None)
+                initial = getattr(broker, "initial_balance", None)
+                equity_fn = getattr(broker, "get_equity", None)
+                summary["initial_balance"] = (
+                    float(initial) if initial is not None else float(self.config.initial_capital)
+                )
+                summary["balance"] = (
+                    float(balance) if balance is not None else summary["initial_balance"]
+                )
+                summary["equity"] = (
+                    float(equity_fn()) if callable(equity_fn) else summary["balance"]
+                )
+                summary["realized_pnl"] = summary["balance"] - summary["initial_balance"]
+                summary["open_positions"] = len(getattr(broker, "positions", {}) or {})
+            except Exception as exc:
+                logger.warning(f"paper broker fallback summary failed: {exc}")
+                return None
+
+        summary["unrealized_pnl"] = summary["equity"] - summary["balance"]
+        return summary
+
     def get_status(self) -> dict[str, Any]:
         """상태 조회"""
         pipeline_status = self.pipeline.get_status() if self.pipeline else {}
@@ -6348,7 +6398,7 @@ class TradingOrchestrator:
             else {}
         )
 
-        return {
+        status: dict[str, Any] = {
             "state": self.state.value,
             "regime": self._current_regime,
             "config": {
@@ -6376,6 +6426,12 @@ class TradingOrchestrator:
             "tick_stream_publisher": tick_stream_stats,
             "pipeline": pipeline_status,
         }
+
+        account = self._get_account_summary()
+        if account is not None:
+            status["account"] = account
+
+        return status
 
     def get_metrics(self) -> dict[str, Any]:
         """메트릭 조회"""
