@@ -50,6 +50,22 @@ def _parse_tz_aware(value: str | None) -> datetime:
 router = APIRouter(prefix="/api/trading", tags=["trading"])
 
 
+class AccountSummary(BaseModel):
+    """Paper engine 계좌 스냅샷 — Cockpit Equity·Cash 카드 데이터 소스.
+
+    KIS 선물 모의서버는 잔고조회 API(CTFO6118R) 미지원이므로 paper
+    engine(VirtualBroker)이 유일한 진실의 원천이다.  Live 모드 또는 broker
+    미연결 시에는 상위 ``TradingStatus.account`` 가 ``None`` 으로 응답된다.
+    """
+
+    initial_balance: float
+    balance: float
+    equity: float
+    realized_pnl: float
+    unrealized_pnl: float
+    open_positions: int
+
+
 class TradingStatus(BaseModel):
     """Trading system status response."""
 
@@ -63,6 +79,7 @@ class TradingStatus(BaseModel):
     closed_pnl: float
     closed_win_rate: float
     last_update: datetime
+    account: AccountSummary | None = None
 
 
 class PositionResponse(BaseModel):
@@ -154,6 +171,28 @@ async def get_trading_status(
 
     start_time = stats.get("start_time")
 
+    # account may arrive as a dict (TradingStateReader auto-decodes JSON values)
+    # or as a string (older publishers / corrupted entries) — be defensive.
+    account_raw = status.get("account")
+    if isinstance(account_raw, str):
+        try:
+            account_raw = __import__("json").loads(account_raw)
+        except (ValueError, TypeError):
+            account_raw = None
+    account_obj: AccountSummary | None = None
+    if isinstance(account_raw, dict):
+        try:
+            account_obj = AccountSummary(
+                initial_balance=float(account_raw.get("initial_balance", 0.0)),
+                balance=float(account_raw.get("balance", 0.0)),
+                equity=float(account_raw.get("equity", 0.0)),
+                realized_pnl=float(account_raw.get("realized_pnl", 0.0)),
+                unrealized_pnl=float(account_raw.get("unrealized_pnl", 0.0)),
+                open_positions=int(account_raw.get("open_positions", 0)),
+            )
+        except (TypeError, ValueError):
+            account_obj = None
+
     return TradingStatus(
         is_running=state in ("running", "waiting"),
         market_status=status.get("regime") or "unknown",
@@ -181,6 +220,7 @@ async def get_trading_status(
             else 0.0
         ),
         last_update=_parse_tz_aware(start_time),
+        account=account_obj,
     )
 
 
