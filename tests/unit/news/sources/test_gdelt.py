@@ -46,6 +46,33 @@ async def test_gdelt_parses_limited_doc_api_response():
 
 
 @pytest.mark.asyncio
+async def test_gdelt_parses_compact_seendate_response():
+    payload = {
+        "articles": [
+            {
+                "url": "https://example.com/markets/compact",
+                "title": "Compact GDELT timestamp",
+                "seendate": "20260515010203",
+                "domain": "example.com",
+                "sourcecountry": "US",
+                "language": "English",
+            }
+        ]
+    }
+    with aioresponses() as m:
+        m.get(
+            re.compile(r"^https://api\.gdeltproject\.org/api/v2/doc/doc.*"),
+            payload=payload,
+        )
+        async with aiohttp.ClientSession() as session:
+            src = GDELTNewsSource(session=session, query='"stock market"')
+            items = [it async for it in src.fetch()]
+
+    assert len(items) == 1
+    assert items[0].published_at_ms == 1_778_806_923_000
+
+
+@pytest.mark.asyncio
 async def test_gdelt_rate_limit_returns_empty():
     with aioresponses() as m:
         m.get(

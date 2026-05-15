@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from typing import Any
 
@@ -158,35 +159,95 @@ def _parse_scored_news_fields(fields: dict[Any, Any]) -> dict[str, Any] | None:
 
 
 def _matches_stock(item: dict[str, Any], stock: StockInfo) -> bool:
-    aliases = _stock_aliases(stock)
-    searchable_values = [
-        item.get("title", ""),
-        item.get("reasoning", ""),
-        *item.get("keywords", []),
-        *item.get("raw_keywords", []),
-    ]
-    searchable = " ".join(str(value) for value in searchable_values if value)
-    searchable_lower = searchable.lower()
-    searchable_compact = searchable_lower.replace(" ", "")
-    return any(
-        alias in searchable_lower or alias.replace(" ", "") in searchable_compact
-        for alias in aliases
+    keyword_values = [*item.get("keywords", []), *item.get("raw_keywords", [])]
+    code_aliases = _stock_code_aliases(stock)
+    if _matches_alias_in_keywords(keyword_values, code_aliases):
+        return True
+
+    name_aliases = _stock_name_aliases(stock)
+    if _matches_alias_in_keywords(keyword_values, name_aliases):
+        return True
+
+    strong_name_aliases = {
+        alias for alias in name_aliases if _is_strong_text_alias(alias)
+    }
+    text_values = [item.get("title", ""), item.get("reasoning", "")]
+    return _matches_alias_in_text(text_values, strong_name_aliases)
+
+
+def _stock_code_aliases(stock: StockInfo) -> set[str]:
+    code = str(stock.code).strip()
+    return _normalize_aliases(
+        {
+            code,
+            f"{code}.ks",
+            f"{code}.kq",
+            f"krx:{code}",
+        }
     )
 
 
-def _stock_aliases(stock: StockInfo) -> set[str]:
-    code = str(stock.code).strip()
-    name = str(stock.name).strip().lower()
-    aliases = {
-        code.lower(),
-        f"{code}.ks".lower(),
-        f"{code}.kq".lower(),
-        f"krx:{code}".lower(),
-    }
-    if name:
-        aliases.add(name)
-        aliases.add(name.replace(" ", ""))
-    return {alias for alias in aliases if alias}
+def _stock_name_aliases(stock: StockInfo) -> set[str]:
+    name = str(stock.name).strip()
+    if not name:
+        return set()
+    return _normalize_aliases({name, name.replace(" ", "")})
+
+
+def _normalize_aliases(values: set[str]) -> set[str]:
+    return {alias for value in values if (alias := str(value).strip().lower())}
+
+
+def _matches_alias_in_keywords(values: list[Any], aliases: set[str]) -> bool:
+    if not aliases:
+        return False
+    compact_aliases = {_compact(alias) for alias in aliases}
+    for value in values:
+        text = str(value or "").strip().lower()
+        if not text:
+            continue
+        if text in aliases or _compact(text) in compact_aliases:
+            return True
+    return False
+
+
+def _matches_alias_in_text(values: list[Any], aliases: set[str]) -> bool:
+    if not aliases:
+        return False
+    for value in values:
+        text = str(value or "").strip().lower()
+        if not text:
+            continue
+        compact_text = _compact(text)
+        for alias in aliases:
+            compact_alias = _compact(alias)
+            if _is_ascii_alias(alias):
+                if _ascii_alias_in_text(text, alias):
+                    return True
+                continue
+            if alias in text or (compact_alias and compact_alias in compact_text):
+                return True
+    return False
+
+
+def _is_strong_text_alias(alias: str) -> bool:
+    compact = _compact(alias)
+    if not compact:
+        return False
+    min_len = 4 if _is_ascii_alias(alias) else 3
+    return len(compact) >= min_len
+
+
+def _is_ascii_alias(alias: str) -> bool:
+    return alias.isascii()
+
+
+def _ascii_alias_in_text(text: str, alias: str) -> bool:
+    return re.search(rf"(?<![a-z0-9]){re.escape(alias)}(?![a-z0-9])", text) is not None
+
+
+def _compact(value: str) -> str:
+    return re.sub(r"\s+", "", value)
 
 
 def _json_list(raw: str) -> list[str]:

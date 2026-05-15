@@ -115,7 +115,7 @@ class GDELTNewsSource(NewsSource):
 def _parse_gdelt_date(raw: str) -> float:
     if not raw:
         return 0.0
-    for fmt in ("%Y%m%dT%H%M%SZ", "%Y%m%dT%H%M%S"):
+    for fmt in ("%Y%m%d%H%M%S", "%Y%m%dT%H%M%SZ", "%Y%m%dT%H%M%S"):
         try:
             return datetime.strptime(raw, fmt).replace(tzinfo=UTC).timestamp()
         except ValueError:

@@ -106,6 +106,116 @@ def test_collect_scored_news_uses_scored_at_when_raw_timestamp_missing():
     assert grouped["005930"][0]["published_at_ms"] > 0
 
 
+def test_collect_scored_news_avoids_short_name_substring_false_positive():
+    redis = _FakeRedis(
+        [
+            (
+                "1-0",
+                _fields(
+                    raw_title="Market risk rises before rate decision",
+                    raw_keywords_json=json.dumps(["risk", "markets"]),
+                    keywords_json=json.dumps(["risk"]),
+                    reasoning="risk appetite weakened",
+                ),
+            )
+        ]
+    )
+
+    grouped = collect_scored_news_for_stocks(
+        [_stock(code="034730", name="SK")], _Config(), redis_client=redis
+    )
+
+    assert grouped == {}
+
+
+def test_collect_scored_news_avoids_common_korean_name_substring_false_positive():
+    redis = _FakeRedis(
+        [
+            (
+                "1-0",
+                _fields(
+                    raw_title="청년 지원 대상 확대",
+                    raw_keywords_json=json.dumps(["정책", "지원 대상"]),
+                    keywords_json=json.dumps(["정책"]),
+                    reasoning="지원 대상 확대는 소비 심리에 중립",
+                ),
+            )
+        ]
+    )
+
+    grouped = collect_scored_news_for_stocks(
+        [_stock(code="001680", name="대상")], _Config(), redis_client=redis
+    )
+
+    assert grouped == {}
+
+
+def test_collect_scored_news_matches_short_name_by_entity_code_keyword():
+    redis = _FakeRedis(
+        [
+            (
+                "1-0",
+                _fields(
+                    raw_title="Unrelated headline",
+                    raw_keywords_json=json.dumps(["034730.KS"]),
+                    keywords_json=json.dumps([]),
+                    reasoning="market update",
+                ),
+            )
+        ]
+    )
+
+    grouped = collect_scored_news_for_stocks(
+        [_stock(code="034730", name="SK")], _Config(), redis_client=redis
+    )
+
+    assert grouped["034730"][0]["raw_keywords"] == ["034730.KS"]
+
+
+def test_collect_scored_news_matches_specific_ascii_name_in_text():
+    redis = _FakeRedis(
+        [
+            (
+                "1-0",
+                _fields(
+                    raw_title="SK Hynix shares rise on AI memory demand",
+                    raw_keywords_json=json.dumps(["AI", "memory"]),
+                    keywords_json=json.dumps(["semiconductor"]),
+                    reasoning="AI memory demand improved",
+                ),
+            )
+        ]
+    )
+
+    grouped = collect_scored_news_for_stocks(
+        [_stock(code="000660", name="SK Hynix")], _Config(), redis_client=redis
+    )
+
+    assert grouped["000660"][0]["title"].startswith("SK Hynix")
+
+
+def test_collect_scored_news_avoids_compact_ascii_false_positive():
+    redis = _FakeRedis(
+        [
+            (
+                "1-0",
+                _fields(
+                    raw_title="Market risk Hynix suppliers face tighter margins",
+                    raw_keywords_json=json.dumps(["risk", "suppliers"]),
+                    keywords_json=json.dumps(["risk"]),
+                    reasoning="risk Hynix suppliers is not an entity mention",
+                ),
+            )
+        ]
+    )
+
+    grouped = collect_scored_news_for_stocks(
+        [_stock(code="000660", name="SK Hynix")], _Config(), redis_client=redis
+    )
+
+    assert grouped == {}
+
+
 def test_summarize_scored_news_sentiment_uses_weighted_average():
     assert summarize_scored_news_sentiment([_fields()], _Config()) == "긍정"
     assert (
