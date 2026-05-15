@@ -1,6 +1,15 @@
 # LLM-primary 의사결정 + RL 축소 통합 계획
 
-**Status**: **v4.10 — RL_mppo 최종 deprecate (2026-05-15)**. Phase 2 cutover 후 6 영업일(2026-05-11~14) 운영 결과 매 1-min cycle "Signal cycle: 0 signals from [rl_mppo, setup_a_gap_reversion, setup_c_event_reaction]" 누적 — RL_mppo는 HOLD bias 또는 confidence < threshold로 시그널 0건. Setup A/C는 정상 평가되지만 gap/event 미발생일에는 자연스럽게 0건. Shadow logging의 6개월 누적 가치 대비 운영 부담(ClickHouse insert + 모델 inference 매 cycle) 크다고 판단 → 최종 deprecate. 코드 경로(`RLMPPOEntry`/`RLMPPOExit`/`rl_model_helpers`)는 retraining 옵션을 위해 즉시 제거하지 않음. `config/strategies/futures/rl_mppo.yaml::enabled: false`. 후속 시그널 layer는 Williams %R / RSI / MACD 등 명시적 기술 지표 기반 전략으로 재구성. Phase 4 "RL aux 활성/폐지/재학습" 결정은 v4.10에서 **폐지**로 종결.
+**Status**: **v4.11 — RL_mppo deprecate 유지, 사유 정정 (2026-05-15)**. ⚠️ v4.10의 deprecate *사유는 사실과 달랐음*. 재평가(2026-05-15, shadow 5/11–5/15 데이터 48,708건):
+
+- ❌ **틀린 전제**: "RL_mppo는 HOLD bias / confidence < threshold로 매 cycle 시그널 0건". 실제로는 entry action **55%**(LONG 5,491 + SHORT 21,423 vs HOLD 21,794), avg confidence **~0.56** (paper threshold 0.50 상회). 로그의 "0 signals from [rl_mppo, ...]"는 **shadow_mode=true가 설계상 Signal 방출을 억제**한 것이지 모델이 HOLD에 갇힌 게 아님.
+- ❌ 캐시 staleness 버그(#252)도 RL과 **무관** — `get_rl_features`는 deque를 직접 읽어 캐시 없음(코드 검증). RL inference는 정상 동작.
+- ✅ **유효한 정정 사유**: counterfactual(#253으로 비로소 측정 가능, EOD-proxy) 결과 RL entry 결정의 PnL이 **음수** — 5/11–5/15 9 trades, 4W/5L, Gross **-1,350,256 KRW** (5/13 단일 -1.3M 지배). 표본은 작고 EOD-proxy라 결정적이진 않으나 RL 운용 복귀를 지지하는 증거는 없음. Setup A/C가 채택된 전략 방향.
+- 추가 발견: §10.2 weekly counterfactual cron이 shadow 기간 내내 빈 리포트만 생성해왔음(symbol 필터 불일치 + crash + exit-action 부재 — #253에서 수정). 즉 v4.10 deprecate는 *그 근거가 되어야 할 counterfactual 증거 없이* 결정됐고, #253 이후 비로소 산출됨.
+
+**결론**: deprecate *결정*은 정정된 증거(EOD-proxy PnL 음수 + Setup A/C 채택)로 **유지**. 코드 경로(`RLMPPOEntry`/`RLMPPOExit`/`rl_model_helpers`)는 retraining 옵션 위해 보존. `config/strategies/futures/rl_mppo.yaml::enabled: false`. 후속 시그널 layer는 Williams %R / RSI / MACD 등 지표 기반 전략으로 재구성. Phase 4 "RL aux 활성/폐지/재학습"은 **폐지**로 종결하되, 근거는 "HOLD-stuck"이 아니라 "counterfactual PnL 음수 + 전략 방향 전환"임.
+
+**(v4.10 원문, 사실오류 — 보존):** Phase 2 cutover 후 매 cycle "0 signals" 누적을 RL HOLD bias/confidence 미달로 해석하여 deprecate. → v4.11에서 shadow_mode 설계상 억제임이 확인되어 정정.
 
 **v4.9** — Phase 2 cutover LIVE: 2 incidents 복구 + 2 회귀 가드 + Grafana 대시보드 정리 (2026-05-11). 첫 거래일에 두 건 incident: (1) 선물 cutover blocker (CLI default single-strategy 강제) → PR #215/#216 fix. (2) 주식 silent-stall (13:09–13:35) → PR #218 fix + 4 regression tests. (3) Grafana 대시보드 audit → `futures-paradigm-overview` 7 패널 silent-broken → PR #220 fix.
 

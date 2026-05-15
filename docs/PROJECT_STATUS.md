@@ -6,7 +6,7 @@
 This is a quick-orientation dashboard for an operator or engineer returning to
 the project.  For full plan detail see
 [docs/plans/2026-05-03-llm-primary-rl-minimization.md](plans/2026-05-03-llm-primary-rl-minimization.md)
-(currently v4.9).
+(currently v4.11).
 
 ---
 
@@ -29,7 +29,7 @@ Impact: 1-day 영향 (선물 Setup A window 미스 + 주식 26분 stall + 대시
 |-------|----------|------|------|
 | Stock | `bb_reversion`, `opening_volume_surge`, `volume_accumulation` | Paper | Phase 2 cutover does NOT change stock side |
 | Futures | `setup_a_gap_reversion`, `setup_c_event_reaction` | Paper, **primary** | LLM-augmented threshold + veto + size scaling |
-| Futures | ~~`rl_mppo`~~ | **DEPRECATED 2026-05-15** | enabled=false. Phase 2 cutover 후 매 cycle 시그널 0건 누적, shadow logging 종료. 후속 신호 layer는 Williams %R / RSI / MACD 등 지표 기반 전략으로 대체 예정. |
+| Futures | ~~`rl_mppo`~~ | **DEPRECATED 2026-05-15 (v4.11)** | enabled=false. 사유 정정: "0 signals→HOLD"는 shadow_mode 억제 오독, 실 사유는 counterfactual EOD-proxy PnL 음수. 후속은 Williams %R/RSI/MACD 지표 전략. |
 
 ## Automation Schedule (all UTC unless noted)
 
@@ -46,11 +46,15 @@ Impact: 1-day 영향 (선물 Setup A window 미스 + 주식 26분 stall + 대시
 
 ## Key Recent Decisions
 
-**2026-05-15** — RL_mppo **최종 deprecate**.  Phase 2 cutover 후 6 영업일 운영
-결과 매 cycle 시그널 0건 누적 (HOLD bias / confidence < threshold).  Shadow
-logging도 종료 (운영 부담 대비 counterfactual 가치 낮음).  YAML `enabled: false`,
-코드 경로는 retraining 옵션 위해 보존.  후속 시그널 layer는 **Williams %R /
-RSI / MACD 등 명시적 지표 기반 전략**으로 대체.
+**2026-05-15** — RL_mppo **deprecate (사유 정정, v4.11)**.  YAML `enabled:
+false`, shadow logging 종료, 코드 경로는 retraining 옵션 위해 보존.  ⚠️
+당초 사유 "매 cycle 0 signals → HOLD bias / conf 미달"은 **오독**: 재평가
+결과 RL은 entry action 55%·conf~0.56로 활발히 예측했고 "0 signals"는
+shadow_mode 설계상 Signal 억제였음 (캐시버그 #252와도 무관 — `get_rl_features`
+캐시 없음).  **유효 사유**: counterfactual(#253로 측정 가능) EOD-proxy PnL
+음수 (5/11–15 9 trades -1.35M, 5/13 -1.3M 지배) + Setup A/C 채택.  deprecate
+결정은 정정된 근거로 유지.  후속 시그널 layer는 **Williams %R / RSI / MACD
+등 지표 기반 전략**으로 대체.  상세: master plan v4.11.
 
 **2026-05-08** — Setup A/C primary 전환 + RL shadow 강등 + LLM veto 권한.
 
@@ -82,7 +86,7 @@ RSI / MACD 등 명시적 지표 기반 전략**으로 대체.
 
 ## Key References
 
-- **Plan (master)**: [docs/plans/2026-05-03-llm-primary-rl-minimization.md](plans/2026-05-03-llm-primary-rl-minimization.md) — currently v4.9, full PR table in §3.1
+- **Plan (master)**: [docs/plans/2026-05-03-llm-primary-rl-minimization.md](plans/2026-05-03-llm-primary-rl-minimization.md) — currently v4.11, full PR table in §3.1
 - **All plans index**: [docs/plans/INDEX.md](plans/INDEX.md) — categorized Active / Reference / Archive
 - **Phase 2 startup runbook**: [docs/runbooks/phase2-startup.md](runbooks/phase2-startup.md)
 - **All runbooks**: [README.md § 운영 런북](../README.md#운영-런북-runbooks)
