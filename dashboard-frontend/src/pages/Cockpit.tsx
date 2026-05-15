@@ -5,6 +5,7 @@ import SignalsListCompact from '../components/SignalsListCompact'
 import FillsListCompact from '../components/FillsListCompact'
 import QuickActions from '../components/QuickActions'
 import MobileKillSwitchBar from '../components/MobileKillSwitchBar'
+import EquityCashCard from '../components/EquityCashCard'
 import { useAssetClass } from '../contexts/AssetClassContext'
 import { healthApi } from '../api/client'
 
@@ -40,6 +41,7 @@ export default function CockpitPage() {
             <PositionsTableLarge />
           </div>
           <div className="flex flex-col gap-2">
+            <EquityCashCard />
             <SignalsListCompact />
             <FillsListCompact />
           </div>
