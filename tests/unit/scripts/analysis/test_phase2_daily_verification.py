@@ -59,6 +59,10 @@ def _stub_client(
     veto: int = 0,
     cum_setup_executed: int = 0,
     cum_shadow: int = 0,
+    har_rv_fits: int = 1,
+    vol_forecasts: int = 200,
+    event_scores: tuple[int, int] = (0, 0),
+    har_rv_param_capture: list | None = None,
 ) -> MagicMock:
     """Build a MagicMock CH client whose execute() routes by query keyword."""
     client = MagicMock()
@@ -78,6 +82,14 @@ def _stub_client(
         if "setup_type = %(type)s" in q:
             assert params is not None
             return [(setup_a if params["type"] == "A" else setup_c,)]
+        if "har_rv_fits" in q:
+            if har_rv_param_capture is not None and params is not None:
+                har_rv_param_capture.append(dict(params))
+            return [(har_rv_fits,)]
+        if "vol_forecasts" in q:
+            return [(vol_forecasts,)]
+        if "event_scores" in q:
+            return [event_scores]
         raise AssertionError(f"unexpected query: {query[:80]}")
 
     client.execute = _execute
@@ -164,6 +176,45 @@ class TestEvaluateGates:
         names = [g.name for g in report.gates]
         assert "shadow_logger_dropped_batches" not in names
         assert report.all_passed  # other 3 gates pass
+
+    def test_har_rv_gate_passes_date_param_not_datetime(self):
+        """Regression: fit_date is a ClickHouse Date column, so the verification
+        query must bind a date (not datetime), otherwise ClickHouse raises
+        ``Code: 53. Cannot convert string '... HH:MM:SS' to type Date`` and the
+        gate fails on every trading day.  Captured param must be a ``date``
+        whose value matches the KST trading_date.
+        """
+        captured: list[dict] = []
+        report = evaluate_gates(
+            client=_stub_client(
+                rl_shadow=100,
+                rl_trades=0,
+                setup_a=3,
+                har_rv_fits=1,
+                har_rv_param_capture=captured,
+            ),
+            trading_date=date(2026, 5, 14),
+            prometheus_url=None,
+        )
+        gate = next(g for g in report.gates if g.name == "har_rv_refit_today")
+        assert gate.passed is True
+        assert gate.actual == 1
+        assert captured, "har_rv_fits query was not executed"
+        bound = captured[0]["d"]
+        # MUST be a plain date, not a datetime — otherwise ClickHouse rejects
+        # the parameter against a Date column.
+        assert isinstance(bound, date) and not isinstance(bound, datetime)
+        assert bound == date(2026, 5, 14)
+
+    def test_har_rv_gate_fails_when_no_refit(self):
+        report = evaluate_gates(
+            client=_stub_client(rl_shadow=100, rl_trades=0, setup_a=3, har_rv_fits=0),
+            trading_date=date(2026, 5, 14),
+            prometheus_url=None,
+        )
+        gate = next(g for g in report.gates if g.name == "har_rv_refit_today")
+        assert gate.passed is False
+        assert gate.actual == 0
 
     def test_info_metrics_populated(self):
         report = evaluate_gates(
