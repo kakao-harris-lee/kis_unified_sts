@@ -16,11 +16,28 @@ PID_FILE="$PROJECT_DIR/pids/forecasting.pid"
 
 mkdir -p "$LOG_DIR" "$(dirname "$PID_FILE")"
 
+# Load .env so cron-spawned runs see CLICKHOUSE_*, REDIS_*, OPENAI_API_KEY etc.
+# Without this the host fallback path (.venv/bin/python refit_har_rv.py) hits
+# ClickHouse with empty CLICKHOUSE_PASSWORD → "Authentication failed" (Code 516)
+# and HAR-RV refit silently fails every trading day.
+if [ -f "$PROJECT_DIR/.env" ]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "$PROJECT_DIR/.env"
+  set +a
+fi
+
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"; }
 
+# Idempotent — uses container state. The legacy PID_FILE held a docker
+# container ID (not a process PID), so the `kill -0` check always failed and
+# every invocation re-ran `docker-compose up`. Querying `docker ps` is both
+# correct and cheaper.
 start_service() {
-  if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
-    log "Already running (PID $(cat "$PID_FILE"))"
+  CID=$(docker ps -q -f name=kis-forecasting)
+  if [ -n "$CID" ]; then
+    log "Already running (container $CID)"
+    echo "$CID" > "$PID_FILE"
     return 0
   fi
   log "Starting kis-forecasting via docker-compose"
