@@ -158,13 +158,17 @@ def _count_har_rv_refits(
 ) -> int:
     """Gate 5 helper — HAR-RV daily refit row count for the trading day.
 
-    Expected: >= 1 (refit runs once per trading day per
-    docs/superpowers/plans/2026-05-13-forecast-aware-paradigm.md).
+    ``har_rv_fits.fit_date`` is a ClickHouse ``Date`` column. Passing a
+    ``DateTime`` parameter (as the other ``DateTime64`` gates do) triggers
+    ``Code: 53. Cannot convert string '... HH:MM:SS' to type Date``, so we
+    compare against the KST trading date directly. The refit cron fires at
+    15:35 KST (06:35 UTC), so the UTC date stored in ``fit_date`` always
+    equals the KST trading date.
     """
+    trading_date_kst = start_utc.astimezone(KST).date()
     rows = client.execute(
-        "SELECT count() FROM kospi.har_rv_fits "
-        "WHERE fit_date >= %(start)s AND fit_date < %(end)s",
-        {"start": _ch_naive(start_utc), "end": _ch_naive(end_utc)},
+        "SELECT count() FROM kospi.har_rv_fits WHERE fit_date = %(d)s",
+        {"d": trading_date_kst},
     )
     return int(rows[0][0]) if rows else 0
 
