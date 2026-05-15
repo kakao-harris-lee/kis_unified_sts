@@ -37,8 +37,9 @@ logger = logging.getLogger(__name__)
 class WilliamsRExitConfig(ConfigMixin):
     """Williams %R Exit 설정"""
 
-    # Williams %R overbought exit
-    overbought_threshold: float = -20.0
+    # Williams %R indicator exit
+    overbought_threshold: float = -20.0   # LONG position exits here
+    oversold_exit_threshold: float = -80.0  # SHORT position exits here (mirror)
 
     # Hard stop
     max_stop_loss_pct: float = -0.03
@@ -188,25 +189,35 @@ class WilliamsRExit(ExitSignalGenerator[WilliamsRExitConfig]):
                 holding_minutes=holding_minutes,
             )
 
-        # 4. Williams %R overbought exit
+        # 4. Williams %R indicator exit — direction-aware.
+        #    LONG  position exits on overbought (%R >= overbought_threshold).
+        #    SHORT position exits on oversold  (%R <= oversold_exit_threshold).
+        #    P&L helpers already handle SHORT; only the indicator trigger was
+        #    LONG-only before, leaving SHORT positions without an indicator exit.
         momentum = indicators.get("momentum_5m", {})
         if isinstance(momentum, dict):
             williams_r = momentum.get("williams_r")
         else:
             williams_r = indicators.get("williams_r")
 
-        if williams_r is not None and float(williams_r) >= self.config.overbought_threshold:
-            return self._create_exit_signal(
-                position=position,
-                current_price=current_price,
-                profit_pct=profit_pct,
-                profit_amount=profit_amount,
-                reason=ExitReason.INDICATOR_EXIT,
-                priority=3,
-                high_since_entry=high_since_entry,
-                holding_minutes=holding_minutes,
-                metadata={"williams_r": float(williams_r)},
-            )
+        if williams_r is not None:
+            wr = float(williams_r)
+            if position.side == PositionSide.SHORT:
+                indicator_hit = wr <= self.config.oversold_exit_threshold
+            else:
+                indicator_hit = wr >= self.config.overbought_threshold
+            if indicator_hit:
+                return self._create_exit_signal(
+                    position=position,
+                    current_price=current_price,
+                    profit_pct=profit_pct,
+                    profit_amount=profit_amount,
+                    reason=ExitReason.INDICATOR_EXIT,
+                    priority=3,
+                    high_since_entry=high_since_entry,
+                    holding_minutes=holding_minutes,
+                    metadata={"williams_r": wr},
+                )
 
         return None
 
