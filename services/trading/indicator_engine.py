@@ -56,6 +56,10 @@ class CandleAccumulator:
 
     def __init__(self, maxlen: int = 100):
         self.candles: deque[Candle] = deque(maxlen=maxlen)
+        # Monotonic count of completed candles ever appended. `len(self.candles)`
+        # saturates at `maxlen`, so it cannot be used to invalidate downstream
+        # indicator caches once the deque is full — the cache would freeze.
+        self.total_appended: int = 0
         self._current_minute: int | None = None
         self._open: float = 0.0
         self._high: float = 0.0
@@ -63,6 +67,15 @@ class CandleAccumulator:
         self._close: float = 0.0
         self._volume: float = 0.0
         self.last_tick_ts: datetime | None = None
+
+    def add_completed(self, candle: Candle) -> None:
+        """Append a completed candle and bump the monotonic counter.
+
+        All append paths (live tick finalize + backtest seed) must go through
+        here so `total_appended` stays accurate for cache invalidation.
+        """
+        self.candles.append(candle)
+        self.total_appended += 1
 
     def on_tick(
         self,
@@ -102,7 +115,7 @@ class CandleAccumulator:
                 volume=self._volume,
                 minute=self._current_minute,
             )
-            self.candles.append(completed)
+            self.add_completed(completed)
 
             # Start new candle
             self._current_minute = minute
@@ -137,8 +150,15 @@ class MultiTimeframeCandleAccumulator:
         """
         self.timeframe = timeframe_minutes
         self.candles: deque[Candle] = deque(maxlen=maxlen)
+        # See CandleAccumulator.total_appended — same cache-invalidation reason.
+        self.total_appended: int = 0
         self._buffer: list[Candle] = []
         self._current_bucket: int | None = None
+
+    def add_completed(self, candle: Candle) -> None:
+        """Append a completed N-min candle and bump the monotonic counter."""
+        self.candles.append(candle)
+        self.total_appended += 1
 
     def _get_bucket(self, minute: int) -> int:
         """Compute the time bucket for a given HHMM minute value.
@@ -190,7 +210,7 @@ class MultiTimeframeCandleAccumulator:
             volume=sum(c.volume for c in self._buffer),
             minute=self._current_bucket or 0,
         )
-        self.candles.append(completed)
+        self.add_completed(completed)
         return completed
 
     def flush(self) -> Candle | None:
@@ -250,6 +270,10 @@ class StreamingIndicatorEngine:
         # Daily candles (loaded from ClickHouse, not aggregated from 1m)
         # {symbol: deque[Candle]}
         self._daily_candles: dict[str, deque] = {}
+        # Monotonic per-symbol count of daily candles ever appended. Same
+        # cache-invalidation reason as CandleAccumulator.total_appended:
+        # _daily_candles deques are maxlen=200 and len() saturates.
+        self._daily_total_appended: dict[str, int] = {}
 
         # Cache for get_indicators(): {symbol: (candle_count, indicators_dict)}
         self._indicator_cache: dict[str, tuple[int, dict[str, float]]] = {}
@@ -410,7 +434,7 @@ class StreamingIndicatorEngine:
                     volume=float(c.get("volume", 0)),
                     minute=candle_minute,
                 )
-                acc.candles.append(candle)
+                acc.add_completed(candle)
                 seeded += 1
 
                 # Track daily highs and closes for multi-day breakout & EMA
@@ -478,7 +502,7 @@ class StreamingIndicatorEngine:
                     volume=float(c.get("volume", 0)),
                     minute=0,
                 )
-                mtf_acc.candles.append(candle)
+                mtf_acc.add_completed(candle)
                 seeded += 1
             except (KeyError, ValueError):
                 continue
@@ -516,6 +540,9 @@ class StreamingIndicatorEngine:
                     minute=0,  # Not used for daily candles
                 )
                 daily_deque.append(candle)
+                self._daily_total_appended[symbol] = (
+                    self._daily_total_appended.get(symbol, 0) + 1
+                )
                 seeded += 1
             except (KeyError, ValueError):
                 continue
@@ -671,8 +698,11 @@ class StreamingIndicatorEngine:
                 )
                 return {}
 
-        # Check cache: return cached result if candle count hasn't changed
-        candle_count = len(acc.candles)
+        # Check cache: return cached result if no new candle has completed.
+        # Use the monotonic counter, not len(acc.candles): once the deque is
+        # full len() saturates at maxlen and the cache would never invalidate
+        # (indicators freeze ~maxlen bars into the session / backtest).
+        candle_count = acc.total_appended
         cached = self._indicator_cache.get(symbol)
         if cached and cached[0] == candle_count:
             self._indicator_cache_hits += 1
@@ -1036,9 +1066,12 @@ class StreamingIndicatorEngine:
         if not mtf_acc:
             return {}
 
-        candle_count = len(mtf_acc.candles)
-        if candle_count < min_candles:
+        # Warmup guard uses the live buffer size (need >= min_candles actual
+        # candles to compute). Cache invalidation uses the monotonic counter
+        # so it keeps invalidating after the deque saturates at maxlen.
+        if len(mtf_acc.candles) < min_candles:
             return {}
+        candle_count = mtf_acc.total_appended
 
         # Check cache before expensive dict conversion and DataFrame construction
         cache_key = (symbol, timeframe)
@@ -1090,7 +1123,7 @@ class StreamingIndicatorEngine:
             "df": df,  # Full DataFrame for divergence detection etc.
         }
 
-        self._momentum_cache[cache_key] = (len(df), result)
+        self._momentum_cache[cache_key] = (candle_count, result)
         return result
 
     def get_daily_indicators(
@@ -1131,9 +1164,9 @@ class StreamingIndicatorEngine:
         if not daily_deque:
             return {}
 
-        candle_count = len(daily_deque)
-        if candle_count < min_candles:
+        if len(daily_deque) < min_candles:
             return {}
+        candle_count = self._daily_total_appended.get(symbol, len(daily_deque))
 
         # Check cache before expensive dict conversion
         cache_key = (symbol, "daily")

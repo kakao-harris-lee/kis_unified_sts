@@ -62,6 +62,52 @@ def _futures_entry_config(**overrides) -> WilliamsRConfig:
     return WilliamsRConfig(**base)
 
 
+class TestVolumeFilterRvol:
+    """volume_confirm은 canonical `rvol`을 우선 사용해야 한다.
+
+    회귀: 인디케이터 파이프라인은 `volume` 키를 노출하지 않고 `rvol`/`volume_ma`만
+    노출한다. 과거 `volume < threshold*volume_ma` 로직은 volume→0으로 해석되어
+    100% 시그널을 차단했다 (williams_r_15m 백테스트 0거래의 2차 원인).
+    """
+
+    def _ctx_no_volume_key(self, *, williams_r, rvol, hour=10, minute=30):
+        now = datetime(2026, 5, 15, hour, minute, tzinfo=KST)
+        ind = {
+            "bb_middle": 301.0,
+            "rvol": rvol,                       # canonical, present
+            "momentum_5m": {"williams_r": williams_r},
+        }
+        # close > bb_middle so LONG trend_filter passes; isolates the volume
+        # filter as the only variable. Deliberately NO "volume" key (matches
+        # the real indicator pipeline which emits rvol/volume_ma, not volume).
+        return EntryContext(
+            market_data={"code": "101S6000", "name": "KF", "close": 305.0},
+            indicators=ind,
+            timestamp=now,
+        )
+
+    @pytest.mark.asyncio
+    async def test_rvol_above_threshold_allows_signal(self):
+        entry = WilliamsREntry(_futures_entry_config(volume_threshold=1.0))
+        await entry.generate(self._ctx_no_volume_key(williams_r=-90.0, rvol=1.5,
+                                                     hour=10, minute=0))
+        sig = await entry.generate(
+            self._ctx_no_volume_key(williams_r=-75.0, rvol=1.5, hour=10, minute=5)
+        )
+        assert sig is not None
+        assert sig.metadata["signal_direction"] == "long"
+
+    @pytest.mark.asyncio
+    async def test_rvol_below_threshold_blocks_signal(self):
+        entry = WilliamsREntry(_futures_entry_config(volume_threshold=1.0))
+        await entry.generate(self._ctx_no_volume_key(williams_r=-90.0, rvol=0.4,
+                                                     hour=10, minute=0))
+        sig = await entry.generate(
+            self._ctx_no_volume_key(williams_r=-75.0, rvol=0.4, hour=10, minute=5)
+        )
+        assert sig is None
+
+
 class TestBidirectionalEntry:
     @pytest.mark.asyncio
     async def test_short_on_overbought_reversal(self):

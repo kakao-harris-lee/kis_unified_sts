@@ -94,7 +94,7 @@ class WilliamsREntry(EntrySignalGenerator[WilliamsRConfig]):
     def required_indicators(self) -> list[str]:
         indicators = ["momentum_5m", "bb_middle"]
         if self.config.volume_confirm:
-            indicators.extend(["volume", "volume_ma"])
+            indicators.extend(["rvol", "volume", "volume_ma"])
         return indicators
 
     async def generate(self, context: EntryContext) -> Optional[Signal]:
@@ -187,11 +187,22 @@ class WilliamsREntry(EntrySignalGenerator[WilliamsRConfig]):
                     return None
 
         # --- Volume filter (direction-agnostic) ---
+        # Prefer the canonical `rvol` (recent vs baseline volume ratio) which
+        # the indicator engine always exposes. The raw `volume` key is NOT
+        # emitted by the indicator pipeline (only volume_ma/rvol are), so the
+        # old `volume < threshold * volume_ma` test resolved volume→0 and
+        # rejected 100% of signals. Fall back to the raw comparison only when
+        # rvol is unavailable (e.g. a caller supplying volume via market_data).
         if self.config.volume_confirm:
-            volume = _get("volume", 0)
-            volume_ma = _get("volume_ma", 0)
-            if volume_ma > 0 and volume < self.config.volume_threshold * volume_ma:
-                return None
+            rvol = indicators.get("rvol")
+            if rvol is not None:
+                if float(rvol) < self.config.volume_threshold:
+                    return None
+            else:
+                volume = _get("volume", 0)
+                volume_ma = _get("volume_ma", 0)
+                if volume_ma > 0 and volume < self.config.volume_threshold * volume_ma:
+                    return None
 
         # --- Confidence calculation ---
         confidence = self._calculate_confidence(

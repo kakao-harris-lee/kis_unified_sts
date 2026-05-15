@@ -604,6 +604,14 @@ class BacktestStrategyAdapter:
     def on_bar(self, bar: dict[str, Any]) -> SignalType:
         """Convert a bar dict into a BUY/SELL/HOLD signal."""
         code = str(bar.get("code", "BACKTEST") or "BACKTEST")
+        # The engine feeds bars parsed from CSV with no `code` column. Live
+        # market_data ALWAYS carries `code`/`name`, and several entry
+        # strategies hard-reject on an empty code (e.g. WilliamsREntry:
+        # `if not code: return None`). Inject the resolved code so the
+        # EntryContext.market_data contract matches live and the backtest
+        # actually exercises the strategy.
+        bar["code"] = code
+        bar.setdefault("name", code)
 
         # Feed bar as a completed candle, extracting minute for MTF bucketing
         timestamp = bar.get("datetime", datetime.now())
