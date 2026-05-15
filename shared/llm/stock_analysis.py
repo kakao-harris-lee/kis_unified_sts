@@ -402,10 +402,19 @@ async def _build_target_signal(
             "available": False,
             "target_price": 0.0,
             "latest_target_price": 0.0,
+            "latest_target_upside_pct": 0.0,
             "target_upside_pct": 0.0,
             "target_opinion": "",
             "target_date": "",
+            "target_latest_broker": "",
             "target_sample_count": 0,
+            "target_coverage_count": 0,
+            "target_dispersion_pct": 0.0,
+            "target_revision_30d_pct": 0.0,
+            "target_revision_direction": "",
+            "target_staleness_days": 0,
+            "target_opinion_distribution": {},
+            "target_recent_reports": [],
         }
     return await collect_target_price_signal(
         analyzer, stock.code, current_price=float(stock.price)
@@ -461,10 +470,27 @@ def _build_screening_metrics(
         "target_available": target_signal["available"],
         "target_price": round(float(target_signal["target_price"]), 2),
         "latest_target_price": round(float(target_signal["latest_target_price"]), 2),
+        "latest_target_upside_pct": round(
+            float(target_signal.get("latest_target_upside_pct", 0.0)), 2
+        ),
         "target_upside_pct": round(float(target_signal["target_upside_pct"]), 2),
         "target_opinion": target_signal["target_opinion"],
         "target_date": target_signal["target_date"],
+        "target_latest_broker": target_signal.get("target_latest_broker", ""),
         "target_sample_count": int(target_signal["target_sample_count"]),
+        "target_coverage_count": int(target_signal.get("target_coverage_count", 0)),
+        "target_dispersion_pct": round(
+            float(target_signal.get("target_dispersion_pct", 0.0)), 2
+        ),
+        "target_revision_30d_pct": round(
+            float(target_signal.get("target_revision_30d_pct", 0.0)), 2
+        ),
+        "target_revision_direction": target_signal.get("target_revision_direction", ""),
+        "target_staleness_days": int(target_signal.get("target_staleness_days", 0)),
+        "target_opinion_distribution": target_signal.get(
+            "target_opinion_distribution", {}
+        ),
+        "target_recent_reports": target_signal.get("target_recent_reports", []),
         "nps_ownership": nps_ownership,
         "is_new_listing": is_new_listing,
     }
@@ -870,6 +896,10 @@ def _append_target_price_reasons(
         target_upside = float(screening.get("target_upside_pct", 0.0))
         if target_upside >= 10.0:
             reasons.append(f"KIS 목표가 괴리 +{target_upside:.1f}%")
+        revision_direction = str(screening.get("target_revision_direction", ""))
+        revision_pct = float(screening.get("target_revision_30d_pct", 0.0) or 0.0)
+        if revision_direction == "up" and revision_pct > 0:
+            reasons.append(f"KIS 목표가 리비전 +{revision_pct:.1f}%")
         target_opinion = str(screening.get("target_opinion", "")).strip()
         if target_opinion and any(
             kw in target_opinion.lower() for kw in ["매수", "buy", "outperform"]

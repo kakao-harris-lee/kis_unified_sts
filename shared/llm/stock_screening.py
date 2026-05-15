@@ -163,7 +163,10 @@ def calc_momentum_metrics(close: pd.Series, lookback: int) -> dict[str, float]:
 # ------------------------------------------------------------------
 
 
-def score_target_price_signal(screening: dict[str, Any]) -> float:
+def score_target_price_signal(
+    screening: dict[str, Any],
+    config: LLMConfig | None = None,
+) -> float:
     """Score analyst target-price signal from KIS invest-opinion."""
     if not screening.get("target_available"):
         return 0.0
@@ -205,6 +208,58 @@ def score_target_price_signal(screening: dict[str, Any]) -> float:
         if needle in opinion:
             score += weight
             break
+
+    revision_pct = float(screening.get("target_revision_30d_pct", 0.0) or 0.0)
+    revision_direction = str(screening.get("target_revision_direction", ""))
+    revision_min_pct = float(
+        getattr(config, "stock_target_revision_min_pct", 3.0)
+        if config is not None
+        else 3.0
+    )
+    revision_score = float(
+        getattr(config, "stock_target_revision_score", 2.0)
+        if config is not None
+        else 2.0
+    )
+    if abs(revision_pct) >= revision_min_pct:
+        if revision_direction == "up":
+            score += revision_score
+        elif revision_direction == "down":
+            score -= revision_score
+
+    coverage_count = int(
+        screening.get("target_coverage_count")
+        or screening.get("target_sample_count")
+        or 0
+    )
+    staleness_days = int(screening.get("target_staleness_days") or 0)
+    dispersion_pct = float(screening.get("target_dispersion_pct", 0.0) or 0.0)
+    min_coverage = int(
+        getattr(config, "stock_target_min_coverage", 2) if config is not None else 2
+    )
+    stale_days = int(
+        getattr(config, "stock_target_stale_days", 90) if config is not None else 90
+    )
+    high_dispersion_pct = float(
+        getattr(config, "stock_target_high_dispersion_pct", 40.0)
+        if config is not None
+        else 40.0
+    )
+    low_quality_multiplier = float(
+        getattr(config, "stock_target_low_quality_multiplier", 0.5)
+        if config is not None
+        else 0.5
+    )
+    high_dispersion_multiplier = float(
+        getattr(config, "stock_target_high_dispersion_multiplier", 0.7)
+        if config is not None
+        else 0.7
+    )
+    if score != 0.0:
+        if coverage_count < min_coverage or staleness_days > stale_days:
+            score *= low_quality_multiplier
+        if dispersion_pct >= high_dispersion_pct:
+            score *= high_dispersion_multiplier
 
     return max(min(score, 12.0), -12.0)
 
@@ -457,7 +512,7 @@ def score_stock_candidate(
     backtest_score = _score_backtest(best)
     news_score = _score_news(news, risk_hits)
     liquidity_score = _score_liquidity(stock, config)
-    target_price_score = score_target_price_signal(screening)
+    target_price_score = score_target_price_signal(screening, config)
     nps_ownership_score = score_nps_ownership_signal(screening, config)
 
     # 테마/섹터 연관성 점수 (ETFFlowAnalyzer 기반)

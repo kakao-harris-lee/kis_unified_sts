@@ -167,6 +167,32 @@ class LLMConfig(ServiceConfigBase):
     stock_target_lookback_days: int = Field(
         default=180, description="Target price lookback period"
     )
+    stock_target_recent_days: int = Field(
+        default=30, description="Recent window for target-price revision"
+    )
+    stock_target_stale_days: int = Field(
+        default=90, description="Days after which target-price signal is stale"
+    )
+    stock_target_min_coverage: int = Field(
+        default=2, description="Minimum analyst coverage for full target-price score"
+    )
+    stock_target_high_dispersion_pct: float = Field(
+        default=40.0, description="Target-price dispersion threshold"
+    )
+    stock_target_low_quality_multiplier: float = Field(
+        default=0.5,
+        description="Score multiplier for stale or low-coverage target-price signals",
+    )
+    stock_target_high_dispersion_multiplier: float = Field(
+        default=0.7,
+        description="Score multiplier for high-dispersion target-price signals",
+    )
+    stock_target_revision_score: float = Field(
+        default=2.0, description="Bonus or penalty for target-price revision direction"
+    )
+    stock_target_revision_min_pct: float = Field(
+        default=3.0, description="Minimum target-price revision pct to score"
+    )
     stock_score_weight_momentum: float = Field(
         default=0.35, description="Momentum score weight"
     )
@@ -664,6 +690,24 @@ class LLMConfig(ServiceConfigBase):
                 "enable_kis_target_price", True
             ),
             "stock_target_lookback_days": stock_config.get("target_lookback_days", 180),
+            "stock_target_recent_days": stock_config.get("target_recent_days", 30),
+            "stock_target_stale_days": stock_config.get("target_stale_days", 90),
+            "stock_target_min_coverage": stock_config.get("target_min_coverage", 2),
+            "stock_target_high_dispersion_pct": stock_config.get(
+                "target_high_dispersion_pct", 40.0
+            ),
+            "stock_target_low_quality_multiplier": stock_config.get(
+                "target_low_quality_multiplier", 0.5
+            ),
+            "stock_target_high_dispersion_multiplier": stock_config.get(
+                "target_high_dispersion_multiplier", 0.7
+            ),
+            "stock_target_revision_score": stock_config.get(
+                "target_revision_score", 2.0
+            ),
+            "stock_target_revision_min_pct": stock_config.get(
+                "target_revision_min_pct", 3.0
+            ),
             "stock_score_weight_momentum": stock_config.get(
                 "score_weight_momentum", 0.35
             ),

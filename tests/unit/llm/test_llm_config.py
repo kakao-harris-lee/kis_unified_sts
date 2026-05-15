@@ -15,6 +15,14 @@ stock:
   volume_lookback_days: 15
   enable_kis_target_price: true
   target_lookback_days: 120
+  target_recent_days: 20
+  target_stale_days: 80
+  target_min_coverage: 3
+  target_high_dispersion_pct: 35.0
+  target_low_quality_multiplier: 0.4
+  target_high_dispersion_multiplier: 0.6
+  target_revision_score: 1.7
+  target_revision_min_pct: 2.5
   score_weight_target_price: 0.07
   score_weight_nps_ownership: 0.11
   scored_news_enabled: true
@@ -48,6 +56,14 @@ output:
     assert cfg.stock_volume_lookback_days == 15
     assert cfg.stock_enable_kis_target_price is True
     assert cfg.stock_target_lookback_days == 120
+    assert cfg.stock_target_recent_days == 20
+    assert cfg.stock_target_stale_days == 80
+    assert cfg.stock_target_min_coverage == 3
+    assert cfg.stock_target_high_dispersion_pct == 35.0
+    assert cfg.stock_target_low_quality_multiplier == 0.4
+    assert cfg.stock_target_high_dispersion_multiplier == 0.6
+    assert cfg.stock_target_revision_score == 1.7
+    assert cfg.stock_target_revision_min_pct == 2.5
     assert cfg.stock_score_weight_target_price == 0.07
     assert cfg.stock_score_weight_nps_ownership == 0.11
     assert cfg.stock_scored_news_enabled is True

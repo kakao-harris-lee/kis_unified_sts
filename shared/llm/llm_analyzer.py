@@ -184,9 +184,7 @@ class LLMAnalyzer:
     ) -> AnalysisResult | None:
         """종목 종합 분석 (Legacy Compatible)"""
         technical_data = self._collect_technical_data(code, technical_data)
-        backtest_data = self._collect_backtest_data(
-            code, backtest_data, technical_data
-        )
+        backtest_data = self._collect_backtest_data(code, backtest_data, technical_data)
 
         llm_result = await self._run_llm_analysis(
             code, name, technical_data, backtest_data, market_data
@@ -281,9 +279,7 @@ class LLMAnalyzer:
                     temperature=self.temperature,
                 )
                 text_blocks = [
-                    b.text
-                    for b in response.content
-                    if getattr(b, "type", "") == "text"
+                    b.text for b in response.content if getattr(b, "type", "") == "text"
                 ]
                 result_text = "\n".join(text_blocks).strip()
             else:
@@ -451,7 +447,9 @@ JSON만 출력하고 다른 설명은 생략해주세요."""
         return score, reasons, risks
 
     @staticmethod
-    def _fallback_score_technical(technical: Dict, reasons: List[str], risks: List[str]) -> int:
+    def _fallback_score_technical(
+        technical: Dict, reasons: List[str], risks: List[str]
+    ) -> int:
         score = 0
         rsi = technical.get("rsi", 50)
         if rsi < 30:
@@ -471,7 +469,9 @@ JSON만 출력하고 다른 설명은 생략해주세요."""
         return score
 
     @staticmethod
-    def _fallback_score_backtest(backtest: Dict, reasons: List[str], risks: List[str]) -> int:
+    def _fallback_score_backtest(
+        backtest: Dict, reasons: List[str], risks: List[str]
+    ) -> int:
         score = 0
         win_rate = backtest.get("win_rate", 50)
         total_return = backtest.get("total_return", 0)
@@ -501,7 +501,9 @@ JSON만 출력하고 다른 설명은 생략해주세요."""
         return "관망"
 
     @staticmethod
-    def _fallback_defaults(reasons: List[str], risks: List[str]) -> tuple[List[str], List[str]]:
+    def _fallback_defaults(
+        reasons: List[str], risks: List[str]
+    ) -> tuple[List[str], List[str]]:
         if not reasons:
             reasons = ["분석 데이터 부족"]
         if not risks:
@@ -605,7 +607,17 @@ class UnifiedTradingAnalyzer:
         self._target_price_cache: dict[str, dict[str, Any]] = {}
         if self.config.stock_enable_kis_target_price:
             kis_is_real = os.environ.get("KIS_IS_REAL", "true").lower() == "true"
-            kis_cfg = KISAuthConfig(is_real=kis_is_real)
+            app_key = os.environ.get("KIS_STOCK_APP_KEY") or os.environ.get(
+                "KIS_APP_KEY", ""
+            )
+            app_secret = os.environ.get("KIS_STOCK_APP_SECRET") or os.environ.get(
+                "KIS_APP_SECRET", ""
+            )
+            kis_cfg = KISAuthConfig(
+                app_key=app_key,
+                app_secret=app_secret,
+                is_real=kis_is_real,
+            )
             if kis_cfg.is_real and kis_cfg.app_key and kis_cfg.app_secret:
                 self.kis_client = KISClient(kis_cfg)
             else:
@@ -690,7 +702,9 @@ class UnifiedTradingAnalyzer:
             markets.append("KOSDAQ")
         return frames, markets
 
-    def _merge_market_frames(self, frames: list["pd.DataFrame"]) -> Optional["pd.DataFrame"]:
+    def _merge_market_frames(
+        self, frames: list["pd.DataFrame"]
+    ) -> Optional["pd.DataFrame"]:
         if not frames:
             return None
         if len(frames) == 1:
@@ -711,7 +725,9 @@ class UnifiedTradingAnalyzer:
         missing_cols = [c for c in required_cols if c not in market_df.columns]
         if missing_cols:
             logger.error(f"Market data missing columns: {missing_cols}")
-            error_meta = {"_excluded": {"_error": [f"missing_columns:{','.join(missing_cols)}"]}}
+            error_meta = {
+                "_excluded": {"_error": [f"missing_columns:{','.join(missing_cols)}"]}
+            }
             return None, False, error_meta
 
         trade_value_fallback = False
@@ -723,7 +739,9 @@ class UnifiedTradingAnalyzer:
         market_df["거래대금"] = pd.to_numeric(market_df["거래대금"], errors="coerce")
         market_df["시가총액"] = pd.to_numeric(market_df["시가총액"], errors="coerce")
         market_df["거래량"] = pd.to_numeric(market_df["거래량"], errors="coerce")
-        market_df = market_df.dropna(subset=["거래대금", "시가총액", "거래량", "종가", "시가"])
+        market_df = market_df.dropna(
+            subset=["거래대금", "시가총액", "거래량", "종가", "시가"]
+        )
         return market_df, trade_value_fallback, None
 
     def _filter_market_df(self, market_df: "pd.DataFrame") -> "pd.DataFrame":
@@ -735,11 +753,13 @@ class UnifiedTradingAnalyzer:
             & (market_df["거래대금"] >= self.config.stock_min_trade_value)
         ].copy()
 
-        filtered["거래대금비율"] = (
-            filtered["거래대금"] / filtered["시가총액"].replace(0, np.nan)
+        filtered["거래대금비율"] = filtered["거래대금"] / filtered["시가총액"].replace(
+            0, np.nan
         )
         filtered = filtered[filtered["거래대금비율"] >= self.config.stock_min_turnover]
-        filtered["등락률"] = (filtered["종가"] - filtered["시가"]) / filtered["시가"] * 100
+        filtered["등락률"] = (
+            (filtered["종가"] - filtered["시가"]) / filtered["시가"] * 100
+        )
         return filtered
 
     def _build_screened_stocks(
@@ -755,14 +775,19 @@ class UnifiedTradingAnalyzer:
             if name_exclusions:
                 excluded[code] = name_exclusions
                 continue
-            stocks.append(StockInfo(
-                code=code, name=name,
-                price=row['종가'], change_pct=round(row['등락률'], 2),
-                volume=int(row['거래량']), volume_ratio=1.0,
-                market_cap=row['시가총액'],
-                trade_value=float(row.get("거래대금", 0.0)),
-                turnover=float(row.get("거래대금비율", 0.0)),
-            ))
+            stocks.append(
+                StockInfo(
+                    code=code,
+                    name=name,
+                    price=row["종가"],
+                    change_pct=round(row["등락률"], 2),
+                    volume=int(row["거래량"]),
+                    volume_ratio=1.0,
+                    market_cap=row["시가총액"],
+                    trade_value=float(row.get("거래대금", 0.0)),
+                    turnover=float(row.get("거래대금비율", 0.0)),
+                )
+            )
         return stocks, excluded
 
     def _collect_stock_history(
@@ -792,13 +817,23 @@ class UnifiedTradingAnalyzer:
     ) -> tuple[Optional[Dict[str, Any]], Optional[List[str]]]:
         lookback = max(1, int(self.config.stock_volume_lookback_days))
         vol_window = df["거래량"].tail(lookback + 1)
-        avg_volume = float(vol_window.iloc[:-1].mean()) if len(vol_window) > 1 else float(vol_window.mean())
-        stock.volume_ratio = round((stock.volume / avg_volume) if avg_volume > 0 else 1.0, 2)
+        avg_volume = (
+            float(vol_window.iloc[:-1].mean())
+            if len(vol_window) > 1
+            else float(vol_window.mean())
+        )
+        stock.volume_ratio = round(
+            (stock.volume / avg_volume) if avg_volume > 0 else 1.0, 2
+        )
         if avg_volume < float(self.config.stock_min_avg_volume):
             return None, [f"min_avg_volume:{int(avg_volume)}"]
 
         trade_window = df["거래대금"].tail(lookback + 1)
-        avg_trade_value = float(trade_window.iloc[:-1].mean()) if len(trade_window) > 1 else float(trade_window.mean())
+        avg_trade_value = (
+            float(trade_window.iloc[:-1].mean())
+            if len(trade_window) > 1
+            else float(trade_window.mean())
+        )
         if avg_trade_value < float(self.config.stock_min_trade_value):
             return None, [f"min_avg_trade_value:{int(avg_trade_value)}"]
 
@@ -810,7 +845,9 @@ class UnifiedTradingAnalyzer:
     def _compute_risk_metrics(self, df: "pd.DataFrame") -> Dict[str, Any]:
         close = df["종가"].astype(float)
         returns = close.pct_change()
-        momentum = self._calc_momentum_metrics(close, int(self.config.stock_momentum_lookback_days))
+        momentum = self._calc_momentum_metrics(
+            close, int(self.config.stock_momentum_lookback_days)
+        )
         consecutive_up = self._calc_consecutive_up(returns)
         atr_pct = self._calc_atr_pct(df)
         max_dd = self._calc_max_drawdown(close)
@@ -831,7 +868,9 @@ class UnifiedTradingAnalyzer:
         try:
             mk_news = self.mk_news_collector.collect(stock.code)
             all_news = mk_news.get("market_news", []) + mk_news.get("stock_news", [])
-            mk_news["sentiment"] = self.mk_news_collector.analyze_sentiment(all_news).value
+            mk_news["sentiment"] = self.mk_news_collector.analyze_sentiment(
+                all_news
+            ).value
         except Exception as e:
             logger.debug(f"MK news failed for {stock.code}: {e}")
 
@@ -1003,9 +1042,7 @@ class UnifiedTradingAnalyzer:
 
         # 주식 분석
         if mode in ["all", "stock"]:
-            stock_plans, stock_analysis = await self._analyze_stocks(
-                intraday=intraday
-            )
+            stock_plans, stock_analysis = await self._analyze_stocks(intraday=intraday)
 
         # 선물 분석 (비활성화)
         if mode in ["all", "futures"]:
@@ -1058,14 +1095,18 @@ class UnifiedTradingAnalyzer:
         events, high_events = self._collect_futures_events(_record_missing)
         flow_data = self._collect_futures_flow(_record_missing, missing_sources)
         technical = self._collect_futures_technical(_record_missing)
-        overall_score = self._compute_futures_score(global_data, flow_data, technical, high_events)
+        overall_score = self._compute_futures_score(
+            global_data, flow_data, technical, high_events
+        )
         overall_bias = self._determine_futures_bias(overall_score)
 
-        direction, confidence, entry, stop_loss, take_profit, entry_cond = self._build_futures_strategy(
-            overall_score, technical
+        direction, confidence, entry, stop_loss, take_profit, entry_cond = (
+            self._build_futures_strategy(overall_score, technical)
         )
 
-        position = "풀" if confidence == "높음" else "하프" if confidence == "중간" else "쿼터"
+        position = (
+            "풀" if confidence == "높음" else "하프" if confidence == "중간" else "쿼터"
+        )
         time_horizon = "장중" if high_events else "오버나이트"
 
         catalysts, risks = self._build_futures_catalysts_and_risks(
@@ -1243,8 +1284,14 @@ class UnifiedTradingAnalyzer:
 
     @staticmethod
     def _append_flow_catalysts(flow_data, catalysts: List[str]) -> None:
-        if flow_data and flow_data.foreign_futures_5d is not None and flow_data.foreign_futures_5d > 15000:
-            catalysts.append(f"외국인 5일 순매수 ({flow_data.foreign_futures_5d:+,.0f})")
+        if (
+            flow_data
+            and flow_data.foreign_futures_5d is not None
+            and flow_data.foreign_futures_5d > 15000
+        ):
+            catalysts.append(
+                f"외국인 5일 순매수 ({flow_data.foreign_futures_5d:+,.0f})"
+            )
         if flow_data and flow_data.basis is not None and flow_data.basis < -1:
             catalysts.append(f"선물 저평가 (베이시스 {flow_data.basis:.2f}pt)")
 
@@ -1253,7 +1300,9 @@ class UnifiedTradingAnalyzer:
         if not flow_data or flow_data.microstructure_score is None:
             return
         if flow_data.microstructure_score <= -6:
-            risks.append(f"단기 주문흐름 매도 우위 (점수 {flow_data.microstructure_score:+.1f})")
+            risks.append(
+                f"단기 주문흐름 매도 우위 (점수 {flow_data.microstructure_score:+.1f})"
+            )
 
     @staticmethod
     def _append_market_risks(
@@ -1272,7 +1321,9 @@ class UnifiedTradingAnalyzer:
             risks.append(f"RSI {technical['rsi']:.0f} 과매도")
 
     @staticmethod
-    def _append_missing_source_risks(missing_sources: List[str], risks: List[str]) -> None:
+    def _append_missing_source_risks(
+        missing_sources: List[str], risks: List[str]
+    ) -> None:
         if missing_sources:
             risks.append(f"데이터 누락: {', '.join(missing_sources)}")
 
@@ -1301,9 +1352,13 @@ class UnifiedTradingAnalyzer:
             take_profit=round(take_profit, 2),
             position_size=position,
             time_horizon=time_horizon,
-            key_levels=[technical['pivot'], technical['support_1'], technical['resistance_1']],
+            key_levels=[
+                technical["pivot"],
+                technical["support_1"],
+                technical["resistance_1"],
+            ],
             risk_factors=risks,
-            catalysts=catalysts
+            catalysts=catalysts,
         )
 
     @staticmethod
@@ -1380,6 +1435,7 @@ class UnifiedTradingAnalyzer:
     def generate_detailed_briefing(self, code: str) -> StockDetailedBriefing | None:
         """종목 코드에 대한 상세 브리핑 생성"""
         return _stock_analysis.generate_detailed_briefing(self, code)
+
 
 # ============================================================
 # Convenience Functions

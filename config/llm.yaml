@@ -59,6 +59,14 @@ stock:
   exclude_preferred_shares: true
   enable_kis_target_price: true    # KIS 종목투자의견(목표가) 반영
   target_lookback_days: 180        # 목표가 조회 기간
+  target_recent_days: 30           # 최근 목표가 리비전 비교 기간
+  target_stale_days: 90            # 이 일수 이후 목표가 신호 감쇠
+  target_min_coverage: 2           # 목표가 신뢰도 최소 커버리지
+  target_high_dispersion_pct: 40.0 # 목표가 분산이 큰 경우 감쇠
+  target_low_quality_multiplier: 0.5
+  target_high_dispersion_multiplier: 0.7
+  target_revision_score: 2.0
+  target_revision_min_pct: 3.0
 
   # 스코어 가중치
   score_weight_momentum: 0.35

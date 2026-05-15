@@ -6,7 +6,7 @@ pytest.importorskip("httpx")
 
 from shared.llm.data_classes import Signal, StockInfo, TechnicalAnalysis
 from shared.llm.llm_analyzer import UnifiedTradingAnalyzer
-from shared.llm.stock_screening import score_stock_candidate
+from shared.llm.stock_screening import score_stock_candidate, score_target_price_signal
 
 
 def test_score_target_price_signal_positive_case():
@@ -40,6 +40,64 @@ def test_score_target_price_signal_unavailable_case():
         }
     )
     assert score == 0.0
+
+
+def test_score_target_price_signal_rewards_recent_revision():
+    config = _make_config()
+    base = UnifiedTradingAnalyzer._score_target_price_signal(
+        {
+            "target_available": True,
+            "target_upside_pct": 12.0,
+            "target_opinion": "매수",
+            "target_coverage_count": 3,
+            "target_staleness_days": 5,
+            "target_dispersion_pct": 10.0,
+        }
+    )
+    revised = score_target_price_signal(
+        {
+            "target_available": True,
+            "target_upside_pct": 12.0,
+            "target_opinion": "매수",
+            "target_coverage_count": 3,
+            "target_staleness_days": 5,
+            "target_dispersion_pct": 10.0,
+            "target_revision_direction": "up",
+            "target_revision_30d_pct": 5.0,
+        },
+        config,
+    )
+
+    assert revised > base
+
+
+def test_score_target_price_signal_discounts_stale_low_coverage():
+    config = _make_config()
+    high_quality = score_target_price_signal(
+        {
+            "target_available": True,
+            "target_upside_pct": 22.0,
+            "target_opinion": "매수",
+            "target_coverage_count": 3,
+            "target_staleness_days": 5,
+            "target_dispersion_pct": 10.0,
+        },
+        config,
+    )
+    low_quality = score_target_price_signal(
+        {
+            "target_available": True,
+            "target_upside_pct": 22.0,
+            "target_opinion": "매수",
+            "target_coverage_count": 1,
+            "target_staleness_days": 120,
+            "target_dispersion_pct": 60.0,
+        },
+        config,
+    )
+
+    assert low_quality > 0
+    assert low_quality < high_quality
 
 
 def test_score_stock_candidate_best_none_new_listing():
