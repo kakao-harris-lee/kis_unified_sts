@@ -201,6 +201,7 @@ class ShadowTrade:
     is_win: bool | None
     regime: str
     risk_mode: str
+    is_eod_est: bool = False  # True = exit via EOD-close proxy (no logged exit)
 
 
 @dataclass
@@ -346,18 +347,24 @@ def _fetch_shadow_predictions(
         risk_mode, risk_score, executed_setup_id (ALL actions, ALL
         confidences — entry-only confidence gate is downstream).
     """
+    # NOTE: Do NOT filter by symbol here. RL shadow predictions are logged
+    # under the live-traded KOSPI200 *mini* front-month (A05xxx), which rolls
+    # over within a window (e.g. A05605 → A05606). The table is futures-RL-only
+    # (single logical stream), so a hardcoded `--symbol 101S6000` filter — the
+    # price-bar symbol — silently matched zero rows and the weekly cron has
+    # been emitting empty reports for the entire shadow period. PnL is
+    # reconstructed on the 101S6000 continuous series (same KOSPI200 index
+    # points; contract economics handled by multiplier_krw).
     rows = client.execute(
         """
         SELECT ts, symbol, action, confidence, regime, risk_mode,
                risk_score, executed_setup_id
         FROM kospi.rl_shadow_predictions
-        WHERE symbol = %(sym)s
-          AND ts >= %(start)s
+        WHERE ts >= %(start)s
           AND ts < %(end)s
         ORDER BY ts
         """,
         {
-            "sym": symbol,
             "start": start_dt.replace(tzinfo=None),
             "end": end_dt.replace(tzinfo=None),
         },
@@ -469,7 +476,13 @@ def _fetch_minute_bars(
         },
     )
     if not rows:
-        return pd.DataFrame(columns=["ts", "open", "high", "low", "close", "volume"])
+        # Empty frame must still carry a DatetimeIndex named 'ts'. Downstream
+        # helpers do `bars.index > signal_ts` / `bars.index.date`; a default
+        # RangeIndex makes those raise TypeError instead of cleanly yielding
+        # "no bars".
+        empty = pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
+        empty.index = pd.DatetimeIndex([], tz="UTC", name="ts")
+        return empty
     df = pd.DataFrame(rows, columns=["ts", "open", "high", "low", "close", "volume"])
     df["ts"] = pd.to_datetime(df["ts"], utc=True)
     df = df.set_index("ts").sort_index()
@@ -585,9 +598,15 @@ def reconstruct_rl_trades(
 ) -> list[ShadowTrade]:
     """Walk shadow predictions chronologically and build virtual trades.
 
-    Matching rule: LONG_ENTRY (0) opens a long; the *next* LONG_EXIT (1)
-    for the same symbol closes it.  Same for SHORT_ENTRY (2) / SHORT_EXIT (3).
-    Orphan entries (no subsequent exit) are emitted as open trades.
+    Matching rule: LONG_ENTRY (0) opens a long; a logged LONG_EXIT (1) closes
+    it (same for SHORT 2/3). In practice RL shadow logging records ONLY
+    entry/HOLD actions — the policy always sees a flat observation in shadow
+    mode, so it never emits exit actions. Positions with no logged exit are
+    therefore closed at the entry day's EOD close (``is_eod_est=True``), the
+    same proxy reconstruct_setup_trades() uses for Setup A/C and consistent
+    with the RL strategy's own EOD-close safety rule. Day rollover also
+    EOD-closes stale positions so multi-day windows yield a real sample
+    (not a single perpetual orphan per direction).
 
     **Confidence gating**: ``min_confidence`` is applied to ENTRY actions
     only.  Exits fire regardless of confidence per the RL safety design
@@ -611,14 +630,58 @@ def reconstruct_rl_trades(
     trades: list[ShadowTrade] = []
     # open_positions: direction -> (entry_ts, entry_price, regime, risk_mode)
     open_pos: dict[str, tuple[pd.Timestamp, float, str, str]] = {}
+    last_symbol = "unknown"
+
+    def _eod_close(direction: str, pos: tuple, *, day_ts: pd.Timestamp) -> None:
+        """Close an open position at the EOD close of ``day_ts``'s date.
+
+        RL shadow logging only ever records entry/HOLD actions (the policy
+        sees a flat observation, so it never emits LONG_EXIT/SHORT_EXIT).
+        With no logged exits, every entry would be an unmeasurable orphan.
+        We therefore close at EOD — the same proxy reconstruct_setup_trades()
+        already uses for Setup A/C, and consistent with the RL strategy's own
+        EOD-close safety rule (CLAUDE.md "RL 청산 안전장치"). Flagged
+        is_eod_est=True so the estimate is never mistaken for a logged exit.
+        """
+        entry_ts, entry_price, e_regime, e_risk_mode = pos
+        exit_price = _eod_close_price(bars, day_ts)
+        if exit_price is None:
+            # No EOD bar (window boundary) — emit as genuine open.
+            trades.append(ShadowTrade(
+                symbol=last_symbol, direction=direction,
+                entry_ts=entry_ts.to_pydatetime(), exit_ts=None,
+                entry_price=entry_price, exit_price=None, is_open=True,
+                pnl_krw=None, is_win=None, regime=e_regime,
+                risk_mode=e_risk_mode, is_eod_est=False,
+            ))
+            return
+        net = _pnl_krw(direction, entry_price, exit_price,
+                       multiplier_krw, commission_bps, slippage_ticks, tick_size)
+        trades.append(ShadowTrade(
+            symbol=last_symbol, direction=direction,
+            entry_ts=entry_ts.to_pydatetime(),
+            exit_ts=None, entry_price=entry_price, exit_price=exit_price,
+            is_open=False, pnl_krw=net, is_win=(net > 0),
+            regime=e_regime, risk_mode=e_risk_mode, is_eod_est=True,
+        ))
 
     for _, row in shadow.iterrows():
         action: int = int(row["action"])
         ts: pd.Timestamp = row["ts"]
         symbol: str = str(row["symbol"])
+        last_symbol = symbol
         regime: str = str(row.get("regime", ""))
         risk_mode: str = str(row.get("risk_mode", ""))
         confidence: float = float(row.get("confidence", 0.0))
+
+        # Day rollover: EOD-close any position whose entry date precedes this
+        # bar's date, freeing the slot so later-day entries can be sampled
+        # (the RL strategy is intraday — EOD 15:15 — so this matches design).
+        if open_pos:
+            for d in list(open_pos.keys()):
+                e_ts = open_pos[d][0]
+                if e_ts.date() < ts.date():
+                    _eod_close(d, open_pos.pop(d), day_ts=e_ts)
 
         if action in (_ACTION_LONG_ENTRY, _ACTION_SHORT_ENTRY):
             direction = "long" if action == _ACTION_LONG_ENTRY else "short"
@@ -664,23 +727,11 @@ def reconstruct_rl_trades(
                 )
             )
 
-    # Emit orphan open positions
-    for direction, (entry_ts, entry_price, e_regime, e_risk_mode) in open_pos.items():
-        trades.append(
-            ShadowTrade(
-                symbol=symbol if "symbol" in dir() else "unknown",  # type: ignore[possibly-undefined]
-                direction=direction,
-                entry_ts=entry_ts.to_pydatetime(),
-                exit_ts=None,
-                entry_price=entry_price,
-                exit_price=None,
-                is_open=True,
-                pnl_krw=None,
-                is_win=None,
-                regime=e_regime,
-                risk_mode=e_risk_mode,
-            )
-        )
+    # Flush remaining open positions at their entry-day EOD close (or emit as
+    # genuine open if no EOD bar exists, e.g. last day still in progress).
+    for direction in list(open_pos.keys()):
+        pos = open_pos.pop(direction)
+        _eod_close(direction, pos, day_ts=pos[0])
 
     return trades
 
