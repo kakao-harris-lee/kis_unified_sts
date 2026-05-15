@@ -6,6 +6,7 @@ filtering, and scoring stock candidates.
 
 from __future__ import annotations
 
+from datetime import date, datetime
 from typing import TYPE_CHECKING, Any
 
 import pandas as pd
@@ -206,6 +207,54 @@ def score_target_price_signal(screening: dict[str, Any]) -> float:
             break
 
     return max(min(score, 12.0), -12.0)
+
+
+def score_nps_ownership_signal(
+    screening: dict[str, Any],
+    config: LLMConfig,
+) -> float:
+    """Score 국민연금 ownership from normalized DART shareholder data."""
+    if not bool(getattr(config, "stock_nps_enabled", True)):
+        return 0.0
+
+    signal = screening.get("nps_ownership", {})
+    if not isinstance(signal, dict) or not signal.get("available"):
+        return 0.0
+
+    ratio = float(signal.get("holding_ratio_pct", 0.0) or 0.0)
+    change = float(signal.get("holding_ratio_change_pctp", 0.0) or 0.0)
+    anchor = max(
+        float(getattr(config, "stock_nps_holding_ratio_anchor_pct", 10.0)), 0.1
+    )
+    base_cap = float(getattr(config, "stock_nps_base_score_max", 10.0))
+    change_multiplier = float(getattr(config, "stock_nps_change_pctp_multiplier", 2.0))
+    change_cap = float(getattr(config, "stock_nps_change_score_cap", 5.0))
+    score_cap = float(getattr(config, "stock_nps_score_cap", 15.0))
+
+    base_score = min(max(ratio, 0.0) / anchor, 1.0) * base_cap
+    change_score = max(min(change * change_multiplier, change_cap), -change_cap)
+    score = base_score + change_score
+
+    report_date = _parse_signal_date(signal.get("rcept_dt"))
+    if report_date != date.min:
+        age_days = (date.today() - report_date).days
+        max_age = int(getattr(config, "stock_nps_max_report_age_days", 90))
+        if age_days > max_age:
+            score *= float(getattr(config, "stock_nps_stale_score_multiplier", 0.5))
+
+    return max(min(score, score_cap), -score_cap)
+
+
+def _parse_signal_date(value: Any) -> date:
+    text = str(value or "").strip()
+    for fmt in ("%Y-%m-%d", "%Y%m%d"):
+        try:
+            return datetime.strptime(
+                text[:10] if fmt == "%Y-%m-%d" else text[:8], fmt
+            ).date()
+        except ValueError:
+            continue
+    return date.min
 
 
 # ------------------------------------------------------------------
@@ -409,6 +458,7 @@ def score_stock_candidate(
     news_score = _score_news(news, risk_hits)
     liquidity_score = _score_liquidity(stock, config)
     target_price_score = score_target_price_signal(screening)
+    nps_ownership_score = score_nps_ownership_signal(screening, config)
 
     # 테마/섹터 연관성 점수 (ETFFlowAnalyzer 기반)
     theme_score = float(screening.get("theme_score", 0.0))
@@ -423,6 +473,7 @@ def score_stock_candidate(
         "liquidity": config.stock_score_weight_liquidity,
         "target_price": config.stock_score_weight_target_price,
         "theme": config.stock_score_weight_theme,
+        "nps_ownership": getattr(config, "stock_score_weight_nps_ownership", 0.0),
         "risk": config.stock_score_weight_risk,
     }
 
@@ -434,6 +485,7 @@ def score_stock_candidate(
         + liquidity_score * weights["liquidity"]
         + target_price_score * weights["target_price"]
         + theme_score * weights["theme"]
+        + nps_ownership_score * weights["nps_ownership"]
         - risk_penalty * weights["risk"]
     )
 
@@ -449,6 +501,7 @@ def score_stock_candidate(
         "target_price": target_price_score,
         "theme": theme_score,
         "theme_matched": str(screening.get("theme_matched", "")),
+        "nps_ownership": nps_ownership_score,
         "risk_penalty": risk_penalty,
         "is_new_listing": screening.get("is_new_listing", False),
         "total": total_score,

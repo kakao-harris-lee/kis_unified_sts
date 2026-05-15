@@ -176,16 +176,80 @@ class LLMConfig(ServiceConfigBase):
     stock_score_weight_backtest: float = Field(
         default=0.20, description="Backtest score weight"
     )
-    stock_score_weight_news: float = Field(default=0.10, description="News score weight")
+    stock_score_weight_news: float = Field(
+        default=0.10, description="News score weight"
+    )
     stock_score_weight_liquidity: float = Field(
         default=0.10, description="Liquidity score weight"
     )
     stock_score_weight_target_price: float = Field(
         default=0.10, description="Target price score weight"
     )
-    stock_score_weight_risk: float = Field(default=0.10, description="Risk score weight")
+    stock_score_weight_risk: float = Field(
+        default=0.10, description="Risk score weight"
+    )
     stock_score_weight_theme: float = Field(
         default=0.15, description="Theme/sector score weight"
+    )
+    stock_score_weight_nps_ownership: float = Field(
+        default=0.10, description="National Pension ownership score weight"
+    )
+    stock_scored_news_enabled: bool = Field(
+        default=True, description="Join LLM-scored market news into stock scoring"
+    )
+    stock_scored_news_stream: str = Field(
+        default="stream:news.scored", description="Redis stream for scored news"
+    )
+    stock_scored_news_sources: list[str] = Field(
+        default_factory=lambda: ["marketaux"],
+        description="Scored news raw sources eligible for stock joins",
+    )
+    stock_scored_news_lookback_seconds: int = Field(
+        default=86400, description="Maximum scored news age for stock joins"
+    )
+    stock_scored_news_max_entries: int = Field(
+        default=500, description="Maximum scored news stream entries to scan"
+    )
+    stock_scored_news_max_per_stock: int = Field(
+        default=3, description="Maximum scored news items attached per stock"
+    )
+    stock_scored_news_min_impact_score: float = Field(
+        default=0.10, description="Minimum scored-news impact for stock joins"
+    )
+    stock_scored_news_positive_sentiment_threshold: float = Field(
+        default=0.20, description="Average scored-news sentiment threshold for positive"
+    )
+    stock_scored_news_negative_sentiment_threshold: float = Field(
+        default=-0.20,
+        description="Average scored-news sentiment threshold for negative",
+    )
+    stock_nps_enabled: bool = Field(
+        default=True, description="Enable National Pension ownership scoring"
+    )
+    stock_nps_holder_keywords: list[str] = Field(
+        default_factory=lambda: ["국민연금", "국민연금공단"],
+        description="DART reporter names treated as National Pension reports",
+    )
+    stock_nps_holding_ratio_anchor_pct: float = Field(
+        default=10.0, description="Holding ratio that earns full base NPS score"
+    )
+    stock_nps_base_score_max: float = Field(
+        default=10.0, description="Maximum base score for NPS holding ratio"
+    )
+    stock_nps_change_pctp_multiplier: float = Field(
+        default=2.0, description="Score multiplier per percentage-point change"
+    )
+    stock_nps_change_score_cap: float = Field(
+        default=5.0, description="Maximum absolute change component"
+    )
+    stock_nps_score_cap: float = Field(
+        default=15.0, description="Maximum absolute NPS ownership score"
+    )
+    stock_nps_max_report_age_days: int = Field(
+        default=90, description="Maximum fresh report age for full NPS score"
+    )
+    stock_nps_stale_score_multiplier: float = Field(
+        default=0.5, description="Multiplier for stale NPS reports"
     )
     stock_llm_scoring_enabled: bool = Field(
         default=True, description="Enable LLM-based scoring"
@@ -222,12 +286,8 @@ class LLMConfig(ServiceConfigBase):
     )
     futures_weight_event: float = Field(default=0.15, description="Event weight")
     futures_stop_loss_pt: float = Field(default=3.0, description="Stop loss points")
-    futures_take_profit_pt: float = Field(
-        default=6.0, description="Take profit points"
-    )
-    futures_tick_stream: str = Field(
-        default="raw_data", description="Tick stream name"
-    )
+    futures_take_profit_pt: float = Field(default=6.0, description="Take profit points")
+    futures_tick_stream: str = Field(default="raw_data", description="Tick stream name")
     futures_tick_lookback_seconds: int = Field(
         default=600, description="Tick lookback period in seconds"
     )
@@ -425,9 +485,11 @@ class LLMConfig(ServiceConfigBase):
             krx_config = {}
 
         # Determine provider (env var takes precedence)
-        provider = str(
-            os.environ.get("LLM_PROVIDER", llm_common.get("provider", "openai"))
-        ).strip().lower()
+        provider = (
+            str(os.environ.get("LLM_PROVIDER", llm_common.get("provider", "openai")))
+            .strip()
+            .lower()
+        )
         if provider not in ("openai", "claude"):
             provider = "openai"
 
@@ -565,7 +627,9 @@ class LLMConfig(ServiceConfigBase):
             "stock_max_atr_pct": stock_config.get("max_atr_pct", 0.08),
             "stock_max_drawdown_pct": stock_config.get("max_drawdown_pct", 0.25),
             "stock_min_backtest_trades": stock_config.get("min_backtest_trades", 10),
-            "stock_min_backtest_win_rate": stock_config.get("min_backtest_win_rate", 45.0),
+            "stock_min_backtest_win_rate": stock_config.get(
+                "min_backtest_win_rate", 45.0
+            ),
             "stock_min_recommendation_score": stock_config.get(
                 "min_recommendation_score", 5.0
             ),
@@ -618,6 +682,53 @@ class LLMConfig(ServiceConfigBase):
             ),
             "stock_score_weight_risk": stock_config.get("score_weight_risk", 0.10),
             "stock_score_weight_theme": stock_config.get("score_weight_theme", 0.15),
+            "stock_score_weight_nps_ownership": stock_config.get(
+                "score_weight_nps_ownership", 0.10
+            ),
+            "stock_scored_news_enabled": stock_config.get("scored_news_enabled", True),
+            "stock_scored_news_stream": stock_config.get(
+                "scored_news_stream", "stream:news.scored"
+            ),
+            "stock_scored_news_sources": stock_config.get(
+                "scored_news_sources", ["marketaux"]
+            ),
+            "stock_scored_news_lookback_seconds": stock_config.get(
+                "scored_news_lookback_seconds", 86400
+            ),
+            "stock_scored_news_max_entries": stock_config.get(
+                "scored_news_max_entries", 500
+            ),
+            "stock_scored_news_max_per_stock": stock_config.get(
+                "scored_news_max_per_stock", 3
+            ),
+            "stock_scored_news_min_impact_score": stock_config.get(
+                "scored_news_min_impact_score", 0.10
+            ),
+            "stock_scored_news_positive_sentiment_threshold": stock_config.get(
+                "scored_news_positive_sentiment_threshold", 0.20
+            ),
+            "stock_scored_news_negative_sentiment_threshold": stock_config.get(
+                "scored_news_negative_sentiment_threshold", -0.20
+            ),
+            "stock_nps_enabled": stock_config.get("nps_enabled", True),
+            "stock_nps_holder_keywords": stock_config.get(
+                "nps_holder_keywords", ["국민연금", "국민연금공단"]
+            ),
+            "stock_nps_holding_ratio_anchor_pct": stock_config.get(
+                "nps_holding_ratio_anchor_pct", 10.0
+            ),
+            "stock_nps_base_score_max": stock_config.get("nps_base_score_max", 10.0),
+            "stock_nps_change_pctp_multiplier": stock_config.get(
+                "nps_change_pctp_multiplier", 2.0
+            ),
+            "stock_nps_change_score_cap": stock_config.get("nps_change_score_cap", 5.0),
+            "stock_nps_score_cap": stock_config.get("nps_score_cap", 15.0),
+            "stock_nps_max_report_age_days": stock_config.get(
+                "nps_max_report_age_days", 90
+            ),
+            "stock_nps_stale_score_multiplier": stock_config.get(
+                "nps_stale_score_multiplier", 0.5
+            ),
             "stock_llm_scoring_enabled": stock_config.get("llm_scoring_enabled", True),
             "stock_llm_scoring_model": stock_config.get("llm_scoring_model", ""),
             "stock_llm_scoring_max_tokens": stock_config.get(

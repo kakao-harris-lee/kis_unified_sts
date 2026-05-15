@@ -11,15 +11,71 @@ news_collector:
     dart:
       enabled: true
       poll_interval_seconds: 30
+      lookback_days: 3
+      page_count: 100
     yonhap:
       enabled: true
       poll_interval_seconds: 60
       rss_url: "https://www.yna.co.kr/rss/economy.xml"
     reuters:
-      enabled: true
+      enabled: false
       poll_interval_seconds: 120
-      rss_url: "https://kr.reuters.com/rss/businessNews"
+      # Direct Reuters Korea/feed hosts are unavailable from runtime.
+      # Enable only after a licensed Reuters endpoint is provisioned.
+      rss_url: "https://news.google.com/rss/search?q=site:reuters.com/business%20OR%20site:reuters.com/markets&hl=en-US&gl=US&ceid=US:en"
+    marketaux:
+      enabled: true
+      poll_interval_seconds: 600
+      api_token: "${MARKETAUX_API_TOKEN}"
+      endpoint: "https://api.marketaux.com/v1/news/all"
+      limit: 20
+      language: "en,ko"
+      countries: "us,kr"
+      symbols: ""
+      entity_types: "equity,index"
+      industries: ""
+      search: ""
+      domains: ""
+      exclude_domains: ""
+      filter_entities: true
+      must_have_entities: false
+      group_similar: true
+      published_after_minutes: 720
+      timeout_seconds: 20
+    gdelt:
+      enabled: true
+      poll_interval_seconds: 600
+      max_records: 20
+      timespan: "6h"
+      sort: "datedesc"
+      timeout_seconds: 20
+      query: '("Federal Reserve" OR "bond yields" OR "equity market" OR "semiconductor stocks")'
     mk:
       enabled: true
       poll_interval_seconds: 180
       mode: "adapter"
+    rss_feeds:
+      - name: "mk_stock_rss"
+        enabled: true
+        poll_interval_seconds: 180
+        rss_url: "https://www.mk.co.kr/rss/50200011/"
+        lang: "ko"
+        timeout_seconds: 10
+      - name: "newsis_economy"
+        enabled: true
+        poll_interval_seconds: 240
+        rss_url: "https://www.newsis.com/RSS/economy.xml"
+        lang: "ko"
+        timeout_seconds: 10
+      - name: "newsis_finance"
+        enabled: true
+        poll_interval_seconds: 240
+        rss_url: "https://www.newsis.com/RSS/bank.xml"
+        lang: "ko"
+        timeout_seconds: 10
+      - name: "cnbc_markets"
+        enabled: true
+        poll_interval_seconds: 300
+        rss_url: "https://www.cnbc.com/id/100003114/device/rss/rss.html"
+        lang: "en"
+        timeout_seconds: 10

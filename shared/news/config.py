@@ -20,7 +20,50 @@ class SourceCommon(BaseModel):
 
 
 class DartSourceConfig(SourceCommon):
-    pass
+    lookback_days: int = Field(default=3, ge=0)
+    page_count: int = Field(default=100, gt=0, le=100)
+
+
+class GDELTSourceConfig(SourceCommon):
+    enabled: bool = False
+    poll_interval_seconds: int = Field(default=600, gt=0)
+    query: str = (
+        '("Federal Reserve" OR "bond yields" OR "equity market" OR '
+        '"semiconductor stocks")'
+    )
+    max_records: int = Field(default=20, gt=0, le=100)
+    timespan: str = "6h"
+    sort: str = "datedesc"
+    timeout_seconds: float = Field(default=20.0, gt=0)
+
+
+class MarketauxSourceConfig(SourceCommon):
+    enabled: bool = False
+    poll_interval_seconds: int = Field(default=600, gt=0)
+    api_token: str = ""
+    endpoint: str = "https://api.marketaux.com/v1/news/all"
+    limit: int = Field(default=20, gt=0, le=100)
+    language: str = "en,ko"
+    countries: str = "us,kr"
+    symbols: str = ""
+    entity_types: str = "equity,index"
+    industries: str = ""
+    search: str = ""
+    domains: str = ""
+    exclude_domains: str = ""
+    filter_entities: bool = True
+    must_have_entities: bool = False
+    group_similar: bool = True
+    published_after_minutes: int = Field(default=720, ge=0)
+    timeout_seconds: float = Field(default=20.0, gt=0)
+
+
+class GenericRSSFeedConfig(SourceCommon):
+    name: str
+    rss_url: str
+    lang: str = "ko"
+    version: str | None = None
+    timeout_seconds: float = Field(default=10.0, gt=0)
 
 
 class YonhapSourceConfig(SourceCommon):
@@ -37,9 +80,12 @@ class MKSourceConfig(SourceCommon):
 
 class SourcesConfig(BaseModel):
     dart: DartSourceConfig
+    gdelt: GDELTSourceConfig = Field(default_factory=GDELTSourceConfig)
+    marketaux: MarketauxSourceConfig = Field(default_factory=MarketauxSourceConfig)
     yonhap: YonhapSourceConfig
     reuters: ReutersSourceConfig
     mk: MKSourceConfig
+    rss_feeds: list[GenericRSSFeedConfig] = Field(default_factory=list)
 
 
 class NewsCollectorConfig(ServiceConfigBase):

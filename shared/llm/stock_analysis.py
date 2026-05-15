@@ -28,7 +28,9 @@ from .data_classes import (
     StockInfo,
     StockTradingPlan,
 )
+from .institutional_signals import build_nps_ownership_signal
 from .llm_scoring import collect_target_price_signal, llm_score_candidate
+from .scored_news import collect_scored_news_for_stocks, summarize_scored_news_sentiment
 from .stock_screening import (
     calc_atr_pct,
     calc_consecutive_up,
@@ -88,9 +90,11 @@ def _prepare_market_df(
     missing_cols = [c for c in required_cols if c not in market_df.columns]
     if missing_cols:
         logger.error(f"Market data missing columns: {missing_cols}")
-        return None, False, {
-            "_excluded": {"_error": [f"missing_columns:{','.join(missing_cols)}"]}
-        }
+        return (
+            None,
+            False,
+            {"_excluded": {"_error": [f"missing_columns:{','.join(missing_cols)}"]}},
+        )
 
     trade_value_fallback = False
     if "거래대금" not in market_df.columns:
@@ -241,9 +245,9 @@ def _collect_mk_news(
             all_news = stock_news
         else:
             all_news = mk_news.get("market_news", []) + mk_news.get("stock_news", [])
-        mk_news["sentiment"] = (
-            analyzer.mk_news_collector.analyze_sentiment(all_news).value
-        )
+        mk_news["sentiment"] = analyzer.mk_news_collector.analyze_sentiment(
+            all_news
+        ).value
     except Exception as e:
         logger.debug(f"MK news failed for {stock.code}: {e}")
     return mk_news
@@ -300,20 +304,19 @@ def _build_texts_to_scan(
     mk_news: dict[str, Any],
     krx_stock_info: dict[str, Any],
     dart_data: dict[str, Any],
+    scored_news: list[dict[str, Any]] | None = None,
 ) -> list[str]:
     texts_to_scan: list[str] = [stock.name]
     texts_to_scan.extend([n.get("title", "") for n in mk_news.get("stock_news", [])])
-    texts_to_scan.extend(
-        [n.get("title", "") for n in mk_news.get("market_news", [])]
-    )
+    texts_to_scan.extend([n.get("title", "") for n in mk_news.get("market_news", [])])
     texts_to_scan.append(json.dumps(krx_stock_info, ensure_ascii=False, default=str))
     if dart_data.get("recent_disclosures"):
         texts_to_scan.extend(
-            [
-                d.get("report_nm", "")
-                for d in dart_data.get("recent_disclosures", [])
-            ]
+            [d.get("report_nm", "") for d in dart_data.get("recent_disclosures", [])]
         )
+    for item in scored_news or []:
+        texts_to_scan.append(str(item.get("title", "")))
+        texts_to_scan.append(str(item.get("reasoning", "")))
     return texts_to_scan
 
 
@@ -322,18 +325,25 @@ def _build_news_payload(
     stock: StockInfo,
     mk_news: dict[str, Any],
     intraday: bool,
+    scored_news: list[dict[str, Any]] | None,
+    config,
 ) -> dict[str, Any]:
+    scored_items = list(scored_news or [])[
+        : max(1, int(getattr(config, "stock_scored_news_max_per_stock", 3)))
+    ]
     if intraday:
         mk_news_count = len(mk_news.get("market_news", [])) + len(
             mk_news.get("stock_news", [])
         )
         payload: dict[str, Any] = {
             "sentiment": mk_news.get("sentiment", "중립"),
-            "news_count": mk_news_count,
+            "news_count": mk_news_count + len(scored_items),
         }
         if mk_news.get("stock_news"):
-            payload["mk_headlines"] = [n.get("title") for n in mk_news["stock_news"][:3]]
-        return payload
+            payload["mk_headlines"] = [
+                n.get("title") for n in mk_news["stock_news"][:3]
+            ]
+        return _attach_scored_news_payload(payload, scored_items, config)
 
     news = analyzer.stock_news_analyzer.analyze(stock.code, stock.name)
     if mk_news.get("sentiment"):
@@ -343,8 +353,43 @@ def _build_news_payload(
     mk_news_count = len(mk_news.get("market_news", [])) + len(
         mk_news.get("stock_news", [])
     )
-    news["news_count"] = mk_news_count
-    return news
+    news["news_count"] = mk_news_count + len(scored_items)
+    return _attach_scored_news_payload(news, scored_items, config)
+
+
+def _attach_scored_news_payload(
+    payload: dict[str, Any],
+    scored_news: list[dict[str, Any]],
+    config,
+) -> dict[str, Any]:
+    if not scored_news:
+        return payload
+
+    compact_items = [_compact_scored_news_item(item) for item in scored_news]
+    payload["marketaux_scored_news"] = compact_items
+    payload["scored_news_headlines"] = [
+        item["title"] for item in compact_items if item.get("title")
+    ]
+    if payload.get("sentiment", "중립") == "중립":
+        payload["sentiment"] = summarize_scored_news_sentiment(scored_news, config)
+    return payload
+
+
+def _compact_scored_news_item(item: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "news_id": item.get("news_id", ""),
+        "source": item.get("source", item.get("raw_source", "")),
+        "title": item.get("title", ""),
+        "url": item.get("url", ""),
+        "category": item.get("category", ""),
+        "sentiment": item.get("sentiment", 0.0),
+        "impact_score": item.get("impact_score", 0.0),
+        "direction_bias": item.get("direction_bias", ""),
+        "confidence": item.get("confidence", 0.0),
+        "keywords": list(item.get("keywords", []))[:5],
+        "raw_keywords": list(item.get("raw_keywords", []))[:5],
+        "reasoning": item.get("reasoning", ""),
+    }
 
 
 async def _build_target_signal(
@@ -397,6 +442,7 @@ def _build_screening_metrics(
     volatility: float,
     risk_hits: list[str],
     target_signal: dict[str, Any],
+    nps_ownership: dict[str, Any],
     is_new_listing: bool,
     technical_consensus: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -419,6 +465,7 @@ def _build_screening_metrics(
         "target_opinion": target_signal["target_opinion"],
         "target_date": target_signal["target_date"],
         "target_sample_count": int(target_signal["target_sample_count"]),
+        "nps_ownership": nps_ownership,
         "is_new_listing": is_new_listing,
     }
     if technical_consensus:
@@ -433,6 +480,7 @@ async def _analyze_stock_candidate(
     intraday: bool,
     sector_classifications: dict[str, str],
     sector_rotation: dict[str, str],
+    scored_news: list[dict[str, Any]] | None = None,
 ) -> tuple[
     Optional[tuple],
     Optional[dict[str, Any]],
@@ -527,7 +575,9 @@ async def _analyze_stock_candidate(
     ksd_data = _collect_ksd_data(analyzer, stock, intraday)
     krx_stock_info = _collect_krx_stock_info(analyzer, stock)
 
-    texts_to_scan = _build_texts_to_scan(stock, mk_news, krx_stock_info, dart_data)
+    texts_to_scan = _build_texts_to_scan(
+        stock, mk_news, krx_stock_info, dart_data, scored_news
+    )
     blacklist_hits = find_keyword_hits(texts_to_scan, config.stock_blacklist)
     keyword_hits = find_keyword_hits(texts_to_scan, config.stock_keyword_filter)
     if blacklist_hits or keyword_hits:
@@ -555,9 +605,16 @@ async def _analyze_stock_candidate(
         return None, None, reasons, excl_features
 
     risk_hits = find_keyword_hits(texts_to_scan, config.stock_risk_keywords)
-    news = _build_news_payload(analyzer, stock, mk_news, intraday)
+    news = _build_news_payload(analyzer, stock, mk_news, intraday, scored_news, config)
     target_signal = await _build_target_signal(analyzer, stock, intraday)
     technical_consensus = _build_technical_consensus_metrics(df, config)
+    nps_ownership = (
+        build_nps_ownership_signal(dart_data, config)
+        if dart_data and not dart_data.get("error")
+        else {"available": False, "matched_reports": 0}
+    )
+    if nps_ownership.get("available"):
+        dart_data["nps_ownership"] = nps_ownership
     screening_metrics = _build_screening_metrics(
         stock,
         avg_volume,
@@ -569,6 +626,7 @@ async def _analyze_stock_candidate(
         volatility,
         risk_hits,
         target_signal,
+        nps_ownership,
         is_new_listing,
         technical_consensus,
     )
@@ -597,6 +655,7 @@ async def _analyze_stock_candidate(
         },
         "data_sources": {
             "mk_news": mk_news,
+            "marketaux_scored_news": news.get("marketaux_scored_news", []),
             "dart": dart_data,
             "ksd": ksd_data,
             "krx_stock_info": krx_stock_info,
@@ -696,7 +755,7 @@ def _build_stock_trading_plan(
     stop_loss, take_profit = _get_plan_price_levels(entry, best)
     position, confidence = _get_plan_position(best, config)
     reasons = _build_plan_reasons(stock, tech, best, news, screening)
-    key_events = news.get("mk_headlines", news.get("key_events", []))
+    key_events = _build_plan_key_events(news)
 
     return StockTradingPlan(
         code=stock.code,
@@ -711,6 +770,19 @@ def _build_stock_trading_plan(
         news_sentiment=news.get("sentiment", "중립"),
         key_events=key_events[:3] if key_events else [],
     )
+
+
+def _build_plan_key_events(news: dict[str, Any]) -> list[str]:
+    events: list[str] = []
+    for key in ("mk_headlines", "key_events", "scored_news_headlines"):
+        values = news.get(key, [])
+        if not isinstance(values, list):
+            continue
+        for value in values:
+            text = str(value or "").strip()
+            if text and text not in events:
+                events.append(text)
+    return events
 
 
 def _get_plan_price_levels(
@@ -758,11 +830,18 @@ def _build_plan_reasons(
         reasons.append(f"백테스트 승률 {best.win_rate}%")
     if news.get("sentiment") in ["긍정", "매우 긍정"]:
         reasons.append(f"뉴스 감성: {news.get('sentiment')}")
+    if news.get("marketaux_scored_news"):
+        top_news = news["marketaux_scored_news"][0]
+        title = str(top_news.get("title", "")).strip()
+        impact = float(top_news.get("impact_score", 0.0) or 0.0)
+        if title:
+            reasons.append(f"Marketaux 뉴스: {title[:40]} (impact {impact:.2f})")
 
     _append_momentum_reasons(reasons, screening)
     _append_technical_consensus_reasons(reasons, screening)
     _append_target_price_reasons(reasons, screening)
     _append_theme_reasons(reasons, screening)
+    _append_nps_reasons(reasons, screening)
 
     return reasons
 
@@ -824,6 +903,18 @@ def _append_theme_reasons(
         reasons.append(f"주도 테마 연관: {theme_matched_name} ({theme_s_val:+.0f})")
     elif not theme_matched_name and theme_s_val < 0:
         reasons.append("주도 테마 미연관 (감점)")
+
+
+def _append_nps_reasons(
+    reasons: list[str],
+    screening: dict[str, Any],
+) -> None:
+    signal = screening.get("nps_ownership", {})
+    if not isinstance(signal, dict) or not signal.get("available"):
+        return
+    ratio = float(signal.get("holding_ratio_pct", 0.0) or 0.0)
+    change = float(signal.get("holding_ratio_change_pctp", 0.0) or 0.0)
+    reasons.append(f"국민연금 보유 {ratio:.2f}% ({change:+.2f}%p)")
 
 
 def _build_screening_meta(
@@ -903,9 +994,9 @@ def _log_screening_summary(
                 reasons_tally[key] = reasons_tally.get(key, 0) + 1
 
         # Log top 5
-        top_reasons = sorted(
-            reasons_tally.items(), key=lambda x: x[1], reverse=True
-        )[:5]
+        top_reasons = sorted(reasons_tally.items(), key=lambda x: x[1], reverse=True)[
+            :5
+        ]
         reasons_msg = ", ".join([f"{k} ({v})" for k, v in top_reasons])
         logger.info(f" - Top exclusion reasons: {reasons_msg}")
 
@@ -959,9 +1050,7 @@ async def analyze_stocks(
 
     config = analyzer.config
 
-    sector_classifications, sector_rotation = _load_sector_theme_data(
-        analyzer, markets
-    )
+    sector_classifications, sector_rotation = _load_sector_theme_data(analyzer, markets)
 
     filtered = _filter_market_df(market_df, config)
 
@@ -969,6 +1058,9 @@ async def analyze_stocks(
 
     stocks, excluded, excluded_features = _build_screened_stocks(
         analyzer, top_volume, config
+    )
+    scored_news_by_code = (
+        collect_scored_news_for_stocks(stocks, config) if not intraday else {}
     )
 
     logger.info(
@@ -992,6 +1084,7 @@ async def analyze_stocks(
             intraday,
             sector_classifications,
             sector_rotation,
+            scored_news_by_code.get(stock.code, []),
         )
         _update_analysis_results_with_candidate(
             analysis_results,
@@ -1022,9 +1115,7 @@ async def analyze_stocks(
 
     # (#5) 최소 스코어 임계값 미달 후보 제거
     min_score = config.stock_min_recommendation_score
-    candidates, filtered_out = _filter_candidates_by_min_score(
-        candidates, min_score
-    )
+    candidates, filtered_out = _filter_candidates_by_min_score(candidates, min_score)
     if filtered_out:
         logger.info(
             f"Min score filter: {filtered_out} candidates below {min_score} removed"
@@ -1086,9 +1177,7 @@ def generate_detailed_briefing(
         selection_reasons = _get_briefing_reasons(
             tech, best, volume_ratio, news_sentiment
         )
-        risk_factors = _get_briefing_risks(
-            tech, best, volume_ratio, news_sentiment
-        )
+        risk_factors = _get_briefing_risks(tech, best, volume_ratio, news_sentiment)
 
         briefing = StockDetailedBriefing(
             code=code,

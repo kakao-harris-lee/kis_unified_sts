@@ -8,6 +8,7 @@ from shared.llm.config import LLMConfig
 from shared.llm.data_classes import BacktestResult, Signal, StockInfo
 from shared.llm.stock_analysis import (
     _attach_market_data,
+    _build_news_payload,
     _build_screening_meta,
     _build_stock_trading_plan,
     _build_technical_consensus_metrics,
@@ -81,7 +82,14 @@ def test_build_stock_trading_plan_uses_scoring_signals(tmp_path):
         avg_profit=1.0,
         avg_loss=-1.0,
     )
-    news = {"sentiment": "긍정", "mk_headlines": ["h1", "h2"]}
+    news = {
+        "sentiment": "긍정",
+        "mk_headlines": ["h1", "h2"],
+        "scored_news_headlines": ["marketaux h"],
+        "marketaux_scored_news": [
+            {"title": "marketaux h", "impact_score": 0.4, "sentiment": 0.5}
+        ],
+    }
     screening = {
         "is_new_listing": True,
         "momentum": {"ret_20d": 5.0, "high_proximity": 0.95},
@@ -109,6 +117,58 @@ def test_build_stock_trading_plan_uses_scoring_signals(tmp_path):
     assert "신규 상장 종목" in plan.reasons
     assert any("KIS 목표가 괴리" in reason for reason in plan.reasons)
     assert any("기술지표 합의 진입" in reason for reason in plan.reasons)
+    assert "marketaux h" in plan.key_events
+    assert any("Marketaux 뉴스" in reason for reason in plan.reasons)
+
+
+def test_build_news_payload_attaches_marketaux_scored_news(tmp_path):
+    cfg = LLMConfig(output_dir=str(tmp_path))
+    analyzer = SimpleNamespace(
+        stock_news_analyzer=SimpleNamespace(
+            analyze=lambda _code, _name: {"sentiment": "중립", "key_events": []}
+        )
+    )
+    stock = StockInfo(
+        code="005930",
+        name="삼성전자",
+        price=70000.0,
+        change_pct=0.0,
+        volume=1000,
+        volume_ratio=1.0,
+        market_cap=1_000_000_000_000,
+        trade_value=1_000_000_000,
+        turnover=0.01,
+    )
+    scored_news = [
+        {
+            "news_id": "marketaux_1",
+            "source": "marketaux",
+            "title": "Samsung AI demand lifts chip stocks",
+            "url": "https://example.com/1",
+            "category": "sector_event",
+            "sentiment": 0.5,
+            "impact_score": 0.4,
+            "direction_bias": "long",
+            "confidence": 0.8,
+            "keywords": ["AI"],
+            "raw_keywords": ["005930.KS"],
+            "reasoning": "반도체 수요 긍정",
+        }
+    ]
+
+    payload = _build_news_payload(
+        analyzer,
+        stock,
+        {"market_news": [], "stock_news": [], "sentiment": "중립"},
+        intraday=False,
+        scored_news=scored_news,
+        config=cfg,
+    )
+
+    assert payload["sentiment"] == "긍정"
+    assert payload["news_count"] == 1
+    assert payload["marketaux_scored_news"][0]["title"].startswith("Samsung AI")
+    assert payload["scored_news_headlines"] == ["Samsung AI demand lifts chip stocks"]
 
 
 def test_build_technical_consensus_metrics_from_korean_ohlcv(tmp_path):

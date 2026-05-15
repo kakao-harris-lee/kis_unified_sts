@@ -22,6 +22,7 @@ import contextlib
 import json
 import logging
 import signal
+from dataclasses import replace
 from typing import Any
 
 try:
@@ -248,6 +249,7 @@ class NewsScorerDaemon:
                 fallback_reason,
                 news.news_id,
             )
+        item = _attach_raw_news_context(item, news, msg_id)
 
         # --- publish ---
         try:
@@ -277,6 +279,24 @@ class NewsScorerDaemon:
             record_news_scorer_backlog(count)
         except Exception:
             logger.debug("Backlog metric query failed", exc_info=True)
+
+
+def _attach_raw_news_context(
+    item: Any,
+    news: NewsItem,
+    msg_id: bytes | str,
+) -> Any:
+    """Return a scored item enriched with source metadata for downstream joins."""
+    raw_ref = msg_id.decode() if isinstance(msg_id, bytes) else str(msg_id)
+    return replace(
+        item,
+        raw_ref=raw_ref,
+        raw_source=news.source,
+        raw_title=news.title,
+        raw_url=news.url,
+        raw_published_at_ms=news.published_at_ms,
+        raw_keywords=list(news.keywords),
+    )
 
 
 async def _build_and_run() -> int:

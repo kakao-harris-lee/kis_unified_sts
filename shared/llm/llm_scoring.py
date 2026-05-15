@@ -128,8 +128,10 @@ async def llm_score_candidate(
             "max_drawdown_pct": screening.get("max_drawdown_pct"),
             "volatility": screening.get("volatility"),
             "is_new_listing": screening.get("is_new_listing", False),
+            "nps_ownership": screening.get("nps_ownership", {}),
         },
         "news_sentiment": news.get("sentiment", "중립"),
+        "scored_news": news.get("marketaux_scored_news", []),
     }
     technical_consensus = screening.get("technical_consensus")
     if technical_consensus:
