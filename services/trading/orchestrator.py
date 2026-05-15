@@ -1612,6 +1612,14 @@ class TradingOrchestrator:
         except Exception:  # noqa: BLE001 — config optional; use canonical default
             self._macro_stream = "stream:macro.overnight"
 
+        # Macro event calendar for Setup C (event reaction). Same wiring-gap
+        # class as macro_overnight: Setup C's find_recent_event saw an empty
+        # list every cycle because EntryContext.metadata never carried it.
+        # Static monthly-maintained file → long (1h) refresh so an operator
+        # mid-month edit propagates without a restart.
+        self._scheduled_events: list[Any] = []
+        self._scheduled_events_monotonic: float = 0.0
+
         # Load daily indicators from Redis (for daily_pullback + chandelier_exit)
         self._refresh_daily_indicators()
 
@@ -2086,6 +2094,39 @@ class TradingOrchestrator:
         self._macro_snapshot = snap
         self._macro_snapshot_monotonic = now_mono
         return snap
+
+    def _get_scheduled_events(self) -> list[Any]:
+        """Macro event calendar for Setup C (event reaction).
+
+        Setup C's ``find_recent_event`` needs ``ctx.scheduled_events``; the
+        orchestrator never injected it (root cause of Setup C 0 signals
+        since cutover). Cached with a 1 h refresh — the calendar is a
+        static, manually monthly-maintained file, so per-cycle reloads are
+        wasteful but a long TTL still picks up a mid-month operator edit
+        without a process restart. ``find_recent_event`` does its own
+        now/window filtering, so injecting the full parsed list is correct.
+        Never raises.
+        """
+        now_mono = time.monotonic()
+        if (
+            self._scheduled_events
+            and now_mono - self._scheduled_events_monotonic < 3600.0
+        ):
+            return self._scheduled_events
+        try:
+            from shared.config.loader import ConfigLoader
+            from shared.decision.context import load_scheduled_events
+
+            path = str(ConfigLoader.get_config_dir() / "scheduled_events.yaml")
+            events = load_scheduled_events(path)
+        except Exception as exc:  # noqa: BLE001 — never break the entry loop
+            logger.debug("scheduled_events load failed: %s", exc)
+            events = []
+        # Keep the previous good list if a reload transiently returns empty.
+        if events:
+            self._scheduled_events = events
+        self._scheduled_events_monotonic = now_mono
+        return self._scheduled_events
 
     def _refresh_dip_candidates(self) -> bool:
         """Load dip (sharp-drop) candidates from Redis for mean-reversion strategies.
@@ -4845,6 +4886,9 @@ class TradingOrchestrator:
                         # Setup A (gap reversion) hard-requires this; absence
                         # was the root cause of 0 signals since cutover.
                         "macro_overnight": self._get_macro_overnight(),
+                        # Setup C (event reaction) find_recent_event needs
+                        # this; same wiring-gap root cause.
+                        "scheduled_events": self._get_scheduled_events(),
                     },
                 )
                 return await self._strategy_manager.check_entries(context)
