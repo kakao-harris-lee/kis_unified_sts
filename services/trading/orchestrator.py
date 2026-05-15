@@ -1596,6 +1596,22 @@ class TradingOrchestrator:
         self._dip_candidates: dict[str, dict[str, Any]] = {}
         self._refresh_dip_candidates()
 
+        # Overnight macro snapshot for Setup A (gap reversion). Cached and
+        # refreshed lazily — Setup A hard-requires ctx.macro_overnight, and
+        # the orchestrator EntryContext previously never injected it (root
+        # cause of "Signal cycle: 0 signals" since 2026-05-11 cutover).
+        self._macro_snapshot: Any = None
+        self._macro_snapshot_monotonic: float = 0.0
+        try:
+            _macro_cfg = ConfigLoader.load("macro_sources.yaml")
+            self._macro_stream: str = (
+                _macro_cfg.get("macro_overnight_collector", {}).get(
+                    "redis_stream", "stream:macro.overnight"
+                )
+            )
+        except Exception:  # noqa: BLE001 — config optional; use canonical default
+            self._macro_stream = "stream:macro.overnight"
+
         # Load daily indicators from Redis (for daily_pullback + chandelier_exit)
         self._refresh_daily_indicators()
 
@@ -2029,6 +2045,47 @@ class TradingOrchestrator:
     )
     DIP_CANDIDATES_REDIS_KEY = "system:dip_candidates:latest"
     LLM_QUALITY_REDIS_KEY = "system:llm_quality:latest"
+
+    def _get_macro_overnight(self) -> Any:
+        """Latest overnight :class:`MacroSnapshot` for Setup A gap-reversion.
+
+        Setup A hard-requires ``ctx.macro_overnight`` (``gap_reversion.py``
+        returns None when absent). Cached with a 60 s refresh — the collector
+        updates fx every 15 min / US at 06:30 KST, so per-cycle Redis reads
+        would be wasteful. Freshness guard: a snapshot older than 24 h is
+        treated as absent (stale multi-day macro must not drive today's
+        gap-reversion; Setup A then correctly no-ops instead of acting on
+        stale data). Never raises — observability/decision input only.
+        """
+        now_mono = time.monotonic()
+        if (
+            self._macro_snapshot is not None
+            and now_mono - self._macro_snapshot_monotonic < 60.0
+        ):
+            return self._macro_snapshot
+        try:
+            from shared.macro.base import read_latest_macro_snapshot
+            from shared.streaming.client import RedisClient
+
+            snap = read_latest_macro_snapshot(
+                RedisClient.get_client(), self._macro_stream
+            )
+        except Exception as exc:  # noqa: BLE001 — never break the entry loop
+            logger.debug("macro snapshot fetch failed: %s", exc)
+            snap = None
+
+        if snap is not None:
+            age_ms = (time.time() * 1000.0) - float(getattr(snap, "ts_ms", 0))
+            if age_ms > 86_400_000.0:  # > 24h → stale overnight data
+                logger.debug(
+                    "macro snapshot stale (%.1fh) — treating as absent",
+                    age_ms / 3_600_000.0,
+                )
+                snap = None
+
+        self._macro_snapshot = snap
+        self._macro_snapshot_monotonic = now_mono
+        return snap
 
     def _refresh_dip_candidates(self) -> bool:
         """Load dip (sharp-drop) candidates from Redis for mean-reversion strategies.
@@ -4785,6 +4842,9 @@ class TradingOrchestrator:
                         ),
                         "dip_candidates": getattr(self, "_dip_candidates", {}),
                         "daily_watchlist": self._daily_watchlist,
+                        # Setup A (gap reversion) hard-requires this; absence
+                        # was the root cause of 0 signals since cutover.
+                        "macro_overnight": self._get_macro_overnight(),
                     },
                 )
                 return await self._strategy_manager.check_entries(context)
