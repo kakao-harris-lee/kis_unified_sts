@@ -1704,6 +1704,28 @@ def paper_status(url: str):
             click.echo(f"  Running: {data.get('is_running', False)}")
             click.echo(f"  Positions: {data.get('total_positions', 0)}")
             click.echo(f"  Total P&L: {data.get('total_pnl', 0):,.0f} KRW")
+            account = data.get("account")
+            if isinstance(account, dict):
+                click.echo("")
+                click.echo("Account:")
+                click.echo(
+                    f"  Initial Balance:  {account.get('initial_balance', 0):>16,.0f} KRW"
+                )
+                click.echo(
+                    f"  Cash Balance:     {account.get('balance', 0):>16,.0f} KRW"
+                )
+                click.echo(
+                    f"  Equity (M2M):     {account.get('equity', 0):>16,.0f} KRW"
+                )
+                click.echo(
+                    f"  Realized P&L:     {account.get('realized_pnl', 0):>16,+.0f} KRW"
+                )
+                click.echo(
+                    f"  Unrealized P&L:   {account.get('unrealized_pnl', 0):>16,+.0f} KRW"
+                )
+                click.echo(
+                    f"  Open Positions:   {account.get('open_positions', 0):>16d}"
+                )
         else:
             click.echo("Paper Trading Status:")
             click.echo("-" * 40)
