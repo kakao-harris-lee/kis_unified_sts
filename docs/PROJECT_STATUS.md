@@ -1,6 +1,6 @@
 # Project Status — KIS Unified Trading Platform
 
-**Last updated**: 2026-05-11
+**Last updated**: 2026-05-15
 **Update cadence**: After every plan version bump (v3.x → v3.y) or operational milestone.
 
 This is a quick-orientation dashboard for an operator or engineer returning to
@@ -28,9 +28,8 @@ Impact: 1-day 영향 (선물 Setup A window 미스 + 주식 26분 stall + 대시
 | Asset | Strategy | Mode | Note |
 |-------|----------|------|------|
 | Stock | `bb_reversion`, `opening_volume_surge`, `volume_accumulation` | Paper | Phase 2 cutover does NOT change stock side |
-| Futures (today) | `rl_mppo` | Paper, **primary** | Will demote to `shadow_mode: true` at next 08:55 KST restart |
-| Futures (post-cutover) | `setup_a_gap_reversion`, `setup_c_event_reaction` | Paper, **primary** | LLM-augmented threshold + veto + size scaling |
-| Futures (post-cutover) | `rl_mppo` | Paper, **shadow** | No Signal emitted; predictions logged to `kospi.rl_shadow_predictions` for counterfactual |
+| Futures | `setup_a_gap_reversion`, `setup_c_event_reaction` | Paper, **primary** | LLM-augmented threshold + veto + size scaling |
+| Futures | ~~`rl_mppo`~~ | **DEPRECATED 2026-05-15** | enabled=false. Phase 2 cutover 후 매 cycle 시그널 0건 누적, shadow logging 종료. 후속 신호 layer는 Williams %R / RSI / MACD 등 지표 기반 전략으로 대체 예정. |
 
 ## Automation Schedule (all UTC unless noted)
 
@@ -45,10 +44,16 @@ Impact: 1-day 영향 (선물 Setup A window 미스 + 주식 26분 stall + 대시
 | Continuous | kill_switch (6 conditions) | Prometheus + Redis |
 | Operator-run, Fri EOD | Pre-flight check (8-gate) | `bash scripts/cron/phase2_preflight_check.sh` |
 
-## Key Recent Decisions (2026-05-08)
+## Key Recent Decisions
 
-- **RL_mppo demoted to `shadow_mode: true`**.  No live RL trades; predictions
-  retained for 6 months for counterfactual analysis vs Setup A/C.
+**2026-05-15** — RL_mppo **최종 deprecate**.  Phase 2 cutover 후 6 영업일 운영
+결과 매 cycle 시그널 0건 누적 (HOLD bias / confidence < threshold).  Shadow
+logging도 종료 (운영 부담 대비 counterfactual 가치 낮음).  YAML `enabled: false`,
+코드 경로는 retraining 옵션 위해 보존.  후속 시그널 layer는 **Williams %R /
+RSI / MACD 등 명시적 지표 기반 전략**으로 대체.
+
+**2026-05-08** — Setup A/C primary 전환 + RL shadow 강등 + LLM veto 권한.
+
 - **Setup A (gap reversion) + Setup C (event reaction) become primary entries**
   — paper-only since `futures_live.enabled: false`.
 - **LLM veto authority** activated for both setups (operator §7-1 grant).
@@ -61,7 +66,7 @@ Impact: 1-day 영향 (선물 Setup A window 미스 + 주식 26분 stall + 대시
 | Risk | Mitigation in place | Detection time |
 |------|---------------------|---------------|
 | Orchestrator fails to boot Mon 08:55 KST | watchdog cron retries every 5 min | First 10 min: heartbeat absence; full failure visible by 09:30 KST |
-| RL inference loop dead | shadow_logger empty | `rl_shadow_predictions_today=0` gate FAIL @ daily 16:00 KST |
+| ~~RL inference loop dead~~ | n/a (RL deprecated 2026-05-15) | n/a |
 | ClickHouse outage | `dropped_batches` Prometheus metric → alert | `ShadowLoggerBatchesDropped` alert (10 min window) |
 | Setup A never fires | (correct on no-gap days; alarm only after 5d) | Daily 16:00 KST gate; week-1 review |
 | Telegram silence | TELEGRAM_BRIEFING_* env missing | Pre-flight check |

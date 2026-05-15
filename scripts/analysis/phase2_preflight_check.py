@@ -129,43 +129,44 @@ def _check_ch_migrations(report: PreflightReport) -> None:
         ))
 
 
-def _check_shadow_mode(report: PreflightReport) -> None:
-    """rl_mppo.yaml shadow_mode == true."""
+def _check_rl_mppo_disabled(report: PreflightReport) -> None:
+    """rl_mppo.yaml::strategy.enabled must be false (DEPRECATED 2026-05-15).
+
+    Replaces the older shadow_mode gate.  After v4.10 the RL strategy is
+    fully decommissioned and the orchestrator must not load it.
+    """
     path = _REPO_ROOT / "config" / "strategies" / "futures" / "rl_mppo.yaml"
     try:
-        text = path.read_text(encoding="utf-8")
-    except OSError as e:
+        import yaml
+
+        with path.open(encoding="utf-8") as f:
+            cfg = yaml.safe_load(f)
+        enabled = cfg.get("strategy", {}).get("enabled")
+    except Exception as e:
         report.checks.append(CheckResult(
-            name="rl_mppo_shadow_mode_true",
+            name="rl_mppo_disabled",
             status="FAIL",
-            observed=f"cannot read {path.name}: {e}",
-            expected="shadow_mode: true",
+            observed=f"yaml load failed: {e}",
+            expected="strategy.enabled: false",
         ))
         return
-    has_true = any(
-        line.strip().startswith("shadow_mode: true")
-        for line in text.splitlines()
-    )
-    has_false = any(
-        line.strip().startswith("shadow_mode: false")
-        for line in text.splitlines()
-    )
-    if has_true and not has_false:
+    if enabled is False:
         report.checks.append(CheckResult(
-            name="rl_mppo_shadow_mode_true",
+            name="rl_mppo_disabled",
             status="PASS",
-            observed="shadow_mode: true",
-            expected="shadow_mode: true",
+            observed="strategy.enabled: false",
+            expected="strategy.enabled: false",
         ))
     else:
         report.checks.append(CheckResult(
-            name="rl_mppo_shadow_mode_true",
+            name="rl_mppo_disabled",
             status="FAIL",
-            observed=f"true={has_true}, false={has_false}",
-            expected="exactly one `shadow_mode: true` line",
+            observed=f"strategy.enabled: {enabled}",
+            expected="strategy.enabled: false",
             detail=(
-                "Edit config/strategies/futures/rl_mppo.yaml and set "
-                "entry.params.shadow_mode: true."
+                "RL_mppo was deprecated 2026-05-15. Edit "
+                "config/strategies/futures/rl_mppo.yaml and set "
+                "strategy.enabled: false."
             ),
         ))
 
@@ -360,8 +361,11 @@ def _check_prometheus_alerts(report: PreflightReport) -> None:
         ))
 
 
+# After v4.10 (RL_mppo deprecated 2026-05-15) the orchestrator loads only the
+# Setup A/C primary strategies. Future indicator-based additions (Williams %R /
+# RSI / MACD) will be added here as they land.
 _EXPECTED_FUTURES_STRATEGIES: frozenset[str] = frozenset(
-    {"rl_mppo", "setup_a_gap_reversion", "setup_c_event_reaction"}
+    {"setup_a_gap_reversion", "setup_c_event_reaction"}
 )
 
 
@@ -415,10 +419,10 @@ def _check_strategies_loadable(report: PreflightReport) -> None:
             observed=f"loaded={sorted(loaded)} missing={sorted(missing)}",
             expected=f"all of {sorted(_EXPECTED_FUTURES_STRATEGIES)}",
             detail=(
-                "Phase 2 cutover requires rl_mppo (shadow) + Setup A/C "
-                "(primary) all three loaded.  Verify each YAML's "
-                "`strategy.enabled: true` AND that no runtime override "
-                "(e.g. `sts rl paper --strategy <name>`) restricts loading."
+                "Phase 2 requires Setup A/C (primary) loaded.  Verify each "
+                "YAML's `strategy.enabled: true` AND that no runtime override "
+                "(e.g. `sts rl paper --strategy <name>`) restricts loading. "
+                "RL_mppo was deprecated 2026-05-15 — its absence is expected."
             ),
         ))
     elif extra:
@@ -512,7 +516,7 @@ def run() -> PreflightReport:
     """Run all checks and return the report."""
     report = PreflightReport()
     _check_ch_migrations(report)
-    _check_shadow_mode(report)
+    _check_rl_mppo_disabled(report)
     _check_setup_strategies_enabled(report)
     _check_futures_live_disabled(report)
     _check_strategies_loadable(report)

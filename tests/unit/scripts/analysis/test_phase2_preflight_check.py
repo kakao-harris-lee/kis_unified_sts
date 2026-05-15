@@ -97,36 +97,35 @@ class TestTelegramCredentials:
 
 
 # ---------------------------------------------------------------------------
-# _check_shadow_mode
+# _check_rl_mppo_disabled (replaces _check_shadow_mode after v4.10 deprecate)
 # ---------------------------------------------------------------------------
 
 
-class TestShadowMode:
-    def test_shadow_mode_true_pass(self, tmp_path: Path, monkeypatch):
-        cfg = tmp_path / "rl_mppo.yaml"
-        cfg.write_text("entry:\n  params:\n      shadow_mode: true\n")
-        monkeypatch.setattr(_mod, "_REPO_ROOT", tmp_path.parent)
-        # _check_shadow_mode hard-codes path: config/strategies/futures/rl_mppo.yaml
-        # so we lay out the directory structure under tmp_path.parent.
-        target = tmp_path.parent / "config" / "strategies" / "futures"
-        target.mkdir(parents=True, exist_ok=True)
-        (target / "rl_mppo.yaml").write_text(
-            "entry:\n  params:\n      shadow_mode: true\n"
-        )
-        report = PreflightReport()
-        _mod._check_shadow_mode(report)
-        assert report.checks[0].status == "PASS"
-
-    def test_shadow_mode_false_fail(self, tmp_path: Path, monkeypatch):
+class TestRlMppoDisabled:
+    def test_enabled_false_pass(self, tmp_path: Path, monkeypatch):
         monkeypatch.setattr(_mod, "_REPO_ROOT", tmp_path)
         target = tmp_path / "config" / "strategies" / "futures"
         target.mkdir(parents=True, exist_ok=True)
         (target / "rl_mppo.yaml").write_text(
-            "entry:\n  params:\n      shadow_mode: false\n"
+            "strategy:\n  name: rl_mppo\n  enabled: false\n"
         )
         report = PreflightReport()
-        _mod._check_shadow_mode(report)
+        _mod._check_rl_mppo_disabled(report)
+        assert report.checks[0].status == "PASS"
+        assert report.checks[0].name == "rl_mppo_disabled"
+
+    def test_enabled_true_fail(self, tmp_path: Path, monkeypatch):
+        """RL_mppo는 2026-05-15 이후 enabled=true이면 안 된다 (deprecate 회귀 가드)."""
+        monkeypatch.setattr(_mod, "_REPO_ROOT", tmp_path)
+        target = tmp_path / "config" / "strategies" / "futures"
+        target.mkdir(parents=True, exist_ok=True)
+        (target / "rl_mppo.yaml").write_text(
+            "strategy:\n  name: rl_mppo\n  enabled: true\n"
+        )
+        report = PreflightReport()
+        _mod._check_rl_mppo_disabled(report)
         assert report.checks[0].status == "FAIL"
+        assert "deprecated" in report.checks[0].detail.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -321,8 +320,8 @@ class TestOutputRenderers:
 class TestStrategiesLoadable:
     """Regression guard for PR #215: pre-flight YAML check passed but
     StrategyFactory loaded only rl_mppo because `sts rl paper`
-    defaulted to `--strategy rl_mppo`.  Setup A/C silently dropped.
-    This gate runs the same loader the orchestrator uses.
+    defaulted to `--strategy rl_mppo`. Setup A/C silently dropped.
+    After v4.10 (RL_mppo deprecate 2026-05-15) only Setup A/C is required.
     """
 
     class _FakeStrategy:
@@ -341,16 +340,24 @@ class TestStrategiesLoadable:
 
         monkeypatch.setattr(StrategyFactory, "create_all", staticmethod(patched))
 
-    def test_all_three_loaded_passes(self, monkeypatch):
+    def test_setup_a_and_c_loaded_passes(self, monkeypatch):
         self._patch_loader(monkeypatch, [
-            "rl_mppo", "setup_a_gap_reversion", "setup_c_event_reaction",
+            "setup_a_gap_reversion", "setup_c_event_reaction",
         ])
         report = PreflightReport()
         _mod._check_strategies_loadable(report)
         assert report.checks[0].status == "PASS"
 
+    def test_one_setup_missing_fails(self, monkeypatch):
+        """Reproduces a partial-load cutover blocker pattern."""
+        self._patch_loader(monkeypatch, ["setup_a_gap_reversion"])
+        report = PreflightReport()
+        _mod._check_strategies_loadable(report)
+        assert report.checks[0].status == "FAIL"
+        assert "setup_c_event_reaction" in report.checks[0].observed
+
     def test_only_rl_mppo_loaded_fails(self, monkeypatch):
-        """Reproduces 2026-05-11 cutover blocker — setup A/C not loaded."""
+        """rl_mppo이 어쩌다 enabled로 돌아왔어도, Setup A/C가 빠지면 FAIL."""
         self._patch_loader(monkeypatch, ["rl_mppo"])
         report = PreflightReport()
         _mod._check_strategies_loadable(report)
@@ -358,27 +365,22 @@ class TestStrategiesLoadable:
         assert "setup_a_gap_reversion" in report.checks[0].observed
         assert "setup_c_event_reaction" in report.checks[0].observed
 
-    def test_one_setup_missing_fails(self, monkeypatch):
-        self._patch_loader(monkeypatch, ["rl_mppo", "setup_a_gap_reversion"])
-        report = PreflightReport()
-        _mod._check_strategies_loadable(report)
-        assert report.checks[0].status == "FAIL"
-        assert "setup_c_event_reaction" in report.checks[0].observed
-
     def test_extra_strategy_warns_not_fails(self, monkeypatch):
-        """Unexpected extra strategy is WARN (not blocking) — operator
-        may have intentionally enabled an experimental strategy.
+        """rl_mppo 같은 추가 전략이 enabled로 돌아오면 WARN (operator 의도 확인).
+
+        v4.10 이후 RL_mppo는 deprecate 됐지만 코드 경로는 살아있어, 누군가
+        실수로 enabled로 돌리면 expected set 밖이므로 WARN 발생 → 운영자가
+        의도성 확인 후 의식적으로 진행하거나 enabled=false로 되돌릴 수 있다.
         """
         self._patch_loader(monkeypatch, [
-            "rl_mppo",
             "setup_a_gap_reversion",
             "setup_c_event_reaction",
-            "experimental_strategy",
+            "rl_mppo",
         ])
         report = PreflightReport()
         _mod._check_strategies_loadable(report)
         assert report.checks[0].status == "WARN"
-        assert "experimental_strategy" in report.checks[0].observed
+        assert "rl_mppo" in report.checks[0].observed
 
     def test_loader_exception_fails(self, monkeypatch):
         self._patch_loader(monkeypatch, ValueError("bad config"))

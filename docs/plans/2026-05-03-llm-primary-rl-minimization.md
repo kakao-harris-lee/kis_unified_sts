@@ -1,6 +1,8 @@
 # LLM-primary 의사결정 + RL 축소 통합 계획
 
-**Status**: **v4.9 — Phase 2 cutover LIVE: 2 incidents 복구 + 2 회귀 가드 + Grafana 대시보드 정리**. 2026-05-11 첫 거래일에 두 건 incident 발생: (1) 선물 cutover blocker (CLI default single-strategy 강제) → PR #215/#216 fix. (2) 주식 silent-stall (13:09–13:35, fresh_symbol_count > 0이지만 active universe 모두 stale) → PR #218 fix + 4 regression tests. 추가로 운영자 요청으로 (3) Grafana 대시보드 audit → `futures-paradigm-overview` 7 패널 silent-broken (deprecated `rl_signals` 테이블 + 잘못된 `today(tz)` + swing_positions schema 불일치) → PR #220 fix + 2 stale 대시보드 archive. RL shadow 정상 누적. Setup A 오늘 발화 윈도우 미스, Setup C는 macro 이벤트 의존. 내일(2026-05-12) 08:55 KST 자동 가동 시 모든 fix 적용된 정상 운영 예상. 다음 마일스톤은 Phase 3 Track A (운영자 영역) + Phase 4 (3개월 후).
+**Status**: **v4.10 — RL_mppo 최종 deprecate (2026-05-15)**. Phase 2 cutover 후 6 영업일(2026-05-11~14) 운영 결과 매 1-min cycle "Signal cycle: 0 signals from [rl_mppo, setup_a_gap_reversion, setup_c_event_reaction]" 누적 — RL_mppo는 HOLD bias 또는 confidence < threshold로 시그널 0건. Setup A/C는 정상 평가되지만 gap/event 미발생일에는 자연스럽게 0건. Shadow logging의 6개월 누적 가치 대비 운영 부담(ClickHouse insert + 모델 inference 매 cycle) 크다고 판단 → 최종 deprecate. 코드 경로(`RLMPPOEntry`/`RLMPPOExit`/`rl_model_helpers`)는 retraining 옵션을 위해 즉시 제거하지 않음. `config/strategies/futures/rl_mppo.yaml::enabled: false`. 후속 시그널 layer는 Williams %R / RSI / MACD 등 명시적 기술 지표 기반 전략으로 재구성. Phase 4 "RL aux 활성/폐지/재학습" 결정은 v4.10에서 **폐지**로 종결.
+
+**v4.9** — Phase 2 cutover LIVE: 2 incidents 복구 + 2 회귀 가드 + Grafana 대시보드 정리 (2026-05-11). 첫 거래일에 두 건 incident: (1) 선물 cutover blocker (CLI default single-strategy 강제) → PR #215/#216 fix. (2) 주식 silent-stall (13:09–13:35) → PR #218 fix + 4 regression tests. (3) Grafana 대시보드 audit → `futures-paradigm-overview` 7 패널 silent-broken → PR #220 fix.
 
 **v4.0 시점 인프라 요약** (수동 작업 0):
 - **자동 cron 4건**: orchestrator restart (08:55), daily verification (16:00 평일), weekly counterfactual (월 07:00), reports rotation (일 04:00)
