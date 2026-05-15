@@ -28,7 +28,7 @@
 - **현재 운용 전략**:
   - **Setup A (gap reversion) + Setup C (volatility breakout)** — primary, paper-only (Phase 5 Gate 3 진입 전까지). `services/decision_engine/`, `services/risk_filter/`, `services/order_router/` 파이프라인. 활성화 게이트는 `docs/runbooks/phase5-verification.md` 참조.
   - **향후**: Williams %R / RSI / MACD 등 명시적 기술 지표 기반 신규 전략 추가 예정 (2026-05-15 운영 결정).
-  - **`rl_mppo` — DEPRECATED 2026-05-15** (Phase 2 cutover 후 매 cycle 시그널 0건 누적, shadow logging도 종료). `config/strategies/futures/rl_mppo.yaml::enabled: false`. 코드 경로(`RLMPPOEntry/RLMPPOExit/rl_model_helpers`)는 즉시 제거하지 않고 retraining 옵션 보존.
+  - **`rl_mppo` — DEPRECATED 2026-05-15** (`enabled: false`, shadow logging 종료). 사유 정정(v4.11): "매 cycle 0 signals → HOLD bias"는 **오독** — 실제 entry action 55%/conf~0.56, "0 signals"는 shadow_mode 설계상 억제. 유효 사유는 **counterfactual EOD-proxy PnL 음수**(5/11–15 9 trades -1.35M) + Setup A/C 채택. 캐시버그 #252와 무관(`get_rl_features` 캐시 없음). 코드 경로(`RLMPPOEntry/RLMPPOExit/rl_model_helpers`)는 retraining 옵션 보존. 상세: master plan v4.11.
 - **계약 명세**: `config/execution.yaml ::futures_contract_spec` (multiplier 50_000 KRW/pt, tick 0.02pt, tick_value 1_000 KRW)
 - **운용 경로 표준**: `TradingOrchestrator` 경로를 사용한다 (Setup A/C). Phase 5 paradigm은 systemd 단위로 분리 (`kis-decision-engine`, `kis-risk-filter`, `kis-order-router`, `kis-kill-switch`).
 - **Phase 5 운영 런북**:
@@ -116,7 +116,7 @@ React 프론트엔드 (port 8001, FastAPI 정적 호스팅) — 실시간 운영
 
 #### RL 선물 운용 규칙 — **DEPRECATED 2026-05-15**
 
-> RL_mppo는 Phase 2 cutover 후 매 cycle 시그널 0건 누적으로 **2026-05-15 deprecate**됨. 아래 규칙은 retraining/복귀 옵션을 위해 보존하지만 운영 경로에서는 사용하지 않는다. `config/strategies/futures/rl_mppo.yaml::enabled: false`. 선물 시그널은 Setup A/C 및 향후 추가될 지표 기반(Williams %R / RSI / MACD) 전략으로 처리한다.
+> RL_mppo는 **2026-05-15 deprecate**됨 (`enabled: false`). 사유 정정(v4.11): "매 cycle 0 signals → HOLD bias"는 오독이었고(shadow_mode 설계상 Signal 억제, 실제 entry 55%/conf~0.56), 유효 사유는 counterfactual EOD-proxy PnL 음수 + Setup A/C 채택. 아래 규칙은 retraining/복귀 옵션을 위해 보존하지만 운영 경로에서는 사용하지 않는다. 선물 시그널은 Setup A/C 및 향후 지표 기반(Williams %R / RSI / MACD) 전략으로 처리한다. 상세: `docs/plans/2026-05-03-llm-primary-rl-minimization.md` v4.11.
 
 - ~~`sts rl paper` 명령은 `TradingOrchestrator`를 사용한다.~~ Setup A/C도 동일 orchestrator 경로 사용 (`sts trade start --asset futures`).
 - `rl_mppo` 전략의 모델 경로 오버라이드는 `RL_MPPO_MODEL_PATH` 환경변수를 사용한다. (retraining 시 참조용)
