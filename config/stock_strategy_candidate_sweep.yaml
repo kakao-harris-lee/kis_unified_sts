@@ -66,6 +66,41 @@ sweep:
         exit.params.take_profit_pct: [0.10, 0.15]
         exit.params.hard_stop_pct: [-0.06]
 
+    - name: "daily_pullback_scan_fixed_hold"
+      # 2026-05-16 focused sweep with 10/20d max-hold still failed active
+      # gates. Keep selectable via --candidate, but exclude from default grid.
+      enabled: false
+      strategy: "daily_pullback"
+      order_amount_per_stock: [16000000, 20000000]
+      max_positions: [3]
+      overrides:
+        entry.params.min_confidence: [0.0]
+        entry.params.signal_cooldown_days: [0]
+        entry.params.min_atr_pct: [0.02]
+        entry.params.min_highest_high_gap_pct: [-0.05]
+        exit.params.take_profit_pct: [0.0]
+        exit.params.hard_stop_pct: [-0.06]
+        exit.params.atr_multiplier: [999.0]
+        exit.params.max_hold_days: [10, 20]
+
+    - name: "daily_pullback_volume_fixed_hold"
+      # 2026-05-16 focused sweep: best long win was acceptable in one variant,
+      # but monthly return and recent window failed. Select explicitly only.
+      enabled: false
+      strategy: "daily_pullback"
+      order_amount_per_stock: [16000000, 20000000]
+      max_positions: [3]
+      overrides:
+        entry.params.min_confidence: [0.0]
+        entry.params.signal_cooldown_days: [0]
+        entry.params.min_atr_pct: [0.03]
+        entry.params.min_volume_ratio: [1.2, 1.5]
+        entry.params.max_return_60d: [0.05]
+        exit.params.take_profit_pct: [0.0]
+        exit.params.hard_stop_pct: [-0.06]
+        exit.params.atr_multiplier: [999.0]
+        exit.params.max_hold_days: [10, 20]
+
     - name: "daily_pullback_volume_return_filter"
       strategy: "daily_pullback"
       order_amount_per_stock: [18000000, 22000000]

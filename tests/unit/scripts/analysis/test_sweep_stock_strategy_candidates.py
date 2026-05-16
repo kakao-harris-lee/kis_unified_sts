@@ -90,18 +90,21 @@ def test_run_sweep_filters_candidate_names(tmp_path):
         {
             "name": "skip_me",
             "strategy": "technical_consensus",
+            "enabled": False,
             "order_amount_per_stock": [1_000_000],
             "max_positions": [1],
             "overrides": {},
         }
     )
 
+    default_runs = mod.expand_sweep_runs(config)
     manifest = mod.run_sweep(
         config,
         dry_run=True,
         candidate_names={"skip_me"},
     )
 
+    assert all(run.candidate_name != "skip_me" for run in default_runs)
     assert manifest["planned_runs"] == 2
     assert {run["candidate_name"] for run in manifest["runs"]} == {"skip_me"}
 
