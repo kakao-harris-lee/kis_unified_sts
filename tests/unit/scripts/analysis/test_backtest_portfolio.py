@@ -5,7 +5,9 @@ from datetime import date
 import pandas as pd
 
 import scripts.analysis.backtest_portfolio as portfolio
+from shared.backtest import BacktestConfig
 from shared.backtest.engine import SignalType
+from shared.models.signal import Signal
 
 
 def test_select_stocks_supports_symbol_and_max_filters(monkeypatch):
@@ -252,3 +254,60 @@ def test_daily_portfolio_adapter_keeps_indicator_windows_per_symbol(monkeypatch)
     adapter.set_position(position)
     assert adapter.on_bar({"code": "AAA"}) == SignalType.BUY
     assert created[0].positions[-1] == position
+
+
+def test_priority_daily_engine_admits_same_date_entries_by_signal_priority():
+    class PriorityStrategy:
+        name = "priority_daily"
+
+        def __init__(self):
+            self.last_entry_signal = None
+
+        def prescan_data(self, _data):
+            return None
+
+        def set_position(self, _position):
+            return None
+
+        def check_exit(self, _bar):
+            return False, None
+
+        def on_bar(self, bar):
+            priority = {"AAA": 10.0, "BBB": 1.0}.get(bar["code"])
+            if priority is None:
+                self.last_entry_signal = None
+                return SignalType.HOLD
+            self.last_entry_signal = Signal(
+                code=bar["code"],
+                name=bar["name"],
+                strategy=self.name,
+                confidence=0.7,
+                metadata={"entry_priority": priority, "signal_direction": "long"},
+            )
+            return SignalType.BUY
+
+    data = pd.DataFrame(
+        {
+            "datetime": pd.to_datetime(["2026-05-11", "2026-05-11"]),
+            "open": [10.0, 10.0],
+            "high": [10.0, 10.0],
+            "low": [10.0, 10.0],
+            "close": [10.0, 10.0],
+            "volume": [1000, 1000],
+            "code": ["AAA", "BBB"],
+            "name": ["A", "B"],
+        }
+    )
+    config = BacktestConfig.stock(
+        initial_capital=1_000.0,
+        order_amount_per_stock=500.0,
+        max_positions=1,
+    )
+
+    result = portfolio.PriorityDailyPortfolioBacktestEngine(
+        PriorityStrategy(),
+        config,
+    ).run(data)
+
+    assert result.total_trades == 1
+    assert result.trades[0].code == "BBB"
