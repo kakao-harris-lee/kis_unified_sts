@@ -1,0 +1,63 @@
+sweep:
+  output_dir: "reports/candidate_strategy_sweep/stock/backtests"
+  gate_output_dir: "reports/candidate_strategy_sweep/stock/gate"
+  portfolio_script: "scripts/analysis/backtest_portfolio.py"
+  gate_config: "stock_paper_verification.yaml"
+  python: ".venv/bin/python"
+  capital: 100000000
+  tier: "all"
+  symbols: ""
+  max_symbols:
+  min_windows: 2
+  allow_high_win_rate: false
+
+  windows:
+    - name: "recent_22d"
+      start: "2026-04-17"
+      end: "2026-05-15"
+    - name: "long_3y"
+      start: "2023-05-17"
+      end: "2026-05-15"
+
+  candidates:
+    - name: "daily_pullback_quality_tp5"
+      strategy: "daily_pullback"
+      order_amount_per_stock: [22000000, 25000000]
+      max_positions: [3, 5]
+      overrides:
+        entry.params.min_atr_pct: [0.035866]
+        entry.params.min_highest_high_gap_pct: [-0.085389]
+        exit.params.take_profit_pct: [0.05]
+        exit.params.hard_stop_pct: [-0.06]
+
+    - name: "daily_pullback_quality_tp10_15"
+      strategy: "daily_pullback"
+      order_amount_per_stock: [16000000, 18000000, 20000000]
+      max_positions: [3, 5]
+      overrides:
+        entry.params.min_atr_pct: [0.035866]
+        entry.params.min_highest_high_gap_pct: [-0.085389]
+        exit.params.take_profit_pct: [0.10, 0.15]
+        exit.params.hard_stop_pct: [-0.06]
+
+    - name: "daily_pullback_volume_return_filter"
+      strategy: "daily_pullback"
+      order_amount_per_stock: [18000000, 22000000]
+      max_positions: [3, 5]
+      overrides:
+        entry.params.min_volume_ratio: [0.95912]
+        entry.params.max_return_60d: [0.014445]
+        exit.params.take_profit_pct: [0.10]
+        exit.params.hard_stop_pct: [-0.06]
+
+    - name: "technical_consensus_relaxed"
+      strategy: "technical_consensus"
+      order_amount_per_stock: [10000000, 15000000]
+      max_positions: [5]
+      overrides:
+        entry.params.min_entry_votes: [1, 2]
+        entry.params.min_entry_core_votes: [1]
+        entry.params.include_volume_vote: [true]
+        exit.params.min_exit_votes: [2]
+        exit.params.min_exit_core_votes: [1]
+        exit.params.hard_stop_pct: [-0.04]
