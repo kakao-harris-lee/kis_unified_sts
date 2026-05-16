@@ -653,8 +653,6 @@ def fetch_redis_snapshot(
             0.0,
             (datetime.now(UTC) - parsed_updated_at).total_seconds(),
         )
-    elif status_ttl >= 0:
-        status_age = max(0.0, 86400.0 - float(status_ttl))
 
     signals_raw = redis_client.lrange(keys["signals_key"], 0, 199) or []
     daily_signals = 0
@@ -761,6 +759,35 @@ def evaluate_report(
             "missing",
             "trading:stock:status present",
             "Stock orchestrator status is not available in Redis.",
+        )
+
+    if (
+        live_redis_gates_enabled
+        and config.require_redis_status
+        and redis_snapshot.status_exists
+        and not redis_snapshot.status_updated_at
+    ):
+        add(
+            "FAIL",
+            "redis_status_updated_at_missing",
+            "missing",
+            "trading:stock:status updated_at present",
+            "Stock orchestrator status uses an old schema or was not published by the timestamped publisher.",
+        )
+
+    if (
+        live_redis_gates_enabled
+        and config.require_redis_status
+        and redis_snapshot.status_exists
+        and redis_snapshot.status_updated_at
+        and redis_snapshot.status_age_seconds is None
+    ):
+        add(
+            "FAIL",
+            "redis_status_updated_at_invalid",
+            str(redis_snapshot.status_updated_at),
+            "ISO-8601 timestamp",
+            "Stock orchestrator status updated_at cannot be parsed.",
         )
 
     if (

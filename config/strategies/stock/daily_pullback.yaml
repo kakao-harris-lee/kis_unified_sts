@@ -18,9 +18,18 @@ strategy:
       stop_loss_pct: 7.0
       signal_cooldown_days: 5
       confidence_base: 0.6
-      # 2026-05-16 portfolio sweep: 0.70 lifted recent-window win rate to
-      # 55.56% while keeping long-window MDD below 10% with 1.095M sizing.
+      # 2026-05-16 100M-capital baseline: min_confidence=0.70 with 1.095M sizing
+      # remains low drawdown but does not yet meet win-rate / monthly-return goals.
       min_confidence: 0.70
+      # Optional quality filters. Keep disabled until a candidate reproduces
+      # across both recent and long-window portfolio backtests.
+      max_atr_pct: 0.0
+      min_atr_pct: 0.0
+      max_pullback_pct: 0.0
+      max_volume_ratio: 0.0
+      min_volume_ratio: 0.0
+      min_highest_high_gap_pct:
+      max_return_60d:
 
   exit:
     type: chandelier_exit

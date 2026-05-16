@@ -227,6 +227,50 @@ def test_stale_redis_status_fails_on_trading_day():
     assert any(issue.code == "redis_status_stale" for issue in issues)
 
 
+def test_redis_status_without_updated_at_fails_on_trading_day():
+    cfg = _config(max_redis_status_age_seconds=600.0)
+    metrics = mod.TradeMetrics(
+        trade_count=5,
+        winning_trades=3,
+        losing_trades=2,
+        win_rate_pct=60.0,
+        monthly_expected_return_pct=12.0,
+        max_drawdown_pct=3.0,
+        equity_slope_krw_per_trade=1000.0,
+        equity_is_upward=True,
+    )
+
+    issues = mod.evaluate_report(
+        cfg,
+        metrics,
+        _redis(status_updated_at=None, status_age_seconds=None),
+    )
+
+    assert any(issue.code == "redis_status_updated_at_missing" for issue in issues)
+
+
+def test_invalid_redis_status_updated_at_fails_on_trading_day():
+    cfg = _config(max_redis_status_age_seconds=600.0)
+    metrics = mod.TradeMetrics(
+        trade_count=5,
+        winning_trades=3,
+        losing_trades=2,
+        win_rate_pct=60.0,
+        monthly_expected_return_pct=12.0,
+        max_drawdown_pct=3.0,
+        equity_slope_krw_per_trade=1000.0,
+        equity_is_upward=True,
+    )
+
+    issues = mod.evaluate_report(
+        cfg,
+        metrics,
+        _redis(status_updated_at="not-a-date", status_age_seconds=None),
+    )
+
+    assert any(issue.code == "redis_status_updated_at_invalid" for issue in issues)
+
+
 def test_reentry_churn_counts_same_symbol_strategy_only():
     first = _trade(1, -100_000, code="005930", strategy="trend_pullback")
     second = _trade(
