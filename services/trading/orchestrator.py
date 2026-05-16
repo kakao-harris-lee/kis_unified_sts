@@ -432,6 +432,7 @@ class TradingConfig:
     universe_mode: str = "dynamic"
     require_daily_indicators_for_dynamic_universe: bool = True
     include_daily_watchlist_in_dynamic_universe: bool = True
+    allow_daily_watchlist_entry_before_intraday_warmup: bool = True
 
     # Regime performance tracking
     regime_performance_tracking_enabled: bool = False
@@ -463,6 +464,13 @@ class TradingConfig:
             raise TypeError(
                 "include_daily_watchlist_in_dynamic_universe must be bool, "
                 f"got {type(self.include_daily_watchlist_in_dynamic_universe)}"
+            )
+        if not isinstance(
+            self.allow_daily_watchlist_entry_before_intraday_warmup, bool
+        ):
+            raise TypeError(
+                "allow_daily_watchlist_entry_before_intraday_warmup must be bool, "
+                f"got {type(self.allow_daily_watchlist_entry_before_intraday_warmup)}"
             )
 
         if self.regime_detection_mode not in ("simple", "adaptive", "hmm"):
@@ -527,6 +535,7 @@ class TradingConfig:
         symbol_metadata: dict[str, dict[str, Any]] | None = None,
         require_daily_indicators_for_dynamic_universe: bool | None = None,
         include_daily_watchlist_in_dynamic_universe: bool | None = None,
+        allow_daily_watchlist_entry_before_intraday_warmup: bool | None = None,
     ) -> TradingConfig:
         """주식용 설정"""
         require_daily_indicators = (
@@ -539,6 +548,11 @@ class TradingConfig:
             if include_daily_watchlist_in_dynamic_universe is None
             else include_daily_watchlist_in_dynamic_universe
         )
+        allow_daily_warmup_bypass = (
+            _env_bool("STOCK_ALLOW_DAILY_WATCHLIST_ENTRY_BEFORE_INTRADAY_WARMUP", True)
+            if allow_daily_watchlist_entry_before_intraday_warmup is None
+            else allow_daily_watchlist_entry_before_intraday_warmup
+        )
         return cls(
             asset_class="stock",
             strategy_name=strategy_name,
@@ -550,6 +564,7 @@ class TradingConfig:
             symbol_metadata=symbol_metadata or {},
             require_daily_indicators_for_dynamic_universe=require_daily_indicators,
             include_daily_watchlist_in_dynamic_universe=include_daily_watchlist,
+            allow_daily_watchlist_entry_before_intraday_warmup=allow_daily_warmup_bypass,
             # Slower refresh for stock (40-50 symbols with retention)
             # avoids KIS API rate limiting
             market_data_refresh_seconds=2.0,
@@ -2579,6 +2594,49 @@ class TradingOrchestrator:
             current.update(meta)
             merged_metadata[code] = current
         return merged_codes, merged_names, merged_metadata
+
+    def _can_bypass_entry_warmup_for_daily_watchlist(self, symbol: str) -> bool:
+        """Allow daily-strategy candidates to enter before intraday warmup.
+
+        The bypass is deliberately narrow: every active strategy must be
+        represented by the daily watchlist payload, and this symbol must be a
+        candidate for at least one active strategy. That keeps mixed intraday
+        strategy runs behind the regular streaming-indicator warmup gate.
+        """
+        if (
+            self.config.asset_class != "stock"
+            or not self.config.allow_daily_watchlist_entry_before_intraday_warmup
+            or symbol not in self._cached_daily_indicators
+        ):
+            return False
+
+        watchlist = self._daily_watchlist or {}
+        strategies = watchlist.get("strategies", {})
+        if not isinstance(strategies, dict) or not strategies:
+            return False
+
+        active_names: set[str] = set()
+        if self._strategy_manager:
+            active_names = set(self._strategy_manager.strategy_names)
+        elif self.config.strategy_name:
+            active_names = {self.config.strategy_name}
+        if not active_names:
+            return False
+
+        daily_strategy_names = {str(name) for name in strategies.keys()}
+        if not active_names.issubset(daily_strategy_names):
+            return False
+
+        meta = (
+            self._symbol_metadata_cache.get(symbol)
+            or self.config.symbol_metadata.get(symbol)
+            or {}
+        )
+        candidates = meta.get("daily_strategy_candidates", [])
+        if not isinstance(candidates, list):
+            return False
+        candidate_names = {str(name) for name in candidates}
+        return bool(candidate_names & active_names)
 
     def _load_ranked_targets(
         self, redis
@@ -5349,7 +5407,18 @@ class TradingOrchestrator:
                 if self._indicator_engine and not self._indicator_engine.is_warm(
                     symbol
                 ):
-                    return []
+                    if not self._can_bypass_entry_warmup_for_daily_watchlist(symbol):
+                        return []
+                    logger.info(
+                        "Bypassing intraday warmup for daily watchlist candidate: "
+                        "symbol=%s strategies=%s",
+                        symbol,
+                        ",".join(
+                            self._symbol_metadata_cache.get(symbol, {}).get(
+                                "daily_strategy_candidates", []
+                            )
+                        ),
+                    )
 
                 # Use pre-computed enriched metadata cache (includes symbol_metadata + daily_indicators)
                 cached_meta = self._enriched_metadata_cache.get(symbol, {})

@@ -111,6 +111,16 @@ class TestTradingConfig:
 
         assert config.include_daily_watchlist_in_dynamic_universe is False
 
+    def test_stock_factory_allows_daily_entry_warmup_bypass_override(self):
+        """주식 daily watchlist 엔트리 warmup 우회를 설정으로 끌 수 있다."""
+        from services.trading.orchestrator import TradingConfig
+
+        config = TradingConfig.stock(
+            allow_daily_watchlist_entry_before_intraday_warmup=False
+        )
+
+        assert config.allow_daily_watchlist_entry_before_intraday_warmup is False
+
     def test_futures_factory(self):
         """선물 설정 팩토리"""
         from services.trading.orchestrator import TradingConfig
