@@ -6,11 +6,24 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import datetime, time, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from shared.config.mixins import ConfigMixin
+from shared.models.signal import Signal, SignalType
+from shared.strategy.base import EntryContext, EntrySignalGenerator
+from shared.strategy.signals.indicator_families import (
+    momentum_reversal_score,
+    trend_breakout_score,
+    volatility_regime_magnitude,
+    volume_microstructure_score,
+)
 
 logger = logging.getLogger(__name__)
+
+_KST = ZoneInfo("Asia/Seoul")
+_VOL_UNSET = object()
 
 
 @dataclass
@@ -76,22 +89,6 @@ def _map_llm_bias(
     return "FLAT"
 
 
-from datetime import datetime, time, timedelta
-from typing import Optional
-from zoneinfo import ZoneInfo
-
-from shared.models.signal import Signal, SignalType
-from shared.strategy.base import EntryContext, EntrySignalGenerator
-from shared.strategy.signals.indicator_families import (
-    momentum_reversal_score,
-    trend_breakout_score,
-    volatility_regime_magnitude,
-    volume_microstructure_score,
-)
-
-_KST = ZoneInfo("Asia/Seoul")
-
-
 class LLMDirectedIndicatorEntry(EntrySignalGenerator[LLMDirectedIndicatorConfig]):
     """LLM bias-masked 3-family indicator ensemble entry (futures)."""
 
@@ -100,7 +97,7 @@ class LLMDirectedIndicatorEntry(EntrySignalGenerator[LLMDirectedIndicatorConfig]
     def __init__(self, config: LLMDirectedIndicatorConfig):
         super().__init__(config)
         self._last_signal_at: dict[str, datetime] = {}
-        self._vol_cache: Any = None
+        self._vol_cache: Any = _VOL_UNSET
         self._vol_cache_mono: float = 0.0
 
     def _validate_config(self):
@@ -119,7 +116,7 @@ class LLMDirectedIndicatorEntry(EntrySignalGenerator[LLMDirectedIndicatorConfig]
     def _get_vol_forecast(self) -> Any | None:
         import time as _t
         now = _t.monotonic()
-        if self._vol_cache is not None and now - self._vol_cache_mono < 60.0:
+        if self._vol_cache is not _VOL_UNSET and now - self._vol_cache_mono < 60.0:
             return self._vol_cache
         try:
             from shared.forecasting.vol_reader import read_latest_vol_forecast
@@ -133,7 +130,7 @@ class LLMDirectedIndicatorEntry(EntrySignalGenerator[LLMDirectedIndicatorConfig]
         self._vol_cache_mono = now
         return vf
 
-    async def generate(self, context: EntryContext) -> Optional[Signal]:
+    async def generate(self, context: EntryContext) -> Signal | None:
         data = context.market_data or {}
         ind = context.indicators or {}
         code = str(data.get("code", "") or "BACKTEST")

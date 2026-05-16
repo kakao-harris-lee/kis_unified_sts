@@ -1,13 +1,19 @@
+from datetime import datetime, timedelta, timezone
+
+import pytest
+
 from shared.llm.data_classes import MarketSignal
 from shared.llm.market_context import MarketContext
+from shared.strategy.base import EntryContext
 from shared.strategy.entry.llm_directed_indicator import (
     LLMDirectedIndicatorConfig,
+    LLMDirectedIndicatorEntry,
     _map_llm_bias,
 )
 
 
 def _cfg(**kw) -> LLMDirectedIndicatorConfig:
-    base = dict(bias_confidence_min=0.6)
+    base = {"bias_confidence_min": 0.6}
     base.update(kw)
     return LLMDirectedIndicatorConfig(**base)
 
@@ -61,14 +67,6 @@ def test_raising_context_degrades_to_flat():
 
     assert _map_llm_bias(_Boom(), _cfg()) == "FLAT"
 
-
-import pytest
-from datetime import datetime, timedelta, timezone
-
-from shared.strategy.base import EntryContext
-from shared.strategy.entry.llm_directed_indicator import (
-    LLMDirectedIndicatorEntry,
-)
 
 KST = timezone(timedelta(hours=9))
 
@@ -131,4 +129,34 @@ async def test_missing_indicators_degrades_not_raises():
     ctx = EntryContext(market_data={"code": "X", "close": 100.0},
                        indicators={}, timestamp=now)
     sig = await _entry().generate(ctx)  # all scores 0 -> no signal, no raise
+    assert sig is None
+
+
+def _ctx_short(*, mc=None, hour=10, minute=30):
+    # unambiguously bearish: overbought momentum + downtrend + outflow
+    now = datetime(2026, 5, 18, hour, minute, tzinfo=KST)
+    return EntryContext(
+        market_data={"code": "101S6000", "name": "KF", "close": 97.0},
+        indicators={
+            "momentum_5m": {"rsi": 92.0, "williams_r": -5.0, "sto_k": 95.0},
+            "ema_5": 97.0, "ema_20": 100.0, "adx": 45.0,
+            "vwap": 101.0, "close": 97.0,
+            "volume_velocity": -0.8, "rvol": 2.0, "atr": 0.5,
+        },
+        timestamp=now, market_context=mc)
+
+
+@pytest.mark.asyncio
+async def test_flat_bias_short_signal_fires():
+    sig = await _entry().generate(_ctx_short())
+    assert sig is not None
+    assert sig.metadata["signal_direction"] == "short"
+
+
+@pytest.mark.asyncio
+async def test_short_bias_blocks_long_signal():
+    mc = MarketContext(overall_signal=MarketSignal.STRONG_BEARISH,
+                        confidence=0.9)
+    # bullish indicators (the default _ctx) -> would be long; SHORT_BIAS masks
+    sig = await _entry().generate(_ctx(mc=mc))
     assert sig is None
