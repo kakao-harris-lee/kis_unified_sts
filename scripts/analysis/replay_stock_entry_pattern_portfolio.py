@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Replay a scanned stock entry pattern with portfolio constraints.
+"""Replay scanned stock entry patterns with portfolio constraints.
 
-The entry scanner ranks raw close-to-close forward returns. This replay keeps
-the same signal definition, then adds shared capital, position limits, fixed
-order size, and trading costs so we can see whether the edge survives the
-portfolio layer before wiring a strategy.
+The entry scanner ranks raw close-to-close forward returns. This replay keeps the
+same signal definitions, then adds shared capital, position limits, fixed order
+size, and trading costs so we can see whether the edge survives the portfolio
+layer before wiring a strategy.
 """
 
 from __future__ import annotations
@@ -148,11 +148,11 @@ def _load_scan_config(path: str) -> dict[str, Any]:
 
 
 def _float_list(value: Any) -> list[float]:
-    return [float(v) for v in _as_list(value)]
+    return [float(v) for v in _as_list(value) if v not in (None, "")]
 
 
 def _int_list(value: Any) -> list[int]:
-    return [int(v) for v in _as_list(value)]
+    return [int(v) for v in _as_list(value) if v not in (None, "")]
 
 
 def _load_feature_data(
@@ -287,6 +287,69 @@ def _select_pattern(
     return results[pattern_rank - 1]
 
 
+def _string_list(value: Any) -> list[str]:
+    return [str(v) for v in _as_list(value) if v not in (None, "")]
+
+
+def _selected_patterns_from_config(
+    results: list[PatternResult],
+    replay_config: dict[str, Any],
+) -> list[PatternResult]:
+    pattern_names = _string_list(replay_config.get("pattern_names"))
+    pattern_name = str(replay_config.get("pattern_name") or "")
+    if pattern_name:
+        pattern_names.insert(0, pattern_name)
+
+    selected: list[PatternResult] = []
+    selected_keys: set[tuple[str, str]] = set()
+
+    def append_once(pattern: PatternResult) -> None:
+        key = (pattern.name, json.dumps(pattern.params, sort_keys=True))
+        if key not in selected_keys:
+            selected.append(pattern)
+            selected_keys.add(key)
+
+    for name in pattern_names:
+        matches = [result for result in results if result.name == name]
+        if not matches:
+            raise ValueError(f"Pattern not found: {name}")
+        for match in matches:
+            append_once(match)
+
+    pattern_ranks = _int_list(replay_config.get("pattern_ranks"))
+    pattern_rank = int(replay_config.get("pattern_rank") or 0)
+    if pattern_rank > 0:
+        pattern_ranks.insert(0, pattern_rank)
+    top_count = int(replay_config.get("top_pattern_count") or 0)
+    if top_count > 0:
+        pattern_ranks.extend(range(1, top_count + 1))
+
+    for rank in pattern_ranks:
+        if rank <= 0:
+            raise ValueError("pattern ranks must be positive")
+        if rank > len(results):
+            raise ValueError(
+                f"pattern_rank={rank} exceeds available results={len(results)}"
+            )
+        append_once(results[rank - 1])
+
+    if not selected:
+        append_once(_select_pattern(results, pattern_rank=1, pattern_name=""))
+    return selected
+
+
+def _pattern_label(patterns: list[PatternResult]) -> str:
+    if len(patterns) == 1:
+        return patterns[0].name
+    names = []
+    seen = set()
+    for pattern in patterns:
+        if pattern.name not in seen:
+            names.append(pattern.name)
+            seen.add(pattern.name)
+    return f"combo_{len(patterns)}:" + ",".join(names)
+
+
 def _signals_for_pattern(
     data: pd.DataFrame,
     pattern: PatternResult,
@@ -306,11 +369,58 @@ def _signals_for_pattern(
     return signals, incomplete
 
 
+def _signals_for_patterns(
+    data: pd.DataFrame,
+    patterns: list[PatternResult],
+    *,
+    hold_days: int,
+    require_complete_horizon: bool,
+) -> tuple[pd.DataFrame, int, int]:
+    frames: list[pd.DataFrame] = []
+    incomplete = 0
+    raw_signal_count = 0
+    for priority, pattern in enumerate(patterns, start=1):
+        signals, missing = _signals_for_pattern(
+            data,
+            pattern,
+            hold_days=hold_days,
+            require_complete_horizon=require_complete_horizon,
+        )
+        raw_signal_count += len(data[_mask_for_conditions(data, pattern.params)])
+        incomplete += missing
+        if signals.empty:
+            continue
+        signals = signals.copy()
+        signals["pattern_name"] = pattern.name
+        signals["pattern_priority"] = priority
+        signals["pattern_score"] = pattern.score
+        signals["pattern_rank_win_rate_pct"] = pattern.rank_win_rate_pct
+        signals["pattern_rank_avg_net_return_pct"] = pattern.rank_avg_net_return_pct
+        frames.append(signals)
+
+    if not frames:
+        return pd.DataFrame(), incomplete, raw_signal_count
+
+    combined = pd.concat(frames, ignore_index=True)
+    combined = combined.sort_values(
+        ["datetime", "code", "pattern_priority", "pattern_score"],
+        ascending=[True, True, True, False],
+    )
+    combined = combined.drop_duplicates(
+        subset=["datetime", "code"],
+        keep="first",
+    )
+    combined = combined.sort_values(["datetime", "code"]).reset_index(drop=True)
+    return combined, incomplete, raw_signal_count
+
+
 def _sort_daily_signals(signals: pd.DataFrame, entry_sort: str) -> pd.DataFrame:
     if signals.empty:
         return signals
     sort_map = {
         "code": (["code"], [True]),
+        "pattern_priority": (["pattern_priority", "code"], [True, True]),
+        "pattern_score_desc": (["pattern_score", "code"], [False, True]),
         "volume_ratio_desc": (["volume_ratio", "code"], [False, True]),
         "rsi5_asc": (["rsi5", "code"], [True, True]),
         "atr_pct_desc": (["atr_pct", "code"], [False, True]),
@@ -348,13 +458,20 @@ def replay_signals(
     pattern: PatternResult,
     spec: ReplaySpec,
 ) -> ReplayResult:
-    signals, incomplete = _signals_for_pattern(
+    return replay_pattern_set(data, [pattern], spec)
+
+
+def replay_pattern_set(
+    data: pd.DataFrame,
+    patterns: list[PatternResult],
+    spec: ReplaySpec,
+) -> ReplayResult:
+    signals, incomplete, total_signals = _signals_for_patterns(
         data,
-        pattern,
+        patterns,
         hold_days=spec.hold_days,
         require_complete_horizon=spec.require_complete_horizon,
     )
-    total_signals = len(data[_mask_for_conditions(data, pattern.params)])
     close_lookup = {
         (str(row.code), row.date): float(row.close)
         for row in data[["code", "date", "close"]].itertuples(index=False)
@@ -563,13 +680,14 @@ def _specs_from_config(replay_config: dict[str, Any]) -> list[ReplaySpec]:
     max_daily_entries = int(replay_config.get("max_daily_entries") or 0)
     initial_capital = float(replay_config.get("initial_capital") or 100_000_000)
     require_complete_horizon = bool(replay_config.get("require_complete_horizon", True))
-    entry_sort = str(replay_config.get("entry_sort") or "code")
+    entry_sorts = _string_list(replay_config.get("entry_sort") or "code")
 
     specs = []
-    for hold, amount, max_pos in itertools.product(
+    for hold, amount, max_pos, entry_sort in itertools.product(
         hold_days,
         order_amounts,
         max_positions,
+        entry_sorts,
     ):
         specs.append(
             ReplaySpec(
@@ -590,7 +708,7 @@ def run_replay(
     replay_config: dict[str, Any],
     *,
     loader: Loader = load_stock_daily_from_clickhouse,
-) -> tuple[list[ReplayResult], PatternResult, dict[str, Any]]:
+) -> tuple[list[ReplayResult], list[PatternResult], dict[str, Any]]:
     scan_config = _load_scan_config(
         str(replay_config.get("scan_config") or "stock_entry_pattern_scan.yaml")
     )
@@ -598,12 +716,10 @@ def run_replay(
     horizons = tuple(sorted({spec.hold_days for spec in specs}))
     data, summary = _load_feature_data(scan_config, horizons=horizons, loader=loader)
     pattern_results = _rank_patterns(data, scan_config, horizons=horizons)
-    selected = _select_pattern(
-        pattern_results,
-        pattern_rank=int(replay_config.get("pattern_rank") or 1),
-        pattern_name=str(replay_config.get("pattern_name") or ""),
-    )
-    results = [replay_signals(data, selected, spec) for spec in specs]
+    if not pattern_results:
+        raise ValueError("No ranked patterns available for replay")
+    selected = _selected_patterns_from_config(pattern_results, replay_config)
+    results = [replay_pattern_set(data, selected, spec) for spec in specs]
     results.sort(
         key=lambda r: (
             -r.monthly_expected_return_pct,
@@ -617,12 +733,14 @@ def run_replay(
             "scan_config": str(
                 replay_config.get("scan_config") or "stock_entry_pattern_scan.yaml"
             ),
-            "pattern_rank": int(replay_config.get("pattern_rank") or 1),
-            "pattern_name": selected.name,
-            "pattern_params": selected.params,
-            "rank_horizon": selected.rank_horizon,
-            "rank_win_rate_pct": selected.rank_win_rate_pct,
-            "rank_avg_net_return_pct": selected.rank_avg_net_return_pct,
+            "pattern_rank": int(replay_config.get("pattern_rank") or 0),
+            "pattern_count": len(selected),
+            "pattern_label": _pattern_label(selected),
+            "pattern_names": [pattern.name for pattern in selected],
+            "patterns": [asdict(pattern) for pattern in selected],
+            "rank_horizon": selected[0].rank_horizon,
+            "rank_win_rate_pct": selected[0].rank_win_rate_pct,
+            "rank_avg_net_return_pct": selected[0].rank_avg_net_return_pct,
             "runs": len(results),
         }
     )
@@ -631,19 +749,20 @@ def run_replay(
 
 def _format_markdown(
     results: list[ReplayResult],
-    pattern: PatternResult,
+    patterns: list[PatternResult],
     summary: dict[str, Any],
 ) -> str:
+    primary = patterns[0]
     lines = [
         "# Stock Entry Pattern Portfolio Replay",
         "",
         f"- Generated at: `{datetime.now().isoformat(timespec='seconds')}`",
         f"- Period: `{summary['start']}~{summary['end']}`",
         f"- Symbols loaded: `{summary['symbols_loaded']}/{summary['symbols_requested']}`",
-        f"- Pattern: `{pattern.name}`",
-        f"- Pattern params: `{json.dumps(pattern.params, ensure_ascii=False, sort_keys=True)}`",
-        f"- Raw rank horizon: `{pattern.rank_horizon}d`",
-        f"- Raw rank win/avg net: `{pattern.rank_win_rate_pct:.2f}% / {pattern.rank_avg_net_return_pct:.2f}%`",
+        f"- Pattern set: `{summary.get('pattern_label') or _pattern_label(patterns)}`",
+        f"- Pattern count: `{len(patterns)}`",
+        f"- Primary raw rank horizon: `{primary.rank_horizon}d`",
+        f"- Primary raw rank win/avg net: `{primary.rank_win_rate_pct:.2f}% / {primary.rank_avg_net_return_pct:.2f}%`",
         "",
         "| Rank | Run | Trades | Monthly | Win | MDD | Upward | Avg deployed | Rej maxpos | Rej cash |",
         "|---:|---|---:|---:|---:|---:|---|---:|---:|---:|",
@@ -657,15 +776,28 @@ def _format_markdown(
             f"{upward} | {result.avg_deployed_pct:.2f}% | "
             f"{result.rejected_max_positions} | {result.rejected_insufficient_cash} |"
         )
+    lines.append("")
+    lines.append("## Patterns")
+    lines.append("")
+    lines.append("| Rank | Pattern | Signals | Win | Avg net | Params |")
+    lines.append("|---:|---|---:|---:|---:|---|")
+    for idx, pattern in enumerate(patterns, start=1):
+        params = json.dumps(pattern.params, ensure_ascii=False, sort_keys=True)
+        lines.append(
+            f"| {idx} | `{pattern.name}` | {pattern.signals} | "
+            f"{pattern.rank_win_rate_pct:.2f}% | "
+            f"{pattern.rank_avg_net_return_pct:.2f}% | `{params}` |"
+        )
     return "\n".join(lines)
 
 
 def write_outputs(
     results: list[ReplayResult],
-    pattern: PatternResult,
+    patterns: list[PatternResult] | PatternResult,
     summary: dict[str, Any],
     output_dir: Path,
 ) -> tuple[Path, Path, Path]:
+    pattern_list = patterns if isinstance(patterns, list) else [patterns]
     output_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     json_path = output_dir / f"stock_entry_pattern_replay_{stamp}.json"
@@ -674,7 +806,8 @@ def write_outputs(
 
     payload = {
         "summary": summary,
-        "pattern": asdict(pattern),
+        "pattern": asdict(pattern_list[0]),
+        "patterns": [asdict(pattern) for pattern in pattern_list],
         "results": [
             {
                 **{
@@ -692,7 +825,7 @@ def write_outputs(
         encoding="utf-8",
     )
     md_path.write_text(
-        _format_markdown(results, pattern, summary),
+        _format_markdown(results, pattern_list, summary),
         encoding="utf-8",
     )
 
@@ -719,19 +852,19 @@ def main() -> None:
     args = parser.parse_args()
 
     replay_config = _load_replay_config(args.config)
-    results, pattern, summary = run_replay(replay_config)
+    results, patterns, summary = run_replay(replay_config)
     output_dir = Path(
         replay_config.get("output_dir") or "reports/stock_entry_pattern_replay"
     )
     json_path, md_path, trades_path = write_outputs(
         results,
-        pattern,
+        patterns,
         summary,
         output_dir,
     )
     best = results[0] if results else None
     print(
-        f"runs={len(results)} pattern={pattern.name} "
+        f"runs={len(results)} patterns={_pattern_label(patterns)} "
         f"symbols={summary['symbols_loaded']}/{summary['symbols_requested']}"
     )
     if best:
