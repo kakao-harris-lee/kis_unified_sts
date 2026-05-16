@@ -16,9 +16,10 @@ def _make_closed_stock_position(
     exit_price: float = 98500.0,
     quantity: int = 10,
     strategy: str = "momentum_breakout",
+    hold_minutes: int = 30,
 ) -> Position:
     entry_time = datetime(2026, 4, 10, 9, 15, 0)
-    exit_time = entry_time + timedelta(minutes=30)
+    exit_time = entry_time + timedelta(minutes=hold_minutes)
     pos = Position(
         id="test-stk-1",
         code=code,
@@ -62,6 +63,20 @@ async def test_save_stock_trade_appends_to_buffer():
 
 
 @pytest.mark.asyncio
+async def test_save_stock_trade_rejects_negative_hold_window():
+    """exit_time이 entry_time보다 빠른 불가능한 거래는 적재하지 않는다."""
+    config = PositionTrackerConfig(asset_class="stock", batch_size=50)
+    tracker = PositionTracker(config=config)
+    tracker._get_db_client = MagicMock(return_value=(MagicMock(), "market"))
+
+    position = _make_closed_stock_position(hold_minutes=-30)
+    result = await tracker.save_stock_trade_to_db(position)
+
+    assert result is False
+    assert tracker._pending_stock_trades == []
+
+
+@pytest.mark.asyncio
 async def test_save_stock_trade_flushes_when_batch_full():
     """버퍼가 batch_size에 도달하면 _flush_stock_trades_batch 호출."""
     config = PositionTrackerConfig(asset_class="stock", batch_size=2)
@@ -87,10 +102,6 @@ async def test_save_stock_trade_rejects_futures_asset_class():
 
     assert result is False
     assert tracker._pending_stock_trades == []
-
-
-from unittest.mock import patch
-
 
 class TestOrchestratorRouting:
     """Asset-class routing: stock → save_stock_trade_to_db, futures+rl → save_rl_trade_to_db."""

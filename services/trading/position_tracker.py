@@ -973,6 +973,30 @@ class PositionTracker:
             raise ValueError(f"Invalid database name: {database}")
         return ch, database
 
+    @staticmethod
+    def _closed_hold_seconds(position: Position) -> int | None:
+        """Return hold seconds for a closed position, or None if timestamps are invalid."""
+        if not position.entry_time or not position.exit_time:
+            return 0
+        try:
+            hold_seconds = int((position.exit_time - position.entry_time).total_seconds())
+        except TypeError:
+            logger.warning(
+                "Closed position %s has incompatible entry/exit timestamps; skipping persistence",
+                position.id[:8],
+            )
+            return None
+        if hold_seconds < 0:
+            logger.warning(
+                "Closed position %s has exit_time before entry_time "
+                "(entry=%s, exit=%s); skipping persistence",
+                position.id[:8],
+                position.entry_time,
+                position.exit_time,
+            )
+            return None
+        return hold_seconds
+
     async def save_to_db(self) -> int:
         """Persist all open positions to ClickHouse swing_positions table.
 
@@ -1070,6 +1094,8 @@ class PositionTracker:
             return False
 
         try:
+            if self._closed_hold_seconds(position) is None:
+                return False
             pnl = self._calc_realized_pnl(position)
 
             row = (
@@ -1157,11 +1183,9 @@ class PositionTracker:
 
         try:
             pnl = self._calc_realized_pnl(position)
-            hold_seconds = 0
-            if position.entry_time and position.exit_time:
-                hold_seconds = max(
-                    0, int((position.exit_time - position.entry_time).total_seconds())
-                )
+            hold_seconds = self._closed_hold_seconds(position)
+            if hold_seconds is None:
+                return False
 
             metadata = position.metadata if isinstance(position.metadata, dict) else {}
             metadata_json = json.dumps(metadata, ensure_ascii=False, default=str)
@@ -1247,11 +1271,9 @@ class PositionTracker:
 
         try:
             pnl = self._calc_realized_pnl(position)
-            hold_seconds = 0
-            if position.entry_time and position.exit_time:
-                hold_seconds = max(
-                    0, int((position.exit_time - position.entry_time).total_seconds())
-                )
+            hold_seconds = self._closed_hold_seconds(position)
+            if hold_seconds is None:
+                return False
 
             entry_price = position.entry_price
             quantity = position.quantity
