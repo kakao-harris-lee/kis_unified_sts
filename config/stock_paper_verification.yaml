@@ -19,6 +19,7 @@ targets:
   require_redis_status: ${STOCK_PAPER_VERIFY_REQUIRE_REDIS_STATUS:true}
   require_trade_targets: ${STOCK_PAPER_VERIFY_REQUIRE_TRADE_TARGETS:true}
   require_daily_indicators: ${STOCK_PAPER_VERIFY_REQUIRE_DAILY_INDICATORS:true}
+  skip_live_redis_gates_on_non_trading_day: ${STOCK_PAPER_VERIFY_SKIP_LIVE_REDIS_ON_NON_TRADING_DAY:true}
 
 clickhouse:
   database: ${CLICKHOUSE_STOCK_DATABASE:market}

@@ -53,6 +53,7 @@ class VerificationConfig:
     require_redis_status: bool
     require_trade_targets: bool
     require_daily_indicators: bool
+    skip_live_redis_gates_on_non_trading_day: bool
     clickhouse_database: str
     clickhouse_table: str
     redis_keys: dict[str, str]
@@ -100,6 +101,7 @@ class TradeMetrics:
 
 @dataclass
 class RedisSnapshot:
+    report_is_trading_day: bool
     status_exists: bool
     status_ttl_seconds: int
     status_age_seconds: float | None
@@ -200,6 +202,9 @@ def _load_config() -> VerificationConfig:
         require_redis_status=_as_bool(targets.get("require_redis_status"), True),
         require_trade_targets=_as_bool(targets.get("require_trade_targets"), True),
         require_daily_indicators=_as_bool(targets.get("require_daily_indicators"), True),
+        skip_live_redis_gates_on_non_trading_day=_as_bool(
+            targets.get("skip_live_redis_gates_on_non_trading_day"), True
+        ),
         clickhouse_database=str(clickhouse.get("database", "market")),
         clickhouse_table=str(clickhouse.get("table", "stock_trades")),
         redis_keys={str(k): str(v) for k, v in redis_cfg.items()},
@@ -455,6 +460,7 @@ def _count_codes_from_payload(payload: Any) -> int:
 
 
 def fetch_redis_snapshot(config: VerificationConfig, report_date: date) -> RedisSnapshot:
+    from shared.collector.historical.calendar import is_trading_day
     from shared.streaming.client import RedisClient
 
     redis_client = RedisClient.get_client()
@@ -509,6 +515,7 @@ def fetch_redis_snapshot(config: VerificationConfig, report_date: date) -> Redis
             freshness = {}
 
     return RedisSnapshot(
+        report_is_trading_day=is_trading_day(report_date),
         status_exists=bool(status_raw),
         status_ttl_seconds=status_ttl,
         status_age_seconds=status_age,
@@ -545,10 +552,21 @@ def evaluate_report(
         code = error.split(":", 1)[0]
         add("FAIL", code, error, "source query succeeds", "A verification data source failed.")
 
-    if config.require_redis_status and not redis_snapshot.status_exists:
-        add("FAIL", "redis_status_missing", "missing", "trading:stock:status present", "Stock orchestrator status is not available in Redis.")
+    live_redis_gates_enabled = (
+        redis_snapshot.report_is_trading_day
+        or not config.skip_live_redis_gates_on_non_trading_day
+    )
 
-    if redis_snapshot.daily_signal_count < config.min_daily_signals:
+    if live_redis_gates_enabled and config.require_redis_status and not redis_snapshot.status_exists:
+        add(
+            "FAIL",
+            "redis_status_missing",
+            "missing",
+            "trading:stock:status present",
+            "Stock orchestrator status is not available in Redis.",
+        )
+
+    if live_redis_gates_enabled and redis_snapshot.daily_signal_count < config.min_daily_signals:
         add(
             "FAIL",
             "daily_signals_below_target",
@@ -557,17 +575,17 @@ def evaluate_report(
             "No stock entry/exit activity is visible in today's Redis signal list.",
         )
 
-    if config.require_trade_targets and not redis_snapshot.trade_targets_exists:
+    if live_redis_gates_enabled and config.require_trade_targets and not redis_snapshot.trade_targets_exists:
         add("FAIL", "trade_targets_missing", "missing", "present", "Fusion/screener trade target snapshot is missing.")
 
-    if config.require_daily_indicators and not redis_snapshot.daily_indicators_exists:
+    if live_redis_gates_enabled and config.require_daily_indicators and not redis_snapshot.daily_indicators_exists:
         add("FAIL", "daily_indicators_missing", "missing", "present", "Daily indicator snapshot is missing; stock strategies may lack daily context.")
 
     provider = redis_snapshot.data_provider or {}
     total_symbols = int(provider.get("total_symbols", redis_snapshot.configured_symbols) or 0)
     fresh_count = int(provider.get("fresh_count", 0) or 0)
     fresh_ratio = fresh_count / total_symbols if total_symbols > 0 else 0.0
-    if total_symbols > 0 and fresh_ratio < config.min_fresh_ratio:
+    if live_redis_gates_enabled and total_symbols > 0 and fresh_ratio < config.min_fresh_ratio:
         add(
             "FAIL",
             "fresh_ratio_below_target",
@@ -668,6 +686,7 @@ def _render_markdown(report: VerificationReport, config: VerificationConfig) -> 
         "",
         "## Redis Pipeline",
         "",
+        f"- Report trading day: `{r.report_is_trading_day}`",
         f"- Status exists: `{r.status_exists}` state=`{r.state}` ttl=`{r.status_ttl_seconds}` age_s=`{r.status_age_seconds}`",
         f"- Signals today/list: `{r.daily_signal_count}` / `{r.signals_list_len}`",
         f"- Trades list len: `{r.trades_list_len}`",
@@ -783,8 +802,11 @@ def build_report(
     )
 
 
-def empty_redis_snapshot() -> RedisSnapshot:
+def empty_redis_snapshot(report_date: date) -> RedisSnapshot:
+    from shared.collector.historical.calendar import is_trading_day
+
     return RedisSnapshot(
+        report_is_trading_day=is_trading_day(report_date),
         status_exists=False,
         status_ttl_seconds=-1,
         status_age_seconds=None,
@@ -835,7 +857,7 @@ def main() -> int:
         try:
             redis_snapshot = fetch_redis_snapshot(config, report_date)
         except Exception as exc:  # noqa: BLE001
-            redis_snapshot = empty_redis_snapshot()
+            redis_snapshot = empty_redis_snapshot(report_date)
             source_errors.append(_source_error("redis_query_failed", exc))
         report = build_report(
             config=config,
