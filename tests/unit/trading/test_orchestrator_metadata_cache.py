@@ -494,6 +494,94 @@ class TestCacheInvalidation:
         assert "035420" in stable
         assert len(stable) == 2
 
+    def test_daily_watchlist_candidate_can_bypass_intraday_warmup(self):
+        orch = _make_orchestrator()
+        orch._strategy_manager = MagicMock(
+            strategy_names=["daily_pullback", "vr_composite"]
+        )
+        orch._cached_daily_indicators = {"005930": {"daily_close": 70000}}
+        orch._daily_watchlist = {
+            "strategies": {
+                "daily_pullback": ["005930"],
+                "vr_composite": [],
+            }
+        }
+        orch._symbol_metadata_cache = {
+            "005930": {
+                "source": "daily_watchlist",
+                "daily_strategy_candidates": ["daily_pullback"],
+            }
+        }
+
+        assert orch._can_bypass_entry_warmup_for_daily_watchlist("005930") is True
+
+    def test_daily_watchlist_warmup_bypass_requires_all_active_strategies_daily(self):
+        orch = _make_orchestrator()
+        orch._strategy_manager = MagicMock(
+            strategy_names=["daily_pullback", "opening_volume_surge"]
+        )
+        orch._cached_daily_indicators = {"005930": {"daily_close": 70000}}
+        orch._daily_watchlist = {"strategies": {"daily_pullback": ["005930"]}}
+        orch._symbol_metadata_cache = {
+            "005930": {"daily_strategy_candidates": ["daily_pullback"]}
+        }
+
+        assert orch._can_bypass_entry_warmup_for_daily_watchlist("005930") is False
+
+    def test_daily_watchlist_warmup_bypass_is_configurable(self):
+        orch = _make_orchestrator(
+            allow_daily_watchlist_entry_before_intraday_warmup=False
+        )
+        orch._strategy_manager = MagicMock(strategy_names=["daily_pullback"])
+        orch._cached_daily_indicators = {"005930": {"daily_close": 70000}}
+        orch._daily_watchlist = {"strategies": {"daily_pullback": ["005930"]}}
+        orch._symbol_metadata_cache = {
+            "005930": {"daily_strategy_candidates": ["daily_pullback"]}
+        }
+
+        assert orch._can_bypass_entry_warmup_for_daily_watchlist("005930") is False
+
+    @pytest.mark.asyncio
+    async def test_handle_entries_checks_daily_candidate_before_intraday_warmup(self):
+        orch = _make_orchestrator()
+        signal = MagicMock()
+        orch._metrics = MagicMock()
+        orch._data_provider = MagicMock()
+        orch._position_tracker = MagicMock(
+            positions=[],
+            can_open_position=MagicMock(return_value=True),
+        )
+        orch._strategy_manager = MagicMock(
+            strategy_names=["daily_pullback"],
+            check_entries=AsyncMock(return_value=[signal]),
+        )
+        orch._indicator_engine = MagicMock(is_warm=MagicMock(return_value=False))
+        orch._indicator_resolver = MagicMock(
+            collect_entry_indicators=MagicMock(return_value={})
+        )
+        orch._cached_daily_indicators = {"005930": {"daily_close": 70000}}
+        orch._daily_watchlist = {"strategies": {"daily_pullback": ["005930"]}}
+        orch._symbol_metadata_cache = {
+            "005930": {"daily_strategy_candidates": ["daily_pullback"]}
+        }
+        orch._enriched_metadata_cache = {
+            "005930": {"daily_close": 70000, "code": "005930"}
+        }
+        orch._get_market_data_snapshot = AsyncMock(
+            return_value={"005930": {"code": "005930", "close": 70100}}
+        )
+        orch._filter_reentry_guarded_signals = lambda signals: signals
+        orch._execute_entry = AsyncMock()
+
+        signals = await orch._handle_entry()
+
+        assert signals == [signal]
+        orch._strategy_manager.check_entries.assert_awaited_once()
+        context = orch._strategy_manager.check_entries.await_args.args[0]
+        assert context.market_data["close"] == 70100
+        assert context.indicators["daily_close"] == 70000
+        orch._execute_entry.assert_awaited_once_with(signal)
+
 
 class TestSymbolMetadataCacheExpiry:
     """Test symbol metadata cache expiry and cleanup."""
