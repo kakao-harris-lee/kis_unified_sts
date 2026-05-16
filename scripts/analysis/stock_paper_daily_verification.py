@@ -112,6 +112,8 @@ class RedisSnapshot:
     status_updated_at: str | None
     status_publisher_pid: str | None
     state: str
+    status_config_capital: float | None
+    risk_initial_capital: float | None
     configured_symbols: int
     data_provider: dict[str, Any]
     data_freshness: dict[str, Any]
@@ -207,6 +209,13 @@ def _as_float(value: Any, default: float) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _maybe_float(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _as_bool(value: Any, default: bool) -> bool:
@@ -693,6 +702,11 @@ def fetch_redis_snapshot(
         except (TypeError, ValueError):
             freshness = {}
 
+    status_config = (
+        status.get("config") if isinstance(status.get("config"), dict) else {}
+    )
+    status_risk = status.get("risk") if isinstance(status.get("risk"), dict) else {}
+
     return RedisSnapshot(
         report_is_trading_day=is_trading_day(report_date),
         status_exists=bool(status_raw),
@@ -703,7 +717,9 @@ def fetch_redis_snapshot(
             str(status.get("publisher_pid")) if status.get("publisher_pid") else None
         ),
         state=str(status.get("state", "")),
-        configured_symbols=int((status.get("config") or {}).get("symbols", 0) or 0),
+        status_config_capital=_maybe_float(status_config.get("capital")),
+        risk_initial_capital=_maybe_float(status_risk.get("initial_capital")),
+        configured_symbols=int(status_config.get("symbols", 0) or 0),
         data_provider=status.get("data_provider") or {},
         data_freshness=freshness,
         daily_signal_count=daily_signals,
@@ -803,6 +819,55 @@ def evaluate_report(
             f"<= {config.max_redis_status_age_seconds:.1f}s",
             "Stock orchestrator status has not been refreshed recently.",
         )
+
+    if (
+        live_redis_gates_enabled
+        and config.require_redis_status
+        and redis_snapshot.status_exists
+        and redis_snapshot.status_config_capital is not None
+        and abs(redis_snapshot.status_config_capital - config.initial_capital) > 1.0
+    ):
+        add(
+            "FAIL",
+            "runtime_capital_mismatch",
+            f"{redis_snapshot.status_config_capital:,.0f}",
+            f"{config.initial_capital:,.0f}",
+            "Stock orchestrator runtime capital differs from verification baseline.",
+        )
+
+    if (
+        live_redis_gates_enabled
+        and config.require_redis_status
+        and redis_snapshot.status_exists
+        and redis_snapshot.risk_initial_capital is None
+    ):
+        add(
+            "FAIL",
+            "risk_initial_capital_missing",
+            "missing",
+            "risk.initial_capital present in trading:stock:status",
+            "Stock orchestrator status does not expose RiskManager capital.",
+        )
+
+    if (
+        live_redis_gates_enabled
+        and config.require_redis_status
+        and redis_snapshot.status_exists
+        and redis_snapshot.risk_initial_capital is not None
+    ):
+        expected_risk_capital = (
+            redis_snapshot.status_config_capital
+            if redis_snapshot.status_config_capital is not None
+            else config.initial_capital
+        )
+        if abs(redis_snapshot.risk_initial_capital - expected_risk_capital) > 1.0:
+            add(
+                "FAIL",
+                "risk_initial_capital_mismatch",
+                f"{redis_snapshot.risk_initial_capital:,.0f}",
+                f"{expected_risk_capital:,.0f}",
+                "RiskManager capital differs from the active orchestrator capital.",
+            )
 
     if (
         live_redis_gates_enabled
@@ -1002,6 +1067,7 @@ def _render_markdown(report: VerificationReport, config: VerificationConfig) -> 
         "",
         f"- Report trading day: `{r.report_is_trading_day}`",
         f"- Status exists: `{r.status_exists}` state=`{r.state}` ttl=`{r.status_ttl_seconds}` age_s=`{r.status_age_seconds}` updated_at=`{r.status_updated_at}` pid=`{r.status_publisher_pid}`",
+        f"- Runtime capital: config=`{r.status_config_capital}` risk=`{r.risk_initial_capital}` verifier=`{config.initial_capital}`",
         f"- Signals today/list: `{r.daily_signal_count}` / `{r.signals_list_len}`",
         f"- Trades list len: `{r.trades_list_len}`",
         f"- Open positions: `{r.open_positions_count}`",
@@ -1195,6 +1261,8 @@ def empty_redis_snapshot(report_date: date) -> RedisSnapshot:
         status_updated_at=None,
         status_publisher_pid=None,
         state="",
+        status_config_capital=None,
+        risk_initial_capital=None,
         configured_symbols=0,
         data_provider={},
         data_freshness={},
