@@ -184,9 +184,7 @@ class StrategyManagerConfig:
                 f"commission_rate must be numeric, got {type(commission_rate)}"
             )
         if not isinstance(slippage_bps, (int, float)):
-            raise TypeError(
-                f"slippage_bps must be numeric, got {type(slippage_bps)}"
-            )
+            raise TypeError(f"slippage_bps must be numeric, got {type(slippage_bps)}")
 
         return cls(
             min_confidence=float(min_confidence),
@@ -347,7 +345,9 @@ class StrategyManager:
                 f"risk_score={market_context.risk_score:.2f}"
             )
         else:
-            logger.debug("No LLM market context available - strategies will proceed without it")
+            logger.debug(
+                "No LLM market context available - strategies will proceed without it"
+            )
 
         signals = []
 
@@ -383,9 +383,7 @@ class StrategyManager:
         now_mono = time.monotonic()
         if now_mono - self._last_cycle_log_time >= 60.0:
             strategy_names = ", ".join(self.strategies.keys())
-            logger.info(
-                f"Signal cycle: {len(signals)} signals from [{strategy_names}]"
-            )
+            logger.info(f"Signal cycle: {len(signals)} signals from [{strategy_names}]")
             self._last_cycle_log_time = now_mono
 
         return signals
@@ -442,7 +440,9 @@ class StrategyManager:
                 f"risk_score={market_context.risk_score:.2f}"
             )
         else:
-            logger.debug("No LLM market context available for exits - strategies will proceed without it")
+            logger.debug(
+                "No LLM market context available for exits - strategies will proceed without it"
+            )
 
         # Pre-group positions by strategy (O(n) instead of O(n*m))
         positions_by_strategy: dict[str, list[Position]] = {}
@@ -475,7 +475,11 @@ class StrategyManager:
             for strategy in self.strategies.values():
                 strategy_positions = positions_by_strategy.get(strategy.name, [])
                 result = await self._check_exits_safe(
-                    strategy, strategy_positions, market_data, market_state, market_context
+                    strategy,
+                    strategy_positions,
+                    market_data,
+                    market_state,
+                    market_context,
                 )
                 signals.extend(result)
 
@@ -483,9 +487,7 @@ class StrategyManager:
         signals.sort(key=lambda s: s.priority)
 
         if signals:
-            logger.info(
-                f"Exit signals: {len(signals)} for {len(positions)} positions"
-            )
+            logger.info(f"Exit signals: {len(signals)} for {len(positions)} positions")
 
         return signals
 
@@ -568,6 +570,7 @@ class StrategyManager:
             # 2) symbol-keyed nested dicts (some tests/backtests).
             indicators = self._resolve_symbol_payload(context.indicators, signal.code)
             market_data = self._resolve_symbol_payload(context.market_data, signal.code)
+            indicators = self._with_cost_atr_alias(indicators, market_data)
             price = market_data.get("close") or market_data.get("price", 0.0)
 
             # Check cost filter
@@ -587,6 +590,37 @@ class StrategyManager:
         if isinstance(candidate, dict):
             return candidate
         return payload
+
+    @staticmethod
+    def _with_cost_atr_alias(
+        indicators: dict[str, Any], market_data: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Expose daily ATR under ``atr`` for the generic cost filter.
+
+        Daily stock strategies publish precomputed indicators as ``daily_*``.
+        Their entry logic handles those aliases, but the shared cost filter
+        intentionally consumes the generic ``atr`` key. Add a local alias for
+        the cost check without mutating the original EntryContext payload.
+        """
+
+        def positive_float(value: Any) -> float | None:
+            try:
+                parsed = float(value)
+            except (TypeError, ValueError):
+                return None
+            return parsed if parsed > 0 else None
+
+        if positive_float(indicators.get("atr")) is not None:
+            return indicators
+
+        for payload in (indicators, market_data):
+            atr = positive_float(payload.get("daily_atr"))
+            if atr is not None:
+                with_alias = dict(indicators)
+                with_alias["atr"] = atr
+                return with_alias
+
+        return indicators
 
     def _dedupe_signals(self, signals: list[Signal]) -> list[Signal]:
         """Deduplicate signals by symbol"""
