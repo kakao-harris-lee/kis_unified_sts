@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -7,56 +8,56 @@ import scripts.analysis.stock_paper_daily_verification as mod
 
 
 def _config(**overrides):
-    base = dict(
-        output_dir=Path("reports/test"),
-        lookback_days=22,
-        monthly_trading_days=22,
-        initial_capital=10_000_000.0,
-        notify_on_issues=False,
-        min_daily_signals=1,
-        min_closed_trades_for_metric_gate=5,
-        min_monthly_expected_return_pct=10.0,
-        min_win_rate_pct=55.0,
-        target_win_rate_max_pct=60.0,
-        max_mdd_pct=10.0,
-        require_positive_equity_slope=True,
-        max_reentry_churn_count=0,
-        reentry_churn_seconds=3600,
-        min_fresh_ratio=0.5,
-        require_redis_status=True,
-        require_trade_targets=True,
-        require_daily_indicators=True,
-        skip_live_redis_gates_on_non_trading_day=True,
-        clickhouse_database="market",
-        clickhouse_table="stock_trades",
-        redis_keys={},
-    )
+    base = {
+        "output_dir": Path("reports/test"),
+        "lookback_days": 22,
+        "monthly_trading_days": 22,
+        "initial_capital": 10_000_000.0,
+        "notify_on_issues": False,
+        "min_daily_signals": 1,
+        "min_closed_trades_for_metric_gate": 5,
+        "min_monthly_expected_return_pct": 10.0,
+        "min_win_rate_pct": 55.0,
+        "target_win_rate_max_pct": 60.0,
+        "max_mdd_pct": 10.0,
+        "require_positive_equity_slope": True,
+        "max_reentry_churn_count": 0,
+        "reentry_churn_seconds": 3600,
+        "min_fresh_ratio": 0.5,
+        "require_redis_status": True,
+        "require_trade_targets": True,
+        "require_daily_indicators": True,
+        "skip_live_redis_gates_on_non_trading_day": True,
+        "clickhouse_database": "market",
+        "clickhouse_table": "stock_trades",
+        "redis_keys": {},
+    }
     base.update(overrides)
     return mod.VerificationConfig(**base)
 
 
 def _redis(**overrides):
-    base = dict(
-        report_is_trading_day=True,
-        status_exists=True,
-        status_ttl_seconds=86000,
-        status_age_seconds=400.0,
-        state="running",
-        configured_symbols=20,
-        data_provider={"total_symbols": 20, "fresh_count": 18},
-        data_freshness={},
-        daily_signal_count=3,
-        signals_list_len=20,
-        trades_list_len=10,
-        open_positions_count=2,
-        candle_cache_symbols=20,
-        trade_targets_exists=True,
-        trade_targets_count=20,
-        universe_exists=True,
-        universe_count=20,
-        daily_indicators_exists=True,
-        daily_indicators_count=20,
-    )
+    base = {
+        "report_is_trading_day": True,
+        "status_exists": True,
+        "status_ttl_seconds": 86000,
+        "status_age_seconds": 400.0,
+        "state": "running",
+        "configured_symbols": 20,
+        "data_provider": {"total_symbols": 20, "fresh_count": 18},
+        "data_freshness": {},
+        "daily_signal_count": 3,
+        "signals_list_len": 20,
+        "trades_list_len": 10,
+        "open_positions_count": 2,
+        "candle_cache_symbols": 20,
+        "trade_targets_exists": True,
+        "trade_targets_count": 20,
+        "universe_exists": True,
+        "universe_count": 20,
+        "daily_indicators_exists": True,
+        "daily_indicators_count": 20,
+    }
     base.update(overrides)
     return mod.RedisSnapshot(**base)
 
@@ -232,3 +233,65 @@ def test_build_report_warns_when_trade_sample_is_too_small():
 
     assert report.verdict == "WARN"
     assert [issue.code for issue in report.issues] == ["insufficient_closed_trades"]
+
+
+def test_build_report_separates_active_strategy_metrics():
+    cfg = _config(min_closed_trades_for_metric_gate=5)
+    rows = [
+        _trade(1, -500_000, strategy="momentum_breakout"),
+        _trade(2, -500_000, strategy="momentum_breakout"),
+        _trade(3, 450_000, strategy="trend_pullback"),
+        _trade(4, 450_000, strategy="trend_pullback"),
+        _trade(5, 350_000, strategy="trend_pullback"),
+        _trade(6, -50_000, strategy="trend_pullback"),
+        _trade(7, -50_000, strategy="trend_pullback"),
+    ]
+
+    report = mod.build_report(
+        config=cfg,
+        report_date=date(2026, 5, 16),
+        rows=rows,
+        redis_snapshot=_redis(),
+        active_strategy_names=["trend_pullback"],
+    )
+
+    assert report.trade_metrics.trade_count == 7
+    assert report.trade_metrics.total_pnl == 150_000
+    assert report.active_strategy_names == ["trend_pullback"]
+    assert report.active_trade_metrics.trade_count == 5
+    assert report.active_trade_metrics.total_pnl == 1_150_000
+    assert report.active_trade_metrics.win_rate_pct == 60.0
+    assert report.active_issues == []
+    assert "momentum_breakout" not in report.active_trade_metrics.by_strategy
+
+
+def test_active_strategy_scope_warns_when_not_yet_verified():
+    cfg = _config(min_closed_trades_for_metric_gate=5)
+    report = mod.build_report(
+        config=cfg,
+        report_date=date(2026, 5, 16),
+        rows=[_trade(i, -100_000, strategy="momentum_breakout") for i in range(1, 6)],
+        redis_snapshot=_redis(),
+        active_strategy_names=["trend_pullback"],
+    )
+
+    assert report.verdict == "FAIL"
+    assert [issue.code for issue in report.active_issues] == ["active_no_closed_trades"]
+    assert report.active_issues[0].severity == "WARN"
+
+
+def test_load_repo_env_uses_repo_dotenv_without_overriding_existing(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(mod, "_REPO_ROOT", tmp_path)
+    monkeypatch.delenv("CLICKHOUSE_PASSWORD", raising=False)
+    monkeypatch.setenv("CLICKHOUSE_USER", "already-set")
+    (tmp_path / ".env").write_text(
+        "CLICKHOUSE_PASSWORD='secret-from-file'\nCLICKHOUSE_USER=file-user\n",
+        encoding="utf-8",
+    )
+
+    mod._load_repo_env()
+
+    assert os.environ["CLICKHOUSE_PASSWORD"] == "secret-from-file"
+    assert os.environ["CLICKHOUSE_USER"] == "already-set"
