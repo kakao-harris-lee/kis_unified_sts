@@ -313,6 +313,28 @@ class TestTradingOrchestrator:
         assert "config" in status
         assert "stats" in status
 
+    def test_get_status_includes_risk_capital_when_risk_manager_exists(self):
+        """Redis status exposes risk-manager capital for operational verification."""
+        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from shared.risk.config import RiskConfig
+        from shared.risk.manager import RiskManager
+
+        config = TradingConfig.stock(initial_capital=100_000_000)
+        orch = TradingOrchestrator(config)
+        orch._risk_manager = RiskManager(
+            RiskConfig(
+                daily_loss_limit_pct=5.0,
+                max_total_positions=20,
+                initial_capital=100_000_000,
+            )
+        )
+
+        status = orch.get_status()
+
+        assert status["config"]["capital"] == 100_000_000
+        assert status["risk"]["initial_capital"] == 100_000_000.0
+        assert status["risk"]["daily_loss_limit_pct"] == 5.0
+
     def test_get_metrics_without_pipeline(self):
         """파이프라인 없을 때 메트릭 조회"""
         from services.trading.orchestrator import TradingOrchestrator, TradingConfig

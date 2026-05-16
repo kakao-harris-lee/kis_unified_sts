@@ -46,6 +46,8 @@ def _redis(**overrides):
         "status_updated_at": "2026-05-16T09:00:00+00:00",
         "status_publisher_pid": "12345",
         "state": "running",
+        "status_config_capital": 10_000_000.0,
+        "risk_initial_capital": 10_000_000.0,
         "configured_symbols": 20,
         "data_provider": {"total_symbols": 20, "fresh_count": 18},
         "data_freshness": {},
@@ -269,6 +271,74 @@ def test_invalid_redis_status_updated_at_fails_on_trading_day():
     )
 
     assert any(issue.code == "redis_status_updated_at_invalid" for issue in issues)
+
+
+def test_risk_initial_capital_missing_fails_on_trading_day():
+    cfg = _config()
+    metrics = mod.TradeMetrics(
+        trade_count=5,
+        winning_trades=3,
+        losing_trades=2,
+        win_rate_pct=60.0,
+        monthly_expected_return_pct=12.0,
+        max_drawdown_pct=3.0,
+        equity_slope_krw_per_trade=1000.0,
+        equity_is_upward=True,
+    )
+
+    issues = mod.evaluate_report(cfg, metrics, _redis(risk_initial_capital=None))
+
+    assert any(issue.code == "risk_initial_capital_missing" for issue in issues)
+
+
+def test_risk_initial_capital_mismatch_fails_on_trading_day():
+    cfg = _config(initial_capital=100_000_000.0)
+    metrics = mod.TradeMetrics(
+        trade_count=5,
+        winning_trades=3,
+        losing_trades=2,
+        win_rate_pct=60.0,
+        monthly_expected_return_pct=12.0,
+        max_drawdown_pct=3.0,
+        equity_slope_krw_per_trade=1000.0,
+        equity_is_upward=True,
+    )
+
+    issues = mod.evaluate_report(
+        cfg,
+        metrics,
+        _redis(
+            status_config_capital=100_000_000.0,
+            risk_initial_capital=10_000_000.0,
+        ),
+    )
+
+    assert any(issue.code == "risk_initial_capital_mismatch" for issue in issues)
+
+
+def test_runtime_capital_mismatch_fails_on_trading_day():
+    cfg = _config(initial_capital=100_000_000.0)
+    metrics = mod.TradeMetrics(
+        trade_count=5,
+        winning_trades=3,
+        losing_trades=2,
+        win_rate_pct=60.0,
+        monthly_expected_return_pct=12.0,
+        max_drawdown_pct=3.0,
+        equity_slope_krw_per_trade=1000.0,
+        equity_is_upward=True,
+    )
+
+    issues = mod.evaluate_report(
+        cfg,
+        metrics,
+        _redis(
+            status_config_capital=10_000_000.0,
+            risk_initial_capital=10_000_000.0,
+        ),
+    )
+
+    assert any(issue.code == "runtime_capital_mismatch" for issue in issues)
 
 
 def test_reentry_churn_counts_same_symbol_strategy_only():

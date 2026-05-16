@@ -6873,6 +6873,25 @@ class TradingOrchestrator:
         summary["unrealized_pnl"] = summary["equity"] - summary["balance"]
         return summary
 
+    def _get_risk_summary(self) -> dict[str, Any] | None:
+        """RiskManager status for Redis/dashboard verification."""
+        manager = self._risk_manager
+        if manager is None:
+            return None
+        try:
+            state = manager.get_risk_state()
+            metrics = manager.get_portfolio_metrics()
+            return {
+                "initial_capital": float(manager.config.initial_capital),
+                "daily_loss_limit_pct": float(manager.config.daily_loss_limit_pct),
+                "max_total_positions": int(manager.config.max_total_positions),
+                "state": state.to_dict(),
+                "metrics": metrics.to_dict(),
+            }
+        except (AttributeError, TypeError, ValueError) as exc:
+            logger.warning("risk summary unavailable: %s", exc)
+            return None
+
     def get_status(self) -> dict[str, Any]:
         """상태 조회"""
         pipeline_status = self.pipeline.get_status() if self.pipeline else {}
@@ -6923,6 +6942,10 @@ class TradingOrchestrator:
         account = self._get_account_summary()
         if account is not None:
             status["account"] = account
+
+        risk = self._get_risk_summary()
+        if risk is not None:
+            status["risk"] = risk
 
         return status
 
