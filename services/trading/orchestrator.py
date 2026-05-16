@@ -743,7 +743,9 @@ class TradingOrchestrator:
         # Optional tick mirroring to Redis streams for monitoring exporter
         self._tick_stream_publisher: Any | None = None
 
-        # Redis state publisher (initialized in _initialize_components)
+        # Redis state publisher.  It is lazily initialized so daemon lifecycle
+        # states (weekend / pre-open waiting) can refresh Redis before the full
+        # trading component graph starts.
         self._state_publisher: Any | None = None
 
         # Universe refresh from screener
@@ -845,6 +847,25 @@ class TradingOrchestrator:
         executor instead of mock fills.
         """
         self._order_executor = executor
+
+    def _ensure_state_publisher(self) -> None:
+        """Initialize the Redis state publisher if it is not available yet."""
+        if self._state_publisher is not None:
+            return
+
+        try:
+            from shared.streaming.trading_state import TradingStatePublisher
+
+            self._state_publisher = TradingStatePublisher(self.config.asset_class)
+            logger.info("Trading state publisher initialized")
+        except (ConfigurationError, InfrastructureError) as e:
+            logger.warning(f"Trading state publisher init failed: {e}")
+
+    def _publish_status_snapshot(self) -> None:
+        """Publish the current orchestrator status best-effort."""
+        self._ensure_state_publisher()
+        if self._state_publisher:
+            self._state_publisher.publish_status(self.get_status())
 
     @property
     def is_running(self) -> bool:
@@ -1761,13 +1782,7 @@ class TradingOrchestrator:
         self._refresh_daily_indicators()
 
         # Redis state publisher
-        try:
-            from shared.streaming.trading_state import TradingStatePublisher
-
-            self._state_publisher = TradingStatePublisher(self.config.asset_class)
-            logger.info("Trading state publisher initialized")
-        except (ConfigurationError, InfrastructureError) as e:
-            logger.warning(f"Trading state publisher init failed: {e}")
+        self._ensure_state_publisher()
 
         # Bootstrap symbols from screener if none configured
         if not self.config.symbols and self.config.asset_class == "stock":
@@ -3518,6 +3533,8 @@ class TradingOrchestrator:
         if not is_trading_day(today, holidays):
             reason = "주말" if today.weekday() >= 5 else "공휴일"
             logger.info(f"Not a trading day: {reason}")
+            self.state = TradingState.IDLE
+            self._publish_status_snapshot()
             await self._notify(f"🏖️ 휴장일: {reason}")
             return
 
@@ -3532,6 +3549,7 @@ class TradingOrchestrator:
             wait_seconds = (open_dt - now).total_seconds()
             logger.info(f"Waiting for market open: {wait_seconds:.0f}s")
             self.state = TradingState.WAITING
+            self._publish_status_snapshot()
             await self._sleep_unless_stop_requested(wait_seconds)
             if self._stop_requested:
                 return
@@ -3595,6 +3613,7 @@ class TradingOrchestrator:
                 logger.info(f"Next session in {wait_seconds / 3600:.1f} hours")
 
                 self.state = TradingState.IDLE
+                self._publish_status_snapshot()
                 await self._sleep_unless_stop_requested(wait_seconds)
 
             except asyncio.CancelledError:
