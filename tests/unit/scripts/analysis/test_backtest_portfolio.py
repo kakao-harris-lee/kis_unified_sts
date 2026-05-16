@@ -8,6 +8,27 @@ import scripts.analysis.backtest_portfolio as portfolio
 from shared.backtest.engine import SignalType
 
 
+def test_select_stocks_supports_symbol_and_max_filters(monkeypatch):
+    monkeypatch.setattr(
+        portfolio,
+        "STOCK_UNIVERSE",
+        [
+            {"code": "AAA", "name": "A", "tier": "top"},
+            {"code": "BBB", "name": "B", "tier": "top"},
+            {"code": "CCC", "name": "C", "tier": "mid"},
+        ],
+    )
+
+    assert [s["code"] for s in portfolio._select_stocks("top", max_symbols=1)] == [
+        "AAA"
+    ]
+    selected = portfolio._select_stocks("all", symbols="CCC,ZZZ", max_symbols=2)
+    assert selected == [
+        {"code": "CCC", "name": "C", "tier": "mid"},
+        {"code": "ZZZ", "name": "ZZZ", "tier": "custom"},
+    ]
+
+
 def _daily_df(code: str, rows: int = 3) -> pd.DataFrame:
     return pd.DataFrame(
         {
