@@ -15,6 +15,9 @@ VENV="$PROJECT_DIR/.venv/bin/activate"
 STS_BIN="$PROJECT_DIR/.venv/bin/sts"
 PID_FILE="$PROJECT_DIR/pids/stock_trading.pid"
 PROC_PATTERN_STS="$STS_BIN trade start --asset stock"
+PROC_PATTERN_STS_SHORT="$STS_BIN trade start -a stock"
+PROC_PATTERN_CLI_MODULE_ASSET="python -m cli[.]main trade start .*--asset stock"
+PROC_PATTERN_CLI_MODULE_SHORT="python -m cli[.]main trade start .*-a stock"
 STOCK_CAPITAL_DEFAULT=100000000
 
 mkdir -p "$LOG_DIR"
@@ -25,7 +28,19 @@ log() {
 }
 
 detect_running_pid() {
-    pgrep -f "$PROC_PATTERN_STS" 2>/dev/null | head -n 1 || true
+    local pattern
+    for pattern in \
+        "$PROC_PATTERN_STS" \
+        "$PROC_PATTERN_STS_SHORT" \
+        "$PROC_PATTERN_CLI_MODULE_ASSET" \
+        "$PROC_PATTERN_CLI_MODULE_SHORT"; do
+        PID=$(pgrep -f "$pattern" 2>/dev/null | head -n 1 || true)
+        if [ -n "$PID" ]; then
+            echo "$PID"
+            return 0
+        fi
+    done
+    return 0
 }
 
 get_process_group_id() {

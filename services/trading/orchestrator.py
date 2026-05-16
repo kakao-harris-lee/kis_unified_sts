@@ -1181,6 +1181,9 @@ class TradingOrchestrator:
                     failover_cfg.get("staleness_threshold_seconds", 10.0)
                 ),
                 min_fresh_ratio=float(failover_cfg.get("min_fresh_ratio", 0.5)),
+                startup_grace_seconds=float(
+                    failover_cfg.get("startup_grace_seconds", 60.0)
+                ),
                 rest_fallback_max_symbols=failover_cfg.get("rest_fallback_max_symbols"),
                 send_telegram_alerts=send_telegram_alerts,
             ),
