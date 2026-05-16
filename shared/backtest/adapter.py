@@ -187,7 +187,7 @@ class _MarketDataEnricher:
         highs = list(self._daily_highs[code])
         if len(highs) >= period + 1:
             # Exclude today — breakout above previous N-day high
-            bar[f"high_{period}"] = max(highs[-(period + 1):-1])
+            bar[f"high_{period}"] = max(highs[-(period + 1) : -1])
         elif len(highs) >= 2:
             bar[f"high_{period}"] = max(highs[:-1])
         else:
@@ -204,7 +204,9 @@ class _MarketDataEnricher:
             bar["rvol"] = 1.0
 
         # VWAP (for volume_accumulation)
-        self._vwap_pv_sum[code] = self._vwap_pv_sum.get(code, 0) + typical_price * volume
+        self._vwap_pv_sum[code] = (
+            self._vwap_pv_sum.get(code, 0) + typical_price * volume
+        )
         self._vwap_v_sum[code] = self._vwap_v_sum.get(code, 0) + volume
         vwap_v = self._vwap_v_sum[code]
         bar["vwap"] = self._vwap_pv_sum[code] / vwap_v if vwap_v > 0 else close
@@ -271,9 +273,7 @@ class BacktestStrategyAdapter:
         self._backtest_metadata = load_backtest_metadata(strategy_config)
 
         entry_params = (
-            strategy_config.get("strategy", {})
-            .get("entry", {})
-            .get("params", {})
+            strategy_config.get("strategy", {}).get("entry", {}).get("params", {})
         )
         bb_period = entry_params.get("bb_period", 20)
         bb_std = entry_params.get("bb_std", 2.0)
@@ -340,7 +340,9 @@ class BacktestStrategyAdapter:
                 self._regime_detector = AdaptiveRegimeDetector(regime_config)
                 logger.info("Adaptive regime detection enabled for backtest")
             except Exception as e:
-                logger.warning(f"Failed to initialize regime detector: {e}. Disabling regime detection.")
+                logger.warning(
+                    f"Failed to initialize regime detector: {e}. Disabling regime detection."
+                )
                 self._regime_detection_enabled = False
 
         # Regime tracking for backtest results
@@ -449,19 +451,19 @@ class BacktestStrategyAdapter:
             col: (
                 1.0
                 if "ratio" in col
-                else 50.0
-                if col in ("rsi", "stoch_k", "stoch_d")
-                else 0.5
-                if col == "bb_position"
-                else 0.0
+                else (
+                    50.0
+                    if col in ("rsi", "stoch_k", "stoch_d")
+                    else 0.5 if col == "bb_position" else 0.0
+                )
             )
             for col in RL_FEATURE_COLUMNS
         }
         features_df = features_df.fillna(neutral)
 
         # Extract only RL feature columns as list of dicts
-        self._precomputed_rl_features = (
-            features_df[RL_FEATURE_COLUMNS].to_dict("records")
+        self._precomputed_rl_features = features_df[RL_FEATURE_COLUMNS].to_dict(
+            "records"
         )
         self._bar_index = 0
         logger.info(
@@ -493,7 +495,11 @@ class BacktestStrategyAdapter:
             confidence: Regime detection confidence
         """
         switch_event = {
-            "timestamp": timestamp.isoformat() if isinstance(timestamp, datetime) else str(timestamp),
+            "timestamp": (
+                timestamp.isoformat()
+                if isinstance(timestamp, datetime)
+                else str(timestamp)
+            ),
             "old_model": old_model,
             "new_model": new_model,
             "regime": regime,
@@ -539,15 +545,19 @@ class BacktestStrategyAdapter:
 
         # Use resolver so exit path follows the same indicator contract as live.
         indicators = self._indicator_resolver.collect_exit_indicators(code)
-        for key, value in indicators.items():
-            if key.startswith("momentum_"):
-                bar[key] = value
+
+        # Live orchestrator merges resolved indicators into the symbol snapshot
+        # before calling check_exits(). Mirror that contract here so exit
+        # strategies that read market_data directly, such as atr_dynamic, see
+        # ATR/trailing inputs instead of silently falling back to zero.
+        exit_market_data = {**bar, **indicators}
 
         # Inject pre-computed RL features (one-bar lag: exit sees same bar as on_bar)
         if self._precomputed_rl_features is not None:
             idx = max(0, self._bar_index - 1)
             if idx < len(self._precomputed_rl_features):
                 indicators.update(self._precomputed_rl_features[idx])
+                exit_market_data.update(self._precomputed_rl_features[idx])
 
         # Build Position model from engine's position dict
         pos = self._current_position
@@ -574,10 +584,11 @@ class BacktestStrategyAdapter:
         symbol_meta = resolve_symbol_metadata(self._backtest_metadata, code)
         if symbol_meta:
             bar.update(symbol_meta)
+            exit_market_data.update(symbol_meta)
 
         context = ExitContext(
             position=position,
-            market_data=bar,
+            market_data=exit_market_data,
             indicators=indicators,
             timestamp=timestamp,
             metadata=self._context_metadata(code=code, raw_code=bar.get("code")),
@@ -666,12 +677,14 @@ class BacktestStrategyAdapter:
         regime_confidence: Optional[float] = None
         if self._regime_detection_enabled and self._regime_detector is not None:
             # Store bar in regime history for building DataFrame
-            self._regime_history[code].append({
-                "close": float(bar.get("close", 0) or 0),
-                "high": float(bar.get("high", 0) or 0),
-                "low": float(bar.get("low", 0) or 0),
-                "volume": float(bar.get("volume", 0) or 0),
-            })
+            self._regime_history[code].append(
+                {
+                    "close": float(bar.get("close", 0) or 0),
+                    "high": float(bar.get("high", 0) or 0),
+                    "low": float(bar.get("low", 0) or 0),
+                    "volume": float(bar.get("volume", 0) or 0),
+                }
+            )
 
             # Build DataFrame from recent bars for regime detection
             if len(self._regime_history[code]) >= self._regime_detector.config.min_bars:
@@ -683,7 +696,9 @@ class BacktestStrategyAdapter:
 
                     # Track regime distribution for backtest results
                     if regime:
-                        self._regime_distribution[regime] = self._regime_distribution.get(regime, 0) + 1
+                        self._regime_distribution[regime] = (
+                            self._regime_distribution.get(regime, 0) + 1
+                        )
                 except Exception as e:
                     logger.debug(f"Regime detection failed: {e}")
 
@@ -725,9 +740,7 @@ class BacktestStrategyAdapter:
         )
 
         try:
-            signal = self._loop.run_until_complete(
-                self._strategy.check_entry(context)
-            )
+            signal = self._loop.run_until_complete(self._strategy.check_entry(context))
         except Exception:
             logger.debug("Entry generator error", exc_info=True)
             return SignalType.HOLD
@@ -740,13 +753,15 @@ class BacktestStrategyAdapter:
             new_model = signal.metadata["model_name"]
             if self._current_model_name and self._current_model_name != new_model:
                 # Model switched - log it
-                self._model_switches.append({
-                    "timestamp": timestamp.isoformat(),
-                    "old_model": self._current_model_name,
-                    "new_model": new_model,
-                    "regime": regime or market_state,
-                    "confidence": regime_confidence or 0.0,
-                })
+                self._model_switches.append(
+                    {
+                        "timestamp": timestamp.isoformat(),
+                        "old_model": self._current_model_name,
+                        "new_model": new_model,
+                        "regime": regime or market_state,
+                        "confidence": regime_confidence or 0.0,
+                    }
+                )
                 logger.info(
                     f"Model switch detected: {self._current_model_name} -> {new_model} "
                     f"(regime: {regime or market_state})"
