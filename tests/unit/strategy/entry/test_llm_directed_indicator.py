@@ -160,3 +160,15 @@ async def test_short_bias_blocks_long_signal():
     # bullish indicators (the default _ctx) -> would be long; SHORT_BIAS masks
     sig = await _entry().generate(_ctx(mc=mc))
     assert sig is None
+
+
+def test_registered_in_registry():
+    from shared.strategy.registry import (
+        EntryRegistry,
+        ExitRegistry,
+        register_builtin_components,
+    )
+    register_builtin_components()
+    # list_all() is the real registry introspection API (not available())
+    assert "llm_directed_indicator" in EntryRegistry.list_all()
+    assert "llm_directed_indicator_exit" in ExitRegistry.list_all()
