@@ -1064,13 +1064,6 @@ def evaluate_active_daily_watchlist_gates(
         redis_snapshot.daily_strategy_counts.get(name, 0) for name in active_daily_names
     )
 
-    live_redis_gates_enabled = (
-        redis_snapshot.report_is_trading_day
-        or not config.skip_live_redis_gates_on_non_trading_day
-    )
-    if not live_redis_gates_enabled:
-        return [], active_candidate_count
-
     issues: list[GateIssue] = []
     missing = [
         name
@@ -1419,14 +1412,20 @@ def build_report(
     )
     active_issues: list[GateIssue] = []
     if active_names:
-        active_issues = evaluate_trade_metric_gates(
-            config,
-            active_metrics,
-            code_prefix="active_",
-            no_trades_severity="WARN",
-            insufficient_trades_severity="WARN",
-            detail_prefix="Enabled-strategy scope: ",
+        active_metric_gates_enabled = (
+            redis_snapshot.report_is_trading_day
+            or not config.skip_live_redis_gates_on_non_trading_day
+            or active_metrics.trade_count > 0
         )
+        if active_metric_gates_enabled:
+            active_issues = evaluate_trade_metric_gates(
+                config,
+                active_metrics,
+                code_prefix="active_",
+                no_trades_severity="WARN",
+                insufficient_trades_severity="WARN",
+                detail_prefix="Enabled-strategy scope: ",
+            )
         active_issues.extend(daily_issues)
     verdict = _verdict_from_issues(
         _select_verdict_issues(issues, active_issues, active_names)

@@ -189,6 +189,39 @@ async def test_config_from_dict_accepts_nested_patterns_and_aliases() -> None:
     assert signal.metadata["entry_priority"] == pytest.approx(-(1_800 / 70_000))
 
 
+@pytest.mark.asyncio
+async def test_current_runtime_candidate_matches_configured_pattern() -> None:
+    from shared.strategy.registry import StrategyFactory, register_builtin_components
+
+    register_builtin_components()
+    strategy = StrategyFactory.create_from_file("stock", "pattern_pullback")
+    context = EntryContext(
+        market_data={"code": "086790", "name": "하나금융지주", "close": 119_000.0},
+        indicators={
+            "daily_sma_200": 99_688.5,
+            "daily_sma_20": 124_315.0,
+            "daily_sma_60": 118_076.66666666667,
+            "daily_sma_60_prev": 117_975.0,
+            "daily_rsi_5": 30.930047623306038,
+            "daily_atr": 4_395.454545454545,
+            "daily_highest_high": 131_000.0,
+            "daily_volume_ratio": 1.253147212064439,
+            "daily_closes": [130_000.0] * 20 + [119_000.0] * 60,
+        },
+        timestamp=datetime(2026, 5, 17),
+    )
+
+    signal = await strategy.entry.generate(context)
+
+    assert signal is not None
+    assert signal.code == "086790"
+    assert signal.strategy == "pattern_pullback"
+    assert signal.metadata["pattern_name"] in {
+        "pullback_reversal",
+        "volume_pullback",
+    }
+
+
 def test_registry_and_factory_create_pattern_pullback() -> None:
     from shared.strategy.registry import (
         EntryRegistry,
