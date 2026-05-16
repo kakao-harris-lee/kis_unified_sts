@@ -272,6 +272,33 @@ class TestTradingOrchestrator:
         assert orch._running is False
 
     @pytest.mark.asyncio
+    async def test_run_session_publishes_idle_status_on_non_trading_day(self):
+        """휴장/주말 대기 daemon도 Redis status를 최신 PID/자본으로 갱신한다."""
+        from services.trading.orchestrator import (
+            HolidayCache,
+            TradingConfig,
+            TradingOrchestrator,
+            TradingState,
+        )
+
+        today = date.today()
+        holiday_cache = HolidayCache(loader=lambda _: {today})
+        orch = TradingOrchestrator(
+            TradingConfig.stock(initial_capital=100_000_000),
+            holiday_cache=holiday_cache,
+        )
+        orch._notify = AsyncMock()
+        orch._state_publisher = MagicMock()
+
+        await orch.run_session()
+
+        orch._state_publisher.publish_status.assert_called_once()
+        status = orch._state_publisher.publish_status.call_args.args[0]
+        assert status["state"] == TradingState.IDLE.value
+        assert status["config"]["asset_class"] == "stock"
+        assert status["config"]["capital"] == 100_000_000
+
+    @pytest.mark.asyncio
     async def test_pause_and_resume(self, monkeypatch):
         """pause/resume 동작"""
         from services.trading.orchestrator import (
