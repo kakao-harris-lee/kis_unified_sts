@@ -18,6 +18,9 @@ strategy:
       stop_loss_pct: 7.0
       signal_cooldown_days: 5
       confidence_base: 0.6
+      # 2026-05-16 portfolio sweep: 0.70 lifted recent-window win rate to
+      # 55.56% while keeping long-window MDD below 10% with 1.095M sizing.
+      min_confidence: 0.70
 
   exit:
     type: chandelier_exit
@@ -26,15 +29,17 @@ strategy:
       atr_multiplier: 3.0
       lookback_period: 22
       hard_stop_pct: -0.07
+      take_profit_pct: 0.0
       max_hold_days: 60
       default_exit_confidence: 0.85
 
   position:
     type: fixed
     params:
-      # 2026-05-16 portfolio sizing: 950k x 5 kept 2023-05-17..2026-05-15
-      # MDD under 10% while preserving recent 22d expected return above 10%.
-      order_amount_per_stock: 950000
+      # 2026-05-16 portfolio sizing: 1.095M x 5 with min_confidence=0.70
+      # kept 2023-05-17..2026-05-15 MDD under 10% and recent 22d return
+      # above 10%.
+      order_amount_per_stock: 1095000
       max_positions: 5
 
   paper:
