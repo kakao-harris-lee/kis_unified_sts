@@ -582,6 +582,86 @@ class TestCacheInvalidation:
         assert context.indicators["daily_close"] == 70000
         orch._execute_entry.assert_awaited_once_with(signal)
 
+    def test_entry_signal_priority_uses_explicit_priority_then_confidence(self):
+        orch = _make_orchestrator()
+        low = MagicMock(
+            code="000001",
+            strategy="daily_pullback",
+            confidence=0.95,
+            metadata={"entry_priority": 2},
+        )
+        high = MagicMock(
+            code="000002",
+            strategy="daily_pullback",
+            confidence=0.70,
+            metadata={"entry_priority": 1},
+        )
+        same_priority_better_confidence = MagicMock(
+            code="000003",
+            strategy="daily_pullback",
+            confidence=0.90,
+            metadata={"entry_priority": 1},
+        )
+
+        ordered = orch._prioritize_entry_signals(
+            [low, high, same_priority_better_confidence]
+        )
+
+        assert ordered == [same_priority_better_confidence, high, low]
+
+    @pytest.mark.asyncio
+    async def test_handle_entry_executes_stock_signals_by_priority_order(self):
+        orch = _make_orchestrator()
+        low = MagicMock(
+            code="000001",
+            strategy="daily_pullback",
+            confidence=0.40,
+            metadata={},
+        )
+        high = MagicMock(
+            code="000002",
+            strategy="daily_pullback",
+            confidence=0.90,
+            metadata={},
+        )
+        orch._metrics = MagicMock()
+        orch._data_provider = MagicMock()
+        orch._position_tracker = MagicMock(
+            positions=[],
+            can_open_position=MagicMock(return_value=True),
+        )
+
+        async def check_entries(context):
+            if context.market_data["code"] == "000001":
+                return [low]
+            return [high]
+
+        orch._strategy_manager = MagicMock(
+            strategy_names=["daily_pullback"],
+            check_entries=AsyncMock(side_effect=check_entries),
+        )
+        orch._indicator_engine = None
+        orch._cached_daily_indicators = {}
+        orch._daily_watchlist = {}
+        orch._symbol_metadata_cache = {}
+        orch._enriched_metadata_cache = {}
+        orch._get_market_data_snapshot = AsyncMock(
+            return_value={
+                "000001": {"code": "000001", "close": 1000},
+                "000002": {"code": "000002", "close": 2000},
+            }
+        )
+        orch._filter_reentry_guarded_signals = lambda signals: signals
+        orch._execute_entry = AsyncMock()
+
+        signals = await orch._handle_entry()
+
+        assert signals == [high, low]
+        assert [call.args[0] for call in orch._execute_entry.await_args_list] == [
+            high,
+            low,
+        ]
+
 
 class TestSymbolMetadataCacheExpiry:
     """Test symbol metadata cache expiry and cleanup."""
