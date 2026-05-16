@@ -117,6 +117,43 @@ class TestTradingConfig:
         assert config.initial_capital == 5_000_000
 
 
+class TestRiskCapitalAlignment:
+    def test_runtime_capital_overrides_shared_default_without_env(self, monkeypatch):
+        from services.trading.orchestrator import _risk_params_for_runtime_capital
+
+        monkeypatch.delenv("RISK_INITIAL_CAPITAL", raising=False)
+
+        params = _risk_params_for_runtime_capital(
+            {"daily_loss_limit_pct": 5.0, "initial_capital": 10_000_000},
+            100_000_000,
+        )
+
+        assert params["initial_capital"] == 100_000_000
+
+    def test_explicit_risk_capital_env_preserves_risk_config(self, monkeypatch):
+        from services.trading.orchestrator import _risk_params_for_runtime_capital
+
+        monkeypatch.setenv("RISK_INITIAL_CAPITAL", "50000000")
+
+        params = _risk_params_for_runtime_capital(
+            {"daily_loss_limit_pct": 5.0, "initial_capital": 50_000_000},
+            100_000_000,
+        )
+
+        assert params["initial_capital"] == 50_000_000
+
+    def test_alignment_does_not_mutate_loaded_config(self, monkeypatch):
+        from services.trading.orchestrator import _risk_params_for_runtime_capital
+
+        monkeypatch.delenv("RISK_INITIAL_CAPITAL", raising=False)
+        loaded = {"daily_loss_limit_pct": 5.0, "initial_capital": 10_000_000}
+
+        params = _risk_params_for_runtime_capital(loaded, 100_000_000)
+
+        assert loaded["initial_capital"] == 10_000_000
+        assert params["initial_capital"] == 100_000_000
+
+
 class TestTradingOrchestrator:
     """TradingOrchestrator 클래스 테스트"""
 

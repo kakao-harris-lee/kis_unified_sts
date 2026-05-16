@@ -351,6 +351,25 @@ def _env_bool(name: str, default: bool) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _risk_params_for_runtime_capital(
+    risk_params: dict[str, Any], runtime_initial_capital: float
+) -> dict[str, Any]:
+    """Return risk params aligned with the active orchestrator capital.
+
+    ``risk_management.yaml`` is shared across runtime modes and has a conservative
+    standalone fallback. In orchestrator runs, the CLI/config ``initial_capital``
+    is the account baseline unless an operator explicitly sets
+    ``RISK_INITIAL_CAPITAL``.
+    """
+    params = dict(risk_params)
+    explicit_risk_capital = os.getenv("RISK_INITIAL_CAPITAL")
+    if explicit_risk_capital is None or not explicit_risk_capital.strip():
+        params["initial_capital"] = int(runtime_initial_capital)
+    elif "initial_capital" not in params:
+        params["initial_capital"] = int(runtime_initial_capital)
+    return params
+
+
 @dataclass
 class TradingConfig:
     """트레이딩 설정"""
@@ -1291,9 +1310,9 @@ class TradingOrchestrator:
         try:
             risk_config_data = ConfigLoader.load("risk_management.yaml")
             risk_params = risk_config_data.get("risk_management", {})
-            # Use orchestrator's initial capital if not specified in risk config
-            if "initial_capital" not in risk_params:
-                risk_params["initial_capital"] = self.config.initial_capital
+            risk_params = _risk_params_for_runtime_capital(
+                risk_params, self.config.initial_capital
+            )
             risk_config = RiskConfig.from_dict(risk_params)
             self._risk_manager = RiskManager(risk_config)
             logger.info(

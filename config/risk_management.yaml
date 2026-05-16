@@ -14,8 +14,9 @@ risk_management:
   # Maximum number of concurrent positions across all asset classes
   max_total_positions: ${RISK_MAX_TOTAL_POSITIONS:20}
 
-  # Initial capital for risk calculations (KRW)
-  # This is used to calculate absolute loss limits from percentages
+  # Initial capital for standalone RiskManager calculations (KRW).
+  # TradingOrchestrator aligns this to the active CLI/config capital unless
+  # RISK_INITIAL_CAPITAL is explicitly set.
   initial_capital: ${RISK_INITIAL_CAPITAL:10000000}
 
   # =============================================================================
@@ -137,5 +138,4 @@ risk_management:
 
     # Use Redis DB 1 (DB 0 is for other projects)
     db: 1
-
 
