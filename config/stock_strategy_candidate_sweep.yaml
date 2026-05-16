@@ -40,6 +40,32 @@ sweep:
         exit.params.take_profit_pct: [0.10, 0.15]
         exit.params.hard_stop_pct: [-0.06]
 
+    - name: "daily_pullback_scan_top"
+      # 2026-05-16 pattern scan found strong 10d forward edge, but focused
+      # portfolio sweep with current chandelier/take-profit exit failed.
+      enabled: false
+      strategy: "daily_pullback"
+      order_amount_per_stock: [18000000, 20000000]
+      max_positions: [3]
+      overrides:
+        entry.params.min_atr_pct: [0.02]
+        entry.params.min_highest_high_gap_pct: [-0.05]
+        exit.params.take_profit_pct: [0.10, 0.15, 0.20]
+        exit.params.hard_stop_pct: [-0.06]
+
+    - name: "daily_pullback_scan_volume"
+      # Disabled by default after focused sweep failed under current exit policy.
+      enabled: false
+      strategy: "daily_pullback"
+      order_amount_per_stock: [18000000, 20000000]
+      max_positions: [3]
+      overrides:
+        entry.params.min_atr_pct: [0.03]
+        entry.params.min_volume_ratio: [1.5]
+        entry.params.max_return_60d: [0.05]
+        exit.params.take_profit_pct: [0.10, 0.15]
+        exit.params.hard_stop_pct: [-0.06]
+
     - name: "daily_pullback_volume_return_filter"
       strategy: "daily_pullback"
       order_amount_per_stock: [18000000, 22000000]
