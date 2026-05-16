@@ -1199,6 +1199,53 @@ class TestMarketClassification:
         assert TradingOrchestrator.MARKET_BEAR_THRESHOLD == -0.02
 
 
+class TestQuantitySizing:
+    """Order quantity sizing tests."""
+
+    def test_strategy_sizer_receives_strategy_scoped_positions(self):
+        """Strategy max_positions should not be tripped by other strategies."""
+        from services.trading.orchestrator import TradingConfig, TradingOrchestrator
+        from shared.strategy.position.sizers import FixedSizerConfig
+
+        orch = TradingOrchestrator.__new__(TradingOrchestrator)
+        orch.config = TradingConfig.stock(initial_capital=100_000_000)
+        orch._paper_broker = None
+        orch._adaptive_sizing = None
+
+        strategy = MagicMock()
+        strategy.position_sizer.config = FixedSizerConfig(
+            fixed_amount=750_000,
+            max_positions=4,
+        )
+        strategy.calculate_position_size.return_value = 7
+
+        orch._strategy_manager = SimpleNamespace(strategies={"vr_composite": strategy})
+        other_positions = [
+            SimpleNamespace(strategy="daily_pullback"),
+            SimpleNamespace(strategy="daily_pullback"),
+            SimpleNamespace(strategy="daily_pullback"),
+            SimpleNamespace(strategy="daily_pullback"),
+            SimpleNamespace(strategy="daily_pullback"),
+        ]
+        orch._position_tracker = SimpleNamespace(
+            positions=other_positions,
+            get_positions_by_strategy=MagicMock(return_value=[]),
+        )
+
+        signal = SimpleNamespace(
+            code="055550",
+            price=95_100.0,
+            quantity=0,
+            strategy="vr_composite",
+        )
+
+        assert orch._calculate_quantity(signal) == 7
+        strategy.calculate_position_size.assert_called_once()
+        assert (
+            strategy.calculate_position_size.call_args.kwargs["current_positions"] == []
+        )
+
+
 class TestStaticUniverse:
     """Static universe mode tests"""
 

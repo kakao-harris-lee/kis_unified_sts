@@ -6902,6 +6902,11 @@ class TradingOrchestrator:
             try:
                 strategy = self._strategy_manager.strategies[signal.strategy]
                 balance = self._get_account_balance()
+                strategy_positions = (
+                    self._position_tracker.get_positions_by_strategy(signal.strategy)
+                    if self._position_tracker
+                    else []
+                )
 
                 # Apply adaptive sizing multiplier (temporarily scale fixed_amount)
                 multiplier = 1.0
@@ -6921,11 +6926,7 @@ class TradingOrchestrator:
                     qty = strategy.calculate_position_size(
                         signal=signal,
                         account_balance=balance,
-                        current_positions=(
-                            self._position_tracker.positions
-                            if self._position_tracker
-                            else []
-                        ),
+                        current_positions=strategy_positions,
                     )
                 finally:
                     # Restore original amount
