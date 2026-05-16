@@ -29,6 +29,22 @@ def test_select_stocks_supports_symbol_and_max_filters(monkeypatch):
     ]
 
 
+def test_scope_label_includes_codes_and_truncates_long_lists():
+    stocks = [
+        {"code": "AAA", "name": "A", "tier": "top"},
+        {"code": "BBB", "name": "B", "tier": "top"},
+        {"code": "CCC", "name": "C", "tier": "top"},
+        {"code": "DDD", "name": "D", "tier": "top"},
+        {"code": "EEE", "name": "E", "tier": "top"},
+        {"code": "FFF", "name": "F", "tier": "top"},
+    ]
+
+    assert (
+        portfolio._scope_label("all", stocks, max_symbols=6)
+        == "all_first6_AAA_BBB_CCC_DDD_EEE_plus1"
+    )
+
+
 def _daily_df(code: str, rows: int = 3) -> pd.DataFrame:
     return pd.DataFrame(
         {

@@ -69,6 +69,21 @@ def _select_stocks(
     return stocks
 
 
+def _scope_label(
+    tier: str, stocks: list[dict[str, str]], max_symbols: int | None
+) -> str:
+    if not stocks:
+        return tier
+    if max_symbols is not None and max_symbols > 0:
+        prefix = f"{tier}_first{max_symbols}"
+    else:
+        prefix = tier
+    codes = "_".join(str(s.get("code", "")) for s in stocks[:5])
+    if len(stocks) > 5:
+        codes = f"{codes}_plus{len(stocks) - 5}"
+    return f"{prefix}_{codes}" if codes else prefix
+
+
 def _parse_override_value(raw: str) -> Any:
     try:
         return json.loads(raw)
@@ -353,8 +368,9 @@ def main() -> None:
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    tag = f"{args.strategy}_{args.tier}_{args.start}_{args.end}_{stamp}"
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    scope = _scope_label(args.tier, stocks, args.max_symbols)
+    tag = f"{args.strategy}_{scope}_{args.start}_{args.end}_{stamp}"
     metrics_path = output_dir / f"{tag}_metrics.json"
     trades_path = output_dir / f"{tag}_trades.csv"
 
@@ -367,6 +383,8 @@ def main() -> None:
     metrics["symbols_requested"] = len(stocks)
     metrics["symbols_loaded"] = len(frames)
     metrics["symbols_missing"] = missing
+    metrics["symbols_selected"] = [s["code"] for s in stocks]
+    metrics["scope_label"] = scope
     metrics["bars"] = len(data)
     metrics["config"] = config.to_dict()
     metrics["strategy_overrides"] = args.strategy_overrides
