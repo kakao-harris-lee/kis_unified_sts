@@ -181,17 +181,29 @@ class TestDailyPullbackEntry:
         assert sig_mild is not None and sig_deep is not None
         assert sig_deep.confidence > sig_mild.confidence
 
+    async def test_min_confidence_blocks_weak_signal(self):
+        """min_confidence blocks technically valid but low-quality signals."""
+        config = DailyPullbackConfig(min_confidence=0.9)
+        strategy = DailyPullbackEntry(config)
+        context = _make_entry_context(rsi_5=42.0)
+
+        signal = await strategy.generate(context)
+
+        assert signal is None
+
     def test_config_from_dict(self):
         """ConfigMixin.from_dict() works correctly."""
         config = DailyPullbackConfig.from_dict(
             {
                 "sma_long_period": 100,
                 "rsi_oversold": 30.0,
+                "min_confidence": 0.7,
                 "unknown_field": "ignored",
             }
         )
         assert config.sma_long_period == 100
         assert config.rsi_oversold == 30.0
+        assert config.min_confidence == 0.7
         assert config.sma_short_period == 20  # default
 
     def test_config_from_dict_with_params_key(self):
@@ -268,6 +280,23 @@ class TestChandelierExit:
         assert signal.reason == ModelExitReason.STOP_LOSS
         assert signal.priority == 1
 
+    async def test_take_profit_exit(self):
+        """Configured take-profit exits before trailing stop."""
+        strategy = ChandelierExit(ChandelierExitConfig(take_profit_pct=0.10))
+        context = self._make_exit_context(
+            entry_price=70000,
+            close=78000,
+            highest_high=79000,
+            atr=1500,
+        )
+
+        should_exit, signal = await strategy.should_exit(context)
+
+        assert should_exit
+        assert signal.reason == ModelExitReason.TARGET_REACHED
+        assert signal.priority == 2
+        assert signal.metadata["exit_type"] == "take_profit"
+
     async def test_max_hold_exit(self, exit_strategy):
         """Holding > 60 days → time cut."""
         context = self._make_exit_context(
@@ -283,10 +312,12 @@ class TestChandelierExit:
         config = ChandelierExitConfig.from_dict(
             {
                 "atr_multiplier": 2.5,
+                "take_profit_pct": 0.1,
                 "max_hold_days": 30,
             }
         )
         assert config.atr_multiplier == 2.5
+        assert config.take_profit_pct == 0.1
         assert config.max_hold_days == 30
 
 

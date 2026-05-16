@@ -14,7 +14,7 @@ Exit Priority:
 import logging
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
 from shared.config.mixins import ConfigMixin
 from shared.models.signal import ExitReason, ExitSignal
@@ -36,6 +36,9 @@ class ChandelierExitConfig(ConfigMixin):
 
     # Hard stop loss (negative ratio, e.g., -0.07 = -7%)
     hard_stop_pct: float = -0.07
+
+    # Fixed take-profit (positive ratio, e.g., 0.10 = +10%). 0 disables.
+    take_profit_pct: float = 0.0
 
     # Max hold days
     max_hold_days: int = 60
@@ -67,17 +70,22 @@ class ChandelierExit(ExitSignalGenerator[ChandelierExitConfig]):
         assert self.config.atr_period > 0, "atr_period must be positive"
         assert self.config.atr_multiplier > 0, "atr_multiplier must be positive"
         assert self.config.lookback_period > 0, "lookback_period must be positive"
-        assert -1.0 < self.config.hard_stop_pct < 0.0, "hard_stop_pct must be between -1.0 and 0.0"
+        assert (
+            -1.0 < self.config.hard_stop_pct < 0.0
+        ), "hard_stop_pct must be between -1.0 and 0.0"
+        assert (
+            0.0 <= self.config.take_profit_pct < 10.0
+        ), "take_profit_pct must be in [0.0, 10.0)"
         assert self.config.max_hold_days > 0, "max_hold_days must be positive"
-        assert 0 < self.config.default_exit_confidence <= 1.0, "default_exit_confidence must be in (0, 1]"
+        assert (
+            0 < self.config.default_exit_confidence <= 1.0
+        ), "default_exit_confidence must be in (0, 1]"
 
     @property
     def name(self) -> str:
         return "chandelier_exit"
 
-    async def should_exit(
-        self, context: ExitContext
-    ) -> tuple[bool, Optional[ExitSignal]]:
+    async def should_exit(self, context: ExitContext) -> tuple[bool, ExitSignal | None]:
         """Check whether position should be exited."""
         position = context.position
         data = context.market_data or {}
@@ -111,45 +119,81 @@ class ChandelierExit(ExitSignalGenerator[ChandelierExitConfig]):
                 f"ChandelierExit HARD STOP: {code} "
                 f"profit={profit_pct:.2%} <= {self.config.hard_stop_pct:.2%}"
             )
-            return (True, ExitSignal(
-                code=code,
-                reason=ExitReason.STOP_LOSS,
-                strategy="chandelier_exit",
-                current_price=close,
-                exit_price=close,
-                entry_price=entry_price,
-                profit_pct=profit_pct,
-                confidence=1.0,
-                priority=1,
-                timestamp=now,
-                metadata={"exit_type": "hard_stop"},
-            ))
+            return (
+                True,
+                ExitSignal(
+                    code=code,
+                    reason=ExitReason.STOP_LOSS,
+                    strategy="chandelier_exit",
+                    current_price=close,
+                    exit_price=close,
+                    entry_price=entry_price,
+                    profit_pct=profit_pct,
+                    confidence=1.0,
+                    priority=1,
+                    timestamp=now,
+                    metadata={"exit_type": "hard_stop"},
+                ),
+            )
 
-        # --- Priority 2: Max hold days ---
+        # --- Priority 2: Fixed take-profit ---
+        if (
+            self.config.take_profit_pct > 0
+            and profit_pct >= self.config.take_profit_pct
+        ):
+            logger.info(
+                f"ChandelierExit TAKE PROFIT: {code} "
+                f"profit={profit_pct:.2%} >= {self.config.take_profit_pct:.2%}"
+            )
+            return (
+                True,
+                ExitSignal(
+                    code=code,
+                    reason=ExitReason.TARGET_REACHED,
+                    strategy="chandelier_exit",
+                    current_price=close,
+                    exit_price=close,
+                    entry_price=entry_price,
+                    profit_pct=profit_pct,
+                    confidence=self.config.default_exit_confidence,
+                    priority=2,
+                    timestamp=now,
+                    metadata={"exit_type": "take_profit"},
+                ),
+            )
+
+        # --- Priority 3: Max hold days ---
         holding_days = _get("holding_days", 0)
         # Fallback: compute from position.entry_time (paper trading)
-        if holding_days == 0 and hasattr(position, "entry_time") and position.entry_time:
+        if (
+            holding_days == 0
+            and hasattr(position, "entry_time")
+            and position.entry_time
+        ):
             holding_days = (now - position.entry_time).days
         if holding_days >= self.config.max_hold_days:
             logger.info(
                 f"ChandelierExit MAX HOLD: {code} "
                 f"holding_days={holding_days} >= {self.config.max_hold_days}"
             )
-            return (True, ExitSignal(
-                code=code,
-                reason=ExitReason.TIME_CUT,
-                strategy="chandelier_exit",
-                current_price=close,
-                exit_price=close,
-                entry_price=entry_price,
-                profit_pct=profit_pct,
-                confidence=self.config.default_exit_confidence,
-                priority=2,
-                timestamp=now,
-                metadata={"exit_type": "max_hold", "holding_days": holding_days},
-            ))
+            return (
+                True,
+                ExitSignal(
+                    code=code,
+                    reason=ExitReason.TIME_CUT,
+                    strategy="chandelier_exit",
+                    current_price=close,
+                    exit_price=close,
+                    entry_price=entry_price,
+                    profit_pct=profit_pct,
+                    confidence=self.config.default_exit_confidence,
+                    priority=3,
+                    timestamp=now,
+                    metadata={"exit_type": "max_hold", "holding_days": holding_days},
+                ),
+            )
 
-        # --- Priority 3: Chandelier trailing stop ---
+        # --- Priority 4: Chandelier trailing stop ---
         atr = _get("atr", 0)
         highest_high = _get("highest_high", 0)
 
@@ -162,24 +206,27 @@ class ChandelierExit(ExitSignalGenerator[ChandelierExitConfig]):
                     f"close={close:.0f} < chandelier={chandelier_stop:.0f} "
                     f"(HH={highest_high:.0f} - ATR={atr:.0f}×{self.config.atr_multiplier})"
                 )
-                return (True, ExitSignal(
-                    code=code,
-                    reason=ExitReason.TRAILING_STOP,
-                    strategy="chandelier_exit",
-                    current_price=close,
-                    exit_price=close,
-                    entry_price=entry_price,
-                    profit_pct=profit_pct,
-                    confidence=self.config.default_exit_confidence,
-                    priority=3,
-                    timestamp=now,
-                    metadata={
-                        "exit_type": "chandelier",
-                        "chandelier_stop": chandelier_stop,
-                        "highest_high": highest_high,
-                        "atr": atr,
-                    },
-                ))
+                return (
+                    True,
+                    ExitSignal(
+                        code=code,
+                        reason=ExitReason.TRAILING_STOP,
+                        strategy="chandelier_exit",
+                        current_price=close,
+                        exit_price=close,
+                        entry_price=entry_price,
+                        profit_pct=profit_pct,
+                        confidence=self.config.default_exit_confidence,
+                        priority=4,
+                        timestamp=now,
+                        metadata={
+                            "exit_type": "chandelier",
+                            "chandelier_stop": chandelier_stop,
+                            "highest_high": highest_high,
+                            "atr": atr,
+                        },
+                    ),
+                )
 
         return (False, None)
 
@@ -187,7 +234,7 @@ class ChandelierExit(ExitSignalGenerator[ChandelierExitConfig]):
         self,
         positions: list,
         market_data: dict[str, Any],
-        market_state: Optional[MarketStateProtocol] = None,
+        market_state: MarketStateProtocol | None = None,
     ) -> list[ExitSignal]:
         """Scan multiple positions for exit signals."""
         signals = []

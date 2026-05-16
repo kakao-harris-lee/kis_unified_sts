@@ -83,6 +83,38 @@ def test_build_backtest_config_accepts_position_overrides():
     assert cfg.max_positions == 4
 
 
+def test_apply_strategy_overrides_updates_copy_only():
+    original = {
+        "strategy": {
+            "entry": {"params": {"rsi_oversold": 45.0}},
+            "exit": {"params": {"hard_stop_pct": -0.07}},
+        }
+    }
+
+    cfg = portfolio._apply_strategy_overrides(
+        original,
+        [
+            "entry.params.rsi_oversold=40",
+            "strategy.exit.params.hard_stop_pct=-0.05",
+            "paper.enabled=false",
+        ],
+    )
+
+    assert cfg["strategy"]["entry"]["params"]["rsi_oversold"] == 40
+    assert cfg["strategy"]["exit"]["params"]["hard_stop_pct"] == -0.05
+    assert cfg["strategy"]["paper"]["enabled"] is False
+    assert original["strategy"]["entry"]["params"]["rsi_oversold"] == 45.0
+
+
+def test_apply_strategy_overrides_rejects_unknown_root():
+    try:
+        portfolio._apply_strategy_overrides({}, ["unknown.params.foo=1"])
+    except ValueError as exc:
+        assert "Override path must start" in str(exc)
+    else:
+        raise AssertionError("expected ValueError")
+
+
 def test_daily_portfolio_adapter_keeps_indicator_windows_per_symbol(monkeypatch):
     created = []
 

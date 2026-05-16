@@ -53,6 +53,58 @@ def _select_stocks(tier: str) -> list[dict[str, str]]:
     return [s for s in STOCK_UNIVERSE if s["tier"] == tier]
 
 
+def _parse_override_value(raw: str) -> Any:
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        pass
+    lowered = raw.strip().lower()
+    if lowered == "true":
+        return True
+    if lowered == "false":
+        return False
+    if lowered == "null":
+        return None
+    return raw
+
+
+def _apply_strategy_overrides(
+    strategy_config: dict[str, Any], overrides: list[str]
+) -> dict[str, Any]:
+    """Apply dotted-path strategy overrides to a copied config.
+
+    Paths are relative to the ``strategy`` section by default, so both
+    ``entry.params.rsi_oversold=40`` and
+    ``strategy.entry.params.rsi_oversold=40`` are valid.
+    """
+    cfg = copy.deepcopy(strategy_config)
+    allowed_roots = {"entry", "exit", "position", "backtest", "paper", "indicators"}
+
+    for item in overrides:
+        if "=" not in item:
+            raise ValueError(f"Override must be KEY=VALUE: {item!r}")
+        raw_path, raw_value = item.split("=", 1)
+        parts = [part.strip() for part in raw_path.split(".") if part.strip()]
+        if not parts:
+            raise ValueError(f"Override path is empty: {item!r}")
+        if parts[0] == "strategy":
+            parts = parts[1:]
+        if not parts or parts[0] not in allowed_roots:
+            raise ValueError(
+                "Override path must start with one of "
+                f"{sorted(allowed_roots)} or 'strategy.': {raw_path!r}"
+            )
+
+        target = cfg.setdefault("strategy", {})
+        for part in parts[:-1]:
+            next_target = target.setdefault(part, {})
+            if not isinstance(next_target, dict):
+                raise ValueError(f"Override path is not a mapping: {raw_path!r}")
+            target = next_target
+        target[parts[-1]] = _parse_override_value(raw_value)
+    return cfg
+
+
 def _build_backtest_config(
     strategy_config: dict[str, Any],
     initial_capital: float,
@@ -193,6 +245,18 @@ def main() -> None:
         default=None,
         help="Override max concurrent positions from strategy YAML.",
     )
+    parser.add_argument(
+        "--set",
+        dest="strategy_overrides",
+        action="append",
+        default=[],
+        metavar="PATH=VALUE",
+        help=(
+            "Override a strategy config value for this run, e.g. "
+            "--set entry.params.rsi_oversold=40 or "
+            "--set exit.params.hard_stop_pct=-0.05"
+        ),
+    )
     parser.add_argument("--output-dir", default="output/analysis/portfolio_backtest")
     args = parser.parse_args()
 
@@ -203,6 +267,9 @@ def main() -> None:
 
     register_builtin_components()
     strategy_config = ConfigLoader.load_strategy("stock", args.strategy)
+    strategy_config = _apply_strategy_overrides(
+        strategy_config, args.strategy_overrides
+    )
     timeframe = strategy_config.get("strategy", {}).get("timeframe", "minute")
     if timeframe not in ("minute", "daily"):
         raise SystemExit(f"Unsupported timeframe for '{args.strategy}': {timeframe}")
@@ -271,6 +338,7 @@ def main() -> None:
     metrics["symbols_missing"] = missing
     metrics["bars"] = len(data)
     metrics["config"] = config.to_dict()
+    metrics["strategy_overrides"] = args.strategy_overrides
     metrics_path.write_text(
         json.dumps(metrics, ensure_ascii=False, indent=2), encoding="utf-8"
     )

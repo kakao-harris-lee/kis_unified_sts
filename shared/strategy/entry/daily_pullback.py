@@ -14,11 +14,8 @@ Entry Conditions (Long):
 """
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Optional
-
-import numpy as np
 
 from shared.config.mixins import ConfigMixin
 from shared.models.signal import Signal, SignalType
@@ -52,6 +49,7 @@ class DailyPullbackConfig(ConfigMixin):
 
     # Confidence
     confidence_base: float = 0.6
+    min_confidence: float = 0.0
 
 
 class DailyPullbackEntry(EntrySignalGenerator[DailyPullbackConfig]):
@@ -78,10 +76,19 @@ class DailyPullbackEntry(EntrySignalGenerator[DailyPullbackConfig]):
         assert self.config.sma_short_period > 0, "sma_short_period must be positive"
         assert self.config.sma_mid_period > 0, "sma_mid_period must be positive"
         assert self.config.rsi_period > 0, "rsi_period must be positive"
-        assert 0 < self.config.rsi_oversold < 100, "rsi_oversold must be between 0 and 100"
+        assert (
+            0 < self.config.rsi_oversold < 100
+        ), "rsi_oversold must be between 0 and 100"
         assert self.config.stop_loss_pct > 0, "stop_loss_pct must be positive"
-        assert self.config.signal_cooldown_days >= 0, "signal_cooldown_days must be >= 0"
-        assert 0 < self.config.confidence_base <= 1.0, "confidence_base must be in (0, 1]"
+        assert (
+            self.config.signal_cooldown_days >= 0
+        ), "signal_cooldown_days must be >= 0"
+        assert (
+            0 < self.config.confidence_base <= 1.0
+        ), "confidence_base must be in (0, 1]"
+        assert (
+            0.0 <= self.config.min_confidence <= 1.0
+        ), "min_confidence must be in [0, 1]"
 
     @property
     def name(self) -> str:
@@ -91,7 +98,7 @@ class DailyPullbackEntry(EntrySignalGenerator[DailyPullbackConfig]):
     def required_indicators(self) -> list[str]:
         return ["sma_200", "sma_20", "sma_60", "rsi_5"]
 
-    async def generate(self, context: EntryContext) -> Optional[Signal]:
+    async def generate(self, context: EntryContext) -> Signal | None:
         """Generate entry signal based on daily pullback conditions."""
         data = context.market_data or {}
         indicators = context.indicators or {}
@@ -143,13 +150,14 @@ class DailyPullbackEntry(EntrySignalGenerator[DailyPullbackConfig]):
         if self.config.require_mid_trend:
             sma_mid = _get("sma_60", 0)
             sma_mid_prev = _get("sma_60_prev", 0)
-            if sma_mid > 0 and sma_mid_prev > 0:
-                if sma_mid <= sma_mid_prev:
-                    return None
+            if sma_mid > 0 and sma_mid_prev > 0 and sma_mid <= sma_mid_prev:
+                return None
 
         # --- Calculate stop loss and confidence ---
         stop_loss = close * (1.0 - self.config.stop_loss_pct / 100.0)
         confidence = self._calculate_confidence(close, sma_long, sma_short, rsi)
+        if confidence < self.config.min_confidence:
+            return None
 
         logger.info(
             f"DailyPullback LONG signal: {code} close={close:.0f}, "
