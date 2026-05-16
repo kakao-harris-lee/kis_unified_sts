@@ -31,6 +31,7 @@ def _config(**overrides):
         "skip_live_redis_gates_on_non_trading_day": True,
         "clickhouse_database": "market",
         "clickhouse_table": "stock_trades",
+        "clickhouse_position_table": "swing_positions",
         "redis_keys": {},
     }
     base.update(overrides)
@@ -67,6 +68,15 @@ def _redis(**overrides):
     }
     base.update(overrides)
     return mod.RedisSnapshot(**base)
+
+
+def _ch(**overrides):
+    base = {
+        "open_positions_count": 0,
+        "open_position_samples": [],
+    }
+    base.update(overrides)
+    return mod.ClickHousePositionSnapshot(**base)
 
 
 def _trade(
@@ -144,6 +154,36 @@ def test_evaluate_report_flags_objective_failures():
     assert "win_rate_below_target" in codes
     assert "mdd_above_target" in codes
     assert "equity_curve_not_upward" in codes
+
+
+def test_evaluate_report_flags_clickhouse_position_mismatch():
+    cfg = _config()
+    metrics = mod.TradeMetrics(
+        trade_count=5,
+        winning_trades=3,
+        losing_trades=2,
+        win_rate_pct=60.0,
+        monthly_expected_return_pct=12.0,
+        max_drawdown_pct=3.0,
+        equity_slope_krw_per_trade=1000.0,
+        equity_is_upward=True,
+    )
+
+    issues = mod.evaluate_report(
+        cfg,
+        metrics,
+        _redis(open_positions_count=0),
+        clickhouse_position_snapshot=_ch(
+            open_positions_count=1,
+            open_position_samples=["108490:external:2026-05-13T12:34:44"],
+        ),
+    )
+
+    assert [issue.code for issue in issues] == [
+        "clickhouse_open_positions_exceed_redis"
+    ]
+    assert "clickhouse=1 redis=0" in issues[0].observed
+    assert "108490:external" in issues[0].observed
 
 
 def test_non_trading_day_skips_live_redis_ttl_gates():
@@ -471,6 +511,35 @@ def test_build_report_separates_active_strategy_metrics():
     assert report.active_trade_metrics.win_rate_pct == 60.0
     assert report.active_issues == []
     assert "momentum_breakout" not in report.active_trade_metrics.by_strategy
+
+
+def test_build_report_includes_clickhouse_position_snapshot_in_verdict():
+    cfg = _config(min_closed_trades_for_metric_gate=5)
+    rows = [
+        _trade(1, 350_000),
+        _trade(2, 300_000),
+        _trade(3, 250_000),
+        _trade(4, -100_000),
+        _trade(5, -50_000),
+    ]
+
+    report = mod.build_report(
+        config=cfg,
+        report_date=date(2026, 5, 16),
+        rows=rows,
+        redis_snapshot=_redis(open_positions_count=0),
+        clickhouse_position_snapshot=_ch(
+            open_positions_count=1,
+            open_position_samples=["108490:external:2026-05-13T12:34:44"],
+        ),
+    )
+
+    assert report.verdict == "FAIL"
+    assert report.clickhouse_position_snapshot.open_positions_count == 1
+    assert any(
+        issue.code == "clickhouse_open_positions_exceed_redis"
+        for issue in report.issues
+    )
 
 
 def test_active_strategy_scope_warns_when_not_yet_verified():

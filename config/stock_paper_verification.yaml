@@ -25,6 +25,7 @@ targets:
 clickhouse:
   database: ${CLICKHOUSE_STOCK_DATABASE:market}
   table: "stock_trades"
+  position_table: "swing_positions"
 
 redis:
   status_key: "trading:stock:status"

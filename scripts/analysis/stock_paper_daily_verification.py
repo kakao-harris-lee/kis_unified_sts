@@ -60,6 +60,7 @@ class VerificationConfig:
     skip_live_redis_gates_on_non_trading_day: bool
     clickhouse_database: str
     clickhouse_table: str
+    clickhouse_position_table: str
     redis_keys: dict[str, str]
 
 
@@ -132,6 +133,12 @@ class RedisSnapshot:
     daily_strategy_counts: dict[str, int]
 
 
+@dataclass
+class ClickHousePositionSnapshot:
+    open_positions_count: int = 0
+    open_position_samples: list[str] = field(default_factory=list)
+
+
 @dataclass(frozen=True)
 class GateIssue:
     severity: str
@@ -157,6 +164,7 @@ class VerificationReport:
     active_trade_metrics: TradeMetrics
     active_issues: list[GateIssue]
     redis_snapshot: RedisSnapshot
+    clickhouse_position_snapshot: ClickHousePositionSnapshot
     json_path: str = ""
     markdown_path: str = ""
     notification_sent: bool = False
@@ -288,6 +296,9 @@ def _load_config() -> VerificationConfig:
         ),
         clickhouse_database=str(clickhouse.get("database", "market")),
         clickhouse_table=str(clickhouse.get("table", "stock_trades")),
+        clickhouse_position_table=str(
+            clickhouse.get("position_table", "swing_positions")
+        ),
         redis_keys={str(k): str(v) for k, v in redis_cfg.items()},
     )
 
@@ -393,6 +404,42 @@ def fetch_trade_rows(
         )
         for row in rows
     ]
+
+
+def fetch_clickhouse_position_snapshot(
+    config: VerificationConfig,
+) -> ClickHousePositionSnapshot:
+    """Fetch open swing-position state from ClickHouse.
+
+    Redis is the runtime source of truth for current paper positions, but stale
+    open rows in ``swing_positions`` can pollute recovery/debug paths. Keep this
+    as a separate operational snapshot instead of mixing it into trade metrics.
+    """
+    database = _validate_identifier(config.clickhouse_database, label="database")
+    table = _validate_identifier(config.clickhouse_position_table, label="table")
+    client = _build_clickhouse_client(database)
+    try:
+        count_rows = client.execute(
+            f"SELECT count() FROM {database}.{table} FINAL WHERE is_open = 1"
+        )
+        sample_rows = client.execute(f"""
+            SELECT code, strategy, entry_date
+            FROM {database}.{table} FINAL
+            WHERE is_open = 1
+            ORDER BY entry_date ASC, code ASC
+            LIMIT 10
+            """)
+    finally:
+        client.disconnect()
+
+    count = int(count_rows[0][0] or 0) if count_rows else 0
+    samples = []
+    for code, strategy, entry_date in sample_rows:
+        samples.append(f"{code}:{strategy}:{_coerce_datetime(entry_date).isoformat()}")
+    return ClickHousePositionSnapshot(
+        open_positions_count=count,
+        open_position_samples=samples,
+    )
 
 
 def load_active_stock_strategy_names(*, timeframe: str | None = None) -> list[str]:
@@ -794,6 +841,7 @@ def evaluate_report(
     config: VerificationConfig,
     metrics: TradeMetrics,
     redis_snapshot: RedisSnapshot,
+    clickhouse_position_snapshot: ClickHousePositionSnapshot | None = None,
     source_errors: list[str] | None = None,
 ) -> list[GateIssue]:
     issues: list[GateIssue] = []
@@ -811,6 +859,23 @@ def evaluate_report(
             error,
             "source query succeeds",
             "A verification data source failed.",
+        )
+
+    if (
+        clickhouse_position_snapshot is not None
+        and clickhouse_position_snapshot.open_positions_count
+        > redis_snapshot.open_positions_count
+    ):
+        samples = ",".join(clickhouse_position_snapshot.open_position_samples[:3])
+        add(
+            "FAIL",
+            "clickhouse_open_positions_exceed_redis",
+            (
+                f"clickhouse={clickhouse_position_snapshot.open_positions_count} "
+                f"redis={redis_snapshot.open_positions_count} samples={samples}"
+            ),
+            "ClickHouse open swing positions <= Redis runtime open positions",
+            "ClickHouse has open swing-position rows that are absent from the runtime Redis position state.",
         )
 
     live_redis_gates_enabled = (
@@ -1185,6 +1250,11 @@ def _render_markdown(report: VerificationReport, config: VerificationConfig) -> 
         f"- Daily indicators: `{r.daily_indicators_exists}` count=`{r.daily_indicators_count}`",
         f"- Daily strategy candidates: total=`{r.daily_strategy_candidate_count}` counts=`{r.daily_strategy_counts}`",
         "",
+        "## ClickHouse Position State",
+        "",
+        f"- Open swing positions: `{report.clickhouse_position_snapshot.open_positions_count}`",
+        f"- Open swing samples: `{report.clickhouse_position_snapshot.open_position_samples}`",
+        "",
     ]
     if report.source_errors:
         lines.extend(["## Source Errors", ""])
@@ -1269,6 +1339,7 @@ def _format_notification(report: VerificationReport) -> str:
         f"monthly_expected: <code>{m.monthly_expected_return_pct:.2f}%</code>, win_rate: <code>{m.win_rate_pct:.2f}%</code>, mdd: <code>{m.max_drawdown_pct:.2f}%</code>",
         f"active_trades: <code>{active.trade_count}</code>, active_monthly_expected: <code>{active.monthly_expected_return_pct:.2f}%</code>, active_win_rate: <code>{active.win_rate_pct:.2f}%</code>",
         f"active_daily_candidates: <code>{report.active_daily_candidate_count}</code>",
+        f"ch_open_positions: <code>{report.clickhouse_position_snapshot.open_positions_count}</code>",
     ]
     verdict_issues = _issues_for_verdict(report)
     if verdict_issues:
@@ -1309,6 +1380,7 @@ def build_report(
     report_date: date,
     rows: list[TradeRow],
     redis_snapshot: RedisSnapshot,
+    clickhouse_position_snapshot: ClickHousePositionSnapshot | None = None,
     source_errors: list[str] | None = None,
     active_strategy_names: list[str] | None = None,
     active_daily_strategy_names: list[str] | None = None,
@@ -1321,6 +1393,7 @@ def build_report(
         monthly_trading_days=config.monthly_trading_days,
         reentry_churn_seconds=config.reentry_churn_seconds,
     )
+    clickhouse_snapshot = clickhouse_position_snapshot or ClickHousePositionSnapshot()
     active_names = sorted(set(active_strategy_names or []))
     active_rows = _filter_active_strategy_rows(rows, active_names)
     active_metrics = summarize_trades(
@@ -1331,7 +1404,13 @@ def build_report(
         reentry_churn_seconds=config.reentry_churn_seconds,
     )
     errors = source_errors or []
-    issues = evaluate_report(config, metrics, redis_snapshot, source_errors=errors)
+    issues = evaluate_report(
+        config,
+        metrics,
+        redis_snapshot,
+        clickhouse_position_snapshot=clickhouse_snapshot,
+        source_errors=errors,
+    )
     active_daily_names = sorted(set(active_daily_strategy_names or []))
     daily_issues, active_daily_candidate_count = evaluate_active_daily_watchlist_gates(
         config,
@@ -1367,6 +1446,7 @@ def build_report(
         active_trade_metrics=active_metrics,
         active_issues=active_issues,
         redis_snapshot=redis_snapshot,
+        clickhouse_position_snapshot=clickhouse_snapshot,
     )
 
 
@@ -1400,6 +1480,10 @@ def empty_redis_snapshot(report_date: date) -> RedisSnapshot:
         daily_strategy_candidate_count=0,
         daily_strategy_counts={},
     )
+
+
+def empty_clickhouse_position_snapshot() -> ClickHousePositionSnapshot:
+    return ClickHousePositionSnapshot()
 
 
 def _source_error(code: str, exc: Exception) -> str:
@@ -1448,6 +1532,13 @@ def main() -> int:
             rows = []
             source_errors.append(_source_error("clickhouse_query_failed", exc))
         try:
+            clickhouse_position_snapshot = fetch_clickhouse_position_snapshot(config)
+        except Exception as exc:  # noqa: BLE001
+            clickhouse_position_snapshot = empty_clickhouse_position_snapshot()
+            source_errors.append(
+                _source_error("clickhouse_open_positions_query_failed", exc)
+            )
+        try:
             redis_snapshot = fetch_redis_snapshot(config, report_date)
         except Exception as exc:  # noqa: BLE001
             redis_snapshot = empty_redis_snapshot(report_date)
@@ -1457,6 +1548,7 @@ def main() -> int:
             report_date=report_date,
             rows=rows,
             redis_snapshot=redis_snapshot,
+            clickhouse_position_snapshot=clickhouse_position_snapshot,
             source_errors=source_errors,
             active_strategy_names=active_strategy_names,
             active_daily_strategy_names=active_daily_strategy_names,
