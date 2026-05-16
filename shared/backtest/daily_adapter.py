@@ -23,6 +23,7 @@ import pandas as pd
 from shared.backtest.engine import ExitReason, SignalType
 from shared.backtest.metadata import load_backtest_metadata, resolve_symbol_metadata
 from shared.config import ConfigLoader
+from shared.indicators.momentum import calculate_all_momentum
 from shared.models.position import Position as ModelPosition
 from shared.models.position import PositionSide
 from shared.regime.adaptive_detector import AdaptiveRegimeConfig, AdaptiveRegimeDetector
@@ -51,18 +52,23 @@ class DailyBacktestAdapter:
         self._backtest_metadata = load_backtest_metadata(strategy_config)
         self._entry_start = entry_start
 
-        entry_params = (
-            strategy_config.get("strategy", {}).get("entry", {}).get("params", {})
-        )
-        exit_params = (
-            strategy_config.get("strategy", {}).get("exit", {}).get("params", {})
-        )
+        entry_section = strategy_config.get("strategy", {}).get("entry", {})
+        exit_section = strategy_config.get("strategy", {}).get("exit", {})
+        self._entry_type = str(entry_section.get("type", "") or "")
+        self._exit_type = str(exit_section.get("type", "") or "")
+        entry_params = entry_section.get("params", {}) or {}
+        exit_params = exit_section.get("params", {}) or {}
 
         # Entry indicator periods
         self._sma_long = entry_params.get("sma_long_period", 200)
         self._sma_short = entry_params.get("sma_short_period", 20)
         self._sma_mid = entry_params.get("sma_mid_period", 60)
         self._rsi_period = entry_params.get("rsi_period", 5)
+        self._williams_r_period = entry_params.get("williams_r_period", 14)
+        self._macd_fast = entry_params.get("macd_fast", 12)
+        self._macd_slow = entry_params.get("macd_slow", 26)
+        self._macd_signal = entry_params.get("macd_signal", 9)
+        self._volume_lookback = entry_params.get("volume_lookback", 20)
         self._mid_trend_lookback = entry_params.get("mid_trend_lookback", 5)
 
         # Exit indicator periods
@@ -84,13 +90,8 @@ class DailyBacktestAdapter:
         if self._series_window < 80:
             self._series_window = 80
 
-        # Warmup indicator key: strategy-dependent
-        # daily_pullback needs sma_200; vr_composite computes its own indicators
-        self._warmup_key = "sma_200" if self._sma_long >= 100 else None
-        self._warmup_bars = max(
-            self._sma_long,
-            entry_params.get("vr_period", 20) + entry_params.get("ma_long", 60),
-        )
+        self._warmup_key = self._resolve_warmup_key(entry_params)
+        self._warmup_bars = self._resolve_warmup_bars(entry_params, exit_params)
 
         # Position state (synced from BacktestEngine)
         self._current_position: dict[str, Any] | None = None
@@ -113,6 +114,101 @@ class DailyBacktestAdapter:
                     f"Failed to initialize regime detector: {e}. Disabling regime detection."
                 )
                 self._regime_detection_enabled = False
+
+    @staticmethod
+    def _int_param(params: dict[str, Any], key: str, default: int = 0) -> int:
+        try:
+            return int(params.get(key, default) or 0)
+        except (TypeError, ValueError):
+            return int(default)
+
+    def _resolve_warmup_key(self, entry_params: dict[str, Any]) -> str | None:
+        """Return a required indicator key only when a strategy really needs it."""
+        uses_long_sma = (
+            self._entry_type == "daily_pullback" or "sma_long_period" in entry_params
+        )
+        if uses_long_sma and self._sma_long >= 100:
+            return "sma_200"
+        return None
+
+    def _resolve_warmup_bars(
+        self,
+        entry_params: dict[str, Any],
+        exit_params: dict[str, Any],
+    ) -> int:
+        periods: list[int] = []
+
+        if self._entry_type == "daily_pullback" or "sma_long_period" in entry_params:
+            periods.extend(
+                [
+                    self._sma_long,
+                    self._sma_mid + self._mid_trend_lookback,
+                    self._sma_short,
+                    self._rsi_period,
+                ]
+            )
+
+        if (
+            self._entry_type == "vr_composite"
+            or "vr_period" in entry_params
+            or "ma_long" in entry_params
+        ):
+            vr_period = self._int_param(entry_params, "vr_period", 20)
+            ma_long = self._int_param(entry_params, "ma_long", 60)
+            periods.extend(
+                [
+                    vr_period + ma_long,
+                    ma_long,
+                    self._int_param(entry_params, "ma_mid", 20),
+                    self._int_param(entry_params, "ma_short", 5),
+                    self._rsi_period,
+                ]
+            )
+
+        if (
+            self._entry_type == "technical_consensus"
+            or "williams_r_period" in entry_params
+            or "macd_slow" in entry_params
+        ):
+            macd_fast = self._int_param(entry_params, "macd_fast", self._macd_fast)
+            macd_slow = self._int_param(entry_params, "macd_slow", self._macd_slow)
+            macd_signal = self._int_param(
+                entry_params,
+                "macd_signal",
+                self._macd_signal,
+            )
+            periods.extend(
+                [
+                    self._rsi_period + 1,
+                    self._williams_r_period + 1,
+                    max(macd_fast, macd_slow) + macd_signal,
+                    self._volume_lookback + 1,
+                    20,
+                ]
+            )
+
+        if self._exit_type == "chandelier_exit" or {
+            "atr_period",
+            "lookback_period",
+        } & set(exit_params):
+            periods.extend([self._atr_period, self._lookback_period])
+
+        if self._exit_type == "vr_composite_exit":
+            vr_period = self._int_param(exit_params, "vr_period", 20)
+            ma_long = self._int_param(exit_params, "ma_long", 60)
+            periods.extend(
+                [
+                    vr_period + ma_long,
+                    ma_long,
+                    self._int_param(exit_params, "ma_mid", 20),
+                    self._int_param(exit_params, "ma_short", 5),
+                    self._int_param(exit_params, "rsi_period", self._rsi_period),
+                ]
+            )
+
+        if not periods:
+            periods.append(max(1, self._rsi_period))
+        return max(1, max(periods))
 
     def _context_metadata(
         self,
@@ -179,6 +275,31 @@ class DailyBacktestAdapter:
         # RSI
         df["rsi_5"] = self._compute_rsi(df["close"], self._rsi_period)
 
+        # Technical-consensus indicators (RSI / Williams %R / MACD).
+        momentum = calculate_all_momentum(
+            df[["open", "high", "low", "close", "volume"]].copy(),
+            rsi_period=self._rsi_period,
+            williams_r_period=self._williams_r_period,
+            macd_fast=self._macd_fast,
+            macd_slow=self._macd_slow,
+            macd_signal=self._macd_signal,
+            include_obv=False,
+        )
+        df["rsi"] = momentum["rsi"]
+        df["prev_rsi"] = df["rsi"].shift(1)
+        df["williams_r"] = momentum["williams_r"]
+        df["prev_williams_r"] = df["williams_r"].shift(1)
+        df["macd_hist"] = momentum["macd_oscillator"]
+        df["prev_macd_hist"] = df["macd_hist"].shift(1)
+        df["ma20"] = df["close"].rolling(window=20, min_periods=1).mean()
+        volume_avg = (
+            df["volume"]
+            .shift(1)
+            .rolling(window=max(1, int(self._volume_lookback)), min_periods=1)
+            .mean()
+        )
+        df["volume_ratio"] = np.where(volume_avg > 0, df["volume"] / volume_avg, 1.0)
+
         # ATR (True Range based)
         high = df["high"]
         low = df["low"]
@@ -207,6 +328,14 @@ class DailyBacktestAdapter:
             "sma_60",
             "sma_60_prev",
             "rsi_5",
+            "rsi",
+            "prev_rsi",
+            "williams_r",
+            "prev_williams_r",
+            "macd_hist",
+            "prev_macd_hist",
+            "ma20",
+            "volume_ratio",
             "atr",
             "highest_high",
         ]
@@ -230,9 +359,14 @@ class DailyBacktestAdapter:
             self._raw_lows = []
 
         warmup = self._warmup_bars
-        valid_count = sum(
-            1 for r in self._precomputed if not np.isnan(r.get("sma_200", float("nan")))
-        )
+        if self._warmup_key:
+            valid_count = sum(
+                1
+                for r in self._precomputed
+                if not np.isnan(r.get(self._warmup_key, float("nan")))
+            )
+        else:
+            valid_count = max(0, len(self._precomputed) - self._warmup_bars + 1)
         logger.info(
             f"DailyBacktestAdapter: pre-computed {len(self._precomputed)} bars, "
             f"{valid_count} valid (warmup={warmup})"

@@ -86,18 +86,89 @@ def _scope_label(
 
 def _daily_warmup_bars(strategy_config: dict[str, Any]) -> int:
     strategy = strategy_config.get("strategy", {})
-    entry_params = strategy.get("entry", {}).get("params", {})
-    exit_params = strategy.get("exit", {}).get("params", {})
-    periods = [
-        entry_params.get("sma_long_period", 0),
-        entry_params.get("sma_mid_period", 0)
-        + entry_params.get("mid_trend_lookback", 0),
-        entry_params.get("sma_short_period", 0),
-        entry_params.get("rsi_period", 0),
-        entry_params.get("vr_period", 0) + entry_params.get("ma_long", 0),
-        exit_params.get("atr_period", 0),
-        exit_params.get("lookback_period", 0),
-    ]
+    entry = strategy.get("entry", {})
+    exit_ = strategy.get("exit", {})
+    entry_type = str(entry.get("type", "") or "")
+    exit_type = str(exit_.get("type", "") or "")
+    entry_params = entry.get("params", {}) or {}
+    exit_params = exit_.get("params", {}) or {}
+
+    def int_param(params: dict[str, Any], key: str, default: int = 0) -> int:
+        try:
+            return int(params.get(key, default) or 0)
+        except (TypeError, ValueError):
+            return int(default)
+
+    periods: list[int] = []
+    if entry_type == "daily_pullback" or "sma_long_period" in entry_params:
+        periods.extend(
+            [
+                int_param(entry_params, "sma_long_period", 200),
+                int_param(entry_params, "sma_mid_period", 60)
+                + int_param(entry_params, "mid_trend_lookback", 0),
+                int_param(entry_params, "sma_short_period", 20),
+                int_param(entry_params, "rsi_period", 5),
+            ]
+        )
+
+    if (
+        entry_type == "vr_composite"
+        or "vr_period" in entry_params
+        or "ma_long" in entry_params
+    ):
+        vr_period = int_param(entry_params, "vr_period", 20)
+        ma_long = int_param(entry_params, "ma_long", 60)
+        periods.extend(
+            [
+                vr_period + ma_long,
+                ma_long,
+                int_param(entry_params, "ma_mid", 20),
+                int_param(entry_params, "ma_short", 5),
+                int_param(entry_params, "rsi_period", 14),
+            ]
+        )
+
+    if (
+        entry_type == "technical_consensus"
+        or "williams_r_period" in entry_params
+        or "macd_slow" in entry_params
+    ):
+        macd_fast = int_param(entry_params, "macd_fast", 12)
+        macd_slow = int_param(entry_params, "macd_slow", 26)
+        macd_signal = int_param(entry_params, "macd_signal", 9)
+        periods.extend(
+            [
+                int_param(entry_params, "rsi_period", 14) + 1,
+                int_param(entry_params, "williams_r_period", 14) + 1,
+                max(macd_fast, macd_slow) + macd_signal,
+                int_param(entry_params, "volume_lookback", 20) + 1,
+                20,
+            ]
+        )
+
+    if exit_type == "chandelier_exit" or {"atr_period", "lookback_period"} & set(
+        exit_params
+    ):
+        periods.extend(
+            [
+                int_param(exit_params, "atr_period", 22),
+                int_param(exit_params, "lookback_period", 22),
+            ]
+        )
+
+    if exit_type == "vr_composite_exit":
+        vr_period = int_param(exit_params, "vr_period", 20)
+        ma_long = int_param(exit_params, "ma_long", 60)
+        periods.extend(
+            [
+                vr_period + ma_long,
+                ma_long,
+                int_param(exit_params, "ma_mid", 20),
+                int_param(exit_params, "ma_short", 5),
+                int_param(exit_params, "rsi_period", 14),
+            ]
+        )
+
     return max((int(p or 0) for p in periods), default=0)
 
 
