@@ -17,10 +17,12 @@ import logging
 import os
 import sys
 from datetime import date, datetime
+from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pandas as pd
+from dotenv import load_dotenv
 
 from shared.collector.historical.calendar import (
     get_previous_trading_day,
@@ -40,16 +42,24 @@ logging.basicConfig(
 )
 logger = logging.getLogger("daily_indicator_scanner")
 
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+
 DEFAULT_SYMBOLS = [item["code"] for item in STOCK_UNIVERSE]
 
 REDIS_KEY = "system:daily_indicators:latest"
 REDIS_TTL = 86400  # 24h
 
 
+def _load_repo_env() -> None:
+    """Load repo-local .env for standalone cron/manual runs."""
+    load_dotenv(_REPO_ROOT / ".env", override=False)
+
+
 def get_clickhouse_client():
     """Create ClickHouse client from env vars."""
     import clickhouse_connect
 
+    _load_repo_env()
     return clickhouse_connect.get_client(
         host=os.getenv("CLICKHOUSE_HOST", "localhost"),
         port=int(os.getenv("CLICKHOUSE_PORT", "8123")),

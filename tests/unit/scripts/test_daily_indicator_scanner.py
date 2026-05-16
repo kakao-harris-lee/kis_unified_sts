@@ -4,10 +4,12 @@ import pandas as pd
 
 from scripts.daily_indicator_scanner import (
     compute_indicators,
+    get_clickhouse_client,
     is_fresh_daily_data,
     latest_candle_date,
     load_daily_candles,
 )
+import scripts.daily_indicator_scanner as scanner
 from shared.collector.historical.calendar import trading_day_lag
 from shared.collector.historical.daily_quality import DailyCandleQualityConfig
 
@@ -62,6 +64,29 @@ def test_compute_indicators_includes_daily_volume_ratio():
     assert indicators is not None
     assert "daily_volume_ratio" in indicators
     assert indicators["daily_volume_ratio"] == 2.0
+
+
+def test_get_clickhouse_client_loads_repo_env(tmp_path, monkeypatch):
+    calls = {}
+
+    def fake_load_dotenv(path, override=False):
+        calls["dotenv"] = (path, override)
+
+    def fake_get_client(**kwargs):
+        calls["client"] = kwargs
+        return object()
+
+    monkeypatch.setattr(scanner, "_REPO_ROOT", tmp_path)
+    monkeypatch.setattr(scanner, "load_dotenv", fake_load_dotenv)
+    monkeypatch.setenv("CLICKHOUSE_USER", "u")
+    monkeypatch.setenv("CLICKHOUSE_PASSWORD", "p")
+    monkeypatch.setattr("clickhouse_connect.get_client", fake_get_client)
+
+    get_clickhouse_client()
+
+    assert calls["dotenv"] == (tmp_path / ".env", False)
+    assert calls["client"]["username"] == "u"
+    assert calls["client"]["password"] == "p"
 
 
 def test_load_daily_candles_fetches_extra_and_filters_placeholder_run():
