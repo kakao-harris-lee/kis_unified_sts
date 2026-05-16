@@ -54,6 +54,7 @@ class VerificationConfig:
     reentry_churn_seconds: int
     min_fresh_ratio: float
     require_redis_status: bool
+    max_redis_status_age_seconds: float
     require_trade_targets: bool
     require_daily_indicators: bool
     skip_live_redis_gates_on_non_trading_day: bool
@@ -108,6 +109,8 @@ class RedisSnapshot:
     status_exists: bool
     status_ttl_seconds: int
     status_age_seconds: float | None
+    status_updated_at: str | None
+    status_publisher_pid: str | None
     state: str
     configured_symbols: int
     data_provider: dict[str, Any]
@@ -260,6 +263,9 @@ def _load_config() -> VerificationConfig:
             0.0, min(1.0, _as_float(targets.get("min_fresh_ratio"), 0.5))
         ),
         require_redis_status=_as_bool(targets.get("require_redis_status"), True),
+        max_redis_status_age_seconds=float(
+            targets.get("max_redis_status_age_seconds", 600.0) or 600.0
+        ),
         require_trade_targets=_as_bool(targets.get("require_trade_targets"), True),
         require_daily_indicators=_as_bool(
             targets.get("require_daily_indicators"), True
@@ -593,6 +599,18 @@ def _parse_signal_date(raw_ts: Any) -> date | None:
     return ts.astimezone(KST).date()
 
 
+def _parse_status_updated_at(raw_ts: Any) -> datetime | None:
+    if not raw_ts:
+        return None
+    try:
+        ts = datetime.fromisoformat(str(raw_ts).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=UTC)
+    return ts.astimezone(UTC)
+
+
 def _count_codes_from_payload(payload: Any) -> int:
     if not isinstance(payload, dict):
         return 0
@@ -625,8 +643,17 @@ def fetch_redis_snapshot(
             status[key_s] = value.decode() if isinstance(value, bytes) else value
 
     status_ttl = int(redis_client.ttl(status_key) or -1)
+    status_updated_at = (
+        str(status.get("updated_at")) if status.get("updated_at") else None
+    )
+    parsed_updated_at = _parse_status_updated_at(status_updated_at)
     status_age = None
-    if status_ttl >= 0:
+    if parsed_updated_at is not None:
+        status_age = max(
+            0.0,
+            (datetime.now(UTC) - parsed_updated_at).total_seconds(),
+        )
+    elif status_ttl >= 0:
         status_age = max(0.0, 86400.0 - float(status_ttl))
 
     signals_raw = redis_client.lrange(keys["signals_key"], 0, 199) or []
@@ -673,6 +700,10 @@ def fetch_redis_snapshot(
         status_exists=bool(status_raw),
         status_ttl_seconds=status_ttl,
         status_age_seconds=status_age,
+        status_updated_at=status_updated_at,
+        status_publisher_pid=(
+            str(status.get("publisher_pid")) if status.get("publisher_pid") else None
+        ),
         state=str(status.get("state", "")),
         configured_symbols=int((status.get("config") or {}).get("symbols", 0) or 0),
         data_provider=status.get("data_provider") or {},
@@ -730,6 +761,20 @@ def evaluate_report(
             "missing",
             "trading:stock:status present",
             "Stock orchestrator status is not available in Redis.",
+        )
+
+    if (
+        live_redis_gates_enabled
+        and config.require_redis_status
+        and redis_snapshot.status_age_seconds is not None
+        and redis_snapshot.status_age_seconds > config.max_redis_status_age_seconds
+    ):
+        add(
+            "FAIL",
+            "redis_status_stale",
+            f"{redis_snapshot.status_age_seconds:.1f}s",
+            f"<= {config.max_redis_status_age_seconds:.1f}s",
+            "Stock orchestrator status has not been refreshed recently.",
         )
 
     if (
@@ -929,7 +974,7 @@ def _render_markdown(report: VerificationReport, config: VerificationConfig) -> 
         "## Redis Pipeline",
         "",
         f"- Report trading day: `{r.report_is_trading_day}`",
-        f"- Status exists: `{r.status_exists}` state=`{r.state}` ttl=`{r.status_ttl_seconds}` age_s=`{r.status_age_seconds}`",
+        f"- Status exists: `{r.status_exists}` state=`{r.state}` ttl=`{r.status_ttl_seconds}` age_s=`{r.status_age_seconds}` updated_at=`{r.status_updated_at}` pid=`{r.status_publisher_pid}`",
         f"- Signals today/list: `{r.daily_signal_count}` / `{r.signals_list_len}`",
         f"- Trades list len: `{r.trades_list_len}`",
         f"- Open positions: `{r.open_positions_count}`",
@@ -1120,6 +1165,8 @@ def empty_redis_snapshot(report_date: date) -> RedisSnapshot:
         status_exists=False,
         status_ttl_seconds=-1,
         status_age_seconds=None,
+        status_updated_at=None,
+        status_publisher_pid=None,
         state="",
         configured_symbols=0,
         data_provider={},

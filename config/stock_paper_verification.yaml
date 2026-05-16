@@ -17,6 +17,7 @@ targets:
   reentry_churn_seconds: ${STOCK_PAPER_VERIFY_REENTRY_CHURN_SECONDS:3600}
   min_fresh_ratio: ${STOCK_PAPER_VERIFY_MIN_FRESH_RATIO:0.5}
   require_redis_status: ${STOCK_PAPER_VERIFY_REQUIRE_REDIS_STATUS:true}
+  max_redis_status_age_seconds: ${STOCK_PAPER_VERIFY_MAX_REDIS_STATUS_AGE_SECONDS:600}
   require_trade_targets: ${STOCK_PAPER_VERIFY_REQUIRE_TRADE_TARGETS:true}
   require_daily_indicators: ${STOCK_PAPER_VERIFY_REQUIRE_DAILY_INDICATORS:true}
   skip_live_redis_gates_on_non_trading_day: ${STOCK_PAPER_VERIFY_SKIP_LIVE_REDIS_ON_NON_TRADING_DAY:true}

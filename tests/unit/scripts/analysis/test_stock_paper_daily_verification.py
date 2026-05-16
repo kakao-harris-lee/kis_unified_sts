@@ -25,6 +25,7 @@ def _config(**overrides):
         "reentry_churn_seconds": 3600,
         "min_fresh_ratio": 0.5,
         "require_redis_status": True,
+        "max_redis_status_age_seconds": 600.0,
         "require_trade_targets": True,
         "require_daily_indicators": True,
         "skip_live_redis_gates_on_non_trading_day": True,
@@ -42,6 +43,8 @@ def _redis(**overrides):
         "status_exists": True,
         "status_ttl_seconds": 86000,
         "status_age_seconds": 400.0,
+        "status_updated_at": "2026-05-16T09:00:00+00:00",
+        "status_publisher_pid": "12345",
         "state": "running",
         "configured_symbols": 20,
         "data_provider": {"total_symbols": 20, "fresh_count": 18},
@@ -200,6 +203,28 @@ def test_non_trading_day_skip_can_be_disabled():
     assert "trade_targets_missing" in codes
     assert "daily_indicators_missing" in codes
     assert "fresh_ratio_below_target" in codes
+
+
+def test_stale_redis_status_fails_on_trading_day():
+    cfg = _config(max_redis_status_age_seconds=600.0)
+    metrics = mod.TradeMetrics(
+        trade_count=5,
+        winning_trades=3,
+        losing_trades=2,
+        win_rate_pct=60.0,
+        monthly_expected_return_pct=12.0,
+        max_drawdown_pct=3.0,
+        equity_slope_krw_per_trade=1000.0,
+        equity_is_upward=True,
+    )
+
+    issues = mod.evaluate_report(
+        cfg,
+        metrics,
+        _redis(status_age_seconds=1200.0),
+    )
+
+    assert any(issue.code == "redis_status_stale" for issue in issues)
 
 
 def test_reentry_churn_counts_same_symbol_strategy_only():

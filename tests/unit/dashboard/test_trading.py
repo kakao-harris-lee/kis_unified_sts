@@ -149,6 +149,31 @@ async def test_trading_status_account_decodes_json_string():
 
 
 @pytest.mark.asyncio
+async def test_trading_status_last_update_uses_status_updated_at():
+    """Dashboard freshness should reflect the Redis publish time, not session start."""
+    from services.dashboard.app import create_app
+    from services.dashboard.routes import trading as _trading_route
+
+    mock_reader = MagicMock()
+    mock_reader.get_status.return_value = {
+        "state": "running",
+        "config": {},
+        "stats": {"start_time": "2026-05-15T00:00:00+00:00"},
+        "positions": {},
+        "regime": "neutral",
+        "updated_at": "2026-05-15T00:05:00+00:00",
+    }
+    with patch.object(_trading_route, "_get_reader", return_value=mock_reader):
+        app = create_app()
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get("/api/trading/status")
+
+    assert response.status_code == 200
+    assert response.json()["last_update"].startswith("2026-05-15T00:05:00")
+
+
+@pytest.mark.asyncio
 async def test_positions_list():
     """Test positions list endpoint."""
     from services.dashboard.app import create_app
