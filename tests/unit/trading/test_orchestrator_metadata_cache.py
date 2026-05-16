@@ -16,7 +16,7 @@ import pytest
 
 def _make_orchestrator(**kwargs):
     """Create a minimal TradingOrchestrator with mocked internals."""
-    from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+    from services.trading.orchestrator import TradingConfig, TradingOrchestrator
 
     config = TradingConfig.stock()
     for k, v in kwargs.items():
@@ -41,6 +41,7 @@ def _make_orchestrator(**kwargs):
     orch._cached_daily_indicators = {}
     orch._symbol_last_seen = {}
     orch._symbol_names = {}
+    orch._daily_watchlist = {}
     orch._daily_indicators = {}
     orch._prev_day_volume_warned = False
     orch._universe_retention_seconds = 600
@@ -394,6 +395,104 @@ class TestCacheInvalidation:
         assert codes == []
         assert names == {}
         assert metadata == {}
+
+    def test_refresh_daily_indicators_loads_strategy_watchlist(self):
+        orch = _make_orchestrator()
+
+        with patch("shared.streaming.client.RedisClient") as mock_redis_cls:
+            mock_redis = MagicMock()
+            mock_redis.get.return_value = (
+                '{"indicators":{"005930":{"daily_close":70000}},'
+                '"strategies":{"daily_pullback":["005930"],"vr_composite":[]}}'
+            )
+            mock_redis_cls.get_client.return_value = mock_redis
+
+            result = orch._refresh_daily_indicators()
+
+        assert result is True
+        assert orch._daily_watchlist["strategies"] == {
+            "daily_pullback": ["005930"],
+            "vr_composite": [],
+        }
+        assert orch._daily_watchlist["counts"] == {
+            "daily_pullback": 1,
+            "vr_composite": 0,
+        }
+
+    def test_dynamic_daily_watchlist_candidates_use_active_strategy_and_coverage(self):
+        orch = _make_orchestrator()
+        orch._strategy_manager = MagicMock(strategy_names=["daily_pullback"])
+        orch._daily_indicators = {
+            "005930": {"daily_close": 70000},
+            "000660": {"daily_close": 120000},
+        }
+        orch._daily_watchlist = {
+            "strategies": {
+                "daily_pullback": ["005930", "034020"],
+                "vr_composite": ["000660"],
+            }
+        }
+
+        codes, names, metadata = orch._load_dynamic_daily_watchlist_candidates()
+
+        assert codes == ["005930"]
+        assert names == {"005930": ""}
+        assert metadata == {
+            "005930": {
+                "source": "daily_watchlist",
+                "daily_strategy_candidates": ["daily_pullback"],
+            }
+        }
+
+    def test_dynamic_daily_watchlist_candidates_can_be_disabled(self):
+        orch = _make_orchestrator(include_daily_watchlist_in_dynamic_universe=False)
+        orch._strategy_manager = MagicMock(strategy_names=["daily_pullback"])
+        orch._daily_indicators = {"005930": {"daily_close": 70000}}
+        orch._daily_watchlist = {"strategies": {"daily_pullback": ["005930"]}}
+
+        codes, names, metadata = orch._load_dynamic_daily_watchlist_candidates()
+
+        assert codes == []
+        assert names == {}
+        assert metadata == {}
+
+    def test_merge_ranked_targets_preserves_order_and_merges_metadata(self):
+        codes, names, metadata = _make_orchestrator()._merge_ranked_targets(
+            ["005930", "000660"],
+            {"005930": "삼성전자"},
+            {"005930": {"source": "fusion"}},
+            ["000660", "035420"],
+            {"035420": "NAVER"},
+            {"000660": {"source": "daily_watchlist"}},
+        )
+
+        assert codes == ["005930", "000660", "035420"]
+        assert names == {"005930": "삼성전자", "035420": "NAVER"}
+        assert metadata == {
+            "005930": {"source": "fusion"},
+            "000660": {"source": "daily_watchlist"},
+        }
+
+    def test_get_stable_universe_protects_daily_watchlist_candidates_over_cold(self):
+        orch = _make_orchestrator()
+        orch._max_universe_size = 2
+        now = datetime.now()
+        orch._symbol_last_seen = {
+            "005930": now,
+            "000660": now,
+            "035420": now,
+        }
+        orch._symbol_metadata_cache = {
+            "035420": {
+                "source": "daily_watchlist",
+                "daily_strategy_candidates": ["daily_pullback"],
+            }
+        }
+
+        stable = orch._get_stable_universe()
+
+        assert "035420" in stable
+        assert len(stable) == 2
 
 
 class TestSymbolMetadataCacheExpiry:

@@ -103,6 +103,14 @@ class TestTradingConfig:
 
         assert config.require_daily_indicators_for_dynamic_universe is False
 
+    def test_stock_factory_allows_daily_watchlist_merge_override(self):
+        """주식 동적 유니버스 daily watchlist 병합을 설정으로 끌 수 있다."""
+        from services.trading.orchestrator import TradingConfig
+
+        config = TradingConfig.stock(include_daily_watchlist_in_dynamic_universe=False)
+
+        assert config.include_daily_watchlist_in_dynamic_universe is False
+
     def test_futures_factory(self):
         """선물 설정 팩토리"""
         from services.trading.orchestrator import TradingConfig

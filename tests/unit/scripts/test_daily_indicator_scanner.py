@@ -1,3 +1,4 @@
+import asyncio
 import json
 from datetime import date
 
@@ -5,6 +6,7 @@ import pandas as pd
 
 import scripts.daily_indicator_scanner as scanner
 from scripts.daily_indicator_scanner import (
+    build_strategy_candidate_watchlist,
     compute_indicators,
     extract_candidate_symbols,
     get_clickhouse_client,
@@ -111,6 +113,29 @@ def test_load_redis_candidate_symbols_merges_keys_in_order():
     ) == ["005930", "000660", "035420", "068270"]
 
 
+def test_build_strategy_candidate_watchlist_uses_strategy_logic():
+    class FakeStrategy:
+        name = "daily_pullback"
+
+        async def check_entry(self, context):
+            if context.market_data["code"] == "005930":
+                return object()
+            return None
+
+    watchlist = asyncio.run(
+        build_strategy_candidate_watchlist(
+            {
+                "005930": {"daily_close": 70000},
+                "000660": {"daily_close": 120000},
+            },
+            strategies=[FakeStrategy()],
+            max_candidates=1,
+        )
+    )
+
+    assert watchlist == {"daily_pullback": ["005930"]}
+
+
 def test_publish_to_redis_includes_coverage_metadata():
     class FakeRedis:
         def __init__(self):
@@ -127,13 +152,18 @@ def test_publish_to_redis_includes_coverage_metadata():
     publish_to_redis(
         {"005930": {"daily_sma_20": 100.0}},
         redis_client=fake,
-        metadata={"requested_symbol_count": 2, "redis_candidate_count": 1},
+        metadata={
+            "requested_symbol_count": 2,
+            "redis_candidate_count": 1,
+            "strategies": {"daily_pullback": ["005930"]},
+        },
     )
 
     payload = json.loads(fake.value)
     assert payload["symbol_count"] == 1
     assert payload["requested_symbol_count"] == 2
     assert payload["redis_candidate_count"] == 1
+    assert payload["strategies"] == {"daily_pullback": ["005930"]}
 
 
 def test_get_clickhouse_client_loads_repo_env(tmp_path, monkeypatch):
