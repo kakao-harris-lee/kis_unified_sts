@@ -2254,7 +2254,13 @@ class TradingOrchestrator:
             return False
 
     SWING_STRATEGIES = frozenset(
-        {"volume_accumulation", "bb_reversion", "daily_pullback", "vr_composite"}
+        {
+            "volume_accumulation",
+            "bb_reversion",
+            "daily_pullback",
+            "vr_composite",
+            "pattern_pullback",
+        }
     )
     DIP_CANDIDATES_REDIS_KEY = "system:dip_candidates:latest"
     LLM_QUALITY_REDIS_KEY = "system:llm_quality:latest"
@@ -2525,7 +2531,7 @@ class TradingOrchestrator:
         ):
             return [], {}, {}
 
-        watchlist = self._daily_watchlist or {}
+        watchlist = getattr(self, "_daily_watchlist", {}) or {}
         strategies = watchlist.get("strategies", {})
         if not isinstance(strategies, dict):
             return [], {}, {}
@@ -2536,7 +2542,7 @@ class TradingOrchestrator:
         elif self.config.strategy_name:
             active_names = {self.config.strategy_name}
 
-        covered = set(self._daily_indicators.keys())
+        covered = set((getattr(self, "_daily_indicators", {}) or {}).keys())
         if not covered:
             return [], {}, {}
 
@@ -2576,7 +2582,8 @@ class TradingOrchestrator:
             }
             for code, strategies_for_code in code_strategies.items()
         }
-        names = {code: self._symbol_names.get(code, "") for code in codes}
+        symbol_names = getattr(self, "_symbol_names", {}) or {}
+        names = {code: symbol_names.get(code, "") for code in codes}
         return codes, names, metadata
 
     @staticmethod

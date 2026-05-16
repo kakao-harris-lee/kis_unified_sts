@@ -9,15 +9,13 @@ Tests cover:
 - WebSocket subscription for recovered symbols
 """
 
-import json
 from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from shared.models.position import Position, PositionSide, PositionState
 from services.trading.position_tracker import PositionTracker, PositionTrackerConfig
-
+from shared.models.position import Position, PositionSide, PositionState
 
 # -- Fixtures --
 
@@ -273,6 +271,25 @@ class TestRecoverPositionsFromRedis:
         pos = _make_redis_position(
             pos_id="swing-ok",
             strategy="bb_reversion",
+            entry_time=three_days_ago,
+        )
+        with patch("shared.streaming.trading_state.TradingStateReader") as MockReader:
+            reader_inst = MockReader.return_value
+            reader_inst.get_positions.return_value = [pos]
+            reader_inst.remove_position = MagicMock()
+
+            count = await mock_orchestrator._recover_positions_from_redis()
+
+        assert count == 1
+        reader_inst.remove_position.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_keep_pattern_pullback_within_swing_age(self, mock_orchestrator):
+        """pattern_pullback is a daily swing strategy and must survive restart."""
+        three_days_ago = datetime.now() - timedelta(days=3)
+        pos = _make_redis_position(
+            pos_id="pattern-swing-ok",
+            strategy="pattern_pullback",
             entry_time=three_days_ago,
         )
         with patch("shared.streaming.trading_state.TradingStateReader") as MockReader:
