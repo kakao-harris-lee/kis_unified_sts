@@ -11,10 +11,15 @@ import asyncio
 import json
 import logging
 from dataclasses import asdict
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Optional
 
 import numpy as np
 import pandas as pd
+
+from shared.strategy.technical_consensus import (
+    TechnicalConsensusConfig,
+    build_technical_consensus_from_ohlcv,
+)
 
 from .data_classes import (
     BacktestResult,
@@ -362,6 +367,25 @@ async def _build_target_signal(
     )
 
 
+def _build_technical_consensus_metrics(
+    df: "pd.DataFrame",
+    config,
+) -> dict[str, Any]:
+    try:
+        consensus_config = TechnicalConsensusConfig.from_dict(
+            getattr(config, "stock_technical_consensus", {}) or {}
+        )
+        consensus = build_technical_consensus_from_ohlcv(
+            df,
+            config=consensus_config,
+            volume_lookback=int(config.stock_volume_lookback_days),
+        )
+        return consensus.to_dict()
+    except Exception as e:
+        logger.debug(f"Technical consensus failed: {e}")
+        return {}
+
+
 def _build_screening_metrics(
     stock: StockInfo,
     avg_volume: float,
@@ -374,8 +398,9 @@ def _build_screening_metrics(
     risk_hits: list[str],
     target_signal: dict[str, Any],
     is_new_listing: bool,
+    technical_consensus: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    return {
+    metrics = {
         "avg_volume": round(avg_volume, 2),
         "avg_trade_value": round(avg_trade_value, 2),
         "volume_ratio": stock.volume_ratio,
@@ -396,6 +421,9 @@ def _build_screening_metrics(
         "target_sample_count": int(target_signal["target_sample_count"]),
         "is_new_listing": is_new_listing,
     }
+    if technical_consensus:
+        metrics["technical_consensus"] = technical_consensus
+    return metrics
 
 
 async def _analyze_stock_candidate(
@@ -529,6 +557,7 @@ async def _analyze_stock_candidate(
     risk_hits = find_keyword_hits(texts_to_scan, config.stock_risk_keywords)
     news = _build_news_payload(analyzer, stock, mk_news, intraday)
     target_signal = await _build_target_signal(analyzer, stock, intraday)
+    technical_consensus = _build_technical_consensus_metrics(df, config)
     screening_metrics = _build_screening_metrics(
         stock,
         avg_volume,
@@ -541,6 +570,7 @@ async def _analyze_stock_candidate(
         risk_hits,
         target_signal,
         is_new_listing,
+        technical_consensus,
     )
 
     industry = sector_classifications.get(stock.code, "")
@@ -730,6 +760,7 @@ def _build_plan_reasons(
         reasons.append(f"뉴스 감성: {news.get('sentiment')}")
 
     _append_momentum_reasons(reasons, screening)
+    _append_technical_consensus_reasons(reasons, screening)
     _append_target_price_reasons(reasons, screening)
     _append_theme_reasons(reasons, screening)
 
@@ -765,6 +796,22 @@ def _append_target_price_reasons(
             kw in target_opinion.lower() for kw in ["매수", "buy", "outperform"]
         ):
             reasons.append(f"KIS 투자의견: {target_opinion}")
+
+
+def _append_technical_consensus_reasons(
+    reasons: list[str],
+    screening: dict[str, Any],
+) -> None:
+    consensus = screening.get("technical_consensus", {})
+    if not isinstance(consensus, dict):
+        return
+
+    entry_votes = int(consensus.get("entry_vote_count", 0) or 0)
+    exit_votes = int(consensus.get("exit_vote_count", 0) or 0)
+    if consensus.get("entry_signal"):
+        reasons.append(f"기술지표 합의 진입 신호 ({entry_votes}개)")
+    if consensus.get("exit_signal"):
+        reasons.append(f"기술지표 합의 청산 주의 ({exit_votes}개)")
 
 
 def _append_theme_reasons(

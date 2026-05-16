@@ -26,6 +26,7 @@ def test_register_builtin_components():
     # Check exit strategies are registered
     exit_strategies = ExitRegistry.list_all()
     assert "three_stage" in exit_strategies
+    assert "technical_consensus_exit" in exit_strategies
 
 
 def test_create_entry_from_registry():

@@ -2,12 +2,15 @@
 
 from types import SimpleNamespace
 
+import pandas as pd
+
 from shared.llm.config import LLMConfig
 from shared.llm.data_classes import BacktestResult, Signal, StockInfo
 from shared.llm.stock_analysis import (
     _attach_market_data,
     _build_screening_meta,
     _build_stock_trading_plan,
+    _build_technical_consensus_metrics,
     _filter_candidates_by_min_score,
     _initialize_analysis_results,
     _select_final_candidates,
@@ -88,6 +91,12 @@ def test_build_stock_trading_plan_uses_scoring_signals(tmp_path):
         "target_opinion": "매수",
         "theme_matched": "AI",
         "theme_score": 2.0,
+        "technical_consensus": {
+            "entry_signal": True,
+            "exit_signal": False,
+            "entry_vote_count": 3,
+            "exit_vote_count": 0,
+        },
     }
 
     plan = _build_stock_trading_plan(stock, tech, best, news, screening, cfg)
@@ -99,6 +108,26 @@ def test_build_stock_trading_plan_uses_scoring_signals(tmp_path):
     assert plan.position_size == round(cfg.stock_max_position, 2)
     assert "신규 상장 종목" in plan.reasons
     assert any("KIS 목표가 괴리" in reason for reason in plan.reasons)
+    assert any("기술지표 합의 진입" in reason for reason in plan.reasons)
+
+
+def test_build_technical_consensus_metrics_from_korean_ohlcv(tmp_path):
+    cfg = LLMConfig(output_dir=str(tmp_path))
+    close = [100 - i for i in range(20)] + [82, 84, 87, 90, 94]
+    df = pd.DataFrame(
+        {
+            "종가": close,
+            "고가": [v + 2 for v in close],
+            "저가": [v - 2 for v in close],
+            "거래량": [1000] * (len(close) - 1) + [1800],
+        }
+    )
+
+    metrics = _build_technical_consensus_metrics(df, cfg)
+
+    assert "entry_vote_count" in metrics
+    assert "entry_core_vote_count" in metrics
+    assert "summary" in metrics
 
 
 def test_update_analysis_results_and_attach_market_data():

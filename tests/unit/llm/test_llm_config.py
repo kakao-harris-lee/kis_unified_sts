@@ -22,6 +22,10 @@ stock:
   llm_scoring_model: "gpt-4o"
   llm_scoring_max_tokens: 300
   llm_scoring_temperature: 0.1
+  technical_consensus:
+    min_entry_votes: 3
+    min_exit_votes: 2
+    rsi_recovery: 42.0
   blacklist: ["관리종목"]
   keyword_filter: ["상장폐지"]
   exclude_name_keywords: ["스팩"]
@@ -50,6 +54,9 @@ output:
     assert cfg.stock_llm_scoring_model == "gpt-4o"
     assert cfg.stock_llm_scoring_max_tokens == 300
     assert cfg.stock_llm_scoring_temperature == 0.1
+    assert cfg.stock_technical_consensus["min_entry_votes"] == 3
+    assert cfg.stock_technical_consensus["min_exit_votes"] == 2
+    assert cfg.stock_technical_consensus["rsi_recovery"] == 42.0
 
 
 def test_llm_config_from_yaml_supports_claude_provider(tmp_path, monkeypatch):

@@ -1,0 +1,77 @@
+strategy:
+  name: trend_pullback_consensus_exit
+  asset_class: stock
+  enabled: false
+  timeframe: daily
+  description: "Trend pullback entry with RSI/Williams %R/MACD consensus exit experiment"
+
+  entry:
+    type: trend_pullback
+    params:
+      bb_period: 20
+      bb_std: 2.0
+      bb_touch_buffer: 1.01
+      rsi_oversold: 34.0
+      williams_r_oversold: -80.0
+      williams_r_reversal: -65.0
+      volume_threshold: 1.0
+      min_atr_cost_ratio: 0.01
+      round_trip_cost: 0.005
+      skip_market_open_minutes: 30
+      skip_market_close_minutes: 15
+      signal_cooldown_seconds: 120
+      stop_atr_multiplier: 3.0
+      stop_fallback_cost_multiplier: 3.5
+
+  exit:
+    type: technical_consensus_exit
+    params:
+      min_exit_votes: 2
+      min_entry_votes: 2
+      min_exit_core_votes: 2
+      min_entry_core_votes: 2
+      rsi_oversold: 35.0
+      rsi_recovery: 40.0
+      rsi_overbought: 70.0
+      rsi_rollover: 60.0
+      williams_oversold: -80.0
+      williams_reversal: -65.0
+      williams_overbought: -20.0
+      williams_exit: -35.0
+      macd_hist_threshold: 0.0
+      include_trend_vote: true
+      trend_buffer_pct: 0.0
+      include_volume_vote: false
+      min_volume_ratio: 1.2
+      exit_retrace_from_high_pct: 0.03
+      hard_stop_pct: -0.07
+      time_cut_minutes: 0
+      eod_close_enabled: false
+      default_exit_confidence: 0.85
+
+  position:
+    type: fixed
+    params:
+      order_amount_per_stock: 1000000
+      max_positions: 5
+
+  indicators:
+    bollinger_bands:
+      period: 20
+      std_dev: 2.0
+    momentum:
+      rsi_period: 14
+      williams_r_period: 14
+      macd_fast: 12
+      macd_slow: 26
+      macd_signal: 9
+
+  backtest:
+    risk:
+      stop_loss_pct: 99.0
+      take_profit_pct: 999.0
+      trailing_stop_enabled: false
+      max_hold_bars: 0
+      force_close_time: ""
+      close_on_day_change: false
+      max_daily_trades: 0

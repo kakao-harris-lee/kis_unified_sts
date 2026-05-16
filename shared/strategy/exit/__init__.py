@@ -5,6 +5,7 @@
 Available Strategies:
     - ThreeStageExit: 3-Stage Dynamic Exit (SURVIVAL→BREAKEVEN→MAXIMIZE)
     - MomentumDecayExit: 모멘텀 소진 기반 스윙 청산
+    - TechnicalConsensusExit: RSI/Williams %R/MACD 합의 기반 스윙 청산
 """
 
 from shared.strategy.exit.three_stage import (
@@ -19,6 +20,10 @@ from shared.strategy.exit.trix_golden_exit import (
     TrixGoldenExit,
     TrixGoldenExitConfig,
 )
+from shared.strategy.exit.technical_consensus_exit import (
+    TechnicalConsensusExit,
+    TechnicalConsensusExitConfig,
+)
 
 __all__ = [
     # Three Stage Exit
@@ -30,4 +35,7 @@ __all__ = [
     # TRIX Golden Exit
     "TrixGoldenExit",
     "TrixGoldenExitConfig",
+    # Technical Consensus Exit
+    "TechnicalConsensusExit",
+    "TechnicalConsensusExitConfig",
 ]

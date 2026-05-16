@@ -76,6 +76,28 @@ stock:
   llm_scoring_max_tokens: 500
   llm_scoring_temperature: 0.2
 
+  # Technical timing consensus injected into LLM candidate scoring.
+  # 2개 이상 신호 겹침을 기본값으로 두고, 실험별 전략 YAML에서 동일 파라미터를 조정한다.
+  technical_consensus:
+    min_entry_votes: 2
+    min_exit_votes: 2
+    min_entry_core_votes: 2
+    min_exit_core_votes: 2
+    rsi_oversold: 35.0
+    rsi_recovery: 40.0
+    rsi_overbought: 70.0
+    rsi_rollover: 60.0
+    williams_oversold: -80.0
+    williams_reversal: -65.0
+    williams_overbought: -20.0
+    williams_exit: -35.0
+    macd_hist_threshold: 0.0
+    include_trend_vote: true
+    trend_buffer_pct: 0.0
+    include_volume_vote: true
+    min_volume_ratio: 1.2
+    exit_retrace_from_high_pct: 0.03
+
 futures:
   # 선물 분석 가중치
   weight_global: 0.4        # 글로벌 시장 가중치

@@ -480,6 +480,13 @@ def register_builtin_components() -> None:
         logger.debug("ChandelierExit not available")
 
     try:
+        from shared.strategy.exit.technical_consensus_exit import TechnicalConsensusExit
+
+        ExitRegistry.register_class("technical_consensus_exit", TechnicalConsensusExit)
+    except ImportError:
+        logger.debug("TechnicalConsensusExit not available")
+
+    try:
         from shared.strategy.entry.vr_composite import VRCompositeEntry
 
         EntryRegistry.register_class("vr_composite", VRCompositeEntry)

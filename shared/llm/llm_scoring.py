@@ -131,6 +131,9 @@ async def llm_score_candidate(
         },
         "news_sentiment": news.get("sentiment", "중립"),
     }
+    technical_consensus = screening.get("technical_consensus")
+    if technical_consensus:
+        payload["technical_consensus"] = technical_consensus
     if best is not None:
         payload["backtest"] = {
             "strategy": best.strategy_name,
@@ -147,6 +150,7 @@ async def llm_score_candidate(
     system_prompt = (
         "당신은 전문 퀀트 트레이더입니다. "
         "주어진 데이터를 기반으로 종목의 매매 확신도를 평가합니다. "
+        "technical_consensus는 RSI/Williams %R/MACD 기반 타이밍 보조 신호입니다. "
         "JSON 형식으로만 응답합니다."
     )
     user_prompt = f"""다음 종목의 매매 확신도를 평가해주세요.

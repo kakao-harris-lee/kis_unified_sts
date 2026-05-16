@@ -13,6 +13,30 @@ from pydantic import Field
 from shared.config.base import ServiceConfigBase
 
 
+def default_stock_technical_consensus() -> dict[str, Any]:
+    """Default stock timing-consensus settings."""
+    return {
+        "min_entry_votes": 2,
+        "min_exit_votes": 2,
+        "min_entry_core_votes": 2,
+        "min_exit_core_votes": 2,
+        "rsi_oversold": 35.0,
+        "rsi_recovery": 40.0,
+        "rsi_overbought": 70.0,
+        "rsi_rollover": 60.0,
+        "williams_oversold": -80.0,
+        "williams_reversal": -65.0,
+        "williams_overbought": -20.0,
+        "williams_exit": -35.0,
+        "macd_hist_threshold": 0.0,
+        "include_trend_vote": True,
+        "trend_buffer_pct": 0.0,
+        "include_volume_vote": True,
+        "min_volume_ratio": 1.2,
+        "exit_retrace_from_high_pct": 0.03,
+    }
+
+
 class LLMConfig(ServiceConfigBase):
     """LLM Analyzer Configuration"""
 
@@ -174,6 +198,10 @@ class LLMConfig(ServiceConfigBase):
     )
     stock_llm_scoring_temperature: float = Field(
         default=0.2, description="Temperature for LLM scoring"
+    )
+    stock_technical_consensus: dict[str, Any] = Field(
+        default_factory=default_stock_technical_consensus,
+        description="RSI/Williams %R/MACD consensus settings for stock timing",
     )
 
     # 선물 분석 가중치
@@ -597,6 +625,9 @@ class LLMConfig(ServiceConfigBase):
             ),
             "stock_llm_scoring_temperature": stock_config.get(
                 "llm_scoring_temperature", 0.2
+            ),
+            "stock_technical_consensus": stock_config.get(
+                "technical_consensus", default_stock_technical_consensus()
             ),
             # Futures settings
             "futures_prompt_addendum": futures_config.get("prompt_addendum", ""),
