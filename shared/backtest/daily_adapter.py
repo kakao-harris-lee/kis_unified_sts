@@ -400,6 +400,10 @@ def load_stock_daily_from_clickhouse(
 
     import clickhouse_connect
 
+    from shared.collector.historical.daily_quality import (
+        clean_daily_candle_frame,
+        load_daily_quality_config,
+    )
     from shared.config.tls import get_clickhouse_tls_params
 
     tls_params = get_clickhouse_tls_params()
@@ -425,9 +429,17 @@ def load_stock_daily_from_clickhouse(
 
     where = " AND ".join(conditions)
     query = f"""
-        SELECT code, date, open, high, low, close, volume
+        SELECT
+            code,
+            date,
+            argMax(open, created_at) AS open,
+            argMax(high, created_at) AS high,
+            argMax(low, created_at) AS low,
+            argMax(close, created_at) AS close,
+            argMax(volume, created_at) AS volume
         FROM market.daily_candles
         WHERE {where}
+        GROUP BY code, date
         ORDER BY date ASC
     """
 
@@ -439,6 +451,12 @@ def load_stock_daily_from_clickhouse(
         result.result_rows,
         columns=["code", "datetime", "open", "high", "low", "close", "volume"],
     )
+    df = df.rename(columns={"datetime": "date"})
+    df = clean_daily_candle_frame(
+        df,
+        config=load_daily_quality_config(),
+    )
+    df = df.rename(columns={"date": "datetime"})
 
     # Convert date to datetime for BacktestEngine compatibility
     df["datetime"] = pd.to_datetime(df["datetime"])

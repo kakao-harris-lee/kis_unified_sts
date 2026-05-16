@@ -1,0 +1,14 @@
+# Daily candle quality controls.
+#
+# These guards protect daily-indicator and daily-strategy inputs from duplicate
+# ClickHouse rows and placeholder historical candles.
+
+# Fetch extra raw rows before quality filtering so enough usable candles remain.
+fetch_multiplier: 3
+
+# Drop consecutive rows when the full OHLCV tuple repeats this many times.
+# This targets placeholder candles such as synthetic seeded history.
+repeated_ohlcv_run_min: 5
+
+# Drop rows with zero/negative volume before indicator calculation.
+reject_nonpositive_volume: true

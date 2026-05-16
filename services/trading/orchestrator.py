@@ -2953,10 +2953,19 @@ class TradingOrchestrator:
         """
         try:
             from clickhouse_driver import Client as CHSyncClient
+            import pandas as pd
+
+            from shared.collector.historical.daily_quality import (
+                clean_daily_candle_frame,
+                load_daily_quality_config,
+                quality_fetch_limit,
+            )
 
             ch_cfg = ClickHouseConfig.from_env(
                 database=os.getenv("CLICKHOUSE_STOCK_DATABASE", "market")
             )
+            quality_config = load_daily_quality_config()
+            fetch_limit = quality_fetch_limit(limit, quality_config)
 
             loop = asyncio.get_event_loop()
             rows = await loop.run_in_executor(
@@ -2968,23 +2977,42 @@ class TradingOrchestrator:
                     password=ch_cfg.password,
                     database=ch_cfg.database,
                 ).execute(
-                    "SELECT code, date, open, high, low, close, volume "
+                    "SELECT "
+                    "code, date, "
+                    "argMax(open, created_at) AS open, "
+                    "argMax(high, created_at) AS high, "
+                    "argMax(low, created_at) AS low, "
+                    "argMax(close, created_at) AS close, "
+                    "argMax(volume, created_at) AS volume "
                     "FROM daily_candles "
                     "WHERE code = %(code)s "
+                    "GROUP BY code, date "
                     "ORDER BY date DESC LIMIT %(limit)s",
-                    {"code": symbol, "limit": limit},
+                    {"code": symbol, "limit": fetch_limit},
                 ),
             )
+            if not rows:
+                return []
+
+            frame = pd.DataFrame(
+                rows,
+                columns=["code", "date", "open", "high", "low", "close", "volume"],
+            )
+            frame = clean_daily_candle_frame(
+                frame,
+                config=quality_config,
+                limit=limit,
+            )
             candles = []
-            for row in reversed(rows):  # oldest first
+            for row in frame.itertuples(index=False):
                 candles.append(
                     {
-                        "date": row[1],
-                        "open": float(row[2]),
-                        "high": float(row[3]),
-                        "low": float(row[4]),
-                        "close": float(row[5]),
-                        "volume": int(row[6]),
+                        "date": row.date,
+                        "open": float(row.open),
+                        "high": float(row.high),
+                        "low": float(row.low),
+                        "close": float(row.close),
+                        "volume": int(row.volume),
                     }
                 )
             return candles

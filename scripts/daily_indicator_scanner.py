@@ -26,6 +26,12 @@ from shared.collector.historical.calendar import (
     get_previous_trading_day,
     trading_day_lag,
 )
+from shared.collector.historical.daily_quality import (
+    DailyCandleQualityConfig,
+    clean_daily_candle_frame,
+    load_daily_quality_config,
+    quality_fetch_limit,
+)
 from shared.collector.historical.stock_universe import STOCK_UNIVERSE
 
 logging.basicConfig(
@@ -52,16 +58,31 @@ def get_clickhouse_client():
     )
 
 
-def load_daily_candles(client, symbol: str, days: int = 250) -> pd.DataFrame:
+def load_daily_candles(
+    client,
+    symbol: str,
+    days: int = 250,
+    quality_config: DailyCandleQualityConfig | None = None,
+) -> pd.DataFrame:
     """Load recent daily candles from ClickHouse."""
+    quality_config = quality_config or load_daily_quality_config()
+    fetch_limit = quality_fetch_limit(days, quality_config)
     query = """
-        SELECT code, date, open, high, low, close, volume
+        SELECT
+            code,
+            date,
+            argMax(open, created_at) AS open,
+            argMax(high, created_at) AS high,
+            argMax(low, created_at) AS low,
+            argMax(close, created_at) AS close,
+            argMax(volume, created_at) AS volume
         FROM market.daily_candles
         WHERE code = {code:String}
+        GROUP BY code, date
         ORDER BY date DESC
         LIMIT {limit:UInt32}
     """
-    result = client.query(query, parameters={"code": symbol, "limit": int(days)})
+    result = client.query(query, parameters={"code": symbol, "limit": int(fetch_limit)})
     if not result.result_rows:
         return pd.DataFrame()
 
@@ -69,8 +90,7 @@ def load_daily_candles(client, symbol: str, days: int = 250) -> pd.DataFrame:
         result.result_rows,
         columns=["code", "date", "open", "high", "low", "close", "volume"],
     )
-    df = df.sort_values("date").reset_index(drop=True)
-    return df
+    return clean_daily_candle_frame(df, config=quality_config, limit=days)
 
 
 def latest_candle_date(df: pd.DataFrame) -> date | None:
@@ -227,13 +247,19 @@ def main():
     )
 
     client = get_clickhouse_client()
+    quality_config = load_daily_quality_config()
 
     results: dict[str, dict] = {}
     errors = 0
 
     for symbol in symbols:
         try:
-            df = load_daily_candles(client, symbol, days=args.days)
+            df = load_daily_candles(
+                client,
+                symbol,
+                days=args.days,
+                quality_config=quality_config,
+            )
             if df.empty:
                 logger.warning(f"  {symbol}: no data")
                 errors += 1
