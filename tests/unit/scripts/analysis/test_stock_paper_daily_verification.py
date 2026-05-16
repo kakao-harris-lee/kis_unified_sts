@@ -316,6 +316,50 @@ def test_active_daily_watchlist_reports_candidate_count():
     }
 
 
+def test_non_trading_day_defers_active_no_trade_gate_when_ready():
+    cfg = _config(min_closed_trades_for_metric_gate=5)
+    report = mod.build_report(
+        config=cfg,
+        report_date=date(2026, 5, 17),
+        rows=[_trade(i, -100_000, strategy="momentum_breakout") for i in range(1, 6)],
+        redis_snapshot=_redis(
+            report_is_trading_day=False,
+            daily_strategy_counts={"pattern_pullback": 1},
+            daily_strategy_candidate_count=1,
+        ),
+        active_strategy_names=["pattern_pullback"],
+        active_daily_strategy_names=["pattern_pullback"],
+    )
+
+    assert report.verdict == "PASS"
+    assert report.active_daily_candidate_count == 1
+    assert report.active_issues == []
+    assert any(
+        issue.code == "monthly_expected_return_below_target" for issue in report.issues
+    )
+
+
+def test_non_trading_day_still_checks_active_daily_readiness():
+    cfg = _config(min_closed_trades_for_metric_gate=5)
+    report = mod.build_report(
+        config=cfg,
+        report_date=date(2026, 5, 17),
+        rows=[],
+        redis_snapshot=_redis(
+            report_is_trading_day=False,
+            daily_strategy_counts={},
+            daily_strategy_candidate_count=0,
+        ),
+        active_strategy_names=["pattern_pullback"],
+        active_daily_strategy_names=["pattern_pullback"],
+    )
+
+    assert report.verdict == "FAIL"
+    assert [issue.code for issue in report.active_issues] == [
+        "active_daily_watchlist_missing"
+    ]
+
+
 def test_stale_redis_status_fails_on_trading_day():
     cfg = _config(max_redis_status_age_seconds=600.0)
     metrics = mod.TradeMetrics(
