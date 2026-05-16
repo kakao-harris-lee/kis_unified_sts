@@ -1002,10 +1002,13 @@ class TradingOrchestrator:
         # 8. Initialize Execution Layer
         await self._init_execution_layer()
 
-        # 9. Load Swing Positions
+        # 9. Ensure persistence schema is current before recovery/flush paths
+        await self._ensure_db_schema()
+
+        # 10. Load Swing Positions
         await self._load_swing_positions()
 
-        # 10. Initialize LLM Context Publisher
+        # 11. Initialize LLM Context Publisher
         self._init_llm_context_publisher()
 
     @staticmethod
@@ -2146,6 +2149,11 @@ class TradingOrchestrator:
                     schema = SCHEMAS.get(table_name)
                     if schema:
                         client.execute(schema.format(database=database))
+                client.execute(
+                    f"ALTER TABLE {database}.swing_positions "
+                    "ADD COLUMN IF NOT EXISTS execution_venue String DEFAULT 'KRX' "
+                    "AFTER strategy"
+                )
 
             await asyncio.to_thread(_sync_init)
         except (InfrastructureError, OSError, ConnectionError) as e:
