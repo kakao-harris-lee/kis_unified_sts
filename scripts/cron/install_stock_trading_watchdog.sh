@@ -10,13 +10,19 @@ set -euo pipefail
 BASE="/home/deploy/project/kis_unified_sts"
 
 TMP=$(mktemp)
-crontab -l 2>/dev/null | grep -v "install_stock_trading_watchdog\|stock_trading_watchdog" > "$TMP" || true
+trap 'rm -f "$TMP"' EXIT
+
+crontab -l 2>/dev/null > "$TMP" || true
+sed -i '/# BEGIN STOCK_TRADING_WATCHDOG/,/# END STOCK_TRADING_WATCHDOG/d' "$TMP"
+sed -i '/# --- Stock trading watchdog/d' "$TMP"
+sed -i '\#scripts/cron/stock_trading.sh start.*/stock_trading_watchdog_#d' "$TMP"
 
 cat >> "$TMP" <<EOF
-# --- Stock trading watchdog (Mon-Fri 09:02-15:52 KST, every 5 min) ---
+# BEGIN STOCK_TRADING_WATCHDOG
+# Stock trading watchdog (Mon-Fri 09:02-15:52 KST, every 5 min)
 2-52/5 9-15 * * 1-5 $BASE/scripts/cron/stock_trading.sh start >> $BASE/logs/stock_trading_watchdog_\$(date +\%Y\%m\%d).log 2>&1
+# END STOCK_TRADING_WATCHDOG
 EOF
 
 crontab "$TMP"
-rm -f "$TMP"
 echo "installed."
