@@ -32,7 +32,9 @@ strategy:
   position:
     type: fixed
     params:
-      order_amount_per_stock: 2000000
+      # 2026-05-16 portfolio sizing: 950k x 5 kept 2023-05-17..2026-05-15
+      # MDD under 10% while preserving recent 22d expected return above 10%.
+      order_amount_per_stock: 950000
       max_positions: 5
 
   paper:

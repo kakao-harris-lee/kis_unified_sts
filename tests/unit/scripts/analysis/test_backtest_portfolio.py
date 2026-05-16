@@ -62,6 +62,27 @@ def test_build_backtest_config_honors_cli_capital_over_yaml_default():
     assert cfg.order_amount_per_stock == 2_000_000
 
 
+def test_build_backtest_config_accepts_position_overrides():
+    cfg = portfolio._build_backtest_config(
+        {
+            "strategy": {
+                "position": {
+                    "params": {
+                        "order_amount_per_stock": 2_000_000,
+                        "max_positions": 5,
+                    }
+                }
+            }
+        },
+        initial_capital=10_000_000,
+        order_amount_per_stock=1_000_000,
+        max_positions=4,
+    )
+
+    assert cfg.order_amount_per_stock == 1_000_000
+    assert cfg.max_positions == 4
+
+
 def test_daily_portfolio_adapter_keeps_indicator_windows_per_symbol(monkeypatch):
     created = []
 

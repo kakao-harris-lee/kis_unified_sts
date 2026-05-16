@@ -147,8 +147,10 @@ strategy:
   position:
     type: fixed
     params:
-      order_amount_per_stock: 2000000  # 종목당 매수 금액 (200만원)
-      max_positions: 5                 # 최대 동시 보유 종목 수
+      # 2026-05-16 portfolio sizing: 750k x 4 kept long-window MDD under 10%;
+      # VR stays small because return contribution is lower than daily_pullback.
+      order_amount_per_stock: 750000   # 종목당 매수 금액
+      max_positions: 4                 # 최대 동시 보유 종목 수
 
   # ===========================================================================
   # 모의투자 설정
