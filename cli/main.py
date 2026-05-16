@@ -349,7 +349,7 @@ def backtest_run(
     is_daily = timeframe == "daily"
 
     if is_daily:
-        click.echo(f"Timeframe: daily (swing strategy)")
+        click.echo("Timeframe: daily (swing strategy)")
 
     # 데이터 로드 및 검증
     if data:
@@ -1115,6 +1115,69 @@ def stock_backfill_refresh(days: int, code_days: int | None):
     click.echo("Backfill complete!")
 
 
+@stock_backfill.command("daily")
+@click.option(
+    "--days",
+    "-d",
+    default=100,
+    type=int,
+    help="Number of calendar days to fetch (capped by STOCK_DAILY_MAX_DAYS, default: 100)",
+)
+@click.option(
+    "--codes",
+    "-c",
+    multiple=True,
+    help="Specific stock codes to backfill (default: stock universe)",
+)
+def stock_backfill_daily(days: int, codes: tuple):
+    """주식 일봉 데이터 백필 실행.
+
+    \b
+    Example:
+        sts stock-backfill daily --days 100
+        sts stock-backfill daily --days 30 -c 005930 -c 000660
+    """
+    import asyncio
+
+    from shared.collector.historical.daily_stock import collect_daily_candles
+
+    codes_list = list(codes) if codes else None
+    click.echo(f"Starting stock daily backfill for {days} days...")
+    rows = asyncio.run(collect_daily_candles(codes=codes_list, days=days, verbose=True))
+    click.echo(f"Daily backfill complete! rows={rows:,}")
+
+
+@stock_backfill.command("daily-status")
+@click.option(
+    "--days",
+    "-d",
+    default=100,
+    type=int,
+    help="Period to check (default: 100 days)",
+)
+def stock_backfill_daily_status(days: int):
+    """주식 일봉 데이터 수집 현황 조회."""
+    from shared.collector.historical.daily_stock import get_daily_collection_status
+    from shared.collector.historical.stock_universe import STOCK_UNIVERSE
+
+    click.echo(f"Stock Daily Data Collection Status (last {days} days)")
+    click.echo("=" * 50)
+    click.echo(f"Universe: {len(STOCK_UNIVERSE)} stocks")
+    click.echo()
+
+    status = get_daily_collection_status(days=days)
+    if "error" in status:
+        click.echo(f"Error: {status['error']}", err=True)
+        return
+
+    click.echo(f"Table: {status['table']}")
+    click.echo(f"   Rows: {status.get('rows', 0):,}")
+    click.echo(f"   Days Collected: {status.get('days_collected', 0)}")
+    click.echo(f"   Unique Codes: {status.get('unique_codes', 0)}")
+    if status.get("min_date"):
+        click.echo(f"   Range: {status['min_date']} ~ {status['max_date']}")
+
+
 @stock_backfill.command("status")
 @click.option(
     "--days",
@@ -1173,7 +1236,7 @@ def stock_backfill_universe():
     Example:
         sts stock-backfill universe
     """
-    from shared.collector.historical.stock import STOCK_UNIVERSE
+    from shared.collector.historical.stock_universe import STOCK_UNIVERSE
 
     click.echo("Stock Universe (30 stocks by market cap tier)")
     click.echo("=" * 50)
@@ -1621,7 +1684,7 @@ def paper_start(strategy: str, asset: str, capital: float, max_positions: int):
     """
     import asyncio
 
-    click.echo(f"Starting Paper Trading")
+    click.echo("Starting Paper Trading")
     click.echo(f"  Strategy: {strategy}")
     click.echo(f"  Asset: {asset}")
     click.echo(f"  Capital: {capital:,.0f} KRW")
@@ -2001,7 +2064,7 @@ def _run_futures_backtest_with_table(
             os.environ["FUTURES_CANDLE_TABLE"] = prev_table
 
 
-def _validate_rl_config(config_path: str) -> "RLMPPOConfig":
+def _validate_rl_config(config_path: str):
     """Validate RL config and return validated config object.
 
     Args:
@@ -2680,8 +2743,6 @@ def rl_retrain(config: str, dry_run: bool, force: bool):
 
         # Run full retraining workflow
         click.echo("\n[1/5] Loading champion model...")
-        champion_metrics = None  # Will be loaded in pipeline.run()
-
         click.echo("[2/5] Training challenger model...")
         click.echo("[3/5] Evaluating models on test data...")
         click.echo("[4/5] Comparing performance and checking thresholds...")
@@ -2740,7 +2801,7 @@ def rl_retrain(config: str, dry_run: bool, force: bool):
                 click.echo(f"\n📝 MLflow Run ID: {result['mlflow_run_id']}")
 
         else:
-            click.echo(f"❌ Status: FAILED")
+            click.echo("❌ Status: FAILED")
             click.echo(f"   Error: {result.get('error', 'Unknown error')}")
             sys.exit(1)
 
@@ -2826,7 +2887,7 @@ def rl_train_hierarchical(mode: str, training: str, config: str):
         # Train based on selected mode
         if training == "sequential":
             click.echo("\n=== Sequential Training ===")
-            models = trainer.train(
+            _ = trainer.train(
                 train_days=train_days,
                 train_prices=train_prices,
                 eval_days=test_days,
@@ -2837,7 +2898,7 @@ def rl_train_hierarchical(mode: str, training: str, config: str):
             click.echo(f"  High-level model: {trainer.save_dir}/high_level_final")
         else:  # joint
             click.echo("\n=== Joint Training ===")
-            models = trainer.train_joint(
+            _ = trainer.train_joint(
                 train_days=train_days,
                 train_prices=train_prices,
                 eval_days=test_days,
@@ -3063,7 +3124,7 @@ def tft_train(config: str, mode: str | None):
 
         train_days, train_prices, test_days, test_prices = load_data_from_clickhouse(config)
 
-        model = trainer.train(
+        _ = trainer.train(
             train_features=train_days,
             train_prices=train_prices,
             eval_features=test_days,

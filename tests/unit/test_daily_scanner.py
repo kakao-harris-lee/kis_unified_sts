@@ -249,6 +249,7 @@ class TestMinimumEdge:
             me_atr_period=5,
             me_round_trip_cost=0.005,
             me_min_atr_cost_ratio=2.0,
+            max_stale_trading_days=9999,
         )
         return DailyScanner(cfg)
 
@@ -276,6 +277,34 @@ class TestMinimumEdge:
         bars = _make_bars([100.0] * 3)
         result = scanner.check_minimum_edge("TEST", bars)
         assert result is False
+
+
+# ---------------------------------------------------------------------------
+# Daily freshness guard tests
+# ---------------------------------------------------------------------------
+
+class TestDailyFreshness:
+    def test_accepts_latest_expected_trading_day(self):
+        scanner = DailyScanner(DailyScannerConfig(max_stale_trading_days=0))
+        bars = _make_bars([100.0, 101.0])
+        bars[-1].date = date(2026, 5, 15)
+
+        assert scanner.check_daily_freshness(
+            "TEST",
+            bars,
+            expected_latest=date(2026, 5, 15),
+        )
+
+    def test_rejects_stale_trading_day_lag(self):
+        scanner = DailyScanner(DailyScannerConfig(max_stale_trading_days=1))
+        bars = _make_bars([100.0, 101.0])
+        bars[-1].date = date(2026, 5, 13)
+
+        assert not scanner.check_daily_freshness(
+            "TEST",
+            bars,
+            expected_latest=date(2026, 5, 15),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -350,6 +379,7 @@ class TestScanAll:
             me_atr_period=5,
             me_round_trip_cost=0.005,
             me_min_atr_cost_ratio=2.0,
+            max_stale_trading_days=9999,
             max_watchlist_size=2,
         )
         scanner = DailyScanner(cfg)
@@ -375,6 +405,7 @@ class TestScanAll:
             me_atr_period=5,
             me_round_trip_cost=0.005,
             me_min_atr_cost_ratio=2.0,
+            max_stale_trading_days=9999,
         )
         scanner = DailyScanner(cfg)
         tp_bars = _make_bars(

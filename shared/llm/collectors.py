@@ -212,6 +212,7 @@ class StockDataCollector(DataCollector):
             "FID_INPUT_DATE_1": start_date.strftime("%Y%m%d"),
             "FID_INPUT_DATE_2": end_date.strftime("%Y%m%d"),
             "FID_PERIOD_DIV_CODE": "D",
+            "FID_ORG_ADJ_PRC": os.getenv("KIS_DAILY_ORG_ADJ_PRC", "0"),
         }
 
         try:

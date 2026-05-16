@@ -28,8 +28,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("run_daily_scanner")
 
-# Import stock universe constant
-from shared.collector.historical.stock import STOCK_UNIVERSE
+from shared.collector.historical.stock_universe import STOCK_UNIVERSE
 from services.daily_scanner import DailyScanner, DailyScannerConfig
 
 

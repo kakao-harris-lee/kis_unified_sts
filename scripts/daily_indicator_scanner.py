@@ -16,11 +16,17 @@ import json
 import logging
 import os
 import sys
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
 import numpy as np
 import pandas as pd
+
+from shared.collector.historical.calendar import (
+    get_previous_trading_day,
+    trading_day_lag,
+)
+from shared.collector.historical.stock_universe import STOCK_UNIVERSE
 
 logging.basicConfig(
     level=logging.INFO,
@@ -28,15 +34,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("daily_indicator_scanner")
 
-# Same universe as backfill_daily_pykrx.py
-DEFAULT_SYMBOLS = [
-    "005930", "000660", "373220", "207940", "005380",
-    "000270", "068270", "035420", "105560", "055550",
-    "006400", "003670", "012330", "034730", "051910",
-    "028260", "066570", "032830", "096770", "003550",
-    "015760", "034020", "009150", "000810", "086790",
-    "010130", "033780", "003490", "011200", "010950",
-]
+DEFAULT_SYMBOLS = [item["code"] for item in STOCK_UNIVERSE]
 
 REDIS_KEY = "system:daily_indicators:latest"
 REDIS_TTL = 86400  # 24h
@@ -56,14 +54,14 @@ def get_clickhouse_client():
 
 def load_daily_candles(client, symbol: str, days: int = 250) -> pd.DataFrame:
     """Load recent daily candles from ClickHouse."""
-    query = f"""
+    query = """
         SELECT code, date, open, high, low, close, volume
         FROM market.daily_candles
-        WHERE code = '{symbol}'
+        WHERE code = {code:String}
         ORDER BY date DESC
-        LIMIT {days}
+        LIMIT {limit:UInt32}
     """
-    result = client.query(query)
+    result = client.query(query, parameters={"code": symbol, "limit": int(days)})
     if not result.result_rows:
         return pd.DataFrame()
 
@@ -73,6 +71,29 @@ def load_daily_candles(client, symbol: str, days: int = 250) -> pd.DataFrame:
     )
     df = df.sort_values("date").reset_index(drop=True)
     return df
+
+
+def latest_candle_date(df: pd.DataFrame) -> date | None:
+    """Return the newest daily candle date from a loaded daily DataFrame."""
+    if df.empty or "date" not in df:
+        return None
+    latest = df["date"].max()
+    if hasattr(latest, "date"):
+        return latest.date()
+    return latest
+
+
+def is_fresh_daily_data(
+    df: pd.DataFrame,
+    *,
+    expected_latest: date | None,
+    max_stale_trading_days: int,
+) -> bool:
+    """Check whether daily candles are fresh enough for pre-market indicators."""
+    latest = latest_candle_date(df)
+    if latest is None or expected_latest is None:
+        return False
+    return trading_day_lag(latest, expected_latest) <= max_stale_trading_days
 
 
 def compute_rsi(series: pd.Series, period: int) -> pd.Series:
@@ -184,14 +205,26 @@ def publish_to_redis(indicators: dict[str, dict], redis_client=None) -> None:
 
 def main():
     parser = argparse.ArgumentParser(description="Pre-compute daily indicators for paper trading")
-    parser.add_argument("--symbols", type=str, default="", help="Comma-separated symbol codes (default: top 30)")
+    parser.add_argument("--symbols", type=str, default="", help="Comma-separated symbol codes (default: stock universe)")
     parser.add_argument("--days", type=int, default=250, help="Number of daily bars to load")
+    parser.add_argument(
+        "--max-stale-trading-days",
+        type=int,
+        default=int(os.getenv("STOCK_DAILY_MAX_STALE_TRADING_DAYS", "1")),
+        help="Maximum allowed trading-day lag versus previous trading day",
+    )
     args = parser.parse_args()
 
     symbols = args.symbols.split(",") if args.symbols else DEFAULT_SYMBOLS
     symbols = [s.strip() for s in symbols if s.strip()]
 
-    logger.info(f"Computing daily indicators for {len(symbols)} symbols (last {args.days} days)")
+    expected_latest = get_previous_trading_day()
+    logger.info(
+        "Computing daily indicators for %d symbols (last %d days, expected_latest=%s)",
+        len(symbols),
+        args.days,
+        expected_latest,
+    )
 
     client = get_clickhouse_client()
 
@@ -203,6 +236,28 @@ def main():
             df = load_daily_candles(client, symbol, days=args.days)
             if df.empty:
                 logger.warning(f"  {symbol}: no data")
+                errors += 1
+                continue
+
+            if not is_fresh_daily_data(
+                df,
+                expected_latest=expected_latest,
+                max_stale_trading_days=args.max_stale_trading_days,
+            ):
+                latest = latest_candle_date(df)
+                lag = (
+                    trading_day_lag(latest, expected_latest)
+                    if latest and expected_latest
+                    else None
+                )
+                logger.warning(
+                    "  %s: stale daily candles latest=%s expected=%s lag=%s max=%s",
+                    symbol,
+                    latest,
+                    expected_latest,
+                    lag,
+                    args.max_stale_trading_days,
+                )
                 errors += 1
                 continue
 

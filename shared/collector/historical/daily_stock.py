@@ -171,6 +171,7 @@ async def fetch_daily_candles_async(
         "FID_INPUT_DATE_1": start_date.strftime("%Y%m%d"),
         "FID_INPUT_DATE_2": end_date.strftime("%Y%m%d"),
         "FID_PERIOD_DIV_CODE": "D",  # D: 일봉
+        "FID_ORG_ADJ_PRC": os.getenv("KIS_DAILY_ORG_ADJ_PRC", "0"),
     }
 
     last_error = None

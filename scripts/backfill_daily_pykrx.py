@@ -16,7 +16,7 @@ import logging
 import sys
 
 from shared.collector.historical.daily_stock import collect_daily_candles
-from shared.collector.historical.stock import STOCK_UNIVERSE
+from shared.collector.historical.stock_universe import STOCK_UNIVERSE
 
 logging.basicConfig(
     level=logging.INFO,

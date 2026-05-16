@@ -70,8 +70,11 @@ from .calendar import (
     is_trading_day,
     is_after_market_close,
     get_trading_days_range,
+    get_previous_trading_day,
+    trading_day_lag,
     get_kst_now,
 )
+from .stock_universe import STOCK_UNIVERSE
 from .futures import (
     get_active_codes_for_date,
     make_code,
@@ -80,7 +83,6 @@ from .futures import (
 )
 try:
     from .stock import (
-        STOCK_UNIVERSE,
         collect_stock_minute_today,
         backfill_stock_minute,
         get_stock_codes_from_db,
@@ -92,7 +94,6 @@ except ModuleNotFoundError as exc:
     if exc.name != "clickhouse_connect":
         raise
     logger.warning("clickhouse_connect missing; stock backfill utilities disabled")
-    STOCK_UNIVERSE = []
     collect_stock_minute_today = _missing_clickhouse
     backfill_stock_minute = _missing_clickhouse
     get_stock_codes_from_db = _missing_clickhouse
@@ -125,6 +126,8 @@ __all__ = [
     "is_trading_day",
     "is_after_market_close",
     "get_trading_days_range",
+    "get_previous_trading_day",
+    "trading_day_lag",
     "get_kst_now",
     # Futures functions
     "get_active_codes_for_date",
