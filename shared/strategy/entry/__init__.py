@@ -8,25 +8,29 @@
 - VolumeAccumulationBreakoutEntry: 거래량 축적 기반 돌파
 """
 
-from shared.strategy.entry.stochrsi_trend import (
-    StochRSIConfig,
-    StochRSITrendEntry,
+from shared.strategy.entry.breakout import (
+    BreakoutConfig,
+    BreakoutEntry,
 )
 from shared.strategy.entry.mean_reversion import (
     MeanReversionConfig,
     MeanReversionEntry,
 )
-from shared.strategy.entry.breakout import (
-    BreakoutConfig,
-    BreakoutEntry,
+from shared.strategy.entry.pattern_pullback import (
+    PatternPullbackConfig,
+    PatternPullbackEntry,
+)
+from shared.strategy.entry.stochrsi_trend import (
+    StochRSIConfig,
+    StochRSITrendEntry,
+)
+from shared.strategy.entry.trix_golden import (
+    TrixGoldenConfig,
+    TrixGoldenEntry,
 )
 from shared.strategy.entry.volume_accumulation import (
     VolumeAccumulationBreakoutEntry,
     VolumeAccumulationConfig,
-)
-from shared.strategy.entry.trix_golden import (
-    TrixGoldenEntry,
-    TrixGoldenConfig,
 )
 
 __all__ = [
@@ -45,4 +49,7 @@ __all__ = [
     # TRIX Golden Signal
     "TrixGoldenEntry",
     "TrixGoldenConfig",
+    # Pattern Pullback
+    "PatternPullbackEntry",
+    "PatternPullbackConfig",
 ]

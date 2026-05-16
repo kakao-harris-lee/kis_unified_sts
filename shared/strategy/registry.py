@@ -19,7 +19,8 @@ Usage:
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Callable, Type, TypeVar
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from shared.config import ConfigLoader
 
@@ -62,10 +63,10 @@ class ComponentRegistry:
         entry = EntryRegistry.create("my_entry", {"param1": 1, "param2": 2})
     """
 
-    _components: dict[str, Type] = {}
+    _components: dict[str, type] = {}
 
     @classmethod
-    def register(cls, name: str) -> Callable[[Type[T]], Type[T]]:
+    def register(cls, name: str) -> Callable[[type[T]], type[T]]:
         """데코레이터로 컴포넌트 등록
 
         Args:
@@ -78,7 +79,7 @@ class ComponentRegistry:
                 ...
         """
 
-        def decorator(component_class: Type[T]) -> Type[T]:
+        def decorator(component_class: type[T]) -> type[T]:
             if name in cls._components:
                 logger.warning(
                     f"Overwriting existing component: {name} in {cls.__name__}"
@@ -90,7 +91,7 @@ class ComponentRegistry:
         return decorator
 
     @classmethod
-    def register_class(cls, name: str, component_class: Type) -> None:
+    def register_class(cls, name: str, component_class: type) -> None:
         """클래스를 직접 등록
 
         Args:
@@ -136,7 +137,7 @@ class ComponentRegistry:
         return component_class(params)
 
     @classmethod
-    def get(cls, name: str) -> Type:
+    def get(cls, name: str) -> type:
         """등록된 컴포넌트 클래스 반환"""
         if name not in cls._components:
             raise ComponentNotFoundError(f"Unknown {cls.__name__} component: '{name}'")
@@ -169,7 +170,7 @@ class EntryRegistry(ComponentRegistry):
         entry = EntryRegistry.create("bb_reversion", {"bb_period": 20})
     """
 
-    _components: dict[str, Type[EntrySignalGenerator]] = {}
+    _components: dict[str, type[EntrySignalGenerator]] = {}
 
 
 class ExitRegistry(ComponentRegistry):
@@ -183,7 +184,7 @@ class ExitRegistry(ComponentRegistry):
         exit = ExitRegistry.create("three_stage", {"stop_loss_pct": -0.015})
     """
 
-    _components: dict[str, Type[ExitSignalGenerator]] = {}
+    _components: dict[str, type[ExitSignalGenerator]] = {}
 
 
 class SizerRegistry(ComponentRegistry):
@@ -197,7 +198,7 @@ class SizerRegistry(ComponentRegistry):
         sizer = SizerRegistry.create("risk_based", {"risk_per_trade_pct": 1.0})
     """
 
-    _components: dict[str, Type[PositionSizer]] = {}
+    _components: dict[str, type[PositionSizer]] = {}
 
 
 class StrategyFactory:
@@ -421,6 +422,13 @@ def register_builtin_components() -> None:
         EntryRegistry.register_class("daily_pullback", DailyPullbackEntry)
     except ImportError:
         logger.debug("DailyPullbackEntry not available")
+
+    try:
+        from shared.strategy.entry.pattern_pullback import PatternPullbackEntry
+
+        EntryRegistry.register_class("pattern_pullback", PatternPullbackEntry)
+    except ImportError:
+        logger.debug("PatternPullbackEntry not available")
 
     try:
         from shared.strategy.entry.rl_mppo import RLMPPOEntry
