@@ -37,6 +37,7 @@ Output: Telegram briefing + JSON archive under
 
 Designed for cron; see scripts/cron/setup_ac_signal_timing.sh.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -76,8 +77,8 @@ class TimingReport:
     total_cycles: int = 0
     nonzero_cycles: int = 0
     total_signals: int = 0
-    morning_signals: int = 0      # 09:00–12:59 KST
-    afternoon_signals: int = 0    # 13:00–15:59 KST
+    morning_signals: int = 0  # 09:00–12:59 KST
+    afternoon_signals: int = 0  # 13:00–15:59 KST
     by_hour: dict[str, int] = field(default_factory=dict)  # "HH" -> signal sum
     verdict: str = "FAIL"
     detail: str = ""
@@ -152,9 +153,7 @@ def _format_telegram(rep: TimingReport) -> str:
         rep.detail,
     ]
     if rep.by_hour:
-        hourly = " ".join(
-            f"{h}:{rep.by_hour[h]}" for h in sorted(rep.by_hour)
-        )
+        hourly = " ".join(f"{h}:{rep.by_hour[h]}" for h in sorted(rep.by_hour))
         lines.append(f"by hour (KST): {hourly}")
     return "\n".join(lines)
 
