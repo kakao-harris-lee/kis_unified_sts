@@ -25,12 +25,12 @@ Requirements:
     - ClickHouse running (for --mode clickhouse)
     - 6+ months of minute-bar data available
 """
+
 from __future__ import annotations
 
 import argparse
 import json
 import logging
-import os
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -49,13 +49,13 @@ load_dotenv(REPO_ROOT / ".env")
 # Import after path setup
 from shared.backtest import BacktestConfig, BacktestEngine
 from shared.backtest.adapter import BacktestStrategyAdapter
+from shared.collector.historical.stock import load_stock_minute_from_clickhouse
 from shared.config.loader import ConfigLoader
 from shared.strategy.registry import StrategyFactory, register_builtin_components
 
 # Setup logging
 logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
 
@@ -63,12 +63,23 @@ logger = logging.getLogger(__name__)
 register_builtin_components()
 
 
+def _align_timestamp_bound(value: datetime, ts: pd.Series) -> pd.Timestamp:
+    """Return a pandas bound comparable with the loaded ClickHouse timestamps."""
+    bound = pd.Timestamp(value)
+    tz = ts.dt.tz
+    if tz is not None and bound.tz is None:
+        return bound.tz_localize(tz)
+    if tz is None and bound.tz is not None:
+        return bound.tz_localize(None)
+    return bound
+
+
 def generate_synthetic_data(
     symbol: str = "005930",
     days: int = 180,
     bars_per_day: int = 260,  # ~6.5 hours * 40 bars/hour
     initial_price: float = 70000,
-    volatility: float = 0.02
+    volatility: float = 0.02,
 ) -> pd.DataFrame:
     """Generate synthetic OHLCV data for testing.
 
@@ -81,11 +92,7 @@ def generate_synthetic_data(
     import numpy as np
 
     total_bars = days * bars_per_day
-    dates = pd.date_range(
-        end=datetime.now(),
-        periods=total_bars,
-        freq="1min"
-    )
+    dates = pd.date_range(end=datetime.now(), periods=total_bars, freq="1min")
 
     # Generate price data with breakout patterns
     np.random.seed(42)  # Reproducible results
@@ -95,18 +102,24 @@ def generate_synthetic_data(
     consolidation_period = bars_per_day * 5  # 5-day consolidation
     for i in range(0, total_bars, consolidation_period):
         # Consolidation phase
-        returns[i:i+consolidation_period] *= 0.3
+        returns[i : i + consolidation_period] *= 0.3
         # Breakout phase
         if i + consolidation_period < total_bars:
             breakout_strength = np.random.uniform(0.002, 0.005)
-            breakout_length = min(bars_per_day * 2, total_bars - i - consolidation_period)
-            returns[i+consolidation_period:i+consolidation_period+breakout_length] += breakout_strength
+            breakout_length = min(
+                bars_per_day * 2, total_bars - i - consolidation_period
+            )
+            returns[
+                i + consolidation_period : i + consolidation_period + breakout_length
+            ] += breakout_strength
 
     # Calculate prices
     price = initial_price * (1 + returns).cumprod()
 
     # Generate OHLC from price with breakout characteristics
-    high = price * (1 + np.abs(np.random.normal(0, 0.008, total_bars)))  # Higher volatility for breakouts
+    high = price * (
+        1 + np.abs(np.random.normal(0, 0.008, total_bars))
+    )  # Higher volatility for breakouts
     low = price * (1 - np.abs(np.random.normal(0, 0.005, total_bars)))
     open_price = price * (1 + np.random.normal(0, 0.003, total_bars))
 
@@ -118,70 +131,44 @@ def generate_synthetic_data(
     for i in range(0, total_bars, consolidation_period):
         if i + consolidation_period < total_bars:
             surge_length = min(bars_per_day, total_bars - i - consolidation_period)
-            volume[i+consolidation_period:i+consolidation_period+surge_length] *= np.random.uniform(2.0, 3.5)
+            volume[
+                i + consolidation_period : i + consolidation_period + surge_length
+            ] *= np.random.uniform(2.0, 3.5)
 
-    df = pd.DataFrame({
-        "datetime": dates,
-        "code": symbol,
-        "open": open_price,
-        "high": high,
-        "low": low,
-        "close": price,
-        "volume": volume.astype(int),
-        "name": "삼성전자"
-    })
+    df = pd.DataFrame(
+        {
+            "datetime": dates,
+            "code": symbol,
+            "open": open_price,
+            "high": high,
+            "low": low,
+            "close": price,
+            "volume": volume.astype(int),
+            "name": "삼성전자",
+        }
+    )
 
     return df
 
 
 def load_clickhouse_data(
-    symbol: str,
-    start_date: datetime,
-    end_date: datetime
+    symbol: str, start_date: datetime, end_date: datetime
 ) -> pd.DataFrame:
-    """Load OHLCV data from ClickHouse."""
-    from clickhouse_driver import Client as ClickHouseDriver
-
-    cfg = {
-        "host": os.getenv("CLICKHOUSE_HOST", "localhost"),
-        "port": int(os.getenv("CLICKHOUSE_NATIVE_PORT", "9000")),
-        "user": os.getenv("CLICKHOUSE_USER", "default"),
-        "password": os.getenv("CLICKHOUSE_PASSWORD", ""),
-        "database": os.getenv("CLICKHOUSE_STOCK_DATABASE", "market"),
-    }
-
-    client = ClickHouseDriver(**cfg)
+    """Load OHLCV data from the canonical stock minute candle table."""
     try:
-        query = f"""
-            SELECT
-                datetime,
-                code,
-                open,
-                high,
-                low,
-                close,
-                volume,
-                name
-            FROM {cfg['database']}.bars_1m
-            WHERE code = %(symbol)s
-              AND datetime >= %(start)s
-              AND datetime <= %(end)s
-            ORDER BY datetime
-        """
-        rows = client.execute(
-            query,
-            {"symbol": symbol, "start": start_date, "end": end_date},
-            with_column_types=True
+        df = load_stock_minute_from_clickhouse(
+            symbol,
+            start_date=start_date.date(),
+            end_date=end_date.date(),
         )
+    except ValueError:
+        return pd.DataFrame()
 
-        if not rows:
-            return pd.DataFrame()
-
-        data, columns = rows[0], [col[0] for col in rows[1]]
-        df = pd.DataFrame(data, columns=columns)
-        return df
-    finally:
-        client.disconnect()
+    ts = pd.to_datetime(df["datetime"])
+    start_ts = _align_timestamp_bound(start_date, ts)
+    end_ts = _align_timestamp_bound(end_date, ts)
+    mask = (ts >= start_ts) & (ts <= end_ts)
+    return df.loc[mask].reset_index(drop=True)
 
 
 def load_csv_data(csv_path: Path) -> pd.DataFrame:
@@ -201,12 +188,14 @@ def run_backtest(
     df: pd.DataFrame,
     strategy_name: str = "momentum_breakout",
     initial_capital: float = 10_000_000,
-    output_dir: Path | None = None
+    output_dir: Path | None = None,
 ) -> dict[str, Any]:
     """Run backtest using the BacktestEngine."""
 
     logger.info(f"Running backtest for {strategy_name}")
-    logger.info(f"Data: {len(df)} bars from {df['datetime'].min()} to {df['datetime'].max()}")
+    logger.info(
+        f"Data: {len(df)} bars from {df['datetime'].min()} to {df['datetime'].max()}"
+    )
 
     # Load strategy config
     try:
@@ -242,7 +231,6 @@ def run_backtest(
         "end_date": str(df["datetime"].max()),
         "total_bars": len(df),
         "duration_days": (df["datetime"].max() - df["datetime"].min()).days,
-
         # Performance metrics
         "initial_capital": result.initial_capital,
         "final_capital": result.final_capital,
@@ -250,8 +238,9 @@ def run_backtest(
         "total_return_pct": result.total_return_pct,
         "sharpe_ratio": result.sharpe_ratio,
         "max_drawdown_pct": result.max_drawdown_pct,
-        "calmar_ratio": result.calmar_ratio if hasattr(result, "calmar_ratio") else None,
-
+        "calmar_ratio": (
+            result.calmar_ratio if hasattr(result, "calmar_ratio") else None
+        ),
         # Trade statistics
         "total_trades": result.total_trades,
         "winning_trades": result.winning_trades,
@@ -259,10 +248,13 @@ def run_backtest(
         "win_rate": result.win_rate,
         "avg_win": result.avg_win if hasattr(result, "avg_win") else None,
         "avg_loss": result.avg_loss if hasattr(result, "avg_loss") else None,
-        "profit_factor": result.profit_factor if hasattr(result, "profit_factor") else None,
-
+        "profit_factor": (
+            result.profit_factor if hasattr(result, "profit_factor") else None
+        ),
         # Validation
-        "passes_sharpe_criteria": result.sharpe_ratio > 1.0 if result.sharpe_ratio is not None else False,
+        "passes_sharpe_criteria": (
+            result.sharpe_ratio > 1.0 if result.sharpe_ratio is not None else False
+        ),
         "passes_return_criteria": result.total_return_pct > 0,
         "has_reasonable_trades": 5 <= result.total_trades <= len(df) / 20,
     }
@@ -271,16 +263,26 @@ def run_backtest(
     logger.info("=" * 80)
     logger.info(f"Backtest Results - {strategy_name}")
     logger.info("=" * 80)
-    logger.info(f"Period: {results['start_date']} to {results['end_date']} ({results['duration_days']} days)")
+    logger.info(
+        f"Period: {results['start_date']} to {results['end_date']} ({results['duration_days']} days)"
+    )
     logger.info(f"Total Bars: {results['total_bars']:,}")
     logger.info("")
     logger.info(f"Initial Capital: ${results['initial_capital']:,.0f}")
     logger.info(f"Final Capital:   ${results['final_capital']:,.0f}")
-    logger.info(f"Total Return:    ${results['total_return']:,.0f} ({results['total_return_pct']:.2f}%)")
+    logger.info(
+        f"Total Return:    ${results['total_return']:,.0f} ({results['total_return_pct']:.2f}%)"
+    )
     logger.info("")
-    logger.info(f"Sharpe Ratio:    {results['sharpe_ratio']:.3f} {'✓' if results['passes_sharpe_criteria'] else '✗'}")
+    logger.info(
+        f"Sharpe Ratio:    {results['sharpe_ratio']:.3f} {'✓' if results['passes_sharpe_criteria'] else '✗'}"
+    )
     logger.info(f"Max Drawdown:    {results['max_drawdown_pct']:.2f}%")
-    logger.info(f"Calmar Ratio:    {results['calmar_ratio']:.3f}" if results['calmar_ratio'] else "")
+    logger.info(
+        f"Calmar Ratio:    {results['calmar_ratio']:.3f}"
+        if results["calmar_ratio"]
+        else ""
+    )
     logger.info("")
     logger.info(f"Total Trades:    {results['total_trades']}")
     logger.info(f"Win Rate:        {results['win_rate']:.1f}%")
@@ -321,40 +323,40 @@ def run_backtest(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Run momentum_breakout strategy backtest")
+    parser = argparse.ArgumentParser(
+        description="Run momentum_breakout strategy backtest"
+    )
     parser.add_argument(
         "--mode",
         choices=["clickhouse", "csv", "synthetic"],
         default="synthetic",
-        help="Data source mode"
+        help="Data source mode",
     )
     parser.add_argument(
-        "--data",
-        type=Path,
-        help="Path to CSV file (required for --mode csv)"
+        "--data", type=Path, help="Path to CSV file (required for --mode csv)"
     )
     parser.add_argument(
         "--symbol",
         default="005930",
-        help="Stock symbol (for ClickHouse or synthetic mode)"
+        help="Stock symbol (for ClickHouse or synthetic mode)",
     )
     parser.add_argument(
         "--days",
         type=int,
         default=180,
-        help="Number of days of data (for ClickHouse or synthetic mode)"
+        help="Number of days of data (for ClickHouse or synthetic mode)",
     )
     parser.add_argument(
         "--output-dir",
         type=Path,
         default=Path("output/backtests/momentum_breakout"),
-        help="Output directory for results"
+        help="Output directory for results",
     )
     parser.add_argument(
         "--initial-capital",
         type=float,
         default=10_000_000,
-        help="Initial capital for backtest"
+        help="Initial capital for backtest",
     )
 
     args = parser.parse_args()
@@ -370,7 +372,9 @@ def main():
         if df.empty:
             logger.error(f"No data found for symbol {args.symbol}")
             logger.error("Please run data collection first:")
-            logger.error(f"  python -m cli.main stock-backfill run --days {args.days} -c {args.symbol}")
+            logger.error(
+                f"  python -m cli.main stock-backfill run --days {args.days} -c {args.symbol}"
+            )
             sys.exit(1)
 
     elif args.mode == "csv":
@@ -384,10 +388,7 @@ def main():
 
     else:  # synthetic
         logger.warning("Using synthetic data - results are for testing only!")
-        df = generate_synthetic_data(
-            symbol=args.symbol,
-            days=args.days
-        )
+        df = generate_synthetic_data(symbol=args.symbol, days=args.days)
 
     # Validate data
     if len(df) < 1000:
@@ -396,7 +397,9 @@ def main():
 
     duration_days = (df["datetime"].max() - df["datetime"].min()).days
     if duration_days < 30:
-        logger.warning(f"Data duration is only {duration_days} days (6+ months recommended)")
+        logger.warning(
+            f"Data duration is only {duration_days} days (6+ months recommended)"
+        )
 
     # Run backtest
     try:
@@ -404,14 +407,14 @@ def main():
             df=df,
             strategy_name="momentum_breakout",
             initial_capital=args.initial_capital,
-            output_dir=args.output_dir
+            output_dir=args.output_dir,
         )
 
         # Exit with success/failure based on criteria
         all_passed = (
-            results["passes_sharpe_criteria"] and
-            results["passes_return_criteria"] and
-            results["has_reasonable_trades"]
+            results["passes_sharpe_criteria"]
+            and results["passes_return_criteria"]
+            and results["has_reasonable_trades"]
         )
 
         if all_passed:
