@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
+from types import SimpleNamespace
 
 import pandas as pd
 
@@ -178,6 +179,27 @@ def test_evaluation_metrics_use_requested_period_not_warmup():
         > 0
     )
     assert portfolio._monthly_expected_return_pct(2.0, data, date(2026, 5, 1)) == 14.0
+
+
+def test_realized_trade_metrics_excludes_end_of_data_marks():
+    metrics = portfolio._realized_trade_metrics(
+        [
+            SimpleNamespace(pnl=100.0, exit_reason="time_cut"),
+            SimpleNamespace(pnl=-50.0, exit_reason="stop_loss"),
+            SimpleNamespace(pnl=200.0, exit_reason="end_of_data"),
+        ],
+        initial_capital=10_000.0,
+    )
+
+    assert metrics["realized_trade_count"] == 2
+    assert metrics["realized_winning_trades"] == 1
+    assert metrics["realized_losing_trades"] == 1
+    assert metrics["realized_win_rate_pct"] == 50.0
+    assert metrics["realized_total_pnl"] == 50.0
+    assert metrics["realized_return_pct"] == 0.5
+    assert metrics["end_of_data_trade_count"] == 1
+    assert metrics["end_of_data_unrealized_pnl"] == 200.0
+    assert metrics["end_of_data_unrealized_return_pct"] == 2.0
 
 
 def test_apply_strategy_overrides_updates_copy_only():
