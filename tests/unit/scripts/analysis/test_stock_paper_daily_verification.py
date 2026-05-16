@@ -275,9 +275,26 @@ def test_active_strategy_scope_warns_when_not_yet_verified():
         active_strategy_names=["trend_pullback"],
     )
 
-    assert report.verdict == "FAIL"
+    assert report.verdict == "WARN"
     assert [issue.code for issue in report.active_issues] == ["active_no_closed_trades"]
     assert report.active_issues[0].severity == "WARN"
+    assert any(
+        issue.code == "monthly_expected_return_below_target" for issue in report.issues
+    )
+
+
+def test_active_verdict_still_fails_operational_gates():
+    cfg = _config(min_closed_trades_for_metric_gate=5)
+    report = mod.build_report(
+        config=cfg,
+        report_date=date(2026, 5, 16),
+        rows=[_trade(i, -100_000, strategy="momentum_breakout") for i in range(1, 6)],
+        redis_snapshot=_redis(status_exists=False),
+        active_strategy_names=["trend_pullback"],
+    )
+
+    assert report.verdict == "FAIL"
+    assert any(issue.code == "redis_status_missing" for issue in report.issues)
 
 
 def test_load_repo_env_uses_repo_dotenv_without_overriding_existing(
