@@ -62,6 +62,8 @@ def _redis(**overrides):
         "universe_count": 20,
         "daily_indicators_exists": True,
         "daily_indicators_count": 20,
+        "daily_strategy_candidate_count": 0,
+        "daily_strategy_counts": {},
     }
     base.update(overrides)
     return mod.RedisSnapshot(**base)
@@ -205,6 +207,73 @@ def test_non_trading_day_skip_can_be_disabled():
     assert "trade_targets_missing" in codes
     assert "daily_indicators_missing" in codes
     assert "fresh_ratio_below_target" in codes
+
+
+def test_daily_strategy_watchlist_can_satisfy_trade_target_gate():
+    cfg = _config()
+    metrics = mod.TradeMetrics(
+        trade_count=5,
+        winning_trades=3,
+        losing_trades=2,
+        win_rate_pct=60.0,
+        monthly_expected_return_pct=12.0,
+        max_drawdown_pct=3.0,
+        equity_slope_krw_per_trade=1000.0,
+        equity_is_upward=True,
+    )
+
+    issues = mod.evaluate_report(
+        cfg,
+        metrics,
+        _redis(
+            trade_targets_exists=False,
+            daily_strategy_candidate_count=7,
+            daily_strategy_counts={"daily_pullback": 6, "vr_composite": 1},
+        ),
+    )
+
+    assert "trade_targets_missing" not in {issue.code for issue in issues}
+
+
+def test_active_daily_watchlist_missing_fails_active_scope():
+    cfg = _config(min_closed_trades_for_metric_gate=5)
+    report = mod.build_report(
+        config=cfg,
+        report_date=date(2026, 5, 16),
+        rows=[_trade(i, -100_000, strategy="momentum_breakout") for i in range(1, 6)],
+        redis_snapshot=_redis(
+            daily_strategy_counts={}, daily_strategy_candidate_count=0
+        ),
+        active_strategy_names=["daily_pullback"],
+        active_daily_strategy_names=["daily_pullback"],
+    )
+
+    assert report.verdict == "FAIL"
+    assert report.active_daily_candidate_count == 0
+    assert any(
+        issue.code == "active_daily_watchlist_missing" for issue in report.active_issues
+    )
+
+
+def test_active_daily_watchlist_reports_candidate_count():
+    cfg = _config(min_closed_trades_for_metric_gate=5)
+    report = mod.build_report(
+        config=cfg,
+        report_date=date(2026, 5, 16),
+        rows=[],
+        redis_snapshot=_redis(
+            daily_strategy_counts={"daily_pullback": 6, "vr_composite": 1},
+            daily_strategy_candidate_count=7,
+        ),
+        active_strategy_names=["daily_pullback", "vr_composite"],
+        active_daily_strategy_names=["daily_pullback", "vr_composite"],
+    )
+
+    assert report.active_daily_strategy_names == ["daily_pullback", "vr_composite"]
+    assert report.active_daily_candidate_count == 7
+    assert "active_daily_watchlist_missing" not in {
+        issue.code for issue in report.active_issues
+    }
 
 
 def test_stale_redis_status_fails_on_trading_day():
