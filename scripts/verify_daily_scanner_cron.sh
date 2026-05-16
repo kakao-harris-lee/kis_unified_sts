@@ -123,8 +123,20 @@ if command -v redis-cli &> /dev/null && redis-cli -h "$REDIS_HOST" -p "$REDIS_PO
             if [[ -n "$COMPUTED_AT" ]] && [[ "$COMPUTED_AT" != "null" ]]; then
                 echo -e "${GREEN}  ✓ Last computed at: ${COMPUTED_AT}${NC}"
 
-                # Check if data is fresh (within 24 hours)
-                COMPUTED_TS=$(date -j -f "%Y-%m-%dT%H:%M:%S" "${COMPUTED_AT:0:19}" "+%s" 2>/dev/null || echo "0")
+                # Check if data is fresh (within 24 hours). Use Python for
+                # Linux/BSD portability; GNU date and BSD date accept different
+                # flags for ISO timestamps.
+                COMPUTED_TS=$(python3 - "$COMPUTED_AT" <<'PY' 2>/dev/null || echo "0"
+from datetime import datetime
+import sys
+
+try:
+    value = sys.argv[1].replace("Z", "+00:00")
+    print(int(datetime.fromisoformat(value).timestamp()))
+except (IndexError, ValueError, TypeError, OSError):
+    print(0)
+PY
+)
                 NOW_TS=$(date "+%s")
                 AGE_HOURS=$(( (NOW_TS - COMPUTED_TS) / 3600 ))
 
