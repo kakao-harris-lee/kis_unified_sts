@@ -118,7 +118,11 @@ def load_sweep_config(path: str) -> dict[str, Any]:
     return sweep
 
 
-def expand_sweep_runs(config: dict[str, Any]) -> list[SweepRun]:
+def expand_sweep_runs(
+    config: dict[str, Any],
+    *,
+    include_disabled: bool = False,
+) -> list[SweepRun]:
     windows = [
         SweepWindow(
             name=str(item.get("name") or f"{item['start']}_{item['end']}"),
@@ -138,7 +142,7 @@ def expand_sweep_runs(config: dict[str, Any]) -> list[SweepRun]:
 
     runs: list[SweepRun] = []
     for candidate in config.get("candidates", []):
-        if candidate.get("enabled", True) is False:
+        if candidate.get("enabled", True) is False and not include_disabled:
             continue
         strategy = str(candidate["strategy"])
         candidate_name = str(candidate.get("name") or strategy)
@@ -270,7 +274,7 @@ def run_sweep(
     candidate_names: set[str] | None = None,
     runner: Runner = subprocess.run,
 ) -> dict[str, Any]:
-    runs = expand_sweep_runs(config)
+    runs = expand_sweep_runs(config, include_disabled=bool(candidate_names))
     if candidate_names:
         runs = [run for run in runs if run.candidate_name in candidate_names]
     if max_runs is not None:
