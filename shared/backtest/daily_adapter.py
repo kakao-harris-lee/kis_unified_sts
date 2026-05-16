@@ -15,7 +15,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -23,8 +23,9 @@ import pandas as pd
 from shared.backtest.engine import ExitReason, SignalType
 from shared.backtest.metadata import load_backtest_metadata, resolve_symbol_metadata
 from shared.config import ConfigLoader
-from shared.models.position import Position as ModelPosition, PositionSide
-from shared.regime.adaptive_detector import AdaptiveRegimeDetector, AdaptiveRegimeConfig
+from shared.models.position import Position as ModelPosition
+from shared.models.position import PositionSide
+from shared.regime.adaptive_detector import AdaptiveRegimeConfig, AdaptiveRegimeDetector
 from shared.strategy.base import EntryContext, ExitContext, TradingStrategy
 
 logger = logging.getLogger(__name__)
@@ -37,21 +38,24 @@ class DailyBacktestAdapter:
     before the backtest loop starts, then looks them up per bar.
     """
 
-    def __init__(self, strategy: TradingStrategy, strategy_config: dict):
+    def __init__(
+        self,
+        strategy: TradingStrategy,
+        strategy_config: dict,
+        *,
+        entry_start: datetime | None = None,
+    ):
         self.name = strategy.name
         self._strategy = strategy
         self._loop = asyncio.new_event_loop()
         self._backtest_metadata = load_backtest_metadata(strategy_config)
+        self._entry_start = entry_start
 
         entry_params = (
-            strategy_config.get("strategy", {})
-            .get("entry", {})
-            .get("params", {})
+            strategy_config.get("strategy", {}).get("entry", {}).get("params", {})
         )
         exit_params = (
-            strategy_config.get("strategy", {})
-            .get("exit", {})
-            .get("params", {})
+            strategy_config.get("strategy", {}).get("exit", {}).get("params", {})
         )
 
         # Entry indicator periods
@@ -74,7 +78,9 @@ class DailyBacktestAdapter:
         self._raw_volumes: list[int] = []
         self._raw_highs: list[float] = []  # For regime detection
         self._raw_lows: list[float] = []  # For regime detection
-        self._series_window: int = entry_params.get("vr_period", 0) + entry_params.get("ma_long", 0) + 10
+        self._series_window: int = (
+            entry_params.get("vr_period", 0) + entry_params.get("ma_long", 0) + 10
+        )
         if self._series_window < 80:
             self._series_window = 80
 
@@ -94,7 +100,7 @@ class DailyBacktestAdapter:
         self._regime_detection_enabled = bool(
             strategy_config.get("backtest", {}).get("regime_detection_enabled", False)
         )
-        self._regime_detector: Optional[AdaptiveRegimeDetector] = None
+        self._regime_detector: AdaptiveRegimeDetector | None = None
 
         if self._regime_detection_enabled:
             try:
@@ -103,15 +109,17 @@ class DailyBacktestAdapter:
                 self._regime_detector = AdaptiveRegimeDetector(regime_config)
                 logger.info("Adaptive regime detection enabled for daily backtest")
             except Exception as e:
-                logger.warning(f"Failed to initialize regime detector: {e}. Disabling regime detection.")
+                logger.warning(
+                    f"Failed to initialize regime detector: {e}. Disabling regime detection."
+                )
                 self._regime_detection_enabled = False
 
     def _context_metadata(
         self,
         code: str,
         market_state: str = "UNKNOWN",
-        regime: Optional[str] = None,
-        regime_confidence: Optional[float] = None,
+        regime: str | None = None,
+        regime_confidence: float | None = None,
     ) -> dict[str, Any]:
         """Build metadata payload aligned with live orchestrator context.
 
@@ -153,9 +161,19 @@ class DailyBacktestAdapter:
         df = data.copy()
 
         # SMA
-        df["sma_200"] = df["close"].rolling(window=self._sma_long, min_periods=self._sma_long).mean()
-        df["sma_20"] = df["close"].rolling(window=self._sma_short, min_periods=self._sma_short).mean()
-        df["sma_60"] = df["close"].rolling(window=self._sma_mid, min_periods=self._sma_mid).mean()
+        df["sma_200"] = (
+            df["close"]
+            .rolling(window=self._sma_long, min_periods=self._sma_long)
+            .mean()
+        )
+        df["sma_20"] = (
+            df["close"]
+            .rolling(window=self._sma_short, min_periods=self._sma_short)
+            .mean()
+        )
+        df["sma_60"] = (
+            df["close"].rolling(window=self._sma_mid, min_periods=self._sma_mid).mean()
+        )
         df["sma_60_prev"] = df["sma_60"].shift(self._mid_trend_lookback)
 
         # RSI
@@ -165,18 +183,33 @@ class DailyBacktestAdapter:
         high = df["high"]
         low = df["low"]
         prev_close = df["close"].shift(1)
-        tr = pd.concat([
-            (high - low),
-            (high - prev_close).abs(),
-            (low - prev_close).abs(),
-        ], axis=1).max(axis=1)
-        df["atr"] = tr.rolling(window=self._atr_period, min_periods=self._atr_period).mean()
+        tr = pd.concat(
+            [
+                (high - low),
+                (high - prev_close).abs(),
+                (low - prev_close).abs(),
+            ],
+            axis=1,
+        ).max(axis=1)
+        df["atr"] = tr.rolling(
+            window=self._atr_period, min_periods=self._atr_period
+        ).mean()
 
         # Highest High (lookback)
-        df["highest_high"] = df["high"].rolling(window=self._lookback_period, min_periods=1).max()
+        df["highest_high"] = (
+            df["high"].rolling(window=self._lookback_period, min_periods=1).max()
+        )
 
         # Store as list of dicts for O(1) lookup
-        indicator_cols = ["sma_200", "sma_20", "sma_60", "sma_60_prev", "rsi_5", "atr", "highest_high"]
+        indicator_cols = [
+            "sma_200",
+            "sma_20",
+            "sma_60",
+            "sma_60_prev",
+            "rsi_5",
+            "atr",
+            "highest_high",
+        ]
         self._precomputed = df[indicator_cols].to_dict("records")
         self._bar_index = 0
 
@@ -185,7 +218,11 @@ class DailyBacktestAdapter:
         self._raw_volumes = df["volume"].astype(int).tolist()
 
         # Store OHLCV for regime detection
-        if self._regime_detection_enabled and "high" in df.columns and "low" in df.columns:
+        if (
+            self._regime_detection_enabled
+            and "high" in df.columns
+            and "low" in df.columns
+        ):
             self._raw_highs = df["high"].astype(float).tolist()
             self._raw_lows = df["low"].astype(float).tolist()
         else:
@@ -193,7 +230,9 @@ class DailyBacktestAdapter:
             self._raw_lows = []
 
         warmup = self._warmup_bars
-        valid_count = sum(1 for r in self._precomputed if not np.isnan(r.get("sma_200", float("nan"))))
+        valid_count = sum(
+            1 for r in self._precomputed if not np.isnan(r.get("sma_200", float("nan")))
+        )
         logger.info(
             f"DailyBacktestAdapter: pre-computed {len(self._precomputed)} bars, "
             f"{valid_count} valid (warmup={warmup})"
@@ -238,7 +277,9 @@ class DailyBacktestAdapter:
         indicators: dict[str, Any] = {}
         idx = max(0, self._bar_index - 1)  # Exit sees same bar's indicators
         if idx < len(self._precomputed):
-            indicators = {k: v for k, v in self._precomputed[idx].items() if not np.isnan(v)}
+            indicators = {
+                k: v for k, v in self._precomputed[idx].items() if not np.isnan(v)
+            }
 
         # Include rolling daily series for exit (VR composite exit needs them)
         bar_end = idx + 1
@@ -316,7 +357,8 @@ class DailyBacktestAdapter:
         indicators: dict[str, Any] = {}
         if self._bar_index < len(self._precomputed):
             indicators = {
-                k: v for k, v in self._precomputed[self._bar_index].items()
+                k: v
+                for k, v in self._precomputed[self._bar_index].items()
                 if not np.isnan(v)
             }
 
@@ -334,10 +376,12 @@ class DailyBacktestAdapter:
             return SignalType.HOLD
         if not self._warmup_key and self._bar_index < self._warmup_bars:
             return SignalType.HOLD
+        if self._entry_start is not None and timestamp < self._entry_start:
+            return SignalType.HOLD
 
         # Detect adaptive regime if enabled
-        regime: Optional[str] = None
-        regime_confidence: Optional[float] = None
+        regime: str | None = None
+        regime_confidence: float | None = None
         if self._regime_detection_enabled and self._regime_detector is not None:
             # Build DataFrame from historical data up to current bar
             # Use bar_index - 1 since we already incremented it
@@ -346,12 +390,24 @@ class DailyBacktestAdapter:
                 try:
                     # Get recent bars for regime detection
                     lookback_start = max(0, current_idx - 100)  # Use last 100 bars
-                    regime_df = pd.DataFrame({
-                        "close": self._raw_closes[lookback_start:current_idx + 1],
-                        "high": self._raw_highs[lookback_start:current_idx + 1] if self._raw_highs else self._raw_closes[lookback_start:current_idx + 1],
-                        "low": self._raw_lows[lookback_start:current_idx + 1] if self._raw_lows else self._raw_closes[lookback_start:current_idx + 1],
-                        "volume": self._raw_volumes[lookback_start:current_idx + 1],
-                    })
+                    regime_df = pd.DataFrame(
+                        {
+                            "close": self._raw_closes[lookback_start : current_idx + 1],
+                            "high": (
+                                self._raw_highs[lookback_start : current_idx + 1]
+                                if self._raw_highs
+                                else self._raw_closes[lookback_start : current_idx + 1]
+                            ),
+                            "low": (
+                                self._raw_lows[lookback_start : current_idx + 1]
+                                if self._raw_lows
+                                else self._raw_closes[lookback_start : current_idx + 1]
+                            ),
+                            "volume": self._raw_volumes[
+                                lookback_start : current_idx + 1
+                            ],
+                        }
+                    )
                     regime_signal = self._regime_detector.detect(regime_df)
                     regime = regime_signal.state.value if regime_signal.state else None
                     regime_confidence = regime_signal.confidence
@@ -363,13 +419,13 @@ class DailyBacktestAdapter:
             indicators=indicators,
             current_positions=[],
             timestamp=timestamp,
-            metadata=self._context_metadata(code, regime=regime, regime_confidence=regime_confidence),
+            metadata=self._context_metadata(
+                code, regime=regime, regime_confidence=regime_confidence
+            ),
         )
 
         try:
-            signal = self._loop.run_until_complete(
-                self._strategy.check_entry(context)
-            )
+            signal = self._loop.run_until_complete(self._strategy.check_entry(context))
         except Exception:
             logger.debug("Entry generator error", exc_info=True)
             return SignalType.HOLD
