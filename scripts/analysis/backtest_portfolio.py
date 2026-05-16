@@ -197,6 +197,49 @@ def _monthly_expected_return_pct(
     return total_return_pct * 21.0 / eval_days
 
 
+def _realized_trade_metrics(
+    trades: list[Any], initial_capital: float
+) -> dict[str, Any]:
+    """Split realized exits from forced end-of-data marks.
+
+    Swing backtests mark still-open positions at the final bar using
+    ``end_of_data``. That mark is useful for equity/MDD, but it is not a live
+    closed trade and should not be used as the only win-rate proxy.
+    """
+    realized = [
+        t for t in trades if str(getattr(t, "exit_reason", "")) != "end_of_data"
+    ]
+    end_of_data = [
+        t for t in trades if str(getattr(t, "exit_reason", "")) == "end_of_data"
+    ]
+
+    realized_pnl = float(sum(float(getattr(t, "pnl", 0.0) or 0.0) for t in realized))
+    end_of_data_pnl = float(
+        sum(float(getattr(t, "pnl", 0.0) or 0.0) for t in end_of_data)
+    )
+    wins = sum(1 for t in realized if float(getattr(t, "pnl", 0.0) or 0.0) > 0.0)
+    losses = sum(1 for t in realized if float(getattr(t, "pnl", 0.0) or 0.0) < 0.0)
+    count = len(realized)
+    capital = float(initial_capital or 0.0)
+    return {
+        "realized_trade_count": count,
+        "realized_winning_trades": wins,
+        "realized_losing_trades": losses,
+        "realized_win_rate_pct": round((wins / count * 100.0) if count else 0.0, 2),
+        "realized_total_pnl": round(realized_pnl, 0),
+        "realized_return_pct": round(
+            (realized_pnl / capital * 100.0) if capital > 0.0 else 0.0,
+            2,
+        ),
+        "end_of_data_trade_count": len(end_of_data),
+        "end_of_data_unrealized_pnl": round(end_of_data_pnl, 0),
+        "end_of_data_unrealized_return_pct": round(
+            (end_of_data_pnl / capital * 100.0) if capital > 0.0 else 0.0,
+            2,
+        ),
+    }
+
+
 def _parse_override_value(raw: str) -> Any:
     try:
         return json.loads(raw)
@@ -757,6 +800,10 @@ def main() -> None:
     )
     metrics["monthly_expected_return_pct"] = round(
         _monthly_expected_return_pct(result.total_return_pct, data, start), 2
+    )
+    metrics["realized_trade_metrics"] = _realized_trade_metrics(
+        result.trades,
+        config.initial_capital,
     )
     metrics["symbols_requested"] = len(stocks)
     metrics["symbols_loaded"] = len(frames)
