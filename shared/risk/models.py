@@ -105,21 +105,27 @@ class PortfolioMetrics:
 
     total_positions: int = 0
     total_exposure: float = 0.0
+    total_realized_pnl: float = 0.0
     total_unrealized_pnl: float = 0.0
     portfolio_value: float = 0.0
     exposure_by_asset: dict[str, AssetExposure] = field(default_factory=dict)
 
     def update_from_positions(
-        self, positions_by_asset: dict[str, list], initial_capital: float
+        self,
+        positions_by_asset: dict[str, list],
+        initial_capital: float,
+        realized_pnl: float = 0.0,
     ):
         """Update metrics from position data
 
         Args:
             positions_by_asset: Dict of asset_class -> list of Position objects
             initial_capital: Initial capital for portfolio value calculation
+            realized_pnl: Realized P&L already locked in for the current risk window
         """
         self.total_positions = 0
         self.total_exposure = 0.0
+        self.total_realized_pnl = realized_pnl
         self.total_unrealized_pnl = 0.0
         self.exposure_by_asset.clear()
 
@@ -144,7 +150,9 @@ class PortfolioMetrics:
             self.exposure_by_asset[asset_class] = AssetExposure(asset_class)
 
         # Calculate portfolio value
-        self.portfolio_value = initial_capital + self.total_unrealized_pnl
+        self.portfolio_value = (
+            initial_capital + self.total_realized_pnl + self.total_unrealized_pnl
+        )
 
         # Update exposure percentages
         for asset_class, positions in positions_by_asset.items():
@@ -182,6 +190,7 @@ class PortfolioMetrics:
         return {
             "total_positions": self.total_positions,
             "total_exposure": self.total_exposure,
+            "total_realized_pnl": self.total_realized_pnl,
             "total_unrealized_pnl": self.total_unrealized_pnl,
             "portfolio_value": self.portfolio_value,
             "exposure_by_asset": {
@@ -200,6 +209,7 @@ class PortfolioMetrics:
         return cls(
             total_positions=data.get("total_positions", 0),
             total_exposure=data.get("total_exposure", 0.0),
+            total_realized_pnl=data.get("total_realized_pnl", 0.0),
             total_unrealized_pnl=data.get("total_unrealized_pnl", 0.0),
             portfolio_value=data.get("portfolio_value", 0.0),
             exposure_by_asset=exposure_by_asset,
@@ -214,6 +224,7 @@ class RiskState:
 
     Attributes:
         daily_pnl: Daily profit/loss (KRW)
+        daily_realized_pnl: Realized daily profit/loss (KRW)
         daily_pnl_pct: Daily P&L as percentage of initial capital
         peak_portfolio_value: Peak portfolio value (for drawdown)
         current_portfolio_value: Current portfolio value
@@ -228,6 +239,7 @@ class RiskState:
 
     # Daily P&L tracking
     daily_pnl: float = 0.0
+    daily_realized_pnl: float = 0.0
     daily_pnl_pct: float = 0.0
 
     # Drawdown tracking
@@ -254,6 +266,7 @@ class RiskState:
             realized_pnl: Realized P&L for the day
             unrealized_pnl: Current unrealized P&L
         """
+        self.daily_realized_pnl = realized_pnl
         self.daily_pnl = realized_pnl + unrealized_pnl
         self.last_updated = datetime.now()
 
@@ -289,7 +302,10 @@ class RiskState:
         self.last_updated = datetime.now()
 
     def update_drawdown_level(
-        self, warning_threshold: float, danger_threshold: float, critical_threshold: float
+        self,
+        warning_threshold: float,
+        danger_threshold: float,
+        critical_threshold: float,
     ):
         """Update drawdown alert level based on thresholds
 
@@ -330,6 +346,7 @@ class RiskState:
             initial_capital: Initial capital to reset peak if needed
         """
         self.daily_pnl = 0.0
+        self.daily_realized_pnl = 0.0
         self.daily_pnl_pct = 0.0
         self.last_reset_date = date.today()
         self.alerts_sent.clear()
@@ -344,6 +361,7 @@ class RiskState:
         """Convert to dict for serialization"""
         return {
             "daily_pnl": self.daily_pnl,
+            "daily_realized_pnl": self.daily_realized_pnl,
             "daily_pnl_pct": self.daily_pnl_pct,
             "peak_portfolio_value": self.peak_portfolio_value,
             "current_portfolio_value": self.current_portfolio_value,
@@ -373,13 +391,16 @@ class RiskState:
             block_reason = BlockReason(data["block_reason"])
 
         # Parse dates
-        last_reset_date = date.fromisoformat(data.get("last_reset_date", date.today().isoformat()))
+        last_reset_date = date.fromisoformat(
+            data.get("last_reset_date", date.today().isoformat())
+        )
         last_updated = datetime.fromisoformat(
             data.get("last_updated", datetime.now().isoformat())
         )
 
         return cls(
             daily_pnl=data.get("daily_pnl", 0.0),
+            daily_realized_pnl=data.get("daily_realized_pnl", 0.0),
             daily_pnl_pct=data.get("daily_pnl_pct", 0.0),
             peak_portfolio_value=data.get("peak_portfolio_value", 0.0),
             current_portfolio_value=data.get("current_portfolio_value", 0.0),

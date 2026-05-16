@@ -243,6 +243,34 @@ class TestTradingOrchestrator:
         metrics = orch.get_metrics()
         assert metrics == {}
 
+    @pytest.mark.asyncio
+    async def test_record_risk_realized_pnl_updates_entry_gate(self):
+        """청산 실현손익은 다음 진입 리스크 게이트에 즉시 반영된다."""
+        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from shared.risk.config import RiskConfig
+        from shared.risk.manager import RiskManager
+        from shared.risk.models import BlockReason
+
+        config = TradingConfig.stock(initial_capital=10_000_000)
+        orch = TradingOrchestrator(config)
+        orch._risk_manager = RiskManager(
+            RiskConfig(
+                daily_loss_limit_pct=5.0,
+                max_total_positions=20,
+                initial_capital=10_000_000,
+            )
+        )
+        orch._risk_manager.save_to_redis = AsyncMock()
+
+        await orch._record_risk_realized_pnl(-600_000)
+
+        state = orch._risk_manager.get_risk_state()
+        assert state.daily_realized_pnl == -600_000
+        assert state.daily_pnl_pct == -6.0
+        assert orch._risk_manager.can_open_position("stock") is False
+        assert state.block_reason == BlockReason.DAILY_LOSS_LIMIT
+        orch._risk_manager.save_to_redis.assert_awaited_once()
+
     def test_create_pipeline_applies_pipeline_yaml(self, monkeypatch):
         """pipeline.yaml의 스테이지 간격이 TradingPipeline에 반영된다."""
         from services.trading.orchestrator import TradingOrchestrator, TradingConfig
