@@ -19,6 +19,8 @@ import pytest
 from shared.backtest.engine import SignalType
 from shared.models.signal import (
     ExitReason as ModelExitReason,
+    Signal,
+    SignalType as ModelSignalType,
 )
 from shared.strategy.base import EntryContext, ExitContext
 from shared.strategy.entry.daily_pullback import DailyPullbackConfig, DailyPullbackEntry
@@ -409,6 +411,53 @@ class TestDailyBacktestAdapter:
         bar = df.iloc[10].to_dict()
         signal = adapter.on_bar(bar)
         assert signal == SignalType.HOLD
+
+    def test_technical_consensus_warmup_does_not_require_sma200(self):
+        """Technical consensus can trade after its own indicators are warm."""
+        from shared.backtest.daily_adapter import DailyBacktestAdapter
+
+        class AlwaysLongStrategy:
+            name = "technical_consensus_test"
+
+            async def check_entry(self, context: EntryContext):
+                return Signal(
+                    code=str(context.market_data["code"]),
+                    name=str(context.market_data.get("name", "")),
+                    signal_type=ModelSignalType.ENTRY,
+                    strategy=self.name,
+                    price=float(context.market_data["close"]),
+                    confidence=0.8,
+                    timestamp=context.timestamp,
+                    metadata={"signal_direction": "long"},
+                )
+
+            async def check_exit(self, context: ExitContext):
+                return False, None
+
+        strategy_config = {
+            "strategy": {
+                "entry": {
+                    "type": "technical_consensus",
+                    "params": {
+                        "rsi_period": 14,
+                        "williams_r_period": 14,
+                        "macd_fast": 12,
+                        "macd_slow": 26,
+                        "macd_signal": 9,
+                        "volume_lookback": 20,
+                    },
+                },
+                "exit": {"type": "technical_consensus_exit", "params": {}},
+            }
+        }
+        adapter = DailyBacktestAdapter(AlwaysLongStrategy(), strategy_config)
+
+        df = self._make_daily_df(40)
+        adapter.prescan_data(df)
+
+        for idx in range(34):
+            assert adapter.on_bar(df.iloc[idx].to_dict()) == SignalType.HOLD
+        assert adapter.on_bar(df.iloc[34].to_dict()) == SignalType.BUY
 
 
 # ── Registry Integration Test ──

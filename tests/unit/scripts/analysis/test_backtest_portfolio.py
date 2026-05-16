@@ -138,6 +138,28 @@ def test_default_warmup_days_uses_daily_indicator_periods():
     assert portfolio._default_warmup_days(cfg, "minute") == 0
 
 
+def test_default_warmup_days_uses_technical_consensus_periods():
+    cfg = {
+        "strategy": {
+            "entry": {
+                "type": "technical_consensus",
+                "params": {
+                    "rsi_period": 14,
+                    "williams_r_period": 14,
+                    "macd_fast": 12,
+                    "macd_slow": 26,
+                    "macd_signal": 9,
+                    "volume_lookback": 20,
+                },
+            },
+            "exit": {"type": "technical_consensus_exit", "params": {}},
+        }
+    }
+
+    assert portfolio._daily_warmup_bars(cfg) == 35
+    assert portfolio._default_warmup_days(cfg, "daily") == 70
+
+
 def test_evaluation_metrics_use_requested_period_not_warmup():
     data = pd.DataFrame(
         {

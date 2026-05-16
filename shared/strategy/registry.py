@@ -384,6 +384,13 @@ def register_builtin_components() -> None:
         logger.debug("WilliamsREntry not available")
 
     try:
+        from shared.strategy.entry.technical_consensus import TechnicalConsensusEntry
+
+        EntryRegistry.register_class("technical_consensus", TechnicalConsensusEntry)
+    except ImportError:
+        logger.debug("TechnicalConsensusEntry not available")
+
+    try:
         from shared.strategy.entry.llm_directed_indicator import (
             LLMDirectedIndicatorEntry,
         )
