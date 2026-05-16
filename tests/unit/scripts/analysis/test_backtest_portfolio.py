@@ -120,6 +120,42 @@ def test_build_backtest_config_accepts_position_overrides():
     assert cfg.max_positions == 4
 
 
+def test_default_warmup_days_uses_daily_indicator_periods():
+    cfg = {
+        "strategy": {
+            "entry": {
+                "params": {
+                    "sma_long_period": 200,
+                    "sma_mid_period": 60,
+                    "mid_trend_lookback": 5,
+                }
+            },
+            "exit": {"params": {"atr_period": 22}},
+        }
+    }
+
+    assert portfolio._default_warmup_days(cfg, "daily") == 400
+    assert portfolio._default_warmup_days(cfg, "minute") == 0
+
+
+def test_evaluation_metrics_use_requested_period_not_warmup():
+    data = pd.DataFrame(
+        {
+            "datetime": pd.to_datetime(
+                ["2026-04-30", "2026-05-01", "2026-05-02", "2026-05-03"]
+            )
+        }
+    )
+
+    assert (
+        round(
+            portfolio._annualized_return_pct(2.0, date(2026, 5, 1), date(2026, 5, 3)), 2
+        )
+        > 0
+    )
+    assert portfolio._monthly_expected_return_pct(2.0, data, date(2026, 5, 1)) == 14.0
+
+
 def test_apply_strategy_overrides_updates_copy_only():
     original = {
         "strategy": {
@@ -156,9 +192,10 @@ def test_daily_portfolio_adapter_keeps_indicator_windows_per_symbol(monkeypatch)
     created = []
 
     class FakeDailyAdapter:
-        def __init__(self, _strategy, _config):
+        def __init__(self, _strategy, _config, *, entry_start=None):
             self.prescan_codes = set()
             self.positions = []
+            self.entry_start = entry_start
             created.append(self)
 
         def prescan_data(self, df):
@@ -176,13 +213,18 @@ def test_daily_portfolio_adapter_keeps_indicator_windows_per_symbol(monkeypatch)
     monkeypatch.setattr(portfolio.StrategyFactory, "create", lambda _cfg: object())
     monkeypatch.setattr(portfolio, "DailyBacktestAdapter", FakeDailyAdapter)
 
-    adapter = portfolio.DailyPortfolioAdapter({"strategy": {"name": "daily_test"}})
+    entry_start = pd.Timestamp("2026-05-12").to_pydatetime()
+    adapter = portfolio.DailyPortfolioAdapter(
+        {"strategy": {"name": "daily_test"}},
+        entry_start=entry_start,
+    )
     data = pd.concat([_daily_df("AAA", 2), _daily_df("BBB", 2)], ignore_index=True)
     data = data.sort_values(["datetime", "code"]).reset_index(drop=True)
 
     adapter.prescan_data(data)
 
     assert [a.prescan_codes for a in created] == [{"AAA"}, {"BBB"}]
+    assert [a.entry_start for a in created] == [entry_start, entry_start]
 
     position = {"code": "AAA", "side": "BUY"}
     adapter.set_position(position)

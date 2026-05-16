@@ -12,7 +12,7 @@ import argparse
 import copy
 import json
 import sys
-from datetime import date, datetime
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -82,6 +82,47 @@ def _scope_label(
     if len(stocks) > 5:
         codes = f"{codes}_plus{len(stocks) - 5}"
     return f"{prefix}_{codes}" if codes else prefix
+
+
+def _daily_warmup_bars(strategy_config: dict[str, Any]) -> int:
+    strategy = strategy_config.get("strategy", {})
+    entry_params = strategy.get("entry", {}).get("params", {})
+    exit_params = strategy.get("exit", {}).get("params", {})
+    periods = [
+        entry_params.get("sma_long_period", 0),
+        entry_params.get("sma_mid_period", 0)
+        + entry_params.get("mid_trend_lookback", 0),
+        entry_params.get("sma_short_period", 0),
+        entry_params.get("rsi_period", 0),
+        entry_params.get("vr_period", 0) + entry_params.get("ma_long", 0),
+        exit_params.get("atr_period", 0),
+        exit_params.get("lookback_period", 0),
+    ]
+    return max((int(p or 0) for p in periods), default=0)
+
+
+def _default_warmup_days(strategy_config: dict[str, Any], timeframe: str) -> int:
+    if timeframe != "daily":
+        return 0
+    bars = _daily_warmup_bars(strategy_config)
+    # Convert trading bars to calendar days with room for weekends/holidays.
+    return max(0, bars * 2)
+
+
+def _annualized_return_pct(total_return_pct: float, start: date, end: date) -> float:
+    days = max(1, (end - start).days)
+    years = days / 365.0
+    return ((1.0 + total_return_pct / 100.0) ** (1.0 / years) - 1.0) * 100.0
+
+
+def _monthly_expected_return_pct(
+    total_return_pct: float, data: pd.DataFrame, start: date
+) -> float:
+    dates = pd.to_datetime(data["datetime"]).dt.date
+    eval_days = int(dates[dates >= start].nunique())
+    if eval_days <= 0:
+        return 0.0
+    return total_return_pct * 21.0 / eval_days
 
 
 def _parse_override_value(raw: str) -> Any:
@@ -181,12 +222,18 @@ class DailyPortfolioAdapter:
     adapter would mix SMA/RSI/ATR windows across symbols.
     """
 
-    def __init__(self, strategy_config: dict[str, Any]):
+    def __init__(
+        self,
+        strategy_config: dict[str, Any],
+        *,
+        entry_start: datetime | None = None,
+    ):
         strategy_name = strategy_config.get("strategy", {}).get(
             "name", "daily_strategy"
         )
         self.name = strategy_name
         self._strategy_config = strategy_config
+        self._entry_start = entry_start
         self._adapters: dict[str, DailyBacktestAdapter] = {}
         self._pending_position: dict[str, Any] | None = None
 
@@ -198,7 +245,11 @@ class DailyPortfolioAdapter:
         for code, group in data.groupby("code", sort=False):
             cfg = copy.deepcopy(self._strategy_config)
             strategy = StrategyFactory.create(cfg)
-            adapter = DailyBacktestAdapter(strategy, cfg)
+            adapter = DailyBacktestAdapter(
+                strategy,
+                cfg,
+                entry_start=self._entry_start,
+            )
             adapter.prescan_data(group.sort_values("datetime").reset_index(drop=True))
             self._adapters[str(code)] = adapter
 
@@ -276,6 +327,15 @@ def main() -> None:
     parser.add_argument("--end", required=True, help="YYYY-MM-DD")
     parser.add_argument("--capital", type=float, default=100_000_000)
     parser.add_argument(
+        "--warmup-days",
+        type=int,
+        default=None,
+        help=(
+            "Calendar days to load before --start for indicator warmup. "
+            "Defaults to 2x the largest daily indicator period for daily strategies."
+        ),
+    )
+    parser.add_argument(
         "--order-amount-per-stock",
         type=float,
         default=None,
@@ -315,6 +375,12 @@ def main() -> None:
     timeframe = strategy_config.get("strategy", {}).get("timeframe", "minute")
     if timeframe not in ("minute", "daily"):
         raise SystemExit(f"Unsupported timeframe for '{args.strategy}': {timeframe}")
+    warmup_days = (
+        _default_warmup_days(strategy_config, timeframe)
+        if args.warmup_days is None
+        else max(0, int(args.warmup_days))
+    )
+    data_start = start - timedelta(days=warmup_days)
 
     stocks = _select_stocks(
         args.tier,
@@ -333,7 +399,7 @@ def main() -> None:
                 code=code,
                 name=s["name"],
                 timeframe=timeframe,
-                start=start,
+                start=data_start,
                 end=end,
             )
         except Exception:
@@ -360,7 +426,10 @@ def main() -> None:
         max_positions=args.max_positions,
     )
     if timeframe == "daily":
-        adapted = DailyPortfolioAdapter(strategy_config)
+        adapted = DailyPortfolioAdapter(
+            strategy_config,
+            entry_start=datetime.combine(start, time.min),
+        )
     else:
         strategy = StrategyFactory.create(strategy_config)
         adapted = BacktestStrategyAdapter(strategy, strategy_config)
@@ -380,6 +449,14 @@ def main() -> None:
     metrics["tier"] = args.tier
     metrics["start"] = args.start
     metrics["end"] = args.end
+    metrics["data_start"] = data_start.isoformat()
+    metrics["warmup_days"] = warmup_days
+    metrics["evaluation_annualized_return"] = round(
+        _annualized_return_pct(result.total_return_pct, start, end), 2
+    )
+    metrics["monthly_expected_return_pct"] = round(
+        _monthly_expected_return_pct(result.total_return_pct, data, start), 2
+    )
     metrics["symbols_requested"] = len(stocks)
     metrics["symbols_loaded"] = len(frames)
     metrics["symbols_missing"] = missing
@@ -402,12 +479,18 @@ def main() -> None:
         )
 
     print(f"strategy={args.strategy} tier={args.tier} period={args.start}~{args.end}")
+    if warmup_days:
+        print(f"data_start={data_start.isoformat()} warmup_days={warmup_days}")
     print(
         f"symbols_loaded={len(frames)}/{len(stocks)} bars={len(data)} trades={result.total_trades}"
     )
     print(
         f"return={result.total_return_pct:+.3f}% sharpe={result.sharpe_ratio:.3f} "
         f"mdd={result.max_drawdown_pct:.3f}% win_rate={result.win_rate:.2f}%"
+    )
+    print(
+        f"monthly_expected={metrics['monthly_expected_return_pct']:+.2f}% "
+        f"eval_annualized={metrics['evaluation_annualized_return']:+.2f}%"
     )
     print(f"metrics={metrics_path}")
     print(f"trades={trades_path}")
