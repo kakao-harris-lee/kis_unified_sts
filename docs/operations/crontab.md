@@ -19,6 +19,11 @@ Production crontab on the deploy server. Maintained manually via `crontab -e` â€
 - `55 8 * * 1-5 /home/deploy/project/kis_unified_sts/scripts/cron/stock_trading.sh start`
   - Starts: Multi-strategy stock orchestrator (bb_reversion, trend_pullback, momentum_breakout, vr_composite)
   - Time: 08:55 (5 min before market open)
+
+- `2-52/5 9-15 * * 1-5 /home/deploy/project/kis_unified_sts/scripts/cron/stock_trading.sh start >> /home/deploy/project/kis_unified_sts/logs/stock_trading_watchdog_$(date +\%Y\%m\%d).log 2>&1`
+  - Watchdog: re-runs idempotent start during market hours
+  - Time: every 5 min from 09:02 to 15:52
+  - Install/update: `bash /home/deploy/project/kis_unified_sts/scripts/cron/install_stock_trading_watchdog.sh`
   
 - `0 16 * * 1-5 /home/deploy/project/kis_unified_sts/scripts/cron/stock_trading.sh stop`
   - Stops: Stock trading gracefully
@@ -74,6 +79,7 @@ Production crontab on the deploy server. Maintained manually via `crontab -e` â€
 |------|---------|---------|
 | 08:55 | `rl_paper.sh start` | RL futures paper trading |
 | 08:55 | `stock_trading.sh start` | Stock orchestrator |
+| 09:02-15:52 | `stock_trading.sh start` | Stock watchdog restart/no-op |
 | 09:00 | `llm_intraday.sh` | LLM refresh #1 |
 | 11:00 | `llm_intraday.sh` | LLM refresh #2 |
 | 13:00 | `llm_intraday.sh` | LLM refresh #3 |
