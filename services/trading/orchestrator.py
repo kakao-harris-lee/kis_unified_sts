@@ -433,6 +433,7 @@ class TradingConfig:
     require_daily_indicators_for_dynamic_universe: bool = True
     include_daily_watchlist_in_dynamic_universe: bool = True
     allow_daily_watchlist_entry_before_intraday_warmup: bool = True
+    prioritize_stock_entry_execution: bool = True
 
     # Regime performance tracking
     regime_performance_tracking_enabled: bool = False
@@ -471,6 +472,11 @@ class TradingConfig:
             raise TypeError(
                 "allow_daily_watchlist_entry_before_intraday_warmup must be bool, "
                 f"got {type(self.allow_daily_watchlist_entry_before_intraday_warmup)}"
+            )
+        if not isinstance(self.prioritize_stock_entry_execution, bool):
+            raise TypeError(
+                "prioritize_stock_entry_execution must be bool, "
+                f"got {type(self.prioritize_stock_entry_execution)}"
             )
 
         if self.regime_detection_mode not in ("simple", "adaptive", "hmm"):
@@ -536,6 +542,7 @@ class TradingConfig:
         require_daily_indicators_for_dynamic_universe: bool | None = None,
         include_daily_watchlist_in_dynamic_universe: bool | None = None,
         allow_daily_watchlist_entry_before_intraday_warmup: bool | None = None,
+        prioritize_stock_entry_execution: bool | None = None,
     ) -> TradingConfig:
         """주식용 설정"""
         require_daily_indicators = (
@@ -553,6 +560,11 @@ class TradingConfig:
             if allow_daily_watchlist_entry_before_intraday_warmup is None
             else allow_daily_watchlist_entry_before_intraday_warmup
         )
+        prioritize_entries = (
+            _env_bool("STOCK_PRIORITIZE_ENTRY_EXECUTION", True)
+            if prioritize_stock_entry_execution is None
+            else prioritize_stock_entry_execution
+        )
         return cls(
             asset_class="stock",
             strategy_name=strategy_name,
@@ -565,6 +577,7 @@ class TradingConfig:
             require_daily_indicators_for_dynamic_universe=require_daily_indicators,
             include_daily_watchlist_in_dynamic_universe=include_daily_watchlist,
             allow_daily_watchlist_entry_before_intraday_warmup=allow_daily_warmup_bypass,
+            prioritize_stock_entry_execution=prioritize_entries,
             # Slower refresh for stock (40-50 symbols with retention)
             # avoids KIS API rate limiting
             market_data_refresh_seconds=2.0,
@@ -5360,6 +5373,42 @@ class TradingOrchestrator:
 
         return filtered
 
+    @staticmethod
+    def _entry_signal_priority(signal: Signal) -> tuple[float, float, str, str]:
+        """Sort key for deterministic stock entry admission.
+
+        Lower explicit ``entry_priority`` wins; unranked signals stay behind
+        ranked ones. Within the same priority, higher confidence wins. This
+        keeps daily/pattern candidates from being admitted by dict/concurrency
+        order when position or capital limits bind.
+        """
+        metadata = getattr(signal, "metadata", {}) or {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+        raw_priority = metadata.get("entry_priority", metadata.get("pattern_priority"))
+        if raw_priority is None:
+            priority = 1_000_000.0
+        else:
+            try:
+                priority = float(raw_priority)
+            except (TypeError, ValueError):
+                priority = 1_000_000.0
+        try:
+            confidence = float(getattr(signal, "confidence", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            confidence = 0.0
+        return (
+            priority,
+            -confidence,
+            str(getattr(signal, "strategy", "") or ""),
+            str(getattr(signal, "code", "") or ""),
+        )
+
+    def _prioritize_entry_signals(self, signals: list[Signal]) -> list[Signal]:
+        if len(signals) <= 1:
+            return signals
+        return sorted(signals, key=self._entry_signal_priority)
+
     async def _handle_entry(self) -> list[Signal]:
         """Entry signal handler (runs every 1 sec)
 
@@ -5517,6 +5566,7 @@ class TradingOrchestrator:
                 if r:
                     signals.extend(r)
             signals = self._filter_reentry_guarded_signals(signals)
+            signals = self._prioritize_entry_signals(signals)
 
             # Execute orders for valid signals (bounded parallelism)
             async def run_entry(signal: Signal) -> None:
@@ -5534,7 +5584,14 @@ class TradingOrchestrator:
                     if queued and not acquired:
                         await self._decrement_order_queue()
 
-            await asyncio.gather(*(run_entry(signal) for signal in signals))
+            if (
+                self.config.asset_class == "stock"
+                and self.config.prioritize_stock_entry_execution
+            ):
+                for signal in signals:
+                    await run_entry(signal)
+            else:
+                await asyncio.gather(*(run_entry(signal) for signal in signals))
 
             return signals
 
