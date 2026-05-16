@@ -9,10 +9,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_orchestrator(**kwargs):
     """Create a minimal TradingOrchestrator with mocked internals."""
@@ -46,6 +46,11 @@ def _make_orchestrator(**kwargs):
     orch._universe_retention_seconds = 600
     orch._max_universe_size = 40
     orch._current_regime_confidence = None
+    orch._macro_snapshot = None
+    orch._macro_snapshot_monotonic = 0.0
+    orch._macro_stream = "stream:macro.overnight"
+    orch._scheduled_events = []
+    orch._scheduled_events_monotonic = 0.0
     return orch
 
 
@@ -333,11 +338,11 @@ class TestCacheInvalidation:
 
         with patch("shared.streaming.client.RedisClient") as mock_redis_cls:
             mock_redis = MagicMock()
-            mock_redis.get.return_value = '{"indicators": {"005930": {"atr": 2500, "prev_day_volume": 15000000}}}'
+            mock_redis.get.return_value = (
+                '{"indicators": {"005930": {"atr": 2500, "prev_day_volume": 15000000}}}'
+            )
             mock_redis_cls.get_client.return_value = mock_redis
 
-            # Refresh should invalidate and rebuild cache
-            import json
             result = orch._refresh_daily_indicators()
 
             assert result is True
@@ -347,6 +352,48 @@ class TestCacheInvalidation:
             meta = orch._enriched_metadata_cache.get("005930", {})
             assert meta["atr"] == 2500
             assert meta["prev_day_volume"] == 15_000_000
+
+    def test_dynamic_universe_filter_removes_symbols_without_daily_indicators(self):
+        orch = _make_orchestrator()
+        orch._daily_indicators = {"005930": {"atr": 1000.0}}
+
+        codes, names, metadata = orch._filter_dynamic_universe_coverage(
+            ["005930", "034020"],
+            {"005930": "삼성전자", "034020": "두산에너빌리티"},
+            {"005930": {"rank": 1}, "034020": {"rank": 2}},
+        )
+
+        assert codes == ["005930"]
+        assert names == {"005930": "삼성전자"}
+        assert metadata == {"005930": {"rank": 1}}
+
+    def test_dynamic_universe_filter_is_configurable(self):
+        orch = _make_orchestrator(require_daily_indicators_for_dynamic_universe=False)
+        orch._daily_indicators = {"005930": {"atr": 1000.0}}
+
+        codes, names, metadata = orch._filter_dynamic_universe_coverage(
+            ["005930", "034020"],
+            {"005930": "삼성전자", "034020": "두산에너빌리티"},
+            {"005930": {"rank": 1}, "034020": {"rank": 2}},
+        )
+
+        assert codes == ["005930", "034020"]
+        assert "034020" in names
+        assert "034020" in metadata
+
+    def test_dynamic_universe_filter_rejects_when_daily_indicators_missing(self):
+        orch = _make_orchestrator()
+        orch._daily_indicators = {}
+
+        codes, names, metadata = orch._filter_dynamic_universe_coverage(
+            ["005930"],
+            {"005930": "삼성전자"},
+            {"005930": {"rank": 1}},
+        )
+
+        assert codes == []
+        assert names == {}
+        assert metadata == {}
 
 
 class TestSymbolMetadataCacheExpiry:
@@ -374,7 +421,8 @@ class TestSymbolMetadataCacheExpiry:
 
         # Trigger cleanup (simulate _prune_stale_symbols logic)
         expired = {
-            code for code, last_seen in orch._symbol_last_seen.items()
+            code
+            for code, last_seen in orch._symbol_last_seen.items()
             if (now - last_seen).total_seconds() > orch._universe_retention_seconds
         }
 
@@ -414,7 +462,8 @@ class TestSymbolMetadataCacheExpiry:
 
         # Simulate _prune_stale_symbols with position protection
         expired = {
-            code for code, last_seen in orch._symbol_last_seen.items()
+            code
+            for code, last_seen in orch._symbol_last_seen.items()
             if (now - last_seen).total_seconds() > orch._universe_retention_seconds
         }
 
@@ -492,7 +541,9 @@ class TestCacheUsageInHotPath:
 
         # Verify the EntryContext has enriched market_data
         call_args = orch._strategy_manager.check_entries.call_args
-        context = call_args.args[0] if call_args.args else call_args.kwargs.get("context")
+        context = (
+            call_args.args[0] if call_args.args else call_args.kwargs.get("context")
+        )
         assert context.market_data.get("name") == "삼성전자"
         assert context.market_data.get("close") == 71000
 

@@ -127,7 +127,9 @@ class EntryReentryGuardConfig:
 
         default_cooldown = raw.get("default_cooldown_seconds", 900.0)
         if not isinstance(default_cooldown, (int, float)):
-            raise TypeError("entry_reentry_guard.default_cooldown_seconds must be numeric")
+            raise TypeError(
+                "entry_reentry_guard.default_cooldown_seconds must be numeric"
+            )
         if float(default_cooldown) < 0:
             raise ValueError(
                 "entry_reentry_guard.default_cooldown_seconds must be non-negative"
@@ -341,6 +343,13 @@ def is_trading_day(d: date | None = None, holidays: set[date] | None = None) -> 
     return True
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
 @dataclass
 class TradingConfig:
     """트레이딩 설정"""
@@ -401,6 +410,7 @@ class TradingConfig:
 
     # Universe mode: "dynamic" (screener-driven, default) or "static" (daily watchlist)
     universe_mode: str = "dynamic"
+    require_daily_indicators_for_dynamic_universe: bool = True
 
     # Regime performance tracking
     regime_performance_tracking_enabled: bool = False
@@ -422,6 +432,11 @@ class TradingConfig:
         if self.universe_mode not in ("dynamic", "static"):
             raise ValueError(
                 f"universe_mode must be 'dynamic' or 'static', got {self.universe_mode}"
+            )
+        if not isinstance(self.require_daily_indicators_for_dynamic_universe, bool):
+            raise TypeError(
+                "require_daily_indicators_for_dynamic_universe must be bool, "
+                f"got {type(self.require_daily_indicators_for_dynamic_universe)}"
             )
 
         if self.regime_detection_mode not in ("simple", "adaptive", "hmm"):
@@ -484,8 +499,14 @@ class TradingConfig:
         paper_trading: bool = True,
         execution_mode: str = "",
         symbol_metadata: dict[str, dict[str, Any]] | None = None,
+        require_daily_indicators_for_dynamic_universe: bool | None = None,
     ) -> TradingConfig:
         """주식용 설정"""
+        require_daily_indicators = (
+            _env_bool("STOCK_REQUIRE_DAILY_INDICATORS_FOR_DYNAMIC_UNIVERSE", True)
+            if require_daily_indicators_for_dynamic_universe is None
+            else require_daily_indicators_for_dynamic_universe
+        )
         return cls(
             asset_class="stock",
             strategy_name=strategy_name,
@@ -495,6 +516,7 @@ class TradingConfig:
             paper_trading=paper_trading,
             execution_mode=execution_mode,
             symbol_metadata=symbol_metadata or {},
+            require_daily_indicators_for_dynamic_universe=require_daily_indicators,
             # Slower refresh for stock (40-50 symbols with retention)
             # avoids KIS API rate limiting
             market_data_refresh_seconds=2.0,
@@ -1137,9 +1159,7 @@ class TradingOrchestrator:
                     failover_cfg.get("staleness_threshold_seconds", 10.0)
                 ),
                 min_fresh_ratio=float(failover_cfg.get("min_fresh_ratio", 0.5)),
-                rest_fallback_max_symbols=failover_cfg.get(
-                    "rest_fallback_max_symbols"
-                ),
+                rest_fallback_max_symbols=failover_cfg.get("rest_fallback_max_symbols"),
                 send_telegram_alerts=send_telegram_alerts,
             ),
             kis_client=self._kis_client,
@@ -1419,10 +1439,16 @@ class TradingOrchestrator:
                             self._paper_broker.record_price_observation(
                                 symbol=symbol,
                                 price=tick_price,
-                                ts=ts if ts.tzinfo is not None else ts.replace(tzinfo=UTC),
+                                ts=(
+                                    ts
+                                    if ts.tzinfo is not None
+                                    else ts.replace(tzinfo=UTC)
+                                ),
                             )
                     except (AttributeError, ValueError, TypeError) as e:
-                        logger.debug("record_price_observation skipped (futures): %s", e)
+                        logger.debug(
+                            "record_price_observation skipped (futures): %s", e
+                        )
 
                 if self._futures_slippage_controller:
                     try:
@@ -1464,7 +1490,11 @@ class TradingOrchestrator:
                             self._paper_broker.record_price_observation(
                                 symbol=symbol,
                                 price=tick_price,
-                                ts=ts if ts.tzinfo is not None else ts.replace(tzinfo=UTC),
+                                ts=(
+                                    ts
+                                    if ts.tzinfo is not None
+                                    else ts.replace(tzinfo=UTC)
+                                ),
                             )
                     except (AttributeError, ValueError, TypeError) as e:
                         logger.debug("record_price_observation skipped (stock): %s", e)
@@ -1688,11 +1718,9 @@ class TradingOrchestrator:
         self._macro_snapshot_monotonic: float = 0.0
         try:
             _macro_cfg = ConfigLoader.load("macro_sources.yaml")
-            self._macro_stream: str = (
-                _macro_cfg.get("macro_overnight_collector", {}).get(
-                    "redis_stream", "stream:macro.overnight"
-                )
-            )
+            self._macro_stream: str = _macro_cfg.get(
+                "macro_overnight_collector", {}
+            ).get("redis_stream", "stream:macro.overnight")
         except Exception:  # noqa: BLE001 — config optional; use canonical default
             self._macro_stream = "stream:macro.overnight"
 
@@ -2083,7 +2111,9 @@ class TradingOrchestrator:
         try:
             pnl = getattr(closed_position, "unrealized_pnl", 0.0) or 0.0
             self._state_publisher.increment_running_totals(
-                pnl=float(pnl), trades=1, win=bool(pnl > 0),
+                pnl=float(pnl),
+                trades=1,
+                win=bool(pnl > 0),
             )
         except (AttributeError, ValueError, TypeError) as e:
             logger.debug("record_running_totals skipped: %s", e)
@@ -2428,6 +2458,53 @@ class TradingOrchestrator:
 
         return [], {}, {}
 
+    def _filter_dynamic_universe_coverage(
+        self,
+        codes: list[str],
+        names: dict[str, str],
+        metadata: dict[str, dict[str, Any]],
+    ) -> tuple[list[str], dict[str, str], dict[str, dict[str, Any]]]:
+        """Reject dynamic stock candidates that lack daily indicator coverage."""
+        if (
+            self.config.asset_class != "stock"
+            or self.config.universe_mode != "dynamic"
+            or not self.config.require_daily_indicators_for_dynamic_universe
+        ):
+            return codes, names, metadata
+
+        covered = set(self._daily_indicators.keys())
+        if not covered:
+            if codes:
+                logger.warning(
+                    "Dynamic universe coverage guard rejected %s candidates: "
+                    "daily indicators unavailable",
+                    len(codes),
+                )
+            return [], {}, {}
+
+        filtered_codes = [code for code in codes if code in covered]
+        if len(filtered_codes) == len(codes):
+            return codes, names, metadata
+
+        filtered_set = set(filtered_codes)
+        removed = [code for code in codes if code not in filtered_set]
+        logger.warning(
+            "Dynamic universe coverage guard removed %s/%s candidates without "
+            "daily indicators: %s",
+            len(removed),
+            len(codes),
+            ",".join(removed[:10]),
+        )
+        return (
+            filtered_codes,
+            {code: name for code, name in names.items() if code in filtered_set},
+            {
+                code: dict(meta)
+                for code, meta in metadata.items()
+                if code in filtered_set
+            },
+        )
+
     def _refresh_universe_from_screener(self) -> bool:
         """Read ranked universe from Redis and update symbols.
 
@@ -2442,6 +2519,16 @@ class TradingOrchestrator:
             codes, names, metadata = self._load_ranked_targets(redis)
 
             if not codes:
+                return False
+            codes, names, metadata = self._filter_dynamic_universe_coverage(
+                codes, names, metadata
+            )
+            if not codes:
+                stable_symbols = self._get_stable_universe()
+                if stable_symbols:
+                    self._apply_universe_changes(stable_symbols)
+                    self._check_strategy_warnings()
+                    return True
                 return False
 
             # Update internal caches with new screen results
@@ -3729,7 +3816,8 @@ class TradingOrchestrator:
             ks_cfg = KillSwitchConsumerConfig()
         except Exception as e:
             logger.error(
-                "Unexpected error loading kill_switch_consumer config: %s", e,
+                "Unexpected error loading kill_switch_consumer config: %s",
+                e,
                 exc_info=True,
             )
             from services.kill_switch.config import KillSwitchConsumerConfig
@@ -4143,9 +4231,7 @@ class TradingOrchestrator:
             sl_yaml = ConfigLoader.load("shadow_loggers.yaml")
             sl_cfg = sl_yaml.get("shadow_loggers", {})
         except (InvalidConfigError, MissingConfigError, OSError) as e:
-            logger.warning(
-                "shadow_loggers config not loaded (%s) — using defaults", e
-            )
+            logger.warning("shadow_loggers config not loaded (%s) — using defaults", e)
             sl_cfg = {}
 
         flush_interval = float(sl_cfg.get("flush_interval_seconds", 60.0))
@@ -4210,7 +4296,9 @@ class TradingOrchestrator:
         from shared.strategy.llm_veto_logger import flush_llm_veto_events
         from shared.strategy.rl_shadow_logger import flush_rl_shadow_predictions
 
-        logger.info("shadow_loggers flush loop running (interval=%.1fs)", interval_seconds)
+        logger.info(
+            "shadow_loggers flush loop running (interval=%.1fs)", interval_seconds
+        )
 
         while True:
             try:
@@ -4239,9 +4327,7 @@ class TradingOrchestrator:
                 )
 
             try:
-                veto_count = await flush_llm_veto_events(
-                    self._shadow_loggers_ch_client
-                )
+                veto_count = await flush_llm_veto_events(self._shadow_loggers_ch_client)
             except asyncio.CancelledError:
                 logger.info("shadow_loggers flush loop cancelled mid-veto-flush")
                 break
@@ -4311,7 +4397,9 @@ class TradingOrchestrator:
             return
 
         if self._shadow_loggers_ch_client is None:
-            logger.debug("shadow_loggers final flush skipped (CH client not initialised)")
+            logger.debug(
+                "shadow_loggers final flush skipped (CH client not initialised)"
+            )
             return
 
         rl_count = 0
@@ -4334,9 +4422,7 @@ class TradingOrchestrator:
             from shared.strategy.llm_veto_logger import flush_llm_veto_events
 
             try:
-                veto_count = await flush_llm_veto_events(
-                    self._shadow_loggers_ch_client
-                )
+                veto_count = await flush_llm_veto_events(self._shadow_loggers_ch_client)
             except Exception as e:
                 logger.warning(
                     "shadow_loggers final flush llm_veto failed (%s) — "
@@ -5318,7 +5404,9 @@ class TradingOrchestrator:
             if stale_signals:
                 # Only add stale signals for positions not already scheduled for exit
                 exiting_ids = {s.position_id for s in signals}
-                signals = signals + [s for s in stale_signals if s.position_id not in exiting_ids]
+                signals = signals + [
+                    s for s in stale_signals if s.position_id not in exiting_ids
+                ]
 
             # Execute exit orders (bounded parallelism)
             async def run_exit(signal: ExitSignal) -> None:
@@ -5381,7 +5469,11 @@ class TradingOrchestrator:
 
             # 최소 보유 시간 미충족 시 스킵
             try:
-                holding_sec = (now - position.entry_time).total_seconds() if position.entry_time else 0.0
+                holding_sec = (
+                    (now - position.entry_time).total_seconds()
+                    if position.entry_time
+                    else 0.0
+                )
                 if holding_sec < min_holding_sec:
                     continue
             except (TypeError, AttributeError):
@@ -5414,7 +5506,10 @@ class TradingOrchestrator:
                     priority=1,  # 최우선 청산
                     timestamp=now,
                     quantity=position.quantity,
-                    metadata={"tick_age_seconds": tick_age, "timeout_seconds": timeout_sec},
+                    metadata={
+                        "tick_age_seconds": tick_age,
+                        "timeout_seconds": timeout_sec,
+                    },
                 )
             )
 
@@ -6705,15 +6800,21 @@ class TradingOrchestrator:
                 initial = getattr(broker, "initial_balance", None)
                 equity_fn = getattr(broker, "get_equity", None)
                 summary["initial_balance"] = (
-                    float(initial) if initial is not None else float(self.config.initial_capital)
+                    float(initial)
+                    if initial is not None
+                    else float(self.config.initial_capital)
                 )
                 summary["balance"] = (
-                    float(balance) if balance is not None else summary["initial_balance"]
+                    float(balance)
+                    if balance is not None
+                    else summary["initial_balance"]
                 )
                 summary["equity"] = (
                     float(equity_fn()) if callable(equity_fn) else summary["balance"]
                 )
-                summary["realized_pnl"] = summary["balance"] - summary["initial_balance"]
+                summary["realized_pnl"] = (
+                    summary["balance"] - summary["initial_balance"]
+                )
                 summary["open_positions"] = len(getattr(broker, "positions", {}) or {})
             except Exception as exc:
                 logger.warning(f"paper broker fallback summary failed: {exc}")

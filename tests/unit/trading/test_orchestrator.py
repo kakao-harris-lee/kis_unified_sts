@@ -91,6 +91,17 @@ class TestTradingConfig:
         assert config.strategy_name == "test_strategy"
         assert config.symbols == ["005930", "000660"]
         assert config.initial_capital == 10_000_000
+        assert config.require_daily_indicators_for_dynamic_universe is True
+
+    def test_stock_factory_allows_dynamic_universe_coverage_override(self):
+        """주식 동적 유니버스 daily indicator 커버리지 가드를 설정으로 끌 수 있다."""
+        from services.trading.orchestrator import TradingConfig
+
+        config = TradingConfig.stock(
+            require_daily_indicators_for_dynamic_universe=False
+        )
+
+        assert config.require_daily_indicators_for_dynamic_universe is False
 
     def test_futures_factory(self):
         """선물 설정 팩토리"""
@@ -111,7 +122,11 @@ class TestTradingOrchestrator:
 
     def test_init(self):
         """초기화"""
-        from services.trading.orchestrator import TradingOrchestrator, TradingConfig, TradingState
+        from services.trading.orchestrator import (
+            TradingOrchestrator,
+            TradingConfig,
+            TradingState,
+        )
 
         config = TradingConfig.stock()
         orch = TradingOrchestrator(config)
@@ -132,10 +147,16 @@ class TestTradingOrchestrator:
     @pytest.mark.asyncio
     async def test_start_changes_state(self, monkeypatch):
         """start() 호출 시 상태 변경"""
-        from services.trading.orchestrator import TradingOrchestrator, TradingConfig, TradingState
+        from services.trading.orchestrator import (
+            TradingOrchestrator,
+            TradingConfig,
+            TradingState,
+        )
         from services.monitoring.metrics import MetricsCollector
 
-        monkeypatch.setattr(MetricsCollector, "start_prometheus_server", lambda *a, **kw: None)
+        monkeypatch.setattr(
+            MetricsCollector, "start_prometheus_server", lambda *a, **kw: None
+        )
 
         config = TradingConfig.stock()
         orch = TradingOrchestrator(config)
@@ -148,11 +169,19 @@ class TestTradingOrchestrator:
     @pytest.mark.asyncio
     async def test_stop_changes_state(self, monkeypatch):
         """stop() 호출 시 상태 변경"""
-        from services.trading.orchestrator import TradingOrchestrator, TradingConfig, TradingState
+        from services.trading.orchestrator import (
+            TradingOrchestrator,
+            TradingConfig,
+            TradingState,
+        )
         from services.monitoring.metrics import MetricsCollector
 
-        monkeypatch.setattr(MetricsCollector, "start_prometheus_server", lambda *a, **kw: None)
-        monkeypatch.setattr(TradingOrchestrator, "_init_llm_context_publisher", lambda *a, **kw: None)
+        monkeypatch.setattr(
+            MetricsCollector, "start_prometheus_server", lambda *a, **kw: None
+        )
+        monkeypatch.setattr(
+            TradingOrchestrator, "_init_llm_context_publisher", lambda *a, **kw: None
+        )
 
         config = TradingConfig.stock()
         orch = TradingOrchestrator(config)
@@ -165,11 +194,19 @@ class TestTradingOrchestrator:
     @pytest.mark.asyncio
     async def test_pause_and_resume(self, monkeypatch):
         """pause/resume 동작"""
-        from services.trading.orchestrator import TradingOrchestrator, TradingConfig, TradingState
+        from services.trading.orchestrator import (
+            TradingOrchestrator,
+            TradingConfig,
+            TradingState,
+        )
         from services.monitoring.metrics import MetricsCollector
 
-        monkeypatch.setattr(MetricsCollector, "start_prometheus_server", lambda *a, **kw: None)
-        monkeypatch.setattr(TradingOrchestrator, "_init_llm_context_publisher", lambda *a, **kw: None)
+        monkeypatch.setattr(
+            MetricsCollector, "start_prometheus_server", lambda *a, **kw: None
+        )
+        monkeypatch.setattr(
+            TradingOrchestrator, "_init_llm_context_publisher", lambda *a, **kw: None
+        )
 
         config = TradingConfig.stock()
         orch = TradingOrchestrator(config)
@@ -464,7 +501,9 @@ class TestTradingOrchestrator:
         assert orch._place_entry_order.await_count == 2
 
     @pytest.mark.asyncio
-    async def test_submit_entry_order_forwards_signal_timestamp_as_price_source_time(self):
+    async def test_submit_entry_order_forwards_signal_timestamp_as_price_source_time(
+        self,
+    ):
         """Regression: slippage-controlled futures path must forward
         signal.timestamp to _place_entry_order so paper broker's freshness
         guard can validate the price snapshot age. Without this, every entry
@@ -539,9 +578,9 @@ class TestTradingOrchestrator:
         # signal.timestamp as price_source_time.
         assert orch._place_entry_order.await_count == 2
         for call in orch._place_entry_order.await_args_list:
-            assert call.kwargs["price_source_time"] == signal_ts, (
-                f"price_source_time not forwarded; got {call.kwargs.get('price_source_time')!r}"
-            )
+            assert (
+                call.kwargs["price_source_time"] == signal_ts
+            ), f"price_source_time not forwarded; got {call.kwargs.get('price_source_time')!r}"
 
     @pytest.mark.asyncio
     async def test_submit_entry_order_does_not_retry_on_partial_fill_signal(self):
@@ -621,7 +660,11 @@ class TestTradingOrchestrator:
             return_value=(
                 True,
                 330.50,
-                {"mode": "slippage_guard", "filled_qty": 1, "execution_path": "passive_limit_partial"},
+                {
+                    "mode": "slippage_guard",
+                    "filled_qty": 1,
+                    "execution_path": "passive_limit_partial",
+                },
             )
         )
         orch._process_filled_entry = AsyncMock()
@@ -651,7 +694,9 @@ class TestTradingOrchestrator:
 
         orch._order_executor = MagicMock()
         orch._order_executor.execute_order = AsyncMock(
-            return_value=OrderResponse(success=True, order_no="00001234", message="accepted")
+            return_value=OrderResponse(
+                success=True, order_no="00001234", message="accepted"
+            )
         )
 
         filled, fill_price, filled_qty, venue = await orch._place_entry_order(
@@ -771,7 +816,9 @@ class TestTradingOrchestrator:
         monkeypatch.setattr(
             ConfigLoader,
             "load",
-            staticmethod(lambda *_args, **_kwargs: {"broker_verification": {"enabled": True}}),
+            staticmethod(
+                lambda *_args, **_kwargs: {"broker_verification": {"enabled": True}}
+            ),
         )
 
         await orch._verify_positions_with_broker()
@@ -1029,8 +1076,14 @@ class TestStaticUniverse:
         mock_redis = MagicMock()
         mock_redis.get.return_value = json.dumps(watchlist_data)
 
-        monkeypatch.setattr(shared.streaming.client.RedisClient, "get_client", staticmethod(lambda: mock_redis))
-        monkeypatch.setattr(TradingOrchestrator, "_hydrate_missing_symbol_names", lambda *_: None)
+        monkeypatch.setattr(
+            shared.streaming.client.RedisClient,
+            "get_client",
+            staticmethod(lambda: mock_redis),
+        )
+        monkeypatch.setattr(
+            TradingOrchestrator, "_hydrate_missing_symbol_names", lambda *_: None
+        )
 
         result = orch._load_static_watchlist()
         assert result is True
@@ -1049,8 +1102,13 @@ class TestStaticUniverse:
         mock_redis.get.return_value = None
 
         import shared.streaming.client
-        monkeypatch.setattr(shared.streaming.client.RedisClient, "get_client", lambda: mock_redis)
-        monkeypatch.setattr(TradingOrchestrator, "_hydrate_missing_symbol_names", lambda *_: None)
+
+        monkeypatch.setattr(
+            shared.streaming.client.RedisClient, "get_client", lambda: mock_redis
+        )
+        monkeypatch.setattr(
+            TradingOrchestrator, "_hydrate_missing_symbol_names", lambda *_: None
+        )
 
         result = orch._load_static_watchlist()
         assert result is False
@@ -1067,8 +1125,13 @@ class TestStaticUniverse:
         mock_redis.get.return_value = json.dumps({"strategies": {}})
 
         import shared.streaming.client
-        monkeypatch.setattr(shared.streaming.client.RedisClient, "get_client", lambda: mock_redis)
-        monkeypatch.setattr(TradingOrchestrator, "_hydrate_missing_symbol_names", lambda *_: None)
+
+        monkeypatch.setattr(
+            shared.streaming.client.RedisClient, "get_client", lambda: mock_redis
+        )
+        monkeypatch.setattr(
+            TradingOrchestrator, "_hydrate_missing_symbol_names", lambda *_: None
+        )
 
         result = orch._load_static_watchlist()
         assert result is False
