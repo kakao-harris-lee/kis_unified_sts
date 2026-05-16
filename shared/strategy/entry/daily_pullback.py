@@ -51,6 +51,15 @@ class DailyPullbackConfig(ConfigMixin):
     confidence_base: float = 0.6
     min_confidence: float = 0.0
 
+    # Optional quality filters (0 disables each filter)
+    max_atr_pct: float = 0.0
+    min_atr_pct: float = 0.0
+    max_pullback_pct: float = 0.0
+    max_volume_ratio: float = 0.0
+    min_volume_ratio: float = 0.0
+    min_highest_high_gap_pct: float | None = None
+    max_return_60d: float | None = None
+
 
 class DailyPullbackEntry(EntrySignalGenerator[DailyPullbackConfig]):
     """일봉 눌림목 진입 전략.
@@ -89,6 +98,11 @@ class DailyPullbackEntry(EntrySignalGenerator[DailyPullbackConfig]):
         assert (
             0.0 <= self.config.min_confidence <= 1.0
         ), "min_confidence must be in [0, 1]"
+        assert self.config.max_atr_pct >= 0.0, "max_atr_pct must be >= 0"
+        assert self.config.min_atr_pct >= 0.0, "min_atr_pct must be >= 0"
+        assert self.config.max_pullback_pct >= 0.0, "max_pullback_pct must be >= 0"
+        assert self.config.max_volume_ratio >= 0.0, "max_volume_ratio must be >= 0"
+        assert self.config.min_volume_ratio >= 0.0, "min_volume_ratio must be >= 0"
 
     @property
     def name(self) -> str:
@@ -141,10 +155,63 @@ class DailyPullbackEntry(EntrySignalGenerator[DailyPullbackConfig]):
         if sma_short <= 0 or close > sma_short:
             return None
 
+        pullback_pct = max(0.0, (sma_short - close) / sma_short)
+        if (
+            self.config.max_pullback_pct > 0
+            and pullback_pct > self.config.max_pullback_pct
+        ):
+            return None
+
         # --- Condition 3: RSI(5) < rsi_oversold ---
         rsi = _get("rsi_5", 50)
         if rsi >= self.config.rsi_oversold:
             return None
+
+        # --- Optional quality filters ---
+        if self.config.max_atr_pct > 0 or self.config.min_atr_pct > 0:
+            atr = _get("atr", 0)
+            if atr <= 0:
+                return None
+            atr_pct = atr / close
+            if self.config.min_atr_pct > 0 and atr_pct < self.config.min_atr_pct:
+                return None
+            if self.config.max_atr_pct > 0 and atr_pct > self.config.max_atr_pct:
+                return None
+        else:
+            atr = _get("atr", 0)
+            atr_pct = atr / close if atr > 0 else 0.0
+
+        if self.config.max_volume_ratio > 0 or self.config.min_volume_ratio > 0:
+            volume_ratio = _get("volume_ratio", 0)
+            if volume_ratio <= 0:
+                return None
+            if (
+                self.config.min_volume_ratio > 0
+                and volume_ratio < self.config.min_volume_ratio
+            ):
+                return None
+            if (
+                self.config.max_volume_ratio > 0
+                and volume_ratio > self.config.max_volume_ratio
+            ):
+                return None
+        else:
+            volume_ratio = _get("volume_ratio", 0)
+
+        highest_high = _get("highest_high", 0)
+        hh_gap_pct = (close - highest_high) / highest_high if highest_high > 0 else 0.0
+        if self.config.min_highest_high_gap_pct is not None and highest_high <= 0:
+            return None
+        if (
+            self.config.min_highest_high_gap_pct is not None
+            and hh_gap_pct < self.config.min_highest_high_gap_pct
+        ):
+            return None
+
+        return_60d = self._recent_return(context, 60)
+        if self.config.max_return_60d is not None:
+            if return_60d is None or return_60d > self.config.max_return_60d:
+                return None
 
         # --- Condition 4 (optional): SMA(60) 상승 ---
         if self.config.require_mid_trend:
@@ -181,8 +248,29 @@ class DailyPullbackEntry(EntrySignalGenerator[DailyPullbackConfig]):
                 "sma_200": sma_long,
                 "sma_20": sma_short,
                 "rsi_5": rsi,
+                "pullback_pct": pullback_pct,
+                "atr_pct": atr_pct,
+                "volume_ratio": volume_ratio,
+                "highest_high_gap_pct": hh_gap_pct,
+                "return_60d": return_60d,
             },
         )
+
+    def _recent_return(self, context: EntryContext, period: int) -> float | None:
+        """Return close-to-close performance over a daily rolling series."""
+        data = context.market_data or {}
+        indicators = context.indicators or {}
+        raw_closes = indicators.get("daily_closes") or data.get("daily_closes") or []
+        if not isinstance(raw_closes, list) or len(raw_closes) <= period:
+            return None
+        try:
+            current = float(raw_closes[-1])
+            previous = float(raw_closes[-period - 1])
+        except (TypeError, ValueError, IndexError):
+            return None
+        if current <= 0 or previous <= 0:
+            return None
+        return current / previous - 1.0
 
     def _calculate_confidence(
         self,

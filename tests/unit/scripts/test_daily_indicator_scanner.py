@@ -3,6 +3,7 @@ from datetime import date
 import pandas as pd
 
 from scripts.daily_indicator_scanner import (
+    compute_indicators,
     is_fresh_daily_data,
     latest_candle_date,
     load_daily_candles,
@@ -39,6 +40,28 @@ def test_daily_indicator_freshness_rejects_old_trading_day():
 
 def test_trading_day_lag_skips_weekends():
     assert trading_day_lag(date(2026, 5, 15), date(2026, 5, 18)) == 1
+
+
+def test_compute_indicators_includes_daily_volume_ratio():
+    rows = []
+    for i in range(220):
+        rows.append(
+            {
+                "date": date(2026, 1, 1),
+                "open": 100.0 + i,
+                "high": 102.0 + i,
+                "low": 99.0 + i,
+                "close": 101.0 + i,
+                "volume": 1_000_000 if i < 219 else 2_000_000,
+            }
+        )
+    df = pd.DataFrame(rows)
+
+    indicators = compute_indicators(df, volume_lookback=20)
+
+    assert indicators is not None
+    assert "daily_volume_ratio" in indicators
+    assert indicators["daily_volume_ratio"] == 2.0
 
 
 def test_load_daily_candles_fetches_extra_and_filters_placeholder_run():

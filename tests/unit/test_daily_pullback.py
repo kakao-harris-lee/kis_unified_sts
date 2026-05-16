@@ -73,6 +73,10 @@ def _make_entry_context(
     sma_60: float = 68000,
     sma_60_prev: float = 67000,
     rsi_5: float = 35.0,
+    atr: float = 1500.0,
+    volume_ratio: float = 0.8,
+    highest_high: float = 72000.0,
+    daily_closes: list[float] | None = None,
     timestamp: datetime | None = None,
 ) -> EntryContext:
     """Helper to build EntryContext for entry tests."""
@@ -84,6 +88,10 @@ def _make_entry_context(
             "sma_60": sma_60,
             "sma_60_prev": sma_60_prev,
             "rsi_5": rsi_5,
+            "atr": atr,
+            "volume_ratio": volume_ratio,
+            "highest_high": highest_high,
+            "daily_closes": daily_closes or [],
         },
         current_positions=[],
         timestamp=timestamp or datetime(2026, 2, 20, 0, 0),
@@ -193,6 +201,110 @@ class TestDailyPullbackEntry:
 
         assert signal is None
 
+    async def test_max_atr_pct_blocks_high_volatility_signal(self):
+        """max_atr_pct blocks otherwise valid high-volatility pullbacks."""
+        config = DailyPullbackConfig(max_atr_pct=0.02)
+        strategy = DailyPullbackEntry(config)
+        context = _make_entry_context(close=70000, atr=2100)
+
+        signal = await strategy.generate(context)
+
+        assert signal is None
+
+    async def test_min_atr_pct_blocks_low_volatility_signal(self):
+        """min_atr_pct can require enough daily range to justify the trade."""
+        config = DailyPullbackConfig(min_atr_pct=0.03)
+        strategy = DailyPullbackEntry(config)
+        context = _make_entry_context(close=70000, atr=1400)
+
+        signal = await strategy.generate(context)
+
+        assert signal is None
+
+    async def test_max_pullback_pct_blocks_deep_pullback_signal(self):
+        """max_pullback_pct blocks pullbacks deeper than the configured gate."""
+        config = DailyPullbackConfig(max_pullback_pct=0.01)
+        strategy = DailyPullbackEntry(config)
+        context = _make_entry_context(close=70000, sma_20=71000)
+
+        signal = await strategy.generate(context)
+
+        assert signal is None
+
+    async def test_max_volume_ratio_blocks_high_volume_pullback_signal(self):
+        """max_volume_ratio blocks pullbacks with unusually high daily volume."""
+        config = DailyPullbackConfig(max_volume_ratio=0.7)
+        strategy = DailyPullbackEntry(config)
+        context = _make_entry_context(volume_ratio=0.8)
+
+        signal = await strategy.generate(context)
+
+        assert signal is None
+
+    async def test_min_volume_ratio_blocks_low_volume_pullback_signal(self):
+        """min_volume_ratio can require meaningful daily participation."""
+        config = DailyPullbackConfig(min_volume_ratio=1.0)
+        strategy = DailyPullbackEntry(config)
+        context = _make_entry_context(volume_ratio=0.8)
+
+        signal = await strategy.generate(context)
+
+        assert signal is None
+
+    async def test_min_highest_high_gap_blocks_far_from_high_signal(self):
+        """min_highest_high_gap_pct blocks entries too far below recent highs."""
+        config = DailyPullbackConfig(min_highest_high_gap_pct=-0.05)
+        strategy = DailyPullbackEntry(config)
+        context = _make_entry_context(close=70000, highest_high=80000)
+
+        signal = await strategy.generate(context)
+
+        assert signal is None
+
+    async def test_max_return_60d_blocks_extended_signal(self):
+        """max_return_60d blocks entries after excessive 60-day extension."""
+        config = DailyPullbackConfig(max_return_60d=0.05)
+        strategy = DailyPullbackEntry(config)
+        daily_closes = [100.0] * 20 + [120.0] * 60 + [70000.0]
+        daily_closes[-61] = 60000.0
+        context = _make_entry_context(daily_closes=daily_closes)
+
+        signal = await strategy.generate(context)
+
+        assert signal is None
+
+    async def test_quality_filter_metadata_on_valid_signal(self):
+        """Quality metrics are emitted for analysis when a signal passes."""
+        config = DailyPullbackConfig(
+            max_atr_pct=0.03,
+            min_atr_pct=0.01,
+            max_pullback_pct=0.02,
+            max_volume_ratio=1.0,
+            min_volume_ratio=0.5,
+            min_highest_high_gap_pct=-0.05,
+            max_return_60d=0.2,
+        )
+        strategy = DailyPullbackEntry(config)
+        daily_closes = [100.0] * 20 + [100.0] * 60 + [70000.0]
+        daily_closes[-61] = 65000.0
+        context = _make_entry_context(
+            close=70000,
+            sma_20=71000,
+            atr=1400,
+            volume_ratio=0.8,
+            highest_high=72000,
+            daily_closes=daily_closes,
+        )
+
+        signal = await strategy.generate(context)
+
+        assert signal is not None
+        assert signal.metadata["atr_pct"] == pytest.approx(0.02)
+        assert signal.metadata["pullback_pct"] == pytest.approx(1000 / 71000)
+        assert signal.metadata["volume_ratio"] == pytest.approx(0.8)
+        assert signal.metadata["highest_high_gap_pct"] == pytest.approx(-2000 / 72000)
+        assert signal.metadata["return_60d"] == pytest.approx(70000 / 65000 - 1)
+
     def test_config_from_dict(self):
         """ConfigMixin.from_dict() works correctly."""
         config = DailyPullbackConfig.from_dict(
@@ -200,12 +312,26 @@ class TestDailyPullbackEntry:
                 "sma_long_period": 100,
                 "rsi_oversold": 30.0,
                 "min_confidence": 0.7,
+                "max_atr_pct": 0.032,
+                "min_atr_pct": 0.02,
+                "max_pullback_pct": 0.02,
+                "max_volume_ratio": 0.8,
+                "min_volume_ratio": 0.6,
+                "min_highest_high_gap_pct": -0.08,
+                "max_return_60d": 0.1,
                 "unknown_field": "ignored",
             }
         )
         assert config.sma_long_period == 100
         assert config.rsi_oversold == 30.0
         assert config.min_confidence == 0.7
+        assert config.max_atr_pct == pytest.approx(0.032)
+        assert config.min_atr_pct == pytest.approx(0.02)
+        assert config.max_pullback_pct == pytest.approx(0.02)
+        assert config.max_volume_ratio == pytest.approx(0.8)
+        assert config.min_volume_ratio == pytest.approx(0.6)
+        assert config.min_highest_high_gap_pct == pytest.approx(-0.08)
+        assert config.max_return_60d == pytest.approx(0.1)
         assert config.sma_short_period == 20  # default
 
     def test_config_from_dict_with_params_key(self):

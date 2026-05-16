@@ -138,6 +138,7 @@ def compute_indicators(
     atr_period: int = 22,
     lookback_period: int = 22,
     mid_trend_lookback: int = 5,
+    volume_lookback: int = 20,
 ) -> dict[str, float] | None:
     """Compute daily indicators from a DataFrame. Returns latest values or None."""
     if len(df) < sma_long:
@@ -157,11 +158,14 @@ def compute_indicators(
 
     # ATR
     prev_close = close.shift(1)
-    tr = pd.concat([
-        (high - low),
-        (high - prev_close).abs(),
-        (low - prev_close).abs(),
-    ], axis=1).max(axis=1)
+    tr = pd.concat(
+        [
+            (high - low),
+            (high - prev_close).abs(),
+            (low - prev_close).abs(),
+        ],
+        axis=1,
+    ).max(axis=1)
     atr_series = tr.rolling(window=atr_period, min_periods=atr_period).mean()
 
     # Highest High
@@ -184,6 +188,18 @@ def compute_indicators(
     atr = safe_float(atr_series.iloc[latest])
     highest_high = safe_float(hh_series.iloc[latest])
     daily_close = safe_float(close.iloc[latest])
+    volume_avg = (
+        df["volume"]
+        .astype(float)
+        .shift(1)
+        .rolling(window=max(1, int(volume_lookback)), min_periods=1)
+        .mean()
+    )
+    volume_ratio = safe_float(
+        df["volume"].astype(float).iloc[latest] / volume_avg.iloc[latest]
+        if volume_avg.iloc[latest] > 0
+        else None
+    )
 
     if sma_200 is None:
         return None
@@ -197,6 +213,7 @@ def compute_indicators(
         "daily_atr": atr,
         "daily_highest_high": highest_high,
         "daily_close": daily_close,
+        "daily_volume_ratio": volume_ratio,
     }
 
     # Include raw daily series for VR composite strategy (most recent 80 bars)
@@ -212,21 +229,35 @@ def publish_to_redis(indicators: dict[str, dict], redis_client=None) -> None:
     """Publish indicator dict to Redis."""
     if redis_client is None:
         from shared.streaming.client import RedisClient
+
         redis_client = RedisClient.get_client()
 
-    payload = json.dumps({
-        "indicators": indicators,
-        "computed_at": datetime.now().isoformat(),
-        "symbol_count": len(indicators),
-    })
+    payload = json.dumps(
+        {
+            "indicators": indicators,
+            "computed_at": datetime.now().isoformat(),
+            "symbol_count": len(indicators),
+        }
+    )
     redis_client.set(REDIS_KEY, payload, ex=REDIS_TTL)
-    logger.info(f"Published daily indicators for {len(indicators)} symbols to Redis ({REDIS_KEY})")
+    logger.info(
+        f"Published daily indicators for {len(indicators)} symbols to Redis ({REDIS_KEY})"
+    )
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Pre-compute daily indicators for paper trading")
-    parser.add_argument("--symbols", type=str, default="", help="Comma-separated symbol codes (default: stock universe)")
-    parser.add_argument("--days", type=int, default=250, help="Number of daily bars to load")
+    parser = argparse.ArgumentParser(
+        description="Pre-compute daily indicators for paper trading"
+    )
+    parser.add_argument(
+        "--symbols",
+        type=str,
+        default="",
+        help="Comma-separated symbol codes (default: stock universe)",
+    )
+    parser.add_argument(
+        "--days", type=int, default=250, help="Number of daily bars to load"
+    )
     parser.add_argument(
         "--max-stale-trading-days",
         type=int,
