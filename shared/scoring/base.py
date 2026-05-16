@@ -37,6 +37,11 @@ class ScoredItem:
     keywords: list[str] = field(default_factory=list)
     reasoning: str = ""
     raw_ref: str = ""
+    raw_source: str = ""
+    raw_title: str = ""
+    raw_url: str = ""
+    raw_published_at_ms: int = 0
+    raw_keywords: list[str] = field(default_factory=list)
 
     MAX_KEYWORDS: ClassVar[int] = 5
 

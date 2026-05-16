@@ -36,10 +36,19 @@ async def collect_target_price_signal(
         "available": False,
         "target_price": 0.0,
         "latest_target_price": 0.0,
+        "latest_target_upside_pct": 0.0,
         "target_upside_pct": 0.0,
         "target_opinion": "",
         "target_date": "",
+        "target_latest_broker": "",
         "target_sample_count": 0,
+        "target_coverage_count": 0,
+        "target_dispersion_pct": 0.0,
+        "target_revision_30d_pct": 0.0,
+        "target_revision_direction": "",
+        "target_staleness_days": 0,
+        "target_opinion_distribution": {},
+        "target_recent_reports": [],
     }
 
     if not analyzer.config.stock_enable_kis_target_price:
@@ -54,15 +63,31 @@ async def collect_target_price_signal(
             code,
             current_price=float(current_price),
             lookback_days=int(analyzer.config.stock_target_lookback_days),
+            recent_days=int(getattr(analyzer.config, "stock_target_recent_days", 30)),
         )
         signal = {
             "available": bool(summary.get("available", False)),
             "target_price": float(summary.get("target_price", 0.0)),
             "latest_target_price": float(summary.get("latest_target_price", 0.0)),
+            "latest_target_upside_pct": float(
+                summary.get("latest_target_upside_pct", 0.0)
+            ),
             "target_upside_pct": float(summary.get("upside_pct", 0.0)),
             "target_opinion": str(summary.get("opinion", "")).strip(),
             "target_date": str(summary.get("date", "")).strip(),
+            "target_latest_broker": str(summary.get("latest_broker", "")).strip(),
             "target_sample_count": int(summary.get("sample_count", 0)),
+            "target_coverage_count": int(summary.get("coverage_count", 0)),
+            "target_dispersion_pct": float(summary.get("dispersion_pct", 0.0)),
+            "target_revision_30d_pct": float(summary.get("revision_30d_pct", 0.0)),
+            "target_revision_direction": str(
+                summary.get("revision_direction", "")
+            ).strip(),
+            "target_staleness_days": int(summary.get("staleness_days", 0)),
+            "target_opinion_distribution": dict(
+                summary.get("opinion_distribution", {})
+            ),
+            "target_recent_reports": list(summary.get("recent_reports", []))[:5],
         }
     except Exception as e:
         logger.debug(f"KIS target-price lookup failed for {code}: {e}")
@@ -128,8 +153,10 @@ async def llm_score_candidate(
             "max_drawdown_pct": screening.get("max_drawdown_pct"),
             "volatility": screening.get("volatility"),
             "is_new_listing": screening.get("is_new_listing", False),
+            "nps_ownership": screening.get("nps_ownership", {}),
         },
         "news_sentiment": news.get("sentiment", "중립"),
+        "scored_news": news.get("marketaux_scored_news", []),
     }
     technical_consensus = screening.get("technical_consensus")
     if technical_consensus:
@@ -143,8 +170,21 @@ async def llm_score_candidate(
         }
     if screening.get("target_available"):
         payload["target_price"] = {
+            "consensus_target": screening.get("target_price"),
+            "latest_target": screening.get("latest_target_price"),
             "upside_pct": screening.get("target_upside_pct"),
+            "latest_upside_pct": screening.get("latest_target_upside_pct"),
             "opinion": screening.get("target_opinion"),
+            "date": screening.get("target_date"),
+            "latest_broker": screening.get("target_latest_broker"),
+            "coverage_count": screening.get("target_coverage_count"),
+            "sample_count": screening.get("target_sample_count"),
+            "dispersion_pct": screening.get("target_dispersion_pct"),
+            "revision_30d_pct": screening.get("target_revision_30d_pct"),
+            "revision_direction": screening.get("target_revision_direction"),
+            "staleness_days": screening.get("target_staleness_days"),
+            "opinion_distribution": screening.get("target_opinion_distribution", {}),
+            "recent_reports": screening.get("target_recent_reports", []),
         }
 
     system_prompt = (

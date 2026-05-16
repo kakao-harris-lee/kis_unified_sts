@@ -68,6 +68,12 @@ class ScoredPublisher:
             "confidence": str(item.confidence),
             "keywords_json": json.dumps(item.keywords, ensure_ascii=False),
             "reasoning": item.reasoning,
+            "raw_ref": item.raw_ref,
+            "raw_source": item.raw_source,
+            "raw_title": item.raw_title,
+            "raw_url": item.raw_url,
+            "raw_published_at_ms": str(item.raw_published_at_ms),
+            "raw_keywords_json": json.dumps(item.raw_keywords, ensure_ascii=False),
         }
         await self.redis.xadd(self.stream, fields, maxlen=self.maxlen, approximate=True)
         # Mandatory TTL refresh after every write (project Redis TTL policy).

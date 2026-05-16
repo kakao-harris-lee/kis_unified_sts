@@ -24,6 +24,11 @@ def _item(news_id: str = "n1") -> ScoredItem:
         confidence=0.85,
         keywords=["fomc"],
         reasoning="hawkish",
+        raw_source="marketaux",
+        raw_title="Samsung headline",
+        raw_url="https://example.com/news",
+        raw_published_at_ms=1_700_000_000_000,
+        raw_keywords=["005930.KS", "삼성전자"],
     )
 
 
@@ -46,6 +51,8 @@ async def test_publish_writes_to_stream(redis):
     assert len(entries) == 1
     assert entries[0][1][b"news_id"] == b"a"
     assert entries[0][1][b"category"] == b"macro_us"
+    assert entries[0][1][b"raw_source"] == b"marketaux"
+    assert entries[0][1][b"raw_title"] == b"Samsung headline"
 
 
 @pytest.mark.asyncio
@@ -158,6 +165,7 @@ async def test_stream_fields_are_scalar_strings(redis):
     import json
 
     assert json.loads(fields[b"keywords_json"]) == ["fomc"]
+    assert json.loads(fields[b"raw_keywords_json"]) == ["005930.KS", "삼성전자"]
 
 
 @pytest.mark.asyncio

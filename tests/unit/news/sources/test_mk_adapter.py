@@ -36,3 +36,28 @@ async def test_mk_adapter_yields_raw_items_without_sentiment():
     # URL-hashed fallback for no-id entry
     assert items[1].news_id.startswith("mk_")
     assert all("sentiment" not in i.keywords for i in items)
+
+
+@pytest.mark.asyncio
+async def test_mk_adapter_accepts_sync_collector_contract():
+    underlying = MagicMock()
+    underlying.collect.return_value = {
+        "market_news": [
+            {
+                "title": "코스피 상승",
+                "link": "https://stock.mk.co.kr/news/view/1",
+                "source": "매일경제",
+            }
+        ],
+        "stock_news": [{"title": "ignored", "link": "https://example.com/stock"}],
+    }
+    del underlying.fetch_market_news
+
+    src = MKNewsSourceAdapter(underlying=underlying)
+    items = [it async for it in src.fetch()]
+
+    assert len(items) == 1
+    assert items[0].source == "mk"
+    assert items[0].title == "코스피 상승"
+    assert items[0].url == "https://stock.mk.co.kr/news/view/1"
+    assert items[0].news_id.startswith("mk_")

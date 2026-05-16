@@ -6,7 +6,7 @@ pytest.importorskip("httpx")
 
 from shared.llm.data_classes import Signal, StockInfo, TechnicalAnalysis
 from shared.llm.llm_analyzer import UnifiedTradingAnalyzer
-from shared.llm.stock_screening import score_stock_candidate
+from shared.llm.stock_screening import score_stock_candidate, score_target_price_signal
 
 
 def test_score_target_price_signal_positive_case():
@@ -40,6 +40,64 @@ def test_score_target_price_signal_unavailable_case():
         }
     )
     assert score == 0.0
+
+
+def test_score_target_price_signal_rewards_recent_revision():
+    config = _make_config()
+    base = UnifiedTradingAnalyzer._score_target_price_signal(
+        {
+            "target_available": True,
+            "target_upside_pct": 12.0,
+            "target_opinion": "매수",
+            "target_coverage_count": 3,
+            "target_staleness_days": 5,
+            "target_dispersion_pct": 10.0,
+        }
+    )
+    revised = score_target_price_signal(
+        {
+            "target_available": True,
+            "target_upside_pct": 12.0,
+            "target_opinion": "매수",
+            "target_coverage_count": 3,
+            "target_staleness_days": 5,
+            "target_dispersion_pct": 10.0,
+            "target_revision_direction": "up",
+            "target_revision_30d_pct": 5.0,
+        },
+        config,
+    )
+
+    assert revised > base
+
+
+def test_score_target_price_signal_discounts_stale_low_coverage():
+    config = _make_config()
+    high_quality = score_target_price_signal(
+        {
+            "target_available": True,
+            "target_upside_pct": 22.0,
+            "target_opinion": "매수",
+            "target_coverage_count": 3,
+            "target_staleness_days": 5,
+            "target_dispersion_pct": 10.0,
+        },
+        config,
+    )
+    low_quality = score_target_price_signal(
+        {
+            "target_available": True,
+            "target_upside_pct": 22.0,
+            "target_opinion": "매수",
+            "target_coverage_count": 1,
+            "target_staleness_days": 120,
+            "target_dispersion_pct": 60.0,
+        },
+        config,
+    )
+
+    assert low_quality > 0
+    assert low_quality < high_quality
 
 
 def test_score_stock_candidate_best_none_new_listing():
@@ -126,6 +184,7 @@ def _make_config(**overrides):
         "stock_score_weight_news": 0.10,
         "stock_score_weight_liquidity": 0.10,
         "stock_score_weight_target_price": 0.10,
+        "stock_score_weight_nps_ownership": 0.10,
         "stock_score_weight_theme": 0.15,
         "stock_score_weight_risk": 0.10,
         "stock_min_trade_value": 500_000_000,
@@ -134,6 +193,14 @@ def _make_config(**overrides):
         "stock_max_drawdown_pct": 0.25,
         "stock_new_listing_penalty": 0.7,
         "stock_enable_kis_target_price": True,
+        "stock_nps_enabled": True,
+        "stock_nps_holding_ratio_anchor_pct": 10.0,
+        "stock_nps_base_score_max": 10.0,
+        "stock_nps_change_pctp_multiplier": 2.0,
+        "stock_nps_change_score_cap": 5.0,
+        "stock_nps_score_cap": 15.0,
+        "stock_nps_max_report_age_days": 99999,
+        "stock_nps_stale_score_multiplier": 0.5,
     }
     defaults.update(overrides)
     return type("C", (), defaults)()
@@ -178,13 +245,23 @@ def test_soft_filter_extreme_atr_gets_heavy_penalty():
         "is_new_listing": False,
     }
     normal_score, normal_bd = score_stock_candidate(
-        stock, tech, None, {"sentiment": "중립", "news_count": 0}, screening_normal, config
+        stock,
+        tech,
+        None,
+        {"sentiment": "중립", "news_count": 0},
+        screening_normal,
+        config,
     )
 
     # Extreme ATR (0.15 > max*1.5 = 0.12)
     screening_extreme = dict(screening_normal, atr_pct=0.15)
     extreme_score, extreme_bd = score_stock_candidate(
-        stock, tech, None, {"sentiment": "중립", "news_count": 0}, screening_extreme, config
+        stock,
+        tech,
+        None,
+        {"sentiment": "중립", "news_count": 0},
+        screening_extreme,
+        config,
     )
 
     # Extreme ATR should produce a score (not excluded), but much lower
@@ -222,7 +299,12 @@ def test_soft_filter_extreme_drawdown_gets_heavy_penalty():
 
     # Extreme drawdown (0.45 > max*1.5 = 0.375)
     screening = {
-        "momentum": {"ret_5d": -3, "ret_20d": -8, "ret_60d": -15, "high_proximity": 0.6},
+        "momentum": {
+            "ret_5d": -3,
+            "ret_20d": -8,
+            "ret_60d": -15,
+            "high_proximity": 0.6,
+        },
         "consecutive_up": 0,
         "atr_pct": 0.06,
         "max_drawdown_pct": 0.45,
@@ -239,3 +321,64 @@ def test_soft_filter_extreme_drawdown_gets_heavy_penalty():
     assert bd["risk_penalty"] >= 15
     # Should have a strongly negative total score
     assert score < 0
+
+
+def test_score_stock_candidate_includes_nps_ownership_bonus():
+    stock = StockInfo(
+        code="111111",
+        name="기관보유",
+        price=20000,
+        change_pct=0.0,
+        volume=300000,
+        volume_ratio=1.0,
+        market_cap=800_000_000_000,
+        trade_value=3_000_000_000,
+        turnover=0.004,
+    )
+    tech = TechnicalAnalysis(
+        rsi=45.0,
+        macd=0.0,
+        macd_signal=0.0,
+        macd_hist=0.0,
+        bb_position=0.5,
+        ma5=20000,
+        ma20=20000,
+        ma60=20000,
+        trend="횡보",
+        signal=Signal.HOLD,
+    )
+    base_screening = {
+        "momentum": {"ret_5d": 0, "ret_20d": 0, "ret_60d": 0, "high_proximity": 0.8},
+        "consecutive_up": 0,
+        "atr_pct": 0.03,
+        "max_drawdown_pct": 0.10,
+        "volatility": 0.3,
+        "risk_keywords": [],
+        "target_available": False,
+        "is_new_listing": False,
+    }
+    config = _make_config()
+
+    neutral_score, _ = score_stock_candidate(
+        stock,
+        tech,
+        None,
+        {"sentiment": "중립", "news_count": 1},
+        base_screening,
+        config,
+    )
+    nps_screening = {
+        **base_screening,
+        "nps_ownership": {
+            "available": True,
+            "holding_ratio_pct": 10.0,
+            "holding_ratio_change_pctp": 0.0,
+            "rcept_dt": "2026-05-14",
+        },
+    }
+    nps_score, breakdown = score_stock_candidate(
+        stock, tech, None, {"sentiment": "중립", "news_count": 1}, nps_screening, config
+    )
+
+    assert breakdown["nps_ownership"] == 10.0
+    assert nps_score > neutral_score

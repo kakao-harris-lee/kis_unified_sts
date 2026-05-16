@@ -24,6 +24,20 @@ news_collector:
       enabled: false
       poll_interval_seconds: 120
       rss_url: "https://example.com/en"
+    marketaux:
+      enabled: true
+      poll_interval_seconds: 600
+      api_token: "test-token"
+      limit: 10
+      language: "en"
+      countries: "us,kr"
+      symbols: "NVDA,005930"
+      entity_types: "equity,index"
+      filter_entities: true
+      must_have_entities: true
+      group_similar: true
+      published_after_minutes: 360
+      timeout_seconds: 20
     dart:
       enabled: false
       poll_interval_seconds: 30
@@ -31,11 +45,33 @@ news_collector:
       enabled: false
       poll_interval_seconds: 180
       mode: "adapter"
+    gdelt:
+      enabled: true
+      poll_interval_seconds: 600
+      query: '("Federal Reserve" OR "bond yields")'
+      max_records: 10
+      timespan: "6h"
+      sort: "datedesc"
+      timeout_seconds: 20
+    rss_feeds:
+      - name: "newsis_economy"
+        enabled: true
+        poll_interval_seconds: 240
+        rss_url: "https://www.newsis.com/RSS/economy.xml"
+        lang: "ko"
+        timeout_seconds: 10
         """.strip())
     cfg = NewsCollectorConfig.from_yaml(str(yaml))
     assert cfg.redis_stream == "stream:news.raw"
     assert cfg.sources.yonhap.enabled is True
     assert cfg.sources.reuters.enabled is False
+    assert cfg.sources.dart.lookback_days == 3
+    assert cfg.sources.dart.page_count == 100
+    assert cfg.sources.marketaux.api_token == "test-token"
+    assert cfg.sources.marketaux.symbols == "NVDA,005930"
+    assert cfg.sources.marketaux.must_have_entities is True
+    assert cfg.sources.gdelt.max_records == 10
+    assert cfg.sources.rss_feeds[0].name == "newsis_economy"
     assert cfg.dedupe.memory_size == 10
 
 

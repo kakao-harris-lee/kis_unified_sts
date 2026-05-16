@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import fakeredis.aioredis
@@ -66,7 +67,14 @@ async def test_loop_records_error_and_keeps_running_on_fetch_exception():
 
 
 def _make_cfg(**source_enables):
-    defaults = {"yonhap": True, "reuters": True, "dart": True, "mk": True}
+    defaults = {
+        "yonhap": True,
+        "reuters": True,
+        "marketaux": False,
+        "gdelt": False,
+        "dart": True,
+        "mk": True,
+    }
     defaults.update(source_enables)
     cfg = MagicMock()
     cfg.redis_stream = "stream:news.raw"
@@ -79,7 +87,32 @@ def _make_cfg(**source_enables):
     for name, enabled in defaults.items():
         section = getattr(cfg.sources, name)
         section.enabled = enabled
-        section.rss_url = f"https://example.com/{name}.rss"
+        if name in {"yonhap", "reuters"}:
+            section.rss_url = f"https://example.com/{name}.rss"
+    cfg.sources.marketaux.poll_interval_seconds = 600
+    cfg.sources.marketaux.api_token = "test-token"
+    cfg.sources.marketaux.endpoint = "https://api.marketaux.com/v1/news/all"
+    cfg.sources.marketaux.limit = 10
+    cfg.sources.marketaux.language = "en"
+    cfg.sources.marketaux.countries = "us,kr"
+    cfg.sources.marketaux.symbols = ""
+    cfg.sources.marketaux.entity_types = "equity,index"
+    cfg.sources.marketaux.industries = ""
+    cfg.sources.marketaux.search = ""
+    cfg.sources.marketaux.domains = ""
+    cfg.sources.marketaux.exclude_domains = ""
+    cfg.sources.marketaux.filter_entities = True
+    cfg.sources.marketaux.must_have_entities = False
+    cfg.sources.marketaux.group_similar = True
+    cfg.sources.marketaux.published_after_minutes = 720
+    cfg.sources.marketaux.timeout_seconds = 20
+    cfg.sources.gdelt.poll_interval_seconds = 600
+    cfg.sources.gdelt.query = '("Federal Reserve" OR "bond yields")'
+    cfg.sources.gdelt.max_records = 10
+    cfg.sources.gdelt.timespan = "6h"
+    cfg.sources.gdelt.sort = "datedesc"
+    cfg.sources.gdelt.timeout_seconds = 20
+    cfg.sources.rss_feeds = []
     return cfg
 
 
@@ -97,6 +130,19 @@ class _NoopSource(NewsSource):
 async def test_build_and_run_all_sources_enabled(monkeypatch):
     """Exercises the full construction path when every source is enabled."""
     cfg = _make_cfg()
+    cfg.sources.marketaux.enabled = True
+    cfg.sources.gdelt.enabled = True
+    cfg.sources.rss_feeds = [
+        SimpleNamespace(
+            enabled=True,
+            name="newsis_economy",
+            rss_url="https://example.com/newsis.rss",
+            lang="ko",
+            version=None,
+            poll_interval_seconds=240,
+            timeout_seconds=10,
+        )
+    ]
 
     monkeypatch.setattr(
         "shared.news.config.NewsCollectorConfig.from_yaml",
@@ -128,6 +174,18 @@ async def test_build_and_run_all_sources_enabled(monkeypatch):
     )
     monkeypatch.setattr(
         "shared.news.sources.reuters.ReutersRSSSource",
+        lambda *_a, **_kw: _NoopSource(),
+    )
+    monkeypatch.setattr(
+        "shared.news.sources.marketaux.MarketauxNewsSource",
+        lambda *_a, **_kw: _NoopSource(),
+    )
+    monkeypatch.setattr(
+        "shared.news.sources.gdelt.GDELTNewsSource",
+        lambda *_a, **_kw: _NoopSource(),
+    )
+    monkeypatch.setattr(
+        "shared.news.sources.rss.GenericRSSSource",
         lambda *_a, **_kw: _NoopSource(),
     )
     # DART + MK import paths must exist (shared.llm.collectors is real).

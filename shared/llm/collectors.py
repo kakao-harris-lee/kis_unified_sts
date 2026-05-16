@@ -11,6 +11,7 @@ Data Sources:
 - KOFIA (freesis.kofia.or.kr): 펀드, 채권, 투자자동향
 - MK Stock (stock.mk.co.kr): 증권뉴스, 테마, 분석
 """
+import asyncio
 import json
 import logging
 import os
@@ -607,8 +608,63 @@ class DARTDataCollector(DataCollector):
             "recent_disclosures": self._get_disclosures(corp_code) if corp_code else [],
             "financial_info": self._get_financial_info(corp_code) if corp_code else {},
             "major_shareholders": self._get_major_shareholders(corp_code) if corp_code else {},
+            "executive_major_shareholders": (
+                self._get_executive_major_shareholders(corp_code) if corp_code else []
+            ),
         }
         return data
+
+    async def fetch_recent_filings(
+        self,
+        *,
+        lookback_days: int = 3,
+        page_count: int = 100,
+    ) -> List[Dict]:
+        """Fetch recent filings for the streaming news pipeline."""
+        return await asyncio.to_thread(
+            self._fetch_recent_filings_sync,
+            lookback_days=lookback_days,
+            page_count=page_count,
+        )
+
+    def _fetch_recent_filings_sync(
+        self,
+        *,
+        lookback_days: int = 3,
+        page_count: int = 100,
+    ) -> List[Dict]:
+        """최근 전체 공시 목록."""
+        if not self.api_key:
+            logger.debug("DART API key not configured")
+            return []
+
+        try:
+            url = f"{self.BASE_URL}/list.json"
+            end_de = datetime.now().strftime("%Y%m%d")
+            days = max(0, int(lookback_days))
+            bgn_de = (datetime.now() - timedelta(days=days)).strftime("%Y%m%d")
+            params = {
+                "crtfc_key": self.api_key,
+                "bgn_de": bgn_de,
+                "end_de": end_de,
+                "sort": "date",
+                "sort_mth": "desc",
+                "page_count": max(1, min(int(page_count), 100)),
+            }
+            response = self.session.get(url, params=params, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                if data.get("status") == "000":
+                    return data.get("list", [])
+                if data.get("status") != "013":
+                    logger.debug(
+                        "DART recent filings returned status=%s message=%s",
+                        data.get("status"),
+                        data.get("message"),
+                    )
+        except Exception as e:
+            logger.debug(f"DART recent filings failed: {e}")
+        return []
 
     def _get_disclosures(self, corp_code: str) -> List[Dict]:
         """최근 공시 목록"""
@@ -667,6 +723,23 @@ class DARTDataCollector(DataCollector):
                     return data.get("list", {})
         except Exception as e:
             logger.debug(f"DART major shareholders failed: {e}")
+        return {}
+
+    def _get_executive_major_shareholders(self, corp_code: str) -> Dict:
+        """임원ㆍ주요주주 특정증권등 소유상황."""
+        try:
+            url = f"{self.BASE_URL}/elestock.json"
+            params = {
+                "crtfc_key": self.api_key,
+                "corp_code": corp_code,
+            }
+            response = self.session.get(url, params=params, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                if data.get("status") == "000":
+                    return data.get("list", {})
+        except Exception as e:
+            logger.debug(f"DART executive/major shareholders failed: {e}")
         return {}
 
 

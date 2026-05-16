@@ -10,7 +10,10 @@ import asyncio
 import logging
 import os
 import time
+from datetime import date, datetime, timedelta
+from statistics import median
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import aiohttp
 
@@ -18,6 +21,7 @@ from shared.config.loader import ConfigLoader
 from shared.http import AsyncSessionMixin
 from shared.kis.auth import KISAuthConfig, KISAuthManager
 from shared.kis.error_rate import KISApiErrorRateTracker
+from shared.utils.parsing import parse_float
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +40,9 @@ _rl_cfg = _load_rate_limiter_config()
 _DEFAULT_REQUEST_TIMEOUT = float(_rl_cfg.get("request_timeout", 10.0))
 _DEFAULT_RATE_LIMIT = int(_rl_cfg.get("default_rate", 5))
 _RATE_LIMIT_PENALTY = float(_rl_cfg.get("penalty_seconds", 1.0))
+_KST = ZoneInfo("Asia/Seoul")
+_INVEST_OPINION_PATH = "/uapi/domestic-stock/v1/quotations/invest-opinion"
+_INVEST_OPINION_TR_ID = "FHKST663300C0"
 
 
 class _RateLimiter:
@@ -145,7 +152,6 @@ class KISClient(AsyncSessionMixin):
         """Normalize account number to digits-only 10-char format."""
         return "".join(ch for ch in (account_no or "") if ch.isdigit())
 
-
     def _is_futures(self, symbol: str) -> bool:
         """Check if symbol is a futures code (KOSPI 200 / Mini)."""
         # Futures codes start with '1' and are usually 8 chars (e.g. 101S6000)
@@ -168,6 +174,299 @@ class KISClient(AsyncSessionMixin):
             logger.warning(f"Failed to fetch price for {symbol}: {e}")
             raise
 
+    async def fetch_invest_opinion(
+        self,
+        symbol: str,
+        *,
+        start_date: date | datetime | str | None = None,
+        end_date: date | datetime | str | None = None,
+        lookback_days: int = 180,
+        max_pages: int = 10,
+    ) -> list[dict[str, Any]]:
+        """Fetch KIS domestic stock analyst opinions and target prices."""
+        if self._is_futures(symbol):
+            return []
+        if not self.config.is_real:
+            raise RuntimeError(
+                "KIS invest-opinion API is not supported in mock investment."
+            )
+
+        end_yyyymmdd = self._format_kis_date(end_date or datetime.now(_KST).date())
+        if start_date is None:
+            days = max(int(lookback_days), 1)
+            start = datetime.strptime(end_yyyymmdd, "%Y%m%d").date() - timedelta(
+                days=days
+            )
+            start_yyyymmdd = self._format_kis_date(start)
+        else:
+            start_yyyymmdd = self._format_kis_date(start_date)
+
+        rows: list[dict[str, Any]] = []
+        tr_cont = ""
+        pages = max(int(max_pages), 1)
+
+        for _ in range(pages):
+            await self._rate_limiter.acquire()
+            session = await self._get_session()
+            headers = await self.auth_manager.get_auth_headers_async()
+            headers["tr_id"] = _INVEST_OPINION_TR_ID
+            headers["custtype"] = "P"
+            if tr_cont:
+                headers["tr_cont"] = tr_cont
+
+            params = {
+                "FID_COND_MRKT_DIV_CODE": "J",
+                "FID_COND_SCR_DIV_CODE": "16633",
+                "FID_INPUT_ISCD": symbol,
+                "FID_INPUT_DATE_1": start_yyyymmdd,
+                "FID_INPUT_DATE_2": end_yyyymmdd,
+            }
+            url = f"{self.config.base_url}{_INVEST_OPINION_PATH}"
+            timeout_seconds = getattr(
+                self.config, "request_timeout_seconds", _DEFAULT_REQUEST_TIMEOUT
+            )
+            request_timeout = aiohttp.ClientTimeout(total=float(timeout_seconds))
+
+            async with session.get(
+                url, headers=headers, params=params, timeout=request_timeout
+            ) as response:
+                if response.status != 200:
+                    text = await response.text()
+                    if "EGW00201" in text:
+                        self._rate_limiter.penalty()
+                    KISApiErrorRateTracker.get_instance().record_error()
+                    raise RuntimeError(
+                        f"KIS invest-opinion HTTP {response.status}: {text[:2000]}"
+                    )
+
+                data = await response.json(content_type=None)
+                response_tr_cont = str(response.headers.get("tr_cont", "")).strip()
+
+            if data.get("rt_cd") != "0":
+                msg = data.get("msg1", "Unknown error")
+                if "EGW00201" in msg:
+                    self._rate_limiter.penalty()
+                KISApiErrorRateTracker.get_instance().record_error()
+                raise RuntimeError(f"KIS invest-opinion API error: {msg}")
+
+            self._rate_limiter.reset_backoff()
+            KISApiErrorRateTracker.get_instance().record_success()
+            rows.extend(self._extract_output_rows(data))
+
+            if response_tr_cont != "M":
+                break
+            tr_cont = "N"
+
+        return rows
+
+    async def summarize_target_price(
+        self,
+        symbol: str,
+        *,
+        current_price: float,
+        lookback_days: int = 180,
+        recent_days: int = 30,
+    ) -> dict[str, Any]:
+        """Summarize KIS analyst target-price rows for stock LLM scoring."""
+        rows = await self.fetch_invest_opinion(
+            symbol,
+            lookback_days=lookback_days,
+        )
+        reports = [
+            report
+            for report in (
+                self._normalize_target_price_report(row, current_price) for row in rows
+            )
+            if report["target_price"] > 0
+        ]
+        if not reports:
+            return self._empty_target_price_summary()
+
+        reports.sort(key=lambda item: item["_sort_date"], reverse=True)
+        target_prices = [float(item["target_price"]) for item in reports]
+        consensus_target = float(median(target_prices))
+        latest = reports[0]
+        reference_price = float(current_price or latest["previous_close"] or 0.0)
+        upside_pct = (
+            (consensus_target / reference_price - 1.0) * 100.0
+            if reference_price > 0
+            else 0.0
+        )
+        latest_upside_pct = (
+            (float(latest["target_price"]) / reference_price - 1.0) * 100.0
+            if reference_price > 0
+            else 0.0
+        )
+
+        today = datetime.now(_KST).date()
+        latest_date = latest["_sort_date"]
+        staleness_days = (today - latest_date).days if latest_date else 0
+        brokers = {
+            str(item["broker"]).strip()
+            for item in reports
+            if str(item["broker"]).strip()
+        }
+        opinion_distribution: dict[str, int] = {}
+        for item in reports:
+            opinion = str(item["opinion"]).strip()
+            if opinion:
+                opinion_distribution[opinion] = opinion_distribution.get(opinion, 0) + 1
+
+        revision_pct = self._calc_target_revision_pct(
+            reports, recent_days=max(int(recent_days), 1)
+        )
+        revision_direction = self._target_revision_direction(revision_pct)
+        dispersion_pct = (
+            (max(target_prices) - min(target_prices)) / consensus_target * 100.0
+            if consensus_target > 0 and len(target_prices) > 1
+            else 0.0
+        )
+
+        recent_reports = [
+            {
+                "date": item["date"],
+                "broker": item["broker"],
+                "opinion": item["opinion"],
+                "previous_opinion": item["previous_opinion"],
+                "target_price": item["target_price"],
+                "upside_pct": round(float(item["upside_pct"]), 2),
+            }
+            for item in reports[:5]
+        ]
+
+        return {
+            "available": True,
+            "target_price": consensus_target,
+            "latest_target_price": float(latest["target_price"]),
+            "latest_target_upside_pct": latest_upside_pct,
+            "upside_pct": upside_pct,
+            "opinion": str(latest["opinion"]),
+            "date": str(latest["date"]),
+            "latest_broker": str(latest["broker"]),
+            "sample_count": len(reports),
+            "coverage_count": len(brokers) if brokers else len(reports),
+            "dispersion_pct": dispersion_pct,
+            "revision_30d_pct": revision_pct,
+            "revision_direction": revision_direction,
+            "staleness_days": staleness_days,
+            "opinion_distribution": opinion_distribution,
+            "recent_reports": recent_reports,
+        }
+
+    @staticmethod
+    def _empty_target_price_summary() -> dict[str, Any]:
+        return {
+            "available": False,
+            "target_price": 0.0,
+            "latest_target_price": 0.0,
+            "latest_target_upside_pct": 0.0,
+            "upside_pct": 0.0,
+            "opinion": "",
+            "date": "",
+            "latest_broker": "",
+            "sample_count": 0,
+            "coverage_count": 0,
+            "dispersion_pct": 0.0,
+            "revision_30d_pct": 0.0,
+            "revision_direction": "",
+            "staleness_days": 0,
+            "opinion_distribution": {},
+            "recent_reports": [],
+        }
+
+    @staticmethod
+    def _extract_output_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
+        value = payload.get("output")
+        if isinstance(value, dict):
+            return [value]
+        if isinstance(value, list):
+            return [item for item in value if isinstance(item, dict)]
+        return []
+
+    @staticmethod
+    def _format_kis_date(value: date | datetime | str) -> str:
+        if isinstance(value, datetime):
+            return value.date().strftime("%Y%m%d")
+        if isinstance(value, date):
+            return value.strftime("%Y%m%d")
+        text = str(value or "").strip().replace("-", "")
+        if len(text) == 8 and text.isdigit():
+            return text
+        raise ValueError(f"Invalid KIS date: {value!r}")
+
+    @staticmethod
+    def _parse_kis_date(value: Any) -> date | None:
+        text = str(value or "").strip().replace("-", "")
+        if len(text) != 8 or not text.isdigit():
+            return None
+        try:
+            return datetime.strptime(text, "%Y%m%d").date()
+        except ValueError:
+            return None
+
+    @classmethod
+    def _normalize_target_price_report(
+        cls, row: dict[str, Any], current_price: float
+    ) -> dict[str, Any]:
+        report_date = cls._parse_kis_date(row.get("stck_bsop_date"))
+        target_price = parse_float(row.get("hts_goal_prc"))
+        previous_close = parse_float(row.get("stck_prdy_clpr"))
+        reference_price = float(current_price or previous_close or 0.0)
+        upside_pct = (
+            (target_price / reference_price - 1.0) * 100.0
+            if target_price > 0 and reference_price > 0
+            else 0.0
+        )
+        return {
+            "date": (
+                report_date.isoformat()
+                if report_date
+                else str(row.get("stck_bsop_date", "")).strip()
+            ),
+            "_sort_date": report_date or date.min,
+            "broker": str(row.get("mbcr_name", "")).strip(),
+            "opinion": str(row.get("invt_opnn", "")).strip(),
+            "previous_opinion": str(row.get("rgbf_invt_opnn", "")).strip(),
+            "target_price": target_price,
+            "previous_close": previous_close,
+            "upside_pct": upside_pct,
+        }
+
+    @staticmethod
+    def _calc_target_revision_pct(
+        reports: list[dict[str, Any]], recent_days: int
+    ) -> float:
+        if not reports:
+            return 0.0
+        latest_date = max(item["_sort_date"] for item in reports)
+        if latest_date == date.min:
+            return 0.0
+        recent_cutoff = latest_date - timedelta(days=recent_days)
+        recent_targets = [
+            float(item["target_price"])
+            for item in reports
+            if item["_sort_date"] >= recent_cutoff and float(item["target_price"]) > 0
+        ]
+        prior_targets = [
+            float(item["target_price"])
+            for item in reports
+            if item["_sort_date"] < recent_cutoff and float(item["target_price"]) > 0
+        ]
+        if not recent_targets or not prior_targets:
+            return 0.0
+        prior_median = float(median(prior_targets))
+        if prior_median <= 0:
+            return 0.0
+        return (float(median(recent_targets)) / prior_median - 1.0) * 100.0
+
+    @staticmethod
+    def _target_revision_direction(revision_pct: float) -> str:
+        if revision_pct > 0:
+            return "up"
+        if revision_pct < 0:
+            return "down"
+        return "flat"
+
     async def _get_stock_price(self, symbol: str) -> dict[str, Any]:
         """Fetch current price for a Stock symbol."""
         session = await self._get_session()
@@ -177,10 +476,7 @@ class KISClient(AsyncSessionMixin):
         headers["tr_id"] = "FHKST01010100"
         headers["custtype"] = "P"
 
-        params = {
-            "FID_COND_MRKT_DIV_CODE": "J",
-            "FID_INPUT_ISCD": symbol
-        }
+        params = {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": symbol}
 
         path = "/uapi/domestic-stock/v1/quotations/inquire-price"
         url = f"{self.config.base_url}{path}"
@@ -220,8 +516,12 @@ class KISClient(AsyncSessionMixin):
                 "high": float(output.get("stck_hgpr", 0)),
                 "low": float(output.get("stck_lwpr", 0)),
                 "volume": int(output.get("acml_vol", 0)),
-                "change": float(output.get("prdy_ctrt", 0)) / 100.0 if output.get("prdy_ctrt") else 0.0,
-                "timestamp": time.time(), # Use local time as approx
+                "change": (
+                    float(output.get("prdy_ctrt", 0)) / 100.0
+                    if output.get("prdy_ctrt")
+                    else 0.0
+                ),
+                "timestamp": time.time(),  # Use local time as approx
             }
 
     async def _get_futures_price(self, symbol: str) -> dict[str, Any]:
@@ -233,10 +533,7 @@ class KISClient(AsyncSessionMixin):
         headers["tr_id"] = "FHMIF10000000"
         headers["custtype"] = "P"
 
-        params = {
-            "FID_COND_MRKT_DIV_CODE": "F",
-            "FID_INPUT_ISCD": symbol
-        }
+        params = {"FID_COND_MRKT_DIV_CODE": "F", "FID_INPUT_ISCD": symbol}
 
         path = "/uapi/domestic-futureoption/v1/quotations/inquire-price"
         url = f"{self.config.base_url}{path}"
@@ -254,7 +551,9 @@ class KISClient(AsyncSessionMixin):
                 if "EGW00201" in text:
                     self._rate_limiter.penalty()
                 KISApiErrorRateTracker.get_instance().record_error()
-                logger.error(f"KIS Futures API Error {response.status} for {symbol}: {text}")
+                logger.error(
+                    f"KIS Futures API Error {response.status} for {symbol}: {text}"
+                )
                 raise Exception(f"KIS API Error {type}")
 
             data = await response.json()
@@ -275,10 +574,13 @@ class KISClient(AsyncSessionMixin):
                 "high": float(output.get("futs_hgpr", 0)),
                 "low": float(output.get("futs_lwpr", 0)),
                 "volume": int(output.get("acml_vol", 0)),
-                "change": float(output.get("futs_prdy_ctrt", 0)) / 100.0 if output.get("futs_prdy_ctrt") else 0.0,
+                "change": (
+                    float(output.get("futs_prdy_ctrt", 0)) / 100.0
+                    if output.get("futs_prdy_ctrt")
+                    else 0.0
+                ),
                 "timestamp": time.time(),
             }
-
 
     async def get_minute_bars(
         self, symbol: str, count: int = 30
@@ -344,13 +646,15 @@ class KISClient(AsyncSessionMixin):
                 candles: list[dict[str, Any]] = []
                 for row in rows[:count]:
                     try:
-                        candles.append({
-                            "open": float(row.get("stck_oprc", 0)),
-                            "high": float(row.get("stck_hgpr", 0)),
-                            "low": float(row.get("stck_lwpr", 0)),
-                            "close": float(row.get("stck_prpr", 0)),
-                            "volume": int(row.get("cntg_vol", 0)),
-                        })
+                        candles.append(
+                            {
+                                "open": float(row.get("stck_oprc", 0)),
+                                "high": float(row.get("stck_hgpr", 0)),
+                                "low": float(row.get("stck_lwpr", 0)),
+                                "close": float(row.get("stck_prpr", 0)),
+                                "volume": int(row.get("cntg_vol", 0)),
+                            }
+                        )
                     except (ValueError, TypeError):
                         continue
 
@@ -374,6 +678,7 @@ class KISClient(AsyncSessionMixin):
             headers["custtype"] = "P"
 
             from datetime import datetime as _dt
+
             now_str = _dt.now().strftime("%H%M%S")
 
             # Futures param keys differ slightly (FID_COND_MRKT_DIV_CODE='F')
@@ -385,7 +690,9 @@ class KISClient(AsyncSessionMixin):
             }
             # Although ID is "fuopchartprice", check path carefully.
             # Usually /uapi/domestic-futureoption/v1/quotations/inquire-time-fuopchartprice
-            path = "/uapi/domestic-futureoption/v1/quotations/inquire-time-fuopchartprice"
+            path = (
+                "/uapi/domestic-futureoption/v1/quotations/inquire-time-fuopchartprice"
+            )
             url = f"{self.config.base_url}{path}"
 
             timeout_seconds = getattr(
@@ -421,13 +728,15 @@ class KISClient(AsyncSessionMixin):
 
                 for row in rows[:count]:
                     try:
-                        candles.append({
-                            "open": float(row.get("stck_oprc", 0)),
-                            "high": float(row.get("stck_hgpr", 0)),
-                            "low": float(row.get("stck_lwpr", 0)),
-                            "close": float(row.get("stck_prpr", 0)),
-                            "volume": int(row.get("cntg_vol", 0)),
-                        })
+                        candles.append(
+                            {
+                                "open": float(row.get("stck_oprc", 0)),
+                                "high": float(row.get("stck_hgpr", 0)),
+                                "low": float(row.get("stck_lwpr", 0)),
+                                "close": float(row.get("stck_prpr", 0)),
+                                "volume": int(row.get("cntg_vol", 0)),
+                            }
+                        )
                     except (ValueError, TypeError):
                         continue
 
@@ -455,7 +764,9 @@ class KISClient(AsyncSessionMixin):
             )
         account_no = self._normalize_account_no(account_no)
         if len(account_no) != 10:
-            logger.warning("Stock account number not configured; skipping balance inquiry")
+            logger.warning(
+                "Stock account number not configured; skipping balance inquiry"
+            )
             return []
 
         await self._rate_limiter.acquire()
@@ -496,7 +807,9 @@ class KISClient(AsyncSessionMixin):
                     if "EGW00201" in text:
                         self._rate_limiter.penalty()
                     KISApiErrorRateTracker.get_instance().record_error()
-                    logger.error(f"Stock balance inquiry failed ({response.status}): {text}")
+                    logger.error(
+                        f"Stock balance inquiry failed ({response.status}): {text}"
+                    )
                     return []
 
                 data = await response.json()
@@ -511,15 +824,17 @@ class KISClient(AsyncSessionMixin):
                     qty = int(item.get("hldg_qty", 0))
                     if qty <= 0:
                         continue
-                    positions.append({
-                        "code": item.get("pdno", ""),
-                        "name": item.get("prdt_name", ""),
-                        "side": "long",
-                        "quantity": qty,
-                        "avg_price": float(item.get("pchs_avg_pric", 0)),
-                        "current_price": float(item.get("prpr", 0)),
-                        "unrealized_pnl": float(item.get("evlu_pfls_amt", 0)),
-                    })
+                    positions.append(
+                        {
+                            "code": item.get("pdno", ""),
+                            "name": item.get("prdt_name", ""),
+                            "side": "long",
+                            "quantity": qty,
+                            "avg_price": float(item.get("pchs_avg_pric", 0)),
+                            "current_price": float(item.get("prpr", 0)),
+                            "unrealized_pnl": float(item.get("evlu_pfls_amt", 0)),
+                        }
+                    )
                 return positions
 
         except Exception as e:
@@ -545,7 +860,9 @@ class KISClient(AsyncSessionMixin):
             )
         account_no = self._normalize_account_no(account_no)
         if len(account_no) != 10:
-            logger.warning("Futures account number not configured; skipping balance inquiry")
+            logger.warning(
+                "Futures account number not configured; skipping balance inquiry"
+            )
             return []
 
         await self._rate_limiter.acquire()
@@ -579,12 +896,16 @@ class KISClient(AsyncSessionMixin):
                     if "EGW00201" in text:
                         self._rate_limiter.penalty()
                     KISApiErrorRateTracker.get_instance().record_error()
-                    logger.error(f"Futures balance inquiry failed ({response.status}): {text}")
+                    logger.error(
+                        f"Futures balance inquiry failed ({response.status}): {text}"
+                    )
                     return []
 
                 data = await response.json()
                 if data.get("rt_cd") != "0":
-                    logger.error(f"Futures balance inquiry error: {data.get('msg1', '')}")
+                    logger.error(
+                        f"Futures balance inquiry error: {data.get('msg1', '')}"
+                    )
                     return []
 
                 self._rate_limiter.reset_backoff()
@@ -596,15 +917,19 @@ class KISClient(AsyncSessionMixin):
                         continue
                     # sll_buy_dvsn_cd: 01=매도(short), 02=매수(long)
                     side = "short" if item.get("sll_buy_dvsn_cd") == "01" else "long"
-                    positions.append({
-                        "code": item.get("pdno", ""),
-                        "name": item.get("prdt_name", ""),
-                        "side": side,
-                        "quantity": qty,
-                        "avg_price": float(item.get("pchs_avg_pric", 0)),
-                        "current_price": float(item.get("prpr", item.get("now_pric2", 0))),
-                        "unrealized_pnl": float(item.get("evlu_pfls_amt", 0)),
-                    })
+                    positions.append(
+                        {
+                            "code": item.get("pdno", ""),
+                            "name": item.get("prdt_name", ""),
+                            "side": side,
+                            "quantity": qty,
+                            "avg_price": float(item.get("pchs_avg_pric", 0)),
+                            "current_price": float(
+                                item.get("prpr", item.get("now_pric2", 0))
+                            ),
+                            "unrealized_pnl": float(item.get("evlu_pfls_amt", 0)),
+                        }
+                    )
                 return positions
 
         except Exception as e:
@@ -705,7 +1030,9 @@ class KISClient(AsyncSessionMixin):
                 data = await response.json()
                 if data.get("rt_cd") != "0":
                     error_msg = data.get("msg1", "Unknown error")
-                    logger.error(f"ATS order error for {symbol}: [{data.get('rt_cd')}] {error_msg}")
+                    logger.error(
+                        f"ATS order error for {symbol}: [{data.get('rt_cd')}] {error_msg}"
+                    )
                     return {
                         "success": False,
                         "order_no": None,

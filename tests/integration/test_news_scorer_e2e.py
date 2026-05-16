@@ -138,6 +138,8 @@ async def test_daemon_scores_and_acks() -> None:
     entries = await redis.xrange("stream:news.scored")
     assert len(entries) == 1, "Expected one entry in scored stream"
     assert entries[0][1][b"news_id"] == b"n1"
+    assert entries[0][1][b"raw_source"] == b"yonhap"
+    assert entries[0][1][b"raw_title"] == b"t"
 
     pending = await redis.xpending("stream:news.raw", "news_scorer-v1")
     assert pending["pending"] == 0, "Message should have been ACKed"

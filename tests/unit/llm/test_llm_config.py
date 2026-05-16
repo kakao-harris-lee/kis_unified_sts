@@ -15,7 +15,22 @@ stock:
   volume_lookback_days: 15
   enable_kis_target_price: true
   target_lookback_days: 120
+  target_recent_days: 20
+  target_stale_days: 80
+  target_min_coverage: 3
+  target_high_dispersion_pct: 35.0
+  target_low_quality_multiplier: 0.4
+  target_high_dispersion_multiplier: 0.6
+  target_revision_score: 1.7
+  target_revision_min_pct: 2.5
   score_weight_target_price: 0.07
+  score_weight_nps_ownership: 0.11
+  scored_news_enabled: true
+  scored_news_stream: "stream:test.scored"
+  scored_news_sources: ["marketaux", "gdelt"]
+  scored_news_max_per_stock: 2
+  nps_enabled: true
+  nps_holding_ratio_anchor_pct: 9.0
   new_listing_min_days: 15
   new_listing_penalty: 0.6
   llm_scoring_enabled: false
@@ -41,7 +56,22 @@ output:
     assert cfg.stock_volume_lookback_days == 15
     assert cfg.stock_enable_kis_target_price is True
     assert cfg.stock_target_lookback_days == 120
+    assert cfg.stock_target_recent_days == 20
+    assert cfg.stock_target_stale_days == 80
+    assert cfg.stock_target_min_coverage == 3
+    assert cfg.stock_target_high_dispersion_pct == 35.0
+    assert cfg.stock_target_low_quality_multiplier == 0.4
+    assert cfg.stock_target_high_dispersion_multiplier == 0.6
+    assert cfg.stock_target_revision_score == 1.7
+    assert cfg.stock_target_revision_min_pct == 2.5
     assert cfg.stock_score_weight_target_price == 0.07
+    assert cfg.stock_score_weight_nps_ownership == 0.11
+    assert cfg.stock_scored_news_enabled is True
+    assert cfg.stock_scored_news_stream == "stream:test.scored"
+    assert cfg.stock_scored_news_sources == ["marketaux", "gdelt"]
+    assert cfg.stock_scored_news_max_per_stock == 2
+    assert cfg.stock_nps_enabled is True
+    assert cfg.stock_nps_holding_ratio_anchor_pct == 9.0
     assert cfg.stock_blacklist == ["관리종목"]
     assert cfg.stock_keyword_filter == ["상장폐지"]
     assert cfg.stock_exclude_name_keywords == ["스팩"]

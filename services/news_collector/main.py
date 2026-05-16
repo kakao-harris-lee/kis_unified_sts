@@ -105,7 +105,10 @@ async def _build_and_run_from_config() -> int:
     from shared.db.client import AsyncClickHouseClient
     from shared.db.config import ClickHouseConfig
     from shared.news.config import NewsCollectorConfig
+    from shared.news.sources.gdelt import GDELTNewsSource
+    from shared.news.sources.marketaux import MarketauxNewsSource
     from shared.news.sources.reuters import ReutersRSSSource
+    from shared.news.sources.rss import GenericRSSSource
     from shared.news.sources.yonhap import YonhapRSSSource
 
     cfg = NewsCollectorConfig.from_yaml()
@@ -119,19 +122,88 @@ async def _build_and_run_from_config() -> int:
     session = aiohttp.ClientSession()
     sources: list[NewsSource] = []
     if cfg.sources.yonhap.enabled:
-        sources.append(
-            YonhapRSSSource(session=session, rss_url=cfg.sources.yonhap.rss_url)
+        source = YonhapRSSSource(
+            session=session,
+            rss_url=cfg.sources.yonhap.rss_url,
         )
+        source.poll_interval_seconds = cfg.sources.yonhap.poll_interval_seconds
+        sources.append(source)
     if cfg.sources.reuters.enabled:
+        source = ReutersRSSSource(
+            session=session,
+            rss_url=cfg.sources.reuters.rss_url,
+        )
+        source.poll_interval_seconds = cfg.sources.reuters.poll_interval_seconds
+        sources.append(source)
+    if cfg.sources.marketaux.enabled:
+        if cfg.sources.marketaux.api_token:
+            sources.append(
+                MarketauxNewsSource(
+                    session=session,
+                    api_token=cfg.sources.marketaux.api_token,
+                    endpoint=cfg.sources.marketaux.endpoint,
+                    limit=cfg.sources.marketaux.limit,
+                    language=cfg.sources.marketaux.language,
+                    countries=cfg.sources.marketaux.countries,
+                    symbols=cfg.sources.marketaux.symbols,
+                    entity_types=cfg.sources.marketaux.entity_types,
+                    industries=cfg.sources.marketaux.industries,
+                    search=cfg.sources.marketaux.search,
+                    domains=cfg.sources.marketaux.domains,
+                    exclude_domains=cfg.sources.marketaux.exclude_domains,
+                    filter_entities=cfg.sources.marketaux.filter_entities,
+                    must_have_entities=cfg.sources.marketaux.must_have_entities,
+                    group_similar=cfg.sources.marketaux.group_similar,
+                    published_after_minutes=(
+                        cfg.sources.marketaux.published_after_minutes
+                    ),
+                    poll_interval_seconds=cfg.sources.marketaux.poll_interval_seconds,
+                    timeout=cfg.sources.marketaux.timeout_seconds,
+                )
+            )
+        else:
+            logger.warning(
+                "Marketaux enabled but MARKETAUX_API_TOKEN is not configured"
+            )
+    if cfg.sources.gdelt.enabled:
         sources.append(
-            ReutersRSSSource(session=session, rss_url=cfg.sources.reuters.rss_url)
+            GDELTNewsSource(
+                session=session,
+                query=cfg.sources.gdelt.query,
+                max_records=cfg.sources.gdelt.max_records,
+                timespan=cfg.sources.gdelt.timespan,
+                sort=cfg.sources.gdelt.sort,
+                poll_interval_seconds=cfg.sources.gdelt.poll_interval_seconds,
+                timeout=cfg.sources.gdelt.timeout_seconds,
+            )
+        )
+    for feed in cfg.sources.rss_feeds:
+        if not feed.enabled:
+            continue
+        sources.append(
+            GenericRSSSource(
+                session=session,
+                name=feed.name,
+                rss_url=feed.rss_url,
+                lang=feed.lang,
+                version=feed.version,
+                poll_interval_seconds=feed.poll_interval_seconds,
+                timeout=feed.timeout_seconds,
+            )
         )
     if cfg.sources.dart.enabled:
         try:
             from shared.llm.collectors import DARTDataCollector  # reuse existing
             from shared.news.sources.dart import DARTNewsSource
 
-            sources.append(DARTNewsSource(collector=DARTDataCollector()))
+            sources.append(
+                DARTNewsSource(
+                    collector=DARTDataCollector(),
+                    lookback_days=cfg.sources.dart.lookback_days,
+                    page_count=cfg.sources.dart.page_count,
+                    poll_interval_seconds=cfg.sources.dart.poll_interval_seconds,
+                )
+            )
         except ImportError:
             logger.warning("DARTDataCollector unavailable — skipping DART source")
     if cfg.sources.mk.enabled:
@@ -139,7 +211,9 @@ async def _build_and_run_from_config() -> int:
             from shared.llm.collectors import MKStockNewsCollector
             from shared.news.sources.mk_adapter import MKNewsSourceAdapter
 
-            sources.append(MKNewsSourceAdapter(underlying=MKStockNewsCollector()))
+            source = MKNewsSourceAdapter(underlying=MKStockNewsCollector())
+            source.poll_interval_seconds = cfg.sources.mk.poll_interval_seconds
+            sources.append(source)
         except ImportError:
             logger.warning("MKStockNewsCollector unavailable — skipping MK source")
 
