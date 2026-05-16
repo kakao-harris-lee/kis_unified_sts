@@ -172,3 +172,16 @@ def test_registered_in_registry():
     # list_all() is the real registry introspection API (not available())
     assert "llm_directed_indicator" in EntryRegistry.list_all()
     assert "llm_directed_indicator_exit" in ExitRegistry.list_all()
+
+
+def test_yaml_loads_via_factory():
+    from shared.strategy.registry import (
+        StrategyFactory,
+        register_builtin_components,
+    )
+    register_builtin_components()
+    s = StrategyFactory.create_from_file("futures",
+                                         "llm_directed_indicator")
+    assert s.name == "llm_directed_indicator"
+    assert s.entry.config.bias_confidence_min == 0.6
+    assert s.exit.config is not None
