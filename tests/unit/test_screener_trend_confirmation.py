@@ -10,9 +10,11 @@ from services.screener import (
     KST,
     ScreenerConfig,
     _apply_trend_confirmation,
+    _code_set_signature,
     _evaluate_bull_trend_profile,
     _in_trend_confirmation_window,
     _normalize_scores_for_codes,
+    _should_publish_snapshot,
 )
 
 
@@ -91,6 +93,43 @@ def test_normalize_scores_for_codes():
     normalized = _normalize_scores_for_codes(scores, ["A", "B"])
     assert normalized["B"] == 1.0
     assert normalized["A"] == 0.5
+
+
+def test_screener_config_defaults_rate_limit_friendly():
+    cfg = ScreenerConfig()
+
+    assert cfg.interval_seconds == 5.0
+    assert cfg.publish_heartbeat_seconds == 60.0
+
+
+def test_code_set_signature_ignores_order_churn():
+    assert _code_set_signature(["005930", "000660"]) == _code_set_signature(
+        ["000660", "005930"]
+    )
+
+
+def test_should_publish_snapshot_on_change_or_heartbeat():
+    assert _should_publish_snapshot(
+        signature="A",
+        last_signature=None,
+        now=10.0,
+        last_publish_time=0.0,
+        heartbeat_seconds=60.0,
+    )
+    assert _should_publish_snapshot(
+        signature="A",
+        last_signature="A",
+        now=59.0,
+        last_publish_time=0.0,
+        heartbeat_seconds=60.0,
+    ) is False
+    assert _should_publish_snapshot(
+        signature="A",
+        last_signature="A",
+        now=60.0,
+        last_publish_time=0.0,
+        heartbeat_seconds=60.0,
+    )
 
 
 class _DummyKISClient:

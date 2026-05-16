@@ -192,6 +192,7 @@ class DataProviderConfig:
         health_check_interval = data.get("health_check_interval_seconds", 5.0)
         rest_poll_interval = data.get("rest_poll_interval_seconds", 5.0)
         staleness_threshold = data.get("staleness_threshold_seconds", 10.0)
+        min_fresh_ratio = data.get("min_fresh_ratio", 0.5)
         rest_fallback_max_symbols = data.get("rest_fallback_max_symbols")
         send_telegram_alerts = data.get("send_telegram_alerts", True)
 
@@ -208,6 +209,8 @@ class DataProviderConfig:
             raise TypeError(f"rest_poll_interval_seconds must be numeric, got {type(rest_poll_interval)}")
         if not isinstance(staleness_threshold, (int, float)):
             raise TypeError(f"staleness_threshold_seconds must be numeric, got {type(staleness_threshold)}")
+        if not isinstance(min_fresh_ratio, (int, float)):
+            raise TypeError(f"min_fresh_ratio must be numeric, got {type(min_fresh_ratio)}")
         if rest_fallback_max_symbols is not None and not isinstance(rest_fallback_max_symbols, int):
             raise TypeError(
                 f"rest_fallback_max_symbols must be int or None, got {type(rest_fallback_max_symbols)}"
@@ -223,6 +226,7 @@ class DataProviderConfig:
             health_check_interval_seconds=float(health_check_interval),
             rest_poll_interval_seconds=float(rest_poll_interval),
             staleness_threshold_seconds=float(staleness_threshold),
+            min_fresh_ratio=float(min_fresh_ratio),
             rest_fallback_max_symbols=rest_fallback_max_symbols,
             send_telegram_alerts=bool(send_telegram_alerts),
         )

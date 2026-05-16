@@ -59,16 +59,20 @@ class TestDataProviderConfig:
         """Test from_dict factory method"""
         from services.trading.data_provider import DataProviderConfig
 
-        config = DataProviderConfig.from_dict({
-            "cache_ttl_seconds": 2.0,
-            "batch_size": 15,
-            "staleness_threshold_seconds": 12.0,
-            "rest_fallback_max_symbols": 10,
-            "mock_seed": 42,
-        })
+        config = DataProviderConfig.from_dict(
+            {
+                "cache_ttl_seconds": 2.0,
+                "batch_size": 15,
+                "staleness_threshold_seconds": 12.0,
+                "min_fresh_ratio": 0.25,
+                "rest_fallback_max_symbols": 10,
+                "mock_seed": 42,
+            }
+        )
         assert config.cache_ttl_seconds == 2.0
         assert config.batch_size == 15
         assert config.staleness_threshold_seconds == 12.0
+        assert config.min_fresh_ratio == 0.25
         assert config.rest_fallback_max_symbols == 10
         assert config.mock_seed == 42
 
@@ -78,6 +82,9 @@ class TestDataProviderConfig:
 
         with pytest.raises(TypeError, match="cache_ttl_seconds"):
             DataProviderConfig.from_dict({"cache_ttl_seconds": "invalid"})
+
+        with pytest.raises(TypeError, match="min_fresh_ratio"):
+            DataProviderConfig.from_dict({"min_fresh_ratio": "invalid"})
 
 
 class TestMarketDataCache:
