@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
+import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
@@ -48,6 +49,8 @@ MIN_BATCH_SIZE = 1
 MAX_BATCH_SIZE = 100
 MIN_TIMEOUT_SECONDS = 0.5
 MAX_TIMEOUT_SECONDS = 60.0
+MIN_STARTUP_GRACE_SECONDS = 0.0
+MAX_STARTUP_GRACE_SECONDS = 600.0
 
 
 @runtime_checkable
@@ -112,6 +115,12 @@ class DataProviderConfig:
     # symbols to be fresh.
     min_fresh_ratio: float = 0.5
 
+    # Failover: grace period after health monitoring starts.  KIS stock
+    # WebSocket subscriptions do not receive first ticks for all symbols at
+    # the same time right after market open; applying min_fresh_ratio during
+    # this short bootstrap window causes unnecessary REST fallback storms.
+    startup_grace_seconds: float = 60.0
+
     # Failover: Limit per-cycle REST polling scope to avoid rate-limit storms.
     rest_fallback_max_symbols: int | None = None
 
@@ -124,7 +133,9 @@ class DataProviderConfig:
 
     def _validate(self):
         """Validate all configuration parameters."""
-        if not (MIN_CACHE_TTL_SECONDS <= self.cache_ttl_seconds <= MAX_CACHE_TTL_SECONDS):
+        if not (
+            MIN_CACHE_TTL_SECONDS <= self.cache_ttl_seconds <= MAX_CACHE_TTL_SECONDS
+        ):
             raise ValueError(
                 f"cache_ttl_seconds must be between {MIN_CACHE_TTL_SECONDS} "
                 f"and {MAX_CACHE_TTL_SECONDS}, got {self.cache_ttl_seconds}"
@@ -136,28 +147,44 @@ class DataProviderConfig:
                 f"and {MAX_BATCH_SIZE}, got {self.batch_size}"
             )
 
-        if not (MIN_TIMEOUT_SECONDS <= self.fetch_timeout_seconds <= MAX_TIMEOUT_SECONDS):
+        if not (
+            MIN_TIMEOUT_SECONDS <= self.fetch_timeout_seconds <= MAX_TIMEOUT_SECONDS
+        ):
             raise ValueError(
                 f"fetch_timeout_seconds must be between {MIN_TIMEOUT_SECONDS} "
                 f"and {MAX_TIMEOUT_SECONDS}, got {self.fetch_timeout_seconds}"
             )
 
         if self.mock_seed is not None and not isinstance(self.mock_seed, int):
-            raise TypeError(f"mock_seed must be int or None, got {type(self.mock_seed)}")
+            raise TypeError(
+                f"mock_seed must be int or None, got {type(self.mock_seed)}"
+            )
 
-        if not (MIN_TIMEOUT_SECONDS <= self.health_check_interval_seconds <= MAX_TIMEOUT_SECONDS):
+        if not (
+            MIN_TIMEOUT_SECONDS
+            <= self.health_check_interval_seconds
+            <= MAX_TIMEOUT_SECONDS
+        ):
             raise ValueError(
                 f"health_check_interval_seconds must be between {MIN_TIMEOUT_SECONDS} "
                 f"and {MAX_TIMEOUT_SECONDS}, got {self.health_check_interval_seconds}"
             )
 
-        if not (MIN_CACHE_TTL_SECONDS <= self.rest_poll_interval_seconds <= MAX_CACHE_TTL_SECONDS):
+        if not (
+            MIN_CACHE_TTL_SECONDS
+            <= self.rest_poll_interval_seconds
+            <= MAX_CACHE_TTL_SECONDS
+        ):
             raise ValueError(
                 f"rest_poll_interval_seconds must be between {MIN_CACHE_TTL_SECONDS} "
                 f"and {MAX_CACHE_TTL_SECONDS}, got {self.rest_poll_interval_seconds}"
             )
 
-        if not (MIN_CACHE_TTL_SECONDS <= self.staleness_threshold_seconds <= MAX_CACHE_TTL_SECONDS):
+        if not (
+            MIN_CACHE_TTL_SECONDS
+            <= self.staleness_threshold_seconds
+            <= MAX_CACHE_TTL_SECONDS
+        ):
             raise ValueError(
                 f"staleness_threshold_seconds must be between {MIN_CACHE_TTL_SECONDS} "
                 f"and {MAX_CACHE_TTL_SECONDS}, got {self.staleness_threshold_seconds}"
@@ -169,6 +196,16 @@ class DataProviderConfig:
             raise ValueError(
                 f"rest_fallback_max_symbols must be between {MIN_BATCH_SIZE} "
                 f"and {MAX_BATCH_SIZE}, got {self.rest_fallback_max_symbols}"
+            )
+        if not (
+            MIN_STARTUP_GRACE_SECONDS
+            <= self.startup_grace_seconds
+            <= MAX_STARTUP_GRACE_SECONDS
+        ):
+            raise ValueError(
+                "startup_grace_seconds must be between "
+                f"{MIN_STARTUP_GRACE_SECONDS} and {MAX_STARTUP_GRACE_SECONDS}, "
+                f"got {self.startup_grace_seconds}"
             )
 
     @classmethod
@@ -193,6 +230,7 @@ class DataProviderConfig:
         rest_poll_interval = data.get("rest_poll_interval_seconds", 5.0)
         staleness_threshold = data.get("staleness_threshold_seconds", 10.0)
         min_fresh_ratio = data.get("min_fresh_ratio", 0.5)
+        startup_grace_seconds = data.get("startup_grace_seconds", 60.0)
         rest_fallback_max_symbols = data.get("rest_fallback_max_symbols")
         send_telegram_alerts = data.get("send_telegram_alerts", True)
 
@@ -202,21 +240,39 @@ class DataProviderConfig:
         if not isinstance(batch_size, int):
             raise TypeError(f"batch_size must be int, got {type(batch_size)}")
         if not isinstance(timeout, (int, float)):
-            raise TypeError(f"fetch_timeout_seconds must be numeric, got {type(timeout)}")
+            raise TypeError(
+                f"fetch_timeout_seconds must be numeric, got {type(timeout)}"
+            )
         if not isinstance(health_check_interval, (int, float)):
-            raise TypeError(f"health_check_interval_seconds must be numeric, got {type(health_check_interval)}")
+            raise TypeError(
+                f"health_check_interval_seconds must be numeric, got {type(health_check_interval)}"
+            )
         if not isinstance(rest_poll_interval, (int, float)):
-            raise TypeError(f"rest_poll_interval_seconds must be numeric, got {type(rest_poll_interval)}")
+            raise TypeError(
+                f"rest_poll_interval_seconds must be numeric, got {type(rest_poll_interval)}"
+            )
         if not isinstance(staleness_threshold, (int, float)):
-            raise TypeError(f"staleness_threshold_seconds must be numeric, got {type(staleness_threshold)}")
+            raise TypeError(
+                f"staleness_threshold_seconds must be numeric, got {type(staleness_threshold)}"
+            )
         if not isinstance(min_fresh_ratio, (int, float)):
-            raise TypeError(f"min_fresh_ratio must be numeric, got {type(min_fresh_ratio)}")
-        if rest_fallback_max_symbols is not None and not isinstance(rest_fallback_max_symbols, int):
+            raise TypeError(
+                f"min_fresh_ratio must be numeric, got {type(min_fresh_ratio)}"
+            )
+        if not isinstance(startup_grace_seconds, (int, float)):
+            raise TypeError(
+                f"startup_grace_seconds must be numeric, got {type(startup_grace_seconds)}"
+            )
+        if rest_fallback_max_symbols is not None and not isinstance(
+            rest_fallback_max_symbols, int
+        ):
             raise TypeError(
                 f"rest_fallback_max_symbols must be int or None, got {type(rest_fallback_max_symbols)}"
             )
         if not isinstance(send_telegram_alerts, bool):
-            raise TypeError(f"send_telegram_alerts must be bool, got {type(send_telegram_alerts)}")
+            raise TypeError(
+                f"send_telegram_alerts must be bool, got {type(send_telegram_alerts)}"
+            )
 
         return cls(
             cache_ttl_seconds=float(cache_ttl),
@@ -227,6 +283,7 @@ class DataProviderConfig:
             rest_poll_interval_seconds=float(rest_poll_interval),
             staleness_threshold_seconds=float(staleness_threshold),
             min_fresh_ratio=float(min_fresh_ratio),
+            startup_grace_seconds=float(startup_grace_seconds),
             rest_fallback_max_symbols=rest_fallback_max_symbols,
             send_telegram_alerts=bool(send_telegram_alerts),
         )
@@ -313,6 +370,7 @@ class MarketDataProvider:
         self._current_mode: DataSourceMode = DataSourceMode.WEBSOCKET
         self._fallback_poll_task: asyncio.Task[None] | None = None
         self._health_check_task: asyncio.Task[None] | None = None
+        self._health_monitor_started_at: float | None = None
 
         logger.info(
             f"MarketDataProvider initialized: {len(self.symbols)} symbols, "
@@ -327,7 +385,9 @@ class MarketDataProvider:
         times is safe.
         """
         if self._data_source is None:
-            logger.debug("Failover monitoring skipped: no primary data source configured")
+            logger.debug(
+                "Failover monitoring skipped: no primary data source configured"
+            )
             return
 
         supports_health_monitoring = any(
@@ -335,9 +395,7 @@ class MarketDataProvider:
             for attr in ("is_healthy", "get_health_status")
         )
         if not supports_health_monitoring:
-            logger.debug(
-                "Failover monitoring skipped: data source has no health hooks"
-            )
+            logger.debug("Failover monitoring skipped: data source has no health hooks")
             return
 
         if self._health_check_task is not None and not self._health_check_task.done():
@@ -348,6 +406,7 @@ class MarketDataProvider:
             self._health_check_loop(),
             name="market_data_provider_health_check",
         )
+        self._health_monitor_started_at = time.monotonic()
         logger.info("Started MarketDataProvider failover health monitoring")
 
     async def stop_background_tasks(self) -> None:
@@ -371,6 +430,7 @@ class MarketDataProvider:
 
         self._health_check_task = None
         self._fallback_poll_task = None
+        self._health_monitor_started_at = None
         self._current_mode = DataSourceMode.WEBSOCKET
         logger.info("Stopped MarketDataProvider background tasks")
 
@@ -422,7 +482,11 @@ class MarketDataProvider:
             stale_symbols = []
             for symbol in target_symbols:
                 cache = self._cache.get(symbol)
-                if force_refresh or cache is None or cache.is_stale(self.config.cache_ttl_seconds):
+                if (
+                    force_refresh
+                    or cache is None
+                    or cache.is_stale(self.config.cache_ttl_seconds)
+                ):
                     stale_symbols.append(symbol)
 
             # Fetch stale data
@@ -605,7 +669,9 @@ class MarketDataProvider:
             instant = getattr(source, "supports_instant_read", False)
 
             # Create tasks with staggered start to avoid KIS API rate limit
-            async def fetch_single(symbol: str, idx: int) -> tuple[str, dict[str, Any] | None]:
+            async def fetch_single(
+                symbol: str, idx: int
+            ) -> tuple[str, dict[str, Any] | None]:
                 try:
                     if idx > 0 and not instant:
                         await asyncio.sleep(idx * self.config.stagger_delay_seconds)
@@ -640,7 +706,9 @@ class MarketDataProvider:
                     timeout=batch_timeout,
                 )
             except TimeoutError:
-                logger.error(f"Batch fetch timeout after {batch_timeout}s for {len(batch)} symbols")
+                logger.error(
+                    f"Batch fetch timeout after {batch_timeout}s for {len(batch)} symbols"
+                )
                 results = []  # Skip this batch on timeout
 
             for item in results:
@@ -686,7 +754,8 @@ class MarketDataProvider:
     def get_cache_stats(self) -> dict[str, Any]:
         """Get cache statistics including failover state"""
         fresh_count = sum(
-            1 for c in self._cache.values()
+            1
+            for c in self._cache.values()
             if not c.is_stale(self.config.cache_ttl_seconds)
         )
 
@@ -700,8 +769,10 @@ class MarketDataProvider:
             ),
             "current_mode": self._current_mode.value,
             "is_in_failover": self.is_in_failover_mode,
-            "health_check_active": self._health_check_task is not None and not self._health_check_task.done(),
-            "fallback_poll_active": self._fallback_poll_task is not None and not self._fallback_poll_task.done(),
+            "health_check_active": self._health_check_task is not None
+            and not self._health_check_task.done(),
+            "fallback_poll_active": self._fallback_poll_task is not None
+            and not self._fallback_poll_task.done(),
         }
 
     async def _health_check_loop(self):
@@ -727,19 +798,27 @@ class MarketDataProvider:
 
                 # Check if we're in WebSocket mode (no need to check if in fallback)
                 if self._current_mode != DataSourceMode.WEBSOCKET:
-                    logger.debug("Health check: in REST fallback mode, checking for recovery")
+                    logger.debug(
+                        "Health check: in REST fallback mode, checking for recovery"
+                    )
                     try:
                         is_healthy, _ = await self._check_data_source_health()
                         if is_healthy:
-                            logger.info("WebSocket is healthy again, attempting recovery")
+                            logger.info(
+                                "WebSocket is healthy again, attempting recovery"
+                            )
                             await self._recover_to_websocket()
                     except Exception as e:
-                        logger.debug(f"Error checking WebSocket health for recovery: {e}")
+                        logger.debug(
+                            f"Error checking WebSocket health for recovery: {e}"
+                        )
                     continue
 
                 # We're in WebSocket mode, check health
                 if self._data_source is None:
-                    logger.debug("Health check: no data source configured (using mock data)")
+                    logger.debug(
+                        "Health check: no data source configured (using mock data)"
+                    )
                     continue
 
                 is_healthy, health_status = await self._check_data_source_health()
@@ -756,7 +835,10 @@ class MarketDataProvider:
                 logger.info("Health check loop cancelled")
                 raise
             except Exception as e:
-                logger.error(f"Error in health check loop: {type(e).__name__}: {e}", exc_info=True)
+                logger.error(
+                    f"Error in health check loop: {type(e).__name__}: {e}",
+                    exc_info=True,
+                )
                 # Continue checking despite errors
 
     async def _check_data_source_health(self) -> tuple[bool, dict[str, Any] | None]:
@@ -768,11 +850,20 @@ class MarketDataProvider:
         if health_status is not None:
             logger.debug(f"Health check: data source status = {health_status}")
 
-            if health_status.get("running") is False or health_status.get("connected") is False:
+            if (
+                health_status.get("running") is False
+                or health_status.get("connected") is False
+            ):
                 return False, health_status
 
+            in_grace = self._is_startup_grace_active()
             staleness = health_status.get("staleness_seconds")
             if staleness is None:
+                if in_grace:
+                    logger.debug(
+                        "Failover startup grace active: no tick yet, keeping WebSocket healthy"
+                    )
+                    return True, health_status
                 return False, health_status
 
             fresh_symbol_count = health_status.get("fresh_symbol_count")
@@ -784,6 +875,13 @@ class MarketDataProvider:
             ):
                 # Hard failure: ALL symbols stale.
                 if fresh_symbol_count <= 0:
+                    if in_grace:
+                        logger.debug(
+                            "Failover startup grace active: fresh_ratio=0/%d, "
+                            "keeping WebSocket healthy",
+                            symbol_count,
+                        )
+                        return True, health_status
                     return False, health_status
                 # Silent-stall guard: too few fresh symbols even though
                 # overall `_last_tick_ts` looks recent.  See
@@ -792,6 +890,16 @@ class MarketDataProvider:
                 if min_ratio > 0.0:
                     fresh_ratio = fresh_symbol_count / symbol_count
                     if fresh_ratio < min_ratio:
+                        if in_grace:
+                            logger.debug(
+                                "Failover startup grace active: fresh_ratio=%.2f "
+                                "(%d/%d) < %.2f, keeping WebSocket healthy",
+                                fresh_ratio,
+                                fresh_symbol_count,
+                                symbol_count,
+                                min_ratio,
+                            )
+                            return True, health_status
                         logger.warning(
                             "Silent-stall guard: fresh_ratio=%.2f (%d/%d) < %.2f, "
                             "marking unhealthy",
@@ -819,9 +927,18 @@ class MarketDataProvider:
 
         return is_healthy, None
 
+    def _is_startup_grace_active(self) -> bool:
+        """Return True while WebSocket failover is in its startup grace window."""
+        grace_seconds = self.config.startup_grace_seconds
+        if grace_seconds <= 0.0 or self._health_monitor_started_at is None:
+            return False
+        return (time.monotonic() - self._health_monitor_started_at) < grace_seconds
+
     async def _get_data_source_health_status(self) -> dict[str, Any] | None:
         """Fetch structured health status from the primary data source when available."""
-        if self._data_source is None or not hasattr(self._data_source, "get_health_status"):
+        if self._data_source is None or not hasattr(
+            self._data_source, "get_health_status"
+        ):
             return None
 
         try:
@@ -869,7 +986,9 @@ class MarketDataProvider:
                 logger.info("Sent Telegram alert for WebSocket failover")
             except Exception as e:
                 # Don't let telegram failures break failover
-                logger.error(f"Failed to send Telegram failover alert: {e}", exc_info=False)
+                logger.error(
+                    f"Failed to send Telegram failover alert: {e}", exc_info=False
+                )
 
         # Create KIS client if not already available
         if self._kis_client is None:
@@ -908,11 +1027,12 @@ class MarketDataProvider:
                     await asyncio.sleep(self.config.rest_poll_interval_seconds)
                     continue
 
-                if (
-                    self._kis_client is not None
-                    and getattr(self._kis_client, "is_rate_limited", False)
+                if self._kis_client is not None and getattr(
+                    self._kis_client, "is_rate_limited", False
                 ):
-                    logger.debug("REST poll cycle: skipping while KIS client is rate-limited")
+                    logger.debug(
+                        "REST poll cycle: skipping while KIS client is rate-limited"
+                    )
                     await asyncio.sleep(self.config.rest_poll_interval_seconds)
                     continue
 
@@ -990,6 +1110,7 @@ class MarketDataProvider:
 
         # Switch mode (this will stop the REST polling loop via its condition check)
         self._current_mode = DataSourceMode.WEBSOCKET
+        self._health_monitor_started_at = time.monotonic()
 
         # Cancel REST polling task if it's still running
         if self._fallback_poll_task is not None and not self._fallback_poll_task.done():
@@ -1020,7 +1141,9 @@ class MarketDataProvider:
                 logger.info("Sent Telegram alert for WebSocket recovery")
             except Exception as e:
                 # Don't let telegram failures break recovery
-                logger.error(f"Failed to send Telegram recovery alert: {e}", exc_info=False)
+                logger.error(
+                    f"Failed to send Telegram recovery alert: {e}", exc_info=False
+                )
 
     def clear_cache(self):
         """Clear all cached data"""

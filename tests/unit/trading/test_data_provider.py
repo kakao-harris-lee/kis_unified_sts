@@ -18,6 +18,7 @@ class TestDataProviderConfig:
         assert config.fetch_timeout_seconds == 5.0
         assert config.staleness_threshold_seconds == 10.0
         assert config.rest_fallback_max_symbols is None
+        assert config.startup_grace_seconds == 60.0
         assert config.mock_seed is None
 
     def test_validation_passes(self):
@@ -65,6 +66,7 @@ class TestDataProviderConfig:
                 "batch_size": 15,
                 "staleness_threshold_seconds": 12.0,
                 "min_fresh_ratio": 0.25,
+                "startup_grace_seconds": 45.0,
                 "rest_fallback_max_symbols": 10,
                 "mock_seed": 42,
             }
@@ -73,6 +75,7 @@ class TestDataProviderConfig:
         assert config.batch_size == 15
         assert config.staleness_threshold_seconds == 12.0
         assert config.min_fresh_ratio == 0.25
+        assert config.startup_grace_seconds == 45.0
         assert config.rest_fallback_max_symbols == 10
         assert config.mock_seed == 42
 
@@ -85,6 +88,9 @@ class TestDataProviderConfig:
 
         with pytest.raises(TypeError, match="min_fresh_ratio"):
             DataProviderConfig.from_dict({"min_fresh_ratio": "invalid"})
+
+        with pytest.raises(TypeError, match="startup_grace_seconds"):
+            DataProviderConfig.from_dict({"startup_grace_seconds": "invalid"})
 
 
 class TestMarketDataCache:
@@ -177,7 +183,10 @@ class TestMarketDataProvider:
     @pytest.mark.asyncio
     async def test_get_data_caching(self):
         """Test data is cached and reused"""
-        from services.trading.data_provider import MarketDataProvider, DataProviderConfig
+        from services.trading.data_provider import (
+            MarketDataProvider,
+            DataProviderConfig,
+        )
 
         config = DataProviderConfig(cache_ttl_seconds=10.0, mock_seed=42)
         provider = MarketDataProvider(symbols=["005930"], config=config)
@@ -255,7 +264,10 @@ class TestMarketDataProvider:
     @pytest.mark.asyncio
     async def test_mock_seed_reproducibility(self):
         """Test mock data is reproducible with seed"""
-        from services.trading.data_provider import MarketDataProvider, DataProviderConfig
+        from services.trading.data_provider import (
+            MarketDataProvider,
+            DataProviderConfig,
+        )
 
         config1 = DataProviderConfig(mock_seed=42)
         provider1 = MarketDataProvider(symbols=["005930"], config=config1)
@@ -293,7 +305,10 @@ class TestMarketDataSourceProtocol:
     @pytest.mark.asyncio
     async def test_parallel_fetching(self):
         """Test parallel fetching from data source"""
-        from services.trading.data_provider import MarketDataProvider, DataProviderConfig
+        from services.trading.data_provider import (
+            MarketDataProvider,
+            DataProviderConfig,
+        )
 
         call_times = []
 
@@ -334,7 +349,10 @@ class TestFailoverLogic:
 
     def test_failover_state_properties(self):
         """Test failover state properties are readable"""
-        from services.trading.data_provider import MarketDataProvider, DataProviderConfig
+        from services.trading.data_provider import (
+            MarketDataProvider,
+            DataProviderConfig,
+        )
 
         config = DataProviderConfig(
             health_check_interval_seconds=5.0,
@@ -455,7 +473,10 @@ class TestFailoverLogic:
     @pytest.mark.asyncio
     async def test_failover_with_telegram_alerts(self):
         """Test failover sends Telegram alert when configured"""
-        from services.trading.data_provider import MarketDataProvider, DataProviderConfig
+        from services.trading.data_provider import (
+            MarketDataProvider,
+            DataProviderConfig,
+        )
         from unittest.mock import AsyncMock
 
         telegram_notifier = AsyncMock()
@@ -478,7 +499,10 @@ class TestFailoverLogic:
     @pytest.mark.asyncio
     async def test_recovery_with_telegram_alerts(self):
         """Test recovery sends Telegram alert when configured"""
-        from services.trading.data_provider import MarketDataProvider, DataProviderConfig
+        from services.trading.data_provider import (
+            MarketDataProvider,
+            DataProviderConfig,
+        )
         from unittest.mock import AsyncMock
 
         class HealthySource:
@@ -509,7 +533,10 @@ class TestFailoverLogic:
     @pytest.mark.asyncio
     async def test_telegram_alerts_disabled(self):
         """Test Telegram alerts are not sent when disabled"""
-        from services.trading.data_provider import MarketDataProvider, DataProviderConfig
+        from services.trading.data_provider import (
+            MarketDataProvider,
+            DataProviderConfig,
+        )
         from unittest.mock import AsyncMock
 
         telegram_notifier = AsyncMock()
@@ -528,7 +555,11 @@ class TestFailoverLogic:
     @pytest.mark.asyncio
     async def test_telegram_alert_failure_does_not_break_failover(self):
         """Test failover continues even if Telegram alert fails"""
-        from services.trading.data_provider import MarketDataProvider, DataProviderConfig, DataSourceMode
+        from services.trading.data_provider import (
+            MarketDataProvider,
+            DataProviderConfig,
+            DataSourceMode,
+        )
         from unittest.mock import AsyncMock
 
         telegram_notifier = AsyncMock()
@@ -548,7 +579,11 @@ class TestFailoverLogic:
     @pytest.mark.asyncio
     async def test_health_check_loop_triggers_failover(self):
         """Test health check loop triggers failover when source becomes unhealthy"""
-        from services.trading.data_provider import MarketDataProvider, DataProviderConfig, DataSourceMode
+        from services.trading.data_provider import (
+            MarketDataProvider,
+            DataProviderConfig,
+            DataSourceMode,
+        )
 
         class ToggleHealthSource:
             def get_health_status(self) -> dict:
@@ -637,7 +672,11 @@ class TestFailoverLogic:
     @pytest.mark.asyncio
     async def test_health_check_loop_triggers_recovery(self):
         """Test health check loop triggers recovery when source becomes healthy again"""
-        from services.trading.data_provider import MarketDataProvider, DataProviderConfig, DataSourceMode
+        from services.trading.data_provider import (
+            MarketDataProvider,
+            DataProviderConfig,
+            DataSourceMode,
+        )
 
         class ToggleHealthSource:
             def get_health_status(self) -> dict:
@@ -679,7 +718,10 @@ class TestFailoverLogic:
     @pytest.mark.asyncio
     async def test_rest_poll_loop_fetches_data(self):
         """Test REST polling loop fetches data at regular intervals"""
-        from services.trading.data_provider import MarketDataProvider, DataProviderConfig
+        from services.trading.data_provider import (
+            MarketDataProvider,
+            DataProviderConfig,
+        )
 
         fetch_count = []
 
@@ -715,7 +757,11 @@ class TestFailoverLogic:
     @pytest.mark.asyncio
     async def test_rest_poll_loop_stops_after_recovery(self):
         """Test REST polling loop stops when recovering to WebSocket"""
-        from services.trading.data_provider import MarketDataProvider, DataProviderConfig, DataSourceMode
+        from services.trading.data_provider import (
+            MarketDataProvider,
+            DataProviderConfig,
+            DataSourceMode,
+        )
 
         class HealthySource:
             def is_healthy(self) -> bool:
@@ -753,7 +799,10 @@ class TestFailoverLogic:
     @pytest.mark.asyncio
     async def test_rest_poll_loop_handles_fetch_errors(self):
         """Test REST polling loop continues despite fetch errors"""
-        from services.trading.data_provider import MarketDataProvider, DataProviderConfig
+        from services.trading.data_provider import (
+            MarketDataProvider,
+            DataProviderConfig,
+        )
         from shared.exceptions import NetworkError
 
         error_count = []
@@ -800,7 +849,11 @@ class TestFailoverLogic:
     @pytest.mark.asyncio
     async def test_health_check_with_no_data_source(self):
         """Test health check handles case with no data source gracefully"""
-        from services.trading.data_provider import MarketDataProvider, DataProviderConfig, DataSourceMode
+        from services.trading.data_provider import (
+            MarketDataProvider,
+            DataProviderConfig,
+            DataSourceMode,
+        )
 
         config = DataProviderConfig(health_check_interval_seconds=0.5)
         provider = MarketDataProvider(config=config)
@@ -823,7 +876,11 @@ class TestFailoverLogic:
     @pytest.mark.asyncio
     async def test_async_is_healthy_method(self):
         """Test health check handles async is_healthy() method"""
-        from services.trading.data_provider import MarketDataProvider, DataProviderConfig, DataSourceMode
+        from services.trading.data_provider import (
+            MarketDataProvider,
+            DataProviderConfig,
+            DataSourceMode,
+        )
 
         class AsyncHealthSource:
             async def is_healthy(self) -> bool:
@@ -850,7 +907,11 @@ class TestFailoverLogic:
     @pytest.mark.asyncio
     async def test_health_check_uses_provider_staleness_threshold(self):
         """Feed health should respect the failover threshold configured on the provider."""
-        from services.trading.data_provider import MarketDataProvider, DataProviderConfig, DataSourceMode
+        from services.trading.data_provider import (
+            MarketDataProvider,
+            DataProviderConfig,
+            DataSourceMode,
+        )
 
         class NearStaleSource:
             def get_health_status(self) -> dict:
@@ -909,7 +970,11 @@ class TestFailoverLogic:
     @pytest.mark.asyncio
     async def test_fetch_batch_preserves_cache_when_real_source_fails(self):
         """REST/source failures should keep the last real cache instead of generating mock data."""
-        from services.trading.data_provider import DataSourceMode, MarketDataProvider, MarketDataCache
+        from services.trading.data_provider import (
+            DataSourceMode,
+            MarketDataProvider,
+            MarketDataCache,
+        )
 
         class FailingClient:
             supports_parallel = False
@@ -931,16 +996,26 @@ class TestFailoverLogic:
 
     def test_select_rest_poll_symbols_prefers_oldest_cache_and_limit(self):
         """REST fallback should poll the stalest symbols first when capped."""
-        from services.trading.data_provider import MarketDataProvider, DataProviderConfig, MarketDataCache
+        from services.trading.data_provider import (
+            MarketDataProvider,
+            DataProviderConfig,
+            MarketDataCache,
+        )
 
         provider = MarketDataProvider(
             symbols=["A", "B", "C"],
             config=DataProviderConfig(rest_fallback_max_symbols=2),
         )
         now = datetime.now()
-        provider._cache["A"] = MarketDataCache("A", {"close": 1}, now - timedelta(seconds=5))
-        provider._cache["B"] = MarketDataCache("B", {"close": 1}, now - timedelta(seconds=10))
-        provider._cache["C"] = MarketDataCache("C", {"close": 1}, now - timedelta(seconds=1))
+        provider._cache["A"] = MarketDataCache(
+            "A", {"close": 1}, now - timedelta(seconds=5)
+        )
+        provider._cache["B"] = MarketDataCache(
+            "B", {"close": 1}, now - timedelta(seconds=10)
+        )
+        provider._cache["C"] = MarketDataCache(
+            "C", {"close": 1}, now - timedelta(seconds=1)
+        )
 
         assert provider._select_rest_poll_symbols() == ["B", "A"]
 
@@ -1022,6 +1097,107 @@ class TestSilentStallGuard:
                 }
 
         provider._data_source = _MostlyFreshSource()
+        is_healthy, _ = await provider._check_data_source_health()
+        assert is_healthy is True
+
+    @pytest.mark.asyncio
+    async def test_startup_grace_defers_low_ratio_failover(self):
+        """Fresh-ratio guard should not fail during initial subscription warm-up."""
+        import time
+
+        from services.trading.data_provider import (
+            DataProviderConfig,
+            MarketDataProvider,
+        )
+
+        provider = MarketDataProvider(
+            config=DataProviderConfig(
+                staleness_threshold_seconds=10.0,
+                min_fresh_ratio=0.5,
+                startup_grace_seconds=60.0,
+            )
+        )
+        provider._health_monitor_started_at = time.monotonic()
+
+        class _OpeningWarmupSource:
+            async def get_health_status(self):
+                return {
+                    "running": True,
+                    "connected": True,
+                    "staleness_seconds": 0.5,
+                    "symbol_count": 25,
+                    "fresh_symbol_count": 11,
+                    "stale_symbol_count": 14,
+                }
+
+        provider._data_source = _OpeningWarmupSource()
+        is_healthy, _ = await provider._check_data_source_health()
+        assert is_healthy is True
+
+    @pytest.mark.asyncio
+    async def test_low_ratio_fails_after_startup_grace(self):
+        """After grace, the same low fresh ratio should still catch a real stall."""
+        import time
+
+        from services.trading.data_provider import (
+            DataProviderConfig,
+            MarketDataProvider,
+        )
+
+        provider = MarketDataProvider(
+            config=DataProviderConfig(
+                staleness_threshold_seconds=10.0,
+                min_fresh_ratio=0.5,
+                startup_grace_seconds=60.0,
+            )
+        )
+        provider._health_monitor_started_at = time.monotonic() - 61.0
+
+        class _SilentStallSource:
+            async def get_health_status(self):
+                return {
+                    "running": True,
+                    "connected": True,
+                    "staleness_seconds": 0.5,
+                    "symbol_count": 25,
+                    "fresh_symbol_count": 11,
+                    "stale_symbol_count": 14,
+                }
+
+        provider._data_source = _SilentStallSource()
+        is_healthy, _ = await provider._check_data_source_health()
+        assert is_healthy is False
+
+    @pytest.mark.asyncio
+    async def test_startup_grace_defers_no_tick_yet(self):
+        """Connected feed with no first tick yet should not fail immediately."""
+        import time
+
+        from services.trading.data_provider import (
+            DataProviderConfig,
+            MarketDataProvider,
+        )
+
+        provider = MarketDataProvider(
+            config=DataProviderConfig(
+                min_fresh_ratio=0.5,
+                startup_grace_seconds=60.0,
+            )
+        )
+        provider._health_monitor_started_at = time.monotonic()
+
+        class _NoTickYetSource:
+            async def get_health_status(self):
+                return {
+                    "running": True,
+                    "connected": True,
+                    "staleness_seconds": None,
+                    "symbol_count": 25,
+                    "fresh_symbol_count": 0,
+                    "stale_symbol_count": 25,
+                }
+
+        provider._data_source = _NoTickYetSource()
         is_healthy, _ = await provider._check_data_source_health()
         assert is_healthy is True
 
