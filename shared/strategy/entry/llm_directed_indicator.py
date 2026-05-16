@@ -2,6 +2,7 @@
 
 Design: docs/superpowers/specs/2026-05-16-llm-directed-indicator-futures-design.md
 """
+
 from __future__ import annotations
 
 import logging
@@ -42,8 +43,8 @@ class LLMDirectedIndicatorConfig(ConfigMixin):
     w_momentum: float = 0.34
     w_trend: float = 0.33
     w_volume: float = 0.33
-    entry_threshold: float = 0.30          # |ensemble| floor
-    vol_threshold_mult: float = 0.5        # eff_thr = thr*(1+mult*vol_mag)
+    entry_threshold: float = 0.30  # |ensemble| floor
+    vol_threshold_mult: float = 0.5  # eff_thr = thr*(1+mult*vol_mag)
 
     # Market-hours (futures, KST)
     market_open_hour: int = 9
@@ -84,7 +85,8 @@ def _map_llm_bias(
             return "SHORT_BIAS"
     except Exception:  # noqa: BLE001 — never break the entry loop; degrade to FLAT
         logger.warning(
-            "_map_llm_bias: is_bullish/is_bearish raised; defaulting to FLAT")
+            "_map_llm_bias: is_bullish/is_bearish raised; defaulting to FLAT"
+        )
         return "FLAT"
     return "FLAT"
 
@@ -110,11 +112,20 @@ class LLMDirectedIndicatorEntry(EntrySignalGenerator[LLMDirectedIndicatorConfig]
 
     @property
     def required_indicators(self) -> list[str]:
-        return ["momentum_5m", "ema_5", "ema_20", "adx", "vwap",
-                "volume_velocity", "rvol", "atr"]
+        return [
+            "momentum_5m",
+            "ema_5",
+            "ema_20",
+            "adx",
+            "vwap",
+            "volume_velocity",
+            "rvol",
+            "atr",
+        ]
 
     def _get_vol_forecast(self) -> Any | None:
         import time as _t
+
         now = _t.monotonic()
         if self._vol_cache is not _VOL_UNSET and now - self._vol_cache_mono < 60.0:
             return self._vol_cache
@@ -139,24 +150,25 @@ class LLMDirectedIndicatorEntry(EntrySignalGenerator[LLMDirectedIndicatorConfig]
             return None
 
         now = context.timestamp
-        now_kst = (now.astimezone(_KST) if now.tzinfo is not None
-                   else now.replace(tzinfo=_KST))
+        now_kst = (
+            now.astimezone(_KST) if now.tzinfo is not None else now.replace(tzinfo=_KST)
+        )
         c = self.config
         open_dt = datetime.combine(
-            now_kst.date(), time(c.market_open_hour, c.market_open_minute),
-            tzinfo=_KST)
+            now_kst.date(), time(c.market_open_hour, c.market_open_minute), tzinfo=_KST
+        )
         close_dt = datetime.combine(
-            now_kst.date(), time(c.market_close_hour, c.market_close_minute),
-            tzinfo=_KST)
+            now_kst.date(),
+            time(c.market_close_hour, c.market_close_minute),
+            tzinfo=_KST,
+        )
         if now_kst < open_dt + timedelta(minutes=c.skip_market_open_minutes):
             return None
-        if now_kst >= close_dt - timedelta(
-                minutes=c.skip_market_close_minutes):
+        if now_kst >= close_dt - timedelta(minutes=c.skip_market_close_minutes):
             return None
         if c.signal_cooldown_seconds > 0:
             last = self._last_signal_at.get(code)
-            if last and (now - last).total_seconds() < (
-                    c.signal_cooldown_seconds):
+            if last and (now - last).total_seconds() < (c.signal_cooldown_seconds):
                 return None
 
         bias = _map_llm_bias(context.market_context, c)
@@ -166,17 +178,17 @@ class LLMDirectedIndicatorEntry(EntrySignalGenerator[LLMDirectedIndicatorConfig]
         m = momentum_reversal_score(ind_for_score)
         t = trend_breakout_score(ind_for_score)
         v = volume_microstructure_score(ind_for_score)
-        vol_mag = volatility_regime_magnitude(
-            ind_for_score, self._get_vol_forecast())
+        vol_mag = volatility_regime_magnitude(ind_for_score, self._get_vol_forecast())
 
         ensemble = c.w_momentum * m + c.w_trend * t + c.w_volume * v
-        eff_threshold = c.entry_threshold * (1.0 + c.vol_threshold_mult
-                                             * vol_mag)
+        eff_threshold = c.entry_threshold * (1.0 + c.vol_threshold_mult * vol_mag)
         direction = "long" if ensemble > 0 else "short"
 
-        trace = (f"bias={bias} m={m:.2f} t={t:.2f} v={v:.2f} "
-                 f"vol={vol_mag:.2f} ens={ensemble:.3f} "
-                 f"eff_thr={eff_threshold:.3f} dir={direction}")
+        trace = (
+            f"bias={bias} m={m:.2f} t={t:.2f} v={v:.2f} "
+            f"vol={vol_mag:.2f} ens={ensemble:.3f} "
+            f"eff_thr={eff_threshold:.3f} dir={direction}"
+        )
 
         if bias == "LONG_BIAS" and direction == "short":
             logger.info("[llm_directed] masked short | %s", trace)
@@ -191,13 +203,12 @@ class LLMDirectedIndicatorEntry(EntrySignalGenerator[LLMDirectedIndicatorConfig]
         llm_conf = 0.5
         if context.market_context is not None:
             try:
-                llm_conf = float(getattr(
-                    context.market_context, "confidence", 0.5) or 0.5)
+                llm_conf = float(
+                    getattr(context.market_context, "confidence", 0.5) or 0.5
+                )
             except (TypeError, ValueError):
                 llm_conf = 0.5
-        confidence = max(0.1, min(1.0,
-                                  0.5 * min(1.0, abs(ensemble))
-                                  + 0.5 * llm_conf))
+        confidence = max(0.1, min(1.0, 0.5 * min(1.0, abs(ensemble)) + 0.5 * llm_conf))
 
         logger.info("[llm_directed] ENTER %s | %s", direction.upper(), trace)
         self._last_signal_at[code] = now

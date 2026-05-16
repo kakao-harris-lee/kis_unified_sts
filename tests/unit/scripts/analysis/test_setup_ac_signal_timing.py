@@ -6,6 +6,7 @@ Verdict logic:
   - WARN: morning signals but zero afternoon (cache-freeze signature)
   - PASS: signals in the afternoon window too (cache fix effective)
 """
+
 from __future__ import annotations
 
 from datetime import date
@@ -67,21 +68,20 @@ def test_signals_throughout_is_pass(tmp_path):
 
 def test_other_date_lines_ignored(tmp_path):
     lines = [
-        _line("2026-05-17 10:00:00", 5),   # different date — ignore
+        _line("2026-05-17 10:00:00", 5),  # different date — ignore
         _line("2026-05-18 10:00:00", 0),
-        _line("2026-05-18 16:30:00", 9),   # post-close (>=16h) — ignore
+        _line("2026-05-18 16:30:00", 9),  # post-close (>=16h) — ignore
     ]
     p = _write_log(tmp_path, "x.log", lines)
     rep = _mod._parse_log(p, date(2026, 5, 18))
-    assert rep.total_cycles == 1   # only the 05-18 10:00 line counted
+    assert rep.total_cycles == 1  # only the 05-18 10:00 line counted
     assert rep.total_signals == 0
     assert rep.verdict == "FAIL"
 
 
 def test_telegram_format_has_verdict_and_hours(tmp_path):
     lines = [_line(f"2026-05-18 {h:02d}:15:00", 1) for h in (9, 14)]
-    rep = _mod._parse_log(_write_log(tmp_path, "t.log", lines),
-                          date(2026, 5, 18))
+    rep = _mod._parse_log(_write_log(tmp_path, "t.log", lines), date(2026, 5, 18))
     msg = _mod._format_telegram(rep)
     assert "Setup A/C signal timing — 2026-05-18" in msg
     assert "verdict: PASS" in msg

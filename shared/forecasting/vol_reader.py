@@ -3,6 +3,7 @@
 Mirrors shared.macro.base.read_latest_macro_snapshot: never raises, returns
 None on absent/garbage/redis-error so trading hot paths degrade gracefully.
 """
+
 from __future__ import annotations
 
 import logging

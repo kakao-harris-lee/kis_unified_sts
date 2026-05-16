@@ -26,22 +26,24 @@ def test_trend_missing_neutral():
 
 
 def test_trend_up_alignment_positive():
-    ind = {"ema_5": 102.0, "ema_20": 100.0, "adx": 40.0,
-           "vwap": 99.0, "close": 103.0}
+    ind = {"ema_5": 102.0, "ema_20": 100.0, "adx": 40.0, "vwap": 99.0, "close": 103.0}
     assert trend_breakout_score(ind) > 0.4
 
 
 def test_trend_down_alignment_negative():
-    ind = {"ema_5": 98.0, "ema_20": 100.0, "adx": 40.0,
-           "vwap": 101.0, "close": 97.0}
+    ind = {"ema_5": 98.0, "ema_20": 100.0, "adx": 40.0, "vwap": 101.0, "close": 97.0}
     assert trend_breakout_score(ind) < -0.4
 
 
 def test_trend_weak_adx_damped():
-    strong = {"ema_5": 102.0, "ema_20": 100.0, "adx": 50.0,
-              "vwap": 99.0, "close": 103.0}
-    weak = {"ema_5": 102.0, "ema_20": 100.0, "adx": 5.0,
-            "vwap": 99.0, "close": 103.0}
+    strong = {
+        "ema_5": 102.0,
+        "ema_20": 100.0,
+        "adx": 50.0,
+        "vwap": 99.0,
+        "close": 103.0,
+    }
+    weak = {"ema_5": 102.0, "ema_20": 100.0, "adx": 5.0, "vwap": 99.0, "close": 103.0}
     assert abs(trend_breakout_score(weak)) < abs(trend_breakout_score(strong))
 
 
@@ -50,16 +52,14 @@ def test_volume_missing_neutral():
 
 
 def test_volume_up_flow_positive():
-    ind = {"volume_velocity": 0.8, "rvol": 2.0, "vwap": 100.0,
-           "close": 101.0}
+    ind = {"volume_velocity": 0.8, "rvol": 2.0, "vwap": 100.0, "close": 101.0}
     assert volume_microstructure_score(ind) > 0.3
 
 
 def test_volume_low_rvol_damped():
     hi = {"volume_velocity": 0.8, "rvol": 2.0, "vwap": 100.0, "close": 101.0}
     lo = {"volume_velocity": 0.8, "rvol": 0.2, "vwap": 100.0, "close": 101.0}
-    assert abs(volume_microstructure_score(lo)) < abs(
-        volume_microstructure_score(hi))
+    assert abs(volume_microstructure_score(lo)) < abs(volume_microstructure_score(hi))
 
 
 def test_vol_regime_missing_is_zero():
@@ -88,7 +88,8 @@ def test_momentum_partial_subdict_uses_available():
 def test_volume_zero_rvol_suppresses_signal():
     # rvol=0 fully gates volume signal to ~0 (no-volume = no signal)
     s = volume_microstructure_score(
-        {"volume_velocity": 0.9, "rvol": 0.0, "vwap": 100.0, "close": 101.0})
+        {"volume_velocity": 0.9, "rvol": 0.0, "vwap": 100.0, "close": 101.0}
+    )
     assert s == 0.0
 
 

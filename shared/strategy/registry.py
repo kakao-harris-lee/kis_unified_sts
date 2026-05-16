@@ -139,9 +139,7 @@ class ComponentRegistry:
     def get(cls, name: str) -> Type:
         """등록된 컴포넌트 클래스 반환"""
         if name not in cls._components:
-            raise ComponentNotFoundError(
-                f"Unknown {cls.__name__} component: '{name}'"
-            )
+            raise ComponentNotFoundError(f"Unknown {cls.__name__} component: '{name}'")
         return cls._components[name]
 
     @classmethod
@@ -171,7 +169,7 @@ class EntryRegistry(ComponentRegistry):
         entry = EntryRegistry.create("bb_reversion", {"bb_period": 20})
     """
 
-    _components: dict[str, Type["EntrySignalGenerator"]] = {}
+    _components: dict[str, Type[EntrySignalGenerator]] = {}
 
 
 class ExitRegistry(ComponentRegistry):
@@ -185,7 +183,7 @@ class ExitRegistry(ComponentRegistry):
         exit = ExitRegistry.create("three_stage", {"stop_loss_pct": -0.015})
     """
 
-    _components: dict[str, Type["ExitSignalGenerator"]] = {}
+    _components: dict[str, Type[ExitSignalGenerator]] = {}
 
 
 class SizerRegistry(ComponentRegistry):
@@ -199,7 +197,7 @@ class SizerRegistry(ComponentRegistry):
         sizer = SizerRegistry.create("risk_based", {"risk_per_trade_pct": 1.0})
     """
 
-    _components: dict[str, Type["PositionSizer"]] = {}
+    _components: dict[str, Type[PositionSizer]] = {}
 
 
 class StrategyFactory:
@@ -220,7 +218,7 @@ class StrategyFactory:
     """
 
     @classmethod
-    def create(cls, config: dict[str, Any]) -> "TradingStrategy":
+    def create(cls, config: dict[str, Any]) -> TradingStrategy:
         """설정 dict로부터 전략 생성
 
         Args:
@@ -278,7 +276,7 @@ class StrategyFactory:
         )
 
     @classmethod
-    def _create_default_sizer(cls, params: dict[str, Any]) -> "PositionSizer":
+    def _create_default_sizer(cls, params: dict[str, Any]) -> PositionSizer:
         """기본 포지션 사이저 생성"""
         from shared.strategy.position import FixedSizer, FixedSizerConfig
 
@@ -286,9 +284,7 @@ class StrategyFactory:
         return FixedSizer(config)
 
     @classmethod
-    def create_from_file(
-        cls, asset_class: str, strategy_name: str
-    ) -> "TradingStrategy":
+    def create_from_file(cls, asset_class: str, strategy_name: str) -> TradingStrategy:
         """파일 경로로부터 전략 생성
 
         Args:
@@ -304,7 +300,7 @@ class StrategyFactory:
     @classmethod
     def create_all(
         cls, asset_class: str | None = None, enabled_only: bool = True
-    ) -> list["TradingStrategy"]:
+    ) -> list[TradingStrategy]:
         """모든 활성화된 전략 생성
 
         Args:
@@ -363,9 +359,13 @@ def register_builtin_components() -> None:
         logger.debug("OpeningVolumeSurgeEntry not available")
 
     try:
-        from shared.strategy.entry.volume_accumulation import VolumeAccumulationBreakoutEntry
+        from shared.strategy.entry.volume_accumulation import (
+            VolumeAccumulationBreakoutEntry,
+        )
 
-        EntryRegistry.register_class("volume_accumulation", VolumeAccumulationBreakoutEntry)
+        EntryRegistry.register_class(
+            "volume_accumulation", VolumeAccumulationBreakoutEntry
+        )
     except ImportError:
         logger.debug("VolumeAccumulationBreakoutEntry not available")
 
@@ -389,7 +389,8 @@ def register_builtin_components() -> None:
         )
 
         EntryRegistry.register_class(
-            "llm_directed_indicator", LLMDirectedIndicatorEntry)
+            "llm_directed_indicator", LLMDirectedIndicatorEntry
+        )
     except ImportError:
         logger.debug("LLMDirectedIndicatorEntry not available")
 
@@ -430,7 +431,9 @@ def register_builtin_components() -> None:
         EntryRegistry.register_class("setup_a_gap_reversion", SetupAEntryAdapter)
         EntryRegistry.register_class("setup_c_event_reaction", SetupCEntryAdapter)
     except ImportError:
-        logger.debug("Setup adapters (SetupAEntryAdapter, SetupCEntryAdapter) not available")
+        logger.debug(
+            "Setup adapters (SetupAEntryAdapter, SetupCEntryAdapter) not available"
+        )
 
     # Exit 전략 등록
     try:
@@ -474,7 +477,8 @@ def register_builtin_components() -> None:
         )
 
         ExitRegistry.register_class(
-            "llm_directed_indicator_exit", LLMDirectedIndicatorExit)
+            "llm_directed_indicator_exit", LLMDirectedIndicatorExit
+        )
     except ImportError:
         logger.debug("LLMDirectedIndicatorExit not available")
 

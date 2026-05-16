@@ -7,6 +7,7 @@ Contract: every scorer returns 0.0 (neutral) on missing/invalid input and
 never raises — the entry strategy must degrade to a reduced signal, never
 to a structural zero (design spec section 5).
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -51,12 +52,12 @@ def trend_breakout_score(indicators: dict[str, Any]) -> float:
     ema_s = _f(indicators, "ema_20")
     if ema_f is None or ema_s is None or ema_s == 0.0:
         return 0.0
-    raw = (ema_f - ema_s) / abs(ema_s)            # signed trend
-    direction = _clip(raw * 50.0)                 # ~2% spread saturates
+    raw = (ema_f - ema_s) / abs(ema_s)  # signed trend
+    direction = _clip(raw * 50.0)  # ~2% spread saturates
     adx = _f(indicators, "adx")
     strength = min(1.0, max(0.0, (adx or 0.0) / 40.0))  # ADX>=40 -> full
     score = direction * strength
-    if score == 0.0:                              # no trend strength -> neutral
+    if score == 0.0:  # no trend strength -> neutral
         return 0.0
     vwap = _f(indicators, "vwap")
     close = _f(indicators, "close")
