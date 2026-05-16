@@ -13,11 +13,14 @@ The report checks the live stock paper path end-to-end:
 Designed for after-close cron. Exit codes:
   0 = PASS, 1 = FAIL/WARN gate issues, 2 = script error.
 """
+
 from __future__ import annotations
 
 import argparse
 import asyncio
 import json
+import os
+import shlex
 import sys
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, date, datetime, time, timedelta
@@ -141,10 +144,52 @@ class VerificationReport:
     source_errors: list[str]
     issues: list[GateIssue]
     trade_metrics: TradeMetrics
+    active_strategy_names: list[str]
+    active_trade_metrics: TradeMetrics
+    active_issues: list[GateIssue]
     redis_snapshot: RedisSnapshot
     json_path: str = ""
     markdown_path: str = ""
     notification_sent: bool = False
+
+
+def _load_repo_env() -> None:
+    """Load repo-local .env for standalone verifier runs.
+
+    Cron wrappers already source .env, but manual invocations should use the
+    same credentials/config without requiring the operator to export variables.
+    Existing environment values win, matching python-dotenv's default
+    ``override=False`` behavior.
+    """
+    env_path = _REPO_ROOT / ".env"
+    if not env_path.exists():
+        return
+    try:
+        from dotenv import load_dotenv
+
+        load_dotenv(env_path, override=False)
+        return
+    except ImportError:
+        pass
+
+    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export ") :].strip()
+        if "=" not in line:
+            continue
+        key, raw_value = line.split("=", 1)
+        key = key.strip()
+        if not key or key in os.environ:
+            continue
+        try:
+            parts = shlex.split(raw_value, comments=False, posix=True)
+            value = parts[0] if parts else ""
+        except ValueError:
+            value = raw_value.strip().strip("'\"")
+        os.environ[key] = value
 
 
 def _as_int(value: Any, default: int) -> int:
@@ -184,24 +229,41 @@ def _load_config() -> VerificationConfig:
     redis_cfg = raw.get("redis", {})
 
     return VerificationConfig(
-        output_dir=_REPO_ROOT / str(report.get("output_dir", "reports/daily_verification/stock")),
+        output_dir=_REPO_ROOT
+        / str(report.get("output_dir", "reports/daily_verification/stock")),
         lookback_days=max(1, _as_int(report.get("lookback_days"), 22)),
         monthly_trading_days=max(1, _as_int(report.get("monthly_trading_days"), 22)),
-        initial_capital=max(1.0, _as_float(report.get("initial_capital"), 10_000_000.0)),
+        initial_capital=max(
+            1.0, _as_float(report.get("initial_capital"), 10_000_000.0)
+        ),
         notify_on_issues=_as_bool(report.get("notify_on_issues"), True),
         min_daily_signals=max(0, _as_int(targets.get("min_daily_signals"), 1)),
-        min_closed_trades_for_metric_gate=max(1, _as_int(targets.get("min_closed_trades_for_metric_gate"), 5)),
-        min_monthly_expected_return_pct=_as_float(targets.get("min_monthly_expected_return_pct"), 10.0),
+        min_closed_trades_for_metric_gate=max(
+            1, _as_int(targets.get("min_closed_trades_for_metric_gate"), 5)
+        ),
+        min_monthly_expected_return_pct=_as_float(
+            targets.get("min_monthly_expected_return_pct"), 10.0
+        ),
         min_win_rate_pct=_as_float(targets.get("min_win_rate_pct"), 55.0),
         target_win_rate_max_pct=_as_float(targets.get("target_win_rate_max_pct"), 60.0),
         max_mdd_pct=max(0.0, _as_float(targets.get("max_mdd_pct"), 10.0)),
-        require_positive_equity_slope=_as_bool(targets.get("require_positive_equity_slope"), True),
-        max_reentry_churn_count=max(0, _as_int(targets.get("max_reentry_churn_count"), 0)),
-        reentry_churn_seconds=max(1, _as_int(targets.get("reentry_churn_seconds"), 3600)),
-        min_fresh_ratio=max(0.0, min(1.0, _as_float(targets.get("min_fresh_ratio"), 0.5))),
+        require_positive_equity_slope=_as_bool(
+            targets.get("require_positive_equity_slope"), True
+        ),
+        max_reentry_churn_count=max(
+            0, _as_int(targets.get("max_reentry_churn_count"), 0)
+        ),
+        reentry_churn_seconds=max(
+            1, _as_int(targets.get("reentry_churn_seconds"), 3600)
+        ),
+        min_fresh_ratio=max(
+            0.0, min(1.0, _as_float(targets.get("min_fresh_ratio"), 0.5))
+        ),
         require_redis_status=_as_bool(targets.get("require_redis_status"), True),
         require_trade_targets=_as_bool(targets.get("require_trade_targets"), True),
-        require_daily_indicators=_as_bool(targets.get("require_daily_indicators"), True),
+        require_daily_indicators=_as_bool(
+            targets.get("require_daily_indicators"), True
+        ),
         skip_live_redis_gates_on_non_trading_day=_as_bool(
             targets.get("skip_live_redis_gates_on_non_trading_day"), True
         ),
@@ -241,6 +303,7 @@ def _window_for(report_date: date, lookback_days: int) -> tuple[date, date]:
 
 def _build_clickhouse_client(database: str):
     from clickhouse_driver import Client
+
     from shared.db.config import ClickHouseConfig
 
     cfg = ClickHouseConfig.from_env(database=database)
@@ -311,6 +374,31 @@ def fetch_trade_rows(
         )
         for row in rows
     ]
+
+
+def load_active_stock_strategy_names() -> list[str]:
+    """Return strategy names currently loaded by stock runtime.
+
+    The orchestrator/StrategyManager loads ``strategy.enabled: true`` from
+    ``config/strategies/stock``. Mirroring that scope lets the verification
+    report distinguish current runtime quality from historical trades created
+    by strategies that have since been disabled.
+    """
+    from shared.config.loader import ConfigLoader
+
+    names: list[str] = []
+    for strategy_config in ConfigLoader.load_all_strategies("stock", enabled_only=True):
+        strategy = strategy_config.get("strategy", {})
+        if not isinstance(strategy, dict):
+            continue
+        name = str(strategy.get("name", "")).strip()
+        if not name:
+            continue
+        paper = strategy.get("paper") or {}
+        if isinstance(paper, dict) and _as_bool(paper.get("enabled"), True) is False:
+            continue
+        names.append(name)
+    return sorted(set(names))
 
 
 def _equity_slope(equity_points: list[float]) -> float:
@@ -417,11 +505,19 @@ def summarize_trades(
     metrics.max_drawdown_pct = _max_drawdown_pct(equity_points)
     metrics.equity_slope_krw_per_trade = _equity_slope(equity_points)
     metrics.equity_is_upward = (
-        equity_points[-1] >= equity_points[0]
-        and metrics.equity_slope_krw_per_trade > 0
+        equity_points[-1] >= equity_points[0] and metrics.equity_slope_krw_per_trade > 0
     )
     metrics.reentry_churn_count = _count_reentry_churn(rows, reentry_churn_seconds)
     return metrics
+
+
+def _filter_active_strategy_rows(
+    rows: list[TradeRow], active_strategy_names: list[str]
+) -> list[TradeRow]:
+    active = {name for name in active_strategy_names if name}
+    if not active:
+        return []
+    return [row for row in rows if row.strategy in active]
 
 
 def _safe_json(raw: Any) -> Any:
@@ -459,7 +555,9 @@ def _count_codes_from_payload(payload: Any) -> int:
     return 0
 
 
-def fetch_redis_snapshot(config: VerificationConfig, report_date: date) -> RedisSnapshot:
+def fetch_redis_snapshot(
+    config: VerificationConfig, report_date: date
+) -> RedisSnapshot:
     from shared.collector.historical.calendar import is_trading_day
     from shared.streaming.client import RedisClient
 
@@ -487,7 +585,10 @@ def fetch_redis_snapshot(config: VerificationConfig, report_date: date) -> Redis
             signal = _safe_json(raw)
         except (TypeError, ValueError):
             continue
-        if isinstance(signal, dict) and _parse_signal_date(signal.get("timestamp")) == report_date:
+        if (
+            isinstance(signal, dict)
+            and _parse_signal_date(signal.get("timestamp")) == report_date
+        ):
             daily_signals += 1
 
     def load_counted_key(name: str) -> tuple[bool, int]:
@@ -502,7 +603,9 @@ def fetch_redis_snapshot(config: VerificationConfig, report_date: date) -> Redis
 
     trade_targets_exists, trade_targets_count = load_counted_key("trade_targets_key")
     universe_exists, universe_count = load_counted_key("universe_key")
-    daily_indicators_exists, daily_indicators_count = load_counted_key("daily_indicators_key")
+    daily_indicators_exists, daily_indicators_count = load_counted_key(
+        "daily_indicators_key"
+    )
 
     freshness = {}
     raw_freshness = redis_client.get(keys["data_freshness_key"])
@@ -545,19 +648,31 @@ def evaluate_report(
 ) -> list[GateIssue]:
     issues: list[GateIssue] = []
 
-    def add(severity: str, code: str, observed: str, expected: str, detail: str) -> None:
+    def add(
+        severity: str, code: str, observed: str, expected: str, detail: str
+    ) -> None:
         issues.append(GateIssue(severity, code, observed, expected, detail))
 
     for error in source_errors or []:
         code = error.split(":", 1)[0]
-        add("FAIL", code, error, "source query succeeds", "A verification data source failed.")
+        add(
+            "FAIL",
+            code,
+            error,
+            "source query succeeds",
+            "A verification data source failed.",
+        )
 
     live_redis_gates_enabled = (
         redis_snapshot.report_is_trading_day
         or not config.skip_live_redis_gates_on_non_trading_day
     )
 
-    if live_redis_gates_enabled and config.require_redis_status and not redis_snapshot.status_exists:
+    if (
+        live_redis_gates_enabled
+        and config.require_redis_status
+        and not redis_snapshot.status_exists
+    ):
         add(
             "FAIL",
             "redis_status_missing",
@@ -566,7 +681,10 @@ def evaluate_report(
             "Stock orchestrator status is not available in Redis.",
         )
 
-    if live_redis_gates_enabled and redis_snapshot.daily_signal_count < config.min_daily_signals:
+    if (
+        live_redis_gates_enabled
+        and redis_snapshot.daily_signal_count < config.min_daily_signals
+    ):
         add(
             "FAIL",
             "daily_signals_below_target",
@@ -575,17 +693,43 @@ def evaluate_report(
             "No stock entry/exit activity is visible in today's Redis signal list.",
         )
 
-    if live_redis_gates_enabled and config.require_trade_targets and not redis_snapshot.trade_targets_exists:
-        add("FAIL", "trade_targets_missing", "missing", "present", "Fusion/screener trade target snapshot is missing.")
+    if (
+        live_redis_gates_enabled
+        and config.require_trade_targets
+        and not redis_snapshot.trade_targets_exists
+    ):
+        add(
+            "FAIL",
+            "trade_targets_missing",
+            "missing",
+            "present",
+            "Fusion/screener trade target snapshot is missing.",
+        )
 
-    if live_redis_gates_enabled and config.require_daily_indicators and not redis_snapshot.daily_indicators_exists:
-        add("FAIL", "daily_indicators_missing", "missing", "present", "Daily indicator snapshot is missing; stock strategies may lack daily context.")
+    if (
+        live_redis_gates_enabled
+        and config.require_daily_indicators
+        and not redis_snapshot.daily_indicators_exists
+    ):
+        add(
+            "FAIL",
+            "daily_indicators_missing",
+            "missing",
+            "present",
+            "Daily indicator snapshot is missing; stock strategies may lack daily context.",
+        )
 
     provider = redis_snapshot.data_provider or {}
-    total_symbols = int(provider.get("total_symbols", redis_snapshot.configured_symbols) or 0)
+    total_symbols = int(
+        provider.get("total_symbols", redis_snapshot.configured_symbols) or 0
+    )
     fresh_count = int(provider.get("fresh_count", 0) or 0)
     fresh_ratio = fresh_count / total_symbols if total_symbols > 0 else 0.0
-    if live_redis_gates_enabled and total_symbols > 0 and fresh_ratio < config.min_fresh_ratio:
+    if (
+        live_redis_gates_enabled
+        and total_symbols > 0
+        and fresh_ratio < config.min_fresh_ratio
+    ):
         add(
             "FAIL",
             "fresh_ratio_below_target",
@@ -594,13 +738,47 @@ def evaluate_report(
             "DataProvider fresh-symbol ratio is below the silent-stall guard target.",
         )
 
+    issues.extend(evaluate_trade_metric_gates(config, metrics))
+    return issues
+
+
+def evaluate_trade_metric_gates(
+    config: VerificationConfig,
+    metrics: TradeMetrics,
+    *,
+    code_prefix: str = "",
+    no_trades_severity: str = "FAIL",
+    insufficient_trades_severity: str = "WARN",
+    detail_prefix: str = "",
+) -> list[GateIssue]:
+    issues: list[GateIssue] = []
+
+    def add(
+        severity: str, code: str, observed: str, expected: str, detail: str
+    ) -> None:
+        issues.append(
+            GateIssue(
+                severity,
+                f"{code_prefix}{code}",
+                observed,
+                expected,
+                f"{detail_prefix}{detail}",
+            )
+        )
+
     if metrics.trade_count == 0:
-        add("FAIL", "no_closed_trades", "0", "> 0", "No closed stock trades in the verification window.")
+        add(
+            no_trades_severity,
+            "no_closed_trades",
+            "0",
+            "> 0",
+            "No closed stock trades in the verification window.",
+        )
         return issues
 
     if metrics.trade_count < config.min_closed_trades_for_metric_gate:
         add(
-            "WARN",
+            insufficient_trades_severity,
             "insufficient_closed_trades",
             str(metrics.trade_count),
             f">= {config.min_closed_trades_for_metric_gate}",
@@ -666,6 +844,7 @@ def evaluate_report(
 
 def _render_markdown(report: VerificationReport, config: VerificationConfig) -> str:
     m = report.trade_metrics
+    active = report.active_trade_metrics
     r = report.redis_snapshot
     lines = [
         f"# Stock Paper Daily Verification ({report.report_date})",
@@ -683,6 +862,17 @@ def _render_markdown(report: VerificationReport, config: VerificationConfig) -> 
         f"- Max drawdown: `{m.max_drawdown_pct:.2f}%` (target `<= {config.max_mdd_pct:.2f}%`)",
         f"- Equity slope: `{m.equity_slope_krw_per_trade:,.0f}` KRW/trade",
         f"- Re-entry churn count: `{m.reentry_churn_count}`",
+        "",
+        "## Active Strategy Metrics",
+        "",
+        f"- Active strategies: `{', '.join(report.active_strategy_names) or 'none'}`",
+        f"- Trades: `{active.trade_count}`",
+        f"- Total PnL: `{active.total_pnl:,.0f}` KRW",
+        f"- Monthly expected return: `{active.monthly_expected_return_pct:.2f}%` (target `>= {config.min_monthly_expected_return_pct:.2f}%`)",
+        f"- Win rate: `{active.win_rate_pct:.2f}%` (target `{config.min_win_rate_pct:.2f}% to {config.target_win_rate_max_pct:.2f}%`)",
+        f"- Max drawdown: `{active.max_drawdown_pct:.2f}%` (target `<= {config.max_mdd_pct:.2f}%`)",
+        f"- Equity slope: `{active.equity_slope_krw_per_trade:,.0f}` KRW/trade",
+        f"- Re-entry churn count: `{active.reentry_churn_count}`",
         "",
         "## Redis Pipeline",
         "",
@@ -713,6 +903,16 @@ def _render_markdown(report: VerificationReport, config: VerificationConfig) -> 
     else:
         lines.append("- None")
 
+    lines.extend(["", "## Active Strategy Issues", ""])
+
+    if report.active_issues:
+        for issue in report.active_issues:
+            lines.append(
+                f"- `{issue.severity}` `{issue.code}` observed=`{issue.observed}` expected=`{issue.expected}` - {issue.detail}"
+            )
+    else:
+        lines.append("- None")
+
     if m.by_strategy:
         lines.extend(["", "## By Strategy", ""])
         for strategy, bucket in sorted(m.by_strategy.items()):
@@ -720,38 +920,63 @@ def _render_markdown(report: VerificationReport, config: VerificationConfig) -> 
                 f"- `{strategy}` trades=`{int(bucket['trades'])}` win_rate=`{bucket['win_rate_pct']:.2f}%` pnl=`{bucket['total_pnl']:,.0f}`"
             )
 
+    if active.by_strategy:
+        lines.extend(["", "## Active By Strategy", ""])
+        for strategy, bucket in sorted(active.by_strategy.items()):
+            lines.append(
+                f"- `{strategy}` trades=`{int(bucket['trades'])}` win_rate=`{bucket['win_rate_pct']:.2f}%` pnl=`{bucket['total_pnl']:,.0f}`"
+            )
+
     if m.by_exit_reason:
         lines.extend(["", "## By Exit Reason", ""])
-        for reason, count in sorted(m.by_exit_reason.items(), key=lambda item: (-item[1], item[0])):
+        for reason, count in sorted(
+            m.by_exit_reason.items(), key=lambda item: (-item[1], item[0])
+        ):
+            lines.append(f"- `{reason}`: `{count}`")
+
+    if active.by_exit_reason:
+        lines.extend(["", "## Active By Exit Reason", ""])
+        for reason, count in sorted(
+            active.by_exit_reason.items(), key=lambda item: (-item[1], item[0])
+        ):
             lines.append(f"- `{reason}`: `{count}`")
 
     return "\n".join(lines) + "\n"
 
 
-def write_report(report: VerificationReport, config: VerificationConfig) -> tuple[Path, Path]:
+def write_report(
+    report: VerificationReport, config: VerificationConfig
+) -> tuple[Path, Path]:
     config.output_dir.mkdir(parents=True, exist_ok=True)
     stem = report.report_date
     json_path = config.output_dir / f"{stem}.json"
     md_path = config.output_dir / f"{stem}.md"
     report.json_path = str(json_path)
     report.markdown_path = str(md_path)
-    json_path.write_text(json.dumps(asdict(report), ensure_ascii=False, indent=2), encoding="utf-8")
+    json_path.write_text(
+        json.dumps(asdict(report), ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     md_path.write_text(_render_markdown(report, config), encoding="utf-8")
     return json_path, md_path
 
 
 def _format_notification(report: VerificationReport) -> str:
     m = report.trade_metrics
+    active = report.active_trade_metrics
     lines = [
         f"<b>Stock paper verification {report.verdict}</b>",
         f"date: <code>{report.report_date}</code>",
         f"trades: <code>{m.trade_count}</code>, pnl: <code>{m.total_pnl:,.0f}</code>",
         f"monthly_expected: <code>{m.monthly_expected_return_pct:.2f}%</code>, win_rate: <code>{m.win_rate_pct:.2f}%</code>, mdd: <code>{m.max_drawdown_pct:.2f}%</code>",
+        f"active_trades: <code>{active.trade_count}</code>, active_monthly_expected: <code>{active.monthly_expected_return_pct:.2f}%</code>, active_win_rate: <code>{active.win_rate_pct:.2f}%</code>",
     ]
-    if report.issues:
+    all_issues = report.issues + report.active_issues
+    if all_issues:
         lines.append("<b>Issues</b>")
-        for issue in report.issues[:8]:
-            lines.append(f"- {issue.severity} {issue.code}: {issue.observed} vs {issue.expected}")
+        for issue in all_issues[:8]:
+            lines.append(
+                f"- {issue.severity} {issue.code}: {issue.observed} vs {issue.expected}"
+            )
     lines.append(f"report: <code>{report.markdown_path}</code>")
     return "\n".join(lines)
 
@@ -777,6 +1002,7 @@ def build_report(
     rows: list[TradeRow],
     redis_snapshot: RedisSnapshot,
     source_errors: list[str] | None = None,
+    active_strategy_names: list[str] | None = None,
 ) -> VerificationReport:
     window_start, window_end = _window_for(report_date, config.lookback_days)
     metrics = summarize_trades(
@@ -786,9 +1012,33 @@ def build_report(
         monthly_trading_days=config.monthly_trading_days,
         reentry_churn_seconds=config.reentry_churn_seconds,
     )
+    active_names = sorted(set(active_strategy_names or []))
+    active_rows = _filter_active_strategy_rows(rows, active_names)
+    active_metrics = summarize_trades(
+        active_rows,
+        initial_capital=config.initial_capital,
+        lookback_days=config.lookback_days,
+        monthly_trading_days=config.monthly_trading_days,
+        reentry_churn_seconds=config.reentry_churn_seconds,
+    )
     errors = source_errors or []
     issues = evaluate_report(config, metrics, redis_snapshot, source_errors=errors)
-    verdict = "FAIL" if any(i.severity == "FAIL" for i in issues) else ("WARN" if issues else "PASS")
+    active_issues: list[GateIssue] = []
+    if active_names:
+        active_issues = evaluate_trade_metric_gates(
+            config,
+            active_metrics,
+            code_prefix="active_",
+            no_trades_severity="WARN",
+            insufficient_trades_severity="WARN",
+            detail_prefix="Enabled-strategy scope: ",
+        )
+    all_issues = issues + active_issues
+    verdict = (
+        "FAIL"
+        if any(i.severity == "FAIL" for i in all_issues)
+        else ("WARN" if all_issues else "PASS")
+    )
     return VerificationReport(
         report_date=report_date.isoformat(),
         window_start=window_start.isoformat(),
@@ -798,6 +1048,9 @@ def build_report(
         source_errors=errors,
         issues=issues,
         trade_metrics=metrics,
+        active_strategy_names=active_names,
+        active_trade_metrics=active_metrics,
+        active_issues=active_issues,
         redis_snapshot=redis_snapshot,
     )
 
@@ -830,25 +1083,40 @@ def empty_redis_snapshot(report_date: date) -> RedisSnapshot:
 
 def _source_error(code: str, exc: Exception) -> str:
     lines = [line.strip() for line in str(exc).splitlines() if line.strip()]
-    detail = next((line for line in lines if "DB::Exception" in line), lines[0] if lines else str(exc))
+    detail = next(
+        (line for line in lines if "DB::Exception" in line),
+        lines[0] if lines else str(exc),
+    )
     return f"{code}: {type(exc).__name__}: {detail[:500]}"
 
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--date", default="", help="KST report date in YYYY-MM-DD. Default: today.")
-    parser.add_argument("--no-telegram", action="store_true", help="Do not send Telegram notifications.")
-    parser.add_argument("--print-json", action="store_true", help="Print full JSON report to stdout.")
+    parser.add_argument(
+        "--date", default="", help="KST report date in YYYY-MM-DD. Default: today."
+    )
+    parser.add_argument(
+        "--no-telegram", action="store_true", help="Do not send Telegram notifications."
+    )
+    parser.add_argument(
+        "--print-json", action="store_true", help="Print full JSON report to stdout."
+    )
     return parser.parse_args()
 
 
 def main() -> int:
     args = _parse_args()
     try:
+        _load_repo_env()
         config = _load_config()
         report_date = _parse_report_date(args.date)
         window_start, window_end = _window_for(report_date, config.lookback_days)
         source_errors: list[str] = []
+        try:
+            active_strategy_names = load_active_stock_strategy_names()
+        except Exception as exc:  # noqa: BLE001
+            active_strategy_names = []
+            source_errors.append(_source_error("active_strategy_config_failed", exc))
         try:
             rows = fetch_trade_rows(config, window_start, window_end)
         except Exception as exc:  # noqa: BLE001
@@ -865,6 +1133,7 @@ def main() -> int:
             rows=rows,
             redis_snapshot=redis_snapshot,
             source_errors=source_errors,
+            active_strategy_names=active_strategy_names,
         )
         write_report(report, config)
         if report.issues and config.notify_on_issues and not args.no_telegram:
@@ -880,6 +1149,14 @@ def main() -> int:
                 f"win_rate={report.trade_metrics.win_rate_pct:.2f}% "
                 f"mdd={report.trade_metrics.max_drawdown_pct:.2f}% "
                 f"issues={len(report.issues)}"
+            )
+            print(
+                "active: "
+                f"strategies={','.join(report.active_strategy_names) or 'none'} "
+                f"trades={report.active_trade_metrics.trade_count} "
+                f"monthly_expected={report.active_trade_metrics.monthly_expected_return_pct:.2f}% "
+                f"win_rate={report.active_trade_metrics.win_rate_pct:.2f}% "
+                f"issues={len(report.active_issues)}"
             )
             print(f"report: {report.markdown_path}")
         return 0 if report.verdict == "PASS" else 1
