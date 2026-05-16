@@ -19,6 +19,9 @@ strategy:
       min_confidence: 0.30
       stop_loss_pct: 7.0
       entry_sort: rsi5_asc
+      # 2026-05-17 priority-corrected portfolio backtest:
+      # volume patterns with ATR > 5% drove recent stop/end losses, so keep
+      # volume pullbacks in a lower-volatility band and narrow broad RSI gates.
       patterns:
         - name: pullback_reversal
           rsi5_max: 45
@@ -26,10 +29,11 @@ strategy:
           min_highest_high_gap_pct: -0.05
           require_mid_trend: true
         - name: volume_pullback
-          rsi5_max: 50
+          rsi5_max: 45
           min_volume_ratio: 1.5
           max_return_60d: 0.05
           min_atr_pct: 0.03
+          max_atr_pct: 0.05
         - name: pullback_reversal
           rsi5_max: 40
           min_atr_pct: 0.02
@@ -40,26 +44,30 @@ strategy:
           min_volume_ratio: 1.5
           max_return_60d: 0.05
           min_atr_pct: 0.03
+          max_atr_pct: 0.05
         - name: volume_pullback
           rsi5_max: 45
           min_volume_ratio: 1.2
           max_return_60d: 0.05
           min_atr_pct: 0.03
+          max_atr_pct: 0.05
         - name: volume_pullback
-          rsi5_max: 50
+          rsi5_max: 45
           min_volume_ratio: 1.2
           max_return_60d: 0.05
           min_atr_pct: 0.03
+          max_atr_pct: 0.05
         - name: pullback_reversal
           rsi5_max: 50
           min_atr_pct: 0.02
           min_highest_high_gap_pct: -0.05
           require_mid_trend: true
         - name: volume_pullback
-          rsi5_max: 50
+          rsi5_max: 45
           min_volume_ratio: 1.2
           max_return_60d: 0.0
           min_atr_pct: 0.03
+          max_atr_pct: 0.05
         - name: pullback_reversal
           rsi5_max: 40
           min_atr_pct: 0.035
@@ -71,6 +79,7 @@ strategy:
           min_volume_ratio: 1.2
           max_return_60d: 0.0
           min_atr_pct: 0.03
+          max_atr_pct: 0.05
 
   exit:
     type: chandelier_exit
@@ -86,8 +95,10 @@ strategy:
   position:
     type: fixed
     params:
-      order_amount_per_stock: 20000000
-      max_position_pct: 20.0
+      # 2026-05-17 corrected quality filter + 25M sizing:
+      # long MDD 9.81%, recent monthly expected 12.43%.
+      order_amount_per_stock: 25000000
+      max_position_pct: 25.0
       max_positions: 3
 
   paper:
