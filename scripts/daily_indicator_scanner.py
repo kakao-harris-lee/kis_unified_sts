@@ -52,6 +52,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_SYMBOLS = [item["code"] for item in STOCK_UNIVERSE]
 
 REDIS_KEY = "system:daily_indicators:latest"
+DAILY_WATCHLIST_COMPAT_KEY = "system:daily_watchlist:latest"
 REDIS_TTL = 86400  # 24h
 DEFAULT_REDIS_CANDIDATE_KEYS = (
     "system:trade_targets:latest",
@@ -475,6 +476,32 @@ def publish_to_redis(
     logger.info(
         f"Published daily indicators for {len(indicators)} symbols to Redis ({REDIS_KEY})"
     )
+
+    strategies = (metadata or {}).get("strategies")
+    if isinstance(strategies, dict):
+        normalized: dict[str, list[str]] = {}
+        for strategy_name, values in strategies.items():
+            if not isinstance(values, list):
+                continue
+            codes = [str(code).strip() for code in values if str(code).strip()]
+            normalized[str(strategy_name)] = codes
+
+        compat_payload = {
+            "timestamp": datetime.now().date().isoformat(),
+            "computed_at": json.loads(payload).get("computed_at"),
+            "source": REDIS_KEY,
+            "strategies": normalized,
+            "counts": {name: len(codes) for name, codes in normalized.items()},
+        }
+        redis_client.set(
+            DAILY_WATCHLIST_COMPAT_KEY,
+            json.dumps(compat_payload, ensure_ascii=False),
+            ex=REDIS_TTL,
+        )
+        logger.info(
+            "Published daily strategy watchlist compatibility payload to Redis (%s)",
+            DAILY_WATCHLIST_COMPAT_KEY,
+        )
 
 
 def main():

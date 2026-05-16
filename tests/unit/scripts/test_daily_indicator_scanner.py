@@ -139,13 +139,12 @@ def test_build_strategy_candidate_watchlist_uses_strategy_logic():
 def test_publish_to_redis_includes_coverage_metadata():
     class FakeRedis:
         def __init__(self):
-            self.value = None
-            self.ttl = None
+            self.values = {}
+            self.ttls = {}
 
         def set(self, key, value, ex=None):
-            self.key = key
-            self.value = value
-            self.ttl = ex
+            self.values[key] = value
+            self.ttls[key] = ex
 
     fake = FakeRedis()
 
@@ -159,11 +158,17 @@ def test_publish_to_redis_includes_coverage_metadata():
         },
     )
 
-    payload = json.loads(fake.value)
+    payload = json.loads(fake.values[scanner.REDIS_KEY])
     assert payload["symbol_count"] == 1
     assert payload["requested_symbol_count"] == 2
     assert payload["redis_candidate_count"] == 1
     assert payload["strategies"] == {"daily_pullback": ["005930"]}
+
+    compat = json.loads(fake.values[scanner.DAILY_WATCHLIST_COMPAT_KEY])
+    assert compat["source"] == scanner.REDIS_KEY
+    assert compat["strategies"] == {"daily_pullback": ["005930"]}
+    assert compat["counts"] == {"daily_pullback": 1}
+    assert fake.ttls[scanner.DAILY_WATCHLIST_COMPAT_KEY] == scanner.REDIS_TTL
 
 
 def test_get_clickhouse_client_loads_repo_env(tmp_path, monkeypatch):
