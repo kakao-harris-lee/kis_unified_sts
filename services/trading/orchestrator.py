@@ -431,6 +431,7 @@ class TradingConfig:
     # Universe mode: "dynamic" (screener-driven, default) or "static" (daily watchlist)
     universe_mode: str = "dynamic"
     require_daily_indicators_for_dynamic_universe: bool = True
+    include_daily_watchlist_in_dynamic_universe: bool = True
 
     # Regime performance tracking
     regime_performance_tracking_enabled: bool = False
@@ -457,6 +458,11 @@ class TradingConfig:
             raise TypeError(
                 "require_daily_indicators_for_dynamic_universe must be bool, "
                 f"got {type(self.require_daily_indicators_for_dynamic_universe)}"
+            )
+        if not isinstance(self.include_daily_watchlist_in_dynamic_universe, bool):
+            raise TypeError(
+                "include_daily_watchlist_in_dynamic_universe must be bool, "
+                f"got {type(self.include_daily_watchlist_in_dynamic_universe)}"
             )
 
         if self.regime_detection_mode not in ("simple", "adaptive", "hmm"):
@@ -520,12 +526,18 @@ class TradingConfig:
         execution_mode: str = "",
         symbol_metadata: dict[str, dict[str, Any]] | None = None,
         require_daily_indicators_for_dynamic_universe: bool | None = None,
+        include_daily_watchlist_in_dynamic_universe: bool | None = None,
     ) -> TradingConfig:
         """주식용 설정"""
         require_daily_indicators = (
             _env_bool("STOCK_REQUIRE_DAILY_INDICATORS_FOR_DYNAMIC_UNIVERSE", True)
             if require_daily_indicators_for_dynamic_universe is None
             else require_daily_indicators_for_dynamic_universe
+        )
+        include_daily_watchlist = (
+            _env_bool("STOCK_INCLUDE_DAILY_WATCHLIST_IN_DYNAMIC_UNIVERSE", True)
+            if include_daily_watchlist_in_dynamic_universe is None
+            else include_daily_watchlist_in_dynamic_universe
         )
         return cls(
             asset_class="stock",
@@ -537,6 +549,7 @@ class TradingConfig:
             execution_mode=execution_mode,
             symbol_metadata=symbol_metadata or {},
             require_daily_indicators_for_dynamic_universe=require_daily_indicators,
+            include_daily_watchlist_in_dynamic_universe=include_daily_watchlist,
             # Slower refresh for stock (40-50 symbols with retention)
             # avoids KIS API rate limiting
             market_data_refresh_seconds=2.0,
@@ -2384,6 +2397,23 @@ class TradingOrchestrator:
                 return False
 
             self._daily_indicators = indicators
+            strategies = payload.get("strategies", {})
+            if isinstance(strategies, dict):
+                normalized_strategies: dict[str, list[str]] = {}
+                for strategy_name, values in strategies.items():
+                    if not isinstance(values, list):
+                        continue
+                    codes = [str(code).strip() for code in values if str(code).strip()]
+                    normalized_strategies[str(strategy_name)] = codes
+                self._daily_watchlist = {
+                    "strategies": normalized_strategies,
+                    "counts": {
+                        name: len(codes)
+                        for name, codes in normalized_strategies.items()
+                    },
+                    "computed_at": payload.get("computed_at"),
+                    "source": self.DAILY_INDICATORS_REDIS_KEY,
+                }
 
             # Invalidate enriched metadata cache after daily indicators update
             self._invalidate_enriched_metadata_cache()
@@ -2455,6 +2485,100 @@ class TradingOrchestrator:
         """
         logger.debug("Invalidating enriched metadata cache")
         self._build_enriched_metadata_cache()
+
+    def _load_dynamic_daily_watchlist_candidates(
+        self,
+    ) -> tuple[list[str], dict[str, str], dict[str, dict[str, Any]]]:
+        """Return active daily-strategy watchlist candidates for dynamic universe."""
+        if (
+            self.config.asset_class != "stock"
+            or self.config.universe_mode != "dynamic"
+            or not self.config.include_daily_watchlist_in_dynamic_universe
+        ):
+            return [], {}, {}
+
+        watchlist = self._daily_watchlist or {}
+        strategies = watchlist.get("strategies", {})
+        if not isinstance(strategies, dict):
+            return [], {}, {}
+
+        active_names: set[str] = set()
+        if self._strategy_manager:
+            active_names = set(self._strategy_manager.strategy_names)
+        elif self.config.strategy_name:
+            active_names = {self.config.strategy_name}
+
+        covered = set(self._daily_indicators.keys())
+        if not covered:
+            return [], {}, {}
+
+        codes: list[str] = []
+        code_strategies: dict[str, list[str]] = {}
+        skipped_uncovered = 0
+        for strategy_name, values in strategies.items():
+            name = str(strategy_name).strip()
+            if not name:
+                continue
+            if active_names and name not in active_names:
+                continue
+            if not isinstance(values, list):
+                continue
+            for raw_code in values:
+                code = str(raw_code).strip()
+                if not code:
+                    continue
+                if code not in covered:
+                    skipped_uncovered += 1
+                    continue
+                if code not in code_strategies:
+                    codes.append(code)
+                    code_strategies[code] = []
+                code_strategies[code].append(name)
+
+        if skipped_uncovered:
+            logger.warning(
+                "Daily watchlist skipped %s candidates without daily indicator coverage",
+                skipped_uncovered,
+            )
+
+        metadata = {
+            code: {
+                "source": "daily_watchlist",
+                "daily_strategy_candidates": strategies_for_code,
+            }
+            for code, strategies_for_code in code_strategies.items()
+        }
+        names = {code: self._symbol_names.get(code, "") for code in codes}
+        return codes, names, metadata
+
+    @staticmethod
+    def _merge_ranked_targets(
+        base_codes: list[str],
+        base_names: dict[str, str],
+        base_metadata: dict[str, dict[str, Any]],
+        extra_codes: list[str],
+        extra_names: dict[str, str],
+        extra_metadata: dict[str, dict[str, Any]],
+    ) -> tuple[list[str], dict[str, str], dict[str, dict[str, Any]]]:
+        """Append extra candidates while preserving first-seen code order."""
+        merged_codes: list[str] = []
+        seen: set[str] = set()
+        for code in [*base_codes, *extra_codes]:
+            if code in seen:
+                continue
+            seen.add(code)
+            merged_codes.append(code)
+
+        merged_names = dict(base_names)
+        merged_metadata = {code: dict(meta) for code, meta in base_metadata.items()}
+        for code, name in extra_names.items():
+            if name:
+                merged_names[code] = name
+        for code, meta in extra_metadata.items():
+            current = dict(merged_metadata.get(code, {}))
+            current.update(meta)
+            merged_metadata[code] = current
+        return merged_codes, merged_names, merged_metadata
 
     def _load_ranked_targets(
         self, redis
@@ -2567,6 +2691,22 @@ class TradingOrchestrator:
 
             redis = RedisClient.get_client()
             codes, names, metadata = self._load_ranked_targets(redis)
+            daily_codes, daily_names, daily_metadata = (
+                self._load_dynamic_daily_watchlist_candidates()
+            )
+            if daily_codes:
+                codes, names, metadata = self._merge_ranked_targets(
+                    codes,
+                    names,
+                    metadata,
+                    daily_codes,
+                    daily_names,
+                    daily_metadata,
+                )
+                logger.info(
+                    "Merged %d daily strategy candidates into dynamic universe source",
+                    len(daily_codes),
+                )
 
             if not codes:
                 return False
@@ -2824,7 +2964,15 @@ class TradingOrchestrator:
                         warm_set.add(s)
                     elif self._indicator_engine.warmup_progress(s) >= 0.5:
                         warming_set.add(s)
-            protected = warm_set | warming_set | position_codes
+            daily_watchlist_set = {
+                code
+                for code in stable_symbols
+                if self._symbol_metadata_cache.get(code, {}).get("source")
+                == "daily_watchlist"
+                or "daily_strategy_candidates"
+                in self._symbol_metadata_cache.get(code, {})
+            }
+            protected = warm_set | warming_set | position_codes | daily_watchlist_set
             cold = stable_symbols - protected
             by_recency = sorted(
                 cold,

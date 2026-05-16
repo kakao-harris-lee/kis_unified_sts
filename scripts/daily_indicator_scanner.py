@@ -15,6 +15,7 @@ Cron: 50 8 * * 1-5  (08:50 KST, before market open)
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import logging
 import os
@@ -59,6 +60,18 @@ DEFAULT_REDIS_CANDIDATE_KEYS = (
     "system:daily_watchlist:latest",
     "system:llm_quality:latest",
 )
+
+
+def _load_strategy_watchlist_size(default: int = 40) -> int:
+    """Load the daily watchlist cap from config, falling back safely."""
+    try:
+        from shared.config.loader import ConfigLoader
+
+        cfg = ConfigLoader.load("daily_scanner.yaml")
+        return int(cfg.get("max_watchlist_size", default))
+    except Exception as exc:  # noqa: BLE001 - standalone cron must keep running
+        logger.debug("daily strategy watchlist size fallback: %s", exc)
+        return default
 
 
 def _load_repo_env() -> None:
@@ -159,6 +172,99 @@ def load_redis_candidate_symbols(
         codes.extend(extract_candidate_symbols(payload))
 
     return _dedupe_symbols(codes)
+
+
+def load_enabled_daily_strategies() -> list[Any]:
+    """Create enabled stock strategies whose configured timeframe is daily."""
+    try:
+        from shared.config.loader import ConfigLoader
+        from shared.strategy.registry import (
+            StrategyFactory,
+            register_builtin_components,
+        )
+
+        register_builtin_components()
+        configs = ConfigLoader.load_all_strategies("stock", enabled_only=True)
+    except Exception as exc:  # noqa: BLE001 - optional strategy candidate path
+        logger.debug("daily strategy configs unavailable: %s", exc)
+        return []
+
+    strategies: list[Any] = []
+    for config in configs:
+        strategy_cfg = config.get("strategy", {}) if isinstance(config, dict) else {}
+        if str(strategy_cfg.get("timeframe", "")).lower() != "daily":
+            continue
+        try:
+            strategies.append(StrategyFactory.create(config))
+        except Exception as exc:  # noqa: BLE001 - skip one bad strategy
+            name = strategy_cfg.get("name", "unknown")
+            logger.warning("Failed to create daily strategy %s: %s", name, exc)
+    return strategies
+
+
+async def build_strategy_candidate_watchlist(
+    indicators: dict[str, dict[str, Any]],
+    *,
+    strategies: Iterable[Any] | None = None,
+    timestamp: datetime | None = None,
+    max_candidates: int | None = None,
+) -> dict[str, list[str]]:
+    """Evaluate enabled daily strategies against precomputed indicators.
+
+    This reuses the strategy entry logic instead of duplicating strategy gates in
+    the scanner. The output is a compact watchlist that the orchestrator can
+    merge into its dynamic universe before market open.
+    """
+    if strategies is None:
+        strategies = load_enabled_daily_strategies()
+
+    timestamp = timestamp or datetime.now()
+    max_candidates = max_candidates if max_candidates is not None else len(indicators)
+
+    try:
+        from shared.strategy.base import EntryContext
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("EntryContext unavailable for daily strategy watchlist: %s", exc)
+        return {}
+
+    watchlist: dict[str, list[str]] = {}
+    for strategy in strategies:
+        name = str(getattr(strategy, "name", "") or "").strip()
+        if not name:
+            continue
+
+        candidates: list[str] = []
+        for symbol, raw_indicators in indicators.items():
+            if not isinstance(raw_indicators, dict):
+                continue
+            context_data = dict(raw_indicators)
+            context_data.setdefault("code", symbol)
+            context_data.setdefault("name", symbol)
+            if "daily_close" in raw_indicators:
+                context_data.setdefault("close", raw_indicators["daily_close"])
+
+            try:
+                signal = await strategy.check_entry(
+                    EntryContext(
+                        market_data=context_data,
+                        indicators=dict(raw_indicators),
+                        timestamp=timestamp,
+                    )
+                )
+            except Exception as exc:  # noqa: BLE001 - one symbol must not abort
+                logger.debug(
+                    "daily strategy candidate check failed %s/%s: %s", name, symbol, exc
+                )
+                continue
+
+            if signal is not None:
+                candidates.append(symbol)
+                if len(candidates) >= max_candidates:
+                    break
+
+        watchlist[name] = candidates
+
+    return watchlist
 
 
 def get_clickhouse_client():
@@ -408,6 +514,26 @@ def main():
         ),
         help="Comma-separated Redis keys to scan for dynamic stock candidates",
     )
+    parser.add_argument(
+        "--build-strategy-watchlist",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Evaluate enabled daily stock strategies and embed their candidate "
+            "watchlists in the Redis payload (default: true)"
+        ),
+    )
+    parser.add_argument(
+        "--strategy-watchlist-size",
+        type=int,
+        default=int(
+            os.getenv(
+                "STOCK_DAILY_STRATEGY_WATCHLIST_SIZE",
+                str(_load_strategy_watchlist_size()),
+            )
+        ),
+        help="Maximum symbols per embedded daily strategy watchlist",
+    )
     args = parser.parse_args()
 
     symbols = args.symbols.split(",") if args.symbols else DEFAULT_SYMBOLS
@@ -489,7 +615,25 @@ def main():
             logger.error(f"  {symbol}: {e}")
             errors += 1
 
+    strategy_candidates: dict[str, list[str]] = {}
+    if results and args.build_strategy_watchlist:
+        strategy_candidates = asyncio.run(
+            build_strategy_candidate_watchlist(
+                results,
+                max_candidates=max(1, args.strategy_watchlist_size),
+            )
+        )
+        if strategy_candidates:
+            logger.info(
+                "Built daily strategy watchlists: %s",
+                ", ".join(
+                    f"{name}={len(codes)}"
+                    for name, codes in sorted(strategy_candidates.items())
+                ),
+            )
+
     if results:
+        strategy_counts = {k: len(v) for k, v in strategy_candidates.items()}
         publish_to_redis(
             results,
             metadata={
@@ -501,6 +645,9 @@ def main():
                     expected_latest.isoformat() if expected_latest else None
                 ),
                 "max_stale_trading_days": args.max_stale_trading_days,
+                "strategies": strategy_candidates,
+                "strategy_counts": strategy_counts,
+                "strategy_watchlist_size": max(1, args.strategy_watchlist_size),
             },
         )
     else:
