@@ -265,6 +265,7 @@ kis-unified-trading/
 | `volume_accumulation` | `VolumeAccumulationBreakoutEntry` | 거래량 축적 기반 돌파 |
 | `trix_golden` | `TrixGoldenEntry` | TRIX 5분봉 황금신호 |
 | `rl_mppo` | `RLMPPOEntry` | RL Maskable PPO 진입 (선물) |
+| `llm_directed_indicator` | `LLMDirectedIndicatorEntry` | LLM 주기 방향 마스크 + 3지표군 앙상블 (선물, RL_mppo 승계, enabled=false 백테스트 게이트 전) |
 
 ### 등록된 청산 전략
 
@@ -274,6 +275,7 @@ kis-unified-trading/
 | `momentum_decay` | `MomentumDecayExit` | 모멘텀 소진 기반 스윙 청산 |
 | `rl_mppo_exit` | `RLMPPOExit` | RL 학습된 청산 정책 (선물) — hard stop + EOD 안전장치 |
 | `trix_golden_exit` | `TrixGoldenExit` | TRIX 5분봉 황금신호 청산 |
+| `llm_directed_indicator_exit` | `LLMDirectedIndicatorExit` | ATR-dynamic + momentum_decay 합성 (선물) |
 
 ### 설정 파일 구조
 

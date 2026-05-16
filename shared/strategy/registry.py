@@ -384,6 +384,16 @@ def register_builtin_components() -> None:
         logger.debug("WilliamsREntry not available")
 
     try:
+        from shared.strategy.entry.llm_directed_indicator import (
+            LLMDirectedIndicatorEntry,
+        )
+
+        EntryRegistry.register_class(
+            "llm_directed_indicator", LLMDirectedIndicatorEntry)
+    except ImportError:
+        logger.debug("LLMDirectedIndicatorEntry not available")
+
+    try:
         from shared.strategy.entry.trend_pullback import TrendPullbackEntry
 
         EntryRegistry.register_class("trend_pullback", TrendPullbackEntry)
@@ -457,6 +467,16 @@ def register_builtin_components() -> None:
         ExitRegistry.register_class("williams_r_exit", WilliamsRExit)
     except ImportError:
         logger.debug("WilliamsRExit not available")
+
+    try:
+        from shared.strategy.exit.llm_directed_indicator_exit import (
+            LLMDirectedIndicatorExit,
+        )
+
+        ExitRegistry.register_class(
+            "llm_directed_indicator_exit", LLMDirectedIndicatorExit)
+    except ImportError:
+        logger.debug("LLMDirectedIndicatorExit not available")
 
     try:
         from shared.strategy.exit.mean_reversion_exit import MeanReversionExit
