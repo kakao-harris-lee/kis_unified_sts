@@ -1,7 +1,12 @@
 strategy:
   name: momentum_breakout
   asset_class: stock
-  enabled: true
+  # Disabled after stock paper verification on 2026-05-16:
+  # 20 closed trades in the 2026-04-25..2026-05-16 window, 0 wins,
+  # -2.51M KRW realized PnL, mostly -5% stop_loss exits. Keep the config
+  # for offline retuning; do not route live paper entries until the edge is
+  # revalidated against recent ClickHouse data.
+  enabled: false
   description: "멀티 타임프레임 모멘텀 돌파 전략"
 
   entry:

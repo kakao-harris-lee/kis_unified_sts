@@ -1,0 +1,36 @@
+report:
+  output_dir: "reports/daily_verification/stock"
+  lookback_days: ${STOCK_PAPER_VERIFY_LOOKBACK_DAYS:22}
+  monthly_trading_days: ${STOCK_PAPER_VERIFY_MONTHLY_TRADING_DAYS:22}
+  initial_capital: ${STOCK_PAPER_INITIAL_CAPITAL:10000000}
+  notify_on_issues: ${STOCK_PAPER_VERIFY_NOTIFY_ON_ISSUES:true}
+
+targets:
+  min_daily_signals: ${STOCK_PAPER_VERIFY_MIN_DAILY_SIGNALS:1}
+  min_closed_trades_for_metric_gate: ${STOCK_PAPER_VERIFY_MIN_TRADES:5}
+  min_monthly_expected_return_pct: ${STOCK_PAPER_VERIFY_MIN_MONTHLY_RETURN_PCT:10.0}
+  min_win_rate_pct: ${STOCK_PAPER_VERIFY_MIN_WIN_RATE_PCT:55.0}
+  target_win_rate_max_pct: ${STOCK_PAPER_VERIFY_TARGET_WIN_RATE_MAX_PCT:60.0}
+  max_mdd_pct: ${STOCK_PAPER_VERIFY_MAX_MDD_PCT:10.0}
+  require_positive_equity_slope: ${STOCK_PAPER_VERIFY_REQUIRE_UPWARD_EQUITY:true}
+  max_reentry_churn_count: ${STOCK_PAPER_VERIFY_MAX_REENTRY_CHURN:0}
+  reentry_churn_seconds: ${STOCK_PAPER_VERIFY_REENTRY_CHURN_SECONDS:3600}
+  min_fresh_ratio: ${STOCK_PAPER_VERIFY_MIN_FRESH_RATIO:0.5}
+  require_redis_status: ${STOCK_PAPER_VERIFY_REQUIRE_REDIS_STATUS:true}
+  require_trade_targets: ${STOCK_PAPER_VERIFY_REQUIRE_TRADE_TARGETS:true}
+  require_daily_indicators: ${STOCK_PAPER_VERIFY_REQUIRE_DAILY_INDICATORS:true}
+
+clickhouse:
+  database: ${CLICKHOUSE_STOCK_DATABASE:market}
+  table: "stock_trades"
+
+redis:
+  status_key: "trading:stock:status"
+  signals_key: "trading:stock:signals"
+  trades_key: "trading:stock:trades"
+  positions_key: "trading:stock:positions"
+  candle_cache_key: "trading:stock:candle_cache"
+  data_freshness_key: "trading:stock:data_freshness"
+  trade_targets_key: "${TRADE_TARGETS_LATEST_KEY:system:trade_targets:latest}"
+  universe_key: "${UNIVERSE_LATEST_KEY:system:universe:latest}"
+  daily_indicators_key: "system:daily_indicators:latest"

@@ -1,0 +1,169 @@
+from __future__ import annotations
+
+from datetime import date, datetime, timedelta
+from pathlib import Path
+
+import scripts.analysis.stock_paper_daily_verification as mod
+
+
+def _config(**overrides):
+    base = dict(
+        output_dir=Path("reports/test"),
+        lookback_days=22,
+        monthly_trading_days=22,
+        initial_capital=10_000_000.0,
+        notify_on_issues=False,
+        min_daily_signals=1,
+        min_closed_trades_for_metric_gate=5,
+        min_monthly_expected_return_pct=10.0,
+        min_win_rate_pct=55.0,
+        target_win_rate_max_pct=60.0,
+        max_mdd_pct=10.0,
+        require_positive_equity_slope=True,
+        max_reentry_churn_count=0,
+        reentry_churn_seconds=3600,
+        min_fresh_ratio=0.5,
+        require_redis_status=True,
+        require_trade_targets=True,
+        require_daily_indicators=True,
+        clickhouse_database="market",
+        clickhouse_table="stock_trades",
+        redis_keys={},
+    )
+    base.update(overrides)
+    return mod.VerificationConfig(**base)
+
+
+def _redis(**overrides):
+    base = dict(
+        status_exists=True,
+        status_ttl_seconds=86000,
+        status_age_seconds=400.0,
+        state="running",
+        configured_symbols=20,
+        data_provider={"total_symbols": 20, "fresh_count": 18},
+        data_freshness={},
+        daily_signal_count=3,
+        signals_list_len=20,
+        trades_list_len=10,
+        open_positions_count=2,
+        candle_cache_symbols=20,
+        trade_targets_exists=True,
+        trade_targets_count=20,
+        universe_exists=True,
+        universe_count=20,
+        daily_indicators_exists=True,
+        daily_indicators_count=20,
+    )
+    base.update(overrides)
+    return mod.RedisSnapshot(**base)
+
+
+def _trade(
+    idx: int,
+    pnl: float,
+    *,
+    code: str = "005930",
+    strategy: str = "trend_pullback",
+    entry: datetime | None = None,
+    hold_minutes: int = 30,
+):
+    entry_date = entry or datetime(2026, 5, 1, 9, 30) + timedelta(days=idx)
+    exit_date = entry_date + timedelta(minutes=hold_minutes)
+    return mod.TradeRow(
+        id=f"t-{idx}",
+        code=code,
+        name=code,
+        strategy=strategy,
+        side="long",
+        entry_date=entry_date,
+        entry_price=100_000.0,
+        exit_date=exit_date,
+        exit_price=101_000.0,
+        quantity=10,
+        pnl=pnl,
+        pnl_pct=pnl / 1_000_000.0 * 100.0,
+        hold_seconds=hold_minutes * 60,
+        exit_reason="take_profit" if pnl > 0 else "stop_loss",
+    )
+
+
+def test_trade_summary_measures_objective_metrics():
+    rows = [
+        _trade(1, 350_000),
+        _trade(2, 300_000),
+        _trade(3, 250_000),
+        _trade(4, -100_000),
+        _trade(5, -50_000),
+    ]
+
+    metrics = mod.summarize_trades(
+        rows,
+        initial_capital=10_000_000.0,
+        lookback_days=22,
+        monthly_trading_days=22,
+        reentry_churn_seconds=3600,
+    )
+
+    assert metrics.trade_count == 5
+    assert metrics.win_rate_pct == 60.0
+    assert metrics.total_pnl == 750_000
+    assert metrics.monthly_expected_return_pct == 7.5
+    assert metrics.max_drawdown_pct < 2.0
+    assert metrics.equity_is_upward is True
+
+
+def test_evaluate_report_flags_objective_failures():
+    cfg = _config()
+    metrics = mod.TradeMetrics(
+        trade_count=5,
+        winning_trades=2,
+        losing_trades=3,
+        win_rate_pct=40.0,
+        monthly_expected_return_pct=-2.0,
+        max_drawdown_pct=12.5,
+        equity_slope_krw_per_trade=-1000.0,
+        equity_is_upward=False,
+    )
+
+    issues = mod.evaluate_report(cfg, metrics, _redis(daily_signal_count=0))
+    codes = {issue.code for issue in issues}
+
+    assert "daily_signals_below_target" in codes
+    assert "monthly_expected_return_below_target" in codes
+    assert "win_rate_below_target" in codes
+    assert "mdd_above_target" in codes
+    assert "equity_curve_not_upward" in codes
+
+
+def test_reentry_churn_counts_same_symbol_strategy_only():
+    first = _trade(1, -100_000, code="005930", strategy="trend_pullback")
+    second = _trade(
+        2,
+        50_000,
+        code="005930",
+        strategy="trend_pullback",
+        entry=first.exit_date + timedelta(seconds=120),
+    )
+    different_strategy = _trade(
+        3,
+        50_000,
+        code="005930",
+        strategy="momentum_breakout",
+        entry=first.exit_date + timedelta(seconds=300),
+    )
+
+    assert mod._count_reentry_churn([first, second, different_strategy], 3600) == 1
+
+
+def test_build_report_warns_when_trade_sample_is_too_small():
+    cfg = _config(min_closed_trades_for_metric_gate=5)
+    report = mod.build_report(
+        config=cfg,
+        report_date=date(2026, 5, 16),
+        rows=[_trade(1, 100_000)],
+        redis_snapshot=_redis(),
+    )
+
+    assert report.verdict == "WARN"
+    assert [issue.code for issue in report.issues] == ["insufficient_closed_trades"]
