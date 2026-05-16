@@ -37,10 +37,10 @@ from shared.collector.historical.stock import (  # noqa: E402
     load_stock_minute_from_clickhouse,
 )
 from shared.config.loader import ConfigLoader  # noqa: E402
-from shared.strategy.registry import (
+from shared.strategy.registry import (  # noqa: E402
     StrategyFactory,
     register_builtin_components,
-)  # noqa: E402
+)
 
 
 def _parse_date(value: str) -> date:
@@ -54,7 +54,11 @@ def _select_stocks(tier: str) -> list[dict[str, str]]:
 
 
 def _build_backtest_config(
-    strategy_config: dict[str, Any], initial_capital: float
+    strategy_config: dict[str, Any],
+    initial_capital: float,
+    *,
+    order_amount_per_stock: float | None = None,
+    max_positions: int | None = None,
 ) -> BacktestConfig:
     bt_override = strategy_config.get("strategy", {}).get("backtest", {})
     position_params = (
@@ -66,18 +70,20 @@ def _build_backtest_config(
     # runner should honor the explicit command-line capital.
     bt_capital = float(initial_capital)
     bt_position_size_pct = float(bt_override.get("position_size_pct", 10.0) or 10.0)
-    max_positions = int(position_params.get("max_positions", 5) or 5)
-    order_amount_per_stock = float(
-        position_params.get("order_amount_per_stock", 0) or 0
-    )
-    if order_amount_per_stock <= 0:
-        order_amount_per_stock = None
+    resolved_max_positions = int(position_params.get("max_positions", 5) or 5)
+    resolved_order_amount = float(position_params.get("order_amount_per_stock", 0) or 0)
+    if order_amount_per_stock is not None:
+        resolved_order_amount = float(order_amount_per_stock)
+    if max_positions is not None:
+        resolved_max_positions = int(max_positions)
+    if resolved_order_amount <= 0:
+        resolved_order_amount = None
 
     config = BacktestConfig.stock(
         initial_capital=bt_capital,
         position_size_pct=bt_position_size_pct,
-        order_amount_per_stock=order_amount_per_stock,
-        max_positions=max_positions,
+        order_amount_per_stock=resolved_order_amount,
+        max_positions=resolved_max_positions,
     )
     if "risk" in bt_override:
         config.risk = RiskConfig.from_dict(bt_override["risk"])
@@ -175,6 +181,18 @@ def main() -> None:
     parser.add_argument("--start", required=True, help="YYYY-MM-DD")
     parser.add_argument("--end", required=True, help="YYYY-MM-DD")
     parser.add_argument("--capital", type=float, default=100_000_000)
+    parser.add_argument(
+        "--order-amount-per-stock",
+        type=float,
+        default=None,
+        help="Override stock fixed order amount from strategy YAML.",
+    )
+    parser.add_argument(
+        "--max-positions",
+        type=int,
+        default=None,
+        help="Override max concurrent positions from strategy YAML.",
+    )
     parser.add_argument("--output-dir", default="output/analysis/portfolio_backtest")
     args = parser.parse_args()
 
@@ -222,7 +240,12 @@ def main() -> None:
         .reset_index(drop=True)
     )
 
-    config = _build_backtest_config(strategy_config, initial_capital=args.capital)
+    config = _build_backtest_config(
+        strategy_config,
+        initial_capital=args.capital,
+        order_amount_per_stock=args.order_amount_per_stock,
+        max_positions=args.max_positions,
+    )
     if timeframe == "daily":
         adapted = DailyPortfolioAdapter(strategy_config)
     else:
