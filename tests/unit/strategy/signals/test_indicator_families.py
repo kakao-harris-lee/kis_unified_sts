@@ -77,3 +77,30 @@ def test_vol_regime_atr_fallback_when_no_forecast():
     ind = {"atr": 2.0, "close": 100.0}  # atr/close = 2% → high
     m = volatility_regime_magnitude(ind, None)
     assert 0.0 < m <= 1.0
+
+
+def test_momentum_partial_subdict_uses_available():
+    # only rsi present (williams_r/sto_k absent) -> non-zero from rsi alone
+    s = momentum_reversal_score({"momentum_5m": {"rsi": 10.0}})
+    assert s > 0.5
+
+
+def test_volume_zero_rvol_suppresses_signal():
+    # rvol=0 fully gates volume signal to ~0 (no-volume = no signal)
+    s = volume_microstructure_score(
+        {"volume_velocity": 0.9, "rvol": 0.0, "vwap": 100.0, "close": 101.0})
+    assert s == 0.0
+
+
+def test_vol_regime_forecast_missing_attr_falls_back_to_atr():
+    class _NoPct:
+        pass  # has no regime_percentile
+
+    m = volatility_regime_magnitude({"atr": 2.0, "close": 100.0}, _NoPct())
+    assert 0.0 < m <= 1.0
+
+
+def test_trend_missing_adx_is_neutral():
+    # no adx -> strength 0 -> score 0 even with strong EMA gap (explicit)
+    ind = {"ema_5": 110.0, "ema_20": 100.0, "vwap": 99.0, "close": 111.0}
+    assert trend_breakout_score(ind) == 0.0

@@ -54,8 +54,10 @@ def trend_breakout_score(indicators: dict[str, Any]) -> float:
     raw = (ema_f - ema_s) / abs(ema_s)            # signed trend
     direction = _clip(raw * 50.0)                 # ~2% spread saturates
     adx = _f(indicators, "adx")
-    strength = min(1.0, (adx or 0.0) / 40.0)      # ADX>=40 -> full
+    strength = min(1.0, max(0.0, (adx or 0.0) / 40.0))  # ADX>=40 -> full
     score = direction * strength
+    if score == 0.0:                              # no trend strength -> neutral
+        return 0.0
     vwap = _f(indicators, "vwap")
     close = _f(indicators, "close")
     if vwap is not None and close is not None and vwap != 0.0:
@@ -65,7 +67,10 @@ def trend_breakout_score(indicators: dict[str, Any]) -> float:
 
 
 def volume_microstructure_score(indicators: dict[str, Any]) -> float:
-    """Volume-velocity direction, damped by rvol, VWAP-deviation confirm."""
+    """Volume-velocity direction, damped by rvol, VWAP-deviation confirm.
+
+    volume_velocity is treated as a pre-normalized signed value (clipped to
+    [-1,1])."""
     vel = _f(indicators, "volume_velocity")
     if vel is None:
         return 0.0
