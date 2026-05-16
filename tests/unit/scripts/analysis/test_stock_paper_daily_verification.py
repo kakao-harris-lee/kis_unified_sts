@@ -26,6 +26,7 @@ def _config(**overrides):
         require_redis_status=True,
         require_trade_targets=True,
         require_daily_indicators=True,
+        skip_live_redis_gates_on_non_trading_day=True,
         clickhouse_database="market",
         clickhouse_table="stock_trades",
         redis_keys={},
@@ -36,6 +37,7 @@ def _config(**overrides):
 
 def _redis(**overrides):
     base = dict(
+        report_is_trading_day=True,
         status_exists=True,
         status_ttl_seconds=86000,
         status_age_seconds=400.0,
@@ -134,6 +136,69 @@ def test_evaluate_report_flags_objective_failures():
     assert "win_rate_below_target" in codes
     assert "mdd_above_target" in codes
     assert "equity_curve_not_upward" in codes
+
+
+def test_non_trading_day_skips_live_redis_ttl_gates():
+    cfg = _config()
+    metrics = mod.TradeMetrics(
+        trade_count=5,
+        winning_trades=3,
+        losing_trades=2,
+        win_rate_pct=60.0,
+        monthly_expected_return_pct=12.0,
+        max_drawdown_pct=3.0,
+        equity_slope_krw_per_trade=1000.0,
+        equity_is_upward=True,
+    )
+
+    issues = mod.evaluate_report(
+        cfg,
+        metrics,
+        _redis(
+            report_is_trading_day=False,
+            status_exists=False,
+            daily_signal_count=0,
+            trade_targets_exists=False,
+            daily_indicators_exists=False,
+            data_provider={"total_symbols": 20, "fresh_count": 0},
+        ),
+    )
+
+    assert issues == []
+
+
+def test_non_trading_day_skip_can_be_disabled():
+    cfg = _config(skip_live_redis_gates_on_non_trading_day=False)
+    metrics = mod.TradeMetrics(
+        trade_count=5,
+        winning_trades=3,
+        losing_trades=2,
+        win_rate_pct=60.0,
+        monthly_expected_return_pct=12.0,
+        max_drawdown_pct=3.0,
+        equity_slope_krw_per_trade=1000.0,
+        equity_is_upward=True,
+    )
+
+    issues = mod.evaluate_report(
+        cfg,
+        metrics,
+        _redis(
+            report_is_trading_day=False,
+            status_exists=False,
+            daily_signal_count=0,
+            trade_targets_exists=False,
+            daily_indicators_exists=False,
+            data_provider={"total_symbols": 20, "fresh_count": 0},
+        ),
+    )
+    codes = {issue.code for issue in issues}
+
+    assert "redis_status_missing" in codes
+    assert "daily_signals_below_target" in codes
+    assert "trade_targets_missing" in codes
+    assert "daily_indicators_missing" in codes
+    assert "fresh_ratio_below_target" in codes
 
 
 def test_reentry_churn_counts_same_symbol_strategy_only():
