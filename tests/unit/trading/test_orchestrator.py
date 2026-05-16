@@ -192,6 +192,49 @@ class TestTradingOrchestrator:
         assert orch.state == TradingState.STOPPED
 
     @pytest.mark.asyncio
+    async def test_stop_sets_interrupt_flag_even_when_already_stopped(self):
+        """STOPPED 상태에서도 daemon sleep을 깨울 수 있도록 stop intent를 기록한다."""
+        from services.trading.orchestrator import (
+            TradingConfig,
+            TradingOrchestrator,
+            TradingState,
+        )
+
+        orch = TradingOrchestrator(TradingConfig.stock())
+        orch.state = TradingState.STOPPED
+        orch._running = True
+
+        await orch.stop()
+
+        assert orch._stop_requested is True
+        assert orch._running is False
+
+    @pytest.mark.asyncio
+    async def test_daemon_run_exits_without_next_session_sleep_when_session_stops(
+        self, monkeypatch
+    ):
+        """장 종료 stop 후 다음 세션 sleep에 들어가지 않고 프로세스를 종료한다."""
+        import services.trading.orchestrator as orchestrator_module
+        from services.trading.orchestrator import TradingConfig, TradingOrchestrator
+
+        orch = TradingOrchestrator(TradingConfig.stock())
+        orch._notify = AsyncMock()
+
+        async def fake_run_session():
+            orch._stop_requested = True
+            orch._running = False
+
+        async def unexpected_sleep(seconds):
+            raise AssertionError(f"unexpected daemon sleep: {seconds}")
+
+        monkeypatch.setattr(orch, "run_session", fake_run_session)
+        monkeypatch.setattr(orchestrator_module.asyncio, "sleep", unexpected_sleep)
+
+        await orch.run()
+
+        assert orch._running is False
+
+    @pytest.mark.asyncio
     async def test_pause_and_resume(self, monkeypatch):
         """pause/resume 동작"""
         from services.trading.orchestrator import (

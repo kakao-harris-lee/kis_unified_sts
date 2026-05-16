@@ -24,6 +24,7 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
@@ -599,6 +600,7 @@ class TradingOrchestrator:
 
         # 내부 상태
         self._running = False
+        self._stop_requested = False
         self._main_task: asyncio.Task | None = None
 
         # Per-symbol locks and order concurrency control
@@ -838,6 +840,7 @@ class TradingOrchestrator:
             logger.warning("Already running")
             return
 
+        self._stop_requested = False
         self.state = TradingState.RUNNING
         self.start_time = datetime.now()
 
@@ -3279,6 +3282,9 @@ class TradingOrchestrator:
                      Cron scripts wait 5s before SIGKILL, so pass timeout=4.0
                      when called from cron contexts for a 1s safety margin.
         """
+        self._stop_requested = True
+        self._running = False
+
         if self.state == TradingState.STOPPED:
             return
 
@@ -3504,7 +3510,9 @@ class TradingOrchestrator:
             wait_seconds = (open_dt - now).total_seconds()
             logger.info(f"Waiting for market open: {wait_seconds:.0f}s")
             self.state = TradingState.WAITING
-            await asyncio.sleep(wait_seconds)
+            await self._sleep_unless_stop_requested(wait_seconds)
+            if self._stop_requested:
+                return
 
         # 거래 시작
         await self.start()
@@ -3518,18 +3526,26 @@ class TradingOrchestrator:
             wait_seconds = (close_dt - now).total_seconds()
             logger.info(f"Trading until market close: {wait_seconds:.0f}s")
 
-            try:
-                await asyncio.sleep(wait_seconds)
-            except asyncio.CancelledError:
-                pass
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._sleep_unless_stop_requested(wait_seconds)
 
         # 거래 종료
         await self.stop()
+
+    async def _sleep_unless_stop_requested(self, wait_seconds: float) -> None:
+        """Sleep in short slices so shutdown signals can interrupt long waits."""
+        deadline = time.monotonic() + max(0.0, wait_seconds)
+        while not self._stop_requested:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return
+            await asyncio.sleep(min(remaining, 1.0))
 
     async def run(self):
         """데몬 모드 실행 (매일 반복)"""
         logger.info("Starting trading orchestrator (daemon mode)")
         self._running = True
+        self._stop_requested = False
 
         await self._notify(
             f"🤖 Trading Orchestrator Started\n"
@@ -3541,6 +3557,8 @@ class TradingOrchestrator:
         while self._running:
             try:
                 await self.run_session()
+                if self._stop_requested or not self._running:
+                    break
 
                 # 다음 날까지 대기
                 now = datetime.now()
@@ -3555,7 +3573,7 @@ class TradingOrchestrator:
                 logger.info(f"Next session in {wait_seconds / 3600:.1f} hours")
 
                 self.state = TradingState.IDLE
-                await asyncio.sleep(wait_seconds)
+                await self._sleep_unless_stop_requested(wait_seconds)
 
             except asyncio.CancelledError:
                 logger.info("Orchestrator cancelled")
