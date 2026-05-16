@@ -337,3 +337,11 @@ def test_load_repo_env_uses_repo_dotenv_without_overriding_existing(
 
     assert os.environ["CLICKHOUSE_PASSWORD"] == "secret-from-file"
     assert os.environ["CLICKHOUSE_USER"] == "already-set"
+
+
+def test_load_config_default_capital_matches_stock_runtime(monkeypatch):
+    monkeypatch.delenv("STOCK_PAPER_INITIAL_CAPITAL", raising=False)
+
+    cfg = mod._load_config()
+
+    assert cfg.initial_capital == 100_000_000.0
