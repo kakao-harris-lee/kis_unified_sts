@@ -1,7 +1,11 @@
 strategy:
   name: daily_pullback
   asset_class: stock
-  enabled: true
+  # Disabled 2026-05-17 after priority-corrected portfolio backtest:
+  # long 2023-05-17..2026-05-15 return +4.72%, win 38.66%, monthly +0.14%;
+  # recent 2026-04-17..2026-05-15 return +0.45%, win 27.27%, monthly +0.50%.
+  # Keep available for research, but exclude from live paper candidates.
+  enabled: false
   timeframe: daily
   description: "일봉 눌림목 진입 + Chandelier Exit 스윙 전략"
 
@@ -18,8 +22,8 @@ strategy:
       stop_loss_pct: 7.0
       signal_cooldown_days: 5
       confidence_base: 0.6
-      # 2026-05-16 100M-capital baseline: min_confidence=0.70 with 1.095M sizing
-      # remains low drawdown but does not yet meet win-rate / monthly-return goals.
+      # 2026-05-17 priority-corrected baseline: min_confidence=0.70 with
+      # 1.095M sizing remains low drawdown but fails win-rate / monthly-return goals.
       min_confidence: 0.70
       # Optional quality filters. Keep disabled until a candidate reproduces
       # across both recent and long-window portfolio backtests.
@@ -45,9 +49,9 @@ strategy:
   position:
     type: fixed
     params:
-      # 2026-05-16 portfolio sizing: 1.095M x 5 with min_confidence=0.70
-      # kept 2023-05-17..2026-05-15 MDD under 10% and recent 22d return
-      # above 10%.
+      # 2026-05-17 priority-corrected portfolio sizing: 1.095M x 5 kept
+      # 2023-05-17..2026-05-15 MDD under 10%, but recent 22d return fell
+      # to +0.45%; disabled until a corrected candidate recovers edge.
       order_amount_per_stock: 1095000
       max_positions: 5
 

@@ -17,7 +17,11 @@
 strategy:
   name: vr_composite
   asset_class: stock
-  enabled: true
+  # Disabled 2026-05-17 after priority-corrected portfolio backtest:
+  # long 2023-05-17..2026-05-15 return +2.12%, win 48.91%, monthly +0.06%;
+  # recent 2026-04-17..2026-05-15 return -0.01%, win 0.00%, monthly -0.01%.
+  # Keep available for research, but exclude from live paper candidates.
+  enabled: false
   timeframe: daily
   description: "일봉 VR + RSI + MA 복합 스윙 전략"
 
@@ -147,8 +151,9 @@ strategy:
   position:
     type: fixed
     params:
-      # 2026-05-16 portfolio sizing: 750k x 4 kept long-window MDD under 10%;
-      # VR stays small because return contribution is lower than daily_pullback.
+      # 2026-05-17 priority-corrected portfolio sizing: 750k x 4 kept
+      # long-window MDD under 10%, but return contribution and win rate
+      # remain below the active stock objective.
       order_amount_per_stock: 750000   # 종목당 매수 금액
       max_positions: 4                 # 최대 동시 보유 종목 수
 
