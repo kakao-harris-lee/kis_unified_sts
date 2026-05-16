@@ -185,3 +185,14 @@ def test_yaml_loads_via_factory():
     assert s.name == "llm_directed_indicator"
     assert s.entry.config.bias_confidence_min == 0.6
     assert s.exit.config is not None
+
+
+@pytest.mark.asyncio
+async def test_backtest_flat_contract_indicators_only():
+    """No market_context (backtest) -> FLAT -> indicators alone decide.
+    Bullish indicators must still produce a long (no LLM gate)."""
+    e = _entry()
+    sig = await e.generate(_ctx(mc=None))
+    assert sig is not None
+    assert sig.metadata["llm_bias"] == "FLAT"
+    assert sig.metadata["signal_direction"] == "long"
