@@ -90,6 +90,70 @@ MIN_ORDER_AMOUNT = 10_000  # 1만원 minimum per trade
 MAX_ORDER_AMOUNT = 100_000_000  # 1억원 maximum per trade
 MAX_ORDER_QUANTITY = 1_000_000  # Safety cap for quantity
 MAX_YAML_FILE_SIZE = 1_024 * 1_024  # 1MB max for YAML config files
+REENTRY_GUARD_SCOPES = {"symbol", "symbol_strategy"}
+
+
+@dataclass(frozen=True)
+class EntryReentryGuardConfig:
+    """Post-exit entry guard configuration.
+
+    The guard prevents immediate churn after a position closes, especially
+    stop-loss followed by same-symbol re-entry during noisy intraday moves.
+    """
+
+    enabled: bool = True
+    scope: str = "symbol_strategy"
+    default_cooldown_seconds: float = 900.0
+    reason_cooldown_seconds: dict[str, float] = field(default_factory=dict)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | None) -> EntryReentryGuardConfig:
+        raw = data or {}
+        raw_reasons = raw.get("reason_cooldown_seconds", {})
+        reasons: dict[str, float] = {}
+        if isinstance(raw_reasons, dict):
+            for reason, seconds in raw_reasons.items():
+                if not isinstance(seconds, (int, float)):
+                    raise TypeError(
+                        "entry_reentry_guard.reason_cooldown_seconds values "
+                        f"must be numeric, got {type(seconds)} for {reason}"
+                    )
+                if float(seconds) < 0:
+                    raise ValueError(
+                        "entry_reentry_guard.reason_cooldown_seconds values "
+                        f"must be non-negative, got {seconds} for {reason}"
+                    )
+                reasons[str(reason).lower()] = float(seconds)
+
+        default_cooldown = raw.get("default_cooldown_seconds", 900.0)
+        if not isinstance(default_cooldown, (int, float)):
+            raise TypeError("entry_reentry_guard.default_cooldown_seconds must be numeric")
+        if float(default_cooldown) < 0:
+            raise ValueError(
+                "entry_reentry_guard.default_cooldown_seconds must be non-negative"
+            )
+
+        scope = str(raw.get("scope", "symbol_strategy"))
+        if scope not in REENTRY_GUARD_SCOPES:
+            raise ValueError(
+                "entry_reentry_guard.scope must be one of "
+                f"{sorted(REENTRY_GUARD_SCOPES)}, got {scope}"
+            )
+
+        return cls(
+            enabled=bool(raw.get("enabled", True)),
+            scope=scope,
+            default_cooldown_seconds=float(default_cooldown),
+            reason_cooldown_seconds=reasons,
+        )
+
+    def cooldown_for(self, reason: str | None) -> float:
+        if not reason:
+            return self.default_cooldown_seconds
+        return self.reason_cooldown_seconds.get(
+            str(reason).lower(),
+            self.default_cooldown_seconds,
+        )
 
 
 class HolidayLoader(Protocol):
@@ -630,6 +694,8 @@ class TradingOrchestrator:
             "adverse_ticks_sum": 0.0,
             "avg_adverse_ticks": 0.0,
         }
+        self._entry_reentry_guard = self._load_entry_reentry_guard_config()
+        self._recent_exit_cooldowns: dict[str, dict[str, Any]] = {}
 
         # Optional tick mirroring to Redis streams for monitoring exporter
         self._tick_stream_publisher: Any | None = None
@@ -851,6 +917,23 @@ class TradingOrchestrator:
             else:
                 merged[key] = value
         return merged
+
+    def _load_entry_reentry_guard_config(self) -> EntryReentryGuardConfig:
+        """Load post-exit re-entry guard config from execution.yaml."""
+        try:
+            raw = ConfigLoader.load("execution.yaml").get("entry_reentry_guard", {})
+            return EntryReentryGuardConfig.from_dict(raw)
+        except (
+            InvalidConfigError,
+            MissingConfigError,
+            OSError,
+            yaml.YAMLError,
+            KeyError,
+            TypeError,
+            ValueError,
+        ) as e:
+            logger.warning("Entry re-entry guard config invalid; disabled: %s", e)
+            return EntryReentryGuardConfig(enabled=False)
 
     def _init_futures_slippage_controller(self) -> None:
         """Initialize futures slippage controller from YAML config."""
@@ -4762,6 +4845,129 @@ class TradingOrchestrator:
             )
             return None
 
+    def _entry_reentry_guard_key(self, code: str, strategy: str | None) -> str:
+        cfg = getattr(
+            self,
+            "_entry_reentry_guard",
+            EntryReentryGuardConfig(enabled=False),
+        )
+        if cfg.scope == "symbol":
+            return str(code)
+        return f"{code}:{strategy or ''}"
+
+    def _record_recent_exit_for_reentry_guard(
+        self,
+        closed: Any,
+        signal: ExitSignal,
+        reason: str,
+    ) -> None:
+        """Record a filled exit so near-term re-entry can be blocked."""
+        cfg = getattr(
+            self,
+            "_entry_reentry_guard",
+            EntryReentryGuardConfig(enabled=False),
+        )
+        if not cfg.enabled or self.config.asset_class != "stock":
+            return
+
+        cooldown_seconds = cfg.cooldown_for(reason)
+        if cooldown_seconds <= 0:
+            return
+
+        code = str(getattr(signal, "code", "") or getattr(closed, "code", "") or "")
+        if not code:
+            return
+        strategy = str(
+            getattr(signal, "strategy", "") or getattr(closed, "strategy", "") or ""
+        )
+        key = self._entry_reentry_guard_key(code, strategy)
+
+        recent = getattr(self, "_recent_exit_cooldowns", None)
+        if recent is None:
+            recent = {}
+            self._recent_exit_cooldowns = recent
+
+        recent[key] = {
+            "code": code,
+            "strategy": strategy,
+            "reason": str(reason).lower(),
+            "exit_time": datetime.now(UTC),
+            "cooldown_seconds": float(cooldown_seconds),
+        }
+
+    def _reentry_guard_block(
+        self,
+        signal: Signal,
+        now: datetime | None = None,
+    ) -> dict[str, Any] | None:
+        """Return block metadata when a signal violates post-exit cooldown."""
+        cfg = getattr(
+            self,
+            "_entry_reentry_guard",
+            EntryReentryGuardConfig(enabled=False),
+        )
+        if not cfg.enabled or self.config.asset_class != "stock":
+            return None
+
+        recent = getattr(self, "_recent_exit_cooldowns", {})
+        if not recent:
+            return None
+
+        now_utc = now or datetime.now(UTC)
+        if now_utc.tzinfo is None:
+            now_utc = now_utc.replace(tzinfo=UTC)
+        else:
+            now_utc = now_utc.astimezone(UTC)
+
+        key = self._entry_reentry_guard_key(signal.code, signal.strategy)
+        record = recent.get(key)
+        if not record:
+            return None
+
+        exit_time = record.get("exit_time")
+        if not isinstance(exit_time, datetime):
+            recent.pop(key, None)
+            return None
+        if exit_time.tzinfo is None:
+            exit_time = exit_time.replace(tzinfo=UTC)
+        else:
+            exit_time = exit_time.astimezone(UTC)
+
+        cooldown_seconds = float(record.get("cooldown_seconds", 0.0) or 0.0)
+        elapsed = max(0.0, (now_utc - exit_time).total_seconds())
+        remaining = cooldown_seconds - elapsed
+        if remaining <= 0:
+            recent.pop(key, None)
+            return None
+
+        return {
+            **record,
+            "remaining_seconds": remaining,
+            "elapsed_seconds": elapsed,
+        }
+
+    def _filter_reentry_guarded_signals(self, signals: list[Signal]) -> list[Signal]:
+        if not signals:
+            return signals
+
+        filtered: list[Signal] = []
+        now = datetime.now(UTC)
+        for signal in signals:
+            block = self._reentry_guard_block(signal, now=now)
+            if block:
+                logger.info(
+                    "Entry blocked by post-exit cooldown: code=%s strategy=%s "
+                    "reason=%s remaining=%.0fs",
+                    signal.code,
+                    signal.strategy,
+                    block.get("reason", ""),
+                    float(block.get("remaining_seconds", 0.0) or 0.0),
+                )
+                continue
+            filtered.append(signal)
+
+        return filtered
+
     async def _handle_entry(self) -> list[Signal]:
         """Entry signal handler (runs every 1 sec)
 
@@ -4907,6 +5113,7 @@ class TradingOrchestrator:
             for r in results:
                 if r:
                     signals.extend(r)
+            signals = self._filter_reentry_guarded_signals(signals)
 
             # Execute orders for valid signals (bounded parallelism)
             async def run_entry(signal: Signal) -> None:
@@ -6050,6 +6257,8 @@ class TradingOrchestrator:
 
         if not closed:
             return
+
+        self._record_recent_exit_for_reentry_guard(closed, signal, reason_str)
 
         # Record exit in regime performance tracker
         if self._regime_tracker:

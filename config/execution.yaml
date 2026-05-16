@@ -24,6 +24,20 @@ position_tracker:
   batch_size: 50                  # Number of closed positions to batch before flush
   flush_interval_seconds: 5.0     # Max seconds to wait before auto-flush (0 = disabled)
 
+# Post-exit re-entry guard — prevents same-symbol churn after a loss/exit signal.
+# This is especially important for stock paper trading where a stop-loss can
+# otherwise be followed by immediate re-entry while the same noisy condition persists.
+entry_reentry_guard:
+  enabled: true
+  scope: symbol_strategy           # symbol_strategy | symbol
+  default_cooldown_seconds: 900    # 15 min for ordinary exits
+  reason_cooldown_seconds:
+    stop_loss: 3600                # 60 min after hard stop
+    stale_timeout: 3600            # 60 min when tick data disappeared
+    momentum_decay: 1800           # 30 min after failed momentum follow-through
+    vwap_breakdown: 1800           # 30 min after structural intraday breakdown
+    trailing_stop: 600             # 10 min after profit-protecting exit
+
 # 전략별 승률 기반 투자금액 동적 조정
 adaptive_sizing:
   enabled: true
