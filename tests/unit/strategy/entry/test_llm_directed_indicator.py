@@ -41,3 +41,22 @@ def test_confident_neutral_is_flat():
 def test_mask_mode_defaults_hard():
     # spec section 7: ship the switch (hard only implemented; soft = future Path B)
     assert _cfg().mask_mode == "hard"
+
+
+def test_confidence_exactly_at_threshold_is_directional():
+    # conf == bias_confidence_min passes the >= gate (boundary contract)
+    mc = MarketContext(overall_signal=MarketSignal.BULLISH, confidence=0.6)
+    assert _map_llm_bias(mc, _cfg(bias_confidence_min=0.6)) == "LONG_BIAS"
+
+
+def test_raising_context_degrades_to_flat():
+    class _Boom:
+        confidence = 0.9
+
+        def is_bullish(self):
+            raise RuntimeError("boom")
+
+        def is_bearish(self):
+            return False
+
+    assert _map_llm_bias(_Boom(), _cfg()) == "FLAT"

@@ -61,10 +61,16 @@ def _map_llm_bias(
         return "FLAT"
     if conf < config.bias_confidence_min:
         return "FLAT"
-    is_bull = getattr(market_context, "is_bullish", None)
-    is_bear = getattr(market_context, "is_bearish", None)
-    if callable(is_bull) and is_bull():
-        return "LONG_BIAS"
-    if callable(is_bear) and is_bear():
-        return "SHORT_BIAS"
+    # is_bullish wins over is_bearish if a (degenerate) context reports both.
+    try:
+        is_bull = getattr(market_context, "is_bullish", None)
+        is_bear = getattr(market_context, "is_bearish", None)
+        if callable(is_bull) and is_bull():
+            return "LONG_BIAS"
+        if callable(is_bear) and is_bear():
+            return "SHORT_BIAS"
+    except Exception:  # noqa: BLE001 — never break the entry loop; degrade to FLAT
+        logger.warning(
+            "_map_llm_bias: is_bullish/is_bearish raised; defaulting to FLAT")
+        return "FLAT"
     return "FLAT"
