@@ -520,6 +520,57 @@ def _filter_active_strategy_rows(
     return [row for row in rows if row.strategy in active]
 
 
+_TRADE_METRIC_ISSUE_CODES = {
+    "no_closed_trades",
+    "insufficient_closed_trades",
+    "monthly_expected_return_below_target",
+    "win_rate_below_target",
+    "win_rate_above_target_band",
+    "mdd_above_target",
+    "equity_curve_not_upward",
+    "reentry_churn_above_target",
+}
+
+
+def _is_trade_metric_issue(issue: GateIssue) -> bool:
+    return issue.code.removeprefix("active_") in _TRADE_METRIC_ISSUE_CODES
+
+
+def _select_verdict_issues(
+    issues: list[GateIssue],
+    active_issues: list[GateIssue],
+    active_strategy_names: list[str],
+) -> list[GateIssue]:
+    """Return only issues that should decide the operational verdict.
+
+    Once enabled stock strategies are known, stale trade metrics from disabled
+    strategies remain useful context but should not keep the daily paper gate in
+    FAIL. Source/Redis issues still gate regardless of strategy scope.
+    """
+    if not active_strategy_names:
+        return issues + active_issues
+    operational_issues = [
+        issue for issue in issues if not _is_trade_metric_issue(issue)
+    ]
+    return operational_issues + active_issues
+
+
+def _issues_for_verdict(report: VerificationReport) -> list[GateIssue]:
+    return _select_verdict_issues(
+        report.issues,
+        report.active_issues,
+        report.active_strategy_names,
+    )
+
+
+def _verdict_from_issues(issues: list[GateIssue]) -> str:
+    if any(issue.severity == "FAIL" for issue in issues):
+        return "FAIL"
+    if issues:
+        return "WARN"
+    return "PASS"
+
+
 def _safe_json(raw: Any) -> Any:
     if raw is None:
         return None
@@ -850,10 +901,11 @@ def _render_markdown(report: VerificationReport, config: VerificationConfig) -> 
         f"# Stock Paper Daily Verification ({report.report_date})",
         "",
         f"- Verdict: `{report.verdict}`",
+        f"- Verdict basis: `{'active strategies + operational gates' if report.active_strategy_names else 'all strategy trades + operational gates'}`",
         f"- Window: `{report.window_start}` to `{report.window_end}`",
         f"- Generated at: `{report.generated_at}`",
         "",
-        "## Objective Metrics",
+        "## All-Strategy Objective Metrics",
         "",
         f"- Trades: `{m.trade_count}`",
         f"- Total PnL: `{m.total_pnl:,.0f}` KRW",
@@ -893,7 +945,7 @@ def _render_markdown(report: VerificationReport, config: VerificationConfig) -> 
             lines.append(f"- `{error}`")
         lines.append("")
 
-    lines.extend(["## Issues", ""])
+    lines.extend(["## All-Strategy / Operational Issues", ""])
 
     if report.issues:
         for issue in report.issues:
@@ -970,12 +1022,20 @@ def _format_notification(report: VerificationReport) -> str:
         f"monthly_expected: <code>{m.monthly_expected_return_pct:.2f}%</code>, win_rate: <code>{m.win_rate_pct:.2f}%</code>, mdd: <code>{m.max_drawdown_pct:.2f}%</code>",
         f"active_trades: <code>{active.trade_count}</code>, active_monthly_expected: <code>{active.monthly_expected_return_pct:.2f}%</code>, active_win_rate: <code>{active.win_rate_pct:.2f}%</code>",
     ]
-    all_issues = report.issues + report.active_issues
-    if all_issues:
-        lines.append("<b>Issues</b>")
-        for issue in all_issues[:8]:
+    verdict_issues = _issues_for_verdict(report)
+    if verdict_issues:
+        lines.append("<b>Verdict issues</b>")
+        for issue in verdict_issues[:8]:
             lines.append(
                 f"- {issue.severity} {issue.code}: {issue.observed} vs {issue.expected}"
+            )
+    if report.active_strategy_names and report.issues:
+        ignored_metric_count = sum(
+            1 for issue in report.issues if _is_trade_metric_issue(issue)
+        )
+        if ignored_metric_count:
+            lines.append(
+                f"historical all-strategy metric issues ignored for verdict: <code>{ignored_metric_count}</code>"
             )
     lines.append(f"report: <code>{report.markdown_path}</code>")
     return "\n".join(lines)
@@ -1033,11 +1093,8 @@ def build_report(
             insufficient_trades_severity="WARN",
             detail_prefix="Enabled-strategy scope: ",
         )
-    all_issues = issues + active_issues
-    verdict = (
-        "FAIL"
-        if any(i.severity == "FAIL" for i in all_issues)
-        else ("WARN" if all_issues else "PASS")
+    verdict = _verdict_from_issues(
+        _select_verdict_issues(issues, active_issues, active_names)
     )
     return VerificationReport(
         report_date=report_date.isoformat(),
@@ -1136,7 +1193,11 @@ def main() -> int:
             active_strategy_names=active_strategy_names,
         )
         write_report(report, config)
-        if report.issues and config.notify_on_issues and not args.no_telegram:
+        if (
+            report.verdict != "PASS"
+            and config.notify_on_issues
+            and not args.no_telegram
+        ):
             report.notification_sent = asyncio.run(_send_notification(report))
             write_report(report, config)
 
