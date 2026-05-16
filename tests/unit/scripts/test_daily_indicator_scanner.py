@@ -1,15 +1,19 @@
+import json
 from datetime import date
 
 import pandas as pd
 
+import scripts.daily_indicator_scanner as scanner
 from scripts.daily_indicator_scanner import (
     compute_indicators,
+    extract_candidate_symbols,
     get_clickhouse_client,
     is_fresh_daily_data,
     latest_candle_date,
     load_daily_candles,
+    load_redis_candidate_symbols,
+    publish_to_redis,
 )
-import scripts.daily_indicator_scanner as scanner
 from shared.collector.historical.calendar import trading_day_lag
 from shared.collector.historical.daily_quality import DailyCandleQualityConfig
 
@@ -64,6 +68,72 @@ def test_compute_indicators_includes_daily_volume_ratio():
     assert indicators is not None
     assert "daily_volume_ratio" in indicators
     assert indicators["daily_volume_ratio"] == 2.0
+
+
+def test_extract_candidate_symbols_from_pipeline_shapes():
+    payload = {
+        "codes": ["005930", "000660"],
+        "final_codes": ["035420", "005930"],
+        "strategies": {
+            "trend_pullback": ["006400"],
+            "momentum_breakout": ["000660", "066570"],
+        },
+        "candidates": [{"code": "068270"}, "051910"],
+    }
+
+    assert extract_candidate_symbols(payload) == [
+        "005930",
+        "000660",
+        "035420",
+        "006400",
+        "066570",
+        "068270",
+        "051910",
+    ]
+
+
+def test_load_redis_candidate_symbols_merges_keys_in_order():
+    class FakeRedis:
+        def __init__(self):
+            self.data = {
+                "targets": b'{"codes":["005930","000660"]}',
+                "watchlist": '{"strategies":{"daily_pullback":["035420"]}}',
+                "bad": "not-json",
+                "llm": '{"final_codes":["000660","068270"]}',
+            }
+
+        def get(self, key):
+            return self.data.get(key)
+
+    assert load_redis_candidate_symbols(
+        redis_client=FakeRedis(),
+        keys=["targets", "watchlist", "bad", "llm"],
+    ) == ["005930", "000660", "035420", "068270"]
+
+
+def test_publish_to_redis_includes_coverage_metadata():
+    class FakeRedis:
+        def __init__(self):
+            self.value = None
+            self.ttl = None
+
+        def set(self, key, value, ex=None):
+            self.key = key
+            self.value = value
+            self.ttl = ex
+
+    fake = FakeRedis()
+
+    publish_to_redis(
+        {"005930": {"daily_sma_20": 100.0}},
+        redis_client=fake,
+        metadata={"requested_symbol_count": 2, "redis_candidate_count": 1},
+    )
+
+    payload = json.loads(fake.value)
+    assert payload["symbol_count"] == 1
+    assert payload["requested_symbol_count"] == 2
+    assert payload["redis_candidate_count"] == 1
 
 
 def test_get_clickhouse_client_loads_repo_env(tmp_path, monkeypatch):

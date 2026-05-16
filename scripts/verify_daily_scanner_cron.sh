@@ -52,11 +52,17 @@ if [[ -n "$CRON_ENTRY" ]]; then
     echo -e "${GREEN}  ✓ Cron job found:${NC}"
     echo "    $CRON_ENTRY"
 
-    # Verify it's scheduled at 08:50
+    # Verify baseline and post-fusion refresh passes are scheduled.
     if echo "$CRON_ENTRY" | grep -q "^50 8"; then
-        echo -e "${GREEN}  ✓ Scheduled at 08:50 (correct time)${NC}"
+        echo -e "${GREEN}  ✓ Baseline scan scheduled at 08:50${NC}"
     else
         echo -e "${YELLOW}  ⚠ Not scheduled at 08:50 (expected: 50 8 * * 1-5)${NC}"
+        ((WARNINGS++))
+    fi
+    if echo "$CRON_ENTRY" | grep -q "^58 8"; then
+        echo -e "${GREEN}  ✓ Dynamic candidate refresh scheduled at 08:58${NC}"
+    else
+        echo -e "${YELLOW}  ⚠ Not scheduled at 08:58 (expected: 58 8 * * 1-5)${NC}"
         ((WARNINGS++))
     fi
 
@@ -70,7 +76,7 @@ if [[ -n "$CRON_ENTRY" ]]; then
 else
     echo -e "${RED}  ✗ No cron job found for daily_indicator_scanner${NC}"
     echo -e "${YELLOW}  → Add to crontab with: crontab -e${NC}"
-    echo -e "${YELLOW}  → Entry: 50 8 * * 1-5 $(pwd)/scripts/cron/daily_indicator_scanner.sh${NC}"
+    echo -e "${YELLOW}  → Entries: 50 and 58 8 * * 1-5 $(pwd)/scripts/cron/daily_indicator_scanner.sh${NC}"
     ((ERRORS++))
 fi
 echo ""
