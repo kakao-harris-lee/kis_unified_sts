@@ -5,6 +5,10 @@ Reuses ATRDynamicExit (trailing + hard-stop + EOD) and MomentumDecayExit
 priority signal (lowest priority int) is returned. Hard-stop + EOD are
 inherent to ATRDynamicExit and are independent safety nets the composite
 never suppresses (design spec section 5).
+
+MomentumDecayExit additionally benefits from ``momentum_5m`` / ``vwap`` /
+``volume_velocity`` in the snapshot; the ATR hard-stop and trailing stop
+still fire without them.
 """
 from __future__ import annotations
 
@@ -56,6 +60,7 @@ class LLMDirectedIndicatorExit(
             MomentumDecayConfig(**(config.momentum_decay or {})))
 
     def _validate_config(self):
+        # Sub-exits validate their own configs in __init__.
         pass
 
     @property
@@ -66,13 +71,27 @@ class LLMDirectedIndicatorExit(
         self, context: ExitContext
     ) -> tuple[bool, ExitSignal | None]:
         candidates: list[ExitSignal] = []
-        for sub in (self._atr, self._mom):
-            try:
-                fired, sig = await sub.should_exit(context)
-                if fired and sig is not None:
-                    candidates.append(sig)
-            except Exception as exc:  # noqa: BLE001 — isolate sub-exit
-                logger.debug("sub-exit %s raised: %s", sub.name, exc)
+        # ATR carries the hard-stop + EOD safety net (spec §5): a failure
+        # here must be LOUD/alertable, never silently swallowed. We still do
+        # not re-raise (that would abort the whole exit scan for this
+        # position); momentum_decay + the engine risk-net remain as backups.
+        try:
+            fired, sig = await self._atr.should_exit(context)
+            if fired and sig is not None:
+                candidates.append(sig)
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "ATR sub-exit raised — hard-stop/EOD may be missed for %s: %s",
+                getattr(getattr(context, "position", None), "code", "?"),
+                exc, exc_info=True,
+            )
+        # momentum_decay is a soft exit — isolation at debug is appropriate.
+        try:
+            fired, sig = await self._mom.should_exit(context)
+            if fired and sig is not None:
+                candidates.append(sig)
+        except Exception as exc:  # noqa: BLE001 — isolate soft sub-exit
+            logger.debug("momentum_decay sub-exit raised: %s", exc)
         if not candidates:
             return (False, None)
         best = min(candidates, key=lambda s: getattr(s, "priority", 99))
