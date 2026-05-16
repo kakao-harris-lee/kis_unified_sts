@@ -84,6 +84,28 @@ def test_run_sweep_dry_run_writes_manifest_without_runner(tmp_path):
     assert manifest["runs"][0]["returncode"] is None
 
 
+def test_run_sweep_filters_candidate_names(tmp_path):
+    config = _config(tmp_path)
+    config["candidates"].append(
+        {
+            "name": "skip_me",
+            "strategy": "technical_consensus",
+            "order_amount_per_stock": [1_000_000],
+            "max_positions": [1],
+            "overrides": {},
+        }
+    )
+
+    manifest = mod.run_sweep(
+        config,
+        dry_run=True,
+        candidate_names={"skip_me"},
+    )
+
+    assert manifest["planned_runs"] == 2
+    assert {run["candidate_name"] for run in manifest["runs"]} == {"skip_me"}
+
+
 def test_run_sweep_executes_runner_and_records_paths(tmp_path, monkeypatch):
     metrics = tmp_path / "backtests" / "run_metrics.json"
     trades = tmp_path / "backtests" / "run_trades.csv"

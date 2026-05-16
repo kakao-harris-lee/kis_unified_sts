@@ -1,0 +1,59 @@
+scan:
+  output_dir: "reports/stock_entry_pattern_scan"
+  start: "2023-05-17"
+  end: "2026-05-15"
+  warmup_days: 420
+  tier: "all"
+  symbols: ""
+  max_symbols:
+  horizons: [5, 10, 20]
+  rank_horizon: 10
+  min_signals: 20
+  top_k: 30
+  round_trip_cost_pct: 0.0028
+
+  patterns:
+    - name: "pullback_reversal"
+      description: "Uptrend pullback with RSI/ATR/volume filters"
+      base:
+        close_above_sma200: true
+        close_below_sma20: true
+        sma60_rising: true
+      grid:
+        rsi5_max: [35, 40, 45, 50]
+        atr_pct_min: [0.02, 0.03, 0.035]
+        volume_ratio_min: [0.0, 0.8, 1.0]
+        highest_high_gap_min: [-0.10, -0.08, -0.05]
+
+    - name: "trend_breakout"
+      description: "Uptrend breakout with controlled extension"
+      base:
+        close_above_sma200: true
+        close_above_sma60: true
+        breakout_20d: true
+      grid:
+        volume_ratio_min: [1.0, 1.2, 1.5]
+        atr_pct_min: [0.015, 0.02, 0.03]
+        return_20d_max: [0.10, 0.20, 0.35]
+
+    - name: "oversold_recovery"
+      description: "Short-term oversold recovery inside a long uptrend"
+      base:
+        close_above_sma200: true
+        rsi5_recovery: true
+      grid:
+        rsi5_prev_max: [25, 30, 35]
+        rsi5_min: [30, 35, 40]
+        close_change_1d_min: [0.0, 0.01]
+        atr_pct_min: [0.02, 0.03]
+
+    - name: "volume_pullback"
+      description: "Pullback with fresh relative-volume confirmation"
+      base:
+        close_above_sma200: true
+        close_below_sma20: true
+      grid:
+        rsi5_max: [45, 50]
+        volume_ratio_min: [1.0, 1.2, 1.5]
+        return_60d_max: [0.0, 0.05, 0.10]
+        atr_pct_min: [0.02, 0.03]

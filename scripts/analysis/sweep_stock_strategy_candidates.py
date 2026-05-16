@@ -267,9 +267,12 @@ def run_sweep(
     *,
     dry_run: bool = False,
     max_runs: int | None = None,
+    candidate_names: set[str] | None = None,
     runner: Runner = subprocess.run,
 ) -> dict[str, Any]:
     runs = expand_sweep_runs(config)
+    if candidate_names:
+        runs = [run for run in runs if run.candidate_name in candidate_names]
     if max_runs is not None:
         runs = runs[: max(0, max_runs)]
 
@@ -354,10 +357,21 @@ def main() -> None:
         default=None,
         help="Run only the first N expanded backtests for smoke checks.",
     )
+    parser.add_argument(
+        "--candidate",
+        action="append",
+        default=[],
+        help="Candidate name to run. Can be passed multiple times.",
+    )
     args = parser.parse_args()
 
     config = load_sweep_config(args.config)
-    manifest = run_sweep(config, dry_run=args.dry_run, max_runs=args.max_runs)
+    manifest = run_sweep(
+        config,
+        dry_run=args.dry_run,
+        max_runs=args.max_runs,
+        candidate_names=set(args.candidate) if args.candidate else None,
+    )
     print(
         f"planned={manifest['planned_runs']} successful={manifest['successful_runs']} "
         f"failed={manifest['failed_runs']} dry_run={manifest['dry_run']}"
