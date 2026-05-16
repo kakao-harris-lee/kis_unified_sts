@@ -17,6 +17,19 @@ _VOL_KEY = "forecast:vol:current"
 
 
 def read_latest_vol_forecast(redis_client: Any) -> VolForecast | None:
+    """Return the current :class:`VolForecast` from Redis, or ``None``.
+
+    Reads ``forecast:vol:current`` (SET by
+    :class:`~shared.forecasting.forecast_publisher.ForecastPublisher`).
+    Requires ``decode_responses=True`` on the client (``VolForecast.from_json``
+    also tolerates ``bytes``).
+
+    Never raises — returns ``None`` on Redis error, absent key, or
+    unparseable payload so trading hot paths degrade gracefully.
+
+    Args:
+        redis_client: Redis client with ``decode_responses=True``.
+    """
     try:
         blob = redis_client.get(_VOL_KEY)
     except Exception as exc:  # noqa: BLE001 — hot path, never propagate

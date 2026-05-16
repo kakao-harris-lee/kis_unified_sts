@@ -8,7 +8,8 @@ class _FakeRedis:
     def __init__(self, value):
         self._value = value
 
-    def get(self, key):  # noqa: ARG002
+    def get(self, key):
+        assert key == "forecast:vol:current"
         return self._value
 
 
