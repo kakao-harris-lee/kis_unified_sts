@@ -10,6 +10,7 @@ MomentumDecayExit additionally benefits from ``momentum_5m`` / ``vwap`` /
 ``volume_velocity`` in the snapshot; the ATR hard-stop and trailing stop
 still fire without them.
 """
+
 from __future__ import annotations
 
 import logging
@@ -46,18 +47,16 @@ class LLMDirectedIndicatorExitConfig(ConfigMixin):
     momentum_decay: dict[str, Any] = field(default_factory=dict)
 
 
-class LLMDirectedIndicatorExit(
-    ExitSignalGenerator[LLMDirectedIndicatorExitConfig]
-):
+class LLMDirectedIndicatorExit(ExitSignalGenerator[LLMDirectedIndicatorExitConfig]):
     CONFIG_CLASS = LLMDirectedIndicatorExitConfig
     NAME = "LLM_DIRECTED_INDICATOR_EXIT"
 
     def __init__(self, config: LLMDirectedIndicatorExitConfig):
         super().__init__(config)
-        self._atr = ATRDynamicExit(
-            ATRDynamicExitConfig(**(config.atr or {})))
+        self._atr = ATRDynamicExit(ATRDynamicExitConfig(**(config.atr or {})))
         self._mom = MomentumDecayExit(
-            MomentumDecayConfig(**(config.momentum_decay or {})))
+            MomentumDecayConfig(**(config.momentum_decay or {}))
+        )
 
     def _validate_config(self):
         # Sub-exits validate their own configs in __init__.
@@ -67,9 +66,7 @@ class LLMDirectedIndicatorExit(
     def name(self) -> str:
         return "llm_directed_indicator_exit"
 
-    async def should_exit(
-        self, context: ExitContext
-    ) -> tuple[bool, ExitSignal | None]:
+    async def should_exit(self, context: ExitContext) -> tuple[bool, ExitSignal | None]:
         candidates: list[ExitSignal] = []
         # ATR carries the hard-stop + EOD safety net (spec §5): a failure
         # here must be LOUD/alertable, never silently swallowed. We still do
@@ -83,7 +80,8 @@ class LLMDirectedIndicatorExit(
             logger.error(
                 "ATR sub-exit raised — hard-stop/EOD may be missed for %s: %s",
                 getattr(getattr(context, "position", None), "code", "?"),
-                exc, exc_info=True,
+                exc,
+                exc_info=True,
             )
         # momentum_decay is a soft exit — isolation at debug is appropriate.
         try:
@@ -107,9 +105,13 @@ class LLMDirectedIndicatorExit(
         now = now_kst()
         for p in positions:
             snap = get_symbol_snapshot(market_data, p.code)
-            ctx = ExitContext(position=p, market_data=snap,
-                              indicators=snap, timestamp=now,
-                              market_state=market_state)
+            ctx = ExitContext(
+                position=p,
+                market_data=snap,
+                indicators=snap,
+                timestamp=now,
+                market_state=market_state,
+            )
             fired, sig = await self.should_exit(ctx)
             if fired and sig is not None:
                 out.append(sig)
