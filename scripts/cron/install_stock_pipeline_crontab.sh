@@ -16,6 +16,8 @@ print_entries() {
 # Daily stock watchlist and indicator snapshots for orchestrator startup.
 30 8 * * 1-5 $DAILY_SCANNER
 50 8 * * 1-5 $DAILY_INDICATOR_SCANNER
+# Refresh after screener/fusion start so dynamic candidates have daily coverage.
+58 8 * * 1-5 $DAILY_INDICATOR_SCANNER
 # END STOCK_PIPELINE_PREMARKET
 
 # BEGIN STOCK_PAPER_DAILY_VERIFICATION

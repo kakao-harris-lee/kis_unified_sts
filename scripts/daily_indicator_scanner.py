@@ -2,6 +2,9 @@
 
 Reads daily candles from ClickHouse `market.daily_candles`, computes SMA/RSI/ATR/
 Highest High per symbol, and publishes results to Redis for the TradingOrchestrator.
+By default, it scans the baseline stock universe plus recent Redis candidates from
+the screener/fusion pipeline so dynamic trading targets have daily indicator
+coverage before the orchestrator admits them.
 
 Usage:
     python scripts/daily_indicator_scanner.py [--symbols 005930,000660]
@@ -16,6 +19,7 @@ import json
 import logging
 import os
 import sys
+from collections.abc import Iterable
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
@@ -48,11 +52,113 @@ DEFAULT_SYMBOLS = [item["code"] for item in STOCK_UNIVERSE]
 
 REDIS_KEY = "system:daily_indicators:latest"
 REDIS_TTL = 86400  # 24h
+DEFAULT_REDIS_CANDIDATE_KEYS = (
+    "system:trade_targets:latest",
+    "system:universe:latest",
+    "system:dip_candidates:latest",
+    "system:daily_watchlist:latest",
+    "system:llm_quality:latest",
+)
 
 
 def _load_repo_env() -> None:
     """Load repo-local .env for standalone cron/manual runs."""
     load_dotenv(_REPO_ROOT / ".env", override=False)
+
+
+def _dedupe_symbols(symbols: Iterable[str]) -> list[str]:
+    """Return symbols in first-seen order, normalized to non-empty strings."""
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for raw in symbols:
+        symbol = str(raw).strip()
+        if not symbol or symbol in seen:
+            continue
+        seen.add(symbol)
+        deduped.append(symbol)
+    return deduped
+
+
+def _json_loads(raw: Any) -> dict[str, Any]:
+    if raw is None:
+        return {}
+    if isinstance(raw, bytes):
+        raw = raw.decode("utf-8")
+    try:
+        payload = json.loads(raw)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _extend_codes(codes: list[str], values: Any) -> None:
+    if not isinstance(values, list):
+        return
+    for value in values:
+        symbol = str(value).strip()
+        if symbol:
+            codes.append(symbol)
+
+
+def extract_candidate_symbols(payload: dict[str, Any]) -> list[str]:
+    """Extract stock codes from known Redis pipeline snapshot shapes."""
+    codes: list[str] = []
+    _extend_codes(codes, payload.get("codes"))
+    _extend_codes(codes, payload.get("symbols"))
+    _extend_codes(codes, payload.get("final_codes"))
+
+    strategies = payload.get("strategies")
+    if isinstance(strategies, dict):
+        for values in strategies.values():
+            _extend_codes(codes, values)
+
+    candidates = payload.get("candidates")
+    if isinstance(candidates, list):
+        for item in candidates:
+            if isinstance(item, dict):
+                symbol = str(item.get("code", "")).strip()
+                if symbol:
+                    codes.append(symbol)
+            else:
+                symbol = str(item).strip()
+                if symbol:
+                    codes.append(symbol)
+
+    return _dedupe_symbols(codes)
+
+
+def load_redis_candidate_symbols(
+    *,
+    redis_client: Any | None = None,
+    keys: Iterable[str] = DEFAULT_REDIS_CANDIDATE_KEYS,
+) -> list[str]:
+    """Load recent dynamic candidate symbols from Redis snapshots.
+
+    This is best-effort: stale/missing Redis should never block the baseline
+    scanner because the fixed universe still provides a safe fallback.
+    """
+    try:
+        if redis_client is None:
+            from shared.streaming.client import RedisClient
+
+            redis_client = RedisClient.get_client()
+    except Exception as exc:  # noqa: BLE001 - optional runtime dependency
+        logger.debug("Redis candidate source unavailable: %s", exc)
+        return []
+
+    codes: list[str] = []
+    for key in keys:
+        key = str(key).strip()
+        if not key:
+            continue
+        try:
+            payload = _json_loads(redis_client.get(key))
+        except Exception as exc:  # noqa: BLE001 - ignore malformed optional source
+            logger.debug("Failed to read Redis candidate key %s: %s", key, exc)
+            continue
+        codes.extend(extract_candidate_symbols(payload))
+
+    return _dedupe_symbols(codes)
 
 
 def get_clickhouse_client():
@@ -235,19 +341,29 @@ def compute_indicators(
     return {k: v for k, v in result.items() if v is not None}
 
 
-def publish_to_redis(indicators: dict[str, dict], redis_client=None) -> None:
+def publish_to_redis(
+    indicators: dict[str, dict],
+    redis_client=None,
+    *,
+    metadata: dict[str, Any] | None = None,
+) -> None:
     """Publish indicator dict to Redis."""
     if redis_client is None:
         from shared.streaming.client import RedisClient
 
         redis_client = RedisClient.get_client()
 
+    payload: dict[str, Any] = {
+        "indicators": indicators,
+        "computed_at": datetime.now().isoformat(),
+        "symbol_count": len(indicators),
+    }
+    if metadata:
+        payload.update(metadata)
+
     payload = json.dumps(
-        {
-            "indicators": indicators,
-            "computed_at": datetime.now().isoformat(),
-            "symbol_count": len(indicators),
-        }
+        payload,
+        ensure_ascii=False,
     )
     redis_client.set(REDIS_KEY, payload, ex=REDIS_TTL)
     logger.info(
@@ -274,15 +390,47 @@ def main():
         default=int(os.getenv("STOCK_DAILY_MAX_STALE_TRADING_DAYS", "1")),
         help="Maximum allowed trading-day lag versus previous trading day",
     )
+    parser.add_argument(
+        "--include-redis-candidates",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Include recent Redis candidates from fusion/screener snapshots "
+            "(default: true)"
+        ),
+    )
+    parser.add_argument(
+        "--redis-candidate-keys",
+        type=str,
+        default=os.getenv(
+            "STOCK_DAILY_REDIS_CANDIDATE_KEYS",
+            ",".join(DEFAULT_REDIS_CANDIDATE_KEYS),
+        ),
+        help="Comma-separated Redis keys to scan for dynamic stock candidates",
+    )
     args = parser.parse_args()
 
     symbols = args.symbols.split(",") if args.symbols else DEFAULT_SYMBOLS
-    symbols = [s.strip() for s in symbols if s.strip()]
+    baseline_count = len(_dedupe_symbols(symbols))
+    redis_candidates: list[str] = []
+    if args.include_redis_candidates:
+        redis_keys = [k.strip() for k in args.redis_candidate_keys.split(",")]
+        redis_candidates = load_redis_candidate_symbols(keys=redis_keys)
+        if redis_candidates:
+            logger.info(
+                "Loaded %d Redis candidate symbols from %d keys",
+                len(redis_candidates),
+                len([k for k in redis_keys if k]),
+            )
+    symbols = _dedupe_symbols([*symbols, *redis_candidates])
 
     expected_latest = get_previous_trading_day()
     logger.info(
-        "Computing daily indicators for %d symbols (last %d days, expected_latest=%s)",
+        "Computing daily indicators for %d symbols "
+        "(baseline=%d redis_candidates=%d, last %d days, expected_latest=%s)",
         len(symbols),
+        baseline_count,
+        len(redis_candidates),
         args.days,
         expected_latest,
     )
@@ -342,7 +490,19 @@ def main():
             errors += 1
 
     if results:
-        publish_to_redis(results)
+        publish_to_redis(
+            results,
+            metadata={
+                "requested_symbol_count": len(symbols),
+                "baseline_symbol_count": baseline_count,
+                "redis_candidate_count": len(redis_candidates),
+                "error_count": errors,
+                "expected_latest": (
+                    expected_latest.isoformat() if expected_latest else None
+                ),
+                "max_stale_trading_days": args.max_stale_trading_days,
+            },
+        )
     else:
         logger.warning("No indicators computed — nothing published")
 
