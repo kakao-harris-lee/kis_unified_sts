@@ -128,6 +128,8 @@ class RedisSnapshot:
     universe_count: int
     daily_indicators_exists: bool
     daily_indicators_count: int
+    daily_strategy_candidate_count: int
+    daily_strategy_counts: dict[str, int]
 
 
 @dataclass(frozen=True)
@@ -150,6 +152,8 @@ class VerificationReport:
     issues: list[GateIssue]
     trade_metrics: TradeMetrics
     active_strategy_names: list[str]
+    active_daily_strategy_names: list[str]
+    active_daily_candidate_count: int
     active_trade_metrics: TradeMetrics
     active_issues: list[GateIssue]
     redis_snapshot: RedisSnapshot
@@ -391,7 +395,7 @@ def fetch_trade_rows(
     ]
 
 
-def load_active_stock_strategy_names() -> list[str]:
+def load_active_stock_strategy_names(*, timeframe: str | None = None) -> list[str]:
     """Return strategy names currently loaded by stock runtime.
 
     The orchestrator/StrategyManager loads ``strategy.enabled: true`` from
@@ -402,10 +406,15 @@ def load_active_stock_strategy_names() -> list[str]:
     from shared.config.loader import ConfigLoader
 
     names: list[str] = []
+    expected_timeframe = str(timeframe).strip().lower() if timeframe else None
     for strategy_config in ConfigLoader.load_all_strategies("stock", enabled_only=True):
         strategy = strategy_config.get("strategy", {})
         if not isinstance(strategy, dict):
             continue
+        if expected_timeframe:
+            actual_timeframe = str(strategy.get("timeframe", "")).strip().lower()
+            if actual_timeframe != expected_timeframe:
+                continue
         name = str(strategy.get("name", "")).strip()
         if not name:
             continue
@@ -630,7 +639,43 @@ def _count_codes_from_payload(payload: Any) -> int:
     indicators = payload.get("indicators")
     if isinstance(indicators, dict):
         return len(indicators)
+    strategies = payload.get("strategies")
+    if isinstance(strategies, dict):
+        return len(
+            {
+                str(code).strip()
+                for values in strategies.values()
+                if isinstance(values, list)
+                for code in values
+                if str(code).strip()
+            }
+        )
     return 0
+
+
+def _strategy_counts_from_payload(payload: Any) -> dict[str, int]:
+    if not isinstance(payload, dict):
+        return {}
+    raw = payload.get("strategy_counts")
+    if isinstance(raw, dict):
+        counts: dict[str, int] = {}
+        for name, value in raw.items():
+            strategy = str(name).strip()
+            if not strategy:
+                continue
+            counts[strategy] = max(0, _as_int(value, 0))
+        return counts
+
+    strategies = payload.get("strategies")
+    if not isinstance(strategies, dict):
+        return {}
+    counts = {}
+    for name, values in strategies.items():
+        strategy = str(name).strip()
+        if not strategy:
+            continue
+        counts[strategy] = len(values) if isinstance(values, list) else 0
+    return counts
 
 
 def fetch_redis_snapshot(
@@ -676,21 +721,28 @@ def fetch_redis_snapshot(
         ):
             daily_signals += 1
 
-    def load_counted_key(name: str) -> tuple[bool, int]:
+    def load_payload(name: str) -> tuple[bool, dict[str, Any]]:
         raw = redis_client.get(keys[name])
         if raw is None:
-            return False, 0
+            return False, {}
         try:
             payload = _safe_json(raw)
         except (TypeError, ValueError):
-            return True, 0
-        return True, _count_codes_from_payload(payload)
+            return True, {}
+        return True, payload if isinstance(payload, dict) else {}
+
+    def load_counted_key(name: str) -> tuple[bool, int]:
+        exists, payload = load_payload(name)
+        return exists, _count_codes_from_payload(payload)
 
     trade_targets_exists, trade_targets_count = load_counted_key("trade_targets_key")
     universe_exists, universe_count = load_counted_key("universe_key")
-    daily_indicators_exists, daily_indicators_count = load_counted_key(
+    daily_indicators_exists, daily_indicators_payload = load_payload(
         "daily_indicators_key"
     )
+    daily_indicators_count = _count_codes_from_payload(daily_indicators_payload)
+    daily_strategy_counts = _strategy_counts_from_payload(daily_indicators_payload)
+    daily_strategy_candidate_count = sum(daily_strategy_counts.values())
 
     freshness = {}
     raw_freshness = redis_client.get(keys["data_freshness_key"])
@@ -733,6 +785,8 @@ def fetch_redis_snapshot(
         universe_count=universe_count,
         daily_indicators_exists=daily_indicators_exists,
         daily_indicators_count=daily_indicators_count,
+        daily_strategy_candidate_count=daily_strategy_candidate_count,
+        daily_strategy_counts=daily_strategy_counts,
     )
 
 
@@ -885,13 +939,14 @@ def evaluate_report(
         live_redis_gates_enabled
         and config.require_trade_targets
         and not redis_snapshot.trade_targets_exists
+        and redis_snapshot.daily_strategy_candidate_count <= 0
     ):
         add(
             "FAIL",
             "trade_targets_missing",
             "missing",
-            "present",
-            "Fusion/screener trade target snapshot is missing.",
+            "trade target snapshot or daily strategy watchlist present",
+            "Fusion/screener trade target snapshot is missing and no daily strategy watchlist is available as an active-runtime fallback.",
         )
 
     if (
@@ -928,6 +983,57 @@ def evaluate_report(
 
     issues.extend(evaluate_trade_metric_gates(config, metrics))
     return issues
+
+
+def evaluate_active_daily_watchlist_gates(
+    config: VerificationConfig,
+    redis_snapshot: RedisSnapshot,
+    active_daily_strategy_names: list[str],
+) -> tuple[list[GateIssue], int]:
+    """Check daily-strategy candidate readiness for the active stock runtime."""
+    active_daily_names = sorted(set(active_daily_strategy_names))
+    if not active_daily_names:
+        return [], 0
+
+    active_candidate_count = sum(
+        redis_snapshot.daily_strategy_counts.get(name, 0) for name in active_daily_names
+    )
+
+    live_redis_gates_enabled = (
+        redis_snapshot.report_is_trading_day
+        or not config.skip_live_redis_gates_on_non_trading_day
+    )
+    if not live_redis_gates_enabled:
+        return [], active_candidate_count
+
+    issues: list[GateIssue] = []
+    missing = [
+        name
+        for name in active_daily_names
+        if name not in redis_snapshot.daily_strategy_counts
+    ]
+    if redis_snapshot.daily_indicators_exists and missing:
+        issues.append(
+            GateIssue(
+                "FAIL",
+                "active_daily_watchlist_missing",
+                ",".join(missing),
+                "all active daily strategies represented in system:daily_indicators:latest strategies",
+                "Daily indicator snapshot exists but does not include candidate watchlists for every active daily strategy.",
+            )
+        )
+    elif active_candidate_count == 0:
+        issues.append(
+            GateIssue(
+                "WARN",
+                "active_daily_no_candidates",
+                "0",
+                "> 0",
+                "Enabled daily strategies have no precomputed candidates; paper trading may legitimately stay idle, but objective evidence cannot accumulate.",
+            )
+        )
+
+    return issues, active_candidate_count
 
 
 def evaluate_trade_metric_gates(
@@ -1055,6 +1161,8 @@ def _render_markdown(report: VerificationReport, config: VerificationConfig) -> 
         "## Active Strategy Metrics",
         "",
         f"- Active strategies: `{', '.join(report.active_strategy_names) or 'none'}`",
+        f"- Active daily strategies: `{', '.join(report.active_daily_strategy_names) or 'none'}`",
+        f"- Active daily candidates: `{report.active_daily_candidate_count}`",
         f"- Trades: `{active.trade_count}`",
         f"- Total PnL: `{active.total_pnl:,.0f}` KRW",
         f"- Monthly expected return: `{active.monthly_expected_return_pct:.2f}%` (target `>= {config.min_monthly_expected_return_pct:.2f}%`)",
@@ -1075,6 +1183,7 @@ def _render_markdown(report: VerificationReport, config: VerificationConfig) -> 
         f"- Trade targets: `{r.trade_targets_exists}` count=`{r.trade_targets_count}`",
         f"- Universe: `{r.universe_exists}` count=`{r.universe_count}`",
         f"- Daily indicators: `{r.daily_indicators_exists}` count=`{r.daily_indicators_count}`",
+        f"- Daily strategy candidates: total=`{r.daily_strategy_candidate_count}` counts=`{r.daily_strategy_counts}`",
         "",
     ]
     if report.source_errors:
@@ -1159,6 +1268,7 @@ def _format_notification(report: VerificationReport) -> str:
         f"trades: <code>{m.trade_count}</code>, pnl: <code>{m.total_pnl:,.0f}</code>",
         f"monthly_expected: <code>{m.monthly_expected_return_pct:.2f}%</code>, win_rate: <code>{m.win_rate_pct:.2f}%</code>, mdd: <code>{m.max_drawdown_pct:.2f}%</code>",
         f"active_trades: <code>{active.trade_count}</code>, active_monthly_expected: <code>{active.monthly_expected_return_pct:.2f}%</code>, active_win_rate: <code>{active.win_rate_pct:.2f}%</code>",
+        f"active_daily_candidates: <code>{report.active_daily_candidate_count}</code>",
     ]
     verdict_issues = _issues_for_verdict(report)
     if verdict_issues:
@@ -1201,6 +1311,7 @@ def build_report(
     redis_snapshot: RedisSnapshot,
     source_errors: list[str] | None = None,
     active_strategy_names: list[str] | None = None,
+    active_daily_strategy_names: list[str] | None = None,
 ) -> VerificationReport:
     window_start, window_end = _window_for(report_date, config.lookback_days)
     metrics = summarize_trades(
@@ -1221,6 +1332,12 @@ def build_report(
     )
     errors = source_errors or []
     issues = evaluate_report(config, metrics, redis_snapshot, source_errors=errors)
+    active_daily_names = sorted(set(active_daily_strategy_names or []))
+    daily_issues, active_daily_candidate_count = evaluate_active_daily_watchlist_gates(
+        config,
+        redis_snapshot,
+        active_daily_names,
+    )
     active_issues: list[GateIssue] = []
     if active_names:
         active_issues = evaluate_trade_metric_gates(
@@ -1231,6 +1348,7 @@ def build_report(
             insufficient_trades_severity="WARN",
             detail_prefix="Enabled-strategy scope: ",
         )
+        active_issues.extend(daily_issues)
     verdict = _verdict_from_issues(
         _select_verdict_issues(issues, active_issues, active_names)
     )
@@ -1244,6 +1362,8 @@ def build_report(
         issues=issues,
         trade_metrics=metrics,
         active_strategy_names=active_names,
+        active_daily_strategy_names=active_daily_names,
+        active_daily_candidate_count=active_daily_candidate_count,
         active_trade_metrics=active_metrics,
         active_issues=active_issues,
         redis_snapshot=redis_snapshot,
@@ -1277,6 +1397,8 @@ def empty_redis_snapshot(report_date: date) -> RedisSnapshot:
         universe_count=0,
         daily_indicators_exists=False,
         daily_indicators_count=0,
+        daily_strategy_candidate_count=0,
+        daily_strategy_counts={},
     )
 
 
@@ -1313,8 +1435,12 @@ def main() -> int:
         source_errors: list[str] = []
         try:
             active_strategy_names = load_active_stock_strategy_names()
+            active_daily_strategy_names = load_active_stock_strategy_names(
+                timeframe="daily"
+            )
         except Exception as exc:  # noqa: BLE001
             active_strategy_names = []
+            active_daily_strategy_names = []
             source_errors.append(_source_error("active_strategy_config_failed", exc))
         try:
             rows = fetch_trade_rows(config, window_start, window_end)
@@ -1333,6 +1459,7 @@ def main() -> int:
             redis_snapshot=redis_snapshot,
             source_errors=source_errors,
             active_strategy_names=active_strategy_names,
+            active_daily_strategy_names=active_daily_strategy_names,
         )
         write_report(report, config)
         if (
@@ -1356,6 +1483,7 @@ def main() -> int:
             print(
                 "active: "
                 f"strategies={','.join(report.active_strategy_names) or 'none'} "
+                f"daily_candidates={report.active_daily_candidate_count} "
                 f"trades={report.active_trade_metrics.trade_count} "
                 f"monthly_expected={report.active_trade_metrics.monthly_expected_return_pct:.2f}% "
                 f"win_rate={report.active_trade_metrics.win_rate_pct:.2f}% "
