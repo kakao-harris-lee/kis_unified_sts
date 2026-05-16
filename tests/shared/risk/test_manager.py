@@ -10,9 +10,9 @@ Tests portfolio-level risk management including:
 
 import pytest
 from datetime import date, datetime
-from unittest.mock import Mock, AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock, patch, MagicMock
 
-from shared.risk.config import RiskConfig, AssetLimits
+from shared.risk.config import RiskConfig
 from shared.risk.manager import RiskManager
 from shared.risk.models import (
     BlockReason,
@@ -207,6 +207,38 @@ class TestUpdatePositions:
         assert manager.metrics.total_positions == 0
         assert manager.metrics.total_unrealized_pnl == 0.0
 
+    def test_realized_pnl_persists_after_positions_close(self, manager):
+        """Closed losses remain in risk P&L after open positions disappear."""
+        manager.record_realized_pnl(-600_000)
+        manager.update_positions({})
+
+        assert manager.metrics.total_positions == 0
+        assert manager.metrics.total_realized_pnl == -600_000
+        assert manager.metrics.total_unrealized_pnl == 0.0
+        assert manager.metrics.portfolio_value == 9_400_000
+        assert manager.state.daily_realized_pnl == -600_000
+        assert manager.state.daily_pnl == -600_000
+        assert manager.state.daily_pnl_pct == -6.0
+
+        assert manager.can_open_position("stock") is False
+        assert manager.state.block_reason == BlockReason.DAILY_LOSS_LIMIT
+
+    def test_realized_pnl_updates_drawdown_without_open_positions(self):
+        """Realized losses alone can trip the drawdown entry gate."""
+        config = RiskConfig(
+            daily_loss_limit_pct=20.0,
+            max_total_positions=20,
+            initial_capital=10_000_000,
+        )
+        manager = RiskManager(config)
+
+        manager.record_realized_pnl(-700_000)
+        manager.update_positions({})
+
+        assert manager.state.drawdown_pct == pytest.approx(7.0)
+        assert manager.state.drawdown_level == DrawdownLevel.CRITICAL
+        assert manager.can_open_position("stock") is False
+
 
 class TestDailyLossLimit:
     """Test daily loss limit checking"""
@@ -366,6 +398,7 @@ class TestDailyReset:
         """Test daily reset clears daily metrics"""
         # Set some state
         manager.state.daily_pnl = 100_000
+        manager.state.daily_realized_pnl = 75_000
         manager.state.daily_pnl_pct = 1.0
         manager.state.alerts_sent.add("test_alert")
         manager.state.peak_portfolio_value = 10_500_000
@@ -376,6 +409,7 @@ class TestDailyReset:
         manager.reset_daily()
 
         assert manager.state.daily_pnl == 0.0
+        assert manager.state.daily_realized_pnl == 0.0
         assert manager.state.daily_pnl_pct == 0.0
         assert len(manager.state.alerts_sent) == 0
         assert manager.state.peak_portfolio_value == 9_900_000

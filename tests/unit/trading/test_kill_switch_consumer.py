@@ -69,9 +69,7 @@ class _FakeOrchestrator:
 
         self._market_data_running = False  # controlled per-test
         self._market_data_lock = asyncio.Lock()
-        self._market_data_snapshot: dict[str, Any] = {
-            "A05603": {"close": 360.0}
-        }
+        self._market_data_snapshot: dict[str, Any] = {"A05603": {"close": 360.0}}
 
         # Position tracker stub
         self._position_tracker = MagicMock()
@@ -112,6 +110,9 @@ class _FakeOrchestrator:
     def _record_running_totals(self, closed) -> None:
         pass
 
+    async def _record_risk_realized_pnl(self, pnl: float) -> None:
+        self._last_risk_realized_pnl = pnl
+
     async def _persist_closed_position(self, closed, strategy: str) -> None:
         pass
 
@@ -147,7 +148,9 @@ class _FakeOrchestrator:
         return await bound()
 
 
-def _make_closed_pos(position_id: str, exit_price: float, reason: str) -> MagicMock:  # noqa: ARG001
+def _make_closed_pos(
+    position_id: str, exit_price: float, reason: str
+) -> MagicMock:  # noqa: ARG001
     closed = MagicMock()
     closed.id = position_id
     closed.unrealized_pnl = 0.0
@@ -301,7 +304,9 @@ async def _run_loop_for_ticks(
 
     orch._market_data_running = True
 
-    with patch("shared.streaming.client.RedisClient.get_client", return_value=redis_mock):
+    with patch(
+        "shared.streaming.client.RedisClient.get_client", return_value=redis_mock
+    ):
         task = asyncio.create_task(bound(ks_cfg))
         await asyncio.sleep(sleep_between * ticks)
         task.cancel()
@@ -336,7 +341,9 @@ class TestConsumerLoopNewEvent:
 
         redis_mock = MagicMock()
         redis_mock.get.return_value = "reason=daily_loss"
-        redis_mock.xrevrange.return_value = [(event_id, {"event": "force_flatten_requested"})]
+        redis_mock.xrevrange.return_value = [
+            (event_id, {"event": "force_flatten_requested"})
+        ]
         redis_mock.delete = MagicMock(return_value=1)
 
         # No pre-startup last-seen; consumer will see the event as new.

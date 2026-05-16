@@ -2118,6 +2118,16 @@ class TradingOrchestrator:
         except (AttributeError, ValueError, TypeError) as e:
             logger.debug("record_running_totals skipped: %s", e)
 
+    async def _record_risk_realized_pnl(self, pnl: float) -> None:
+        """Feed closed-trade P&L into the entry risk gate immediately."""
+        if self._risk_manager is None:
+            return
+        try:
+            self._risk_manager.record_realized_pnl(float(pnl))
+            await self._risk_manager.save_to_redis()
+        except (InfrastructureError, ValidationError, ValueError, TypeError) as e:
+            logger.warning("risk realized P&L update skipped: %s", e)
+
     ACCUMULATION_REDIS_KEY = "system:accumulation:latest"
 
     def _refresh_accumulation_candidates(self) -> bool:
@@ -3387,7 +3397,9 @@ class TradingOrchestrator:
                 pos.id, price, reason="EOD_CLOSE"
             )
             if closed:
-                self.total_pnl += closed.unrealized_pnl
+                pnl = closed.unrealized_pnl
+                self.total_pnl += pnl
+                await self._record_risk_realized_pnl(pnl)
                 if self._state_publisher:
                     self._state_publisher.publish_position_closed(closed)
                     self._record_running_totals(closed)
@@ -4102,6 +4114,7 @@ class TradingOrchestrator:
                     flat_count += 1
                     pnl = getattr(closed, "unrealized_pnl", 0.0) or 0.0
                     self.total_pnl += pnl
+                    await self._record_risk_realized_pnl(pnl)
                     self.total_trades += 1
                     if self._state_publisher:
                         self._state_publisher.publish_position_closed(closed)
@@ -6413,14 +6426,14 @@ class TradingOrchestrator:
                     f"Failed to record exit in regime tracker: {e}", exc_info=True
                 )
 
-        # Position.current_price is set to exit_price on close,
-        # so unrealized_pnl effectively equals realized PnL.
-        self.total_pnl += closed.unrealized_pnl
-        self._sync_open_positions_metric()
-
         name = getattr(closed, "name", "") or self._symbol_names.get(signal.code, "")
         pnl = closed.unrealized_pnl
         pnl_pct = closed.profit_pct
+        # Position.current_price is set to exit_price on close,
+        # so unrealized_pnl effectively equals realized PnL.
+        self.total_pnl += pnl
+        await self._record_risk_realized_pnl(pnl)
+        self._sync_open_positions_metric()
 
         strategy_name = signal.strategy or closed.strategy or ""
         holding_mins = getattr(signal, "holding_minutes", None) or 0

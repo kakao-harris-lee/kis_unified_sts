@@ -228,6 +228,8 @@ class RiskManager:
         """Update portfolio metrics from current positions
 
         Recalculates all portfolio metrics including exposure, P&L, and drawdown.
+        The risk window's realized P&L is preserved and combined with the
+        current open-position P&L so closed losses still affect entry gates.
 
         Args:
             positions_by_asset: Dict mapping asset_class to list of Position objects
@@ -236,16 +238,39 @@ class RiskManager:
 
         # Update portfolio metrics
         self.metrics.update_from_positions(
-            positions_by_asset, self.config.initial_capital
+            positions_by_asset,
+            self.config.initial_capital,
+            realized_pnl=self.state.daily_realized_pnl,
         )
 
-        # Calculate realized P&L from closed positions (if tracking)
-        # For now, we only track unrealized P&L
-        realized_pnl = 0.0
-        unrealized_pnl = self.metrics.total_unrealized_pnl
+        self._update_state_from_metrics()
+        self._log_risk_thresholds()
 
-        # Update risk state
-        self.state.update_daily_pnl(realized_pnl, unrealized_pnl)
+    def record_realized_pnl(self, pnl: float) -> None:
+        """Record realized P&L from a just-closed trade.
+
+        ``update_positions()`` only sees open positions, so without this call a
+        stop-loss that has already closed disappears from both daily-loss and
+        drawdown checks. This method keeps realized P&L in the risk state until
+        the normal daily reset.
+        """
+        self._check_and_reset_daily()
+        self.state.daily_realized_pnl += float(pnl)
+        self.metrics.total_realized_pnl = self.state.daily_realized_pnl
+        self.metrics.portfolio_value = (
+            self.config.initial_capital
+            + self.metrics.total_realized_pnl
+            + self.metrics.total_unrealized_pnl
+        )
+        self._update_state_from_metrics()
+        self._log_risk_thresholds()
+
+    def _update_state_from_metrics(self) -> None:
+        """Synchronize risk state from the latest realized/unrealized metrics."""
+        self.state.update_daily_pnl(
+            self.state.daily_realized_pnl,
+            self.metrics.total_unrealized_pnl,
+        )
         self.state.update_portfolio_value(
             self.metrics.portfolio_value, self.config.initial_capital
         )
@@ -257,6 +282,8 @@ class RiskManager:
                 thresholds.warning, thresholds.danger, thresholds.critical
             )
 
+    def _log_risk_thresholds(self) -> None:
+        """Log threshold proximity after risk-state updates."""
         # Log significant changes
         if self.state.daily_pnl_pct <= -self.config.daily_loss_limit_pct * 0.8:
             logger.warning(
