@@ -1,14 +1,22 @@
 replay:
   scan_config: "stock_entry_pattern_scan.yaml"
   output_dir: "reports/stock_entry_pattern_replay"
-  pattern_rank: 1
+  pattern_rank: 0
+  pattern_ranks: []
+  top_pattern_count: 10
   pattern_name: ""
+  pattern_names: []
   require_complete_horizon: true
-  entry_sort: "code"
+  entry_sort:
+    - "pattern_priority"
+    - "pattern_score_desc"
+    - "volume_ratio_desc"
+    - "rsi5_asc"
+    - "atr_pct_desc"
 
   initial_capital: 100000000
   hold_days: [5, 10, 20]
-  order_amount_per_stock: [10000000, 20000000, 30000000]
+  order_amount_per_stock: [20000000, 30000000, 40000000]
   max_positions: [3, 5, 8]
   max_daily_entries: 0
 

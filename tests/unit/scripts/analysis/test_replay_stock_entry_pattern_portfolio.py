@@ -51,9 +51,14 @@ def _feature_data(codes: tuple[str, ...] = ("AAA", "BBB")) -> pd.DataFrame:
     return data
 
 
-def _pattern(params: dict | None = None) -> PatternResult:
+def _pattern(
+    params: dict | None = None,
+    *,
+    name: str = "test_pullback",
+    score: float = 10.0,
+) -> PatternResult:
     return PatternResult(
-        name="test_pullback",
+        name=name,
         description="test",
         params=params
         or {
@@ -72,7 +77,7 @@ def _pattern(params: dict | None = None) -> PatternResult:
         rank_median_net_return_pct=1.0,
         rank_profit_factor=2.0,
         horizon_metrics={},
-        score=10.0,
+        score=score,
     )
 
 
@@ -101,6 +106,35 @@ def test_replay_signals_applies_portfolio_constraints():
     assert result.rejected_max_positions > 0 or result.rejected_existing_position > 0
     assert result.max_drawdown_pct >= 0.0
     assert all(trade.run_id == spec.run_id for trade in result.trades)
+
+
+def test_replay_pattern_set_deduplicates_same_day_symbol_signals():
+    data = _feature_data(("AAA",))
+    spec = mod.ReplaySpec(
+        hold_days=5,
+        initial_capital=100_000,
+        order_amount_per_stock=50_000,
+        max_positions=1,
+        max_daily_entries=0,
+        costs=mod.ReplayCosts(
+            commission_rate=0.0,
+            slippage_rate=0.0,
+            tax_rate=0.0,
+        ),
+        require_complete_horizon=True,
+        entry_sort="pattern_priority",
+    )
+    patterns = [
+        _pattern(name="primary", score=20.0),
+        _pattern(name="duplicate", score=30.0),
+    ]
+
+    single = mod.replay_signals(data, patterns[0], spec)
+    combined = mod.replay_pattern_set(data, patterns, spec)
+
+    assert combined.total_signals == single.total_signals * 2
+    assert combined.completed_signal_candidates == single.completed_signal_candidates
+    assert combined.admitted_trades == single.admitted_trades
 
 
 def test_run_replay_selects_ranked_pattern(monkeypatch):
@@ -139,7 +173,7 @@ def test_run_replay_selects_ranked_pattern(monkeypatch):
         ),
     )
 
-    results, pattern, summary = mod.run_replay(
+    results, patterns, summary = mod.run_replay(
         {
             "scan_config": "unused.yaml",
             "pattern_rank": 1,
@@ -155,10 +189,118 @@ def test_run_replay_selects_ranked_pattern(monkeypatch):
         }
     )
 
-    assert pattern.name == "test_pullback"
+    assert [pattern.name for pattern in patterns] == ["test_pullback"]
+    assert summary["pattern_count"] == 1
     assert summary["runs"] == 1
     assert len(results) == 1
     assert results[0].admitted_trades > 0
+
+
+def test_run_replay_selects_top_pattern_count(monkeypatch):
+    data = _feature_data()
+    patterns = [
+        _pattern(name="first", score=30.0),
+        _pattern(
+            {
+                "close_above_sma200": True,
+                "atr_pct_min": 0.0,
+                "rsi5_max": 100.0,
+            },
+            name="second",
+            score=20.0,
+        ),
+    ]
+    monkeypatch.setattr(mod, "_load_scan_config", lambda _path: {})
+    monkeypatch.setattr(
+        mod,
+        "_load_feature_data",
+        lambda _cfg, *, horizons, loader: (
+            data,
+            {
+                "symbols_requested": 2,
+                "symbols_loaded": 2,
+                "symbols_missing": [],
+                "start": "2025-08-01",
+                "end": "2025-09-17",
+                "data_start": "2025-01-01",
+                "rows": len(data),
+            },
+        ),
+    )
+    monkeypatch.setattr(
+        mod, "_rank_patterns", lambda _data, _cfg, *, horizons: patterns
+    )
+
+    results, selected, summary = mod.run_replay(
+        {
+            "scan_config": "unused.yaml",
+            "pattern_rank": 0,
+            "top_pattern_count": 2,
+            "hold_days": [5],
+            "initial_capital": 100_000,
+            "order_amount_per_stock": [50_000],
+            "max_positions": [1],
+            "costs": {
+                "commission_rate": 0.0,
+                "slippage_rate": 0.0,
+                "tax_rate": 0.0,
+            },
+        }
+    )
+
+    assert [pattern.name for pattern in selected] == ["first", "second"]
+    assert summary["pattern_count"] == 2
+    assert summary["pattern_label"].startswith("combo_2:")
+    assert len(results) == 1
+
+
+def test_run_replay_expands_entry_sort_grid(monkeypatch):
+    data = _feature_data()
+    monkeypatch.setattr(mod, "_load_scan_config", lambda _path: {})
+    monkeypatch.setattr(
+        mod,
+        "_load_feature_data",
+        lambda _cfg, *, horizons, loader: (
+            data,
+            {
+                "symbols_requested": 2,
+                "symbols_loaded": 2,
+                "symbols_missing": [],
+                "start": "2025-08-01",
+                "end": "2025-09-17",
+                "data_start": "2025-01-01",
+                "rows": len(data),
+            },
+        ),
+    )
+    monkeypatch.setattr(
+        mod,
+        "_rank_patterns",
+        lambda _data, _cfg, *, horizons: [_pattern(name="first")],
+    )
+
+    results, _selected, summary = mod.run_replay(
+        {
+            "scan_config": "unused.yaml",
+            "pattern_rank": 1,
+            "hold_days": [5],
+            "initial_capital": 100_000,
+            "order_amount_per_stock": [50_000],
+            "max_positions": [1],
+            "entry_sort": ["pattern_priority", "rsi5_asc"],
+            "costs": {
+                "commission_rate": 0.0,
+                "slippage_rate": 0.0,
+                "tax_rate": 0.0,
+            },
+        }
+    )
+
+    assert summary["runs"] == 2
+    assert {result.run_id.split("|sort=")[1] for result in results} == {
+        "pattern_priority",
+        "rsi5_asc",
+    }
 
 
 def test_write_outputs_creates_json_markdown_and_trades(tmp_path):
