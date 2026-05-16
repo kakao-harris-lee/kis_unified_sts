@@ -19,6 +19,7 @@ Production crontab on the deploy server. Maintained manually via `crontab -e` â€
 - `55 8 * * 1-5 /home/deploy/project/kis_unified_sts/scripts/cron/stock_trading.sh start`
   - Starts: Multi-strategy stock orchestrator (bb_reversion, trend_pullback, momentum_breakout, vr_composite)
   - Time: 08:55 (5 min before market open)
+  - Capital: `${STOCK_PAPER_INITIAL_CAPITAL:-100000000}`; keep `config/stock_paper_verification.yaml` aligned with the same env var.
 
 - `2-52/5 9-15 * * 1-5 /home/deploy/project/kis_unified_sts/scripts/cron/stock_trading.sh start >> /home/deploy/project/kis_unified_sts/logs/stock_trading_watchdog_$(date +\%Y\%m\%d).log 2>&1`
   - Watchdog: re-runs idempotent start during market hours

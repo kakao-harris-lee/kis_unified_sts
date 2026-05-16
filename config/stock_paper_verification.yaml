@@ -2,7 +2,7 @@ report:
   output_dir: "reports/daily_verification/stock"
   lookback_days: ${STOCK_PAPER_VERIFY_LOOKBACK_DAYS:22}
   monthly_trading_days: ${STOCK_PAPER_VERIFY_MONTHLY_TRADING_DAYS:22}
-  initial_capital: ${STOCK_PAPER_INITIAL_CAPITAL:10000000}
+  initial_capital: ${STOCK_PAPER_INITIAL_CAPITAL:100000000}
   notify_on_issues: ${STOCK_PAPER_VERIFY_NOTIFY_ON_ISSUES:true}
 
 targets:

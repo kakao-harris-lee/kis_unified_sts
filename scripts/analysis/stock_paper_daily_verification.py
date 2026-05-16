@@ -237,7 +237,7 @@ def _load_config() -> VerificationConfig:
         lookback_days=max(1, _as_int(report.get("lookback_days"), 22)),
         monthly_trading_days=max(1, _as_int(report.get("monthly_trading_days"), 22)),
         initial_capital=max(
-            1.0, _as_float(report.get("initial_capital"), 10_000_000.0)
+            1.0, _as_float(report.get("initial_capital"), 100_000_000.0)
         ),
         notify_on_issues=_as_bool(report.get("notify_on_issues"), True),
         min_daily_signals=max(0, _as_int(targets.get("min_daily_signals"), 1)),

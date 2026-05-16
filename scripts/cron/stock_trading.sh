@@ -15,6 +15,7 @@ VENV="$PROJECT_DIR/.venv/bin/activate"
 STS_BIN="$PROJECT_DIR/.venv/bin/sts"
 PID_FILE="$PROJECT_DIR/pids/stock_trading.pid"
 PROC_PATTERN_STS="$STS_BIN trade start --asset stock"
+STOCK_CAPITAL_DEFAULT=100000000
 
 mkdir -p "$LOG_DIR"
 mkdir -p "$PROJECT_DIR/pids"
@@ -64,6 +65,7 @@ start_trading() {
 
     # Load environment variables
     set -a && source .env && set +a
+    STOCK_CAPITAL="${STOCK_PAPER_INITIAL_CAPITAL:-$STOCK_CAPITAL_DEFAULT}"
 
     # Check trading day
     IS_TRADING_DAY=$(python3 -c "
@@ -78,6 +80,7 @@ print('1' if is_trading_day(date.today()) else '0')
     fi
 
     log "Trading day confirmed. Starting stock trading..."
+    log "Stock paper initial capital: $STOCK_CAPITAL"
 
     # Force stock metrics endpoint to match Prometheus scrape target.
     # Prevent inherited shell env (e.g. PROMETHEUS_PORT=8080) from breaking scrape.
@@ -87,7 +90,7 @@ print('1' if is_trading_day(date.today()) else '0')
     # Start trading via fully detached session.
     setsid bash -c "exec '$STS_BIN' trade start \
         --asset stock \
-        --capital 100000000 \
+        --capital '$STOCK_CAPITAL' \
         --paper \
         --daemon" \
         >> "$LOG_FILE" 2>&1 < /dev/null &
