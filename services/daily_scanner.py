@@ -24,6 +24,10 @@ from typing import ClassVar, Optional
 
 from pydantic import Field
 
+from shared.collector.historical.calendar import (
+    get_previous_trading_day,
+    trading_day_lag,
+)
 from shared.config.base import ServiceConfigBase
 from shared.db.client import get_clickhouse_client
 from shared.db.config import ClickHouseConfig
@@ -85,6 +89,11 @@ class DailyScannerConfig(ServiceConfigBase):
     me_round_trip_cost: float = Field(default=0.005, description="Round-trip trading cost (slippage + commission)")
     me_min_atr_cost_ratio: float = Field(
         default=2.0, description="Minimum ratio of ATR to round-trip cost for sufficient edge"
+    )
+    max_stale_trading_days: int = Field(
+        default=1,
+        ge=0,
+        description="Maximum allowed lag between latest daily candle and previous trading day",
     )
 
     # Redis publish params
@@ -372,6 +381,36 @@ class DailyScanner:
         logger.debug("%s passes minimum_edge (atr_pct=%.3f%%)", code, atr_pct * 100)
         return True
 
+    def check_daily_freshness(
+        self,
+        code: str,
+        bars: list[DailyBar],
+        expected_latest: date | None = None,
+    ) -> bool:
+        """Reject stale daily candles before publishing pre-market watchlists."""
+        if not bars:
+            return False
+        if expected_latest is None:
+            expected_latest = get_previous_trading_day()
+        if expected_latest is None:
+            logger.warning("%s daily freshness: previous trading day unavailable", code)
+            return False
+
+        latest = bars[-1].date
+        lag = trading_day_lag(latest, expected_latest)
+        if lag > self.config.max_stale_trading_days:
+            logger.warning(
+                "%s daily freshness: stale latest=%s expected=%s lag=%d trading days "
+                "(max=%d)",
+                code,
+                latest,
+                expected_latest,
+                lag,
+                self.config.max_stale_trading_days,
+            )
+            return False
+        return True
+
     # ------------------------------------------------------------------
     # Data loading
     # ------------------------------------------------------------------
@@ -387,7 +426,7 @@ class DailyScanner:
             List of ``DailyBar`` ordered oldest → newest. Empty on error.
         """
         try:
-            client = get_clickhouse_client()
+            client = get_clickhouse_client(ClickHouseConfig.from_env())
             end_date = date.today()
             start_date = end_date - timedelta(days=lookback_days)
             candles = client.get_daily_candles(code, start_date, end_date)
@@ -438,9 +477,11 @@ class DailyScanner:
         # Filter funnel metrics
         total_input = len(codes)
         loaded_count = 0
+        stale_count = 0
         min_edge_count = 0
         trend_pullback_raw = 0
         momentum_breakout_raw = 0
+        expected_latest = get_previous_trading_day()
 
         logger.info(f"Starting daily scan on {total_input} stocks")
 
@@ -454,6 +495,10 @@ class DailyScanner:
                 continue
 
             loaded_count += 1
+
+            if not self.check_daily_freshness(code, bars, expected_latest):
+                stale_count += 1
+                continue
 
             if not self.check_minimum_edge(code, bars):
                 logger.debug("Skipping %s — minimum edge not met", code)
@@ -475,6 +520,7 @@ class DailyScanner:
         logger.info("Daily Scanner Filter Funnel:")
         logger.info(f"  Universe (input):        {total_input:>5} stocks")
         logger.info(f"  Data loaded:             {loaded_count:>5} stocks ({loaded_count/total_input*100:.1f}%)")
+        logger.info(f"  Stale daily data:        {stale_count:>5} stocks ({stale_count/total_input*100:.1f}%)")
         logger.info(f"  Minimum edge passed:     {min_edge_count:>5} stocks ({min_edge_count/total_input*100:.1f}%)")
         logger.info(f"  Trend pullback (raw):    {trend_pullback_raw:>5} stocks ({trend_pullback_raw/total_input*100:.1f}%)")
         logger.info(f"  Momentum breakout (raw): {momentum_breakout_raw:>5} stocks ({momentum_breakout_raw/total_input*100:.1f}%)")

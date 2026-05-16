@@ -20,15 +20,9 @@ sys.path.insert(0, str(REPO_ROOT))
 # Load environment
 load_dotenv(REPO_ROOT / ".env")
 
-# Same symbols as daily_indicator_scanner.py
-DEFAULT_SYMBOLS = [
-    "005930", "000660", "373220", "207940", "005380",
-    "000270", "068270", "035420", "105560", "055550",
-    "006400", "003670", "012330", "034730", "051910",
-    "028260", "066570", "032830", "096770", "003550",
-    "015760", "034020", "009150", "000810", "086790",
-    "010130", "033780", "003490", "011200", "010950",
-]
+from shared.collector.historical.stock_universe import STOCK_UNIVERSE
+
+DEFAULT_SYMBOLS = [item["code"] for item in STOCK_UNIVERSE]
 
 MIN_MONTHS = 6
 MIN_SYMBOLS = 10

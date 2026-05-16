@@ -18,6 +18,7 @@ mb_max_extension_pct: 15.0
 me_atr_period: 14
 me_round_trip_cost: 0.005
 me_min_atr_cost_ratio: 2.0
+max_stale_trading_days: 1
 
 # Redis publish
 max_watchlist_size: 40

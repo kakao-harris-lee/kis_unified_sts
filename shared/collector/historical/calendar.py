@@ -141,6 +141,31 @@ def get_past_trading_days(days: int, from_date: date = None) -> List[date]:
     return get_trading_days_range(start, from_date)
 
 
+def get_previous_trading_day(from_date: date = None) -> date | None:
+    """Return the trading day immediately before ``from_date``.
+
+    Returns ``None`` only when the local static holiday calendar cannot produce
+    a prior trading day within the search window.
+    """
+    if from_date is None:
+        from_date = date.today()
+
+    end = from_date - timedelta(days=1)
+    trading_days = get_trading_days_range(from_date - timedelta(days=21), end)
+    return trading_days[-1] if trading_days else None
+
+
+def trading_day_lag(latest_date: date, expected_date: date) -> int:
+    """Count trading days between ``latest_date`` and ``expected_date``.
+
+    ``0`` means the data is current for the expected trading day.  Weekend and
+    holiday gaps do not inflate the lag.
+    """
+    if latest_date >= expected_date:
+        return 0
+    return len(get_trading_days_range(latest_date + timedelta(days=1), expected_date))
+
+
 def is_market_open() -> bool:
     """Check if the market is currently open."""
     kst = pytz.timezone('Asia/Seoul')
