@@ -8,7 +8,7 @@
 
 Environment variables:
   - `KIS_APP_KEY`, `KIS_APP_SECRET`, `KIS_IS_REAL` ("true"/"false")
-  - `SCREENER_INTERVAL_SECONDS` (default: 1.0)
+  - `SCREENER_INTERVAL_SECONDS` (default: 5.0)
   - `SCREENER_RANK_LIMIT` (default: 30)
   - `SCREENER_TOP_N` (default: 20)
   - `SCREENER_WEIGHT_TRADE_VALUE` (default: 0.6)
@@ -27,6 +27,7 @@ Environment variables:
   - `SCREENER_TREND_CONFIRM_MAX_SINGLE_BAR_VOLUME_SHARE` (default: 0.55)
   - `SCREENER_TREND_CONFIRM_CACHE_SECONDS` (default: 90)
   - `SCREENER_TREND_CONFIRM_FAIL_OPEN` (default: true)
+  - `SCREENER_PUBLISH_HEARTBEAT_SECONDS` (default: 60)
 """
 
 from __future__ import annotations
@@ -70,12 +71,13 @@ class ScreenerConfig(ServiceConfigBase):
     _env_prefix: ClassVar[str | None] = "SCREENER_"
 
     # Screening parameters
-    interval_seconds: float = Field(default=1.0, description="Polling interval in seconds")
+    interval_seconds: float = Field(default=5.0, description="Polling interval in seconds")
     rank_limit: int = Field(default=30, description="Number of stocks to fetch from each ranking")
     top_n: int = Field(default=20, description="Number of top stocks to select")
     weight_trade_value: float = Field(default=0.6, description="Weight for trade value ranking")
     weight_gainer: float = Field(default=0.4, description="Weight for gainer ranking")
     notify_interval_seconds: float = Field(default=1800.0, description="Notification interval in seconds")
+    publish_heartbeat_seconds: float = Field(default=60.0, description="Republish unchanged snapshots")
 
     # Redis keys (not prefixed with SCREENER_)
     universe_stream: str = Field(default="system:universe", description="Redis stream key for universe updates")
@@ -135,6 +137,26 @@ def _rank_to_score(rank: int, max_rank: int) -> float:
         return 0.0
     # Higher score for better rank (1 is best)
     return (max_rank - rank + 1) / max_rank
+
+
+def _code_set_signature(codes: list[str]) -> str:
+    """Stable code-set signature for publish de-dupe."""
+    return json.dumps(sorted(str(code) for code in codes), ensure_ascii=False)
+
+
+def _should_publish_snapshot(
+    *,
+    signature: str,
+    last_signature: str | None,
+    now: float,
+    last_publish_time: float,
+    heartbeat_seconds: float,
+) -> bool:
+    if signature != last_signature:
+        return True
+    if heartbeat_seconds <= 0:
+        return False
+    return (now - last_publish_time) >= heartbeat_seconds
 
 
 def _select_top_codes(
@@ -434,6 +456,11 @@ async def run_screener(config: ScreenerConfig) -> None:
     last_notified_codes: set[str] = set()
     last_notify_time: float = 0.0
     notify_interval = max(0.0, config.notify_interval_seconds)
+    publish_heartbeat = max(0.0, config.publish_heartbeat_seconds)
+    last_universe_signature: str | None = None
+    last_universe_publish_time: float = 0.0
+    last_dip_signature: str | None = None
+    last_dip_publish_time: float = 0.0
     notifier: TelegramNotifier | None = None
     if config.telegram_enabled:
         # Screener is stock-only: route explicitly to TELEGRAM_STOCK_*.
@@ -502,6 +529,7 @@ async def run_screener(config: ScreenerConfig) -> None:
                     # Lazy-fill prev-day volumes for any new codes
                     await prev_vol_cache.ensure_async(codes)
 
+                if codes:
                     names = {c: info[c]["name"] for c in codes if c in info}
                     metadata = prev_vol_cache.build_metadata(codes)
                     for code in codes:
@@ -531,11 +559,22 @@ async def run_screener(config: ScreenerConfig) -> None:
                             "counts": {k: len(v) for k, v in sources.items()},
                         },
                     }
-                    publisher.publish(payload)
-                    redis_client.set(config.universe_latest_key, json.dumps(payload, ensure_ascii=False), ex=86400)
+                    now = time.time()
+                    signature = _code_set_signature(codes)
+                    if _should_publish_snapshot(
+                        signature=signature,
+                        last_signature=last_universe_signature,
+                        now=now,
+                        last_publish_time=last_universe_publish_time,
+                        heartbeat_seconds=publish_heartbeat,
+                    ):
+                        publisher.publish(payload)
+                        redis_client.set(config.universe_latest_key, json.dumps(payload, ensure_ascii=False), ex=86400)
+                        last_universe_signature = signature
+                        last_universe_publish_time = now
+                        logger.info(f"Published new universe: {len(codes)} codes")
 
                     current_set = set(codes)
-                    now = time.time()
                     set_changed = current_set != last_notified_codes
                     enough_time = (now - last_notify_time) >= notify_interval
 
@@ -568,7 +607,6 @@ async def run_screener(config: ScreenerConfig) -> None:
                         last_notify_time = now
 
                     last_codes = codes
-                    logger.info(f"Published new universe: {len(codes)} codes")
 
                 # Dip candidates (for mean-reversion strategies)
                 dip_codes, dip_scores, dip_info = _select_dip_candidates(
@@ -584,12 +622,23 @@ async def run_screener(config: ScreenerConfig) -> None:
                         "info": dip_info,
                         "generated_at": datetime.now().isoformat(),
                     }
-                    redis_client.set(
-                        config.dip_latest_key,
-                        json.dumps(dip_payload, ensure_ascii=False),
-                        ex=86400,
-                    )
-                    logger.info(f"Published dip candidates: {len(dip_codes)} codes")
+                    now = time.time()
+                    dip_signature = _code_set_signature(dip_codes)
+                    if _should_publish_snapshot(
+                        signature=dip_signature,
+                        last_signature=last_dip_signature,
+                        now=now,
+                        last_publish_time=last_dip_publish_time,
+                        heartbeat_seconds=publish_heartbeat,
+                    ):
+                        redis_client.set(
+                            config.dip_latest_key,
+                            json.dumps(dip_payload, ensure_ascii=False),
+                            ex=86400,
+                        )
+                        last_dip_signature = dip_signature
+                        last_dip_publish_time = now
+                        logger.info(f"Published dip candidates: {len(dip_codes)} codes")
 
             except APIError as e:
                 logger.warning(f"Screener iteration failed (API error): {e}")
