@@ -30,6 +30,7 @@ Impact: 1-day 영향 (선물 Setup A window 미스 + 주식 26분 stall + 대시
 | Stock | `bb_reversion`, `opening_volume_surge`, `volume_accumulation` | Paper | Phase 2 cutover does NOT change stock side |
 | Futures | `setup_a_gap_reversion`, `setup_c_event_reaction` | Paper, **primary** | LLM-augmented threshold + veto + size scaling |
 | Futures | ~~`rl_mppo`~~ | **DEPRECATED 2026-05-15 (v4.11)** | enabled=false. 사유 정정: "0 signals→HOLD"는 shadow_mode 억제 오독, 실 사유는 counterfactual EOD-proxy PnL 음수. 후속은 Williams %R/RSI/MACD 지표 전략. |
+| Futures | `llm_directed_indicator` | **설계 완료, 미활성** | enabled=false. 백테스트 Sharpe>1.0/PF>1.2 게이트 → paper-primary. RL_mppo 승계. spec: 2026-05-16-llm-directed-indicator-futures-design.md |
 
 ## Automation Schedule (all UTC unless noted)
 
