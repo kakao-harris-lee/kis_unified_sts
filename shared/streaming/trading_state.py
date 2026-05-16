@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import socket
 import time as _time
 from datetime import UTC, date, datetime
 from typing import Any
@@ -95,8 +96,12 @@ class TradingStatePublisher:
         try:
             r = _get_redis()
             key = _key(_KEY_STATUS, self._asset)
+            snapshot = dict(status)
+            snapshot["updated_at"] = _tz_aware_iso(datetime.now(UTC))
+            snapshot["publisher_pid"] = os.getpid()
+            snapshot["publisher_host"] = socket.gethostname()
             flat: dict[str, str] = {}
-            for k, v in status.items():
+            for k, v in snapshot.items():
                 flat[k] = json.dumps(v) if isinstance(v, (dict, list)) else str(v)
             pipe = r.pipeline(transaction=False)
             pipe.delete(key)
@@ -444,7 +449,7 @@ class TradingStateReader:
                 try:
                     result[k] = json.loads(v)
                 except (json.JSONDecodeError, TypeError):
-                    result[k] = v
+                    result[k] = v.decode() if isinstance(v, bytes) else v
             return result
         except Exception:
             logger.debug("Failed to read status from Redis", exc_info=True)

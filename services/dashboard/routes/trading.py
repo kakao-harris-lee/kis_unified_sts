@@ -170,6 +170,7 @@ async def get_trading_status(
         strategies = strats_info["strategies"]
 
     start_time = stats.get("start_time")
+    updated_at = status.get("updated_at") or start_time
 
     # account may arrive as a dict (TradingStateReader auto-decodes JSON values)
     # or as a string (older publishers / corrupted entries) — be defensive.
@@ -219,7 +220,7 @@ async def get_trading_status(
             if isinstance(positions, dict)
             else 0.0
         ),
-        last_update=_parse_tz_aware(start_time),
+        last_update=_parse_tz_aware(updated_at),
         account=account_obj,
     )
 

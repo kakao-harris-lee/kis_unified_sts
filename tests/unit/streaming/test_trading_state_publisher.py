@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from datetime import datetime
 
 from shared.models.position import Position, PositionSide
@@ -99,3 +100,19 @@ def test_publish_positions_update_empty_snapshot_clears_hash(monkeypatch):
     publisher.publish_positions_update([], throttle=0.0)
 
     assert fake_redis.hgetall(key) == {}
+
+
+def test_publish_status_adds_freshness_metadata(monkeypatch):
+    fake_redis = _FakeRedis()
+
+    monkeypatch.setattr(trading_state, "_get_redis", lambda: fake_redis)
+    publisher = TradingStatePublisher("stock")
+
+    publisher.publish_status({"state": "running", "stats": {"total_pnl": 0.0}})
+
+    stored = fake_redis.hgetall("trading:stock:status")
+    assert stored["state"] == "running"
+    assert "updated_at" in stored
+    assert datetime.fromisoformat(stored["updated_at"])
+    assert stored["publisher_pid"] == str(os.getpid())
+    assert stored["publisher_host"]
