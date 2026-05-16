@@ -47,10 +47,26 @@ def _parse_date(value: str) -> date:
     return datetime.strptime(value, "%Y-%m-%d").date()
 
 
-def _select_stocks(tier: str) -> list[dict[str, str]]:
-    if tier == "all":
-        return list(STOCK_UNIVERSE)
-    return [s for s in STOCK_UNIVERSE if s["tier"] == tier]
+def _select_stocks(
+    tier: str,
+    *,
+    symbols: str = "",
+    max_symbols: int | None = None,
+) -> list[dict[str, str]]:
+    requested = [s.strip() for s in symbols.split(",") if s.strip()]
+    if requested:
+        by_code = {s["code"]: s for s in STOCK_UNIVERSE}
+        stocks = [
+            by_code.get(code, {"code": code, "name": code, "tier": "custom"})
+            for code in requested
+        ]
+    elif tier == "all":
+        stocks = list(STOCK_UNIVERSE)
+    else:
+        stocks = [s for s in STOCK_UNIVERSE if s["tier"] == tier]
+    if max_symbols is not None and max_symbols > 0:
+        return stocks[:max_symbols]
+    return stocks
 
 
 def _parse_override_value(raw: str) -> Any:
@@ -230,6 +246,17 @@ def main() -> None:
     parser.add_argument(
         "--tier", default="all", choices=["top", "mid", "bottom", "all"]
     )
+    parser.add_argument(
+        "--symbols",
+        default="",
+        help="Comma-separated stock codes to run. Overrides --tier when set.",
+    )
+    parser.add_argument(
+        "--max-symbols",
+        type=int,
+        default=None,
+        help="Limit selected symbols for faster smoke/parameter experiments.",
+    )
     parser.add_argument("--start", required=True, help="YYYY-MM-DD")
     parser.add_argument("--end", required=True, help="YYYY-MM-DD")
     parser.add_argument("--capital", type=float, default=100_000_000)
@@ -274,7 +301,11 @@ def main() -> None:
     if timeframe not in ("minute", "daily"):
         raise SystemExit(f"Unsupported timeframe for '{args.strategy}': {timeframe}")
 
-    stocks = _select_stocks(args.tier)
+    stocks = _select_stocks(
+        args.tier,
+        symbols=args.symbols,
+        max_symbols=args.max_symbols,
+    )
     if not stocks:
         raise SystemExit("No stocks selected")
 
