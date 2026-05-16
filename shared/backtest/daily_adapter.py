@@ -96,6 +96,7 @@ class DailyBacktestAdapter:
         # Position state (synced from BacktestEngine)
         self._current_position: dict[str, Any] | None = None
         self._entry_bar_index: int | None = None
+        self.last_entry_signal = None
 
         # Adaptive regime detection (optional, controlled by config flag)
         self._regime_detection_enabled = bool(
@@ -478,6 +479,7 @@ class DailyBacktestAdapter:
 
     def on_bar(self, bar: dict[str, Any]) -> SignalType:
         """Convert a daily bar dict into a BUY/SELL/HOLD signal."""
+        self.last_entry_signal = None
         code = str(bar.get("code", "BACKTEST") or "BACKTEST")
 
         timestamp = bar.get("datetime", datetime.now())
@@ -567,6 +569,7 @@ class DailyBacktestAdapter:
         if signal is None:
             return SignalType.HOLD
 
+        self.last_entry_signal = signal
         direction = signal.metadata.get("signal_direction", "long")
         if direction == "long":
             return SignalType.BUY

@@ -32,6 +32,7 @@ from shared.backtest.daily_adapter import (  # noqa: E402
     DailyBacktestAdapter,
     load_stock_daily_from_clickhouse,
 )
+from shared.backtest.engine import ExitReason, SignalType  # noqa: E402
 from shared.collector.historical.stock import (  # noqa: E402
     STOCK_UNIVERSE,
     load_stock_minute_from_clickhouse,
@@ -307,6 +308,7 @@ class DailyPortfolioAdapter:
         self._entry_start = entry_start
         self._adapters: dict[str, DailyBacktestAdapter] = {}
         self._pending_position: dict[str, Any] | None = None
+        self.last_entry_signal = None
 
     def prescan_data(self, data: pd.DataFrame) -> None:
         if "code" not in data.columns:
@@ -341,12 +343,238 @@ class DailyPortfolioAdapter:
         return adapter.check_exit(bar)
 
     def on_bar(self, bar: dict[str, Any]):
+        self.last_entry_signal = None
         adapter = self._adapter_for_bar(bar)
         if adapter is None:
-            from shared.backtest.engine import SignalType
-
             return SignalType.HOLD
-        return adapter.on_bar(bar)
+        signal = adapter.on_bar(bar)
+        self.last_entry_signal = getattr(adapter, "last_entry_signal", None)
+        return signal
+
+
+def _entry_signal_priority(signal: Any) -> tuple[float, float, str, str]:
+    metadata = getattr(signal, "metadata", {}) or {}
+    if not isinstance(metadata, dict):
+        metadata = {}
+    raw_priority = metadata.get("entry_priority", metadata.get("pattern_priority"))
+    if raw_priority is None:
+        priority = 1_000_000.0
+    else:
+        try:
+            priority = float(raw_priority)
+        except (TypeError, ValueError):
+            priority = 1_000_000.0
+    try:
+        confidence = float(getattr(signal, "confidence", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        confidence = 0.0
+    return (
+        priority,
+        -confidence,
+        str(getattr(signal, "strategy", "") or ""),
+        str(getattr(signal, "code", "") or ""),
+    )
+
+
+class PriorityDailyPortfolioBacktestEngine(BacktestEngine):
+    """Backtest daily portfolio entries in the same priority order as runtime.
+
+    The shared engine processes interleaved rows in ``datetime, code`` order.
+    For daily stock strategies this can admit alphabetical candidates first
+    when several symbols trigger on the same date and position/capital limits
+    bind. This engine keeps exit/risk processing per bar, then batches same-date
+    entry signals and sorts by entry metadata before opening positions.
+    """
+
+    def run(self, data: pd.DataFrame):
+        if data.empty:
+            raise ValueError("Empty data provided")
+
+        self._reset()
+        sort_cols = ["datetime"] + (["code"] if "code" in data.columns else [])
+        data = data.sort_values(sort_cols).reset_index(drop=True)
+
+        if hasattr(self.strategy, "precompute_rl_features"):
+            self.strategy.precompute_rl_features(data)
+        if hasattr(self.strategy, "prescan_data"):
+            self.strategy.prescan_data(data)
+
+        for _, group in data.groupby("datetime", sort=False):
+            bars = [
+                dict(zip(data.columns, row))
+                for row in group.itertuples(index=False, name=None)
+            ]
+            for bar in bars:
+                self._process_bar_without_signal(bar)
+            pending_entries = []
+            for bar in bars:
+                pending = self._collect_or_apply_signal(bar)
+                if pending is not None:
+                    pending_entries.append(pending)
+            for pending in sorted(
+                pending_entries,
+                key=lambda item: _entry_signal_priority(item["entry_signal"]),
+            ):
+                risk = self.config.risk
+                if (
+                    risk.max_daily_trades > 0
+                    and self._daily_trades >= risk.max_daily_trades
+                ):
+                    break
+                code = pending["code"]
+                if code in self.positions:
+                    continue
+                signal = pending["signal"]
+                side = "BUY" if signal == SignalType.BUY else "SELL"
+                self._open_position(
+                    code=code,
+                    name=pending["name"],
+                    side=side,
+                    price=pending["price"],
+                    timestamp=pending["timestamp"],
+                    bar=pending["bar"],
+                )
+
+        if self.positions:
+            last_bar = data.iloc[-1].to_dict()
+            for code in list(self.positions.keys()):
+                last_price = self._last_price_by_code.get(
+                    code, float(last_bar["close"])
+                )
+                self._close_position(
+                    code=code,
+                    exit_price=last_price,
+                    exit_time=last_bar["datetime"],
+                    reason=ExitReason.END_OF_DATA,
+                )
+
+        if self._current_day_pnl != 0:
+            self.daily_returns.append(self._current_day_pnl)
+
+        return self._generate_result(data)
+
+    def _process_bar_without_signal(self, bar: dict[str, Any]) -> None:
+        timestamp = bar["datetime"]
+        current_price = bar["close"]
+        code = str(bar.get("code", "DEFAULT") or "DEFAULT")
+        self._last_price_by_code[code] = float(current_price)
+
+        if self._last_date and timestamp.date() != self._last_date.date():
+            if self.config.risk.close_on_day_change and self.positions:
+                for pos_code in list(self.positions.keys()):
+                    self._close_position(
+                        pos_code,
+                        self._last_price_by_code.get(pos_code, float(current_price)),
+                        timestamp,
+                        ExitReason.FORCE_CLOSE,
+                    )
+            if self._current_day_pnl != 0:
+                self.daily_returns.append(self._current_day_pnl)
+            self._current_day_pnl = 0.0
+            self._daily_trades = 0
+
+        self._last_date = timestamp
+        self.equity_curve.append((timestamp, self._calculate_total_equity()))
+
+        current_pos = self.positions.get(code)
+        if not current_pos:
+            return
+
+        current_pos.bars_held += 1
+        if current_price > current_pos.highest_price:
+            current_pos.highest_price = current_price
+        if current_price < current_pos.lowest_price or current_pos.lowest_price == 0:
+            current_pos.lowest_price = current_price
+
+        if hasattr(self.strategy, "check_exit") and hasattr(
+            self.strategy, "set_position"
+        ):
+            self.strategy.set_position(
+                self._position_payload(current_pos, current_price)
+            )
+            should_exit, exit_reason = self.strategy.check_exit(bar)
+            if should_exit and exit_reason:
+                self._close_position(
+                    code=code,
+                    exit_price=current_price,
+                    exit_time=timestamp,
+                    reason=exit_reason,
+                )
+                current_pos = None
+
+        if current_pos:
+            exit_reason = self._check_risk(current_pos, current_price, timestamp)
+            if exit_reason:
+                self._close_position(
+                    code=code,
+                    exit_price=current_price,
+                    exit_time=timestamp,
+                    reason=exit_reason,
+                )
+
+    def _collect_or_apply_signal(self, bar: dict[str, Any]) -> dict[str, Any] | None:
+        timestamp = bar["datetime"]
+        current_price = bar["close"]
+        code = str(bar.get("code", "DEFAULT") or "DEFAULT")
+        name = bar.get("name", code)
+
+        risk = self.config.risk
+        if risk.max_daily_trades > 0 and self._daily_trades >= risk.max_daily_trades:
+            return None
+
+        current_pos = self.positions.get(code)
+        if hasattr(self.strategy, "set_position"):
+            self.strategy.set_position(
+                self._position_payload(current_pos, current_price)
+                if current_pos
+                else None
+            )
+
+        signal = self.strategy.on_bar(bar)
+        entry_signal = getattr(self.strategy, "last_entry_signal", None)
+
+        if code not in self.positions:
+            if signal in (SignalType.BUY, SignalType.SELL):
+                return {
+                    "bar": bar,
+                    "code": code,
+                    "name": name,
+                    "price": current_price,
+                    "timestamp": timestamp,
+                    "signal": signal,
+                    "entry_signal": entry_signal,
+                }
+            return None
+
+        pos = self.positions[code]
+        should_close = (pos.side == "BUY" and signal == SignalType.SELL) or (
+            pos.side == "SELL" and signal == SignalType.BUY
+        )
+        if should_close:
+            self._close_position(
+                code=code,
+                exit_price=current_price,
+                exit_time=timestamp,
+                reason=ExitReason.SIGNAL,
+            )
+        return None
+
+    @staticmethod
+    def _position_payload(position: Any, current_price: float) -> dict[str, Any]:
+        if position.side == "BUY":
+            unrealized_pnl = (current_price - position.entry_price) * position.quantity
+        else:
+            unrealized_pnl = (position.entry_price - current_price) * position.quantity
+        return {
+            "code": position.code,
+            "side": position.side,
+            "entry_price": position.entry_price,
+            "quantity": position.quantity,
+            "unrealized_pnl": unrealized_pnl,
+            "highest_price": position.highest_price,
+            "lowest_price": position.lowest_price,
+            "entry_time": position.entry_time,
+        }
 
 
 def _load_symbol_data(
@@ -501,10 +729,12 @@ def main() -> None:
             strategy_config,
             entry_start=datetime.combine(start, time.min),
         )
+        engine = PriorityDailyPortfolioBacktestEngine(adapted, config)
     else:
         strategy = StrategyFactory.create(strategy_config)
         adapted = BacktestStrategyAdapter(strategy, strategy_config)
-    result = BacktestEngine(adapted, config).run(data)
+        engine = BacktestEngine(adapted, config)
+    result = engine.run(data)
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
