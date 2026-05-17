@@ -363,9 +363,7 @@ def _risk_params_for_runtime_capital(
     """
     params = dict(risk_params)
     explicit_risk_capital = os.getenv("RISK_INITIAL_CAPITAL")
-    if explicit_risk_capital is None or not explicit_risk_capital.strip():
-        params["initial_capital"] = int(runtime_initial_capital)
-    elif "initial_capital" not in params:
+    if explicit_risk_capital is None or not explicit_risk_capital.strip() or "initial_capital" not in params:
         params["initial_capital"] = int(runtime_initial_capital)
     return params
 
@@ -1935,6 +1933,13 @@ class TradingOrchestrator:
                     fee_rate=float(pos_data.get("fee_rate", 0.003)),
                 )
 
+                # Re-attach the idempotency key (if persisted) so that
+                # any in-flight retry of the originating signal does not
+                # create a duplicate position after restart.
+                recovered_coid = str(pos_data.get("client_order_id") or "").strip()
+                if recovered_coid:
+                    position.metadata["client_order_id"] = recovered_coid
+
                 stop_price = pos_data.get("stop_price")
                 if stop_price is not None:
                     position.stop_price = float(stop_price)
@@ -3323,8 +3328,8 @@ class TradingOrchestrator:
             List of daily candle dicts with keys: date, open, high, low, close, volume
         """
         try:
-            from clickhouse_driver import Client as CHSyncClient
             import pandas as pd
+            from clickhouse_driver import Client as CHSyncClient
 
             from shared.collector.historical.daily_quality import (
                 clean_daily_candle_frame,
