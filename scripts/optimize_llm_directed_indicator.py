@@ -17,8 +17,9 @@ the strategy runs the indicators-only floor. Consequences:
     parameter-importance. Live LLM-bias behaviour is a separate concern
     validated in unit tests, not here.
   * What is tunable here = the directional indicator ensemble + the ATR
-    exit safety net. That is exactly the surface the Sharpe>1.0 / PF>1.2
-    activation gate (spec section 6) measures.
+    exit safety net. The §6 activation bar is the RE-SCOPED gate
+    (robust non-catastrophic floor, see ``_rescoped_gate``): it judges
+    the *distribution* of valid trials, not a single best curve-fit.
 
 The BacktestConfig mirrors ``cli/main.py::backtest_run`` for futures
 exactly (``BacktestConfig.futures(initial_capital=10_000_000,
@@ -64,9 +65,27 @@ _STRATEGY = "llm_directed_indicator"
 _DEFAULT_DATA = "data/kospi200f_1m_ch_101S6000.csv"
 _SENTINEL = -10.0  # failed / degenerate trial objective
 
-# Activation gate (spec section 6).
+# --- Legacy numeric gate (spec §6, pre-2026-05-17). Kept ONLY as an
+# informational reference line. It judged the single best trial by raw
+# Sharpe, which rewarded knife-edge curve-fits — superseded below.
 _GATE_SHARPE = 1.0
 _GATE_PF = 1.2
+
+# --- Re-scoped §6 gate (2026-05-17, operator-approved): "robust
+# non-catastrophic floor". The FLAT-bias path is a *safety floor*, not
+# the alpha (the LLM directional bias is the alpha); so the bar is that
+# the floor is broadly non-catastrophic, NOT that its best curve-fit is
+# great. PASS requires ALL of (a)+(b)+(c):
+#   (a) MEDIAN of valid trials (train) is non-catastrophic
+#   (b) a broad basin (≥ FLOOR_BASIN_FRAC of valid trials clear (a))
+#   (c) the selected config is non-catastrophic out-of-sample
+# (a)+(b) are the methodological fix: they judge the *distribution*, so a
+# single lucky trial can no longer pass the gate.
+_FLOOR_SHARPE = 0.0   # non-catastrophic: not risk-adjusted-negative
+_FLOOR_PF = 1.0       # non-catastrophic: gross winners ≥ gross losers
+_FLOOR_BASIN_FRAC = 0.25  # ≥25% of valid trials must clear (a)
+_OOS_MDD_MAX = 25.0   # bounded drawdown (%)
+_OOS_RET_MIN = 0.0    # does not lose money over the OOS window (%)
 
 # Same guardrails the CLI applies to futures CSVs.
 _CSV_KW = {
@@ -189,10 +208,61 @@ def _fmt(m: dict[str, float]) -> str:
 
 
 def _gate(m: dict[str, float]) -> bool:
+    """Legacy numeric gate — informational reference only."""
     return (
         m.get("sharpe_ratio", -99) > _GATE_SHARPE
         and m.get("profit_factor", 0) > _GATE_PF
     )
+
+
+def _rescoped_gate(study, oos_m: dict[str, float]) -> dict[str, object]:
+    """Re-scoped §6 gate: robust non-catastrophic floor.
+
+    Judges the *distribution* of valid trials (so one lucky curve-fit
+    cannot pass) plus an out-of-sample non-catastrophic check on the
+    selected config.
+
+    A "valid" trial = one that cleared the min-trades floor and was not
+    NaN/pathological, i.e. its objective is not the sentinel. The trial
+    objective IS its train Sharpe; train PF is in user_attrs.
+    """
+    import statistics as _st
+
+    valid = [
+        t for t in study.trials
+        if t.value is not None and t.value > _SENTINEL + 0.1
+    ]
+    n = len(valid)
+    sh = [t.value for t in valid]
+    pf = [
+        float(t.user_attrs.get("profit_factor", 0.0))
+        for t in valid
+    ]
+    pf_finite = [p for p in pf if p == p and p != float("inf")]
+
+    med_s = _st.median(sh) if sh else float("nan")
+    med_pf = _st.median(pf_finite) if pf_finite else float("nan")
+    a = (n > 0) and med_s >= _FLOOR_SHARPE and med_pf >= _FLOOR_PF
+
+    cleared = sum(
+        1 for t in valid
+        if t.value >= _FLOOR_SHARPE
+        and float(t.user_attrs.get("profit_factor", 0.0)) >= _FLOOR_PF
+    )
+    frac = (cleared / n) if n else 0.0
+    b = frac >= _FLOOR_BASIN_FRAC
+
+    c = bool(oos_m) and (
+        oos_m.get("sharpe_ratio", -99) >= _FLOOR_SHARPE
+        and oos_m.get("profit_factor", 0.0) >= _FLOOR_PF
+        and oos_m.get("max_drawdown_pct", 1e9) <= _OOS_MDD_MAX
+        and oos_m.get("total_return_pct", -1e9) >= _OOS_RET_MIN
+    )
+    return {
+        "n_valid": n, "median_sharpe": med_s, "median_pf": med_pf,
+        "basin_frac": frac, "basin_cleared": cleared,
+        "a": a, "b": b, "c": c, "pass": bool(a and b and c),
+    }
 
 
 def run_optimization(
@@ -280,8 +350,8 @@ def run_optimization(
     optuna.logging.set_verbosity(optuna.logging.WARNING)
     cap = f", wall-cap={timeout_s}s" if timeout_s else ""
     print(f"\nTrials: {n_trials} (objective=sharpe_ratio, "
-          f"min_trades={min_trades} floor, "
-          f"gate=Sharpe>{_GATE_SHARPE}/PF>{_GATE_PF}{cap})")
+          f"min_trades={min_trades} floor; gate=re-scoped robust "
+          f"non-catastrophic{cap})")
     print("Each backtest ≈ 170s on full 101S6000 — progress prints per "
           "completed trial.\n")
 
@@ -313,16 +383,21 @@ def run_optimization(
     for k, v in sorted(best.params.items()):
         print(f"  {k}: {v}")
 
-    in_sample_pass = (
+    # Legacy numeric gate — REFERENCE ONLY (judged one trial by raw
+    # Sharpe; rewarded knife-edge curve-fits). Superseded by the
+    # re-scoped robust gate below.
+    legacy_best = (
         best.value > _GATE_SHARPE
         and best.user_attrs.get("profit_factor", 0.0) > _GATE_PF
     )
-    label = "TRAIN (in-sample)" if oos_df is not None else "FULL (in-sample)"
-    print(f"\n{label} gate (Sharpe>{_GATE_SHARPE} AND PF>{_GATE_PF}): "
-          f"{'PASS ✅' if in_sample_pass else 'FAIL ❌'}")
+    print(f"\n[reference only] legacy best-trial gate "
+          f"(Sharpe>{_GATE_SHARPE} & PF>{_GATE_PF}): "
+          f"{'pass' if legacy_best else 'fail'}  "
+          f"— NOT the activation bar")
 
-    # --- Out-of-sample evaluation: the decision-grade number. Best params
-    # were chosen WITHOUT seeing oos_df → honest generalization estimate.
+    # --- Out-of-sample evaluation of the selected config (chosen WITHOUT
+    # seeing oos_df → honest generalization estimate). Feeds gate (c).
+    oos_m: dict[str, float] = {}
     if oos_df is not None:
         oos_cfg = _apply_params(base_cfg, best.params)
         try:
@@ -330,16 +405,40 @@ def run_optimization(
         except Exception as exc:  # noqa: BLE001
             print(f"\nOOS backtest failed: {exc}")
             oos_m = {}
-        print(f"\n{'=' * 64}\nOUT-OF-SAMPLE (held-out, decision-grade)"
-              f"\n{'=' * 64}")
+        print(f"\n{'=' * 64}\nSELECTED CONFIG: TRAIN → OOS\n{'=' * 64}")
         print(f"  TRAIN: {_fmt(best.user_attrs | {'sharpe_ratio': best.value})}")
         print(f"  OOS  : {_fmt(oos_m)}")
-        oos_pass = _gate(oos_m)
-        print(f"\nOOS activation gate (Sharpe>{_GATE_SHARPE} AND "
-              f"PF>{_GATE_PF}): "
-              f"{'PASS ✅' if oos_pass else 'FAIL ❌ — DO NOT activate'}")
-        print("  (Large TRAIN→OOS degradation = overfit; only the OOS "
-              "number should inform the activation decision.)")
+
+    # --- Re-scoped §6 gate (operator-approved 2026-05-17): robust
+    # non-catastrophic floor. THIS is the activation bar.
+    rg = _rescoped_gate(study, oos_m)
+    ok = lambda x: "PASS ✅" if x else "FAIL ❌"  # noqa: E731
+    print(f"\n{'=' * 64}\nRE-SCOPED §6 GATE — robust non-catastrophic "
+          f"floor\n{'=' * 64}")
+    print(f"  valid trials (min-trades, non-degenerate): {rg['n_valid']}")
+    print(f"  (a) MEDIAN valid TRAIN  Sharpe={rg['median_sharpe']:.3f} "
+          f"PF={rg['median_pf']:.3f}  "
+          f"(need ≥{_FLOOR_SHARPE}/≥{_FLOOR_PF})  {ok(rg['a'])}")
+    print(f"  (b) BASIN  {rg['basin_cleared']}/{rg['n_valid']} = "
+          f"{rg['basin_frac'] * 100:.1f}% clear (a)  "
+          f"(need ≥{_FLOOR_BASIN_FRAC * 100:.0f}%)  {ok(rg['b'])}")
+    if oos_df is not None:
+        print(f"  (c) SELECTED cfg OOS  Sharpe="
+              f"{oos_m.get('sharpe_ratio', float('nan')):.3f} "
+              f"PF={oos_m.get('profit_factor', float('nan')):.3f} "
+              f"MDD={oos_m.get('max_drawdown_pct', float('nan')):.1f}% "
+              f"ret={oos_m.get('total_return_pct', float('nan')):.1f}%  "
+              f"(need Sharpe≥{_FLOOR_SHARPE}/PF≥{_FLOOR_PF}/"
+              f"MDD≤{_OOS_MDD_MAX}/ret≥{_OOS_RET_MIN})  {ok(rg['c'])}")
+    else:
+        print("  (c) SELECTED cfg OOS  — n/a (run with --holdout-split "
+              "for the decision-grade bar)")
+    print(f"\n  >>> RE-SCOPED GATE: "
+          f"{'PASS ✅ — floor is robustly non-catastrophic' if rg['pass'] else 'FAIL ❌ — DO NOT activate'}")
+    print("  (a)+(b) judge the trial DISTRIBUTION, so a single lucky "
+          "curve-fit can no longer pass. The FLAT floor is a safety net, "
+          "not the alpha — this bar only asks it be broadly "
+          "non-catastrophic.")
 
     try:
         importances = optuna.importance.get_param_importances(study)
@@ -368,9 +467,9 @@ def run_optimization(
         with open(out_path, "w") as fh:
             yaml.safe_dump(tuned, fh, sort_keys=False, allow_unicode=True)
         print(f"\nBest-param config written → {out_path}")
-        print("  (review, then apply to "
-              "config/strategies/futures/llm_directed_indicator.yaml; "
-              "keep enabled: false unless the gate PASSed)")
+        print("  (artifact only — best-train config. Do NOT apply unless "
+              "the RE-SCOPED gate PASSes; keep enabled: false regardless "
+              "until operator activation approval.)")
 
     return study
 

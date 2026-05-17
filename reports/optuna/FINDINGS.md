@@ -4,7 +4,37 @@ Tool: `scripts/optimize_llm_directed_indicator.py`
 Data: `data/kospi200f_1m_ch_101S6000.csv` (51,396 bars, 2025-07-01 → 2026-04-23)
 Backtest path mirrors `cli/main.py::backtest_run` futures exactly
 (`BacktestConfig.futures(10_000_000, point_value=50_000)`), FLAT-bias
-indicators-only floor (spec §4(a)). §6 gate = Sharpe>1.0 AND PF>1.2.
+indicators-only floor (spec §4(a)).
+
+## VERDICT — re-scoped §6 gate (2026-05-17, operator-approved): **FAIL ❌**
+
+The original "best-trial Sharpe>1.0 & PF>1.2" bar was withdrawn (it
+rewards knife-edge curve-fits). The re-scoped **robust non-catastrophic
+floor** gate judges the *distribution* of valid trials:
+
+Canonical run: `_rescoped` (70 trials, holdout split 2026-02-01,
+min-trades=50), tool-printed verdict:
+
+| Check | Requirement | Result | |
+|---|---|---|---|
+| (a) median valid trial, train | Sharpe ≥ 0 & PF ≥ 1.0 | **Sharpe −2.07 / PF 0.78** | FAIL |
+| (b) broad basin | ≥ 25% of valid clear (a) | **5/40 = 12.5%** | FAIL |
+| (c) selected cfg OOS | Sh≥0,PF≥1,MDD≤25,ret≥0 | 8.68/3.49/7.5%/+163% | pass¹ |
+
+¹ (c) passes only because the *selected* config is the single lucky
+outlier — exactly what (a)+(b) exist to reject. ~87% of valid trials
+are money-losing on the floor.
+
+**Robustness of the verdict:** reproduced on two independent codebases
+(`runtime/main-current` hand-calc: median −2.25, basin 3/38=7.9%;
+`origin/main` native tool run: median −2.07, basin 5/40=12.5%). Small
+metric drift, identical decisive FAIL — the conclusion is not sensitive
+to codebase, trial count, or seed-path.
+
+**Implication:** spec §4(a)'s "indicators-only floor is a reasonable
+live safety floor" is **empirically falsified** (see spec §6.1). The
+floor is *actively unsafe* without the LLM bias — DO NOT ACTIVATE; YAML
+stays `enabled: false`, no tuned params applied.
 
 ## Runs
 
@@ -17,10 +47,11 @@ indicators-only floor (spec §4(a)). §6 gate = Sharpe>1.0 AND PF>1.2.
 | OOS train, min-trades=50 (67 tr) | 1.42 | 1.21 | 90 | 37.8% | +15.8% | 27.6% | realistic, marginal |
 | **OOS test, min-trades=50** | **8.63** | **4.08** | 106 | 40.6% | +199% | 7.1% | gate-pass BUT untrustworthy |
 
-## Conclusion: gate technically PASSES, but DO NOT ACTIVATE
+## Supporting detail (why the re-scoped gate fails)
 
-The numeric §6 gate passes out-of-sample, yet the result is **not a
-trustworthy edge** and must not gate activation:
+Under the *withdrawn* numeric bar the OOS number passed, yet the result
+was never a trustworthy edge — the same evidence the re-scoped gate now
+encodes formally:
 
 1. **Knife-edge config, no robust basin.** With the min-trades floor,
    of 39 valid trials exactly ONE clears the gate (Sharpe 1.42); all
