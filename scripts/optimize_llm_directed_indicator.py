@@ -117,6 +117,16 @@ def _suggest_params(trial) -> dict[str, Any]:
         "vol_threshold_mult": trial.suggest_float(
             "vol_threshold_mult", 0.0, 1.2, step=0.1
         ),
+        # --- per-family scorer shape (decisive-probe spike) ---
+        "mom_rsi_pivot": trial.suggest_float(
+            "mom_rsi_pivot", 35.0, 60.0, step=2.5
+        ),
+        "trend_spread_saturation": trial.suggest_float(
+            "trend_spread_saturation", 20.0, 100.0, step=10.0
+        ),
+        "trend_adx_full": trial.suggest_float(
+            "trend_adx_full", 15.0, 60.0, step=5.0
+        ),
         "signal_cooldown_seconds": trial.suggest_int(
             "signal_cooldown_seconds", 60, 600, step=60
         ),

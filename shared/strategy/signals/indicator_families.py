@@ -25,16 +25,24 @@ def _clip(x: float) -> float:
     return max(-1.0, min(1.0, x))
 
 
-def momentum_reversal_score(indicators: dict[str, Any]) -> float:
+def momentum_reversal_score(
+    indicators: dict[str, Any], *, rsi_pivot: float = 50.0
+) -> float:
     """Oversold -> +1 (long reversal), overbought -> -1. Avg of available
-    RSI / Williams %R / Stochastic %K, each mapped so midpoint = 0."""
+    RSI / Williams %R / Stochastic %K, each mapped so midpoint = 0.
+
+    ``rsi_pivot``: RSI value treated as neutral (default 50 = classic
+    midpoint). Per-family-params spike — default preserves the original
+    hardcoded behavior exactly."""
     mom = indicators.get("momentum_5m")
     if not isinstance(mom, dict):
         return 0.0
+    if rsi_pivot <= 0.0:
+        rsi_pivot = 50.0
     parts: list[float] = []
     rsi = _f(mom, "rsi")
     if rsi is not None:
-        parts.append((50.0 - rsi) / 50.0)
+        parts.append((rsi_pivot - rsi) / rsi_pivot)
     wr = _f(mom, "williams_r")  # range -100..0; -50 = midpoint
     if wr is not None:
         parts.append((-50.0 - wr) / 50.0)
@@ -46,16 +54,30 @@ def momentum_reversal_score(indicators: dict[str, Any]) -> float:
     return _clip(sum(parts) / len(parts))
 
 
-def trend_breakout_score(indicators: dict[str, Any]) -> float:
-    """EMA fast/slow alignment scaled by ADX strength, VWAP-side confirm."""
+def trend_breakout_score(
+    indicators: dict[str, Any],
+    *,
+    spread_saturation: float = 50.0,
+    adx_full: float = 40.0,
+) -> float:
+    """EMA fast/slow alignment scaled by ADX strength, VWAP-side confirm.
+
+    ``spread_saturation``: multiplier on the normalized EMA spread before
+    clipping (higher => smaller spreads saturate to ±1). ``adx_full``:
+    ADX at which trend strength reaches 1.0. Per-family-params spike —
+    defaults preserve the original hardcoded behavior exactly."""
     ema_f = _f(indicators, "ema_5")
     ema_s = _f(indicators, "ema_20")
     if ema_f is None or ema_s is None or ema_s == 0.0:
         return 0.0
+    if spread_saturation <= 0.0:
+        spread_saturation = 50.0
+    if adx_full <= 0.0:
+        adx_full = 40.0
     raw = (ema_f - ema_s) / abs(ema_s)  # signed trend
-    direction = _clip(raw * 50.0)  # ~2% spread saturates
+    direction = _clip(raw * spread_saturation)
     adx = _f(indicators, "adx")
-    strength = min(1.0, max(0.0, (adx or 0.0) / 40.0))  # ADX>=40 -> full
+    strength = min(1.0, max(0.0, (adx or 0.0) / adx_full))
     score = direction * strength
     if score == 0.0:  # no trend strength -> neutral
         return 0.0

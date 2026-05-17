@@ -138,3 +138,49 @@ edge — not the missing LLM bias. Pursue that (per-family scorer params,
 different indicator set, or rethink the strategy) *before* any LLM-bias
 data-collection investment. `config/strategies/futures/llm_directed_
 indicator.yaml` remains `enabled: false`, no tuned params applied.
+
+---
+
+## Per-family-params decisive probe (2026-05-17) — lever **DEAD**
+
+Spike: exposed 3 highest-leverage scorer-shape knobs (`mom_rsi_pivot`,
+`trend_spread_saturation`, `trend_adx_full`) on `LLMDirectedIndicatorConfig`
++ 2 scorers + optimizer search space (backward-compatible; defaults ==
+old constants; all 35 scorer/entry unit tests green). Re-scoped-gate run
+(70 trials, holdout 2026-02-01, min-trades 50; now 13 dims).
+
+| Re-scoped gate | Prior 10-dim | Probe 13-dim (+3 family knobs) |
+|---|---|---|
+| (a) median valid TRAIN Sharpe / PF | −2.07 / 0.78 | **−5.36 / 0.50** |
+| (b) robust basin | 12.5% (5/40) | **0.0% (0/36)** |
+| best-train cfg TRAIN Sharpe | +2.14 | **−0.25** |
+| verdict | FAIL | **FAIL (worse)** |
+
+Adding scorer-shape dimensions **collapsed the robust basin to zero** and
+worsened the median. Confirms the scope prediction exactly: mapping/
+normalization knobs add overfit surface, not information — Optuna fits
+the train window's noise harder, degrading the whole distribution.
+
+**Lever DEAD. Do NOT do the full ~12-knob build.** The spike code is
+retained as reproducible negative evidence only; the new params are inert
+by default and must NOT be tuned/activated.
+
+### Synthesis — three independent lines converge
+
+1. Replay: impossible (LLM context never persisted).
+2. Ceiling bracket: a *perfect* look-ahead mask can't rescue the floor at
+   robust params (4 trades / +4.6% per 10mo); only the overfit config
+   "looks good".
+3. Per-family probe: adding scorer tuning makes robustness *worse*
+   (basin 12.5% → 0%).
+
+**Conclusion:** `llm_directed_indicator`'s indicator ensemble has **no
+robust standalone edge** on KOSPI200 1-min futures, and neither bias-
+masking nor scorer-shape tuning fixes that — the bottleneck is
+informational (the chosen indicators/timeframe lack a robust
+generalizable directional signal for this instrument). Honest remaining
+options: (a) *different information* (different indicators / multi-
+timeframe / microstructure features — IndicatorEngine work, still
+speculative) or (b) **accept the archetype is not viable here** and
+formalize "do not pursue activation" (mirrors the RL_mppo arc). The
+strategy already sits `enabled: false`; no tuned params ever applied.
