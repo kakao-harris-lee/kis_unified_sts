@@ -1,6 +1,9 @@
-# LLM-directed indicator composite (futures) — succeeds RL_mppo.
-# Design: docs/superpowers/specs/2026-05-16-llm-directed-indicator-futures-design.md
-# enabled: false until backtest Sharpe>1.0/PF>1.2 gate passes (spec section 6).
+# LLM-directed indicator composite (futures).
+# ⛔ DEPRECATED 2026-05-17 — DO NOT ACTIVATE. Built & evaluated; no robust
+#    standalone edge on KOSPI200 1-min futures; fails the re-scoped §6
+#    gate. enabled: false is PERMANENT; no tuned params applied. Rationale:
+#    spec §8 (2026-05-16-llm-directed-indicator-futures-design.md) +
+#    reports/optuna/FINDINGS.md. Retained for reference, not activation.
 
 strategy:
   name: llm_directed_indicator

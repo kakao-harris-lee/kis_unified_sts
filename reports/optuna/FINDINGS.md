@@ -1,5 +1,11 @@
 # llm_directed_indicator — Optuna tuning findings (2026-05-16/17)
 
+> **⛔ DECISION 2026-05-17: DEPRECATED — do not activate.** No robust
+> standalone edge on KOSPI200 1-min futures; re-scoped §6 gate FAIL on
+> three independent lines (gate / ceiling bracket / per-family probe).
+> `enabled: false` permanent, no tuned params applied. Canonical
+> rationale: design spec §8. Code/tests retained for reference only.
+
 Tool: `scripts/optimize_llm_directed_indicator.py`
 Data: `data/kospi200f_1m_ch_101S6000.csv` (51,396 bars, 2025-07-01 → 2026-04-23)
 Backtest path mirrors `cli/main.py::backtest_run` futures exactly

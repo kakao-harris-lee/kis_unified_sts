@@ -1,7 +1,15 @@
 # LLM-Directed Indicator Strategy (Futures) — Design
 
-**Date**: 2026-05-16
-**Status**: Design (approved) → implementation plan pending
+> ## ⛔ DEPRECATED 2026-05-17 — DO NOT ACTIVATE
+> The strategy was built and evaluated. It has **no robust standalone
+> edge** on KOSPI200 1-min futures and **fails the re-scoped §6 gate**.
+> Activation is not pursued. `enabled: false` permanently; no tuned
+> params were ever applied. Rationale + evidence: **§8** below and
+> `reports/optuna/FINDINGS.md`. Code/tests retained for reference (the
+> negative result is reproducible); this is NOT an activation path.
+
+**Date**: 2026-05-16  ·  **Deprecated**: 2026-05-17
+**Status**: ⛔ DEPRECATED (built, evaluated, no robust edge — see §8)
 **Context**: RL_mppo deprecated (master plan v4.11). Futures needs an
 indicator-based primary strategy. Currently only `williams_r_15m` exists
 (enabled=false, unprofitable at defaults). This spec designs a single
@@ -349,3 +357,58 @@ scaffolding → deferred until multi-contract.
   constraints).
 - Backtest harness wiring for the FLAT-bias contract (force mask=FLAT in
   backtest adapter path).
+
+---
+
+## 8. Deprecation (2026-05-17) — decision & rationale
+
+**Decision:** `llm_directed_indicator` is **DEPRECATED**. It will not be
+activated. `config/strategies/futures/llm_directed_indicator.yaml`
+remains `enabled: false` permanently; no tuned parameters were ever
+applied. Code, config, and tests are **retained** (not deleted) so the
+negative result stays reproducible and as reference for any future
+futures-signal work — mirroring the RL_mppo arc (deprecated 2026-05-15,
+code retained for the retraining option).
+
+**Why (three independent investigation lines converged):**
+
+1. **Re-scoped §6 gate FAIL (§6.1).** The original "best-trial
+   Sharpe>1.0/PF>1.2" bar was withdrawn (it rewards knife-edge
+   curve-fits). Under the operator-approved *robust non-catastrophic*
+   gate the FLAT-bias floor fails decisively: median valid trial
+   Sharpe ≈ −2.07 / PF 0.78, only ~12.5 % of valid trials
+   non-catastrophic. Reproduced on two independent codebases. The floor
+   loses money across ~87 % of its parameter space — empirically
+   falsifying §4(a)'s "reasonable live safety floor" assumption.
+2. **LLM-bias ceiling bracket.** Historical LLM `market_context` was
+   never persisted (overwriting 24h-TTL Redis key only) → spec §4(b)
+   replay is impossible. The substitute ceiling test (force the mask;
+   a perfect look-ahead ORACLE = the unreachable upper bound) shows even
+   a *perfect* directional mask cannot rescue the floor at robust
+   params (4 trades / +4.6 % per 10 mo); the only config where it
+   "looks good" is the non-generalizing curve-fit, where FLAT is
+   already comfortable *without* any bias.
+3. **Per-family-params decisive probe.** Exposing scorer-shape knobs
+   made robustness *worse* — basin 12.5 % → **0.0 %** (0/36 valid
+   trials non-catastrophic), median Sharpe −2.07 → −5.36. Mapping/
+   normalization knobs add overfit surface, not information.
+
+**Root cause:** the bottleneck is *informational* — the chosen
+indicator ensemble / 1-min timeframe does not contain a robust,
+generalizable directional edge for KOSPI200 futures. Neither
+LLM-bias masking nor parameter/shape tuning can manufacture an edge
+that the base signal lacks.
+
+**Operational status:**
+- YAML `enabled: false` (permanent); registry registration retained.
+- The strategy must NOT be set `enabled: true` without a *new* spec
+  that addresses the informational bottleneck (different indicators /
+  multi-timeframe / microstructure features) and re-clears the
+  re-scoped §6 gate from scratch.
+- Full evidence, tooling, and reproducible runs: PR #320 +
+  `reports/optuna/FINDINGS.md`.
+
+**If futures signal work resumes,** start from *different information*
+(not re-tuning this ensemble) and gate any candidate on the re-scoped
+robust-non-catastrophic bar (`scripts/optimize_llm_directed_indicator.py
+::_rescoped_gate`), not raw best-trial Sharpe.
