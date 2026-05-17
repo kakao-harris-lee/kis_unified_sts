@@ -85,6 +85,11 @@ class MarketStateAdapter:
 class EntryContext:
     """진입 판단에 필요한 컨텍스트
 
+    Temporal contract (look-ahead bias guard):
+        - market_data/indicators 내 모든 시계열 값은 반드시 마지막 관측치의 timestamp <= context.timestamp 여야 함.
+        - (C1 스펙) 백테스트/최적화 시 LookaheadGuard가 이를 검증하며, 위반 시 assert/warn/off 모드로 동작.
+        - 실전/모의는 off, 백테스트/최적화는 assert가 기본값.
+
     Attributes:
         market_data: 시장 데이터 (OHLCV 등)
         indicators: 계산된 지표 값
@@ -92,6 +97,12 @@ class EntryContext:
         timestamp: 현재 시간
         market_context: LLM 시장 분석 컨텍스트 (regime, sentiment, risk 등)
         metadata: 추가 메타데이터
+
+    Example (strategy/indicator 내부):
+        # 시계열 값 검증
+        guard = getattr(context, 'lookahead_guard', None)
+        if guard:
+            guard.check(arr, arr_timestamps, context.timestamp, context_info='my_indicator')
     """
 
     market_data: dict[str, Any] = field(default_factory=dict)
@@ -106,6 +117,11 @@ class EntryContext:
 class ExitContext:
     """청산 판단에 필요한 컨텍스트
 
+    Temporal contract (look-ahead bias guard):
+        - market_data/indicators 내 모든 시계열 값은 반드시 마지막 관측치의 timestamp <= context.timestamp 여야 함.
+        - (C1 스펙) 백테스트/최적화 시 LookaheadGuard가 이를 검증하며, 위반 시 assert/warn/off 모드로 동작.
+        - 실전/모의는 off, 백테스트/최적화는 assert가 기본값.
+
     Attributes:
         position: 청산 대상 포지션
         market_data: 시장 데이터
@@ -114,6 +130,11 @@ class ExitContext:
         market_state: 시장 상태 (MarketClassifier 결과)
         market_context: LLM 시장 분석 컨텍스트 (regime, sentiment, risk 등)
         metadata: 추가 메타데이터
+
+    Example (strategy/indicator 내부):
+        guard = getattr(context, 'lookahead_guard', None)
+        if guard:
+            guard.check(arr, arr_timestamps, context.timestamp, context_info='my_indicator')
     """
 
     position: "Position"

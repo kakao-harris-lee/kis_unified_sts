@@ -137,7 +137,12 @@ class VolumeAccelerationCalculator:
         self._volume_windows[code].append((timestamp, volume))
 
     def calculate(
-        self, code: str, lookback_seconds: int | None = None
+        self, code: str, lookback_seconds: int | None = None,
+        *,
+        timestamps: list = None,
+        context_timestamp = None,
+        lookahead_guard = None,
+        context_info: str = None,
     ) -> VolumeAcceleration:
         """거래량 가속도 계산
 
@@ -162,6 +167,10 @@ class VolumeAccelerationCalculator:
         window = self._volume_windows[code]
         if not window:
             return VolumeAcceleration(0.0, 0.0, False, 0, 0)
+
+        # LookaheadGuard: 시계열 입력이 배열이면 검사
+        if lookahead_guard and timestamps is not None and context_timestamp is not None:
+            lookahead_guard.check([v[1] for v in window], timestamps, context_timestamp, context_info or f"volume:{code}")
 
         now = window[-1][0]
         cutoff_current = now - lookback_seconds

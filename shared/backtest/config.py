@@ -96,6 +96,8 @@ class RiskConfig:
 
 @dataclass
 class BacktestConfig:
+        # Lookahead bias guard mode: 'off', 'warn', 'assert' (default: 'assert')
+        lookahead_guard_mode: str = "assert"
     """백테스트 설정
 
     Attributes:
@@ -134,6 +136,7 @@ class BacktestConfig:
         order_amount_per_stock: float | None = None,
         max_positions: int = 5,
         ats_enabled: bool = False,
+        lookahead_guard_mode: str = "assert",
     ) -> BacktestConfig:
         """주식용 설정
 
@@ -162,6 +165,7 @@ class BacktestConfig:
             cost=CostConfig.stock(),
             ats_enabled=ats_enabled,
             ats_simulator=ats_simulator,
+            lookahead_guard_mode=lookahead_guard_mode,
         )
 
     @classmethod
@@ -170,6 +174,7 @@ class BacktestConfig:
         initial_capital: float = 10_000_000,
         contracts: int = 1,
         point_value: float = 50_000,
+        lookahead_guard_mode: str = "assert",
     ) -> BacktestConfig:
         """선물용 설정"""
         return cls(
@@ -178,6 +183,7 @@ class BacktestConfig:
             max_positions=contracts,
             point_value=point_value,
             cost=CostConfig.futures(),
+            lookahead_guard_mode=lookahead_guard_mode,
         )
 
     @classmethod
@@ -217,6 +223,7 @@ class BacktestConfig:
             ats_enabled=ats_enabled,
             ats_simulator=ats_simulator,
             verbose=data.get("verbose", False),
+            lookahead_guard_mode=data.get("lookahead_guard_mode", "assert"),
         )
 
     def to_dict(self) -> dict[str, Any]:

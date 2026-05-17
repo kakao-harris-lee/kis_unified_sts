@@ -122,6 +122,11 @@ class VolumeRatioCalculator:
         self,
         closes: np.ndarray | list[float],
         volumes: np.ndarray | list[int],
+        *,
+        timestamps: list = None,
+        context_timestamp = None,
+        lookahead_guard = None,
+        context_info: str = None,
     ) -> list[Optional[float]]:
         """VR 값 시계열 계산.
 
@@ -134,6 +139,11 @@ class VolumeRatioCalculator:
         """
         closes_arr = np.asarray(closes, dtype=float)
         volumes_arr = np.asarray(volumes, dtype=float)
+
+        # LookaheadGuard: 시계열 값이 context.timestamp 이후 미래값을 포함하는지 검사
+        if lookahead_guard and timestamps is not None and context_timestamp is not None:
+            lookahead_guard.check(closes_arr, timestamps, context_timestamp, context_info or "VR closes")
+            lookahead_guard.check(volumes_arr, timestamps, context_timestamp, context_info or "VR volumes")
 
         if len(closes_arr) != len(volumes_arr):
             raise ValueError("closes and volumes must have the same length")

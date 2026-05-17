@@ -142,6 +142,7 @@ React 프론트엔드 (port 8001, FastAPI 정적 호스팅) — 실시간 운영
 | `directional` | LONG_BIAS / SHORT_BIAS / FLAT | 진입 방향 제약 (action mask) | 트렌드 추종/역추세 전략 |
 
 **Directional Mode 동작**:
+
 - `LONG_BIAS` → Low-level의 SHORT_ENTRY 차단 (롱 진입만 허용)
 - `SHORT_BIAS` → Low-level의 LONG_ENTRY 차단 (숏 진입만 허용)
 - `FLAT` → 양방향 진입 모두 허용 (관망 모드)
@@ -172,11 +173,13 @@ sts rl evaluate-hierarchical \
 ```
 
 **성능 기대치**:
+
 - Sharpe ratio 향상: flat rl_mppo 대비 10-30% 개선 예상
 - 승률 개선: 멀티 타임프레임 필터링으로 거짓 신호 감소
 - 레이턴시 제약: 추론 시간 p99 < 60초 (1분봉 제약 준수)
 
 **구현 위치**:
+
 - `shared/ml/rl/hierarchical/` — High-level env, Low-level env, Trainer, Evaluator
 - `config/ml/rl_mppo.yaml` — `hierarchical` 섹션 (directional_bias, training_mode, joint_timesteps)
 - `tests/unit/ml/rl/test_hierarchical*.py` — 포괄적 테스트 (51개 테스트 메서드)
@@ -191,8 +194,21 @@ kis-unified-trading/
 ├── pyproject.toml                   # 프로젝트 설정
 ├── docker-compose.yml / .dev.yml    # Docker 오케스트레이션
 │
-├── config/                          # 📁 모든 설정 파일 (YAML)
-│   ├── api.yaml, llm.yaml, streaming.yaml, execution.yaml
+- **C1: Look-ahead Bias 방지**: 모든 시계열/배열 데이터는 반드시 현재 context.timestamp 이하만 참조해야 하며, 미래 데이터(look-ahead bias) 참조 시 경고 또는 실패 처리된다. 백테스트/최적화 시에는 LookaheadGuard가 강제 적용되며, 엔진/지표/전략 컨텍스트는 아래와 같이 사용한다.
+
+  - 구현: `shared/backtest/lookahead_guard.py` (`LookaheadGuard`)
+  - 설정: `BacktestConfig.lookahead_guard_mode` (off/warn/assert, 기본 assert)
+  - wiring: `BacktestEngine`, `IndicatorEngine`, 모든 주요 indicator/지표 계산 함수
+  - 테스트: `tests/unit/backtest/test_lookahead_guard.py` (미래 데이터 참조 시 경고/실패 검증)
+  - 사용 예시:
+    ```python
+    # 지표/엔진 내부
+    lookahead_guard.check(arr, timestamps, ctx.timestamp, context_info="SMA")
+    # 타임스탬프 없는 배열은 check_fingerprint 사용
+    lookahead_guard.check_fingerprint(arr, prev_fp, context_info="custom_array")
+    ```
+  - 스펙: "C1: Look-ahead bias 방지" (모든 전략/지표/엔진은 미래 데이터 참조 금지, 위반 시 경고 또는 실패)
+
 │   ├── monitoring.yaml, market_schedule.yaml
 │   ├── strategies/                  # 전략별 설정
 │   │   ├── stock/                   # bb_reversion, opening_volume_surge, volume_accumulation
@@ -304,6 +320,7 @@ strategy:
 `shared/config/base.py` — Pydantic BaseModel 기반 통합 설정 베이스 클래스.
 
 **핵심 기능:**
+
 - `from_yaml()`: YAML 파일에서 로드 (ConfigLoader 통합, 섹션 추출 지원)
 - `from_env()`: 환경변수에서 로드 (prefix 매핑, 타입 자동 변환)
 - 환경변수 우선순위: YAML + env override 조합 가능

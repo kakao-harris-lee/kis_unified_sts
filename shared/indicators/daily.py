@@ -72,6 +72,7 @@ def calculate_daily_indicators(
         >>> print(ind["sma_200"])  # Daily SMA(200)
         100.5
     """
+
     if sma_periods is None:
         sma_periods = [20, 60, 200]
     if ema_periods is None:
@@ -80,6 +81,11 @@ def calculate_daily_indicators(
     if not candles:
         logger.warning("calculate_daily_indicators: no candles provided")
         return {}
+
+    # LookaheadGuard: 시계열 입력이 배열이면 검사
+    if lookahead_guard and context_timestamp is not None:
+        timestamps = [c['timestamp'] for c in candles if 'timestamp' in c]
+        lookahead_guard.check([c['close'] for c in candles], timestamps, context_timestamp, context_info or "daily:candles")
 
     # Convert candles to DataFrame
     df = pd.DataFrame(candles)

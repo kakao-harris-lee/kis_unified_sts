@@ -125,6 +125,13 @@ class BacktestEngine:
         self.strategy = strategy
         self.config = config or BacktestConfig()
 
+        # LookaheadGuard wiring
+        from shared.backtest.lookahead_guard import LookaheadGuard, LookaheadGuardMode
+        mode = self.config.lookahead_guard_mode.lower() if hasattr(self.config, "lookahead_guard_mode") else "assert"
+        if mode not in ("off", "warn", "assert"):
+            mode = "assert"
+        self.lookahead_guard = LookaheadGuard(mode=mode)
+
         # ATS 시뮬레이터 초기화
         self.ats_simulator = self.config.ats_simulator
         if self.config.ats_enabled and self.ats_simulator:
@@ -163,6 +170,8 @@ class BacktestEngine:
             raise ValueError("Empty data provided")
 
         self._reset()
+        # expose guard for context/indicator checks
+        guard = self.lookahead_guard
 
         # 데이터 정렬 (멀티심볼 백테스트는 datetime, code 순으로 고정)
         sort_cols = ["datetime"] + (["code"] if "code" in data.columns else [])

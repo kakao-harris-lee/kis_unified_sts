@@ -169,6 +169,11 @@ class CompositeScoreCalculator:
         imbalance: float,
         price_vs_vwap: float,
         program_net_buy: float = 0.0,
+        *,
+        timestamps: list = None,
+        context_timestamp = None,
+        lookahead_guard = None,
+        context_info: str = None,
     ) -> ScoreResult:
         """복합 스코어 계산
 
@@ -181,6 +186,11 @@ class CompositeScoreCalculator:
         Returns:
             ScoreResult
         """
+        # LookaheadGuard: 시계열 입력이 배열이면 검사
+        if lookahead_guard and timestamps is not None and context_timestamp is not None:
+            lookahead_guard.check([volume_velocity], timestamps, context_timestamp, context_info or "composite:volume_velocity")
+            lookahead_guard.check([imbalance], timestamps, context_timestamp, context_info or "composite:imbalance")
+            lookahead_guard.check([price_vs_vwap], timestamps, context_timestamp, context_info or "composite:price_vs_vwap")
         vol_score = self.volume_calculator.get_velocity_score(volume_velocity)
         imb_score = self.orderbook_analyzer.get_imbalance_score(imbalance)
         vwap_score = self.vwap_calculator.get_vwap_score(price_vs_vwap)
@@ -216,6 +226,11 @@ class CompositeScoreCalculator:
         current_price: float,
         vwap: float,
         program_net_buy: float = 0.0,
+        *,
+        timestamps: list = None,
+        context_timestamp = None,
+        lookahead_guard = None,
+        context_info: str = None,
     ) -> ScoreResult:
         """원시 데이터로 복합 스코어 계산
 
@@ -255,4 +270,8 @@ class CompositeScoreCalculator:
             imbalance=imbalance,
             price_vs_vwap=price_vs_vwap,
             program_net_buy=program_net_buy,
+            timestamps=timestamps,
+            context_timestamp=context_timestamp,
+            lookahead_guard=lookahead_guard,
+            context_info=context_info,
         )

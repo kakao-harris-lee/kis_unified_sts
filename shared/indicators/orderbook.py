@@ -108,6 +108,11 @@ class OrderBookAnalyzer:
         bid_volumes: list[int],
         ask_volumes: list[int],
         levels: int | None = None,
+        *,
+        timestamps: list = None,
+        context_timestamp = None,
+        lookahead_guard = None,
+        context_info: str = None,
     ) -> OrderBookImbalance:
         """호가 불균형 계산
 
@@ -122,6 +127,11 @@ class OrderBookAnalyzer:
             OrderBookImbalance
         """
         levels = levels or self.config.orderbook_levels
+
+        # LookaheadGuard: 시계열 입력이 배열이면 검사
+        if lookahead_guard and timestamps is not None and context_timestamp is not None:
+            lookahead_guard.check(bid_volumes, timestamps, context_timestamp, context_info or "orderbook:bid_volumes")
+            lookahead_guard.check(ask_volumes, timestamps, context_timestamp, context_info or "orderbook:ask_volumes")
 
         # 상위 N단계만 사용
         bid_vols = bid_volumes[:levels]

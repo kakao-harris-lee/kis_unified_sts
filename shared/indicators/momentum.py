@@ -104,7 +104,7 @@ class TRIXCalculator:
     def __init__(self, n: int = 12, signal: int = 9):
         self.config = TRIXConfig(n=n, signal=signal)
 
-    def calculate(self, df: pd.DataFrame) -> pd.DataFrame:
+    def calculate(self, df: pd.DataFrame, *, lookahead_guard=None, context_timestamp=None, context_info: str = None) -> pd.DataFrame:
         """Calculate TRIX and signal line.
 
         Adds 'trix' and 'trix_signal' columns to the DataFrame.
@@ -117,6 +117,11 @@ class TRIXCalculator:
         """
         close = df["close"]
         n = self.config.n
+
+        # LookaheadGuard: close 시계열 검사
+        if lookahead_guard and context_timestamp is not None:
+            timestamps = df["timestamp"].tolist() if "timestamp" in df.columns else None
+            lookahead_guard.check(close.tolist(), timestamps, context_timestamp, context_info or "momentum:trix_close")
 
         ema1 = ema(close, n)
         ema2 = ema(ema1, n)
