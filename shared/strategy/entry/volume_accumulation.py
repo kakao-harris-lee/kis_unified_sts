@@ -17,13 +17,11 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, time
 from typing import Dict, Optional
-from zoneinfo import ZoneInfo
-
-_KST = ZoneInfo("Asia/Seoul")
 
 from shared.config.mixins import ConfigMixin
 from shared.models.signal import Signal, SignalType
 from shared.strategy.base import EntryContext, EntrySignalGenerator
+from shared.strategy.market_time import to_kst
 
 logger = logging.getLogger(__name__)
 
@@ -235,7 +233,7 @@ class VolumeAccumulationBreakoutEntry(EntrySignalGenerator[VolumeAccumulationCon
     def _check_time_filter(self, timestamp: datetime) -> bool:
         """Check if current time is within allowed trading window."""
         # Market hour filters use KST; timestamp is UTC-aware (PR #159).
-        ts_kst = timestamp.astimezone(_KST) if timestamp.tzinfo is not None else timestamp.replace(tzinfo=_KST)
+        ts_kst = to_kst(timestamp)
         current_time = ts_kst.time()
 
         # Calculate market open time (with buffer)

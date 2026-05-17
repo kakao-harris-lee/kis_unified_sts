@@ -21,6 +21,7 @@ _KST = ZoneInfo("Asia/Seoul")
 from shared.config.mixins import ConfigMixin
 from shared.models.signal import Signal, SignalType
 from shared.strategy.base import EntryContext, EntrySignalGenerator
+from shared.strategy.market_time import to_kst
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +117,7 @@ class WilliamsREntry(EntrySignalGenerator[WilliamsRConfig]):
 
         now = context.timestamp
         # Market hour filters use KST; context.timestamp is UTC-aware (PR #159).
-        now_kst = now.astimezone(_KST) if now.tzinfo is not None else now.replace(tzinfo=_KST)
+        now_kst = to_kst(now)
 
         # --- Time filters ---
         open_dt = datetime.combine(

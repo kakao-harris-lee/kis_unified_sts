@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo
 from shared.config.mixins import ConfigMixin
 from shared.models.signal import Signal, SignalType
 from shared.strategy.base import EntryContext, EntrySignalGenerator
+from shared.strategy.market_time import to_kst
 from shared.strategy.signals.indicator_families import (
     momentum_reversal_score,
     trend_breakout_score,
@@ -150,9 +151,7 @@ class LLMDirectedIndicatorEntry(EntrySignalGenerator[LLMDirectedIndicatorConfig]
             return None
 
         now = context.timestamp
-        now_kst = (
-            now.astimezone(_KST) if now.tzinfo is not None else now.replace(tzinfo=_KST)
-        )
+        now_kst = to_kst(now)
         c = self.config
         open_dt = datetime.combine(
             now_kst.date(), time(c.market_open_hour, c.market_open_minute), tzinfo=_KST

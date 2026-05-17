@@ -28,6 +28,7 @@ except ImportError:
 from shared.config.mixins import ConfigMixin
 from shared.models.signal import Signal, SignalType
 from shared.strategy.base import EntryContext, EntrySignalGenerator
+from shared.strategy.market_time import to_kst
 
 logger = logging.getLogger(__name__)
 
@@ -150,7 +151,7 @@ class OpeningVolumeSurgeEntry(EntrySignalGenerator[OpeningVolumeSurgeConfig]):
             return None
 
         now: datetime = context.timestamp
-        now = now.replace(tzinfo=KST) if now.tzinfo is None else now.astimezone(KST)
+        now = to_kst(now)
 
         open_dt = datetime.combine(
             now.date(),
