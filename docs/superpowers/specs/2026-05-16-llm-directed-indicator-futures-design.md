@@ -1,7 +1,15 @@
 # LLM-Directed Indicator Strategy (Futures) — Design
 
-**Date**: 2026-05-16
-**Status**: Design (approved) → implementation plan pending
+> ## ⛔ DEPRECATED 2026-05-17 — DO NOT ACTIVATE
+> The strategy was built and evaluated. It has **no robust standalone
+> edge** on KOSPI200 1-min futures and **fails the re-scoped §6 gate**.
+> Activation is not pursued. `enabled: false` permanently; no tuned
+> params were ever applied. Rationale + evidence: **§8** below and
+> `reports/optuna/FINDINGS.md`. Code/tests retained for reference (the
+> negative result is reproducible); this is NOT an activation path.
+
+**Date**: 2026-05-16  ·  **Deprecated**: 2026-05-17
+**Status**: ⛔ DEPRECATED (built, evaluated, no robust edge — see §8)
 **Context**: RL_mppo deprecated (master plan v4.11). Futures needs an
 indicator-based primary strategy. Currently only `williams_r_15m` exists
 (enabled=false, unprofitable at defaults). This spec designs a single
@@ -158,9 +166,11 @@ indicator engine. There is **no live LLM in backtest**. Contract:
 - **(a) FLAT-bias backtest** (the contract): mask is always FLAT
   (indicators-only, both directions). Measures the **conservative floor
   of the pure indicator suite's edge** — deterministic, zero LLM-replay
-  infrastructure. The Sharpe gate is on this floor. Live LLM bias only
+  infrastructure. The gate is on this floor. Live LLM bias only
   *removes* wrong-direction trades (an added filter), so passing the
-  indicators-only floor is a reasonable live safety floor.
+  indicators-only floor was *assumed* to be a reasonable live safety
+  floor. **⚠️ This assumption was empirically FALSIFIED on 2026-05-17 —
+  see §6.1.** The floor loses money across ~92 % of its parameter space.
 - (b) replay logged LLM `market_context` from ClickHouse — higher
   fidelity, documented as a **future upgrade** (depends on historical
   context persistence + alignment).
@@ -212,14 +222,37 @@ never to *zero* signals.
 
 - `data/kospi200f_1m_ch_101S6000.csv`, FLAT-bias contract
   (indicators-only floor).
-- Optuna over: family weights + entry_threshold + bias_confidence_min +
-  per-family params.
+- Optuna over: family weights + entry_threshold + per-family params.
+  (`bias_confidence_min` is **excluded** — under the FLAT-bias backtest
+  contract the mask is always FLAT, so it is provably a no-op in
+  backtest. Tuning it wastes trials and distorts param-importance.)
+- A **min-trades floor** on the optimization window is mandatory: with
+  no floor, maximizing Sharpe "wins" by barely trading (e.g. 8 trades /
+  7 months) — statistical noise, wildly unstable across windows.
 - Costs: `futures_contract_spec` (1 tick slippage, ~0.3 bps) — same as
   the backtest engine / counterfactual.
-- **Sharpe gate (proposed)**: net-of-cost **Sharpe > 1.0 AND PF > 1.2
-  AND MDD reasonable** as the pass floor (report williams_r_15m Sharpe
-  -5.81 and deprecated RL_mppo eval Sharpe ~3.19 as reference lines).
-  **Operator sets the final bar.**
+
+- **Re-scoped gate (2026-05-17, operator-approved) — "robust
+  non-catastrophic floor".** The original "best-trial Sharpe > 1.0 AND
+  PF > 1.2" bar was **withdrawn**: it judged the *single best trial* by
+  raw Sharpe, which an Optuna search will satisfy with a knife-edge
+  curve-fit even when ~92 % of the parameter space loses money. The
+  FLAT-bias path is a *safety floor*, not the alpha (the LLM directional
+  bias is the alpha), so the bar is that the floor is **broadly
+  non-catastrophic**, judged on the *distribution* of valid trials.
+  PASS requires **all** of:
+  - **(a)** the **median** valid trial (cleared the min-trades floor,
+    not NaN/degenerate) is non-catastrophic on train:
+    `Sharpe ≥ 0 AND PF ≥ 1.0`;
+  - **(b)** a **broad basin**: `≥ 25 %` of valid trials clear (a)
+    (kills single-lucky-trial acceptance);
+  - **(c)** the selected config is non-catastrophic **out-of-sample**
+    (held-out split): `Sharpe ≥ 0 AND PF ≥ 1.0 AND MDD ≤ 25 % AND
+    return ≥ 0`.
+  Reference lines: williams_r_15m Sharpe −5.81; deprecated RL_mppo eval
+  Sharpe ~3.19. Thresholds are CLI-configurable; **operator sets the
+  final bar**. Implemented in `scripts/optimize_llm_directed_indicator.py`
+  (`_rescoped_gate`).
 
 **Rollout:** `enabled: false` → backtest + Optuna → gate pass → flip
 `enabled: true` paper-primary (Setup A/C coexist). No shadow stage.
@@ -237,6 +270,43 @@ shadow PnL stage means the first real-money-equivalent evidence is
 paper-primary itself. Passing the FLAT-bias backtest floor does not
 guarantee LLM upside (it is only a conservative floor). The #256 monitor
 + weekly paper review are the sole post-hoc safety nets.
+
+### 6.1 Empirical result (2026-05-17) — gate FAILED
+
+Three Optuna runs on `101S6000` (84 + 66 + 67 trials), tool
+`scripts/optimize_llm_directed_indicator.py`; full evidence in
+`reports/optuna/FINDINGS.md`.
+
+- No-floor runs exposed the low-trade-count Sharpe degeneracy (best:
+  8 trades / 7 months). Min-trades floor added.
+- **Re-scoped gate verdict: FAIL** (tool-printed, canonical run). With
+  the floor: median valid trial train **Sharpe −2.07 / PF 0.78** →
+  (a) FAIL; only **5/40 = 12.5 %** of valid trials are non-catastrophic
+  → (b) FAIL (need ≥25 %). The selected config does pass OOS
+  (8.68 / 3.49) — exactly the single-lucky-outlier the re-scoped gate is
+  designed to reject. ~87 % of valid trials are money-losing on the
+  floor. Verdict reproduced on two independent codebases
+  (`runtime/main-current` median −2.25 / basin 7.9 %; `origin/main`
+  median −2.07 / basin 12.5 %) — robust to codebase / trial count /
+  seed-path.
+
+**This empirically falsifies §4(a)'s assumption that "the
+indicators-only floor is a reasonable live safety floor."** Without the
+LLM bias the indicator suite is *actively unsafe*, not merely "not
+alpha". Consequences for any future activation attempt:
+
+1. Activation must **not** rely on the FLAT-bias path as a safety net.
+   The LLM-absent degrade path should be re-examined — a true FLAT/
+   no-trade fallback is safer than an indicator-driven one here.
+2. The LLM-bias contribution must be evaluated **directly** (replay
+   path (b), or a paper A/B), not inferred from the floor.
+3. Structural levers before re-test: fix the ATR-in-backtest plumbing
+   (`atr=0.0000` ⇒ exit is just the % stop, untested); rolling
+   walk-forward (multi-window) for regime-stability; per-family scorer
+   params (listed above, not yet exposed).
+
+`config/strategies/futures/llm_directed_indicator.yaml` remains
+`enabled: false` with **no tuned params applied**.
 
 ---
 
@@ -287,3 +357,58 @@ scaffolding → deferred until multi-contract.
   constraints).
 - Backtest harness wiring for the FLAT-bias contract (force mask=FLAT in
   backtest adapter path).
+
+---
+
+## 8. Deprecation (2026-05-17) — decision & rationale
+
+**Decision:** `llm_directed_indicator` is **DEPRECATED**. It will not be
+activated. `config/strategies/futures/llm_directed_indicator.yaml`
+remains `enabled: false` permanently; no tuned parameters were ever
+applied. Code, config, and tests are **retained** (not deleted) so the
+negative result stays reproducible and as reference for any future
+futures-signal work — mirroring the RL_mppo arc (deprecated 2026-05-15,
+code retained for the retraining option).
+
+**Why (three independent investigation lines converged):**
+
+1. **Re-scoped §6 gate FAIL (§6.1).** The original "best-trial
+   Sharpe>1.0/PF>1.2" bar was withdrawn (it rewards knife-edge
+   curve-fits). Under the operator-approved *robust non-catastrophic*
+   gate the FLAT-bias floor fails decisively: median valid trial
+   Sharpe ≈ −2.07 / PF 0.78, only ~12.5 % of valid trials
+   non-catastrophic. Reproduced on two independent codebases. The floor
+   loses money across ~87 % of its parameter space — empirically
+   falsifying §4(a)'s "reasonable live safety floor" assumption.
+2. **LLM-bias ceiling bracket.** Historical LLM `market_context` was
+   never persisted (overwriting 24h-TTL Redis key only) → spec §4(b)
+   replay is impossible. The substitute ceiling test (force the mask;
+   a perfect look-ahead ORACLE = the unreachable upper bound) shows even
+   a *perfect* directional mask cannot rescue the floor at robust
+   params (4 trades / +4.6 % per 10 mo); the only config where it
+   "looks good" is the non-generalizing curve-fit, where FLAT is
+   already comfortable *without* any bias.
+3. **Per-family-params decisive probe.** Exposing scorer-shape knobs
+   made robustness *worse* — basin 12.5 % → **0.0 %** (0/36 valid
+   trials non-catastrophic), median Sharpe −2.07 → −5.36. Mapping/
+   normalization knobs add overfit surface, not information.
+
+**Root cause:** the bottleneck is *informational* — the chosen
+indicator ensemble / 1-min timeframe does not contain a robust,
+generalizable directional edge for KOSPI200 futures. Neither
+LLM-bias masking nor parameter/shape tuning can manufacture an edge
+that the base signal lacks.
+
+**Operational status:**
+- YAML `enabled: false` (permanent); registry registration retained.
+- The strategy must NOT be set `enabled: true` without a *new* spec
+  that addresses the informational bottleneck (different indicators /
+  multi-timeframe / microstructure features) and re-clears the
+  re-scoped §6 gate from scratch.
+- Full evidence, tooling, and reproducible runs: PR #320 +
+  `reports/optuna/FINDINGS.md`.
+
+**If futures signal work resumes,** start from *different information*
+(not re-tuning this ensemble) and gate any candidate on the re-scoped
+robust-non-catastrophic bar (`scripts/optimize_llm_directed_indicator.py
+::_rescoped_gate`), not raw best-trial Sharpe.

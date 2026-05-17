@@ -59,6 +59,13 @@ class LLMDirectedIndicatorConfig(ConfigMixin):
     # Risk
     stop_loss_pct: float = 3.0
 
+    # Per-family scorer shape (decisive-probe spike, 2026-05-17).
+    # Defaults == the original hardcoded scorer constants → zero
+    # behavior change unless explicitly overridden / Optuna-tuned.
+    mom_rsi_pivot: float = 50.0          # momentum: RSI neutral pivot
+    trend_spread_saturation: float = 50.0  # trend: EMA-spread saturation
+    trend_adx_full: float = 40.0         # trend: ADX at full strength
+
 
 def _map_llm_bias(
     market_context: Any | None, config: LLMDirectedIndicatorConfig
@@ -174,8 +181,14 @@ class LLMDirectedIndicatorEntry(EntrySignalGenerator[LLMDirectedIndicatorConfig]
 
         ind_for_score = dict(ind)
         ind_for_score.setdefault("close", close)
-        m = momentum_reversal_score(ind_for_score)
-        t = trend_breakout_score(ind_for_score)
+        m = momentum_reversal_score(
+            ind_for_score, rsi_pivot=c.mom_rsi_pivot
+        )
+        t = trend_breakout_score(
+            ind_for_score,
+            spread_saturation=c.trend_spread_saturation,
+            adx_full=c.trend_adx_full,
+        )
         v = volume_microstructure_score(ind_for_score)
         vol_mag = volatility_regime_magnitude(ind_for_score, self._get_vol_forecast())
 

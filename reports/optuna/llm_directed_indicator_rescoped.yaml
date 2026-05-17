@@ -1,0 +1,40 @@
+strategy:
+  name: llm_directed_indicator
+  asset_class: futures
+  enabled: false
+  description: 'Periodic LLM directional bias masks a 3-family fast indicator ensemble
+    (momentum-reversal / trend-breakout / volume-microstructure); a volatility-regime
+    modulator raises the entry threshold. Composite exit reuses ATR-dynamic + momentum-decay.
+    Succeeds RL_mppo primary.
+
+    '
+  entry:
+    type: llm_directed_indicator
+    params:
+      bias_confidence_min: 0.6
+      w_momentum: 0.45000000000000007
+      w_trend: 0.2
+      w_volume: 0.4
+      entry_threshold: 0.30000000000000004
+      vol_threshold_mult: 1.1
+      market_open_hour: 9
+      market_open_minute: 0
+      market_close_hour: 15
+      market_close_minute: 45
+      skip_market_open_minutes: 15
+      skip_market_close_minutes: 30
+      signal_cooldown_seconds: 60
+      stop_loss_pct: 4.5
+  exit:
+    type: llm_directed_indicator_exit
+    params:
+      atr:
+        stop_atr_multiplier: 2.5
+        trail_activation_atr: 0.5
+        trail_atr_multiplier: 3.0
+      momentum_decay: {}
+  position:
+    type: fixed
+    params:
+      max_positions: 1
+      order_amount_per_stock: 1000000
