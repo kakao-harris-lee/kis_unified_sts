@@ -93,3 +93,48 @@ encodes formally:
      to measure regime-stability rather than one lucky OOS window.
   4. **Per-family scorer params** (spec §6 listed them; not yet exposed
      through `LLMDirectedIndicatorConfig`).
+
+---
+
+## LLM-bias contribution evaluation (2026-05-17) — replay BLOCKED → ceiling bracket → **NO-GO**
+
+**Replay is impossible.** Historical LLM `market_context` was never
+persisted: it lives only in a single overwriting Redis key
+`trading:{asset}:market_context` (24h TTL); no ClickHouse table; LLM
+cron scripts emit Telegram only. Zero context history exists for
+2025-07→2026-04 — spec §4(b) "replay logged context" cannot be done.
+
+**Instead: ceiling bracket** (`scripts/bracket_llm_bias_ceiling.py`) —
+force the mask per run over the full range and measure the *maximum*
+any directional-bias layer could add. A perfect look-ahead ORACLE mask
+is the unreachable upper bound.
+
+| Config | Mode | Sharpe | PF | Trades | Ret | Verdict |
+|---|---|---|---|---|---|---|
+| default | FLAT | −6.85 | 0.28 | 14 | −37.7% | catastrophic |
+| default | ORACLE | 13.25 | inf | **4** | +4.6% | **INSUFFICIENT-TRADES** |
+| rescoped (overfit) | FLAT | 5.54 | 2.42 | 182 | +185% | comfortable¹ |
+| rescoped (overfit) | ORACLE | 8.42 | 7.79 | 116 | +283% | comfortable¹ |
+
+¹ `rescoped.yaml` is the single knife-edge config the **re-scoped gate
+already FAILED** (median valid trial −2.07; 1/40 non-catastrophic). Its
+"comfortable" numbers are overfitting artifacts.
+
+**Decision: NO-GO on investing weeks in live LLM-context collection.**
+Rationale:
+- On any *robust* parameterization the floor has no edge (re-scoped gate
+  FAIL) and at sensible/default params the ensemble barely trades →
+  even a *perfect* mask is economically negligible (4 trades, +4.6%/10mo).
+  A directional mask only ever *subtracts* trades; it cannot manufacture
+  an edge from a floor that lacks one.
+- The only config where the bracket "looks good" is the known
+  non-generalizing curve-fit, and there **FLAT is already comfortable
+  without any bias** — so the bias layer is not what carries the result.
+- **Bracket ⊥ gate**: a bracket is only decision-meaningful on a config
+  that PASSES the re-scoped gate. None does.
+
+**Real bottleneck:** the indicator ensemble has no robust standalone
+edge — not the missing LLM bias. Pursue that (per-family scorer params,
+different indicator set, or rethink the strategy) *before* any LLM-bias
+data-collection investment. `config/strategies/futures/llm_directed_
+indicator.yaml` remains `enabled: false`, no tuned params applied.
