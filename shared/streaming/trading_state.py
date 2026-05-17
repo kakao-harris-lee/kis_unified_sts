@@ -330,6 +330,12 @@ class TradingStatePublisher:
 
     @staticmethod
     def _serialize_position(pos: Any) -> dict:
+        # Surface the idempotency key (if any) at the top level so it
+        # survives the Redis round-trip used by orchestrator recovery.
+        metadata = getattr(pos, "metadata", None) or {}
+        client_order_id = ""
+        if isinstance(metadata, dict):
+            client_order_id = str(metadata.get("client_order_id") or "")
         return {
             "id": pos.id,
             "code": pos.code,
@@ -347,6 +353,7 @@ class TradingStatePublisher:
             "lowest_price": getattr(pos, "lowest_price", pos.entry_price),
             "fee_rate": getattr(pos, "fee_rate", 0.0),
             "stop_price": getattr(pos, "stop_price", None),
+            "client_order_id": client_order_id,
         }
 
     @staticmethod

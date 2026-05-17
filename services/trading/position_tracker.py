@@ -299,6 +299,13 @@ class PositionTracker:
         # Index: strategy -> list of position ids
         self._by_strategy: dict[str, list[str]] = {}
 
+        # Idempotency index: client_order_id -> position_id
+        # Used to deduplicate retried add_position calls (e.g., when the
+        # caller retries after a transient broker ACK timeout on a fill
+        # that actually succeeded).  Populated only when the caller passes
+        # a non-empty ``client_order_id`` to :meth:`add_position`.
+        self._by_client_order_id: dict[str, str] = {}
+
         # Event history (bounded with deque)
         self._events: deque[PositionEvent] = deque(maxlen=self.config.max_events)
 
@@ -363,6 +370,7 @@ class PositionTracker:
         fee_rate: float | None = None,
         metadata: dict[str, Any] | None = None,
         execution_venue: str = "KRX",
+        client_order_id: str | None = None,
     ) -> Position | None:
         """Add a new position
 
@@ -376,10 +384,40 @@ class PositionTracker:
             fee_rate: Trading fee rate (overrides config default)
             metadata: Additional metadata dict
             execution_venue: Execution venue (KRX/ATS)
+            client_order_id: Optional idempotency key, typically a stable
+                identifier derived from the originating signal or broker
+                client-order-id.  When supplied, a second call with the
+                same key returns the *existing* position instead of
+                opening a duplicate one.  Required for safe retries
+                across orchestrator crashes / broker ACK timeouts.
 
         Returns:
-            Position if added successfully, None if limits exceeded
+            Position if added successfully, None if limits exceeded.
+            When ``client_order_id`` matches an existing open position,
+            that position is returned (no new record created).
         """
+        # Idempotency short-circuit: same client_order_id => same position.
+        # We check before ``can_open_position`` so that retries are not
+        # rejected by max_positions_per_symbol bounds.
+        coid = (client_order_id or "").strip()
+        if coid:
+            existing_id = self._by_client_order_id.get(coid)
+            if existing_id is not None:
+                existing = self._positions.get(existing_id)
+                if existing is not None:
+                    logger.info(
+                        "Idempotent add_position: client_order_id=%s already "
+                        "maps to position id=%s (code=%s); returning existing.",
+                        coid,
+                        existing_id[:8],
+                        existing.code,
+                    )
+                    return existing
+                # Stale index entry (existing position was closed) — drop it
+                # and fall through to open a fresh position.  This is safe
+                # because a closed position cannot be "re-opened" via retry.
+                self._by_client_order_id.pop(coid, None)
+
         if not self.can_open_position(code):
             logger.warning(
                 f"Cannot open position for {code}: "
@@ -389,6 +427,14 @@ class PositionTracker:
             return None
 
         position_id = self._generate_id()
+
+        # Stash client_order_id in metadata so it survives Redis round-trips
+        # and can be rebuilt on recovery.  The param is authoritative —
+        # any conflicting value already in metadata is overwritten so the
+        # in-memory index and the persisted record agree.
+        position_metadata = dict(metadata or {})
+        if coid:
+            position_metadata["client_order_id"] = coid
 
         position = Position(
             id=position_id,
@@ -404,7 +450,7 @@ class PositionTracker:
             state=PositionState.SURVIVAL,
             strategy=strategy,
             fee_rate=fee_rate or self.config.default_fee_rate,
-            metadata=metadata or {},
+            metadata=position_metadata,
             execution_venue=execution_venue,
         )
 
@@ -419,6 +465,9 @@ class PositionTracker:
         if strategy not in self._by_strategy:
             self._by_strategy[strategy] = []
         self._by_strategy[strategy].append(position_id)
+
+        if coid:
+            self._by_client_order_id[coid] = position_id
 
         # Record event
         self._record_event(
@@ -444,8 +493,25 @@ class PositionTracker:
         signal: Signal,
         quantity: int,
         side: PositionSide = PositionSide.LONG,
+        client_order_id: str | None = None,
     ) -> Position | None:
-        """Add position from entry signal"""
+        """Add position from entry signal.
+
+        When ``client_order_id`` is not supplied explicitly, the signal's
+        ``metadata['client_order_id']`` (or ``metadata['signal_id']``) is
+        used as the idempotency key so retries of the same signal cannot
+        create duplicate positions.  When neither is present, no
+        idempotency key is registered \u2014 behavior matches the legacy
+        callsites that have not yet adopted the contract.
+        """
+        effective_coid = client_order_id
+        if not effective_coid:
+            meta = getattr(signal, "metadata", None) or {}
+            for meta_key in ("client_order_id", "signal_id"):
+                candidate = str(meta.get(meta_key, "") or "").strip()
+                if candidate:
+                    effective_coid = candidate
+                    break
         return self.add_position(
             code=signal.code,
             name=signal.name,
@@ -453,6 +519,7 @@ class PositionTracker:
             quantity=quantity,
             strategy=signal.strategy,
             side=side,
+            client_order_id=effective_coid,
         )
 
     def add_recovered_position(self, position: Position) -> bool:
@@ -475,6 +542,14 @@ class PositionTracker:
         if position.strategy not in self._by_strategy:
             self._by_strategy[position.strategy] = []
         self._by_strategy[position.strategy].append(position.id)
+
+        # Re-register the idempotency key (if any) so retries from the
+        # producer after a restart remain deduplicated.
+        recovered_coid = ""
+        if isinstance(position.metadata, dict):
+            recovered_coid = str(position.metadata.get("client_order_id") or "").strip()
+        if recovered_coid:
+            self._by_client_order_id[recovered_coid] = position.id
 
         self._record_event(
             "recovered",
@@ -685,6 +760,17 @@ class PositionTracker:
             # Clean up empty lists
             if not self._by_strategy[position.strategy]:
                 del self._by_strategy[position.strategy]
+
+        # Drop the idempotency index entry for this position, if any.
+        # Done by reverse lookup rather than reading metadata so the
+        # index stays consistent even when callers mutate metadata.
+        closed_coid: str | None = None
+        for _coid, _pid in self._by_client_order_id.items():
+            if _pid == position_id:
+                closed_coid = _coid
+                break
+        if closed_coid is not None:
+            self._by_client_order_id.pop(closed_coid, None)
 
         # Add to closed history (deque automatically maintains maxlen)
         self._closed_positions.append(position)
@@ -979,7 +1065,9 @@ class PositionTracker:
         if not position.entry_time or not position.exit_time:
             return 0
         try:
-            hold_seconds = int((position.exit_time - position.entry_time).total_seconds())
+            hold_seconds = int(
+                (position.exit_time - position.entry_time).total_seconds()
+            )
         except TypeError:
             logger.warning(
                 "Closed position %s has incompatible entry/exit timestamps; skipping persistence",
@@ -1286,7 +1374,11 @@ class PositionTracker:
 
             exit_state = ""
             if position.state is not None:
-                exit_state = position.state.value if hasattr(position.state, "value") else str(position.state)
+                exit_state = (
+                    position.state.value
+                    if hasattr(position.state, "value")
+                    else str(position.state)
+                )
 
             row = (
                 position.id,
@@ -1662,7 +1754,9 @@ class PositionTracker:
                     lowest_price=entry_price,
                     state=state,
                     strategy=strategy,
-                    fee_rate=fee_rate_val if fee_rate_val else self.config.default_fee_rate,
+                    fee_rate=(
+                        fee_rate_val if fee_rate_val else self.config.default_fee_rate
+                    ),
                     execution_venue=execution_venue if execution_venue else "KRX",
                 )
                 position.stop_price = stop_price or 0.0
