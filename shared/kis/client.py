@@ -152,6 +152,56 @@ class KISClient(AsyncSessionMixin):
         """Normalize account number to digits-only 10-char format."""
         return "".join(ch for ch in (account_no or "") if ch.isdigit())
 
+    @staticmethod
+    def _resolve_account_no(asset: str) -> str:
+        """Resolve account number from environment with explicit, fail-loud semantics.
+
+        Asset-specific env var takes precedence:
+            - asset='stock'   -> KIS_STOCK_ACCOUNT_NO
+            - asset='futures' -> KIS_FUTURES_ACCOUNT_NO
+
+        Fallback to the legacy single-account env var ``KIS_ACCOUNT_NO`` is
+        DISABLED by default to prevent stock/futures cross-routing (e.g. a
+        futures order being placed against a stock account). To opt into the
+        legacy behavior for backward compatibility, set
+        ``KIS_LEGACY_ACCOUNT_FALLBACK=1`` — a warning is emitted each time
+        the legacy value is used.
+
+        Returns an empty string if no value is configured; callers retain
+        their existing length / fail-fast behavior on empty.
+        """
+        if asset == "stock":
+            primary_key = "KIS_STOCK_ACCOUNT_NO"
+        elif asset == "futures":
+            primary_key = "KIS_FUTURES_ACCOUNT_NO"
+        else:
+            raise ValueError(
+                f"_resolve_account_no: unknown asset '{asset}' (expected 'stock' or 'futures')"
+            )
+
+        primary = os.getenv(primary_key, "").strip()
+        if primary:
+            return primary
+
+        legacy = os.getenv("KIS_ACCOUNT_NO", "").strip()
+        if legacy and os.getenv("KIS_LEGACY_ACCOUNT_FALLBACK", "0").strip() in (
+            "1",
+            "true",
+            "TRUE",
+            "yes",
+        ):
+            logger.warning(
+                "[KISClient] %s not set; using legacy KIS_ACCOUNT_NO fallback "
+                "(asset=%s). Set %s explicitly and remove KIS_LEGACY_ACCOUNT_FALLBACK "
+                "to silence this warning.",
+                primary_key,
+                asset,
+                primary_key,
+            )
+            return legacy
+
+        return ""
+
     def _is_futures(self, symbol: str) -> bool:
         """Check if symbol is a futures code (KOSPI 200 / Mini)."""
         # Futures codes start with '1' and are usually 8 chars (e.g. 101S6000)
@@ -759,9 +809,7 @@ class KISClient(AsyncSessionMixin):
         current_price, unrealized_pnl.
         """
         if not account_no:
-            account_no = os.getenv(
-                "KIS_STOCK_ACCOUNT_NO", os.getenv("KIS_ACCOUNT_NO", "")
-            )
+            account_no = self._resolve_account_no("stock")
         account_no = self._normalize_account_no(account_no)
         if len(account_no) != 10:
             logger.warning(
@@ -855,9 +903,7 @@ class KISClient(AsyncSessionMixin):
             return []
 
         if not account_no:
-            account_no = os.getenv(
-                "KIS_FUTURES_ACCOUNT_NO", os.getenv("KIS_ACCOUNT_NO", "")
-            )
+            account_no = self._resolve_account_no("futures")
         account_no = self._normalize_account_no(account_no)
         if len(account_no) != 10:
             logger.warning(
@@ -967,9 +1013,7 @@ class KISClient(AsyncSessionMixin):
             Exception: On API errors or invalid parameters
         """
         if not account_no:
-            account_no = os.getenv(
-                "KIS_STOCK_ACCOUNT_NO", os.getenv("KIS_ACCOUNT_NO", "")
-            )
+            account_no = self._resolve_account_no("stock")
         account_no = self._normalize_account_no(account_no)
         if len(account_no) != 10:
             raise ValueError("Account number must be 10 digits")
