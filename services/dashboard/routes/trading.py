@@ -1,5 +1,6 @@
 """Trading status and control endpoints."""
 
+import json
 import os
 from datetime import UTC, datetime
 
@@ -140,19 +141,19 @@ async def get_trading_status(
     # config/stats/positions may be JSON strings from Redis HASH
     if isinstance(config, str):
         try:
-            config = __import__("json").loads(config)
+            config = json.loads(config)
         except (ValueError, TypeError):
             # Invalid JSON - use empty dict
             config = {}
     if isinstance(stats, str):
         try:
-            stats = __import__("json").loads(stats)
+            stats = json.loads(stats)
         except (ValueError, TypeError):
             # Invalid JSON - use empty dict
             stats = {}
     if isinstance(positions, str):
         try:
-            positions = __import__("json").loads(positions)
+            positions = json.loads(positions)
         except (ValueError, TypeError):
             # Invalid JSON - use empty dict
             positions = {}
@@ -162,7 +163,7 @@ async def get_trading_status(
     strats_info = status.get("strategies", {})
     if isinstance(strats_info, str):
         try:
-            strats_info = __import__("json").loads(strats_info)
+            strats_info = json.loads(strats_info)
         except (ValueError, TypeError):
             # Invalid JSON - use empty dict
             strats_info = {}
@@ -177,7 +178,7 @@ async def get_trading_status(
     account_raw = status.get("account")
     if isinstance(account_raw, str):
         try:
-            account_raw = __import__("json").loads(account_raw)
+            account_raw = json.loads(account_raw)
         except (ValueError, TypeError):
             account_raw = None
     account_obj: AccountSummary | None = None
