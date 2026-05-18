@@ -93,3 +93,18 @@ def test_bb_reversion_15m_enabled_for_paper_but_live_gated():
     with open(_ROOT / "config" / "futures_live.yaml") as f:
         live = yaml.safe_load(f)
     assert live["futures_live"]["enabled"] is False     # live still gated
+
+
+@pytest.mark.integration
+def test_streaming_config_has_15m_mtf_timeframe():
+    """Live 15m decision-cadence gate depends on the indicator engine
+    having a 15m MTF accumulator, configured by streaming.yaml. If 15 is
+    removed from mtf_timeframes the live gate silently degrades to the
+    1m-cadence regime (bb_reversion_15m paper would run the unvalidated
+    strategy). Guard the live config foundation."""
+    with open(_ROOT / "config" / "streaming.yaml") as f:
+        s = yaml.safe_load(f)
+    tfs = s["indicator_engine"]["mtf_timeframes"]
+    assert 15 in tfs, (
+        f"streaming.yaml mtf_timeframes must contain 15 for the live bb_reversion_15m gate; got {tfs!r}"
+    )
