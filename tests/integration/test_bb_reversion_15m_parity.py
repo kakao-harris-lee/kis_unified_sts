@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 
 import pytest
 import yaml
@@ -12,6 +13,9 @@ from shared.strategy.registry import (
     register_builtin_components,
 )
 from shared.validation.cli_validators import validate_csv_file
+
+# tests/integration/<file> -> tests/ -> repo root
+_ROOT = Path(__file__).resolve().parents[2]
 
 _CSV = "/home/deploy/project/kis_unified_sts/data/kospi200f_1m_ch_101S6000.csv"
 _CSV_KW = {
@@ -82,10 +86,10 @@ def test_bb_reversion_15m_enabled_for_paper_but_live_gated():
     remains independently gated via futures_live.yaml and Redis flag.
     Invariant: strategy.enabled=True AND futures_live.enabled=False.
     """
-    with open("config/strategies/futures/bb_reversion_15m.yaml") as f:
+    with open(_ROOT / "config" / "strategies" / "futures" / "bb_reversion_15m.yaml") as f:
         d = yaml.safe_load(f)
     assert d["strategy"]["enabled"] is True            # loaded for PAPER
     assert d["strategy"]["entry"]["params"]["timeframe_minutes"] == 15
-    with open("config/futures_live.yaml") as f:
+    with open(_ROOT / "config" / "futures_live.yaml") as f:
         live = yaml.safe_load(f)
     assert live["futures_live"]["enabled"] is False     # live still gated
