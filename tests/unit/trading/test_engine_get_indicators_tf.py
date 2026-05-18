@@ -73,3 +73,19 @@ def test_get_indicators_tf_cache_hit_returns_copy_and_tracks_stats():
     # not the cached reference) so callers may safely mutate.
     assert a == b
     assert a is not b
+
+
+def test_mtf_total_appended_accessor():
+    eng = StreamingIndicatorEngine(
+        bb_period=5, bb_std=2.0, rsi_period=5, mtf_timeframes=[15]
+    )
+    sym = "101S6000"
+    assert eng.mtf_total_appended(sym, 15) == 0
+    assert eng.mtf_total_appended("missing", 15) == 0
+    for i in range(40):
+        hh, mm = 9 + i // 60, i % 60
+        eng._feed_mtf_candle(sym, Candle(open=1.0, high=1.0, low=1.0,
+                              close=1.0, volume=1.0, minute=hh * 100 + mm))
+    n = eng.mtf_total_appended(sym, 15)
+    mtf = eng._mtf_accumulators[sym][15]
+    assert n == mtf.total_appended and n >= 2

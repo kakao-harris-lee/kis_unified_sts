@@ -39,6 +39,7 @@ from shared.strategy.base import (
     MarketStateProtocol,
     TradingStrategy,
 )
+from shared.strategy.decision_cadence import DecisionCadenceGate
 from shared.strategy.filters import CostFilter, CostFilterConfig
 from shared.strategy.registry import (
     StrategyFactory,
@@ -233,12 +234,16 @@ class StrategyManager:
         asset_class: str = "stock",
         strategy_names: list[str] | None = None,
         config: StrategyManagerConfig | None = None,
+        indicator_engine: Any | None = None,
     ):
         """
         Args:
             asset_class: Asset class ("stock" or "futures")
             strategy_names: Specific strategies to load (None = all enabled)
             config: Manager configuration
+            indicator_engine: Optional indicator engine exposing
+                ``mtf_total_appended(symbol, timeframe)`` for the
+                decision-cadence gate (futures 15m strategies).
         """
         self.asset_class = asset_class
         self.config = config or StrategyManagerConfig()
@@ -270,6 +275,16 @@ class StrategyManager:
         # Throttle for cycle summary logging (every 60s)
         self._last_cycle_log_time: float = 0.0
 
+        # Decision-cadence gates: one per strategy, keyed by strategy name.
+        # Entry and exit use separate gate instances so both can fire on the
+        # same closed N-min bar without blocking each other.
+        # Gates are no-ops for strategies with timeframe_minutes <= 1 (default).
+        # DRY: reuses DecisionCadenceGate from shared/strategy/decision_cadence.py.
+        self._indicator_engine: Any | None = indicator_engine
+        self._cadence_gates: dict[str, DecisionCadenceGate] = {}
+        self._exit_cadence_gates: dict[str, DecisionCadenceGate] = {}
+        self._rebuild_cadence_gates()
+
         logger.info(
             f"StrategyManager initialized: {len(self.strategies)} strategies "
             f"for {asset_class}, cost_filter={'enabled' if self.cost_filter else 'disabled'}"
@@ -299,9 +314,72 @@ class StrategyManager:
             except (ConfigurationError, ValueError, TypeError, KeyError) as e:
                 logger.error(f"Failed to load strategies: {e}")
 
+    def _rebuild_cadence_gates(self) -> None:
+        """Build separate entry/exit DecisionCadenceGates per loaded strategy.
+
+        Entry and exit get independent watermarks so both can fire on the same
+        closed N-min bar boundary without blocking each other. Reads
+        ``strategy.entry.config.timeframe_minutes`` (default 0 → no-op).
+        Call after strategies are loaded or added.
+        """
+        self._cadence_gates = {}        # entry gates
+        self._exit_cadence_gates = {}   # exit gates (independent watermarks)
+        for name, strategy in self.strategies.items():
+            tf = int(
+                getattr(
+                    getattr(strategy.entry, "config", None),
+                    "timeframe_minutes",
+                    0,
+                )
+                or 0
+            )
+            self._cadence_gates[name] = DecisionCadenceGate(tf)
+            self._exit_cadence_gates[name] = DecisionCadenceGate(tf)
+
+    def set_indicator_engine(self, engine: Any) -> None:
+        """Inject the indicator engine for decision-cadence gating.
+
+        Called by the orchestrator after the engine is initialized so the
+        manager can consult ``engine.mtf_total_appended`` per-symbol to gate
+        N-min strategy decisions to closed-bar boundaries.
+        """
+        self._indicator_engine = engine
+
+    def _gate_allows(
+        self, strategy_name: str, symbol: str, for_exit: bool = False
+    ) -> bool:
+        """Return True if the cadence gate allows a decision for this strategy/symbol.
+
+        Entry and exit use separate gate instances (independent watermarks) so
+        both can fire on the same closed N-min bar without blocking each other.
+        If no indicator engine is set, always returns True (gate disabled).
+        This is the extracted helper unit-tested by test_decision_cadence.py.
+        """
+        engine = self._indicator_engine
+        if engine is None:
+            return True
+        gates = self._exit_cadence_gates if for_exit else self._cadence_gates
+        gate = gates.get(strategy_name)
+        if gate is None or not gate.enabled:
+            return True
+        return gate.should_decide(engine, symbol)
+
+    def _gate_mark_decided(
+        self, strategy_name: str, symbol: str, for_exit: bool = False
+    ) -> None:
+        """Advance the cadence watermark for strategy/symbol after deciding."""
+        engine = self._indicator_engine
+        if engine is None:
+            return
+        gates = self._exit_cadence_gates if for_exit else self._cadence_gates
+        gate = gates.get(strategy_name)
+        if gate is not None:
+            gate.mark_decided(engine, symbol)
+
     def add_strategy(self, strategy: TradingStrategy):
         """Add a strategy manually"""
         self.strategies[strategy.name] = strategy
+        self._rebuild_cadence_gates()
         logger.info(f"Added strategy: {strategy.name}")
 
     def remove_strategy(self, name: str):
@@ -394,8 +472,14 @@ class StrategyManager:
         context: EntryContext,
     ) -> Signal | None:
         """Check entry with exception handling"""
+        # Decision-cadence gate: skip if no new closed N-min bar since last decision.
+        symbol = str(context.market_data.get("code", "") or "")
+        if not self._gate_allows(strategy.name, symbol):
+            return None
         try:
             signal = await strategy.check_entry(context)
+            # Advance cadence watermark after deciding (regardless of signal).
+            self._gate_mark_decided(strategy.name, symbol)
             if signal is None:
                 return None
 
@@ -516,17 +600,30 @@ class StrategyManager:
             if not strategy_positions:
                 return []
 
+            # Decision-cadence gate: filter positions whose symbol has not yet
+            # seen a new closed N-min bar (no-op when timeframe_minutes <= 1).
+            gated_positions = [
+                p for p in strategy_positions
+                if self._gate_allows(strategy.name, p.code, for_exit=True)
+            ]
+            if not gated_positions:
+                return []
+
             # Use scan_positions if available
             if hasattr(strategy.exit, "scan_positions"):
-                return await strategy.exit.scan_positions(
-                    positions=strategy_positions,
+                signals = await strategy.exit.scan_positions(
+                    positions=gated_positions,
                     market_data=market_data,
                     market_state=market_state,
                 )
+                # Advance watermark for each position that was gated through.
+                for p in gated_positions:
+                    self._gate_mark_decided(strategy.name, p.code, for_exit=True)
+                return signals
 
             # Fallback: check each position individually
             signals = []
-            for position in strategy_positions:
+            for position in gated_positions:
                 context = ExitContext(
                     position=position,
                     market_data=market_data,
@@ -535,6 +632,7 @@ class StrategyManager:
                     timestamp=datetime.now(),
                 )
                 should_exit, signal = await strategy.check_exit(context)
+                self._gate_mark_decided(strategy.name, position.code, for_exit=True)
                 if should_exit and signal:
                     signals.append(signal)
 

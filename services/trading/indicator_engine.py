@@ -1041,6 +1041,16 @@ class StreamingIndicatorEngine:
             for c in candles
         ]
 
+    def mtf_total_appended(self, symbol: str, timeframe: int) -> int:
+        """Monotonic count of CLOSED `timeframe`-min candles for `symbol`
+        (0 if none / unknown). The decision-cadence gate watermarks on
+        this — never on len(deque) (saturates at maxlen)."""
+        mtf_map = self._mtf_accumulators.get(symbol)
+        if not mtf_map:
+            return 0
+        acc = mtf_map.get(timeframe)
+        return int(acc.total_appended) if acc is not None else 0
+
     def get_indicators_tf(self, symbol: str, timeframe: int) -> dict[str, float]:
         """Compute BB and RSI from closed multi-timeframe candles.
 
