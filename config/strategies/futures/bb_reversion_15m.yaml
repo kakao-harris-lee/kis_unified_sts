@@ -50,6 +50,7 @@ strategy:
 
       buy_only: true
       min_bb_bandwidth: 0.003
+      timeframe_minutes: 15   # MTF base: BB/RSI computed on closed 15m bars
 
   exit:
     type: three_stage
