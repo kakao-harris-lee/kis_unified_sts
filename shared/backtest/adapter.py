@@ -375,6 +375,9 @@ class BacktestStrategyAdapter:
         # (not the start) so check_exit's value survives until on_bar consumes
         # it; check_exit always recomputes (it is first when it runs) so a stale
         # flag from a bar where on_bar was skipped is harmless.
+        # The True init is never observed: _recompute_decision_bar always
+        # overwrites self._decision_bar before its first read (check_exit
+        # recomputes unconditionally; on_bar reads it only after a recompute).
         self._decision_bar: bool = True
         self._decision_bar_computed: bool = False
 

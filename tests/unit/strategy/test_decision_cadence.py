@@ -174,6 +174,21 @@ def test_manager_no_engine_is_noop():
     assert manager._gate_allows(strategy.name, "X", for_exit=True) is True
 
 
+def test_manager_remove_strategy_evicts_cadence_gates():
+    """remove_strategy must evict BOTH per-strategy cadence gate dicts so the
+    entry/exit watermarks are not orphaned (cache-eviction consistency)."""
+    manager = _bare_manager()
+    strategy = _FakeStrategy("bb_reversion_15m", timeframe_minutes=15)
+    manager.add_strategy(strategy)
+    assert strategy.name in manager._cadence_gates
+    assert strategy.name in manager._exit_cadence_gates
+
+    manager.remove_strategy(strategy.name)
+    assert strategy.name not in manager.strategies
+    assert strategy.name not in manager._cadence_gates
+    assert strategy.name not in manager._exit_cadence_gates
+
+
 def test_manager_entry_exit_independent_same_closed_bar():
     """Entry and exit have INDEPENDENT per-side watermarks (the live
     orchestrator drives them as separate async loops). Both must be able to

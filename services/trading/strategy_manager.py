@@ -421,6 +421,11 @@ class StrategyManager:
         """Remove a strategy"""
         if name in self.strategies:
             del self.strategies[name]
+            # Evict the per-strategy cadence gates too, else the entry/exit
+            # watermarks for this strategy are orphaned (cache-eviction
+            # consistency — mirrors the indicator-engine cache eviction).
+            self._cadence_gates.pop(name, None)
+            self._exit_cadence_gates.pop(name, None)
             logger.info(f"Removed strategy: {name}")
 
     @property

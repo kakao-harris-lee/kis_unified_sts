@@ -34,6 +34,9 @@ class DecisionCadenceGate:
         try:
             closed = int(engine.mtf_total_appended(symbol, self._tf))
         except Exception:  # noqa: BLE001
+            # engine not ready during warmup / hot trading path → safe HOLD;
+            # this gate sits in the live orchestrator loop and must NEVER raise
+            # (do not narrow/remove this broad swallow).
             return False
         return closed > self._decided_at.get(symbol, 0)
 
@@ -45,4 +48,7 @@ class DecisionCadenceGate:
                 engine.mtf_total_appended(symbol, self._tf)
             )
         except Exception:  # noqa: BLE001
+            # engine not ready / hot trading path → skip watermark advance;
+            # this gate sits in the live orchestrator loop and must NEVER raise
+            # (do not narrow/remove this broad swallow).
             pass
