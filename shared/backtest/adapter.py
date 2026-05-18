@@ -363,14 +363,20 @@ class BacktestStrategyAdapter:
             .get("timeframe_minutes", 0) or 0
         )
         self._cadence = DecisionCadenceGate(_entry_tf)
-        # Ordering invariant (engine._process_bar): check_exit line 276 runs
-        # BEFORE on_bar line 326. When a position exists, check_exit computes
-        # _decision_bar (pre-seed count) and sets _cadence_exit_computed=True.
-        # on_bar: if _cadence_exit_computed is still False (no position → check_exit
-        # was skipped), recomputes _decision_bar post-seed. mark_decided runs at
-        # end of on_bar so the watermark advances exactly once per decision bar.
+        # Ordering invariant (engine._process_bar): when a position exists,
+        # check_exit (line 276) runs BEFORE on_bar (line 326); on_bar ALWAYS
+        # runs once per bar and is the LAST of the pair. The first of the two to
+        # run this bar computes self._decision_bar (and sets
+        # _decision_bar_computed=True); the other reuses it without recomputing
+        # — so entry+exit act on the SAME closed bar. mark_decided is called
+        # EXACTLY ONCE at the end of on_bar (after both had their chance), so
+        # the watermark advances once per decision bar and never on a
+        # non-decision bar. _decision_bar_computed is reset at the END of on_bar
+        # (not the start) so check_exit's value survives until on_bar consumes
+        # it; check_exit always recomputes (it is first when it runs) so a stale
+        # flag from a bar where on_bar was skipped is harmless.
         self._decision_bar: bool = True
-        self._cadence_exit_computed: bool = False
+        self._decision_bar_computed: bool = False
 
     def _context_metadata(
         self,
@@ -551,6 +557,19 @@ class BacktestStrategyAdapter:
             "regime_enabled": self._regime_detection_enabled,
         }
 
+    def _recompute_decision_bar(self, code: str) -> None:
+        """Compute self._decision_bar for the current bar and flag it computed.
+
+        Called by whichever of check_exit/on_bar runs FIRST this bar. The other
+        reuses self._decision_bar without recomputing, so entry+exit act on the
+        SAME closed bar. No-op (always-decide) when the gate is disabled
+        (timeframe_minutes <= 1).
+        """
+        self._decision_bar = self._cadence.should_decide(
+            self._indicator_engine, code
+        )
+        self._decision_bar_computed = True
+
     def check_exit(self, bar: dict[str, Any]) -> tuple[bool, ExitReason | None]:
         """Check exit strategy for current position.
 
@@ -560,16 +579,16 @@ class BacktestStrategyAdapter:
         if not self._current_position:
             return (False, None)
 
-        # check_exit runs BEFORE on_bar (engine._process_bar line 276 vs 326).
-        # Compute _decision_bar here (pre-seed count) so on_bar reuses the same
-        # closed-bar count for both exit and entry on this bar.
+        # check_exit runs BEFORE on_bar (engine._process_bar line 276 vs 326)
+        # and is the FIRST of the pair when a position exists. Always recompute
+        # here (first-runner) so a stale flag from a bar where on_bar was
+        # skipped (e.g. daily-trade-limit early return) is harmless; on_bar
+        # reuses this value without recomputing.
         code = str(bar.get("code", "BACKTEST") or "BACKTEST")
-        self._decision_bar = self._cadence.should_decide(self._indicator_engine, code)
-        self._cadence_exit_computed = True
+        self._recompute_decision_bar(code)
         if not self._decision_bar:
             return (False, None)
 
-        code = str(bar.get("code", "BACKTEST") or "BACKTEST")
         timestamp = bar.get("datetime", datetime.now())
         if isinstance(timestamp, str):
             timestamp = datetime.fromisoformat(timestamp)
@@ -645,8 +664,6 @@ class BacktestStrategyAdapter:
 
     def on_bar(self, bar: dict[str, Any]) -> SignalType:
         """Convert a bar dict into a BUY/SELL/HOLD signal."""
-        # Reset per-bar cadence flag so check_exit can set it when it runs first.
-        self._cadence_exit_computed = False
         code = str(bar.get("code", "BACKTEST") or "BACKTEST")
         # The engine feeds bars parsed from CSV with no `code` column. Live
         # market_data ALWAYS carries `code`/`name`, and several entry
@@ -684,13 +701,19 @@ class BacktestStrategyAdapter:
         if not self._indicator_engine.is_warm(code):
             return SignalType.HOLD
 
-        # Decision-cadence gate: if check_exit didn't run this bar (no position →
-        # engine skips check_exit), compute _decision_bar here post-seed so it
-        # catches a 15m bucket that just closed from this bar's seed_candles call.
-        if not self._cadence_exit_computed:
-            self._decision_bar = self._cadence.should_decide(self._indicator_engine, code)
+        # Decision-cadence gate. If check_exit already computed _decision_bar
+        # this bar (position existed → it ran first), REUSE it so entry+exit
+        # act on the SAME closed bar. Otherwise (no-position bar → check_exit
+        # skipped) compute it here post-seed so it catches a 15m bucket that
+        # just closed from this bar's seed_candles call.
+        if not self._decision_bar_computed:
+            self._recompute_decision_bar(code)
+        # on_bar is the LAST of the check_exit/on_bar pair this bar, so consume
+        # the flag now (reset for next bar). Do NOT mark_decided on a
+        # non-decision bar (would be a no-op but the spec forbids advancing the
+        # watermark on non-decision bars); just HOLD.
+        self._decision_bar_computed = False
         if not self._decision_bar:
-            self._cadence.mark_decided(self._indicator_engine, code)
             return SignalType.HOLD
 
         indicators = self._indicator_resolver.collect_entry_indicators(code)
@@ -781,18 +804,19 @@ class BacktestStrategyAdapter:
             metadata=metadata,
         )
 
+        # This IS a decision bar (gate passed above) and on_bar is the LAST of
+        # the check_exit/on_bar pair. Advance the watermark EXACTLY ONCE here,
+        # in a finally, so it advances regardless of BUY/SELL/HOLD outcome AND
+        # even if check_entry raises (spec's "mark once even on exception";
+        # never twice; never on a non-decision bar — that path returned above
+        # without reaching here).
         try:
             signal = self._loop.run_until_complete(self._strategy.check_entry(context))
         except Exception:
             logger.debug("Entry generator error", exc_info=True)
-            # Still advance watermark: strategy ran this bar (decision bar).
-            self._cadence.mark_decided(self._indicator_engine, code)
             return SignalType.HOLD
-
-        # Advance cadence watermark exactly once per decision bar (after both
-        # check_exit and on_bar have had their chance this bar, regardless of
-        # BUY/SELL/HOLD outcome).
-        self._cadence.mark_decided(self._indicator_engine, code)
+        finally:
+            self._cadence.mark_decided(self._indicator_engine, code)
 
         if signal is None:
             return SignalType.HOLD

@@ -1503,6 +1503,16 @@ class TradingOrchestrator:
             logger.warning(f"Indicator resolver init failed: {e}")
             self._indicator_resolver = None
 
+        # Wire the indicator engine into the StrategyManager so the
+        # decision-cadence gate can throttle N-min strategies to closed-bar
+        # boundaries (no-op for timeframe_minutes<=1). Both objects exist here:
+        # _init_strategy_infrastructure (step 6) ran before this method (step 7).
+        if self._strategy_manager is not None and self._indicator_engine is not None:
+            self._strategy_manager.set_indicator_engine(self._indicator_engine)
+            logger.info(
+                "StrategyManager wired with indicator engine for decision-cadence gating"
+            )
+
         # Hook futures WebSocket ticks into indicator engine and monitoring stream.
         if self._futures_price_feed:
 

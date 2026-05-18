@@ -275,11 +275,27 @@ class StrategyManager:
         # Throttle for cycle summary logging (every 60s)
         self._last_cycle_log_time: float = 0.0
 
-        # Decision-cadence gates: one per strategy, keyed by strategy name.
-        # Entry and exit use separate gate instances so both can fire on the
-        # same closed N-min bar without blocking each other.
-        # Gates are no-ops for strategies with timeframe_minutes <= 1 (default).
-        # DRY: reuses DecisionCadenceGate from shared/strategy/decision_cadence.py.
+        # Decision-cadence gates. DRY: ONE DecisionCadenceGate *class*
+        # (shared/strategy/decision_cadence.py), reused for both the backtest
+        # adapter and here. Parity goal: a timeframe_minutes=N strategy must
+        # decide entry ONCE and exit ONCE per CLOSED N-min bar (same as the
+        # probe / backtest adapter).
+        #
+        # Why TWO gate instances per strategy (entry vs exit) and NOT one
+        # shared instance: in the backtest adapter the engine is sequential
+        # (check_exit then on_bar, one decision per bar) so a single gate
+        # works. In LIVE the orchestrator drives entry and exit as INDEPENDENT
+        # async loops on separate intervals (services/trading/pipeline.py
+        # _run_stage_loop per PipelineStage) that each poll continuously. With
+        # a SINGLE shared watermark, whichever loop fires first after a 15m
+        # bar closes advances the watermark and STARVES the other loop for
+        # that whole window — erratic entry/exit alternation, the OPPOSITE of
+        # parity. Independent per-side watermarks give true parity: entry
+        # decides exactly once and exit decides exactly once per closed bar.
+        # The reviewer's stated drift bug (exit firing a bar late when
+        # _check_exits_safe raises) is fixed by advancing the watermark in a
+        # `finally` (mark before the strategy call so an exception never skips
+        # it; never advances on a non-decision bar; never twice).
         self._indicator_engine: Any | None = indicator_engine
         self._cadence_gates: dict[str, DecisionCadenceGate] = {}
         self._exit_cadence_gates: dict[str, DecisionCadenceGate] = {}
@@ -315,15 +331,16 @@ class StrategyManager:
                 logger.error(f"Failed to load strategies: {e}")
 
     def _rebuild_cadence_gates(self) -> None:
-        """Build separate entry/exit DecisionCadenceGates per loaded strategy.
+        """Build per-strategy entry & exit DecisionCadenceGates.
 
-        Entry and exit get independent watermarks so both can fire on the same
-        closed N-min bar boundary without blocking each other. Reads
+        Same DecisionCadenceGate class (DRY) for both; separate instances per
+        side because live entry/exit are independent async loops — see the
+        rationale block in __init__. Reads
         ``strategy.entry.config.timeframe_minutes`` (default 0 → no-op).
         Call after strategies are loaded or added.
         """
-        self._cadence_gates = {}        # entry gates
-        self._exit_cadence_gates = {}   # exit gates (independent watermarks)
+        self._cadence_gates = {}
+        self._exit_cadence_gates = {}
         for name, strategy in self.strategies.items():
             tf = int(
                 getattr(
@@ -345,21 +362,33 @@ class StrategyManager:
         """
         self._indicator_engine = engine
 
+    def _gate_for(self, strategy_name: str, for_exit: bool) -> DecisionCadenceGate | None:
+        """Return the entry or exit DecisionCadenceGate for a strategy."""
+        gates = self._exit_cadence_gates if for_exit else self._cadence_gates
+        return gates.get(strategy_name)
+
     def _gate_allows(
         self, strategy_name: str, symbol: str, for_exit: bool = False
     ) -> bool:
-        """Return True if the cadence gate allows a decision for this strategy/symbol.
+        """Return True if the cadence gate allows a decision for strategy/symbol.
 
-        Entry and exit use separate gate instances (independent watermarks) so
-        both can fire on the same closed N-min bar without blocking each other.
-        If no indicator engine is set, always returns True (gate disabled).
-        This is the extracted helper unit-tested by test_decision_cadence.py.
+        Entry and exit each have their OWN gate instance (same class, DRY) so
+        that — with the live orchestrator's INDEPENDENT entry/exit loops — each
+        side decides EXACTLY ONCE per closed N-min bar (true parity with the
+        probe), instead of one side starving the other under a shared
+        watermark. Pure predicate: it does NOT advance the watermark; callers
+        must call _gate_mark_decided EXACTLY ONCE per (strategy,symbol,side)
+        per decision bar in a ``finally`` (so an exception in the strategy
+        never skips the advance and never causes a one-bar drift).
+
+        If no indicator engine is set, always returns True (gate disabled →
+        backward-compatible no-op for timeframe_minutes <= 1 and stock).
+        Extracted helper, unit-tested by test_decision_cadence.py.
         """
         engine = self._indicator_engine
         if engine is None:
             return True
-        gates = self._exit_cadence_gates if for_exit else self._cadence_gates
-        gate = gates.get(strategy_name)
+        gate = self._gate_for(strategy_name, for_exit)
         if gate is None or not gate.enabled:
             return True
         return gate.should_decide(engine, symbol)
@@ -367,12 +396,18 @@ class StrategyManager:
     def _gate_mark_decided(
         self, strategy_name: str, symbol: str, for_exit: bool = False
     ) -> None:
-        """Advance the cadence watermark for strategy/symbol after deciding."""
+        """Advance the entry/exit cadence watermark for strategy/symbol.
+
+        Must be called EXACTLY ONCE per (strategy,symbol,side) per decision bar,
+        in a ``finally`` block, so the watermark advances even if the strategy
+        raised (fixing the reviewer's one-bar drift bug) — and only when it WAS
+        a decision bar (callers guard with _gate_allows first). ``mark_decided``
+        itself is a no-op when the gate is disabled.
+        """
         engine = self._indicator_engine
         if engine is None:
             return
-        gates = self._exit_cadence_gates if for_exit else self._cadence_gates
-        gate = gates.get(strategy_name)
+        gate = self._gate_for(strategy_name, for_exit)
         if gate is not None:
             gate.mark_decided(engine, symbol)
 
@@ -472,15 +507,17 @@ class StrategyManager:
         context: EntryContext,
     ) -> Signal | None:
         """Check entry with exception handling"""
-        # Decision-cadence gate: skip if no new closed N-min bar since last decision.
+        # Decision-cadence gate (ENTRY side): skip if no new closed N-min bar
+        # since this side last decided. If it IS a decision bar, advance the
+        # ENTRY watermark EXACTLY ONCE in a `finally` so it advances even if
+        # strategy.check_entry raises (no one-bar drift) and exactly once per
+        # decision bar (never on a non-decision bar — guarded by _gate_allows).
         market_data = getattr(context, "market_data", {}) or {}
         symbol = str(market_data.get("code", "") if isinstance(market_data, dict) else "")
         if not self._gate_allows(strategy.name, symbol):
             return None
         try:
             signal = await strategy.check_entry(context)
-            # Advance cadence watermark after deciding (regardless of signal).
-            self._gate_mark_decided(strategy.name, symbol)
             if signal is None:
                 return None
 
@@ -493,6 +530,8 @@ class StrategyManager:
         except TradingSystemError as e:
             logger.error(f"Entry check failed for {strategy.name}: {e}", exc_info=True)
             return None
+        finally:
+            self._gate_mark_decided(strategy.name, symbol)
 
     async def check_exits(
         self,
@@ -596,31 +635,34 @@ class StrategyManager:
         Returns:
             List of exit signals
         """
+        # Positions are already filtered by caller
+        if not strategy_positions:
+            return []
+
+        # Decision-cadence gate (EXIT side, independent watermark from entry):
+        # keep only positions whose symbol has seen a new closed N-min bar for
+        # the EXIT side (no-op when timeframe_minutes <= 1). The EXIT watermark
+        # for each gated symbol is advanced EXACTLY ONCE in a `finally` so it
+        # advances even if strategy.check_exit/scan_positions raises (fixes the
+        # one-bar drift bug) and only on a decision bar (guarded by
+        # _gate_allows). Independent per-side watermarks give true parity:
+        # entry decides once and exit decides once per closed bar even though
+        # the orchestrator drives them as separate async loops.
+        gated_positions = [
+            p for p in strategy_positions
+            if self._gate_allows(strategy.name, p.code, for_exit=True)
+        ]
+        if not gated_positions:
+            return []
+
         try:
-            # Positions are already filtered by caller
-            if not strategy_positions:
-                return []
-
-            # Decision-cadence gate: filter positions whose symbol has not yet
-            # seen a new closed N-min bar (no-op when timeframe_minutes <= 1).
-            gated_positions = [
-                p for p in strategy_positions
-                if self._gate_allows(strategy.name, p.code, for_exit=True)
-            ]
-            if not gated_positions:
-                return []
-
             # Use scan_positions if available
             if hasattr(strategy.exit, "scan_positions"):
-                signals = await strategy.exit.scan_positions(
+                return await strategy.exit.scan_positions(
                     positions=gated_positions,
                     market_data=market_data,
                     market_state=market_state,
                 )
-                # Advance watermark for each position that was gated through.
-                for p in gated_positions:
-                    self._gate_mark_decided(strategy.name, p.code, for_exit=True)
-                return signals
 
             # Fallback: check each position individually
             signals = []
@@ -633,7 +675,6 @@ class StrategyManager:
                     timestamp=datetime.now(),
                 )
                 should_exit, signal = await strategy.check_exit(context)
-                self._gate_mark_decided(strategy.name, position.code, for_exit=True)
                 if should_exit and signal:
                     signals.append(signal)
 
@@ -642,6 +683,12 @@ class StrategyManager:
         except TradingSystemError as e:
             logger.error(f"Exit check failed for {strategy.name}: {e}", exc_info=True)
             return []
+        finally:
+            # EXACTLY ONCE per gated (strategy,symbol) this decision bar, even
+            # on exception (never on a non-decision bar — those were filtered
+            # out of gated_positions above).
+            for p in gated_positions:
+                self._gate_mark_decided(strategy.name, p.code, for_exit=True)
 
     def _filter_signals(self, signals: list[Signal]) -> list[Signal]:
         """Filter signals by confidence threshold"""
