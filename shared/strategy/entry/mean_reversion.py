@@ -81,6 +81,10 @@ class MeanReversionConfig(ConfigMixin):
     regime_filter: bool = False  # Enable regime-based filtering
     block_long_in_strong_bearish: bool = True  # Skip LONG signals in STRONG_BEARISH regime
 
+    # Multi-timeframe base: 0 = 1-minute base (default); N = N-min MTF base
+    # When set, required_indicators includes mtf_base_{N}m to trigger T1–T4 machinery.
+    timeframe_minutes: int = 0
+
 
 class MeanReversionEntry(EntrySignalGenerator[MeanReversionConfig]):
     """Mean reversion entry strategy.
@@ -124,6 +128,8 @@ class MeanReversionEntry(EntrySignalGenerator[MeanReversionConfig]):
             indicators.append("vwap")
         if self.config.adx_filter:
             indicators.append("adx")
+        if self.config.timeframe_minutes and self.config.timeframe_minutes > 1:
+            indicators.append(f"mtf_base_{self.config.timeframe_minutes}m")
         return indicators
 
     async def generate(self, context: EntryContext) -> Optional[Signal]:
