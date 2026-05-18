@@ -1,3 +1,4 @@
+from shared.indicators.contracts import IndicatorContract
 from shared.indicators.resolver import StreamingIndicatorResolver
 
 
@@ -60,3 +61,14 @@ def test_mtf_base_engine_returns_empty_keeps_1m_base():
     out = r.collect_entry_indicators("101S6000")
     assert out["bb_lower"] == 1.0   # 1m base retained
     assert out["rsi"] == 10.0
+
+
+def test_contract_mtf_base_timeframes_for_adapter():
+    c = IndicatorContract.from_required_keys(
+        ["bb_lower", "rsi", "mtf_base_15m"]
+    )
+    tfs = sorted(
+        {r.timeframe.minutes for r in c.mtf_base_requests
+         if r.timeframe is not None}
+    )
+    assert tfs == [15]

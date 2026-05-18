@@ -287,7 +287,10 @@ class BacktestStrategyAdapter:
         mtf_timeframes = sorted(
             {
                 req.timeframe.minutes
-                for req in self._indicator_contract.momentum_requests
+                for req in (
+                    *self._indicator_contract.momentum_requests,
+                    *self._indicator_contract.mtf_base_requests,
+                )
                 if req.timeframe is not None
             }
         )
