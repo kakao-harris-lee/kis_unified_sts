@@ -53,6 +53,14 @@ class StreamingIndicatorResolver:
             if momentum:
                 result[req.key] = momentum
 
+        for req in self.contract.mtf_base_requests:
+            tf = req.timeframe.minutes if req.timeframe else 15
+            tf_base = self.engine.get_indicators_tf(symbol, tf)
+            if tf_base:
+                # Higher-TF BB/RSI replace the 1m base under the same
+                # plain keys so mean_reversion.generate() is unchanged.
+                result.update(tf_base)
+
         return result
 
     def collect_exit_indicators(self, symbol: str) -> dict[str, Any]:
