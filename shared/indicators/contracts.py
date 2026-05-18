@@ -127,7 +127,7 @@ class IndicatorContract:
                 )
                 continue
             if key.startswith("mtf_base_"):
-                token = key[len("mtf_base_"):]
+                token = key[len("mtf_base_") :]
                 try:
                     tf = Timeframe.from_token(token)
                 except ValueError:
