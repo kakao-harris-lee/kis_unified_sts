@@ -21,13 +21,17 @@ _CSV_KW = {
 }
 
 
+@pytest.mark.integration
 def test_bb_reversion_15m_entry_declares_mtf_base_15m():
+    """Entry must declare mtf_base_15m; this is the root signal that
+    drives T4 adapter wiring and the MTF accumulator in tests 2 and 3."""
     register_builtin_components()
     cfg = ConfigLoader.load_strategy("futures", "bb_reversion_15m")
     strat = StrategyFactory.create(cfg)
     assert "mtf_base_15m" in strat.entry.required_indicators
 
 
+@pytest.mark.integration
 def test_adapter_builds_15m_mtf_accumulator():
     """T4 carry-forward: the registered BacktestStrategyAdapter for
     bb_reversion_15m must actually create a 15-minute MTF feed (not just
@@ -48,6 +52,8 @@ def test_adapter_builds_15m_mtf_accumulator():
     )
 
 
+@pytest.mark.integration
+@pytest.mark.slow
 def test_registered_backtest_matches_probe_15m_profile():
     """End-to-end: registered path on the 1m CSV must behave as a 15m
     strategy (few-hundred trades, Sharpe>1, PF>1.2) — NOT the 1-min
