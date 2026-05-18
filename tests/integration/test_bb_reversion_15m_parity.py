@@ -1,6 +1,7 @@
 import os
 
 import pytest
+import yaml
 
 from shared.backtest.adapter import BacktestStrategyAdapter
 from shared.backtest.config import BacktestConfig
@@ -73,3 +74,18 @@ def test_registered_backtest_matches_probe_15m_profile():
     assert 150 <= m["total_trades"] <= 800, m["total_trades"]
     assert m["sharpe_ratio"] > 1.0, m["sharpe_ratio"]
     assert m["profit_factor"] > 1.2, m["profit_factor"]
+
+
+@pytest.mark.integration
+def test_bb_reversion_15m_enabled_for_paper_but_live_gated():
+    """Strategy must be enabled (loaded for PAPER) while live execution
+    remains independently gated via futures_live.yaml and Redis flag.
+    Invariant: strategy.enabled=True AND futures_live.enabled=False.
+    """
+    with open("config/strategies/futures/bb_reversion_15m.yaml") as f:
+        d = yaml.safe_load(f)
+    assert d["strategy"]["enabled"] is True            # loaded for PAPER
+    assert d["strategy"]["entry"]["params"]["timeframe_minutes"] == 15
+    with open("config/futures_live.yaml") as f:
+        live = yaml.safe_load(f)
+    assert live["futures_live"]["enabled"] is False     # live still gated
