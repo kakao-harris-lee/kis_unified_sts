@@ -285,6 +285,8 @@ class StreamingIndicatorEngine:
         self._indicator_cache_misses: int = 0
         self._momentum_cache_hits: int = 0
         self._momentum_cache_misses: int = 0
+        self._mtf_base_cache_hits: int = 0
+        self._mtf_base_cache_misses: int = 0
 
         # Volume indicators
         self._high_period = high_period
@@ -578,6 +580,9 @@ class StreamingIndicatorEngine:
         self._momentum_cache = {
             key: value for key, value in self._momentum_cache.items() if key[0] != symbol
         }
+        self._mtf_base_cache = {
+            key: value for key, value in self._mtf_base_cache.items() if key[0] != symbol
+        }
         self._indicator_cache.pop(symbol, None)
         self._warm_logged.discard(symbol)
         self._vwap_calc.reset(symbol)
@@ -632,13 +637,18 @@ class StreamingIndicatorEngine:
             - indicator_cache_misses: Number of cache misses for get_indicators()
             - momentum_cache_hits: Number of cache hits for get_momentum_indicators()
             - momentum_cache_misses: Number of cache misses for get_momentum_indicators()
+            - mtf_base_cache_hits: Number of cache hits for get_indicators_tf()
+            - mtf_base_cache_misses: Number of cache misses for get_indicators_tf()
             - indicator_cache_size: Number of cached symbols
             - momentum_cache_size: Number of cached (symbol, timeframe) pairs
+            - mtf_base_cache_size: Number of cached (symbol, timeframe) pairs
             - indicator_hit_rate: Percentage of cache hits (0-100)
             - momentum_hit_rate: Percentage of cache hits (0-100)
+            - mtf_base_hit_rate: Percentage of cache hits (0-100)
         """
         indicator_total = self._indicator_cache_hits + self._indicator_cache_misses
         momentum_total = self._momentum_cache_hits + self._momentum_cache_misses
+        mtf_base_total = self._mtf_base_cache_hits + self._mtf_base_cache_misses
 
         indicator_hit_rate = (
             (self._indicator_cache_hits / indicator_total * 100)
@@ -650,16 +660,25 @@ class StreamingIndicatorEngine:
             if momentum_total > 0
             else 0.0
         )
+        mtf_base_hit_rate = (
+            (self._mtf_base_cache_hits / mtf_base_total * 100)
+            if mtf_base_total > 0
+            else 0.0
+        )
 
         return {
             "indicator_cache_hits": self._indicator_cache_hits,
             "indicator_cache_misses": self._indicator_cache_misses,
             "momentum_cache_hits": self._momentum_cache_hits,
             "momentum_cache_misses": self._momentum_cache_misses,
+            "mtf_base_cache_hits": self._mtf_base_cache_hits,
+            "mtf_base_cache_misses": self._mtf_base_cache_misses,
             "indicator_cache_size": len(self._indicator_cache),
             "momentum_cache_size": len(self._momentum_cache),
+            "mtf_base_cache_size": len(self._mtf_base_cache),
             "indicator_hit_rate": indicator_hit_rate,
             "momentum_hit_rate": momentum_hit_rate,
+            "mtf_base_hit_rate": mtf_base_hit_rate,
         }
 
     def get_indicators(
@@ -1052,7 +1071,10 @@ class StreamingIndicatorEngine:
         cache_key = (symbol, timeframe)
         cached = self._mtf_base_cache.get(cache_key)
         if cached and cached[0] == candle_count:
+            self._mtf_base_cache_hits += 1
             return cached[1].copy()
+
+        self._mtf_base_cache_misses += 1
 
         # Compute from CLOSED candles only — never read mtf._buffer.
         closes = [c.close for c in mtf.candles]
