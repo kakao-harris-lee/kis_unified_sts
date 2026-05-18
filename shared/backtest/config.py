@@ -96,8 +96,6 @@ class RiskConfig:
 
 @dataclass
 class BacktestConfig:
-        # Lookahead bias guard mode: 'off', 'warn', 'assert' (default: 'assert')
-        lookahead_guard_mode: str = "assert"
     """백테스트 설정
 
     Attributes:
@@ -112,6 +110,7 @@ class BacktestConfig:
         ats_enabled: ATS 라우팅 시뮬레이션 활성화 (주식 전용)
         ats_simulator: ATS 시뮬레이터 인스턴스
         verbose: 디버그 출력
+        lookahead_guard_mode: 룩어헤드 편향 가드 모드 ('off'|'warn'|'assert')
     """
 
     initial_capital: float = 10_000_000
@@ -127,6 +126,8 @@ class BacktestConfig:
     ats_simulator: ATSSimulator | None = None
 
     verbose: bool = False
+    # Lookahead bias guard mode: 'off', 'warn', 'assert' (default: 'assert')
+    lookahead_guard_mode: str = "assert"
 
     @classmethod
     def stock(
