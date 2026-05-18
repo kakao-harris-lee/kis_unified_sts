@@ -473,7 +473,8 @@ class StrategyManager:
     ) -> Signal | None:
         """Check entry with exception handling"""
         # Decision-cadence gate: skip if no new closed N-min bar since last decision.
-        symbol = str(context.market_data.get("code", "") or "")
+        market_data = getattr(context, "market_data", {}) or {}
+        symbol = str(market_data.get("code", "") if isinstance(market_data, dict) else "")
         if not self._gate_allows(strategy.name, symbol):
             return None
         try:
