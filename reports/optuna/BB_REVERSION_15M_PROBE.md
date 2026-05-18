@@ -94,3 +94,33 @@ and the ~3–4mo thin-sample paper duration (planning constraints, not
 technical risks). Look-ahead (risk #2) is mitigable by closed-bar
 discipline (the harness used only closed buckets + flush, never the
 in-progress `_buffer`).
+
+---
+
+## T7 parity defect + decision-cadence resolution (2026-05-18)
+
+The productionization parity gate (registered backtest path == the
+probe that passed the robust gate) **FAILED**, catching a real
+architectural defect: Option B (15m BB/RSI injected under plain keys,
+engine still on 1m bars) makes the strategy DECIDE every 1 minute with
+15m indicators → **1,584 trades**, not the **~345** of the gate-passing
+strategy (probe ran the engine on 15m bars → one decision per 15m bar).
+Pure-1m = 1,832. The de-risk checkpoint validated 15m *bar*
+equivalence — necessary but **insufficient**; *decision-cadence*
+equivalence was unvalidated and broken.
+
+**Resolution (operator-approved):** a shared, look-ahead-safe
+**decision-cadence gate** (`shared/strategy/decision_cadence.py`, plan
+Task 6.5) throttles entry+exit to closed-15m-bar boundaries in BOTH the
+backtest adapter and the live `StrategyManager` (DRY, backtest==live;
+no-op when `timeframe_minutes ≤ 1`). Acceptance = the parity test
+(`test_registered_backtest_matches_probe_15m_profile`) passes
+(~345-trade regime).
+
+**Accepted tradeoff (carried into the T8 runbook):** at 15m cadence,
+stop-loss/exit is only checked once per closed 15m bar — a –4% stop can
+overshoot intra-15m. This is an inherent property of the strategy that
+*passed the robust gate* (the probe only ever saw 15m bars);
+reproducing it is required for parity. Engine risk-net + EOD remain
+independent safety nets; an intra-bar hard-stop is a documented future
+enhancement, out of scope for parity.

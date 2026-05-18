@@ -554,6 +554,300 @@ git commit -m "feat(config): bb_reversion_15m declares 15m MTF base (still enabl
 
 ---
 
+## Architecture amendment (2026-05-18, from the T7 parity finding)
+
+**Defect found by the T7 parity gate:** Option B (T1–T6) injects 15m
+BB/RSI under the plain keys but leaves the engine on **1-minute bars**,
+so `on_bar`/`check_exit` fire every 1 minute → the strategy decides at
+**1m cadence with 15m indicators** (1,584 trades), which is a *different
+strategy* than the one that passed the robust gate (the probe ran the
+engine on 15m bars → decisions every 15m → ~345 trades). The de-risk
+checkpoint validated 15m **bar** equivalence — necessary but
+insufficient; **decision-cadence** equivalence was never validated and
+is broken.
+
+**Resolution (operator-approved):** add a **decision-cadence gate** so a
+strategy configured with `timeframe_minutes = N` only evaluates entry
+AND exit when a new **closed** N-min bar has appeared since it last
+decided — in BOTH the backtest adapter and the live path, sharing one
+helper (DRY, backtest == live). Look-ahead-safe by construction: the
+decision fires *after* the N-min bucket closes and uses
+`get_indicators_tf` (closed-bars-only, T2) — compliant with the C1
+LookaheadGuard rule. No-op when `timeframe_minutes ≤ 1` (default 0 →
+every-bar; stock `bb_reversion` and all other `mean_reversion` users
+unchanged).
+
+**Accepted tradeoff (must be in the T8 runbook):** at 15m decision
+cadence, stop-loss / exit conditions are only checked once per closed
+15m bar — a –4% stop can overshoot intra-15m. This is an **inherent
+property of the strategy that passed the robust gate** (the probe only
+ever saw 15m bars); reproducing it is *required* for parity. The
+engine-level risk net + EOD remain independent safety nets; an
+intra-bar hard-stop is a documented future enhancement, out of scope
+for parity.
+
+---
+
+## Task 6.5: 15m decision-cadence gate (shared helper + adapter + live wiring)
+
+**Files:**
+- Create: `shared/strategy/decision_cadence.py`
+- Create: `tests/unit/strategy/test_decision_cadence.py`
+- Modify: `services/trading/indicator_engine.py` (add `mtf_total_appended` accessor)
+- Modify: `shared/backtest/adapter.py` (gate `on_bar` entry + `check_exit`)
+- Modify: `services/trading/strategy_manager.py` (gate `_check_entry_safe` / `_check_exits_safe`)
+- Test: `tests/unit/trading/test_engine_get_indicators_tf.py` (append accessor test), `tests/unit/strategy/test_decision_cadence.py`, plus the existing `tests/unit/indicators/` & `tests/integration/test_bb_reversion_15m_parity.py` (Task 7) as the integration acceptance.
+
+- [ ] **Step 1: Engine accessor — failing test** (append to `tests/unit/trading/test_engine_get_indicators_tf.py`)
+
+```python
+def test_mtf_total_appended_accessor():
+    eng = StreamingIndicatorEngine(
+        bb_period=5, bb_std=2.0, rsi_period=5, mtf_timeframes=[15]
+    )
+    sym = "101S6000"
+    assert eng.mtf_total_appended(sym, 15) == 0  # nothing fed yet
+    assert eng.mtf_total_appended("missing", 15) == 0
+    for i in range(40):  # ~2+ closed 15m candles
+        hh, mm = 9 + i // 60, i % 60
+        eng._feed_mtf_candle(sym, Candle(open=1.0, high=1.0, low=1.0,
+                              close=1.0, volume=1.0, minute=hh * 100 + mm))
+    n = eng.mtf_total_appended(sym, 15)
+    mtf = eng._mtf_accumulators[sym][15]
+    assert n == mtf.total_appended and n >= 2
+```
+
+- [ ] **Step 2: Run → fails** (`mtf_total_appended` undefined):
+`source .venv/bin/activate && pytest tests/unit/trading/test_engine_get_indicators_tf.py::test_mtf_total_appended_accessor -q`
+
+- [ ] **Step 3: Implement the accessor** in `services/trading/indicator_engine.py` (near `get_indicators_tf`):
+
+```python
+    def mtf_total_appended(self, symbol: str, timeframe: int) -> int:
+        """Monotonic count of CLOSED `timeframe`-min candles for `symbol`
+        (0 if none / unknown). The decision-cadence gate watermarks on
+        this — never on len(deque) (saturates at maxlen)."""
+        mtf_map = self._mtf_accumulators.get(symbol)
+        if not mtf_map:
+            return 0
+        acc = mtf_map.get(timeframe)
+        return int(acc.total_appended) if acc is not None else 0
+```
+
+- [ ] **Step 4: Run → passes** (same command, expect PASS).
+
+- [ ] **Step 5: Cadence gate — failing tests** (`tests/unit/strategy/test_decision_cadence.py`)
+
+```python
+from shared.strategy.decision_cadence import DecisionCadenceGate
+
+
+class _Eng:
+    def __init__(self):
+        self._n = {}
+    def mtf_total_appended(self, symbol, timeframe):
+        return self._n.get((symbol, timeframe), 0)
+
+
+def test_noop_when_timeframe_le_1():
+    g = DecisionCadenceGate(timeframe_minutes=0)
+    e = _Eng()
+    assert g.should_decide(e, "X") is True   # always decide (1m default)
+    g.mark_decided(e, "X")
+    assert g.should_decide(e, "X") is True
+    assert DecisionCadenceGate(1).should_decide(e, "X") is True
+
+
+def test_fires_once_per_closed_bar_increment():
+    g = DecisionCadenceGate(timeframe_minutes=15)
+    e = _Eng()
+    assert g.should_decide(e, "S") is False          # 0 closed 15m bars
+    e._n[("S", 15)] = 1                               # first 15m bar closed
+    assert g.should_decide(e, "S") is True            # decision due
+    assert g.should_decide(e, "S") is True            # idempotent until marked
+    g.mark_decided(e, "S")
+    assert g.should_decide(e, "S") is False           # same bar → no re-decide
+    e._n[("S", 15)] = 2                               # next 15m bar closed
+    assert g.should_decide(e, "S") is True
+    g.mark_decided(e, "S")
+    assert g.should_decide(e, "S") is False
+
+
+def test_per_symbol_independent_watermarks():
+    g = DecisionCadenceGate(timeframe_minutes=15)
+    e = _Eng()
+    e._n[("A", 15)] = 1
+    assert g.should_decide(e, "A") is True
+    assert g.should_decide(e, "B") is False           # B has no closed bar
+    g.mark_decided(e, "A")
+    assert g.should_decide(e, "A") is False
+    e._n[("B", 15)] = 1
+    assert g.should_decide(e, "B") is True             # A's watermark independent
+```
+
+- [ ] **Step 6: Run → fails** (module missing):
+`source .venv/bin/activate && pytest tests/unit/strategy/test_decision_cadence.py -q`
+
+- [ ] **Step 7: Implement** `shared/strategy/decision_cadence.py`:
+
+```python
+"""Decision-cadence gate: throttle a strategy's entry/exit decisions to
+its configured higher-timeframe bar boundary.
+
+A strategy fed 1-minute bars but configured `timeframe_minutes = N`
+must DECIDE only when a new *closed* N-min bar has appeared since it
+last decided (the engine still consumes every 1m bar to build the N-min
+candle). This makes the registered backtest path and the live path
+behave like the N-min strategy that was validated by the robust gate
+(decision-cadence parity), instead of deciding every 1m with N-min
+indicators. Look-ahead-safe: callers evaluate AFTER the N-min bucket
+closes, using closed-bars-only indicators (`get_indicators_tf`).
+
+`timeframe_minutes <= 1` → no-op (always decide), so 1-minute strategies
+(stock `bb_reversion`, all other `mean_reversion` users) are unchanged.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+
+class DecisionCadenceGate:
+    def __init__(self, timeframe_minutes: int = 0) -> None:
+        self._tf = int(timeframe_minutes or 0)
+        # per-symbol watermark: last closed-bar count we DECIDED on.
+        self._decided_at: dict[str, int] = {}
+
+    @property
+    def enabled(self) -> bool:
+        return self._tf > 1
+
+    def should_decide(self, engine: Any, symbol: str) -> bool:
+        """True iff a 1m strategy (no-op) OR a new closed N-min bar has
+        appeared since the last `mark_decided` for this symbol.
+        Idempotent within a bar (does not mutate)."""
+        if not self.enabled:
+            return True
+        try:
+            closed = int(engine.mtf_total_appended(symbol, self._tf))
+        except Exception:  # noqa: BLE001 — hot path, never raise
+            return False
+        return closed > self._decided_at.get(symbol, 0)
+
+    def mark_decided(self, engine: Any, symbol: str) -> None:
+        """Advance the watermark to the current closed-bar count so this
+        symbol does not re-decide until the next N-min bar closes."""
+        if not self.enabled:
+            return
+        try:
+            self._decided_at[symbol] = int(
+                engine.mtf_total_appended(symbol, self._tf)
+            )
+        except Exception:  # noqa: BLE001
+            pass
+```
+
+- [ ] **Step 8: Run → passes** (`pytest tests/unit/strategy/test_decision_cadence.py -q`, 3 passed).
+
+- [ ] **Step 9: Wire into the backtest adapter — `shared/backtest/adapter.py`.**
+Read the adapter first. In `__init__` (after `_indicator_resolver` is built, ~line 305), read the strategy's entry timeframe and build the gate:
+
+```python
+        _entry_tf = int(
+            (strategy_config.get("strategy", {})
+             .get("entry", {}).get("params", {}) or {})
+            .get("timeframe_minutes", 0) or 0
+        )
+        from shared.strategy.decision_cadence import DecisionCadenceGate
+        self._cadence = DecisionCadenceGate(_entry_tf)
+        self._decision_bar: bool = True
+```
+
+In `on_bar(bar)` — AFTER the engine has consumed the bar (after the
+`seed_candles` / `is_warm` block, immediately before
+`collect_entry_indicators`, ~line 656) insert:
+
+```python
+        # Decision-cadence parity: only decide on a closed N-min boundary.
+        self._decision_bar = self._cadence.should_decide(
+            self._indicator_engine, code
+        )
+        if not self._decision_bar:
+            return SignalType.HOLD
+```
+
+And AFTER a successful entry decision is computed (just before the final
+`return` paths at the end of `on_bar`, on ALL non-HOLD/HOLD return
+paths reached past the gate) advance the watermark exactly once for this
+bar:
+
+```python
+        self._cadence.mark_decided(self._indicator_engine, code)
+```
+
+Implementer note: `mark_decided` MUST run once per decision bar
+regardless of BUY/SELL/HOLD outcome, and AFTER `check_exit` has also had
+its chance this bar (see Step 10). The simplest correct structure: do
+NOT call `mark_decided` inside `on_bar`'s early returns; instead call it
+once at the very end of `on_bar` (all post-gate paths converge there) —
+and ensure `check_exit` (Step 10) consults `self._decision_bar` (set by
+`on_bar`) rather than recomputing, so entry+exit act on the SAME closed
+15m boundary. Read `engine.run`'s call order of `on_bar` vs `check_exit`
+in `shared/backtest/engine.py` and confirm `on_bar` runs first each bar;
+if `check_exit` runs first, compute `_decision_bar` lazily in whichever
+runs first (a `_recompute_decision_bar(code)` helper) and reset it per
+bar. Add a one-line comment explaining the ordering invariant.
+
+- [ ] **Step 10: Gate `check_exit`** in `shared/backtest/adapter.py` (~line 535). At the top of `check_exit`, after the `if not self._current_position: return (False, None)` guard, add:
+
+```python
+        if not self._decision_bar:
+            return (False, None)
+```
+
+(Exits evaluate only on the same 15m boundary as entries — the probe
+ran the whole engine at 15m, so exits were also 15m-cadence. The
+engine-level risk net + EOD remain independent.)
+
+- [ ] **Step 11: Wire into the live path — `services/trading/strategy_manager.py`.**
+Read `_check_entry_safe` (~391) and `_check_exits_safe` (~494) and the
+loops that call them. Per strategy, build a `DecisionCadenceGate` from
+that strategy's entry-config `timeframe_minutes` (cache one gate per
+strategy instance — e.g. a `dict[str, DecisionCadenceGate]` keyed by
+strategy name, built once in `StrategyManager.__init__`/strategy load,
+mirroring how per-strategy state is already held). Before calling
+`strategy.check_entry`/`check_exit` for a symbol, if
+`gate.should_decide(self._indicator_engine, symbol)` is False → skip
+that strategy this cycle (same effect as the adapter's HOLD/`(False,
+None)`); after the entry+exit evaluation for that symbol/strategy this
+cycle, `gate.mark_decided(...)` once. Reuse the SAME
+`DecisionCadenceGate` class (DRY — do NOT reimplement). If the live
+engine handle is named differently than `self._indicator_engine`, use
+the actual attribute (read the file). If the StrategyManager has no
+direct engine handle, obtain the closed-bar count via the same
+`mtf_total_appended` accessor on whatever engine instance the manager
+already uses for indicators; if genuinely unavailable, report
+NEEDS_CONTEXT rather than guessing.
+
+- [ ] **Step 12: Live-wiring test** (`tests/unit/strategy/test_decision_cadence.py`, append) — a focused test that the StrategyManager consults the gate and suppresses sub-N-min calls. Use the manager's existing test patterns; assert `strategy.check_entry` is NOT awaited on a non-decision cycle and IS on a decision cycle (a fake engine whose `mtf_total_appended` you control + a spy strategy). If the manager's construction is heavy, keep this a minimal targeted unit test of the gating branch you added (extract the gate-consult into a tiny helper method on StrategyManager and test that helper directly).
+
+- [ ] **Step 13: Regression + ruff:**
+```
+source .venv/bin/activate && pytest tests/unit/strategy/test_decision_cadence.py tests/unit/trading/test_engine_get_indicators_tf.py tests/unit/indicators tests/unit/strategy/entry/test_mean_reversion_timeframe.py tests/unit/strategy -q -p no:warnings 2>&1 | tail -6
+ruff check shared/strategy/decision_cadence.py services/trading/indicator_engine.py shared/backtest/adapter.py services/trading/strategy_manager.py tests/unit/strategy/test_decision_cadence.py
+```
+All new pass; NO new regressions in existing strategy/backtest/orchestrator suites (default `timeframe_minutes=0` → gate disabled → byte-identical behavior). Pre-existing unrelated failures (lookahead_guard NameError in `shared/indicators/daily.py`, ClickHouse-auth, contaminated `tests/unit/news/*`) accounted for separately — must not increase.
+
+- [ ] **Step 14: Commit** (explicit paths; `git commit -o` if the unmerged guard blocks):
+```bash
+git add shared/strategy/decision_cadence.py tests/unit/strategy/test_decision_cadence.py services/trading/indicator_engine.py shared/backtest/adapter.py services/trading/strategy_manager.py tests/unit/trading/test_engine_get_indicators_tf.py
+git commit -m "feat(strategy): 15m decision-cadence gate (backtest+live, parity)"
+```
+
+**Acceptance:** Task 7's `test_registered_backtest_matches_probe_15m_profile` (band 150–800, Sharpe>1, PF>1.2) now PASSES because the registered path decides at 15m cadence (~345 trades), not 1m (1,584). That integration test is Task 6.5's true acceptance gate.
+
+---
+
 ## Task 7: Parity gate — registered backtest reproduces the probe verdict
 
 **Files:**
