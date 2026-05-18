@@ -15,3 +15,9 @@ def test_timeframe_minutes_adds_mtf_base_key():
     ri = e.required_indicators
     assert "mtf_base_15m" in ri
     assert {"bb_lower", "bb_upper", "bb_middle", "rsi"} <= set(ri)
+
+
+def test_timeframe_minutes_one_adds_no_key():
+    e = MeanReversionEntry(MeanReversionConfig(timeframe_minutes=1))
+    assert "mtf_base_1m" not in e.required_indicators
+    assert "bb_lower" in e.required_indicators

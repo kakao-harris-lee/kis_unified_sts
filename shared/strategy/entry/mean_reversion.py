@@ -128,7 +128,7 @@ class MeanReversionEntry(EntrySignalGenerator[MeanReversionConfig]):
             indicators.append("vwap")
         if self.config.adx_filter:
             indicators.append("adx")
-        if self.config.timeframe_minutes and self.config.timeframe_minutes > 1:
+        if self.config.timeframe_minutes > 1:
             indicators.append(f"mtf_base_{self.config.timeframe_minutes}m")
         return indicators
 
