@@ -65,3 +65,32 @@ plan; keep `config/strategies/futures/bb_reversion_15m.yaml`
 `enabled: false` until paper evidence + operator approval (Phase-5-style
 gate). Do NOT infer deployability from these inflated backtest
 magnitudes — the paper stage is the real bar.
+
+---
+
+## De-risking checkpoint (2026-05-18) — live == probe bars: **MATCH ✅**
+
+Before committing to the M–L Option-B build + 3–4mo paper, the single
+load-bearing assumption was tested: do the *live* orchestrator path's
+15m bars (`MultiTimeframeCandleAccumulator`,
+services/trading/indicator_engine.py) equal the probe's offline
+`_resample_15m` bars — the bars that actually passed the robust gate?
+
+Tool: `scripts/derisk_live_vs_probe_15m.py` (feeds the 101S6000 1m CSV
+bar-by-bar through the exact live accumulator class + flush; diffs
+sequence-aligned vs `_resample_15m`).
+
+Result: **5,615 / 5,615 = 100.000% bar-for-bar identical** (minute +
+OHLCV within 1e-6), count match YES. The wall-clock 15-min `_get_bucket`
+grid exactly reproduces pandas `resample("15min")` including
+session-open and intraday-gap bins (the anticipated divergence did not
+materialize — verified empirically, not by inspection).
+
+**Risk #1 (the highest: live ≠ probe-bars → edge unvalidated) is
+ELIMINATED.** The robust-gate result transfers to live bars; Option B
+(reuse `MultiTimeframeCandleAccumulator` → 15m BB/RSI → `mean_reversion`,
+closed-bars-only) is sound to proceed. Remaining items are the M–L build
+and the ~3–4mo thin-sample paper duration (planning constraints, not
+technical risks). Look-ahead (risk #2) is mitigable by closed-bar
+discipline (the harness used only closed buckets + flush, never the
+in-progress `_buffer`).
