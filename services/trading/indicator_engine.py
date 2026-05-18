@@ -266,6 +266,8 @@ class StreamingIndicatorEngine:
             str, dict[int, MultiTimeframeCandleAccumulator]
         ] = {}
         self._momentum_cache: dict[tuple[str, int], tuple[int, dict[str, Any]]] = {}
+        # Cache for get_indicators_tf(): {(symbol, timeframe): (total_appended, indicators_dict)}
+        self._mtf_base_cache: dict[tuple[str, int], tuple[int, dict[str, float]]] = {}
 
         # Daily candles (loaded from ClickHouse, not aggregated from 1m)
         # {symbol: deque[Candle]}
@@ -1019,6 +1021,53 @@ class StreamingIndicatorEngine:
             }
             for c in candles
         ]
+
+    def get_indicators_tf(self, symbol: str, timeframe: int) -> dict[str, float]:
+        """Compute BB and RSI from closed multi-timeframe candles.
+
+        Reads ONLY the closed candles in the MultiTimeframeCandleAccumulator
+        (``mtf.candles``).  The in-progress ``_buffer`` is intentionally never
+        touched — acting on an incomplete bar would introduce look-ahead bias.
+
+        Args:
+            symbol: Symbol to compute indicators for.
+            timeframe: Timeframe in minutes (must have been passed via
+                ``mtf_timeframes`` at construction time or fed via
+                ``_feed_mtf_candle``).
+
+        Returns:
+            Dict with keys ``bb_lower``, ``bb_middle``, ``bb_upper``, ``rsi``.
+            Returns ``{}`` if the accumulator is missing or has fewer closed
+            candles than ``self.bb_period``.
+        """
+        mtf_map = self._mtf_accumulators.get(symbol)
+        if mtf_map is None:
+            return {}
+        mtf = mtf_map.get(timeframe)
+        if mtf is None or len(mtf.candles) < self.bb_period:
+            return {}
+
+        # Use the monotonic counter (not len) to invalidate after deque saturates.
+        candle_count = mtf.total_appended
+        cache_key = (symbol, timeframe)
+        cached = self._mtf_base_cache.get(cache_key)
+        if cached and cached[0] == candle_count:
+            return cached[1].copy()
+
+        # Compute from CLOSED candles only — never read mtf._buffer.
+        closes = [c.close for c in mtf.candles]
+        bb_lower, bb_middle, bb_upper = self._calc_bb(closes)
+        rsi = self._calc_rsi(closes)
+
+        result: dict[str, float] = {
+            "bb_lower": bb_lower,
+            "bb_middle": bb_middle,
+            "bb_upper": bb_upper,
+            "rsi": rsi,
+        }
+
+        self._mtf_base_cache[cache_key] = (candle_count, result.copy())
+        return result
 
     def get_momentum_indicators(
         self,
