@@ -79,6 +79,14 @@ class IndicatorContract:
     def momentum_requests(self) -> tuple[IndicatorRequest, ...]:
         return tuple(req for req in self.requests if req.kind == IndicatorKind.MOMENTUM)
 
+    @property
+    def mtf_base_requests(self) -> tuple[IndicatorRequest, ...]:
+        return tuple(
+            req
+            for req in self.requests
+            if req.kind == IndicatorKind.BASE and req.timeframe is not None
+        )
+
     @classmethod
     def from_required_keys(cls, keys: list[str] | tuple[str, ...]) -> IndicatorContract:
         requests: list[IndicatorRequest] = []
@@ -113,6 +121,29 @@ class IndicatorContract:
                     IndicatorRequest(
                         kind=IndicatorKind.MOMENTUM,
                         name="momentum",
+                        timeframe=tf,
+                        source_key=key,
+                    )
+                )
+                continue
+            if key.startswith("mtf_base_"):
+                token = key[len("mtf_base_"):]
+                try:
+                    tf = Timeframe.from_token(token)
+                except ValueError:
+                    # Keep malformed keys as base indicators for backward safety.
+                    requests.append(
+                        IndicatorRequest(
+                            kind=IndicatorKind.BASE,
+                            name=key,
+                            source_key=key,
+                        )
+                    )
+                    continue
+                requests.append(
+                    IndicatorRequest(
+                        kind=IndicatorKind.BASE,
+                        name="mtf_base",
                         timeframe=tf,
                         source_key=key,
                     )
