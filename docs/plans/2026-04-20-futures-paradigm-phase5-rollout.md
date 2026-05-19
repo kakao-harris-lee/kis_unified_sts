@@ -95,16 +95,16 @@ Gate 3 통과 후:
 
 ---
 
-## 4. Grafana 대시보드 (최종 세트)
+## 4. 운영 대시보드 (최종 세트)
 
-| 대시보드 | 출처 | 비고 |
+| 화면/지표 | 출처 | 비고 |
 |----------|------|------|
-| `futures-paradigm-overview` | 신규 | 당일 PnL, 포지션, 시그널 발생 |
-| `futures-paradigm-data-quality` | Phase 1 확장 | 수집/스코어링 건강성 |
-| `futures-paradigm-decision-engine` | Phase 3 | Setup별 시그널, 필터 거부율 |
-| `futures-paradigm-execution` | Phase 4 | 슬리피지, 체결률, 레이턴시 |
-| `futures-paradigm-risk` | Phase 4 + 신규 | MDD, 연속손실, VaR, kill switch 상태 |
-| 기존 `trading-overview` | 변경 없음 | `rl_mppo` + 주식 페이퍼 |
+| Cockpit overview | 신규 | 당일 PnL, 포지션, 시그널 발생 |
+| Data quality indicators | Phase 1 확장 | 수집/스코어링 건강성 |
+| Decision-engine indicators | Phase 3 | Setup별 시그널, 필터 거부율 |
+| Execution indicators | Phase 4 | 슬리피지, 체결률, 레이턴시 |
+| Risk indicators | Phase 4 + 신규 | MDD, 연속손실, VaR, kill switch 상태 |
+| Existing paper-trading views | 변경 없음 | `rl_mppo` + 주식 페이퍼 |
 
 **시각 일관성:** 모든 신규 대시보드에 `system=futures_paradigm` 태그 label로 `rl_mppo` 지표와 구분.
 
@@ -182,7 +182,7 @@ Phase 5 완료 시 CLAUDE.md `선물 (Futures)` 섹션 갱신:
 ## 8. Phase 5 완료 게이트
 
 - [ ] Gate 1-3 모두 통과
-- [ ] 3개 신규 Grafana 대시보드 구축
+- [ ] 3개 신규 운영 대시보드 구축
 - [ ] 주간 Edge Review 8주 연속 발행 (Phase 4 말 포함)
 - [ ] 롤백 드릴 1회 수행 및 런북 검증
 - [ ] CLAUDE.md 업데이트

@@ -461,7 +461,7 @@ news_stream_length{stream}          Gauge
 macro_collected_total{session}      Counter
 ```
 
-### 7.2 Grafana 패널 (기존 `system-health` 확장)
+### 7.2 대시보드 패널 (기존 `system-health` 확장)
 
 - 소스별 수집량 (1h rolling)
 - 각 스트림 `XLEN`
@@ -560,7 +560,7 @@ macro_collected_total{session}      Counter
 7. `services/news_collector/main.py` 데몬
 8. `shared/macro/` + Yahoo/ECOS sources
 9. `scripts/cron/macro_overnight.sh`
-10. Prometheus 메트릭 + Grafana 패널
+10. Prometheus 메트릭 + 대시보드 패널
 11. systemd units + 배포
 12. 48h 연속 검증
 13. Phase 1 완료 게이트 체크

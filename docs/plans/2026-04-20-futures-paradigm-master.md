@@ -102,7 +102,7 @@ futures_contract_spec:
 | **2** | `2026-04-20-futures-paradigm-phase2-scoring.md` | Week 3-4 | 뉴스 감성 분류기 (LLM per-news scoring) | 1,000건 스코어링, 사람 라벨과 agreement ≥ 70% |
 | **3** | `2026-04-20-futures-paradigm-phase3-decision-engine.md` | Week 5 | Setup A/C + RiskFilterLayer + 포지션 사이저 + `signal.candidate→final` 파이프라인 | 단위 테스트 + 과거 6개월 백테스트 EV > 0.5 tick/setup |
 | **4** | `2026-04-20-futures-paradigm-phase4-execution.md` | Week 5-6 | Passive Maker 라우터 + OCO + force-close + 슬리피지 로깅 + Kill switch | Paper 100회 체결, 슬리피지 ≤ 0.4 tick 평균 |
-| **5** | `2026-04-20-futures-paradigm-phase5-rollout.md` | Week 7+ | Paper→Live 게이트, Grafana 대시보드, 주간 Edge Review, 롤백 런북 | 2주 소액 실전 일일 MDD ≤ 3%, 누적 PnL > 슬리피지+수수료 |
+| **5** | `2026-04-20-futures-paradigm-phase5-rollout.md` | Week 7+ | Paper→Live 게이트, 운영 대시보드, 주간 Edge Review, 롤백 런북 | 2주 소액 실전 일일 MDD ≤ 3%, 누적 PnL > 슬리피지+수수료 |
 | **RL** | `2026-04-20-futures-paradigm-rl-repurposing.md` | Phase 5 이후 | RL을 진입 적합성 보조 필터로 재학습 | 로깅 전용 3개월 → A/B 비교 → 편입 |
 
 각 Phase spec은 **이전 Phase의 검증 게이트가 통과되어야** 착수한다.

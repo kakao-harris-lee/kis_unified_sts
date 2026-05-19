@@ -162,7 +162,7 @@ rl_aux_agreement_rate             Gauge (PASS 정답률 proxy)
 rl_aux_skipped_pnl                Gauge (skip했으면 어땠을지 EV)
 ```
 
-### 6.3 Grafana (RL Aux 대시보드)
+### 6.3 operational dashboard (RL Aux 대시보드)
 
 - PASS / SKIP 분포
 - 매일 shadow A/B EV 비교

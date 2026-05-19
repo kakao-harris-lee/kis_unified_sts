@@ -2970,7 +2970,7 @@ Checklist (all must pass before Phase 2 starts):
       - `SELECT count() FROM kospi.macro_overnight WHERE ts >= now() - INTERVAL 2 DAY`
 - [ ] Test coverage: shared/news, shared/macro >= 80%
 - [ ] `rl_mppo` daily P&L and latency unchanged (compare before vs. after
-      deployment from Grafana `trading-overview` dashboard)
+      deployment from ClickHouse reports and Prometheus metrics)
 ```
 
 - [ ] **Step 5: Push branch + open draft PR**
@@ -3012,11 +3012,11 @@ git push
 | `services/news_collector/main.py` daemon | Task 12 |
 | `shared/macro/` + Yahoo/ECOS | Task 13 |
 | `scripts/cron/macro_overnight.sh` | Task 14 |
-| Prometheus + Grafana | Task 15 (metrics); Grafana dashboard edits left for Phase 1 ops (low-risk config) |
+| Prometheus + dashboard | Task 15 (metrics); monitoring dashboard edits left for Phase 1 ops (low-risk config) |
 | systemd units + deploy | Task 16 |
 | 48h verification | Task 17 |
 
-Grafana dashboard JSON is intentionally NOT in this plan — it's a downstream ops artifact with low code-risk and high churn. Metrics emission (Task 15) is the prerequisite; dashboard can be composed by the ops engineer during the 48h gate window.
+monitoring dashboard JSON is intentionally NOT in this plan — it's a downstream ops artifact with low code-risk and high churn. Metrics emission (Task 15) is the prerequisite; dashboard can be composed by the ops engineer during the 48h gate window.
 
 **2. Placeholder scan:** No TBDs, no "add error handling", no "similar to Task N" — every step has concrete code or commands. ✓
 

@@ -49,7 +49,7 @@ Prometheus Metrics:
   - websocket_message_processing_latency_seconds (histogram, p50/p95/p99)
   - websocket_publish_throughput_per_second (gauge)
 
-Grafana Alerts:
+Prometheus Alerts:
   - Warning: p95 latency > baseline × 1.2 for 5 minutes
   - Critical: p99 latency > baseline × 1.5 for 2 minutes
   - Critical: Throughput < baseline × 0.8 for 3 minutes
@@ -89,7 +89,7 @@ Prometheus Metrics:
   - clickhouse_concurrent_queries (gauge)
   - clickhouse_query_throughput_qps (gauge)
 
-Grafana Alerts:
+Prometheus Alerts:
   - Warning: 30-day query p95 > 1200ms for 5 minutes
   - Critical: 30-day query p95 > 1500ms for 2 minutes
   - Warning: Query throughput (20 workers) < baseline × 0.8
@@ -141,7 +141,7 @@ Prometheus Metrics:
   - redis_position_state_throughput_ops (gauge)
   - redis_concurrent_workers (gauge)
 
-Grafana Alerts:
+Prometheus Alerts:
   - Warning: Write ops/s < 800 for 3 minutes
   - Critical: Write ops/s < 500 for 1 minute
   - Warning: p99 latency > 12ms for 5 minutes
@@ -190,7 +190,7 @@ Prometheus Metrics:
   - orchestrator_memory_usage_mb (gauge)
   - orchestrator_scalability_factor (gauge)
 
-Grafana Alerts:
+Prometheus Alerts:
   - Warning: 10-position cycle time > 6.0s for 5 minutes
   - Critical: 10-position cycle time > 7.5s for 2 minutes
   - Warning: Scalability factor > 20x (linear degradation)
@@ -249,7 +249,7 @@ Prometheus Metrics:
   - rl_inference_consistency_cv (gauge)
   - rl_model_cache_hits_total (counter)
 
-Grafana Alerts:
+Prometheus Alerts:
   - CRITICAL: p99 latency > 60s (HARD LIMIT VIOLATION)
   - Warning: p99 latency > 50s (approaching hard limit)
   - Warning: p95 latency > baseline × 1.2
@@ -346,7 +346,7 @@ scrape_configs:
         action: keep
 ```
 
-### Grafana Dashboards
+### Monitoring Dashboards
 
 **Recommended Dashboards:**
 

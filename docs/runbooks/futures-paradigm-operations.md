@@ -3,7 +3,7 @@
 Day-to-day operating checklist for the Phase 5 futures paradigm system
 (Setup A/C + Phase 4 stack: decision_engine, risk_filter, order_router,
 kill_switch). Use alongside `futures-paradigm-failure-modes.md` (Phase 4)
-and the Grafana dashboards in `monitoring/grafana/dashboards/`.
+and the React Cockpit / Prometheus monitoring path.
 
 ## 09:00 — Status check (mandatory before market open at 09:00 KST)
 
@@ -12,19 +12,19 @@ and the Grafana dashboards in `monitoring/grafana/dashboards/`.
 - [ ] No position-recovery sentinel: `! test -f /var/run/kis_position_recovery.tripped`
 - [ ] Live-mode guard state matches intent: `redis-cli -n 1 get futures:live:suspended` returns `(nil)` for "live runs", or `1` for "paused"
 - [ ] Daily-trade counter from prior session expired (or absent): `redis-cli -n 1 get "order_router:daily_trades:$(TZ=Asia/Seoul date +%Y-%m-%d)"` returns `(nil)` at session start
-- [ ] Grafana **Futures Paradigm — Risk** dashboard: all 6 condition tiles green
-- [ ] Last 1h fills count sane on **Futures Paradigm — Overview** (no runaway order rate)
+- [ ] React Cockpit: kill-switch/process/data-freshness indicators are green
+- [ ] Last 1h fills count sane on Cockpit `/trades` (no runaway order rate)
 
 ## Noon — Signal review
 
-- [ ] **Futures Paradigm — Overview** signal-by-setup count is non-zero by 12:00 (zero by noon = signal pipeline likely broken)
+- [ ] Cockpit `/signals` signal-by-setup count is non-zero by 12:00 (zero by noon = signal pipeline likely broken)
 - [ ] Open-positions table shows ≤ `futures_live.max_position_size_contracts` (currently 1)
 
 ## 15:30 — EOD flat verification
 
 - [ ] All futures positions closed by 15:15 (EOD close logic — `eod_close_hour=15, eod_close_minute=15` in exit configs, executed before futures market close at 15:45). Check: `clickhouse-client --query "SELECT count() FROM kospi.swing_positions WHERE asset_class='futures' AND status='open'"` → 0
 - [ ] If non-zero: investigate before next session. Manual close: `python -m scripts.trading.flatten_all --confirm --reason eod_manual`
-- [ ] Today PnL recorded: see **Overview → Today PnL**
+- [ ] Today PnL recorded: see Cockpit `/trades` or the daily verification report
 
 ## Overnight — Macro readiness (if running 24h pipelines)
 
@@ -71,7 +71,7 @@ redis-cli -n 1 del "order_router:daily_trades:$(TZ=Asia/Seoul date +%Y-%m-%d)"
 
 ## Escalation
 
-- **Telegram alerts (`is_critical=True`)**: drop everything, check Grafana Risk dashboard, identify which condition tripped (`kill_switch_condition_value{name="..."}`), then follow `futures-paradigm-failure-modes.md` matrix.
+- **Telegram alerts (`is_critical=True`)**: drop everything, check Cockpit and Prometheus (`kill_switch_condition_value{name="..."}`), identify which condition tripped, then follow `futures-paradigm-failure-modes.md` matrix.
 - **Sentinel files present at startup**: refuse to clear without RCA. The sentinel exists *because* the prior session detected something the daemon refuses to silently absorb.
 
 Spec: `docs/plans/2026-04-20-futures-paradigm-phase5-rollout.md` §6.1 / §7.1.

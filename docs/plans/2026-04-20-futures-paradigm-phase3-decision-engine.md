@@ -434,7 +434,7 @@ risk_state_consecutive_losses                    Gauge
 risk_state_daily_trade_count                     Gauge
 ```
 
-### 10.2 Grafana (신규 대시보드: `futures-decision-engine`)
+### 10.2 operational dashboard (신규 대시보드: `futures-decision-engine`)
 
 - Setup별 시그널 발생 빈도 (24h)
 - 필터별 거부율 (pie)
@@ -465,7 +465,7 @@ risk_state_daily_trade_count                     Gauge
 - [ ] Walk-Forward OOS Sharpe ≥ 0.5 × IS
 - [ ] `signals_all` 적재 확인 (백테스트 run당 수십~수백 rows)
 - [ ] `config/decision_engine.yaml`, `config/risk.yaml`, `config/scheduled_events.yaml` 확정
-- [ ] Grafana 대시보드 신설
+- [ ] 운영 대시보드 신설
 - [ ] `rl_mppo` 운용 영향 없음
 
 ---

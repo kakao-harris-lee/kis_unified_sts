@@ -11,7 +11,7 @@
 | **대상** | 주식 (Stock) | KOSPI Mini 선물 (Futures) |
 | **전략** | BB Mean Reversion, Volume Momentum | OFI, 마이크로스트럭처 |
 | **데이터 저장** | In-Memory (deque) | Redis Streams + ClickHouse |
-| **모니터링** | Telegram + Custom Dashboard | Prometheus + Grafana |
+| **모니터링** | Telegram + Custom Dashboard | Prometheus + React Dashboard |
 | **백테스트** | ✅ MLflow 기반 히스토리 관리 | 자체 백테스트 엔진 |
 | **실험 추적** | MLflow (파라미터, 메트릭, 아티팩트) | 없음 |
 
@@ -65,14 +65,14 @@ kospi_mini_sts/
 │   └── cli/                  # CLI 명령어
 ├── common/                    # 공통 유틸리티
 ├── config/                    # 설정
-├── monitoring/                # Grafana 대시보드
+├── monitoring/                # React Dashboard 대시보드
 └── models/                    # ML 모델
 ```
 
 **핵심 특징:**
 - Redis Streams 기반 메시지 파이프라인
 - ClickHouse 시계열 데이터 저장
-- Prometheus + Grafana 모니터링
+- Prometheus + React Dashboard 모니터링
 - 마이크로서비스 지향 아키텍처
 
 ---
@@ -89,7 +89,7 @@ kospi_mini_sts/
 │  ┌─────────────────────────────────────────────────────────────────────┐    │
 │  │                        Presentation Layer                            │    │
 │  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌────────────┐  │    │
-│  │  │   Web UI    │  │  Grafana    │  │  Telegram   │  │    CLI     │  │    │
+│  │  │   Web UI    │  │  Cockpit    │  │  Telegram   │  │    CLI     │  │    │
 │  │  │  (React)    │  │ Dashboard   │  │    Bot      │  │   (sts)    │  │    │
 │  │  └─────────────┘  └─────────────┘  └─────────────┘  └────────────┘  │    │
 │  └─────────────────────────────────────────────────────────────────────┘    │
@@ -133,7 +133,7 @@ kospi_mini_sts/
 │  │                       Infrastructure Layer                           │    │
 │  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌────────────┐  │    │
 │  │  │   Redis     │  │ ClickHouse  │  │ Prometheus  │  │   Docker   │  │    │
-│  │  │  Streams    │  │   (TSDB)    │  │  + Grafana  │  │  Compose   │  │    │
+│  │  │  Streams    │  │   (TSDB)    │  │  Metrics   │  │  Compose   │  │    │
 │  │  └─────────────┘  └─────────────┘  └─────────────┘  └────────────┘  │    │
 │  └─────────────────────────────────────────────────────────────────────┘    │
 │                                                                              │
@@ -326,7 +326,7 @@ kis-unified-trading/
 │   │   ├── src/
 │   │   ├── package.json
 │   │   └── ...
-│   └── grafana/                     # Grafana 대시보드
+│   └── dashboard/                     # React Dashboard 대시보드
 │       └── dashboards/
 │
 ├── deploy/                           # 📁 배포
@@ -339,7 +339,7 @@ kis-unified-trading/
 │
 ├── monitoring/                       # 📁 모니터링 설정
 │   ├── prometheus/
-│   └── grafana/
+│   └── dashboard/
 │
 ├── tests/                            # 📁 테스트
 │   ├── __init__.py
@@ -1311,7 +1311,7 @@ API_ERRORS = Counter(
 )
 ```
 
-### 6.2 Grafana Dashboard 구성
+### 6.2 운영 Dashboard 구성
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
@@ -1453,7 +1453,7 @@ TELEGRAM_CHAT_ID=your_chat_id
 
 # Monitoring
 PROMETHEUS_PORT=9090
-GRAFANA_PORT=3000
+DASHBOARD_PORT=8001
 
 # Logging
 LOG_LEVEL=INFO
@@ -1603,13 +1603,12 @@ services:
     volumes:
       - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
 
-  grafana:
-    image: grafana/grafana:latest
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile.dashboard
     ports:
-      - "3000:3000"
-    volumes:
-      - grafana_data:/var/lib/grafana
-      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - "8001:8001"
 
   api:
     build:
@@ -1663,7 +1662,6 @@ services:
 volumes:
   redis_data:
   clickhouse_data:
-  grafana_data:
   mlflow_data:
   mlflow_artifacts:
   postgres_data:

@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans` to implement task-by-task. Steps use checkbox (`- [ ]`) syntax.
 
-**Goal:** promote Phase 4's paper system to **1-contract live**, install the weekly Edge Review cron + 3 new Grafana dashboards + rollback drill, and lock in the parallel-`rl_mppo` operational contract.
+**Goal:** promote Phase 4's paper system to **1-contract live**, install the weekly Edge Review cron + 3 new monitoring dashboards + rollback drill, and lock in the parallel-`rl_mppo` operational contract.
 
 **Architecture:** Phase 5 is **operational** rather than architectural — almost no new daemons or ClickHouse tables. It's gates, cron jobs, dashboards, runbooks, and a CLAUDE.md sync. The one non-trivial code item is `scripts/trading/recover_positions.py` (startup reconciliation for open live positions), which Phase 4 did not build for the paper account.
 
-**Tech stack:** Python 3.11+, existing scripts infra (`scripts/cron/`), Grafana JSON + provisioning config, `shared/notification/telegram.py` (reuse for Edge Review delivery).
+**Tech stack:** Python 3.11+, existing scripts infra (`scripts/cron/`), dashboard JSON + provisioning config, `shared/notification/telegram.py` (reuse for Edge Review delivery).
 
 **Parent spec:** `docs/plans/2026-04-20-futures-paradigm-phase5-rollout.md`
 **Depends on:**
@@ -42,10 +42,8 @@ docs/runbooks/
 ├── futures-legal-review.md                 # Gate 2 legal/tax deliverable
 └── phase5-verification.md                  # gate checklist (Gate 1-3)
 
-grafana/dashboards/
-├── futures-paradigm-overview.json          # 당일 PnL, 포지션, 시그널
-├── futures-paradigm-risk.json              # MDD, 연속손실, VaR, kill switch 상태
-└── futures-paradigm-live-ladder.json       # Gate 3 진행 상황 (1→2→5 계약)
+dashboard-frontend/
+└── src/                                    # Cockpit / trades / signals UI surfaces
 ```
 
 **Modify (existing files):**
@@ -156,14 +154,14 @@ Live-account configuration + a small runtime guard that order_router consults be
 
 ---
 
-## Task 6: Grafana dashboards (3 new)
+## Task 6: monitoring dashboards (3 new)
 
-**Scope:** JSON + provisioning entries only. Match existing dashboards at `grafana/dashboards/` (infra convention from Phase 1/4).
+**Scope:** React Dashboard UI surfaces and Prometheus/ClickHouse-backed indicators.
 
-- [ ] **Step 1** `futures-paradigm-overview.json` — panels: today PnL (stat), open positions (table), signal count by setup (timeseries 24h), fills count by setup.
-- [ ] **Step 2** `futures-paradigm-risk.json` — panels: daily MDD gauge vs limit, weekly MDD gauge, consecutive-loss counter, kill-switch condition state (6 gauges with threshold line).
-- [ ] **Step 3** `futures-paradigm-live-ladder.json` — panels: current contract size, Gate 3 progress bar (days completed / 14), cumulative net PnL, cumulative slippage, API error rate.
-- [ ] **Step 4** No tests (JSON is declarative + reviewed by ops). Commit with a brief README in `grafana/dashboards/phase5-readme.md`.
+- [ ] **Step 1** Cockpit overview — today PnL, open positions, signal count by setup, fills count by setup.
+- [ ] **Step 2** Risk indicators — daily MDD, weekly MDD, consecutive-loss counter, kill-switch condition state.
+- [ ] **Step 3** Live ladder indicators — current contract size, Gate 3 progress, cumulative net PnL, cumulative slippage, API error rate.
+- [ ] **Step 4** Validate React Dashboard surfaces and Prometheus/ClickHouse queries.
 
 ---
 
@@ -228,13 +226,13 @@ Spec §7.2 — update the root CLAUDE.md's `선물 (Futures)` section.
 | Gate 3 1-contract live | 5 (live_mode_guard enforces), 6 (monitoring) |
 | Gate 4 increment | out of scope for code — spec says user-approved step |
 | Weekly Edge Review cron | 2 |
-| Grafana dashboards | 6 |
+| monitoring dashboards | 6 |
 | `rl_mppo` parallel + symbol lock | reuses Phase 4's risk_filter `has_open_position_provider` |
 | Rollback drill | 4, 8 |
 | Runbooks | 7 |
 | CLAUDE.md sync | 9 |
 
-Grafana and runbook content is deliberately light on prescriptive JSON/text in this plan — operators will adapt during the 2-week live window. Task 6 lists the panel set; final JSON is composed during execution.
+dashboard and runbook content is deliberately light on prescriptive JSON/text in this plan — operators will adapt during the 2-week live window. Task 6 lists the panel set; final JSON is composed during execution.
 
 **Carried-forward lessons:**
 - ServiceConfigBase for every new config (Task 5)
@@ -257,7 +255,7 @@ Grafana and runbook content is deliberately light on prescriptive JSON/text in t
 
 Two execution options (Phase 1-4 pattern):
 
-1. **Subagent-Driven** — 10 tasks; but several (Grafana JSON, runbooks, CLAUDE.md) are content work better done inline by a single writer for consistency. Recommended split: dispatch Tasks 2, 3, 4, 5 to subagents; do Tasks 6, 7, 9 inline.
+1. **Subagent-Driven** — 10 tasks; but several (dashboard JSON, runbooks, CLAUDE.md) are content work better done inline by a single writer for consistency. Recommended split: dispatch Tasks 2, 3, 4, 5 to subagents; do Tasks 6, 7, 9 inline.
 2. **Inline** — straight through; Phase 5 is ~40% the code volume of Phase 4 so a single-session pass is realistic.
 
 Phase 5 completion doesn't trigger a new phase — RL repurposing spec is the only optional follow-up. Master plan §3 marks Phase 5 as the "terminal" phase of the paradigm.

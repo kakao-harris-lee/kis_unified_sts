@@ -89,7 +89,7 @@ All checkboxes must be ✅ before Phase 3 begins.
 ## 7. `rl_mppo` unaffected
 
 - [ ] `rl_mppo` paper trading daily PnL + latency before vs after scorer deploy — no statistically significant shift.
-- Grafana `trading-overview`: open positions, daily PnL, tick-to-fill latency.
+- React Dashboard / ClickHouse checks: open positions, daily PnL, tick-to-fill latency.
 
 ## 8. Prometheus metrics spot-check
 

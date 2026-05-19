@@ -54,7 +54,6 @@ check_service "Trading API" "http://localhost:8000/health/live" || true
 check_service "Dashboard API" "http://localhost:8001/health" || true
 check_redis || true
 check_service "Prometheus" "http://localhost:9090/-/healthy" || true
-check_service "Grafana" "http://localhost:3000/api/health" || true
 
 echo ""
 if [ $FAILED -eq 0 ]; then

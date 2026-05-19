@@ -689,7 +689,7 @@ DELETED_PATTERNS=(
 
 ### 관측성
 - ❌ Distributed tracing — 단일 서비스
-- ❌ Custom Grafana 대시보드 — Cockpit indicator 1개 추가 (별도 follow-up)
+- ❌ Custom React Dashboard 대시보드 — Cockpit indicator 1개 추가 (별도 follow-up)
 - ❌ A/B testing framework — Phase D canary로 충분
 
 ### 비교/검증 확장
