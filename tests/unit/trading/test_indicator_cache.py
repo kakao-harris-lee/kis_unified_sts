@@ -353,10 +353,14 @@ class TestCachePerformanceBenefit:
             "indicator_cache_misses",
             "momentum_cache_hits",
             "momentum_cache_misses",
+            "mtf_base_cache_hits",
+            "mtf_base_cache_misses",
             "indicator_cache_size",
             "momentum_cache_size",
+            "mtf_base_cache_size",
             "indicator_hit_rate",
             "momentum_hit_rate",
+            "mtf_base_hit_rate",
         }
 
         assert set(stats.keys()) == required_fields

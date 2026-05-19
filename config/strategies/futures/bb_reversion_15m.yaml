@@ -27,7 +27,7 @@
 strategy:
   name: bb_reversion_15m
   asset_class: futures
-  enabled: false  # DEPRECATED: 선물은 RL paper trader (rl_mppo)로 전환 (2026-02-12). WF 검증 통과(Sharpe 3.84)했으나 미운용.
+  enabled: true  # PAPER ONLY. Live execution gated by config/futures_live.yaml::futures_live.enabled=false + Redis futures:live:suspended. Paper-validation gate + accepted intra-15m-stop tradeoff: docs/runbooks/bb-reversion-15m-paper.md. Robust-gate + parity evidence: reports/optuna/BB_REVERSION_15M_PROBE.md.
   timeframe: 15min  # 1분봉 데이터를 15분으로 리샘플링
   description: "볼린저 밴드 평균회귀 선물 전략 (15분봉)"
 
@@ -50,6 +50,7 @@ strategy:
 
       buy_only: true
       min_bb_bandwidth: 0.003
+      timeframe_minutes: 15   # MTF base: BB/RSI computed on closed 15m bars
 
   exit:
     type: three_stage

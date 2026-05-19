@@ -266,6 +266,8 @@ class StreamingIndicatorEngine:
             str, dict[int, MultiTimeframeCandleAccumulator]
         ] = {}
         self._momentum_cache: dict[tuple[str, int], tuple[int, dict[str, Any]]] = {}
+        # Cache for get_indicators_tf(): {(symbol, timeframe): (total_appended, indicators_dict)}
+        self._mtf_base_cache: dict[tuple[str, int], tuple[int, dict[str, float]]] = {}
 
         # Daily candles (loaded from ClickHouse, not aggregated from 1m)
         # {symbol: deque[Candle]}
@@ -283,6 +285,8 @@ class StreamingIndicatorEngine:
         self._indicator_cache_misses: int = 0
         self._momentum_cache_hits: int = 0
         self._momentum_cache_misses: int = 0
+        self._mtf_base_cache_hits: int = 0
+        self._mtf_base_cache_misses: int = 0
 
         # Volume indicators
         self._high_period = high_period
@@ -576,6 +580,9 @@ class StreamingIndicatorEngine:
         self._momentum_cache = {
             key: value for key, value in self._momentum_cache.items() if key[0] != symbol
         }
+        self._mtf_base_cache = {
+            key: value for key, value in self._mtf_base_cache.items() if key[0] != symbol
+        }
         self._indicator_cache.pop(symbol, None)
         self._warm_logged.discard(symbol)
         self._vwap_calc.reset(symbol)
@@ -630,13 +637,18 @@ class StreamingIndicatorEngine:
             - indicator_cache_misses: Number of cache misses for get_indicators()
             - momentum_cache_hits: Number of cache hits for get_momentum_indicators()
             - momentum_cache_misses: Number of cache misses for get_momentum_indicators()
+            - mtf_base_cache_hits: Number of cache hits for get_indicators_tf()
+            - mtf_base_cache_misses: Number of cache misses for get_indicators_tf()
             - indicator_cache_size: Number of cached symbols
             - momentum_cache_size: Number of cached (symbol, timeframe) pairs
+            - mtf_base_cache_size: Number of cached (symbol, timeframe) pairs
             - indicator_hit_rate: Percentage of cache hits (0-100)
             - momentum_hit_rate: Percentage of cache hits (0-100)
+            - mtf_base_hit_rate: Percentage of cache hits (0-100)
         """
         indicator_total = self._indicator_cache_hits + self._indicator_cache_misses
         momentum_total = self._momentum_cache_hits + self._momentum_cache_misses
+        mtf_base_total = self._mtf_base_cache_hits + self._mtf_base_cache_misses
 
         indicator_hit_rate = (
             (self._indicator_cache_hits / indicator_total * 100)
@@ -648,16 +660,25 @@ class StreamingIndicatorEngine:
             if momentum_total > 0
             else 0.0
         )
+        mtf_base_hit_rate = (
+            (self._mtf_base_cache_hits / mtf_base_total * 100)
+            if mtf_base_total > 0
+            else 0.0
+        )
 
         return {
             "indicator_cache_hits": self._indicator_cache_hits,
             "indicator_cache_misses": self._indicator_cache_misses,
             "momentum_cache_hits": self._momentum_cache_hits,
             "momentum_cache_misses": self._momentum_cache_misses,
+            "mtf_base_cache_hits": self._mtf_base_cache_hits,
+            "mtf_base_cache_misses": self._mtf_base_cache_misses,
             "indicator_cache_size": len(self._indicator_cache),
             "momentum_cache_size": len(self._momentum_cache),
+            "mtf_base_cache_size": len(self._mtf_base_cache),
             "indicator_hit_rate": indicator_hit_rate,
             "momentum_hit_rate": momentum_hit_rate,
+            "mtf_base_hit_rate": mtf_base_hit_rate,
         }
 
     def get_indicators(
@@ -1019,6 +1040,66 @@ class StreamingIndicatorEngine:
             }
             for c in candles
         ]
+
+    def mtf_total_appended(self, symbol: str, timeframe: int) -> int:
+        """Monotonic count of CLOSED `timeframe`-min candles for `symbol`
+        (0 if none / unknown). The decision-cadence gate watermarks on
+        this — never on len(deque) (saturates at maxlen)."""
+        mtf_map = self._mtf_accumulators.get(symbol)
+        if not mtf_map:
+            return 0
+        acc = mtf_map.get(timeframe)
+        return int(acc.total_appended) if acc is not None else 0
+
+    def get_indicators_tf(self, symbol: str, timeframe: int) -> dict[str, float]:
+        """Compute BB and RSI from closed multi-timeframe candles.
+
+        Reads ONLY the closed candles in the MultiTimeframeCandleAccumulator
+        (``mtf.candles``).  The in-progress ``_buffer`` is intentionally never
+        touched — acting on an incomplete bar would introduce look-ahead bias.
+
+        Args:
+            symbol: Symbol to compute indicators for.
+            timeframe: Timeframe in minutes (must have been passed via
+                ``mtf_timeframes`` at construction time or fed via
+                ``_feed_mtf_candle``).
+
+        Returns:
+            Dict with keys ``bb_lower``, ``bb_middle``, ``bb_upper``, ``rsi``.
+            Returns ``{}`` if the accumulator is missing or has fewer closed
+            candles than ``self.bb_period``.
+        """
+        mtf_map = self._mtf_accumulators.get(symbol)
+        if mtf_map is None:
+            return {}
+        mtf = mtf_map.get(timeframe)
+        if mtf is None or len(mtf.candles) < self.bb_period:
+            return {}
+
+        # Use the monotonic counter (not len) to invalidate after deque saturates.
+        candle_count = mtf.total_appended
+        cache_key = (symbol, timeframe)
+        cached = self._mtf_base_cache.get(cache_key)
+        if cached and cached[0] == candle_count:
+            self._mtf_base_cache_hits += 1
+            return cached[1].copy()
+
+        self._mtf_base_cache_misses += 1
+
+        # Compute from CLOSED candles only — never read mtf._buffer.
+        closes = [c.close for c in mtf.candles]
+        bb_lower, bb_middle, bb_upper = self._calc_bb(closes)
+        rsi = self._calc_rsi(closes)
+
+        result: dict[str, float] = {
+            "bb_lower": bb_lower,
+            "bb_middle": bb_middle,
+            "bb_upper": bb_upper,
+            "rsi": rsi,
+        }
+
+        self._mtf_base_cache[cache_key] = (candle_count, result.copy())
+        return result
 
     def get_momentum_indicators(
         self,
