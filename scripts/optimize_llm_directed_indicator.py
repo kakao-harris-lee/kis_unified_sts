@@ -53,6 +53,16 @@ from shared.strategy.registry import (
     StrategyFactory,
     register_builtin_components,
 )
+from shared.backtest.robust_gate import (
+    rescoped_gate as _rescoped_gate,
+    objective_value as _objective_value,
+    SENTINEL as _SENTINEL,
+    FLOOR_SHARPE as _FLOOR_SHARPE,
+    FLOOR_PF as _FLOOR_PF,
+    FLOOR_BASIN_FRAC as _FLOOR_BASIN_FRAC,
+    OOS_MDD_MAX as _OOS_MDD_MAX,
+    OOS_RET_MIN as _OOS_RET_MIN,
+)
 from shared.validation.cli_validators import validate_csv_file
 
 logging.basicConfig(level=logging.WARNING, format="%(levelname)s: %(message)s")
@@ -63,7 +73,6 @@ register_builtin_components()
 _ASSET = "futures"
 _STRATEGY = "llm_directed_indicator"
 _DEFAULT_DATA = "data/kospi200f_1m_ch_101S6000.csv"
-_SENTINEL = -10.0  # failed / degenerate trial objective
 
 # --- Legacy numeric gate (spec §6, pre-2026-05-17). Kept ONLY as an
 # informational reference line. It judged the single best trial by raw
@@ -81,11 +90,7 @@ _GATE_PF = 1.2
 #   (c) the selected config is non-catastrophic out-of-sample
 # (a)+(b) are the methodological fix: they judge the *distribution*, so a
 # single lucky trial can no longer pass the gate.
-_FLOOR_SHARPE = 0.0   # non-catastrophic: not risk-adjusted-negative
-_FLOOR_PF = 1.0       # non-catastrophic: gross winners ≥ gross losers
-_FLOOR_BASIN_FRAC = 0.25  # ≥25% of valid trials must clear (a)
-_OOS_MDD_MAX = 25.0   # bounded drawdown (%)
-_OOS_RET_MIN = 0.0    # does not lose money over the OOS window (%)
+# Constants are now in shared/backtest/robust_gate.py (imported above).
 
 # Same guardrails the CLI applies to futures CSVs.
 _CSV_KW = {
@@ -180,34 +185,6 @@ def _run_backtest(cfg: dict, df, bt_config: BacktestConfig) -> dict[str, float]:
     return result.to_metrics_dict()
 
 
-def _objective_value(metrics: dict[str, float], min_trades: int) -> float:
-    """Maximize Sharpe; reject degenerate trials.
-
-    Two degeneracies are rejected with the worst-possible sentinel so TPE
-    steers away:
-
-    * **0-trade** — the structural-zero failure this whole design exists
-      to avoid.
-    * **< ``min_trades``** — the *low-trade-count* degeneracy. Maximizing
-      Sharpe with no trade floor lets the optimizer "win" by barely
-      trading (e.g. 8 trades / 7 months): Sharpe/PF on a handful of
-      trades is statistical noise, not an edge, and is wildly unstable
-      across windows. Requiring a minimum trade count over the
-      optimization window forces statistically meaningful, regime-robust
-      solutions — the only kind that can credibly inform the §6 gate.
-    """
-    trades = metrics.get("total_trades", 0.0)
-    sharpe = metrics.get("sharpe_ratio", _SENTINEL)
-    if not trades or trades < max(1, min_trades):
-        return _SENTINEL
-    try:
-        if sharpe != sharpe or abs(sharpe) > 100:  # NaN or pathological
-            return _SENTINEL
-    except (TypeError, ValueError):
-        return _SENTINEL
-    return float(sharpe)
-
-
 def _fmt(m: dict[str, float]) -> str:
     return (f"Sharpe={m.get('sharpe_ratio', float('nan')):.4f} "
             f"PF={m.get('profit_factor', float('nan')):.4f} "
@@ -223,56 +200,6 @@ def _gate(m: dict[str, float]) -> bool:
         m.get("sharpe_ratio", -99) > _GATE_SHARPE
         and m.get("profit_factor", 0) > _GATE_PF
     )
-
-
-def _rescoped_gate(study, oos_m: dict[str, float]) -> dict[str, object]:
-    """Re-scoped §6 gate: robust non-catastrophic floor.
-
-    Judges the *distribution* of valid trials (so one lucky curve-fit
-    cannot pass) plus an out-of-sample non-catastrophic check on the
-    selected config.
-
-    A "valid" trial = one that cleared the min-trades floor and was not
-    NaN/pathological, i.e. its objective is not the sentinel. The trial
-    objective IS its train Sharpe; train PF is in user_attrs.
-    """
-    import statistics as _st
-
-    valid = [
-        t for t in study.trials
-        if t.value is not None and t.value > _SENTINEL + 0.1
-    ]
-    n = len(valid)
-    sh = [t.value for t in valid]
-    pf = [
-        float(t.user_attrs.get("profit_factor", 0.0))
-        for t in valid
-    ]
-    pf_finite = [p for p in pf if p == p and p != float("inf")]
-
-    med_s = _st.median(sh) if sh else float("nan")
-    med_pf = _st.median(pf_finite) if pf_finite else float("nan")
-    a = (n > 0) and med_s >= _FLOOR_SHARPE and med_pf >= _FLOOR_PF
-
-    cleared = sum(
-        1 for t in valid
-        if t.value >= _FLOOR_SHARPE
-        and float(t.user_attrs.get("profit_factor", 0.0)) >= _FLOOR_PF
-    )
-    frac = (cleared / n) if n else 0.0
-    b = frac >= _FLOOR_BASIN_FRAC
-
-    c = bool(oos_m) and (
-        oos_m.get("sharpe_ratio", -99) >= _FLOOR_SHARPE
-        and oos_m.get("profit_factor", 0.0) >= _FLOOR_PF
-        and oos_m.get("max_drawdown_pct", 1e9) <= _OOS_MDD_MAX
-        and oos_m.get("total_return_pct", -1e9) >= _OOS_RET_MIN
-    )
-    return {
-        "n_valid": n, "median_sharpe": med_s, "median_pf": med_pf,
-        "basin_frac": frac, "basin_cleared": cleared,
-        "a": a, "b": b, "c": c, "pass": bool(a and b and c),
-    }
 
 
 def run_optimization(

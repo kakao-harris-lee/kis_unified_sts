@@ -190,3 +190,21 @@ timeframe / microstructure features — IndicatorEngine work, still
 speculative) or (b) **accept the archetype is not viable here** and
 formalize "do not pursue activation" (mirrors the RL_mppo arc). The
 strategy already sits `enabled: false`; no tuned params ever applied.
+
+---
+
+## williams_r_15m — robust §6 gate (2026-05-19): FAIL (terminal)
+
+`>>> RE-SCOPED GATE: FAIL (a=False b=False c=False | median_sharpe=nan basin=0.0% n_valid=0)`
+
+Genuine-15m williams_r (timeframe_minutes:15, momentum_15m + mtf_base_15m), 70
+Optuna trials on `101S6000`, holdout 2026-02-01, min-trades 50. **Zero** valid
+(non-sentinel) trials — strictly worse than llm_directed_indicator (basin 12.5%).
+best train value -10.0 (min-trades sentinel); selected-cfg OOS Sharpe -15.22 /
+PF 0.00 / MDD 56.73% / ret -52.79% / 6 trades. Terminal per spec §8;
+`williams_r_15m.yaml` stays `enabled:false`. The price-indicator timeframe axis
+on the williams_r family is exhausted for KOSPI200 futures → spec
+`docs/superpowers/specs/2026-05-19-futures-rlmppo-replacement-indicator-research-design.md`
+§9 trigger to Approach ③ (microstructure / cross-asset, new spec). Tool:
+`scripts/gate_futures_strategy.py` (shared.backtest.robust_gate). Full report:
+`reports/optuna/WILLIAMS_R_15M_GATE.md`.

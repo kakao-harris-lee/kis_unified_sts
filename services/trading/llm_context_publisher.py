@@ -30,9 +30,10 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from shared.llm.config import LLMConfig
@@ -435,4 +436,42 @@ class LLMContextPublisher:
                 "Failed to publish LLM market context to Redis: %s",
                 e,
                 exc_info=True,
+            )
+        # Durable forward-only history for future backtest replay
+        # (spec 2026-05-19 P0). Best-effort: CH failure must not affect live.
+        self._append_market_context_history(context)
+
+    def _append_market_context_history(self, context: MarketContext) -> None:
+        """Best-effort forward-only CH history (spec 2026-05-19 P0); CH failure is logged (warning) but never affects the live Redis path."""
+        try:
+            from shared.db.client import get_clickhouse_client
+            from shared.db.config import ClickHouseConfig
+
+            gen = context.generated_at
+            if getattr(gen, "tzinfo", None) is not None:
+                # ClickHouse DateTime64 expects naive datetimes
+                gen = gen.replace(tzinfo=None)
+            row = {
+                "ts": datetime.now(timezone.utc).replace(tzinfo=None),  # noqa: UP017
+                "asset": self.asset_class,
+                "regime": context.regime,
+                "overall_signal": getattr(
+                    context.overall_signal, "value", str(context.overall_signal)
+                ),
+                "risk_mode": getattr(
+                    context.risk_mode, "value", str(context.risk_mode)
+                ),
+                "risk_score": float(context.risk_score),
+                "confidence": float(context.confidence),
+                "generated_at": gen,
+                "metadata_json": json.dumps(
+                    context.metadata or {}, ensure_ascii=False
+                ),
+            }
+            get_clickhouse_client(ClickHouseConfig.from_env()).insert_llm_market_context(
+                [row]
+            )
+        except Exception as e:
+            logger.warning(
+                "llm_market_context history append skipped: %s", e, exc_info=True
             )

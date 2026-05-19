@@ -177,6 +177,24 @@ SCHEMAS = {
         ORDER BY (code, datetime)
         TTL datetime + INTERVAL 30 DAY
     """,
+    "llm_market_context": """
+        CREATE TABLE IF NOT EXISTS {database}.llm_market_context (
+            ts DateTime64(3),
+            asset LowCardinality(String),
+            regime LowCardinality(String),
+            overall_signal LowCardinality(String),
+            risk_mode LowCardinality(String),
+            risk_score Float64,
+            confidence Float64,
+            generated_at DateTime64(3),
+            metadata_json String,
+            created_at DateTime DEFAULT now()
+        ) ENGINE = MergeTree()
+        PARTITION BY toYYYYMM(ts)
+        ORDER BY (asset, ts)
+        TTL ts + INTERVAL 2 YEAR
+        COMMENT 'Durable forward-only LLM market_context history for backtest replay (spec 2026-05-19 P0)'
+    """,
 }
 
 
@@ -399,6 +417,32 @@ class ClickHouseClient:
             return len(candles)
         except Exception as e:
             logger.error(f"Failed to insert daily candles: {e}")
+            return 0
+
+    def insert_llm_market_context(self, rows: list[dict]) -> int:
+        """Append LLM market_context snapshots (best-effort durable history)."""
+        if not rows:
+            return 0
+        try:
+            client = self.get_sync_client()
+            data = [
+                (
+                    r["ts"], r["asset"], r["regime"], r["overall_signal"],
+                    r["risk_mode"], float(r["risk_score"]),
+                    float(r["confidence"]), r["generated_at"],
+                    r["metadata_json"],
+                )
+                for r in rows
+            ]
+            client.execute(
+                f"INSERT INTO {self.config.database}.llm_market_context "
+                "(ts, asset, regime, overall_signal, risk_mode, "
+                "risk_score, confidence, generated_at, metadata_json) VALUES",
+                data,
+            )
+            return len(rows)
+        except Exception as e:
+            logger.error(f"Failed to insert llm_market_context: {e}")
             return 0
 
     def get_daily_candles(

@@ -60,6 +60,10 @@ class WilliamsRConfig(ConfigMixin):
     confidence_reversal_scale: float = 50.0
     confidence_trend_scale: float = 10.0
 
+    # Multi-timeframe: 1 = 1-minute base (default, no-op); N>1 → N-min closed-bar
+    # cadence via DecisionCadenceGate (bb_reversion_15m pattern).
+    timeframe_minutes: int = 1  # >1 → decide on closed N-min bars
+
 
 class WilliamsREntry(EntrySignalGenerator[WilliamsRConfig]):
     """Williams %R 과매도 반전 진입 전략.
@@ -92,8 +96,21 @@ class WilliamsREntry(EntrySignalGenerator[WilliamsRConfig]):
         return "williams_r"
 
     @property
+    def _momentum_key(self) -> str:
+        """Single source of truth for the timeframe-selected momentum bundle
+        key. Used by BOTH required_indicators (what the resolver injects) and
+        generate()'s read site (what is dereferenced). If these ever desync,
+        generate() silently returns None forever — so they MUST share this.
+        """
+        tf = self.config.timeframe_minutes
+        return "momentum_5m" if tf <= 1 else f"momentum_{tf}m"
+
+    @property
     def required_indicators(self) -> list[str]:
-        indicators = ["momentum_5m", "bb_middle"]
+        tf = self.config.timeframe_minutes
+        indicators = [self._momentum_key, "bb_middle"]
+        if tf > 1:
+            indicators.append(f"mtf_base_{tf}m")
         if self.config.volume_confirm:
             indicators.extend(["rvol", "volume", "volume_ma"])
         return indicators
@@ -146,8 +163,8 @@ class WilliamsREntry(EntrySignalGenerator[WilliamsRConfig]):
             if last_time and (now - last_time).total_seconds() < self.config.signal_cooldown_seconds:
                 return None
 
-        # --- Extract Williams %R from momentum_5m ---
-        momentum = indicators.get("momentum_5m", {})
+        # --- Extract Williams %R from the timeframe-selected momentum bundle ---
+        momentum = indicators.get(self._momentum_key, {})
         if not isinstance(momentum, dict) or "williams_r" not in momentum:
             return None
 

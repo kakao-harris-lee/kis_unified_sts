@@ -9,46 +9,48 @@ strategy:
   name: williams_r_15m
   asset_class: futures
   enabled: false
-  description: "Williams %R 양방향 과매도/과매수 반전 (KOSPI200 선물)"
+  description: "Williams %R 양방향 반전 — 진짜 15분봉 (spec 2026-05-19 P1)"
+  backtest:
+    initial_capital: 10000000
+    point_value: 50000
 
   entry:
     type: williams_r
     params:
+      timeframe_minutes: 15
       williams_r_period: 14
-      # LONG — 과매도 반전
       oversold_threshold: -80.0
       reversal_threshold: -80.0
-      # SHORT — 과매수 반전 (allow_short=true에서만 활성)
       overbought_threshold: -20.0
       overbought_reversal_threshold: -20.0
       allow_short: true
-      trend_filter: true          # long: close>bb_mid / short: close<bb_mid
+      trend_filter: true
       volume_confirm: true
       volume_threshold: 1.0
       stop_loss_pct: 3.0
       signal_cooldown_seconds: 180
       skip_market_open_minutes: 15
-      skip_market_close_minutes: 30   # 15:45 - 30 = 15:15 신규 진입 중단
+      skip_market_close_minutes: 30
       market_open_hour: 9
       market_open_minute: 0
       market_close_hour: 15
-      market_close_minute: 45         # 선물 EOD (주식은 15:15)
+      market_close_minute: 45
       confidence_reversal_scale: 50.0
       confidence_trend_scale: 10.0
 
   exit:
     type: williams_r_exit
     params:
-      overbought_threshold: -20.0       # LONG 포지션 청산
-      oversold_exit_threshold: -80.0    # SHORT 포지션 청산 (mirror)
+      overbought_threshold: -20.0
+      oversold_exit_threshold: -80.0
       max_stop_loss_pct: -0.03
       time_cut_minutes: 120
       eod_close_hour: 15
-      eod_close_minute: 45              # 선물 EOD
+      eod_close_minute: 45
       default_exit_confidence: 0.8
 
   position:
     type: fixed
     params:
-      max_positions: 1                  # 선물 단일 계약 (Gate 3 정렬)
+      max_positions: 1
       order_amount_per_stock: 1000000
