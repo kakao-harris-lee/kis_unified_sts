@@ -79,3 +79,47 @@ def test_callable_current_close_invoked_per_timestamp(monkeypatch):
     # Each row's forecast_atr_equivalent should differ since close varies per-call
     atrs = [r[3] for r in rows_written]
     assert len(set(atrs)) == 4
+
+
+def test_load_candles_from_csv_returns_correct_shape(tmp_path):
+    # Schema: datetime,open,high,low,close,volume  (no 'code')
+    csv = tmp_path / "clean.csv"
+    csv.write_text(
+        "datetime,open,high,low,close,volume\n"
+        "2025-08-01 09:00:00,400.0,400.5,399.5,400.2,150\n"
+        "2025-08-01 09:01:00,400.2,400.4,400.0,400.3,200\n"
+        "2025-08-04 09:00:00,401.0,401.2,400.8,401.1,180\n")
+    df = hrr._load_candles_from_csv(str(csv), dt.date(2025, 8, 1), dt.date(2025, 8, 5))
+    assert len(df) == 3
+    # Same shape as _fetch_minute_candles output: UTC DatetimeIndex, OHLCV columns
+    assert df.index.tz is not None  # tz-aware
+    assert list(df.columns) == ["open", "high", "low", "close", "volume"]
+    assert df.iloc[0]["close"] == 400.2
+    assert df.iloc[-1]["volume"] == 180
+
+
+def test_load_candles_from_csv_respects_date_range(tmp_path):
+    csv = tmp_path / "clean.csv"
+    csv.write_text(
+        "datetime,open,high,low,close,volume\n"
+        "2025-07-31 15:30:00,395.0,395.0,395.0,395.0,10\n"  # before start → excluded
+        "2025-08-01 09:00:00,400.0,400.5,399.5,400.2,150\n"  # included
+        "2025-08-05 09:00:00,402.0,402.5,401.5,402.2,250\n"  # at end (exclusive) → excluded
+        "2025-08-04 15:30:00,401.0,401.0,401.0,401.0,50\n")  # included
+    df = hrr._load_candles_from_csv(str(csv), dt.date(2025, 8, 1), dt.date(2025, 8, 5))
+    assert len(df) == 2
+    closes = df["close"].tolist()
+    assert 400.2 in closes
+    assert 401.0 in closes
+    assert 395.0 not in closes
+    assert 402.2 not in closes
+
+
+def test_load_candles_from_csv_empty_window_returns_empty_df(tmp_path):
+    csv = tmp_path / "clean.csv"
+    csv.write_text(
+        "datetime,open,high,low,close,volume\n"
+        "2025-08-01 09:00:00,400.0,400.5,399.5,400.2,150\n")
+    df = hrr._load_candles_from_csv(str(csv), dt.date(2026, 1, 1), dt.date(2026, 1, 5))
+    assert len(df) == 0
+    assert list(df.columns) == ["open", "high", "low", "close", "volume"]

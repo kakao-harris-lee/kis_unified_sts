@@ -66,6 +66,24 @@ def _fetch_minute_candles(client, start: dt.date, end: dt.date) -> pd.DataFrame:
     return df
 
 
+def _load_candles_from_csv(path: str, start: dt.date, end: dt.date) -> pd.DataFrame:
+    """Load OHLCV minute bars from a CSV in the same shape _fetch_minute_candles
+    returns (UTC DatetimeIndex, OHLCV columns) over [start, end) — exclusive end.
+
+    Schema: datetime,open,high,low,close,volume (no 'code' column).
+    """
+    df = pd.read_csv(path)
+    df["datetime"] = pd.to_datetime(df["datetime"], utc=True)
+    # Filter to half-open [start, end) window. Use timestamps for comparison
+    # so date-boundary semantics match _fetch_minute_candles' SQL `>= s AND < e`.
+    s_ts = pd.Timestamp(start, tz="UTC")
+    e_ts = pd.Timestamp(end, tz="UTC")
+    df = df[(df["datetime"] >= s_ts) & (df["datetime"] < e_ts)]
+    df = df.set_index("datetime")
+    # Drop any incidental columns (e.g. if CSV happens to have 'code') — keep only OHLCV
+    return df[["open", "high", "low", "close", "volume"]]
+
+
 def _insert_rows(client, rows: list[tuple]) -> int:
     if client is None or not rows:
         return 0
@@ -133,6 +151,9 @@ def main(argv=None) -> int:
     ap.add_argument("--test-end", required=True, help="YYYY-MM-DD (inclusive)")
     ap.add_argument("--cadence-minutes", type=int, default=15,
                     help="Forecast cadence in minutes (default: 15)")
+    ap.add_argument("--candles-csv", default=None,
+                    help="path to clean OHLCV CSV (datetime,open,high,low,close,volume); "
+                         "if set, train+test fetches use this CSV instead of ClickHouse")
     a = ap.parse_args(argv)
 
     ts_d = dt.date.fromisoformat(a.train_start)
@@ -157,7 +178,10 @@ def main(argv=None) -> int:
         database="kospi",
     )
 
-    train_df = _fetch_minute_candles(client, ts_d, te_d)
+    if a.candles_csv:
+        train_df = _load_candles_from_csv(a.candles_csv, ts_d, te_d)
+    else:
+        train_df = _fetch_minute_candles(client, ts_d, te_d)
     if train_df.empty:
         print(f"ERROR: no minute candles in train window {ts_d}..{te_d}")
         return 2
@@ -168,7 +192,12 @@ def main(argv=None) -> int:
         end=f"{xe_d.isoformat()} 15:30",
         freq=f"{a.cadence_minutes}min",
     )
-    test_df = _fetch_minute_candles(client, xs_d, xe_d + dt.timedelta(days=1))
+    if a.candles_csv:
+        test_df = _load_candles_from_csv(
+            a.candles_csv, xs_d, xe_d + dt.timedelta(days=1)
+        )
+    else:
+        test_df = _fetch_minute_candles(client, xs_d, xe_d + dt.timedelta(days=1))
 
     current_close_arg: float | Callable[[dt.datetime], float]
     if not test_df.empty:
