@@ -105,6 +105,37 @@ def _json_loads(raw: Any) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
+def _normalize_strategy_watchlist(value: Any) -> dict[str, list[str]]:
+    """Normalize ``strategies`` payloads to strategy -> unique non-empty codes."""
+    if not isinstance(value, dict):
+        return {}
+
+    normalized: dict[str, list[str]] = {}
+    for strategy_name, values in value.items():
+        name = str(strategy_name).strip()
+        if not name or not isinstance(values, list):
+            continue
+        codes = _dedupe_symbols(str(code).strip() for code in values)
+        normalized[name] = codes
+    return normalized
+
+
+def _load_existing_daily_watchlist(
+    redis_client: Any, today: date
+) -> dict[str, list[str]]:
+    """Load same-day strategy watchlist so daily indicators do not erase it."""
+    try:
+        existing = _json_loads(redis_client.get(DAILY_WATCHLIST_COMPAT_KEY))
+    except Exception as exc:  # noqa: BLE001 - best-effort compatibility path
+        logger.debug("Failed to read existing daily watchlist: %s", exc)
+        return {}
+
+    timestamp = str(existing.get("timestamp") or existing.get("as_of_date") or "")
+    if timestamp != today.isoformat():
+        return {}
+    return _normalize_strategy_watchlist(existing.get("strategies"))
+
+
 def _extend_codes(codes: list[str], values: Any) -> None:
     if not isinstance(values, list):
         return
@@ -479,19 +510,18 @@ def publish_to_redis(
 
     strategies = (metadata or {}).get("strategies")
     if isinstance(strategies, dict):
-        normalized: dict[str, list[str]] = {}
-        for strategy_name, values in strategies.items():
-            if not isinstance(values, list):
-                continue
-            codes = [str(code).strip() for code in values if str(code).strip()]
-            normalized[str(strategy_name)] = codes
+        normalized = _normalize_strategy_watchlist(strategies)
+        existing = _load_existing_daily_watchlist(redis_client, datetime.now().date())
+        merged = {**existing, **normalized}
+        if not merged:
+            return
 
         compat_payload = {
             "timestamp": datetime.now().date().isoformat(),
             "computed_at": json.loads(payload).get("computed_at"),
             "source": REDIS_KEY,
-            "strategies": normalized,
-            "counts": {name: len(codes) for name, codes in normalized.items()},
+            "strategies": merged,
+            "counts": {name: len(codes) for name, codes in merged.items()},
         }
         redis_client.set(
             DAILY_WATCHLIST_COMPAT_KEY,

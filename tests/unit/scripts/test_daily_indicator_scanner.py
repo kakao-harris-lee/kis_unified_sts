@@ -142,6 +142,9 @@ def test_publish_to_redis_includes_coverage_metadata():
             self.values = {}
             self.ttls = {}
 
+        def get(self, key):
+            return self.values.get(key)
+
         def set(self, key, value, ex=None):
             self.values[key] = value
             self.ttls[key] = ex
@@ -169,6 +172,83 @@ def test_publish_to_redis_includes_coverage_metadata():
     assert compat["strategies"] == {"daily_pullback": ["005930"]}
     assert compat["counts"] == {"daily_pullback": 1}
     assert fake.ttls[scanner.DAILY_WATCHLIST_COMPAT_KEY] == scanner.REDIS_TTL
+
+
+def test_publish_to_redis_merges_same_day_strategy_watchlist():
+    class FakeRedis:
+        def __init__(self):
+            self.values = {
+                scanner.DAILY_WATCHLIST_COMPAT_KEY: json.dumps(
+                    {
+                        "timestamp": date.today().isoformat(),
+                        "strategies": {
+                            "trend_pullback": ["005930"],
+                            "momentum_breakout": ["000660"],
+                        },
+                    }
+                )
+            }
+            self.ttls = {}
+
+        def get(self, key):
+            return self.values.get(key)
+
+        def set(self, key, value, ex=None):
+            self.values[key] = value
+            self.ttls[key] = ex
+
+    fake = FakeRedis()
+
+    publish_to_redis(
+        {"086790": {"daily_sma_20": 100.0}},
+        redis_client=fake,
+        metadata={"strategies": {"pattern_pullback": ["086790"]}},
+    )
+
+    compat = json.loads(fake.values[scanner.DAILY_WATCHLIST_COMPAT_KEY])
+    assert compat["strategies"] == {
+        "trend_pullback": ["005930"],
+        "momentum_breakout": ["000660"],
+        "pattern_pullback": ["086790"],
+    }
+    assert compat["counts"] == {
+        "trend_pullback": 1,
+        "momentum_breakout": 1,
+        "pattern_pullback": 1,
+    }
+
+
+def test_publish_to_redis_ignores_stale_strategy_watchlist():
+    class FakeRedis:
+        def __init__(self):
+            self.values = {
+                scanner.DAILY_WATCHLIST_COMPAT_KEY: json.dumps(
+                    {
+                        "timestamp": "2026-01-01",
+                        "strategies": {"trend_pullback": ["005930"]},
+                    }
+                )
+            }
+            self.ttls = {}
+
+        def get(self, key):
+            return self.values.get(key)
+
+        def set(self, key, value, ex=None):
+            self.values[key] = value
+            self.ttls[key] = ex
+
+    fake = FakeRedis()
+
+    publish_to_redis(
+        {"086790": {"daily_sma_20": 100.0}},
+        redis_client=fake,
+        metadata={"strategies": {"pattern_pullback": ["086790"]}},
+    )
+
+    compat = json.loads(fake.values[scanner.DAILY_WATCHLIST_COMPAT_KEY])
+    assert compat["strategies"] == {"pattern_pullback": ["086790"]}
+    assert compat["counts"] == {"pattern_pullback": 1}
 
 
 def test_get_clickhouse_client_loads_repo_env(tmp_path, monkeypatch):

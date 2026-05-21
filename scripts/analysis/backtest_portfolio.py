@@ -173,12 +173,59 @@ def _daily_warmup_bars(strategy_config: dict[str, Any]) -> int:
     return max((int(p or 0) for p in periods), default=0)
 
 
+def _daily_indicator_periods_from_keys(keys: list[str] | tuple[str, ...]) -> list[int]:
+    periods: list[int] = []
+    for raw in keys:
+        key = str(raw or "")
+        for prefix in ("daily_sma_", "daily_ema_", "daily_rsi_"):
+            if key.startswith(prefix):
+                try:
+                    periods.append(int(key.removeprefix(prefix)))
+                except ValueError:
+                    pass
+    return periods
+
+
 def _default_warmup_days(strategy_config: dict[str, Any], timeframe: str) -> int:
     if timeframe != "daily":
         return 0
     bars = _daily_warmup_bars(strategy_config)
     # Convert trading bars to calendar days with room for weekends/holidays.
     return max(0, bars * 2)
+
+
+def _daily_prewarm_days_for_minute_strategy(strategy: Any) -> int:
+    periods = _daily_indicator_periods_from_keys(
+        list(getattr(strategy, "required_indicators", []) or [])
+    )
+    if not periods:
+        return 0
+    return max(periods) * 2
+
+
+def _seed_minute_strategy_daily_indicators(
+    adapter: Any,
+    stocks: list[dict[str, str]],
+    *,
+    start: date,
+    end: date,
+) -> list[str]:
+    if not hasattr(adapter, "seed_daily_candles"):
+        return []
+
+    missing: list[str] = []
+    for stock in stocks:
+        code = stock["code"]
+        try:
+            daily_df = load_stock_daily_from_clickhouse(code, start, end)
+        except Exception:
+            missing.append(code)
+            continue
+        if daily_df is None or daily_df.empty:
+            missing.append(code)
+            continue
+        adapter.seed_daily_candles(code, daily_df.to_dict("records"))
+    return missing
 
 
 def _annualized_return_pct(total_return_pct: float, start: date, end: date) -> float:
@@ -476,6 +523,7 @@ class PriorityDailyPortfolioBacktestEngine(BacktestEngine):
                     price=pending["price"],
                     timestamp=pending["timestamp"],
                     bar=pending["bar"],
+                    entry_signal=pending.get("entry_signal"),
                 )
 
         if self.positions:
@@ -617,6 +665,7 @@ class PriorityDailyPortfolioBacktestEngine(BacktestEngine):
             "highest_price": position.highest_price,
             "lowest_price": position.lowest_price,
             "entry_time": position.entry_time,
+            "metadata": dict(getattr(position, "metadata", {}) or {}),
         }
 
 
@@ -776,6 +825,16 @@ def main() -> None:
     else:
         strategy = StrategyFactory.create(strategy_config)
         adapted = BacktestStrategyAdapter(strategy, strategy_config)
+        daily_prewarm_days = _daily_prewarm_days_for_minute_strategy(strategy)
+        if daily_prewarm_days:
+            daily_missing = _seed_minute_strategy_daily_indicators(
+                adapted,
+                stocks,
+                start=start - timedelta(days=daily_prewarm_days),
+                end=end,
+            )
+        else:
+            daily_missing = []
         engine = BacktestEngine(adapted, config)
     result = engine.run(data)
 
@@ -805,9 +864,14 @@ def main() -> None:
         result.trades,
         config.initial_capital,
     )
+    if hasattr(adapted, "get_regime_stats"):
+        metrics["backtest_adapter_stats"] = adapted.get_regime_stats()
     metrics["symbols_requested"] = len(stocks)
     metrics["symbols_loaded"] = len(frames)
     metrics["symbols_missing"] = missing
+    metrics["daily_indicator_symbols_missing"] = (
+        daily_missing if timeframe != "daily" else []
+    )
     metrics["symbols_selected"] = [s["code"] for s in stocks]
     metrics["scope_label"] = scope
     metrics["bars"] = len(data)

@@ -323,6 +323,7 @@ class BacktestStrategyAdapter:
 
         # Position state for RL strategies (synced from BacktestEngine)
         self._current_position: dict[str, Any] | None = None
+        self.last_entry_signal = None
 
         # Pre-computed RL features (populated by precompute_rl_features)
         self._precomputed_rl_features: list[dict[str, float]] | None = None
@@ -358,9 +359,11 @@ class BacktestStrategyAdapter:
         # closed N-min bar has appeared (parity with probe's 15m-bar engine run).
         # No-op when timeframe_minutes<=1 so stock strategies are byte-identical.
         _entry_tf = int(
-            (strategy_config.get("strategy", {})
-             .get("entry", {}).get("params", {}) or {})
-            .get("timeframe_minutes", 0) or 0
+            (
+                strategy_config.get("strategy", {}).get("entry", {}).get("params", {})
+                or {}
+            ).get("timeframe_minutes", 0)
+            or 0
         )
         self._cadence = DecisionCadenceGate(_entry_tf)
         # Ordering invariant (engine._process_bar): when a position exists,
@@ -451,6 +454,10 @@ class BacktestStrategyAdapter:
     def prescan_data(self, data: pd.DataFrame) -> None:
         """Pre-scan backtest data so enricher has prev_day_volume from day 2."""
         self._enricher.prescan(data)
+
+    def seed_daily_candles(self, symbol: str, candles: list[dict[str, Any]]) -> None:
+        """Pre-warm daily indicators for minute strategies that need them."""
+        self._indicator_engine.seed_daily_candles(symbol, candles)
 
     def precompute_rl_features(self, data: pd.DataFrame) -> None:
         """Vectorized RL feature pre-computation for entire backtest dataset.
@@ -568,9 +575,7 @@ class BacktestStrategyAdapter:
         SAME closed bar. No-op (always-decide) when the gate is disabled
         (timeframe_minutes <= 1).
         """
-        self._decision_bar = self._cadence.should_decide(
-            self._indicator_engine, code
-        )
+        self._decision_bar = self._cadence.should_decide(self._indicator_engine, code)
         self._decision_bar_computed = True
 
     def check_exit(self, bar: dict[str, Any]) -> tuple[bool, ExitReason | None]:
@@ -632,6 +637,7 @@ class BacktestStrategyAdapter:
             current_price=float(bar.get("close", 0) or 0),
             highest_price=highest_price,
             lowest_price=lowest_price,
+            metadata=dict(pos.get("metadata", {}) or {}),
         )
 
         symbol_meta = resolve_symbol_metadata(self._backtest_metadata, code)
@@ -667,6 +673,7 @@ class BacktestStrategyAdapter:
 
     def on_bar(self, bar: dict[str, Any]) -> SignalType:
         """Convert a bar dict into a BUY/SELL/HOLD signal."""
+        self.last_entry_signal = None
         code = str(bar.get("code", "BACKTEST") or "BACKTEST")
         # The engine feeds bars parsed from CSV with no `code` column. Live
         # market_data ALWAYS carries `code`/`name`, and several entry
@@ -720,6 +727,16 @@ class BacktestStrategyAdapter:
             return SignalType.HOLD
 
         indicators = self._indicator_resolver.collect_entry_indicators(code)
+
+        try:
+            daily_indicators = self._indicator_engine.get_daily_indicators(code)
+        except Exception:
+            logger.debug(
+                "Daily indicator collection failed for %s", code, exc_info=True
+            )
+            daily_indicators = {}
+        for key, value in daily_indicators.items():
+            indicators[f"daily_{key}"] = value
 
         # Inject pre-computed RL features (preferred for backtest throughput).
         # RL observation builder reads canonical feature names only, so
@@ -823,6 +840,8 @@ class BacktestStrategyAdapter:
 
         if signal is None:
             return SignalType.HOLD
+
+        self.last_entry_signal = signal
 
         # Track model switches from signal metadata (for adaptive strategies)
         if signal.metadata.get("model_name"):

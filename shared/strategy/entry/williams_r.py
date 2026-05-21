@@ -11,7 +11,7 @@ Williams %R Formula:
 """
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, time, timedelta
 from typing import Any, Optional
 from zoneinfo import ZoneInfo
@@ -43,6 +43,15 @@ class WilliamsRConfig(ConfigMixin):
     volume_confirm: bool = True
     volume_threshold: float = 1.0
     allow_short: bool = False
+    market_state_filter: dict[str, Any] = field(
+        default_factory=lambda: {
+            "enabled": False,
+            "allowed_states": [],
+            "blocked_states": [],
+        }
+    )
+    max_full_size_bb_distance_pct: float = 0.0
+    overextended_position_size_multiplier: float = 1.0
 
     # Risk
     stop_loss_pct: float = 3.0
@@ -84,10 +93,18 @@ class WilliamsREntry(EntrySignalGenerator[WilliamsRConfig]):
 
     def _validate_config(self):
         assert self.config.williams_r_period > 0, "williams_r_period must be positive"
-        assert -100 <= self.config.oversold_threshold <= 0, "oversold_threshold must be between -100 and 0"
-        assert -100 <= self.config.reversal_threshold <= 0, "reversal_threshold must be between -100 and 0"
+        assert (
+            -100 <= self.config.oversold_threshold <= 0
+        ), "oversold_threshold must be between -100 and 0"
+        assert (
+            -100 <= self.config.reversal_threshold <= 0
+        ), "reversal_threshold must be between -100 and 0"
         assert self.config.volume_threshold > 0, "volume_threshold must be positive"
-        assert self.config.signal_cooldown_seconds >= 0, "signal_cooldown_seconds must be >= 0"
+        assert (
+            self.config.signal_cooldown_seconds >= 0
+        ), "signal_cooldown_seconds must be >= 0"
+        assert self.config.max_full_size_bb_distance_pct >= 0
+        assert 0 < self.config.overextended_position_size_multiplier <= 1.0
         assert self.config.skip_market_open_minutes >= 0
         assert self.config.skip_market_close_minutes >= 0
 
@@ -111,9 +128,21 @@ class WilliamsREntry(EntrySignalGenerator[WilliamsRConfig]):
         indicators = [self._momentum_key, "bb_middle"]
         if tf > 1:
             indicators.append(f"mtf_base_{tf}m")
+        if self.config.market_state_filter.get("enabled", False):
+            indicators.append("mfi")
         if self.config.volume_confirm:
             indicators.extend(["rvol", "volume", "volume_ma"])
         return indicators
+
+    @staticmethod
+    def _state_name(state: Any) -> Optional[str]:
+        if state is None:
+            return None
+        if hasattr(state, "regime"):
+            state = state.regime
+        if hasattr(state, "value"):
+            state = state.value
+        return str(state).upper()
 
     async def generate(self, context: EntryContext) -> Optional[Signal]:
         """Generate entry signal based on Williams %R oversold reversal."""
@@ -151,16 +180,24 @@ class WilliamsREntry(EntrySignalGenerator[WilliamsRConfig]):
         if now_kst < open_dt:
             return None
         if self.config.skip_market_open_minutes > 0:
-            if now_kst < open_dt + timedelta(minutes=self.config.skip_market_open_minutes):
+            if now_kst < open_dt + timedelta(
+                minutes=self.config.skip_market_open_minutes
+            ):
                 return None
         if self.config.skip_market_close_minutes > 0:
-            if now_kst >= close_dt - timedelta(minutes=self.config.skip_market_close_minutes):
+            if now_kst >= close_dt - timedelta(
+                minutes=self.config.skip_market_close_minutes
+            ):
                 return None
 
         # --- Cooldown ---
         if self.config.signal_cooldown_seconds > 0:
             last_time = self._last_signal_at.get(code)
-            if last_time and (now - last_time).total_seconds() < self.config.signal_cooldown_seconds:
+            if (
+                last_time
+                and (now - last_time).total_seconds()
+                < self.config.signal_cooldown_seconds
+            ):
                 return None
 
         # --- Extract Williams %R from the timeframe-selected momentum bundle ---
@@ -194,6 +231,26 @@ class WilliamsREntry(EntrySignalGenerator[WilliamsRConfig]):
         # If both somehow match (degenerate thresholds), prefer LONG.
         direction = "long" if is_long else "short"
 
+        # --- Market-state filter ---
+        state = (
+            context.metadata.get("market_state")
+            or context.metadata.get("regime")
+            or indicators.get("market_state")
+            or data.get("market_state")
+        )
+        state_name = self._state_name(state)
+        filter_cfg = self.config.market_state_filter or {}
+        if filter_cfg.get("enabled", False):
+            allowed_states = [s.upper() for s in filter_cfg.get("allowed_states", [])]
+            blocked_states = [s.upper() for s in filter_cfg.get("blocked_states", [])]
+            if state_name is None:
+                logger.debug("Market state missing for %s; skipping", code)
+                return None
+            if blocked_states and state_name in blocked_states:
+                return None
+            if allowed_states and state_name not in allowed_states:
+                return None
+
         # --- Trend filter ---
         # LONG wants close above BB middle (uptrend), SHORT below (downtrend).
         if self.config.trend_filter:
@@ -222,9 +279,29 @@ class WilliamsREntry(EntrySignalGenerator[WilliamsRConfig]):
                 if volume_ma > 0 and volume < self.config.volume_threshold * volume_ma:
                     return None
 
+        bb_middle = _get("bb_middle", 0)
+        bb_distance_pct = (
+            ((close - bb_middle) / bb_middle) * 100.0 if bb_middle > 0 else 0.0
+        )
+        rvol = indicators.get("rvol")
+        mfi = indicators.get("mfi")
+        wr_reversal_points = current_wr - prev_wr
+        wr_depth_points = (
+            self.config.oversold_threshold - prev_wr
+            if direction == "long"
+            else prev_wr - self.config.overbought_threshold
+        )
+        position_size_multiplier = 1.0
+        if (
+            direction == "long"
+            and self.config.max_full_size_bb_distance_pct > 0
+            and bb_distance_pct > self.config.max_full_size_bb_distance_pct
+        ):
+            position_size_multiplier = self.config.overextended_position_size_multiplier
+
         # --- Confidence calculation ---
         confidence = self._calculate_confidence(
-            prev_wr, current_wr, close, _get("bb_middle", 0), direction
+            prev_wr, current_wr, close, bb_middle, direction
         )
 
         logger.info(
@@ -247,6 +324,15 @@ class WilliamsREntry(EntrySignalGenerator[WilliamsRConfig]):
                 "stop_loss_pct": float(self.config.stop_loss_pct),
                 "williams_r": current_wr,
                 "prev_williams_r": prev_wr,
+                "wr_reversal_points": wr_reversal_points,
+                "wr_depth_points": wr_depth_points,
+                "rvol": float(rvol) if rvol is not None else None,
+                "mfi": float(mfi) if mfi is not None else None,
+                "market_state": state_name,
+                "bb_middle": bb_middle,
+                "bb_distance_pct": bb_distance_pct,
+                "confidence": confidence,
+                "position_size_multiplier": position_size_multiplier,
             },
         )
 

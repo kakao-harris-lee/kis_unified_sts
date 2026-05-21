@@ -363,7 +363,11 @@ def _risk_params_for_runtime_capital(
     """
     params = dict(risk_params)
     explicit_risk_capital = os.getenv("RISK_INITIAL_CAPITAL")
-    if explicit_risk_capital is None or not explicit_risk_capital.strip() or "initial_capital" not in params:
+    if (
+        explicit_risk_capital is None
+        or not explicit_risk_capital.strip()
+        or "initial_capital" not in params
+    ):
         params["initial_capital"] = int(runtime_initial_capital)
     return params
 
@@ -5588,7 +5592,15 @@ class TradingOrchestrator:
 
             async def check_symbol_limited(symbol: str) -> list[Signal]:
                 async with sem:
-                    return await check_symbol(symbol)
+                    try:
+                        return await check_symbol(symbol)
+                    except Exception as exc:  # noqa: BLE001
+                        logger.exception(
+                            "Entry check failed for symbol %s; skipping symbol: %s",
+                            symbol,
+                            exc,
+                        )
+                        return []
 
             results = await asyncio.gather(*(check_symbol_limited(s) for s in symbols))
             signals: list[Signal] = []

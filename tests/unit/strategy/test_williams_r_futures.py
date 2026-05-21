@@ -11,6 +11,7 @@
   - Exit: LONG 포지션 overbought 청산 (회귀)
   - 선물 config(williams_r_15m) 로딩
 """
+
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -26,9 +27,21 @@ from shared.strategy.exit.williams_r_exit import WilliamsRExit, WilliamsRExitCon
 KST = timezone(timedelta(hours=9))
 
 
-def _entry_ctx(*, close=300.0, bb_middle=301.0, williams_r=-15.0,
-               volume=1000, volume_ma=900, hour=10, minute=30):
+def _entry_ctx(
+    *,
+    close=300.0,
+    bb_middle=301.0,
+    williams_r=-15.0,
+    volume=1000,
+    volume_ma=900,
+    hour=10,
+    minute=30,
+    market_state=None,
+):
     now = datetime(2026, 5, 15, hour, minute, tzinfo=KST)
+    metadata = {}
+    if market_state is not None:
+        metadata["market_state"] = market_state
     return EntryContext(
         market_data={"code": "101S6000", "name": "KOSPI200 F", "close": close},
         indicators={
@@ -38,6 +51,7 @@ def _entry_ctx(*, close=300.0, bb_middle=301.0, williams_r=-15.0,
             "momentum_5m": {"williams_r": williams_r},
         },
         timestamp=now,
+        metadata=metadata,
     )
 
 
@@ -74,7 +88,7 @@ class TestVolumeFilterRvol:
         now = datetime(2026, 5, 15, hour, minute, tzinfo=KST)
         ind = {
             "bb_middle": 301.0,
-            "rvol": rvol,                       # canonical, present
+            "rvol": rvol,  # canonical, present
             "momentum_5m": {"williams_r": williams_r},
         }
         # close > bb_middle so LONG trend_filter passes; isolates the volume
@@ -89,8 +103,9 @@ class TestVolumeFilterRvol:
     @pytest.mark.asyncio
     async def test_rvol_above_threshold_allows_signal(self):
         entry = WilliamsREntry(_futures_entry_config(volume_threshold=1.0))
-        await entry.generate(self._ctx_no_volume_key(williams_r=-90.0, rvol=1.5,
-                                                     hour=10, minute=0))
+        await entry.generate(
+            self._ctx_no_volume_key(williams_r=-90.0, rvol=1.5, hour=10, minute=0)
+        )
         sig = await entry.generate(
             self._ctx_no_volume_key(williams_r=-75.0, rvol=1.5, hour=10, minute=5)
         )
@@ -100,12 +115,106 @@ class TestVolumeFilterRvol:
     @pytest.mark.asyncio
     async def test_rvol_below_threshold_blocks_signal(self):
         entry = WilliamsREntry(_futures_entry_config(volume_threshold=1.0))
-        await entry.generate(self._ctx_no_volume_key(williams_r=-90.0, rvol=0.4,
-                                                     hour=10, minute=0))
+        await entry.generate(
+            self._ctx_no_volume_key(williams_r=-90.0, rvol=0.4, hour=10, minute=0)
+        )
         sig = await entry.generate(
             self._ctx_no_volume_key(williams_r=-75.0, rvol=0.4, hour=10, minute=5)
         )
         assert sig is None
+
+
+class TestMarketStateFilter:
+    def _config(self) -> WilliamsRConfig:
+        return _futures_entry_config(
+            allow_short=False,
+            market_state_filter={
+                "enabled": True,
+                "allowed_states": ["BULL", "BULL_STRONG", "SIDEWAYS_UP"],
+                "blocked_states": ["BEAR", "SIDEWAYS_DOWN", "UNKNOWN"],
+            },
+        )
+
+    @pytest.mark.asyncio
+    async def test_allowed_market_state_allows_long_reversal(self):
+        entry = WilliamsREntry(self._config())
+        await entry.generate(
+            _entry_ctx(
+                williams_r=-90.0,
+                close=302.0,
+                bb_middle=301.0,
+                market_state="BULL_STRONG",
+                hour=10,
+                minute=0,
+            )
+        )
+        sig = await entry.generate(
+            _entry_ctx(
+                williams_r=-75.0,
+                close=302.0,
+                bb_middle=301.0,
+                market_state="BULL_STRONG",
+                hour=10,
+                minute=5,
+            )
+        )
+        assert sig is not None
+        assert sig.metadata["signal_direction"] == "long"
+
+    @pytest.mark.asyncio
+    async def test_blocked_market_state_suppresses_reversal(self):
+        entry = WilliamsREntry(self._config())
+        await entry.generate(
+            _entry_ctx(
+                williams_r=-90.0,
+                close=302.0,
+                bb_middle=301.0,
+                market_state="BULL_STRONG",
+                hour=10,
+                minute=0,
+            )
+        )
+        sig = await entry.generate(
+            _entry_ctx(
+                williams_r=-75.0,
+                close=302.0,
+                bb_middle=301.0,
+                market_state="SIDEWAYS_DOWN",
+                hour=10,
+                minute=5,
+            )
+        )
+        assert sig is None
+
+    @pytest.mark.asyncio
+    async def test_missing_market_state_suppresses_reversal_when_filter_enabled(self):
+        entry = WilliamsREntry(self._config())
+        await entry.generate(
+            _entry_ctx(
+                williams_r=-90.0,
+                close=302.0,
+                bb_middle=301.0,
+                market_state="BULL_STRONG",
+                hour=10,
+                minute=0,
+            )
+        )
+        sig = await entry.generate(
+            _entry_ctx(
+                williams_r=-75.0,
+                close=302.0,
+                bb_middle=301.0,
+                hour=10,
+                minute=5,
+            )
+        )
+        assert sig is None
+
+    def test_market_state_filter_adds_mfi_requirement(self):
+        cfg = self._config()
+        assert "mfi" in WilliamsREntry(cfg).required_indicators
+        cfg.market_state_filter["enabled"] = False
+        assert "mfi" not in WilliamsREntry(cfg).required_indicators
 
 
 class TestBidirectionalEntry:
@@ -114,14 +223,19 @@ class TestBidirectionalEntry:
         """과매수 깊이 진입 후 반전하강 → SHORT (close < bb_middle 추세 일치)."""
         entry = WilliamsREntry(_futures_entry_config())
         # prev bar deep overbought (> -20, e.g. -5)
-        assert await entry.generate(
-            _entry_ctx(williams_r=-5.0, close=300.0, bb_middle=301.0,
-                       hour=10, minute=0)
-        ) is None
+        assert (
+            await entry.generate(
+                _entry_ctx(
+                    williams_r=-5.0, close=300.0, bb_middle=301.0, hour=10, minute=0
+                )
+            )
+            is None
+        )
         # current bar crossed down below reversal line (-20)
         sig = await entry.generate(
-            _entry_ctx(williams_r=-25.0, close=300.0, bb_middle=301.0,
-                       hour=10, minute=5)
+            _entry_ctx(
+                williams_r=-25.0, close=300.0, bb_middle=301.0, hour=10, minute=5
+            )
         )
         assert sig is not None
         assert sig.metadata["signal_direction"] == "short"
@@ -131,12 +245,8 @@ class TestBidirectionalEntry:
     async def test_no_short_when_allow_short_false(self):
         """allow_short=False(주식 default)면 과매수 반전이 와도 SHORT 미생성."""
         entry = WilliamsREntry(_futures_entry_config(allow_short=False))
-        await entry.generate(
-            _entry_ctx(williams_r=-5.0, hour=10, minute=0)
-        )
-        sig = await entry.generate(
-            _entry_ctx(williams_r=-25.0, hour=10, minute=5)
-        )
+        await entry.generate(_entry_ctx(williams_r=-5.0, hour=10, minute=0))
+        sig = await entry.generate(_entry_ctx(williams_r=-25.0, hour=10, minute=5))
         assert sig is None
 
     @pytest.mark.asyncio
@@ -144,12 +254,14 @@ class TestBidirectionalEntry:
         """allow_short=True 에서도 과매도 반전 LONG은 정상 (회귀)."""
         entry = WilliamsREntry(_futures_entry_config())
         await entry.generate(
-            _entry_ctx(williams_r=-90.0, close=302.0, bb_middle=301.0,
-                       hour=10, minute=0)
+            _entry_ctx(
+                williams_r=-90.0, close=302.0, bb_middle=301.0, hour=10, minute=0
+            )
         )
         sig = await entry.generate(
-            _entry_ctx(williams_r=-75.0, close=302.0, bb_middle=301.0,
-                       hour=10, minute=5)
+            _entry_ctx(
+                williams_r=-75.0, close=302.0, bb_middle=301.0, hour=10, minute=5
+            )
         )
         assert sig is not None
         assert sig.metadata["signal_direction"] == "long"
@@ -159,12 +271,12 @@ class TestBidirectionalEntry:
         """SHORT인데 close > bb_middle(상승추세)면 trend_filter가 차단."""
         entry = WilliamsREntry(_futures_entry_config())
         await entry.generate(
-            _entry_ctx(williams_r=-5.0, close=305.0, bb_middle=301.0,
-                       hour=10, minute=0)
+            _entry_ctx(williams_r=-5.0, close=305.0, bb_middle=301.0, hour=10, minute=0)
         )
         sig = await entry.generate(
-            _entry_ctx(williams_r=-25.0, close=305.0, bb_middle=301.0,
-                       hour=10, minute=5)
+            _entry_ctx(
+                williams_r=-25.0, close=305.0, bb_middle=301.0, hour=10, minute=5
+            )
         )
         assert sig is None
 
@@ -186,15 +298,13 @@ def _make_position(side: PositionSide, entry_price=300.0):
     )
 
 
-def _exit_ctx(position, *, current_price=300.0, williams_r=-50.0,
-              hour=10, minute=45):
+def _exit_ctx(position, *, current_price=300.0, williams_r=-50.0, hour=10, minute=45):
     # entry_time is 10:00; keep holding < time_cut_minutes (120) so the
     # indicator-exit branch is reached without TIME_CUT pre-empting it.
     now = datetime(2026, 5, 15, hour, minute, tzinfo=KST)
     return ExitContext(
         position=position,
-        market_data={position.code: {"close": current_price,
-                                     "price": current_price}},
+        market_data={position.code: {"close": current_price, "price": current_price}},
         indicators={"momentum_5m": {"williams_r": williams_r}},
         timestamp=now,
         metadata={"is_backtest": True},  # skip EOD branch for indicator test
@@ -258,14 +368,18 @@ class TestFuturesConfigLoads:
         s = StrategyFactory.create_from_file("futures", "williams_r_15m")
         assert s.name == "williams_r_15m"
         assert s.entry.config.allow_short is True
-        assert (s.entry.config.market_close_hour,
-                s.entry.config.market_close_minute) == (15, 45)
+        assert (
+            s.entry.config.market_close_hour,
+            s.entry.config.market_close_minute,
+        ) == (15, 45)
         assert s.exit.config.oversold_exit_threshold == -80.0
-        assert (s.exit.config.eod_close_hour,
-                s.exit.config.eod_close_minute) == (15, 45)
+        assert (s.exit.config.eod_close_hour, s.exit.config.eod_close_minute) == (
+            15,
+            45,
+        )
 
-    def test_stock_williams_r_unchanged_regression(self):
-        """주식 williams_r은 allow_short=False, EOD 15:15 유지 (후방호환)."""
+    def test_stock_williams_r_loads_as_long_only_strategy(self):
+        """주식 williams_r은 long-only, EOD 15:15 설정을 유지한다."""
         from shared.strategy.registry import (
             StrategyFactory,
             register_builtin_components,
@@ -274,5 +388,9 @@ class TestFuturesConfigLoads:
         register_builtin_components()
         s = StrategyFactory.create_from_file("stock", "williams_r")
         assert s.entry.config.allow_short is False
-        assert (s.entry.config.market_close_hour,
-                s.entry.config.market_close_minute) == (15, 15)
+        assert (
+            s.entry.config.market_close_hour,
+            s.entry.config.market_close_minute,
+        ) == (15, 15)
+        assert s.entry.config.market_state_filter["enabled"] is True
+        assert s.exit.config.overbought_threshold == 0.0

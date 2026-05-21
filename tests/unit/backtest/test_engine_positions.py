@@ -6,11 +6,10 @@ from datetime import datetime, timedelta
 
 import numpy as np
 import pandas as pd
-import pytest
 
-from shared.backtest.config import BacktestConfig, CostConfig, RiskConfig
+from shared.backtest.config import BacktestConfig, CostConfig
 from shared.backtest.engine import BacktestEngine, ExitReason, SignalType
-
+from shared.models.signal import Signal
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -59,7 +58,9 @@ class TestOpenPositionStock:
 
     def test_open_buy_position_creates_position(self):
         """Opening a BUY position should create position entry and deduct capital."""
-        config = BacktestConfig.stock(initial_capital=10_000_000, position_size_pct=10.0)
+        config = BacktestConfig.stock(
+            initial_capital=10_000_000, position_size_pct=10.0
+        )
         engine = BacktestEngine(_HoldStrategy(), config)
         engine._reset()
 
@@ -89,6 +90,34 @@ class TestOpenPositionStock:
 
         # Capital should be deducted
         assert engine.capital < initial_capital
+
+    def test_open_position_copies_entry_signal_metadata(self):
+        """Entry metadata must survive into the backtest position state."""
+        config = BacktestConfig.stock(
+            initial_capital=10_000_000, position_size_pct=10.0
+        )
+        engine = BacktestEngine(_HoldStrategy(), config)
+        engine._reset()
+
+        signal = Signal(
+            code="005930",
+            name="Samsung",
+            strategy="momentum_breakout",
+            metadata={
+                "signal_direction": "long",
+                "exit_stop_atr_multiplier": 2.5,
+            },
+        )
+        engine._open_position(
+            code="005930",
+            name="Samsung",
+            side="BUY",
+            price=50000.0,
+            timestamp=datetime(2024, 1, 2, 9, 0),
+            entry_signal=signal,
+        )
+
+        assert engine.positions["005930"].metadata == signal.metadata
 
     def test_open_sell_position_short(self):
         """Opening a SELL position (short) should work correctly."""
@@ -156,6 +185,36 @@ class TestOpenPositionStock:
         pos = engine.positions["005930"]
         expected_qty = int(2_000_000 / (price * 1.00025))
         assert pos.quantity == expected_qty
+
+    def test_position_size_multiplier_scales_order_amount_per_stock(self):
+        """Entry metadata can reduce fixed stock order size for risk throttles."""
+        config = BacktestConfig.stock(
+            initial_capital=10_000_000,
+            order_amount_per_stock=2_000_000,
+        )
+        engine = BacktestEngine(_HoldStrategy(), config)
+        engine._reset()
+
+        price = 100000.0
+        signal = Signal(
+            code="005930",
+            strategy="williams_r",
+            price=price,
+            metadata={"position_size_multiplier": 0.25},
+        )
+        engine._open_position(
+            code="005930",
+            name="Samsung",
+            side="BUY",
+            price=price,
+            timestamp=datetime(2024, 1, 2, 9, 0),
+            entry_signal=signal,
+        )
+
+        pos = engine.positions["005930"]
+        expected_qty = int(500_000 / (price * 1.00025))
+        assert pos.quantity == expected_qty
+        assert pos.metadata["position_size_multiplier"] == 0.25
 
     def test_commission_and_slippage_applied(self):
         """Commission and slippage should be applied to capital deduction."""
@@ -400,8 +459,6 @@ class TestClosePositionStock:
             timestamp=datetime(2024, 1, 2, 9, 0),
         )
 
-        capital_after_open = engine.capital
-
         # Close with loss
         exit_price = 45000.0  # -10% loss
         engine._close_position(
@@ -470,8 +527,6 @@ class TestClosePositionStock:
             timestamp=datetime(2024, 1, 2, 9, 0),
         )
 
-        capital_after_open = engine.capital
-
         # Close short with loss (price went up)
         exit_price = 55000.0  # +10% = loss for short
         engine._close_position(
@@ -484,7 +539,9 @@ class TestClosePositionStock:
         # For stock shorts, the PnL should be negative (entry_price - exit_price) * qty
         # The capital tracking for stock shorts reflects proceeds (entry) and buy-to-cover (exit)
         trade = engine.trades[0]
-        assert trade.pnl < 0, f"Short position PnL should be negative (loss), got {trade.pnl}"
+        assert (
+            trade.pnl < 0
+        ), f"Short position PnL should be negative (loss), got {trade.pnl}"
         assert trade.side == "SELL"
 
     def test_commission_slippage_tax_applied_on_close(self):
@@ -522,10 +579,7 @@ class TestClosePositionStock:
         # Calculate expected costs
         revenue = exit_price * quantity
         commission = revenue * cost.commission_rate
-        slippage = revenue * cost.slippage_rate
         tax = revenue * cost.tax_rate  # 0.23% for stock sell
-        total_cost = commission + slippage + tax
-
         # Trade should record commission + tax
         trade = engine.trades[0]
         expected_commission = commission + tax
@@ -813,8 +867,6 @@ class TestClosePositionFutures:
         # Futures commission rate is 0.00003 (0.003%)
         notional = 355.0 * 1 * 250_000
         expected_commission = notional * 0.00003
-        expected_slippage = notional * 0.0001
-        expected_costs = expected_commission + expected_slippage
 
         # Commission field should only contain commission (no tax for futures)
         assert abs(trade.commission - expected_commission) < 1.0

@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from services.trading.indicator_engine import StreamingIndicatorEngine, Candle
+from services.trading.indicator_engine import StreamingIndicatorEngine
+from shared.indicators.daily import calculate_daily_indicators
 
 
 class TestDailyCandleSeedingAndRetrieval:
@@ -15,9 +16,27 @@ class TestDailyCandleSeedingAndRetrieval:
         engine = StreamingIndicatorEngine(staleness_seconds=0)
 
         daily_candles = [
-            {"open": 100.0, "high": 102.0, "low": 98.0, "close": 101.0, "volume": 10000},
-            {"open": 101.0, "high": 103.0, "low": 99.0, "close": 102.0, "volume": 11000},
-            {"open": 102.0, "high": 104.0, "low": 100.0, "close": 103.0, "volume": 12000},
+            {
+                "open": 100.0,
+                "high": 102.0,
+                "low": 98.0,
+                "close": 101.0,
+                "volume": 10000,
+            },
+            {
+                "open": 101.0,
+                "high": 103.0,
+                "low": 99.0,
+                "close": 102.0,
+                "volume": 11000,
+            },
+            {
+                "open": 102.0,
+                "high": 104.0,
+                "low": 100.0,
+                "close": 103.0,
+                "volume": 12000,
+            },
         ]
 
         engine.seed_daily_candles("005930", daily_candles)
@@ -38,20 +57,24 @@ class TestDailyCandleSeedingAndRetrieval:
         # Seed 250 daily candles (exceeds maxlen=200)
         daily_candles = []
         for i in range(250):
-            daily_candles.append({
-                "open": 100.0 + i,
-                "high": 102.0 + i,
-                "low": 98.0 + i,
-                "close": 101.0 + i,
-                "volume": 10000 + i * 100,
-            })
+            daily_candles.append(
+                {
+                    "open": 100.0 + i,
+                    "high": 102.0 + i,
+                    "low": 98.0 + i,
+                    "close": 101.0 + i,
+                    "volume": 10000 + i * 100,
+                }
+            )
 
         engine.seed_daily_candles("005930", daily_candles)
         result = engine.get_daily_candles("005930")
 
         # Should only keep last 200 candles
         assert len(result) == 200, "Should keep only 200 candles (maxlen)"
-        assert result[0]["open"] == 150.0, "First candle should be from index 50 (250-200)"
+        assert (
+            result[0]["open"] == 150.0
+        ), "First candle should be from index 50 (250-200)"
         assert result[-1]["open"] == 349.0, "Last candle should be from index 249"
 
     def test_seed_daily_candles_multiple_symbols(self):
@@ -59,14 +82,44 @@ class TestDailyCandleSeedingAndRetrieval:
         engine = StreamingIndicatorEngine(staleness_seconds=0)
 
         samsung_candles = [
-            {"open": 70000, "high": 71000, "low": 69000, "close": 70500, "volume": 10000000},
-            {"open": 70500, "high": 71500, "low": 70000, "close": 71000, "volume": 11000000},
+            {
+                "open": 70000,
+                "high": 71000,
+                "low": 69000,
+                "close": 70500,
+                "volume": 10000000,
+            },
+            {
+                "open": 70500,
+                "high": 71500,
+                "low": 70000,
+                "close": 71000,
+                "volume": 11000000,
+            },
         ]
 
         sk_candles = [
-            {"open": 200000, "high": 205000, "low": 195000, "close": 203000, "volume": 5000000},
-            {"open": 203000, "high": 207000, "low": 201000, "close": 205000, "volume": 5500000},
-            {"open": 205000, "high": 210000, "low": 203000, "close": 208000, "volume": 6000000},
+            {
+                "open": 200000,
+                "high": 205000,
+                "low": 195000,
+                "close": 203000,
+                "volume": 5000000,
+            },
+            {
+                "open": 203000,
+                "high": 207000,
+                "low": 201000,
+                "close": 205000,
+                "volume": 5500000,
+            },
+            {
+                "open": 205000,
+                "high": 210000,
+                "low": 203000,
+                "close": 208000,
+                "volume": 6000000,
+            },
         ]
 
         engine.seed_daily_candles("005930", samsung_candles)
@@ -86,13 +139,15 @@ class TestDailyCandleSeedingAndRetrieval:
 
         daily_candles = []
         for i in range(50):
-            daily_candles.append({
-                "open": 100.0 + i,
-                "high": 102.0 + i,
-                "low": 98.0 + i,
-                "close": 101.0 + i,
-                "volume": 10000,
-            })
+            daily_candles.append(
+                {
+                    "open": 100.0 + i,
+                    "high": 102.0 + i,
+                    "low": 98.0 + i,
+                    "close": 101.0 + i,
+                    "volume": 10000,
+                }
+            )
 
         engine.seed_daily_candles("005930", daily_candles)
 
@@ -109,13 +164,15 @@ class TestDailyCandleSeedingAndRetrieval:
 
         daily_candles = []
         for i in range(30):
-            daily_candles.append({
-                "open": 100.0 + i,
-                "high": 102.0 + i,
-                "low": 98.0 + i,
-                "close": 101.0 + i,
-                "volume": 10000,
-            })
+            daily_candles.append(
+                {
+                    "open": 100.0 + i,
+                    "high": 102.0 + i,
+                    "low": 98.0 + i,
+                    "close": 101.0 + i,
+                    "volume": 10000,
+                }
+            )
 
         engine.seed_daily_candles("005930", daily_candles)
         result = engine.get_daily_candles("005930", limit=0)
@@ -135,10 +192,28 @@ class TestDailyCandleSeedingAndRetrieval:
         engine = StreamingIndicatorEngine(staleness_seconds=0)
 
         daily_candles = [
-            {"open": 100.0, "high": 102.0, "low": 98.0, "close": 101.0, "volume": 10000},
-            {"open": "invalid", "high": 103.0, "low": 99.0, "close": 102.0, "volume": 11000},  # Invalid
+            {
+                "open": 100.0,
+                "high": 102.0,
+                "low": 98.0,
+                "close": 101.0,
+                "volume": 10000,
+            },
+            {
+                "open": "invalid",
+                "high": 103.0,
+                "low": 99.0,
+                "close": 102.0,
+                "volume": 11000,
+            },  # Invalid
             {"close": 103.0},  # Missing required fields
-            {"open": 103.0, "high": 105.0, "low": 101.0, "close": 104.0, "volume": 12000},
+            {
+                "open": 103.0,
+                "high": 105.0,
+                "low": 101.0,
+                "close": 104.0,
+                "volume": 12000,
+            },
         ]
 
         engine.seed_daily_candles("005930", daily_candles)
@@ -167,6 +242,61 @@ class TestDailyCandleSeedingAndRetrieval:
 class TestDailyIndicators:
     """Tests for get_daily_indicators() - SMA, EMA, RSI calculation."""
 
+    def test_calculate_daily_indicators_without_lookahead_guard(self):
+        """Runtime calls should not require optional lookahead guard arguments."""
+        candles = [
+            {
+                "open": 100.0 + i,
+                "high": 102.0 + i,
+                "low": 98.0 + i,
+                "close": 101.0 + i,
+                "volume": 10000,
+            }
+            for i in range(60)
+        ]
+
+        indicators = calculate_daily_indicators(candles)
+
+        assert "sma_20" in indicators
+        assert "rsi_5" in indicators
+
+    def test_calculate_daily_indicators_uses_optional_lookahead_guard(self):
+        """Backtest callers can still pass a guard with timestamped candles."""
+
+        class Guard:
+            calls = []
+
+            def check(self, values, timestamps, context_timestamp, context_info):
+                self.calls.append((values, timestamps, context_timestamp, context_info))
+
+        guard = Guard()
+        candles = [
+            {
+                "timestamp": i,
+                "open": 100.0 + i,
+                "high": 102.0 + i,
+                "low": 98.0 + i,
+                "close": 101.0 + i,
+                "volume": 10000,
+            }
+            for i in range(60)
+        ]
+
+        indicators = calculate_daily_indicators(
+            candles,
+            lookahead_guard=guard,
+            context_timestamp=59,
+            context_info="test:daily",
+        )
+
+        assert "sma_20" in indicators
+        assert guard.calls
+        values, timestamps, context_timestamp, context_info = guard.calls[0]
+        assert values[-1] == 160.0
+        assert timestamps[-1] == 59
+        assert context_timestamp == 59
+        assert context_info == "test:daily"
+
     def test_daily_indicators_basic(self):
         """get_daily_indicators should compute SMA, EMA, RSI from daily candles."""
         engine = StreamingIndicatorEngine(staleness_seconds=0)
@@ -177,13 +307,15 @@ class TestDailyIndicators:
         for i in range(250):
             # Create uptrend
             price = base_price + i * 0.5
-            daily_candles.append({
-                "open": price,
-                "high": price + 1.0,
-                "low": price - 1.0,
-                "close": price + 0.5,
-                "volume": 10000 + i * 100,
-            })
+            daily_candles.append(
+                {
+                    "open": price,
+                    "high": price + 1.0,
+                    "low": price - 1.0,
+                    "close": price + 0.5,
+                    "volume": 10000 + i * 100,
+                }
+            )
 
         engine.seed_daily_candles("005930", daily_candles)
 
@@ -210,13 +342,15 @@ class TestDailyIndicators:
         # Seed 100 daily candles
         daily_candles = []
         for i in range(100):
-            daily_candles.append({
-                "open": 100.0 + i,
-                "high": 102.0 + i,
-                "low": 98.0 + i,
-                "close": 101.0 + i,
-                "volume": 10000,
-            })
+            daily_candles.append(
+                {
+                    "open": 100.0 + i,
+                    "high": 102.0 + i,
+                    "low": 98.0 + i,
+                    "close": 101.0 + i,
+                    "volume": 10000,
+                }
+            )
 
         engine.seed_daily_candles("005930", daily_candles)
 
@@ -247,13 +381,15 @@ class TestDailyIndicators:
         # Seed only 10 candles (less than min_candles default of 50)
         daily_candles = []
         for i in range(10):
-            daily_candles.append({
-                "open": 100.0 + i,
-                "high": 102.0 + i,
-                "low": 98.0 + i,
-                "close": 101.0 + i,
-                "volume": 10000,
-            })
+            daily_candles.append(
+                {
+                    "open": 100.0 + i,
+                    "high": 102.0 + i,
+                    "low": 98.0 + i,
+                    "close": 101.0 + i,
+                    "volume": 10000,
+                }
+            )
 
         engine.seed_daily_candles("005930", daily_candles)
 
@@ -268,13 +404,15 @@ class TestDailyIndicators:
         # Seed 30 candles
         daily_candles = []
         for i in range(30):
-            daily_candles.append({
-                "open": 100.0 + i,
-                "high": 102.0 + i,
-                "low": 98.0 + i,
-                "close": 101.0 + i,
-                "volume": 10000,
-            })
+            daily_candles.append(
+                {
+                    "open": 100.0 + i,
+                    "high": 102.0 + i,
+                    "low": 98.0 + i,
+                    "close": 101.0 + i,
+                    "volume": 10000,
+                }
+            )
 
         engine.seed_daily_candles("005930", daily_candles)
 
@@ -301,19 +439,20 @@ class TestDailyIndicators:
         # Seed 100 daily candles
         daily_candles = []
         for i in range(100):
-            daily_candles.append({
-                "open": 100.0 + i,
-                "high": 102.0 + i,
-                "low": 98.0 + i,
-                "close": 101.0 + i,
-                "volume": 10000,
-            })
+            daily_candles.append(
+                {
+                    "open": 100.0 + i,
+                    "high": 102.0 + i,
+                    "low": 98.0 + i,
+                    "close": 101.0 + i,
+                    "volume": 10000,
+                }
+            )
 
         engine.seed_daily_candles("005930", daily_candles)
 
         # First call should miss cache
         indicators1 = engine.get_daily_indicators("005930", min_candles=20)
-        initial_misses = engine._momentum_cache_misses
 
         # Second call with same data should hit cache
         indicators2 = engine.get_daily_indicators("005930", min_candles=20)
@@ -329,13 +468,15 @@ class TestDailyIndicators:
         # All gains - RSI should be 100
         all_gains = []
         for i in range(60):
-            all_gains.append({
-                "open": 100.0 + i,
-                "high": 102.0 + i,
-                "low": 98.0 + i,
-                "close": 101.0 + i,  # Monotonically increasing
-                "volume": 10000,
-            })
+            all_gains.append(
+                {
+                    "open": 100.0 + i,
+                    "high": 102.0 + i,
+                    "low": 98.0 + i,
+                    "close": 101.0 + i,  # Monotonically increasing
+                    "volume": 10000,
+                }
+            )
 
         engine.seed_daily_candles("GAINS", all_gains)
         ind_gains = engine.get_daily_indicators("GAINS", min_candles=20)
@@ -358,7 +499,12 @@ class TestDailyHighTracking:
             tick_time = base_date + timedelta(minutes=minute)
             engine.on_tick(
                 "005930",
-                {"close": 100.0 + minute, "high": 101.0 + minute, "low": 99.0 + minute, "volume": 1000},
+                {
+                    "close": 100.0 + minute,
+                    "high": 101.0 + minute,
+                    "low": 99.0 + minute,
+                    "volume": 1000,
+                },
                 tick_time,
             )
 
@@ -375,7 +521,12 @@ class TestDailyHighTracking:
             tick_time = day1 + timedelta(minutes=minute)
             engine.on_tick(
                 "005930",
-                {"close": 100.0 + minute, "high": 101.0 + minute, "low": 99.0 + minute, "volume": 1000},
+                {
+                    "close": 100.0 + minute,
+                    "high": 101.0 + minute,
+                    "low": 99.0 + minute,
+                    "volume": 1000,
+                },
                 tick_time,
             )
 
@@ -383,16 +534,26 @@ class TestDailyHighTracking:
 
         # Day 2: Feed ticks - should roll over day 1 high
         day2 = datetime(2026, 3, 8, 9, 30, 0)
-        engine.on_tick("005930", {"close": 110.0, "high": 112.0, "low": 109.0, "volume": 1000}, day2)
+        engine.on_tick(
+            "005930",
+            {"close": 110.0, "high": 112.0, "low": 109.0, "volume": 1000},
+            day2,
+        )
         # Feed another tick to complete the candle
-        engine.on_tick("005930", {"close": 111.0, "high": 113.0, "low": 110.0, "volume": 1100}, day2 + timedelta(minutes=1))
+        engine.on_tick(
+            "005930",
+            {"close": 111.0, "high": 113.0, "low": 110.0, "volume": 1100},
+            day2 + timedelta(minutes=1),
+        )
 
         # Day 1 high should be in _daily_highs
         assert len(engine._daily_highs["005930"]) == 1
         assert engine._daily_highs["005930"][0] == 104.0
 
         # Intraday high should be from day 2 candles
-        assert engine._intraday_high.get("005930") >= 112.0, "Day 2 intraday high should be at least 112.0"
+        assert (
+            engine._intraday_high.get("005930") >= 112.0
+        ), "Day 2 intraday high should be at least 112.0"
 
     def test_daily_high_multiple_day_rollovers(self):
         """Multiple day rollovers should accumulate historical daily highs."""
@@ -401,7 +562,7 @@ class TestDailyHighTracking:
         # Simulate 5 days with different highs
         daily_highs = [105.0, 110.0, 108.0, 112.0, 115.0]
 
-        for day_idx, expected_high in enumerate(daily_highs):
+        for day_idx, _expected_high in enumerate(daily_highs):
             day_date = datetime(2026, 3, 7 + day_idx, 9, 30, 0)
 
             for minute in range(5):
@@ -409,17 +570,28 @@ class TestDailyHighTracking:
                 high = 100.0 + day_idx * 5 + minute
                 engine.on_tick(
                     "005930",
-                    {"close": high - 1.0, "high": high, "low": high - 2.0, "volume": 1000},
+                    {
+                        "close": high - 1.0,
+                        "high": high,
+                        "low": high - 2.0,
+                        "volume": 1000,
+                    },
                     tick_time,
                 )
 
         # Trigger final rollover with next day
         next_day = datetime(2026, 3, 12, 9, 30, 0)
-        engine.on_tick("005930", {"close": 120.0, "high": 122.0, "low": 119.0, "volume": 1000}, next_day)
+        engine.on_tick(
+            "005930",
+            {"close": 120.0, "high": 122.0, "low": 119.0, "volume": 1000},
+            next_day,
+        )
 
         # Should have 5 historical daily highs
         assert len(engine._daily_highs["005930"]) == 5
-        assert engine._daily_highs["005930"][-1] == 123.0  # Last day's high (from last completed candle)
+        assert (
+            engine._daily_highs["005930"][-1] == 123.0
+        )  # Last day's high (from last completed candle)
 
     def test_daily_high_respects_maxlen(self):
         """_daily_highs deque should respect maxlen=30."""
@@ -431,22 +603,38 @@ class TestDailyHighTracking:
             # Feed 2 ticks per day to ensure candle completion
             engine.on_tick(
                 "005930",
-                {"close": 100.0 + day_idx, "high": 101.0 + day_idx, "low": 99.0 + day_idx, "volume": 1000},
+                {
+                    "close": 100.0 + day_idx,
+                    "high": 101.0 + day_idx,
+                    "low": 99.0 + day_idx,
+                    "volume": 1000,
+                },
                 day_date,
             )
             engine.on_tick(
                 "005930",
-                {"close": 100.5 + day_idx, "high": 101.5 + day_idx, "low": 99.5 + day_idx, "volume": 1100},
+                {
+                    "close": 100.5 + day_idx,
+                    "high": 101.5 + day_idx,
+                    "low": 99.5 + day_idx,
+                    "volume": 1100,
+                },
                 day_date + timedelta(minutes=1),
             )
 
         # Trigger final rollover
         final_day = datetime(2026, 4, 10, 9, 30, 0)
-        engine.on_tick("005930", {"close": 150.0, "high": 151.0, "low": 149.0, "volume": 1000}, final_day)
+        engine.on_tick(
+            "005930",
+            {"close": 150.0, "high": 151.0, "low": 149.0, "volume": 1000},
+            final_day,
+        )
 
         # Should only keep last 30 daily highs (or might not have daily_highs if not triggered)
         if "005930" in engine._daily_highs:
-            assert len(engine._daily_highs["005930"]) <= 30, "Should respect maxlen of 30"
+            assert (
+                len(engine._daily_highs["005930"]) <= 30
+            ), "Should respect maxlen of 30"
 
 
 class TestDailyCloseTrackingAndEMAAlignment:
@@ -487,21 +675,35 @@ class TestDailyCloseTrackingAndEMAAlignment:
 
         # Day 2: Feed ticks - should roll over day 1 close
         day2 = datetime(2026, 3, 8, 9, 30, 0)
-        engine.on_tick("005930", {"close": 110.0, "high": 111.0, "low": 109.0, "volume": 1000}, day2)
+        engine.on_tick(
+            "005930",
+            {"close": 110.0, "high": 111.0, "low": 109.0, "volume": 1000},
+            day2,
+        )
         # Feed another tick to complete the candle
-        engine.on_tick("005930", {"close": 111.0, "high": 112.0, "low": 110.0, "volume": 1100}, day2 + timedelta(minutes=1))
+        engine.on_tick(
+            "005930",
+            {"close": 111.0, "high": 112.0, "low": 110.0, "volume": 1100},
+            day2 + timedelta(minutes=1),
+        )
 
         # Day 1 close should be in _daily_closes (if day rollover was triggered)
         if "005930" in engine._daily_closes:
-            assert len(engine._daily_closes["005930"]) >= 1, "Should have at least one daily close"
-            assert engine._daily_closes["005930"][0] >= 100.0, "Day 1 close should be tracked"
+            assert (
+                len(engine._daily_closes["005930"]) >= 1
+            ), "Should have at least one daily close"
+            assert (
+                engine._daily_closes["005930"][0] >= 100.0
+            ), "Day 1 close should be tracked"
 
         # Intraday close should be updated to day 2 close
         assert engine._intraday_last_close.get("005930") >= 110.0
 
     def test_daily_ema_aligned_uptrend(self):
         """_calc_daily_ema_aligned should return True for uptrend (EMA5 > EMA10 > EMA20)."""
-        engine = StreamingIndicatorEngine(staleness_seconds=0, daily_ema_periods=[5, 10, 20])
+        engine = StreamingIndicatorEngine(
+            staleness_seconds=0, daily_ema_periods=[5, 10, 20]
+        )
 
         # Simulate 30 days with clear uptrend - feed multiple ticks per day to ensure candle completion
         for day_idx in range(30):
@@ -510,19 +712,37 @@ class TestDailyCloseTrackingAndEMAAlignment:
             # Feed 2 ticks per day to ensure candle completion
             engine.on_tick(
                 "005930",
-                {"close": close_price, "high": close_price + 1, "low": close_price - 1, "volume": 10000},
+                {
+                    "close": close_price,
+                    "high": close_price + 1,
+                    "low": close_price - 1,
+                    "volume": 10000,
+                },
                 day_date,
             )
             engine.on_tick(
                 "005930",
-                {"close": close_price + 0.5, "high": close_price + 1.5, "low": close_price - 0.5, "volume": 11000},
+                {
+                    "close": close_price + 0.5,
+                    "high": close_price + 1.5,
+                    "low": close_price - 0.5,
+                    "volume": 11000,
+                },
                 day_date + timedelta(minutes=1),
             )
 
         # On next day, check alignment - feed ticks to ensure candles exist
         next_day = datetime(2026, 3, 3, 9, 30, 0)
-        engine.on_tick("005930", {"close": 165.0, "high": 166.0, "low": 164.0, "volume": 10000}, next_day)
-        engine.on_tick("005930", {"close": 165.5, "high": 166.5, "low": 164.5, "volume": 11000}, next_day + timedelta(minutes=1))
+        engine.on_tick(
+            "005930",
+            {"close": 165.0, "high": 166.0, "low": 164.0, "volume": 10000},
+            next_day,
+        )
+        engine.on_tick(
+            "005930",
+            {"close": 165.5, "high": 166.5, "low": 164.5, "volume": 11000},
+            next_day + timedelta(minutes=1),
+        )
 
         # Get indicators to trigger EMA alignment check
         indicators = engine.get_indicators("005930")
@@ -534,14 +754,20 @@ class TestDailyCloseTrackingAndEMAAlignment:
             assert isinstance(ema_aligned, bool), "ema_daily_aligned should be boolean"
             # For a strong uptrend, we expect alignment, but the implementation
             # may have different logic, so just verify it computed the value
-            assert "ema_daily_aligned" in indicators, "Should include ema_daily_aligned indicator"
+            assert (
+                "ema_daily_aligned" in indicators
+            ), "Should include ema_daily_aligned indicator"
         else:
             # If no indicators, at least check that daily closes were tracked
-            assert len(engine._daily_closes.get("005930", [])) >= 20, "Should have tracked daily closes"
+            assert (
+                len(engine._daily_closes.get("005930", [])) >= 20
+            ), "Should have tracked daily closes"
 
     def test_daily_ema_aligned_downtrend(self):
         """_calc_daily_ema_aligned should return False for downtrend."""
-        engine = StreamingIndicatorEngine(staleness_seconds=0, daily_ema_periods=[5, 10, 20])
+        engine = StreamingIndicatorEngine(
+            staleness_seconds=0, daily_ema_periods=[5, 10, 20]
+        )
 
         # Simulate 30 days with downtrend - feed multiple ticks per day
         for day_idx in range(30):
@@ -550,31 +776,55 @@ class TestDailyCloseTrackingAndEMAAlignment:
             # Feed 2 ticks per day to ensure candle completion
             engine.on_tick(
                 "005930",
-                {"close": close_price, "high": close_price + 1, "low": close_price - 1, "volume": 10000},
+                {
+                    "close": close_price,
+                    "high": close_price + 1,
+                    "low": close_price - 1,
+                    "volume": 10000,
+                },
                 day_date,
             )
             engine.on_tick(
                 "005930",
-                {"close": close_price - 0.5, "high": close_price + 0.5, "low": close_price - 1.5, "volume": 11000},
+                {
+                    "close": close_price - 0.5,
+                    "high": close_price + 0.5,
+                    "low": close_price - 1.5,
+                    "volume": 11000,
+                },
                 day_date + timedelta(minutes=1),
             )
 
         # On next day, check alignment
         next_day = datetime(2026, 3, 3, 9, 30, 0)
-        engine.on_tick("005930", {"close": 135.0, "high": 136.0, "low": 134.0, "volume": 10000}, next_day)
-        engine.on_tick("005930", {"close": 134.5, "high": 135.5, "low": 133.5, "volume": 11000}, next_day + timedelta(minutes=1))
+        engine.on_tick(
+            "005930",
+            {"close": 135.0, "high": 136.0, "low": 134.0, "volume": 10000},
+            next_day,
+        )
+        engine.on_tick(
+            "005930",
+            {"close": 134.5, "high": 135.5, "low": 133.5, "volume": 11000},
+            next_day + timedelta(minutes=1),
+        )
 
         indicators = engine.get_indicators("005930")
 
         if indicators:
-            assert indicators.get("ema_daily_aligned") is False, "Should NOT detect uptrend"
+            assert (
+                indicators.get("ema_daily_aligned") is False
+            ), "Should NOT detect uptrend"
         else:
             # If no indicators, at least check that daily closes were tracked
-            assert len(engine._daily_closes.get("005930", [])) >= 20, "Should have tracked daily closes"
+            assert (
+                len(engine._daily_closes.get("005930", [])) >= 20
+            ), "Should have tracked daily closes"
 
     def test_daily_ema_aligned_insufficient_data(self):
         """_calc_daily_ema_aligned should return False if insufficient daily data."""
-        engine = StreamingIndicatorEngine(staleness_seconds=0, daily_ema_periods=[5, 10, 20])
+        engine = StreamingIndicatorEngine(
+            staleness_seconds=0, daily_ema_periods=[5, 10, 20]
+        )
 
         # Feed only 10 days (less than max period of 20) - with multiple ticks per day
         for day_idx in range(10):
@@ -591,13 +841,23 @@ class TestDailyCloseTrackingAndEMAAlignment:
             )
 
         next_day = datetime(2026, 2, 11, 9, 30, 0)
-        engine.on_tick("005930", {"close": 110.0, "high": 111.0, "low": 109.0, "volume": 10000}, next_day)
-        engine.on_tick("005930", {"close": 110.5, "high": 111.5, "low": 109.5, "volume": 11000}, next_day + timedelta(minutes=1))
+        engine.on_tick(
+            "005930",
+            {"close": 110.0, "high": 111.0, "low": 109.0, "volume": 10000},
+            next_day,
+        )
+        engine.on_tick(
+            "005930",
+            {"close": 110.5, "high": 111.5, "low": 109.5, "volume": 11000},
+            next_day + timedelta(minutes=1),
+        )
 
         indicators = engine.get_indicators("005930")
 
         if indicators:
-            assert indicators.get("ema_daily_aligned") is False, "Should return False if insufficient data"
+            assert (
+                indicators.get("ema_daily_aligned") is False
+            ), "Should return False if insufficient data"
         # If no indicators dict at all, that's also acceptable (insufficient data)
 
     def test_daily_closes_respects_maxlen(self):
@@ -621,11 +881,17 @@ class TestDailyCloseTrackingAndEMAAlignment:
 
         # Trigger final rollover
         final_day = datetime(2026, 3, 21, 9, 30, 0)
-        engine.on_tick("005930", {"close": 180.0, "high": 181.0, "low": 179.0, "volume": 10000}, final_day)
+        engine.on_tick(
+            "005930",
+            {"close": 180.0, "high": 181.0, "low": 179.0, "volume": 10000},
+            final_day,
+        )
 
         # Should only keep last 60 daily closes (or might not be created yet)
         if "005930" in engine._daily_closes:
-            assert len(engine._daily_closes["005930"]) <= 60, "Should respect maxlen of 60"
+            assert (
+                len(engine._daily_closes["005930"]) <= 60
+            ), "Should respect maxlen of 60"
 
 
 class TestDailyEdgeCases:
@@ -647,13 +913,15 @@ class TestDailyEdgeCases:
         # Seed daily candles
         daily_candles = []
         for i in range(100):
-            daily_candles.append({
-                "open": 100.0 + i,
-                "high": 102.0 + i,
-                "low": 98.0 + i,
-                "close": 101.0 + i,
-                "volume": 10000,
-            })
+            daily_candles.append(
+                {
+                    "open": 100.0 + i,
+                    "high": 102.0 + i,
+                    "low": 98.0 + i,
+                    "close": 101.0 + i,
+                    "volume": 10000,
+                }
+            )
 
         engine.seed_daily_candles("005930", daily_candles)
 
@@ -673,20 +941,42 @@ class TestDailyEdgeCases:
 
         # Day 1 - feed multiple ticks to ensure candle completion
         day1 = datetime(2026, 3, 7, 9, 30, 0)
-        engine.on_tick("005930", {"close": 100.0, "high": 105.0, "low": 99.0, "volume": 1000}, day1)
-        engine.on_tick("005930", {"close": 102.0, "high": 106.0, "low": 100.0, "volume": 1000}, day1 + timedelta(minutes=1))
-        engine.on_tick("005930", {"close": 103.0, "high": 107.0, "low": 101.0, "volume": 1000}, day1 + timedelta(minutes=2))
+        engine.on_tick(
+            "005930", {"close": 100.0, "high": 105.0, "low": 99.0, "volume": 1000}, day1
+        )
+        engine.on_tick(
+            "005930",
+            {"close": 102.0, "high": 106.0, "low": 100.0, "volume": 1000},
+            day1 + timedelta(minutes=1),
+        )
+        engine.on_tick(
+            "005930",
+            {"close": 103.0, "high": 107.0, "low": 101.0, "volume": 1000},
+            day1 + timedelta(minutes=2),
+        )
 
         # Day 2 - triggers rollover - feed multiple ticks
         day2 = datetime(2026, 3, 8, 9, 30, 0)
-        engine.on_tick("005930", {"close": 110.0, "high": 112.0, "low": 109.0, "volume": 1000}, day2)
-        engine.on_tick("005930", {"close": 111.0, "high": 113.0, "low": 110.0, "volume": 1000}, day2 + timedelta(minutes=1))
+        engine.on_tick(
+            "005930",
+            {"close": 110.0, "high": 112.0, "low": 109.0, "volume": 1000},
+            day2,
+        )
+        engine.on_tick(
+            "005930",
+            {"close": 111.0, "high": 113.0, "low": 110.0, "volume": 1000},
+            day2 + timedelta(minutes=1),
+        )
 
         # At least daily_highs should have rolled over (daily_closes behavior may vary)
-        assert len(engine._daily_highs.get("005930", [])) >= 1, "Daily highs should be tracked"
+        assert (
+            len(engine._daily_highs.get("005930", [])) >= 1
+        ), "Daily highs should be tracked"
         # Daily highs should include day 1's high
         if len(engine._daily_highs.get("005930", [])) >= 1:
-            assert engine._daily_highs["005930"][0] >= 105.0, "Day 1 high should be tracked"
+            assert (
+                engine._daily_highs["005930"][0] >= 105.0
+            ), "Day 1 high should be tracked"
 
     def test_multiple_symbols_daily_tracking_independent(self):
         """Daily tracking for different symbols should be independent."""
@@ -696,15 +986,31 @@ class TestDailyEdgeCases:
         day1 = datetime(2026, 3, 7, 9, 30, 0)
         for minute in range(3):
             tick_time = day1 + timedelta(minutes=minute)
-            engine.on_tick("005930", {"close": 100.0 + minute, "high": 105.0, "low": 99.0, "volume": 1000}, tick_time)
-            engine.on_tick("000660", {"close": 200.0 + minute, "high": 205.0, "low": 199.0, "volume": 1000}, tick_time)
+            engine.on_tick(
+                "005930",
+                {"close": 100.0 + minute, "high": 105.0, "low": 99.0, "volume": 1000},
+                tick_time,
+            )
+            engine.on_tick(
+                "000660",
+                {"close": 200.0 + minute, "high": 205.0, "low": 199.0, "volume": 1000},
+                tick_time,
+            )
 
         # Day 2 - triggers rollover for both - feed multiple ticks
         day2 = datetime(2026, 3, 8, 9, 30, 0)
         for minute in range(2):
             tick_time = day2 + timedelta(minutes=minute)
-            engine.on_tick("005930", {"close": 110.0 + minute, "high": 112.0, "low": 109.0, "volume": 1000}, tick_time)
-            engine.on_tick("000660", {"close": 210.0 + minute, "high": 215.0, "low": 209.0, "volume": 1000}, tick_time)
+            engine.on_tick(
+                "005930",
+                {"close": 110.0 + minute, "high": 112.0, "low": 109.0, "volume": 1000},
+                tick_time,
+            )
+            engine.on_tick(
+                "000660",
+                {"close": 210.0 + minute, "high": 215.0, "low": 209.0, "volume": 1000},
+                tick_time,
+            )
 
         # Each symbol should have independent tracking
         if "005930" in engine._daily_highs and "000660" in engine._daily_highs:
@@ -720,13 +1026,15 @@ class TestDailyEdgeCases:
         # Seed historical daily candles
         historical = []
         for i in range(50):
-            historical.append({
-                "open": 100.0 + i,
-                "high": 102.0 + i,
-                "low": 98.0 + i,
-                "close": 101.0 + i,
-                "volume": 10000,
-            })
+            historical.append(
+                {
+                    "open": 100.0 + i,
+                    "high": 102.0 + i,
+                    "low": 98.0 + i,
+                    "close": 101.0 + i,
+                    "volume": 10000,
+                }
+            )
 
         engine.seed_daily_candles("005930", historical)
 
@@ -754,14 +1062,16 @@ class TestDailyEdgeCases:
 
         # Seed candles with all same close prices (could cause division by zero in RSI)
         flat_candles = []
-        for i in range(100):
-            flat_candles.append({
-                "open": 100.0,
-                "high": 100.0,
-                "low": 100.0,
-                "close": 100.0,  # Flat prices
-                "volume": 10000,
-            })
+        for _i in range(100):
+            flat_candles.append(
+                {
+                    "open": 100.0,
+                    "high": 100.0,
+                    "low": 100.0,
+                    "close": 100.0,  # Flat prices
+                    "volume": 10000,
+                }
+            )
 
         engine.seed_daily_candles("FLAT", flat_candles)
 

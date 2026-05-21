@@ -23,6 +23,15 @@ from shared.strategy.base import ExitContext, ExitSignalGenerator, MarketStatePr
 logger = logging.getLogger(__name__)
 
 
+def _holding_days_since(entry_time: datetime, now: datetime) -> int:
+    """Return holding days without failing on mixed timezone awareness."""
+    if entry_time.tzinfo is None and now.tzinfo is not None:
+        entry_time = entry_time.replace(tzinfo=now.tzinfo)
+    elif entry_time.tzinfo is not None and now.tzinfo is None:
+        now = now.replace(tzinfo=entry_time.tzinfo)
+    return max(0, (now - entry_time).days)
+
+
 @dataclass
 class ChandelierExitConfig(ConfigMixin):
     """Chandelier Exit 청산 전략 설정."""
@@ -45,6 +54,10 @@ class ChandelierExitConfig(ConfigMixin):
 
     # Confidence
     default_exit_confidence: float = 0.85
+
+    # Use the position's post-entry high for trailing stops. The rolling
+    # lookback high can predate a pullback entry and cause immediate loss exits.
+    use_position_high_since_entry: bool = True
 
 
 class ChandelierExit(ExitSignalGenerator[ChandelierExitConfig]):
@@ -170,7 +183,7 @@ class ChandelierExit(ExitSignalGenerator[ChandelierExitConfig]):
             and hasattr(position, "entry_time")
             and position.entry_time
         ):
-            holding_days = (now - position.entry_time).days
+            holding_days = _holding_days_since(position.entry_time, now)
         if holding_days >= self.config.max_hold_days:
             logger.info(
                 f"ChandelierExit MAX HOLD: {code} "
@@ -195,7 +208,13 @@ class ChandelierExit(ExitSignalGenerator[ChandelierExitConfig]):
 
         # --- Priority 4: Chandelier trailing stop ---
         atr = _get("atr", 0)
-        highest_high = _get("highest_high", 0)
+        indicator_highest_high = _get("highest_high", 0)
+        position_highest_high = float(getattr(position, "highest_price", 0.0) or 0.0)
+        highest_high = (
+            position_highest_high
+            if self.config.use_position_high_since_entry and position_highest_high > 0
+            else indicator_highest_high
+        )
 
         if atr > 0 and highest_high > 0:
             chandelier_stop = highest_high - atr * self.config.atr_multiplier
@@ -223,6 +242,8 @@ class ChandelierExit(ExitSignalGenerator[ChandelierExitConfig]):
                             "exit_type": "chandelier",
                             "chandelier_stop": chandelier_stop,
                             "highest_high": highest_high,
+                            "indicator_highest_high": indicator_highest_high,
+                            "position_highest_high": position_highest_high,
                             "atr": atr,
                         },
                     ),
