@@ -11,6 +11,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import bisect
 import copy
 import sys
 from pathlib import Path
@@ -59,7 +60,7 @@ def load_gate_config(path: str):
     """Load a RegimeGate YAML config into a GateConfig dataclass."""
     from shared.strategy.gates.regime_gate import GateConfig
 
-    data = yaml.safe_load(Path(path).read_text())
+    data = yaml.safe_load(Path(path).read_text()) or {}
     return GateConfig(
         regime_percentile_max=float(data.get("regime_percentile_max", 80.0)),
         impact_score_max=int(data.get("impact_score_max", 70)),
@@ -108,187 +109,33 @@ def _load_data(path: str):
     )
 
 
-def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(
-        description=__doc__,
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    ap.add_argument("--strategy", required=True)
-    ap.add_argument("--asset", default="futures")
-    ap.add_argument("--data", "-d", default=_DEFAULT_DATA)
-    ap.add_argument("--space", required=True)
-    ap.add_argument("--trials", "-n", type=int, default=70)
-    ap.add_argument("--holdout-split", "-H", default=None)
-    ap.add_argument("--min-trades", "-M", type=int, default=50)
-    ap.add_argument(
-        "--gate",
-        default=None,
-        help="path to RegimeGate YAML; if set, the engine is "
-        "wrapped with the gate during the run",
-    )
-    ap.add_argument(
-        "--head-to-head",
-        action="store_true",
-        help="run baseline (no gate) then gated; require "
-        "Δ Sharpe >= --delta-sharpe AND no MDD worsening",
-    )
-    ap.add_argument(
-        "--delta-sharpe",
-        type=float,
-        default=0.5,
-        help="spec §8 head-to-head margin (default 0.5)",
-    )
-    a = ap.parse_args(argv)
-
-    base_cfg = ConfigLoader.load_strategy(a.asset, a.strategy)
-    space = yaml.safe_load(Path(a.space).read_text())["search_space"]
-    bt_over = base_cfg.get("strategy", {}).get("backtest", {}) or {}
-    bt_config = BacktestConfig.futures(
-        initial_capital=bt_over.get("initial_capital", 10_000_000),
-        point_value=bt_over.get("point_value", 50_000),
-    )
-
-    df = _load_data(a.data)
-    opt_df, oos_df = df, None
-    if a.holdout_split:
-        split = pd.Timestamp(a.holdout_split)
-        tz = df["datetime"].dt.tz
-        if tz is not None and split.tzinfo is None:
-            split = split.tz_localize(tz)
-        opt_df = df[df["datetime"] < split].reset_index(drop=True)
-        oos_df = df[df["datetime"] >= split].reset_index(drop=True)
-        if len(opt_df) < 500 or len(oos_df) < 500:
-            print("ERROR: split leaves too few bars on one side.")
-            return 2
-
-    def objective(trial):
-        params = suggest_params(trial, space)
-        cfg = apply_params(base_cfg, params)
-        m = _run_backtest(cfg, opt_df, bt_config)
-        for k in (
-            "profit_factor",
-            "total_trades",
-            "win_rate",
-            "total_return_pct",
-            "max_drawdown_pct",
-        ):
-            trial.set_user_attr(k, float(m.get(k, 0.0)))
-        return objective_value(m, a.min_trades)
-
-    study = optuna.create_study(
-        direction="maximize",
-        sampler=TPESampler(seed=42),
-        study_name=f"{a.strategy}_gate",
-    )
-    study.optimize(objective, n_trials=a.trials)
-
-    print(f"best_params: {study.best_params}")
-    print(f"best_value (train Sharpe): {study.best_value:.4f}")
-
-    oos_m = {}
-    if oos_df is not None:
-        best_cfg = apply_params(base_cfg, study.best_params)
-        oos_m = _run_backtest(best_cfg, oos_df, bt_config)
-        print(
-            f"OOS metrics: sharpe={oos_m.get('sharpe_ratio', float('nan')):.4f} "
-            f"pf={oos_m.get('profit_factor', float('nan')):.4f} "
-            f"mdd={oos_m.get('max_drawdown_pct', float('nan')):.2f}% "
-            f"ret={oos_m.get('total_return_pct', float('nan')):.4f}% "
-            f"trades={oos_m.get('total_trades', 0):.0f}"
-        )
-
-    rg = rescoped_gate(study, oos_m)
-    verdict = "PASS" if rg["pass"] else "FAIL"
-    print(
-        f">>> RE-SCOPED GATE: {verdict} "
-        f"(a={rg['a']} b={rg['b']} c={rg['c']} | "
-        f"median_sharpe={rg['median_sharpe']:.2f} "
-        f"basin={rg['basin_frac']:.1%} n_valid={rg['n_valid']})"
-    )
-
-    # Head-to-head: run gated study and compare vs baseline.
-    if a.head_to_head and a.gate:
-        gate_cfg = load_gate_config(a.gate)
-        full_df = pd.concat([opt_df, oos_df]) if oos_df is not None else opt_df
-        gate = _build_gate(gate_cfg, full_df)
-
-        def objective_gated(trial):
-            params = suggest_params(trial, space)
-            cfg = apply_params(base_cfg, params)
-            m = _run_backtest(cfg, opt_df, bt_config, gate=gate)
-            for k in (
-                "profit_factor",
-                "total_trades",
-                "win_rate",
-                "total_return_pct",
-                "max_drawdown_pct",
-            ):
-                trial.set_user_attr(k, float(m.get(k, 0.0)))
-            return objective_value(m, a.min_trades)
-
-        study_gated = optuna.create_study(
-            direction="maximize",
-            sampler=TPESampler(seed=42),
-            study_name=f"{a.strategy}_gate_GATED",
-        )
-        study_gated.optimize(objective_gated, n_trials=a.trials)
-
-        baseline_oos = _run_backtest(
-            apply_params(base_cfg, study.best_params), oos_df, bt_config, gate=None
-        )
-        gated_oos = _run_backtest(
-            apply_params(base_cfg, study_gated.best_params),
-            oos_df,
-            bt_config,
-            gate=gate,
-        )
-
-        rg_gated = rescoped_gate(study_gated, gated_oos)
-        ok, delta = head_to_head_verdict(
-            baseline_oos, gated_oos, a.delta_sharpe, rg_gated["pass"]
-        )
-        print(
-            f"baseline OOS: sharpe={baseline_oos.get('sharpe_ratio', 0):.4f} "
-            f"mdd={baseline_oos.get('max_drawdown_pct', 0):.2f}%"
-        )
-        print(
-            f"gated    OOS: sharpe={gated_oos.get('sharpe_ratio', 0):.4f} "
-            f"mdd={gated_oos.get('max_drawdown_pct', 0):.2f}%"
-        )
-        print(
-            f">>> HEAD-TO-HEAD: {'PASS' if ok else 'FAIL'} "
-            f"(Δsharpe={delta:.3f} vs δ={a.delta_sharpe} | "
-            f"gated_rescoped_pass={rg_gated['pass']})"
-        )
-        return 0 if ok else 1
-
-    return 0 if rg["pass"] else 1
-
-
 class _CHInputs:
-    """Pre-loaded ClickHouse-backed inputs for RegimeGate (T5)."""
+    """Pre-loaded ClickHouse-backed inputs for RegimeGate (T5).
+
+    vol_rows / event_rows must be SORTED by asof (the SQL ORDER BY asof
+    already guarantees this). We bisect on a key list for O(log n) lookups.
+    """
 
     def __init__(self, vol_rows, event_rows, macro_map):
-        # vol_rows: sorted list of (asof_naive_utc, regime_percentile)
-        # event_rows: sorted list of (asof_naive_utc, impact_score)
-        # macro_map: dict[date, MacroSnapshot]
         self._vol = vol_rows
+        self._vol_keys = [r[0] for r in vol_rows]
         self._events = event_rows
+        self._event_keys = [r[0] for r in event_rows]
         self._macro = macro_map
 
     def latest_vol_at(self, ts):
-        import datetime as _dt  # noqa: F401
-
         ts_n = ts.replace(tzinfo=None) if getattr(ts, "tzinfo", None) else ts
-        cand = [r for r in self._vol if r[0] <= ts_n]
-        return cand[-1] if cand else None
+        idx = bisect.bisect_right(self._vol_keys, ts_n)
+        return self._vol[idx - 1] if idx > 0 else None
 
     def events_within(self, ts, window_min):
         import datetime as _dt
 
         ts_n = ts.replace(tzinfo=None) if getattr(ts, "tzinfo", None) else ts
         lo = ts_n - _dt.timedelta(minutes=window_min)
-        return [r for r in self._events if lo <= r[0] <= ts_n]
+        lo_idx = bisect.bisect_left(self._event_keys, lo)
+        hi_idx = bisect.bisect_right(self._event_keys, ts_n)
+        return self._events[lo_idx:hi_idx]
 
     def macro_for(self, date):
         snap = self._macro.get(date)
@@ -321,6 +168,169 @@ def _build_gate(gate_cfg, df):
     )
     macro = fetch_macro_history(start.date(), end.date())
     return RegimeGate(gate_cfg, _CHInputs(vol, ev, macro))
+
+
+def _make_objective(base_cfg, space, opt_df, bt_config, min_trades, gate=None):
+    def objective(trial):
+        params = suggest_params(trial, space)
+        cfg = apply_params(base_cfg, params)
+        m = _run_backtest(cfg, opt_df, bt_config, gate=gate)
+        for k in (
+            "profit_factor",
+            "total_trades",
+            "win_rate",
+            "total_return_pct",
+            "max_drawdown_pct",
+        ):
+            trial.set_user_attr(k, float(m.get(k, 0.0)))
+        return objective_value(m, min_trades)
+
+    return objective
+
+
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    ap.add_argument("--strategy", required=True)
+    ap.add_argument("--asset", default="futures")
+    ap.add_argument("--data", "-d", default=_DEFAULT_DATA)
+    ap.add_argument("--space", required=True)
+    ap.add_argument("--trials", "-n", type=int, default=70)
+    ap.add_argument("--holdout-split", "-H", default=None)
+    ap.add_argument("--min-trades", "-M", type=int, default=50)
+    ap.add_argument(
+        "--gate",
+        default=None,
+        help="path to RegimeGate YAML; if set, the engine is "
+        "wrapped with the gate during the run",
+    )
+    ap.add_argument(
+        "--head-to-head",
+        action="store_true",
+        help="run baseline (no gate) then gated; require "
+        "Δ Sharpe >= --delta-sharpe AND no MDD worsening",
+    )
+    ap.add_argument(
+        "--delta-sharpe",
+        type=float,
+        default=0.5,
+        help="spec §8 head-to-head margin (default 0.5)",
+    )
+    a = ap.parse_args(argv)
+
+    if a.gate and not a.head_to_head:
+        ap.error(
+            "--gate requires --head-to-head (single-pass mode is gate-less by design)"
+        )
+
+    base_cfg = ConfigLoader.load_strategy(a.asset, a.strategy)
+    space = yaml.safe_load(Path(a.space).read_text())["search_space"]
+    bt_over = base_cfg.get("strategy", {}).get("backtest", {}) or {}
+    bt_config = BacktestConfig.futures(
+        initial_capital=bt_over.get("initial_capital", 10_000_000),
+        point_value=bt_over.get("point_value", 50_000),
+    )
+
+    df = _load_data(a.data)
+    opt_df, oos_df = df, None
+    if a.holdout_split:
+        split = pd.Timestamp(a.holdout_split)
+        tz = df["datetime"].dt.tz
+        if tz is not None and split.tzinfo is None:
+            split = split.tz_localize(tz)
+        opt_df = df[df["datetime"] < split].reset_index(drop=True)
+        oos_df = df[df["datetime"] >= split].reset_index(drop=True)
+        if len(opt_df) < 500 or len(oos_df) < 500:
+            print("ERROR: split leaves too few bars on one side.")
+            return 2
+
+    study = optuna.create_study(
+        direction="maximize",
+        sampler=TPESampler(seed=42),
+        study_name=f"{a.strategy}_gate",
+    )
+    study.optimize(
+        _make_objective(base_cfg, space, opt_df, bt_config, a.min_trades),
+        n_trials=a.trials,
+    )
+
+    print(f"best_params: {study.best_params}")
+    print(f"best_value (train Sharpe): {study.best_value:.4f}")
+
+    oos_m = {}
+    if oos_df is not None:
+        best_cfg = apply_params(base_cfg, study.best_params)
+        oos_m = _run_backtest(best_cfg, oos_df, bt_config)
+        print(
+            f"OOS metrics: sharpe={oos_m.get('sharpe_ratio', float('nan')):.4f} "
+            f"pf={oos_m.get('profit_factor', float('nan')):.4f} "
+            f"mdd={oos_m.get('max_drawdown_pct', float('nan')):.2f}% "
+            f"ret={oos_m.get('total_return_pct', float('nan')):.4f}% "
+            f"trades={oos_m.get('total_trades', 0):.0f}"
+        )
+
+    rg = rescoped_gate(study, oos_m)
+    verdict = "PASS" if rg["pass"] else "FAIL"
+    print(
+        f">>> RE-SCOPED GATE: {verdict} "
+        f"(a={rg['a']} b={rg['b']} c={rg['c']} | "
+        f"median_sharpe={rg['median_sharpe']:.2f} "
+        f"basin={rg['basin_frac']:.1%} n_valid={rg['n_valid']})"
+    )
+
+    # Head-to-head: run gated study and compare vs baseline.
+    if a.head_to_head and a.gate:
+        if oos_df is None:
+            print("ERROR: --head-to-head requires --holdout-split.")
+            return 2
+        gate_cfg = load_gate_config(a.gate)
+        full_df = pd.concat([opt_df, oos_df])
+        gate = _build_gate(gate_cfg, full_df)
+
+        study_gated = optuna.create_study(
+            direction="maximize",
+            sampler=TPESampler(seed=42),
+            study_name=f"{a.strategy}_gate_GATED",
+        )
+        study_gated.optimize(
+            _make_objective(
+                base_cfg, space, opt_df, bt_config, a.min_trades, gate=gate
+            ),
+            n_trials=a.trials,
+        )
+
+        baseline_oos = _run_backtest(
+            apply_params(base_cfg, study.best_params), oos_df, bt_config, gate=None
+        )
+        gated_oos = _run_backtest(
+            apply_params(base_cfg, study_gated.best_params),
+            oos_df,
+            bt_config,
+            gate=gate,
+        )
+
+        rg_gated = rescoped_gate(study_gated, gated_oos)
+        ok, delta = head_to_head_verdict(
+            baseline_oos, gated_oos, a.delta_sharpe, rg_gated["pass"]
+        )
+        print(
+            f"baseline OOS: sharpe={baseline_oos.get('sharpe_ratio', 0):.4f} "
+            f"mdd={baseline_oos.get('max_drawdown_pct', 0):.2f}%"
+        )
+        print(
+            f"gated    OOS: sharpe={gated_oos.get('sharpe_ratio', 0):.4f} "
+            f"mdd={gated_oos.get('max_drawdown_pct', 0):.2f}%"
+        )
+        print(
+            f">>> HEAD-TO-HEAD: {'PASS' if ok else 'FAIL'} "
+            f"(Δsharpe={delta:.3f} vs δ={a.delta_sharpe} | "
+            f"gated_rescoped_pass={rg_gated['pass']})"
+        )
+        return 0 if ok else 1
+
+    return 0 if rg["pass"] else 1
 
 
 if __name__ == "__main__":

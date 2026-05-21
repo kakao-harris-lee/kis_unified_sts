@@ -58,3 +58,15 @@ def test_head_to_head_requires_gated_gate_pass():
         baseline_oos=baseline, gated_oos=gated, delta_min=0.5,
         gated_gate_pass=False)
     assert ok is False
+
+
+def test_load_gate_config_empty_yaml(tmp_path):
+    # Empty YAML must fall back to all-defaults (no AttributeError on None.get).
+    y = tmp_path / "empty.yaml"
+    y.write_text("")
+    cfg = gfs.load_gate_config(str(y))
+    assert cfg.regime_percentile_max == 80.0
+    assert cfg.impact_score_max == 70
+    assert cfg.event_window_minutes == 15
+    assert cfg.require_overnight_us_direction is False
+    assert cfg.permissive_on_missing is True
