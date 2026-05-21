@@ -140,10 +140,7 @@ class BacktestEngine:
         # ATS 시뮬레이터 초기화
         self.ats_simulator = self.config.ats_simulator
         if self.config.ats_enabled and self.ats_simulator:
-            try:
-                logger.info(f"ATS simulation enabled: fill_rate={self.ats_simulator.ats_fill_rate:.1%}")
-            except (TypeError, ValueError):
-                logger.info("ATS simulation enabled")
+            logger.info(f"ATS simulation enabled: fill_rate={self.ats_simulator.ats_fill_rate:.1%}")
 
         # 상태 초기화
         self._reset()
@@ -222,52 +219,6 @@ class BacktestEngine:
 
         # 결과 생성
         return self._generate_result(data)
-
-    def on_bar(self, bar: dict[str, Any]) -> None:
-        """Public single-bar entry point: signal → gate → dispatch.
-
-        Minimal entry-dispatch path designed for unit testing the gate hook
-        without the full risk-management pipeline.  For production backtest
-        execution use run() which calls _process_bar() internally.
-        """
-        timestamp = bar["datetime"]
-        current_price = float(bar["close"])
-        code = str(bar.get("code", "DEFAULT") or "DEFAULT")
-        name = bar.get("name", code)
-        self._last_price_by_code[code] = current_price
-
-        # Obtain strategy signal
-        signal = self.strategy.on_bar(bar)
-
-        # Gate (spec 2026-05-21 P1-③ T4): strategy-agnostic regime/event filter.
-        # Backward-compatible: when self._gate is None this is a pure no-op.
-        if self._gate is not None and signal in (SignalType.BUY, SignalType.SELL):
-            direction = "long" if signal == SignalType.BUY else "short"
-            allow, _reason = self._gate.allow(
-                ts=timestamp, asset=code, signal_direction=direction)
-            if not allow:
-                signal = SignalType.HOLD
-
-        # Entry dispatch — only when no existing position for this code
-        if code not in self.positions:
-            if signal == SignalType.BUY:
-                self._open_position(
-                    code=code,
-                    name=name,
-                    side="BUY",
-                    price=current_price,
-                    timestamp=timestamp,
-                    bar=bar,
-                )
-            elif signal == SignalType.SELL:
-                self._open_position(
-                    code=code,
-                    name=name,
-                    side="SELL",
-                    price=current_price,
-                    timestamp=timestamp,
-                    bar=bar,
-                )
 
     def _process_bar(self, bar: dict[str, Any]):
         """바 데이터 처리"""
