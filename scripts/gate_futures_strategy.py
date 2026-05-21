@@ -55,10 +55,44 @@ def suggest_params(trial, space: dict) -> dict:
     return out
 
 
-def _run_backtest(cfg: dict, df, bt_config: BacktestConfig) -> dict:
+def load_gate_config(path: str):
+    """Load a RegimeGate YAML config into a GateConfig dataclass."""
+    from shared.strategy.gates.regime_gate import GateConfig
+
+    data = yaml.safe_load(Path(path).read_text())
+    return GateConfig(
+        regime_percentile_max=float(data.get("regime_percentile_max", 80.0)),
+        impact_score_max=int(data.get("impact_score_max", 70)),
+        event_window_minutes=int(data.get("event_window_minutes", 15)),
+        require_overnight_us_direction=bool(
+            data.get("require_overnight_us_direction", False)
+        ),
+        permissive_on_missing=bool(data.get("permissive_on_missing", True)),
+    )
+
+
+def head_to_head_verdict(
+    baseline_oos: dict,
+    gated_oos: dict,
+    delta_min: float,
+    gated_gate_pass: bool,
+) -> tuple[bool, float]:
+    """spec §8: PASS iff gated clears its own robust gate AND
+    OOS Sharpe improves by >= delta_min AND MDD does not worsen.
+    Returns (ok, delta_sharpe)."""
+    delta = gated_oos.get("sharpe_ratio", -99.0) - baseline_oos.get(
+        "sharpe_ratio", -99.0
+    )
+    mdd_ok = gated_oos.get("max_drawdown_pct", 1e9) <= baseline_oos.get(
+        "max_drawdown_pct", 1e9
+    )
+    return (bool(gated_gate_pass) and (delta >= delta_min) and mdd_ok, delta)
+
+
+def _run_backtest(cfg: dict, df, bt_config: BacktestConfig, gate=None) -> dict:
     strategy = StrategyFactory.create(cfg)
     adapter = BacktestStrategyAdapter(strategy, cfg)
-    engine = BacktestEngine(adapter, bt_config)
+    engine = BacktestEngine(adapter, bt_config, gate=gate)
     return engine.run(df.copy()).to_metrics_dict()
 
 
@@ -86,6 +120,24 @@ def main(argv=None) -> int:
     ap.add_argument("--trials", "-n", type=int, default=70)
     ap.add_argument("--holdout-split", "-H", default=None)
     ap.add_argument("--min-trades", "-M", type=int, default=50)
+    ap.add_argument(
+        "--gate",
+        default=None,
+        help="path to RegimeGate YAML; if set, the engine is "
+        "wrapped with the gate during the run",
+    )
+    ap.add_argument(
+        "--head-to-head",
+        action="store_true",
+        help="run baseline (no gate) then gated; require "
+        "Δ Sharpe >= --delta-sharpe AND no MDD worsening",
+    )
+    ap.add_argument(
+        "--delta-sharpe",
+        type=float,
+        default=0.5,
+        help="spec §8 head-to-head margin (default 0.5)",
+    )
     a = ap.parse_args(argv)
 
     base_cfg = ConfigLoader.load_strategy(a.asset, a.strategy)
@@ -153,7 +205,122 @@ def main(argv=None) -> int:
         f"median_sharpe={rg['median_sharpe']:.2f} "
         f"basin={rg['basin_frac']:.1%} n_valid={rg['n_valid']})"
     )
+
+    # Head-to-head: run gated study and compare vs baseline.
+    if a.head_to_head and a.gate:
+        gate_cfg = load_gate_config(a.gate)
+        full_df = pd.concat([opt_df, oos_df]) if oos_df is not None else opt_df
+        gate = _build_gate(gate_cfg, full_df)
+
+        def objective_gated(trial):
+            params = suggest_params(trial, space)
+            cfg = apply_params(base_cfg, params)
+            m = _run_backtest(cfg, opt_df, bt_config, gate=gate)
+            for k in (
+                "profit_factor",
+                "total_trades",
+                "win_rate",
+                "total_return_pct",
+                "max_drawdown_pct",
+            ):
+                trial.set_user_attr(k, float(m.get(k, 0.0)))
+            return objective_value(m, a.min_trades)
+
+        study_gated = optuna.create_study(
+            direction="maximize",
+            sampler=TPESampler(seed=42),
+            study_name=f"{a.strategy}_gate_GATED",
+        )
+        study_gated.optimize(objective_gated, n_trials=a.trials)
+
+        baseline_oos = _run_backtest(
+            apply_params(base_cfg, study.best_params), oos_df, bt_config, gate=None
+        )
+        gated_oos = _run_backtest(
+            apply_params(base_cfg, study_gated.best_params),
+            oos_df,
+            bt_config,
+            gate=gate,
+        )
+
+        rg_gated = rescoped_gate(study_gated, gated_oos)
+        ok, delta = head_to_head_verdict(
+            baseline_oos, gated_oos, a.delta_sharpe, rg_gated["pass"]
+        )
+        print(
+            f"baseline OOS: sharpe={baseline_oos.get('sharpe_ratio', 0):.4f} "
+            f"mdd={baseline_oos.get('max_drawdown_pct', 0):.2f}%"
+        )
+        print(
+            f"gated    OOS: sharpe={gated_oos.get('sharpe_ratio', 0):.4f} "
+            f"mdd={gated_oos.get('max_drawdown_pct', 0):.2f}%"
+        )
+        print(
+            f">>> HEAD-TO-HEAD: {'PASS' if ok else 'FAIL'} "
+            f"(Δsharpe={delta:.3f} vs δ={a.delta_sharpe} | "
+            f"gated_rescoped_pass={rg_gated['pass']})"
+        )
+        return 0 if ok else 1
+
     return 0 if rg["pass"] else 1
+
+
+class _CHInputs:
+    """Pre-loaded ClickHouse-backed inputs for RegimeGate (T5)."""
+
+    def __init__(self, vol_rows, event_rows, macro_map):
+        # vol_rows: sorted list of (asof_naive_utc, regime_percentile)
+        # event_rows: sorted list of (asof_naive_utc, impact_score)
+        # macro_map: dict[date, MacroSnapshot]
+        self._vol = vol_rows
+        self._events = event_rows
+        self._macro = macro_map
+
+    def latest_vol_at(self, ts):
+        import datetime as _dt  # noqa: F401
+
+        ts_n = ts.replace(tzinfo=None) if getattr(ts, "tzinfo", None) else ts
+        cand = [r for r in self._vol if r[0] <= ts_n]
+        return cand[-1] if cand else None
+
+    def events_within(self, ts, window_min):
+        import datetime as _dt
+
+        ts_n = ts.replace(tzinfo=None) if getattr(ts, "tzinfo", None) else ts
+        lo = ts_n - _dt.timedelta(minutes=window_min)
+        return [r for r in self._events if lo <= r[0] <= ts_n]
+
+    def macro_for(self, date):
+        snap = self._macro.get(date)
+        return getattr(snap, "sp500_change_pct", None) if snap else None
+
+
+def _build_gate(gate_cfg, df):
+    """Pre-load vol_forecasts / event_scores / macro_history for the df window,
+    construct a RegimeGate ready to use as engine `gate=`."""
+    from shared.backtest.macro_history import fetch_macro_history
+    from shared.db.client import get_clickhouse_client
+    from shared.db.config import ClickHouseConfig
+    from shared.strategy.gates.regime_gate import RegimeGate
+
+    start = df["datetime"].min().to_pydatetime()
+    end = df["datetime"].max().to_pydatetime()
+    start_n = start.replace(tzinfo=None) if getattr(start, "tzinfo", None) else start
+    end_n = end.replace(tzinfo=None) if getattr(end, "tzinfo", None) else end
+
+    cli = get_clickhouse_client(ClickHouseConfig.from_env())
+    vol = cli.execute(
+        "SELECT asof, regime_percentile FROM kospi.vol_forecasts "
+        "WHERE asof >= %(s)s AND asof < %(e)s ORDER BY asof",
+        {"s": start_n, "e": end_n},
+    )
+    ev = cli.execute(
+        "SELECT asof, impact_score FROM kospi.event_scores "
+        "WHERE asof >= %(s)s AND asof < %(e)s ORDER BY asof",
+        {"s": start_n, "e": end_n},
+    )
+    macro = fetch_macro_history(start.date(), end.date())
+    return RegimeGate(gate_cfg, _CHInputs(vol, ev, macro))
 
 
 if __name__ == "__main__":
