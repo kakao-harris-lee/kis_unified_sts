@@ -129,4 +129,19 @@ The first plan covers P0-③ + P1-③ only. P2/P3/P4 are *not* built here.
 
 ---
 
+## 13. Plan-time corrections (2026-05-21, from code extraction)
+
+Discovered while extracting exact code shapes for the plan; folded in so the plan is factually grounded. Cf. yesterday's §12.
+
+1. **The "block" path is `SignalType.HOLD`, NOT `signal_direction = NEUTRAL`.** `shared/backtest/engine.py:36-41` defines `SignalType{HOLD, BUY, SELL}`; there is no NEUTRAL. `signal_direction` (`"long"`/`"short"`) lives in `signal.metadata`, not as a top-level field on `Signal`. The §7 wording is amended: *block → force `signal = SignalType.HOLD` before the BUY/SELL dispatch.*
+2. **The gate-injection point is the ENGINE, not the adapter.** `shared/backtest/engine.py:326` calls `signal = self.strategy.on_bar(bar)`; the BUY/SELL dispatch follows at 331–360. Injecting the gate here keeps it strategy-agnostic (applies to ANY strategy without touching adapter or strategy code), simpler, and DRY. C4 in §6 is amended accordingly.
+3. **`forecast_pct` is annualized percent** (e.g. `30` means 30%), not a fraction or unit-pct. `shared/forecasting/volatility_har_rv.py:140`: `forecast_pct = sqrt(pred_rv * 252) * 100`. **`regime_percentile` is the empirical CDF position scaled 0–100** (line 149: `(self._rv_history < pred_rv).mean() * 100`). Gate thresholds in `regime_gate_default.yaml` use these natural units (e.g. `regime_percentile_max: 80.0` = block when predicted RV exceeds the 80th percentile of in-fit daily RV history).
+4. **`MacroSnapshot.sp500_change_pct` is a percentage, no precomputed direction.** Direction must be derived via `math.copysign(1.0, sp500_change_pct)` (same pattern Setup A uses at `shared/decision/setups/gap_reversion.py:133`).
+5. **`vol_forecasts` TTL is 90 DAY** (`infra/clickhouse/migrations/V6__forecast_tables.sql`). For any backtest window older than ~90 days, live-emitted vol_forecasts have been TTL-evicted → C2 (historical HAR-RV recompute) is **required**, not optional, for the bb_reversion_15m gate-test data range (2025-07-01 → 2026-04-23). The recompute writes rows with `model_version = "har_rv_v1_recompute"`, distinct from live `"har_rv_v1"` (§9 isolation rule preserved).
+6. **DDL location** for `vol_forecasts` / `event_scores` is `infra/clickhouse/migrations/V6__forecast_tables.sql`, **not** `shared/db/client.py::SCHEMAS`. The plan's table-existence assumptions reference the migration file.
+
+Outside the spec: **the daily RV input the HAR-RV `fit()` expects is a `pd.Series` keyed by date** (`shared/forecasting/volatility_har_rv.py:59`), constructible from `kospi.kospi200f_1m` minute candles via `shared.forecasting.realized_variance.daily_rv_series(...)` (cf. `scripts/forecasting/refit_har_rv.py:52-65`). The plan's recompute task wires this end-to-end.
+
+---
+
 *Brainstorm note: per operator standing instruction this session, scoping calls — re-scoping Approach ③'s first deliverable from the original §3 tick/basis examples to the available-B-state regime/event gate; deferring ②/③' as triggered later phases; mandating head-to-head over baseline; permissive degrade on missing data — were made without one-at-a-time Q&A. Operator redirects at this spec-review gate.*
