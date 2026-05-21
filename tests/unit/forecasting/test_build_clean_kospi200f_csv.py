@@ -82,3 +82,35 @@ def test_write_csv_schema(tmp_path):
     assert r[0]["datetime"] == "2025-11-17 09:00:00"
     assert float(r[0]["close"]) == 580.2
     assert int(r[0]["volume"]) == 100
+
+
+def test_select_dominant_with_force_keeps_only_forced_code():
+    # New helper: filter_to_single_code(rows, "A01603") keeps only A01603 rows
+    d1 = dt.datetime(2025, 11, 17, 9, 0)
+    d2 = dt.datetime(2025, 11, 17, 9, 1)
+    rows = [
+        _row("A01603", d1, 580.0, 600),
+        _row("A01606", d1, 600.0, 100),
+        _row("A01603", d2, 580.5, 400),
+        _row("A01606", d2, 600.5, 100),
+    ]
+    out = bck.filter_to_single_code(rows, "A01603")
+    assert len(out) == 2
+    assert all(r[0] == "A01603" for r in out)
+
+
+def test_select_dominant_with_force_drops_non_matching_days():
+    # Days that don't have the forced code at all are dropped
+    d_has = dt.datetime(2025, 11, 17, 9, 0)
+    d_missing = dt.datetime(2025, 11, 14, 9, 0)
+    rows = [
+        _row("A01603", d_has, 580.0, 600),
+        _row("A01609", d_missing, 506.8, 173),  # this day has no A01603 → dropped
+    ]
+    out = bck.filter_to_single_code(rows, "A01603")
+    assert len(out) == 1
+    assert out[0][1].date() == dt.date(2025, 11, 17)
+
+
+def test_filter_to_single_code_empty_returns_empty():
+    assert bck.filter_to_single_code([], "A01603") == []

@@ -57,6 +57,14 @@ def select_dominant_per_day(rows: list[tuple]) -> list[tuple]:
     return [r for r in rows if dominant_by_day.get(r[1].date()) == r[0]]
 
 
+def filter_to_single_code(rows: list[tuple], code: str) -> list[tuple]:
+    """Keep ONLY rows from the specified contract code. Days with no data
+    from that code are dropped (no fallback). This is the safer alternative
+    to dominant-volume selection when you know which near-month is the
+    legitimate active contract for the period."""
+    return [r for r in rows if r[0] == code]
+
+
 def write_csv(out_path: Path, rows: list[tuple]) -> int:
     """Write OHLCV rows in the schema the gate runner / backtest CSV loader expects.
 
@@ -86,6 +94,10 @@ def main(argv=None) -> int:
         help="YYYY-MM-DD (inclusive); fetch is [start, end+1day) internally",
     )
     ap.add_argument("--out", required=True, help="output CSV path")
+    ap.add_argument(
+        "--single-code", default=None,
+        help="if set, write ONLY this contract code's bars (bypasses dominant-"
+             "volume selection); days lacking this code's data are dropped")
     a = ap.parse_args(argv)
     s = dt.date.fromisoformat(a.start)
     e_inclusive = dt.date.fromisoformat(a.end)
@@ -105,11 +117,15 @@ def main(argv=None) -> int:
     )
 
     raw = _fetch_a01_rows(client, s, e_exclusive)
-    clean = select_dominant_per_day(raw)
+    if a.single_code:
+        clean = filter_to_single_code(raw, a.single_code)
+    else:
+        clean = select_dominant_per_day(raw)
     n = write_csv(Path(a.out), clean)
+    mode = f"single_code={a.single_code}" if a.single_code else "dominant-volume"
     print(
         f"wrote {n} rows to {a.out}  "
-        f"(window {s} → {e_inclusive} inclusive; "
+        f"(mode={mode}; window {s} → {e_inclusive}; "
         f"{len(raw)} raw A01* rows seen)"
     )
     return 0
