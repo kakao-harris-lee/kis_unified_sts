@@ -7,12 +7,20 @@ kospi.kospi200f_1m), then applies the frozen coefficients to every
 tagged model_version='har_rv_v1_recompute' so they are never confused
 with live publishes (har_rv_v1). Look-ahead-safe: train_end < test_start
 is enforced.
+
+NOTE: this tool is not idempotent — vol_forecasts uses plain MergeTree
+(no dedup key). Re-running the same window inserts duplicates. To
+re-run cleanly:
+  ALTER TABLE kospi.vol_forecasts DELETE
+   WHERE model_version = 'har_rv_v1_recompute'
+     AND asof >= '<test_start>' AND asof < '<test_end+1>';
 """
 from __future__ import annotations
 
 import argparse
 import datetime as dt
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 import pandas as pd
@@ -70,10 +78,15 @@ def _insert_rows(client, rows: list[tuple]) -> int:
     return len(rows)
 
 
+def _resolve(cc, asof):
+    """Resolve current_close to a float — accepts either a float or a callable."""
+    return cc(asof) if callable(cc) else cc
+
+
 def recompute_and_insert(
     train_rv: pd.Series,
     test_minutes: pd.DatetimeIndex,
-    current_close: float,
+    current_close: float | Callable[[dt.datetime], float],
     client,
 ) -> int:
     """Fit on train_rv, forecast at every test_minutes timestamp, insert.
@@ -81,7 +94,10 @@ def recompute_and_insert(
     Args:
         train_rv: daily realized variance Series, indexed by date objects.
         test_minutes: timestamps at which to produce forecasts.
-        current_close: most recent close price (for ATR-equivalent calc).
+        current_close: close price for ATR-equivalent calc. Either a float
+            (applied to every timestamp — simple but biased over long windows)
+            or a callable taking the asof datetime and returning the per-
+            timestamp close (preferred for multi-day OOS windows).
         client: ClickHouse client (None in tests — _insert_rows handles it).
 
     Returns:
@@ -94,7 +110,7 @@ def recompute_and_insert(
         asof = ts.to_pydatetime() if hasattr(ts, "to_pydatetime") else ts
         if getattr(asof, "tzinfo", None) is not None:
             asof = asof.replace(tzinfo=None)
-        vf = forecaster.forecast(asof, current_close=current_close)
+        vf = forecaster.forecast(asof, current_close=_resolve(current_close, asof))
         rows.append((
             asof,
             vf.horizon_minutes,
@@ -114,7 +130,7 @@ def main(argv=None) -> int:
     ap.add_argument("--train-start", required=True, help="YYYY-MM-DD (inclusive)")
     ap.add_argument("--train-end", required=True, help="YYYY-MM-DD (exclusive)")
     ap.add_argument("--test-start", required=True, help="YYYY-MM-DD (inclusive)")
-    ap.add_argument("--test-end", required=True, help="YYYY-MM-DD (exclusive)")
+    ap.add_argument("--test-end", required=True, help="YYYY-MM-DD (inclusive)")
     ap.add_argument("--cadence-minutes", type=int, default=15,
                     help="Forecast cadence in minutes (default: 15)")
     a = ap.parse_args(argv)
@@ -124,6 +140,9 @@ def main(argv=None) -> int:
     xs_d = dt.date.fromisoformat(a.test_start)
     xe_d = dt.date.fromisoformat(a.test_end)
     _validate_split(te_d, xs_d)
+    if xe_d < xs_d:
+        print(f"ERROR: test window inverted: test_end={xe_d} < test_start={xs_d}")
+        return 2
 
     from clickhouse_driver import Client
 
@@ -149,10 +168,29 @@ def main(argv=None) -> int:
         end=f"{xe_d.isoformat()} 15:30",
         freq=f"{a.cadence_minutes}min",
     )
-    test_df = _fetch_minute_candles(client, xs_d, xe_d)
-    last_close = float(test_df["close"].iloc[-1]) if not test_df.empty else 380.0
+    test_df = _fetch_minute_candles(client, xs_d, xe_d + dt.timedelta(days=1))
 
-    n = recompute_and_insert(train_rv, test_minutes, last_close, client)
+    current_close_arg: float | Callable[[dt.datetime], float]
+    if not test_df.empty:
+        # _fetch_minute_candles returns a UTC-DatetimeIndex df; strip tz for
+        # tz-naive asof lookups (matches ClickHouse DateTime64 storage).
+        tdf = test_df.copy()
+        tdf.index = tdf.index.tz_convert(None)
+        daily_close = tdf["close"].resample("1D").last().ffill()
+        fallback_close = float(test_df["close"].iloc[-1])
+
+        def close_for(asof: dt.datetime) -> float:
+            try:
+                v = daily_close.asof(pd.Timestamp(asof))
+                return float(v) if pd.notna(v) and float(v) > 0 else fallback_close
+            except Exception:
+                return fallback_close
+
+        current_close_arg = close_for
+    else:
+        current_close_arg = 380.0
+
+    n = recompute_and_insert(train_rv, test_minutes, current_close_arg, client)
     print(f"wrote {n} vol_forecasts rows (model_version={RECOMPUTE_MODEL_VERSION})")
     return 0
 
