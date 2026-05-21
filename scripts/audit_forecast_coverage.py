@@ -20,7 +20,7 @@ from shared.db.config import ClickHouseConfig
 
 
 def _get_client():
-    return get_clickhouse_client(ClickHouseConfig.from_env())
+    return get_clickhouse_client(ClickHouseConfig.from_env()).get_sync_client()
 
 
 def _ch_naive(d):

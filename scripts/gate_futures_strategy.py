@@ -155,7 +155,7 @@ def _build_gate(gate_cfg, df):
     start_n = start.replace(tzinfo=None) if getattr(start, "tzinfo", None) else start
     end_n = end.replace(tzinfo=None) if getattr(end, "tzinfo", None) else end
 
-    cli = get_clickhouse_client(ClickHouseConfig.from_env())
+    cli = get_clickhouse_client(ClickHouseConfig.from_env()).get_sync_client()
     vol = cli.execute(
         "SELECT asof, regime_percentile FROM kospi.vol_forecasts "
         "WHERE asof >= %(s)s AND asof < %(e)s ORDER BY asof",
