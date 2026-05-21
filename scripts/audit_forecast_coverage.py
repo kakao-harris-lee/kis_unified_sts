@@ -80,7 +80,12 @@ def main(argv=None) -> int:
         if cov < a.min_coverage:
             print("VERDICT: insufficient — run Task 2 historical recompute")
             return 1
-    print("VERDICT: ok")
+        print("VERDICT: ok")
+        return 0
+    print(
+        "WARNING: --expected-trading-minutes not set; coverage threshold "
+        "skipped (counts above are raw)")
+    print("VERDICT: ok (no-check)")
     return 0
 
 

@@ -43,12 +43,39 @@ def test_coverage_recompute_only(monkeypatch):
     assert r["event_total"] == 5
 
 
-def test_main_prints_verdict(capsys, monkeypatch):
+def test_main_ok_when_no_check(capsys, monkeypatch):
     monkeypatch.setattr(
         afc, "_get_client",
         lambda: _FakeClient([(60, 30, 30)], [(2,)]))
     rc = afc.main(["--start", "2026-04-01", "--end", "2026-04-02"])
     out = capsys.readouterr().out
+    assert rc == 0
+    assert "no-check" in out
     assert "vol_forecasts" in out
-    assert "event_scores" in out
-    assert rc in (0, 1)
+
+
+def test_main_insufficient_returns_1(capsys, monkeypatch):
+    # 60 vol rows / 1000 expected = 6% << 90% min → exit 1
+    monkeypatch.setattr(
+        afc, "_get_client",
+        lambda: _FakeClient([(60, 60, 0)], [(0,)]))
+    rc = afc.main([
+        "--start", "2026-04-01", "--end", "2026-04-02",
+        "--expected-trading-minutes", "1000"])
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "insufficient" in out
+
+
+def test_main_ok_when_above_threshold(capsys, monkeypatch):
+    # 60 / 50 = 120% well above 90% → exit 0 / "ok"
+    monkeypatch.setattr(
+        afc, "_get_client",
+        lambda: _FakeClient([(60, 60, 0)], [(0,)]))
+    rc = afc.main([
+        "--start", "2026-04-01", "--end", "2026-04-02",
+        "--expected-trading-minutes", "50"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "VERDICT: ok" in out
+    assert "no-check" not in out
