@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
-from services.dashboard.routes.trading import _normalize_asset_class
+from services.dashboard.routes.trading import _normalize_asset_class, _target_assets
 from shared.exceptions import InfrastructureError
 
 
@@ -36,6 +36,7 @@ class TradeResponse(BaseModel):
     """Trade response model."""
 
     id: str
+    asset_class: str
     symbol: str
     side: str
     quantity: int
@@ -81,27 +82,28 @@ class StrategyPerformance(BaseModel):
     avg_pnl: float
 
 
-def _get_reader():
+def _get_reader(asset_class: str | None = None):
     from shared.streaming.trading_state import TradingStateReader
 
-    asset = os.environ.get("TRADING_ASSET_CLASS", "stock")
+    asset = asset_class or os.environ.get("TRADING_ASSET_CLASS", "stock")
     return TradingStateReader(asset)
 
 
-def _load_trades() -> list[dict]:
+def _load_trades(asset_class: str) -> list[dict]:
     """Load all trades from Redis."""
     try:
-        reader = _get_reader()
+        reader = _get_reader(asset_class)
         return reader.get_trades(start=0, count=500)
     except InfrastructureError:
         # Redis unavailable - return empty list
         return []
 
 
-def _to_trade_response(t: dict) -> TradeResponse | None:
+def _to_trade_response(t: dict, asset_class: str) -> TradeResponse | None:
     try:
         return TradeResponse(
             id=t.get("id", ""),
+            asset_class=asset_class,
             symbol=t.get("symbol", ""),
             side=t.get("side", "long"),
             quantity=int(t.get("quantity", 0)),
@@ -127,10 +129,15 @@ async def get_trades(
     asset_class: str = Query(default="futures"),
 ):
     """Get list of trades with optional filters."""
-    _normalize_asset_class(asset_class)
-    raw = _load_trades()
-    trades = [_to_trade_response(t) for t in raw]
+    asset = _normalize_asset_class(asset_class)
+    raw_by_asset = [
+        (target, trade)
+        for target in _target_assets(asset)
+        for trade in _load_trades(target)
+    ]
+    trades = [_to_trade_response(t, target) for target, t in raw_by_asset]
     trades = [t for t in trades if t is not None]
+    trades.sort(key=lambda t: t.exit_time, reverse=True)
 
     if strategy:
         trades = [t for t in trades if t.strategy == strategy]
@@ -148,8 +155,11 @@ async def get_trades(
 @router.get("/statistics", response_model=TradeStatistics)
 async def get_trade_statistics():
     """Get overall trade statistics."""
-    raw = _load_trades()
-    trades = [_to_trade_response(t) for t in raw]
+    raw = _load_trades(os.environ.get("TRADING_ASSET_CLASS", "stock"))
+    trades = [
+        _to_trade_response(t, os.environ.get("TRADING_ASSET_CLASS", "stock"))
+        for t in raw
+    ]
     trades = [t for t in trades if t is not None]
 
     if not trades:
@@ -187,8 +197,9 @@ async def get_trade_statistics():
 @router.get("/by-strategy", response_model=list[StrategyPerformance])
 async def get_trades_by_strategy():
     """Get trade performance grouped by strategy."""
-    raw = _load_trades()
-    trades = [_to_trade_response(t) for t in raw]
+    asset = os.environ.get("TRADING_ASSET_CLASS", "stock")
+    raw = _load_trades(asset)
+    trades = [_to_trade_response(t, asset) for t in raw]
     trades = [t for t in trades if t is not None]
 
     strategy_trades: dict[str, list[TradeResponse]] = {}
@@ -323,11 +334,13 @@ async def get_db_rl_statistics(
         merged["max_loss"] = 0 if max_loss == float("inf") else max_loss
         return merged
     except InfrastructureError as e:
-        raise HTTPException(status_code=503, detail=f"ClickHouse unavailable: {e}")
+        raise HTTPException(
+            status_code=503, detail=f"ClickHouse unavailable: {e}"
+        ) from e
     except Exception as e:
         raise HTTPException(
             status_code=503, detail=f"Database error: {type(e).__name__}"
-        )
+        ) from e
 
 
 @router.get("/fills")
@@ -418,9 +431,7 @@ def _build_rl_trades_sql(
     where_sql = f"WHERE {' AND '.join(where)}" if where else ""
     # Normalize the SELECT so both tables expose the same column set.
     # `asset_class` is materialized as a literal when missing.
-    asset_select = (
-        "asset_class" if has_ac else f"'{asset_class}' AS asset_class"
-    )
+    asset_select = "asset_class" if has_ac else f"'{asset_class}' AS asset_class"
     sql = (
         f"SELECT id, {asset_select}, code, name, strategy, side, "
         f"entry_date, entry_price, exit_date, exit_price, quantity, "
@@ -465,8 +476,10 @@ async def get_db_rl_trades(
         merged.sort(key=lambda r: r.get("exit_date") or "", reverse=True)
         return merged[:limit]
     except InfrastructureError as e:
-        raise HTTPException(status_code=503, detail=f"ClickHouse unavailable: {e}")
+        raise HTTPException(
+            status_code=503, detail=f"ClickHouse unavailable: {e}"
+        ) from e
     except Exception as e:
         raise HTTPException(
             status_code=503, detail=f"Database error: {type(e).__name__}"
-        )
+        ) from e

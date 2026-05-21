@@ -21,7 +21,7 @@ export default function FillsListCompact() {
     queryKey: ['fills', selectedAsset, 'compact'],
     queryFn: () =>
       fillsApi.getRecent({ asset_class: selectedAsset, limit: MAX_ITEMS }).then((r) => r.data),
-    refetchInterval: 5000,
+    refetchInterval: 15000,
   })
 
   return (

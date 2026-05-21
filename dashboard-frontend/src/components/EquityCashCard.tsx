@@ -33,7 +33,7 @@ export default function EquityCashCard() {
     queryKey: ['trading-status-account', selectedAsset],
     queryFn: () =>
       tradingApi.getStatus({ asset_class: selectedAsset }).then((r) => r.data),
-    refetchInterval: 5000,
+    refetchInterval: 15000,
   })
 
   if (isLoading) {

@@ -3,6 +3,7 @@
 Serves the React SPA frontend and provides API endpoints for trading data.
 The React app is built from dashboard-frontend/ and served as static files.
 """
+
 from __future__ import annotations
 
 import logging
@@ -10,9 +11,8 @@ import os
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
-from fastapi import FastAPI
+from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -25,10 +25,12 @@ logger = logging.getLogger(__name__)
 # React SPA build output directory
 # Docker: /app/static (copied from build stage)
 # Local dev: dashboard-frontend/dist (after bun run build)
-_STATIC_DIR = Path(os.environ.get(
-    "DASHBOARD_STATIC_DIR",
-    "/app/static" if Path("/app/static").exists() else "dashboard-frontend/dist",
-))
+_STATIC_DIR = Path(
+    os.environ.get(
+        "DASHBOARD_STATIC_DIR",
+        "/app/static" if Path("/app/static").exists() else "dashboard-frontend/dist",
+    )
+)
 
 # OpenAPI tags for documentation organization
 OPENAPI_TAGS = [
@@ -62,8 +64,8 @@ OPENAPI_TAGS = [
 def create_app(
     title: str = "KIS Unified Trading Dashboard",
     debug: bool = False,
-    require_auth: Optional[bool] = None,
-    api_key: Optional[str] = None,
+    require_auth: bool | None = None,
+    api_key: str | None = None,
     rate_limit: int = 0,
     rate_limit_window: int = 60,
 ) -> FastAPI:
@@ -187,8 +189,6 @@ def create_app(
 
 def _register_routes(app: FastAPI) -> None:
     """Register API routes and React SPA static file serving."""
-    from fastapi import WebSocket
-
     from services.dashboard.routes import (
         health,
         metrics,
@@ -226,7 +226,9 @@ def _register_routes(app: FastAPI) -> None:
     index_html = static_dir / "index.html"
 
     if assets_dir.exists():
-        app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="static-assets")
+        app.mount(
+            "/assets", StaticFiles(directory=str(assets_dir)), name="static-assets"
+        )
         logger.info(f"Serving React SPA assets from {assets_dir}")
 
     if index_html.exists():

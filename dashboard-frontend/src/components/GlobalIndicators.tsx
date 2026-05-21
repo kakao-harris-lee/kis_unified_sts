@@ -14,7 +14,7 @@ export default function GlobalIndicators() {
   const { data } = useQuery<HealthSummary>({
     queryKey: ['health-summary', selectedAsset],
     queryFn: () => healthApi.getSummary({ asset_class: selectedAsset }).then((r) => r.data),
-    refetchInterval: 5000,
+    refetchInterval: 15000,
   })
 
   if (!data) {
