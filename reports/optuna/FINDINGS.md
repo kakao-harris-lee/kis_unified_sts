@@ -208,3 +208,21 @@ on the williams_r family is exhausted for KOSPI200 futures → spec
 §9 trigger to Approach ③ (microstructure / cross-asset, new spec). Tool:
 `scripts/gate_futures_strategy.py` (shared.backtest.robust_gate). Full report:
 `reports/optuna/WILLIAMS_R_15M_GATE.md`.
+
+---
+
+## bb_reversion_15m × RegimeGate — head-to-head (2026-05-21): BLOCKED (data-infrastructure)
+
+T7 head-to-head NOT executed. The gate's data sources can't supply meaningful
+inputs over the test window: `kospi.vol_forecasts` is empty for 2026-02-01..04-24
+(TTL eviction); the historical HAR-RV recompute (`scripts/forecasting/recompute_har_rv_historical.py`)
+cannot fit because the source `kospi.kospi200f_1m` minute-bar table has chronic
+outlier corruption (23/152 days > 5× median daily-RV; max ≈ 161× median →
+implied annualized vol ≈ 1258%, physically impossible). `kospi.event_scores`
+has zero rows for all time. **Approach ③ P1 cannot be decided until the
+`kospi200f_1m` data quality is investigated** — chiefly Aug 5, Sep 25/30,
+Oct 10/27/30, Nov 13/14/21 in 2025. Full report:
+`reports/optuna/BB_REVERSION_15M_REGIME_GATE.md`. P0+P1 infrastructure
+(audit, recompute, RegimeGate, engine hook, gate runner, configs) is built
+and tested (152 unit tests pass) and remains ready to use once the data
+layer is repaired.
