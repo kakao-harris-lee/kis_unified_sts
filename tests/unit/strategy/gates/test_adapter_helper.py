@@ -103,14 +103,25 @@ def test_log_failure_does_not_propagate(monkeypatch):
     assert blocked is False  # verdict preserved
 
 
-def test_signal_direction_falls_back_to_long_when_missing():
-    """If decision_signal has no metadata/side, defaults to 'long'."""
-    from shared.strategy.gates.adapter_helper import apply_regime_gate
+def test_signal_direction_falls_back_to_long_when_missing(monkeypatch):
+    """When decision_signal has no metadata['signal_direction'] and no .side,
+    apply_regime_gate uses 'long' as the default direction passed to the gate
+    AND logged for counterfactual review."""
+    from shared.strategy.gates import adapter_helper
+    monkeypatch.setattr(adapter_helper, "LiveVolInputs",
+                        lambda **_kw: MagicMock(
+                            latest_vol_at=MagicMock(return_value=None),
+                            events_within=MagicMock(return_value=[]),
+                            macro_for=MagicMock(return_value=None)))
+    logged_rows = []
+    monkeypatch.setattr(adapter_helper, "_log_decision",
+                        lambda **kw: logged_rows.append(kw))
     sig = MagicMock()
-    sig.metadata = None  # no metadata
-    sig.side = None  # no side
-    # Use gate_cfg=None for fast no-op path (we just want to verify no crash)
-    blocked = apply_regime_gate(
-        gate_cfg=None, decision_signal=sig, context=_ctx(),
+    sig.metadata = {}      # no signal_direction key
+    sig.side = None        # no side
+    blocked = adapter_helper.apply_regime_gate(
+        gate_cfg=_cfg(), decision_signal=sig, context=_ctx(),
         strategy_name="x", redis=MagicMock(), ch_client=MagicMock())
+    # Permissive allow (no vol data); the direction must have been 'long'
     assert blocked is False
+    assert logged_rows[0]["signal_direction"] == "long"
