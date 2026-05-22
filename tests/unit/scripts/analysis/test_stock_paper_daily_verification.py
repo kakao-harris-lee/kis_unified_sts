@@ -4,7 +4,14 @@ import os
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
+import pytest
+
 import scripts.analysis.stock_paper_daily_verification as mod
+
+
+@pytest.fixture(autouse=True)
+def _market_open(monkeypatch):
+    monkeypatch.setattr(mod, "_is_market_open_now", lambda: True)
 
 
 def _config(**overrides):
@@ -249,6 +256,60 @@ def test_non_trading_day_skip_can_be_disabled():
     assert "fresh_ratio_below_target" in codes
 
 
+def test_after_market_close_skips_intraday_runtime_gates(monkeypatch):
+    monkeypatch.setattr(mod, "_is_market_open_now", lambda: False)
+    cfg = _config()
+    metrics = mod.TradeMetrics(
+        trade_count=5,
+        winning_trades=3,
+        losing_trades=2,
+        win_rate_pct=60.0,
+        monthly_expected_return_pct=12.0,
+        max_drawdown_pct=3.0,
+        equity_slope_krw_per_trade=1000.0,
+        equity_is_upward=True,
+    )
+
+    issues = mod.evaluate_report(
+        cfg,
+        metrics,
+        _redis(
+            state="stopped",
+            status_age_seconds=3600.0,
+            data_provider={},
+            daily_signal_count=1,
+        ),
+    )
+
+    codes = {issue.code for issue in issues}
+    assert "runtime_not_running" not in codes
+    assert "redis_status_stale" not in codes
+    assert "fresh_ratio_below_target" not in codes
+
+
+def test_market_open_stopped_runtime_fails(monkeypatch):
+    monkeypatch.setattr(mod, "_is_market_open_now", lambda: True)
+    cfg = _config()
+    metrics = mod.TradeMetrics(
+        trade_count=5,
+        winning_trades=3,
+        losing_trades=2,
+        win_rate_pct=60.0,
+        monthly_expected_return_pct=12.0,
+        max_drawdown_pct=3.0,
+        equity_slope_krw_per_trade=1000.0,
+        equity_is_upward=True,
+    )
+
+    issues = mod.evaluate_report(
+        cfg,
+        metrics,
+        _redis(state="stopped", data_provider={}),
+    )
+
+    assert "runtime_not_running" in {issue.code for issue in issues}
+
+
 def test_daily_strategy_watchlist_can_satisfy_trade_target_gate():
     cfg = _config()
     metrics = mod.TradeMetrics(
@@ -313,6 +374,45 @@ def test_active_daily_watchlist_reports_candidate_count():
     assert report.active_daily_candidate_count == 7
     assert "active_daily_watchlist_missing" not in {
         issue.code for issue in report.active_issues
+    }
+
+
+def test_daily_signal_zero_is_warn_when_active_daily_candidates_are_empty():
+    cfg = _config(min_closed_trades_for_metric_gate=5)
+    report = mod.build_report(
+        config=cfg,
+        report_date=date(2026, 5, 16),
+        rows=[_trade(i, -100_000, strategy="momentum_breakout") for i in range(1, 6)],
+        redis_snapshot=_redis(
+            daily_signal_count=0,
+            daily_strategy_counts={"pattern_pullback": 0},
+            daily_strategy_candidate_count=0,
+        ),
+        active_strategy_names=["pattern_pullback", "williams_r"],
+        active_daily_strategy_names=["pattern_pullback"],
+    )
+
+    signal_issue = next(
+        issue for issue in report.issues if issue.code == "daily_signals_below_target"
+    )
+    assert signal_issue.severity == "WARN"
+    assert report.verdict == "WARN"
+    assert "active_daily_no_candidates" in {
+        issue.code for issue in report.active_issues
+    }
+
+
+def test_candidate_coverage_reports_missing_samples():
+    coverage = mod._candidate_coverage(
+        ["005930", "000660", "999999", "005930"],
+        {"005930", "000660"},
+    )
+
+    assert coverage == {
+        "total": 3,
+        "covered": 2,
+        "coverage_ratio": 0.6667,
+        "missing_sample": ["999999"],
     }
 
 

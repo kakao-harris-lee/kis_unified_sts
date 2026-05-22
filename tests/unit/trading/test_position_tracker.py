@@ -1,6 +1,11 @@
 """Tests for services/trading/position_tracker.py"""
 
+from datetime import UTC, datetime
+from unittest.mock import MagicMock
+
 import pytest
+
+from shared.models.position import Position, PositionSide
 
 
 class TestPositionTrackerConfig:
@@ -181,6 +186,86 @@ class TestPositionTracker:
 
         # Non-existent
         assert tracker.get_position("nonexistent") is None
+
+    def test_db_datetime_converts_aware_values_to_naive_utc(self):
+        """ClickHouse DateTime rows should use stable naive UTC keys."""
+        from services.trading.position_tracker import PositionTracker
+
+        aware = datetime(2026, 5, 22, 11, 42, 52, tzinfo=UTC)
+
+        assert PositionTracker._db_datetime(aware) == datetime(
+            2026, 5, 22, 11, 42, 52
+        )
+
+    @pytest.mark.asyncio
+    async def test_reconcile_closes_duplicate_entry_date_rows(self):
+        """Same id/code with a different entry_date is a stale ClickHouse duplicate."""
+        from services.trading.position_tracker import PositionTracker
+
+        tracker = PositionTracker()
+        position = Position(
+            id="broker_stock_001740_long",
+            code="001740",
+            name="SK네트웍스",
+            side=PositionSide.LONG,
+            quantity=238,
+            entry_price=7262.16,
+            entry_time=datetime(2026, 5, 22, 11, 42, 52, tzinfo=UTC),
+            current_price=8430.0,
+            strategy="external",
+        )
+        tracker.add_recovered_position(position)
+
+        client = MagicMock()
+        client.execute.side_effect = [
+            [
+                (
+                    "broker_stock_001740_long",
+                    "001740",
+                    "SK네트웍스",
+                    datetime(2026, 5, 22, 11, 42, 52),
+                    7262.16,
+                    238,
+                    "external",
+                    "KRX",
+                    0.0,
+                    8430.0,
+                    "survival",
+                    "long",
+                    0.003,
+                ),
+                (
+                    "broker_stock_001740_long",
+                    "001740",
+                    "SK네트웍스",
+                    datetime(2026, 5, 22, 20, 42, 52),
+                    7262.16,
+                    238,
+                    "external",
+                    "KRX",
+                    0.0,
+                    8430.0,
+                    "survival",
+                    "long",
+                    0.003,
+                ),
+            ],
+            None,
+            None,
+        ]
+        ch = MagicMock()
+        ch.get_sync_client.return_value = client
+        tracker._get_db_client = MagicMock(return_value=(ch, "market"))
+
+        result = await tracker.reconcile_open_positions_to_db()
+
+        assert result == {"open_saved": 1, "closed_orphans": 1}
+        close_rows = client.execute.call_args_list[1].args[1]
+        open_rows = client.execute.call_args_list[2].args[1]
+        assert close_rows[0][0] == "broker_stock_001740_long"
+        assert close_rows[0][3] == datetime(2026, 5, 22, 20, 42, 52)
+        assert close_rows[0][11] == 0
+        assert open_rows[0][3] == datetime(2026, 5, 22, 11, 42, 52)
 
     def test_get_positions_by_symbol(self):
         """Test getting positions by symbol"""

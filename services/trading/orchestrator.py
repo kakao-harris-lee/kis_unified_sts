@@ -351,6 +351,26 @@ def _env_bool(name: str, default: bool) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _env_int(name: str, default: int) -> int:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return default
+
+
+def _env_float(name: str, default: float) -> float:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    try:
+        return float(str(value).strip())
+    except (TypeError, ValueError):
+        return default
+
+
 def _risk_params_for_runtime_capital(
     risk_params: dict[str, Any], runtime_initial_capital: float
 ) -> dict[str, Any]:
@@ -440,6 +460,9 @@ class TradingConfig:
     regime_exclude_position_only_symbols: bool = True
     regime_require_daily_indicators: bool = True
     regime_require_mfi_symbols: bool = True
+    regime_min_mfi_symbols: int = 8
+    regime_min_mfi_coverage_ratio: float = 0.5
+    regime_low_confidence_bear_fallback: str = "SIDEWAYS_DOWN"
 
     # Regime performance tracking
     regime_performance_tracking_enabled: bool = False
@@ -494,6 +517,12 @@ class TradingConfig:
                 raise TypeError(
                     f"{attr_name} must be bool, got {type(getattr(self, attr_name))}"
                 )
+        if self.regime_min_mfi_symbols < 1:
+            raise ValueError("regime_min_mfi_symbols must be >= 1")
+        if not (0.0 <= self.regime_min_mfi_coverage_ratio <= 1.0):
+            raise ValueError("regime_min_mfi_coverage_ratio must be in [0, 1]")
+        if not self.regime_low_confidence_bear_fallback:
+            raise ValueError("regime_low_confidence_bear_fallback must be non-empty")
 
         if self.regime_detection_mode not in ("simple", "adaptive", "hmm"):
             raise ValueError(
@@ -563,6 +592,9 @@ class TradingConfig:
         regime_exclude_position_only_symbols: bool | None = None,
         regime_require_daily_indicators: bool | None = None,
         regime_require_mfi_symbols: bool | None = None,
+        regime_min_mfi_symbols: int | None = None,
+        regime_min_mfi_coverage_ratio: float | None = None,
+        regime_low_confidence_bear_fallback: str | None = None,
     ) -> TradingConfig:
         """주식용 설정"""
         require_daily_indicators = (
@@ -605,6 +637,21 @@ class TradingConfig:
             if regime_require_mfi_symbols is None
             else regime_require_mfi_symbols
         )
+        min_mfi_symbols = (
+            _env_int("STOCK_REGIME_MIN_MFI_SYMBOLS", 8)
+            if regime_min_mfi_symbols is None
+            else regime_min_mfi_symbols
+        )
+        min_mfi_coverage_ratio = (
+            _env_float("STOCK_REGIME_MIN_MFI_COVERAGE_RATIO", 0.5)
+            if regime_min_mfi_coverage_ratio is None
+            else regime_min_mfi_coverage_ratio
+        )
+        low_confidence_bear_fallback = (
+            os.getenv("STOCK_REGIME_LOW_CONFIDENCE_BEAR_FALLBACK", "SIDEWAYS_DOWN")
+            if regime_low_confidence_bear_fallback is None
+            else regime_low_confidence_bear_fallback
+        )
         return cls(
             asset_class="stock",
             strategy_name=strategy_name,
@@ -622,6 +669,9 @@ class TradingConfig:
             regime_exclude_position_only_symbols=exclude_position_only_from_regime,
             regime_require_daily_indicators=require_daily_for_regime,
             regime_require_mfi_symbols=require_mfi_for_regime,
+            regime_min_mfi_symbols=min_mfi_symbols,
+            regime_min_mfi_coverage_ratio=min_mfi_coverage_ratio,
+            regime_low_confidence_bear_fallback=low_confidence_bear_fallback,
             # Slower refresh for stock (40-50 symbols with retention)
             # avoids KIS API rate limiting
             market_data_refresh_seconds=2.0,
@@ -2379,8 +2429,23 @@ class TradingOrchestrator:
             "pattern_pullback",
         }
     )
+    DIP_CANDIDATE_STRATEGIES = frozenset({"bb_reversion"})
     DIP_CANDIDATES_REDIS_KEY = "system:dip_candidates:latest"
     LLM_QUALITY_REDIS_KEY = "system:llm_quality:latest"
+
+    def _active_strategy_names(self) -> set[str]:
+        if self._strategy_manager:
+            return {
+                str(name).strip()
+                for name in self._strategy_manager.strategy_names
+                if str(name).strip()
+            }
+        if self.config.strategy_name:
+            return {self.config.strategy_name}
+        return set()
+
+    def _should_include_dip_candidates_in_universe(self) -> bool:
+        return bool(self._active_strategy_names() & self.DIP_CANDIDATE_STRATEGIES)
 
     def _get_macro_overnight(self) -> Any:
         """Latest overnight :class:`MacroSnapshot` for Setup A gap-reversion.
@@ -2523,6 +2588,33 @@ class TradingOrchestrator:
         except (InfrastructureError, OSError, ConnectionError) as e:
             logger.debug(f"Dip candidates not available: {e}")
             return False
+
+    def _merge_dip_candidates_into_universe(self) -> bool:
+        """Add dip candidates only when an active entry strategy consumes them."""
+        if (
+            not self._dip_candidates
+            or not self._should_include_dip_candidates_in_universe()
+        ):
+            return False
+
+        dip_codes = set(self._dip_candidates.keys())
+        missing = dip_codes - set(self.config.symbols)
+        if not missing:
+            return False
+
+        now = datetime.now()
+        for code in missing:
+            self._symbol_last_seen[code] = now
+            dip_info = self._dip_candidates.get(code, {})
+            meta = {"name": dip_info.get("name", ""), "source": "dip"}
+            self._symbol_metadata_cache[code] = meta
+            if dip_info.get("name"):
+                self._symbol_names[code] = dip_info["name"]
+        self.config.symbols = list(set(self.config.symbols) | missing)
+        if self._data_provider:
+            self._data_provider.symbols = list(self.config.symbols)
+        logger.info(f"Added {len(missing)} dip candidates to universe")
+        return True
 
     DAILY_INDICATORS_REDIS_KEY = "system:daily_indicators:latest"
 
@@ -3127,25 +3219,43 @@ class TradingOrchestrator:
         retention_cutoff = now - timedelta(seconds=self._universe_retention_seconds)
         stable_symbols = set()
         expired = []
+        uncovered = []
+        position_codes = self._get_position_codes()
+        require_daily_coverage = (
+            self.config.asset_class == "stock"
+            and self.config.universe_mode == "dynamic"
+            and self.config.require_daily_indicators_for_dynamic_universe
+            and bool(self._daily_indicators)
+        )
+        covered_symbols = set(self._daily_indicators)
 
         # Filter by retention time
         for code, last_seen in self._symbol_last_seen.items():
             if last_seen >= retention_cutoff:
+                if (
+                    require_daily_coverage
+                    and code not in covered_symbols
+                    and code not in position_codes
+                ):
+                    uncovered.append(code)
+                    continue
                 stable_symbols.add(code)
             else:
                 expired.append(code)
 
         # Cleanup expired
-        for code in expired:
+        for code in expired + uncovered:
             del self._symbol_last_seen[code]
             self._symbol_metadata_cache.pop(code, None)
+        if uncovered:
+            logger.info(
+                "Pruned %d retained dynamic symbols without daily indicator coverage",
+                len(uncovered),
+            )
 
         # Always include symbols with open positions — they must stay in
         # the WebSocket subscription to receive price ticks for exit evaluation.
-        position_codes: set[str] = set()
-        if self._position_tracker:
-            position_codes = {p.code for p in self._position_tracker.positions}
-            stable_symbols |= position_codes
+        stable_symbols |= position_codes
 
         # Cap size — protect warm and near-warm symbols from eviction.
         # Near-warm symbols (>=50% warmup progress) have accumulated significant
@@ -3273,24 +3383,9 @@ class TradingOrchestrator:
                 old_symbols = set(self.config.symbols)
                 self._refresh_universe_from_screener()
 
-                # Merge dip candidates into universe so bb_reversion can evaluate them
+                # Merge dip candidates only when an active strategy consumes them.
                 self._refresh_dip_candidates()
-                if self._dip_candidates:
-                    dip_codes = set(self._dip_candidates.keys())
-                    missing = dip_codes - set(self.config.symbols)
-                    if missing:
-                        now = datetime.now()
-                        for code in missing:
-                            self._symbol_last_seen[code] = now
-                            dip_info = self._dip_candidates.get(code, {})
-                            meta = {"name": dip_info.get("name", ""), "source": "dip"}
-                            self._symbol_metadata_cache[code] = meta
-                            if dip_info.get("name"):
-                                self._symbol_names[code] = dip_info["name"]
-                        self.config.symbols = list(set(self.config.symbols) | missing)
-                        if self._data_provider:
-                            self._data_provider.symbols = list(self.config.symbols)
-                        logger.info(f"Added {len(missing)} dip candidates to universe")
+                self._merge_dip_candidates_into_universe()
 
                 new_symbols = set(self.config.symbols) - old_symbols
 
@@ -5192,11 +5287,16 @@ class TradingOrchestrator:
                     logger.debug(f"Adaptive sizing refresh failed: {e}")
 
             regime_diag = getattr(self, "_last_regime_diagnostics", {}) or {}
+            low_confidence_reason = regime_diag.get("low_confidence_reason")
+            raw_regime = regime_diag.get("raw_regime")
             logger.info(
-                "Market regime: %s (regime_symbols=%s, mfi_symbols=%s)",
+                "Market regime: %s (raw=%s, regime_symbols=%s, "
+                "mfi_symbols=%s, low_confidence=%s)",
                 regime,
+                raw_regime or regime,
                 regime_diag.get("regime_symbols"),
                 regime_diag.get("mfi_symbols"),
+                low_confidence_reason,
             )
 
             return {
@@ -5278,6 +5378,46 @@ class TradingOrchestrator:
             symbol: data for symbol, data in market_data.items() if symbol in symbols
         }
 
+    def _effective_stock_regime(
+        self,
+        raw_regime: str,
+        *,
+        regime_symbols: set[str] | None,
+        mfi_symbols: set[str],
+    ) -> tuple[str, dict[str, Any]]:
+        """Return the regime used for stock entry blocking plus diagnostics."""
+        total_symbols = (
+            len(regime_symbols)
+            if regime_symbols is not None
+            else len(self.config.symbols)
+        )
+        mfi_count = len(mfi_symbols)
+        coverage_ratio = (mfi_count / total_symbols) if total_symbols > 0 else 0.0
+        diagnostics: dict[str, Any] = {
+            "raw_regime": raw_regime,
+            "effective_regime": raw_regime,
+            "mfi_coverage_ratio": coverage_ratio,
+            "low_confidence_reason": None,
+        }
+
+        if self.config.asset_class != "stock" or "BEAR" not in raw_regime:
+            return raw_regime, diagnostics
+
+        reasons: list[str] = []
+        if mfi_count < self.config.regime_min_mfi_symbols:
+            reasons.append(f"mfi_symbols<{self.config.regime_min_mfi_symbols}")
+        if coverage_ratio < self.config.regime_min_mfi_coverage_ratio:
+            reasons.append(
+                f"mfi_coverage<{self.config.regime_min_mfi_coverage_ratio:.2f}"
+            )
+        if not reasons:
+            return raw_regime, diagnostics
+
+        fallback = self.config.regime_low_confidence_bear_fallback
+        diagnostics["effective_regime"] = fallback
+        diagnostics["low_confidence_reason"] = ",".join(reasons)
+        return fallback, diagnostics
+
     def _classify_market(self, market_data: dict[str, Any]) -> str:
         """Market classification using MarketClassifier with MFI from indicator engine.
 
@@ -5304,6 +5444,11 @@ class TradingOrchestrator:
 
                     classifier = MarketClassifier()
                     state = classifier.classify(mfi=mfi, adx=0.0)
+                    effective_regime, confidence_diag = self._effective_stock_regime(
+                        state.value,
+                        regime_symbols=regime_symbols,
+                        mfi_symbols=mfi_symbols,
+                    )
                     self._last_regime_diagnostics = {
                         "regime_symbols": (
                             len(regime_symbols)
@@ -5313,8 +5458,9 @@ class TradingOrchestrator:
                         "mfi_symbols": len(mfi_symbols),
                         "mfi": mfi,
                         "fallback_symbols": 0,
+                        **confidence_diag,
                     }
-                    return state.value
+                    return effective_regime
                 except (ValidationError, ValueError, TypeError, AttributeError) as e:
                     logger.debug(f"MarketClassifier failed: {e}")
 

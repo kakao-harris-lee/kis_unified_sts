@@ -40,7 +40,7 @@ import uuid
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Protocol
 
 from shared.exceptions import InfrastructureError, TradingSystemError, ValidationError
@@ -1119,6 +1119,21 @@ class PositionTracker:
         return ch, database
 
     @staticmethod
+    def _db_datetime(value: datetime | None) -> datetime | None:
+        """Return a stable naive UTC datetime for ClickHouse DateTime columns.
+
+        clickhouse-driver converts tz-aware datetimes to the server timezone for
+        naive DateTime columns. Runtime positions recovered from Redis carry UTC
+        offsets, so passing them through directly changes the ReplacingMergeTree
+        key from the original UTC value and creates duplicate open rows.
+        """
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            return value
+        return value.astimezone(UTC).replace(tzinfo=None)
+
+    @staticmethod
     def _closed_hold_seconds(position: Position) -> int | None:
         """Return hold seconds for a closed position, or None if timestamps are invalid."""
         if not position.entry_time or not position.exit_time:
@@ -1163,7 +1178,7 @@ class PositionTracker:
                         position.id,
                         position.code,
                         position.name,
-                        position.entry_time,
+                        self._db_datetime(position.entry_time),
                         position.entry_price,
                         position.quantity,
                         position.strategy,
@@ -1211,8 +1226,10 @@ class PositionTracker:
         try:
             ch, database = self._get_db_client()
             current_positions = list(self._positions.values())
-            current_ids = {p.id for p in current_positions}
-            current_codes = {p.code for p in current_positions}
+            current_keys = {
+                (p.id, p.code, self._db_datetime(p.entry_time))
+                for p in current_positions
+            }
 
             def _sync_reconcile() -> dict[str, int]:
                 client = ch.get_sync_client()
@@ -1243,14 +1260,14 @@ class PositionTracker:
                         side_str,
                         fee_rate_val,
                     ) = row
-                    if pos_id in current_ids or code in current_codes:
+                    if (pos_id, code, self._db_datetime(entry_time)) in current_keys:
                         continue
                     close_rows.append(
                         (
                             pos_id,
                             code,
                             name,
-                            entry_time,
+                            self._db_datetime(entry_time),
                             float(entry_price or 0.0),
                             int(quantity or 0),
                             strategy,
@@ -1259,7 +1276,7 @@ class PositionTracker:
                             float(high_since_entry or entry_price or 0.0),
                             state_str or "survival",
                             0,
-                            closed_at,
+                            self._db_datetime(closed_at),
                             float(entry_price or 0.0),
                             exit_reason,
                             0.0,
@@ -1273,7 +1290,7 @@ class PositionTracker:
                         position.id,
                         position.code,
                         position.name,
-                        position.entry_time,
+                        self._db_datetime(position.entry_time),
                         position.entry_price,
                         position.quantity,
                         position.strategy,
@@ -1372,7 +1389,7 @@ class PositionTracker:
                 position.id,
                 position.code,
                 position.name,
-                position.entry_time,
+                self._db_datetime(position.entry_time),
                 position.entry_price,
                 position.quantity,
                 position.strategy,
@@ -1381,7 +1398,7 @@ class PositionTracker:
                 position.highest_price,
                 position.state.value,
                 0,  # is_open = closed
-                position.exit_time,
+                self._db_datetime(position.exit_time),
                 position.exit_price,
                 position.exit_reason,
                 pnl,
@@ -1471,9 +1488,9 @@ class PositionTracker:
                 position.side.value,
                 position.strategy,
                 position.execution_venue,
-                position.entry_time,
+                self._db_datetime(position.entry_time),
                 position.entry_price,
-                position.exit_time,
+                self._db_datetime(position.exit_time),
                 position.exit_price,
                 position.quantity,
                 pnl,
@@ -1569,9 +1586,9 @@ class PositionTracker:
                 position.side.value,
                 position.strategy,
                 position.execution_venue,
-                position.entry_time,
+                self._db_datetime(position.entry_time),
                 entry_price,
-                position.exit_time,
+                self._db_datetime(position.exit_time),
                 position.exit_price,
                 quantity,
                 pnl,

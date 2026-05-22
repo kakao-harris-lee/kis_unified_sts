@@ -6,6 +6,7 @@
 redis_keys:
   realtime: "${UNIVERSE_LATEST_KEY:system:universe:latest}"
   llm_quality: "${LLM_QUALITY_LATEST_KEY:system:llm_quality:latest}"
+  daily_indicators: "${DAILY_INDICATORS_LATEST_KEY:system:daily_indicators:latest}"
   output: "${TRADE_TARGETS_LATEST_KEY:system:trade_targets:latest}"
   output_stream: "${TRADE_TARGETS_STREAM:system:trade_targets}"
 

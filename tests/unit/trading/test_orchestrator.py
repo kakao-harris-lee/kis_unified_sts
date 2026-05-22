@@ -134,12 +134,18 @@ class TestTradingConfig:
             regime_exclude_position_only_symbols=False,
             regime_require_daily_indicators=False,
             regime_require_mfi_symbols=False,
+            regime_min_mfi_symbols=4,
+            regime_min_mfi_coverage_ratio=0.25,
+            regime_low_confidence_bear_fallback="SIDEWAYS_FLAT",
         )
 
         assert config.regime_exclude_dip_candidates is False
         assert config.regime_exclude_position_only_symbols is False
         assert config.regime_require_daily_indicators is False
         assert config.regime_require_mfi_symbols is False
+        assert config.regime_min_mfi_symbols == 4
+        assert config.regime_min_mfi_coverage_ratio == 0.25
+        assert config.regime_low_confidence_bear_fallback == "SIDEWAYS_FLAT"
 
     def test_futures_factory(self):
         """선물 설정 팩토리"""

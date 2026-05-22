@@ -491,7 +491,10 @@ class MarketDataProvider:
 
             # Fetch stale data
             if stale_symbols:
-                await self._fetch_batch(stale_symbols)
+                if not force_refresh:
+                    stale_symbols = self._select_fetch_symbols_for_mode(stale_symbols)
+                if stale_symbols:
+                    await self._fetch_batch(stale_symbols)
 
         # Return cached data
         result = {}
@@ -501,6 +504,26 @@ class MarketDataProvider:
                 result[symbol] = cache.data
 
         return result
+
+    def _select_fetch_symbols_for_mode(self, stale_symbols: list[str]) -> list[str]:
+        """Throttle foreground REST fetches while fallback polling is active."""
+        if self._current_mode != DataSourceMode.REST_FALLBACK:
+            return stale_symbols
+
+        poll_active = (
+            self._fallback_poll_task is not None and not self._fallback_poll_task.done()
+        )
+        if poll_active:
+            # The fallback poller owns REST refresh cadence.  Foreground callers
+            # should consume cache only; otherwise the market-data loop can race
+            # the poller and trip KIS per-second limits.
+            return []
+
+        max_symbols = self.config.rest_fallback_max_symbols
+        if max_symbols is None or max_symbols >= len(stale_symbols):
+            return stale_symbols
+
+        return self._select_rest_poll_symbols(stale_symbols)[:max_symbols]
 
     async def get_single(
         self,
@@ -1159,17 +1182,18 @@ class MarketDataProvider:
         self._last_batch_fetch = None
         logger.info("Cache cleared")
 
-    def _select_rest_poll_symbols(self) -> list[str]:
+    def _select_rest_poll_symbols(self, symbols: list[str] | None = None) -> list[str]:
         """Choose the stalest cached symbols first during REST fallback."""
-        if not self.symbols:
+        target_symbols = list(self.symbols if symbols is None else symbols)
+        if not target_symbols:
             return []
 
         max_symbols = self.config.rest_fallback_max_symbols
-        if max_symbols is None or max_symbols >= len(self.symbols):
-            return list(self.symbols)
+        if max_symbols is None or max_symbols >= len(target_symbols):
+            return target_symbols
 
         return sorted(
-            self.symbols,
+            target_symbols,
             key=lambda symbol: (
                 self._cache[symbol].fetched_at
                 if symbol in self._cache

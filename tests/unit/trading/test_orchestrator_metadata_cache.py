@@ -397,6 +397,60 @@ class TestCacheInvalidation:
         assert names == {}
         assert metadata == {}
 
+    def test_stable_universe_prunes_retained_symbols_without_daily_indicators(self):
+        orch = _make_orchestrator()
+        now = datetime.now()
+        orch._daily_indicators = {"005930": {"atr": 1000.0}}
+        orch._symbol_last_seen = {"005930": now, "034020": now}
+        orch._symbol_metadata_cache = {
+            "005930": {"rank": 1},
+            "034020": {"rank": 2},
+        }
+
+        stable = orch._get_stable_universe()
+
+        assert stable == {"005930"}
+        assert "034020" not in orch._symbol_last_seen
+        assert "034020" not in orch._symbol_metadata_cache
+
+    def test_stable_universe_keeps_uncovered_position_symbols(self):
+        orch = _make_orchestrator()
+        now = datetime.now()
+        orch._daily_indicators = {"005930": {"atr": 1000.0}}
+        orch._symbol_last_seen = {"005930": now, "034020": now}
+        pos = MagicMock()
+        pos.code = "034020"
+        orch._position_tracker = MagicMock()
+        orch._position_tracker.positions = [pos]
+
+        stable = orch._get_stable_universe()
+
+        assert stable == {"005930", "034020"}
+
+    def test_dip_candidates_not_merged_when_strategy_does_not_use_them(self):
+        orch = _make_orchestrator()
+        orch.config.symbols = ["005930"]
+        orch._strategy_manager = MagicMock(strategy_names=["williams_r"])
+        orch._dip_candidates = {"034020": {"name": "두산에너빌리티"}}
+
+        changed = orch._merge_dip_candidates_into_universe()
+
+        assert changed is False
+        assert orch.config.symbols == ["005930"]
+        assert "034020" not in orch._symbol_last_seen
+
+    def test_dip_candidates_merge_for_active_bb_reversion(self):
+        orch = _make_orchestrator()
+        orch.config.symbols = ["005930"]
+        orch._strategy_manager = MagicMock(strategy_names=["bb_reversion"])
+        orch._dip_candidates = {"034020": {"name": "두산에너빌리티"}}
+
+        changed = orch._merge_dip_candidates_into_universe()
+
+        assert changed is True
+        assert set(orch.config.symbols) == {"005930", "034020"}
+        assert orch._symbol_metadata_cache["034020"]["source"] == "dip"
+
     def test_refresh_daily_indicators_loads_strategy_watchlist(self):
         orch = _make_orchestrator()
 
@@ -570,6 +624,42 @@ class TestCacheInvalidation:
         )
 
         assert regime == "BULL"
+
+    def test_low_confidence_bear_regime_downgrades_to_sideways_down(self):
+        orch = _make_orchestrator()
+        symbols = [f"{idx:06d}" for idx in range(20)]
+        orch.config.symbols = symbols
+        orch._daily_indicators = {code: {"daily_close": 100.0} for code in symbols}
+        engine = MagicMock()
+        engine.get_market_mfi_values.return_value = {
+            "000000": 30.0,
+            "000001": 32.0,
+            "000002": 33.0,
+        }
+        orch._indicator_engine = engine
+
+        regime = orch._classify_market({code: {"change": -0.05} for code in symbols})
+
+        assert regime == "SIDEWAYS_DOWN"
+        assert orch._last_regime_diagnostics["raw_regime"] == "BEAR_STRONG"
+        assert orch._last_regime_diagnostics["effective_regime"] == "SIDEWAYS_DOWN"
+        assert "mfi_symbols<8" in orch._last_regime_diagnostics["low_confidence_reason"]
+
+    def test_confident_bear_regime_still_blocks(self):
+        orch = _make_orchestrator()
+        symbols = [f"{idx:06d}" for idx in range(10)]
+        orch.config.symbols = symbols
+        orch._daily_indicators = {code: {"daily_close": 100.0} for code in symbols}
+        engine = MagicMock()
+        engine.get_market_mfi_values.return_value = {code: 30.0 for code in symbols[:8]}
+        orch._indicator_engine = engine
+
+        regime = orch._classify_market({code: {"change": -0.05} for code in symbols})
+
+        assert regime == "BEAR_STRONG"
+        assert orch._last_regime_diagnostics["raw_regime"] == "BEAR_STRONG"
+        assert orch._last_regime_diagnostics["effective_regime"] == "BEAR_STRONG"
+        assert orch._last_regime_diagnostics["low_confidence_reason"] is None
 
     def test_get_stable_universe_protects_daily_watchlist_candidates_over_cold(self):
         orch = _make_orchestrator()

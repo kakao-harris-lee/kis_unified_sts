@@ -1089,6 +1089,48 @@ class TestFailoverLogic:
 
         assert provider._select_rest_poll_symbols() == ["B", "A"]
 
+    def test_foreground_fetch_skips_when_rest_fallback_poller_active(self):
+        """Market-data loop should not duplicate REST fallback polling."""
+        from services.trading.data_provider import (
+            DataProviderConfig,
+            DataSourceMode,
+            MarketDataProvider,
+        )
+
+        provider = MarketDataProvider(
+            symbols=["A", "B"],
+            config=DataProviderConfig(rest_fallback_max_symbols=1),
+        )
+        provider._current_mode = DataSourceMode.REST_FALLBACK
+        provider._fallback_poll_task = type(
+            "RunningTask",
+            (),
+            {"done": lambda self: False},
+        )()
+
+        assert provider._select_fetch_symbols_for_mode(["A", "B"]) == []
+
+    def test_foreground_fetch_is_capped_when_rest_fallback_poller_inactive(self):
+        """Manual fallback fetches should still respect the fallback cap."""
+        from services.trading.data_provider import (
+            DataProviderConfig,
+            DataSourceMode,
+            MarketDataCache,
+            MarketDataProvider,
+        )
+
+        provider = MarketDataProvider(
+            symbols=["A", "B", "C"],
+            config=DataProviderConfig(rest_fallback_max_symbols=2),
+        )
+        provider._current_mode = DataSourceMode.REST_FALLBACK
+        now = datetime.now()
+        provider._cache["A"] = MarketDataCache("A", {}, now - timedelta(seconds=2))
+        provider._cache["B"] = MarketDataCache("B", {}, now - timedelta(seconds=5))
+        provider._cache["C"] = MarketDataCache("C", {}, now - timedelta(seconds=1))
+
+        assert provider._select_fetch_symbols_for_mode(["A", "B", "C"]) == ["B", "A"]
+
 
 class TestSilentStallGuard:
     """Regression: 2026-05-11 stock orchestrator stalled silently 13:09–13:35 KST.
