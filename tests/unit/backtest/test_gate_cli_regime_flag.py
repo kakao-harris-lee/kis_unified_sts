@@ -70,3 +70,22 @@ def test_load_gate_config_empty_yaml(tmp_path):
     assert cfg.event_window_minutes == 15
     assert cfg.require_overnight_us_direction is False
     assert cfg.permissive_on_missing is True
+
+
+def test_chinputs_handles_tz_aware_vol_keys():
+    """Regression for the T7 head-to-head failure: CH returns tz-aware
+    datetimes for DateTime64(3,'UTC') columns; bisect must not blow up."""
+    import datetime as dt
+    aware = dt.datetime(2026, 2, 15, 9, 30, tzinfo=dt.UTC)
+    naive_ts = dt.datetime(2026, 2, 15, 9, 35)  # caller's incoming ts
+    inputs = gfs._CHInputs(
+        vol_rows=[(aware, 50.0)],
+        event_rows=[(aware, 30)],
+        macro_map={})
+    # MUST NOT raise; bisect compares naive-vs-naive after __init__ normalizes
+    v = inputs.latest_vol_at(naive_ts)
+    assert v is not None
+    assert v[1] == 50.0  # regime_percentile preserved
+    ev = inputs.events_within(naive_ts, 60)
+    assert len(ev) == 1
+    assert ev[0][1] == 30   # impact_score preserved

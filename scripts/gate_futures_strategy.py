@@ -117,10 +117,15 @@ class _CHInputs:
     """
 
     def __init__(self, vol_rows, event_rows, macro_map):
-        self._vol = vol_rows
-        self._vol_keys = [r[0] for r in vol_rows]
-        self._events = event_rows
-        self._event_keys = [r[0] for r in event_rows]
+        # CH DateTime64(3,'UTC') returns tz-aware datetimes; downstream
+        # bisect needs tz-naive (incoming ts is .replace(tzinfo=None)).
+        # Normalize ONCE at load so all subsequent compares are naive-vs-naive.
+        def _naive(d):
+            return d.replace(tzinfo=None) if getattr(d, "tzinfo", None) else d
+        self._vol = [(_naive(r[0]),) + tuple(r[1:]) for r in vol_rows]
+        self._vol_keys = [r[0] for r in self._vol]
+        self._events = [(_naive(r[0]),) + tuple(r[1:]) for r in event_rows]
+        self._event_keys = [r[0] for r in self._events]
         self._macro = macro_map
 
     def latest_vol_at(self, ts):
