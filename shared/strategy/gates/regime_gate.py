@@ -2,10 +2,12 @@
 """Regime/event gate for futures entries (spec 2026-05-21 P1-③ T3).
 
 Pure filter: given a decision timestamp + signal direction, returns
-(allow: bool, reason: str). Reads vol_forecasts (HAR-RV regime),
-event_scores (per-event impact), MacroSnapshot (overnight US sp500_change_pct).
-Missing inputs → PERMISSIVE pass-through (§9). Look-ahead-safe: vol rows
-with asof > ts are treated as MISSING, never used.
+(allow: bool, reason: str, regime_pct: float). Reads vol_forecasts
+(HAR-RV regime), event_scores (per-event impact), MacroSnapshot
+(overnight US sp500_change_pct). Missing inputs → PERMISSIVE
+pass-through (§9). Look-ahead-safe: vol rows with asof > ts are
+treated as MISSING, never used. regime_pct is 0.0 when vol data was
+missing (distinguishable from a real low-regime 0.0 via reason field).
 """
 from __future__ import annotations
 
@@ -36,8 +38,15 @@ class RegimeGate:
 
     def allow(
         self, ts: dt.datetime, asset: str, signal_direction: str = "long",  # noqa: ARG002
-    ) -> tuple[bool, str]:
+    ) -> tuple[bool, str, float]:
+        """Apply the gate. Returns (allow, reason, regime_pct).
+
+        regime_pct is the regime_percentile value used in the decision
+        (0.0 when vol data was missing — distinguishable from a real
+        low-regime 0.0 only via the reason field).
+        """
         cfg = self._cfg
+        regime_pct: float = 0.0
 
         # 1) regime check (look-ahead-safe: future rows treated as missing)
         vol = self._inputs.latest_vol_at(ts)
@@ -45,13 +54,13 @@ class RegimeGate:
             vol = None  # future row → missing
         if vol is None:
             if not cfg.permissive_on_missing:
-                return (False, "missing_vol_non_permissive")
+                return (False, "missing_vol_non_permissive", regime_pct)
             # fall through (do not return yet — still check events/overnight)
             regime_reason = "permissive_missing_vol"
         else:
             _, regime_pct = vol
             if regime_pct > cfg.regime_percentile_max:
-                return (False, f"regime_percentile={regime_pct:.1f}>max")
+                return (False, f"regime_percentile={regime_pct:.1f}>max", regime_pct)
             regime_reason = "regime_ok"
 
         # 2) event check
@@ -60,22 +69,22 @@ class RegimeGate:
             if asof is not None and asof > ts:
                 continue  # future event → look-ahead skip
             if impact > cfg.impact_score_max:
-                return (False, f"impact_score={impact}>max")
+                return (False, f"impact_score={impact}>max", regime_pct)
 
         # 3) overnight US direction alignment (optional)
         if cfg.require_overnight_us_direction:
             sp500_pct = self._inputs.macro_for(ts.date())
             if sp500_pct is None:
                 if not cfg.permissive_on_missing:
-                    return (False, "missing_macro_non_permissive")
+                    return (False, "missing_macro_non_permissive", regime_pct)
                 # fall through allow
             else:
                 us_dir = math.copysign(1.0, sp500_pct)
                 want = 1.0 if signal_direction == "long" else -1.0
                 if us_dir != want:
-                    return (False, f"overnight_us_dir={us_dir} vs {signal_direction}")
+                    return (False, f"overnight_us_dir={us_dir} vs {signal_direction}", regime_pct)
 
-        return (True, regime_reason)
+        return (True, regime_reason, regime_pct)
 
 
 def regime_gate_cfg_from_yaml(d: dict | None) -> GateConfig | None:

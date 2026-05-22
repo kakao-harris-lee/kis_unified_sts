@@ -334,7 +334,7 @@ class BacktestEngine:
         # Backward-compatible: when self._gate is None this is a pure no-op.
         if self._gate is not None and signal in (SignalType.BUY, SignalType.SELL):
             direction = "long" if signal == SignalType.BUY else "short"
-            allow, _reason = self._gate.allow(
+            allow, _reason, _regime_pct = self._gate.allow(
                 ts=timestamp, asset=code, signal_direction=direction)
             if not allow:
                 signal = SignalType.HOLD

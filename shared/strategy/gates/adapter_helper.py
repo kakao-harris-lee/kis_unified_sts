@@ -94,15 +94,6 @@ def _extract_signal_direction(decision_signal: Any) -> str:
     return "long"
 
 
-def _extract_regime_pct_from_reason(reason: str) -> float:
-    """Extract numeric regime_pct from reason string ('regime_percentile=X.X>max')."""
-    if "regime_percentile=" not in reason:
-        return 0.0
-    try:
-        return float(reason.split("regime_percentile=")[1].split(">")[0])
-    except (IndexError, ValueError):
-        return 0.0
-
 
 def apply_regime_gate(
     *,
@@ -149,13 +140,13 @@ def apply_regime_gate(
     # RegimeGate.allow compares ts against naive datetimes from LiveVolInputs;
     # strip tz-info to avoid offset-naive vs offset-aware TypeError.
     ts_naive = ts.replace(tzinfo=None) if getattr(ts, "tzinfo", None) else ts
-    allow, reason = gate.allow(ts=ts_naive, asset=asset, signal_direction=direction)
+    allow, reason, regime_pct = gate.allow(ts=ts_naive, asset=asset, signal_direction=direction)
 
     try:
         _log_decision(
             ts=ts, strategy=strategy_name, asset=asset,
             signal_direction=direction, allow=bool(allow), reason=reason,
-            regime_pct=_extract_regime_pct_from_reason(reason),
+            regime_pct=regime_pct,
         )
     except Exception as e:  # noqa: BLE001
         logger.warning(
