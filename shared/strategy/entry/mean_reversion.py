@@ -17,6 +17,8 @@ _KST = ZoneInfo("Asia/Seoul")
 from shared.config.mixins import ConfigMixin
 from shared.models.signal import Signal, SignalType
 from shared.strategy.base import EntryContext, EntrySignalGenerator
+from shared.strategy.gates.adapter_helper import apply_regime_gate
+from shared.strategy.gates.regime_gate import GateConfig
 from shared.strategy.market_time import to_kst
 
 logger = logging.getLogger(__name__)
@@ -96,9 +98,10 @@ class MeanReversionEntry(EntrySignalGenerator[MeanReversionConfig]):
 
     CONFIG_CLASS = MeanReversionConfig
 
-    def __init__(self, config: MeanReversionConfig):
+    def __init__(self, config: MeanReversionConfig, gate_cfg: "GateConfig | None" = None):
         super().__init__(config)
         self._last_signal_at: dict[str, datetime] = {}
+        self._gate_cfg = gate_cfg  # P2-③ T6
 
     def _validate_config(self):
         """설정 유효성 검증"""
@@ -277,6 +280,44 @@ class MeanReversionEntry(EntrySignalGenerator[MeanReversionConfig]):
         oversold_threshold = self.config.rsi_oversold
         if state_name == "SIDEWAYS_DOWN":
             oversold_threshold = self.config.rsi_deep_oversold
+
+        # === P2-③ T6: Determine candidate direction + apply RegimeGate ONCE ===
+        # Cheap recompute (existing branches also do this) — preferable to 4 gate calls
+        _long_candidate = (
+            close <= bb_lower * self.config.bb_touch_buffer
+            and rsi < oversold_threshold
+        )
+        _short_candidate = (
+            self.config.allow_short
+            and close >= bb_upper / self.config.bb_touch_buffer
+            and rsi > self.config.rsi_overbought
+        )
+        _candidate_direction = (
+            "long" if _long_candidate
+            else ("short" if _short_candidate else None)
+        )
+        if _candidate_direction is not None and self._gate_cfg is not None:
+            try:
+                from shared.db.client import get_clickhouse_client
+                from shared.db.config import ClickHouseConfig
+                from shared.streaming.client import RedisClient
+                _redis = RedisClient.get_client()
+                _ch = get_clickhouse_client(ClickHouseConfig.from_env()).get_sync_client()
+            except Exception:  # noqa: BLE001
+                _redis, _ch = None, None
+            if _redis is not None and _ch is not None:
+                _stand_in = type("X", (), {
+                    "metadata": {"signal_direction": _candidate_direction}})()
+                blocked = apply_regime_gate(
+                    gate_cfg=self._gate_cfg,
+                    decision_signal=_stand_in,
+                    context=context,
+                    strategy_name="mean_reversion",
+                    redis=_redis,
+                    ch_client=_ch,
+                )
+                if blocked:
+                    return None
 
         # Check for long entry (oversold)
         long_touch = close <= bb_lower * self.config.bb_touch_buffer
