@@ -60,3 +60,24 @@ def test_factory_injects_gate_cfg_when_enabled():
         }))
     assert isinstance(strat.entry._gate_cfg, GateConfig)
     assert strat.entry._gate_cfg.regime_percentile_max == 55.0
+
+
+def test_factory_does_not_mutate_input_cfg():
+    """Critical: ConfigLoader caches the dict; mutating it would silently
+    disable the gate on subsequent StrategyFactory.create() calls."""
+    from shared.strategy.registry import StrategyFactory
+    cfg = _base_setup_a_cfg({"enabled": True, "regime_percentile_max": 55.0})
+    # Snapshot the regime_gate section before factory call
+    rg_before = dict(cfg["strategy"]["entry"]["params"]["regime_gate"])
+    # Call factory TWICE
+    s1 = StrategyFactory.create(cfg)
+    s2 = StrategyFactory.create(cfg)
+    rg_after = cfg["strategy"]["entry"]["params"].get("regime_gate")
+    # The cfg dict's regime_gate section must remain intact (not popped)
+    assert rg_after == rg_before, (
+        f"StrategyFactory mutated the input cfg: "
+        f"before={rg_before}, after={rg_after}")
+    # Both adapters must have the gate cfg (not None on second call)
+    assert s1.entry._gate_cfg is not None, "first call lost gate"
+    assert s2.entry._gate_cfg is not None, "second call lost gate (mutation bug)"
+    assert s2.entry._gate_cfg.regime_percentile_max == 55.0
