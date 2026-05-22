@@ -52,11 +52,14 @@ class LiveVolInputs:
         except Exception as e:  # noqa: BLE001
             logger.debug("LiveVolInputs: malformed vol JSON: %s", e)
             return None
-        # Freshness check against wall-clock now (live data is real-time)
-        now = dt.datetime.now(dt.UTC)
-        if not vf.is_fresh(now, max_age_s=self._max_age_s):
+        try:
+            now = dt.datetime.now(dt.UTC)
+            if not vf.is_fresh(now, max_age_s=self._max_age_s):
+                return None
+            asof_n = vf.asof.replace(tzinfo=None) if vf.asof.tzinfo else vf.asof
+        except Exception as e:  # noqa: BLE001 — hot path
+            logger.debug("LiveVolInputs: freshness check failed: %s", e)
             return None
-        asof_n = vf.asof.replace(tzinfo=None) if vf.asof.tzinfo else vf.asof
         return (asof_n, float(vf.regime_percentile))
 
     def events_within(

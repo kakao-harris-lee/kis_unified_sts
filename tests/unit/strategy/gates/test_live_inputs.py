@@ -67,10 +67,16 @@ def test_events_within_queries_ch_and_filters_window():
     ]
     inp = LiveVolInputs(redis=MagicMock(), ch_client=cli)
     out = inp.events_within(dt.datetime(2026, 5, 22, 9, 10), 15)
-    # CH SELECT handled the filtering; both rows are returned as-is
+    # CH SELECT WHERE handled the filtering; impl returns all mock rows
     assert len(out) == 2
     assert out[0][1] == 85
     assert out[1][1] == 90
+    # Verify the SQL bounds were computed correctly (asof ± window_min)
+    args, kwargs = cli.execute.call_args
+    assert "kospi.event_scores" in args[0]
+    bounds = args[1]
+    assert bounds["lo"] == dt.datetime(2026, 5, 22, 8, 55)
+    assert bounds["hi"] == dt.datetime(2026, 5, 22, 9, 25)
 
 
 def test_events_within_swallows_ch_exception():
@@ -87,3 +93,21 @@ def test_macro_for_always_returns_none_in_live():
     from shared.strategy.gates.live_inputs import LiveVolInputs
     inp = LiveVolInputs(redis=MagicMock(), ch_client=MagicMock())
     assert inp.macro_for(dt.date(2026, 5, 22)) is None
+
+
+def test_latest_vol_at_returns_none_when_vf_asof_is_tz_naive():
+    """Defensive: if asof is tz-naive (some publishers), the freshness
+    check (now-aware vs asof-naive) must NOT raise — returns None instead."""
+    import json
+
+    from shared.strategy.gates.live_inputs import LiveVolInputs
+    redis = MagicMock()
+    naive_iso = dt.datetime(2026, 5, 22, 9, 0, 0).isoformat()  # no offset
+    redis.get.return_value = json.dumps({
+        "asof": naive_iso, "horizon_minutes": 15, "forecast_pct": 18.0,
+        "forecast_atr_equivalent": 3.0, "regime_percentile": 72.5,
+        "model_version": "har_rv_v1", "confidence": 0.3,
+    })
+    inp = LiveVolInputs(redis=redis, ch_client=MagicMock())
+    # MUST NOT raise
+    assert inp.latest_vol_at(dt.datetime(2026, 5, 22, 9, 0, 0)) is None
