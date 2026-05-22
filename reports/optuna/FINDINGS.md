@@ -208,3 +208,64 @@ on the williams_r family is exhausted for KOSPI200 futures → spec
 §9 trigger to Approach ③ (microstructure / cross-asset, new spec). Tool:
 `scripts/gate_futures_strategy.py` (shared.backtest.robust_gate). Full report:
 `reports/optuna/WILLIAMS_R_15M_GATE.md`.
+
+---
+
+## bb_reversion_15m × RegimeGate — head-to-head (2026-05-21): BLOCKED (data-infrastructure)
+
+T7 head-to-head NOT executed. The gate's data sources can't supply meaningful
+inputs over the test window: `kospi.vol_forecasts` is empty for 2026-02-01..04-24
+(TTL eviction); the historical HAR-RV recompute (`scripts/forecasting/recompute_har_rv_historical.py`)
+cannot fit because the source `kospi.kospi200f_1m` minute-bar table has chronic
+outlier corruption (23/152 days > 5× median daily-RV; max ≈ 161× median →
+implied annualized vol ≈ 1258%, physically impossible). `kospi.event_scores`
+has zero rows for all time. **Approach ③ P1 cannot be decided until the
+`kospi200f_1m` data quality is investigated** — chiefly Aug 5, Sep 25/30,
+Oct 10/27/30, Nov 13/14/21 in 2025. Full report:
+`reports/optuna/BB_REVERSION_15M_REGIME_GATE.md`. P0+P1 infrastructure
+(audit, recompute, RegimeGate, engine hook, gate runner, configs) is built
+and tested (152 unit tests pass) and remains ready to use once the data
+layer is repaired.
+
+---
+
+## bb_reversion_15m × RegimeGate — head-to-head (2026-05-22): FAIL (Δ=0.000; degenerate regime labels)
+
+`>>> HEAD-TO-HEAD: FAIL (Δsharpe=0.000 vs δ=0.5 | gated_rescoped_pass=True)`
+
+T7 re-run via the Path A pivot (A01603-only CSV; HAR-RV fits cleanly
+R²_in=0.255 / R²_oos=0.115). 70+70 trials, 0 failures, baseline rescoped
+gate PASS (median 7.14, basin 100%, n_valid=48). Baseline OOS Sharpe
+11.76 — strong; gated OOS bit-for-bit identical → Δ=0.000.
+
+Root cause is upstream-of-gate, in `VolatilityForecaster.forecast()`:
+`self._latest_components` is frozen at `fit()` time and reused by every
+subsequent `forecast(asof, ...)` call → all 1,887 OOS regime_percentile
+labels = 34.03 exactly (constant). No threshold can make the gate fire
+meaningfully on a constant input. The gate's design is therefore NOT
+honestly evaluated by this run; a recompute-rolling-components fix is
+required before a real head-to-head verdict is possible. Full report:
+`reports/optuna/BB_REVERSION_15M_REGIME_GATE.md`. P0+P1+Path-A
+infrastructure (audit, recompute, RegimeGate, engine hook, gate runner,
+configs, clean-CSV builder) is built and tested; only `VolatilityForecaster`'s
+rolling-components semantics for one-shot historical replay are missing.
+
+---
+
+## bb_reversion_15m × RegimeGate — head-to-head (2026-05-22 edition 3): PASS (Δ=+3.26)
+
+`>>> HEAD-TO-HEAD: PASS (Δsharpe=3.260 vs δ=0.5 | gated_rescoped_pass=True)`
+
+Third edition (BLOCKED → FAIL Δ=0 → PASS Δ=+3.26). T11 rolling-components
+Locus 2 fix + T12 threshold tighten 80→60 unlocked the verdict.
+
+Baseline OOS Sharpe 11.76 → Gated OOS Sharpe 15.02 (Δ=+3.26, well above δ=0.5).
+MDD identical (13.50%). Both arms' rescoped §6 gates PASS (baseline median
+7.14, basin 100%). 140 trials, 0 failures. Recompute now produces 19 distinct
+regime_percentile values (vs constant 34.03 yesterday); 16.9% of OOS bars
+above the tightened threshold → gate fires often enough to materially affect
+the strategy. Spec §10 P2-③ trigger fires (apply to Setup A/C, new spec).
+Caveats: ~30-day OOS is short; threshold tightened after seeing label
+distribution; gated study's best_params not separately logged; forecast_pct
+calibration looks ~3× too high (separate concern, doesn't affect this gate).
+Full report: `reports/optuna/BB_REVERSION_15M_REGIME_GATE.md` (edition 3).

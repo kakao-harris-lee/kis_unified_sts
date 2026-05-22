@@ -116,14 +116,19 @@ class BacktestEngine:
         self,
         strategy: StrategyProtocol,
         config: BacktestConfig | None = None,
+        *,
+        gate=None,
     ):
         """
         Args:
             strategy: 전략 객체 (on_bar 메서드 필요)
             config: 백테스트 설정
+            gate: Optional RegimeGate (spec 2026-05-21 P1-③ T4).
+                  When None, entry dispatch is unchanged (backward-compatible).
         """
         self.strategy = strategy
         self.config = config or BacktestConfig()
+        self._gate = gate
 
         # LookaheadGuard wiring
         from shared.backtest.lookahead_guard import LookaheadGuard, LookaheadGuardMode
@@ -324,6 +329,15 @@ class BacktestEngine:
 
         # 전략 시그널 생성
         signal = self.strategy.on_bar(bar)
+
+        # Gate (spec 2026-05-21 P1-③ T4): strategy-agnostic regime/event filter.
+        # Backward-compatible: when self._gate is None this is a pure no-op.
+        if self._gate is not None and signal in (SignalType.BUY, SignalType.SELL):
+            direction = "long" if signal == SignalType.BUY else "short"
+            allow, _reason = self._gate.allow(
+                ts=timestamp, asset=code, signal_direction=direction)
+            if not allow:
+                signal = SignalType.HOLD
 
         # 4. 시그널 처리
         if code not in self.positions:

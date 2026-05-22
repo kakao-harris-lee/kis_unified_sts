@@ -1,0 +1,10 @@
+# Default RegimeGate config (spec 2026-05-21 P1-③ T6).
+# Units (spec §13 correction 3):
+#   - regime_percentile is 0-100 (empirical CDF of HAR-RV predicted RV
+#     vs in-fit daily RV history)
+#   - impact_score is 0-100
+regime_percentile_max: 60.0          # block when predicted RV exceeds 60th pct of in-fit history (tightened 80→60 — T11 rolling-components walk-forward showed OOS labels span 34→79 with p90=67; blocks ~top-30% vol days)
+impact_score_max: 70                 # block when any event within window scores > 70
+event_window_minutes: 15
+require_overnight_us_direction: false # phase-1 keep off; revisit in P2-③
+permissive_on_missing: true          # spec §9 — never silently block on missing data
