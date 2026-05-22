@@ -76,3 +76,32 @@ class RegimeGate:
                     return (False, f"overnight_us_dir={us_dir} vs {signal_direction}")
 
         return (True, regime_reason)
+
+
+def regime_gate_cfg_from_yaml(d: dict | None) -> GateConfig | None:
+    """Build a GateConfig from a per-strategy YAML config section.
+
+    Returns None when the strategy has not opted in (missing section
+    or `enabled: false`) — adapters then take the gate_cfg=None no-op
+    branch in apply_regime_gate(). Defaults match
+    config/gates/regime_gate_default.yaml (T12 threshold=60).
+
+    Example YAML section (under strategy.entry.params):
+        regime_gate:
+          enabled: true
+          regime_percentile_max: 60.0
+          impact_score_max: 70
+          event_window_minutes: 15
+          require_overnight_us_direction: false
+          permissive_on_missing: true
+    """
+    if not d or not d.get("enabled", False):
+        return None
+    return GateConfig(
+        regime_percentile_max=float(d.get("regime_percentile_max", 60.0)),
+        impact_score_max=int(d.get("impact_score_max", 70)),
+        event_window_minutes=int(d.get("event_window_minutes", 15)),
+        require_overnight_us_direction=bool(
+            d.get("require_overnight_us_direction", False)),
+        permissive_on_missing=bool(d.get("permissive_on_missing", True)),
+    )
