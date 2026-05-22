@@ -162,6 +162,22 @@ SCHEMAS = {
         TTL timestamp + INTERVAL 180 DAY
         COMMENT 'RL model drift detection metrics for production monitoring'
     """,
+    "regime_gate_decisions": """
+        CREATE TABLE IF NOT EXISTS {database}.regime_gate_decisions (
+            ts DateTime64(3),
+            strategy LowCardinality(String),
+            asset LowCardinality(String),
+            signal_direction LowCardinality(String),
+            allow UInt8,
+            reason String,
+            regime_pct Float64,
+            created_at DateTime DEFAULT now()
+        ) ENGINE = MergeTree()
+        PARTITION BY toYYYYMM(ts)
+        ORDER BY (strategy, ts)
+        TTL toDateTime(ts) + INTERVAL 90 DAY
+        COMMENT 'Per-decision RegimeGate audit log for P2-③ live-paper counterfactual review (spec 2026-05-22)'
+    """,
     "tick_data": """
         CREATE TABLE IF NOT EXISTS {database}.tick_data (
             code String,
@@ -496,6 +512,29 @@ class ClickHouseClient:
             return len(metrics)
         except Exception as e:
             logger.error(f"Failed to insert drift metrics: {e}")
+            return 0
+
+    def insert_regime_gate_decisions(self, rows: list[dict]) -> int:
+        """Append RegimeGate decision audit rows (best-effort, P2-③ T1)."""
+        if not rows:
+            return 0
+        try:
+            client = self.get_sync_client()
+            data = [
+                (
+                    r["ts"], r["strategy"], r["asset"], r["signal_direction"],
+                    int(bool(r["allow"])), r["reason"], float(r["regime_pct"]),
+                )
+                for r in rows
+            ]
+            client.execute(
+                f"INSERT INTO {self.config.database}.regime_gate_decisions "
+                "(ts, strategy, asset, signal_direction, allow, reason, regime_pct) VALUES",
+                data,
+            )
+            return len(rows)
+        except Exception as e:
+            logger.error(f"Failed to insert regime_gate_decisions: {e}")
             return 0
 
     def get_minute_candles(
