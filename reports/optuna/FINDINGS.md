@@ -249,3 +249,23 @@ required before a real head-to-head verdict is possible. Full report:
 infrastructure (audit, recompute, RegimeGate, engine hook, gate runner,
 configs, clean-CSV builder) is built and tested; only `VolatilityForecaster`'s
 rolling-components semantics for one-shot historical replay are missing.
+
+---
+
+## bb_reversion_15m × RegimeGate — head-to-head (2026-05-22 edition 3): PASS (Δ=+3.26)
+
+`>>> HEAD-TO-HEAD: PASS (Δsharpe=3.260 vs δ=0.5 | gated_rescoped_pass=True)`
+
+Third edition (BLOCKED → FAIL Δ=0 → PASS Δ=+3.26). T11 rolling-components
+Locus 2 fix + T12 threshold tighten 80→60 unlocked the verdict.
+
+Baseline OOS Sharpe 11.76 → Gated OOS Sharpe 15.02 (Δ=+3.26, well above δ=0.5).
+MDD identical (13.50%). Both arms' rescoped §6 gates PASS (baseline median
+7.14, basin 100%). 140 trials, 0 failures. Recompute now produces 19 distinct
+regime_percentile values (vs constant 34.03 yesterday); 16.9% of OOS bars
+above the tightened threshold → gate fires often enough to materially affect
+the strategy. Spec §10 P2-③ trigger fires (apply to Setup A/C, new spec).
+Caveats: ~30-day OOS is short; threshold tightened after seeing label
+distribution; gated study's best_params not separately logged; forecast_pct
+calibration looks ~3× too high (separate concern, doesn't affect this gate).
+Full report: `reports/optuna/BB_REVERSION_15M_REGIME_GATE.md` (edition 3).
