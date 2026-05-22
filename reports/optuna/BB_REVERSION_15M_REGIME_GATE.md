@@ -1,118 +1,111 @@
-# bb_reversion_15m × RegimeGate — head-to-head verdict (2026-05-21)
+# bb_reversion_15m × RegimeGate — head-to-head verdict (2026-05-22)
 
 Spec: docs/superpowers/specs/2026-05-21-futures-approach3-regime-gate-design.md (§7 robust gate, §8 head-to-head δ, §10 triggers)
 Tool: scripts/gate_futures_strategy.py --head-to-head --delta-sharpe 0.5
-Data: data/kospi200f_1m_ch_101S6000.csv | holdout 2026-02-01 | min-trades 50 | 70+70 trials (planned)
+Data: data/kospi200f_1m_a01603.csv (T10 --single-code A01603) | holdout 2026-02-01 | min-trades 50 | 70+70 trials
 Gate config: config/gates/regime_gate_default.yaml (regime_percentile_max=80, impact_score_max=70, event_window=15min, permissive_on_missing=true)
+HAR-RV recompute: scripts/forecasting/recompute_har_rv_historical.py --candles-csv data/kospi200f_1m_a01603.csv --train-start 2025-08-01 --train-end 2026-01-31 --test-start 2026-02-01 --test-end 2026-03-12; wrote 3,771 rows tagged model_version='har_rv_v1_recompute'
+(Yesterday-2026-05-21's BLOCKED verdict has been superseded by this run; Path A pivot via T8/T9/T10 enabled it.)
 
-## VERDICT: BLOCKED (data-infrastructure bottleneck, not a gate-design verdict)
+## VERDICT: FAIL (Δsharpe=0.000)
 
-The head-to-head Optuna run was NOT executed because the gate's data layer cannot supply meaningful inputs over the gate-test window. The discovery itself is the substantive finding.
+`>>> HEAD-TO-HEAD: FAIL (Δsharpe=0.000 vs δ=0.5 | gated_rescoped_pass=True)`
 
-## Evidence
+| Arm | OOS Sharpe | OOS MDD | OOS Return | OOS PF | OOS Trades |
+|---|---|---|---|---|---|
+| Baseline (no gate) | **11.7632** | 13.50% | +166.28% | 4.0952 | 40 |
+| Gated (RegimeGate) | **11.7632** | 13.50% | +166.28% | 4.0952 | 40 |
+| Δ | **0.000** | 0.000 | 0.00% | 0.00 | 0 |
 
-### 1. Forecast tables are empty for the gate-test window
+The gated arm's OOS is **bit-for-bit identical** to baseline. Δ Sharpe = exactly 0.000.
 
-```
-window: 2026-02-01T00:00:00 → 2026-04-24T00:00:00
-vol_forecasts: total=0  live=0  recompute=0
-event_scores:  total=0
-coverage: 0.0% (min=90%)
-```
+Baseline's own robust §6 gate: `PASS (a=True b=True c=True | median_sharpe=7.14 basin=100.0% n_valid=48)` (strong: 48/70 valid train trials all non-catastrophic; median Sharpe 7.14 vs floor 0; basin 100% vs floor 25%).
 
-`vol_forecasts` has 78 live rows across all time (all outside this window — the 90-day TTL evicts older rows; the live forecasting service has only been writing recently). `event_scores` has zero rows for all time — the live event-scorer has never written to this ClickHouse instance.
+Best baseline params: `bb_period=20, bb_std=2.30, bb_touch_buffer=1.09, rsi_period=19, rsi_oversold=34, rsi_overbought=79, min_bb_bandwidth=0.00717` (train Sharpe = 10.06).
 
-### 2. The HAR-RV historical recompute (Task 2) cannot fit on this data
+Baseline OOS detail line (verbatim):
+`OOS metrics: sharpe=11.7632 pf=4.0952 mdd=13.50% ret=166.2782% trades=40`
 
-Two attempts with different train windows both failed at the HAR-RV OOS R² threshold (the implementer set `min_r2_oos=-1.0`, already the maximally-permissive value the Pydantic field validator allows — `HARRVConfig.min_r2_oos: float = Field(default=0.10, ge=-1.0, le=1.0)` at `shared/forecasting/config.py:17`):
+Trial counts: 140 successful, 0 failed across both studies (70 baseline + 70 gated). 2 study creations.
 
-| Train window | Test window | Result |
-|---|---|---|
-| 2025-07-01 → 2026-01-31 | 2026-02-01 → 2026-04-23 | `R² OOS = -168.796` |
-| 2025-08-01 → 2026-01-31 | 2026-02-01 → 2026-04-23 | `R² OOS = -127.767` |
+## Why Δ = exactly 0.000 — the actual finding
 
-### 3. Root cause — chronic outlier-corruption in `kospi.kospi200f_1m`
-
-The daily-RV series derived from the source minute-bar table (`kospi.kospi200f_1m`, `code='101S6000'`) has catastrophic outliers throughout the train window:
+The gate at `regime_percentile_max=80` never blocked a single entry during OOS. CH query of the recompute's actual regime_percentile labels confirms why:
 
 ```
-AUG2025-JAN2026 daily RV (n=152 days, median=3.886e-03):
-  max=6.280e-01  =  161.6× median
-  days > 5×median: 23 (15.1% of days)
-  days > 50×median: 6
-  top outliers:
-    2025-11-14: 6.28e-01  (161.6× median)
-    2025-11-21: 6.28e-01  (161.5× median)
-    2025-08-05: 3.81e-01  (98.0× median)
-    2025-10-27: 3.51e-01  (90.3× median)
-    2025-10-30: 3.38e-01  (86.9× median)
-    2025-10-10: 2.23e-01  (57.3× median)
-    2025-09-25: 1.91e-01  (49.1× median)
-    2025-09-30: 1.68e-01  (43.3× median)
+recompute regime_percentile distribution (OOS Feb 1-Mar 12, 1,887 rows):
+  min=34.03  p50=34.03  p90=34.03  p99=34.03  max=34.03
+  rows > 80 (would have blocked): 0 / 1,887  (0.0%)
 ```
 
-Interpretation: median daily-variance 3.9e-3 ≈ 10% annualized vol (plausible for KOSPI200 futures). Max daily-variance 6.3e-1 ≈ √0.63 × √252 × 100 ≈ **1258% annualized vol** — physically impossible for a sane trading day. The outliers are not isolated to one event; they are spread across Aug–Nov 2025 (15% of days). The most likely upstream cause is corrupted minute-bar OHLC values (e.g. bad high/low ticks producing absurd intra-day ranges that feed into the sum-of-squared-1m-returns realized-variance calculation).
+**Every single label is exactly 34.03** — the value is constant across the entire OOS window.
 
-OLS HAR-RV on this skewed input produces wildly unstable coefficients → OOS predictions far from the held-out tail mean → catastrophically negative R². The fit aborts; recompute cannot proceed.
+Root cause is in `shared/forecasting/volatility_har_rv.py::forecast()`:
 
-### 4. event_scores empty regardless
+```python
+def forecast(self, asof, current_close):
+    rv_d, rv_w, rv_m = self._latest_components   # FROZEN at fit time
+    pred_rv = c.beta_0 + c.beta_d * rv_d + c.beta_w * rv_w + c.beta_m * rv_m
+    percentile = (self._rv_history < pred_rv).mean() * 100
+    return VolForecast(..., regime_percentile=percentile, ...)
+```
 
-Even if the vol-regime layer were fixable, `event_scores` has zero rows over all of history, so the event-impact component of the gate would be a complete no-op (PERMISSIVE pass-through for every bar). The full RegimeGate as designed cannot be exercised on this data.
+`self._latest_components` is set ONCE during `fit()` (line 114) and reused by every subsequent `forecast()` call regardless of `asof`. Our `recompute_and_insert` fits once on the train window then calls `forecast()` for every OOS minute — producing identical `pred_rv` and identical `regime_percentile` across all 1,887 labels. **The production live forecasting service avoids this only because it presumably refits frequently with updated daily-RV history; the one-shot historical recompute path doesn't replicate that rolling behavior.**
 
-## Decision
+## So is this a gate-FAIL or a recompute-FAIL?
 
-**Spec §10 P2-③ trigger does NOT fire** — head-to-head was not run (data-layer blocked); cannot claim PASS.
-**Spec §10 P3-③ trigger does NOT fire** — head-to-head was not run; cannot claim FAIL of the gate's design.
+It is a **recompute-FAIL** — the gate's design isn't being honestly evaluated. With constant labels, no threshold setting can make the gate fire meaningfully on OOS:
+- `regime_percentile_max >= 34.03` → gate never blocks (current default 80 falls here)
+- `regime_percentile_max < 34.03` → gate ALWAYS blocks (would suppress every entry → trivially worse)
 
-A new, dedicated effort is required to investigate `kospi.kospi200f_1m` data quality for 2025-07 → 2026-01 (specifically the 23 days with daily-RV > 5× median; chiefly Aug 5, Sep 25/30, Oct 10/27/30, Nov 13/14/21). Likely angles:
-- Are the corrupt rows actually present in the source KIS feed or introduced during ingestion?
-- Is there a high/low validity check that should have rejected the bad ticks?
-- Should the realized-variance computation winsorize 1-minute returns before squaring?
-- Does the live forecasting service avoid these because of the 90-day TTL (i.e. has the issue ever affected live)?
+So the head-to-head's exact 0.000 Δ is not "the gate doesn't help" — it's "we can't tell because our regime labels are degenerate."
 
-Until that investigation completes, Approach ③ P1 cannot be decided. The P0+P1 infrastructure on this branch (audit CLI, recompute CLI, RegimeGate, engine hook, gate runner, configs) is built and tested and remains ready to use once the data layer is repaired.
+## Spec §10 trigger interpretation
 
-## What was actually committed in P0+P1 (still valuable, reusable)
+A literal reading: head-to-head FAIL → P3-③ trigger (tick microstructure). But the FAIL is upstream-of-gate, not in the gate's design. The honest trigger is a new **P0-③' (recompute-rolling-components fix)**: modify `recompute_and_insert` to call `forecast()` with per-asof updated `(rv_d, rv_w, rv_m)` derived from the rolling RV window up to (but excluding) `asof`. Without that, NO future Approach ③ run can produce meaningful regime_percentile labels.
+
+After that fix lands, the head-to-head re-runs verbatim — all P0+P1+T8/T9/T10 infrastructure stays as-is — and produces a real PASS/FAIL of the gate's design.
+
+## P0+P1+Path-A artifacts (built and tested on this branch, ready when the recompute is fixed)
 
 | Component | File | Status |
 |---|---|---|
-| Spec §13 corrections | `docs/superpowers/specs/2026-05-21-futures-approach3-regime-gate-design.md` | merged on branch |
-| Coverage audit CLI | `scripts/audit_forecast_coverage.py` + test | merged, tests green |
-| Historical HAR-RV recompute | `scripts/forecasting/recompute_har_rv_historical.py` + test | merged, tests green (fit fails on this dataset; the script itself is correct) |
-| RegimeGate filter | `shared/strategy/gates/regime_gate.py` + test | merged, 6 tests green |
-| Engine-layer gate hook | `shared/backtest/engine.py` + test | merged, 3 tests green |
-| Gate runner --gate/--head-to-head | `scripts/gate_futures_strategy.py` + test | merged, 4 tests green |
+| Spec + §13 corrections | `docs/superpowers/specs/2026-05-21-...md` | merged on branch (commits `5747974`, `6e4ead3`) |
+| Coverage audit CLI | `scripts/audit_forecast_coverage.py` (+ test) | 5 tests pass |
+| Historical HAR-RV recompute | `scripts/forecasting/recompute_har_rv_historical.py` (+ test) | 8 tests pass; **needs rolling-components fix** to produce non-degenerate labels |
+| RegimeGate filter | `shared/strategy/gates/regime_gate.py` (+ test) | 6 tests pass |
+| Engine-layer gate hook | `shared/backtest/engine.py` (+ test) | 3 tests pass |
+| Gate runner --gate/--head-to-head | `scripts/gate_futures_strategy.py` (+ test) | 5 tests pass (incl. tz-mismatch regression fix from this T7 run) |
 | Search-space + gate-default configs | `config/optuna/futures/bb_reversion_15m.yaml`, `config/gates/regime_gate_default.yaml` | merged |
-| CH-wrapper unwrap fix | (T7 follow-up commit) | merged |
+| build_clean_kospi200f_csv + --single-code (Path A++) | `scripts/forecasting/build_clean_kospi200f_csv.py` (+ test) | 7 tests pass |
+| recompute --candles-csv flag | (same file as above) | merged via T9 |
+| Cross-task ClickHouse-wrapper unwrap fix | (3 scripts) | merged (commit `74f1383`) |
+| `_CHInputs` tz-strip-at-load fix | `scripts/gate_futures_strategy.py` (+ test) | merged (commit `4dd951c`); blocks the head-to-head crash that surfaced today |
 
-Total: 152 unit tests pass on this branch; ruff clean for all touched files. All infrastructure is production-ready as far as the gate runner is concerned. The only blocker is the upstream data.
+Total: 152+ unit tests pass on this branch; ruff clean for all touched files; **all infrastructure is production-ready**. The only blocker for a real gate-design verdict is the one-line-conceptual `_latest_components` rolling-update in `recompute_and_insert`.
 
 ## Reproduce
 
 ```bash
 cd <worktree>
 set -a; source /home/deploy/project/kis_unified_sts/.env; set +a
-# audit:
-python scripts/audit_forecast_coverage.py --start 2026-02-01 --end 2026-04-24 \
-  --expected-trading-minutes 24300 --min-coverage 0.90
-# recompute (will FAIL with R² OOS catastrophic):
+# Step 1 — clean CSV (A01603 only):
+python scripts/forecasting/build_clean_kospi200f_csv.py \
+  --single-code A01603 --start 2025-07-01 --end 2026-03-12 \
+  --out data/kospi200f_1m_a01603.csv
+# Step 2 — recompute (will populate ~1,887 OOS rows; ALL with regime_percentile=34.03):
 python scripts/forecasting/recompute_har_rv_historical.py \
-  --train-start 2025-07-01 --train-end 2026-01-31 \
-  --test-start 2026-02-01 --test-end 2026-04-23 --cadence-minutes 15
-# data-quality diagnostic:
-python - <<'PY'
-from shared.db.client import get_clickhouse_client
-from shared.db.config import ClickHouseConfig
-from shared.forecasting.realized_variance import daily_rv_series
-import pandas as pd
-cli = get_clickhouse_client(ClickHouseConfig.from_env()).get_sync_client()
-rows = cli.execute(
-    "SELECT datetime, open, high, low, close, volume FROM kospi.kospi200f_1m "
-    "WHERE code='101S6000' AND datetime >= '2025-08-01' AND datetime < '2026-02-01' "
-    "ORDER BY datetime")
-df = pd.DataFrame(rows, columns=["datetime","open","high","low","close","volume"])
-df["datetime"] = pd.to_datetime(df["datetime"], utc=True); df = df.set_index("datetime")
-rv = daily_rv_series(df)
-print(rv.nlargest(10))
-PY
+  --candles-csv data/kospi200f_1m_a01603.csv \
+  --train-start 2025-08-01 --train-end 2026-01-31 \
+  --test-start 2026-02-01 --test-end 2026-03-12 --cadence-minutes 15
+# Step 3 — head-to-head (~5 min; will FAIL with Δ=0 due to constant labels):
+python scripts/gate_futures_strategy.py \
+  --strategy bb_reversion_15m \
+  --data data/kospi200f_1m_a01603.csv \
+  --space config/optuna/futures/bb_reversion_15m.yaml \
+  --gate config/gates/regime_gate_default.yaml \
+  --head-to-head --delta-sharpe 0.5 \
+  --holdout-split 2026-02-01 --min-trades 50 --trials 70
 ```
+
+(TPESampler seed=42 — deterministic.)

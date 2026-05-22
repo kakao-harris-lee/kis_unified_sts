@@ -226,3 +226,26 @@ Oct 10/27/30, Nov 13/14/21 in 2025. Full report:
 (audit, recompute, RegimeGate, engine hook, gate runner, configs) is built
 and tested (152 unit tests pass) and remains ready to use once the data
 layer is repaired.
+
+---
+
+## bb_reversion_15m × RegimeGate — head-to-head (2026-05-22): FAIL (Δ=0.000; degenerate regime labels)
+
+`>>> HEAD-TO-HEAD: FAIL (Δsharpe=0.000 vs δ=0.5 | gated_rescoped_pass=True)`
+
+T7 re-run via the Path A pivot (A01603-only CSV; HAR-RV fits cleanly
+R²_in=0.255 / R²_oos=0.115). 70+70 trials, 0 failures, baseline rescoped
+gate PASS (median 7.14, basin 100%, n_valid=48). Baseline OOS Sharpe
+11.76 — strong; gated OOS bit-for-bit identical → Δ=0.000.
+
+Root cause is upstream-of-gate, in `VolatilityForecaster.forecast()`:
+`self._latest_components` is frozen at `fit()` time and reused by every
+subsequent `forecast(asof, ...)` call → all 1,887 OOS regime_percentile
+labels = 34.03 exactly (constant). No threshold can make the gate fire
+meaningfully on a constant input. The gate's design is therefore NOT
+honestly evaluated by this run; a recompute-rolling-components fix is
+required before a real head-to-head verdict is possible. Full report:
+`reports/optuna/BB_REVERSION_15M_REGIME_GATE.md`. P0+P1+Path-A
+infrastructure (audit, recompute, RegimeGate, engine hook, gate runner,
+configs, clean-CSV builder) is built and tested; only `VolatilityForecaster`'s
+rolling-components semantics for one-shot historical replay are missing.
