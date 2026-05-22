@@ -753,17 +753,25 @@ class MarketDataProvider:
 
     def get_cache_stats(self) -> dict[str, Any]:
         """Get cache statistics including failover state"""
+        current_symbols = list(dict.fromkeys(self.symbols))
+        freshness_threshold = self.config.staleness_threshold_seconds
         fresh_count = sum(
             1
-            for c in self._cache.values()
-            if not c.is_stale(self.config.cache_ttl_seconds)
+            for symbol in current_symbols
+            if (
+                (cache := self._cache.get(symbol)) is not None
+                and not cache.is_stale(freshness_threshold)
+            )
         )
+        cached_count = sum(1 for symbol in current_symbols if symbol in self._cache)
 
         return {
-            "total_symbols": len(self.symbols),
-            "cached_symbols": len(self._cache),
+            "total_symbols": len(current_symbols),
+            "cached_symbols": cached_count,
             "fresh_count": fresh_count,
-            "stale_count": len(self._cache) - fresh_count,
+            "stale_count": len(current_symbols) - fresh_count,
+            "cache_entries": len(self._cache),
+            "freshness_threshold_seconds": freshness_threshold,
             "last_batch_fetch": (
                 self._last_batch_fetch.isoformat() if self._last_batch_fetch else None
             ),

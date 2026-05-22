@@ -251,6 +251,76 @@ class TestMarketDataProvider:
         assert stats["total_symbols"] == 2
         assert stats["cached_symbols"] == 0
 
+    def test_get_cache_stats_uses_current_symbols_only(self):
+        """Freshness stats should ignore old cache entries for removed symbols."""
+        from services.trading.data_provider import (
+            DataProviderConfig,
+            MarketDataCache,
+            MarketDataProvider,
+        )
+
+        provider = MarketDataProvider(
+            symbols=["005930", "000660"],
+            config=DataProviderConfig(cache_ttl_seconds=10.0),
+        )
+        now = datetime.now()
+        provider._cache["005930"] = MarketDataCache(
+            symbol="005930",
+            data={"close": 70000},
+            fetched_at=now,
+        )
+        provider._cache["000660"] = MarketDataCache(
+            symbol="000660",
+            data={"close": 120000},
+            fetched_at=now - timedelta(seconds=30),
+        )
+        provider._cache["OLD001"] = MarketDataCache(
+            symbol="OLD001",
+            data={"close": 1},
+            fetched_at=now - timedelta(seconds=30),
+        )
+
+        stats = provider.get_cache_stats()
+
+        assert stats["total_symbols"] == 2
+        assert stats["cached_symbols"] == 2
+        assert stats["fresh_count"] == 1
+        assert stats["stale_count"] == 1
+        assert stats["cache_entries"] == 3
+
+    def test_get_cache_stats_uses_operational_freshness_threshold(self):
+        """Operational freshness should not flap on short WebSocket cache TTL."""
+        from services.trading.data_provider import (
+            DataProviderConfig,
+            MarketDataCache,
+            MarketDataProvider,
+        )
+
+        provider = MarketDataProvider(
+            symbols=["005930", "000660"],
+            config=DataProviderConfig(
+                cache_ttl_seconds=2.0,
+                staleness_threshold_seconds=10.0,
+            ),
+        )
+        now = datetime.now()
+        provider._cache["005930"] = MarketDataCache(
+            symbol="005930",
+            data={"close": 70000},
+            fetched_at=now - timedelta(seconds=5),
+        )
+        provider._cache["000660"] = MarketDataCache(
+            symbol="000660",
+            data={"close": 120000},
+            fetched_at=now - timedelta(seconds=12),
+        )
+
+        stats = provider.get_cache_stats()
+
+        assert stats["freshness_threshold_seconds"] == 10.0
+        assert stats["fresh_count"] == 1
+        assert stats["stale_count"] == 1
+
     def test_clear_cache(self):
         """Test cache clearing"""
         from services.trading.data_provider import MarketDataProvider

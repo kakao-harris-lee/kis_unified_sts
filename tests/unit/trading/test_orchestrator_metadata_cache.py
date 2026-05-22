@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timedelta
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -472,6 +473,103 @@ class TestCacheInvalidation:
             "005930": {"source": "fusion"},
             "000660": {"source": "daily_watchlist"},
         }
+
+    def test_regime_universe_excludes_dip_position_only_and_missing_daily(self):
+        orch = _make_orchestrator()
+        now = datetime.now()
+        orch.config.symbols = ["005930", "000660", "001740", "034020", "017900"]
+        orch._daily_indicators = {
+            "005930": {"daily_close": 70000},
+            "000660": {"daily_close": 120000},
+            "001740": {"daily_close": 5000},
+            "034020": {"daily_close": 18000},
+            "017900": {"daily_close": 2000},
+        }
+        orch._dip_candidates = {"017900": {"name": "광전자"}}
+        orch._symbol_metadata_cache = {"034020": {"source": "dip"}}
+        orch._symbol_last_seen = {
+            "005930": now,
+            "000660": now,
+            "017900": now,
+        }
+        orch._position_tracker = SimpleNamespace(
+            positions=[SimpleNamespace(code="001740")]
+        )
+
+        assert orch._get_regime_universe_symbols() == {"005930", "000660"}
+
+    def test_classify_market_uses_filtered_regime_mfi_symbols(self):
+        orch = _make_orchestrator()
+        now = datetime.now()
+        orch.config.symbols = ["005930", "000660", "001740", "017900"]
+        orch._daily_indicators = {
+            "005930": {"daily_close": 70000},
+            "000660": {"daily_close": 120000},
+            "001740": {"daily_close": 5000},
+            "017900": {"daily_close": 2000},
+        }
+        orch._dip_candidates = {"017900": {"name": "광전자"}}
+        orch._symbol_last_seen = {
+            "005930": now,
+            "000660": now,
+            "017900": now,
+        }
+        orch._position_tracker = SimpleNamespace(
+            positions=[SimpleNamespace(code="001740")]
+        )
+        engine = MagicMock()
+        engine.get_market_mfi_values.return_value = {"005930": 83.0}
+        orch._indicator_engine = engine
+
+        regime = orch._classify_market(
+            {
+                "005930": {"change": 0.01},
+                "000660": {"change": 0.01},
+                "001740": {"change": -0.2},
+                "017900": {"change": -0.2},
+            }
+        )
+
+        assert regime == "BULL_STRONG"
+        engine.get_market_mfi_values.assert_called_once_with({"005930", "000660"})
+
+    def test_classify_market_does_not_fallback_to_mfi_missing_stock_symbols(self):
+        orch = _make_orchestrator()
+        now = datetime.now()
+        orch.config.symbols = ["005930", "000660"]
+        orch._daily_indicators = {
+            "005930": {"daily_close": 70000},
+            "000660": {"daily_close": 120000},
+        }
+        orch._symbol_last_seen = {"005930": now, "000660": now}
+        engine = MagicMock()
+        engine.get_market_mfi_values.return_value = {}
+        orch._indicator_engine = engine
+
+        regime = orch._classify_market(
+            {"005930": {"change": 0.05}, "000660": {"change": 0.06}}
+        )
+
+        assert regime == "UNKNOWN"
+
+    def test_classify_market_can_use_change_fallback_when_mfi_filter_disabled(self):
+        orch = _make_orchestrator(regime_require_mfi_symbols=False)
+        now = datetime.now()
+        orch.config.symbols = ["005930", "000660"]
+        orch._daily_indicators = {
+            "005930": {"daily_close": 70000},
+            "000660": {"daily_close": 120000},
+        }
+        orch._symbol_last_seen = {"005930": now, "000660": now}
+        engine = MagicMock()
+        engine.get_market_mfi_values.return_value = {}
+        orch._indicator_engine = engine
+
+        regime = orch._classify_market(
+            {"005930": {"change": 0.05}, "000660": {"change": 0.06}}
+        )
+
+        assert regime == "BULL"
 
     def test_get_stable_universe_protects_daily_watchlist_candidates_over_cold(self):
         orch = _make_orchestrator()

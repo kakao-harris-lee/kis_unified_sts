@@ -436,6 +436,10 @@ class TradingConfig:
     include_daily_watchlist_in_dynamic_universe: bool = True
     allow_daily_watchlist_entry_before_intraday_warmup: bool = True
     prioritize_stock_entry_execution: bool = True
+    regime_exclude_dip_candidates: bool = True
+    regime_exclude_position_only_symbols: bool = True
+    regime_require_daily_indicators: bool = True
+    regime_require_mfi_symbols: bool = True
 
     # Regime performance tracking
     regime_performance_tracking_enabled: bool = False
@@ -480,6 +484,16 @@ class TradingConfig:
                 "prioritize_stock_entry_execution must be bool, "
                 f"got {type(self.prioritize_stock_entry_execution)}"
             )
+        for attr_name in (
+            "regime_exclude_dip_candidates",
+            "regime_exclude_position_only_symbols",
+            "regime_require_daily_indicators",
+            "regime_require_mfi_symbols",
+        ):
+            if not isinstance(getattr(self, attr_name), bool):
+                raise TypeError(
+                    f"{attr_name} must be bool, got {type(getattr(self, attr_name))}"
+                )
 
         if self.regime_detection_mode not in ("simple", "adaptive", "hmm"):
             raise ValueError(
@@ -545,6 +559,10 @@ class TradingConfig:
         include_daily_watchlist_in_dynamic_universe: bool | None = None,
         allow_daily_watchlist_entry_before_intraday_warmup: bool | None = None,
         prioritize_stock_entry_execution: bool | None = None,
+        regime_exclude_dip_candidates: bool | None = None,
+        regime_exclude_position_only_symbols: bool | None = None,
+        regime_require_daily_indicators: bool | None = None,
+        regime_require_mfi_symbols: bool | None = None,
     ) -> TradingConfig:
         """주식용 설정"""
         require_daily_indicators = (
@@ -567,6 +585,26 @@ class TradingConfig:
             if prioritize_stock_entry_execution is None
             else prioritize_stock_entry_execution
         )
+        exclude_dip_from_regime = (
+            _env_bool("STOCK_REGIME_EXCLUDE_DIP_CANDIDATES", True)
+            if regime_exclude_dip_candidates is None
+            else regime_exclude_dip_candidates
+        )
+        exclude_position_only_from_regime = (
+            _env_bool("STOCK_REGIME_EXCLUDE_POSITION_ONLY_SYMBOLS", True)
+            if regime_exclude_position_only_symbols is None
+            else regime_exclude_position_only_symbols
+        )
+        require_daily_for_regime = (
+            _env_bool("STOCK_REGIME_REQUIRE_DAILY_INDICATORS", True)
+            if regime_require_daily_indicators is None
+            else regime_require_daily_indicators
+        )
+        require_mfi_for_regime = (
+            _env_bool("STOCK_REGIME_REQUIRE_MFI_SYMBOLS", True)
+            if regime_require_mfi_symbols is None
+            else regime_require_mfi_symbols
+        )
         return cls(
             asset_class="stock",
             strategy_name=strategy_name,
@@ -580,6 +618,10 @@ class TradingConfig:
             include_daily_watchlist_in_dynamic_universe=include_daily_watchlist,
             allow_daily_watchlist_entry_before_intraday_warmup=allow_daily_warmup_bypass,
             prioritize_stock_entry_execution=prioritize_entries,
+            regime_exclude_dip_candidates=exclude_dip_from_regime,
+            regime_exclude_position_only_symbols=exclude_position_only_from_regime,
+            regime_require_daily_indicators=require_daily_for_regime,
+            regime_require_mfi_symbols=require_mfi_for_regime,
             # Slower refresh for stock (40-50 symbols with retention)
             # avoids KIS API rate limiting
             market_data_refresh_seconds=2.0,
@@ -2047,6 +2089,9 @@ class TradingOrchestrator:
         broker_only = broker_codes - redis_codes
 
         reconcile_qty = bv_cfg.get("reconcile_quantity", True)
+        reconcile_price = bv_cfg.get("reconcile_price", True)
+        remove_redis_only = bv_cfg.get("remove_redis_only", False)
+        sync_clickhouse = bv_cfg.get("sync_clickhouse", False)
         notify = bv_cfg.get("notify_on_mismatch", True)
         auto_track = bv_cfg.get("auto_track_external", False)
         alerts: list[str] = []
@@ -2079,6 +2124,25 @@ class TradingOrchestrator:
                 else:
                     alerts.append(msg)
 
+            broker_avg_price = float(bp.get("avg_price") or 0.0)
+            if broker_avg_price > 0 and abs(rp.entry_price - broker_avg_price) > 1e-6:
+                msg = (
+                    f"[{code}] Avg price mismatch: "
+                    f"Redis={rp.entry_price:,.2f}, Broker={broker_avg_price:,.2f}"
+                )
+                logger.warning(msg)
+                if reconcile_price:
+                    rp.entry_price = broker_avg_price
+                    logger.info(
+                        f"[{code}] Entry price reconciled to broker value: {broker_avg_price:,.2f}"
+                    )
+                else:
+                    alerts.append(msg)
+
+            broker_current_price = float(bp.get("current_price") or 0.0)
+            if broker_current_price > 0:
+                rp.update_price(broker_current_price)
+
         # 2. Redis-only — position may have been closed externally
         for code in redis_only:
             rp = redis_by_code[code]
@@ -2087,7 +2151,15 @@ class TradingOrchestrator:
                 f"qty={rp.quantity}, entry={rp.entry_price:,.0f}"
             )
             logger.warning(msg)
-            alerts.append(msg)
+            if remove_redis_only:
+                removed = self._position_tracker.remove_position(
+                    rp.id,
+                    reason="broker_absent",
+                )
+                if removed is not None:
+                    logger.info(f"[{code}] Removed Redis-only position from tracker")
+            else:
+                alerts.append(msg)
 
         # 3. Broker-only — external position not tracked by system
         for code in broker_only:
@@ -2099,15 +2171,26 @@ class TradingOrchestrator:
             logger.warning(msg)
             if auto_track:
                 try:
+                    side = PositionSide(bp["side"])
+                    broker_avg_price = float(bp["avg_price"])
+                    broker_current_price = float(
+                        bp.get("current_price") or broker_avg_price
+                    )
                     new_pos = Position(
-                        id=f"broker_{code}_{datetime.now().strftime('%H%M%S')}",
+                        id=f"broker_{self.config.asset_class}_{code}_{side.value}",
                         code=code,
                         name=bp.get("name", ""),
-                        side=PositionSide(bp["side"]),
+                        side=side,
                         quantity=bp["quantity"],
-                        entry_price=bp["avg_price"],
-                        current_price=bp.get("current_price", bp["avg_price"]),
+                        entry_price=broker_avg_price,
+                        current_price=broker_current_price,
+                        highest_price=max(broker_avg_price, broker_current_price),
+                        lowest_price=min(broker_avg_price, broker_current_price),
                         strategy="external",
+                        metadata={
+                            "source": "broker_verification",
+                            "broker_reconciled_at": datetime.now(UTC).isoformat(),
+                        },
                     )
                     if self._position_tracker.add_recovered_position(new_pos):
                         logger.info(f"[{code}] Auto-tracked broker position")
@@ -2132,6 +2215,13 @@ class TradingOrchestrator:
                 f"Broker verification: {len(matched)} matched, "
                 f"{len(redis_only)} Redis-only, {len(broker_only)} broker-only"
             )
+
+        if (
+            sync_clickhouse
+            and self.config.asset_class == "stock"
+            and self._position_tracker is not None
+        ):
+            await self._position_tracker.reconcile_open_positions_to_db()
 
         # Telegram alert for mismatches
         if alerts and notify:
@@ -5101,12 +5191,19 @@ class TradingOrchestrator:
                 except (InfrastructureError, OSError, ConnectionError) as e:
                     logger.debug(f"Adaptive sizing refresh failed: {e}")
 
-            logger.info(f"Market regime: {regime}")
+            regime_diag = getattr(self, "_last_regime_diagnostics", {}) or {}
+            logger.info(
+                "Market regime: %s (regime_symbols=%s, mfi_symbols=%s)",
+                regime,
+                regime_diag.get("regime_symbols"),
+                regime_diag.get("mfi_symbols"),
+            )
 
             return {
                 "regime": regime,
                 "timestamp": datetime.now().isoformat(),
                 "symbols_checked": len(data) if data else 0,
+                "diagnostics": regime_diag,
             }
 
         except (NetworkError, APIError, InfrastructureError, ValidationError) as e:
@@ -5117,25 +5214,128 @@ class TradingOrchestrator:
     MARKET_BULL_THRESHOLD = 0.02  # +2% = BULL
     MARKET_BEAR_THRESHOLD = -0.02  # -2% = BEAR
 
+    @staticmethod
+    def _median_float(values: list[float]) -> float | None:
+        if not values:
+            return None
+        ordered = sorted(values)
+        n = len(ordered)
+        if n % 2 == 0:
+            return (ordered[n // 2 - 1] + ordered[n // 2]) / 2
+        return ordered[n // 2]
+
+    def _get_position_codes(self) -> set[str]:
+        tracker = getattr(self, "_position_tracker", None)
+        if not tracker:
+            return set()
+        return {
+            str(getattr(position, "code", "")).strip()
+            for position in getattr(tracker, "positions", [])
+            if str(getattr(position, "code", "")).strip()
+        }
+
+    def _get_position_only_symbols(self) -> set[str]:
+        """Return held symbols that are not present in the active source universe."""
+        position_codes = self._get_position_codes()
+        if not position_codes:
+            return set()
+        source_seen = set((getattr(self, "_symbol_last_seen", {}) or {}).keys())
+        return position_codes - source_seen
+
+    def _get_regime_universe_symbols(self) -> set[str] | None:
+        """Build the stock regime universe separately from entry candidates."""
+        symbols = set(self.config.symbols) if self.config.symbols else set()
+        if self.config.asset_class != "stock":
+            return symbols or None
+
+        if self.config.regime_exclude_dip_candidates:
+            dip_codes = set((getattr(self, "_dip_candidates", {}) or {}).keys())
+            meta_sources = getattr(self, "_symbol_metadata_cache", {}) or {}
+            dip_codes.update(
+                code
+                for code, meta in meta_sources.items()
+                if isinstance(meta, dict) and meta.get("source") == "dip"
+            )
+            symbols -= dip_codes
+
+        if self.config.regime_exclude_position_only_symbols:
+            symbols -= self._get_position_only_symbols()
+
+        if self.config.regime_require_daily_indicators:
+            covered = set((getattr(self, "_daily_indicators", {}) or {}).keys())
+            symbols &= covered
+
+        return symbols
+
+    @staticmethod
+    def _filter_market_data_by_symbols(
+        market_data: dict[str, Any],
+        symbols: set[str] | None,
+    ) -> dict[str, Any]:
+        if symbols is None:
+            return market_data
+        return {
+            symbol: data for symbol, data in market_data.items() if symbol in symbols
+        }
+
     def _classify_market(self, market_data: dict[str, Any]) -> str:
         """Market classification using MarketClassifier with MFI from indicator engine.
 
         Falls back to simple avg-change heuristic when MFI is not yet available
         (during warmup period).
         """
+        regime_symbols = self._get_regime_universe_symbols()
+        mfi_symbols: set[str] = set()
+
         # Try MFI-based classification via MarketClassifier (works even without market_data)
         if self._indicator_engine:
-            active = set(self.config.symbols) if self.config.symbols else None
-            mfi = self._indicator_engine.get_market_mfi(active)
+            mfi_by_symbol: dict[str, float] = {}
+            if hasattr(self._indicator_engine, "get_market_mfi_values"):
+                mfi_by_symbol = self._indicator_engine.get_market_mfi_values(
+                    regime_symbols
+                )
+                mfi = self._median_float(list(mfi_by_symbol.values()))
+            else:
+                mfi = self._indicator_engine.get_market_mfi(regime_symbols)
+            mfi_symbols = set(mfi_by_symbol)
             if mfi is not None:
                 try:
                     from shared.strategy.market_classifier import MarketClassifier
 
                     classifier = MarketClassifier()
                     state = classifier.classify(mfi=mfi, adx=0.0)
+                    self._last_regime_diagnostics = {
+                        "regime_symbols": (
+                            len(regime_symbols)
+                            if regime_symbols is not None
+                            else len(self.config.symbols)
+                        ),
+                        "mfi_symbols": len(mfi_symbols),
+                        "mfi": mfi,
+                        "fallback_symbols": 0,
+                    }
                     return state.value
                 except (ValidationError, ValueError, TypeError, AttributeError) as e:
                     logger.debug(f"MarketClassifier failed: {e}")
+
+        fallback_symbols = regime_symbols
+        if (
+            self.config.asset_class == "stock"
+            and self.config.regime_require_mfi_symbols
+        ):
+            fallback_symbols = mfi_symbols
+
+        market_data = self._filter_market_data_by_symbols(market_data, fallback_symbols)
+        self._last_regime_diagnostics = {
+            "regime_symbols": (
+                len(regime_symbols)
+                if regime_symbols is not None
+                else len(self.config.symbols)
+            ),
+            "mfi_symbols": len(mfi_symbols),
+            "mfi": None,
+            "fallback_symbols": len(market_data),
+        }
 
         # Fallback: simple avg-change heuristic (used during warmup)
         changes = []

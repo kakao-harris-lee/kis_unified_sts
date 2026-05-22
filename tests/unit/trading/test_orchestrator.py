@@ -92,6 +92,10 @@ class TestTradingConfig:
         assert config.symbols == ["005930", "000660"]
         assert config.initial_capital == 10_000_000
         assert config.require_daily_indicators_for_dynamic_universe is True
+        assert config.regime_exclude_dip_candidates is True
+        assert config.regime_exclude_position_only_symbols is True
+        assert config.regime_require_daily_indicators is True
+        assert config.regime_require_mfi_symbols is True
 
     def test_stock_factory_allows_dynamic_universe_coverage_override(self):
         """주식 동적 유니버스 daily indicator 커버리지 가드를 설정으로 끌 수 있다."""
@@ -120,6 +124,22 @@ class TestTradingConfig:
         )
 
         assert config.allow_daily_watchlist_entry_before_intraday_warmup is False
+
+    def test_stock_factory_allows_regime_filter_overrides(self):
+        """주식 레짐 유니버스 필터를 설정으로 끌 수 있다."""
+        from services.trading.orchestrator import TradingConfig
+
+        config = TradingConfig.stock(
+            regime_exclude_dip_candidates=False,
+            regime_exclude_position_only_symbols=False,
+            regime_require_daily_indicators=False,
+            regime_require_mfi_symbols=False,
+        )
+
+        assert config.regime_exclude_dip_candidates is False
+        assert config.regime_exclude_position_only_symbols is False
+        assert config.regime_require_daily_indicators is False
+        assert config.regime_require_mfi_symbols is False
 
     def test_futures_factory(self):
         """선물 설정 팩토리"""
@@ -1096,11 +1116,21 @@ class TestReloadHolidays:
 class TestMarketClassification:
     """TradingOrchestrator._classify_market 테스트"""
 
+    @staticmethod
+    def _fallback_config():
+        from services.trading.orchestrator import TradingConfig
+
+        return TradingConfig.stock(
+            symbols=["005930", "000660"],
+            regime_require_daily_indicators=False,
+            regime_require_mfi_symbols=False,
+        )
+
     def test_bull_market(self):
         """상승장 (BULL) 감지"""
-        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from services.trading.orchestrator import TradingOrchestrator
 
-        config = TradingConfig.stock()
+        config = self._fallback_config()
         orch = TradingOrchestrator(config)
 
         # Average change > 2% = BULL
@@ -1112,9 +1142,9 @@ class TestMarketClassification:
 
     def test_bear_market(self):
         """하락장 (BEAR) 감지"""
-        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from services.trading.orchestrator import TradingOrchestrator
 
-        config = TradingConfig.stock()
+        config = self._fallback_config()
         orch = TradingOrchestrator(config)
 
         # Average change < -2% = BEAR
@@ -1126,9 +1156,9 @@ class TestMarketClassification:
 
     def test_sideways_up(self):
         """소폭 상승 횡보장 감지"""
-        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from services.trading.orchestrator import TradingOrchestrator
 
-        config = TradingConfig.stock()
+        config = self._fallback_config()
         orch = TradingOrchestrator(config)
 
         # 0 < change <= 2% = SIDEWAYS_UP
@@ -1140,9 +1170,9 @@ class TestMarketClassification:
 
     def test_sideways_down(self):
         """소폭 하락 횡보장 감지"""
-        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from services.trading.orchestrator import TradingOrchestrator
 
-        config = TradingConfig.stock()
+        config = self._fallback_config()
         orch = TradingOrchestrator(config)
 
         # -2% <= change < 0 = SIDEWAYS_DOWN
@@ -1154,9 +1184,9 @@ class TestMarketClassification:
 
     def test_sideways_flat(self):
         """변화 없음"""
-        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from services.trading.orchestrator import TradingOrchestrator
 
-        config = TradingConfig.stock()
+        config = self._fallback_config()
         orch = TradingOrchestrator(config)
 
         # Zero change = SIDEWAYS_FLAT
@@ -1168,18 +1198,18 @@ class TestMarketClassification:
 
     def test_empty_data(self):
         """빈 데이터"""
-        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from services.trading.orchestrator import TradingOrchestrator
 
-        config = TradingConfig.stock()
+        config = self._fallback_config()
         orch = TradingOrchestrator(config)
 
         assert orch._classify_market({}) == "UNKNOWN"
 
     def test_no_change_field(self):
         """change 필드 없음"""
-        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from services.trading.orchestrator import TradingOrchestrator
 
-        config = TradingConfig.stock()
+        config = self._fallback_config()
         orch = TradingOrchestrator(config)
 
         data = {
