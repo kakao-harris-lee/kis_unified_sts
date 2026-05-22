@@ -123,3 +123,64 @@ def test_load_candles_from_csv_empty_window_returns_empty_df(tmp_path):
     df = hrr._load_candles_from_csv(str(csv), dt.date(2026, 1, 1), dt.date(2026, 1, 5))
     assert len(df) == 0
     assert list(df.columns) == ["open", "high", "low", "close", "volume"]
+
+
+def test_rolling_components_produce_varying_labels(monkeypatch):
+    """With full_rv supplied, _latest_components updates per OOS day → labels vary.
+    Regression for T7 degenerate-labels FAIL (all labels = 34.03 constant)."""
+    # Synthetic train (200 days, spread across a range) so that OOS preds land at
+    # different percentiles within the training distribution.
+    import numpy as np
+    rng = pd.date_range("2025-04-01", periods=200, freq="D")
+    # Train: linearly varying RV from 1e-4 to 1e-2 so percentile computation is fine
+    train_vals = np.linspace(1e-4, 1e-2, len(rng))
+    train_rv = pd.Series(train_vals, index=rng.date)
+    # OOS: 10 days with gradually increasing RV — stays within train range so pred_rv
+    # lands at different internal percentiles, not all clamped to 0/100.
+    oos = pd.date_range("2025-10-20", periods=10, freq="D")
+    oos_vals = np.linspace(1e-3, 8e-3, 10)       # rising, within training range
+    full_rv = pd.concat([train_rv, pd.Series(oos_vals, index=oos.date)])
+
+    rows_written = []
+    def fake_insert(client, rows):
+        rows_written.extend(rows)
+        return len(rows)
+    monkeypatch.setattr(hrr, "_insert_rows", fake_insert)
+
+    # One 15-min stamp per OOS day at 09:00
+    test_minutes = pd.DatetimeIndex([
+        pd.Timestamp(d.year, d.month, d.day, 9, 0) for d in oos.date])
+    hrr.recompute_and_insert(
+        train_rv=train_rv, test_minutes=test_minutes,
+        current_close=380.0, client=None, full_rv=full_rv)
+    assert len(rows_written) == 10
+    # regime_percentile is the 5th tuple element
+    percentiles = [r[4] for r in rows_written]
+    # Labels MUST vary — the rolling components update per day → pred_rv shifts
+    # The key assertion: labels are NOT all identical (the pre-fix constant=34.03 bug)
+    assert len(set(percentiles)) > 1, (
+        f"labels degenerate (all identical): {percentiles}")
+    # Max should exceed min by a meaningful margin (the synthetic OOS rises stair-step)
+    assert max(percentiles) - min(percentiles) >= 20.0, (
+        f"labels too clustered: range {max(percentiles)-min(percentiles):.1f}")
+
+
+def test_full_rv_none_preserves_frozen_components(monkeypatch):
+    """Backward-compat: full_rv=None → _latest_components stays frozen → constant
+    labels (the pre-fix behavior). Existing T2 tests already cover the float-path
+    happy case; this test pins that no behavior change happens when full_rv is omitted."""
+    rng = pd.date_range("2025-09-01", periods=90, freq="D")
+    rv = pd.Series(0.0001 + 1e-6 * (rng.dayofyear % 7), index=rng.date)
+    rows_written = []
+    def fake_insert(client, rows):
+        rows_written.extend(rows)
+        return len(rows)
+    monkeypatch.setattr(hrr, "_insert_rows", fake_insert)
+    test_minutes = pd.date_range("2025-12-01 09:00", "2025-12-01 09:45", freq="15min")
+    # No full_rv kwarg — backward-compat path
+    hrr.recompute_and_insert(
+        train_rv=rv, test_minutes=test_minutes, current_close=380.0, client=None)
+    percentiles = [r[4] for r in rows_written]
+    # All 4 forecasts on the SAME day with frozen components → SAME label
+    assert len(set(percentiles)) == 1, (
+        f"backward-compat broken: labels vary when full_rv=None: {percentiles}")

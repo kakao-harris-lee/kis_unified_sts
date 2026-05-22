@@ -106,8 +106,18 @@ def recompute_and_insert(
     test_minutes: pd.DatetimeIndex,
     current_close: float | Callable[[dt.datetime], float],
     client,
+    *,
+    full_rv: pd.Series | None = None,
 ) -> int:
     """Fit on train_rv, forecast at every test_minutes timestamp, insert.
+
+    When full_rv is supplied (containing train+OOS daily RV), updates
+    VolatilityForecaster._latest_components per OOS day from rolling
+    (last_d, last_w, last_m) computed from full_rv history strictly
+    BEFORE that day. This walks the model forward correctly through
+    the OOS window — mirrors production's daily-refit semantics
+    without the cost of a full fit() per day. Without full_rv,
+    _latest_components stays frozen at fit() time (backward-compat).
 
     Args:
         train_rv: daily realized variance Series, indexed by date objects.
@@ -117,6 +127,10 @@ def recompute_and_insert(
             or a callable taking the asof datetime and returning the per-
             timestamp close (preferred for multi-day OOS windows).
         client: ClickHouse client (None in tests — _insert_rows handles it).
+        full_rv: optional combined daily RV Series (train + OOS), indexed by
+            date objects. When supplied, enables rolling-components walk-forward
+            so regime_percentile labels vary across OOS days. Look-ahead-safe:
+            per-day components are built from history STRICTLY before day D.
 
     Returns:
         Number of rows written.
@@ -124,10 +138,22 @@ def recompute_and_insert(
     forecaster = VolatilityForecaster(_RECOMPUTE_HAR_CFG)
     forecaster.fit(train_rv)
     rows: list[tuple] = []
+    last_day_seen = None
     for ts in test_minutes:
         asof = ts.to_pydatetime() if hasattr(ts, "to_pydatetime") else ts
         if getattr(asof, "tzinfo", None) is not None:
             asof = asof.replace(tzinfo=None)
+        # Rolling-components walk-forward: refresh _latest_components ONCE per day.
+        if full_rv is not None:
+            D = asof.date()
+            if last_day_seen != D:
+                history_before = full_rv.loc[full_rv.index < D]
+                if len(history_before) >= 22:
+                    last_d = float(history_before.iloc[-1])
+                    last_w = float(history_before.iloc[-5:].mean())
+                    last_m = float(history_before.iloc[-22:].mean())
+                    forecaster._latest_components = (last_d, last_w, last_m)
+                last_day_seen = D
         vf = forecaster.forecast(asof, current_close=_resolve(current_close, asof))
         rows.append((
             asof,
@@ -199,6 +225,16 @@ def main(argv=None) -> int:
     else:
         test_df = _fetch_minute_candles(client, xs_d, xe_d + dt.timedelta(days=1))
 
+    # Build the FULL daily RV series (train + test) for rolling-components walk-forward.
+    # This mirrors production's daily-refit semantics: _latest_components updates
+    # per OOS day from history STRICTLY before that day. Look-ahead-safe because
+    # the per-day component is built from days BEFORE day D.
+    if not test_df.empty:
+        full_df = pd.concat([train_df, test_df]).sort_index()
+        full_rv = daily_rv_series(full_df)
+    else:
+        full_rv = train_rv
+
     current_close_arg: float | Callable[[dt.datetime], float]
     if not test_df.empty:
         # _fetch_minute_candles returns a UTC-DatetimeIndex df; strip tz for
@@ -219,7 +255,7 @@ def main(argv=None) -> int:
     else:
         current_close_arg = 380.0
 
-    n = recompute_and_insert(train_rv, test_minutes, current_close_arg, client)
+    n = recompute_and_insert(train_rv, test_minutes, current_close_arg, client, full_rv=full_rv)
     print(f"wrote {n} vol_forecasts rows (model_version={RECOMPUTE_MODEL_VERSION})")
     return 0
 
