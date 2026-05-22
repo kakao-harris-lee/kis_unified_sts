@@ -243,7 +243,17 @@ class StrategyFactory:
                 f"Available: {EntryRegistry.list_all()}"
             )
 
+        # Pop regime_gate section before passing params to EntryRegistry.create()
+        # so adapter CONFIG_CLASS never sees an unknown field.
+        gate_yaml = entry_params.pop("regime_gate", None)
+
         entry = EntryRegistry.create(entry_type, entry_params)
+
+        # Attach GateConfig to the adapter (P2-③ T7).  The hasattr guard
+        # preserves backward-compat for entry adapters that don't support gates.
+        if hasattr(entry, "_gate_cfg"):
+            from shared.strategy.gates.regime_gate import regime_gate_cfg_from_yaml
+            entry._gate_cfg = regime_gate_cfg_from_yaml(gate_yaml)
 
         # 청산 로직 생성
         exit_cfg = strategy_cfg.get("exit", {})
