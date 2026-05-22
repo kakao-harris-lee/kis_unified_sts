@@ -23,6 +23,20 @@ def _cfg():
     )
 
 
+def _stub_infra(monkeypatch, setup_adapters_module):
+    """Stub Redis + CH client construction so the gate hook is reached
+    deterministically (offline CI doesn't have Redis/CH listening)."""
+    from shared.streaming.client import RedisClient
+    monkeypatch.setattr(RedisClient, "get_client",
+                        classmethod(lambda _cls: MagicMock()))
+    fake_ch_client = MagicMock()
+    fake_ch_client.get_sync_client = MagicMock(return_value=MagicMock())
+    monkeypatch.setattr(
+        "shared.db.client.get_clickhouse_client",
+        lambda _cfg: fake_ch_client,
+    )
+
+
 @pytest.mark.parametrize("adapter_class,cfg_class", [
     ("SetupAEntryAdapter", "SetupAEntryConfig"),
     ("SetupCEntryAdapter", "SetupCEntryConfig"),
@@ -61,6 +75,7 @@ async def test_gate_blocks_returns_none(adapter_class, cfg_class, monkeypatch):
     AdapterCls = getattr(setup_adapters, adapter_class)
     CfgCls = getattr(setup_adapters, cfg_class)
     adapter = AdapterCls(CfgCls(), gate_cfg=_cfg())
+    _stub_infra(monkeypatch, setup_adapters)
     # Force the underlying setup to emit a decision signal
     fake_decision = MagicMock()
     fake_decision.metadata = {"signal_direction": "long"}
@@ -86,6 +101,7 @@ async def test_gate_allows_returns_signal(adapter_class, cfg_class, monkeypatch)
     AdapterCls = getattr(setup_adapters, adapter_class)
     CfgCls = getattr(setup_adapters, cfg_class)
     adapter = AdapterCls(CfgCls(), gate_cfg=_cfg())
+    _stub_infra(monkeypatch, setup_adapters)
     fake_decision = MagicMock()
     fake_decision.metadata = {"signal_direction": "long"}
     adapter._setup.check = MagicMock(return_value=fake_decision)
