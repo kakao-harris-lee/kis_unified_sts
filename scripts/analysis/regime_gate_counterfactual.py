@@ -20,6 +20,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
+from shared.strategy.gates.adapter_helper import (  # noqa: E402
+    _futures_clickhouse_database,
+    futures_clickhouse_client,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -32,11 +37,13 @@ def _resolve_window() -> tuple[dt.date, dt.date]:
 
 def fetch_decisions(start: dt.date, end: dt.date) -> list[tuple]:
     """Return [(ts, strategy, signal_direction, allow), ...] for the window."""
-    from shared.db.client import get_clickhouse_client
-    from shared.db.config import ClickHouseConfig
-    cli = get_clickhouse_client(ClickHouseConfig.from_env()).get_sync_client()
+    db = _futures_clickhouse_database()
+    client = futures_clickhouse_client()
+    if client is None:
+        raise RuntimeError("futures_clickhouse_client unavailable")
+    cli = client.get_sync_client()
     rows = cli.execute(
-        "SELECT ts, strategy, signal_direction, allow FROM kospi.regime_gate_decisions "
+        f"SELECT ts, strategy, signal_direction, allow FROM {db}.regime_gate_decisions "
         "WHERE ts >= %(s)s AND ts < %(e)s ORDER BY ts",
         {"s": dt.datetime.combine(start, dt.time.min),
          "e": dt.datetime.combine(end + dt.timedelta(days=1), dt.time.min)},
@@ -77,11 +84,13 @@ def load_candles(start: dt.date, end: dt.date):
     """Load kospi200f_1m candles for the window (uses A01603 clean series)."""
     import pandas as pd
 
-    from shared.db.client import get_clickhouse_client
-    from shared.db.config import ClickHouseConfig
-    cli = get_clickhouse_client(ClickHouseConfig.from_env()).get_sync_client()
+    db = _futures_clickhouse_database()
+    client = futures_clickhouse_client()
+    if client is None:
+        return None
+    cli = client.get_sync_client()
     rows = cli.execute(
-        "SELECT datetime, close FROM kospi.kospi200f_1m "
+        f"SELECT datetime, close FROM {db}.kospi200f_1m "
         "WHERE code = 'A01603' AND datetime >= %(s)s AND datetime < %(e)s "
         "ORDER BY datetime",
         {"s": dt.datetime.combine(start, dt.time.min),

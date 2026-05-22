@@ -125,3 +125,45 @@ def test_signal_direction_falls_back_to_long_when_missing(monkeypatch):
     # Permissive allow (no vol data); the direction must have been 'long'
     assert blocked is False
     assert logged_rows[0]["signal_direction"] == "long"
+
+
+def test_log_decision_targets_futures_database(monkeypatch):
+    """Regression for cross-DB bug: audit row must land in the futures DB
+    (kospi by default via CLICKHOUSE_FUTURES_DATABASE), NOT the stock-DB
+    default (`market`). Otherwise the weekly counterfactual SELECT reads
+    from kospi.regime_gate_decisions while inserts land in market.* —
+    silent feature dud."""
+    from shared.strategy.gates import adapter_helper
+    captured = {}
+
+    class FakeFuturesClient:
+        config = type("C", (), {"database": "kospi"})()
+
+        def insert_regime_gate_decisions(self, rows):
+            captured["rows"] = rows
+            captured["db"] = self.config.database
+            return len(rows)
+
+    monkeypatch.setattr(adapter_helper, "futures_clickhouse_client",
+                        lambda: FakeFuturesClient())
+    monkeypatch.setattr(adapter_helper, "LiveVolInputs",
+                        lambda **_kw: MagicMock(
+                            latest_vol_at=MagicMock(return_value=None),
+                            events_within=MagicMock(return_value=[]),
+                            macro_for=MagicMock(return_value=None)))
+    adapter_helper.apply_regime_gate(
+        gate_cfg=_cfg(), decision_signal=_sig("long"),
+        context=_ctx(code="A01603"),
+        strategy_name="setup_a_gap_reversion",
+        redis=MagicMock(), ch_client=MagicMock())
+    assert captured["db"] == "kospi"  # NOT 'market'
+    assert captured["rows"][0]["strategy"] == "setup_a_gap_reversion"
+
+
+def test_futures_clickhouse_database_resolves_env_var(monkeypatch):
+    """Helper uses CLICKHOUSE_FUTURES_DATABASE env var (default kospi)."""
+    from shared.strategy.gates.adapter_helper import _futures_clickhouse_database
+    monkeypatch.delenv("CLICKHOUSE_FUTURES_DATABASE", raising=False)
+    assert _futures_clickhouse_database() == "kospi"
+    monkeypatch.setenv("CLICKHOUSE_FUTURES_DATABASE", "custom_futures")
+    assert _futures_clickhouse_database() == "custom_futures"

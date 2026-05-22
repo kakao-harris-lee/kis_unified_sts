@@ -18,12 +18,42 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+import os
 from typing import Any
 
 from shared.strategy.gates.live_inputs import LiveVolInputs
 from shared.strategy.gates.regime_gate import GateConfig, RegimeGate
 
 logger = logging.getLogger(__name__)
+
+
+def _futures_clickhouse_database() -> str:
+    """Resolve the futures ClickHouse DB name.
+
+    The system splits stocks (`market`, default) from futures (`kospi`,
+    per CLICKHOUSE_FUTURES_DATABASE in .env). RegimeGate is a futures-
+    only feature so audit rows + event_scores SELECTs must target the
+    futures DB. Without this, the stock-DB default would land
+    regime_gate_decisions rows in `market` while the counterfactual
+    digest reads from `kospi` (silent feature dud).
+    """
+    return os.environ.get("CLICKHOUSE_FUTURES_DATABASE", "kospi")
+
+
+def futures_clickhouse_client() -> Any | None:
+    """Return a ClickHouseClient bound to the futures DB, or None on failure.
+
+    Hot-path safe: any construction failure returns None (caller takes
+    PERMISSIVE degrade branch — never propagates to trading hot path).
+    """
+    try:
+        from shared.db.client import get_clickhouse_client
+        from shared.db.config import ClickHouseConfig
+        cfg = ClickHouseConfig.from_env(database=_futures_clickhouse_database())
+        return get_clickhouse_client(cfg)
+    except Exception as e:  # noqa: BLE001
+        logger.debug("futures_clickhouse_client construction failed: %s", e)
+        return None
 
 
 def _log_decision(
@@ -37,9 +67,6 @@ def _log_decision(
     regime_pct: float,
 ) -> None:
     """Best-effort append to regime_gate_decisions. Any exception → swallowed."""
-    from shared.db.client import get_clickhouse_client
-    from shared.db.config import ClickHouseConfig
-
     ts_n = ts.replace(tzinfo=None) if getattr(ts, "tzinfo", None) else ts
     row = {
         "ts": ts_n,
@@ -50,7 +77,10 @@ def _log_decision(
         "reason": reason or "",
         "regime_pct": regime_pct,
     }
-    get_clickhouse_client(ClickHouseConfig.from_env()).insert_regime_gate_decisions([row])
+    client = futures_clickhouse_client()
+    if client is None:
+        return
+    client.insert_regime_gate_decisions([row])
 
 
 def _extract_signal_direction(decision_signal: Any) -> str:

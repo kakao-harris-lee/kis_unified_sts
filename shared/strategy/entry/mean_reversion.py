@@ -9,7 +9,7 @@ Migrated from kospi_mini_sts.
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, time, timedelta
-from typing import Any, Optional
+from typing import Any
 from zoneinfo import ZoneInfo
 
 _KST = ZoneInfo("Asia/Seoul")
@@ -135,7 +135,7 @@ class MeanReversionEntry(EntrySignalGenerator[MeanReversionConfig]):
             indicators.append(f"mtf_base_{self.config.timeframe_minutes}m")
         return indicators
 
-    async def generate(self, context: EntryContext) -> Optional[Signal]:
+    async def generate(self, context: EntryContext) -> Signal | None:
         """Generate entry signal based on mean reversion conditions."""
         data = context.market_data or {}
         indicators = context.indicators or {}
@@ -298,11 +298,13 @@ class MeanReversionEntry(EntrySignalGenerator[MeanReversionConfig]):
         )
         if _candidate_direction is not None and self._gate_cfg is not None:
             try:
-                from shared.db.client import get_clickhouse_client
-                from shared.db.config import ClickHouseConfig
+                from shared.strategy.gates.adapter_helper import (
+                    futures_clickhouse_client,
+                )
                 from shared.streaming.client import RedisClient
                 _redis = RedisClient.get_client()
-                _ch = get_clickhouse_client(ClickHouseConfig.from_env()).get_sync_client()
+                _futures_cli = futures_clickhouse_client()
+                _ch = _futures_cli.get_sync_client() if _futures_cli is not None else None
             except Exception:  # noqa: BLE001
                 _redis, _ch = None, None
             if _redis is not None and _ch is not None:

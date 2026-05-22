@@ -1089,11 +1089,13 @@ class SetupAEntryAdapter(EntrySignalGenerator[SetupAEntryConfig]):
         # === P2-③ T5: RegimeGate check (after LLM veto, before Signal return) ===
         if self._gate_cfg is not None:
             try:
-                from shared.db.client import get_clickhouse_client
-                from shared.db.config import ClickHouseConfig
+                from shared.strategy.gates.adapter_helper import (
+                    futures_clickhouse_client,
+                )
                 from shared.streaming.client import RedisClient
                 _redis = RedisClient.get_client()
-                _ch = get_clickhouse_client(ClickHouseConfig.from_env()).get_sync_client()
+                _futures_cli = futures_clickhouse_client()
+                _ch = _futures_cli.get_sync_client() if _futures_cli is not None else None
             except Exception:  # noqa: BLE001 — degrade PERMISSIVE
                 _redis, _ch = None, None
             if _redis is not None and _ch is not None:
@@ -1330,11 +1332,13 @@ class SetupCEntryAdapter(EntrySignalGenerator[SetupCEntryConfig]):
         # === P2-③ T5: RegimeGate check (after LLM veto, before Signal return) ===
         if self._gate_cfg is not None:
             try:
-                from shared.db.client import get_clickhouse_client
-                from shared.db.config import ClickHouseConfig
+                from shared.strategy.gates.adapter_helper import (
+                    futures_clickhouse_client,
+                )
                 from shared.streaming.client import RedisClient
                 _redis = RedisClient.get_client()
-                _ch = get_clickhouse_client(ClickHouseConfig.from_env()).get_sync_client()
+                _futures_cli = futures_clickhouse_client()
+                _ch = _futures_cli.get_sync_client() if _futures_cli is not None else None
             except Exception:  # noqa: BLE001 — degrade PERMISSIVE
                 _redis, _ch = None, None
             if _redis is not None and _ch is not None:
