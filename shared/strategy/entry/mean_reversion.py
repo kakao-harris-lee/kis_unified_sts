@@ -17,7 +17,10 @@ _KST = ZoneInfo("Asia/Seoul")
 from shared.config.mixins import ConfigMixin
 from shared.models.signal import Signal, SignalType
 from shared.strategy.base import EntryContext, EntrySignalGenerator
-from shared.strategy.gates.adapter_helper import apply_regime_gate
+from shared.strategy.gates.adapter_helper import (
+    acquire_infra_clients,
+    apply_regime_gate,
+)
 from shared.strategy.gates.regime_gate import GateConfig
 from shared.strategy.market_time import to_kst
 
@@ -297,16 +300,7 @@ class MeanReversionEntry(EntrySignalGenerator[MeanReversionConfig]):
             else ("short" if _short_candidate else None)
         )
         if _candidate_direction is not None and self._gate_cfg is not None:
-            try:
-                from shared.strategy.gates.adapter_helper import (
-                    futures_clickhouse_client,
-                )
-                from shared.streaming.client import RedisClient
-                _redis = RedisClient.get_client()
-                _futures_cli = futures_clickhouse_client()
-                _ch = _futures_cli.get_sync_client() if _futures_cli is not None else None
-            except Exception:  # noqa: BLE001
-                _redis, _ch = None, None
+            _redis, _ch = acquire_infra_clients()
             if _redis is not None and _ch is not None:
                 _stand_in = type("X", (), {
                     "metadata": {"signal_direction": _candidate_direction}})()

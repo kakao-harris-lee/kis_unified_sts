@@ -167,3 +167,43 @@ def test_futures_clickhouse_database_resolves_env_var(monkeypatch):
     assert _futures_clickhouse_database() == "kospi"
     monkeypatch.setenv("CLICKHOUSE_FUTURES_DATABASE", "custom_futures")
     assert _futures_clickhouse_database() == "custom_futures"
+
+
+def test_acquire_infra_clients_returns_tuple_when_both_available(monkeypatch):
+    """Happy path: both Redis + CH client constructed → returns (redis, ch)."""
+    from shared.strategy.gates import adapter_helper
+    from shared.streaming.client import RedisClient
+    monkeypatch.setattr(RedisClient, "get_client",
+                        classmethod(lambda _cls: MagicMock(name="redis")))
+    fake_ch = MagicMock(name="ch_client")
+    fake_ch.get_sync_client = MagicMock(return_value=MagicMock(name="ch_sync"))
+    monkeypatch.setattr(adapter_helper, "futures_clickhouse_client",
+                        lambda: fake_ch)
+    redis, ch = adapter_helper.acquire_infra_clients()
+    assert redis is not None
+    assert ch is not None
+
+
+def test_acquire_infra_clients_returns_none_on_redis_failure(monkeypatch):
+    """Redis raise → (None, None) PERMISSIVE degrade."""
+    from shared.strategy.gates import adapter_helper
+    from shared.streaming.client import RedisClient
+    monkeypatch.setattr(RedisClient, "get_client",
+                        classmethod(lambda _cls: (_ for _ in ()).throw(
+                            RuntimeError("redis down"))))
+    redis, ch = adapter_helper.acquire_infra_clients()
+    assert redis is None
+    assert ch is None
+
+
+def test_acquire_infra_clients_returns_none_when_futures_cli_none(monkeypatch):
+    """futures_clickhouse_client returns None → (None, None)."""
+    from shared.strategy.gates import adapter_helper
+    from shared.streaming.client import RedisClient
+    monkeypatch.setattr(RedisClient, "get_client",
+                        classmethod(lambda _cls: MagicMock(name="redis")))
+    monkeypatch.setattr(adapter_helper, "futures_clickhouse_client",
+                        lambda: None)
+    redis, ch = adapter_helper.acquire_infra_clients()
+    assert redis is None
+    assert ch is None

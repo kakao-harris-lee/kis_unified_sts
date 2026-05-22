@@ -56,6 +56,35 @@ def futures_clickhouse_client() -> Any | None:
         return None
 
 
+def acquire_infra_clients() -> tuple[Any | None, Any | None]:
+    """Acquire (redis, ch_sync_client) pair for the gate hot path.
+
+    Returns (None, None) on any construction failure — caller takes
+    the PERMISSIVE degrade branch (signal passes through). Hot-path
+    safe: never raises.
+
+    The CH client is bound to the futures DB
+    (CLICKHOUSE_FUTURES_DATABASE, default ``kospi``) via
+    :func:`futures_clickhouse_client` — symmetric with where
+    audit rows land in :func:`_log_decision`.
+    """
+    try:
+        from shared.streaming.client import RedisClient
+        redis_cli = RedisClient.get_client()
+    except Exception as e:  # noqa: BLE001
+        logger.debug("acquire_infra_clients: redis acquire failed: %s", e)
+        return None, None
+    futures_cli = futures_clickhouse_client()
+    if futures_cli is None:
+        return None, None
+    try:
+        ch = futures_cli.get_sync_client()
+    except Exception as e:  # noqa: BLE001
+        logger.debug("acquire_infra_clients: ch sync_client failed: %s", e)
+        return None, None
+    return redis_cli, ch
+
+
 def _log_decision(
     *,
     ts: dt.datetime,

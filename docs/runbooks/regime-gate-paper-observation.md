@@ -69,6 +69,7 @@ source .env
 - **Threshold transferability untested** — `regime_percentile_max=60` was tuned on `bb_reversion_15m` backtest (PR e6cfa35 PASS Δ=+3.26). Per-strategy revalidation needed after ≥2 weeks of paper data per activated strategy.
 - **`forecast_pct` calibration is suspect (~3× too high)** — does NOT affect this gate's CDF-position semantics (regime_percentile is rank-based), but Setup C's `forecast_atr_equivalent` consumption may be miscalibrated. Separate concern, tracked under master plan v4.11.
 - **No live trading affected** — `config/futures_live.yaml::enabled` stays `false` and Redis `futures:live:suspended` flag remains set; this whole feature is paper-only.
+- **`A01603` contract roll**: `scripts/analysis/regime_gate_counterfactual.py:85` hardcodes `WHERE code = 'A01603'` (the KOSPI200 connected-near futures contract used in PR #329's HAR-RV training data). After each quarterly roll (~March / June / September / December), this code expires and the script will return empty rows → all cohort P&L estimates become 0.0. **Operator must update the constant in the script after each roll** (or, future PR: parameterize via `--futures-code` CLI flag defaulting to the current near-month). Next expected roll: **2026-06-12**.
 
 ## On-call escalation
 

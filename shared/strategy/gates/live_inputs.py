@@ -17,7 +17,7 @@ import logging
 from typing import Any
 
 from shared.forecasting.models import VolForecast
-from shared.forecasting.vol_reader import _VOL_KEY  # canonical key
+from shared.forecasting.vol_reader import VOL_REDIS_KEY  # canonical key
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +41,7 @@ class LiveVolInputs:
         self, ts: dt.datetime  # noqa: ARG002
     ) -> tuple[dt.datetime, float] | None:
         try:
-            blob = self._redis.get(_VOL_KEY)
+            blob = self._redis.get(VOL_REDIS_KEY)
         except Exception as e:  # noqa: BLE001 — hot path
             logger.debug("LiveVolInputs: redis GET failed: %s", e)
             return None

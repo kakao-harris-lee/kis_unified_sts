@@ -16,6 +16,10 @@ logger = logging.getLogger(__name__)
 # Must match shared.forecasting.forecast_publisher._VOL_KEY.
 _VOL_KEY = "forecast:vol:current"
 
+# Public alias (preferred for new consumers — _VOL_KEY remains for
+# backward compat with existing imports).
+VOL_REDIS_KEY = _VOL_KEY
+
 
 def read_latest_vol_forecast(redis_client: Any) -> VolForecast | None:
     """Return the current :class:`VolForecast` from Redis, or ``None``.

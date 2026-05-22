@@ -5,8 +5,18 @@ import pytest
 
 
 def _ctx_long_trigger():
-    """Build a context that triggers the LONG entry path."""
+    """Build a context that triggers the LONG entry path.
+
+    Uses a fixed KST market-hours timestamp (10:00 KST = 01:00 UTC) to
+    avoid time-fragile failures when the test runs before 09:00 KST.
+    """
+    from zoneinfo import ZoneInfo
+
     from shared.strategy.base import EntryContext
+    _KST = ZoneInfo("Asia/Seoul")
+    today_kst = dt.datetime.now(_KST).date()
+    ts = dt.datetime(today_kst.year, today_kst.month, today_kst.day, 10, 0, 0,
+                     tzinfo=_KST)
     return EntryContext(
         market_data={"code": "futures", "name": "futures", "close": 100.0},
         indicators={
@@ -15,7 +25,7 @@ def _ctx_long_trigger():
             "volume": 1000, "volume_ma": 500,
             "atr": 2.0,
         },
-        timestamp=dt.datetime.now(dt.UTC),
+        timestamp=ts,
     )
 
 
