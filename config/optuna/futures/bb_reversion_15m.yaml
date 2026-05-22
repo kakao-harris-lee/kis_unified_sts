@@ -7,7 +7,7 @@ search_space:
   entry.params.bb_std:            {type: float, low: 1.2,  high: 2.6}
   entry.params.bb_touch_buffer:   {type: float, low: 1.00, high: 1.10}
   entry.params.rsi_period:        {type: int,   low: 8,    high: 24}
-  entry.params.rsi_oversold:      {type: int,   low: 30,   high: 50}
+  entry.params.rsi_oversold:      {type: int,   low: 30,   high: 49}   # strict <50 per mean_reversion validator
   entry.params.rsi_overbought:    {type: int,   low: 70,   high: 90}
   entry.params.min_bb_bandwidth:  {type: float, low: 0.001, high: 0.010}
 # Reference only — passed to the CLI via --holdout-split / --min-trades
