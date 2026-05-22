@@ -78,6 +78,8 @@ from pydantic import BaseModel, Field
 from shared.config.base import ServiceConfigBase
 from shared.decision.context import MarketContext, ScheduledEvent
 from shared.strategy.base import EntryContext, EntrySignalGenerator
+from shared.strategy.gates.adapter_helper import apply_regime_gate
+from shared.strategy.gates.regime_gate import GateConfig
 
 if TYPE_CHECKING:
     from shared.models.signal import Signal as OrchestratorSignal
@@ -891,6 +893,7 @@ class SetupAEntryAdapter(EntrySignalGenerator[SetupAEntryConfig]):
         self,
         config: SetupAEntryConfig,
         forecast_client: Any | None = None,
+        gate_cfg: GateConfig | None = None,   # P2-③ T5
     ) -> None:
         super().__init__(config)
         from shared.decision.setups.gap_reversion import (
@@ -917,6 +920,7 @@ class SetupAEntryAdapter(EntrySignalGenerator[SetupAEntryConfig]):
         # adapter consumes 15-min vol forecast + event impact scores to derive
         # gap threshold + reversion range dynamically and scale position size.
         self._forecast_client = forecast_client
+        self._gate_cfg = gate_cfg  # P2-③ T5
 
     def _derive_gap_threshold_pct(self, forecast: Any | None) -> float:
         """Return the gap entry threshold in percent units.
@@ -1082,6 +1086,28 @@ class SetupAEntryAdapter(EntrySignalGenerator[SetupAEntryConfig]):
                 if should_veto:
                     return None
 
+        # === P2-③ T5: RegimeGate check (after LLM veto, before Signal return) ===
+        if self._gate_cfg is not None:
+            try:
+                from shared.db.client import get_clickhouse_client
+                from shared.db.config import ClickHouseConfig
+                from shared.streaming.client import RedisClient
+                _redis = RedisClient.get_client()
+                _ch = get_clickhouse_client(ClickHouseConfig.from_env()).get_sync_client()
+            except Exception:  # noqa: BLE001 — degrade PERMISSIVE
+                _redis, _ch = None, None
+            if _redis is not None and _ch is not None:
+                blocked = apply_regime_gate(
+                    gate_cfg=self._gate_cfg,
+                    decision_signal=decision_signal,
+                    context=context,
+                    strategy_name=self.name,
+                    redis=_redis,
+                    ch_client=_ch,
+                )
+                if blocked:
+                    return None
+
         return _decision_signal_to_orchestrator_signal(
             decision_signal,
             strategy_name=self.name,
@@ -1136,6 +1162,7 @@ class SetupCEntryAdapter(EntrySignalGenerator[SetupCEntryConfig]):
         self,
         config: SetupCEntryConfig,
         forecast_client: Any | None = None,
+        gate_cfg: GateConfig | None = None,   # P2-③ T5
     ) -> None:
         super().__init__(config)
         from shared.decision.setups.event_reaction import (
@@ -1157,6 +1184,7 @@ class SetupCEntryAdapter(EntrySignalGenerator[SetupCEntryConfig]):
         # adapter consumes 15-min vol forecast + event impact scores to derive
         # breakout buffer/target dynamically.
         self._forecast_client = forecast_client
+        self._gate_cfg = gate_cfg  # P2-③ T5
 
     def _derive_thresholds(
         self, forecast: Any | None, atr: float
@@ -1297,6 +1325,28 @@ class SetupCEntryAdapter(EntrySignalGenerator[SetupCEntryConfig]):
                     ts=ts,
                 )
                 if should_veto:
+                    return None
+
+        # === P2-③ T5: RegimeGate check (after LLM veto, before Signal return) ===
+        if self._gate_cfg is not None:
+            try:
+                from shared.db.client import get_clickhouse_client
+                from shared.db.config import ClickHouseConfig
+                from shared.streaming.client import RedisClient
+                _redis = RedisClient.get_client()
+                _ch = get_clickhouse_client(ClickHouseConfig.from_env()).get_sync_client()
+            except Exception:  # noqa: BLE001 — degrade PERMISSIVE
+                _redis, _ch = None, None
+            if _redis is not None and _ch is not None:
+                blocked = apply_regime_gate(
+                    gate_cfg=self._gate_cfg,
+                    decision_signal=decision_signal,
+                    context=context,
+                    strategy_name=self.name,
+                    redis=_redis,
+                    ch_client=_ch,
+                )
+                if blocked:
                     return None
 
         return _decision_signal_to_orchestrator_signal(
