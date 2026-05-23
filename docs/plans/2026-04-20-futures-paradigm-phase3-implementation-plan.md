@@ -820,7 +820,7 @@ Gate: docs/runbooks/phase3-verification.md."
 | Walk-forward + Optuna | 20 |
 | Runbook + PR | 21 |
 
-Grafana dashboard JSON (spec §10.2) is intentionally NOT in this plan — low-risk ops config, composed during 48h observation window.
+monitoring dashboard JSON (spec §10.2) is intentionally NOT in this plan — low-risk ops config, composed during 48h observation window.
 
 **2. Type consistency:**
 - `Signal` fields used across Tasks 3, 5, 6, 13, 18, 19 match.

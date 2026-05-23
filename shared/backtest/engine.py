@@ -18,7 +18,7 @@ Usage:
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from typing import Any, Literal, Protocol
@@ -28,7 +28,6 @@ import pandas as pd
 
 from shared.backtest.config import BacktestConfig
 from shared.backtest.result import BacktestResult, BacktestTrade
-from shared.backtest.ats_simulator import ATSSimulator
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +88,7 @@ class Position:
     lowest_price: float = 0.0
     bars_held: int = 0
     atr_at_entry: float = 0.0
+    metadata: dict[str, Any] = field(default_factory=dict)
     execution_venue: str = "KRX"  # "KRX" or "ATS"
 
     @property
@@ -131,8 +131,13 @@ class BacktestEngine:
         self._gate = gate
 
         # LookaheadGuard wiring
-        from shared.backtest.lookahead_guard import LookaheadGuard, LookaheadGuardMode
-        mode = self.config.lookahead_guard_mode.lower() if hasattr(self.config, "lookahead_guard_mode") else "assert"
+        from shared.backtest.lookahead_guard import LookaheadGuard
+
+        mode = (
+            self.config.lookahead_guard_mode.lower()
+            if hasattr(self.config, "lookahead_guard_mode")
+            else "assert"
+        )
         if mode not in ("off", "warn", "assert"):
             mode = "assert"
         self.lookahead_guard = LookaheadGuard(mode=mode)
@@ -140,7 +145,9 @@ class BacktestEngine:
         # ATS 시뮬레이터 초기화
         self.ats_simulator = self.config.ats_simulator
         if self.config.ats_enabled and self.ats_simulator:
-            logger.info(f"ATS simulation enabled: fill_rate={self.ats_simulator.ats_fill_rate:.1%}")
+            logger.info(
+                f"ATS simulation enabled: fill_rate={self.ats_simulator.ats_fill_rate:.1%}"
+            )
 
         # 상태 초기화
         self._reset()
@@ -175,9 +182,6 @@ class BacktestEngine:
             raise ValueError("Empty data provided")
 
         self._reset()
-        # expose guard for context/indicator checks
-        guard = self.lookahead_guard
-
         # 데이터 정렬 (멀티심볼 백테스트는 datetime, code 순으로 고정)
         sort_cols = ["datetime"] + (["code"] if "code" in data.columns else [])
         data = data.sort_values(sort_cols).reset_index(drop=True)
@@ -205,7 +209,9 @@ class BacktestEngine:
         if self.positions:
             last_bar = data.iloc[-1].to_dict()
             for code in list(self.positions.keys()):
-                last_price = self._last_price_by_code.get(code, float(last_bar["close"]))
+                last_price = self._last_price_by_code.get(
+                    code, float(last_bar["close"])
+                )
                 self._close_position(
                     code=code,
                     exit_price=last_price,
@@ -257,15 +263,22 @@ class BacktestEngine:
 
             if current_price > current_pos.highest_price:
                 current_pos.highest_price = current_price
-            if current_price < current_pos.lowest_price or current_pos.lowest_price == 0:
+            if (
+                current_price < current_pos.lowest_price
+                or current_pos.lowest_price == 0
+            ):
                 current_pos.lowest_price = current_price
 
             # 1a. Exit strategy check FIRST (RL exit, eod_close, etc.)
             if hasattr(self.strategy, "check_exit"):
                 if current_pos.side == "BUY":
-                    unrealized = (current_price - current_pos.entry_price) * current_pos.quantity
+                    unrealized = (
+                        current_price - current_pos.entry_price
+                    ) * current_pos.quantity
                 else:
-                    unrealized = (current_pos.entry_price - current_price) * current_pos.quantity
+                    unrealized = (
+                        current_pos.entry_price - current_price
+                    ) * current_pos.quantity
                 self.strategy.set_position(
                     {
                         "code": current_pos.code,
@@ -276,6 +289,7 @@ class BacktestEngine:
                         "highest_price": current_pos.highest_price,
                         "lowest_price": current_pos.lowest_price,
                         "entry_time": current_pos.entry_time,
+                        "metadata": dict(current_pos.metadata or {}),
                     }
                 )
                 should_exit, exit_reason = self.strategy.check_exit(bar)
@@ -309,9 +323,13 @@ class BacktestEngine:
         if hasattr(self.strategy, "set_position"):
             if current_pos:
                 if current_pos.side == "BUY":
-                    unrealized_pnl = (current_price - current_pos.entry_price) * current_pos.quantity
+                    unrealized_pnl = (
+                        current_price - current_pos.entry_price
+                    ) * current_pos.quantity
                 else:
-                    unrealized_pnl = (current_pos.entry_price - current_price) * current_pos.quantity
+                    unrealized_pnl = (
+                        current_pos.entry_price - current_price
+                    ) * current_pos.quantity
                 self.strategy.set_position(
                     {
                         "code": current_pos.code,
@@ -322,6 +340,7 @@ class BacktestEngine:
                         "highest_price": current_pos.highest_price,
                         "lowest_price": current_pos.lowest_price,
                         "entry_time": current_pos.entry_time,
+                        "metadata": dict(current_pos.metadata or {}),
                     }
                 )
             else:
@@ -350,6 +369,7 @@ class BacktestEngine:
                     price=current_price,
                     timestamp=timestamp,
                     bar=bar,
+                    entry_signal=getattr(self.strategy, "last_entry_signal", None),
                 )
             elif signal == SignalType.SELL:
                 self._open_position(
@@ -359,6 +379,7 @@ class BacktestEngine:
                     price=current_price,
                     timestamp=timestamp,
                     bar=bar,
+                    entry_signal=getattr(self.strategy, "last_entry_signal", None),
                 )
         else:
             # 현재 심볼 포지션 있음 → 반대 시그널 시 청산
@@ -441,11 +462,22 @@ class BacktestEngine:
         price: float,
         timestamp: datetime,
         bar: dict[str, Any] | None = None,
+        entry_signal: Any | None = None,
     ):
         """포지션 진입"""
         # 최대 포지션 수 체크
         if len(self.positions) >= self.config.max_positions:
             return
+        entry_metadata = getattr(entry_signal, "metadata", None)
+        if not isinstance(entry_metadata, dict):
+            entry_metadata = {}
+        try:
+            position_size_multiplier = float(
+                entry_metadata.get("position_size_multiplier", 1.0) or 1.0
+            )
+        except (TypeError, ValueError):
+            position_size_multiplier = 1.0
+        position_size_multiplier = max(0.0, min(1.0, position_size_multiplier))
 
         # 포지션 크기 계산
         cost = self.config.cost
@@ -477,8 +509,14 @@ class BacktestEngine:
                 order_size = float(quantity)
                 _default_spread = self.config.slippage_model.config.default_spread
                 _default_depth = self.config.slippage_model.config.default_depth
-                current_spread = float(bar.get("spread", _default_spread)) if bar else _default_spread
-                available_depth = float(bar.get("depth", _default_depth)) if bar else _default_depth
+                current_spread = (
+                    float(bar.get("spread", _default_spread))
+                    if bar
+                    else _default_spread
+                )
+                available_depth = (
+                    float(bar.get("depth", _default_depth)) if bar else _default_depth
+                )
 
                 slippage_bps = self.config.slippage_model.calculate_slippage(
                     order_size=order_size,
@@ -497,13 +535,23 @@ class BacktestEngine:
                     price = price * (1 - slippage_rate)
         else:
             # 주식: 고정 금액(order_amount_per_stock) 우선, 없으면 자본 대비 % 사용
-            if self.config.order_amount_per_stock and self.config.order_amount_per_stock > 0:
-                position_value = min(self.capital, float(self.config.order_amount_per_stock))
+            if (
+                self.config.order_amount_per_stock
+                and self.config.order_amount_per_stock > 0
+            ):
+                position_value = min(
+                    self.capital, float(self.config.order_amount_per_stock)
+                )
             else:
                 position_value = self.capital * (self.config.position_size_pct / 100)
+            position_value *= position_size_multiplier
 
             # Apply ATS slippage if enabled and ATS venue selected
-            is_ats_venue = self.config.ats_enabled and self.ats_simulator and execution_venue == "ATS"
+            is_ats_venue = (
+                self.config.ats_enabled
+                and self.ats_simulator
+                and execution_venue == "ATS"
+            )
             if is_ats_venue:
                 # Apply ATS slippage model (price improvement) — replaces regular slippage
                 price = self.ats_simulator.apply_ats_slippage(
@@ -540,6 +588,7 @@ class BacktestEngine:
             highest_price=price,
             lowest_price=price,
             atr_at_entry=atr_value,
+            metadata=dict(entry_metadata),
             execution_venue=execution_venue,
         )
 
@@ -552,8 +601,7 @@ class BacktestEngine:
 
         if self.config.verbose:
             logger.info(
-                f"[{timestamp}] OPEN {side}: {name} "
-                f"@ {price:,.0f} x {quantity}"
+                f"[{timestamp}] OPEN {side}: {name} " f"@ {price:,.0f} x {quantity}"
             )
 
     def _close_position(
@@ -603,7 +651,14 @@ class BacktestEngine:
             notional = exit_price * pos.quantity * pv
             commission = notional * cost.commission_rate
             # Slippage already applied to exit_price, so use 0 for fixed slippage
-            slippage = notional * cost.slippage_rate if not (self.config.slippage_model and self.config.slippage_model.config.enabled) else 0
+            slippage = (
+                notional * cost.slippage_rate
+                if not (
+                    self.config.slippage_model
+                    and self.config.slippage_model.config.enabled
+                )
+                else 0
+            )
             trade_costs = commission + slippage
 
             if pos.side == "BUY":
@@ -618,11 +673,17 @@ class BacktestEngine:
         else:
             # 주식: 매도 대금 기반 자본 추적
             # Apply ATS slippage if enabled and ATS venue was used
-            is_ats_exit = self.config.ats_enabled and self.ats_simulator and pos.execution_venue == "ATS"
+            is_ats_exit = (
+                self.config.ats_enabled
+                and self.ats_simulator
+                and pos.execution_venue == "ATS"
+            )
             if is_ats_exit:
                 # Apply ATS slippage model on exit — replaces regular slippage
                 # Note: For exit, we reverse the side (BUY position → SELL to exit)
-                exit_side: Literal["BUY", "SELL"] = "SELL" if pos.side == "BUY" else "BUY"
+                exit_side: Literal["BUY", "SELL"] = (
+                    "SELL" if pos.side == "BUY" else "BUY"
+                )
                 exit_price = self.ats_simulator.apply_ats_slippage(
                     order_side=exit_side,
                     base_price=exit_price,

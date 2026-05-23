@@ -110,7 +110,7 @@ React 프론트엔드 (port 8001, FastAPI 정적 호스팅) — 실시간 운영
 - **자산군 탭** (선물/주식/통합): URL `?asset=` + localStorage 동기화, 모든 페이지 공통
 - **모바일 KILL SWITCH**: slide-to-confirm (90% threshold). STOP 버튼은 데스크탑 전용 (오작동 방지)
 - **백테스트/MLflow는 CLI 전용** (UI 제거됨 — Phase 5)
-- **Grafana ops 대시보드는 archive** (`monitoring/grafana/dashboards/archive/`) — raw debugging용으로만 유지
+- **레거시 ops 대시보드 제거됨** — 운영 모니터링은 React Cockpit 단일 화면 + Prometheus/Telegram 경로를 사용
 
 설계 + 구현 plan: `docs/superpowers/specs/2026-05-12-dashboard-redesign-design.md`, `docs/superpowers/plans/2026-05-12-dashboard-redesign.md`.
 
@@ -406,7 +406,7 @@ config = MyServiceConfig.from_yaml(apply_env_overrides=True)
 - **기본값 비활성화**: `config/execution.yaml`에서 `ats_routing.enabled: false` (opt-in)
 - **거래소 추적**: 모든 주문의 실행 거래소(`execution_venue`)를 ClickHouse에 기록 (`rl_trades`, `swing_positions`)
 - **백테스트 시뮬레이션**: ATS는 평균 3 bps 가격 개선, 65% 체결률로 모델링 (KRX 대비)
-- **모니터링**: Grafana 대시보드의 `VenueMetrics` 카드에서 거래소별 분포 및 가격 개선 추적
+- **모니터링**: React Cockpit 및 ClickHouse/Prometheus 지표에서 거래소별 분포 및 가격 개선 추적
 
 **설정 예시** (`config/execution.yaml`):
 
@@ -555,7 +555,7 @@ if now_kst < open_dt:
 | `CLICKHOUSE_*`, `REDIS_*`, `MLFLOW_TRACKING_URI` | 인프라 설정 |
 | `OPENAI_API_KEY`, `KRX_API_KEY`, `DART_API_KEY` | LLM/데이터 API |
 | `TELEGRAM_STOCK_*`, `TELEGRAM_FUTURES_*`, `TELEGRAM_BRIEFING_*` | Telegram 알림 |
-| `API_KEY`, `GRAFANA_*`, `PROMETHEUS_PORT` | API/모니터링 |
+| `API_KEY`, `PROMETHEUS_PORT` | API/모니터링 |
 | `KIS_APP_KEY`, `KIS_APP_SECRET` | 레거시 단일 계좌 호환 |
 
 Config YAML에서 `${VAR_NAME}` / `${VAR_NAME:default}` 문법으로 참조 가능.

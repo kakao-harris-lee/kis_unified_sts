@@ -113,6 +113,13 @@ class FixedSizer(PositionSizer[FixedSizerConfig]):
         # 최대 포지션 비율 체크
         max_amount = account_balance * (c.max_position_pct / 100)
         amount = min(c.fixed_amount, max_amount)
+        try:
+            multiplier = float(
+                signal.metadata.get("position_size_multiplier", 1.0) or 1.0
+            )
+        except (TypeError, ValueError):
+            multiplier = 1.0
+        amount *= max(0.0, min(1.0, multiplier))
 
         quantity = int(amount / price)
 

@@ -8,7 +8,7 @@
 
 **Architecture:** Docker Compose orchestration, multi-stage builds, production-ready configuration.
 
-**Tech Stack:** Docker, Docker Compose, Prometheus, Grafana, GitHub Actions
+**Tech Stack:** Docker, Docker Compose, Prometheus, React Dashboard, GitHub Actions
 
 ---
 
@@ -17,7 +17,7 @@
 | # | Component | Status | Description |
 |---|-----------|--------|-------------|
 | 1 | Docker Setup | 90% Complete | Dockerfile, docker-compose.yml exist |
-| 2 | Monitoring Config | 100% Complete | Prometheus, Grafana dashboards ready |
+| 2 | Monitoring Config | 100% Complete | Prometheus, monitoring dashboards ready |
 | 3 | Paper Trading Verification | Needs Testing | End-to-end validation |
 | 4 | Documentation | 0% Complete | README, API docs, guides |
 | 5 | CI/CD | Not Started | GitHub Actions workflow |
@@ -168,13 +168,6 @@ MLFLOW_TRACKING_URI=http://localhost:5000
 MLFLOW_EXPERIMENT_NAME=kis-unified-backtest
 
 # =============================================================================
-# Grafana
-# =============================================================================
-GRAFANA_ADMIN_USER=admin
-GRAFANA_ADMIN_PASSWORD=admin
-GRAFANA_ROOT_URL=http://localhost:3000
-
-# =============================================================================
 # Environment
 # =============================================================================
 ENVIRONMENT=development
@@ -197,9 +190,6 @@ TELEGRAM_BOT_TOKEN=REQUIRED
 TELEGRAM_CHAT_ID=REQUIRED
 
 REDIS_URL=redis://redis:6379/0
-
-GRAFANA_ADMIN_PASSWORD=REQUIRED_STRONG_PASSWORD
-GRAFANA_ANONYMOUS=false
 
 ENVIRONMENT=production
 LOG_LEVEL=WARNING
@@ -258,7 +248,6 @@ check_service "Trading API" "http://localhost:8000/health/live"
 check_service "Dashboard API" "http://localhost:8001/health"
 check_service "Redis" "http://localhost:6379" || redis-cli ping > /dev/null 2>&1 && echo -e "${GREEN}✓${NC} Redis is healthy"
 check_service "Prometheus" "http://localhost:9090/-/healthy"
-check_service "Grafana" "http://localhost:3000/api/health"
 
 echo ""
 echo "=== Health Check Complete ==="
@@ -299,7 +288,6 @@ echo ""
 echo "Access points:"
 echo "  - Trading API: http://localhost:8000"
 echo "  - Dashboard:   http://localhost:8001"
-echo "  - Grafana:     http://localhost:3000"
 echo "  - Prometheus:  http://localhost:9090"
 ```
 
@@ -1010,7 +998,7 @@ KIS Unified Trading Platform은 한국투자증권 API를 활용한 알고리즘
 - **백테스팅**: MLflow 통합, Optuna 파라미터 최적화
 - **실시간 거래**: Redis Streams 기반 이벤트 파이프라인
 - **모의투자**: 가상 브로커를 통한 전략 검증
-- **모니터링**: Prometheus 메트릭, Grafana 대시보드
+- **모니터링**: Prometheus 메트릭, 운영 대시보드
 
 ## 빠른 시작
 
@@ -1548,7 +1536,6 @@ github-actions
 
 # Monitoring
 prometheus>=2.48
-grafana>=10.2
 \`\`\`
 
 ---

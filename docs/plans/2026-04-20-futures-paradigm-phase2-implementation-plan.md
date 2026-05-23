@@ -2000,7 +2000,7 @@ Branch: `feat/futures-paradigm-phase2`.
 - [ ] `news_scoring_fallback_total / news_scored_total` < 0.05 over 48h
 
 ## 7. `rl_mppo` unaffected
-- [ ] Same latency + PnL Grafana comparison as Phase 1
+- [ ] Same latency + PnL operational dashboard comparison as Phase 1
 
 ## 8. Prometheus spot-check
 - [ ] `curl -s :9091/metrics | grep -E "news_scored_total|news_scoring_duration_seconds"`
@@ -2054,7 +2054,7 @@ per docs/runbooks/phase2-verification.md."
 **4. Risks flagged in spec §6 addressed:**
 - LLM cost: daily budget cap + alert (Task 6)
 - Prompt drift: scorer_version bump + golden regression test (Tasks 7, 15)
-- Consumer-group lag: XPENDING metric + Grafana alert (Tasks 11, 12)
+- Consumer-group lag: XPENDING metric + Prometheus alert (Tasks 11, 12)
 - RL unaffected: no modifications to Phase 1 modules or RL pipeline (convention reminder)
 
 ---

@@ -40,7 +40,7 @@ import uuid
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Protocol
 
 from shared.exceptions import InfrastructureError, TradingSystemError, ValidationError
@@ -573,6 +573,65 @@ class PositionTracker:
         """Get position by ID"""
         return self._positions.get(position_id)
 
+    def remove_position(
+        self,
+        position_id: str,
+        *,
+        reason: str = "removed",
+    ) -> Position | None:
+        """Remove an active position without recording a trade close.
+
+        Used for broker reconciliation when the broker is the source of truth
+        and a recovered Redis position no longer exists in the account.
+        """
+        position = self._positions.pop(position_id, None)
+        if position is None:
+            logger.warning("Position not found for removal: %s", position_id)
+            return None
+
+        if position.code in self._by_symbol:
+            try:
+                self._by_symbol[position.code].remove(position_id)
+            except ValueError:
+                pass
+            if not self._by_symbol[position.code]:
+                del self._by_symbol[position.code]
+
+        if position.strategy in self._by_strategy:
+            try:
+                self._by_strategy[position.strategy].remove(position_id)
+            except ValueError:
+                pass
+            if not self._by_strategy[position.strategy]:
+                del self._by_strategy[position.strategy]
+
+        stale_coid: str | None = None
+        for coid, pid in self._by_client_order_id.items():
+            if pid == position_id:
+                stale_coid = coid
+                break
+        if stale_coid is not None:
+            self._by_client_order_id.pop(stale_coid, None)
+
+        self._record_event(
+            "removed",
+            position_id,
+            {
+                "code": position.code,
+                "quantity": position.quantity,
+                "strategy": position.strategy,
+                "reason": reason,
+            },
+        )
+        logger.info(
+            "Position removed: %s x%d (reason=%s, id=%s)",
+            position.code,
+            position.quantity,
+            reason,
+            position_id[:8],
+        )
+        return position
+
     def get_positions_by_symbol(self, symbol: str) -> list[Position]:
         """Get positions for a symbol"""
         position_ids = self._by_symbol.get(symbol, [])
@@ -1060,6 +1119,21 @@ class PositionTracker:
         return ch, database
 
     @staticmethod
+    def _db_datetime(value: datetime | None) -> datetime | None:
+        """Return a stable naive UTC datetime for ClickHouse DateTime columns.
+
+        clickhouse-driver converts tz-aware datetimes to the server timezone for
+        naive DateTime columns. Runtime positions recovered from Redis carry UTC
+        offsets, so passing them through directly changes the ReplacingMergeTree
+        key from the original UTC value and creates duplicate open rows.
+        """
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            return value
+        return value.astimezone(UTC).replace(tzinfo=None)
+
+    @staticmethod
     def _closed_hold_seconds(position: Position) -> int | None:
         """Return hold seconds for a closed position, or None if timestamps are invalid."""
         if not position.entry_time or not position.exit_time:
@@ -1104,7 +1178,7 @@ class PositionTracker:
                         position.id,
                         position.code,
                         position.name,
-                        position.entry_time,
+                        self._db_datetime(position.entry_time),
                         position.entry_price,
                         position.quantity,
                         position.strategy,
@@ -1138,6 +1212,131 @@ class PositionTracker:
         except InfrastructureError as e:
             logger.error(f"Failed to save swing positions: {e}")
             return 0
+
+    async def reconcile_open_positions_to_db(
+        self,
+        *,
+        exit_reason: str = "reconciled_broker_absent",
+    ) -> dict[str, int]:
+        """Synchronize ClickHouse open rows with current active positions.
+
+        Current tracker positions are inserted as open rows. Existing ClickHouse
+        open rows absent by both id and code are closed via replacement rows.
+        """
+        try:
+            ch, database = self._get_db_client()
+            current_positions = list(self._positions.values())
+            current_keys = {
+                (p.id, p.code, self._db_datetime(p.entry_time))
+                for p in current_positions
+            }
+
+            def _sync_reconcile() -> dict[str, int]:
+                client = ch.get_sync_client()
+                rows = client.execute(f"""
+                    SELECT id, code, name, entry_date, entry_price, quantity,
+                           strategy, execution_venue, stop_loss_price,
+                           high_since_entry, current_state, side, fee_rate
+                    FROM {database}.swing_positions FINAL
+                    WHERE is_open = 1
+                    ORDER BY entry_date ASC, code ASC, id ASC
+                    """)
+
+                closed_at = datetime.now()
+                close_rows = []
+                for row in rows:
+                    (
+                        pos_id,
+                        code,
+                        name,
+                        entry_time,
+                        entry_price,
+                        quantity,
+                        strategy,
+                        execution_venue,
+                        stop_price,
+                        high_since_entry,
+                        state_str,
+                        side_str,
+                        fee_rate_val,
+                    ) = row
+                    if (pos_id, code, self._db_datetime(entry_time)) in current_keys:
+                        continue
+                    close_rows.append(
+                        (
+                            pos_id,
+                            code,
+                            name,
+                            self._db_datetime(entry_time),
+                            float(entry_price or 0.0),
+                            int(quantity or 0),
+                            strategy,
+                            execution_venue or "KRX",
+                            float(stop_price or 0.0),
+                            float(high_since_entry or entry_price or 0.0),
+                            state_str or "survival",
+                            0,
+                            self._db_datetime(closed_at),
+                            float(entry_price or 0.0),
+                            exit_reason,
+                            0.0,
+                            side_str or "long",
+                            float(fee_rate_val or self.config.default_fee_rate),
+                        )
+                    )
+
+                open_rows = [
+                    (
+                        position.id,
+                        position.code,
+                        position.name,
+                        self._db_datetime(position.entry_time),
+                        position.entry_price,
+                        position.quantity,
+                        position.strategy,
+                        position.execution_venue,
+                        position.stop_price,
+                        position.highest_price,
+                        position.state.value,
+                        1,
+                        None,
+                        None,
+                        None,
+                        None,
+                        position.side.value,
+                        position.fee_rate,
+                    )
+                    for position in current_positions
+                ]
+
+                if close_rows:
+                    client.execute(
+                        f"INSERT INTO {database}.swing_positions "
+                        f"{self._SWING_INSERT_COLS} VALUES",
+                        close_rows,
+                    )
+                if open_rows:
+                    client.execute(
+                        f"INSERT INTO {database}.swing_positions "
+                        f"{self._SWING_INSERT_COLS} VALUES",
+                        open_rows,
+                    )
+                return {
+                    "open_saved": len(open_rows),
+                    "closed_orphans": len(close_rows),
+                }
+
+            result = await asyncio.to_thread(_sync_reconcile)
+            logger.info(
+                "Reconciled ClickHouse open positions: open_saved=%d, closed_orphans=%d",
+                result["open_saved"],
+                result["closed_orphans"],
+            )
+            return result
+
+        except InfrastructureError as e:
+            logger.error("Failed to reconcile swing positions in ClickHouse: %s", e)
+            return {"open_saved": 0, "closed_orphans": 0}
 
     async def save_closed_to_db(self, position: Position) -> bool:
         """Accumulate closed position for batch insertion to ClickHouse.
@@ -1190,7 +1389,7 @@ class PositionTracker:
                 position.id,
                 position.code,
                 position.name,
-                position.entry_time,
+                self._db_datetime(position.entry_time),
                 position.entry_price,
                 position.quantity,
                 position.strategy,
@@ -1199,7 +1398,7 @@ class PositionTracker:
                 position.highest_price,
                 position.state.value,
                 0,  # is_open = closed
-                position.exit_time,
+                self._db_datetime(position.exit_time),
                 position.exit_price,
                 position.exit_reason,
                 pnl,
@@ -1289,9 +1488,9 @@ class PositionTracker:
                 position.side.value,
                 position.strategy,
                 position.execution_venue,
-                position.entry_time,
+                self._db_datetime(position.entry_time),
                 position.entry_price,
-                position.exit_time,
+                self._db_datetime(position.exit_time),
                 position.exit_price,
                 position.quantity,
                 pnl,
@@ -1387,9 +1586,9 @@ class PositionTracker:
                 position.side.value,
                 position.strategy,
                 position.execution_venue,
-                position.entry_time,
+                self._db_datetime(position.entry_time),
                 entry_price,
-                position.exit_time,
+                self._db_datetime(position.exit_time),
                 position.exit_price,
                 quantity,
                 pnl,

@@ -34,6 +34,7 @@ def _write_metrics(
     mdd: float = 5.0,
     overrides: list[str] | None = None,
     order_amount: float = 10_000_000.0,
+    realized_trade_metrics: dict | None = None,
 ) -> None:
     payload = {
         "strategy": strategy,
@@ -54,12 +55,16 @@ def _write_metrics(
             "max_positions": 5,
         },
     }
+    if realized_trade_metrics is not None:
+        payload["realized_trade_metrics"] = realized_trade_metrics
     path.write_text(json.dumps(payload), encoding="utf-8")
 
 
-def _write_trades(path: Path, pnls: list[float]) -> None:
+def _write_trades(path: Path, pnls: list[float], *, exit_reason: str = "") -> None:
     with path.open("w", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=["entry_time", "exit_time", "pnl"])
+        writer = csv.DictWriter(
+            f, fieldnames=["entry_time", "exit_time", "pnl", "exit_reason"]
+        )
         writer.writeheader()
         for idx, pnl in enumerate(pnls):
             writer.writerow(
@@ -67,6 +72,7 @@ def _write_trades(path: Path, pnls: list[float]) -> None:
                     "entry_time": f"2026-05-{idx + 1:02d}T09:00:00",
                     "exit_time": f"2026-05-{idx + 1:02d}T15:00:00",
                     "pnl": pnl,
+                    "exit_reason": exit_reason,
                 }
             )
 
@@ -120,6 +126,32 @@ def test_strict_win_rate_band_can_fail_high_win_rate(tmp_path):
         issue.code == "win_rate_above_target_band" and issue.severity == "WARN"
         for issue in loose.issues
     )
+
+
+def test_evaluate_metrics_file_uses_realized_closed_trade_metrics(tmp_path):
+    metrics = tmp_path / "candidate_metrics.json"
+    trades = tmp_path / "candidate_trades.csv"
+    _write_metrics(
+        metrics,
+        trades=3,
+        monthly=11.0,
+        win_rate=66.67,
+        realized_trade_metrics={
+            "realized_trade_count": 1,
+            "realized_win_rate_pct": 0.0,
+            "end_of_data_trade_count": 2,
+        },
+    )
+    _write_trades(trades, [100.0, 120.0], exit_reason="end_of_data")
+
+    _, window = mod.evaluate_metrics_file(metrics, _targets(min_closed_trades=2))
+    codes = {issue.code for issue in window.issues}
+
+    assert window.total_trades == 3
+    assert window.closed_trades_for_metric_gate == 1
+    assert window.end_of_data_trades == 2
+    assert window.win_rate_pct == 0.0
+    assert "insufficient_closed_trades" in codes
 
 
 def test_build_reports_groups_same_candidate_across_windows(tmp_path):

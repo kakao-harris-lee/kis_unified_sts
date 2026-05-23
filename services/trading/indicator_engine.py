@@ -1277,6 +1277,31 @@ class StreamingIndicatorEngine:
 
         return result
 
+    def get_market_mfi_values(
+        self, active_symbols: set[str] | None = None
+    ) -> dict[str, float]:
+        """Compute per-symbol MFI for warm symbols.
+
+        Args:
+            active_symbols: If provided, only include these symbols.
+                Otherwise, all accumulators are used.
+
+        Returns:
+            Mapping of symbol to MFI. Symbols without enough candles or valid
+            MFI are omitted.
+        """
+        values: dict[str, float] = {}
+        for symbol, acc in self._accumulators.items():
+            if active_symbols is not None and symbol not in active_symbols:
+                continue
+            if len(acc.candles) < 14:
+                continue
+            mfi = self._calc_mfi(list(acc.candles))
+            if mfi is not None:
+                values[symbol] = mfi
+
+        return values
+
     def get_market_mfi(self, active_symbols: set[str] | None = None) -> float | None:
         """Compute aggregate MFI across warm symbols.
 
@@ -1286,21 +1311,12 @@ class StreamingIndicatorEngine:
 
         Returns the median MFI of warm symbols, or None if insufficient data.
         """
-        mfi_values = []
-        for symbol, acc in self._accumulators.items():
-            if active_symbols is not None and symbol not in active_symbols:
-                continue
-            if len(acc.candles) < 14:
-                continue
-            mfi = self._calc_mfi(list(acc.candles))
-            if mfi is not None:
-                mfi_values.append(mfi)
+        mfi_values = sorted(self.get_market_mfi_values(active_symbols).values())
 
         if not mfi_values:
             return None
 
         # Median is more robust than mean for market-wide MFI
-        mfi_values.sort()
         n = len(mfi_values)
         if n % 2 == 0:
             return (mfi_values[n // 2 - 1] + mfi_values[n // 2]) / 2

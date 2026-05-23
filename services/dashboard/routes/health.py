@@ -1,4 +1,5 @@
 """Health and observability endpoints for the Cockpit page."""
+
 from __future__ import annotations
 
 import json
@@ -255,7 +256,12 @@ _summary_lock = Lock()
 
 
 def _today_pnl_krw(asset: str) -> int:
-    """Today's realized PnL in KRW from ``kospi.rl_trades``. Returns 0 on failure."""
+    """Today's realized PnL in KRW for the selected asset view.
+
+    Futures ``rl_trades.pnl`` is stored in index points and converted by the
+    configured contract multiplier. Stock ``stock_trades.pnl`` is already KRW.
+    Returns 0 on failure so the Cockpit stays available if ClickHouse is down.
+    """
     try:
         from clickhouse_driver import Client as SyncClient
 
@@ -266,20 +272,30 @@ def _today_pnl_krw(asset: str) -> int:
             host=cfg.host, port=cfg.port, user=cfg.user, password=cfg.password
         )
         try:
-            if asset == "all":
-                q = (
-                    "SELECT sum(pnl * 50000) FROM kospi.rl_trades "
-                    "WHERE toDate(exit_date, 'Asia/Seoul') = toDate(now(), 'Asia/Seoul')"
+            queries: list[tuple[str, dict]] = []
+            if asset in ("futures", "all"):
+                queries.append(
+                    (
+                        "SELECT sum(pnl * 50000) FROM kospi.rl_trades "
+                        "WHERE asset_class = 'futures' "
+                        "AND toDate(exit_date, 'Asia/Seoul') = toDate(now(), 'Asia/Seoul')",
+                        {},
+                    )
                 )
-                result = client.execute(q)
-            else:
-                q = (
-                    "SELECT sum(pnl * 50000) FROM kospi.rl_trades "
-                    "WHERE asset_class = %(ac)s "
-                    "AND toDate(exit_date, 'Asia/Seoul') = toDate(now(), 'Asia/Seoul')"
+            if asset in ("stock", "all"):
+                queries.append(
+                    (
+                        "SELECT sum(pnl) FROM market.stock_trades "
+                        "WHERE toDate(exit_date, 'Asia/Seoul') = toDate(now(), 'Asia/Seoul')",
+                        {},
+                    )
                 )
-                result = client.execute(q, {"ac": asset})
-            return int(result[0][0] or 0) if result else 0
+
+            total = 0
+            for query, params in queries:
+                result = client.execute(query, params)
+                total += int(result[0][0] or 0) if result else 0
+            return total
         finally:
             client.disconnect()
     except Exception:  # noqa: BLE001

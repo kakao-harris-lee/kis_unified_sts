@@ -17,11 +17,11 @@ interface Position {
 export default function PositionCard({ position: p }: { position: Position }) {
   const positive = p.unrealized_pnl >= 0
   return (
-    <div className="border rounded-lg p-3 mb-2 bg-white shadow-sm">
+    <div className="border border-slate-200 rounded-lg p-3 mb-2 bg-white text-slate-900 shadow-sm">
       <div className="flex items-center justify-between mb-1">
         <div className="flex items-center gap-2">
           <SideBadge side={p.side} />
-          <span className="font-semibold text-sm">{p.code} {p.name}</span>
+          <span className="font-semibold text-sm text-slate-900">{p.code} {p.name}</span>
         </div>
         <span className={`text-xs font-medium ${positive ? 'text-emerald-700' : 'text-rose-700'}`}>
           {positive ? '+' : ''}{p.pnl_pct.toFixed(2)}%

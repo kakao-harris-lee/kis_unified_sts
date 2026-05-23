@@ -18,13 +18,13 @@ export default function CockpitPage() {
   const { data: summary } = useQuery<HealthSummary>({
     queryKey: ['health-summary', selectedAsset],
     queryFn: () => healthApi.getSummary({ asset_class: selectedAsset }).then((r) => r.data),
-    refetchInterval: 5000,
+    refetchInterval: 15000,
   })
 
   return (
     <>
       <HeaderBar />
-      <div className="max-w-[1400px] mx-auto px-2 sm:px-4 lg:px-6 pt-2 pb-24 lg:pb-2">
+      <div className="max-w-[1400px] mx-auto px-2 sm:px-4 lg:px-6 pt-2 pb-24 lg:pb-2 text-slate-900">
         <div className="lg:hidden mb-2 bg-white rounded shadow-sm p-3">
           <div className="text-[10px] text-slate-500 uppercase">Today P&amp;L</div>
           <div

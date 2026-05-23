@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from shared.exceptions import InfrastructureError
 
 VALID_ASSET = {"stock", "futures", "all"}
+ASSET_CLASSES = ("futures", "stock")
 
 
 def _normalize_asset_class(value: str | None) -> str:
@@ -28,6 +29,11 @@ def _normalize_asset_class(value: str | None) -> str:
             detail="asset_class must be stock, futures, or all",
         )
     return normalized
+
+
+def _target_assets(asset_class: str) -> tuple[str, ...]:
+    """Return concrete asset classes to read for a normalized selector."""
+    return ASSET_CLASSES if asset_class == "all" else (asset_class,)
 
 
 def _parse_tz_aware(value: str | None) -> datetime:
@@ -70,6 +76,7 @@ class AccountSummary(BaseModel):
 class TradingStatus(BaseModel):
     """Trading system status response."""
 
+    asset_class: str = "futures"
     is_running: bool
     market_status: str
     active_strategies: list[str]
@@ -86,6 +93,7 @@ class TradingStatus(BaseModel):
 class PositionResponse(BaseModel):
     """Position response model."""
 
+    asset_class: str
     code: str
     name: str
     side: str
@@ -98,40 +106,64 @@ class PositionResponse(BaseModel):
     strategy: str
 
 
-def _get_reader():
+def _get_reader(asset_class: str | None = None):
     """Get TradingStateReader for the configured asset class."""
     from shared.streaming.trading_state import TradingStateReader
 
-    asset = os.environ.get("TRADING_ASSET_CLASS", "stock")
+    asset = asset_class or os.environ.get("TRADING_ASSET_CLASS", "stock")
     return TradingStateReader(asset)
 
 
-@router.get("/status", response_model=TradingStatus)
-async def get_trading_status(
-    asset_class: str = Query(default="futures"),
-):
-    """Get current trading system status."""
-    _normalize_asset_class(asset_class)
-    try:
-        reader = _get_reader()
-        status = reader.get_status()
-    except InfrastructureError:
-        # Redis unavailable - return default status
-        status = {}
+def _empty_status(asset_class: str) -> TradingStatus:
+    return TradingStatus(
+        asset_class=asset_class,
+        is_running=False,
+        market_status="closed",
+        active_strategies=[],
+        total_positions=0,
+        total_pnl=0.0,
+        unrealized_pnl=0.0,
+        closed_trades=0,
+        closed_pnl=0.0,
+        closed_win_rate=0.0,
+        last_update=datetime.now(UTC),
+    )
 
-    if not status:
-        return TradingStatus(
-            is_running=False,
-            market_status="closed",
-            active_strategies=[],
-            total_positions=0,
-            total_pnl=0.0,
-            unrealized_pnl=0.0,
-            closed_trades=0,
-            closed_pnl=0.0,
-            closed_win_rate=0.0,
-            last_update=datetime.now(UTC),
+
+def _coerce_account(account_raw: object) -> AccountSummary | None:
+    if isinstance(account_raw, str):
+        try:
+            account_raw = json.loads(account_raw)
+        except (ValueError, TypeError):
+            account_raw = None
+
+    if not isinstance(account_raw, dict):
+        return None
+
+    try:
+        return AccountSummary(
+            initial_balance=float(account_raw.get("initial_balance", 0.0)),
+            balance=float(account_raw.get("balance", 0.0)),
+            equity=float(account_raw.get("equity", 0.0)),
+            realized_pnl=float(account_raw.get("realized_pnl", 0.0)),
+            unrealized_pnl=float(account_raw.get("unrealized_pnl", 0.0)),
+            open_positions=int(account_raw.get("open_positions", 0)),
         )
+    except (TypeError, ValueError):
+        return None
+
+
+def _read_status(asset_class: str) -> dict:
+    try:
+        reader = _get_reader(asset_class)
+        return reader.get_status()
+    except InfrastructureError:
+        return {}
+
+
+def _status_response_from_raw(asset_class: str, status: dict) -> TradingStatus:
+    if not status:
+        return _empty_status(asset_class)
 
     state = status.get("state", "stopped").lower()
     config = status.get("config", {})
@@ -173,29 +205,10 @@ async def get_trading_status(
     start_time = stats.get("start_time")
     updated_at = status.get("updated_at") or start_time
 
-    # account may arrive as a dict (TradingStateReader auto-decodes JSON values)
-    # or as a string (older publishers / corrupted entries) — be defensive.
-    account_raw = status.get("account")
-    if isinstance(account_raw, str):
-        try:
-            account_raw = json.loads(account_raw)
-        except (ValueError, TypeError):
-            account_raw = None
-    account_obj: AccountSummary | None = None
-    if isinstance(account_raw, dict):
-        try:
-            account_obj = AccountSummary(
-                initial_balance=float(account_raw.get("initial_balance", 0.0)),
-                balance=float(account_raw.get("balance", 0.0)),
-                equity=float(account_raw.get("equity", 0.0)),
-                realized_pnl=float(account_raw.get("realized_pnl", 0.0)),
-                unrealized_pnl=float(account_raw.get("unrealized_pnl", 0.0)),
-                open_positions=int(account_raw.get("open_positions", 0)),
-            )
-        except (TypeError, ValueError):
-            account_obj = None
+    account_obj = _coerce_account(status.get("account"))
 
     return TradingStatus(
+        asset_class=asset_class,
         is_running=state in ("running", "waiting"),
         market_status=status.get("regime") or "unknown",
         active_strategies=strategies,
@@ -226,39 +239,102 @@ async def get_trading_status(
     )
 
 
+def _aggregate_statuses(statuses: list[TradingStatus]) -> TradingStatus:
+    if not statuses:
+        return _empty_status("all")
+
+    strategy_names = sorted(
+        {s for status in statuses for s in status.active_strategies if s}
+    )
+    market_statuses = {
+        status.market_status for status in statuses if status.market_status
+    }
+    closed_trades = sum(status.closed_trades for status in statuses)
+    closed_pnl = sum(status.closed_pnl for status in statuses)
+    winning_estimate = sum(
+        status.closed_trades * status.closed_win_rate / 100.0 for status in statuses
+    )
+
+    accounts = [status.account for status in statuses if status.account is not None]
+    account = None
+    if accounts:
+        account = AccountSummary(
+            initial_balance=sum(a.initial_balance for a in accounts),
+            balance=sum(a.balance for a in accounts),
+            equity=sum(a.equity for a in accounts),
+            realized_pnl=sum(a.realized_pnl for a in accounts),
+            unrealized_pnl=sum(a.unrealized_pnl for a in accounts),
+            open_positions=sum(a.open_positions for a in accounts),
+        )
+
+    return TradingStatus(
+        asset_class="all",
+        is_running=any(status.is_running for status in statuses),
+        market_status=(
+            next(iter(market_statuses)) if len(market_statuses) == 1 else "mixed"
+        ),
+        active_strategies=strategy_names,
+        total_positions=sum(status.total_positions for status in statuses),
+        total_pnl=sum(status.total_pnl for status in statuses),
+        unrealized_pnl=sum(status.unrealized_pnl for status in statuses),
+        closed_trades=closed_trades,
+        closed_pnl=closed_pnl,
+        closed_win_rate=(
+            winning_estimate / closed_trades * 100.0 if closed_trades else 0.0
+        ),
+        last_update=max(
+            (status.last_update for status in statuses), default=datetime.now(UTC)
+        ),
+        account=account,
+    )
+
+
+@router.get("/status", response_model=TradingStatus)
+async def get_trading_status(
+    asset_class: str = Query(default="futures"),
+):
+    """Get current trading system status for one asset class or the merged view."""
+    asset = _normalize_asset_class(asset_class)
+    statuses = [
+        _status_response_from_raw(target, _read_status(target))
+        for target in _target_assets(asset)
+    ]
+    return _aggregate_statuses(statuses) if asset == "all" else statuses[0]
+
+
 @router.get("/positions", response_model=list[PositionResponse])
 async def get_positions(
     asset_class: str = Query(default="futures"),
 ):
     """Get all open positions."""
-    _normalize_asset_class(asset_class)
-    try:
-        reader = _get_reader()
-        positions = reader.get_positions()
-    except InfrastructureError:
-        # Redis unavailable - return empty list
-        positions = []
-
-    result = []
-    for p in positions:
+    asset = _normalize_asset_class(asset_class)
+    result: list[PositionResponse] = []
+    for target in _target_assets(asset):
         try:
-            result.append(
-                PositionResponse(
-                    code=p.get("code", ""),
-                    name=p.get("name", ""),
-                    side=p.get("side", "long"),
-                    quantity=int(p.get("quantity", 0)),
-                    entry_price=float(p.get("entry_price", 0)),
-                    current_price=float(p.get("current_price", 0)),
-                    unrealized_pnl=float(p.get("unrealized_pnl", 0)),
-                    pnl_pct=float(p.get("pnl_pct", 0)),
-                    entry_time=_parse_tz_aware(p.get("entry_time")),
-                    strategy=p.get("strategy", ""),
+            reader = _get_reader(target)
+            positions = reader.get_positions()
+        except InfrastructureError:
+            positions = []
+
+        for p in positions:
+            try:
+                result.append(
+                    PositionResponse(
+                        asset_class=target,
+                        code=p.get("code", ""),
+                        name=p.get("name", ""),
+                        side=p.get("side", "long"),
+                        quantity=int(p.get("quantity", 0)),
+                        entry_price=float(p.get("entry_price", 0)),
+                        current_price=float(p.get("current_price", 0)),
+                        unrealized_pnl=float(p.get("unrealized_pnl", 0)),
+                        pnl_pct=float(p.get("pnl_pct", 0)),
+                        entry_time=_parse_tz_aware(p.get("entry_time")),
+                        strategy=p.get("strategy", ""),
+                    )
                 )
-            )
-        except (ValueError, TypeError, KeyError):
-            # Invalid position data - skip this record
-            continue
+            except (ValueError, TypeError, KeyError):
+                continue
     return result
 
 

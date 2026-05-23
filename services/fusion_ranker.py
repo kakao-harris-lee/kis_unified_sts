@@ -57,6 +57,10 @@ class FusionRankerConfig(ServiceConfigBase):
         default="system:trade_targets",
         description="Redis stream for fused trade targets",
     )
+    daily_indicators_key: str = Field(
+        default="system:daily_indicators:latest",
+        description="Redis key for daily indicator coverage",
+    )
 
     # Ranking parameters
     interval_seconds: float = Field(
@@ -160,6 +164,7 @@ class FusionRankerConfig(ServiceConfigBase):
             "llm_quality_key": keys.get("llm_quality"),
             "output_key": keys.get("output"),
             "output_stream": keys.get("output_stream"),
+            "daily_indicators_key": keys.get("daily_indicators"),
             # Ranking
             "interval_seconds": ranking.get("interval_seconds"),
             "top_n": ranking.get("top_n"),
@@ -319,6 +324,58 @@ class FusionRanker:
             return -1.0
         return 0.0
 
+    def _load_daily_indicator_coverage(self) -> set[str] | None:
+        """Return covered symbols, or None when the coverage key is absent."""
+        raw = self.redis.get(self.config.daily_indicators_key)
+        if raw is None:
+            return None
+        payload = _parse_json(raw)
+        indicators = payload.get("indicators")
+        if not isinstance(indicators, dict):
+            return set()
+        return {str(code).strip() for code in indicators if str(code).strip()}
+
+    @staticmethod
+    def _apply_daily_indicator_coverage(
+        rows: list[tuple[str, float, dict[str, Any]]],
+        covered_symbols: set[str] | None,
+    ) -> tuple[list[tuple[str, float, dict[str, Any]]], dict[str, Any]]:
+        if covered_symbols is None:
+            return rows, {
+                "enabled": False,
+                "daily_indicator_count": None,
+                "input_count": len(rows),
+                "covered_count": len(rows),
+                "coverage_filtered_count": 0,
+                "missing_sample": [],
+            }
+
+        filtered = [row for row in rows if row[0] in covered_symbols]
+        missing = [row[0] for row in rows if row[0] not in covered_symbols]
+        return filtered, {
+            "enabled": True,
+            "daily_indicator_count": len(covered_symbols),
+            "input_count": len(rows),
+            "covered_count": len(filtered),
+            "coverage_filtered_count": len(missing),
+            "missing_sample": missing[:10],
+        }
+
+    def _publish_payload(self, payload: dict[str, Any]) -> bool:
+        fingerprint = json.dumps(payload.get("codes", []), ensure_ascii=False)
+        if fingerprint == self._last_payload_fingerprint:
+            return False
+
+        self.publisher.publish(payload)
+        self.redis.set(
+            self.config.output_key,
+            json.dumps(payload, ensure_ascii=False),
+            ex=86400,
+        )
+        self._last_payload_fingerprint = fingerprint
+        logger.info(f"Published fused trade targets: {len(payload.get('codes', []))}")
+        return True
+
     def run_once(self) -> bool:
         realtime_payload = _parse_json(self.redis.get(self.config.realtime_key))
         if not realtime_payload:
@@ -410,6 +467,12 @@ class FusionRanker:
             logger.debug("Fusion skipped: no rows after filtering")
             return False
 
+        covered_symbols = self._load_daily_indicator_coverage()
+        rows, coverage_stats = self._apply_daily_indicator_coverage(
+            rows,
+            covered_symbols,
+        )
+
         rows.sort(key=lambda x: x[1], reverse=True)
         rows = rows[: self.config.top_n]
 
@@ -431,18 +494,15 @@ class FusionRanker:
             "sources": {
                 "realtime_key": self.config.realtime_key,
                 "llm_quality_key": self.config.llm_quality_key,
+                "daily_indicators_key": self.config.daily_indicators_key,
+                "daily_indicator_coverage": coverage_stats,
+                "coverage_filtered_count": coverage_stats[
+                    "coverage_filtered_count"
+                ],
             },
         }
 
-        fingerprint = json.dumps(payload.get("codes", []), ensure_ascii=False)
-        if fingerprint == self._last_payload_fingerprint:
-            return False
-
-        self.publisher.publish(payload)
-        self.redis.set(self.config.output_key, json.dumps(payload, ensure_ascii=False), ex=86400)
-        self._last_payload_fingerprint = fingerprint
-        logger.info(f"Published fused trade targets: {len(codes)}")
-        return True
+        return self._publish_payload(payload)
 
 
 def run_fusion_ranker(config: FusionRankerConfig) -> None:

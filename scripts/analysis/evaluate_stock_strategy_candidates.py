@@ -55,6 +55,8 @@ class CandidateWindow:
     start: str
     end: str
     total_trades: int
+    closed_trades_for_metric_gate: int
+    end_of_data_trades: int
     monthly_expected_return_pct: float
     win_rate_pct: float
     max_drawdown_pct: float
@@ -170,6 +172,8 @@ def _equity_shape_from_trades(trades_path: Path) -> tuple[float, bool]:
     rows: list[tuple[str, float]] = []
     with trades_path.open("r", encoding="utf-8") as f:
         for row in csv.DictReader(f):
+            if str(row.get("exit_reason", "")).lower() == "end_of_data":
+                continue
             raw_pnl = row.get("pnl", "")
             try:
                 pnl = float(raw_pnl)
@@ -239,27 +243,39 @@ def evaluate_metrics_file(
     slope, is_upward = _equity_shape_from_trades(trades_path)
 
     total_trades = _as_int(metrics.get("total_trades"), 0)
+    realized_metrics = metrics.get("realized_trade_metrics", {}) or {}
+    closed_trades = _as_int(
+        realized_metrics.get("realized_trade_count"),
+        total_trades,
+    )
+    end_of_data_trades = _as_int(
+        realized_metrics.get("end_of_data_trade_count"),
+        0,
+    )
     monthly_return = _as_float(metrics.get("monthly_expected_return_pct"), 0.0)
-    win_rate = _as_float(metrics.get("win_rate"), 0.0)
+    win_rate = _as_float(
+        realized_metrics.get("realized_win_rate_pct"),
+        _as_float(metrics.get("win_rate"), 0.0),
+    )
     mdd = _as_float(metrics.get("max_drawdown_pct"), 0.0)
     total_return = _as_float(metrics.get("total_return_pct"), 0.0)
     issues: list[CandidateIssue] = []
 
-    if total_trades == 0:
+    if closed_trades == 0:
         _add_issue(
             issues,
             "FAIL",
             "no_closed_trades",
-            "0",
+            f"0 closed ({end_of_data_trades} open marks)",
             "> 0",
             "No closed trades in this backtest window.",
         )
-    elif total_trades < targets.min_closed_trades:
+    elif closed_trades < targets.min_closed_trades:
         _add_issue(
             issues,
             "FAIL",
             "insufficient_closed_trades",
-            str(total_trades),
+            f"{closed_trades} closed ({end_of_data_trades} open marks)",
             f">= {targets.min_closed_trades}",
             "Candidate has too few closed trades for an objective gate.",
         )
@@ -321,6 +337,8 @@ def evaluate_metrics_file(
         start=str(metrics.get("start", "")),
         end=str(metrics.get("end", "")),
         total_trades=total_trades,
+        closed_trades_for_metric_gate=closed_trades,
+        end_of_data_trades=end_of_data_trades,
         monthly_expected_return_pct=monthly_return,
         win_rate_pct=win_rate,
         max_drawdown_pct=mdd,
@@ -344,7 +362,7 @@ def _score_window(window: CandidateWindow, targets: CandidateTargets) -> float:
         else 0.0
     )
     mdd_gap = max(0.0, window.max_drawdown_pct - targets.max_mdd_pct)
-    trade_gap = max(0, targets.min_closed_trades - window.total_trades)
+    trade_gap = max(0, targets.min_closed_trades - window.closed_trades_for_metric_gate)
     equity_penalty = 10.0 if not window.equity_is_upward else 0.0
     return (
         monthly_gap * 3.0
@@ -486,14 +504,15 @@ def _format_markdown(
         lines.extend(
             [
                 "",
-                "| Window | Verdict | Trades | Monthly | Win | MDD | Equity slope | Issues |",
-                "|---|---|---:|---:|---:|---:|---:|---|",
+                "| Window | Verdict | Trades | Closed/Open | Monthly | Win | MDD | Equity slope | Issues |",
+                "|---|---|---:|---:|---:|---:|---:|---:|---|",
             ]
         )
         for window in report.windows:
             issue_codes = ", ".join(issue.code for issue in window.issues) or "-"
             lines.append(
                 f"| {window.label} | {window.verdict} | {window.total_trades} | "
+                f"{window.closed_trades_for_metric_gate}/{window.end_of_data_trades} | "
                 f"{window.monthly_expected_return_pct:.2f}% | "
                 f"{window.win_rate_pct:.2f}% | {window.max_drawdown_pct:.2f}% | "
                 f"{window.equity_slope_per_trade:.0f} | {issue_codes} |"

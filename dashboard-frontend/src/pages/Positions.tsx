@@ -35,7 +35,7 @@ function Positions() {
     queryKey: ['positions', selectedAsset],
     queryFn: () =>
       tradingApi.getPositions({ asset_class: selectedAsset }).then((r) => r.data),
-    refetchInterval: 5000, // Auto-refresh every 5 seconds
+    refetchInterval: 15000,
   });
 
   return (

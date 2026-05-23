@@ -29,14 +29,6 @@ services:
       redis:
         condition: service_started
 
-  grafana:
-    environment:
-      # 개발 시 익명 접근 허용
-      - GF_AUTH_ANONYMOUS_ENABLED=true
-      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
-      # 디버그
-      - GF_LOG_LEVEL=debug
-
   prometheus:
     # 개발 시 더 짧은 보존 기간
     command:

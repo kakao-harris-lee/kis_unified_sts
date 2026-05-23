@@ -34,7 +34,6 @@ and active since the same day.
 | `kospi.rl_trades` | shadow_mode → 0 inserts | invariant verified by daily check |
 | Counterfactual weekly report | Mon 07:00 KST | Telegram briefing channel |
 | Phase 2 daily verification | Mon-Fri 16:00 KST | Telegram PASS/FAIL |
-| Grafana dashboard `llm-primary-phase2-monitoring` | live | 7 panels |
 
 ## Pre-flight check (Friday EOD before the Monday cutover)
 
@@ -143,9 +142,9 @@ to the briefing channel:
 
 After the daily-verification Telegram, manually inspect:
 
-1. **Grafana — LLM-primary Phase 2 monitoring** (`/d/llm-primary-phase2-monitoring`):
-   Panels 1-4 should show non-zero data for today.  Panel 5 (RL shadow 7d) and
-   Panel 6 (Setup A/C 30d) update slowly — wait a few days for meaningful values.
+1. **Daily verification report**:
+   `reports/daily_verification/$(date +%Y-%m-%d).json` should show non-zero
+   Setup A/C and RL shadow logger activity for today.
 
 2. **Prometheus alerts** — confirm none of the 4 shadow-loggers alerts fired
    (browser → http://localhost:9090/alerts → all should be `inactive`):
@@ -164,7 +163,7 @@ After the daily-verification Telegram, manually inspect:
 No manual checks required.  Trust the automation:
 
 - **Telegram daily 16:00 KST** PASS report = green-light next day.
-- **Grafana — Phase 2 monitoring** dashboard 데일리 추적.
+- **React Dashboard + Prometheus alerts** daily spot-check as needed.
 - **Telegram weekly 07:00 KST Mon** = first counterfactual report on
   2026-05-18 covering Mon–Fri week 1.
 

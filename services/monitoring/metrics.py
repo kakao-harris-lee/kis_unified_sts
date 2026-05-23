@@ -336,7 +336,7 @@ class MetricsCollector:
     def register_strategies(self, strategy_names: list[str]) -> None:
         """Pre-initialize Prometheus counters with known strategy names.
 
-        This ensures label_values() in Grafana can discover strategies
+        This ensures Prometheus label_values() queries can discover strategies
         even before any trades or signals are recorded.
         """
         if not HAS_PROMETHEUS:

@@ -491,7 +491,10 @@ class MarketDataProvider:
 
             # Fetch stale data
             if stale_symbols:
-                await self._fetch_batch(stale_symbols)
+                if not force_refresh:
+                    stale_symbols = self._select_fetch_symbols_for_mode(stale_symbols)
+                if stale_symbols:
+                    await self._fetch_batch(stale_symbols)
 
         # Return cached data
         result = {}
@@ -501,6 +504,26 @@ class MarketDataProvider:
                 result[symbol] = cache.data
 
         return result
+
+    def _select_fetch_symbols_for_mode(self, stale_symbols: list[str]) -> list[str]:
+        """Throttle foreground REST fetches while fallback polling is active."""
+        if self._current_mode != DataSourceMode.REST_FALLBACK:
+            return stale_symbols
+
+        poll_active = (
+            self._fallback_poll_task is not None and not self._fallback_poll_task.done()
+        )
+        if poll_active:
+            # The fallback poller owns REST refresh cadence.  Foreground callers
+            # should consume cache only; otherwise the market-data loop can race
+            # the poller and trip KIS per-second limits.
+            return []
+
+        max_symbols = self.config.rest_fallback_max_symbols
+        if max_symbols is None or max_symbols >= len(stale_symbols):
+            return stale_symbols
+
+        return self._select_rest_poll_symbols(stale_symbols)[:max_symbols]
 
     async def get_single(
         self,
@@ -753,17 +776,25 @@ class MarketDataProvider:
 
     def get_cache_stats(self) -> dict[str, Any]:
         """Get cache statistics including failover state"""
+        current_symbols = list(dict.fromkeys(self.symbols))
+        freshness_threshold = self.config.staleness_threshold_seconds
         fresh_count = sum(
             1
-            for c in self._cache.values()
-            if not c.is_stale(self.config.cache_ttl_seconds)
+            for symbol in current_symbols
+            if (
+                (cache := self._cache.get(symbol)) is not None
+                and not cache.is_stale(freshness_threshold)
+            )
         )
+        cached_count = sum(1 for symbol in current_symbols if symbol in self._cache)
 
         return {
-            "total_symbols": len(self.symbols),
-            "cached_symbols": len(self._cache),
+            "total_symbols": len(current_symbols),
+            "cached_symbols": cached_count,
             "fresh_count": fresh_count,
-            "stale_count": len(self._cache) - fresh_count,
+            "stale_count": len(current_symbols) - fresh_count,
+            "cache_entries": len(self._cache),
+            "freshness_threshold_seconds": freshness_threshold,
             "last_batch_fetch": (
                 self._last_batch_fetch.isoformat() if self._last_batch_fetch else None
             ),
@@ -1151,17 +1182,18 @@ class MarketDataProvider:
         self._last_batch_fetch = None
         logger.info("Cache cleared")
 
-    def _select_rest_poll_symbols(self) -> list[str]:
+    def _select_rest_poll_symbols(self, symbols: list[str] | None = None) -> list[str]:
         """Choose the stalest cached symbols first during REST fallback."""
-        if not self.symbols:
+        target_symbols = list(self.symbols if symbols is None else symbols)
+        if not target_symbols:
             return []
 
         max_symbols = self.config.rest_fallback_max_symbols
-        if max_symbols is None or max_symbols >= len(self.symbols):
-            return list(self.symbols)
+        if max_symbols is None or max_symbols >= len(target_symbols):
+            return target_symbols
 
         return sorted(
-            self.symbols,
+            target_symbols,
             key=lambda symbol: (
                 self._cache[symbol].fetched_at
                 if symbol in self._cache

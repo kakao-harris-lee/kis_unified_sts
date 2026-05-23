@@ -15,7 +15,7 @@ KIS Unified Trading Platform은 한국투자증권 API를 활용한 알고리즘
 - **백테스팅**: MLflow 통합, Optuna 파라미터 최적화
 - **실시간 거래**: Redis Streams 기반 이벤트 파이프라인
 - **모의투자 (Paper Trading)**: 가상 브로커를 통한 전략 검증
-- **모니터링**: Prometheus 메트릭, Grafana 대시보드, Telegram 알림
+- **모니터링**: React 운영 대시보드, Prometheus 메트릭, Telegram 알림
 
 ### 프로젝트 현황 (Project Status)
 
@@ -99,7 +99,6 @@ docker compose up -d
 
 - Trading API: http://localhost:8000
 - Dashboard: http://localhost:8001
-- Grafana: http://localhost:3000
 - Prometheus: http://localhost:9090
 
 ### CLI 사용

@@ -188,6 +188,71 @@ async def test_positions_list():
 
 
 @pytest.mark.asyncio
+async def test_positions_respect_asset_class_and_all():
+    """asset_class must select the matching Redis state, not the env default."""
+    from services.dashboard.app import create_app
+    from services.dashboard.routes import trading as _trading_route
+
+    readers = {
+        "futures": MagicMock(
+            get_positions=MagicMock(
+                return_value=[
+                    {
+                        "code": "A05000",
+                        "name": "KOSPI200 mini",
+                        "side": "short",
+                        "quantity": 1,
+                        "entry_price": 390.0,
+                        "current_price": 388.0,
+                        "unrealized_pnl": 2.0,
+                        "pnl_pct": 0.5,
+                        "entry_time": "2026-05-21T09:00:00+00:00",
+                        "strategy": "setup_a",
+                    }
+                ]
+            )
+        ),
+        "stock": MagicMock(
+            get_positions=MagicMock(
+                return_value=[
+                    {
+                        "code": "086790",
+                        "name": "하나금융지주",
+                        "side": "long",
+                        "quantity": 216,
+                        "entry_price": 115815.7,
+                        "current_price": 119200.0,
+                        "unrealized_pnl": 731008.8,
+                        "pnl_pct": 2.92,
+                        "entry_time": "2026-05-18T00:00:00+00:00",
+                        "strategy": "pattern_pullback",
+                    }
+                ]
+            )
+        ),
+    }
+
+    with patch.object(
+        _trading_route, "_get_reader", side_effect=lambda asset: readers[asset]
+    ):
+        app = create_app()
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            futures = await client.get("/api/trading/positions?asset_class=futures")
+            stock = await client.get("/api/trading/positions?asset_class=stock")
+            all_assets = await client.get("/api/trading/positions?asset_class=all")
+
+    assert futures.status_code == 200
+    assert stock.status_code == 200
+    assert all_assets.status_code == 200
+    assert futures.json()[0]["asset_class"] == "futures"
+    assert futures.json()[0]["code"] == "A05000"
+    assert stock.json()[0]["asset_class"] == "stock"
+    assert stock.json()[0]["code"] == "086790"
+    assert [p["asset_class"] for p in all_assets.json()] == ["futures", "stock"]
+
+
+@pytest.mark.asyncio
 async def test_start_trading():
     """Test start trading endpoint."""
     from services.dashboard.app import create_app

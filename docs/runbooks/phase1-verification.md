@@ -105,7 +105,7 @@ All checkboxes must be ✅ before Phase 2 begins.
 ## 7. `rl_mppo` unaffected
 
 - [ ] `rl_mppo` paper trading P&L over 48h post-deploy compared to 48h pre-deploy:
-  - Grafana `trading-overview`: open position count, daily PnL KRW, tick-to-fill latency.
+  - React Dashboard / ClickHouse checks: open position count, daily PnL KRW, tick-to-fill latency.
   - Acceptance: no statistically significant shift.
   - Cron `scripts/cron/rl_paper.sh` still runs on schedule.
 

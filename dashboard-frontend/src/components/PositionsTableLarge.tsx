@@ -26,7 +26,7 @@ export default function PositionsTableLarge() {
     queryKey: ['positions', selectedAsset],
     queryFn: () =>
       tradingApi.getPositions({ asset_class: selectedAsset }).then((r) => r.data),
-    refetchInterval: 5000,
+    refetchInterval: 15000,
   })
 
   if (isLoading) return <TableSkeleton rows={3} />
@@ -36,7 +36,7 @@ export default function PositionsTableLarge() {
 
   return (
     <div>
-      <div className="hidden sm:block bg-white rounded shadow-sm overflow-x-auto">
+      <div className="hidden sm:block bg-white text-slate-900 rounded shadow-sm overflow-x-auto">
         <table className="w-full text-xs">
           <thead className="bg-slate-50 text-slate-600">
             <tr>
@@ -51,10 +51,10 @@ export default function PositionsTableLarge() {
           </thead>
           <tbody>
             {data.map((p) => (
-              <tr key={`${p.asset_class}-${p.code}`} className="border-t">
+              <tr key={`${p.asset_class}-${p.code}`} className="border-t border-slate-100">
                 <td className="px-2 py-1"><SideBadge side={p.side} /></td>
-                <td className="px-2 py-1 font-mono">{p.code}</td>
-                <td className="px-2 py-1">{p.name}</td>
+                <td className="px-2 py-1 font-mono text-slate-900">{p.code}</td>
+                <td className="px-2 py-1 text-slate-900">{p.name}</td>
                 <td className="px-2 py-1 text-right">{p.quantity}</td>
                 <td className="px-2 py-1 text-right">{p.entry_price.toLocaleString()}</td>
                 <td className={`px-2 py-1 text-right ${p.unrealized_pnl >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>

@@ -326,7 +326,7 @@ Glue that wires passive_maker + fill_logger + OCO. Keep existing market path int
     - Kill switch drill test green
     - Weekly Edge Review report reviewed
     - Backtest vs paper PnL divergence < 20%
-    - `rl_mppo` unaffected (no regression in its own Grafana)
+    - `rl_mppo` unaffected (no regression in its own operational dashboard)
 
 ---
 
@@ -352,7 +352,7 @@ Glue that wires passive_maker + fill_logger + OCO. Keep existing market path int
 | Runbook + failure modes | 19 |
 | Gate sweep + PR | 20 |
 
-Grafana `futures-execution` dashboard (spec §7.2) intentionally NOT in this plan — low-code-risk ops artifact composed during the 2-week paper window.
+operational dashboard `futures-execution` dashboard (spec §7.2) intentionally NOT in this plan — low-code-risk ops artifact composed during the 2-week paper window.
 
 **Carried-forward lessons from Phase 1-3:**
 

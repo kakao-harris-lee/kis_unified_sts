@@ -437,7 +437,7 @@ python scripts/walk_forward_sensitivity.py \
       grep -E "services/trading/|shared/ml/rl/" && echo "REGRESSION" || echo "OK"
   ```
   Expected: `OK`.
-- [ ] `rl_mppo` paper trading Grafana `trading-overview` shows no regressions
+- [ ] `rl_mppo` paper trading React Dashboard / ClickHouse checks show no regressions
       in open positions / daily PnL / latency after the Phase 3 branch merges.
 
 ## 8. Prometheus metrics compile

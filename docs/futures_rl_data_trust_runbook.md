@@ -142,13 +142,12 @@ candidate를 `mppo_best`로 교체하려면 최소 조건:
 - `RL_PAPER_MATRIX_DURATION_MINUTES` (프로파일별 분할 실행 시간, 미지정 시 장 종료 시각 기준 자동 계산)
 - `RL_PAPER_MATRIX_COOLDOWN_SECONDS` (프로파일 사이 휴지시간, 기본 `8`)
 
-### 8.4 Grafana 장중 모니터링
+### 8.4 장중 모니터링
 
-신규 대시보드:
+레거시 대시보드는 제거되었으며, 장중 확인은 React Dashboard와
+Prometheus/ClickHouse 쿼리로 수행한다.
 
-- `RL Paper Matrix Realtime` (`uid=rl-paper-matrix-realtime`)
-
-핵심 패널:
+핵심 확인 항목:
 
 - Entry/Rejected 신호 수
 - Signal Acceptance Rate

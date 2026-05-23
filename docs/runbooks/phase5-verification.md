@@ -35,7 +35,7 @@ exercised at least once.
       divergence handled per runbook)
 - [ ] `python -m scripts.trading.flatten_all` (no `--confirm`) printed a
       reasonable dry-run summary at least once
-- [ ] Grafana **Futures Paradigm — Overview** has 2+ weeks of populated panels
+- [ ] React Dashboard / ClickHouse reports have 2+ weeks of populated paper data
 
 **Fallback**: If paper data is < 2 weeks at this point (e.g. interrupted
 by infra issue), restart the 2-week clock. Do *not* substitute backtest
@@ -81,11 +81,10 @@ Gate 1.
 - [ ] `futures_live.max_daily_trades: 2` enforced (no day exceeded)
 - [ ] **Daily MDD -3% breaches: 0 events**
 - [ ] **Cumulative net PnL > slippage + fees** (positive after costs) by end of window
-- [ ] Average entry slippage ≤ 0.4 ticks (rolling 14-day) — Grafana
-      live-ladder "Mean Entry Slippage" panel
+- [ ] Average entry slippage ≤ 0.4 ticks (rolling 14-day) from ClickHouse
+      `kospi.order_fills`
 - [ ] Kill-switch trips: 0 (any trip → fail)
-- [ ] API error rate < 2% on 5-min rolling window — Grafana live-ladder
-      "API / System Error Rate" panel
+- [ ] API error rate < 2% on 5-min rolling window from Prometheus alerts
 
 **Daily check** (record in operator log):
 
@@ -125,9 +124,7 @@ an operational sign-off.
 After Gate 4's first 2-contract success:
 
 - [ ] Gates 1, 2, 3 all passed (each documented above)
-- [ ] 3 Grafana dashboards live and consulted regularly
-      (`futures-paradigm-overview`, `futures-paradigm-risk`,
-      `futures-paradigm-live-ladder`)
+- [ ] React Dashboard, Prometheus alerts, and Telegram reports consulted regularly
 - [ ] Weekly Edge Review delivered for **8 consecutive weeks** (Phase 4
       end → Phase 5 end) without breaking
 - [ ] Rollback drill performed at least once (output committed to

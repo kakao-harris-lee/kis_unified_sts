@@ -51,8 +51,7 @@ print('1' if is_trading_day(date.today()) else '0')
 
     log "Starting fusion ranker..."
 
-    nohup python3 -m services.fusion_ranker \
-        >> "$LOG_FILE" 2>&1 &
+    setsid bash -c "exec python3 -m services.fusion_ranker >> '$LOG_FILE' 2>&1" &
 
     echo $! > "$PID_FILE"
     log "Fusion ranker started (PID: $!)"

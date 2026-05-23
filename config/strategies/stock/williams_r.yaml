@@ -1,7 +1,7 @@
 strategy:
   asset_class: stock
   description: Williams %R 과매도 반전 모멘텀 전략
-  enabled: false
+  enabled: true
   entry:
     params:
       allow_short: false
@@ -11,16 +11,37 @@ strategy:
       market_close_minute: 15
       market_open_hour: 9
       market_open_minute: 0
-      oversold_threshold: -75.0
-      reversal_threshold: -75.0
-      signal_cooldown_seconds: 180
+      oversold_threshold: -85.0
+      reversal_threshold: -80.0
+      signal_cooldown_seconds: 7200
       skip_market_close_minutes: 15
       skip_market_open_minutes: 15
       stop_loss_pct: 3.0
-      trend_filter: false
+      trend_filter: true
       volume_confirm: true
-      volume_threshold: 1.0
+      volume_threshold: 2.0
       williams_r_period: 14
+      max_full_size_bb_distance_pct: 0.8
+      overextended_position_size_multiplier: 0.1
+      market_state_filter:
+        enabled: true
+        allowed_states:
+          - BULL
+          - TRENDING_BULL
+          - BULL_STRONG
+          - BULL_MODERATE
+          - SIDEWAYS_UP
+        blocked_states:
+          - UNKNOWN
+          - BEAR
+          - TRENDING_BEAR
+          - VOLATILE_SIDEWAYS
+          - CALM_SIDEWAYS
+          - MEAN_REVERTING
+          - SIDEWAYS_FLAT
+          - SIDEWAYS_DOWN
+          - BEAR_MODERATE
+          - BEAR_STRONG
     type: williams_r
   exit:
     params:
@@ -28,8 +49,8 @@ strategy:
       eod_close_hour: 15
       eod_close_minute: 15
       max_stop_loss_pct: -0.03
-      overbought_threshold: -5.0
-      time_cut_minutes: 120
+      overbought_threshold: 0.0
+      time_cut_minutes: 240
     type: williams_r_exit
   indicators:
     bollinger_bands:
@@ -41,5 +62,19 @@ strategy:
   position:
     params:
       max_positions: 5
-      order_amount_per_stock: 1000000
+      max_position_pct: 50.0
+      order_amount_per_stock: 48000000
     type: fixed
+  paper:
+    enabled: true
+    check_interval: 60
+  backtest:
+    initial_capital: 100000000
+    risk:
+      stop_loss_pct: 3.0
+      take_profit_pct: 999.0
+      trailing_stop_enabled: false
+      max_hold_bars: 0
+      max_daily_trades: 5
+      force_close_time: ""
+      close_on_day_change: false

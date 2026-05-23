@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 
 const RECONNECT_DELAYS_MS = [1000, 2000, 4000, 8000, 16000, 30000]
+const SUBSCRIPTIONS = ['positions', 'signals', 'fills', 'data-freshness', 'kill-switch']
 
 export function useWebSocketInvalidation() {
   const queryClient = useQueryClient()
@@ -15,10 +16,16 @@ export function useWebSocketInvalidation() {
     const connect = () => {
       if (stopped) return
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-      ws = new WebSocket(`${protocol}//${window.location.host}/ws`)
+      const url = new URL(`${protocol}//${window.location.host}/ws`)
+      const apiKey = import.meta.env.VITE_API_KEY
+      if (apiKey) url.searchParams.set('api_key', apiKey)
+      ws = new WebSocket(url.toString())
 
       ws.onopen = () => {
         reconnectIdx = 0
+        SUBSCRIPTIONS.forEach((channel) => {
+          ws?.send(JSON.stringify({ type: 'subscribe', channel }))
+        })
       }
 
       ws.onmessage = (event) => {

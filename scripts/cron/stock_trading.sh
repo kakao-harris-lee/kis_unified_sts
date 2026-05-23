@@ -29,16 +29,23 @@ log() {
 
 detect_running_pid() {
     local pattern
+    local pid
+    local cmd
     for pattern in \
         "$PROC_PATTERN_STS" \
         "$PROC_PATTERN_STS_SHORT" \
         "$PROC_PATTERN_CLI_MODULE_ASSET" \
         "$PROC_PATTERN_CLI_MODULE_SHORT"; do
-        PID=$(pgrep -f "$pattern" 2>/dev/null | head -n 1 || true)
-        if [ -n "$PID" ]; then
-            echo "$PID"
+        while read -r pid cmd; do
+            if [ -z "$pid" ]; then
+                continue
+            fi
+            if [ "$pid" = "$$" ] || [[ "$cmd" == *"stock_trading.sh"* ]]; then
+                continue
+            fi
+            echo "$pid"
             return 0
-        fi
+        done < <(pgrep -af "$pattern" 2>/dev/null || true)
     done
     return 0
 }
@@ -49,6 +56,41 @@ get_process_group_id() {
 }
 
 start_trading() {
+    cd "$PROJECT_DIR"
+    source "$VENV"
+    if [ ! -x "$STS_BIN" ]; then
+        log "sts binary not found: $STS_BIN"
+        exit 1
+    fi
+
+    # Load environment variables
+    set -a && source .env && set +a
+    STOCK_CAPITAL="${STOCK_PAPER_INITIAL_CAPITAL:-$STOCK_CAPITAL_DEFAULT}"
+    STOCK_START_HHMM="${STOCK_TRADING_START_HHMM:-0855}"
+    STOCK_LAST_START_HHMM="${STOCK_TRADING_LAST_START_HHMM:-1530}"
+
+    # Check trading day
+    IS_TRADING_DAY=$(python3 -c "
+from shared.collector.historical.calendar import is_trading_day
+from datetime import date
+print('1' if is_trading_day(date.today()) else '0')
+" 2>/dev/null || echo "1")
+
+    if [ "$IS_TRADING_DAY" != "1" ]; then
+        log "Not a trading day. Exiting."
+        exit 0
+    fi
+
+    NOW_HHMM=$(date +%H%M)
+    if ((10#$NOW_HHMM < 10#$STOCK_START_HHMM)); then
+        log "Before stock trading start window (${NOW_HHMM} < ${STOCK_START_HHMM}). Not starting."
+        exit 0
+    fi
+    if ((10#$NOW_HHMM >= 10#$STOCK_LAST_START_HHMM)); then
+        log "Stock regular session start window ended (${NOW_HHMM} >= ${STOCK_LAST_START_HHMM}). Not starting."
+        exit 0
+    fi
+
     # Check if already running
     if [ -f "$PID_FILE" ]; then
         OLD_PID=$(cat "$PID_FILE")
@@ -70,29 +112,6 @@ start_trading() {
     fi
 
     log "=== Stock Trading Start ==="
-
-    cd "$PROJECT_DIR"
-    source "$VENV"
-    if [ ! -x "$STS_BIN" ]; then
-        log "sts binary not found: $STS_BIN"
-        exit 1
-    fi
-
-    # Load environment variables
-    set -a && source .env && set +a
-    STOCK_CAPITAL="${STOCK_PAPER_INITIAL_CAPITAL:-$STOCK_CAPITAL_DEFAULT}"
-
-    # Check trading day
-    IS_TRADING_DAY=$(python3 -c "
-from shared.collector.historical.calendar import is_trading_day
-from datetime import date
-print('1' if is_trading_day(date.today()) else '0')
-" 2>/dev/null || echo "1")
-
-    if [ "$IS_TRADING_DAY" != "1" ]; then
-        log "Not a trading day. Exiting."
-        exit 0
-    fi
 
     log "Trading day confirmed. Starting stock trading..."
     log "Stock paper initial capital: $STOCK_CAPITAL"

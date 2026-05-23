@@ -323,7 +323,7 @@ risk_state_daily_pnl_krw                             Gauge
 risk_state_weekly_pnl_krw                            Gauge
 ```
 
-### 7.2 Grafana 대시보드 (`futures-execution`)
+### 7.2 운영 대시보드 (`futures-execution`)
 
 - 실시간 PnL 곡선 (당일, 주간)
 - 시그널 발생 vs 체결 비율 (fill rate)
@@ -355,7 +355,7 @@ risk_state_weekly_pnl_krw                            Gauge
 - [ ] Weekly Edge Review 1회 실행, 리포트 확인
 - [ ] 백테스트 PnL vs 실 페이퍼 PnL 괴리 < 20% (Setup A + C 합산)
 - [ ] `rl_mppo` 운용 영향 없음 (독립 계정 확인)
-- [ ] Grafana `futures-execution` 대시보드 구축
+- [ ] operational dashboard `futures-execution` 대시보드 구축
 - [ ] 종합 failure mode 문서화 (`docs/runbooks/futures-paradigm-failure-modes.md`)
 
 ---

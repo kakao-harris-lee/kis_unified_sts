@@ -36,4 +36,5 @@ redis:
   data_freshness_key: "trading:stock:data_freshness"
   trade_targets_key: "${TRADE_TARGETS_LATEST_KEY:system:trade_targets:latest}"
   universe_key: "${UNIVERSE_LATEST_KEY:system:universe:latest}"
+  llm_quality_key: "${LLM_QUALITY_LATEST_KEY:system:llm_quality:latest}"
   daily_indicators_key: "system:daily_indicators:latest"

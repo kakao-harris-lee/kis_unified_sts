@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from services.fusion_ranker import FusionRanker, FusionRankerConfig
@@ -112,3 +113,81 @@ class TestFusionMetadataMerge:
 
         # Fusion's value should win
         assert metadata["005930"]["realtime_score"] == 0.9
+
+
+class TestFusionDailyIndicatorCoverage:
+    def _make_ranker(self, payloads: dict[str, dict[str, Any]]) -> FusionRanker:
+        config = FusionRankerConfig()
+        ranker = FusionRanker.__new__(FusionRanker)
+        ranker.config = config
+        ranker._last_seen = {}
+        ranker._first_seen = {}
+        ranker._last_payload_fingerprint = ""
+
+        class FakeRedis:
+            def __init__(self, data: dict[str, dict[str, Any]]) -> None:
+                self.data = data
+                self.writes: dict[str, str] = {}
+
+            def get(self, key: str) -> str | None:
+                payload = self.data.get(key)
+                return json.dumps(payload) if payload is not None else None
+
+            def set(self, key: str, value: str, ex: int | None = None) -> None:
+                _ = ex
+                self.writes[key] = value
+
+        class FakePublisher:
+            def __init__(self) -> None:
+                self.payloads: list[dict[str, Any]] = []
+
+            def publish(self, payload: dict[str, Any]) -> None:
+                self.payloads.append(payload)
+
+        ranker.redis = FakeRedis(payloads)
+        ranker.publisher = FakePublisher()
+        return ranker
+
+    def test_run_once_filters_uncovered_realtime_and_llm_final_codes(self):
+        ranker = self._make_ranker(
+            {
+                "system:universe:latest": {
+                    "codes": ["005930", "000660", "123456"],
+                    "scores": {"005930": 0.9, "000660": 0.8, "123456": 0.7},
+                },
+                "system:llm_quality:latest": {
+                    "quality": {"005930": 0.9, "000660": 0.9, "999999": 1.0},
+                    "final_codes": ["999999", "000660"],
+                    "risk_flags": {},
+                    "excluded": {},
+                },
+                "system:daily_indicators:latest": {
+                    "indicators": {"005930": {}, "000660": {}}
+                },
+            }
+        )
+
+        assert ranker.run_once() is True
+        payload = ranker.publisher.payloads[-1]
+
+        assert payload["codes"] == ["005930", "000660"]
+        assert "123456" not in payload["metadata"]
+        assert "999999" not in payload["metadata"]
+        coverage = payload["sources"]["daily_indicator_coverage"]
+        assert coverage["enabled"] is True
+        assert coverage["input_count"] == 4
+        assert coverage["covered_count"] == 2
+        assert coverage["coverage_filtered_count"] == 2
+        assert coverage["missing_sample"] == ["123456", "999999"]
+
+    def test_daily_coverage_missing_key_is_fail_open(self):
+        rows = [
+            ("005930", 0.9, {}),
+            ("999999", 0.8, {}),
+        ]
+
+        filtered, stats = FusionRanker._apply_daily_indicator_coverage(rows, None)
+
+        assert filtered == rows
+        assert stats["enabled"] is False
+        assert stats["coverage_filtered_count"] == 0

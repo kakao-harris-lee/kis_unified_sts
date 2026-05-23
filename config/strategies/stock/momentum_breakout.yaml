@@ -18,19 +18,20 @@ strategy:
       intrabar_min_rvol: 1.8         # intrabar 진입은 상대적으로 높은 RVOL 요구
       rvol_threshold: 1.6            # 기준 RVOL 완화 (기존 1.9)
       accumulation_score_min: 40     # Optuna best: 스크리너 필터 약간 완화
-      volume_threshold: 0.8
+      volume_threshold: 1.2
       min_atr_cost_ratio: 0.01
       round_trip_cost: 0.005
-      skip_market_open_minutes: 10
+      skip_market_open_minutes: 20
       skip_market_close_minutes: 10
       signal_cooldown_seconds: 120   # 신호 밀집 구간 재진입 허용
       stop_atr_multiplier: 2.2
       # Trend mode (activated when regime in BULL/SIDEWAYS_UP)
       trend_mode_enabled: true
       trend_mode_regimes: ["BULL", "BULL_STRONG", "BULL_MODERATE", "SIDEWAYS_UP"]
-      trend_rvol_threshold: 1.0
+      require_trend_mode: true
+      trend_rvol_threshold: 2.0
       trend_breakout_buffer_pct: 0.0
-      trend_signal_cooldown_seconds: 60
+      trend_signal_cooldown_seconds: 7200
       # EMA pullback trigger
       trend_ema_pullback_enabled: true
       trend_ema_fast: 5

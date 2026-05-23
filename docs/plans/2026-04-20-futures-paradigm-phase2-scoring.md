@@ -245,7 +245,7 @@ news_scoring_cost_usd_today                     Gauge
 news_scorer_backlog                             Gauge (XPENDING count)
 ```
 
-### 8.2 Grafana 패널 (Phase 1 대시보드 확장)
+### 8.2 대시보드 패널 (Phase 1 대시보드 확장)
 
 - 카테고리 분포 (파이)
 - direction_bias 시계열 (stacked area)

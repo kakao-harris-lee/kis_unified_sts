@@ -11,7 +11,7 @@
 
 **(v4.10 원문, 사실오류 — 보존):** Phase 2 cutover 후 매 cycle "0 signals" 누적을 RL HOLD bias/confidence 미달로 해석하여 deprecate. → v4.11에서 shadow_mode 설계상 억제임이 확인되어 정정.
 
-**v4.9** — Phase 2 cutover LIVE: 2 incidents 복구 + 2 회귀 가드 + Grafana 대시보드 정리 (2026-05-11). 첫 거래일에 두 건 incident: (1) 선물 cutover blocker (CLI default single-strategy 강제) → PR #215/#216 fix. (2) 주식 silent-stall (13:09–13:35) → PR #218 fix + 4 regression tests. (3) Grafana 대시보드 audit → `futures-paradigm-overview` 7 패널 silent-broken → PR #220 fix.
+**v4.9** — Phase 2 cutover LIVE: 2 incidents 복구 + 2 회귀 가드 + 운영 대시보드 정리 (2026-05-11). 첫 거래일에 두 건 incident: (1) 선물 cutover blocker (CLI default single-strategy 강제) → PR #215/#216 fix. (2) 주식 silent-stall (13:09–13:35) → PR #218 fix + 4 regression tests. (3) 운영 대시보드 audit → silent-broken query issues 발견 → PR #220 fix.
 
 **v4.0 시점 인프라 요약** (수동 작업 0):
 - **자동 cron 4건**: orchestrator restart (08:55), daily verification (16:00 평일), weekly counterfactual (월 07:00), reports rotation (일 04:00)
@@ -28,7 +28,7 @@
 - 2026-05-08 (v3.2 — 마이그레이션 실행 진행 상황 반영: PR #158 + #163-#171 9건 머지로 Phase 0/1/2 완료. RL은 shadow_mode로 강등, Setup A/C 활성. §10 신설 — Phase 3+ 후속 작업 정리)
 - 2026-05-08 (**v3.3 — §10.3 인프라 정비 완료**: PR #173 (KIS API error rate writer) + #174 (CH insert fail rate writer) 머지. kill_switch ApiErrorRateCondition / ClickHouseInsertFailCondition이 0.0 stub → 실데이터로 전환. §3.1 PR 표 + §9 추적 + §10.3 갱신)
 - 2026-05-08 (**v3.4 — §10.2 Counterfactual 분석 스크립트 완료**: PR #178 머지 — `scripts/analysis/setup_vs_rl_shadow_counterfactual.py` (Phase 4 Gate 입력 도구). RL shadow 예측을 가상 long/short trade로 재구성, Setup A/C 실제 체결 trade와 비교, 4-cell confusion matrix + per-day breakdown. PR #178 review (BLOCK 6건) — confidence filter는 entry-only만 (exit는 RL 안전장치 보존), Phase 4 gate thresholds → YAML 이전, EOD-estimated count surface, inverted window ValueError 등 모두 반영. §3.1 PR 표 + §9 추적 + §10.2 갱신)
-- 2026-05-08 (**v3.5 — Phase 2 paper validation 인프라 가동 완료**: PR #180 (Grafana 대시보드 `llm-primary-phase2-monitoring.json` 7-panel) 머지 + V4 (rl_trades TTL 5y) + V5 (rl_shadow_predictions CREATE) ClickHouse migrations 적용 (V1–V3 → V1–V5). Phase 2 데이터 누적 인프라 100% 준비. 다음 평일 08:55 KST 재시작 시 RL shadow logger flush + dashboard 패널 데이터 표시 가능. §3.1 PR 표 + §9 추적 + §10.2 갱신)
+- 2026-05-08 (**v3.5 — Phase 2 paper validation 인프라 가동 완료**: PR #180 운영 대시보드 머지 + V4 (rl_trades TTL 5y) + V5 (rl_shadow_predictions CREATE) ClickHouse migrations 적용 (V1–V3 → V1–V5). Phase 2 데이터 누적 인프라 100% 준비. 다음 평일 08:55 KST 재시작 시 RL shadow logger flush + dashboard 패널 데이터 표시 가능. §3.1 PR 표 + §9 추적 + §10.2 갱신)
 - 2026-05-08 (**v3.6 — Phase 2 observability + 주간 자동화 완료**: PR #182 (rl_shadow_logger 12 단위 테스트 — V5 schema 매핑 회귀 가드), #183 (두 logger의 stale "follow-up" docstring 정정), #184 (Counterfactual 주간 cron 등록 + OHLCV 스키마 버그 픽스), #185 (`clickhouse_client_from_env` 8123→9000 fallback), #186 (shadow_loggers Prometheus 5 metrics + 4 alerts) 머지. crontab 등록(매주 월 07:00 KST), Prometheus 컨테이너 재시작으로 4 알림 활성. Phase 2 자동 운영 인프라 100% 준비.)
 - 2026-05-08 (**v3.7 — Phase 2 일일 자동 검증 완료**: PR #188 (`scripts/analysis/phase2_daily_verification.py` + cron) 머지. 매일 16:00 KST (월-금) 4-gate 자동 검증: rl_shadow_predictions > 0, rl_trades == 0 (shadow_mode invariant), Setup A signals >= 1, shadow_logger dropped_batches == 0 (Prometheus 호출, outage 시 gate 생략). PASS/FAIL Telegram 브리핑 채널 자동 보고. 1주/2주 누적 검증이 daily 누적으로 자동 완성. 12 단위 테스트.)
 - 2026-05-08 (**v3.8 — 운영자 startup runbook + CI 신호 정상화 완료**: PR #190 (Phase 2 startup runbook), #191 (CI test collection 16 ImportErrors → 0 — sibling test dir `__init__.py` 충돌), #192 (orchestrator 시간 의존성), #193 (retraining pipeline TELEGRAM env 독립), #194 (perf 테스트 main job 제외), #195 (ATS routing AUTO band time 고정) 6건 머지. main CI test/lint/type-check 모두 처음으로 green. 향후 PR CI 신호 신뢰 가능. Phase 2 cutover 운영자 진입점 문서 + 자동화된 functional CI까지 모두 준비.)
@@ -241,8 +241,8 @@ WebSocket tick (futures_feed.py, tz-aware UTC)
 |----|------|------|
 | **#178** `feat/phase10-2-counterfactual-script` | ✅ 5/8 머지 (eb64750) | §10.2 — `scripts/analysis/setup_vs_rl_shadow_counterfactual.py` (RL shadow 예측을 가상 long/short trade로 재구성, Setup A/C 실제 체결 trade와 비교, 4-cell confusion matrix + per-day breakdown, table/json/csv 출력); review BLOCK 6건 반영 — confidence filter는 entry-only (RL exit 안전장치 보존), Phase 4 gate thresholds → `config/ml/rl_mppo.yaml::phase4_gates`, `--commission-bps`/`--slippage-ticks` 기본값 None (config fallback), `start_date > end_date` ValueError 검증, EOD-estimated count via `AggregateStat.eod_estimated_count` |
 | **#179** `docs/plan-v3.4-counterfactual-complete` | ✅ 5/8 머지 (d45c35b) | v3.4 plan — §10.2 Counterfactual 완료 추적 |
-| **#180** `feat/llm-primary-monitoring-dashboard` | ✅ 5/8 머지 (9fed723) | §10.2 — Grafana `llm-primary-phase2-monitoring.json` (7 panels: Setup A/C signals/day, RL shadow distribution, LLM veto rate, Setup-vs-RL 14d comparison, Phase 4 gate counts, kill_switch state) |
-| **#181** `docs/plan-v3.5-dashboard-migrations` | ✅ 5/8 머지 (5e4f6a6) | v3.5 plan — §10.2 Grafana 대시보드 + V4/V5 ClickHouse migrations 적용 추적 |
+| **#180** `feat/llm-primary-monitoring-dashboard` | ✅ 5/8 머지 (9fed723) | §10.2 — operational dashboard for Setup A/C signals/day, RL shadow distribution, LLM veto rate, Setup-vs-RL comparison, Phase 4 gate counts, kill_switch state |
+| **#181** `docs/plan-v3.5-dashboard-migrations` | ✅ 5/8 머지 (5e4f6a6) | v3.5 plan — §10.2 운영 대시보드 + V4/V5 ClickHouse migrations 적용 추적 |
 
 #### 3.1.8 §10.2 Phase 2 observability (PR #182–#186 batch, 2026-05-08)
 
@@ -485,30 +485,30 @@ return staleness < threshold, health_status  # _last_tick_ts 기준
 - 첫 daily 실행: 2026-05-11 (월) 16:00 KST
 - Prometheus reload: `sts-prometheus` 컨테이너 재시작 → `/api/v1/rules` 응답에 `shadow_loggers` 그룹 4 룰 active
 
-#### 3.1.21 Grafana 대시보드 정리 — 깨진 쿼리 fix + stale 대시보드 archive (2026-05-11)
+#### 3.1.21 운영 대시보드 정리 — 깨진 쿼리 fix + stale 대시보드 archive (2026-05-11)
 
-운영자 요청 ("선물 운영 결과를 확인할수 있는 grafana 대시보드 정리가 필요해. 불필요한 부분은 제거하고. 효율적으로 개선 하자.") → 10개 대시보드 audit 후 3 issue 발견 + 일괄 정리.
+운영자 요청 ("선물 운영 결과를 확인할수 있는 dashboard 대시보드 정리가 필요해. 불필요한 부분은 제거하고. 효율적으로 개선 하자.") → 10개 대시보드 audit 후 3 issue 발견 + 일괄 정리.
 
 ##### 발견된 issue 5건
 
 | Issue | 위치 | 원인 |
 |-------|------|------|
-| `kospi.rl_signals` 테이블 미존재 (CH Code 60 UNKNOWN_TABLE) | `futures-paradigm-overview.json` lines 129/214 | Phase 2에서 `rl_signals` deprecated, `signals_all`로 대체됐으나 대시보드 미갱신 |
-| `today('Asia/Seoul')` 인자 잘못됨 (CH Code 42) — `today()`는 인자를 받지 않음 | `futures-paradigm-overview.json` lines 53/129/167 | 작성 시점 CH 함수 시그니처 오해 |
-| `swing_positions.{asset_class, status, symbol, signal_id}` 컬럼 미존재 (CH Code 47) | `futures-paradigm-overview.json` lines 91/299 | 대시보드 가정한 스키마와 production 스키마 불일치 — 실제로는 `is_open` / `code` / `id` / `current_state` |
-| 매트릭스 프로필 비교 사용 안 함 (단일 production 프로필) | `rl-paper-matrix-realtime.json` | 의미 상실 |
-| Gate 3 진입 전 (live ladder 미가동, `futures_live.enabled: false`) | `futures-paradigm-live-ladder.json` | 표시할 데이터 없음 |
+| `kospi.rl_signals` 테이블 미존재 (CH Code 60 UNKNOWN_TABLE) | legacy dashboard query | Phase 2에서 `rl_signals` deprecated, `signals_all`로 대체됐으나 대시보드 미갱신 |
+| `today('Asia/Seoul')` 인자 잘못됨 (CH Code 42) — `today()`는 인자를 받지 않음 | legacy dashboard query | 작성 시점 CH 함수 시그니처 오해 |
+| `swing_positions.{asset_class, status, symbol, signal_id}` 컬럼 미존재 (CH Code 47) | legacy dashboard query | 대시보드 가정한 스키마와 production 스키마 불일치 — 실제로는 `is_open` / `code` / `id` / `current_state` |
+| 매트릭스 프로필 비교 사용 안 함 (단일 production 프로필) | stale dashboard | 의미 상실 |
+| Gate 3 진입 전 (live ladder 미가동, `futures_live.enabled: false`) | stale dashboard | 표시할 데이터 없음 |
 
 ##### 즉시 조치 PR
 
 | PR | 상태 | 내용 |
 |----|------|------|
-| **#220** `chore/grafana-cleanup` | 🟡 OPEN | 7 쿼리 fix (`rl_signals` → `signals_all`, `today(tz)` → `toDate(now(), tz)`, swing_positions schema 정합) + 2 stale 대시보드 archive (`futures-paradigm-live-ladder` / `rl-paper-matrix-realtime`) + `phase5-readme.md`에 Active/Archived 인벤토리 명시. 모든 패널 production CH 실행 검증 완료 |
+| **#220** `chore/dashboard-cleanup` | 🟡 OPEN | 7 쿼리 fix (`rl_signals` → `signals_all`, `today(tz)` → `toDate(now(), tz)`, swing_positions schema 정합) + 2 stale 대시보드 archive. 모든 패널 production CH 실행 검증 완료 |
 
 ##### 운영 영향
-- `futures-paradigm-overview` 대시보드 7개 패널 모두 production data 반영 가능 (이전에는 silent error로 모두 빈 차트)
+- 운영 대시보드 패널 모두 production data 반영 가능 (이전에는 silent error로 모두 빈 차트)
 - Phase 2 운영 가시성 즉시 향상: Today Signals (Setup A/C), Today Fills, Signal Count by Setup (24h) 패널 정상 표시
-- Gate 3 진입 시점에 `live-ladder` archive에서 복원하여 재가동
+- Gate 3 진입 시점에 live-ladder 지표를 React Dashboard / Prometheus 경로로 재구성
 
 ##### 교훈
 - **대시보드는 코드와 동일하게 검증 대상**: ClickHouse 쿼리 silent error는 빈 패널만 남기고 알림 없음. CI에서 raw SQL 실행 smoke test가 있다면 조기 발견 가능했음 (잠재 follow-up).
@@ -570,7 +570,7 @@ PR #171 + #173 + #174 + #182–#188 머지로 다음 평일 08:55 KST 재시작 
   - signal payload는 별도 stream(`rl:shadow:predictions`) 또는 ClickHouse table(`kospi.rl_shadow_predictions`) 기록
 - [ ] `kospi.rl_shadow_predictions` ClickHouse 마이그레이션 (V6) — schema: ts, symbol, action, confidence, masks, regime_at_decision, executed_setup_id (correlation), executed_pnl
 - [ ] `services/trading/strategy_manager.py` — shadow strategy는 dedupe/min_confidence/parallel 기존 흐름과 동일하게 호출하되 결과 무시
-- [ ] Grafana panel: "RL shadow vs Setup A/C signal 일치률"
+- [ ] dashboard panel: "RL shadow vs Setup A/C signal 일치률"
 
 #### 0.4 Kill switch 추가 conditions (Phase 3 Track A 시작 전 필수)
 - [ ] `services/kill_switch/conditions.py` — 3개 stub 구현
@@ -667,7 +667,7 @@ PR #171 + #173 + #174 + #182–#188 머지로 다음 평일 08:55 KST 재시작 
 - [ ] `config/strategies/futures/rl_mppo.yaml`에 `shadow_mode: true` 추가 (`enabled: true` 유지)
   - 효과: strategy_manager가 호출하나 should_enter는 항상 None 반환, signal payload만 별도 stream/CH 기록
 - [ ] Setup A/C 메인 활성: `setup_a_gap_reversion.yaml::enabled: true`, `setup_c_event_reaction.yaml::enabled: true`
-- [ ] Grafana 대시보드 추가 (Phase 0.3에서 만들어둔 panel 확장):
+- [ ] 운영 대시보드 추가 (Phase 0.3에서 만들어둔 panel 확장):
   - "Setup A/C signals/day" vs "RL shadow LONG/SHORT/HOLD distribution"
   - LLM regime → setup conversion rate
   - **Counterfactual P&L**: RL이 LONG_ENTRY인데 Setup A가 발화 안 한 시점 / 그 반대 — paper 가격 추적
@@ -770,7 +770,7 @@ Phase 0/1만 사전 분해. Phase 2/3은 Phase 1 결과 보고 다시 분해.
 - **0.2-b** (1일): 단위/통합 테스트 (모의 트리거 → flatten → Redis 빈 상태)
 - **0.3-a** (2일): `RLMPPOEntry::shadow_mode` 옵션 추가 + signal payload 별도 기록 경로
 - **0.3-b** (1일): ClickHouse `kospi.rl_shadow_predictions` 마이그레이션 (V6) + 단위 테스트
-- **0.3-c** (1일): Grafana panel "RL shadow distribution"
+- **0.3-c** (1일): dashboard panel "RL shadow distribution"
 - **0.4-a** (1일): `ApiErrorRateCondition` 구현 (5분 윈도우, error rate 임계)
 - **0.4-b** (1일): `NewsPipelineLagCondition` 구현
 - **0.4-c** (1일): `ClickHouseInsertFailCondition` 구현 + `config/kill_switch.yaml` 임계값 추가
@@ -805,7 +805,7 @@ Phase 0/1만 사전 분해. Phase 2/3은 Phase 1 결과 보고 다시 분해.
 ### Phase 1 종합 (1주)
 - **paper validation**: 1주 paper 가동 후 측정 지표 수집
 - **graceful degradation 검증**: LLM API 인위 중단 → safe defaults 동작
-- **Grafana panel 추가**: "LLM regime distribution" + "Setup signals by regime" + "Veto rate" + "Size scale factor"
+- **dashboard panel 추가**: "LLM regime distribution" + "Setup signals by regime" + "Veto rate" + "Size scale factor"
 - **Telegram alert**: LLM context staleness > 30min, veto 발화
 
 **Phase 1 총 ~4주** (1.1-1.3 병렬 가능 영역 있어 단축 여지 있음).
@@ -845,7 +845,7 @@ Phase 1.1 완료 + paper 1주 안정성 확인 즉시 (운영자 §7-5 결정):
 | 2026-05-08 | **§10.3 DRY follow-up** 완료: PR #176 (`RollingRateTracker` base class), #177 (error_rate.py docstring cleanup) 머지. ~140 LOC duplicate 제거. |
 | 2026-05-08 | **§10.2 Counterfactual 도구** 완료: PR #178 (`scripts/analysis/setup_vs_rl_shadow_counterfactual.py`) 머지. Phase 4 Gate 입력 분석 도구 — RL shadow vs Setup A/C 4-cell confusion matrix + per-day PnL breakdown. Review BLOCK 6건 반영 (entry-only confidence filter, Phase 4 thresholds → YAML, ValueError on inverted window 등). |
 | 2026-05-08 | **v3.4** — §10.2 Counterfactual 분석 스크립트 완료. §3.1.7 신설, §10.2 체크박스 완료, §9 history 갱신. Phase 4 Gate 도달 시 사용 가능. |
-| 2026-05-08 | **§10.2 Grafana 대시보드** 완료: PR #180 (`monitoring/grafana/dashboards/llm-primary-phase2-monitoring.json` 7-panel) 머지. PR #171 deferred follow-up. ClickHouse 데이터소스 활용. |
+| 2026-05-08 | **§10.2 운영 대시보드** 완료: PR #180 머지. PR #171 deferred follow-up. ClickHouse 데이터소스 활용. |
 | 2026-05-08 | **V4/V5 ClickHouse migrations 적용**: V4 (rl_trades TTL 5y), V5 (rl_shadow_predictions CREATE TABLE) 운영 production에 적용 (직접 SQL + schema_migrations 백필). V1–V3 → V1–V5. Phase 2 RL shadow logger flush 가능 상태. |
 | 2026-05-08 | **v3.5** — Phase 2 paper validation 인프라 100% 가동 가능. 다음 평일 08:55 KST 재시작 시 RL shadow logger → ClickHouse 데이터 누적 → dashboard 패널 표시. §3.1/§9/§10.2 갱신. |
 | 2026-05-08 | **§10.2 Phase 2 observability batch** 완료: PR #182 (shadow logger 회귀 가드 12 테스트), #183 (stale docstring 정정), #184 (counterfactual 주간 cron + OHLCV 스키마 버그 픽스), #185 (`clickhouse_client_from_env` 8123→9000 fallback), #186 (shadow_loggers Prometheus 5 metrics + 4 alerts) 5건 연속 머지. crontab 등록 + Prometheus 컨테이너 재시작으로 production에 즉시 활성. |
@@ -867,7 +867,7 @@ Phase 1.1 완료 + paper 1주 안정성 확인 즉시 (운영자 §7-5 결정):
 | 2026-05-10 | **v4.6** — Telegram 라우팅 footgun 완전 제거. PR #213 머지로 dormant footgun 2건(`get_telegram_notifier()` + `send_telegram()`, `AlertConfig.from_env()`)에 deprecation/strict 가드 추가. Active caller 0이지만 미래 wiring 위험 차단. §3.1.18 신설, §9 history 갱신. |
 | 2026-05-11 | **v4.7** — Phase 2 cutover LIVE 첫 거래일 incident 발견 + 즉시 복구 + 회귀 가드. 운영자 보고 → 진단(strategies=["rl_mppo"]만 로드) → PR #215 (CLI default fix) → restart 후 3 strategies 로드 검증 → PR #216 (9th pre-flight gate `strategies_loadable_futures`로 runtime 시뮬레이션). 1-day 영향(Setup A 윈도우 미스)이지만 내일부터 정상 가동 예상. §3.1.19 신설, §9 history 갱신. |
 | 2026-05-11 | **v4.8** — 주식 silent-stall incident 발견 + 즉시 복구 + 회귀 가드. 운영자가 주식 거래 상황 점검 요청 → 13:09–13:35 silent stall 발견 (active universe 800s+ stale, 그러나 health check `fresh_count > 0`이라 healthy 판정). cron script restart로 즉시 복구 → PR #218 (`min_fresh_ratio` 0.5 default). 4 regression tests. 두 incident(선물 §3.1.19 + 주식 §3.1.20) 모두 silent-failure 패턴 — system observability 갭 패턴화. §3.1.20 신설, §9 history 갱신. |
-| 2026-05-11 | **v4.9** — Grafana 대시보드 정리 (3번째 silent-failure 발견). 운영자 요청 "선물 운영 결과 grafana 대시보드 정리" → 10개 대시보드 audit → `futures-paradigm-overview` 7 패널 모두 silent-broken 발견: (a) `kospi.rl_signals` 테이블 미존재 (deprecated, `signals_all`로 대체됨), (b) `today('Asia/Seoul')` 인자 잘못됨 (CH 함수 시그니처), (c) `swing_positions` schema 불일치 (`asset_class`/`status`/`symbol`/`signal_id` 컬럼 미존재). PR #220 — 7 쿼리 fix + 2 stale 대시보드 archive (`futures-paradigm-live-ladder` pre-Gate3, `rl-paper-matrix-realtime` 단일 프로필) + `phase5-readme.md` Active/Archived 인벤토리. 모든 패널 production CH 실행 검증. 같은 day에 3번째 silent-failure 패턴 — 대시보드도 코드와 동일하게 검증 필요. §3.1.21 신설, §9 history 갱신. |
+| 2026-05-11 | **v4.9** — 운영 대시보드 정리 (3번째 silent-failure 발견). 운영자 요청 "선물 운영 결과 dashboard 대시보드 정리" → 대시보드 audit → silent-broken query 발견: (a) `kospi.rl_signals` 테이블 미존재 (deprecated, `signals_all`로 대체됨), (b) `today('Asia/Seoul')` 인자 잘못됨 (CH 함수 시그니처), (c) `swing_positions` schema 불일치 (`asset_class`/`status`/`symbol`/`signal_id` 컬럼 미존재). PR #220 — 7 쿼리 fix + stale 대시보드 archive. 모든 패널 production CH 실행 검증. 같은 day에 3번째 silent-failure 패턴 — 대시보드도 코드와 동일하게 검증 필요. §3.1.21 신설, §9 history 갱신. |
 | TBD | Phase 1 paper validation (1주) — Setup A/C 신호 발생률, LLM-veto counterfactual PnL, size scaling trade PnL 비교 |
 | TBD | Phase 3 Track A — 운영자 게이트 (legal review §1-6, KIS Real smoke test, 증거금, position-recovery drill, kill-switch unit 설치, `futures_live.enabled: true` 플립, Gate 3 14일 1계약 운용) |
 | TBD | Phase 4 (+3개월) — `signals_all` 누적 trade ≥ 50 + EV+ 3개월 → RL aux 활성 / 폐지 / 재학습 결정 |
@@ -901,9 +901,9 @@ PR #171이 운영을 활성화했으므로 다음 거래일부터 Phase 1 paper 
   - `kospi.signals_all` Setup A signal ≥ 1 (Setup A 일평균 목표)
   - `kospi.rl_trades` row count = 0 (shadow_mode 효과)
   - shadow_logger dropped_batches == 0 (Prometheus, outage 시 gate 생략)
-- [x] **1주 누적 (5 거래일)** — 자동 (daily 결과 5일치 누적). 운영자는 `reports/daily_verification/*.json` 5일치 + Grafana 대시보드 누적 panel로 검증
+- [x] **1주 누적 (5 거래일)** — 자동 (daily 결과 5일치 누적). 운영자는 `reports/daily_verification/*.json` 5일치 + 운영 대시보드 누적 panel로 검증
 - [x] **2주 누적** — 자동 (daily 결과 10일치 누적 + Prometheus 알림 통계)
-- [x] **Grafana 대시보드** (Phase 2 PR #171 deferred follow-up) — ✅ PR #180 머지 (9fed723): `monitoring/grafana/dashboards/llm-primary-phase2-monitoring.json` (7 panels: Setup A/C signals/day, RL shadow LONG/SHORT/HOLD distribution, LLM veto rate, Setup-vs-RL 14d directional comparison, Phase 4 gate counts (≥1000 / ≥50), kill_switch state)
+- [x] **운영 대시보드** (Phase 2 PR #171 deferred follow-up) — ✅ PR #180 머지 (9fed723): Setup A/C signals/day, RL shadow distribution, LLM veto rate, Setup-vs-RL comparison, Phase 4 gate counts, kill_switch state
 - [x] **Counterfactual 분석 스크립트** (Phase 4 입력) — ✅ PR #178 머지 (eb64750): `scripts/analysis/setup_vs_rl_shadow_counterfactual.py` 작성 완료. RL shadow 예측을 가상 long/short trade로 재구성, Setup A/C 실제 체결 trade와 비교, 4-cell confusion matrix + per-day breakdown, table/json/csv 출력. Phase 4 gate thresholds (50, 1000)는 `config/ml/rl_mppo.yaml::phase4_gates`에서 로드. Phase 4 Gate 도달 시 사용
 
 ### 10.3 인프라 정비 follow-ups (✅ v3.3에서 핵심 항목 완료)

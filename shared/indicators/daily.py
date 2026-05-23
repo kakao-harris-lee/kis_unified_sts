@@ -34,7 +34,6 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-import numpy as np
 import pandas as pd
 
 logger = logging.getLogger(__name__)
@@ -46,6 +45,9 @@ def calculate_daily_indicators(
     sma_periods: list[int] | None = None,
     ema_periods: list[int] | None = None,
     rsi_period: int = 5,
+    lookahead_guard: Any | None = None,
+    context_timestamp: Any | None = None,
+    context_info: str | None = None,
 ) -> dict[str, float]:
     """Calculate daily timeframe indicators from candle data.
 
@@ -57,6 +59,9 @@ def calculate_daily_indicators(
         sma_periods: SMA periods to calculate (default: [20, 60, 200]).
         ema_periods: EMA periods to calculate (default: [5, 10, 20]).
         rsi_period: RSI period (default: 5).
+        lookahead_guard: Optional backtest guard for timestamped candle arrays.
+        context_timestamp: Timestamp used by the optional lookahead guard.
+        context_info: Label used in lookahead guard diagnostics.
 
     Returns:
         Dict with indicator values from the most recent candle:
@@ -82,10 +87,20 @@ def calculate_daily_indicators(
         logger.warning("calculate_daily_indicators: no candles provided")
         return {}
 
-    # LookaheadGuard: 시계열 입력이 배열이면 검사
-    if lookahead_guard and context_timestamp is not None:
-        timestamps = [c['timestamp'] for c in candles if 'timestamp' in c]
-        lookahead_guard.check([c['close'] for c in candles], timestamps, context_timestamp, context_info or "daily:candles")
+    if lookahead_guard is not None and context_timestamp is not None:
+        timestamped = [
+            (c["close"], c["timestamp"])
+            for c in candles
+            if "close" in c and "timestamp" in c
+        ]
+        if timestamped:
+            closes, timestamps = zip(*timestamped)
+            lookahead_guard.check(
+                list(closes),
+                list(timestamps),
+                context_timestamp,
+                context_info or "daily:candles",
+            )
 
     # Convert candles to DataFrame
     df = pd.DataFrame(candles)

@@ -1,9 +1,11 @@
 """Background task: Redis pubsub → WS broadcast + periodic data-freshness/kill-switch ticks."""
+
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
+from contextlib import suppress
 from typing import Any
 
 from services.dashboard.websocket import WebSocketManager
@@ -40,17 +42,17 @@ class WebSocketPublisher:
         for t in (self._task, self._pubsub_task):
             if t is not None and not t.done():
                 t.cancel()
-                try:
+                with suppress(asyncio.CancelledError, Exception):
                     await t
-                except (asyncio.CancelledError, Exception):  # noqa: BLE001
-                    pass
 
     async def _fetch_kill_switch_state(self) -> dict[str, Any]:
         from services.dashboard.routes.health import get_kill_switch
+
         return await get_kill_switch()
 
     async def _fetch_data_freshness_state(self) -> dict[str, Any]:
         from services.dashboard.routes.health import get_data_freshness
+
         return await get_data_freshness(asset_class="all")
 
     async def _tick_kill_switch(self) -> None:
@@ -81,19 +83,21 @@ class WebSocketPublisher:
     async def _periodic_loop(self) -> None:
         while not self._stop.is_set():
             try:
-                await self._tick_kill_switch()
-                await self._tick_data_freshness()
+                if self.manager.get_connection_count() > 0:
+                    await self._tick_kill_switch()
+                    await self._tick_data_freshness()
             except Exception as e:  # noqa: BLE001
                 logger.warning("Publisher periodic loop error: %s", e)
             try:
                 await asyncio.wait_for(self._stop.wait(), timeout=_PERIODIC_INTERVAL_S)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 continue
 
     async def _pubsub_loop(self) -> None:
         """Subscribe to Redis pubsub trading events and forward to WS subscribers."""
         try:
             from shared.streaming.client import RedisClient
+
             redis = RedisClient.get_client()
             pubsub = redis.pubsub()
         except Exception as e:  # noqa: BLE001
@@ -105,8 +109,13 @@ class WebSocketPublisher:
                 pubsub.subscribe(channel)
 
             while not self._stop.is_set():
-                # Non-blocking poll; await control between iterations
-                message = pubsub.get_message(ignore_subscribe_messages=True, timeout=0.5)
+                # redis-py's pubsub read is blocking. Run it off the event loop
+                # so dashboard HTTP requests are not delayed by socket_timeout.
+                message = await asyncio.to_thread(
+                    pubsub.get_message,
+                    ignore_subscribe_messages=True,
+                    timeout=0.5,
+                )
                 if message is None:
                     await asyncio.sleep(0)
                     continue
@@ -128,7 +137,9 @@ class WebSocketPublisher:
                     if isinstance(payload, dict)
                     else "all"
                 )
-                await self.manager.broadcast_topic(topic, payload, asset_class=asset_class)
+                await self.manager.broadcast_topic(
+                    topic, payload, asset_class=asset_class
+                )
         except asyncio.CancelledError:
             raise
         except Exception as e:  # noqa: BLE001

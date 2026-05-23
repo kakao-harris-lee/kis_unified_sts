@@ -131,6 +131,7 @@ class RedisSnapshot:
     daily_indicators_count: int
     daily_strategy_candidate_count: int
     daily_strategy_counts: dict[str, int]
+    candidate_coverage: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 @dataclass
@@ -165,6 +166,7 @@ class VerificationReport:
     active_issues: list[GateIssue]
     redis_snapshot: RedisSnapshot
     clickhouse_position_snapshot: ClickHousePositionSnapshot
+    candidate_coverage: dict[str, dict[str, Any]] = field(default_factory=dict)
     json_path: str = ""
     markdown_path: str = ""
     notification_sent: bool = False
@@ -642,6 +644,29 @@ def _verdict_from_issues(issues: list[GateIssue]) -> str:
     return "PASS"
 
 
+def _is_market_open_now() -> bool:
+    def _hhmm(value: str, default: str) -> str:
+        digits = "".join(ch for ch in value if ch.isdigit())
+        if len(digits) == 3:
+            digits = f"0{digits}"
+        return digits if len(digits) == 4 else default
+
+    try:
+        from shared.collector.historical.calendar import is_trading_day
+
+        now = datetime.now(KST)
+        if not is_trading_day(now.date()):
+            return False
+        start_hhmm = _hhmm(str(os.getenv("STOCK_TRADING_START_HHMM", "0900")), "0900")
+        end_hhmm = _hhmm(
+            str(os.getenv("STOCK_TRADING_LAST_START_HHMM", "1530")), "1530"
+        )
+        current_hhmm = now.strftime("%H%M")
+        return start_hhmm <= current_hhmm < end_hhmm
+    except (ImportError, OSError, RuntimeError, ValueError):
+        return False
+
+
 def _safe_json(raw: Any) -> Any:
     if raw is None:
         return None
@@ -698,6 +723,42 @@ def _count_codes_from_payload(payload: Any) -> int:
             }
         )
     return 0
+
+
+def _codes_from_payload(
+    payload: Any,
+    *,
+    keys: tuple[str, ...] = ("codes", "symbols", "ranked_codes"),
+) -> list[str]:
+    if not isinstance(payload, dict):
+        return []
+    for key in keys:
+        value = payload.get(key)
+        if isinstance(value, list):
+            return [str(code).strip() for code in value if str(code).strip()]
+    indicators = payload.get("indicators")
+    if isinstance(indicators, dict):
+        return [str(code).strip() for code in indicators if str(code).strip()]
+    return []
+
+
+def _candidate_coverage(
+    codes: list[str],
+    covered_symbols: set[str],
+) -> dict[str, Any]:
+    unique_codes = list(
+        dict.fromkeys(str(code).strip() for code in codes if str(code).strip())
+    )
+    covered = [code for code in unique_codes if code in covered_symbols]
+    missing = [code for code in unique_codes if code not in covered_symbols]
+    total = len(unique_codes)
+    ratio = (len(covered) / total) if total else None
+    return {
+        "total": total,
+        "covered": len(covered),
+        "coverage_ratio": round(ratio, 4) if ratio is not None else None,
+        "missing_sample": missing[:10],
+    }
 
 
 def _strategy_counts_from_payload(payload: Any) -> dict[str, int]:
@@ -769,7 +830,10 @@ def fetch_redis_snapshot(
             daily_signals += 1
 
     def load_payload(name: str) -> tuple[bool, dict[str, Any]]:
-        raw = redis_client.get(keys[name])
+        key = keys.get(name)
+        if not key:
+            return False, {}
+        raw = redis_client.get(key)
         if raw is None:
             return False, {}
         try:
@@ -778,18 +842,33 @@ def fetch_redis_snapshot(
             return True, {}
         return True, payload if isinstance(payload, dict) else {}
 
-    def load_counted_key(name: str) -> tuple[bool, int]:
-        exists, payload = load_payload(name)
-        return exists, _count_codes_from_payload(payload)
-
-    trade_targets_exists, trade_targets_count = load_counted_key("trade_targets_key")
-    universe_exists, universe_count = load_counted_key("universe_key")
+    trade_targets_exists, trade_targets_payload = load_payload("trade_targets_key")
+    trade_targets_count = _count_codes_from_payload(trade_targets_payload)
+    universe_exists, universe_payload = load_payload("universe_key")
+    universe_count = _count_codes_from_payload(universe_payload)
+    llm_quality_exists, llm_quality_payload = load_payload("llm_quality_key")
     daily_indicators_exists, daily_indicators_payload = load_payload(
         "daily_indicators_key"
     )
     daily_indicators_count = _count_codes_from_payload(daily_indicators_payload)
     daily_strategy_counts = _strategy_counts_from_payload(daily_indicators_payload)
     daily_strategy_candidate_count = sum(daily_strategy_counts.values())
+    covered_symbols = set(_codes_from_payload(daily_indicators_payload))
+    candidate_coverage = {
+        "trade_targets": _candidate_coverage(
+            _codes_from_payload(trade_targets_payload),
+            covered_symbols,
+        ),
+        "universe": _candidate_coverage(
+            _codes_from_payload(universe_payload),
+            covered_symbols,
+        ),
+        "llm_quality_final_codes": _candidate_coverage(
+            _codes_from_payload(llm_quality_payload, keys=("final_codes",)),
+            covered_symbols,
+        ),
+    }
+    candidate_coverage["llm_quality_final_codes"]["exists"] = llm_quality_exists
 
     freshness = {}
     raw_freshness = redis_client.get(keys["data_freshness_key"])
@@ -834,6 +913,7 @@ def fetch_redis_snapshot(
         daily_indicators_count=daily_indicators_count,
         daily_strategy_candidate_count=daily_strategy_candidate_count,
         daily_strategy_counts=daily_strategy_counts,
+        candidate_coverage=candidate_coverage,
     )
 
 
@@ -882,9 +962,12 @@ def evaluate_report(
         redis_snapshot.report_is_trading_day
         or not config.skip_live_redis_gates_on_non_trading_day
     )
+    intraday_runtime_gates_enabled = live_redis_gates_enabled and (
+        not config.skip_live_redis_gates_on_non_trading_day or _is_market_open_now()
+    )
 
     if (
-        live_redis_gates_enabled
+        intraday_runtime_gates_enabled
         and config.require_redis_status
         and not redis_snapshot.status_exists
     ):
@@ -897,7 +980,7 @@ def evaluate_report(
         )
 
     if (
-        live_redis_gates_enabled
+        intraday_runtime_gates_enabled
         and config.require_redis_status
         and redis_snapshot.status_exists
         and not redis_snapshot.status_updated_at
@@ -911,7 +994,7 @@ def evaluate_report(
         )
 
     if (
-        live_redis_gates_enabled
+        intraday_runtime_gates_enabled
         and config.require_redis_status
         and redis_snapshot.status_exists
         and redis_snapshot.status_updated_at
@@ -926,7 +1009,7 @@ def evaluate_report(
         )
 
     if (
-        live_redis_gates_enabled
+        intraday_runtime_gates_enabled
         and config.require_redis_status
         and redis_snapshot.status_age_seconds is not None
         and redis_snapshot.status_age_seconds > config.max_redis_status_age_seconds
@@ -940,7 +1023,22 @@ def evaluate_report(
         )
 
     if (
-        live_redis_gates_enabled
+        intraday_runtime_gates_enabled
+        and config.require_redis_status
+        and redis_snapshot.status_exists
+        and redis_snapshot.state
+        and redis_snapshot.state != "running"
+    ):
+        add(
+            "FAIL",
+            "runtime_not_running",
+            redis_snapshot.state,
+            "running during market hours",
+            "Stock orchestrator is not running during the live market window.",
+        )
+
+    if (
+        intraday_runtime_gates_enabled
         and config.require_redis_status
         and redis_snapshot.status_exists
         and redis_snapshot.status_config_capital is not None
@@ -955,7 +1053,7 @@ def evaluate_report(
         )
 
     if (
-        live_redis_gates_enabled
+        intraday_runtime_gates_enabled
         and config.require_redis_status
         and redis_snapshot.status_exists
         and redis_snapshot.risk_initial_capital is None
@@ -969,7 +1067,7 @@ def evaluate_report(
         )
 
     if (
-        live_redis_gates_enabled
+        intraday_runtime_gates_enabled
         and config.require_redis_status
         and redis_snapshot.status_exists
         and redis_snapshot.risk_initial_capital is not None
@@ -1034,7 +1132,8 @@ def evaluate_report(
     fresh_count = int(provider.get("fresh_count", 0) or 0)
     fresh_ratio = fresh_count / total_symbols if total_symbols > 0 else 0.0
     if (
-        live_redis_gates_enabled
+        intraday_runtime_gates_enabled
+        and redis_snapshot.state == "running"
         and total_symbols > 0
         and fresh_ratio < config.min_fresh_ratio
     ):
@@ -1048,6 +1147,37 @@ def evaluate_report(
 
     issues.extend(evaluate_trade_metric_gates(config, metrics))
     return issues
+
+
+def _downgrade_daily_signal_issue_for_no_ready_candidates(
+    issues: list[GateIssue],
+    *,
+    active_strategy_names: list[str],
+    active_daily_strategy_names: list[str],
+    active_daily_candidate_count: int,
+) -> list[GateIssue]:
+    if (
+        not active_strategy_names
+        or not active_daily_strategy_names
+        or active_daily_candidate_count > 0
+    ):
+        return issues
+
+    adjusted: list[GateIssue] = []
+    for issue in issues:
+        if issue.code != "daily_signals_below_target":
+            adjusted.append(issue)
+            continue
+        adjusted.append(
+            GateIssue(
+                "WARN",
+                issue.code,
+                issue.observed,
+                "ready active daily candidates before signal activity",
+                "No stock signal is visible today, but enabled daily strategies have no ready candidates; this is a readiness/coverage issue rather than a failed trade-signal event.",
+            )
+        )
+    return adjusted
 
 
 def evaluate_active_daily_watchlist_gates(
@@ -1410,6 +1540,12 @@ def build_report(
         redis_snapshot,
         active_daily_names,
     )
+    issues = _downgrade_daily_signal_issue_for_no_ready_candidates(
+        issues,
+        active_strategy_names=active_names,
+        active_daily_strategy_names=active_daily_names,
+        active_daily_candidate_count=active_daily_candidate_count,
+    )
     active_issues: list[GateIssue] = []
     if active_names:
         active_metric_gates_enabled = (
@@ -1446,6 +1582,7 @@ def build_report(
         active_issues=active_issues,
         redis_snapshot=redis_snapshot,
         clickhouse_position_snapshot=clickhouse_snapshot,
+        candidate_coverage=redis_snapshot.candidate_coverage,
     )
 
 
@@ -1478,6 +1615,7 @@ def empty_redis_snapshot(report_date: date) -> RedisSnapshot:
         daily_indicators_count=0,
         daily_strategy_candidate_count=0,
         daily_strategy_counts={},
+        candidate_coverage={},
     )
 
 

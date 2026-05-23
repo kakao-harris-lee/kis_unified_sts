@@ -50,7 +50,7 @@ function Signals() {
             limit: 50,
           })
           .then((r) => r.data),
-      refetchInterval: 5000,
+      refetchInterval: 15000,
     });
 
   const filterControls = (

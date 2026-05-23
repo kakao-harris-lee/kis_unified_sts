@@ -1,5 +1,5 @@
 # Monitoring Stack for KIS Unified Trading Platform
-# Prometheus + Grafana + Redis Exporter
+# Prometheus + Redis Exporter
 #
 # Usage:
 #   cd monitoring && docker compose up -d
@@ -23,26 +23,6 @@ services:
       - '--storage.tsdb.path=/prometheus'
       - '--storage.tsdb.retention.time=30d'
       - '--web.enable-lifecycle'
-
-  grafana:
-    image: grafana/grafana:10.2.0
-    container_name: sts-grafana
-    restart: unless-stopped
-    env_file:
-      - ../.env
-    ports:
-      - "0.0.0.0:3000:3000"
-    volumes:
-      - monitoring_grafana_data:/var/lib/grafana
-      - ./grafana/provisioning:/etc/grafana/provisioning:ro
-      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
-    environment:
-      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
-      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
-      - GF_INSTALL_PLUGINS=grafana-clickhouse-datasource
-      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD}
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
 
   redis-exporter:
     image: oliver006/redis_exporter:v1.55.0
@@ -77,6 +57,4 @@ services:
 
 volumes:
   monitoring_prometheus_data:
-    external: true
-  monitoring_grafana_data:
     external: true

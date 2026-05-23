@@ -45,7 +45,7 @@ Add Weekly Edge Review to crontab:
 - [ ] `clickhouse-client --query "SELECT count() FROM kospi.order_fills WHERE filled_at >= now() - INTERVAL 7 DAY"` ≥ 10
 - [ ] `clickhouse-client --query "SELECT avg(slippage_ticks) FROM kospi.order_fills WHERE filled_at >= now() - INTERVAL 7 DAY"` ≤ 0.5 (warn) / ≤ 0.4 (gate)
 - [ ] `redis-cli -n 1 XLEN stream:signal.candidate` reasonable (no runaway growth)
-- [ ] `rl_mppo` Grafana dashboard shows zero regression vs pre-Phase-4 baseline (independent paper account)
+- [ ] `rl_mppo` React Dashboard / ClickHouse checks show zero regression vs pre-Phase-4 baseline (independent paper account)
 - [ ] Weekly Edge Review Telegram delivered Mon 05:00 KST with no negative-EV alerts on either Setup A or C
 
 ### Week 2 endpoint (gate decision)

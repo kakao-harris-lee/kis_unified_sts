@@ -211,6 +211,82 @@ class TestBrokerVerification:
         assert tracker.get_position(new_pos.id).code == "035420"
         assert tracker.get_position(new_pos.id).strategy == "external"
 
+    def test_verify_removes_redis_only_and_tracks_broker_only(self, orchestrator_mocks):
+        """Configured broker reconciliation should make tracker match broker."""
+        from services.trading.orchestrator import TradingOrchestrator
+
+        orch, tracker = orchestrator_mocks
+        tracker.add_recovered_position(_make_position(code="005930"))
+        orch._kis_client.get_stock_balance = AsyncMock(
+            return_value=[
+                _make_broker_position(
+                    code="035420",
+                    name="NAVER",
+                    quantity=30,
+                    avg_price=250000.0,
+                )
+            ]
+        )
+        tracker.reconcile_open_positions_to_db = AsyncMock(
+            return_value={"open_saved": 1, "closed_orphans": 0}
+        )
+
+        with patch(
+            "services.trading.orchestrator.ConfigLoader.load",
+            return_value={
+                "broker_verification": {
+                    "enabled": True,
+                    "auto_track_external": True,
+                    "remove_redis_only": True,
+                    "sync_clickhouse": True,
+                    "notify_on_mismatch": False,
+                }
+            },
+        ):
+            _run(TradingOrchestrator._verify_positions_with_broker(orch))
+
+        assert tracker.get_positions_by_symbol("005930") == []
+        broker_positions = tracker.get_positions_by_symbol("035420")
+        assert len(broker_positions) == 1
+        assert broker_positions[0].strategy == "external"
+        tracker.reconcile_open_positions_to_db.assert_awaited_once()
+
+    def test_verify_reconciles_quantity_and_price(self, orchestrator_mocks):
+        """Matched position quantity and entry/current price follow broker."""
+        from services.trading.orchestrator import TradingOrchestrator
+
+        orch, tracker = orchestrator_mocks
+        position = _make_position(code="005930", quantity=100, entry_price=70000.0)
+        tracker.add_recovered_position(position)
+        orch._kis_client.get_stock_balance = AsyncMock(
+            return_value=[
+                _make_broker_position(
+                    code="005930",
+                    quantity=150,
+                    avg_price=71000.0,
+                )
+                | {"current_price": 72000.0}
+            ]
+        )
+
+        with patch(
+            "services.trading.orchestrator.ConfigLoader.load",
+            return_value={
+                "broker_verification": {
+                    "enabled": True,
+                    "reconcile_quantity": True,
+                    "reconcile_price": True,
+                    "notify_on_mismatch": False,
+                }
+            },
+        ):
+            _run(TradingOrchestrator._verify_positions_with_broker(orch))
+
+        reconciled = tracker.get_position(position.id)
+        assert reconciled.quantity == 150
+        assert reconciled.entry_price == 71000.0
+        assert reconciled.current_price == 72000.0
+
     def test_multiple_positions_mixed_scenario(self, orchestrator_mocks):
         """Complex scenario: some matched, some Redis-only, some broker-only."""
         orch, tracker = orchestrator_mocks

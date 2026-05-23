@@ -67,6 +67,11 @@ async def test_oversold_reversal_signal(entry):
     assert result2.strategy == "williams_r"
     assert result2.metadata["signal_direction"] == "long"
     assert result2.metadata["williams_r"] == -75.0
+    assert result2.metadata["prev_williams_r"] == -90.0
+    assert result2.metadata["wr_reversal_points"] == 15.0
+    assert result2.metadata["wr_depth_points"] == 10.0
+    assert result2.metadata["bb_distance_pct"] > 0
+    assert 0 < result2.metadata["confidence"] <= 1.0
 
 
 @pytest.mark.asyncio
@@ -193,3 +198,22 @@ def test_confidence_calculation(entry):
     assert 0 < c1 <= 1.0
     assert 0 < c2 <= 1.0
     assert c1 > c2
+
+
+@pytest.mark.asyncio
+async def test_overextended_signal_gets_position_size_multiplier(config):
+    """BB 중심선에서 멀어진 과확장 반전은 작은 탐색 포지션으로 표시."""
+    config.max_full_size_bb_distance_pct = 1.0
+    config.overextended_position_size_multiplier = 0.2
+    entry = WilliamsREntry(config)
+
+    await entry.generate(
+        _make_context(williams_r=-90.0, close=55_000, bb_middle=49_000)
+    )
+    result = await entry.generate(
+        _make_context(williams_r=-75.0, close=55_000, bb_middle=49_000, minute=35)
+    )
+
+    assert result is not None
+    assert result.metadata["bb_distance_pct"] > 1.0
+    assert result.metadata["position_size_multiplier"] == 0.2

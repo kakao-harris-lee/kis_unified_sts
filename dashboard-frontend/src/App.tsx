@@ -11,11 +11,11 @@ import { useWebSocketInvalidation } from './hooks/useWebSocket';
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      staleTime: 1000,
-      gcTime: 60000,
-      retry: 3,
+      staleTime: 5000,
+      gcTime: 120000,
+      retry: 1,
       retryDelay: (n) => Math.min(1000 * 2 ** n, 30000),
-      refetchOnWindowFocus: true,
+      refetchOnWindowFocus: false,
     },
     mutations: {
       retry: 1,

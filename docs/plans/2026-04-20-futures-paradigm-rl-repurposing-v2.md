@@ -274,7 +274,7 @@ rl_aux_inference_error_total{exception_type}       Counter     # v2
 rl_aux_fallback_pass_total{reason}                 Counter     # v2
 ```
 
-### 6.3 Grafana — v1 유지
+### 6.3 operational dashboard — v1 유지
 
 ---
 
