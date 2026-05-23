@@ -41,4 +41,31 @@ trap "rm -f $LOCK_FILE" EXIT
 
 python3 -m scripts.analysis.llm_intraday_refresh >> "$LOG_FILE" 2>&1
 
+if [ "${STOCK_LLM_REFRESH_DAILY_INDICATORS:-1}" != "0" ]; then
+    LLM_CODES=$(python3 - <<'PY'
+import json
+from shared.streaming.client import RedisClient
+
+raw = RedisClient.get_client().get("system:llm_quality:latest")
+payload = json.loads(raw or "{}")
+codes = payload.get("final_codes") or []
+print(" ".join(str(code).strip() for code in codes if str(code).strip()))
+PY
+)
+    if [ -n "$LLM_CODES" ]; then
+        log "Backfilling daily candles for LLM final codes: $LLM_CODES"
+        BACKFILL_ARGS=()
+        for code in $LLM_CODES; do
+            BACKFILL_ARGS+=("-c" "$code")
+        done
+        export STOCK_DAILY_MAX_DAYS="${STOCK_LLM_DAILY_MAX_DAYS:-280}"
+        sts stock-backfill daily \
+            --days "${STOCK_LLM_DAILY_BACKFILL_DAYS:-280}" \
+            "${BACKFILL_ARGS[@]}" >> "$LOG_FILE" 2>&1 || \
+            log "Daily candle backfill for LLM final codes failed"
+    fi
+    log "Refreshing daily indicators after LLM quality update..."
+    python3 scripts/daily_indicator_scanner.py >> "$LOG_FILE" 2>&1
+fi
+
 log "=== LLM Intraday Refresh Complete ==="

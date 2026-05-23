@@ -19,7 +19,7 @@ Entry Conditions:
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, time, timedelta
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 from zoneinfo import ZoneInfo
 
 _KST = ZoneInfo("Asia/Seoul")
@@ -46,6 +46,11 @@ class MomentumBreakoutConfig(ConfigMixin):
     # Volume confirmation
     rvol_threshold: float = 1.5
     volume_threshold: float = 1.0  # current volume >= volume_ma * threshold
+
+    # Daily momentum quality filters from the pre-market scanner.
+    # Values <= 0 disable the corresponding filter.
+    daily_rsi_max: float = 0.0
+    daily_volume_ratio_min: float = 0.0
 
     # Accumulation score filter (from overnight scan)
     accumulation_score_min: int = 60
@@ -103,6 +108,10 @@ class MomentumBreakoutConfig(ConfigMixin):
         assert self.intrabar_min_rvol > 0, "intrabar_min_rvol must be positive"
         assert self.rvol_threshold > 0, "rvol_threshold must be positive"
         assert self.volume_threshold >= 0, "volume_threshold must be non-negative"
+        assert self.daily_rsi_max >= 0, "daily_rsi_max must be non-negative"
+        assert (
+            self.daily_volume_ratio_min >= 0
+        ), "daily_volume_ratio_min must be non-negative"
         assert (
             0 <= self.accumulation_score_min <= 100
         ), "accumulation_score_min must be 0-100"
@@ -230,6 +239,9 @@ class MomentumBreakoutEntry(EntrySignalGenerator[MomentumBreakoutConfig]):
             if is_trend_mode
             else self.config.signal_cooldown_seconds
         )
+
+        if not self._passes_daily_quality_filters(context, code):
+            return None
 
         # --- Time filters ---
         open_dt = datetime.combine(
@@ -403,6 +415,62 @@ class MomentumBreakoutEntry(EntrySignalGenerator[MomentumBreakoutConfig]):
             confidence=confidence,
             metadata=metadata,
         )
+
+    @staticmethod
+    def _float_from_mapping(source: Any, key: str) -> float | None:
+        if not isinstance(source, dict) or key not in source:
+            return None
+        try:
+            value = source.get(key)
+            return float(value) if value is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    def _context_float(self, context: EntryContext, key: str) -> float | None:
+        """Read a numeric value from live indicators, enriched data, or metadata."""
+        for source in (
+            context.indicators or {},
+            context.market_data or {},
+            (context.metadata or {}).get("symbol_metadata", {}),
+        ):
+            value = self._float_from_mapping(source, key)
+            if value is not None:
+                return value
+        return None
+
+    def _passes_daily_quality_filters(self, context: EntryContext, code: str) -> bool:
+        """Apply optional daily scanner quality gates.
+
+        Missing values fail open so historical backtests and fallback runtime paths
+        keep their previous behavior unless the scanner supplies the relevant
+        daily fields.
+        """
+        if self.config.daily_rsi_max > 0:
+            daily_rsi = self._context_float(context, "daily_rsi_5")
+            if daily_rsi is not None and daily_rsi > self.config.daily_rsi_max:
+                logger.debug(
+                    "%s: daily RSI %.2f above max %.2f",
+                    code,
+                    daily_rsi,
+                    self.config.daily_rsi_max,
+                )
+                return False
+
+        if self.config.daily_volume_ratio_min > 0:
+            daily_volume_ratio = self._context_float(context, "daily_volume_ratio")
+            if (
+                daily_volume_ratio is not None
+                and daily_volume_ratio < self.config.daily_volume_ratio_min
+            ):
+                logger.debug(
+                    "%s: daily volume ratio %.2f below min %.2f",
+                    code,
+                    daily_volume_ratio,
+                    self.config.daily_volume_ratio_min,
+                )
+                return False
+
+        return True
 
     def _check_ema_pullback(self, close: float, atr: float, indicators: dict) -> bool:
         """Check EMA pullback trigger conditions.

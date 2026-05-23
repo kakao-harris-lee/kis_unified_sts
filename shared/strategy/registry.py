@@ -430,6 +430,17 @@ def register_builtin_components() -> None:
         logger.debug("MomentumBreakoutEntry not available")
 
     try:
+        from shared.strategy.entry.trend_continuation_vwap import (
+            TrendContinuationVWAPEntry,
+        )
+
+        EntryRegistry.register_class(
+            "trend_continuation_vwap", TrendContinuationVWAPEntry
+        )
+    except ImportError:
+        logger.debug("TrendContinuationVWAPEntry not available")
+
+    try:
         from shared.strategy.entry.daily_pullback import DailyPullbackEntry
 
         EntryRegistry.register_class("daily_pullback", DailyPullbackEntry)

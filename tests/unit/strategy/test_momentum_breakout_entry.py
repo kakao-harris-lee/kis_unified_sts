@@ -47,6 +47,8 @@ def _make_context(
     minute=30,
     watchlist_codes=("005930",),
     accumulation_candidates=None,
+    indicators=None,
+    symbol_metadata=None,
 ) -> EntryContext:
     """Helper: build EntryContext with sensible defaults."""
     now = datetime(2026, 2, 26, hour, minute, tzinfo=KST)
@@ -55,6 +57,8 @@ def _make_context(
     metadata = {"daily_watchlist": watchlist}
     if accumulation_candidates is not None:
         metadata["accumulation_candidates"] = accumulation_candidates
+    if symbol_metadata is not None:
+        metadata["symbol_metadata"] = symbol_metadata
     if high is None:
         high = close
 
@@ -70,7 +74,7 @@ def _make_context(
             "volume_ma": volume_ma,
             "atr": atr,
         },
-        indicators={},
+        indicators=indicators or {},
         timestamp=now,
         metadata=metadata,
     )
@@ -310,6 +314,81 @@ async def test_low_accumulation_score_no_boost(entry):
 
 
 # ---------------------------------------------------------------------------
+# Daily quality filters
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_rejects_overheated_daily_rsi():
+    """Configured daily RSI cap rejects overheated momentum candidates."""
+    cfg = MomentumBreakoutConfig(
+        breakout_buffer_pct=0.1,
+        rvol_threshold=1.5,
+        volume_threshold=1.0,
+        min_atr_cost_ratio=2.0,
+        round_trip_cost=0.005,
+        daily_rsi_max=80.0,
+    )
+    entry = MomentumBreakoutEntry(cfg)
+    ctx = _make_context(
+        close=50100.0,
+        high_5=49900.0,
+        indicators={"daily_rsi_5": 86.4},
+    )
+
+    signal = await entry.generate(ctx)
+
+    assert signal is None
+
+
+@pytest.mark.asyncio
+async def test_rejects_low_daily_volume_ratio_from_symbol_metadata():
+    """Daily volume ratio gate also reads backtest symbol metadata."""
+    cfg = MomentumBreakoutConfig(
+        breakout_buffer_pct=0.1,
+        rvol_threshold=1.5,
+        volume_threshold=1.0,
+        min_atr_cost_ratio=2.0,
+        round_trip_cost=0.005,
+        daily_volume_ratio_min=1.5,
+    )
+    entry = MomentumBreakoutEntry(cfg)
+    ctx = _make_context(
+        close=50100.0,
+        high_5=49900.0,
+        symbol_metadata={"daily_volume_ratio": 1.37},
+    )
+
+    signal = await entry.generate(ctx)
+
+    assert signal is None
+
+
+@pytest.mark.asyncio
+async def test_daily_quality_filter_allows_confirmed_momentum_candidate():
+    """Candidate with non-overheated RSI and enough daily volume can signal."""
+    cfg = MomentumBreakoutConfig(
+        breakout_buffer_pct=0.1,
+        rvol_threshold=1.5,
+        volume_threshold=1.0,
+        min_atr_cost_ratio=2.0,
+        round_trip_cost=0.005,
+        daily_rsi_max=80.0,
+        daily_volume_ratio_min=1.5,
+    )
+    entry = MomentumBreakoutEntry(cfg)
+    ctx = _make_context(
+        close=50100.0,
+        high_5=49900.0,
+        indicators={"daily_rsi_5": 72.8, "daily_volume_ratio": 1.86},
+    )
+
+    signal = await entry.generate(ctx)
+
+    assert signal is not None
+
+
+# ---------------------------------------------------------------------------
 # Intrabar breakout path
 # ---------------------------------------------------------------------------
 
@@ -414,6 +493,8 @@ def test_config_defaults():
     assert cfg.intrabar_reclaim_pct == 0.05
     assert cfg.intrabar_min_rvol == 1.8
     assert cfg.rvol_threshold == 1.5
+    assert cfg.daily_rsi_max == 0.0
+    assert cfg.daily_volume_ratio_min == 0.0
     assert cfg.accumulation_score_min == 60
     assert cfg.volume_threshold == 1.0
     assert cfg.min_atr_cost_ratio == 2.0

@@ -389,13 +389,28 @@ def compute_indicators(
     sma_short: int = 20,
     sma_mid: int = 60,
     rsi_period: int = 5,
+    consensus_rsi_period: int = 14,
     atr_period: int = 22,
     lookback_period: int = 22,
     mid_trend_lookback: int = 5,
     volume_lookback: int = 20,
+    williams_r_period: int = 14,
+    macd_fast: int = 12,
+    macd_slow: int = 26,
+    macd_signal: int = 9,
 ) -> dict[str, float] | None:
     """Compute daily indicators from a DataFrame. Returns latest values or None."""
-    if len(df) < sma_long:
+    min_required = max(
+        sma_mid,
+        rsi_period + 1,
+        consensus_rsi_period + 1,
+        atr_period + 1,
+        lookback_period,
+        volume_lookback,
+        williams_r_period,
+        macd_slow + macd_signal,
+    )
+    if len(df) < min_required:
         return None
 
     close = df["close"].astype(float)
@@ -409,6 +424,7 @@ def compute_indicators(
 
     # RSI
     rsi_series = compute_rsi(close, rsi_period)
+    consensus_rsi_series = compute_rsi(close, consensus_rsi_period)
 
     # ATR
     prev_close = close.shift(1)
@@ -455,8 +471,25 @@ def compute_indicators(
         else None
     )
 
-    if sma_200 is None:
-        return None
+    williams_high = high.rolling(
+        window=max(1, int(williams_r_period)),
+        min_periods=max(1, int(williams_r_period)),
+    ).max()
+    williams_low = low.rolling(
+        window=max(1, int(williams_r_period)),
+        min_periods=max(1, int(williams_r_period)),
+    ).min()
+    williams_denominator = (williams_high - williams_low).replace(0, np.nan)
+    williams_r_series = (williams_high - close) / williams_denominator * -100.0
+
+    ema_fast = close.ewm(span=max(1, int(macd_fast)), adjust=False).mean()
+    ema_slow = close.ewm(span=max(1, int(macd_slow)), adjust=False).mean()
+    macd_line = ema_fast - ema_slow
+    macd_signal_line = macd_line.ewm(
+        span=max(1, int(macd_signal)),
+        adjust=False,
+    ).mean()
+    macd_hist_series = macd_line - macd_signal_line
 
     result: dict[str, Any] = {
         "daily_sma_200": sma_200,
@@ -468,6 +501,20 @@ def compute_indicators(
         "daily_highest_high": highest_high,
         "daily_close": daily_close,
         "daily_volume_ratio": volume_ratio,
+        # Daily-prefixed technical consensus fields avoid clobbering intraday
+        # indicators in the orchestrator while still feeding daily strategies.
+        "daily_rsi_14": safe_float(consensus_rsi_series.iloc[latest]),
+        "daily_prev_rsi_14": (
+            safe_float(consensus_rsi_series.iloc[latest - 1]) if latest >= 1 else None
+        ),
+        "daily_williams_r_14": safe_float(williams_r_series.iloc[latest]),
+        "daily_prev_williams_r_14": (
+            safe_float(williams_r_series.iloc[latest - 1]) if latest >= 1 else None
+        ),
+        "daily_macd_hist": safe_float(macd_hist_series.iloc[latest]),
+        "daily_prev_macd_hist": (
+            safe_float(macd_hist_series.iloc[latest - 1]) if latest >= 1 else None
+        ),
     }
 
     # Include raw daily series for VR composite strategy (most recent 80 bars)

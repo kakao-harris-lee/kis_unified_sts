@@ -402,6 +402,33 @@ def test_daily_signal_zero_is_warn_when_active_daily_candidates_are_empty():
     }
 
 
+def test_activation_day_daily_signal_gate_is_warn_with_ready_candidates():
+    cfg = _config(min_closed_trades_for_metric_gate=5)
+    report = mod.build_report(
+        config=cfg,
+        report_date=date(2026, 5, 16),
+        rows=[],
+        redis_snapshot=_redis(
+            daily_signal_count=0,
+            daily_strategy_counts={"momentum_breakout": 2},
+            daily_strategy_candidate_count=2,
+        ),
+        active_strategy_names=["momentum_breakout"],
+        active_strategy_since={"momentum_breakout": datetime(2026, 5, 16, 16, 20)},
+    )
+
+    signal_issue = next(
+        issue for issue in report.issues if issue.code == "daily_signals_below_target"
+    )
+    assert signal_issue.severity == "WARN"
+    assert signal_issue.expected == "post-activation signal opportunity"
+    assert report.active_daily_strategy_names == ["momentum_breakout"]
+    assert report.active_daily_candidate_count == 2
+    assert "active_daily_no_candidates" not in {
+        issue.code for issue in report.active_issues
+    }
+
+
 def test_candidate_coverage_reports_missing_samples():
     coverage = mod._candidate_coverage(
         ["005930", "000660", "999999", "005930"],
@@ -655,6 +682,45 @@ def test_build_report_separates_active_strategy_metrics():
     assert report.active_trade_metrics.win_rate_pct == 60.0
     assert report.active_issues == []
     assert "momentum_breakout" not in report.active_trade_metrics.by_strategy
+
+
+def test_build_report_filters_active_strategy_metrics_after_activation():
+    cfg = _config(min_closed_trades_for_metric_gate=5, target_win_rate_max_pct=100.0)
+    rows = [
+        *[
+            _trade(
+                idx,
+                -100_000,
+                strategy="momentum_breakout",
+                entry=datetime(2026, 5, 1, 9, 30) + timedelta(days=idx),
+            )
+            for idx in range(1, 6)
+        ],
+        *[
+            _trade(
+                idx,
+                300_000,
+                strategy="momentum_breakout",
+                entry=datetime(2026, 5, 11, 9, 30) + timedelta(days=idx),
+            )
+            for idx in range(6, 11)
+        ],
+    ]
+
+    report = mod.build_report(
+        config=cfg,
+        report_date=date(2026, 5, 16),
+        rows=rows,
+        redis_snapshot=_redis(),
+        active_strategy_names=["momentum_breakout"],
+        active_strategy_since={"momentum_breakout": datetime(2026, 5, 10, 0, 0)},
+    )
+
+    assert report.active_strategy_since == {"momentum_breakout": "2026-05-10T00:00:00"}
+    assert report.active_trade_metrics.trade_count == 5
+    assert report.active_trade_metrics.total_pnl == 1_500_000
+    assert report.active_issues == []
+    assert report.verdict == "PASS"
 
 
 def test_build_report_includes_clickhouse_position_snapshot_in_verdict():

@@ -1,0 +1,62 @@
+strategy:
+  name: trend_continuation_vwap
+  asset_class: stock
+  enabled: true
+  description: "상승장 VWAP 회복 기반 추세 지속 파일럿"
+  paper:
+    enabled: true
+    activated_at: "2026-05-22T21:40:00+09:00"
+
+  entry:
+    type: trend_continuation_vwap
+    params:
+      allowed_regimes: ["BULL", "BULL_STRONG", "BULL_MODERATE", "SIDEWAYS_UP"]
+      require_regime: true
+      require_daily_trend: true
+      require_daily_sma60_rising: true
+      daily_rsi_min: 45.0
+      daily_rsi_max: 82.0
+      daily_volume_ratio_min: 1.0
+      vwap_reclaim_buffer_pct: 0.05
+      max_price_vs_vwap_pct: 3.0
+      rvol_threshold: 1.5
+      volume_threshold: 1.0
+      require_above_open: true
+      skip_market_open_minutes: 20
+      skip_market_close_minutes: 15
+      signal_cooldown_seconds: 7200
+      stop_loss_pct: 3.0
+      confidence_base: 0.68
+      confidence_max: 0.95
+      confidence_rvol_bonus: 0.10
+      confidence_daily_volume_bonus: 0.07
+
+  exit:
+    type: atr_dynamic
+    params:
+      atr_period: 14
+      stop_atr_multiplier: 2.5
+      trail_activation_atr: 1.5
+      trail_atr_multiplier: 2.0
+      momentum_decay_exit: true
+      max_hold_days: 8
+      eod_close_enabled: false
+      default_exit_confidence: 0.85
+
+  position:
+    type: fixed
+    params:
+      order_amount_per_stock: 1000000
+      max_position_pct: 5.0
+      max_positions: 2
+
+  backtest:
+    initial_capital: 100000000
+    risk:
+      stop_loss_pct: 99.0
+      take_profit_pct: 999.0
+      trailing_stop_enabled: false
+      max_hold_bars: 0
+      max_daily_trades: 2
+      force_close_time: ""
+      close_on_day_change: false

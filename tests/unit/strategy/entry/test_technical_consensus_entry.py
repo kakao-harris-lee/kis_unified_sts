@@ -51,6 +51,37 @@ async def test_generates_entry_when_core_votes_overlap():
 
 
 @pytest.mark.asyncio
+async def test_generates_entry_from_daily_prefixed_scanner_fields():
+    entry = TechnicalConsensusEntry(
+        TechnicalConsensusEntryConfig(
+            min_entry_votes=2,
+            min_entry_core_votes=2,
+            include_trend_vote=True,
+            include_volume_vote=True,
+            min_confidence=0.70,
+            confidence_base=0.70,
+        )
+    )
+
+    signal = await entry.generate(
+        _context(
+            daily_prev_williams_r_14=-90.0,
+            daily_williams_r_14=-60.0,
+            daily_prev_rsi_14=30.0,
+            daily_rsi_14=42.0,
+            daily_prev_macd_hist=-1.0,
+            daily_macd_hist=0.2,
+            daily_sma_20=69000.0,
+            daily_volume_ratio=1.5,
+        )
+    )
+
+    assert signal is not None
+    assert signal.strategy == "technical_consensus"
+    assert signal.metadata["technical_consensus"]["entry_core_vote_count"] >= 2
+
+
+@pytest.mark.asyncio
 async def test_requires_minimum_core_votes():
     entry = TechnicalConsensusEntry(
         TechnicalConsensusEntryConfig(

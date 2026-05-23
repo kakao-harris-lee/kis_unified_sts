@@ -72,6 +72,64 @@ def test_compute_indicators_includes_daily_volume_ratio():
     assert indicators["daily_volume_ratio"] == 2.0
 
 
+def test_compute_indicators_includes_daily_technical_consensus_fields():
+    rows = []
+    close = 100.0
+    for i in range(220):
+        close += 1.0 if i % 3 else -0.5
+        rows.append(
+            {
+                "date": date(2026, 1, 1),
+                "open": close - 0.5,
+                "high": close + 2.0,
+                "low": close - 2.0,
+                "close": close,
+                "volume": 1_000_000 + i * 1000,
+            }
+        )
+    df = pd.DataFrame(rows)
+
+    indicators = compute_indicators(df)
+
+    assert indicators is not None
+    for key in (
+        "daily_rsi_14",
+        "daily_prev_rsi_14",
+        "daily_williams_r_14",
+        "daily_prev_williams_r_14",
+        "daily_macd_hist",
+        "daily_prev_macd_hist",
+    ):
+        assert key in indicators
+        assert isinstance(indicators[key], float)
+
+
+def test_compute_indicators_allows_partial_history_without_sma200():
+    rows = []
+    close = 100.0
+    for i in range(100):
+        close += 1.0 if i % 3 else -0.5
+        rows.append(
+            {
+                "date": date(2026, 1, 1),
+                "open": close - 0.5,
+                "high": close + 2.0,
+                "low": close - 2.0,
+                "close": close,
+                "volume": 1_000_000,
+            }
+        )
+    df = pd.DataFrame(rows)
+
+    indicators = compute_indicators(df)
+
+    assert indicators is not None
+    assert "daily_sma_200" not in indicators
+    assert "daily_sma_20" in indicators
+    assert "daily_sma_60" in indicators
+    assert "daily_rsi_14" in indicators
+
+
 def test_extract_candidate_symbols_from_pipeline_shapes():
     payload = {
         "codes": ["005930", "000660"],
