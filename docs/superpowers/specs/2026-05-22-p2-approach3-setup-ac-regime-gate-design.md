@@ -70,8 +70,8 @@ Added: `LiveVolInputs` (Redis+CH-backed duck-typed source for `RegimeGate`), `re
 
 | # | Component | Responsibility | Depends on |
 |---|---|---|---|
-| C1 | `LiveVolInputs` (NEW class in `shared/strategy/gates/live_inputs.py`) | Duck-typed source for `RegimeGate`: `latest_vol_at(ts)` reads `forecast:vol:current` from Redis (PERMISSIVE on miss); `events_within(ts, window)` reads `kospi.event_scores` via CH; `macro_for(date)` reads `MarketContext.macro_overnight` from the EntryContext. No backtest dependency. | Redis (live), CH (live), EntryContext |
-| C2 | `regime_gate_decisions` CH table + `insert_regime_gate_decision()` | Best-effort append-only history of every gate decision (ts, strategy, signal_direction, allow, reason, regime_pct). Failure-isolated. | ClickHouse (existing pattern from `llm_market_context` write-through) |
+| C1 | `LiveVolInputs` (NEW class in `shared/strategy/gates/live_inputs.py`) | Duck-typed source for `RegimeGate`: `latest_vol_at(ts)` reads `forecast:vol:current` from Redis (PERMISSIVE on miss); `events_within(ts, window)` reads `kospi.event_scores` via CH; `macro_for(date)` returns `None` unconditionally in live (EntryContext has no `macro_overnight` field — see §13 correction 7). Gate's `require_overnight_us_direction` flag therefore degrades PERMISSIVE per §9. No backtest dependency. | Redis (live), CH (live), EntryContext |
+| C2 | `regime_gate_decisions` CH table + `insert_regime_gate_decisions()` | Best-effort append-only history of every gate decision (ts, strategy, signal_direction, allow, reason, regime_pct). Failure-isolated. Table lives in **futures DB** (`CLICKHOUSE_FUTURES_DATABASE=kospi`); audit insert routed via `futures_clickhouse_client()` helper — see §13 correction 8. | ClickHouse (mirrors `insert_drift_metrics` / `rl_drift_metrics` DDL + best-effort-insert pattern) |
 | C3 | `SetupAEntryAdapter.generate()` integration | After LLM veto, before Signal return: call gate; on block, log+return None; on allow, log+return Signal | C1, C2 |
 | C4 | `SetupCEntryAdapter.generate()` integration | Same as C3 (symmetric) | C1, C2 |
 | C5 | `MeanReversionEntry.generate()` integration | Same as C3 (bb_reversion_15m bonus) | C1, C2 |
@@ -89,11 +89,15 @@ Live tick → StrategyManager.check_entries(context)
         Adapter.generate(context):
            1. Existing decision logic produces decision_signal
            2. Existing LLM tuning/veto runs (may early-return None)
-           3. NEW gate check:
-                a. inputs = LiveVolInputs(redis, ch, context)
-                b. allow, reason = gate.allow(ts, asset, signal_direction)
-                c. insert_regime_gate_decision({ts, strategy, ...allow, reason})
-                d. if not allow: return None    # block
+           3. NEW gate check (via apply_regime_gate() in adapter_helper.py):
+                a. _redis, _ch = acquire_infra_clients()  # futures-DB CH client
+                   if either None → PERMISSIVE degrade, skip gate
+                b. inputs = LiveVolInputs(_redis, _ch)
+                c. allow, reason, regime_pct = gate.allow(
+                       ts, asset, signal_direction)        # 3-tuple — see §13.9
+                d. insert_regime_gate_decisions([{ts, strategy, ..., regime_pct}])
+                   (best-effort; CH failure → logged + swallowed)
+                e. if not allow: return None    # block
            4. Return orchestrator Signal
                   │
                   ▼
@@ -118,7 +122,7 @@ This is a deliberately *qualitative* gate (operator interprets the digest), not 
 ## 9. Error handling & safety
 
 - **Gate degrade**: PERMISSIVE on any missing input (Redis vol stale/absent; event_scores query failure; macro_overnight absent). Same §9 discipline.
-- **Best-effort decision logging**: `insert_regime_gate_decision()` is wrapped in broad try/except + `logger.warning(...)`; CH failure NEVER blocks the entry decision.
+- **Best-effort decision logging**: `insert_regime_gate_decisions()` (plural) is wrapped in broad try/except + `logger.warning(...)`; CH failure NEVER blocks the entry decision.
 - **Default-off**: every strategy YAML defaults `regime_gate.enabled: false`. Activation per-strategy requires an explicit operator YAML edit (auditable in git).
 - **No live-trading flag changes**: `futures_live.enabled` stays `false`; Redis `futures:live:suspended` stays set. This spec is paper-only.
 - **Backtest path unchanged**: `_CHInputs` and the gate-runner CLI from P1-③ are unaffected. Backtest re-runs continue to produce the same results.
@@ -149,7 +153,7 @@ This spec covers P2-③ — all six tasks ship in ONE plan (T1-T6 below). Operat
 - Exact `LiveVolInputs` Redis key access pattern (reuse `shared/forecasting/vol_reader.py::read_latest_vol_forecast`? or new helper).
 - `regime_gate_decisions` table DDL + retention TTL (default 90 days, matching `vol_forecasts`).
 - Per-strategy YAML schema validation (Pydantic model for `RegimeGateYAML`; auto-merge with `config/gates/regime_gate_default.yaml` for unspecified fields).
-- The exact log-decision SQL + tuple shape (mirror `insert_llm_market_context` from P0).
+- The exact log-decision SQL + tuple shape (implementation chose `insert_drift_metrics` / `rl_drift_metrics` as the analog — same best-effort try/except pattern; `llm_market_context` would have worked too).
 - Counterfactual P&L lookback window (suggest: 15 minutes for blocked-entry simulation since bb_reversion_15m operates at 15m and Setup A/C are intraday).
 - Telegram digest format (mirror existing weekly counterfactual cron at `scripts/cron/` if one exists; else new).
 - Cron schedule for the weekly analyzer (suggest: Sunday 18:00 KST).
@@ -166,6 +170,16 @@ Discovered while mapping the live entry-signal flow; folded in so the plan is fa
 4. **bb_reversion_15m bundling is free.** `MeanReversionEntry.generate()` sits at the same adapter layer; one extra file edit + one extra YAML section activates the gate for bb_reversion_15m in live paper. Bundled into this spec rather than deferred to a separate scope.
 5. **Backtest validation is NOT in scope.** No Setup A/C backtest harness exists; building one is 3-5 days; macro_overnight isn't replayed offline; `event_scores` is empty. Live paper + counterfactual digest is the substantive validation discipline for this spec, with the operator interpreting weekly evidence rather than a §6-style automated gate.
 6. **Counterfactual review is qualitative, not a robust §6 bar.** Live-paper sample size is too small for the median-valid-trial / basin-fraction / OOS-non-catastrophic framework that worked for the bb_reversion_15m backtest. The operator reviews the weekly Telegram digest and decides; a quantitative bar can be defined once ≥3 months of paper data accrues.
+
+### Implementation-time corrections (PR #330, 2026-05-22)
+
+Surfaced during T2 implementation, the final holistic review, and the PR #330 code-review pass. Folded back into §6/§7/§9/§12 above; recorded here for the audit trail.
+
+7. **`EntryContext.macro_overnight` does not exist.** §6 C1 originally implied `macro_for(date)` would read `MarketContext.macro_overnight` from the context — but `shared/strategy/base.py::EntryContext` has no such field; macro data flows into Setup A/C via `_build_market_context(context)` internal-only. Live `LiveVolInputs.macro_for` returns `None` unconditionally; gate's `require_overnight_us_direction` flag degrades PERMISSIVE per §9.
+8. **Audit insert + futures-DB CH SELECTs must use `CLICKHOUSE_FUTURES_DATABASE` (`kospi`), not the stock-DB default (`market`).** `ClickHouseConfig.from_env()` defaults to the stock DB. Without explicit routing, audit rows would land in `market.regime_gate_decisions` while the counterfactual digest reads from `kospi.regime_gate_decisions` — silent feature dud. Resolved by `futures_clickhouse_client()` helper in `adapter_helper.py` + `acquire_infra_clients()` for the 3 adapter `generate()` hooks. Caught by PR #330 review.
+9. **`RegimeGate.allow()` returns a 3-tuple `(allow, reason, regime_pct)`.** Original P1-③ implementation returned `(allow, reason)` and the adapter helper string-parsed `regime_pct` out of the reason field — brittle (any reason-string format change silently breaks the `Float64 regime_pct` audit column). Refactored to explicit 3rd element. Internal: `regime_pct` is sourced from the vol tuple when present, `0.0` when vol is missing. Caught by PR #330 review.
+10. **`ConfigLoader` returns cached dict references — never `.pop()` from `entry_params`.** `StrategyFactory.create()` originally did `entry_params.pop("regime_gate", None)` to extract the gate section before `EntryRegistry.create()`. But `ConfigLoader` is a singleton with caching: mutating that dict means the SECOND call to `StrategyFactory.create()` for the same strategy silently sees no `regime_gate` → gate permanently disabled even with `enabled: true` in YAML. Fix: `.get()` + filtered shallow-copy. Caught by the final holistic review (commit `45ea1a3`); regression test verifies factory does not mutate input cfg.
+11. **Method name is plural (`insert_regime_gate_decisions`).** Earlier §6 C2 / §7 / §9 used the singular form. The implementation uses plural (batch-of-rows insert pattern, matching `insert_drift_metrics` / `insert_llm_market_context`). Spec sections updated.
 
 These corrections shape the design without changing its goal.
 
