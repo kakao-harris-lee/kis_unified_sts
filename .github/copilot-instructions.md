@@ -171,7 +171,7 @@ pytest tests/ -v --cov=shared
 | `CLICKHOUSE_*`, `REDIS_*`, `MLFLOW_TRACKING_URI`                          | Infrastructure settings             |
 | `OPENAI_API_KEY`, `KRX_API_KEY`, `DART_API_KEY`                           | LLM/data APIs                       |
 | `TELEGRAM_STOCK_*`, `TELEGRAM_FUTURES_*`, `TELEGRAM_BRIEFING_*`           | Telegram notifications              |
-| `API_KEY`, `GRAFANA_*`, `PROMETHEUS_PORT`                                 | API/monitoring                      |
+| `API_KEY`, `PROMETHEUS_PORT`                                              | API/monitoring                      |
 | `KIS_APP_KEY`, `KIS_APP_SECRET`                                           | Legacy single-account compatibility |
 
 Config YAML supports `${VAR_NAME}` / `${VAR_NAME:default}` syntax for secrets.
