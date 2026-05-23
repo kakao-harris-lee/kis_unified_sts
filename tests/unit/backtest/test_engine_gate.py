@@ -42,7 +42,7 @@ def test_no_gate_passthrough_buy_opens_position():
 def test_gate_block_forces_hold_no_open():
     strat = _make_strat(SignalType.BUY)
     gate = MagicMock()
-    gate.allow.return_value = (False, "regime_high")
+    gate.allow.return_value = (False, "regime_high", 92.5)
     eng = BacktestEngine(strat, _make_cfg(), gate=gate)
     eng._open_position = MagicMock()
     eng._process_bar(_bar(dt.datetime(2026, 3, 1, 9, 0)))
@@ -53,7 +53,7 @@ def test_gate_block_forces_hold_no_open():
 def test_gate_allow_buy_still_opens():
     strat = _make_strat(SignalType.BUY)
     gate = MagicMock()
-    gate.allow.return_value = (True, "regime_ok")
+    gate.allow.return_value = (True, "regime_ok", 50.0)
     eng = BacktestEngine(strat, _make_cfg(), gate=gate)
     eng._open_position = MagicMock()
     eng._process_bar(_bar(dt.datetime(2026, 3, 1, 9, 0)))

@@ -243,7 +243,20 @@ class StrategyFactory:
                 f"Available: {EntryRegistry.list_all()}"
             )
 
-        entry = EntryRegistry.create(entry_type, entry_params)
+        # P2-③ T7 fix: get (not pop) — entry_params may reference ConfigLoader's
+        # cached dict; mutating it silently disables the gate on subsequent calls.
+        gate_yaml = entry_params.get("regime_gate")
+        # Filter the gate section out for the entry config (CONFIG_CLASS
+        # doesn't accept it). Build a fresh dict — do NOT mutate entry_params.
+        entry_params_filtered = {k: v for k, v in entry_params.items() if k != "regime_gate"}
+
+        entry = EntryRegistry.create(entry_type, entry_params_filtered)
+
+        # Attach GateConfig to the adapter (P2-③ T7).  The hasattr guard
+        # preserves backward-compat for entry adapters that don't support gates.
+        if hasattr(entry, "_gate_cfg"):
+            from shared.strategy.gates.regime_gate import regime_gate_cfg_from_yaml
+            entry._gate_cfg = regime_gate_cfg_from_yaml(gate_yaml)
 
         # 청산 로직 생성
         exit_cfg = strategy_cfg.get("exit", {})

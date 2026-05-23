@@ -52,6 +52,19 @@ strategy:
       min_bb_bandwidth: 0.003
       timeframe_minutes: 15   # MTF base: BB/RSI computed on closed 15m bars
 
+      # P2-③ RegimeGate (spec 2026-05-22). Default off — operator opt-in.
+      # When enabled: gate checks `forecast:vol:current` Redis (live HAR-RV)
+      # + event_scores CH (low-frequency) after LLM veto, before signal
+      # emission. Block → entry suppressed. Decisions logged to
+      # regime_gate_decisions for weekly counterfactual review.
+      regime_gate:
+        enabled: false
+        regime_percentile_max: 60.0       # T12 default; tighten/loosen after first 2wk paper
+        impact_score_max: 70
+        event_window_minutes: 15
+        require_overnight_us_direction: false   # PERMISSIVE in live (no macro on EntryContext)
+        permissive_on_missing: true
+
   exit:
     type: three_stage
     params:
