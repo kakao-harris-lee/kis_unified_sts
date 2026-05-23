@@ -90,7 +90,7 @@ strategy:
       # emission. Block → entry suppressed. Decisions logged to
       # regime_gate_decisions for weekly counterfactual review.
       regime_gate:
-        enabled: false
+        enabled: true                     # Activated 2026-05-23 per operator decision (PR #330 followup)
         regime_percentile_max: 60.0       # T12 default; tighten/loosen after first 2wk paper
         impact_score_max: 70
         event_window_minutes: 15
