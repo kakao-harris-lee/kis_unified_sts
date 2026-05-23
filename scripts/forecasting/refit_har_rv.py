@@ -4,19 +4,66 @@
 Run via `scripts/cron/forecasting.sh refit` or directly. Writes the fitted model
 to Redis (`forecast:vol:model`) and a fit row to `kospi.har_rv_fits`.
 The running daemon picks up the new model on SIGUSR1 (reload from Redis).
+
+Symbol policy (CRITICAL): fetch the *active near-month* contract code
+(A016xx / A017xx convention), NOT the synthetic continuous series 101S6000.
+
+The synthetic continuous series is chronically polluted by stale/missing
+days that surface as physically-impossible RV outliers (~15% of train days
+had RV > 5× median; max ~161× median ≈ 1258% annualized vol). HAR-RV fits
+on that data routinely fail with R² OOS ≪ -1, blocking the daily refit.
+See PR #329 investigation for the full root-cause analysis.
+
+Contract-code resolution: auto-detected from the most-recent-volume A01* code
+in CH so quarterly rolls don't require manual env updates. Override via
+FORECAST_REFIT_CODE env var if needed (e.g. forcing a specific contract for
+back-testing or recovery).
 """
 from __future__ import annotations
 
 import logging
+import os
 import sys
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import pandas as pd
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
-PROXY_CODE = "101S6000"
+# Hard fallback used only if both env-var override is unset AND auto-resolve
+# fails. A01606 is the active near-month as of 2026-05-23.
+_FALLBACK_PROXY_CODE = "A01606"
+
+
+def _resolve_proxy_code(ch: Any) -> str:
+    """Return the current near-month A01* contract code.
+
+    Order of precedence:
+      1. FORECAST_REFIT_CODE env var (operator override / pinning).
+      2. A01* code with the most volume in the last 3 trading days
+         (auto-handles quarterly rolls).
+      3. Hard-coded fallback (_FALLBACK_PROXY_CODE).
+    """
+    env = os.environ.get("FORECAST_REFIT_CODE")
+    if env:
+        logger.info("FORECAST_REFIT_CODE override = %s", env)
+        return env
+    try:
+        rows = ch.execute(
+            "SELECT code, sum(volume) AS v FROM kospi.kospi200f_1m "
+            "WHERE code LIKE 'A01%' AND datetime >= now() - INTERVAL 3 DAY "
+            "GROUP BY code ORDER BY v DESC LIMIT 1"
+        )
+        if rows and rows[0][0]:
+            logger.info("Auto-resolved near-month code by volume: %s (vol=%d)",
+                        rows[0][0], rows[0][1])
+            return rows[0][0]
+    except Exception as e:  # noqa: BLE001
+        logger.warning("auto-resolve failed: %s — falling back to %s",
+                       e, _FALLBACK_PROXY_CODE)
+    return _FALLBACK_PROXY_CODE
 
 
 def main() -> int:
@@ -42,10 +89,11 @@ def main() -> int:
         database="kospi",
     )
 
+    proxy_code = _resolve_proxy_code(ch)
     cutoff = datetime.now(UTC) - timedelta(days=lookback_days)
     logger.info(
         "Fetching 1m bars for %s since %s (lookback %dd)",
-        PROXY_CODE,
+        proxy_code,
         cutoff.isoformat(),
         lookback_days,
     )
@@ -54,7 +102,7 @@ def main() -> int:
         "FROM kospi.kospi200f_1m "
         "WHERE code = %(c)s AND datetime >= %(t)s "
         "ORDER BY datetime",
-        {"c": PROXY_CODE, "t": cutoff},
+        {"c": proxy_code, "t": cutoff},
     )
     if not rows:
         logger.error("No bars found — cannot refit")
