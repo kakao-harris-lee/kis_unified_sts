@@ -4,6 +4,8 @@ strategy:
   # Disabled from paper runtime on 2026-05-16: recent 2026-04-17..2026-05-15
   # portfolio backtests across the active stock universe produced 0 trades, so
   # this strategy only added runtime/verification noise versus daily strategies.
+  # Rechecked on 2026-05-22: current LLM/daily watchlist has 0 trend_pullback
+  # candidates, so keep it offline until the scanner produces actionable names.
   enabled: false
   description: "멀티 타임프레임 추세 추종 눌림목 전략"
   entry:

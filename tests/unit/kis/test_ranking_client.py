@@ -3,7 +3,11 @@
 import pytest
 
 from shared.kis.auth import KISAuthConfig
-from shared.kis.ranking_client import RankingEndpoints, _market_to_input_iscd, KISRankingClient
+from shared.kis.ranking_client import (
+    KISRankingClient,
+    RankingEndpoints,
+    _market_to_input_iscd,
+)
 
 
 def test_market_to_input_iscd_mapping():
@@ -22,6 +26,12 @@ def test_endpoints_match_kis_docs():
     assert e.fluctuation_tr_id_real == "FHPST01700000"
 
 
+def test_rate_limit_error_detection():
+    assert KISRankingClient._is_rate_limit_error("EGW00201: 초당 거래건수 초과")
+    assert KISRankingClient._is_rate_limit_error("RATE limit exceeded")
+    assert not KISRankingClient._is_rate_limit_error("normal business error")
+
+
 @pytest.mark.asyncio
 async def test_ranking_rejects_mock_investment():
     client = KISRankingClient(
@@ -29,4 +39,3 @@ async def test_ranking_rejects_mock_investment():
     )
     with pytest.raises(RuntimeError):
         await client.get_ranking(type="volume", market="KOSPI")
-

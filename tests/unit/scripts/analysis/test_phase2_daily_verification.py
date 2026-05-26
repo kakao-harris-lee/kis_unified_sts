@@ -221,7 +221,9 @@ class TestEvaluateGates:
 
     def test_info_metrics_populated(self):
         report = evaluate_gates(
-            client=_stub_client(setup_c=2, veto=4, cum_setup_executed=12, cum_shadow=350),
+            client=_stub_client(
+                setup_c=2, veto=4, cum_setup_executed=12, cum_shadow=350
+            ),
             trading_date=date(2026, 5, 11),
             prometheus_url=None,
         )
@@ -286,6 +288,17 @@ class TestFormatTelegram:
         assert "700" in msg  # shadow cumulative
         assert "/ 50" in msg
         assert "/ 1000" in msg
+
+    def test_escapes_html_special_chars(self):
+        report = self._report(all_pass=False)
+        report.gates[0].expected = "< 1"
+        report.gates[0].detail = "actual <= threshold"
+
+        msg = _format_telegram(report)
+
+        assert "&lt; 1" in msg
+        assert "&lt;= threshold" in msg
+        assert "expected < 1" not in msg
 
 
 # ---------------------------------------------------------------------------

@@ -4,6 +4,7 @@ Telegram Notifier Module
 Sends trading signals, system status, and analysis results via Telegram.
 Includes trading hours awareness to avoid notifications outside market hours.
 """
+
 import logging
 import os
 from datetime import datetime, time
@@ -54,13 +55,16 @@ class TelegramNotifier:
         if self.token:
             try:
                 from telegram import Bot
+
                 self.bot = Bot(token=self.token)
                 logger.info("TelegramNotifier initialized")
                 logger.info(
                     f"  Notification active hours: {notification_start} ~ {notification_end}"
                 )
             except ImportError:
-                logger.warning("python-telegram-bot not installed. Run: pip install python-telegram-bot")
+                logger.warning(
+                    "python-telegram-bot not installed. Run: pip install python-telegram-bot"
+                )
             except Exception as e:
                 logger.warning(f"Failed to initialize Telegram bot: {e}")
         else:
@@ -80,7 +84,8 @@ class TelegramNotifier:
         self,
         message: str,
         disable_notification: bool = False,
-        is_critical: bool = False
+        is_critical: bool = False,
+        raise_on_error: bool = False,
     ):
         """기본 메시지 전송
 
@@ -88,6 +93,7 @@ class TelegramNotifier:
             message: 전송할 메시지
             disable_notification: 알림음 비활성화 여부
             is_critical: 중요 알림 여부 (True면 시간 제한 무시)
+            raise_on_error: 전송 실패를 호출자에게 전파할지 여부
         """
         if not self.bot or not self.chat_id:
             logger.debug("Telegram bot not configured. Skipping notification.")
@@ -106,19 +112,23 @@ class TelegramNotifier:
                 chat_id=self.chat_id,
                 text=message,
                 disable_notification=disable_notification,
-                parse_mode='HTML'
+                parse_mode="HTML",
             )
             logger.debug(f"Sent Telegram message: {message[:50]}...")
         except Exception as e:
             logger.error(f"Failed to send Telegram message: {e}")
+            if raise_on_error:
+                raise
 
     async def send_error(self, error_msg: str):
         """에러 알림 (중요 알림 - 시간 제한 무시)"""
         await self.send_message(f"🚨 <b>ERROR</b>\n{error_msg}", is_critical=True)
 
-    async def send_system_start(self, strategies: list = None, auto_trading: bool = False):
+    async def send_system_start(
+        self, strategies: list = None, auto_trading: bool = False
+    ):
         """시스템 시작 알림 (중요 알림 - 시간 제한 무시)"""
-        strategies_str = ', '.join(strategies) if strategies else "N/A"
+        strategies_str = ", ".join(strategies) if strategies else "N/A"
         msg = (
             "🚀 <b>시스템 시작</b>\n"
             f"시간: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
@@ -142,7 +152,7 @@ class TelegramNotifier:
         price: float,
         strategy: str,
         confidence: float = None,
-        reason: str = None
+        reason: str = None,
     ):
         """매수 시그널 알림
 
@@ -176,7 +186,7 @@ class TelegramNotifier:
         price: float,
         quantity: int,
         amount: int,
-        strategy: str
+        strategy: str,
     ):
         """매수 체결 알림
 
@@ -205,7 +215,7 @@ class TelegramNotifier:
         price: float,
         reason: str,
         profit_rate: float = None,
-        holding_time: str = None
+        holding_time: str = None,
     ):
         """매도 시그널 알림
 
@@ -242,7 +252,7 @@ class TelegramNotifier:
         quantity: int,
         amount: int,
         profit: int,
-        profit_rate: float
+        profit_rate: float,
     ):
         """매도 체결 알림
 
@@ -269,11 +279,7 @@ class TelegramNotifier:
         await self.send_message(msg)
 
     async def send_daily_summary(
-        self,
-        total_trades: int,
-        win_trades: int,
-        total_profit: int,
-        win_rate: float
+        self, total_trades: int, win_trades: int, total_profit: int, win_rate: float
     ):
         """일일 요약 알림 (중요 알림 - 시간 제한 무시)
 
@@ -302,7 +308,7 @@ class TelegramNotifier:
         total_purchase_amount: int,
         total_unrealized_pnl: int,
         total_unrealized_pnl_pct: float,
-        position_count: int
+        position_count: int,
     ):
         """계좌 잔고 요약 알림 (매시간)
 

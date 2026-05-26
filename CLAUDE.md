@@ -103,7 +103,8 @@ if pnl_pct >= self.config.exit.breakeven_threshold:
 
 #### 운영 대시보드 (Dashboard)
 
-React 프론트엔드 (port 8001, FastAPI 정적 호스팅) — 실시간 운영 모니터링 단일 화면.
+React 프론트엔드 (host port 8001, FastAPI 정적 호스팅) — 실시간 운영 모니터링 단일 화면.
+KIS Unified STS의 사용자-facing 웹 포트는 8001뿐이다. host 3000은 별도 `bid-vector` 프로젝트용이므로 이 repo에서 사용하지 않는다. 별도 웹서비스/API가 생기기 전까지 추가 host port를 예약하지 않는다.
 
 - `/` — Cockpit (HeaderBar + Positions + Signals/Fills + Quick Actions)
 - `/positions`, `/signals`, `/trades` — drill-down 페이지 (모바일 카드/sheet 패턴)

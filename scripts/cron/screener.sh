@@ -42,6 +42,11 @@ start_screener() {
 
     # Aggressive trend-confirm tuning (Option 2):
     # keep more candidates while still applying anti-fakeout checks.
+    export SCREENER_INTERVAL_SECONDS=${SCREENER_INTERVAL_SECONDS:-20}
+    export KIS_RANKING_API_RATE_LIMIT=${KIS_RANKING_API_RATE_LIMIT:-1}
+    export SCREENER_TREND_CONFIRM_ENABLED=${SCREENER_TREND_CONFIRM_ENABLED:-false}
+    export SCREENER_TREND_CONFIRM_MAX_SCAN_CODES=${SCREENER_TREND_CONFIRM_MAX_SCAN_CODES:-3}
+    export SCREENER_TREND_CONFIRM_CACHE_SECONDS=${SCREENER_TREND_CONFIRM_CACHE_SECONDS:-180}
     export SCREENER_TREND_CONFIRM_MIN_RETURN_PCT=0.25
     export SCREENER_TREND_CONFIRM_MAX_PULLBACK_PCT=0.60
 
@@ -58,9 +63,10 @@ print('1' if is_trading_day(date.today()) else '0')
     fi
 
     log "Trading day confirmed. Starting screener..."
-    log "Trend confirm tuning: min_return=${SCREENER_TREND_CONFIRM_MIN_RETURN_PCT}, max_pullback=${SCREENER_TREND_CONFIRM_MAX_PULLBACK_PCT}"
+    log "Rate tuning: interval=${SCREENER_INTERVAL_SECONDS}s, ranking_rate=${KIS_RANKING_API_RATE_LIMIT}/s"
+    log "Trend confirm tuning: enabled=${SCREENER_TREND_CONFIRM_ENABLED}, max_scan=${SCREENER_TREND_CONFIRM_MAX_SCAN_CODES}, cache=${SCREENER_TREND_CONFIRM_CACHE_SECONDS}s, min_return=${SCREENER_TREND_CONFIRM_MIN_RETURN_PCT}, max_pullback=${SCREENER_TREND_CONFIRM_MAX_PULLBACK_PCT}"
 
-    nohup python3 -m services.screener \
+    nohup setsid python3 -m services.screener \
         >> "$LOG_FILE" 2>&1 &
 
     echo $! > "$PID_FILE"

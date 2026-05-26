@@ -122,6 +122,7 @@ class TechnicalConsensusEntry(EntrySignalGenerator[TechnicalConsensusEntryConfig
 
         snapshot: dict[str, Any] = {**data, **indicators}
         snapshot.setdefault("close", close)
+        self._apply_daily_aliases(snapshot)
         if "ma20" not in snapshot:
             for key in ("sma_20", "daily_sma_20", "bb_middle", "vwap"):
                 if key in snapshot:
@@ -179,8 +180,28 @@ class TechnicalConsensusEntry(EntrySignalGenerator[TechnicalConsensusEntryConfig
         extra_votes = max(0, core_votes - self.config.min_entry_core_votes)
         return min(
             0.95,
-            self.config.confidence_base + extra_votes * self.config.confidence_vote_bonus,
+            self.config.confidence_base
+            + extra_votes * self.config.confidence_vote_bonus,
         )
+
+    @staticmethod
+    def _apply_daily_aliases(snapshot: dict[str, Any]) -> None:
+        aliases = {
+            "rsi": ("daily_rsi_14",),
+            "prev_rsi": ("daily_prev_rsi_14",),
+            "williams_r": ("daily_williams_r_14",),
+            "prev_williams_r": ("daily_prev_williams_r_14",),
+            "macd_hist": ("daily_macd_hist",),
+            "prev_macd_hist": ("daily_prev_macd_hist",),
+            "volume_ratio": ("daily_volume_ratio",),
+        }
+        for target, sources in aliases.items():
+            if target in snapshot:
+                continue
+            for source in sources:
+                if source in snapshot:
+                    snapshot[target] = snapshot[source]
+                    break
 
     @staticmethod
     def _first_float(

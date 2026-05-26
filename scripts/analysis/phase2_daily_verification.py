@@ -34,6 +34,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
+import html
 import json
 import logging
 import os
@@ -72,8 +73,8 @@ class GateResult:
 
 @dataclass
 class DailyReport:
-    trading_date: str       # ISO date (KST)
-    generated_at: str       # ISO datetime (UTC)
+    trading_date: str  # ISO date (KST)
+    generated_at: str  # ISO datetime (UTC)
     gates: list[GateResult] = field(default_factory=list)
     info: dict[str, Any] = field(default_factory=dict)
 
@@ -153,9 +154,7 @@ def _count_llm_vetoes(client: Any, start_utc: datetime, end_utc: datetime) -> in
 # ---------------------------------------------------------------------------
 
 
-def _count_har_rv_refits(
-    client: Any, start_utc: datetime, end_utc: datetime
-) -> int:
+def _count_har_rv_refits(client: Any, start_utc: datetime, end_utc: datetime) -> int:
     """Gate 5 helper — HAR-RV daily refit row count for the trading day.
 
     ``har_rv_fits.fit_date`` is a ClickHouse ``Date`` column. Passing a
@@ -173,9 +172,7 @@ def _count_har_rv_refits(
     return int(rows[0][0]) if rows else 0
 
 
-def _count_vol_forecasts(
-    client: Any, start_utc: datetime, end_utc: datetime
-) -> int:
+def _count_vol_forecasts(client: Any, start_utc: datetime, end_utc: datetime) -> int:
     """Gate 6 helper — vol forecast row count for the trading day.
 
     Expected: >= 100 (forecast publisher emits ~390 rows during a full
@@ -289,16 +286,18 @@ def evaluate_gates(
     #   기존 PASS 조건이 "> 0"였지만 deprecate 이후 0이 정상. 게이트를 폐지.
     # - rl_trades_today_is_zero: 여전히 0이어야 함 (RL 코드 경로 재활성화 시 즉시 감지)
     rl_trades = _count_rl_trades(client, start_utc, end_utc)
-    report.gates.append(GateResult(
-        name="rl_trades_today_is_zero",
-        passed=rl_trades == 0,
-        actual=rl_trades,
-        expected="== 0",
-        detail=(
-            "RL_mppo deprecated 2026-05-15 — should never produce trades. "
-            "Non-zero indicates strategy was accidentally re-enabled."
-        ),
-    ))
+    report.gates.append(
+        GateResult(
+            name="rl_trades_today_is_zero",
+            passed=rl_trades == 0,
+            actual=rl_trades,
+            expected="== 0",
+            detail=(
+                "RL_mppo deprecated 2026-05-15 — should never produce trades. "
+                "Non-zero indicates strategy was accidentally re-enabled."
+            ),
+        )
+    )
     # rl_shadow_predictions count는 info로만 노출 (deprecate 추세 모니터링).
     report.info["rl_shadow_predictions_today"] = _count_rl_shadow_rows(
         client, start_utc, end_utc
@@ -306,29 +305,33 @@ def evaluate_gates(
 
     # Gate 3 — Setup A signal count >= 1
     setup_a = _count_setup_signals(client, start_utc, end_utc, "A")
-    report.gates.append(GateResult(
-        name="setup_a_signals_today",
-        passed=setup_a >= 1,
-        actual=setup_a,
-        expected=">= 1",
-        detail="Setup A daily target per plan §6 (gap reversion).",
-    ))
+    report.gates.append(
+        GateResult(
+            name="setup_a_signals_today",
+            passed=setup_a >= 1,
+            actual=setup_a,
+            expected=">= 1",
+            detail="Setup A daily target per plan §6 (gap reversion).",
+        )
+    )
 
     # Gate 4 — shadow logger dropped batches == 0 (Prometheus optional)
     if prometheus_url:
         drops = _fetch_shadow_logger_drops(prometheus_url)
         if drops:
             total_drops = sum(drops.values())
-            report.gates.append(GateResult(
-                name="shadow_logger_dropped_batches",
-                passed=total_drops == 0,
-                actual=total_drops,
-                expected="== 0",
-                detail=(
-                    f"Per-logger: {drops}.  Non-zero means CH insert "
-                    f"failures lost Phase 4 data."
-                ),
-            ))
+            report.gates.append(
+                GateResult(
+                    name="shadow_logger_dropped_batches",
+                    passed=total_drops == 0,
+                    actual=total_drops,
+                    expected="== 0",
+                    detail=(
+                        f"Per-logger: {drops}.  Non-zero means CH insert "
+                        f"failures lost Phase 4 data."
+                    ),
+                )
+            )
 
     # ------------------------------------------------------------------
     # Phase C forecasting gates (5/6/7) — verify the forecast-aware
@@ -342,43 +345,51 @@ def evaluate_gates(
     # Gate 5 — HAR-RV refit ran today
     try:
         har_rv_count = _count_har_rv_refits(client, start_utc, end_utc)
-        report.gates.append(GateResult(
-            name="har_rv_refit_today",
-            passed=har_rv_count >= 1,
-            actual=har_rv_count,
-            expected=">= 1",
-            detail="HAR-RV daily refit should produce >= 1 row per trading day.",
-        ))
+        report.gates.append(
+            GateResult(
+                name="har_rv_refit_today",
+                passed=har_rv_count >= 1,
+                actual=har_rv_count,
+                expected=">= 1",
+                detail="HAR-RV daily refit should produce >= 1 row per trading day.",
+            )
+        )
     except Exception as exc:
-        report.gates.append(GateResult(
-            name="har_rv_refit_today",
-            passed=False,
-            actual=0,
-            expected=">= 1",
-            detail=f"ClickHouse query failed: {exc}",
-        ))
+        report.gates.append(
+            GateResult(
+                name="har_rv_refit_today",
+                passed=False,
+                actual=0,
+                expected=">= 1",
+                detail=f"ClickHouse query failed: {exc}",
+            )
+        )
 
     # Gate 6 — vol forecast publisher active during the session
     try:
         forecast_count = _count_vol_forecasts(client, start_utc, end_utc)
-        report.gates.append(GateResult(
-            name="forecast_publish_active",
-            passed=forecast_count >= 100,
-            actual=forecast_count,
-            expected=">= 100",
-            detail=(
-                "Forecast publisher emits ~390 rows per full session; "
-                "<100 indicates the daemon stalled or never started."
-            ),
-        ))
+        report.gates.append(
+            GateResult(
+                name="forecast_publish_active",
+                passed=forecast_count >= 100,
+                actual=forecast_count,
+                expected=">= 100",
+                detail=(
+                    "Forecast publisher emits ~390 rows per full session; "
+                    "<100 indicates the daemon stalled or never started."
+                ),
+            )
+        )
     except Exception as exc:
-        report.gates.append(GateResult(
-            name="forecast_publish_active",
-            passed=False,
-            actual=0,
-            expected=">= 100",
-            detail=f"ClickHouse query failed: {exc}",
-        ))
+        report.gates.append(
+            GateResult(
+                name="forecast_publish_active",
+                passed=False,
+                actual=0,
+                expected=">= 100",
+                detail=f"ClickHouse query failed: {exc}",
+            )
+        )
 
     # Gate 7 — event scorer not stuck in deterministic LLM-failure fallback
     try:
@@ -387,33 +398,39 @@ def evaluate_gates(
         )
         if llm_total == 0:
             # No LLM-sourced events today → treat as PASS (healthy idle).
-            report.gates.append(GateResult(
-                name="event_scorer_healthy",
-                passed=True,
-                actual=0.0,
-                expected="< 0.5 (or 0 LLM calls)",
-                detail="No LLM-sourced events today — gate auto-passes.",
-            ))
+            report.gates.append(
+                GateResult(
+                    name="event_scorer_healthy",
+                    passed=True,
+                    actual=0.0,
+                    expected="< 0.5 (or 0 LLM calls)",
+                    detail="No LLM-sourced events today — gate auto-passes.",
+                )
+            )
         else:
-            report.gates.append(GateResult(
-                name="event_scorer_healthy",
-                passed=fallback_rate < 0.5,
-                actual=fallback_rate,
-                expected="< 0.5",
-                detail=(
-                    f"LLM event scorer fallback rate {fallback_rate:.2%} "
-                    f"({llm_failures}/{llm_total}). ≥50% means the LLM "
-                    f"path is stuck in UNKNOWN_LLM_SCORED fallback."
-                ),
-            ))
+            report.gates.append(
+                GateResult(
+                    name="event_scorer_healthy",
+                    passed=fallback_rate < 0.5,
+                    actual=fallback_rate,
+                    expected="< 0.5",
+                    detail=(
+                        f"LLM event scorer fallback rate {fallback_rate:.2%} "
+                        f"({llm_failures}/{llm_total}). ≥50% means the LLM "
+                        f"path is stuck in UNKNOWN_LLM_SCORED fallback."
+                    ),
+                )
+            )
     except Exception as exc:
-        report.gates.append(GateResult(
-            name="event_scorer_healthy",
-            passed=False,
-            actual=0.0,
-            expected="< 0.5",
-            detail=f"ClickHouse query failed: {exc}",
-        ))
+        report.gates.append(
+            GateResult(
+                name="event_scorer_healthy",
+                passed=False,
+                actual=0.0,
+                expected="< 0.5",
+                detail=f"ClickHouse query failed: {exc}",
+            )
+        )
 
     # Informational metrics
     report.info["setup_c_signals_today"] = _count_setup_signals(
@@ -436,29 +453,40 @@ def evaluate_gates(
 def _format_telegram(report: DailyReport) -> str:
     """Concise PASS/FAIL summary for the briefing channel."""
     overall = "✅ ALL PASS" if report.all_passed else "❌ FAIL"
+
+    def code(value: Any) -> str:
+        return f"<code>{html.escape(str(value), quote=False)}</code>"
+
     lines = [
-        f"🛡️ *Phase 2 Daily Verification — {overall}*",
-        f"`{report.trading_date}` (KST)",
+        f"🛡️ <b>Phase 2 Daily Verification - {html.escape(overall, quote=False)}</b>",
+        f"{code(report.trading_date)} (KST)",
         "",
-        "*Critical gates*",
+        "<b>Critical gates</b>",
     ]
     for g in report.gates:
         icon = "✅" if g.passed else "❌"
-        lines.append(f"{icon} `{g.name}`: actual=`{g.actual}` (expected {g.expected})")
+        lines.append(
+            f"{icon} {code(g.name)}: actual={code(g.actual)} "
+            f"(expected {code(g.expected)})"
+        )
         if not g.passed and g.detail:
-            lines.append(f"   ↳ {g.detail}")
+            lines.append(f"   ↳ {html.escape(str(g.detail), quote=False)}")
     lines.append("")
-    lines.append("*Informational*")
-    lines.append(f"• Setup C signals today: `{report.info.get('setup_c_signals_today', 0)}`")
-    lines.append(f"• LLM-veto signals today: `{report.info.get('llm_veto_signals_today', 0)}`")
+    lines.append("<b>Informational</b>")
+    lines.append(
+        f"• Setup C signals today: {code(report.info.get('setup_c_signals_today', 0))}"
+    )
+    lines.append(
+        f"• LLM-veto signals today: {code(report.info.get('llm_veto_signals_today', 0))}"
+    )
     lines.append("")
-    lines.append("*Phase 4 cumulative gate progress*")
+    lines.append("<b>Phase 4 cumulative gate progress</b>")
     se = report.info.get("phase4_gate_setup_executed_30d", 0)
     sp = report.info.get("phase4_gate_shadow_predictions_7d", 0)
     se_icon = "✅" if se >= 50 else "⏳"
     sp_icon = "✅" if sp >= 1000 else "⏳"
-    lines.append(f"{se_icon} Setup A/C executed (30d): `{se}` / 50")
-    lines.append(f"{sp_icon} RL shadow predictions (7d): `{sp}` / 1000")
+    lines.append(f"{se_icon} Setup A/C executed (30d): {code(se)} / 50")
+    lines.append(f"{sp_icon} RL shadow predictions (7d): {code(sp)} / 1000")
 
     return "\n".join(lines)
 
@@ -498,7 +526,7 @@ async def _send_telegram(message: str) -> None:
         notifier = TelegramNotifier(bot_token=bot_token, chat_id=chat_id)
         # Verification failures are operationally important — flag as critical
         # so they bypass quiet hours.
-        await notifier.send_message(message, is_critical=True)
+        await notifier.send_message(message, is_critical=True, raise_on_error=True)
         logger.info("telegram report delivered")
     except Exception:
         logger.exception("telegram send failed")

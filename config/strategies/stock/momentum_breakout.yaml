@@ -1,13 +1,14 @@
 strategy:
   name: momentum_breakout
   asset_class: stock
-  # Disabled after stock paper verification on 2026-05-16:
-  # 20 closed trades in the 2026-04-25..2026-05-16 window, 0 wins,
-  # -2.51M KRW realized PnL, mostly -5% stop_loss exits. Keep the config
-  # for offline retuning; do not route live paper entries until the edge is
-  # revalidated against recent ClickHouse data.
-  enabled: false
+  # Limited paper pilot re-enabled on 2026-05-22 after current LLM watchlist
+  # review. The new daily quality gates keep overheated/weak-volume momentum
+  # names out of the runtime while preserving the trend-mode entry path.
+  enabled: true
   description: "멀티 타임프레임 모멘텀 돌파 전략"
+  paper:
+    enabled: true
+    activated_at: "2026-05-22T16:20:00+09:00"
 
   entry:
     type: momentum_breakout
@@ -17,6 +18,8 @@ strategy:
       intrabar_reclaim_pct: 0.05     # 꼬리 돌파 후 종가가 고점 근처면 추격 진입 허용
       intrabar_min_rvol: 1.8         # intrabar 진입은 상대적으로 높은 RVOL 요구
       rvol_threshold: 1.6            # 기준 RVOL 완화 (기존 1.9)
+      daily_rsi_max: 80.0            # 과열 추격 차단: 현재 009150(86+) 제외
+      daily_volume_ratio_min: 1.5    # 일간 거래량 확인: 현재 012330 통과, 009150 제외
       accumulation_score_min: 40     # Optuna best: 스크리너 필터 약간 완화
       volume_threshold: 1.2
       min_atr_cost_ratio: 0.01
@@ -60,8 +63,8 @@ strategy:
   position:
     type: fixed
     params:
-      order_amount_per_stock: 3000000
-      max_positions: 8
+      order_amount_per_stock: 1000000
+      max_positions: 2
   backtest:
     # Keep engine risk as safety net only; let atr_dynamic exit drive liquidation.
     risk:

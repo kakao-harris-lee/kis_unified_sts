@@ -6,6 +6,7 @@ import pandas as pd
 
 import scripts.daily_indicator_scanner as scanner
 from scripts.daily_indicator_scanner import (
+    backfill_missing_candidate_candles,
     build_strategy_candidate_watchlist,
     compute_indicators,
     extract_candidate_symbols,
@@ -14,6 +15,7 @@ from scripts.daily_indicator_scanner import (
     latest_candle_date,
     load_daily_candles,
     load_redis_candidate_symbols,
+    load_symbol_indicators,
     publish_to_redis,
 )
 from shared.collector.historical.calendar import trading_day_lag
@@ -70,6 +72,64 @@ def test_compute_indicators_includes_daily_volume_ratio():
     assert indicators is not None
     assert "daily_volume_ratio" in indicators
     assert indicators["daily_volume_ratio"] == 2.0
+
+
+def test_compute_indicators_includes_daily_technical_consensus_fields():
+    rows = []
+    close = 100.0
+    for i in range(220):
+        close += 1.0 if i % 3 else -0.5
+        rows.append(
+            {
+                "date": date(2026, 1, 1),
+                "open": close - 0.5,
+                "high": close + 2.0,
+                "low": close - 2.0,
+                "close": close,
+                "volume": 1_000_000 + i * 1000,
+            }
+        )
+    df = pd.DataFrame(rows)
+
+    indicators = compute_indicators(df)
+
+    assert indicators is not None
+    for key in (
+        "daily_rsi_14",
+        "daily_prev_rsi_14",
+        "daily_williams_r_14",
+        "daily_prev_williams_r_14",
+        "daily_macd_hist",
+        "daily_prev_macd_hist",
+    ):
+        assert key in indicators
+        assert isinstance(indicators[key], float)
+
+
+def test_compute_indicators_allows_partial_history_without_sma200():
+    rows = []
+    close = 100.0
+    for i in range(100):
+        close += 1.0 if i % 3 else -0.5
+        rows.append(
+            {
+                "date": date(2026, 1, 1),
+                "open": close - 0.5,
+                "high": close + 2.0,
+                "low": close - 2.0,
+                "close": close,
+                "volume": 1_000_000,
+            }
+        )
+    df = pd.DataFrame(rows)
+
+    indicators = compute_indicators(df)
+
+    assert indicators is not None
+    assert "daily_sma_200" not in indicators
+    assert "daily_sma_20" in indicators
+    assert "daily_sma_60" in indicators
+    assert "daily_rsi_14" in indicators
 
 
 def test_extract_candidate_symbols_from_pipeline_shapes():
@@ -299,3 +359,54 @@ def test_load_daily_candles_fetches_extra_and_filters_placeholder_run():
 
     assert client.parameters == {"code": "005930", "limit": 6}
     assert df["date"].tolist() == [date(2026, 1, 4), date(2026, 1, 5)]
+
+
+def test_load_symbol_indicators_reports_no_data():
+    class Result:
+        result_rows = []
+
+    class Client:
+        def query(self, _query, parameters):
+            assert parameters["code"] == "005930"
+            return Result()
+
+    indicators, reason = load_symbol_indicators(
+        Client(),
+        "005930",
+        days=250,
+        quality_config=DailyCandleQualityConfig(),
+        expected_latest=date(2026, 5, 15),
+        max_stale_trading_days=1,
+    )
+
+    assert indicators is None
+    assert reason == "no_data"
+
+
+def test_backfill_missing_candidate_candles_limits_and_dedupes(monkeypatch):
+    calls = {}
+
+    async def fake_collect_daily_candles(codes, days, verbose):
+        calls["codes"] = codes
+        calls["days"] = days
+        calls["verbose"] = verbose
+        return 123
+
+    import shared.collector.historical.daily_stock as daily_stock
+
+    monkeypatch.setattr(
+        daily_stock,
+        "collect_daily_candles",
+        fake_collect_daily_candles,
+    )
+
+    rows = asyncio.run(
+        backfill_missing_candidate_candles(
+            ["005930", "005930", "000660"],
+            days=100,
+            max_symbols=1,
+        )
+    )
+
+    assert rows == 123
+    assert calls == {"codes": ["005930"], "days": 100, "verbose": False}

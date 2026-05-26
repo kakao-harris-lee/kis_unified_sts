@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import html
 import json
 import os
 import shlex
@@ -161,6 +162,7 @@ class VerificationReport:
     trade_metrics: TradeMetrics
     active_strategy_names: list[str]
     active_daily_strategy_names: list[str]
+    active_strategy_since: dict[str, str]
     active_daily_candidate_count: int
     active_trade_metrics: TradeMetrics
     active_issues: list[GateIssue]
@@ -444,17 +446,13 @@ def fetch_clickhouse_position_snapshot(
     )
 
 
-def load_active_stock_strategy_names(*, timeframe: str | None = None) -> list[str]:
-    """Return strategy names currently loaded by stock runtime.
-
-    The orchestrator/StrategyManager loads ``strategy.enabled: true`` from
-    ``config/strategies/stock``. Mirroring that scope lets the verification
-    report distinguish current runtime quality from historical trades created
-    by strategies that have since been disabled.
-    """
+def _iter_active_stock_strategy_configs(
+    *, timeframe: str | None = None
+) -> list[tuple[str, dict[str, Any]]]:
+    """Return active stock strategy names and their strategy config blocks."""
     from shared.config.loader import ConfigLoader
 
-    names: list[str] = []
+    strategies: list[tuple[str, dict[str, Any]]] = []
     expected_timeframe = str(timeframe).strip().lower() if timeframe else None
     for strategy_config in ConfigLoader.load_all_strategies("stock", enabled_only=True):
         strategy = strategy_config.get("strategy", {})
@@ -470,8 +468,58 @@ def load_active_stock_strategy_names(*, timeframe: str | None = None) -> list[st
         paper = strategy.get("paper") or {}
         if isinstance(paper, dict) and _as_bool(paper.get("enabled"), True) is False:
             continue
-        names.append(name)
-    return sorted(set(names))
+        strategies.append((name, strategy))
+    return strategies
+
+
+def load_active_stock_strategy_names(*, timeframe: str | None = None) -> list[str]:
+    """Return strategy names currently loaded by stock runtime.
+
+    The orchestrator/StrategyManager loads ``strategy.enabled: true`` from
+    ``config/strategies/stock``. Mirroring that scope lets the verification
+    report distinguish current runtime quality from historical trades created
+    by strategies that have since been disabled.
+    """
+    return sorted(
+        {
+            name
+            for name, _strategy in _iter_active_stock_strategy_configs(
+                timeframe=timeframe
+            )
+        }
+    )
+
+
+def _parse_active_since(value: Any) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(KST).replace(tzinfo=None)
+    return parsed
+
+
+def load_active_stock_strategy_since(
+    *, timeframe: str | None = None
+) -> dict[str, datetime]:
+    """Return optional active-performance start timestamps by strategy.
+
+    ``strategy.paper.activated_at`` lets a re-tuned strategy enter the runtime
+    without letting pre-retune paper trades dominate the active verification
+    verdict. Strategies without the field keep the historical behavior.
+    """
+    active_since: dict[str, datetime] = {}
+    for name, strategy in _iter_active_stock_strategy_configs(timeframe=timeframe):
+        paper = strategy.get("paper") or {}
+        if not isinstance(paper, dict):
+            continue
+        since = _parse_active_since(paper.get("activated_at"))
+        if since is not None:
+            active_since[name] = since
+    return active_since
 
 
 def _equity_slope(equity_points: list[float]) -> float:
@@ -584,13 +632,30 @@ def summarize_trades(
     return metrics
 
 
+def _naive_kst(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value
+    return value.astimezone(KST).replace(tzinfo=None)
+
+
 def _filter_active_strategy_rows(
-    rows: list[TradeRow], active_strategy_names: list[str]
+    rows: list[TradeRow],
+    active_strategy_names: list[str],
+    active_strategy_since: dict[str, datetime] | None = None,
 ) -> list[TradeRow]:
     active = {name for name in active_strategy_names if name}
     if not active:
         return []
-    return [row for row in rows if row.strategy in active]
+    since_by_strategy = active_strategy_since or {}
+    filtered: list[TradeRow] = []
+    for row in rows:
+        if row.strategy not in active:
+            continue
+        since = since_by_strategy.get(row.strategy)
+        if since is not None and _naive_kst(row.exit_date) < since:
+            continue
+        filtered.append(row)
+    return filtered
 
 
 _TRADE_METRIC_ISSUE_CODES = {
@@ -847,11 +912,20 @@ def fetch_redis_snapshot(
     universe_exists, universe_payload = load_payload("universe_key")
     universe_count = _count_codes_from_payload(universe_payload)
     llm_quality_exists, llm_quality_payload = load_payload("llm_quality_key")
+    _daily_watchlist_exists, daily_watchlist_payload = load_payload(
+        "daily_watchlist_key"
+    )
     daily_indicators_exists, daily_indicators_payload = load_payload(
         "daily_indicators_key"
     )
     daily_indicators_count = _count_codes_from_payload(daily_indicators_payload)
     daily_strategy_counts = _strategy_counts_from_payload(daily_indicators_payload)
+    for strategy, count in _strategy_counts_from_payload(
+        daily_watchlist_payload
+    ).items():
+        daily_strategy_counts[strategy] = max(
+            daily_strategy_counts.get(strategy, 0), count
+        )
     daily_strategy_candidate_count = sum(daily_strategy_counts.values())
     covered_symbols = set(_codes_from_payload(daily_indicators_payload))
     candidate_coverage = {
@@ -1152,14 +1226,19 @@ def evaluate_report(
 def _downgrade_daily_signal_issue_for_no_ready_candidates(
     issues: list[GateIssue],
     *,
+    report_date: date,
     active_strategy_names: list[str],
     active_daily_strategy_names: list[str],
     active_daily_candidate_count: int,
+    active_strategy_since: dict[str, datetime] | None = None,
 ) -> list[GateIssue]:
+    newly_activated = any(
+        since.date() >= report_date for since in (active_strategy_since or {}).values()
+    )
     if (
         not active_strategy_names
         or not active_daily_strategy_names
-        or active_daily_candidate_count > 0
+        or (active_daily_candidate_count > 0 and not newly_activated)
     ):
         return issues
 
@@ -1173,8 +1252,16 @@ def _downgrade_daily_signal_issue_for_no_ready_candidates(
                 "WARN",
                 issue.code,
                 issue.observed,
-                "ready active daily candidates before signal activity",
-                "No stock signal is visible today, but enabled daily strategies have no ready candidates; this is a readiness/coverage issue rather than a failed trade-signal event.",
+                (
+                    "post-activation signal opportunity"
+                    if newly_activated
+                    else "ready active daily candidates before signal activity"
+                ),
+                (
+                    "No stock signal is visible today, but at least one active strategy was reactivated during this report date; collect signal evidence from the next regular session."
+                    if newly_activated
+                    else "No stock signal is visible today, but enabled daily strategies have no ready candidates; this is a readiness/coverage issue rather than a failed trade-signal event."
+                ),
             )
         )
     return adjusted
@@ -1349,6 +1436,7 @@ def _render_markdown(report: VerificationReport, config: VerificationConfig) -> 
         "## Active Strategy Metrics",
         "",
         f"- Active strategies: `{', '.join(report.active_strategy_names) or 'none'}`",
+        f"- Active strategy since: `{report.active_strategy_since or {}}`",
         f"- Active daily strategies: `{', '.join(report.active_daily_strategy_names) or 'none'}`",
         f"- Active daily candidates: `{report.active_daily_candidate_count}`",
         f"- Trades: `{active.trade_count}`",
@@ -1453,23 +1541,27 @@ def write_report(
 
 
 def _format_notification(report: VerificationReport) -> str:
+    def code(value: Any) -> str:
+        return f"<code>{html.escape(str(value), quote=False)}</code>"
+
     m = report.trade_metrics
     active = report.active_trade_metrics
     lines = [
-        f"<b>Stock paper verification {report.verdict}</b>",
-        f"date: <code>{report.report_date}</code>",
-        f"trades: <code>{m.trade_count}</code>, pnl: <code>{m.total_pnl:,.0f}</code>",
-        f"monthly_expected: <code>{m.monthly_expected_return_pct:.2f}%</code>, win_rate: <code>{m.win_rate_pct:.2f}%</code>, mdd: <code>{m.max_drawdown_pct:.2f}%</code>",
-        f"active_trades: <code>{active.trade_count}</code>, active_monthly_expected: <code>{active.monthly_expected_return_pct:.2f}%</code>, active_win_rate: <code>{active.win_rate_pct:.2f}%</code>",
-        f"active_daily_candidates: <code>{report.active_daily_candidate_count}</code>",
-        f"ch_open_positions: <code>{report.clickhouse_position_snapshot.open_positions_count}</code>",
+        f"<b>Stock paper verification {html.escape(str(report.verdict), quote=False)}</b>",
+        f"date: {code(report.report_date)}",
+        f"trades: {code(m.trade_count)}, pnl: {code(f'{m.total_pnl:,.0f}')}",
+        f"monthly_expected: {code(f'{m.monthly_expected_return_pct:.2f}%')}, win_rate: {code(f'{m.win_rate_pct:.2f}%')}, mdd: {code(f'{m.max_drawdown_pct:.2f}%')}",
+        f"active_trades: {code(active.trade_count)}, active_monthly_expected: {code(f'{active.monthly_expected_return_pct:.2f}%')}, active_win_rate: {code(f'{active.win_rate_pct:.2f}%')}",
+        f"active_daily_candidates: {code(report.active_daily_candidate_count)}",
+        f"ch_open_positions: {code(report.clickhouse_position_snapshot.open_positions_count)}",
     ]
     verdict_issues = _issues_for_verdict(report)
     if verdict_issues:
         lines.append("<b>Verdict issues</b>")
         for issue in verdict_issues[:8]:
             lines.append(
-                f"- {issue.severity} {issue.code}: {issue.observed} vs {issue.expected}"
+                f"- {html.escape(str(issue.severity), quote=False)} "
+                f"{code(issue.code)}: {code(issue.observed)} vs {code(issue.expected)}"
             )
     if report.active_strategy_names and report.issues:
         ignored_metric_count = sum(
@@ -1477,9 +1569,10 @@ def _format_notification(report: VerificationReport) -> str:
         )
         if ignored_metric_count:
             lines.append(
-                f"historical all-strategy metric issues ignored for verdict: <code>{ignored_metric_count}</code>"
+                "historical all-strategy metric issues ignored for verdict: "
+                f"{code(ignored_metric_count)}"
             )
-    lines.append(f"report: <code>{report.markdown_path}</code>")
+    lines.append(f"report: {code(report.markdown_path)}")
     return "\n".join(lines)
 
 
@@ -1490,7 +1583,11 @@ async def _send_notification(report: VerificationReport) -> bool:
         notifier = notifier_for_domain("briefing")
         if notifier is None:
             return False
-        await notifier.send_message(_format_notification(report), is_critical=True)
+        await notifier.send_message(
+            _format_notification(report),
+            is_critical=True,
+            raise_on_error=True,
+        )
         return True
     except Exception as exc:  # noqa: BLE001
         print(f"[warn] telegram notification failed: {exc}", file=sys.stderr)
@@ -1507,6 +1604,7 @@ def build_report(
     source_errors: list[str] | None = None,
     active_strategy_names: list[str] | None = None,
     active_daily_strategy_names: list[str] | None = None,
+    active_strategy_since: dict[str, datetime] | None = None,
 ) -> VerificationReport:
     window_start, window_end = _window_for(report_date, config.lookback_days)
     metrics = summarize_trades(
@@ -1518,7 +1616,12 @@ def build_report(
     )
     clickhouse_snapshot = clickhouse_position_snapshot or ClickHousePositionSnapshot()
     active_names = sorted(set(active_strategy_names or []))
-    active_rows = _filter_active_strategy_rows(rows, active_names)
+    active_since = {
+        name: since
+        for name, since in (active_strategy_since or {}).items()
+        if name in active_names
+    }
+    active_rows = _filter_active_strategy_rows(rows, active_names, active_since)
     active_metrics = summarize_trades(
         active_rows,
         initial_capital=config.initial_capital,
@@ -1534,7 +1637,14 @@ def build_report(
         clickhouse_position_snapshot=clickhouse_snapshot,
         source_errors=errors,
     )
-    active_daily_names = sorted(set(active_daily_strategy_names or []))
+    active_daily_names = sorted(
+        set(active_daily_strategy_names or [])
+        | {
+            name
+            for name in active_names
+            if name in redis_snapshot.daily_strategy_counts
+        }
+    )
     daily_issues, active_daily_candidate_count = evaluate_active_daily_watchlist_gates(
         config,
         redis_snapshot,
@@ -1542,9 +1652,11 @@ def build_report(
     )
     issues = _downgrade_daily_signal_issue_for_no_ready_candidates(
         issues,
+        report_date=report_date,
         active_strategy_names=active_names,
         active_daily_strategy_names=active_daily_names,
         active_daily_candidate_count=active_daily_candidate_count,
+        active_strategy_since=active_since,
     )
     active_issues: list[GateIssue] = []
     if active_names:
@@ -1577,6 +1689,9 @@ def build_report(
         trade_metrics=metrics,
         active_strategy_names=active_names,
         active_daily_strategy_names=active_daily_names,
+        active_strategy_since={
+            name: since.isoformat() for name, since in sorted(active_since.items())
+        },
         active_daily_candidate_count=active_daily_candidate_count,
         active_trade_metrics=active_metrics,
         active_issues=active_issues,
@@ -1659,9 +1774,11 @@ def main() -> int:
             active_daily_strategy_names = load_active_stock_strategy_names(
                 timeframe="daily"
             )
+            active_strategy_since = load_active_stock_strategy_since()
         except Exception as exc:  # noqa: BLE001
             active_strategy_names = []
             active_daily_strategy_names = []
+            active_strategy_since = {}
             source_errors.append(_source_error("active_strategy_config_failed", exc))
         try:
             rows = fetch_trade_rows(config, window_start, window_end)
@@ -1689,6 +1806,7 @@ def main() -> int:
             source_errors=source_errors,
             active_strategy_names=active_strategy_names,
             active_daily_strategy_names=active_daily_strategy_names,
+            active_strategy_since=active_strategy_since,
         )
         write_report(report, config)
         if (

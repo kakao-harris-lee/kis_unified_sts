@@ -172,10 +172,7 @@ pytest tests/ -q
 ### 5. 로컬 서버 실행
 
 ```bash
-# API 서버
-uvicorn services.api.app:app --reload --port 8000
-
-# Dashboard 서버 (별도 터미널)
+# Dashboard 서버
 uvicorn services.dashboard.app:create_app --factory --reload --port 8001
 ```
 
@@ -228,7 +225,7 @@ docker compose down
 
 | 서비스 | 포트 | 설명 |
 |--------|------|------|
-| app | 8000 | Trading API |
+| app | host 미노출 | Trading runtime; container-internal health check only |
 | dashboard | 8001 | Dashboard API |
 | redis | 6379 | 캐시/메시지 큐 |
 | prometheus | 9090 | 메트릭 수집 |
@@ -275,8 +272,7 @@ services:
     networks:
       - internal
       - external
-    ports:
-      - "127.0.0.1:8000:8000"  # 로컬만 노출
+    # No host port by default; keep app traffic inside the compose network.
 
 networks:
   internal:
@@ -296,7 +292,7 @@ server {
     ssl_certificate_key /etc/ssl/private/trading.key;
 
     location / {
-        proxy_pass http://127.0.0.1:8000;
+        proxy_pass http://127.0.0.1:8001;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;

@@ -116,13 +116,16 @@ def test_should_publish_snapshot_on_change_or_heartbeat():
         last_publish_time=0.0,
         heartbeat_seconds=60.0,
     )
-    assert _should_publish_snapshot(
-        signature="A",
-        last_signature="A",
-        now=59.0,
-        last_publish_time=0.0,
-        heartbeat_seconds=60.0,
-    ) is False
+    assert (
+        _should_publish_snapshot(
+            signature="A",
+            last_signature="A",
+            now=59.0,
+            last_publish_time=0.0,
+            heartbeat_seconds=60.0,
+        )
+        is False
+    )
     assert _should_publish_snapshot(
         signature="A",
         last_signature="A",
@@ -135,9 +138,21 @@ def test_should_publish_snapshot_on_change_or_heartbeat():
 class _DummyKISClient:
     def __init__(self, bars_by_code: dict[str, list[dict[str, float]]]):
         self.bars_by_code = bars_by_code
+        self.is_rate_limited = False
 
     async def get_minute_bars(self, code: str, count: int = 30):
         return self.bars_by_code.get(code, [])[:count]
+
+
+class _RateLimitedKISClient:
+    is_rate_limited = True
+
+    def __init__(self):
+        self.calls = 0
+
+    async def get_minute_bars(self, _code: str, _count: int = 30):
+        self.calls += 1
+        return []
 
 
 @pytest.mark.asyncio
@@ -153,12 +168,14 @@ async def test_apply_trend_confirmation_filters_unconfirmed_codes():
         {"open": 99.5, "high": 99.7, "low": 99.0, "close": 99.2, "volume": 1000},
     ]
     client = _DummyKISClient({"000001": bars_pass, "000002": bars_fail})
-    config = ScreenerConfig().model_copy(update={
-        "trend_confirm_enabled": True,
-        "trend_confirm_max_scan_codes": 2,
-        "trend_confirm_bar_count": 3,
-        "trend_confirm_fail_open": False,
-    })
+    config = ScreenerConfig().model_copy(
+        update={
+            "trend_confirm_enabled": True,
+            "trend_confirm_max_scan_codes": 2,
+            "trend_confirm_bar_count": 3,
+            "trend_confirm_fail_open": False,
+        }
+    )
     filtered, diagnostics = await _apply_trend_confirmation(
         codes=["000001", "000002"],
         info_by_code={},
@@ -184,12 +201,14 @@ async def test_apply_trend_confirmation_keeps_unscanned_codes():
         {"open": 99.5, "high": 99.7, "low": 99.0, "close": 99.2, "volume": 1000},
     ]
     client = _DummyKISClient({"000001": bars_pass, "000002": bars_fail})
-    config = ScreenerConfig().model_copy(update={
-        "trend_confirm_enabled": True,
-        "trend_confirm_max_scan_codes": 2,
-        "trend_confirm_bar_count": 3,
-        "trend_confirm_fail_open": False,
-    })
+    config = ScreenerConfig().model_copy(
+        update={
+            "trend_confirm_enabled": True,
+            "trend_confirm_max_scan_codes": 2,
+            "trend_confirm_bar_count": 3,
+            "trend_confirm_fail_open": False,
+        }
+    )
     filtered, diagnostics = await _apply_trend_confirmation(
         codes=["000001", "000002", "000003"],
         info_by_code={},
@@ -201,3 +220,27 @@ async def test_apply_trend_confirmation_keeps_unscanned_codes():
     assert diagnostics["000001"]["passed"] is True
     assert diagnostics["000002"]["passed"] is False
     assert "000003" not in diagnostics
+
+
+@pytest.mark.asyncio
+async def test_apply_trend_confirmation_stops_when_kis_is_rate_limited():
+    client = _RateLimitedKISClient()
+    config = ScreenerConfig().model_copy(
+        update={
+            "trend_confirm_enabled": True,
+            "trend_confirm_max_scan_codes": 2,
+            "trend_confirm_fail_open": True,
+        }
+    )
+
+    filtered, diagnostics = await _apply_trend_confirmation(
+        codes=["000001", "000002", "000003"],
+        info_by_code={},
+        config=config,
+        kis_client=client,  # type: ignore[arg-type]
+        cache={},
+    )
+
+    assert client.calls == 0
+    assert filtered == ["000001", "000002", "000003"]
+    assert diagnostics["000001"]["reason"] == "kis_rate_limited"

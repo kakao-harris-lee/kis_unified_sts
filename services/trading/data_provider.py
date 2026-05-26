@@ -51,6 +51,8 @@ MIN_TIMEOUT_SECONDS = 0.5
 MAX_TIMEOUT_SECONDS = 60.0
 MIN_STARTUP_GRACE_SECONDS = 0.0
 MAX_STARTUP_GRACE_SECONDS = 600.0
+MIN_HEALTH_CONFIRMATION_CHECKS = 1
+MAX_HEALTH_CONFIRMATION_CHECKS = 100
 
 
 @runtime_checkable
@@ -95,13 +97,13 @@ class DataProviderConfig:
     mock_seed: int | None = None
 
     # Failover: Health check interval in seconds
-    health_check_interval_seconds: float = 5.0
+    health_check_interval_seconds: float = 10.0
 
     # Failover: REST polling interval in seconds (when in fallback mode)
-    rest_poll_interval_seconds: float = 5.0
+    rest_poll_interval_seconds: float = 10.0
 
     # Failover: Data staleness threshold in seconds (trigger failover if no data)
-    staleness_threshold_seconds: float = 10.0
+    staleness_threshold_seconds: float = 30.0
 
     # Failover: Minimum fresh-symbol ratio (fresh / subscribed).  Trigger
     # failover when ratio drops below this even if some symbols still tick.
@@ -111,21 +113,28 @@ class DataProviderConfig:
     # had 0 fresh trade-target symbols but health check passed because
     # non-universe dip-candidate symbols kept producing ticks).
     # Set to 0.0 to disable (legacy behaviour: only fail when ALL symbols
-    # are stale).  Default 0.5 = require at least half the subscribed
-    # symbols to be fresh.
-    min_fresh_ratio: float = 0.5
+    # are stale).  Default 0.25 tolerates low-liquidity symbol tick gaps.
+    min_fresh_ratio: float = 0.25
 
     # Failover: grace period after health monitoring starts.  KIS stock
     # WebSocket subscriptions do not receive first ticks for all symbols at
     # the same time right after market open; applying min_fresh_ratio during
     # this short bootstrap window causes unnecessary REST fallback storms.
-    startup_grace_seconds: float = 60.0
+    startup_grace_seconds: float = 120.0
 
     # Failover: Limit per-cycle REST polling scope to avoid rate-limit storms.
     rest_fallback_max_symbols: int | None = None
 
-    # Failover: Send Telegram alerts on failover/recovery
-    send_telegram_alerts: bool = True
+    # Failover: Send Telegram alerts on failover/recovery.
+    # Deprecated operationally: transitions are logged only to avoid noisy
+    # Telegram flapping during normal WebSocket tick gaps.
+    send_telegram_alerts: bool = False
+
+    # Failover: require consecutive unhealthy checks before entering REST mode.
+    failover_unhealthy_threshold: int = 3
+
+    # Recovery: require consecutive healthy checks before returning to WebSocket.
+    recovery_healthy_threshold: int = 3
 
     def __post_init__(self):
         """Validate configuration values."""
@@ -207,6 +216,20 @@ class DataProviderConfig:
                 f"{MIN_STARTUP_GRACE_SECONDS} and {MAX_STARTUP_GRACE_SECONDS}, "
                 f"got {self.startup_grace_seconds}"
             )
+        for field_name, value in (
+            ("failover_unhealthy_threshold", self.failover_unhealthy_threshold),
+            ("recovery_healthy_threshold", self.recovery_healthy_threshold),
+        ):
+            if not (
+                MIN_HEALTH_CONFIRMATION_CHECKS
+                <= value
+                <= MAX_HEALTH_CONFIRMATION_CHECKS
+            ):
+                raise ValueError(
+                    f"{field_name} must be between "
+                    f"{MIN_HEALTH_CONFIRMATION_CHECKS} and "
+                    f"{MAX_HEALTH_CONFIRMATION_CHECKS}, got {value}"
+                )
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> DataProviderConfig:
@@ -226,13 +249,15 @@ class DataProviderConfig:
         batch_size = data.get("batch_size", 20)
         timeout = data.get("fetch_timeout_seconds", 5.0)
         mock_seed = data.get("mock_seed")
-        health_check_interval = data.get("health_check_interval_seconds", 5.0)
-        rest_poll_interval = data.get("rest_poll_interval_seconds", 5.0)
-        staleness_threshold = data.get("staleness_threshold_seconds", 10.0)
-        min_fresh_ratio = data.get("min_fresh_ratio", 0.5)
-        startup_grace_seconds = data.get("startup_grace_seconds", 60.0)
+        health_check_interval = data.get("health_check_interval_seconds", 10.0)
+        rest_poll_interval = data.get("rest_poll_interval_seconds", 10.0)
+        staleness_threshold = data.get("staleness_threshold_seconds", 30.0)
+        min_fresh_ratio = data.get("min_fresh_ratio", 0.25)
+        startup_grace_seconds = data.get("startup_grace_seconds", 120.0)
         rest_fallback_max_symbols = data.get("rest_fallback_max_symbols")
-        send_telegram_alerts = data.get("send_telegram_alerts", True)
+        send_telegram_alerts = data.get("send_telegram_alerts", False)
+        failover_unhealthy_threshold = data.get("failover_unhealthy_threshold", 3)
+        recovery_healthy_threshold = data.get("recovery_healthy_threshold", 3)
 
         # Type validation
         if not isinstance(cache_ttl, (int, float)):
@@ -273,6 +298,16 @@ class DataProviderConfig:
             raise TypeError(
                 f"send_telegram_alerts must be bool, got {type(send_telegram_alerts)}"
             )
+        if not isinstance(failover_unhealthy_threshold, int):
+            raise TypeError(
+                "failover_unhealthy_threshold must be int, "
+                f"got {type(failover_unhealthy_threshold)}"
+            )
+        if not isinstance(recovery_healthy_threshold, int):
+            raise TypeError(
+                "recovery_healthy_threshold must be int, "
+                f"got {type(recovery_healthy_threshold)}"
+            )
 
         return cls(
             cache_ttl_seconds=float(cache_ttl),
@@ -286,6 +321,8 @@ class DataProviderConfig:
             startup_grace_seconds=float(startup_grace_seconds),
             rest_fallback_max_symbols=rest_fallback_max_symbols,
             send_telegram_alerts=bool(send_telegram_alerts),
+            failover_unhealthy_threshold=int(failover_unhealthy_threshold),
+            recovery_healthy_threshold=int(recovery_healthy_threshold),
         )
 
 
@@ -371,6 +408,8 @@ class MarketDataProvider:
         self._fallback_poll_task: asyncio.Task[None] | None = None
         self._health_check_task: asyncio.Task[None] | None = None
         self._health_monitor_started_at: float | None = None
+        self._consecutive_unhealthy_checks = 0
+        self._consecutive_recovery_checks = 0
 
         logger.info(
             f"MarketDataProvider initialized: {len(self.symbols)} symbols, "
@@ -835,11 +874,23 @@ class MarketDataProvider:
                     try:
                         is_healthy, _ = await self._check_data_source_health()
                         if is_healthy:
-                            logger.info(
-                                "WebSocket is healthy again, attempting recovery"
-                            )
-                            await self._recover_to_websocket()
+                            self._consecutive_recovery_checks += 1
+                            if (
+                                self._consecutive_recovery_checks
+                                >= self.config.recovery_healthy_threshold
+                            ):
+                                logger.info(
+                                    "WebSocket healthy for %d/%d checks, "
+                                    "attempting recovery",
+                                    self._consecutive_recovery_checks,
+                                    self.config.recovery_healthy_threshold,
+                                )
+                                await self._recover_to_websocket()
+                                self._consecutive_recovery_checks = 0
+                        else:
+                            self._consecutive_recovery_checks = 0
                     except Exception as e:
+                        self._consecutive_recovery_checks = 0
                         logger.debug(
                             f"Error checking WebSocket health for recovery: {e}"
                         )
@@ -856,11 +907,30 @@ class MarketDataProvider:
 
                 # Trigger failover if unhealthy
                 if not is_healthy:
-                    logger.warning(
-                        f"Data source unhealthy, triggering failover to REST polling. "
-                        f"Health status: {health_status}"
-                    )
-                    await self._failover_to_rest()
+                    self._consecutive_unhealthy_checks += 1
+                    if (
+                        self._consecutive_unhealthy_checks
+                        >= self.config.failover_unhealthy_threshold
+                    ):
+                        logger.warning(
+                            "Data source unhealthy for %d/%d checks, "
+                            "triggering failover to REST polling. Health status: %s",
+                            self._consecutive_unhealthy_checks,
+                            self.config.failover_unhealthy_threshold,
+                            health_status,
+                        )
+                        await self._failover_to_rest()
+                        self._consecutive_unhealthy_checks = 0
+                    else:
+                        logger.info(
+                            "Data source unhealthy check %d/%d; waiting before failover. "
+                            "Health status: %s",
+                            self._consecutive_unhealthy_checks,
+                            self.config.failover_unhealthy_threshold,
+                            health_status,
+                        )
+                else:
+                    self._consecutive_unhealthy_checks = 0
 
             except asyncio.CancelledError:
                 logger.info("Health check loop cancelled")
@@ -1003,23 +1073,7 @@ class MarketDataProvider:
 
         # Switch mode
         self._current_mode = DataSourceMode.REST_FALLBACK
-
-        # Send Telegram alert if configured
-        if self.config.send_telegram_alerts and self._telegram_notifier is not None:
-            try:
-                await self._telegram_notifier.send_message(
-                    f"⚠️ <b>WebSocket Failover</b>\n"
-                    f"WebSocket 연결이 끊어져 REST API 모드로 전환합니다.\n"
-                    f"Polling 간격: {self.config.rest_poll_interval_seconds}초\n"
-                    f"시간: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-                    is_critical=True,
-                )
-                logger.info("Sent Telegram alert for WebSocket failover")
-            except Exception as e:
-                # Don't let telegram failures break failover
-                logger.error(
-                    f"Failed to send Telegram failover alert: {e}", exc_info=False
-                )
+        self._consecutive_recovery_checks = 0
 
         # Create KIS client if not already available
         if self._kis_client is None:
@@ -1142,6 +1196,7 @@ class MarketDataProvider:
         # Switch mode (this will stop the REST polling loop via its condition check)
         self._current_mode = DataSourceMode.WEBSOCKET
         self._health_monitor_started_at = time.monotonic()
+        self._consecutive_unhealthy_checks = 0
 
         # Cancel REST polling task if it's still running
         if self._fallback_poll_task is not None and not self._fallback_poll_task.done():
@@ -1159,22 +1214,6 @@ class MarketDataProvider:
                 logger.error(f"Error stopping REST polling task: {e}", exc_info=True)
 
         logger.info("Successfully recovered to WebSocket mode")
-
-        # Send Telegram alert if configured
-        if self.config.send_telegram_alerts and self._telegram_notifier is not None:
-            try:
-                await self._telegram_notifier.send_message(
-                    f"✅ <b>WebSocket 복구</b>\n"
-                    f"WebSocket 연결이 복구되어 실시간 데이터 피드를 재개합니다.\n"
-                    f"시간: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-                    is_critical=True,
-                )
-                logger.info("Sent Telegram alert for WebSocket recovery")
-            except Exception as e:
-                # Don't let telegram failures break recovery
-                logger.error(
-                    f"Failed to send Telegram recovery alert: {e}", exc_info=False
-                )
 
     def clear_cache(self):
         """Clear all cached data"""

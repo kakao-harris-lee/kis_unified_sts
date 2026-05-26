@@ -61,12 +61,16 @@ strategy:
   name: williams_r
   position:
     params:
-      max_positions: 5
-      max_position_pct: 50.0
-      order_amount_per_stock: 48000000
+      # 2026-05-22: reduce active paper exposure until fresh post-cutover
+      # evidence exists; previous sizing could allocate nearly half of capital
+      # to a strategy with no recent active closed-trade sample.
+      max_positions: 2
+      max_position_pct: 5.0
+      order_amount_per_stock: 1000000
     type: fixed
   paper:
     enabled: true
+    activated_at: "2026-05-22T21:40:00+09:00"
     check_interval: 60
   backtest:
     initial_capital: 100000000

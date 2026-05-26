@@ -1,6 +1,6 @@
 ---
 name: ops-monitor
-description: "시스템 모니터링/성능 분석 전문가. 인프라 상태 점검, 트레이딩 성능 분석, Grafana/Prometheus 대시보드, ClickHouse/Redis 모니터링."
+description: "시스템 모니터링/성능 분석 전문가. 인프라 상태 점검, 트레이딩 성능 분석, Prometheus, ClickHouse, Redis 모니터링."
 ---
 
 # Ops Monitor — 시스템 모니터링/성능 분석 전문가

@@ -11,8 +11,6 @@ services:
       dockerfile: Dockerfile
     container_name: kis-trading-app
     restart: unless-stopped
-    ports:
-      - "8000:8000"
     environment:
       # KIS API 인증 (환경변수)
       - KIS_APP_KEY=${KIS_APP_KEY}
