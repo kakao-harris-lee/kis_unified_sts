@@ -32,15 +32,15 @@ strategy:
 
       # Time window: minutes after 09:00 KST market open
       valid_minutes_min: 10
-      valid_minutes_max: 90
+      valid_minutes_max: 120      # was 90; +30m for retrace to develop
 
       # Overnight macro confirmation thresholds
-      min_sp500_gap_pct: 0.5     # Minimum absolute S&P 500 overnight gap (%)
-      min_kr_gap_pct: 0.3        # Minimum absolute Korean open gap vs prev close (%)
+      min_sp500_gap_pct: 0.3     # was 0.5; captures ~47%→~65% of trading days
+      min_kr_gap_pct: 0.2        # was 0.3; KR futures gap usually >> 0.2%
 
       # Retrace band: fraction of the gap that must have reversed
-      retrace_min: 0.30
-      retrace_max: 0.55
+      retrace_min: 0.20          # was 0.30; catches shallow retrace (e.g. 5/14 ret=0.22)
+      retrace_max: 0.70          # was 0.55; catches deeper retrace (e.g. 4/22 ret=0.61, 5/6 ret=0.63)
 
       # Exit targets
       stop_atr_mult: 1.5           # ATR multiplier for hard stop-loss

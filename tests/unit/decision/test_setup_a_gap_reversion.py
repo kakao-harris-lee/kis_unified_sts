@@ -165,14 +165,14 @@ def test_outside_valid_minutes_returns_none(now_hhmm):
 
 
 def test_sp500_gap_too_small_returns_none():
-    """SP500 change 0.3 % < min_sp500_gap_pct=0.5 → None."""
+    """SP500 change 0.2 % < min_sp500_gap_pct=0.3 → None."""
     setup = SetupAGapReversion(config=_default_config())
     ctx = _ctx(
         now_hhmm=(9, 30),
         current_price=348.5,
         prev_close=350.0,
         today_open=347.0,
-        macro=_macro(-0.3),  # too small
+        macro=_macro(-0.2),  # too small
     )
     assert setup.check(ctx) is None
 
@@ -267,16 +267,17 @@ def test_retrace_below_min_returns_none():
 
 
 def test_retrace_above_max_returns_none():
-    """Retrace > retrace_max (0.55) → None.
+    """Retrace > retrace_max (0.70) → None.
 
     For gap-down: retrace = (current_price - today_open)/(prev_close - today_open)
-    Must be > 0.55 → current_price > 347 + 0.55*3 = 348.65
-    Use current_price=349.0 → retrace = 2/3 ≈ 0.667 > 0.55
+    prev_close=350, today_open=347 → gap_mag=3
+    Must be > 0.70 → current_price > 347 + 0.70*3 = 349.1
+    Use current_price=349.5 → retrace = 2.5/3 ≈ 0.833 > 0.70
     """
     setup = SetupAGapReversion(config=_default_config())
     ctx = _ctx(
         now_hhmm=(9, 30),
-        current_price=349.0,
+        current_price=349.5,
         prev_close=350.0,
         today_open=347.0,
         macro=_macro(-1.2),
@@ -475,11 +476,11 @@ def test_config_defaults_match_spec():
     cfg = SetupAConfig()
     assert cfg.enabled is True
     assert cfg.valid_minutes_min == 10
-    assert cfg.valid_minutes_max == 90
-    assert cfg.min_sp500_gap_pct == pytest.approx(0.5)
-    assert cfg.min_kr_gap_pct == pytest.approx(0.3)
-    assert cfg.retrace_min == pytest.approx(0.30)
-    assert cfg.retrace_max == pytest.approx(0.55)
+    assert cfg.valid_minutes_max == 120
+    assert cfg.min_sp500_gap_pct == pytest.approx(0.3)
+    assert cfg.min_kr_gap_pct == pytest.approx(0.2)
+    assert cfg.retrace_min == pytest.approx(0.20)
+    assert cfg.retrace_max == pytest.approx(0.70)
     assert cfg.stop_atr_mult == pytest.approx(1.5)
     assert cfg.target_gap_fill_ratio == pytest.approx(0.9)
     assert cfg.signal_ttl_minutes == 10

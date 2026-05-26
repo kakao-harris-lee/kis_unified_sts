@@ -22,8 +22,10 @@ Confidence formula (spec §4.3)
 
 where::
 
-    gap_strength    = min(abs(sp500_pct) / 1.5, 0.3)          # up to +0.3
-    retrace_cent    = 0.2 * (1 - abs(retrace - 0.425) / 0.125) # up to +0.2
+    gap_strength    = min(abs(sp500_pct) / 1.5, 0.3)                # up to +0.3
+    retrace_cent    = 0.2 * (1 - abs(retrace - mid) / half)         # up to +0.2
+    mid             = (retrace_min + retrace_max) / 2               # band centre
+    half            = (retrace_max - retrace_min) / 2               # band half-width
 """
 
 from __future__ import annotations
@@ -56,19 +58,19 @@ class SetupAConfig(ServiceConfigBase):
         default=10, description="Earliest minutes after open to fire (inclusive)"
     )
     valid_minutes_max: int = Field(
-        default=90, description="Latest minutes after open to fire (inclusive)"
+        default=120, description="Latest minutes after open to fire (inclusive)"
     )
     min_sp500_gap_pct: float = Field(
-        default=0.5, description="Minimum absolute S&P 500 overnight gap (%)"
+        default=0.3, description="Minimum absolute S&P 500 overnight gap (%)"
     )
     min_kr_gap_pct: float = Field(
-        default=0.3, description="Minimum absolute Korean open gap vs prev close (%)"
+        default=0.2, description="Minimum absolute Korean open gap vs prev close (%)"
     )
     retrace_min: float = Field(
-        default=0.30, description="Minimum retrace ratio of the gap (fraction)"
+        default=0.20, description="Minimum retrace ratio of the gap (fraction)"
     )
     retrace_max: float = Field(
-        default=0.55, description="Maximum retrace ratio of the gap (fraction)"
+        default=0.70, description="Maximum retrace ratio of the gap (fraction)"
     )
     stop_atr_mult: float = Field(
         default=1.5, description="ATR multiplier for the hard stop-loss"
@@ -193,17 +195,22 @@ class SetupAGapReversion(Setup):
         ----------
         base            = 0.5
         gap_strength    = min(abs(sp500_pct) / 1.5, 0.3)           # max +0.3
-        retrace_cent    = 0.2 * (1 - abs(retrace - 0.425) / 0.125) # max +0.2
+        retrace_cent    = 0.2 * (1 - abs(retrace - mid) / half)    # max +0.2
 
-        The retrace_centrality is *not* clamped to zero at the extremes here;
-        it can go slightly negative at the hard band edges (retrace = 0.30 or
-        0.55) where ``abs(retrace - 0.425) / 0.125 > 1``, but those values
-        are already blocked by the retrace-band guard so in practice this term
-        is always non-negative when this function is called.
+        The retrace midpoint and half-width are derived from the config's
+        retrace band [retrace_min, retrace_max] so that confidence peaks at
+        the band centre and tapers linearly toward the edges.
         """
         base = 0.5
         gap_strength = min(abs(sp500_pct) / 1.5, 0.3)
-        retrace_centrality = 0.2 * (1 - abs(retrace - 0.425) / 0.125)
+
+        # Derive centrality from the configured retrace band
+        mid = (self.config.retrace_min + self.config.retrace_max) / 2.0
+        half = (self.config.retrace_max - self.config.retrace_min) / 2.0
+        if half <= 0:
+            half = 0.125  # fallback to original
+
+        retrace_centrality = 0.2 * (1 - abs(retrace - mid) / half)
         # Clamp retrace_centrality at 0 to avoid penalizing the base score
         # for edge-band retraces (defensive, belt-and-suspenders).
         retrace_centrality = max(0.0, retrace_centrality)
