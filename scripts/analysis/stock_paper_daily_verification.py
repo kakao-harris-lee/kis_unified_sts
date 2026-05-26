@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import html
 import json
 import os
 import shlex
@@ -1540,23 +1541,27 @@ def write_report(
 
 
 def _format_notification(report: VerificationReport) -> str:
+    def code(value: Any) -> str:
+        return f"<code>{html.escape(str(value), quote=False)}</code>"
+
     m = report.trade_metrics
     active = report.active_trade_metrics
     lines = [
-        f"<b>Stock paper verification {report.verdict}</b>",
-        f"date: <code>{report.report_date}</code>",
-        f"trades: <code>{m.trade_count}</code>, pnl: <code>{m.total_pnl:,.0f}</code>",
-        f"monthly_expected: <code>{m.monthly_expected_return_pct:.2f}%</code>, win_rate: <code>{m.win_rate_pct:.2f}%</code>, mdd: <code>{m.max_drawdown_pct:.2f}%</code>",
-        f"active_trades: <code>{active.trade_count}</code>, active_monthly_expected: <code>{active.monthly_expected_return_pct:.2f}%</code>, active_win_rate: <code>{active.win_rate_pct:.2f}%</code>",
-        f"active_daily_candidates: <code>{report.active_daily_candidate_count}</code>",
-        f"ch_open_positions: <code>{report.clickhouse_position_snapshot.open_positions_count}</code>",
+        f"<b>Stock paper verification {html.escape(str(report.verdict), quote=False)}</b>",
+        f"date: {code(report.report_date)}",
+        f"trades: {code(m.trade_count)}, pnl: {code(f'{m.total_pnl:,.0f}')}",
+        f"monthly_expected: {code(f'{m.monthly_expected_return_pct:.2f}%')}, win_rate: {code(f'{m.win_rate_pct:.2f}%')}, mdd: {code(f'{m.max_drawdown_pct:.2f}%')}",
+        f"active_trades: {code(active.trade_count)}, active_monthly_expected: {code(f'{active.monthly_expected_return_pct:.2f}%')}, active_win_rate: {code(f'{active.win_rate_pct:.2f}%')}",
+        f"active_daily_candidates: {code(report.active_daily_candidate_count)}",
+        f"ch_open_positions: {code(report.clickhouse_position_snapshot.open_positions_count)}",
     ]
     verdict_issues = _issues_for_verdict(report)
     if verdict_issues:
         lines.append("<b>Verdict issues</b>")
         for issue in verdict_issues[:8]:
             lines.append(
-                f"- {issue.severity} {issue.code}: {issue.observed} vs {issue.expected}"
+                f"- {html.escape(str(issue.severity), quote=False)} "
+                f"{code(issue.code)}: {code(issue.observed)} vs {code(issue.expected)}"
             )
     if report.active_strategy_names and report.issues:
         ignored_metric_count = sum(
@@ -1564,9 +1569,10 @@ def _format_notification(report: VerificationReport) -> str:
         )
         if ignored_metric_count:
             lines.append(
-                f"historical all-strategy metric issues ignored for verdict: <code>{ignored_metric_count}</code>"
+                "historical all-strategy metric issues ignored for verdict: "
+                f"{code(ignored_metric_count)}"
             )
-    lines.append(f"report: <code>{report.markdown_path}</code>")
+    lines.append(f"report: {code(report.markdown_path)}")
     return "\n".join(lines)
 
 
@@ -1577,7 +1583,11 @@ async def _send_notification(report: VerificationReport) -> bool:
         notifier = notifier_for_domain("briefing")
         if notifier is None:
             return False
-        await notifier.send_message(_format_notification(report), is_critical=True)
+        await notifier.send_message(
+            _format_notification(report),
+            is_critical=True,
+            raise_on_error=True,
+        )
         return True
     except Exception as exc:  # noqa: BLE001
         print(f"[warn] telegram notification failed: {exc}", file=sys.stderr)

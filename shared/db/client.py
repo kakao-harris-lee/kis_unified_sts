@@ -326,6 +326,7 @@ class ClickHouseClient:
 
             self.config = config
             self._sync_client: SyncClient | None = None
+            self._ensured_tables: set[str] = set()
             self._initialized = True
 
             logger.info(f"ClickHouseClient (Sync) initialized: {self.config}")
@@ -418,6 +419,17 @@ class ClickHouseClient:
             logger.error(f"Failed to init schema: {e}")
             return False
 
+    def _ensure_table(self, table_name: str) -> None:
+        """Create one known schema table if this process has not ensured it."""
+        if table_name in self._ensured_tables:
+            return
+        schema = SCHEMAS.get(table_name)
+        if not schema:
+            raise KeyError(f"Unknown ClickHouse schema table: {table_name}")
+        client = self.get_sync_client()
+        client.execute(schema.format(database=self.config.database))
+        self._ensured_tables.add(table_name)
+
     def insert_daily_candles(self, candles: list[DailyCandle]) -> int:
         """Batch insert daily candles."""
         if not candles:
@@ -441,11 +453,17 @@ class ClickHouseClient:
             return 0
         try:
             client = self.get_sync_client()
+            self._ensure_table("llm_market_context")
             data = [
                 (
-                    r["ts"], r["asset"], r["regime"], r["overall_signal"],
-                    r["risk_mode"], float(r["risk_score"]),
-                    float(r["confidence"]), r["generated_at"],
+                    r["ts"],
+                    r["asset"],
+                    r["regime"],
+                    r["overall_signal"],
+                    r["risk_mode"],
+                    float(r["risk_score"]),
+                    float(r["confidence"]),
+                    r["generated_at"],
                     r["metadata_json"],
                 )
                 for r in rows
@@ -522,8 +540,13 @@ class ClickHouseClient:
             client = self.get_sync_client()
             data = [
                 (
-                    r["ts"], r["strategy"], r["asset"], r["signal_direction"],
-                    int(bool(r["allow"])), r["reason"], float(r["regime_pct"]),
+                    r["ts"],
+                    r["strategy"],
+                    r["asset"],
+                    r["signal_direction"],
+                    int(bool(r["allow"])),
+                    r["reason"],
+                    float(r["regime_pct"]),
                 )
                 for r in rows
             ]
