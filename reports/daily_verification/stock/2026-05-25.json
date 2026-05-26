@@ -1,0 +1,220 @@
+{
+  "report_date": "2026-05-25",
+  "window_start": "2026-05-04",
+  "window_end": "2026-05-26",
+  "generated_at": "2026-05-26T06:13:15.887294+00:00",
+  "verdict": "WARN",
+  "source_errors": [],
+  "issues": [
+    {
+      "severity": "FAIL",
+      "code": "monthly_expected_return_below_target",
+      "observed": "-1.49%",
+      "expected": ">= 10.00%",
+      "detail": "Monthly expected return is below the active objective."
+    },
+    {
+      "severity": "FAIL",
+      "code": "win_rate_below_target",
+      "observed": "0.00%",
+      "expected": ">= 55.00%",
+      "detail": "Closed-trade win rate is below the active objective."
+    },
+    {
+      "severity": "FAIL",
+      "code": "equity_curve_not_upward",
+      "observed": "slope=-87955",
+      "expected": "positive slope and ending equity >= starting equity",
+      "detail": "Equity curve is not upward over the verification window."
+    },
+    {
+      "severity": "FAIL",
+      "code": "reentry_churn_above_target",
+      "observed": "1",
+      "expected": "<= 0",
+      "detail": "Same-symbol same-strategy re-entry occurred too soon after an exit."
+    }
+  ],
+  "trade_metrics": {
+    "trade_count": 15,
+    "winning_trades": 0,
+    "losing_trades": 12,
+    "win_rate_pct": 0.0,
+    "total_pnl": -1489859.6469999976,
+    "avg_pnl": -99323.9764666665,
+    "avg_pnl_pct": -3.914098888598728,
+    "gross_profit": 0,
+    "gross_loss": 1489859.6469999976,
+    "profit_factor": 0.0,
+    "realized_return_pct": -1.4898596469999974,
+    "monthly_expected_return_pct": -1.4898596469999974,
+    "max_drawdown_pct": 1.4898596470000147,
+    "equity_slope_krw_per_trade": -87955.25628676564,
+    "equity_is_upward": false,
+    "reentry_churn_count": 1,
+    "by_strategy": {
+      "momentum_breakout": {
+        "trades": 14,
+        "wins": 0,
+        "total_pnl": -1489859.6469999976,
+        "win_rate_pct": 0.0,
+        "avg_pnl": -106418.54621428554
+      },
+      "trend_pullback": {
+        "trades": 1,
+        "wins": 0,
+        "total_pnl": 0.0,
+        "win_rate_pct": 0.0,
+        "avg_pnl": 0.0
+      }
+    },
+    "by_exit_reason": {
+      "stop_loss": 11,
+      "manual_close": 3,
+      "momentum_decay": 1
+    }
+  },
+  "active_strategy_names": [
+    "pattern_pullback",
+    "williams_r"
+  ],
+  "active_daily_strategy_names": [
+    "pattern_pullback"
+  ],
+  "active_daily_candidate_count": 0,
+  "active_trade_metrics": {
+    "trade_count": 0,
+    "winning_trades": 0,
+    "losing_trades": 0,
+    "win_rate_pct": 0.0,
+    "total_pnl": 0.0,
+    "avg_pnl": 0.0,
+    "avg_pnl_pct": 0.0,
+    "gross_profit": 0.0,
+    "gross_loss": 0.0,
+    "profit_factor": null,
+    "realized_return_pct": 0.0,
+    "monthly_expected_return_pct": 0.0,
+    "max_drawdown_pct": 0.0,
+    "equity_slope_krw_per_trade": 0.0,
+    "equity_is_upward": false,
+    "reentry_churn_count": 0,
+    "by_strategy": {},
+    "by_exit_reason": {}
+  },
+  "active_issues": [
+    {
+      "severity": "WARN",
+      "code": "active_daily_no_candidates",
+      "observed": "0",
+      "expected": "> 0",
+      "detail": "Enabled daily strategies have no precomputed candidates; paper trading may legitimately stay idle, but objective evidence cannot accumulate."
+    }
+  ],
+  "redis_snapshot": {
+    "report_is_trading_day": false,
+    "status_exists": true,
+    "status_ttl_seconds": 86397,
+    "status_age_seconds": 2.666062,
+    "status_updated_at": "2026-05-26T06:13:13.216716+00:00",
+    "status_publisher_pid": "695704",
+    "state": "running",
+    "status_config_capital": 100000000.0,
+    "risk_initial_capital": 100000000.0,
+    "configured_symbols": 23,
+    "data_provider": {
+      "total_symbols": 23,
+      "cached_symbols": 23,
+      "fresh_count": 23,
+      "stale_count": 0,
+      "cache_entries": 37,
+      "freshness_threshold_seconds": 30.0,
+      "last_batch_fetch": "2026-05-26T15:13:11.030722",
+      "current_mode": "websocket",
+      "is_in_failover": false,
+      "health_check_active": true,
+      "fallback_poll_active": false
+    },
+    "data_freshness": {},
+    "daily_signal_count": 0,
+    "signals_list_len": 2,
+    "trades_list_len": 0,
+    "open_positions_count": 5,
+    "candle_cache_symbols": 21,
+    "trade_targets_exists": true,
+    "trade_targets_count": 18,
+    "universe_exists": true,
+    "universe_count": 20,
+    "daily_indicators_exists": true,
+    "daily_indicators_count": 68,
+    "daily_strategy_candidate_count": 0,
+    "daily_strategy_counts": {
+      "technical_consensus": 0,
+      "pattern_pullback": 0
+    },
+    "candidate_coverage": {
+      "trade_targets": {
+        "total": 18,
+        "covered": 18,
+        "coverage_ratio": 1.0,
+        "missing_sample": []
+      },
+      "universe": {
+        "total": 20,
+        "covered": 16,
+        "coverage_ratio": 0.8,
+        "missing_sample": [
+          "003720",
+          "439960",
+          "071950",
+          "006490"
+        ]
+      },
+      "llm_quality_final_codes": {
+        "total": 4,
+        "covered": 4,
+        "coverage_ratio": 1.0,
+        "missing_sample": [],
+        "exists": true
+      }
+    }
+  },
+  "clickhouse_position_snapshot": {
+    "open_positions_count": 4,
+    "open_position_samples": [
+      "001740:external:2026-05-26T09:00:08",
+      "108490:external:2026-05-26T09:00:08",
+      "196170:external:2026-05-26T09:00:08",
+      "036540:trend_continuation_vwap:2026-05-26T09:42:01"
+    ]
+  },
+  "candidate_coverage": {
+    "trade_targets": {
+      "total": 18,
+      "covered": 18,
+      "coverage_ratio": 1.0,
+      "missing_sample": []
+    },
+    "universe": {
+      "total": 20,
+      "covered": 16,
+      "coverage_ratio": 0.8,
+      "missing_sample": [
+        "003720",
+        "439960",
+        "071950",
+        "006490"
+      ]
+    },
+    "llm_quality_final_codes": {
+      "total": 4,
+      "covered": 4,
+      "coverage_ratio": 1.0,
+      "missing_sample": [],
+      "exists": true
+    }
+  },
+  "json_path": "/home/deploy/project/kis_unified_sts/reports/daily_verification/stock/2026-05-25.json",
+  "markdown_path": "/home/deploy/project/kis_unified_sts/reports/daily_verification/stock/2026-05-25.md",
+  "notification_sent": false
+}

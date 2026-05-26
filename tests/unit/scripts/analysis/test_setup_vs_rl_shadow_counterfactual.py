@@ -200,8 +200,8 @@ class TestReconstructRLTrades:
         assert t.direction == "short"
         assert not t.is_open
 
-    def test_orphan_entry_marked_open(self):
-        """Entry with no subsequent exit -> is_open=True."""
+    def test_orphan_entry_uses_eod_proxy_when_bar_exists(self):
+        """Entry with no logged exit uses same-day EOD proxy and is flagged."""
         bars = _make_bars("2026-05-01", n_bars=60)
         shadow_rows = [
             {
@@ -214,9 +214,10 @@ class TestReconstructRLTrades:
         trades = self._build(shadow_rows, bars)
         assert len(trades) == 1
         t = trades[0]
-        assert t.is_open is True
-        assert t.pnl_krw is None
-        assert t.exit_price is None
+        assert t.is_open is False
+        assert t.is_eod_est is True
+        assert t.pnl_krw is not None
+        assert t.exit_price is not None
 
     def test_hold_action_skipped(self):
         """HOLD (4) signals produce no trades."""
@@ -534,6 +535,14 @@ class TestComputeAgg:
         # Peak at 15k, drops to -5k relative to peak is -20k
         assert agg.max_drawdown_krw < 0
 
+    def test_counts_eod_estimated_closed_trades(self):
+        agg = _compute_agg(
+            [10_000.0, -5_000.0, None],
+            eod_flags=[True, False, True],
+        )
+
+        assert agg.eod_estimated_count == 1
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Tests: Output format integrity
@@ -610,6 +619,7 @@ class TestOutputFormats:
         assert "direction" in trade
         assert "pnl_krw" in trade
         assert "is_open" in trade
+        assert "is_eod_est" in trade
 
     def test_csv_has_header_and_rows(self):
         report = _make_minimal_report()
@@ -622,6 +632,14 @@ class TestOutputFormats:
         types = {line.split(",")[0] for line in lines[1:]}
         assert "rl_shadow" in types
         assert "setup_actual" in types
+
+    def test_csv_rl_rows_include_eod_estimate_flag(self):
+        report = _make_minimal_report()
+        report.rl_trades[0].is_eod_est = True
+        csv_out = _render_csv(report)
+
+        rl_row = next(line for line in csv_out.splitlines() if line.startswith("rl_shadow"))
+        assert ",True," in rl_row
 
     def test_csv_correct_column_count(self):
         report = _make_minimal_report()

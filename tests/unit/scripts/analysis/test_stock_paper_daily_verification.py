@@ -193,6 +193,34 @@ def test_evaluate_report_flags_clickhouse_position_mismatch():
     assert "108490:external" in issues[0].observed
 
 
+def test_non_trading_day_skips_clickhouse_redis_position_mismatch():
+    cfg = _config()
+    metrics = mod.TradeMetrics(
+        trade_count=5,
+        winning_trades=3,
+        losing_trades=2,
+        win_rate_pct=60.0,
+        monthly_expected_return_pct=12.0,
+        max_drawdown_pct=3.0,
+        equity_slope_krw_per_trade=1000.0,
+        equity_is_upward=True,
+    )
+
+    issues = mod.evaluate_report(
+        cfg,
+        metrics,
+        _redis(report_is_trading_day=False, open_positions_count=0),
+        clickhouse_position_snapshot=_ch(
+            open_positions_count=3,
+            open_position_samples=[
+                "001740:external:2026-05-22T11:42:52",
+            ],
+        ),
+    )
+
+    assert issues == []
+
+
 def test_non_trading_day_skips_live_redis_ttl_gates():
     cfg = _config()
     metrics = mod.TradeMetrics(

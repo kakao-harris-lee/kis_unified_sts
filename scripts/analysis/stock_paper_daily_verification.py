@@ -1015,8 +1015,17 @@ def evaluate_report(
             "A verification data source failed.",
         )
 
+    live_redis_gates_enabled = (
+        redis_snapshot.report_is_trading_day
+        or not config.skip_live_redis_gates_on_non_trading_day
+    )
+    intraday_runtime_gates_enabled = live_redis_gates_enabled and (
+        not config.skip_live_redis_gates_on_non_trading_day or _is_market_open_now()
+    )
+
     if (
-        clickhouse_position_snapshot is not None
+        live_redis_gates_enabled
+        and clickhouse_position_snapshot is not None
         and clickhouse_position_snapshot.open_positions_count
         > redis_snapshot.open_positions_count
     ):
@@ -1031,14 +1040,6 @@ def evaluate_report(
             "ClickHouse open swing positions <= Redis runtime open positions",
             "ClickHouse has open swing-position rows that are absent from the runtime Redis position state.",
         )
-
-    live_redis_gates_enabled = (
-        redis_snapshot.report_is_trading_day
-        or not config.skip_live_redis_gates_on_non_trading_day
-    )
-    intraday_runtime_gates_enabled = live_redis_gates_enabled and (
-        not config.skip_live_redis_gates_on_non_trading_day or _is_market_open_now()
-    )
 
     if (
         intraday_runtime_gates_enabled

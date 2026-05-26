@@ -1,0 +1,235 @@
+{
+  "generated_at": "2026-05-26T06:13:08.715765+00:00",
+  "start_date": "2026-05-11",
+  "end_date": "2026-05-17",
+  "symbol": "101S6000",
+  "commission_bps": 0.3,
+  "slippage_ticks": 1.0,
+  "multiplier_krw": 50000.0,
+  "tick_size": 0.02,
+  "min_confidence": 0.5,
+  "rl_shadow": {
+    "trade_count": 9,
+    "win_count": 4,
+    "loss_count": 5,
+    "open_count": 0,
+    "gross_pnl_krw": -1350256.15,
+    "avg_pnl_krw": -150028.4611111111,
+    "win_rate": 0.4444444444444444,
+    "max_drawdown_krw": -3295550.0249999957,
+    "eod_estimated_count": 9
+  },
+  "setup_actual": {
+    "trade_count": 0,
+    "win_count": 0,
+    "loss_count": 0,
+    "open_count": 0,
+    "gross_pnl_krw": 0,
+    "avg_pnl_krw": 0.0,
+    "win_rate": 0.0,
+    "max_drawdown_krw": 0.0,
+    "eod_estimated_count": 0
+  },
+  "agreement": {
+    "long_long": 0,
+    "long_short": 0,
+    "short_long": 0,
+    "short_short": 0
+  },
+  "per_day": [
+    {
+      "date": "2026-05-11",
+      "rl_trades": 2,
+      "rl_pnl_krw": -10878.399999999907,
+      "setup_trades": 0,
+      "setup_pnl_krw": 0,
+      "delta_krw": -10878.399999999907
+    },
+    {
+      "date": "2026-05-12",
+      "rl_trades": 2,
+      "rl_pnl_krw": -11371.75,
+      "setup_trades": 0,
+      "setup_pnl_krw": 0,
+      "delta_krw": -11371.75
+    },
+    {
+      "date": "2026-05-13",
+      "rl_trades": 1,
+      "rl_pnl_krw": -1305519.0,
+      "setup_trades": 0,
+      "setup_pnl_krw": 0,
+      "delta_krw": -1305519.0
+    },
+    {
+      "date": "2026-05-14",
+      "rl_trades": 2,
+      "rl_pnl_krw": -11440.149999999907,
+      "setup_trades": 0,
+      "setup_pnl_krw": 0,
+      "delta_krw": -11440.149999999907
+    },
+    {
+      "date": "2026-05-15",
+      "rl_trades": 2,
+      "rl_pnl_krw": -11046.849999999977,
+      "setup_trades": 0,
+      "setup_pnl_krw": 0,
+      "delta_krw": -11046.849999999977
+    },
+    {
+      "date": "2026-05-16",
+      "rl_trades": 0,
+      "rl_pnl_krw": 0,
+      "setup_trades": 0,
+      "setup_pnl_krw": 0,
+      "delta_krw": 0
+    },
+    {
+      "date": "2026-05-17",
+      "rl_trades": 0,
+      "rl_pnl_krw": 0,
+      "setup_trades": 0,
+      "setup_pnl_krw": 0,
+      "delta_krw": 0
+    }
+  ],
+  "phase4_gate": {
+    "setup_executed_trades": 0,
+    "setup_target": 50,
+    "setup_gate_met": false,
+    "rl_shadow_count": 48708,
+    "rl_shadow_target": 1000,
+    "rl_shadow_gate_met": true
+  },
+  "rl_trades": [
+    {
+      "symbol": "A05605",
+      "direction": "long",
+      "entry_ts": "2026-05-11T00:20:00.456000+00:00",
+      "exit_ts": null,
+      "entry_price": 1132.2,
+      "exit_price": 1160.6,
+      "is_open": false,
+      "pnl_krw": 1414560.7999999933,
+      "is_win": true,
+      "regime": "BULL_STRONG",
+      "risk_mode": "",
+      "is_eod_est": true
+    },
+    {
+      "symbol": "A05605",
+      "direction": "short",
+      "entry_ts": "2026-05-11T01:10:00.878000+00:00",
+      "exit_ts": null,
+      "entry_price": 1132.2,
+      "exit_price": 1160.6,
+      "is_open": false,
+      "pnl_krw": -1425439.1999999932,
+      "is_win": false,
+      "regime": "BEAR_MODERATE",
+      "risk_mode": "",
+      "is_eod_est": true
+    },
+    {
+      "symbol": "A05605",
+      "direction": "long",
+      "entry_ts": "2026-05-12T00:08:00.371000+00:00",
+      "exit_ts": null,
+      "entry_price": 1243.0,
+      "exit_price": 1214.25,
+      "is_open": false,
+      "pnl_krw": -1443185.875,
+      "is_win": false,
+      "regime": "BULL_STRONG",
+      "risk_mode": "",
+      "is_eod_est": true
+    },
+    {
+      "symbol": "A05605",
+      "direction": "short",
+      "entry_ts": "2026-05-12T00:32:01.371000+00:00",
+      "exit_ts": null,
+      "entry_price": 1243.0,
+      "exit_price": 1214.25,
+      "is_open": false,
+      "pnl_krw": 1431814.125,
+      "is_win": true,
+      "regime": "SIDEWAYS_DOWN",
+      "risk_mode": "",
+      "is_eod_est": true
+    },
+    {
+      "symbol": "A05605",
+      "direction": "short",
+      "entry_ts": "2026-05-13T00:05:00.850000+00:00",
+      "exit_ts": null,
+      "entry_price": 1160.0,
+      "exit_price": 1186.0,
+      "is_open": false,
+      "pnl_krw": -1305519.0,
+      "is_win": false,
+      "regime": "BEAR_STRONG",
+      "risk_mode": "",
+      "is_eod_est": true
+    },
+    {
+      "symbol": "A05606",
+      "direction": "short",
+      "entry_ts": "2026-05-14T03:02:01.714000+00:00",
+      "exit_ts": null,
+      "entry_price": 1234.55,
+      "exit_price": 1245.5,
+      "is_open": false,
+      "pnl_krw": -553220.0750000023,
+      "is_win": false,
+      "regime": "BEAR_STRONG",
+      "risk_mode": "",
+      "is_eod_est": true
+    },
+    {
+      "symbol": "A05606",
+      "direction": "long",
+      "entry_ts": "2026-05-14T04:37:02.353000+00:00",
+      "exit_ts": null,
+      "entry_price": 1234.55,
+      "exit_price": 1245.5,
+      "is_open": false,
+      "pnl_krw": 541779.9250000024,
+      "is_win": true,
+      "regime": "BEAR_MODERATE",
+      "risk_mode": "",
+      "is_eod_est": true
+    },
+    {
+      "symbol": "A05606",
+      "direction": "long",
+      "entry_ts": "2026-05-15T00:20:00.121000+00:00",
+      "exit_ts": null,
+      "entry_price": 1176.25,
+      "exit_price": 1172.7,
+      "is_open": false,
+      "pnl_krw": -183023.42499999772,
+      "is_win": false,
+      "regime": "BULL_STRONG",
+      "risk_mode": "",
+      "is_eod_est": true
+    },
+    {
+      "symbol": "A05606",
+      "direction": "short",
+      "entry_ts": "2026-05-15T06:09:00.604000+00:00",
+      "exit_ts": null,
+      "entry_price": 1176.25,
+      "exit_price": 1172.7,
+      "is_open": false,
+      "pnl_krw": 171976.57499999774,
+      "is_win": true,
+      "regime": "SIDEWAYS_FLAT",
+      "risk_mode": "",
+      "is_eod_est": true
+    }
+  ],
+  "setup_trades": [],
+  "archived_at": "2026-05-26T06:13:08.717965+00:00"
+}
