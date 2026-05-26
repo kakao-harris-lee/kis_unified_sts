@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -18,6 +19,7 @@ import aiohttp
 
 from shared.http import AsyncSessionMixin
 from shared.kis.auth import KISAuthConfig, KISAuthManager
+from shared.kis.client import _DEFAULT_RATE_LIMIT, _RateLimiter
 from shared.utils.parsing import parse_float, parse_int
 
 logger = logging.getLogger(__name__)
@@ -60,13 +62,27 @@ class RankingEndpoints:
 class KISRankingClient(AsyncSessionMixin):
     """Async client for KIS domestic stock ranking APIs."""
 
-    def __init__(self, config: KISAuthConfig, endpoints: RankingEndpoints | None = None):
+    def __init__(
+        self, config: KISAuthConfig, endpoints: RankingEndpoints | None = None
+    ):
         self.config = config
         self.endpoints = endpoints or RankingEndpoints()
         self.auth_manager = KISAuthManager.get_instance(config)
+        rate_limit = int(
+            os.environ.get(
+                "KIS_RANKING_API_RATE_LIMIT",
+                os.environ.get("KIS_API_RATE_LIMIT", str(_DEFAULT_RATE_LIMIT)),
+            )
+        )
+        self._rate_limiter = _RateLimiter(max_requests=max(1, rate_limit))
 
     async def close(self) -> None:
         await self._close_session()
+
+    @property
+    def is_rate_limited(self) -> bool:
+        """True while ranking requests are backing off from KIS rate limiting."""
+        return self._rate_limiter.is_penalized
 
     async def get_ranking(
         self,
@@ -106,31 +122,63 @@ class KISRankingClient(AsyncSessionMixin):
 
         raise ValueError(f"Unsupported ranking type: {type}")
 
-    async def get_all_aggressive_sources(self, limit: int = _MAX_KIS_RANKING_ROWS) -> dict[str, Any]:
+    async def get_all_aggressive_sources(
+        self, limit: int = _MAX_KIS_RANKING_ROWS
+    ) -> dict[str, Any]:
         """Fetch multiple ranking sources concurrently.
 
         This is meant for screeners: high volume + strong gainers + losers
         across KOSPI/KOSDAQ.
         """
-        tasks = [
-            self.get_ranking(type="volume", market="KOSPI", limit=limit),
-            self.get_ranking(type="volume", market="KOSDAQ", limit=limit),
-            self.get_ranking(type="gainer", market="KOSPI", limit=limit),
-            self.get_ranking(type="gainer", market="KOSDAQ", limit=limit),
-            self.get_ranking(type="gainer", market="KOSPI", limit=limit, direction="down"),
-            self.get_ranking(type="gainer", market="KOSDAQ", limit=limit, direction="down"),
-        ]
+        tasks = {
+            "kospi_volume": self.get_ranking(
+                type="volume", market="KOSPI", limit=limit
+            ),
+            "kosdaq_volume": self.get_ranking(
+                type="volume", market="KOSDAQ", limit=limit
+            ),
+            "kospi_gainer": self.get_ranking(
+                type="gainer", market="KOSPI", limit=limit
+            ),
+            "kosdaq_gainer": self.get_ranking(
+                type="gainer", market="KOSDAQ", limit=limit
+            ),
+            "kospi_loser": self.get_ranking(
+                type="gainer", market="KOSPI", limit=limit, direction="down"
+            ),
+            "kosdaq_loser": self.get_ranking(
+                type="gainer", market="KOSDAQ", limit=limit, direction="down"
+            ),
+        }
 
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        gathered = await asyncio.gather(*tasks.values(), return_exceptions=True)
+        results: dict[str, Any] = {}
+        for key, result in zip(tasks, gathered, strict=True):
+            if isinstance(result, Exception):
+                logger.warning("KIS ranking source failed (%s): %s", key, result)
+                results[key] = []
+            else:
+                results[key] = result
 
         return {
-            "kospi_volume": results[0] if not isinstance(results[0], Exception) else [],
-            "kosdaq_volume": results[1] if not isinstance(results[1], Exception) else [],
-            "kospi_gainer": results[2] if not isinstance(results[2], Exception) else [],
-            "kosdaq_gainer": results[3] if not isinstance(results[3], Exception) else [],
-            "kospi_loser": results[4] if not isinstance(results[4], Exception) else [],
-            "kosdaq_loser": results[5] if not isinstance(results[5], Exception) else [],
+            "kospi_volume": results["kospi_volume"],
+            "kosdaq_volume": results["kosdaq_volume"],
+            "kospi_gainer": results["kospi_gainer"],
+            "kosdaq_gainer": results["kosdaq_gainer"],
+            "kospi_loser": results["kospi_loser"],
+            "kosdaq_loser": results["kosdaq_loser"],
         }
+
+    @staticmethod
+    def _is_rate_limit_error(text: str) -> bool:
+        markers = (
+            "EGW00201",
+            "초당 거래건수",
+            "거래건수",
+            "rate limit",
+            "RATE",
+        )
+        return any(marker in text for marker in markers)
 
     async def _get_volume_rank(self, market: MarketType) -> dict[str, Any]:
         headers = await self._get_headers(self.endpoints.volume_tr_id_real)
@@ -148,7 +196,9 @@ class KISRankingClient(AsyncSessionMixin):
             "FID_VOL_CNT": "",
             "FID_INPUT_DATE_1": "",
         }
-        return await self._get(self.endpoints.volume_path, headers=headers, params=params)
+        return await self._get(
+            self.endpoints.volume_path, headers=headers, params=params
+        )
 
     async def _get_fluctuation_rank(
         self, market: MarketType, direction: Literal["up", "down"]
@@ -181,7 +231,10 @@ class KISRankingClient(AsyncSessionMixin):
         headers["custtype"] = "P"
         return headers
 
-    async def _get(self, path: str, headers: dict[str, str], params: dict[str, Any]) -> dict[str, Any]:
+    async def _get(
+        self, path: str, headers: dict[str, str], params: dict[str, Any]
+    ) -> dict[str, Any]:
+        await self._rate_limiter.acquire()
         url = f"{self.config.base_url}{path}"
         session = await self._get_session()
         timeout_seconds = getattr(self.config, "request_timeout_seconds", 30)
@@ -192,15 +245,22 @@ class KISRankingClient(AsyncSessionMixin):
         ) as response:
             text = await response.text()
             if response.status != 200:
+                if self._is_rate_limit_error(text):
+                    self._rate_limiter.penalty()
                 raise RuntimeError(f"KIS ranking HTTP {response.status}: {text[:2000]}")
             try:
                 data = await response.json()
             except Exception as e:
-                raise RuntimeError(f"KIS ranking JSON decode failed: {e}: {text[:2000]}") from e
+                raise RuntimeError(
+                    f"KIS ranking JSON decode failed: {e}: {text[:2000]}"
+                ) from e
 
         if data.get("rt_cd") != "0":
             msg = data.get("msg1", "Unknown error")
+            if self._is_rate_limit_error(str(msg)):
+                self._rate_limiter.penalty()
             raise RuntimeError(f"KIS ranking API error: {msg}")
+        self._rate_limiter.reset_backoff()
         return data
 
     @staticmethod

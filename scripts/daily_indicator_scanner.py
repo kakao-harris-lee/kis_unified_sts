@@ -61,6 +61,7 @@ DEFAULT_REDIS_CANDIDATE_KEYS = (
     "system:daily_watchlist:latest",
     "system:llm_quality:latest",
 )
+BACKFILL_RETRYABLE_FAILURES = {"no_data", "stale_data", "insufficient_data"}
 
 
 def _load_strategy_watchlist_size(default: int = 40) -> int:
@@ -78,6 +79,13 @@ def _load_strategy_watchlist_size(default: int = 40) -> int:
 def _load_repo_env() -> None:
     """Load repo-local .env for standalone cron/manual runs."""
     load_dotenv(_REPO_ROOT / ".env", override=False)
+
+
+def _env_flag(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _dedupe_symbols(symbols: Iterable[str]) -> list[str]:
@@ -345,6 +353,93 @@ def load_daily_candles(
         columns=["code", "date", "open", "high", "low", "close", "volume"],
     )
     return clean_daily_candle_frame(df, config=quality_config, limit=days)
+
+
+def load_symbol_indicators(
+    client: Any,
+    symbol: str,
+    *,
+    days: int,
+    quality_config: DailyCandleQualityConfig,
+    expected_latest: date | None,
+    max_stale_trading_days: int,
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Load, validate, and compute one symbol's daily indicators."""
+    try:
+        df = load_daily_candles(
+            client,
+            symbol,
+            days=days,
+            quality_config=quality_config,
+        )
+        if df.empty:
+            return None, "no_data"
+
+        if not is_fresh_daily_data(
+            df,
+            expected_latest=expected_latest,
+            max_stale_trading_days=max_stale_trading_days,
+        ):
+            latest = latest_candle_date(df)
+            lag = (
+                trading_day_lag(latest, expected_latest)
+                if latest and expected_latest
+                else None
+            )
+            return (
+                None,
+                (
+                    "stale_data "
+                    f"latest={latest} expected={expected_latest} "
+                    f"lag={lag} max={max_stale_trading_days}"
+                ),
+            )
+
+        indicators = compute_indicators(df)
+        if indicators is None:
+            return None, f"insufficient_data bars={len(df)}"
+
+        return indicators, None
+    except Exception as exc:  # noqa: BLE001 - scanner must aggregate per-symbol errors
+        return None, f"error {exc}"
+
+
+def _failure_category(reason: str | None) -> str:
+    return str(reason or "").split(" ", 1)[0]
+
+
+async def backfill_missing_candidate_candles(
+    symbols: list[str],
+    *,
+    days: int,
+    max_symbols: int,
+) -> int:
+    """Best-effort KIS daily backfill for missing dynamic candidates."""
+    limited = _dedupe_symbols(symbols)[: max(0, int(max_symbols))]
+    if not limited:
+        return 0
+    _load_repo_env()
+    os.environ.setdefault(
+        "STOCK_RATE_LIMIT",
+        os.getenv("STOCK_DAILY_BACKFILL_RATE_LIMIT", "1"),
+    )
+    os.environ.setdefault(
+        "STOCK_MAX_CONCURRENCY",
+        os.getenv("STOCK_DAILY_BACKFILL_MAX_CONCURRENCY", "1"),
+    )
+    from shared.collector.historical.daily_stock import collect_daily_candles
+
+    logger.info(
+        "Backfilling daily candles for %d Redis candidate symbols "
+        "(days=%d, rate=%s/s, concurrency=%s)",
+        len(limited),
+        days,
+        os.getenv("STOCK_RATE_LIMIT"),
+        os.getenv("STOCK_MAX_CONCURRENCY"),
+    )
+    return await collect_daily_candles(
+        codes=limited, days=max(1, int(days)), verbose=False
+    )
 
 
 def latest_candle_date(df: pd.DataFrame) -> date | None:
@@ -638,6 +733,27 @@ def main():
         ),
         help="Maximum symbols per embedded daily strategy watchlist",
     )
+    parser.add_argument(
+        "--backfill-missing-candidates",
+        action=argparse.BooleanOptionalAction,
+        default=_env_flag("STOCK_DAILY_BACKFILL_MISSING_CANDIDATES", True),
+        help=(
+            "Backfill missing/stale Redis candidate daily candles before publishing "
+            "(default: true)"
+        ),
+    )
+    parser.add_argument(
+        "--backfill-days",
+        type=int,
+        default=int(os.getenv("STOCK_DAILY_BACKFILL_DAYS", "100")),
+        help="Trading-day lookback for on-demand candidate daily backfill",
+    )
+    parser.add_argument(
+        "--backfill-max-symbols",
+        type=int,
+        default=int(os.getenv("STOCK_DAILY_BACKFILL_MAX_SYMBOLS", "30")),
+        help="Maximum Redis candidate symbols to backfill per scanner run",
+    )
     args = parser.parse_args()
 
     symbols = args.symbols.split(",") if args.symbols else DEFAULT_SYMBOLS
@@ -669,55 +785,72 @@ def main():
     quality_config = load_daily_quality_config()
 
     results: dict[str, dict] = {}
-    errors = 0
+    failures: dict[str, str] = {}
 
     for symbol in symbols:
+        indicators, reason = load_symbol_indicators(
+            client,
+            symbol,
+            days=args.days,
+            quality_config=quality_config,
+            expected_latest=expected_latest,
+            max_stale_trading_days=args.max_stale_trading_days,
+        )
+        if indicators is not None:
+            results[symbol] = indicators
+            logger.debug("  %s: OK", symbol)
+        else:
+            failures[symbol] = reason or "unknown"
+            logger.warning("  %s: %s", symbol, failures[symbol])
+
+    backfill_attempted_count = 0
+    backfill_rows = 0
+    backfill_retry_success_count = 0
+    redis_candidate_set = set(redis_candidates)
+    backfill_symbols = [
+        symbol
+        for symbol, reason in failures.items()
+        if symbol in redis_candidate_set
+        and _failure_category(reason) in BACKFILL_RETRYABLE_FAILURES
+    ]
+    if args.backfill_missing_candidates and backfill_symbols:
+        limited = backfill_symbols[: max(0, args.backfill_max_symbols)]
+        backfill_attempted_count = len(limited)
         try:
-            df = load_daily_candles(
+            backfill_rows = asyncio.run(
+                backfill_missing_candidate_candles(
+                    limited,
+                    days=args.backfill_days,
+                    max_symbols=args.backfill_max_symbols,
+                )
+            )
+        except Exception as exc:  # noqa: BLE001 - publish original partial results
+            logger.warning("Candidate daily backfill failed: %s", exc)
+            backfill_rows = 0
+
+        for symbol in limited:
+            indicators, reason = load_symbol_indicators(
                 client,
                 symbol,
                 days=args.days,
                 quality_config=quality_config,
-            )
-            if df.empty:
-                logger.warning(f"  {symbol}: no data")
-                errors += 1
-                continue
-
-            if not is_fresh_daily_data(
-                df,
                 expected_latest=expected_latest,
                 max_stale_trading_days=args.max_stale_trading_days,
-            ):
-                latest = latest_candle_date(df)
-                lag = (
-                    trading_day_lag(latest, expected_latest)
-                    if latest and expected_latest
-                    else None
-                )
+            )
+            if indicators is not None:
+                results[symbol] = indicators
+                failures.pop(symbol, None)
+                backfill_retry_success_count += 1
+                logger.info("  %s: OK after daily backfill", symbol)
+            else:
+                failures[symbol] = reason or "unknown"
                 logger.warning(
-                    "  %s: stale daily candles latest=%s expected=%s lag=%s max=%s",
+                    "  %s: still unavailable after backfill: %s",
                     symbol,
-                    latest,
-                    expected_latest,
-                    lag,
-                    args.max_stale_trading_days,
+                    failures[symbol],
                 )
-                errors += 1
-                continue
 
-            indicators = compute_indicators(df)
-            if indicators is None:
-                logger.warning(f"  {symbol}: insufficient data ({len(df)} bars)")
-                errors += 1
-                continue
-
-            results[symbol] = indicators
-            logger.debug(f"  {symbol}: OK ({len(df)} bars)")
-
-        except Exception as e:
-            logger.error(f"  {symbol}: {e}")
-            errors += 1
+    errors = len(failures)
 
     strategy_candidates: dict[str, list[str]] = {}
     if results and args.build_strategy_watchlist:
@@ -745,6 +878,10 @@ def main():
                 "baseline_symbol_count": baseline_count,
                 "redis_candidate_count": len(redis_candidates),
                 "error_count": errors,
+                "backfill_missing_candidates": bool(args.backfill_missing_candidates),
+                "backfill_attempted_count": backfill_attempted_count,
+                "backfill_rows": backfill_rows,
+                "backfill_retry_success_count": backfill_retry_success_count,
                 "expected_latest": (
                     expected_latest.isoformat() if expected_latest else None
                 ),
