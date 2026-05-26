@@ -1,0 +1,33 @@
+strategy_lab:
+  ttl_seconds: 86400
+  position_ttl_seconds: 172800
+  default_order_amount: 1000000
+  builder_template:
+    entry:
+      left: rsi
+      operator: lte
+      right: 30
+    exit:
+      left: rsi
+      operator: gte
+      right: 70
+  capabilities:
+    indicators:
+      - rsi
+      - close
+      - volume
+      - sma_20
+    operators:
+      - gt
+      - gte
+      - lt
+      - lte
+      - eq
+    sides:
+      - BUY
+      - SELL
+      - HOLD
+    timeframes:
+      - 1m
+      - 5m
+      - 1d

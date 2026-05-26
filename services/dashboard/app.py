@@ -51,6 +51,10 @@ OPENAPI_TAGS = [
         "description": "Strategy configuration management",
     },
     {
+        "name": "strategy-lab",
+        "description": "Visual strategy builder, generated signals, and paper orders",
+    },
+    {
         "name": "metrics",
         "description": "Performance and execution venue metrics",
     },
@@ -193,6 +197,7 @@ def _register_routes(app: FastAPI) -> None:
         health,
         metrics,
         signals,
+        strategy_lab,
         strategies,
         trades,
         trading,
@@ -202,6 +207,7 @@ def _register_routes(app: FastAPI) -> None:
     # Include API routers (registered first — take priority over SPA catch-all)
     app.include_router(trading.router)
     app.include_router(signals.router)
+    app.include_router(strategy_lab.router)
     app.include_router(trades.router)
     app.include_router(strategies.router)
     app.include_router(metrics.router, tags=["metrics"])
