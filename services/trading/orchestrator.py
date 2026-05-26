@@ -1292,7 +1292,7 @@ class TradingOrchestrator:
         stagger_delay = float(dp_cfg.get("stagger_delay", 0.1))
 
         telegram_notifier = None
-        send_telegram_alerts = bool(failover_cfg.get("send_telegram_alerts", True))
+        send_telegram_alerts = bool(failover_cfg.get("send_telegram_alerts", False))
         if self.config.enable_telegram and send_telegram_alerts:
             try:
                 from shared.notification.telegram import (
@@ -1331,20 +1331,26 @@ class TradingOrchestrator:
                 fetch_timeout_seconds=float(dp_cfg.get("fetch_timeout_seconds", 5.0)),
                 stagger_delay_seconds=stagger_delay,
                 health_check_interval_seconds=float(
-                    failover_cfg.get("health_check_interval_seconds", 5.0)
+                    failover_cfg.get("health_check_interval_seconds", 10.0)
                 ),
                 rest_poll_interval_seconds=float(
-                    failover_cfg.get("rest_poll_interval_seconds", 5.0)
+                    failover_cfg.get("rest_poll_interval_seconds", 10.0)
                 ),
                 staleness_threshold_seconds=float(
-                    failover_cfg.get("staleness_threshold_seconds", 10.0)
+                    failover_cfg.get("staleness_threshold_seconds", 30.0)
                 ),
-                min_fresh_ratio=float(failover_cfg.get("min_fresh_ratio", 0.5)),
+                min_fresh_ratio=float(failover_cfg.get("min_fresh_ratio", 0.25)),
                 startup_grace_seconds=float(
-                    failover_cfg.get("startup_grace_seconds", 60.0)
+                    failover_cfg.get("startup_grace_seconds", 120.0)
                 ),
                 rest_fallback_max_symbols=failover_cfg.get("rest_fallback_max_symbols"),
                 send_telegram_alerts=send_telegram_alerts,
+                failover_unhealthy_threshold=int(
+                    failover_cfg.get("failover_unhealthy_threshold", 3)
+                ),
+                recovery_healthy_threshold=int(
+                    failover_cfg.get("recovery_healthy_threshold", 3)
+                ),
             ),
             kis_client=self._kis_client,
             data_source=data_source,

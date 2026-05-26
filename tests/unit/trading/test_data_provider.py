@@ -16,9 +16,15 @@ class TestDataProviderConfig:
         assert config.cache_ttl_seconds == 1.0
         assert config.batch_size == 20
         assert config.fetch_timeout_seconds == 5.0
-        assert config.staleness_threshold_seconds == 10.0
+        assert config.health_check_interval_seconds == 10.0
+        assert config.rest_poll_interval_seconds == 10.0
+        assert config.staleness_threshold_seconds == 30.0
+        assert config.min_fresh_ratio == 0.25
         assert config.rest_fallback_max_symbols is None
-        assert config.startup_grace_seconds == 60.0
+        assert config.startup_grace_seconds == 120.0
+        assert config.send_telegram_alerts is False
+        assert config.failover_unhealthy_threshold == 3
+        assert config.recovery_healthy_threshold == 3
         assert config.mock_seed is None
 
     def test_validation_passes(self):
@@ -68,6 +74,9 @@ class TestDataProviderConfig:
                 "min_fresh_ratio": 0.25,
                 "startup_grace_seconds": 45.0,
                 "rest_fallback_max_symbols": 10,
+                "send_telegram_alerts": True,
+                "failover_unhealthy_threshold": 4,
+                "recovery_healthy_threshold": 2,
                 "mock_seed": 42,
             }
         )
@@ -77,6 +86,9 @@ class TestDataProviderConfig:
         assert config.min_fresh_ratio == 0.25
         assert config.startup_grace_seconds == 45.0
         assert config.rest_fallback_max_symbols == 10
+        assert config.send_telegram_alerts is True
+        assert config.failover_unhealthy_threshold == 4
+        assert config.recovery_healthy_threshold == 2
         assert config.mock_seed == 42
 
     def test_from_dict_type_validation(self):
@@ -91,6 +103,12 @@ class TestDataProviderConfig:
 
         with pytest.raises(TypeError, match="startup_grace_seconds"):
             DataProviderConfig.from_dict({"startup_grace_seconds": "invalid"})
+
+        with pytest.raises(TypeError, match="failover_unhealthy_threshold"):
+            DataProviderConfig.from_dict({"failover_unhealthy_threshold": "invalid"})
+
+        with pytest.raises(TypeError, match="recovery_healthy_threshold"):
+            DataProviderConfig.from_dict({"recovery_healthy_threshold": "invalid"})
 
 
 class TestMarketDataCache:
@@ -541,8 +559,8 @@ class TestFailoverLogic:
         assert provider.current_mode == DataSourceMode.WEBSOCKET
 
     @pytest.mark.asyncio
-    async def test_failover_with_telegram_alerts(self):
-        """Test failover sends Telegram alert when configured"""
+    async def test_failover_telegram_alert_removed_even_when_configured(self):
+        """Failover no longer sends Telegram noise even if legacy config is true."""
         from services.trading.data_provider import (
             MarketDataProvider,
             DataProviderConfig,
@@ -559,16 +577,11 @@ class TestFailoverLogic:
 
         await provider._failover_to_rest()
 
-        # Should have sent failover alert
-        telegram_notifier.send_message.assert_called_once()
-        call_args = telegram_notifier.send_message.call_args
-        message = call_args[0][0]
-        assert "WebSocket" in message
-        assert "REST" in message
+        telegram_notifier.send_message.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_recovery_with_telegram_alerts(self):
-        """Test recovery sends Telegram alert when configured"""
+    async def test_recovery_telegram_alert_removed_even_when_configured(self):
+        """Recovery no longer sends Telegram noise even if legacy config is true."""
         from services.trading.data_provider import (
             MarketDataProvider,
             DataProviderConfig,
@@ -594,11 +607,7 @@ class TestFailoverLogic:
 
         await provider._recover_to_websocket()
 
-        # Should have sent recovery alert
-        telegram_notifier.send_message.assert_called_once()
-        call_args = telegram_notifier.send_message.call_args
-        message = call_args[0][0]
-        assert "복구" in message or "recovery" in message.lower()
+        telegram_notifier.send_message.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_telegram_alerts_disabled(self):
@@ -623,8 +632,8 @@ class TestFailoverLogic:
         telegram_notifier.send_message.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_telegram_alert_failure_does_not_break_failover(self):
-        """Test failover continues even if Telegram alert fails"""
+    async def test_legacy_telegram_alert_failure_cannot_break_failover(self):
+        """Legacy notifier is not called, so Telegram errors cannot affect failover."""
         from services.trading.data_provider import (
             MarketDataProvider,
             DataProviderConfig,
@@ -645,6 +654,7 @@ class TestFailoverLogic:
         # Failover should succeed despite Telegram error
         await provider._failover_to_rest()
         assert provider.current_mode == DataSourceMode.REST_FALLBACK
+        telegram_notifier.send_message.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_health_check_loop_triggers_failover(self):
@@ -668,6 +678,7 @@ class TestFailoverLogic:
         config = DataProviderConfig(
             health_check_interval_seconds=0.5,
             staleness_threshold_seconds=10.0,
+            failover_unhealthy_threshold=1,
         )
         source = ToggleHealthSource()
         provider = MarketDataProvider(config=config, data_source=source)
@@ -682,6 +693,45 @@ class TestFailoverLogic:
         assert provider.current_mode == DataSourceMode.REST_FALLBACK
 
         # Cleanup
+        health_task.cancel()
+        try:
+            await health_task
+        except asyncio.CancelledError:
+            pass
+
+    @pytest.mark.asyncio
+    async def test_health_check_requires_consecutive_unhealthy_checks(self):
+        """One transient low-fresh check should not immediately fail over."""
+        from services.trading.data_provider import (
+            MarketDataProvider,
+            DataProviderConfig,
+            DataSourceMode,
+        )
+
+        class UnhealthySource:
+            async def get_health_status(self) -> dict:
+                return {
+                    "running": True,
+                    "connected": True,
+                    "staleness_seconds": 31.0,
+                    "fresh_symbol_count": 0,
+                    "symbol_count": 2,
+                }
+
+        config = DataProviderConfig(
+            health_check_interval_seconds=0.5,
+            staleness_threshold_seconds=30.0,
+            failover_unhealthy_threshold=3,
+        )
+        provider = MarketDataProvider(config=config, data_source=UnhealthySource())
+
+        health_task = asyncio.create_task(provider._health_check_loop())
+        await asyncio.sleep(0.7)
+        assert provider.current_mode == DataSourceMode.WEBSOCKET
+
+        await asyncio.sleep(1.0)
+        assert provider.current_mode == DataSourceMode.REST_FALLBACK
+
         health_task.cancel()
         try:
             await health_task
@@ -761,6 +811,7 @@ class TestFailoverLogic:
         config = DataProviderConfig(
             health_check_interval_seconds=0.5,
             staleness_threshold_seconds=10.0,
+            recovery_healthy_threshold=1,
         )
         source = ToggleHealthSource()
         provider = MarketDataProvider(config=config, data_source=source)
@@ -925,7 +976,10 @@ class TestFailoverLogic:
             DataSourceMode,
         )
 
-        config = DataProviderConfig(health_check_interval_seconds=0.5)
+        config = DataProviderConfig(
+            health_check_interval_seconds=0.5,
+            failover_unhealthy_threshold=1,
+        )
         provider = MarketDataProvider(config=config)
 
         # Start health check (should not crash with no data source)
@@ -956,7 +1010,10 @@ class TestFailoverLogic:
             async def is_healthy(self) -> bool:
                 return False
 
-        config = DataProviderConfig(health_check_interval_seconds=0.5)
+        config = DataProviderConfig(
+            health_check_interval_seconds=0.5,
+            failover_unhealthy_threshold=1,
+        )
         provider = MarketDataProvider(config=config, data_source=AsyncHealthSource())
 
         # Start health check
@@ -1142,7 +1199,7 @@ class TestSilentStallGuard:
     failover triggered → IndicatorEngine got 800s+ stale data → 0 signals
     → 0 trades for ~30 min.
 
-    Fix (PR #218): add `min_fresh_ratio` config (default 0.5) so the
+    Fix (PR #218): add `min_fresh_ratio` config so the
     health check fails when fewer than half the subscribed symbols are
     fresh, even if the overall `_last_tick_ts` is recent.
     """
