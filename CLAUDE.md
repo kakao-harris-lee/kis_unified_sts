@@ -535,6 +535,23 @@ if now_kst < open_dt:
 
 레퍼런스 구현: `shared/strategy/entry/opening_volume_surge.py`, `shared/strategy/entry/momentum_breakout.py`
 
+#### Cron entries: 항상 KST native로 작성
+
+운영 서버 crontab은 `CRON_TZ=Asia/Seoul`이 선언되어 있어 모든 entry가 **KST로 해석된다**. UTC 시각을 그대로 쓰면 9시간 어긋난다.
+
+```cron
+# ❌ 금지 — UTC를 KST로 해석되는 환경에 그대로 쓰기
+55 23 * * 0-4   # 의도: Sun-Thu 23:55 UTC = Mon-Fri 08:55 KST
+                # 실제: Sun-Thu 23:55 KST (전혀 다른 시점)
+
+# ✅ 권장 — KST native
+55 8 * * 1-5    # 08:55 KST Mon-Fri (장 시작 5분 전)
+2-57/5 9-15 * * 1-5   # 매 5분 09:00-15:55 KST (장중)
+0 18 * * 0      # Sun 18:00 KST (주간 다이제스트)
+```
+
+**확인 방법**: `crontab -l | grep CRON_TZ` — `Asia/Seoul` 선언이 있는 줄 아래의 entry는 KST. 한국 시장만 거래하는 이 프로젝트에서는 KST가 canonical이며 `CRON_TZ=UTC`로 바꾸지 않는다.
+
 ---
 
 ## 📝 코드 스타일
