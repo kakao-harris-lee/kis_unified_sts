@@ -49,8 +49,7 @@ echo ""
 echo "Checking services..."
 echo ""
 
-# Check each service
-check_service "Trading API" "http://localhost:8000/health/live" || true
+# Check each host-exposed service
 check_service "Dashboard API" "http://localhost:8001/health" || true
 check_redis || true
 check_service "Prometheus" "http://localhost:9090/-/healthy" || true

@@ -2,7 +2,6 @@
 
 ## Base URL
 
-- Trading API: `http://localhost:8000`
 - Dashboard API: `http://localhost:8001`
 
 ## Authentication
@@ -394,7 +393,7 @@ Rate limit 초과 시 `429 Too Many Requests` 응답과 함께 `Retry-After` 헤
 ```python
 import requests
 
-API_URL = "http://localhost:8000"
+API_URL = "http://localhost:8001"
 API_KEY = "your_api_key"
 
 headers = {"X-API-Key": API_KEY}

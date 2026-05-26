@@ -97,7 +97,6 @@ docker compose up -d
 
 ### 접속 URL
 
-- Trading API: http://localhost:8000
 - Dashboard: http://localhost:8001
 - Prometheus: http://localhost:9090
 
