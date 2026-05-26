@@ -265,10 +265,8 @@ class AggregateStat:
     win_rate: float
     max_drawdown_krw: float
     # Number of trades whose exit price was estimated via the EOD close
-    # fallback (Setup A/C trades with no recorded exit).  Operators
-    # reading aggregate PnL should know what fraction is approximation
-    # vs actual-exit measurement.  Always 0 for RL shadow trades
-    # (they always have an explicit LONG_EXIT/SHORT_EXIT in the predictions).
+    # fallback. Operators reading aggregate PnL should know what fraction is
+    # approximation vs actual-exit measurement.
     eod_estimated_count: int = 0
 
 
@@ -1059,9 +1057,7 @@ def run_analysis(
         t.pnl_krw if t.executed and t.pnl_krw is not None else None
         for t in setup_trades
     ]
-    # RL shadow trades always have explicit LONG_EXIT/SHORT_EXIT predictions
-    # (no EOD fallback used) — pass all-False flags for clarity.
-    rl_eod_flags = [False] * len(rl_pnl_list)
+    rl_eod_flags = [t.is_eod_est for t in rl_trades]
     setup_eod_flags = [t.is_eod_est for t in setup_trades]
 
     rl_agg = _compute_agg(rl_pnl_list, eod_flags=rl_eod_flags)
@@ -1232,6 +1228,7 @@ def _report_to_dict(report: CounterfactualReport) -> dict[str, Any]:
             "is_win": t.is_win,
             "regime": t.regime,
             "risk_mode": t.risk_mode,
+            "is_eod_est": t.is_eod_est,
         }
 
     def _trade_setup(t: SetupTrade) -> dict[str, Any]:
@@ -1293,7 +1290,7 @@ def _render_csv(report: CounterfactualReport) -> str:
             t.entry_ts.isoformat() if t.entry_ts else "",
             t.exit_ts.isoformat() if t.exit_ts else "",
             t.entry_price, t.exit_price if t.exit_price is not None else "",
-            "", "", "",
+            "", "", t.is_eod_est,
             t.pnl_krw if t.pnl_krw is not None else "",
             t.is_win if t.is_win is not None else "",
             t.is_open,

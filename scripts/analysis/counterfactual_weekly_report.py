@@ -95,6 +95,11 @@ def _format_telegram_message(report: CounterfactualReport) -> str:
         f"• RL shadow virtual:  `{rl.trade_count}` trades, "
         f"PnL `{rl.gross_pnl_krw:,.0f}` KRW (WR `{rl.win_rate:.1%}`)"
     )
+    if rl.eod_estimated_count:
+        lines.append(
+            f"  ↳ RL EOD-estimated exits: `{rl.eod_estimated_count}` "
+            f"({100.0 * rl.eod_estimated_count / rl.trade_count:.0f}%)"
+        )
     if setup.eod_estimated_count:
         lines.append(
             f"  ↳ Setup EOD-estimated exits: `{setup.eod_estimated_count}` "

@@ -1,0 +1,243 @@
+strategy_builder:
+  ttl_seconds: 86400
+  position_ttl_seconds: 172800
+  default_order_amount: 1000000
+  operators:
+    - greater_than
+    - less_than
+    - greater_equal
+    - less_equal
+    - equals
+    - cross_above
+    - cross_below
+  price_fields:
+    - close
+    - open
+    - high
+    - low
+    - volume
+  risk_fields:
+    order_amount:
+      default: 1000000
+      min: 0
+    stop_loss:
+      default_percent: 5.0
+    take_profit:
+      default_percent: 10.0
+    trailing_stop:
+      default_percent: 3.0
+  indicators:
+    - id: sma
+      name: Simple Moving Average
+      name_ko: 단순 이동평균
+      category: moving_average
+      description: Simple moving average over a configurable period.
+      params:
+        - name: period
+          type: number
+          default: 20
+          min: 1
+          max: 500
+      outputs:
+        - id: value
+          name: Value
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: ema
+      name: Exponential Moving Average
+      name_ko: 지수 이동평균
+      category: moving_average
+      description: Exponential moving average over a configurable period.
+      params:
+        - name: period
+          type: number
+          default: 20
+          min: 1
+          max: 500
+      outputs:
+        - id: value
+          name: Value
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: rsi
+      name: RSI
+      name_ko: RSI
+      category: oscillator
+      description: Relative Strength Index.
+      params:
+        - name: period
+          type: number
+          default: 14
+          min: 1
+          max: 100
+      outputs:
+        - id: value
+          name: Value
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: macd
+      name: MACD
+      name_ko: MACD
+      category: oscillator
+      description: Moving Average Convergence/Divergence.
+      params:
+        - name: fast
+          type: number
+          default: 12
+          min: 1
+          max: 100
+        - name: slow
+          type: number
+          default: 26
+          min: 1
+          max: 200
+        - name: signal
+          type: number
+          default: 9
+          min: 1
+          max: 100
+      outputs:
+        - id: value
+          name: MACD
+        - id: signal
+          name: Signal
+        - id: histogram
+          name: Histogram
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: bollinger
+      name: Bollinger Bands
+      name_ko: 볼린저 밴드
+      category: volatility
+      description: Upper, middle, and lower bands around a moving average.
+      params:
+        - name: period
+          type: number
+          default: 20
+          min: 1
+          max: 200
+        - name: std
+          type: number
+          default: 2
+          min: 0.1
+          max: 10
+      outputs:
+        - id: upper
+          name: Upper
+        - id: middle
+          name: Middle
+        - id: lower
+          name: Lower
+      default_output: middle
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: stochastic
+      name: Stochastic
+      name_ko: 스토캐스틱
+      category: oscillator
+      description: Stochastic oscillator.
+      params:
+        - name: k_period
+          type: number
+          default: 14
+          min: 1
+          max: 100
+        - name: d_period
+          type: number
+          default: 3
+          min: 1
+          max: 100
+      outputs:
+        - id: k
+          name: Percent K
+        - id: d
+          name: Percent D
+      default_output: k
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: atr
+      name: ATR
+      name_ko: ATR
+      category: volatility
+      description: Average True Range.
+      params:
+        - name: period
+          type: number
+          default: 14
+          min: 1
+          max: 100
+      outputs:
+        - id: value
+          name: Value
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: adx
+      name: ADX
+      name_ko: ADX
+      category: trend
+      description: Average Directional Index.
+      params:
+        - name: period
+          type: number
+          default: 14
+          min: 1
+          max: 100
+      outputs:
+        - id: value
+          name: Value
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: volume_ma
+      name: Volume Moving Average
+      name_ko: 거래량 이동평균
+      category: volume
+      description: Moving average of volume.
+      params:
+        - name: period
+          type: number
+          default: 20
+          min: 1
+          max: 200
+      outputs:
+        - id: value
+          name: Value
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true
+
+    - id: vwap
+      name: VWAP
+      name_ko: VWAP
+      category: volume
+      description: Volume weighted average price.
+      params: []
+      outputs:
+        - id: value
+          name: Value
+      default_output: value
+      implemented: true
+      backtest_supported: true
+      runtime_supported: true

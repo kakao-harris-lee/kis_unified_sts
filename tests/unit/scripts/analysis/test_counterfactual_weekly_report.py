@@ -238,6 +238,15 @@ def test_format_telegram_shows_eod_estimate_when_present():
     assert "EOD-estimated" in msg
 
 
+def test_format_telegram_shows_rl_eod_estimate_when_present():
+    report = _populated_report()
+    report.rl_shadow.eod_estimated_count = 6
+
+    msg = _format_telegram_message(report)
+
+    assert "RL EOD-estimated exits" in msg
+
+
 # ---------------------------------------------------------------------------
 # _write_archive
 # ---------------------------------------------------------------------------
