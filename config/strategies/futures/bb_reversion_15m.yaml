@@ -48,7 +48,7 @@ strategy:
       macd_slow: 26
       macd_signal: 9
 
-      buy_only: true
+      allow_short: true       # was buy_only:true (dead config); enables BB upper + RSI overbought shorts
       min_bb_bandwidth: 0.003
       timeframe_minutes: 15   # MTF base: BB/RSI computed on closed 15m bars
 
