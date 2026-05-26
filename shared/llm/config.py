@@ -227,7 +227,7 @@ class LLMConfig(ServiceConfigBase):
         default="stream:news.scored", description="Redis stream for scored news"
     )
     stock_scored_news_sources: list[str] = Field(
-        default_factory=lambda: ["marketaux"],
+        default_factory=lambda: ["marketaux", "naver_search"],
         description="Scored news raw sources eligible for stock joins",
     )
     stock_scored_news_lookback_seconds: int = Field(
@@ -453,6 +453,7 @@ class LLMConfig(ServiceConfigBase):
         Handles complex nested YAML structure with provider-specific settings.
         Supports both new format (llm/openai/claude sections) and legacy formats.
         """
+        _ = section
         # Use ConfigLoader to load YAML with env var substitution
         from shared.config.loader import ConfigLoader
 
@@ -472,7 +473,7 @@ class LLMConfig(ServiceConfigBase):
         if _os.path.isabs(path_str):
             import yaml as _yaml
 
-            with open(path_str, "r", encoding="utf-8") as _f:
+            with open(path_str, encoding="utf-8") as _f:
                 data = _yaml.safe_load(_f) or {}
         else:
             data = ConfigLoader.load(path_str)
@@ -734,7 +735,7 @@ class LLMConfig(ServiceConfigBase):
                 "scored_news_stream", "stream:news.scored"
             ),
             "stock_scored_news_sources": stock_config.get(
-                "scored_news_sources", ["marketaux"]
+                "scored_news_sources", ["marketaux", "naver_search"]
             ),
             "stock_scored_news_lookback_seconds": stock_config.get(
                 "scored_news_lookback_seconds", 86400
