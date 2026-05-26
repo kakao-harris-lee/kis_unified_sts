@@ -3462,21 +3462,25 @@ class TradingOrchestrator:
         limit=120 covers all indicator warmup needs:
         SMA(120), BB(20), RSI(14), MACD(26+9), Stochastic(14).
 
-        Stock data is in `market.minute_candles` (from stock_backfill.sh).
-        Futures have no usable minute candle table in ClickHouse.
+        Stock data is in ``market.minute_candles`` (from stock_backfill.sh).
+        Futures data is in ``kospi.kospi_mini_1m`` (KOSPI200 mini) or
+        ``kospi.kospi200f_1m`` (KOSPI200 futures / 연결선물).
         """
-        # Futures: no minute candle data in ClickHouse
-        if self.config.asset_class == "futures":
-            return []
+        is_futures = self.config.asset_class == "futures"
+
+        if is_futures:
+            db = os.getenv("CLICKHOUSE_FUTURES_DATABASE", "kospi")
+            table = "kospi_mini_1m"
+        else:
+            db = os.getenv("CLICKHOUSE_STOCK_DATABASE", "market")
+            table = "minute_candles"
 
         try:
             from clickhouse_driver import Client as CHSyncClient
 
             # Reuse the shared env parsing so the native driver does not
             # accidentally point at the HTTP port (8123).
-            ch_cfg = ClickHouseConfig.from_env(
-                database=os.getenv("CLICKHOUSE_STOCK_DATABASE", "market")
-            )
+            ch_cfg = ClickHouseConfig.from_env(database=db)
 
             loop = asyncio.get_event_loop()
             rows = await loop.run_in_executor(
@@ -3489,7 +3493,7 @@ class TradingOrchestrator:
                     database=ch_cfg.database,
                 ).execute(
                     "SELECT code, datetime, open, high, low, close, volume "
-                    "FROM minute_candles "
+                    f"FROM {table} "
                     "WHERE code = %(code)s "
                     "ORDER BY datetime DESC LIMIT %(limit)s",
                     {"code": symbol, "limit": limit},
@@ -3627,8 +3631,11 @@ class TradingOrchestrator:
             if symbol not in set(self.config.symbols):
                 continue
             try:
-                # ClickHouse first (no rate limit, faster)
-                candles = await self._fetch_candles_from_clickhouse(symbol, limit=120)
+                # ClickHouse first (no rate limit, faster).
+                # Futures need more candles for 15m resampling strategies
+                # (e.g. BB period=43 on 15m bars → 43*15=645 1-min candles).
+                ch_limit = 700 if self.config.asset_class == "futures" else 120
+                candles = await self._fetch_candles_from_clickhouse(symbol, limit=ch_limit)
                 if candles:
                     ch_hits += 1
                 elif self._kis_client.is_rate_limited:
