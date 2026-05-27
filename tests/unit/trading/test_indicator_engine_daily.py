@@ -374,6 +374,34 @@ class TestDailyIndicators:
         assert "sma_60" not in indicators
         assert "ema_5" not in indicators
 
+    def test_daily_indicators_cache_separates_period_sets(self):
+        """Different daily period requests should not reuse stale cache entries."""
+        engine = StreamingIndicatorEngine(staleness_seconds=0)
+        daily_candles = [
+            {
+                "open": 100.0 + i,
+                "high": 102.0 + i,
+                "low": 98.0 + i,
+                "close": 101.0 + i,
+                "volume": 10000,
+            }
+            for i in range(100)
+        ]
+        engine.seed_daily_candles("005930", daily_candles)
+
+        default_indicators = engine.get_daily_indicators("005930")
+        extended_indicators = engine.get_daily_indicators(
+            "005930",
+            ema_periods=[5, 10, 20, 60],
+            rsi_periods=[5, 14],
+        )
+
+        assert "ema_60" not in default_indicators
+        assert "rsi_14" not in default_indicators
+        assert "ema_60" in extended_indicators
+        assert "rsi_14" in extended_indicators
+        assert "ema_20_prev" in extended_indicators
+
     def test_daily_indicators_insufficient_data(self):
         """get_daily_indicators should return empty dict if insufficient candles."""
         engine = StreamingIndicatorEngine(staleness_seconds=0)
