@@ -109,6 +109,6 @@ failover:
   startup_grace_seconds: 120.0         # 장 시작/재구독 직후 종목별 첫 tick 분산 구간에는 fresh 비율 판정 유예
   failover_unhealthy_threshold: 3      # 연속 N회 unhealthy일 때만 REST fallback 진입
   recovery_healthy_threshold: 3        # 연속 N회 healthy일 때만 WebSocket 복구
-  rest_poll_interval_seconds: 10.0    # REST fallback 시 polling 간격 (초)
-  rest_fallback_max_symbols: 10       # REST fallback 1회 polling 최대 심볼 수
+  rest_poll_interval_seconds: 15.0    # REST fallback 시 polling 간격 (초)
+  rest_fallback_max_symbols: 5        # REST fallback 1회 polling 최대 심볼 수
   send_telegram_alerts: false    # Failover/복구 Telegram 알림 제거(로그로만 기록)

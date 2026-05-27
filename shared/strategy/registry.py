@@ -398,6 +398,13 @@ def register_builtin_components() -> None:
         logger.debug("WilliamsREntry not available")
 
     try:
+        from shared.strategy.entry.macd_ema_crossover import MACDEMACrossoverEntry
+
+        EntryRegistry.register_class("macd_ema_crossover", MACDEMACrossoverEntry)
+    except ImportError:
+        logger.debug("MACDEMACrossoverEntry not available")
+
+    try:
         from shared.strategy.entry.technical_consensus import TechnicalConsensusEntry
 
         EntryRegistry.register_class("technical_consensus", TechnicalConsensusEntry)

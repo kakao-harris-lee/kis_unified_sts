@@ -79,12 +79,36 @@ def _merge_market_frames(
     return pd.concat(frames, axis=0)
 
 
+def _analysis_status(
+    status: str,
+    reason: str,
+    *,
+    detail: Any | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "status": status,
+        "reason": reason,
+    }
+    if detail is not None:
+        payload["detail"] = detail
+    return payload
+
+
+def _analysis_failure_meta(reason: str, detail: Any | None = None) -> dict[str, Any]:
+    error_reason = reason if detail is None else f"{reason}:{detail}"
+    return {
+        "_analysis_status": _analysis_status("failed", reason, detail=detail),
+        "_excluded": {"_error": [error_reason]},
+        "_excluded_features": {},
+    }
+
+
 def _prepare_market_df(
     market_df: "pd.DataFrame",
 ) -> tuple[Optional["pd.DataFrame"], bool, Optional[dict]]:
     if market_df is None or len(market_df) == 0:
         logger.error("Failed to collect market data")
-        return None, False, None
+        return None, False, _analysis_failure_meta("market_data_unavailable")
 
     required_cols = ["종가", "시가", "거래량", "시가총액"]
     missing_cols = [c for c in required_cols if c not in market_df.columns]
@@ -93,7 +117,10 @@ def _prepare_market_df(
         return (
             None,
             False,
-            {"_excluded": {"_error": [f"missing_columns:{','.join(missing_cols)}"]}},
+            _analysis_failure_meta(
+                "market_data_missing_columns",
+                ",".join(missing_cols),
+            ),
         )
 
     trade_value_fallback = False
@@ -1006,6 +1033,32 @@ def _initialize_analysis_results(
     }
 
 
+def _set_analysis_completion_status(
+    analysis_results: dict[str, Any],
+    *,
+    plan_count: int,
+    screened_count: int,
+    candidate_count: int,
+) -> None:
+    if plan_count > 0:
+        status = _analysis_status(
+            "ok",
+            "recommendations_generated",
+            detail={"plan_count": plan_count},
+        )
+    elif screened_count == 0:
+        status = _analysis_status("empty", "no_stocks_after_screening")
+    elif candidate_count == 0:
+        status = _analysis_status("empty", "no_candidates_after_analysis")
+    else:
+        status = _analysis_status(
+            "empty",
+            "no_candidates_after_final_filters",
+            detail={"candidate_count": candidate_count},
+        )
+    analysis_results["_analysis_status"] = status
+
+
 def _log_screening_summary(
     stocks: list[StockInfo],
     excluded: dict[str, list[str]],
@@ -1167,6 +1220,13 @@ async def analyze_stocks(
                 config,
             )
         )
+
+    _set_analysis_completion_status(
+        analysis_results,
+        plan_count=len(plans),
+        screened_count=len(stocks),
+        candidate_count=len(candidates),
+    )
 
     logger.info(f"Final stock recommendations: {len(plans)}")
     return plans, analysis_results

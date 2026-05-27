@@ -31,6 +31,7 @@ async def send_telegram_alerts(
     stock_plans: list[StockTradingPlan],
     futures_plan: FuturesTradingPlan | None,
     futures_analysis: dict,
+    stock_analysis: dict[str, Any] | None = None,
 ) -> None:
     """Send Telegram alerts for analysis results."""
     if not analyzer.notifier:
@@ -69,9 +70,7 @@ async def send_telegram_alerts(
             for plan in stock_plans[:3]:
                 await analyzer.notifier.send_message(plan.to_telegram_message())
         else:
-            await analyzer.notifier.send_message(
-                "⚠️ <b>주식 추천 없음</b>\n시장 데이터 수집 실패 또는 조건 충족 종목 없음",
-            )
+            await analyzer.notifier.send_message(_stock_empty_message(stock_analysis))
 
         checklist = """
 📋 <b>체크리스트</b>
@@ -87,6 +86,41 @@ async def send_telegram_alerts(
         logger.info("Telegram alerts sent successfully")
     except Exception as e:
         logger.error(f"Failed to send Telegram alerts: {e}")
+
+
+def _stock_empty_message(stock_analysis: dict[str, Any] | None) -> str:
+    status = (
+        stock_analysis.get("_analysis_status")
+        if isinstance(stock_analysis, dict)
+        else None
+    )
+    if not isinstance(status, dict):
+        return (
+            "⚠️ <b>주식 추천 없음</b>\n시장 데이터 수집 실패 또는 조건 충족 종목 없음"
+        )
+
+    reason = str(status.get("reason") or "unknown")
+    detail = status.get("detail")
+    if reason == "market_data_unavailable":
+        return (
+            "🚨 <b>주식 장전 분석 실패</b>\n"
+            "KRX 시장 데이터 수집 결과가 비어 있어 추천 생성을 중단했습니다."
+        )
+    if reason == "market_data_missing_columns":
+        return (
+            "🚨 <b>주식 장전 분석 실패</b>\n"
+            f"KRX 시장 데이터 필수 컬럼 누락: {detail or 'unknown'}"
+        )
+
+    reason_labels = {
+        "no_stocks_after_screening": "기초 스크리닝 통과 종목 없음",
+        "no_candidates_after_analysis": "개별 분석 통과 후보 없음",
+        "no_candidates_after_final_filters": "최종 점수 필터 통과 후보 없음",
+    }
+    return (
+        "⚠️ <b>주식 추천 없음</b>\n"
+        f"{reason_labels.get(reason, reason)}"
+    )
 
 
 # ------------------------------------------------------------------
@@ -212,6 +246,10 @@ def publish_llm_quality_snapshot(
     stock_analysis: dict[str, Any],
 ) -> None:
     """Publish quality snapshot to Redis (best-effort)."""
+    if not should_publish_llm_quality_snapshot(stock_analysis):
+        logger.info("Skipped LLM quality snapshot publish: stock analysis failed")
+        return
+
     try:
         from shared.streaming.client import RedisClient
 
@@ -226,6 +264,19 @@ def publish_llm_quality_snapshot(
         )
     except Exception as e:
         logger.warning(f"Failed to publish LLM quality snapshot: {e}")
+
+
+def should_publish_llm_quality_snapshot(
+    stock_analysis: dict[str, Any] | None,
+) -> bool:
+    if not stock_analysis:
+        return False
+
+    status = stock_analysis.get("_analysis_status")
+    if isinstance(status, dict) and status.get("status") == "failed":
+        return False
+
+    return True
 
 
 # ------------------------------------------------------------------

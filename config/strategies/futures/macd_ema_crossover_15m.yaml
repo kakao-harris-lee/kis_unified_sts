@@ -1,0 +1,121 @@
+# MACD/EMA Crossover (Trend-Following) — 60분봉 Futures
+#
+# 추세 추종 전략. 현 paper 운용에 mean-reversion(BB/Setup A/C) 외에
+# 상승장에서 추세를 잡는 보조 옵션으로 시도 (2026-05-27).
+#
+# 진입 로직 (60m candle 단위):
+#   LONG  : MACD 골든크로스 + EMA-fast > EMA-slow + close > EMA-slow
+#   SHORT : MACD 데드크로스  + EMA-fast < EMA-slow + close < EMA-slow
+#
+# 출구: three_stage with trend-friendly params (1440m time_cut, wider trailing).
+#
+# === 검증 결과 (2026-05-27, point_value=50000 mini) ===
+# 15m baseline:  PF 0.52, Sharpe -4.65 → exit 튜닝 후 PF 0.81, Sharpe -1.28
+# 60m timeframe: PF 0.81, Sharpe -1.28, Return -59.5%, MDD 84.0%, 65 trades
+# Optuna 120-trial sweep 25 trials: 모든 trial 음수 Sharpe (best -1.006)
+# Walk-Forward: 시도 안 함 — in-sample조차 PF < 1.0
+#
+# 결론: KOSPI200 선물 인트라데이는 mean-reverting 본질. EOD 강제청산
+# 환경에서 추세가 다음날까지 이어지지 못함. 추세 추종은 daily-bar 또는
+# 계층적 RL (LLM macro + low-level execution) 같은 별도 인프라 필요.
+#
+# enabled: false — **활성화 금지**. 향후 daily timeframe 또는 다른 인프라
+# 추가 시 재시도 위한 기반 코드로만 보존. 같은 시도 반복 방지 위해
+# reports/trend_following_attempt_2026-05-27.md 참조.
+
+strategy:
+  name: macd_ema_crossover_15m
+  asset_class: futures
+  enabled: false
+  timeframe: 60min
+  description: "MACD + EMA 추세 추종 (60분봉) — 노이즈 적은 시간프레임으로 추세 포착"
+
+  backtest:
+    initial_capital: 10000000
+    point_value: 50000   # KOSPI200 mini multiplier per execution.yaml (50,000 KRW/pt)
+
+  entry:
+    type: macd_ema_crossover
+    params:
+      # MACD (15m bars; computed by IndicatorEngine momentum_15m)
+      macd_fast: 12
+      macd_slow: 26
+      macd_signal: 9
+
+      # EMA trend filter (inline from close on 60m bars)
+      # 12 × 60m ≈ 2 sessions short-trend
+      # 26 × 60m ≈ 4 sessions long-trend
+      ema_fast_period: 12
+      ema_slow_period: 26
+
+      # Timeframe (drives required_indicators)
+      timeframe_minutes: 60
+
+      # Histogram strength gate
+      use_hist_filter: true
+      hist_min_abs: 0.0
+
+      # Volume confirmation
+      volume_confirm: false
+      volume_ma_period: 20
+      volume_threshold: 1.0
+
+      allow_short: true
+
+      # Time filters (KST)
+      market_open_hour: 9
+      market_open_minute: 0
+      market_close_hour: 15
+      market_close_minute: 45
+      skip_market_open_minutes: 15
+      skip_market_close_minutes: 30
+
+      signal_cooldown_seconds: 0
+      stop_loss_pct: 1.5
+
+      confidence_hist_scale: 200.0
+      min_candles: 50
+
+      market_state_filter:
+        enabled: false
+        allowed_states: []
+        blocked_states: []
+
+      # RegimeGate placeholder — default off. Operator may flip after first
+      # 2-wk paper window similar to setup_a_gap_reversion (PR #330).
+      regime_gate:
+        enabled: false
+        regime_percentile_max: 60.0
+        impact_score_max: 70
+        event_window_minutes: 15
+        require_overnight_us_direction: false
+        permissive_on_missing: true
+
+  exit:
+    type: three_stage
+    params:
+      # Trend-friendly exit: wide stop + breakeven + delayed trailing.
+      # Default three_stage was tuned for mean-reversion (time_cut 20m, max 3%).
+      # Trend-following needs longer holding and bigger profit room.
+      # 60m timeframe → wider room for trend, less noise
+      stop_loss_pct: -0.040            # 4% hard stop (60m bars have larger ranges)
+      breakeven_threshold_pct: 0.025
+      maximize_threshold_pct: 0.050
+      trailing_stop_pct: -0.025
+      overshoot_threshold_pct: 0.100
+      overshoot_trailing_pct: -0.015
+      time_cut_minutes: 1440           # 24h — multi-day holding for true trends
+      eod_close_hour: 15
+      eod_close_minute: 40             # Close 5m before market end
+
+  position:
+    type: fixed
+    params:
+      contracts: 1
+      max_contracts: 2
+
+  indicators:
+    macd:
+      fast_period: 12
+      slow_period: 26
+      signal_period: 9

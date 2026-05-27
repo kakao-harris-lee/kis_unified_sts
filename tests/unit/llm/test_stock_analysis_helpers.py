@@ -14,6 +14,7 @@ from shared.llm.stock_analysis import (
     _build_technical_consensus_metrics,
     _filter_candidates_by_min_score,
     _initialize_analysis_results,
+    _prepare_market_df,
     _select_final_candidates,
     _update_analysis_results_with_candidate,
 )
@@ -25,6 +26,26 @@ def test_filter_candidates_by_min_score():
 
     assert [c[1] for c in filtered] == ["b", "c"]
     assert removed == 1
+
+
+def test_prepare_market_df_reports_unavailable_status():
+    market_df, fallback, meta = _prepare_market_df(pd.DataFrame())
+
+    assert market_df is None
+    assert fallback is False
+    assert meta["_analysis_status"]["status"] == "failed"
+    assert meta["_analysis_status"]["reason"] == "market_data_unavailable"
+
+
+def test_prepare_market_df_reports_missing_columns():
+    market_df, fallback, meta = _prepare_market_df(
+        pd.DataFrame({"종가": [1000], "시가": [990]})
+    )
+
+    assert market_df is None
+    assert fallback is False
+    assert meta["_analysis_status"]["reason"] == "market_data_missing_columns"
+    assert meta["_analysis_status"]["detail"] == "거래량,시가총액"
 
 
 def test_select_final_candidates_sorts_and_limits():

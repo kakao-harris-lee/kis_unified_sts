@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import os
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -71,9 +72,9 @@ class MockAccountMirror:
         side: str,
         quantity: int,
         price: float | None = None,
-    ) -> None:
+    ) -> dict[str, Any]:
         """Mirror an entry order (fire-and-forget)."""
-        await self._mirror_order(code, side, quantity, price, label="entry")
+        return await self._mirror_order(code, side, quantity, price, label="entry")
 
     async def mirror_exit(
         self,
@@ -81,9 +82,9 @@ class MockAccountMirror:
         side: str,
         quantity: int,
         price: float | None = None,
-    ) -> None:
+    ) -> dict[str, Any]:
         """Mirror an exit order (fire-and-forget)."""
-        await self._mirror_order(code, side, quantity, price, label="exit")
+        return await self._mirror_order(code, side, quantity, price, label="exit")
 
     async def _mirror_order(
         self,
@@ -92,10 +93,18 @@ class MockAccountMirror:
         quantity: int,
         _price: float | None,
         label: str,
-    ) -> None:
+    ) -> dict[str, Any]:
         """Send one order to the mock account, logging success or failure."""
         if not self._initialized or self._executor is None:
-            return
+            return self._result(
+                label,
+                code,
+                side,
+                quantity,
+                success=False,
+                skipped=True,
+                message="mock_mirror_not_initialized",
+            )
 
         try:
             from .models import OrderRequest, OrderSide, OrderType
@@ -119,13 +128,64 @@ class MockAccountMirror:
                     f"MockAccountMirror: {label} mirrored {tr_id} "
                     f"{code} x{quantity} -> order_no={response.order_no}"
                 )
+                return self._result(
+                    label,
+                    code,
+                    side,
+                    quantity,
+                    success=True,
+                    order_no=str(response.order_no or ""),
+                    tr_id=tr_id,
+                    message=str(response.message or ""),
+                )
             else:
                 logger.warning(
                     f"MockAccountMirror: {label} mirror failed "
                     f"{code} x{quantity} — {response.message}"
                 )
+                return self._result(
+                    label,
+                    code,
+                    side,
+                    quantity,
+                    success=False,
+                    message=str(response.message or "mock_order_failed"),
+                )
         except Exception:
             logger.exception(f"MockAccountMirror: {label} mirror exception {code}")
+            return self._result(
+                label,
+                code,
+                side,
+                quantity,
+                success=False,
+                message="mock_order_exception",
+            )
+
+    @staticmethod
+    def _result(
+        label: str,
+        code: str,
+        side: str,
+        quantity: int,
+        *,
+        success: bool,
+        skipped: bool = False,
+        order_no: str = "",
+        tr_id: str = "",
+        message: str = "",
+    ) -> dict[str, Any]:
+        return {
+            "label": label,
+            "code": code,
+            "side": side.upper(),
+            "quantity": quantity,
+            "success": success,
+            "skipped": skipped,
+            "order_no": order_no,
+            "tr_id": tr_id,
+            "message": message,
+        }
 
     async def cleanup(self) -> None:
         """Release resources."""

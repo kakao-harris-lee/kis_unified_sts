@@ -78,6 +78,21 @@ def _default_config() -> SetupAConfig:
     return SetupAConfig()
 
 
+def test_zero_prev_close_is_skipped_without_division_error():
+    setup = SetupAGapReversion(config=_default_config())
+
+    signal = setup.check(
+        _ctx(
+            prev_close=0.0,
+            today_open=348.0,
+            current_price=348.8,
+            macro=_macro(-0.8),
+        )
+    )
+
+    assert signal is None
+
+
 # ---------------------------------------------------------------------------
 # (a) Happy path — gap-down → long reversion
 # ---------------------------------------------------------------------------

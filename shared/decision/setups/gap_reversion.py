@@ -127,6 +127,8 @@ class SetupAGapReversion(Setup):
             return None
 
         # 3. Korean open gap
+        if ctx.prev_close <= 0:
+            return None
         gap_pct = (ctx.today_open - ctx.prev_close) / ctx.prev_close * 100
         if abs(gap_pct) < c.min_kr_gap_pct:
             return None
@@ -139,11 +141,15 @@ class SetupAGapReversion(Setup):
         if gap_pct > 0:
             # Gap-UP: price fell back from the high → buy the dip ("long")
             gap_magnitude = ctx.today_open - ctx.prev_close  # positive
+            if gap_magnitude <= 0:
+                return None
             retrace = (ctx.today_open - ctx.current_price) / gap_magnitude
             direction = "long"
         else:
             # Gap-DOWN: price bounced up from the low → short the bounce ("short")
             gap_magnitude = ctx.prev_close - ctx.today_open  # positive
+            if gap_magnitude <= 0:
+                return None
             retrace = (ctx.current_price - ctx.today_open) / gap_magnitude
             direction = "short"
 

@@ -132,6 +132,8 @@ class RedisSnapshot:
     daily_indicators_count: int
     daily_strategy_candidate_count: int
     daily_strategy_counts: dict[str, int]
+    runtime_stats: dict[str, Any] = field(default_factory=dict)
+    mock_mirror_stats: dict[str, Any] = field(default_factory=dict)
     candidate_coverage: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
@@ -958,6 +960,12 @@ def fetch_redis_snapshot(
         status.get("config") if isinstance(status.get("config"), dict) else {}
     )
     status_risk = status.get("risk") if isinstance(status.get("risk"), dict) else {}
+    runtime_stats = status.get("stats") if isinstance(status.get("stats"), dict) else {}
+    mock_mirror_stats = (
+        runtime_stats.get("mock_mirror")
+        if isinstance(runtime_stats.get("mock_mirror"), dict)
+        else {}
+    )
 
     return RedisSnapshot(
         report_is_trading_day=is_trading_day(report_date),
@@ -972,6 +980,8 @@ def fetch_redis_snapshot(
         status_config_capital=_maybe_float(status_config.get("capital")),
         risk_initial_capital=_maybe_float(status_risk.get("initial_capital")),
         configured_symbols=int(status_config.get("symbols", 0) or 0),
+        runtime_stats=runtime_stats,
+        mock_mirror_stats=mock_mirror_stats,
         data_provider=status.get("data_provider") or {},
         data_freshness=freshness,
         daily_signal_count=daily_signals,
@@ -1453,6 +1463,7 @@ def _render_markdown(report: VerificationReport, config: VerificationConfig) -> 
         f"- Report trading day: `{r.report_is_trading_day}`",
         f"- Status exists: `{r.status_exists}` state=`{r.state}` ttl=`{r.status_ttl_seconds}` age_s=`{r.status_age_seconds}` updated_at=`{r.status_updated_at}` pid=`{r.status_publisher_pid}`",
         f"- Runtime capital: config=`{r.status_config_capital}` risk=`{r.risk_initial_capital}` verifier=`{config.initial_capital}`",
+        f"- Runtime execution: internal_entry_trades=`{r.runtime_stats.get('internal_entry_trades', r.runtime_stats.get('total_trades'))}` total_trades=`{r.runtime_stats.get('total_trades')}` mock_mirror=`{r.mock_mirror_stats}`",
         f"- Signals today/list: `{r.daily_signal_count}` / `{r.signals_list_len}`",
         f"- Trades list len: `{r.trades_list_len}`",
         f"- Open positions: `{r.open_positions_count}`",
@@ -1716,6 +1727,8 @@ def empty_redis_snapshot(report_date: date) -> RedisSnapshot:
         status_config_capital=None,
         risk_initial_capital=None,
         configured_symbols=0,
+        runtime_stats={},
+        mock_mirror_stats={},
         data_provider={},
         data_freshness={},
         daily_signal_count=0,
