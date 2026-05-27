@@ -778,6 +778,14 @@ class TradingOrchestrator:
         self._kis_client: Any | None = None
         self._order_executor: Any | None = None
         self._mock_mirror: Any | None = None
+        self._mock_mirror_stats: dict[str, int] = {
+            "entry_success": 0,
+            "entry_failed": 0,
+            "entry_skipped": 0,
+            "exit_success": 0,
+            "exit_failed": 0,
+            "exit_skipped": 0,
+        }
 
         # Market regime
         self._current_regime: str | None = None
@@ -3913,6 +3921,14 @@ class TradingOrchestrator:
                 logger.warning(f"TickStreamPublisher cleanup failed: {e}")
             self._tick_stream_publisher = None
 
+        if self._data_provider is not None and hasattr(
+            self._data_provider, "stop_background_tasks"
+        ):
+            try:
+                await self._data_provider.stop_background_tasks()
+            except Exception as e:
+                logger.warning(f"MarketDataProvider cleanup failed: {e}")
+
         if self.pipeline:
             await self.pipeline.stop()
             self.pipeline = None
@@ -3942,6 +3958,13 @@ class TradingOrchestrator:
             ) as e:
                 logger.warning(f"MockAccountMirror cleanup failed: {e}")
             self._mock_mirror = None
+
+        if self._kis_client is not None and hasattr(self._kis_client, "close"):
+            try:
+                await self._kis_client.close()
+            except Exception as e:
+                logger.warning(f"KISClient cleanup failed: {e}")
+            self._kis_client = None
 
         self._data_provider = None
         self._strategy_manager = None
@@ -6849,11 +6872,92 @@ class TradingOrchestrator:
         if self._mock_mirror:
             side = "SELL" if is_short else "BUY"
             task = asyncio.create_task(
-                self._mock_mirror.mirror_entry(signal.code, side, quantity, fill_price),
+                self._mirror_entry_and_record(
+                    position,
+                    signal.code,
+                    side,
+                    quantity,
+                    fill_price,
+                ),
                 name="mock_mirror_entry",
             )
             self._pending_notify_tasks.add(task)
             task.add_done_callback(self._on_notify_done)
+
+    async def _mirror_entry_and_record(
+        self,
+        position: Position,
+        code: str,
+        side: str,
+        quantity: int,
+        fill_price: float,
+    ) -> None:
+        if not self._mock_mirror:
+            return
+        result = await self._mock_mirror.mirror_entry(
+            code,
+            side,
+            quantity,
+            fill_price,
+        )
+        self._record_mock_mirror_result(position, "entry", result)
+
+    async def _mirror_exit_and_record(
+        self,
+        position: Position,
+        code: str,
+        side: str,
+        quantity: int,
+        fill_price: float,
+    ) -> None:
+        if not self._mock_mirror:
+            return
+        result = await self._mock_mirror.mirror_exit(
+            code,
+            side,
+            quantity,
+            fill_price,
+        )
+        self._record_mock_mirror_result(position, "exit", result)
+
+    def _record_mock_mirror_result(
+        self,
+        position: Position,
+        label: str,
+        result: dict[str, Any] | None,
+    ) -> None:
+        normalized = dict(result or {})
+        if "success" not in normalized:
+            normalized["success"] = False
+            normalized.setdefault("message", "mock_mirror_no_result")
+        normalized.setdefault("skipped", False)
+
+        metadata = position.metadata if isinstance(position.metadata, dict) else {}
+        metadata = dict(metadata)
+        mirror_meta = metadata.get("mock_mirror")
+        mirror_meta = {} if not isinstance(mirror_meta, dict) else dict(mirror_meta)
+        mirror_meta[label] = normalized
+        metadata["mock_mirror"] = mirror_meta
+        position.metadata = metadata
+
+        if normalized.get("skipped"):
+            outcome = "skipped"
+        elif normalized.get("success"):
+            outcome = "success"
+        else:
+            outcome = "failed"
+        key = f"{label}_{outcome}"
+        self._mock_mirror_stats[key] = int(self._mock_mirror_stats.get(key, 0)) + 1
+
+    def _mock_mirror_exit_should_skip(self, position: Position) -> bool:
+        metadata = position.metadata if isinstance(position.metadata, dict) else {}
+        mirror_meta = metadata.get("mock_mirror")
+        if not isinstance(mirror_meta, dict):
+            return False
+        entry_result = mirror_meta.get("entry")
+        if not isinstance(entry_result, dict):
+            return False
+        return entry_result.get("success") is False
 
     def _finalize_entry_execution_meta(
         self,
@@ -7222,14 +7326,38 @@ class TradingOrchestrator:
         # Mock mirror (fire-and-forget)
         if self._mock_mirror:
             side = "BUY" if close_is_buy else "SELL"
-            task = asyncio.create_task(
-                self._mock_mirror.mirror_exit(
-                    signal.code, side, exit_quantity, fill_price
-                ),
-                name="mock_mirror_exit",
-            )
-            self._pending_notify_tasks.add(task)
-            task.add_done_callback(self._on_notify_done)
+            if self._mock_mirror_exit_should_skip(closed):
+                self._record_mock_mirror_result(
+                    closed,
+                    "exit",
+                    {
+                        "label": "exit",
+                        "code": signal.code,
+                        "side": side,
+                        "quantity": exit_quantity,
+                        "success": False,
+                        "skipped": True,
+                        "message": "entry_mirror_not_successful",
+                    },
+                )
+                logger.info(
+                    "MockAccountMirror: exit mirror skipped for %s "
+                    "(entry mirror was not successful)",
+                    signal.code,
+                )
+            else:
+                task = asyncio.create_task(
+                    self._mirror_exit_and_record(
+                        closed,
+                        signal.code,
+                        side,
+                        exit_quantity,
+                        fill_price,
+                    ),
+                    name="mock_mirror_exit",
+                )
+                self._pending_notify_tasks.add(task)
+                task.add_done_callback(self._on_notify_done)
 
     def _log_exit(
         self,
@@ -7621,7 +7749,9 @@ class TradingOrchestrator:
             "stats": {
                 "session_count": self.session_count,
                 "total_trades": self.total_trades,
+                "internal_entry_trades": self.total_trades,
                 "total_pnl": self.total_pnl,
+                "mock_mirror": dict(self._mock_mirror_stats),
                 "entry_slippage_count": int(
                     self._entry_slippage_stats.get("count", 0.0)
                 ),

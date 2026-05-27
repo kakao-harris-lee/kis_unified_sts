@@ -1059,18 +1059,19 @@ class UnifiedTradingAnalyzer:
         }
 
         # 리포트 저장
-        if stock_plans or futures_plan:
+        if stock_plans or futures_plan or stock_analysis:
             self._save_reports(stock_plans, futures_plan, analysis_data, snapshot_id)
-            self._save_training_rows(snapshot_id, stock_plans, stock_analysis)
+            if stock_plans:
+                self._save_training_rows(snapshot_id, stock_plans, stock_analysis)
 
         # 실시간-배치 융합용 LLM 품질 스냅샷 게시(best-effort)
-        if stock_analysis:
+        if _reporting.should_publish_llm_quality_snapshot(stock_analysis):
             self._publish_llm_quality_snapshot(snapshot_id, stock_plans, stock_analysis)
 
         # 텔레그램 알림
         if send_telegram and self.notifier:
             await self._send_telegram_alerts(
-                stock_plans, futures_plan, futures_analysis
+                stock_plans, futures_plan, futures_analysis, stock_analysis
             )
 
         return stock_plans, futures_plan, analysis_data
@@ -1386,10 +1387,11 @@ class UnifiedTradingAnalyzer:
         stock_plans: list[StockTradingPlan],
         futures_plan: FuturesTradingPlan | None,
         futures_analysis: dict,
+        stock_analysis: dict | None = None,
     ):
         """텔레그램 알림 전송"""
         await _reporting.send_telegram_alerts(
-            self, stock_plans, futures_plan, futures_analysis
+            self, stock_plans, futures_plan, futures_analysis, stock_analysis
         )
 
     def _save_reports(

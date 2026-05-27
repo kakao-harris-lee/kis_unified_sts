@@ -146,9 +146,9 @@ class StockDataCollector(DataCollector):
         if market not in self.SUPPORTED_MARKETS:
             raise ValueError(f"Unsupported market: {market} (supported={self.SUPPORTED_MARKETS})")
 
-    @staticmethod
-    def _previous_date(target_date: str) -> str:
-        return (datetime.strptime(target_date, "%Y%m%d") - timedelta(days=1)).strftime("%Y%m%d")
+    def _previous_date(self, target_date: str) -> str:
+        parsed = datetime.strptime(target_date, "%Y%m%d").date()
+        return self._calendar.get_previous_market_day(parsed).strftime("%Y%m%d")
 
     @staticmethod
     def _attach_market_column(df: pd.DataFrame, market: str) -> None:
