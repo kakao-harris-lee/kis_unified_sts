@@ -1,0 +1,81 @@
+# Momentum Breakout (Futures port from stock-validated config)
+#
+# Stock에서 Sharpe 3.12 / 285 trades 검증. 거래량 폭증 + 가격 돌파로 추세 시작 포착.
+#
+# === Sanity 백테스트 결과 (2026-05-27) — Catastrophic ===
+# 36 trades, 승률 13.9%, PF 0.01, Sharpe -11.0, 수익률 -47.8%
+# 평균 수익 13K vs 평균 손실 156K (1:12 비대칭)
+# 원인: stock-specific 필터 (daily_volume_ratio_min=1.5, accumulation_score_min=40)가
+# futures backtest context에서 fail-soft → 신호 30+ 중 대부분 false signal.
+#
+# enabled: false — **활성화 금지**. 참조: reports/trend_following_attempt_2026-05-27.md
+
+strategy:
+  name: momentum_breakout_futures
+  asset_class: futures
+  enabled: false
+  description: "Momentum breakout (futures port) — 거래량+가격 돌파 추세 시작"
+
+  backtest:
+    initial_capital: 10000000
+    point_value: 10000
+
+  entry:
+    type: momentum_breakout
+    params:
+      breakout_buffer_pct: 0.001       # Futures: 0.1% (stock 3% too wide for futures)
+      intrabar_breakout_enabled: true
+      intrabar_reclaim_pct: 0.0005
+      intrabar_min_rvol: 1.8
+      rvol_threshold: 1.6
+      daily_rsi_max: 80.0
+      daily_volume_ratio_min: 1.5
+      accumulation_score_min: 40
+      volume_threshold: 1.2
+      min_atr_cost_ratio: 0.0005
+      round_trip_cost: 0.0006
+      skip_market_open_minutes: 15
+      skip_market_close_minutes: 15
+      signal_cooldown_seconds: 120
+      stop_atr_multiplier: 2.2
+
+      # Trend mode (always-on for futures; no regime context in backtest)
+      trend_mode_enabled: true
+      trend_mode_regimes: ["BULL", "BULL_STRONG", "BULL_MODERATE", "SIDEWAYS_UP"]
+      require_trend_mode: false        # Futures backtest lacks regime → don't gate
+      trend_rvol_threshold: 2.0
+      trend_breakout_buffer_pct: 0.0
+      trend_signal_cooldown_seconds: 3600
+
+      # EMA pullback trigger
+      trend_ema_pullback_enabled: true
+      trend_ema_fast: 5
+      trend_ema_mid: 20
+      trend_ema_slow: 60
+      trend_ema_touch_buffer_atr: 1.0
+      trend_rsi_min: 40.0
+
+      # Exit overrides
+      trend_exit_stop_atr_multiplier: 2.5
+      trend_exit_trail_activation_atr: 1.5
+      trend_exit_trail_atr_multiplier: 2.5
+      trend_exit_max_hold_days: 5
+
+  exit:
+    type: three_stage
+    params:
+      stop_loss_pct: -0.025
+      breakeven_threshold_pct: 0.015
+      maximize_threshold_pct: 0.035
+      trailing_stop_pct: -0.020
+      overshoot_threshold_pct: 0.070
+      overshoot_trailing_pct: -0.012
+      time_cut_minutes: 480
+      eod_close_hour: 15
+      eod_close_minute: 40
+
+  position:
+    type: fixed
+    params:
+      contracts: 1
+      max_contracts: 2

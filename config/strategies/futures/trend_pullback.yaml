@@ -1,0 +1,59 @@
+# Trend Pullback (Futures port from stock-validated config)
+#
+# Stock에서 Sharpe 3.88 / 953 trades 검증된 추세 추종 전략을 futures로 포팅 시도.
+#
+# === Sanity 백테스트 결과 (2026-05-27) — 0 trades ===
+# 진입 차단 사유: stock-specific dependencies (sma_200, daily_watchlist).
+# Futures backtest의 IndicatorEngine은 sma_200을 계산하지 않으며
+# daily_watchlist도 stock screener output에서만 채워짐.
+#
+# enabled: false — **활성화 금지**. Futures 인프라에서 동작하려면
+# sma_200 indicator 추가 + daily_watchlist 우회 필요.
+# 참조: reports/trend_following_attempt_2026-05-27.md
+
+strategy:
+  name: trend_pullback_futures
+  asset_class: futures
+  enabled: false
+  description: "Trend-pullback (futures port) — 추세 중 풀백 진입"
+
+  backtest:
+    initial_capital: 10000000
+    point_value: 10000
+
+  entry:
+    type: trend_pullback
+    params:
+      bb_period: 20
+      bb_std: 2.0
+      bb_touch_buffer: 1.01
+      rsi_oversold: 34.0
+      williams_r_oversold: -80.0
+      williams_r_reversal: -65.0
+      volume_threshold: 1.0
+      min_atr_cost_ratio: 0.0005     # Futures 1m ATR ~0.08%, looser than stock
+      round_trip_cost: 0.0006        # commission(0.003%×2) + slippage(5bps)
+      skip_market_open_minutes: 15
+      skip_market_close_minutes: 15
+      signal_cooldown_seconds: 120
+      stop_atr_multiplier: 3.0
+      stop_fallback_cost_multiplier: 3.5
+
+  exit:
+    type: three_stage
+    params:
+      stop_loss_pct: -0.025
+      breakeven_threshold_pct: 0.015
+      maximize_threshold_pct: 0.035
+      trailing_stop_pct: -0.020
+      overshoot_threshold_pct: 0.070
+      overshoot_trailing_pct: -0.012
+      time_cut_minutes: 480
+      eod_close_hour: 15
+      eod_close_minute: 40
+
+  position:
+    type: fixed
+    params:
+      contracts: 1
+      max_contracts: 2
