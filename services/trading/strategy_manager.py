@@ -535,6 +535,16 @@ class StrategyManager:
         except TradingSystemError as e:
             logger.error(f"Entry check failed for {strategy.name}: {e}", exc_info=True)
             return None
+        except Exception as e:
+            # Per-strategy isolation: a buggy strategy must not cascade to symbol-level
+            # skip in orchestrator.check_symbol (which would block other strategies
+            # for the same symbol). Root cause for 2026-05-27 zero-trades incident:
+            # gap_reversion.ZeroDivisionError propagated past TradingSystemError catch.
+            logger.error(
+                f"Entry check failed for {strategy.name} (unexpected): {e}",
+                exc_info=True,
+            )
+            return None
         finally:
             self._gate_mark_decided(strategy.name, symbol)
 

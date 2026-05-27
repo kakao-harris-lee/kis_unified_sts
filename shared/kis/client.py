@@ -617,6 +617,11 @@ class KISClient(AsyncSessionMixin):
             # FHMIF10000000 returns output1 (price), output2/3 (index info)
             output = data.get("output1", {})
 
+            # Setup A (gap_reversion) requires prev_close to compute the overnight gap.
+            # Missing this key was the root cause behind 2026-05-27 zero-trades: even
+            # after the ZeroDivisionError guard, the gap_pct path returns early.
+            prev_close = float(output.get("futs_prdy_clpr", 0) or 0)
+
             return {
                 "code": symbol,
                 "close": float(output.get("futs_prpr", 0)),
@@ -624,6 +629,8 @@ class KISClient(AsyncSessionMixin):
                 "high": float(output.get("futs_hgpr", 0)),
                 "low": float(output.get("futs_lwpr", 0)),
                 "volume": int(output.get("acml_vol", 0)),
+                "prev_close": prev_close,
+                "previous_close": prev_close,  # alias for downstream consumers
                 "change": (
                     float(output.get("futs_prdy_ctrt", 0)) / 100.0
                     if output.get("futs_prdy_ctrt")

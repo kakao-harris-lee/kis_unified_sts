@@ -776,6 +776,10 @@ class TradingOrchestrator:
         )
         self._paper_broker: Any | None = None
         self._kis_client: Any | None = None
+        # Per-session daily reference cache (prev_close, etc.) for futures symbols.
+        # WebSocket H0IFCNT0 ticks lack prev_close; REST FHMIF10000000 carries it
+        # via futs_prdy_clpr. Setup A (gap_reversion) requires this for gap_pct.
+        self._futures_daily_reference: dict[str, dict[str, float]] = {}
         self._order_executor: Any | None = None
         self._mock_mirror: Any | None = None
         self._mock_mirror_stats: dict[str, int] = {
@@ -1032,6 +1036,14 @@ class TradingOrchestrator:
         # Initialize components
         await self._initialize_components()
 
+        # Prefetch daily reference (prev_close) for futures symbols.
+        # Setup A (gap_reversion) requires prev_close to compute gap_pct; the
+        # WebSocket H0IFCNT0 tick stream does not carry prev_close so we fetch
+        # it once at session start via REST FHMIF10000000 (futs_prdy_clpr) and
+        # cache it for the session. Root cause behind 2026-05-27 zero-trades.
+        if self.config.asset_class == "futures":
+            await self._prefetch_futures_daily_reference()
+
         # Start shared market data loop before pipeline
         await self._start_market_data_loop()
 
@@ -1237,6 +1249,36 @@ class TradingOrchestrator:
             logger.warning(f"Failed to initialize KIS Client: {e}")
             self._kis_client = None
             return None
+
+    async def _prefetch_futures_daily_reference(self) -> None:
+        """Cache prev_close for each futures symbol via REST at session start.
+
+        WebSocket H0IFCNT0 ticks don't carry prev_close; Setup A (gap_reversion)
+        needs it to compute gap_pct. Falls back silently on per-symbol failure —
+        downstream guards (`if ctx.prev_close <= 0: return None`) handle missing
+        data without crashing.
+        """
+        if not self._kis_client:
+            return
+        symbols = list(self.config.symbols or [])
+        if not symbols:
+            return
+        for symbol in symbols:
+            try:
+                price = await self._kis_client._get_futures_price(symbol)
+            except Exception as e:
+                logger.warning(
+                    "prev_close prefetch failed for %s: %s — Setup A will skip",
+                    symbol, e,
+                )
+                continue
+            prev_close = float(price.get("prev_close", 0) or 0)
+            if prev_close > 0:
+                self._futures_daily_reference[symbol] = {"prev_close": prev_close}
+                logger.info(
+                    "prev_close prefetched: %s = %s (Setup A gap_pct ready)",
+                    symbol, prev_close,
+                )
 
     def _init_price_feeds(self, kis_config) -> Any | None:
         """Initialize WebSocket Price Feeds"""
@@ -5888,6 +5930,17 @@ class TradingOrchestrator:
                 # Use pre-computed enriched metadata cache (includes symbol_metadata + daily_indicators)
                 cached_meta = self._enriched_metadata_cache.get(symbol, {})
                 enriched = {**symbol_data, **cached_meta, "code": symbol}
+
+                # Inject prefetched futures daily reference (prev_close) when
+                # the WebSocket tick payload lacks it. Setup A gap_reversion
+                # uses ctx.prev_close to compute the overnight gap.
+                if self.config.asset_class == "futures" and not enriched.get(
+                    "prev_close"
+                ):
+                    daily_ref = self._futures_daily_reference.get(symbol)
+                    if daily_ref:
+                        enriched["prev_close"] = daily_ref.get("prev_close", 0.0)
+                        enriched["previous_close"] = daily_ref.get("prev_close", 0.0)
 
                 # Preserve pure symbol_metadata for context (without daily indicators)
                 meta = self._cached_symbol_meta.get(symbol, {})
