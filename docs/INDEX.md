@@ -24,6 +24,7 @@ For "what's the project doing right now?" → [PROJECT_STATUS.md](PROJECT_STATUS
 | [strategies.md](strategies.md) | 설정 기반 전략 시스템 가이드 — YAML 정의, 레지스트리 패턴. |
 | [config_patterns.md](config_patterns.md) | `ServiceConfigBase` 기반 통합 설정 패턴. |
 | [deployment.md](deployment.md) | 플랫폼 배포 가이드. |
+| [kis_mcp.md](kis_mcp.md) | 한국투자증권 공식 MCP 등록, 조회 진단, 적용성 감사 가이드. |
 | [exception_hierarchy.md](exception_hierarchy.md) | Typed exception hierarchy — broad `except Exception` 제거 정책. |
 | [error_handling_guide.md](error_handling_guide.md) | 에러 핸들링 베스트 프랙티스 + recovery 전략. |
 | [TLS_SETUP.md](TLS_SETUP.md) | Redis / ClickHouse TLS 활성화 가이드. |
