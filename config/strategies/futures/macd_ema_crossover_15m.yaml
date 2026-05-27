@@ -9,9 +9,9 @@
 #
 # 출구: three_stage with trend-friendly params (1440m time_cut, wider trailing).
 #
-# === 검증 결과 (2026-05-27) ===
+# === 검증 결과 (2026-05-27, point_value=50000 mini) ===
 # 15m baseline:  PF 0.52, Sharpe -4.65 → exit 튜닝 후 PF 0.81, Sharpe -1.28
-# 60m timeframe: PF 0.81, Sharpe -1.28 (가장 좋은 manual run)
+# 60m timeframe: PF 0.81, Sharpe -1.28, Return -59.5%, MDD 84.0%, 65 trades
 # Optuna 120-trial sweep 25 trials: 모든 trial 음수 Sharpe (best -1.006)
 # Walk-Forward: 시도 안 함 — in-sample조차 PF < 1.0
 #
@@ -32,7 +32,7 @@ strategy:
 
   backtest:
     initial_capital: 10000000
-    point_value: 10000   # KOSPI200 mini multiplier (실 운용 단위)
+    point_value: 50000   # KOSPI200 mini multiplier per execution.yaml (50,000 KRW/pt)
 
   entry:
     type: macd_ema_crossover

@@ -19,7 +19,7 @@ strategy:
 
   backtest:
     initial_capital: 10000000
-    point_value: 10000
+    point_value: 50000   # KOSPI200 mini multiplier per execution.yaml
 
   entry:
     type: trend_pullback

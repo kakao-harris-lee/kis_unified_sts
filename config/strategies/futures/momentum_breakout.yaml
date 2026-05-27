@@ -2,9 +2,10 @@
 #
 # Stock에서 Sharpe 3.12 / 285 trades 검증. 거래량 폭증 + 가격 돌파로 추세 시작 포착.
 #
-# === Sanity 백테스트 결과 (2026-05-27) — Catastrophic ===
-# 36 trades, 승률 13.9%, PF 0.01, Sharpe -11.0, 수익률 -47.8%
-# 평균 수익 13K vs 평균 손실 156K (1:12 비대칭)
+# === Sanity 백테스트 결과 (2026-05-27, point_value=50000 mini) — 파산 ===
+# 36 trades, 승률 13.9%, PF 0.01, Sharpe -11.0, 수익률 **-238.9%**, MDD 239.3%
+# Final capital -13.9M (마이너스, 자본 초과 손실)
+# 평균 수익 64K vs 평균 손실 781K (1:12 비대칭)
 # 원인: stock-specific 필터 (daily_volume_ratio_min=1.5, accumulation_score_min=40)가
 # futures backtest context에서 fail-soft → 신호 30+ 중 대부분 false signal.
 #
@@ -18,7 +19,7 @@ strategy:
 
   backtest:
     initial_capital: 10000000
-    point_value: 10000
+    point_value: 50000   # KOSPI200 mini multiplier per execution.yaml
 
   entry:
     type: momentum_breakout

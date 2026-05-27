@@ -2,11 +2,11 @@
 #
 # TRIX (EMA 3차 도함수) 황금신호 + 비상관 필터. Acceleration mode로 TRIX 음→양 전환 가속 포착.
 #
-# === Sanity 백테스트 결과 (2026-05-27) — 최선이지만 부족 ===
-# 68 trades, 승률 41.2%, PF 0.51, Sharpe -3.31, 수익률 -19.0%, MDD 27.4%
+# === Sanity 백테스트 결과 (2026-05-27, point_value=50000 mini) ===
+# 68 trades, 승률 41.2%, PF 0.51, Sharpe -3.31, 수익률 **-95.0%**, MDD 115.7%
 # 청산: EOD 59회 (87%!) + stop_loss 9회 → 추세가 인트라데이로 끝나고 다음날까지 안 이어짐.
 # 진입 시그널 자체는 양호 (승률 41%) 하지만 KOSPI200 선물 EOD 강제청산 환경에서
-# 추세 추종이 본질적으로 어려움.
+# 추세 추종이 본질적으로 어려움. 정확한 mini multiplier로 자본 95% 손실.
 #
 # enabled: false — **활성화 금지**. 참조: reports/trend_following_attempt_2026-05-27.md
 
@@ -18,7 +18,7 @@ strategy:
 
   backtest:
     initial_capital: 10000000
-    point_value: 10000
+    point_value: 50000   # KOSPI200 mini multiplier per execution.yaml
 
   entry:
     type: trix_golden
