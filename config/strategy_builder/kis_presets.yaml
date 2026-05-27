@@ -1,0 +1,1429 @@
+strategy_builder_kis:
+  presets:
+    - id: golden_cross
+      name: 골든크로스
+      description: 단기 MA가 장기 MA를 상향 돌파 시 매수
+      category: 추세추종
+      params:
+        - name: short_period
+          label: 단기 MA
+          min: 3
+          max: 20
+          default: 5
+          step: 1
+        - name: long_period
+          label: 장기 MA
+          min: 20
+          max: 120
+          default: 20
+          step: 5
+      builder_state:
+        metadata:
+          id: golden_cross
+          name: 골든크로스
+          description: 단기 MA가 장기 MA를 상향 돌파 시 매수
+          category: trend
+          tags: [ma, crossover, trend]
+          author: KIS
+        indicators:
+          - id: sma_1
+            indicatorId: sma
+            alias: sma_fast
+            params: {period: 5}
+            output: value
+          - id: sma_2
+            indicatorId: sma
+            alias: sma_slow
+            params: {period: 20}
+            output: value
+        entry:
+          logic: AND
+          conditions:
+            - id: entry_1
+              left: {type: indicator, indicatorAlias: sma_fast, indicatorOutput: value}
+              operator: cross_above
+              right: {type: indicator, indicatorAlias: sma_slow, indicatorOutput: value}
+        exit:
+          logic: AND
+          conditions:
+            - id: exit_1
+              left: {type: indicator, indicatorAlias: sma_fast, indicatorOutput: value}
+              operator: cross_below
+              right: {type: indicator, indicatorAlias: sma_slow, indicatorOutput: value}
+        risk:
+          stopLoss: {enabled: true, percent: 5}
+          takeProfit: {enabled: false, percent: 10}
+          trailingStop: {enabled: false, percent: 3}
+
+    - id: momentum
+      name: 모멘텀
+      description: N일 수익률 기준 매수/매도
+      category: 추세추종
+      params:
+        - name: lookback_days
+          label: 수익률 기간
+          min: 20
+          max: 120
+          default: 60
+          step: 10
+        - name: buy_threshold
+          label: 매수 기준(%)
+          min: 10
+          max: 50
+          default: 30
+          step: 5
+        - name: sell_threshold
+          label: 매도 기준(%)
+          min: -50
+          max: -5
+          default: -20
+          step: 5
+      builder_state:
+        metadata:
+          id: momentum
+          name: 모멘텀
+          description: N일 수익률 기준 매수/매도
+          category: momentum
+          tags: [momentum, rate_of_change]
+          author: KIS
+        indicators:
+          - id: roc_1
+            indicatorId: roc
+            alias: roc_1
+            params: {period: 60}
+            output: value
+        entry:
+          logic: AND
+          conditions:
+            - id: entry_1
+              left: {type: indicator, indicatorAlias: roc_1, indicatorOutput: value}
+              operator: greater_than
+              right: {type: value, value: 30}
+        exit:
+          logic: OR
+          conditions:
+            - id: exit_1
+              left: {type: indicator, indicatorAlias: roc_1, indicatorOutput: value}
+              operator: less_than
+              right: {type: value, value: -20}
+        risk:
+          stopLoss: {enabled: true, percent: 5}
+          takeProfit: {enabled: false, percent: 10}
+          trailingStop: {enabled: false, percent: 3}
+
+    - id: trend_filter
+      name: 추세 필터
+      description: MA 위/아래 추세 방향 매매
+      category: 추세추종
+      params:
+        - name: ma_period
+          label: MA 기간
+          min: 20
+          max: 120
+          default: 60
+          step: 10
+      builder_state:
+        metadata:
+          id: trend_filter
+          name: 추세 필터
+          description: MA 위/아래 추세 방향 매매
+          category: trend
+          tags: [trend, ma, filter]
+          author: KIS
+        indicators:
+          - id: sma_1
+            indicatorId: sma
+            alias: sma_1
+            params: {period: 60}
+            output: value
+          - id: chg_1
+            indicatorId: change
+            alias: chg_1
+            params: {}
+            output: value
+        entry:
+          logic: AND
+          conditions:
+            - id: entry_1
+              left: {type: price, priceField: close}
+              operator: greater_than
+              right: {type: indicator, indicatorAlias: sma_1, indicatorOutput: value}
+            - id: entry_2
+              left: {type: indicator, indicatorAlias: chg_1, indicatorOutput: value}
+              operator: greater_than
+              right: {type: value, value: 0}
+        exit:
+          logic: AND
+          conditions:
+            - id: exit_1
+              left: {type: price, priceField: close}
+              operator: less_than
+              right: {type: indicator, indicatorAlias: sma_1, indicatorOutput: value}
+            - id: exit_2
+              left: {type: indicator, indicatorAlias: chg_1, indicatorOutput: value}
+              operator: less_than
+              right: {type: value, value: 0}
+        risk:
+          stopLoss: {enabled: true, percent: 5}
+          takeProfit: {enabled: false, percent: 10}
+          trailingStop: {enabled: false, percent: 3}
+
+    - id: week52_high
+      name: 52주 신고가
+      description: 52주 최고가 돌파 시 매수
+      category: 돌파매매
+      params:
+        - name: breakout_margin
+          label: 돌파 마진(%)
+          min: 0
+          max: 5
+          default: 0
+          step: 0.5
+      builder_state:
+        metadata:
+          id: week52_high
+          name: 52주 신고가
+          description: 52주 최고가 돌파 시 매수
+          category: breakout
+          tags: [52week, high, breakout]
+          author: KIS
+        indicators:
+          - id: maximum_1
+            indicatorId: maximum
+            alias: high_52w
+            params: {period: 252}
+            output: value
+          - id: breakout_margin_1
+            indicatorId: breakout_margin
+            alias: breakout_margin_1
+            params: {period: 252}
+            output: value
+        entry:
+          logic: AND
+          conditions:
+            - id: entry_1
+              left: {type: price, priceField: close}
+              operator: greater_than
+              right: {type: indicator, indicatorAlias: high_52w, indicatorOutput: value}
+            - id: entry_2
+              left: {type: indicator, indicatorAlias: breakout_margin_1, indicatorOutput: value}
+              operator: greater_than
+              right: {type: value, value: 0}
+        exit:
+          logic: OR
+          conditions:
+            - id: exit_1
+              left: {type: price, priceField: close}
+              operator: less_than
+              right: {type: indicator, indicatorAlias: high_52w, indicatorOutput: value}
+            - id: exit_2
+              left: {type: indicator, indicatorAlias: breakout_margin_1, indicatorOutput: value}
+              operator: less_than
+              right: {type: value, value: 0}
+        risk:
+          stopLoss: {enabled: true, percent: 5}
+          takeProfit: {enabled: true, percent: 15}
+          trailingStop: {enabled: false, percent: 3}
+
+    - id: consecutive
+      name: 연속 상승/하락
+      description: N일 연속 상승 시 매수
+      category: 추세추종
+      params:
+        - name: consecutive_days
+          label: 연속 일수
+          min: 3
+          max: 10
+          default: 5
+          step: 1
+      builder_state:
+        metadata:
+          id: consecutive
+          name: 연속 상승/하락
+          description: N일 연속 상승 시 매수
+          category: pattern
+          tags: [consecutive, pattern]
+          author: KIS
+        indicators:
+          - id: consec_up
+            indicatorId: consecutive
+            alias: up_days
+            params: {direction: up}
+            output: value
+          - id: consec_down
+            indicatorId: consecutive
+            alias: down_days
+            params: {direction: down}
+            output: value
+        entry:
+          logic: AND
+          conditions:
+            - id: entry_1
+              left: {type: indicator, indicatorAlias: up_days, indicatorOutput: value}
+              operator: greater_equal
+              right: {type: value, value: 5}
+        exit:
+          logic: OR
+          conditions:
+            - id: exit_1
+              left: {type: indicator, indicatorAlias: down_days, indicatorOutput: value}
+              operator: greater_equal
+              right: {type: value, value: 5}
+        risk:
+          stopLoss: {enabled: true, percent: 5}
+          takeProfit: {enabled: false, percent: 10}
+          trailingStop: {enabled: false, percent: 3}
+
+    - id: disparity
+      name: 이격도
+      description: MA 대비 이격 기준 매수/매도
+      category: 역추세
+      params:
+        - name: period
+          label: MA 기간
+          min: 5
+          max: 40
+          default: 20
+          step: 5
+        - name: buy_threshold
+          label: 매수 기준
+          min: 80
+          max: 95
+          default: 90
+          step: 1
+        - name: sell_threshold
+          label: 매도 기준
+          min: 105
+          max: 120
+          default: 110
+          step: 1
+      builder_state:
+        metadata:
+          id: disparity
+          name: 이격도
+          description: MA 대비 이격 기준 매수/매도
+          category: reversal
+          tags: [disparity, ma, reversal]
+          author: KIS
+        indicators:
+          - id: disp_1
+            indicatorId: disparity
+            alias: disp_20
+            params: {period: 20}
+            output: value
+        entry:
+          logic: AND
+          conditions:
+            - id: entry_1
+              left: {type: indicator, indicatorAlias: disp_20, indicatorOutput: value}
+              operator: less_than
+              right: {type: value, value: 90}
+        exit:
+          logic: OR
+          conditions:
+            - id: exit_1
+              left: {type: indicator, indicatorAlias: disp_20, indicatorOutput: value}
+              operator: greater_than
+              right: {type: value, value: 110}
+        risk:
+          stopLoss: {enabled: true, percent: 5}
+          takeProfit: {enabled: true, percent: 10}
+          trailingStop: {enabled: false, percent: 3}
+
+    - id: breakout_fail
+      name: 돌파 실패
+      description: 전고점 돌파 실패 시 매도
+      category: 손절
+      params:
+        - name: lookback_days
+          label: 전고점 기간
+          min: 10
+          max: 40
+          default: 20
+          step: 5
+        - name: drop_pct
+          label: 하락 기준(%)
+          min: -10
+          max: -1
+          default: -3
+          step: 1
+      builder_state:
+        metadata:
+          id: breakout_fail
+          name: 돌파 실패
+          description: 전고점 돌파 실패 시 매도
+          category: reversal
+          tags: [breakout, fail, reversal]
+          author: KIS
+        indicators:
+          - id: maximum_1
+            indicatorId: maximum
+            alias: prev_high
+            params: {period: 20}
+            output: value
+        entry:
+          logic: AND
+          conditions:
+            - id: entry_1
+              left: {type: price, priceField: close}
+              operator: less_than
+              right: {type: indicator, indicatorAlias: prev_high, indicatorOutput: value}
+        exit:
+          logic: OR
+          conditions:
+            - id: exit_1
+              left: {type: price, priceField: close}
+              operator: greater_than
+              right: {type: indicator, indicatorAlias: prev_high, indicatorOutput: value}
+        risk:
+          stopLoss: {enabled: true, percent: 3}
+          takeProfit: {enabled: false, percent: 10}
+          trailingStop: {enabled: false, percent: 3}
+
+    - id: strong_close
+      name: 강한 종가
+      description: 당일 고가 대비 종가 위치로 매수 (장마감 후 권장)
+      category: 모멘텀
+      params:
+        - name: min_close_ratio
+          label: 최소 종가 비율
+          min: 0.5
+          max: 1.0
+          default: 0.8
+          step: 0.05
+      builder_state:
+        metadata:
+          id: strong_close
+          name: 강한 종가
+          description: 당일 고가 대비 종가 위치로 매수 (장마감 후 권장)
+          category: momentum
+          tags: [strong, close, momentum]
+          author: KIS
+        indicators:
+          - id: ibs_1
+            indicatorId: ibs
+            alias: ibs_1
+            params: {}
+            output: value
+        entry:
+          logic: AND
+          conditions:
+            - id: entry_1
+              left: {type: indicator, indicatorAlias: ibs_1, indicatorOutput: value}
+              operator: greater_equal
+              right: {type: value, value: 0.8}
+        exit:
+          logic: OR
+          conditions:
+            - id: exit_1
+              left: {type: indicator, indicatorAlias: ibs_1, indicatorOutput: value}
+              operator: less_than
+              right: {type: value, value: 0.5}
+        risk:
+          stopLoss: {enabled: true, percent: 3}
+          takeProfit: {enabled: true, percent: 5}
+          trailingStop: {enabled: false, percent: 3}
+
+    - id: volatility
+      name: 변동성 확장
+      description: 변동성 최저에서 돌파 시 매수
+      category: 돌파매매
+      params:
+        - name: lookback_days
+          label: 변동성 기간
+          min: 5
+          max: 30
+          default: 10
+          step: 5
+        - name: breakout_pct
+          label: 돌파 기준(%)
+          min: 1
+          max: 10
+          default: 3
+          step: 1
+      builder_state:
+        metadata:
+          id: volatility
+          name: 변동성 확장
+          description: 변동성 최저에서 돌파 시 매수
+          category: volatility
+          tags: [volatility, breakout, atr]
+          author: KIS
+        indicators:
+          - id: vol_1
+            indicatorId: volatility_ind
+            alias: vol_10
+            params: {period: 10}
+            output: value
+          - id: chg_1
+            indicatorId: change
+            alias: chg_1
+            params: {}
+            output: value
+        entry:
+          logic: AND
+          conditions:
+            - id: entry_1
+              left: {type: indicator, indicatorAlias: vol_10, indicatorOutput: value}
+              operator: less_than
+              right: {type: value, value: 0.02}
+            - id: entry_2
+              left: {type: indicator, indicatorAlias: chg_1, indicatorOutput: value}
+              operator: greater_equal
+              right: {type: value, value: 3}
+        exit:
+          logic: OR
+          conditions:
+            - id: exit_1
+              left: {type: indicator, indicatorAlias: chg_1, indicatorOutput: value}
+              operator: less_equal
+              right: {type: value, value: -3}
+        risk:
+          stopLoss: {enabled: true, percent: 3}
+          takeProfit: {enabled: false, percent: 10}
+          trailingStop: {enabled: false, percent: 3}
+
+    - id: mean_reversion
+      name: 평균회귀
+      description: N일 평균 대비 이탈 시 매매
+      category: 역추세
+      params:
+        - name: period
+          label: 평균 기간
+          min: 3
+          max: 20
+          default: 5
+          step: 1
+        - name: buy_threshold
+          label: 매수 이탈(%)
+          min: -10
+          max: -1
+          default: -3
+          step: 1
+        - name: sell_threshold
+          label: 매도 이탈(%)
+          min: 1
+          max: 10
+          default: 3
+          step: 1
+      builder_state:
+        metadata:
+          id: mean_reversion
+          name: 평균회귀
+          description: N일 평균 대비 이탈 시 매매
+          category: reversal
+          tags: [mean_reversion, reversal]
+          author: KIS
+        indicators:
+          - id: disp_1
+            indicatorId: disparity
+            alias: disp_5
+            params: {period: 5}
+            output: value
+        entry:
+          logic: AND
+          conditions:
+            - id: entry_1
+              left: {type: indicator, indicatorAlias: disp_5, indicatorOutput: value}
+              operator: less_equal
+              right: {type: value, value: 97}
+        exit:
+          logic: OR
+          conditions:
+            - id: exit_1
+              left: {type: indicator, indicatorAlias: disp_5, indicatorOutput: value}
+              operator: greater_equal
+              right: {type: value, value: 103}
+        risk:
+          stopLoss: {enabled: true, percent: 3}
+          takeProfit: {enabled: true, percent: 3}
+          trailingStop: {enabled: false, percent: 3}
+
+    - id: rsi_reversal
+      name: RSI 반등
+      description: RSI 과매도권 회복 시 매수
+      category: 오실레이터
+      params:
+        - name: period
+          label: RSI 기간
+          min: 5
+          max: 30
+          default: 14
+          step: 1
+        - name: oversold
+          label: 과매도 기준
+          min: 10
+          max: 40
+          default: 30
+          step: 5
+      builder_state:
+        metadata:
+          id: rsi_reversal
+          name: RSI 반등
+          description: RSI 과매도권 회복 시 매수
+          category: oscillator
+          tags: [rsi, reversal, oversold]
+          author: KIS
+        indicators:
+          - id: rsi_1
+            indicatorId: rsi
+            alias: rsi_14
+            params: {period: 14}
+            output: value
+        entry:
+          logic: AND
+          conditions:
+            - id: entry_1
+              left: {type: indicator, indicatorAlias: rsi_14, indicatorOutput: value}
+              operator: cross_above
+              right: {type: value, value: 30}
+        exit:
+          logic: OR
+          conditions:
+            - id: exit_1
+              left: {type: indicator, indicatorAlias: rsi_14, indicatorOutput: value}
+              operator: cross_below
+              right: {type: value, value: 70}
+        risk:
+          stopLoss: {enabled: true, percent: 4}
+          takeProfit: {enabled: true, percent: 8}
+          trailingStop: {enabled: false, percent: 3}
+
+    - id: williams_r_reversal
+      name: Williams %R 반등
+      description: Williams %R 과매도권 탈출 시 매수
+      category: 오실레이터
+      params:
+        - name: period
+          label: Williams %R 기간
+          min: 5
+          max: 30
+          default: 14
+          step: 1
+      builder_state:
+        metadata:
+          id: williams_r_reversal
+          name: Williams %R 반등
+          description: Williams %R 과매도권 탈출 시 매수
+          category: oscillator
+          tags: [williams_r, reversal, oversold]
+          author: KIS
+        indicators:
+          - id: williams_r_1
+            indicatorId: williams_r
+            alias: wr_14
+            params: {period: 14}
+            output: value
+        entry:
+          logic: AND
+          conditions:
+            - id: entry_1
+              left: {type: indicator, indicatorAlias: wr_14, indicatorOutput: value}
+              operator: cross_above
+              right: {type: value, value: -80}
+        exit:
+          logic: OR
+          conditions:
+            - id: exit_1
+              left: {type: indicator, indicatorAlias: wr_14, indicatorOutput: value}
+              operator: cross_below
+              right: {type: value, value: -20}
+        risk:
+          stopLoss: {enabled: true, percent: 4}
+          takeProfit: {enabled: true, percent: 8}
+          trailingStop: {enabled: false, percent: 3}
+
+    - id: macd_signal_cross
+      name: MACD 시그널 교차
+      description: MACD가 시그널선을 상향 돌파할 때 매수
+      category: 모멘텀
+      params:
+        - name: fast
+          label: Fast EMA
+          min: 5
+          max: 20
+          default: 12
+          step: 1
+        - name: slow
+          label: Slow EMA
+          min: 20
+          max: 60
+          default: 26
+          step: 1
+        - name: signal
+          label: Signal EMA
+          min: 5
+          max: 20
+          default: 9
+          step: 1
+      builder_state:
+        metadata:
+          id: macd_signal_cross
+          name: MACD 시그널 교차
+          description: MACD가 시그널선을 상향 돌파할 때 매수
+          category: momentum
+          tags: [macd, crossover, momentum]
+          author: KIS
+        indicators:
+          - id: macd_1
+            indicatorId: macd
+            alias: macd_1
+            params: {fast: 12, slow: 26, signal: 9}
+            output: value
+        entry:
+          logic: AND
+          conditions:
+            - id: entry_1
+              left: {type: indicator, indicatorAlias: macd_1, indicatorOutput: value}
+              operator: cross_above
+              right: {type: indicator, indicatorAlias: macd_1, indicatorOutput: signal}
+        exit:
+          logic: OR
+          conditions:
+            - id: exit_1
+              left: {type: indicator, indicatorAlias: macd_1, indicatorOutput: value}
+              operator: cross_below
+              right: {type: indicator, indicatorAlias: macd_1, indicatorOutput: signal}
+        risk:
+          stopLoss: {enabled: true, percent: 5}
+          takeProfit: {enabled: true, percent: 10}
+          trailingStop: {enabled: false, percent: 3}
+
+    - id: bollinger_rsi_reversion
+      name: 볼린저 RSI 반등
+      description: 하단 밴드 이탈과 RSI 과매도 조합
+      category: 역추세
+      params:
+        - name: period
+          label: 밴드 기간
+          min: 10
+          max: 40
+          default: 20
+          step: 5
+        - name: std
+          label: 표준편차
+          min: 1
+          max: 3
+          default: 2
+          step: 0.5
+      builder_state:
+        metadata:
+          id: bollinger_rsi_reversion
+          name: 볼린저 RSI 반등
+          description: 하단 밴드 이탈과 RSI 과매도 조합
+          category: mean_reversion
+          tags: [bollinger, rsi, mean_reversion]
+          author: KIS
+        indicators:
+          - id: bb_1
+            indicatorId: bollinger
+            alias: bb_20
+            params: {period: 20, std: 2}
+            output: middle
+          - id: rsi_1
+            indicatorId: rsi
+            alias: rsi_14
+            params: {period: 14}
+            output: value
+        entry:
+          logic: AND
+          conditions:
+            - id: entry_1
+              left: {type: price, priceField: close}
+              operator: less_than
+              right: {type: indicator, indicatorAlias: bb_20, indicatorOutput: lower}
+            - id: entry_2
+              left: {type: indicator, indicatorAlias: rsi_14, indicatorOutput: value}
+              operator: less_than
+              right: {type: value, value: 35}
+        exit:
+          logic: OR
+          conditions:
+            - id: exit_1
+              left: {type: price, priceField: close}
+              operator: greater_than
+              right: {type: indicator, indicatorAlias: bb_20, indicatorOutput: middle}
+            - id: exit_2
+              left: {type: indicator, indicatorAlias: rsi_14, indicatorOutput: value}
+              operator: greater_than
+              right: {type: value, value: 60}
+        risk:
+          stopLoss: {enabled: true, percent: 4}
+          takeProfit: {enabled: true, percent: 7}
+          trailingStop: {enabled: false, percent: 3}
+
+    - id: vwap_reclaim
+      name: VWAP 회복
+      description: 종가가 VWAP을 회복하며 단기 모멘텀이 양수일 때 매수
+      category: 추세추종
+      params:
+        - name: change_threshold
+          label: 등락률 기준(%)
+          min: 0
+          max: 5
+          default: 0
+          step: 0.5
+      builder_state:
+        metadata:
+          id: vwap_reclaim
+          name: VWAP 회복
+          description: 종가가 VWAP을 회복하며 단기 모멘텀이 양수일 때 매수
+          category: intraday
+          tags: [vwap, reclaim, momentum]
+          author: KIS
+        indicators:
+          - id: vwap_1
+            indicatorId: vwap
+            alias: vwap_1
+            params: {}
+            output: value
+          - id: chg_1
+            indicatorId: change
+            alias: chg_1
+            params: {}
+            output: value
+        entry:
+          logic: AND
+          conditions:
+            - id: entry_1
+              left: {type: price, priceField: close}
+              operator: cross_above
+              right: {type: indicator, indicatorAlias: vwap_1, indicatorOutput: value}
+            - id: entry_2
+              left: {type: indicator, indicatorAlias: chg_1, indicatorOutput: value}
+              operator: greater_than
+              right: {type: value, value: 0}
+        exit:
+          logic: OR
+          conditions:
+            - id: exit_1
+              left: {type: price, priceField: close}
+              operator: cross_below
+              right: {type: indicator, indicatorAlias: vwap_1, indicatorOutput: value}
+        risk:
+          stopLoss: {enabled: true, percent: 3}
+          takeProfit: {enabled: true, percent: 6}
+          trailingStop: {enabled: false, percent: 3}
+
+    - id: stochastic_reversal
+      name: 스토캐스틱 반전
+      description: 과매도 구간에서 %K가 회복할 때 매수
+      category: 오실레이터
+      params:
+        - name: k_period
+          label: "%K 기간"
+          min: 5
+          max: 30
+          default: 14
+          step: 1
+        - name: d_period
+          label: "%D 기간"
+          min: 3
+          max: 10
+          default: 3
+          step: 1
+      builder_state:
+        metadata:
+          id: stochastic_reversal
+          name: 스토캐스틱 반전
+          description: 과매도 구간에서 %K가 회복할 때 매수
+          category: oscillator
+          tags: [stochastic, reversal, oversold]
+          author: KIS
+        indicators:
+          - id: stoch_1
+            indicatorId: stochastic
+            alias: stoch_1
+            params: {k_period: 14, d_period: 3}
+            output: k
+        entry:
+          logic: AND
+          conditions:
+            - id: entry_1
+              left: {type: indicator, indicatorAlias: stoch_1, indicatorOutput: k}
+              operator: cross_above
+              right: {type: value, value: 20}
+            - id: entry_2
+              left: {type: indicator, indicatorAlias: stoch_1, indicatorOutput: d}
+              operator: less_than
+              right: {type: value, value: 35}
+        exit:
+          logic: OR
+          conditions:
+            - id: exit_1
+              left: {type: indicator, indicatorAlias: stoch_1, indicatorOutput: k}
+              operator: cross_below
+              right: {type: value, value: 80}
+        risk:
+          stopLoss: {enabled: true, percent: 4}
+          takeProfit: {enabled: true, percent: 8}
+          trailingStop: {enabled: false, percent: 3}
+
+    - id: trend_pullback
+      name: 추세 눌림 반등
+      description: 장기 상승 추세 안에서 RSI 회복과 단기 EMA 회복 확인
+      category: 추세추종
+      params:
+        - name: long_period
+          label: 장기 SMA
+          min: 60
+          max: 240
+          default: 120
+          step: 20
+        - name: short_period
+          label: 단기 EMA
+          min: 5
+          max: 30
+          default: 20
+          step: 5
+      builder_state:
+        metadata:
+          id: trend_pullback
+          name: 추세 눌림 반등
+          description: 장기 상승 추세 안에서 RSI 회복과 단기 EMA 회복 확인
+          category: trend
+          tags: [trend, pullback, ema, rsi]
+          author: KIS
+        indicators:
+          - id: sma_1
+            indicatorId: sma
+            alias: sma_120
+            params: {period: 120}
+            output: value
+          - id: ema_1
+            indicatorId: ema
+            alias: ema_20
+            params: {period: 20}
+            output: value
+          - id: rsi_1
+            indicatorId: rsi
+            alias: rsi_14
+            params: {period: 14}
+            output: value
+        entry:
+          logic: AND
+          conditions:
+            - id: entry_1
+              left: {type: price, priceField: close}
+              operator: greater_than
+              right: {type: indicator, indicatorAlias: sma_120, indicatorOutput: value}
+            - id: entry_2
+              left: {type: price, priceField: close}
+              operator: cross_above
+              right: {type: indicator, indicatorAlias: ema_20, indicatorOutput: value}
+            - id: entry_3
+              left: {type: indicator, indicatorAlias: rsi_14, indicatorOutput: value}
+              operator: cross_above
+              right: {type: value, value: 45}
+        exit:
+          logic: OR
+          conditions:
+            - id: exit_1
+              left: {type: price, priceField: close}
+              operator: cross_below
+              right: {type: indicator, indicatorAlias: ema_20, indicatorOutput: value}
+        risk:
+          stopLoss: {enabled: true, percent: 5}
+          takeProfit: {enabled: false, percent: 10}
+          trailingStop: {enabled: true, percent: 4}
+
+    - id: donchian_breakout
+      name: 돈치안 돌파
+      description: 최근 고가 채널 상향 돌파 시 추세 매수
+      category: 돌파매매
+      params:
+        - name: period
+          label: 채널 기간
+          min: 10
+          max: 80
+          default: 20
+          step: 5
+      builder_state:
+        metadata:
+          id: donchian_breakout
+          name: 돈치안 돌파
+          description: 최근 고가 채널 상향 돌파 시 추세 매수
+          category: breakout
+          tags: [donchian, breakout, trend]
+          author: KIS
+        indicators:
+          - id: donchian_1
+            indicatorId: donchian
+            alias: donchian_20
+            params: {period: 20}
+            output: upper
+        entry:
+          logic: AND
+          conditions:
+            - id: entry_1
+              left: {type: price, priceField: close}
+              operator: cross_above
+              right: {type: indicator, indicatorAlias: donchian_20, indicatorOutput: upper}
+        exit:
+          logic: OR
+          conditions:
+            - id: exit_1
+              left: {type: price, priceField: close}
+              operator: cross_below
+              right: {type: indicator, indicatorAlias: donchian_20, indicatorOutput: lower}
+        risk:
+          stopLoss: {enabled: true, percent: 5}
+          takeProfit: {enabled: false, percent: 10}
+          trailingStop: {enabled: true, percent: 5}
+
+    - id: adx_trend_continuation
+      name: ADX 추세 지속
+      description: ADX 강도와 +DI 우위가 확인될 때 매수
+      category: 추세추종
+      params:
+        - name: period
+          label: ADX 기간
+          min: 7
+          max: 30
+          default: 14
+          step: 1
+      builder_state:
+        metadata:
+          id: adx_trend_continuation
+          name: ADX 추세 지속
+          description: ADX 강도와 +DI 우위가 확인될 때 매수
+          category: trend
+          tags: [adx, directional, trend]
+          author: KIS
+        indicators:
+          - id: adx_1
+            indicatorId: adx
+            alias: adx_14
+            params: {period: 14}
+            output: value
+        entry:
+          logic: AND
+          conditions:
+            - id: entry_1
+              left: {type: indicator, indicatorAlias: adx_14, indicatorOutput: value}
+              operator: greater_than
+              right: {type: value, value: 25}
+            - id: entry_2
+              left: {type: indicator, indicatorAlias: adx_14, indicatorOutput: plus_di}
+              operator: greater_than
+              right: {type: indicator, indicatorAlias: adx_14, indicatorOutput: minus_di}
+        exit:
+          logic: OR
+          conditions:
+            - id: exit_1
+              left: {type: indicator, indicatorAlias: adx_14, indicatorOutput: plus_di}
+              operator: cross_below
+              right: {type: indicator, indicatorAlias: adx_14, indicatorOutput: minus_di}
+        risk:
+          stopLoss: {enabled: true, percent: 5}
+          takeProfit: {enabled: false, percent: 10}
+          trailingStop: {enabled: true, percent: 4}
+
+    - id: trix_golden
+      name: TRIX 골든 신호
+      description: TRIX가 0선을 상향 돌파할 때 매수
+      category: 모멘텀
+      params:
+        - name: period
+          label: TRIX 기간
+          min: 5
+          max: 30
+          default: 15
+          step: 1
+      builder_state:
+        metadata:
+          id: trix_golden
+          name: TRIX 골든 신호
+          description: TRIX가 0선을 상향 돌파할 때 매수
+          category: momentum
+          tags: [trix, momentum, crossover]
+          author: KIS
+        indicators:
+          - id: trix_1
+            indicatorId: trix
+            alias: trix_15
+            params: {period: 15}
+            output: value
+        entry:
+          logic: AND
+          conditions:
+            - id: entry_1
+              left: {type: indicator, indicatorAlias: trix_15, indicatorOutput: value}
+              operator: cross_above
+              right: {type: value, value: 0}
+        exit:
+          logic: OR
+          conditions:
+            - id: exit_1
+              left: {type: indicator, indicatorAlias: trix_15, indicatorOutput: value}
+              operator: cross_below
+              right: {type: value, value: 0}
+        risk:
+          stopLoss: {enabled: true, percent: 5}
+          takeProfit: {enabled: true, percent: 10}
+          trailingStop: {enabled: false, percent: 3}
+
+    - id: cci_reversal
+      name: CCI 반등
+      description: CCI가 과매도 기준을 회복할 때 매수
+      category: 오실레이터
+      params:
+        - name: period
+          label: CCI 기간
+          min: 10
+          max: 40
+          default: 20
+          step: 5
+      builder_state:
+        metadata:
+          id: cci_reversal
+          name: CCI 반등
+          description: CCI가 과매도 기준을 회복할 때 매수
+          category: oscillator
+          tags: [cci, reversal, oversold]
+          author: KIS
+        indicators:
+          - id: cci_1
+            indicatorId: cci
+            alias: cci_20
+            params: {period: 20}
+            output: value
+        entry:
+          logic: AND
+          conditions:
+            - id: entry_1
+              left: {type: indicator, indicatorAlias: cci_20, indicatorOutput: value}
+              operator: cross_above
+              right: {type: value, value: -100}
+        exit:
+          logic: OR
+          conditions:
+            - id: exit_1
+              left: {type: indicator, indicatorAlias: cci_20, indicatorOutput: value}
+              operator: cross_below
+              right: {type: value, value: 100}
+        risk:
+          stopLoss: {enabled: true, percent: 4}
+          takeProfit: {enabled: true, percent: 8}
+          trailingStop: {enabled: false, percent: 3}
+
+    - id: mfi_reversal
+      name: MFI 반등
+      description: 거래량 반영 MFI 과매도권 회복 시 매수
+      category: 거래량
+      params:
+        - name: period
+          label: MFI 기간
+          min: 5
+          max: 30
+          default: 14
+          step: 1
+      builder_state:
+        metadata:
+          id: mfi_reversal
+          name: MFI 반등
+          description: 거래량 반영 MFI 과매도권 회복 시 매수
+          category: volume
+          tags: [mfi, volume, reversal]
+          author: KIS
+        indicators:
+          - id: mfi_1
+            indicatorId: mfi
+            alias: mfi_14
+            params: {period: 14}
+            output: value
+        entry:
+          logic: AND
+          conditions:
+            - id: entry_1
+              left: {type: indicator, indicatorAlias: mfi_14, indicatorOutput: value}
+              operator: cross_above
+              right: {type: value, value: 20}
+        exit:
+          logic: OR
+          conditions:
+            - id: exit_1
+              left: {type: indicator, indicatorAlias: mfi_14, indicatorOutput: value}
+              operator: cross_below
+              right: {type: value, value: 80}
+        risk:
+          stopLoss: {enabled: true, percent: 4}
+          takeProfit: {enabled: true, percent: 8}
+          trailingStop: {enabled: false, percent: 3}
+
+    - id: obv_accumulation
+      name: OBV 누적 추세
+      description: OBV 0선 회복과 가격 EMA 회복을 동시에 확인
+      category: 거래량
+      params:
+        - name: ema_period
+          label: EMA 기간
+          min: 5
+          max: 60
+          default: 20
+          step: 5
+      builder_state:
+        metadata:
+          id: obv_accumulation
+          name: OBV 누적 추세
+          description: OBV 0선 회복과 가격 EMA 회복을 동시에 확인
+          category: volume
+          tags: [obv, accumulation, ema]
+          author: KIS
+        indicators:
+          - id: obv_1
+            indicatorId: obv
+            alias: obv_1
+            params: {}
+            output: value
+          - id: ema_1
+            indicatorId: ema
+            alias: ema_20
+            params: {period: 20}
+            output: value
+        entry:
+          logic: AND
+          conditions:
+            - id: entry_1
+              left: {type: indicator, indicatorAlias: obv_1, indicatorOutput: value}
+              operator: cross_above
+              right: {type: value, value: 0}
+            - id: entry_2
+              left: {type: price, priceField: close}
+              operator: cross_above
+              right: {type: indicator, indicatorAlias: ema_20, indicatorOutput: value}
+        exit:
+          logic: OR
+          conditions:
+            - id: exit_1
+              left: {type: indicator, indicatorAlias: obv_1, indicatorOutput: value}
+              operator: cross_below
+              right: {type: value, value: 0}
+        risk:
+          stopLoss: {enabled: true, percent: 5}
+          takeProfit: {enabled: false, percent: 10}
+          trailingStop: {enabled: true, percent: 4}
+
+    - id: ichimoku_cloud_breakout
+      name: 이치모쿠 구름 돌파
+      description: 가격이 구름 위에 있고 전환선이 기준선을 돌파할 때 매수
+      category: 추세추종
+      params:
+        - name: conversion
+          label: 전환선 기간
+          min: 5
+          max: 20
+          default: 9
+          step: 1
+        - name: base
+          label: 기준선 기간
+          min: 20
+          max: 60
+          default: 26
+          step: 1
+      builder_state:
+        metadata:
+          id: ichimoku_cloud_breakout
+          name: 이치모쿠 구름 돌파
+          description: 가격이 구름 위에 있고 전환선이 기준선을 돌파할 때 매수
+          category: trend
+          tags: [ichimoku, cloud, trend]
+          author: KIS
+        indicators:
+          - id: ichimoku_1
+            indicatorId: ichimoku
+            alias: ichimoku_1
+            params: {conversion: 9, base: 26, span_b: 52}
+            output: tenkan
+        entry:
+          logic: AND
+          conditions:
+            - id: entry_1
+              left: {type: price, priceField: close}
+              operator: greater_than
+              right: {type: indicator, indicatorAlias: ichimoku_1, indicatorOutput: senkou_a}
+            - id: entry_2
+              left: {type: price, priceField: close}
+              operator: greater_than
+              right: {type: indicator, indicatorAlias: ichimoku_1, indicatorOutput: senkou_b}
+            - id: entry_3
+              left: {type: indicator, indicatorAlias: ichimoku_1, indicatorOutput: tenkan}
+              operator: cross_above
+              right: {type: indicator, indicatorAlias: ichimoku_1, indicatorOutput: kijun}
+        exit:
+          logic: OR
+          conditions:
+            - id: exit_1
+              left: {type: price, priceField: close}
+              operator: cross_below
+              right: {type: indicator, indicatorAlias: ichimoku_1, indicatorOutput: kijun}
+        risk:
+          stopLoss: {enabled: true, percent: 5}
+          takeProfit: {enabled: false, percent: 10}
+          trailingStop: {enabled: true, percent: 4}
+
+    - id: supertrend_follow
+      name: SuperTrend 추세 추종
+      description: 종가가 SuperTrend 위로 올라서고 단기 변화율이 양수일 때 매수
+      category: 추세추종
+      params:
+        - name: period
+          label: ATR 기간
+          min: 7
+          max: 30
+          default: 10
+          step: 1
+        - name: multiplier
+          label: 승수
+          min: 1
+          max: 5
+          default: 3
+          step: 0.5
+      builder_state:
+        metadata:
+          id: supertrend_follow
+          name: SuperTrend 추세 추종
+          description: 종가가 SuperTrend 위로 올라서고 단기 변화율이 양수일 때 매수
+          category: trend
+          tags: [supertrend, trend, atr]
+          author: KIS
+        indicators:
+          - id: supertrend_1
+            indicatorId: supertrend
+            alias: supertrend_1
+            params: {period: 10, multiplier: 3}
+            output: value
+          - id: chg_1
+            indicatorId: change
+            alias: chg_1
+            params: {}
+            output: value
+        entry:
+          logic: AND
+          conditions:
+            - id: entry_1
+              left: {type: price, priceField: close}
+              operator: cross_above
+              right: {type: indicator, indicatorAlias: supertrend_1, indicatorOutput: value}
+            - id: entry_2
+              left: {type: indicator, indicatorAlias: chg_1, indicatorOutput: value}
+              operator: greater_than
+              right: {type: value, value: 0}
+        exit:
+          logic: OR
+          conditions:
+            - id: exit_1
+              left: {type: price, priceField: close}
+              operator: cross_below
+              right: {type: indicator, indicatorAlias: supertrend_1, indicatorOutput: value}
+        risk:
+          stopLoss: {enabled: true, percent: 5}
+          takeProfit: {enabled: false, percent: 10}
+          trailingStop: {enabled: true, percent: 4}
+
+    - id: keltner_breakout
+      name: 켈트너 채널 돌파
+      description: 종가가 켈트너 상단 채널을 돌파할 때 매수
+      category: 돌파매매
+      params:
+        - name: period
+          label: 채널 기간
+          min: 10
+          max: 40
+          default: 20
+          step: 5
+        - name: multiplier
+          label: ATR 승수
+          min: 1
+          max: 4
+          default: 2
+          step: 0.5
+      builder_state:
+        metadata:
+          id: keltner_breakout
+          name: 켈트너 채널 돌파
+          description: 종가가 켈트너 상단 채널을 돌파할 때 매수
+          category: breakout
+          tags: [keltner, breakout, atr]
+          author: KIS
+        indicators:
+          - id: keltner_1
+            indicatorId: keltner
+            alias: keltner_20
+            params: {period: 20, multiplier: 2}
+            output: upper
+        entry:
+          logic: AND
+          conditions:
+            - id: entry_1
+              left: {type: price, priceField: close}
+              operator: cross_above
+              right: {type: indicator, indicatorAlias: keltner_20, indicatorOutput: upper}
+        exit:
+          logic: OR
+          conditions:
+            - id: exit_1
+              left: {type: price, priceField: close}
+              operator: cross_below
+              right: {type: indicator, indicatorAlias: keltner_20, indicatorOutput: middle}
+        risk:
+          stopLoss: {enabled: true, percent: 5}
+          takeProfit: {enabled: false, percent: 10}
+          trailingStop: {enabled: true, percent: 4}
+
+    - id: engulfing_rsi_reversal
+      name: 장악형 RSI 반전
+      description: 상승 반전 캔들 패턴과 RSI 저평가를 함께 확인
+      category: 캔들패턴
+      params:
+        - name: rsi_period
+          label: RSI 기간
+          min: 5
+          max: 30
+          default: 14
+          step: 1
+      builder_state:
+        metadata:
+          id: engulfing_rsi_reversal
+          name: 장악형 RSI 반전
+          description: 상승 반전 캔들 패턴과 RSI 저평가를 함께 확인
+          category: candlestick
+          tags: [candlestick, rsi, reversal]
+          author: KIS
+        indicators:
+          - id: engulfing_1
+            indicatorId: engulfing
+            alias: engulfing_1
+            params: {}
+            output: value
+          - id: rsi_1
+            indicatorId: rsi
+            alias: rsi_14
+            params: {period: 14}
+            output: value
+        entry:
+          logic: AND
+          conditions:
+            - id: entry_1
+              left: {type: indicator, indicatorAlias: engulfing_1, indicatorOutput: value}
+              operator: greater_than
+              right: {type: value, value: 0}
+            - id: entry_2
+              left: {type: indicator, indicatorAlias: rsi_14, indicatorOutput: value}
+              operator: less_than
+              right: {type: value, value: 45}
+        exit:
+          logic: OR
+          conditions:
+            - id: exit_1
+              left: {type: indicator, indicatorAlias: engulfing_1, indicatorOutput: value}
+              operator: less_than
+              right: {type: value, value: 0}
+            - id: exit_2
+              left: {type: indicator, indicatorAlias: rsi_14, indicatorOutput: value}
+              operator: greater_than
+              right: {type: value, value: 65}
+        risk:
+          stopLoss: {enabled: true, percent: 4}
+          takeProfit: {enabled: true, percent: 8}
+          trailingStop: {enabled: false, percent: 3}
