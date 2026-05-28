@@ -1,16 +1,55 @@
-# Upstream KIS Strategy Builder UI (Next.js)
+# Strategy Builder UI (Next.js) — production build via multi-stage.
+#
+# Stage 1 installs deps and runs `next build` (turbopack production compile).
+# Stage 2 takes the compiled artifacts only — no source files in runtime —
+# so the container starts fast and runs `next start` instead of `next dev`.
+# Replaces the prior single-stage `next dev` (HMR, dev assets, ~3x RAM) as
+# part of Phase 5c of the Vite → Next.js migration.
 
-FROM node:20-slim
-
+# Stage 1: build
+FROM node:20-slim AS builder
 WORKDIR /app
 
-COPY strategy-builder-ui/package.json strategy-builder-ui/package-lock.json* ./
-RUN npm install
+# Copy manifest first so dep install layer is cacheable across source edits
+COPY strategy-builder-ui/package.json strategy-builder-ui/package-lock.json* strategy-builder-ui/bun.lock* ./
 
+# Upstream committed both package-lock.json and bun.lock; use npm to match
+# what we built and tested in Phase 2-4 (#350). --legacy-peer-deps because
+# the upstream tree has some peer ranges that recent npm rejects.
+RUN npm install --legacy-peer-deps
+
+# Copy the rest of the source and build
 COPY strategy-builder-ui/ .
+ENV NEXT_TELEMETRY_DISABLED=1
+RUN npm run build
 
-ENV KIS_BUILDER_API_BASE=http://dashboard:8001
+# Stage 2: runtime
+FROM node:20-slim AS runtime
+WORKDIR /app
+ENV NODE_ENV=production \
+    NEXT_TELEMETRY_DISABLED=1 \
+    PORT=3100 \
+    HOSTNAME=0.0.0.0 \
+    KIS_BUILDER_API_BASE=http://dashboard:8001
+
+# Bring across the compiled output, node_modules, and the small set of files
+# `next start` reads at runtime (manifest, config). No `public/` here — this
+# upstream import keeps favicon.ico under src/app/ and has no other static
+# assets in public/.
+COPY --from=builder /app/.next ./.next
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/package.json ./package.json
+COPY --from=builder /app/next.config.ts ./next.config.ts
+
+# Non-root for safety. node:20-slim already ships a `node` user at UID 1000,
+# so reuse it instead of creating a duplicate.
+RUN chown -R node:node /app
+USER node
 
 EXPOSE 3100
 
-CMD ["npm", "run", "dev"]
+# Healthcheck: Next.js answers GET / with the Cockpit home page at 200.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD node -e "fetch('http://localhost:3100/').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+
+CMD ["npm", "run", "start"]
