@@ -1,0 +1,31 @@
+.git
+.gitignore
+.venv
+__pycache__
+**/__pycache__
+.pytest_cache
+.ruff_cache
+.mypy_cache
+.coverage
+htmlcov
+
+# Local dependency/build outputs
+node_modules
+**/node_modules
+.next
+**/.next
+dist
+**/dist
+
+# Runtime and generated artifacts
+.cache
+logs
+reports
+mlruns
+artifacts
+data
+
+# Local credentials and environment files
+.env
+.env.*
+.kis_token_*

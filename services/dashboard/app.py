@@ -199,11 +199,12 @@ def _register_routes(app: FastAPI) -> None:
     """Register API routes and React SPA static file serving."""
     from services.dashboard.routes import (
         health,
+        kis_builder,
         metrics,
         signals,
+        strategies,
         strategy_builder,
         strategy_lab,
-        strategies,
         trades,
         trading,
     )
@@ -213,6 +214,7 @@ def _register_routes(app: FastAPI) -> None:
     app.include_router(trading.router)
     app.include_router(signals.router)
     app.include_router(strategy_builder.router)
+    app.include_router(kis_builder.router)
     app.include_router(strategy_lab.router)
     app.include_router(trades.router)
     app.include_router(strategies.router)
