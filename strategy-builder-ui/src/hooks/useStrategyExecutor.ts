@@ -68,10 +68,16 @@ export function useStrategyExecutor(): UseStrategyExecutorResult {
     setSignals([]);
     setLogs([]);
 
-    // Initialize params with defaults
+    // Initialize params with defaults. The KIS STS `/api/strategies` endpoint
+    // does not currently emit a `params` array per strategy (the registry
+    // YAMLs hold the parameter definitions, not the response). Guard against
+    // missing/null so selecting a strategy on /execute doesn't crash with
+    // "Cannot read properties of undefined (reading 'forEach')". When the
+    // backend gains structured params this branch will populate naturally.
     if (strategy) {
       const defaultParams: Record<string, number> = {};
-      for (const param of strategy.params) {
+      const strategyParams = strategy.params ?? [];
+      for (const param of strategyParams) {
         defaultParams[param.name] = param.default;
       }
       setParams(defaultParams);
