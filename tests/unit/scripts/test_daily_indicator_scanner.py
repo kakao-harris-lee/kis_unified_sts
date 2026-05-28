@@ -8,6 +8,7 @@ import scripts.daily_indicator_scanner as scanner
 from scripts.daily_indicator_scanner import (
     backfill_missing_candidate_candles,
     build_strategy_candidate_watchlist,
+    compute_futures_daily_indicators,
     compute_indicators,
     extract_candidate_symbols,
     get_clickhouse_client,
@@ -17,6 +18,7 @@ from scripts.daily_indicator_scanner import (
     load_redis_candidate_symbols,
     load_symbol_indicators,
     publish_to_redis,
+    scan_futures_symbols,
 )
 from shared.collector.historical.calendar import trading_day_lag
 from shared.collector.historical.daily_quality import DailyCandleQualityConfig
@@ -410,3 +412,67 @@ def test_backfill_missing_candidate_candles_limits_and_dedupes(monkeypatch):
 
     assert rows == 123
     assert calls == {"codes": ["005930"], "days": 100, "verbose": False}
+
+
+
+def test_compute_futures_daily_indicators_returns_required_keys():
+    # 80 synthetic days with mild uptrend + small daily noise so RSI is well
+    # defined (purely monotonic series would yield avg_loss == 0 → NaN RSI).
+    closes = [1000.0 + i * 1.25 + (5.0 if i % 3 else -3.0) for i in range(80)]
+    df = pd.DataFrame({
+        "date": [date(2026, 1, 1)] * 80,  # placeholder; not used by compute
+        "open": closes,
+        "high": [c + 5.0 for c in closes],
+        "low": [c - 5.0 for c in closes],
+        "close": closes,
+        "volume": [1000] * 80,
+    })
+
+    result = compute_futures_daily_indicators(df)
+    assert result is not None
+    # daily_regime_trend_filter consumes exactly these keys (see
+    # shared/strategy/gates/daily_regime_trend_gate.py defaults).
+    for key in ("daily_close", "daily_ema_20", "daily_ema_20_prev",
+                "daily_ema_60", "daily_rsi_14"):
+        assert key in result, f"missing required key {key}"
+    # Sanity: rising series → ema_20 > ema_60 (BULL regime), rsi > 50
+    assert result["daily_ema_20"] > result["daily_ema_60"]
+    assert result["daily_rsi_14"] > 50.0
+
+
+def test_compute_futures_daily_indicators_insufficient_history_returns_none():
+    df = pd.DataFrame({
+        "date": [date(2026, 1, 1)] * 30,
+        "open": [1000.0] * 30,
+        "high": [1001.0] * 30,
+        "low": [999.0] * 30,
+        "close": [1000.0] * 30,
+        "volume": [1000] * 30,
+    })
+    assert compute_futures_daily_indicators(df) is None
+
+
+def test_scan_futures_symbols_aggregates_per_symbol():
+    closes = [1000.0 + i * 1.0 for i in range(80)]
+
+    class Result:
+        def __init__(self, rows):
+            self.result_rows = rows
+
+    class Client:
+        def __init__(self):
+            self.calls = []
+
+        def query(self, _query, parameters):
+            self.calls.append(parameters["code"])
+            # date column unused by compute path → placeholders fine.
+            return Result([
+                (date(2026, 1, 1), c, c + 5.0, c - 5.0, c, 1000)
+                for c in closes
+            ])
+
+    client = Client()
+    out = scan_futures_symbols(client, ["101S6000"])
+    assert "101S6000" in out
+    assert "daily_ema_20" in out["101S6000"]
+    assert client.calls == ["101S6000"]
