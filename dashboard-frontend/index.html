@@ -5,6 +5,33 @@
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>KIS Trading Dashboard</title>
+    <script>
+      // Polyfill for crypto.randomUUID() — only exposed in Secure Contexts
+      // (HTTPS or localhost). The dashboard ships behind plain HTTP at
+      // lchsvr.duckdns.org and several bundled deps call randomUUID at module
+      // init, throwing before React mounts. Implement RFC 4122 v4 using
+      // getRandomValues (available in non-secure contexts too) so HTTP-only
+      // deployments still work. No-op when the native API is available.
+      if (
+        typeof crypto !== 'undefined' &&
+        typeof crypto.randomUUID !== 'function' &&
+        typeof crypto.getRandomValues === 'function'
+      ) {
+        crypto.randomUUID = function randomUUID() {
+          const b = crypto.getRandomValues(new Uint8Array(16));
+          b[6] = (b[6] & 0x0f) | 0x40; // version 4
+          b[8] = (b[8] & 0x3f) | 0x80; // variant 10
+          const h = Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+          return (
+            h.slice(0, 8) + '-' +
+            h.slice(8, 12) + '-' +
+            h.slice(12, 16) + '-' +
+            h.slice(16, 20) + '-' +
+            h.slice(20)
+          );
+        };
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>
