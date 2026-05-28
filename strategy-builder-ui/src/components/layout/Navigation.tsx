@@ -11,22 +11,19 @@ import {
   LayoutDashboard,
   Briefcase,
   Activity,
-  FlaskConical,
   Receipt,
 } from "lucide-react";
 import { useAuth } from "@/hooks";
 import { SettingsModal } from "@/components/settings";
 
-// Two route families share one nav (Vite SPA → Next.js big-bang port,
-// 2026-05-28). Dashboard items first (cockpit/positions/signals/trades/lab),
-// strategy items last (builder/execute). Order matches the Vite SPA's
-// original NavLink sequence.
+// Dashboard items first (Cockpit / Positions / Signals / Trades),
+// strategy items last (builder / execute). Order matches the
+// original Vite NavLink sequence.
 const navItems = [
   { href: "/", label: "Cockpit", icon: LayoutDashboard },
   { href: "/positions", label: "Positions", icon: Briefcase },
   { href: "/signals", label: "Signals", icon: Activity },
   { href: "/trades", label: "Trades", icon: Receipt },
-  { href: "/strategy-lab", label: "Strategy Lab", icon: FlaskConical },
   { href: "/builder", label: "전략 빌더", icon: Sparkles },
   { href: "/execute", label: "전략 실행", icon: Play },
 ];
