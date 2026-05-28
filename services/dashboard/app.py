@@ -10,27 +10,18 @@ import logging
 import os
 from contextlib import asynccontextmanager
 from datetime import datetime
-from pathlib import Path
 
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
-from fastapi.staticfiles import StaticFiles
 
 from shared.api.cors import get_cors_config, load_api_config
 from shared.strategy.registry import register_builtin_components
 
 logger = logging.getLogger(__name__)
 
-# React SPA build output directory
-# Docker: /app/static (copied from build stage)
-# Local dev: dashboard-frontend/dist (after bun run build)
-_STATIC_DIR = Path(
-    os.environ.get(
-        "DASHBOARD_STATIC_DIR",
-        "/app/static" if Path("/app/static").exists() else "dashboard-frontend/dist",
-    )
-)
+# All dashboard UI is now served by the Next.js app at strategy-builder-ui:3100
+# (post-Vite-migration, 2026-05-28). This FastAPI service is API-only; Caddy
+# at :5080 routes /api/*, /health, /docs to here and everything else to Next.js.
 
 # OpenAPI tags for documentation organization
 OPENAPI_TAGS = [
@@ -234,37 +225,13 @@ def _register_routes(app: FastAPI) -> None:
             "timestamp": datetime.now().isoformat(),
         }
 
-    # React SPA static files
-    static_dir = _STATIC_DIR
-    assets_dir = static_dir / "assets"
-    index_html = static_dir / "index.html"
-
-    if assets_dir.exists():
-        app.mount(
-            "/assets", StaticFiles(directory=str(assets_dir)), name="static-assets"
-        )
-        logger.info(f"Serving React SPA assets from {assets_dir}")
-
-    if index_html.exists():
-        # SPA catch-all: any non-API path → index.html (React Router handles routing)
-        @app.get("/{path:path}")
-        async def spa_fallback(path: str):
-            # Serve actual static files if they exist (e.g. vite.svg, favicon)
-            file_path = static_dir / path
-            if path and file_path.exists() and file_path.is_file():
-                return FileResponse(str(file_path))
-            return FileResponse(str(index_html))
-
-        logger.info(f"React SPA enabled: {index_html}")
-    else:
-        logger.warning(
-            f"React SPA not found at {static_dir}. "
-            "Build the frontend: cd dashboard-frontend && bun run build"
-        )
-
-        @app.get("/")
-        async def no_frontend():
-            return {
-                "message": "Dashboard frontend not built. Run: cd dashboard-frontend && bun run build",
-                "api_docs": "/docs",
-            }
+    # Dashboard FastAPI is API-only after the Vite → Next.js migration.
+    # Direct hits to / return a minimal pointer; UI traffic is served by
+    # strategy-builder-ui:3100 via Caddy on :5080.
+    @app.get("/")
+    async def root():
+        return {
+            "service": "kis-dashboard",
+            "ui": "http://localhost:5080/  (Caddy)  or  http://localhost:3100/  (direct)",
+            "api_docs": "/docs",
+        }
