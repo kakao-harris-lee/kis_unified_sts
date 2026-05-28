@@ -104,6 +104,12 @@ services:
     volumes:
       - ./config:/app/config:ro
       - ./logs:/app/logs
+      # The dashboard FastAPI serves the pre-built Vite SPA out of /app/static.
+      # Without this mount, the bundle frozen at image-build time is what the
+      # browser sees — every `bun run build` on the host has to be followed by
+      # `docker cp dashboard-frontend/dist/. kis-dashboard:/app/static/`.
+      # Bind-mount makes a host rebuild visible on the next page load.
+      - ./dashboard-frontend/dist:/app/static:ro
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
       interval: 30s
