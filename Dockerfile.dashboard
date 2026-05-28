@@ -1,19 +1,16 @@
 # Dockerfile.dashboard
-# Multi-stage: React frontend build + Python API server
+# API-only FastAPI service. The UI (Cockpit, Positions, Signals, Trades,
+# Strategy Lab, Strategy Builder, Strategy Execute) lives in the Next.js
+# app at strategy-builder-ui:3100 (see Dockerfile.strategy_builder_ui),
+# routed by Caddy at host :5080.
+#
+# Before 2026-05-28 this image bundled a Vite SPA build stage. The Vite
+# SPA was merged into the Next.js app; the build stage is gone.
 
-# Stage 1: Build React frontend
-FROM node:20-slim AS frontend
-WORKDIR /app/frontend
-COPY dashboard-frontend/package.json dashboard-frontend/package-lock.json* ./
-RUN npm install --production=false
-COPY dashboard-frontend/ .
-RUN npm run build
-
-# Stage 2: Python API server + static files
 FROM python:3.11-slim
 
 LABEL maintainer="harris"
-LABEL description="KIS Trading Dashboard (React SPA + FastAPI)"
+LABEL description="KIS Trading Dashboard API (FastAPI)"
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -25,7 +22,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Copy files needed for installation
 COPY pyproject.toml README.md ./
 COPY shared/ ./shared/
 COPY domains/ ./domains/
@@ -34,11 +30,7 @@ COPY cli/ ./cli/
 
 RUN pip install --upgrade pip && pip install .
 
-# Copy remaining files
 COPY config/ ./config/
-
-# Copy React build output from Stage 1
-COPY --from=frontend /app/frontend/dist /app/static
 
 RUN useradd -m -u 1000 appuser && \
     chown -R appuser:appuser /app

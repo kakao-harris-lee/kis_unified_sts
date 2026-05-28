@@ -1,18 +1,18 @@
 # KIS Unified STS — Single external entry on host port 5080.
 #
-# Routes:
-#   /builder, /builder/*, /execute, /_next/*, /favicon.ico  → strategy-builder-ui:3100 (Next.js)
-#   /api/kis-builder/*                                       → strategy-builder-ui:3100
-#     (Next.js proxies these to dashboard:8001 server-side; see strategy-builder-ui/next.config.ts.)
-#   everything else                                          → dashboard:8001 (Vite SPA + FastAPI)
+# Routing (post-Vite-migration, 2026-05-28):
+#   /api/*                  → dashboard:8001 (FastAPI — sole owner of backend API)
+#                             except /api/kis-builder/* which the Next.js app
+#                             proxies server-side (see strategy-builder-ui/next.config.ts).
+#   /health, /docs,
+#   /openapi.json, /redoc,
+#   /metrics                → dashboard:8001 (FastAPI introspection endpoints)
+#   everything else         → strategy-builder-ui:3100 (Next.js — sole owner of UI)
 #
 # HTTP-only on :5080. The host can only expose this port (operator constraint).
-# crypto.randomUUID() polyfill in dashboard-frontend/index.html keeps non-secure-context
-# browsers working until a future HTTPS path lands (DNS-01 challenge w/ Caddy).
-#
-# All TLS-aware sub-resources (WebSocket upgrades, server-sent events) are passed
-# through verbatim via reverse_proxy defaults — no extra configuration needed for
-# Next.js HMR (only meaningful in dev) or dashboard SSE endpoints.
+# crypto.randomUUID() polyfill stayed in the Vite SPA before its removal; the
+# Next.js Strategy Builder code (#346) was always polyfill-free because it
+# doesn't call randomUUID at module init.
 
 :5080 {
 	log {
@@ -21,20 +21,21 @@
 		level INFO
 	}
 
-	# Next.js owns: builder UI, execute UI, _next assets, favicon, and the
-	# /api/kis-builder/* compatibility namespace proxied to dashboard.
-	@nextjs {
-		path /builder /builder/* /execute /execute/*
-		path /_next/* /favicon.ico /vite.svg
-		path /api/kis-builder/* /api/kis-builder
+	# All FastAPI traffic carve-out. The dashboard FastAPI owns every /api/*
+	# namespace *except* /api/kis-builder/* (which the Next.js app proxies
+	# itself), plus its own introspection endpoints.
+	@to_dashboard {
+		path /api/* /health /docs /openapi.json /redoc /metrics
+		not path /api/kis-builder/*
 	}
-	handle @nextjs {
-		reverse_proxy strategy-builder-ui:3100
+	handle @to_dashboard {
+		reverse_proxy dashboard:8001
 	}
 
-	# Dashboard FastAPI owns everything else: Cockpit, Positions, Signals,
-	# Trades, StrategyLab, and the /api/* namespace (excluding kis-builder).
+	# Next.js owns everything else: the dashboard UI (Cockpit, Positions,
+	# Signals, Trades, Strategy Lab — ported from the now-removed Vite SPA),
+	# the Strategy Builder, and the Strategy Execute UI.
 	handle {
-		reverse_proxy dashboard:8001
+		reverse_proxy strategy-builder-ui:3100
 	}
 }
