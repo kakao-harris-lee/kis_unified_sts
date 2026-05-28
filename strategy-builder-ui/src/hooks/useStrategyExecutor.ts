@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect } from "react";
-import { listStrategies, executeStrategy } from "@/lib/api";
+import { executeStrategy } from "@/lib/api";
 import { loadAllStrategies } from "@/lib/builder/storage";
 import type { StrategyInfo, SignalResult, LogEntry } from "@/types/signal";
 import type { StoredStrategy } from "@/types/builder";
@@ -37,11 +37,15 @@ export function useStrategyExecutor(): UseStrategyExecutorResult {
     setError(null);
 
     try {
-      // 백엔드 전략 로드
-      const response = await listStrategies();
-      const backendStrategies: StrategyInfo[] = response.strategies || [];
-
-      // 로컬 전략 로드 및 변환
+      // /execute is the Strategy Builder's execution surface: it runs
+      // strategies that the user has *built* in /builder (kept in local
+      // storage with full BuilderState). The STS /api/strategies endpoint
+      // exposes registry-loaded YAML strategies that have a completely
+      // different shape (no `params` array, no builder_state). Mixing the
+      // two used to populate the strategy dropdown with entries that
+      // crashed on select. Strategy Execute now only lists locally built
+      // strategies; YAML registry strategies remain visible elsewhere
+      // (Cockpit / Signals filters) where their shape is appropriate.
       const localStrategies: StoredStrategy[] = loadAllStrategies();
       const convertedLocalStrategies: StrategyInfo[] = localStrategies.map((s) => ({
         id: `local_${s.id}`,
@@ -53,8 +57,7 @@ export function useStrategyExecutor(): UseStrategyExecutorResult {
         isLocal: true,
       }));
 
-      // 백엔드 전략 + 로컬 전략 합침
-      setStrategies([...backendStrategies, ...convertedLocalStrategies]);
+      setStrategies(convertedLocalStrategies);
     } catch (err) {
       const message = err instanceof Error ? err.message : "전략 목록 조회 오류";
       setError(message);
