@@ -1,0 +1,40 @@
+# KIS Unified STS — Single external entry on host port 5080.
+#
+# Routes:
+#   /builder, /builder/*, /execute, /_next/*, /favicon.ico  → strategy-builder-ui:3100 (Next.js)
+#   /api/kis-builder/*                                       → strategy-builder-ui:3100
+#     (Next.js proxies these to dashboard:8001 server-side; see strategy-builder-ui/next.config.ts.)
+#   everything else                                          → dashboard:8001 (Vite SPA + FastAPI)
+#
+# HTTP-only on :5080. The host can only expose this port (operator constraint).
+# crypto.randomUUID() polyfill in dashboard-frontend/index.html keeps non-secure-context
+# browsers working until a future HTTPS path lands (DNS-01 challenge w/ Caddy).
+#
+# All TLS-aware sub-resources (WebSocket upgrades, server-sent events) are passed
+# through verbatim via reverse_proxy defaults — no extra configuration needed for
+# Next.js HMR (only meaningful in dev) or dashboard SSE endpoints.
+
+:5080 {
+	log {
+		output stdout
+		format console
+		level INFO
+	}
+
+	# Next.js owns: builder UI, execute UI, _next assets, favicon, and the
+	# /api/kis-builder/* compatibility namespace proxied to dashboard.
+	@nextjs {
+		path /builder /builder/* /execute /execute/*
+		path /_next/* /favicon.ico /vite.svg
+		path /api/kis-builder/* /api/kis-builder
+	}
+	handle @nextjs {
+		reverse_proxy strategy-builder-ui:3100
+	}
+
+	# Dashboard FastAPI owns everything else: Cockpit, Positions, Signals,
+	# Trades, StrategyLab, and the /api/* namespace (excluding kis-builder).
+	handle {
+		reverse_proxy dashboard:8001
+	}
+}

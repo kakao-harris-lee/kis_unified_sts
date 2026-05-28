@@ -30,6 +30,23 @@ const navClassName = ({ isActive }: { isActive: boolean }) =>
     ? "px-3 py-2 rounded-md bg-blue-600 text-white"
     : "px-3 py-2 rounded-md hover:bg-gray-700";
 
+function getStrategyBuilderUrl() {
+  const configuredUrl = import.meta.env.VITE_STRATEGY_BUILDER_URL;
+  if (configuredUrl) {
+    return configuredUrl;
+  }
+  if (typeof window === 'undefined') {
+    return 'http://localhost:3100/builder';
+  }
+
+  const builderUrl = new URL(window.location.href);
+  builderUrl.port = '3100';
+  builderUrl.pathname = '/builder';
+  builderUrl.search = '';
+  builderUrl.hash = '';
+  return builderUrl.toString();
+}
+
 function AppInner() {
   // Must be inside QueryClientProvider — uses useQueryClient.
   useWebSocketInvalidation();
@@ -55,9 +72,9 @@ function AppInner() {
                     <NavLink to="/signals" className={navClassName}>
                       Signals
                     </NavLink>
-                    <NavLink to="/strategy-builder" className={navClassName}>
+                    <a href={getStrategyBuilderUrl()} className={navClassName({ isActive: false })}>
                       Strategy Builder
-                    </NavLink>
+                    </a>
                     <NavLink to="/trades" className={navClassName}>
                       Trades
                     </NavLink>

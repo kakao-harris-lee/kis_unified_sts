@@ -1,6 +1,7 @@
 """Strategy Builder dashboard route tests."""
 
 import pytest
+from fastapi.testclient import TestClient
 
 from shared.strategy_builder.schema import (
     BuilderCondition,
@@ -87,3 +88,24 @@ async def test_strategy_builder_preview_signal_and_order(monkeypatch):
         strategy_builder.PaperOrderSubmitRequest(ticket_id=ticket["ticket_id"])
     )
     assert order["status"] == "filled"
+
+
+def test_dashboard_registers_kis_builder_compat_routes():
+    from services.dashboard.app import create_app
+
+    client = TestClient(create_app(require_auth=False))
+
+    listed = client.get("/api/kis-builder/strategies", headers={"accept": "application/json"})
+    assert listed.status_code == 200
+    assert listed.json()["total"] >= 27
+
+    executed = client.post(
+        "/api/kis-builder/strategies/execute",
+        json={
+            "strategy_id": "golden_cross",
+            "stocks": ["005930"],
+            "params": {"short_period": 7, "long_period": 35},
+        },
+    )
+    assert executed.status_code == 200
+    assert executed.json()["results"][0]["action"] == "BUY"
