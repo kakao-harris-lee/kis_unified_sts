@@ -49,16 +49,16 @@ function ConfirmationModal({
       onClick={onClose}
     >
       <div
-        className="bg-gray-800 rounded-lg p-6 border border-gray-700 max-w-md w-full mx-4 shadow-xl"
+        className="bg-white rounded-lg p-6 border border-slate-200 max-w-md w-full mx-4 shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
         <h3 className="text-lg font-semibold text-white mb-3">{title}</h3>
-        <p className="text-sm text-gray-300 mb-6">{message}</p>
+        <p className="text-sm text-slate-700 mb-6">{message}</p>
 
         <div className="flex gap-3 justify-end">
           <button
             onClick={onClose}
-            className="px-4 py-2 text-sm font-medium text-gray-300 bg-gray-700 hover:bg-gray-600 rounded transition-colors"
+            className="px-4 py-2 text-sm font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded transition-colors"
           >
             Cancel
           </button>

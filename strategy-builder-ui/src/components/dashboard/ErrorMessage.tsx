@@ -5,7 +5,7 @@ interface ErrorMessageProps {
 
 function ErrorMessage({ message, onRetry }: ErrorMessageProps) {
   return (
-    <div className="bg-gray-800 rounded-lg p-4 border border-red-900/50">
+    <div className="bg-white rounded-lg p-4 border border-red-900/50">
       <div className="flex items-start gap-3">
         <div className="flex-shrink-0">
           <svg

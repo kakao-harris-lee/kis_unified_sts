@@ -35,7 +35,7 @@ function Positions() {
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
               <h1 className="text-2xl font-bold">Open Positions</h1>
-              <div className="text-sm text-gray-400">
+              <div className="text-sm text-slate-500">
                 {positions?.length || 0} position(s)
               </div>
             </div>

@@ -11,7 +11,7 @@ interface PositionsTableProps {
 function PositionsTable({ positions, loading, error }: PositionsTableProps) {
   if (error) {
     return (
-      <div className="bg-gray-800 rounded-lg p-8 text-center border border-red-800">
+      <div className="bg-white rounded-lg p-8 text-center border border-red-800">
         <div className="text-red-400">{error}</div>
       </div>
     );
@@ -23,7 +23,7 @@ function PositionsTable({ positions, loading, error }: PositionsTableProps) {
 
   if (positions.length === 0) {
     return (
-      <div className="bg-gray-800 rounded-lg p-8 text-center text-gray-400">
+      <div className="bg-white rounded-lg p-8 text-center text-slate-500">
         No open positions
       </div>
     );
@@ -36,7 +36,7 @@ function PositionsTable({ positions, loading, error }: PositionsTableProps) {
         {positions.map((position, idx) => (
           <div
             key={idx}
-            className="bg-gray-800 rounded-lg p-4 border border-gray-700"
+            className="bg-white rounded-lg p-4 border border-slate-200"
           >
             <div className="flex items-center justify-between mb-3">
               <span className="font-medium text-lg">{position.name || position.code}</span>
@@ -45,23 +45,23 @@ function PositionsTable({ positions, loading, error }: PositionsTableProps) {
 
             <div className="grid grid-cols-2 gap-3 text-sm">
               <div>
-                <div className="text-gray-400">Quantity</div>
+                <div className="text-slate-500">Quantity</div>
                 <div className="font-medium">{position.quantity}</div>
               </div>
               <div>
-                <div className="text-gray-400">Entry Price</div>
+                <div className="text-slate-500">Entry Price</div>
                 <div className="font-medium">
                   {(position.entry_price ?? 0).toLocaleString()}
                 </div>
               </div>
               <div>
-                <div className="text-gray-400">Current Price</div>
+                <div className="text-slate-500">Current Price</div>
                 <div className="font-medium">
                   {(position.current_price ?? 0).toLocaleString()}
                 </div>
               </div>
               <div>
-                <div className="text-gray-400">P&L</div>
+                <div className="text-slate-500">P&L</div>
                 <div
                   className={`font-medium ${
                     (position.unrealized_pnl ?? 0) >= 0
@@ -74,7 +74,7 @@ function PositionsTable({ positions, loading, error }: PositionsTableProps) {
                 </div>
               </div>
               <div>
-                <div className="text-gray-400">P&L %</div>
+                <div className="text-slate-500">P&L %</div>
                 <div
                   className={`font-medium ${
                     (position.pnl_pct ?? 0) >= 0
@@ -87,8 +87,8 @@ function PositionsTable({ positions, loading, error }: PositionsTableProps) {
                 </div>
               </div>
               <div>
-                <div className="text-gray-400">Strategy</div>
-                <div className="font-medium text-gray-300">
+                <div className="text-slate-500">Strategy</div>
+                <div className="font-medium text-slate-700">
                   {position.strategy}
                 </div>
               </div>
@@ -98,40 +98,40 @@ function PositionsTable({ positions, loading, error }: PositionsTableProps) {
       </div>
 
       {/* Desktop Table View with Horizontal Scroll */}
-      <div className="hidden md:block bg-gray-800 rounded-lg overflow-hidden border border-gray-700">
+      <div className="hidden md:block bg-white rounded-lg overflow-hidden border border-slate-200">
         <div className="overflow-x-auto">
           <table className="w-full">
-            <thead className="bg-gray-700">
+            <thead className="bg-slate-100">
               <tr>
-                <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">
+                <th className="px-4 py-3 text-left text-sm font-medium text-slate-700">
                   Symbol
                 </th>
-                <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">
+                <th className="px-4 py-3 text-left text-sm font-medium text-slate-700">
                   Side
                 </th>
-                <th className="px-4 py-3 text-right text-sm font-medium text-gray-300">
+                <th className="px-4 py-3 text-right text-sm font-medium text-slate-700">
                   Quantity
                 </th>
-                <th className="px-4 py-3 text-right text-sm font-medium text-gray-300">
+                <th className="px-4 py-3 text-right text-sm font-medium text-slate-700">
                   Entry Price
                 </th>
-                <th className="px-4 py-3 text-right text-sm font-medium text-gray-300">
+                <th className="px-4 py-3 text-right text-sm font-medium text-slate-700">
                   Current Price
                 </th>
-                <th className="px-4 py-3 text-right text-sm font-medium text-gray-300">
+                <th className="px-4 py-3 text-right text-sm font-medium text-slate-700">
                   P&L
                 </th>
-                <th className="px-4 py-3 text-right text-sm font-medium text-gray-300">
+                <th className="px-4 py-3 text-right text-sm font-medium text-slate-700">
                   P&L %
                 </th>
-                <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">
+                <th className="px-4 py-3 text-left text-sm font-medium text-slate-700">
                   Strategy
                 </th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-700">
+            <tbody className="divide-y divide-slate-200">
               {positions.map((position, idx) => (
-                <tr key={idx} className="hover:bg-gray-750">
+                <tr key={idx} className="hover:bg-slate-100">
                   <td className="px-4 py-3 font-medium">{position.name || position.code}</td>
                   <td className="px-4 py-3">
                     <SideBadge side={position.side} />
@@ -163,7 +163,7 @@ function PositionsTable({ positions, loading, error }: PositionsTableProps) {
                     {(position.pnl_pct ?? 0) >= 0 ? '+' : ''}
                     {(position.pnl_pct ?? 0).toFixed(2)}%
                   </td>
-                  <td className="px-4 py-3 text-sm text-gray-400">
+                  <td className="px-4 py-3 text-sm text-slate-500">
                     {position.strategy}
                   </td>
                 </tr>

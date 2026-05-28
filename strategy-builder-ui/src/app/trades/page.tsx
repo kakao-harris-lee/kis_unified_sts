@@ -165,7 +165,7 @@ function LiveTab() {
             showStaleWarning={true}
             staleThresholdSeconds={30}
           />
-          <div className="text-sm text-gray-400">{tradesData?.total || 0} trade(s)</div>
+          <div className="text-sm text-slate-500">{tradesData?.total || 0} trade(s)</div>
         </div>
       </div>
 
@@ -173,7 +173,7 @@ function LiveTab() {
       <div className="sm:hidden">
         <button
           onClick={() => setChartCollapsed((v) => !v)}
-          className="w-full px-4 py-2 bg-gray-800 border border-gray-600 rounded text-sm text-gray-200"
+          className="w-full px-4 py-2 bg-white border border-slate-300 rounded text-sm text-slate-800"
         >
           📊 {chartCollapsed ? '차트 보기' : '차트 숨기기'}
         </button>
@@ -182,11 +182,11 @@ function LiveTab() {
       <div
         className={`${chartCollapsed ? 'hidden' : 'block'} sm:block grid grid-cols-1 lg:grid-cols-2 gap-6`}
       >
-        <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
+        <div className="bg-white rounded-lg p-4 border border-slate-200">
           <h3 className="text-lg font-medium mb-4">Cumulative P&L (%)</h3>
           {tradesLoading ? (
             <div className="h-[250px] flex items-center justify-center">
-              <div className="animate-pulse text-gray-400">Loading chart...</div>
+              <div className="animate-pulse text-slate-500">Loading chart...</div>
             </div>
           ) : (
             <ResponsiveContainer width="100%" height={250}>
@@ -202,7 +202,7 @@ function LiveTab() {
             </ResponsiveContainer>
           )}
         </div>
-        <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
+        <div className="bg-white rounded-lg p-4 border border-slate-200">
           <h3 className="text-lg font-medium mb-4">Performance by Strategy</h3>
           {tradesLoading || strategyError ? (
             <div className="h-[250px] flex items-center justify-center">
@@ -217,7 +217,7 @@ function LiveTab() {
                   </button>
                 </div>
               ) : (
-                <div className="animate-pulse text-gray-400">Loading chart...</div>
+                <div className="animate-pulse text-slate-500">Loading chart...</div>
               )}
             </div>
           ) : (
@@ -239,7 +239,7 @@ function LiveTab() {
       {tradesLoading ? (
         <TableSkeleton rows={10} columns={8} />
       ) : tradesData?.trades.length === 0 ? (
-        <div className="bg-gray-800 rounded-lg p-8 text-center text-gray-400">No trades found</div>
+        <div className="bg-white rounded-lg p-8 text-center text-slate-500">No trades found</div>
       ) : (
         <>
           {/* Mobile Card View */}
@@ -247,7 +247,7 @@ function LiveTab() {
             {tradesData?.trades.map((trade) => (
               <div
                 key={trade.id}
-                className="bg-gray-800 rounded-lg p-4 border border-gray-700"
+                className="bg-white rounded-lg p-4 border border-slate-200"
               >
                 <div className="flex items-center justify-between mb-3">
                   <span className="font-medium text-lg">{trade.symbol}</span>
@@ -256,25 +256,25 @@ function LiveTab() {
 
                 <div className="grid grid-cols-2 gap-3 text-sm">
                   <div>
-                    <div className="text-gray-400">Strategy</div>
-                    <div className="font-medium text-gray-300">{trade.strategy}</div>
+                    <div className="text-slate-500">Strategy</div>
+                    <div className="font-medium text-slate-700">{trade.strategy}</div>
                   </div>
                   <div>
-                    <div className="text-gray-400">Exit Time</div>
-                    <div className="font-medium text-gray-300">
+                    <div className="text-slate-500">Exit Time</div>
+                    <div className="font-medium text-slate-700">
                       {new Date(trade.exit_time).toLocaleString()}
                     </div>
                   </div>
                   <div>
-                    <div className="text-gray-400">Entry Price</div>
+                    <div className="text-slate-500">Entry Price</div>
                     <div className="font-medium">{(trade.entry_price ?? 0).toLocaleString()}</div>
                   </div>
                   <div>
-                    <div className="text-gray-400">Exit Price</div>
+                    <div className="text-slate-500">Exit Price</div>
                     <div className="font-medium">{(trade.exit_price ?? 0).toLocaleString()}</div>
                   </div>
                   <div>
-                    <div className="text-gray-400">P&L</div>
+                    <div className="text-slate-500">P&L</div>
                     <div
                       className={`font-medium ${
                         (trade.pnl ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'
@@ -285,7 +285,7 @@ function LiveTab() {
                     </div>
                   </div>
                   <div>
-                    <div className="text-gray-400">P&L %</div>
+                    <div className="text-slate-500">P&L %</div>
                     <div
                       className={`font-medium ${
                         (trade.pnl_pct ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'
@@ -301,25 +301,25 @@ function LiveTab() {
           </div>
 
           {/* Desktop Table View with Horizontal Scroll */}
-          <div className="hidden md:block bg-gray-800 rounded-lg overflow-hidden border border-gray-700">
+          <div className="hidden md:block bg-white rounded-lg overflow-hidden border border-slate-200">
             <div className="overflow-x-auto">
               <table className="w-full">
-                <thead className="bg-gray-700">
+                <thead className="bg-slate-100">
                   <tr>
-                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Exit Time</th>
-                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Strategy</th>
-                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Symbol</th>
-                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Side</th>
-                    <th className="px-4 py-3 text-right text-sm font-medium text-gray-300">Entry</th>
-                    <th className="px-4 py-3 text-right text-sm font-medium text-gray-300">Exit</th>
-                    <th className="px-4 py-3 text-right text-sm font-medium text-gray-300">P&L</th>
-                    <th className="px-4 py-3 text-right text-sm font-medium text-gray-300">P&L %</th>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-slate-700">Exit Time</th>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-slate-700">Strategy</th>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-slate-700">Symbol</th>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-slate-700">Side</th>
+                    <th className="px-4 py-3 text-right text-sm font-medium text-slate-700">Entry</th>
+                    <th className="px-4 py-3 text-right text-sm font-medium text-slate-700">Exit</th>
+                    <th className="px-4 py-3 text-right text-sm font-medium text-slate-700">P&L</th>
+                    <th className="px-4 py-3 text-right text-sm font-medium text-slate-700">P&L %</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-700">
+                <tbody className="divide-y divide-slate-200">
                   {tradesData?.trades.map((trade) => (
-                    <tr key={trade.id} className="hover:bg-gray-750">
-                      <td className="px-4 py-3 text-sm text-gray-400">
+                    <tr key={trade.id} className="hover:bg-slate-100">
+                      <td className="px-4 py-3 text-sm text-slate-500">
                         {new Date(trade.exit_time).toLocaleString()}
                       </td>
                       <td className="px-4 py-3">{trade.strategy}</td>
@@ -433,9 +433,9 @@ function HistoryTab() {
       <div className="space-y-6">
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-4">
           {Array.from({ length: 4 }).map((_, idx) => (
-            <div key={idx} className="bg-gray-800 rounded-lg p-4 border border-gray-700">
-              <div className="h-4 bg-gray-700 rounded animate-pulse w-20 mb-2" />
-              <div className="h-6 bg-gray-700 rounded animate-pulse w-24" />
+            <div key={idx} className="bg-white rounded-lg p-4 border border-slate-200">
+              <div className="h-4 bg-slate-100 rounded animate-pulse w-20 mb-2" />
+              <div className="h-6 bg-slate-100 rounded animate-pulse w-24" />
             </div>
           ))}
         </div>
@@ -498,7 +498,7 @@ function HistoryTab() {
             {openPositions.map((pos) => (
               <div
                 key={pos.id}
-                className="bg-gray-800 rounded-lg p-4 border border-gray-700"
+                className="bg-white rounded-lg p-4 border border-slate-200"
               >
                 <div className="flex items-center justify-between mb-3">
                   <span className="font-medium text-lg">{pos.code}</span>
@@ -507,29 +507,29 @@ function HistoryTab() {
 
                 <div className="grid grid-cols-2 gap-3 text-sm">
                   <div>
-                    <div className="text-gray-400">Name</div>
-                    <div className="font-medium text-gray-300">{pos.name}</div>
+                    <div className="text-slate-500">Name</div>
+                    <div className="font-medium text-slate-700">{pos.name}</div>
                   </div>
                   <div>
-                    <div className="text-gray-400">Strategy</div>
-                    <div className="font-medium text-gray-300">{pos.strategy}</div>
+                    <div className="text-slate-500">Strategy</div>
+                    <div className="font-medium text-slate-700">{pos.strategy}</div>
                   </div>
                   <div>
-                    <div className="text-gray-400">Entry Date</div>
+                    <div className="text-slate-500">Entry Date</div>
                     <div className="font-medium">
                       {new Date(pos.entry_date).toLocaleString()}
                     </div>
                   </div>
                   <div>
-                    <div className="text-gray-400">Entry Price</div>
+                    <div className="text-slate-500">Entry Price</div>
                     <div className="font-medium">{(pos.entry_price ?? 0).toLocaleString()}</div>
                   </div>
                   <div>
-                    <div className="text-gray-400">Quantity</div>
+                    <div className="text-slate-500">Quantity</div>
                     <div className="font-medium">{pos.quantity}</div>
                   </div>
                   <div>
-                    <div className="text-gray-400">State</div>
+                    <div className="text-slate-500">State</div>
                     <div>
                       <span className="px-2 py-1 rounded text-xs font-medium bg-blue-900 text-blue-300">
                         {pos.current_state}
@@ -537,11 +537,11 @@ function HistoryTab() {
                     </div>
                   </div>
                   <div>
-                    <div className="text-gray-400">High</div>
+                    <div className="text-slate-500">High</div>
                     <div className="font-medium">{(pos.high_since_entry ?? 0).toLocaleString()}</div>
                   </div>
                   <div>
-                    <div className="text-gray-400">Stop Loss</div>
+                    <div className="text-slate-500">Stop Loss</div>
                     <div className="font-medium">{(pos.stop_loss_price ?? 0).toLocaleString()}</div>
                   </div>
                 </div>
@@ -550,33 +550,33 @@ function HistoryTab() {
           </div>
 
           {/* Desktop Table View with Horizontal Scroll */}
-          <div className="hidden md:block bg-gray-800 rounded-lg overflow-hidden border border-gray-700">
+          <div className="hidden md:block bg-white rounded-lg overflow-hidden border border-slate-200">
             <div className="overflow-x-auto">
               <table className="w-full">
-                <thead className="bg-gray-700">
+                <thead className="bg-slate-100">
                   <tr>
-                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Code</th>
-                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Name</th>
-                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Strategy</th>
-                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Side</th>
-                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Entry Date</th>
-                    <th className="px-4 py-3 text-right text-sm font-medium text-gray-300">Entry Price</th>
-                    <th className="px-4 py-3 text-right text-sm font-medium text-gray-300">Qty</th>
-                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">State</th>
-                    <th className="px-4 py-3 text-right text-sm font-medium text-gray-300">High</th>
-                    <th className="px-4 py-3 text-right text-sm font-medium text-gray-300">Stop Loss</th>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-slate-700">Code</th>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-slate-700">Name</th>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-slate-700">Strategy</th>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-slate-700">Side</th>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-slate-700">Entry Date</th>
+                    <th className="px-4 py-3 text-right text-sm font-medium text-slate-700">Entry Price</th>
+                    <th className="px-4 py-3 text-right text-sm font-medium text-slate-700">Qty</th>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-slate-700">State</th>
+                    <th className="px-4 py-3 text-right text-sm font-medium text-slate-700">High</th>
+                    <th className="px-4 py-3 text-right text-sm font-medium text-slate-700">Stop Loss</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-700">
+                <tbody className="divide-y divide-slate-200">
                   {openPositions.map((pos) => (
-                    <tr key={pos.id} className="hover:bg-gray-750">
+                    <tr key={pos.id} className="hover:bg-slate-100">
                       <td className="px-4 py-3 font-medium">{pos.code}</td>
                       <td className="px-4 py-3">{pos.name}</td>
                       <td className="px-4 py-3">{pos.strategy}</td>
                       <td className="px-4 py-3">
                         <SideBadge side={pos.side} />
                       </td>
-                      <td className="px-4 py-3 text-sm text-gray-400">
+                      <td className="px-4 py-3 text-sm text-slate-500">
                         {new Date(pos.entry_date).toLocaleString()}
                       </td>
                       <td className="px-4 py-3 text-right">{(pos.entry_price ?? 0).toLocaleString()}</td>
@@ -601,7 +601,7 @@ function HistoryTab() {
       <div>
         <h3 className="text-lg font-medium mb-3">Closed Trades</h3>
         {!trades || trades.length === 0 ? (
-          <div className="bg-gray-800 rounded-lg p-8 text-center text-gray-400">
+          <div className="bg-white rounded-lg p-8 text-center text-slate-500">
             No closed trades in DB
           </div>
         ) : (
@@ -611,7 +611,7 @@ function HistoryTab() {
               {trades.map((trade) => (
                 <div
                   key={trade.id}
-                  className="bg-gray-800 rounded-lg p-4 border border-gray-700"
+                  className="bg-white rounded-lg p-4 border border-slate-200"
                 >
                   <div className="flex items-center justify-between mb-3">
                     <span className="font-medium text-lg">{trade.code}</span>
@@ -620,35 +620,35 @@ function HistoryTab() {
 
                   <div className="grid grid-cols-2 gap-3 text-sm">
                     <div>
-                      <div className="text-gray-400">Name</div>
-                      <div className="font-medium text-gray-300">{trade.name}</div>
+                      <div className="text-slate-500">Name</div>
+                      <div className="font-medium text-slate-700">{trade.name}</div>
                     </div>
                     <div>
-                      <div className="text-gray-400">Strategy</div>
-                      <div className="font-medium text-gray-300">{trade.strategy}</div>
+                      <div className="text-slate-500">Strategy</div>
+                      <div className="font-medium text-slate-700">{trade.strategy}</div>
                     </div>
                     <div>
-                      <div className="text-gray-400">Exit Date</div>
+                      <div className="text-slate-500">Exit Date</div>
                       <div className="font-medium">
                         {trade.exit_date ? new Date(trade.exit_date).toLocaleString() : '-'}
                       </div>
                     </div>
                     <div>
-                      <div className="text-gray-400">Exit Reason</div>
-                      <div className="font-medium text-gray-300">{trade.exit_reason || '-'}</div>
+                      <div className="text-slate-500">Exit Reason</div>
+                      <div className="font-medium text-slate-700">{trade.exit_reason || '-'}</div>
                     </div>
                     <div>
-                      <div className="text-gray-400">Entry Price</div>
+                      <div className="text-slate-500">Entry Price</div>
                       <div className="font-medium">{(trade.entry_price ?? 0).toLocaleString()}</div>
                     </div>
                     <div>
-                      <div className="text-gray-400">Exit Price</div>
+                      <div className="text-slate-500">Exit Price</div>
                       <div className="font-medium">
                         {trade.exit_price ? (trade.exit_price ?? 0).toLocaleString() : '-'}
                       </div>
                     </div>
                     <div className="col-span-2">
-                      <div className="text-gray-400">P&L</div>
+                      <div className="text-slate-500">P&L</div>
                       <div
                         className={`font-medium text-lg ${
                           (trade.pnl || 0) >= 0 ? 'text-green-400' : 'text-red-400'
@@ -665,26 +665,26 @@ function HistoryTab() {
             </div>
 
             {/* Desktop Table View with Horizontal Scroll */}
-            <div className="hidden md:block bg-gray-800 rounded-lg overflow-hidden border border-gray-700">
+            <div className="hidden md:block bg-white rounded-lg overflow-hidden border border-slate-200">
               <div className="overflow-x-auto">
                 <table className="w-full">
-                  <thead className="bg-gray-700">
+                  <thead className="bg-slate-100">
                     <tr>
-                      <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Exit Date</th>
-                      <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Code</th>
-                      <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Name</th>
-                      <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Strategy</th>
-                      <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Side</th>
-                      <th className="px-4 py-3 text-right text-sm font-medium text-gray-300">Entry</th>
-                      <th className="px-4 py-3 text-right text-sm font-medium text-gray-300">Exit</th>
-                      <th className="px-4 py-3 text-right text-sm font-medium text-gray-300">P&L</th>
-                      <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">Reason</th>
+                      <th className="px-4 py-3 text-left text-sm font-medium text-slate-700">Exit Date</th>
+                      <th className="px-4 py-3 text-left text-sm font-medium text-slate-700">Code</th>
+                      <th className="px-4 py-3 text-left text-sm font-medium text-slate-700">Name</th>
+                      <th className="px-4 py-3 text-left text-sm font-medium text-slate-700">Strategy</th>
+                      <th className="px-4 py-3 text-left text-sm font-medium text-slate-700">Side</th>
+                      <th className="px-4 py-3 text-right text-sm font-medium text-slate-700">Entry</th>
+                      <th className="px-4 py-3 text-right text-sm font-medium text-slate-700">Exit</th>
+                      <th className="px-4 py-3 text-right text-sm font-medium text-slate-700">P&L</th>
+                      <th className="px-4 py-3 text-left text-sm font-medium text-slate-700">Reason</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-gray-700">
+                  <tbody className="divide-y divide-slate-200">
                     {trades.map((trade) => (
-                      <tr key={trade.id} className="hover:bg-gray-750">
-                        <td className="px-4 py-3 text-sm text-gray-400">
+                      <tr key={trade.id} className="hover:bg-slate-100">
+                        <td className="px-4 py-3 text-sm text-slate-500">
                           {trade.exit_date ? new Date(trade.exit_date).toLocaleString() : '-'}
                         </td>
                         <td className="px-4 py-3 font-medium">{trade.code}</td>
@@ -706,7 +706,7 @@ function HistoryTab() {
                             ? `${(trade.pnl ?? 0) >= 0 ? '+' : ''}${(trade.pnl ?? 0).toLocaleString()}`
                             : '-'}
                         </td>
-                        <td className="px-4 py-3 text-sm text-gray-400">{trade.exit_reason || '-'}</td>
+                        <td className="px-4 py-3 text-sm text-slate-500">{trade.exit_reason || '-'}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -730,13 +730,13 @@ function Trades() {
         <div className="space-y-6">
           <div className="flex items-center justify-between">
             <h1 className="text-2xl font-bold">Trade History</h1>
-            <div className="flex rounded-lg overflow-hidden border border-gray-600">
+            <div className="flex rounded-lg overflow-hidden border border-slate-300">
               <button
                 onClick={() => setActiveTab('live')}
                 className={`px-4 py-2 text-sm font-medium transition-colors ${
                   activeTab === 'live'
                     ? 'bg-blue-600 text-white'
-                    : 'bg-gray-800 text-gray-400 hover:text-white'
+                    : 'bg-white text-slate-500 hover:text-white'
                 }`}
               >
                 Live (Redis)
@@ -746,7 +746,7 @@ function Trades() {
                 className={`px-4 py-2 text-sm font-medium transition-colors ${
                   activeTab === 'history'
                     ? 'bg-blue-600 text-white'
-                    : 'bg-gray-800 text-gray-400 hover:text-white'
+                    : 'bg-white text-slate-500 hover:text-white'
                 }`}
               >
                 History (DB)
