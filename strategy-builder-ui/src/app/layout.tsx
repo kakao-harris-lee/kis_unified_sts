@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import { Geist, Geist_Mono, Noto_Sans_KR } from "next/font/google";
 import "./globals.css";
 import { Navigation } from "@/components/layout";
@@ -36,17 +37,22 @@ export default function RootLayout({
       <body
         className={`${notoSansKR.variable} ${geistSans.variable} ${geistMono.variable} antialiased min-h-screen`}
       >
-        <Providers>
-          <Navigation />
-          <main className="min-h-[calc(100vh-4rem)]">{children}</main>
-          <footer className="border-t border-slate-200 dark:border-slate-800">
-            <div className="max-w-7xl mx-auto px-4 py-4">
-              <p className="text-center text-sm text-slate-500">
-                투자에는 원금 손실의 위험이 있으며, 과거 성과가 미래를 보장하지 않습니다.
-              </p>
-            </div>
-          </footer>
-        </Providers>
+        {/* Suspense wraps the entire Providers tree because AssetClassContext
+            calls useSearchParams() — Next.js requires a Suspense boundary on
+            any client-side bailout that reads search params. */}
+        <Suspense fallback={null}>
+          <Providers>
+            <Navigation />
+            <main className="min-h-[calc(100vh-4rem)]">{children}</main>
+            <footer className="border-t border-slate-200 dark:border-slate-800">
+              <div className="max-w-7xl mx-auto px-4 py-4">
+                <p className="text-center text-sm text-slate-500">
+                  투자에는 원금 손실의 위험이 있으며, 과거 성과가 미래를 보장하지 않습니다.
+                </p>
+              </div>
+            </footer>
+          </Providers>
+        </Suspense>
       </body>
     </html>
   );
