@@ -621,6 +621,117 @@ def compute_indicators(
     return {k: v for k, v in result.items() if v is not None}
 
 
+# Futures symbols whose daily indicators feed Setup A/C daily_regime_trend_filter.
+# Reads from kospi.kospi200f_1m (1m bars) and aggregates to daily candles inline —
+# `market.daily_candles` does not carry futures.
+FUTURES_DAILY_SYMBOLS: tuple[str, ...] = ("101S6000",)
+
+
+def load_futures_daily_candles(
+    client: Any, symbol: str, days: int = 250
+) -> pd.DataFrame:
+    """Aggregate kospi.kospi200f_1m intraday bars to daily candles.
+
+    Returns columns: date, open, high, low, close, volume (one row per session).
+    """
+    query = """
+        SELECT
+            toDate(datetime) AS date,
+            argMin(open, datetime) AS open,
+            max(high) AS high,
+            min(low) AS low,
+            argMax(close, datetime) AS close,
+            sum(volume) AS volume
+        FROM kospi.kospi200f_1m
+        WHERE code = {code:String}
+        GROUP BY date
+        ORDER BY date DESC
+        LIMIT {limit:UInt32}
+    """
+    result = client.query(query, parameters={"code": symbol, "limit": int(days)})
+    if not result.result_rows:
+        return pd.DataFrame()
+    df = pd.DataFrame(
+        result.result_rows,
+        columns=["date", "open", "high", "low", "close", "volume"],
+    )
+    # Drop intraday-only "phantom days" (single tick before market close):
+    # require at least 30 minutes of trading to count as a real session.
+    return df.sort_values("date").reset_index(drop=True)
+
+
+def compute_futures_daily_indicators(df: pd.DataFrame) -> dict[str, float] | None:
+    """Compute daily indicators required by daily_regime_trend_filter.
+
+    Only emits the fields the gate actually uses (``daily_close``,
+    ``daily_ema_20``, ``daily_ema_20_prev``, ``daily_ema_60``, ``daily_rsi_14``)
+    plus a small set of conveniences (``daily_sma_20``, ``daily_sma_60``).
+    Returns None when there is not enough history (need >= 60 daily bars).
+    """
+    if len(df) < 60:
+        return None
+    close = df["close"].astype(float)
+    ema_20 = close.ewm(span=20, adjust=False).mean()
+    ema_60 = close.ewm(span=60, adjust=False).mean()
+    sma_20 = close.rolling(window=20, min_periods=20).mean()
+    sma_60 = close.rolling(window=60, min_periods=60).mean()
+    rsi_14 = compute_rsi(close, 14)
+
+    def safe_float(val: Any) -> float | None:
+        if val is None or (isinstance(val, float) and np.isnan(val)):
+            return None
+        return float(val)
+
+    latest = len(df) - 1
+    result: dict[str, Any] = {
+        "daily_close": safe_float(close.iloc[latest]),
+        "daily_ema_20": safe_float(ema_20.iloc[latest]),
+        "daily_ema_20_prev": (
+            safe_float(ema_20.iloc[latest - 1]) if latest >= 1 else None
+        ),
+        "daily_ema_60": safe_float(ema_60.iloc[latest]),
+        "daily_sma_20": safe_float(sma_20.iloc[latest]),
+        "daily_sma_60": safe_float(sma_60.iloc[latest]),
+        "daily_rsi_14": safe_float(rsi_14.iloc[latest]),
+    }
+    return {k: v for k, v in result.items() if v is not None}
+
+
+def scan_futures_symbols(client: Any, symbols: Iterable[str]) -> dict[str, dict[str, Any]]:
+    """Compute daily indicators for the configured futures symbols.
+
+    Returns a dict ready to merge into the scanner's stock-symbol payload —
+    the orchestrator already keys by symbol, so a single Redis key carries both
+    stock and futures daily indicators (~unchanged consumer code path).
+    """
+    out: dict[str, dict[str, Any]] = {}
+    for sym in symbols:
+        try:
+            df = load_futures_daily_candles(client, sym)
+            if df.empty:
+                logger.warning("futures daily scan: %s has no 1m history", sym)
+                continue
+            inds = compute_futures_daily_indicators(df)
+            if inds is None:
+                logger.warning(
+                    "futures daily scan: %s has %d daily bars (<60 minimum)",
+                    sym, len(df),
+                )
+                continue
+            out[sym] = inds
+            logger.info(
+                "futures daily indicators: %s close=%.2f ema20=%.2f ema60=%.2f rsi14=%.1f",
+                sym,
+                inds.get("daily_close", 0.0),
+                inds.get("daily_ema_20", 0.0),
+                inds.get("daily_ema_60", 0.0),
+                inds.get("daily_rsi_14", 0.0),
+            )
+        except Exception as exc:  # noqa: BLE001 - per-symbol best effort
+            logger.warning("futures daily scan failed for %s: %s", sym, exc)
+    return out
+
+
 def publish_to_redis(
     indicators: dict[str, dict],
     redis_client=None,
@@ -868,6 +979,16 @@ def main():
                     for name, codes in sorted(strategy_candidates.items())
                 ),
             )
+
+    # Augment with futures daily indicators (Setup A/C daily_regime_trend_filter
+    # consumes daily_close / daily_ema_20 / daily_ema_60 / daily_rsi_14 for
+    # KOSPI200 futures; the stock scan above never covers these symbols).
+    try:
+        futures_results = scan_futures_symbols(client, FUTURES_DAILY_SYMBOLS)
+        if futures_results:
+            results.update(futures_results)
+    except Exception as exc:  # noqa: BLE001 - keep stock publishing on failure
+        logger.warning("futures daily scan aborted: %s", exc)
 
     if results:
         strategy_counts = {k: len(v) for k, v in strategy_candidates.items()}
