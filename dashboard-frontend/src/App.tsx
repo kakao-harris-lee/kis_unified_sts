@@ -30,21 +30,15 @@ const navClassName = ({ isActive }: { isActive: boolean }) =>
     ? "px-3 py-2 rounded-md bg-blue-600 text-white"
     : "px-3 py-2 rounded-md hover:bg-gray-700";
 
+// Strategy Builder lives on a separate Next.js app. With Caddy fronting
+// both UIs on a single port (5080), the canonical link is just the relative
+// path /builder — Caddy routes it to strategy-builder-ui:3100 transparently.
+//
+// VITE_STRATEGY_BUILDER_URL still overrides this for direct-access scenarios
+// (e.g. operator running both services on the host and bypassing the proxy).
 function getStrategyBuilderUrl() {
   const configuredUrl = import.meta.env.VITE_STRATEGY_BUILDER_URL;
-  if (configuredUrl) {
-    return configuredUrl;
-  }
-  if (typeof window === 'undefined') {
-    return 'http://localhost:3100/builder';
-  }
-
-  const builderUrl = new URL(window.location.href);
-  builderUrl.port = '3100';
-  builderUrl.pathname = '/builder';
-  builderUrl.search = '';
-  builderUrl.hash = '';
-  return builderUrl.toString();
+  return configuredUrl || '/builder';
 }
 
 function AppInner() {
