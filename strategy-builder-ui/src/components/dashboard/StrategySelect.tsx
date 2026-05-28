@@ -13,7 +13,7 @@ function StrategySelect({
   onChange,
   assetClass,
   allOption = true,
-  className = 'bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm',
+  className = 'bg-white border border-slate-300 rounded px-3 py-2 text-sm',
 }: StrategySelectProps) {
   const { strategies, byAssetClass } = useStrategies();
 

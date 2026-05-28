@@ -58,15 +58,15 @@ function Signals() {
   const filterControls = (
     <>
       <div>
-        <label className="block text-sm text-gray-400 mb-1">Strategy</label>
+        <label className="block text-sm text-slate-500 mb-1">Strategy</label>
         <StrategySelect value={strategyFilter} onChange={setStrategyFilter} />
       </div>
       <div>
-        <label className="block text-sm text-gray-400 mb-1">Side</label>
+        <label className="block text-sm text-slate-500 mb-1">Side</label>
         <select
           value={sideFilter}
           onChange={(e) => setSideFilter(e.target.value)}
-          className="bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm w-full"
+          className="bg-white border border-slate-300 rounded px-3 py-2 text-sm w-full"
         >
           <option value="">All</option>
           <option value="BUY">Buy</option>
@@ -87,7 +87,7 @@ function Signals() {
           <div className="flex items-center justify-between">
             <h1 className="text-2xl font-bold">Trading Signals</h1>
             <div className="flex items-center gap-4">
-              <div className="text-sm text-gray-400">{data?.total || 0} signal(s)</div>
+              <div className="text-sm text-slate-500">{data?.total || 0} signal(s)</div>
               <RefreshIndicator
                 lastUpdated={dataUpdatedAt}
                 isRefreshing={isRefetching}
@@ -104,7 +104,7 @@ function Signals() {
           <div className="sm:hidden">
             <button
               onClick={() => setFilterSheetOpen(true)}
-              className="w-full px-4 py-2 bg-gray-800 border border-gray-600 rounded text-sm text-left text-gray-200"
+              className="w-full px-4 py-2 bg-white border border-slate-300 rounded text-sm text-left text-slate-800"
             >
               <span className="mr-2">⚙</span>
               필터
@@ -130,7 +130,7 @@ function Signals() {
           ) : errorMessage ? (
             <ErrorMessage message={errorMessage} onRetry={() => refetch()} />
           ) : data?.signals.length === 0 ? (
-            <div className="bg-gray-800 rounded-lg p-8 text-center text-gray-400">
+            <div className="bg-white rounded-lg p-8 text-center text-slate-500">
               No signals found
             </div>
           ) : (
@@ -140,7 +140,7 @@ function Signals() {
                 {data?.signals.map((signal) => (
                   <div
                     key={signal.id}
-                    className="bg-gray-800 rounded-lg p-4 border border-gray-700"
+                    className="bg-white rounded-lg p-4 border border-slate-200"
                   >
                     <div className="flex items-center justify-between mb-3">
                       <span className="font-medium text-lg">{signal.symbol}</span>
@@ -149,35 +149,35 @@ function Signals() {
 
                     <div className="grid grid-cols-2 gap-3 text-sm">
                       <div>
-                        <div className="text-gray-400">Time</div>
+                        <div className="text-slate-500">Time</div>
                         <div className="font-medium text-xs">
                           {new Date(signal.timestamp).toLocaleString()}
                         </div>
                       </div>
                       <div>
-                        <div className="text-gray-400">Strategy</div>
+                        <div className="text-slate-500">Strategy</div>
                         <div className="font-medium">{signal.strategy}</div>
                       </div>
                       <div>
-                        <div className="text-gray-400">Price</div>
+                        <div className="text-slate-500">Price</div>
                         <div className="font-medium">
                           {signal.price.toLocaleString()}
                         </div>
                       </div>
                       <div>
-                        <div className="text-gray-400">Executed</div>
+                        <div className="text-slate-500">Executed</div>
                         <div className="font-medium">
                           {signal.executed ? (
                             <span className="text-green-400">Yes</span>
                           ) : (
-                            <span className="text-gray-500">No</span>
+                            <span className="text-slate-500">No</span>
                           )}
                         </div>
                       </div>
                       <div className="col-span-2">
-                        <div className="text-gray-400 mb-1">Strength</div>
+                        <div className="text-slate-500 mb-1">Strength</div>
                         <div className="flex items-center">
-                          <div className="flex-1 bg-gray-700 rounded-full h-2 mr-2">
+                          <div className="flex-1 bg-slate-100 rounded-full h-2 mr-2">
                             <div
                               className="bg-blue-500 h-2 rounded-full"
                               style={{ width: `${(signal.strength ?? 0) * 100}%` }}
@@ -194,38 +194,38 @@ function Signals() {
               </div>
 
               {/* Desktop Table View with Horizontal Scroll */}
-              <div className="hidden md:block bg-gray-800 rounded-lg overflow-hidden border border-gray-700">
+              <div className="hidden md:block bg-white rounded-lg overflow-hidden border border-slate-200">
                 <div className="overflow-x-auto">
                   <table className="w-full">
-                    <thead className="bg-gray-700">
+                    <thead className="bg-slate-100">
                       <tr>
-                        <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">
+                        <th className="px-4 py-3 text-left text-sm font-medium text-slate-700">
                           Time
                         </th>
-                        <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">
+                        <th className="px-4 py-3 text-left text-sm font-medium text-slate-700">
                           Strategy
                         </th>
-                        <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">
+                        <th className="px-4 py-3 text-left text-sm font-medium text-slate-700">
                           Symbol
                         </th>
-                        <th className="px-4 py-3 text-left text-sm font-medium text-gray-300">
+                        <th className="px-4 py-3 text-left text-sm font-medium text-slate-700">
                           Side
                         </th>
-                        <th className="px-4 py-3 text-right text-sm font-medium text-gray-300">
+                        <th className="px-4 py-3 text-right text-sm font-medium text-slate-700">
                           Price
                         </th>
-                        <th className="px-4 py-3 text-right text-sm font-medium text-gray-300">
+                        <th className="px-4 py-3 text-right text-sm font-medium text-slate-700">
                           Strength
                         </th>
-                        <th className="px-4 py-3 text-center text-sm font-medium text-gray-300">
+                        <th className="px-4 py-3 text-center text-sm font-medium text-slate-700">
                           Executed
                         </th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-gray-700">
+                    <tbody className="divide-y divide-slate-200">
                       {data?.signals.map((signal) => (
-                        <tr key={signal.id} className="hover:bg-gray-750">
-                          <td className="px-4 py-3 text-sm text-gray-400">
+                        <tr key={signal.id} className="hover:bg-slate-100">
+                          <td className="px-4 py-3 text-sm text-slate-500">
                             {new Date(signal.timestamp).toLocaleString()}
                           </td>
                           <td className="px-4 py-3">{signal.strategy}</td>
@@ -238,7 +238,7 @@ function Signals() {
                           </td>
                           <td className="px-4 py-3 text-right">
                             <div className="flex items-center justify-end">
-                              <div className="w-16 bg-gray-700 rounded-full h-2 mr-2">
+                              <div className="w-16 bg-slate-100 rounded-full h-2 mr-2">
                                 <div
                                   className="bg-blue-500 h-2 rounded-full"
                                   style={{ width: `${(signal.strength ?? 0) * 100}%` }}
@@ -253,7 +253,7 @@ function Signals() {
                             {signal.executed ? (
                               <span className="text-green-400">Yes</span>
                             ) : (
-                              <span className="text-gray-500">-</span>
+                              <span className="text-slate-500">-</span>
                             )}
                           </td>
                         </tr>

@@ -21,8 +21,8 @@ function StatCard({ title, value, loading, highlight, variant, error, onRetry }:
   const resolvedVariant: StatCardVariant = variant ?? (highlight ? 'positive' : 'neutral');
 
   return (
-    <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
-      <div className="text-sm text-gray-400 mb-1">{title}</div>
+    <div className="bg-white rounded-lg p-4 border border-slate-200">
+      <div className="text-sm text-slate-500 mb-1">{title}</div>
       {error ? (
         <div className="flex items-start gap-2">
           <svg
@@ -52,8 +52,8 @@ function StatCard({ title, value, loading, highlight, variant, error, onRetry }:
         </div>
       ) : loading ? (
         <div className="space-y-2">
-          <div className="h-8 bg-gray-700 rounded animate-pulse" />
-          <div className="h-2 w-3/4 bg-gray-700/60 rounded animate-pulse" />
+          <div className="h-8 bg-slate-100 rounded animate-pulse" />
+          <div className="h-2 w-3/4 bg-slate-100/60 rounded animate-pulse" />
         </div>
       ) : (
         <div

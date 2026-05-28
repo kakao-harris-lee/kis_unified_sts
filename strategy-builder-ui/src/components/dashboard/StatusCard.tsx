@@ -19,12 +19,12 @@ function StatusCard({
     success: 'text-green-400',
     warning: 'text-yellow-400',
     error: 'text-red-400',
-    neutral: 'text-gray-300',
+    neutral: 'text-slate-700',
   };
 
   return (
-    <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
-      <div className="text-sm text-gray-400 mb-1">{title}</div>
+    <div className="bg-white rounded-lg p-4 border border-slate-200">
+      <div className="text-sm text-slate-500 mb-1">{title}</div>
 
       {error ? (
         <div className="flex items-start gap-2">
@@ -57,7 +57,7 @@ function StatusCard({
         </div>
       ) : loading ? (
         <div className="space-y-2">
-          <div className="h-8 bg-gray-700 rounded animate-pulse" />
+          <div className="h-8 bg-slate-100 rounded animate-pulse" />
         </div>
       ) : (
         <div className={`text-2xl font-bold ${statusColors[status]}`}>

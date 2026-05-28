@@ -58,7 +58,7 @@ function RefreshIndicator({
   const getStatusColor = () => {
     if (isRefreshing) return 'text-blue-400';
     if (isStale) return 'text-yellow-400';
-    return 'text-gray-400';
+    return 'text-slate-500';
   };
 
   return (

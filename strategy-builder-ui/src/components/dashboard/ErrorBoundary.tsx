@@ -57,8 +57,8 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
 
       // Default error UI
       return (
-        <div className="min-h-screen bg-gray-900 flex items-center justify-center p-4">
-          <div className="max-w-2xl w-full bg-gray-800 rounded-lg p-6 border border-red-900/50">
+        <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
+          <div className="max-w-2xl w-full bg-white rounded-lg p-6 border border-red-900/50">
             <div className="flex items-start gap-4">
               <div className="flex-shrink-0">
                 <svg
@@ -79,22 +79,22 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
                 <h2 className="text-xl font-semibold text-red-400 mb-2">
                   Something went wrong
                 </h2>
-                <p className="text-sm text-gray-300 mb-4">
+                <p className="text-sm text-slate-700 mb-4">
                   An unexpected error occurred in the application. Please try
                   refreshing the page or contact support if the problem persists.
                 </p>
 
                 {this.state.error && (
                   <div className="mb-4">
-                    <h3 className="text-sm font-medium text-gray-400 mb-2">
+                    <h3 className="text-sm font-medium text-slate-500 mb-2">
                       Error Details:
                     </h3>
-                    <div className="bg-gray-900 rounded p-3 text-xs text-red-300 font-mono overflow-auto">
+                    <div className="bg-slate-50 rounded p-3 text-xs text-red-300 font-mono overflow-auto">
                       <div className="mb-2">
                         <strong>Message:</strong> {this.state.error.message}
                       </div>
                       {this.state.error.stack && (
-                        <div className="text-gray-500 whitespace-pre-wrap">
+                        <div className="text-slate-500 whitespace-pre-wrap">
                           {this.state.error.stack}
                         </div>
                       )}
@@ -111,7 +111,7 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
                   </button>
                   <button
                     onClick={() => window.location.reload()}
-                    className="px-4 py-2 text-sm font-medium text-gray-300 bg-gray-700 hover:bg-gray-600 rounded transition-colors"
+                    className="px-4 py-2 text-sm font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded transition-colors"
                   >
                     Reload Page
                   </button>
