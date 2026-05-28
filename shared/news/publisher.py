@@ -16,11 +16,23 @@ logger = logging.getLogger(__name__)
 _STREAM_TTL_SECONDS = 86400  # Project Redis TTL policy (memory: stream keys 24h)
 
 
+_PUBSUB_CHANNEL = "news:raw"  # consumed by forecasting EventImpactScorer
+_PUBSUB_MAX_TEXT_CHARS = 1000  # cap pubsub payload independently of stream body
+
+
 class NewsStreamPublisher:
-    """Minimal publisher targeting stream:news.raw.
+    """Minimal publisher targeting stream:news.raw + news:raw pubsub.
 
     Does NOT reuse shared.streaming.publisher.StreamPublisher because that
     one is sync and uses a global correlation-id tracer — not needed here.
+
+    Two outputs per news item:
+      * Redis XADD to ``stream:news.raw`` — durable, consumed by archivers
+        and replay tooling (24h TTL).
+      * Redis PUBLISH to ``news:raw`` — ephemeral fan-out consumed by the
+        forecasting EventImpactScorer (``services/forecasting/main.py``).
+        Without this fan-out Setup C never sees ``event_scores`` rows and
+        produces zero signals indefinitely (root cause discovered 2026-05-28).
     """
 
     def __init__(self, redis: Any, stream: str, maxlen: int):
@@ -41,6 +53,21 @@ class NewsStreamPublisher:
             self.stream, fields, maxlen=self.maxlen, approximate=True
         )
         await self.redis.expire(self.stream, _STREAM_TTL_SECONDS)
+
+        # Fan-out to pubsub for forecasting EventImpactScorer.
+        # Body is intentionally separate from the stream payload — scorer only
+        # needs short event text, not the full archive row.
+        try:
+            text = (item.title or "").strip()
+            if item.body:
+                text = f"{text} {item.body.strip()}" if text else item.body.strip()
+            if text:
+                await self.redis.publish(
+                    _PUBSUB_CHANNEL, text[:_PUBSUB_MAX_TEXT_CHARS]
+                )
+        except Exception as e:  # noqa: BLE001 — pubsub fan-out is best-effort
+            logger.warning("news:raw pubsub publish failed: %s", e)
+
         return msg_id.decode() if isinstance(msg_id, bytes) else str(msg_id)
 
 

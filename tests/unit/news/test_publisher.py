@@ -68,6 +68,32 @@ async def test_publisher_sets_stream_ttl(redis):
 
 
 @pytest.mark.asyncio
+async def test_publisher_also_publishes_to_pubsub_channel(redis):
+    """Forecasting EventImpactScorer subscribes to the ``news:raw`` pubsub
+    channel — without this fan-out Setup C never sees event_scores rows.
+    Regression for the 2026-05-28 Setup C-zero-signals discovery.
+    """
+    pubsub = redis.pubsub()
+    await pubsub.subscribe("news:raw")
+    # Drain the subscribe confirmation message
+    await pubsub.get_message(ignore_subscribe_messages=True, timeout=0.1)
+
+    pub = NewsStreamPublisher(redis, stream="stream:news.raw", maxlen=100)
+    await pub.publish(_item("a"))
+
+    msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+    assert msg is not None and msg["type"] == "message"
+    data = msg["data"]
+    if isinstance(data, bytes):
+        data = data.decode()
+    # _item() yields title="T", body="B" — both must reach scorer
+    assert "T" in data
+    assert "B" in data
+    await pubsub.unsubscribe("news:raw")
+    await pubsub.close()
+
+
+@pytest.mark.asyncio
 async def test_ch_writer_batches_and_flushes_on_size():
     ch_client = AsyncMock()
     writer = ClickHouseNewsWriter(ch_client, batch_size=3, flush_interval_seconds=60)
