@@ -3,7 +3,6 @@ import { BrowserRouter, Routes, Route, NavLink, Navigate } from 'react-router-do
 import Cockpit from './pages/Cockpit';
 import Positions from './pages/Positions';
 import Signals from './pages/Signals';
-import StrategyBuilder from './pages/StrategyBuilder';
 import Trades from './pages/Trades';
 import ErrorBoundary from './components/ErrorBoundary';
 import { AssetClassProvider } from './contexts/AssetClassContext';
@@ -85,8 +84,6 @@ function AppInner() {
               <Route path="/dashboard" element={<Navigate to="/" replace />} />
               <Route path="/positions" element={<Positions />} />
               <Route path="/signals" element={<Signals />} />
-              <Route path="/strategy-builder" element={<StrategyBuilder />} />
-              <Route path="/strategy-lab" element={<Navigate to="/strategy-builder" replace />} />
               <Route path="/trades" element={<Trades />} />
             </Routes>
           </main>
