@@ -35,7 +35,9 @@ strategy:
       valid_minutes_max: 120      # was 90; +30m for retrace to develop
 
       # Overnight macro confirmation thresholds
-      min_sp500_gap_pct: 0.3     # was 0.5; captures ~47%→~65% of trading days
+      min_sp500_gap_pct: 0.15    # 0.5 → 0.3 (#336) → 0.15 (2026-05-28): today SP500 +0.016%
+                                 # blocked all entries; widen ~65% → ~80% of trading days.
+                                 # Re-evaluate after 1 week of paper if noise-entry rate spikes.
       min_kr_gap_pct: 0.2        # was 0.3; KR futures gap usually >> 0.2%
 
       # Retrace band: fraction of the gap that must have reversed
