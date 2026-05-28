@@ -119,6 +119,31 @@ services:
         max-file: "3"
 
   # =============================================================================
+  # Strategy Builder UI (visual strategy builder)
+  # =============================================================================
+  strategy-builder-ui:
+    build:
+      context: .
+      dockerfile: Dockerfile.strategy_builder_ui
+    container_name: kis-strategy-builder-ui
+    restart: unless-stopped
+    ports:
+      - "3100:3100"
+    environment:
+      - KIS_BUILDER_API_BASE=http://dashboard:8001
+      - KIS_BUILDER_API_KEY=${DASHBOARD_API_KEY:-}
+    depends_on:
+      dashboard:
+        condition: service_healthy
+    networks:
+      - trading-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # =============================================================================
   # Forecasting daemon (HAR-RV vol + event impact scoring)
   # =============================================================================
   forecasting:

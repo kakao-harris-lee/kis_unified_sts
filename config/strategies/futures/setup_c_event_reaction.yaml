@@ -66,6 +66,24 @@ strategy:
         veto_long_block_signal: "STRONG_BEARISH"   # opposing signal that blocks longs
         veto_short_block_signal: "STRONG_BULLISH"  # opposing signal that blocks shorts
 
+      # Daily Regime Trend Filter (plan: K200 Daily Regime Trend Following).
+      # This is a direction gate only: it does not create trend-following
+      # entries, it only blocks Setup C candidates that fight the daily bias.
+      daily_regime_trend_filter:
+        enabled: true
+        permissive_on_missing: true
+        block_sideways: true
+        close_key: "daily_close"
+        ema_short_key: "daily_ema_20"
+        ema_short_prev_key: "daily_ema_20_prev"
+        ema_long_key: "daily_ema_60"
+        rsi_key: "daily_rsi_14"
+        min_ema_gap_pct: 0.005
+        long_min_rsi: 50.0
+        short_max_rsi: 50.0
+        neutral_rsi_low: 45.0
+        neutral_rsi_high: 55.0
+
       # Phase 5 forecast integration — Phase D canary activated 2026-05-13
       forecast_integration:
         enabled: true                        # feature flag
@@ -113,4 +131,3 @@ strategy:
         - [60, 0.7]   # risk_score <= 60  → ×0.7
         - [80, 0.4]   # risk_score <= 80  → ×0.4
         - [100, 0.0]  # risk_score <= 100 → ×0.0 (entry skip)
-

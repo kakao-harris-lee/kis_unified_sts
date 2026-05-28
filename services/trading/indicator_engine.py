@@ -260,12 +260,12 @@ class StreamingIndicatorEngine:
         self._numeric_mtf_timeframes: list[int] = [
             tf for tf in self._mtf_timeframes if isinstance(tf, int)
         ]
-        self._has_daily = 'daily' in self._mtf_timeframes
+        self._has_daily = "daily" in self._mtf_timeframes
         self._mtf_maxlen = mtf_maxlen
         self._mtf_accumulators: dict[
             str, dict[int, MultiTimeframeCandleAccumulator]
         ] = {}
-        self._momentum_cache: dict[tuple[str, int], tuple[int, dict[str, Any]]] = {}
+        self._momentum_cache: dict[tuple[Any, ...], tuple[int, dict[str, Any]]] = {}
         # Cache for get_indicators_tf(): {(symbol, timeframe): (total_appended, indicators_dict)}
         self._mtf_base_cache: dict[tuple[str, int], tuple[int, dict[str, float]]] = {}
 
@@ -306,7 +306,9 @@ class StreamingIndicatorEngine:
         # Stores per-symbol deque of previous session closes.
         # On day change, previous day's last close is pushed to the deque.
         self._daily_closes: dict[str, deque] = {}  # symbol -> deque of daily closes
-        self._intraday_last_close: dict[str, float] = {}  # symbol -> current session last close
+        self._intraday_last_close: dict[str, float] = (
+            {}
+        )  # symbol -> current session last close
         self._daily_ema_periods: list[int] = daily_ema_periods or [5, 10, 20]
 
         # Cumulative volume → delta conversion
@@ -578,10 +580,14 @@ class StreamingIndicatorEngine:
         if symbol in self._mtf_accumulators:
             del self._mtf_accumulators[symbol]
         self._momentum_cache = {
-            key: value for key, value in self._momentum_cache.items() if key[0] != symbol
+            key: value
+            for key, value in self._momentum_cache.items()
+            if key[0] != symbol
         }
         self._mtf_base_cache = {
-            key: value for key, value in self._mtf_base_cache.items() if key[0] != symbol
+            key: value
+            for key, value in self._mtf_base_cache.items()
+            if key[0] != symbol
         }
         self._indicator_cache.pop(symbol, None)
         self._warm_logged.discard(symbol)
@@ -608,7 +614,9 @@ class StreamingIndicatorEngine:
             return False
         return len(acc.candles) >= self.bb_period
 
-    def get_tick_age_seconds(self, symbol: str, now: datetime | None = None) -> float | None:
+    def get_tick_age_seconds(
+        self, symbol: str, now: datetime | None = None
+    ) -> float | None:
         """Return seconds elapsed since last tick for symbol, or None if never seen."""
         acc = self._accumulators.get(symbol)
         if acc is None or acc.last_tick_ts is None:
@@ -616,7 +624,7 @@ class StreamingIndicatorEngine:
         last_ts = acc.last_tick_ts
         if last_ts.tzinfo is None:
             last_ts = last_ts.replace(tzinfo=UTC)
-        _now = (now or datetime.now(UTC))
+        _now = now or datetime.now(UTC)
         if _now.tzinfo is None:
             _now = _now.replace(tzinfo=UTC)
         return (_now - last_ts).total_seconds()
@@ -926,9 +934,7 @@ class StreamingIndicatorEngine:
 
         # 25. price_change_5
         result["price_change_5"] = (
-            (cur_close - closes[-6]) / closes[-6]
-            if n >= 6 and closes[-6] != 0
-            else 0.0
+            (cur_close - closes[-6]) / closes[-6] if n >= 6 and closes[-6] != 0 else 0.0
         )
 
         return result
@@ -1181,7 +1187,13 @@ class StreamingIndicatorEngine:
                 rsi_period=rsi_period,
                 williams_r_period=williams_r_period,
             )
-        except (ValidationError, ValueError, KeyError, IndexError, ZeroDivisionError) as e:
+        except (
+            ValidationError,
+            ValueError,
+            KeyError,
+            IndexError,
+            ZeroDivisionError,
+        ) as e:
             logger.error(f"Momentum indicator calculation failed for {symbol}: {e}")
             return {}
 
@@ -1214,6 +1226,7 @@ class StreamingIndicatorEngine:
         sma_periods: list[int] | None = None,
         ema_periods: list[int] | None = None,
         rsi_period: int = 5,
+        rsi_periods: list[int] | None = None,
         min_candles: int = 50,
     ) -> dict[str, Any]:
         """Compute daily timeframe indicators from daily candles.
@@ -1226,6 +1239,7 @@ class StreamingIndicatorEngine:
             sma_periods: SMA periods to calculate (default: [20, 60, 200]).
             ema_periods: EMA periods to calculate (default: [5, 10, 20]).
             rsi_period: RSI period (default: 5).
+            rsi_periods: Optional list of RSI periods to calculate.
             min_candles: Minimum candles needed for valid computation.
 
         Returns:
@@ -1250,7 +1264,15 @@ class StreamingIndicatorEngine:
         candle_count = self._daily_total_appended.get(symbol, len(daily_deque))
 
         # Check cache before expensive dict conversion
-        cache_key = (symbol, "daily")
+        effective_rsi_periods = tuple(rsi_periods or [rsi_period])
+        cache_key = (
+            symbol,
+            "daily",
+            tuple(sma_periods),
+            tuple(ema_periods),
+            effective_rsi_periods,
+            min_candles,
+        )
         cached = self._momentum_cache.get(cache_key)
         if cached and cached[0] == candle_count:
             self._momentum_cache_hits += 1
@@ -1266,8 +1288,15 @@ class StreamingIndicatorEngine:
                 sma_periods=sma_periods,
                 ema_periods=ema_periods,
                 rsi_period=rsi_period,
+                rsi_periods=list(effective_rsi_periods),
             )
-        except (ValidationError, ValueError, KeyError, IndexError, ZeroDivisionError) as e:
+        except (
+            ValidationError,
+            ValueError,
+            KeyError,
+            IndexError,
+            ZeroDivisionError,
+        ) as e:
             logger.error(f"Daily indicator calculation failed for {symbol}: {e}")
             return {}
 
@@ -1414,9 +1443,7 @@ class StreamingIndicatorEngine:
 
         self._current_date[symbol] = date_str
 
-    def _update_daily_close(
-        self, symbol: str, close: float, date_str: str
-    ) -> None:
+    def _update_daily_close(self, symbol: str, close: float, date_str: str) -> None:
         """Track daily closes for daily-scale EMA trend filter.
 
         On day change, pushes the previous day's last close to the deque.
@@ -1629,7 +1656,9 @@ class StreamingIndicatorEngine:
         for i in range(period, len(tr_list)):
             atr = (atr * (period - 1) + tr_list[i]) / period
             plus_di_smooth = (plus_di_smooth * (period - 1) + plus_dm_list[i]) / period
-            minus_di_smooth = (minus_di_smooth * (period - 1) + minus_dm_list[i]) / period
+            minus_di_smooth = (
+                minus_di_smooth * (period - 1) + minus_dm_list[i]
+            ) / period
 
             if atr > 0:
                 plus_di = 100 * plus_di_smooth / atr

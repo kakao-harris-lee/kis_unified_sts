@@ -1,0 +1,16 @@
+# Upstream KIS Strategy Builder UI (Next.js)
+
+FROM node:20-slim
+
+WORKDIR /app
+
+COPY strategy-builder-ui/package.json strategy-builder-ui/package-lock.json* ./
+RUN npm install
+
+COPY strategy-builder-ui/ .
+
+ENV KIS_BUILDER_API_BASE=http://dashboard:8001
+
+EXPOSE 3100
+
+CMD ["npm", "run", "dev"]

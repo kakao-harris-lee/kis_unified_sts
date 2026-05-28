@@ -1269,7 +1269,8 @@ class TradingOrchestrator:
             except Exception as e:
                 logger.warning(
                     "prev_close prefetch failed for %s: %s — Setup A will skip",
-                    symbol, e,
+                    symbol,
+                    e,
                 )
                 continue
             prev_close = float(price.get("prev_close", 0) or 0)
@@ -1277,7 +1278,8 @@ class TradingOrchestrator:
                 self._futures_daily_reference[symbol] = {"prev_close": prev_close}
                 logger.info(
                     "prev_close prefetched: %s = %s (Setup A gap_pct ready)",
-                    symbol, prev_close,
+                    symbol,
+                    prev_close,
                 )
 
     def _init_price_feeds(self, kis_config) -> Any | None:
@@ -3586,6 +3588,78 @@ class TradingOrchestrator:
         Returns:
             List of daily candle dicts with keys: date, open, high, low, close, volume
         """
+        if self.config.asset_class == "futures":
+            try:
+                from clickhouse_driver import Client as CHSyncClient
+
+                db = os.getenv("CLICKHOUSE_FUTURES_DATABASE", "kospi")
+                execution_cfg = ConfigLoader.load("execution.yaml")
+                cross_asset_cfg = (
+                    execution_cfg.get("futures_slippage_control", {}).get(
+                        "cross_asset", {}
+                    )
+                    if isinstance(execution_cfg, dict)
+                    else {}
+                )
+                reference_symbol = str(
+                    cross_asset_cfg.get("reference_symbol", "") or ""
+                ).strip()
+                source_code = reference_symbol or symbol
+                table = (
+                    "kospi200f_1m" if source_code.startswith("101") else "kospi_mini_1m"
+                )
+
+                ch_cfg = ClickHouseConfig.from_env(database=db)
+                loop = asyncio.get_event_loop()
+                rows = await loop.run_in_executor(
+                    None,
+                    lambda: CHSyncClient(
+                        host=ch_cfg.host,
+                        port=ch_cfg.port,
+                        user=ch_cfg.user,
+                        password=ch_cfg.password,
+                        database=ch_cfg.database,
+                    ).execute(
+                        "SELECT "
+                        "toDate(datetime) AS date, "
+                        "argMin(open, datetime) AS open, "
+                        "max(high) AS high, "
+                        "min(low) AS low, "
+                        "argMax(close, datetime) AS close, "
+                        "sum(volume) AS volume "
+                        f"FROM {table} "
+                        "WHERE code = %(code)s "
+                        "GROUP BY date "
+                        "ORDER BY date DESC LIMIT %(limit)s",
+                        {"code": source_code, "limit": limit},
+                    ),
+                )
+                candles = []
+                for row in reversed(rows):
+                    candles.append(
+                        {
+                            "date": row[0],
+                            "open": float(row[1]),
+                            "high": float(row[2]),
+                            "low": float(row[3]),
+                            "close": float(row[4]),
+                            "volume": int(row[5]),
+                        }
+                    )
+                return candles
+            except (
+                InfrastructureError,
+                OSError,
+                ConnectionError,
+                ValueError,
+                IndexError,
+                KeyError,
+            ) as e:
+                logger.debug(
+                    f"ClickHouse futures daily candle fetch failed for {symbol}: {e}"
+                )
+                return []
+
         try:
             import pandas as pd
             from clickhouse_driver import Client as CHSyncClient
@@ -3675,8 +3749,6 @@ class TradingOrchestrator:
         kis_hits = 0
         daily_ch_hits = 0
         for symbol in symbols:
-            if self._indicator_engine.is_warm(symbol):
-                continue
             # Skip if symbol was evicted during prewarm
             if symbol not in set(self.config.symbols):
                 continue
@@ -3684,28 +3756,34 @@ class TradingOrchestrator:
                 # ClickHouse first (no rate limit, faster).
                 # Futures need more candles for 15m resampling strategies
                 # (e.g. BB period=43 on 15m bars → 43*15=645 1-min candles).
-                ch_limit = 700 if self.config.asset_class == "futures" else 120
-                candles = await self._fetch_candles_from_clickhouse(symbol, limit=ch_limit)
-                if candles:
-                    ch_hits += 1
-                elif self._kis_client.is_rate_limited:
-                    # Skip KIS REST when rate limiter is in penalty/cooldown
-                    logger.debug(f"Prewarm {symbol}: skipping KIS REST (rate limited)")
-                    continue
-                else:
-                    # Fallback to KIS REST
-                    candles = await asyncio.wait_for(
-                        self._kis_client.get_minute_bars(symbol, count=120),
-                        timeout=5.0,
+                if not self._indicator_engine.is_warm(symbol):
+                    ch_limit = 700 if self.config.asset_class == "futures" else 120
+                    candles = await self._fetch_candles_from_clickhouse(
+                        symbol, limit=ch_limit
                     )
                     if candles:
-                        kis_hits += 1
-                    await asyncio.sleep(0.3)  # rate-limit protection
-                if candles:
-                    self._indicator_engine.seed_candles(symbol, candles)
-                    logger.info(f"Prewarm {symbol}: {len(candles)} candles seeded")
+                        ch_hits += 1
+                    elif self._kis_client.is_rate_limited:
+                        # Skip KIS REST when rate limiter is in penalty/cooldown
+                        logger.debug(
+                            f"Prewarm {symbol}: skipping KIS REST (rate limited)"
+                        )
+                    else:
+                        # Fallback to KIS REST
+                        candles = await asyncio.wait_for(
+                            self._kis_client.get_minute_bars(symbol, count=120),
+                            timeout=5.0,
+                        )
+                        if candles:
+                            kis_hits += 1
+                        await asyncio.sleep(0.3)  # rate-limit protection
+                    if candles:
+                        self._indicator_engine.seed_candles(symbol, candles)
+                        logger.info(f"Prewarm {symbol}: {len(candles)} candles seeded")
+                    else:
+                        logger.debug(f"Prewarm {symbol}: no candles returned")
                 else:
-                    logger.debug(f"Prewarm {symbol}: no candles returned")
+                    logger.debug(f"Prewarm {symbol}: intraday candles already warm")
 
                 # Fetch and seed daily candles from ClickHouse (for multi-timeframe strategies)
                 daily_candles = await self._fetch_daily_candles_from_clickhouse(
@@ -5987,6 +6065,15 @@ class TradingOrchestrator:
                         daily_indicators = self._indicator_engine.get_daily_indicators(
                             symbol
                         )
+                        if self.config.asset_class == "futures":
+                            daily_indicators.update(
+                                self._indicator_engine.get_daily_indicators(
+                                    symbol,
+                                    ema_periods=[5, 10, 20, 60, 120],
+                                    rsi_periods=[5, 14],
+                                    min_candles=60,
+                                )
+                            )
                         # Add with daily_ prefix for multi-timeframe clarity
                         for key, value in daily_indicators.items():
                             indicators[f"daily_{key}"] = value

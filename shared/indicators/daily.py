@@ -45,6 +45,7 @@ def calculate_daily_indicators(
     sma_periods: list[int] | None = None,
     ema_periods: list[int] | None = None,
     rsi_period: int = 5,
+    rsi_periods: list[int] | None = None,
     lookahead_guard: Any | None = None,
     context_timestamp: Any | None = None,
     context_info: str | None = None,
@@ -59,6 +60,8 @@ def calculate_daily_indicators(
         sma_periods: SMA periods to calculate (default: [20, 60, 200]).
         ema_periods: EMA periods to calculate (default: [5, 10, 20]).
         rsi_period: RSI period (default: 5).
+        rsi_periods: Optional list of RSI periods. When provided, this takes
+            precedence over ``rsi_period`` and computes every listed period.
         lookahead_guard: Optional backtest guard for timestamped candle arrays.
         context_timestamp: Timestamp used by the optional lookahead guard.
         context_info: Label used in lookahead guard diagnostics.
@@ -82,6 +85,8 @@ def calculate_daily_indicators(
         sma_periods = [20, 60, 200]
     if ema_periods is None:
         ema_periods = [5, 10, 20]
+    if rsi_periods is None:
+        rsi_periods = [rsi_period]
 
     if not candles:
         logger.warning("calculate_daily_indicators: no candles provided")
@@ -125,43 +130,52 @@ def calculate_daily_indicators(
     result: dict[str, float] = {}
 
     try:
+        result["close"] = float(df["close"].iloc[-1])
+        if len(df) >= 2:
+            result["close_prev"] = float(df["close"].iloc[-2])
+
         # Calculate SMA for each period
         for period in sma_periods:
             sma = df["close"].rolling(window=period, min_periods=1).mean()
             result[f"sma_{period}"] = float(sma.iloc[-1])
+            if len(sma) >= 2:
+                result[f"sma_{period}_prev"] = float(sma.iloc[-2])
 
         # Calculate EMA for each period
         for period in ema_periods:
             ema = df["close"].ewm(span=period, adjust=False).mean()
             result[f"ema_{period}"] = float(ema.iloc[-1])
+            if len(ema) >= 2:
+                result[f"ema_{period}_prev"] = float(ema.iloc[-2])
 
         # Calculate RSI
         delta = df["close"].diff()
         gain = delta.clip(lower=0)
         loss = (-delta).clip(lower=0)
 
-        avg_gain = gain.ewm(
-            alpha=1.0 / rsi_period, min_periods=rsi_period, adjust=False
-        ).mean()
-        avg_loss = loss.ewm(
-            alpha=1.0 / rsi_period, min_periods=rsi_period, adjust=False
-        ).mean()
+        for period in rsi_periods:
+            avg_gain = gain.ewm(
+                alpha=1.0 / period, min_periods=period, adjust=False
+            ).mean()
+            avg_loss = loss.ewm(
+                alpha=1.0 / period, min_periods=period, adjust=False
+            ).mean()
 
-        # Handle edge cases for RSI calculation
-        zero_loss = avg_loss.iloc[-1] == 0
-        zero_gain = avg_gain.iloc[-1] == 0
+            # Handle edge cases for RSI calculation
+            zero_loss = avg_loss.iloc[-1] == 0
+            zero_gain = avg_gain.iloc[-1] == 0
 
-        if zero_loss and zero_gain:
-            rsi_value = 50.0  # Flat market
-        elif zero_loss and not zero_gain:
-            rsi_value = 100.0  # All gains
-        elif zero_gain and not zero_loss:
-            rsi_value = 0.0  # All losses
-        else:
-            rs = avg_gain.iloc[-1] / avg_loss.iloc[-1]
-            rsi_value = 100 - (100 / (1 + rs))
+            if zero_loss and zero_gain:
+                rsi_value = 50.0  # Flat market
+            elif zero_loss and not zero_gain:
+                rsi_value = 100.0  # All gains
+            elif zero_gain and not zero_loss:
+                rsi_value = 0.0  # All losses
+            else:
+                rs = avg_gain.iloc[-1] / avg_loss.iloc[-1]
+                rsi_value = 100 - (100 / (1 + rs))
 
-        result[f"rsi_{rsi_period}"] = float(rsi_value)
+            result[f"rsi_{period}"] = float(rsi_value)
 
     except (ValueError, KeyError, IndexError, ZeroDivisionError) as e:
         logger.error(f"calculate_daily_indicators: calculation failed: {e}")
