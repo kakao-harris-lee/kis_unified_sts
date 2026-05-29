@@ -1,26 +1,33 @@
 ---
 name: rl-pipeline
-description: "RL 모델 전체 수명주기 관리 파이프라인. 학습→평가→비교→배포 자동화. RL 모델 학습, 모델 비교, 모델 배포, Paper→Live 승격."
+description: "[DEPRECATED 2026-05-15 — 재학습 전용] RL 모델 재학습 수명주기. RL_mppo는 운영 비활성(enabled:false). 운영 전략 개발은 strategy-lab 스킬을 사용. 이 스킬은 RL 재학습/복귀 검토 시에만 호출."
 ---
 
-# RL Pipeline — RL 모델 수명주기 오케스트레이터
+# RL Pipeline — RL 모델 재학습 수명주기 (DEPRECATED, 재학습 전용)
 
-RL 모델의 전체 수명주기(학습→평가→비교→배포)를 관리하는 파이프라인 스킬.
+> ⚠️ **DEPRECATED 2026-05-15.** RL_mppo는 운영 경로에서 deprecate되었습니다
+> (`enabled:false`, counterfactual EOD-proxy PnL 음수 + Setup A/C 채택).
+> 코드(`RLMPPOEntry`/`RLMPPOExit`/`rl_model_helpers`)는 보존되어 있으나,
+> **신규 운영 시그널 개발은 `strategy-lab` 스킬**(지표 기반 + RegimeGate + builder)을 사용하세요.
+> 이 스킬은 **RL 재학습 또는 복귀 타당성 검토**가 명시적으로 필요할 때만 호출합니다.
+
+RL 모델의 재학습 수명주기(학습→평가→비교→배포)를 관리하는 파이프라인 스킬.
 
 ## 전문가 구성
 
 | 에이전트 | 파이프라인 역할 | 단계 |
 |---------|---------------|------|
-| `rl-specialist` | 모델 학습 (Flat/Hierarchical) | Phase 1 |
-| `model-evaluator` | 성과 평가 및 모델 비교 | Phase 2-3 |
-| `model-deployer` | Paper/Live 배포 및 버전 관리 | Phase 4 |
+| `indicator-specialist` | (보조 역할) RL 재학습 (Flat/Hierarchical) | Phase 1 |
+| `model-evaluator` | 성과 평가 및 모델 비교 (재학습 모델) | Phase 2-3 |
+| `model-deployer` | Paper/Live 배포 및 버전 관리 (재학습 시) | Phase 4 |
 
 ## 파이프라인
 
 ```
 Phase 1: 학습              Phase 2: 평가              Phase 3: 비교              Phase 4: 배포
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│  rl-specialist   │ →  │ model-evaluator  │ →  │ model-evaluator  │ →  │ model-deployer   │
+│ indicator-spec.  │ →  │ model-evaluator  │ →  │ model-evaluator  │ →  │ model-deployer   │
+│ (RL 재학습 보조) │    │                  │    │                  │    │                  │
 │                  │    │                  │    │                  │    │                  │
 │ - Flat MPPO      │    │ - Sharpe/MDD    │    │ - A/B 비교       │    │ - Paper 배포     │
 │ - Hierarchical   │    │ - Win Rate      │    │ - Flat vs Hier   │    │ - 검증 (1주)     │
@@ -30,9 +37,9 @@ Phase 1: 학습              Phase 2: 평가              Phase 3: 비교       
 
 ## 시나리오별 워크플로우
 
-### 1. 신규 모델 학습 → 배포 (풀 파이프라인)
+### 1. 신규 모델 재학습 → 배포 (풀 파이프라인)
 ```
-rl-specialist: 학습 (train --algo mppo 또는 train-hierarchical)
+indicator-specialist: RL 재학습 (train --algo mppo 또는 train-hierarchical)
     ↓
 model-evaluator: 단일 모델 평가 (Sharpe, MDD, Win Rate)
     ↓
@@ -61,9 +68,9 @@ ops-monitor: 롤백 후 성능 모니터링
 
 ### 4. 계층적 RL 실험
 ```
-rl-specialist: directional + sequential 학습
+indicator-specialist: directional + sequential 학습
     ↓ (병렬)
-rl-specialist: risk_budget + joint 학습
+indicator-specialist: risk_budget + joint 학습
     ↓
 model-evaluator: 4개 조합 비교 (dir-seq, dir-joint, risk-seq, risk-joint)
     ↓

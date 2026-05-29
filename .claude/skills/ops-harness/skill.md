@@ -78,11 +78,11 @@ ops-monitor + alert-manager (병렬):
 
 ### 5. 배포 후 모니터링
 ```
-model-deployer (rl-pipeline)에서 인계:
+model-deployer (strategy-lab)에서 인계:
     ↓
-ops-monitor: 새 모델 성능 추적 (Sharpe, DD, latency)
+ops-monitor: 새 전략 성능 추적 (Sharpe, DD, latency)
     ↓ [이상 시]
-incident-responder: 모델 롤백 판단
+incident-responder: 전략/설정 롤백 판단
     ↓
 alert-manager: 이상/롤백 알림
 ```
@@ -103,7 +103,7 @@ alert-manager: 이상/롤백 알림
 
 | 상황 | ops-harness 에이전트 | 협력 대상 (다른 하네스) |
 |------|---------------------|----------------------|
-| 모델 배포 후 성능 이상 | ops-monitor | model-deployer (rl-pipeline) |
+| 전략 배포 후 성능 이상 | ops-monitor | model-deployer (strategy-lab) |
 | 장애로 포지션 정합성 불일치 | incident-responder | - (직접 Redis 확인) |
 | 전략 성과 급락 | ops-monitor | backtest-engineer (trading-harness) |
 | 새 전략 배포 후 알림 추가 | alert-manager | strategy-architect (trading-harness) |
