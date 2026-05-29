@@ -51,6 +51,7 @@ export {
   listRegisteredStrategies,
   setRegisteredEnabled,
   unregisterStrategy,
+  getRegisteredActivity,
   type StrategiesListResponse,
   type IndicatorsResponse,
   type BuildRequest,
@@ -60,6 +61,8 @@ export {
   type RegisteredStrategy,
   type RegisteredListResponse,
   type RegisterPaperRequest,
+  type StrategyActivity,
+  type ActivityResponse,
 } from "./strategies";
 
 // Orders

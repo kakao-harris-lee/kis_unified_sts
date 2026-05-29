@@ -1,4 +1,5 @@
 """Tests for the builder→paper registration endpoints (Phase 2)."""
+
 from __future__ import annotations
 
 import pytest
@@ -75,6 +76,7 @@ def client(tmp_path, monkeypatch):
     importlib.reload(kis_builder)
 
     from fastapi import FastAPI
+
     app = FastAPI()
     app.include_router(kis_builder.router)
     return TestClient(app), tmp_path / "built"
@@ -102,7 +104,9 @@ def test_register_paper_creates_yaml(client) -> None:
     assert strategy["entry"]["type"] == "builder_v1"
     assert strategy["exit"]["type"] == "builder_v1_exit"
     assert strategy["position"]["type"] == "fixed"
-    assert strategy["entry"]["params"]["builder_state"]["metadata"]["id"] == "test_built"
+    assert (
+        strategy["entry"]["params"]["builder_state"]["metadata"]["id"] == "test_built"
+    )
 
 
 def test_register_paper_rejects_futures(client) -> None:
@@ -127,9 +131,7 @@ def test_register_paper_rejects_invalid_state(client) -> None:
 def test_register_paper_rejects_bad_id(client) -> None:
     tc, _ = client
     state = _minimal_state(strategy_id="../escape")
-    resp = tc.post(
-        "/api/kis-builder/register-paper", json={"builder_state": state}
-    )
+    resp = tc.post("/api/kis-builder/register-paper", json={"builder_state": state})
     assert resp.status_code == 400
     assert "Invalid strategy id" in resp.json()["detail"]
 
@@ -161,26 +163,20 @@ def test_toggle_registered_strategy_flips_enabled(client) -> None:
         json={"builder_state": _minimal_state(strategy_id="alpha")},
     )
     # Enable
-    resp = tc.post(
-        "/api/kis-builder/registered/alpha/enable", json={"enabled": True}
-    )
+    resp = tc.post("/api/kis-builder/registered/alpha/enable", json={"enabled": True})
     assert resp.status_code == 200
     assert resp.json()["enabled"] is True
     # Persisted
     doc = yaml.safe_load((built_dir / "alpha.yaml").read_text(encoding="utf-8"))
     assert doc["strategy"]["enabled"] is True
     # Disable
-    resp = tc.post(
-        "/api/kis-builder/registered/alpha/enable", json={"enabled": False}
-    )
+    resp = tc.post("/api/kis-builder/registered/alpha/enable", json={"enabled": False})
     assert resp.json()["enabled"] is False
 
 
 def test_toggle_missing_strategy_returns_404(client) -> None:
     tc, _ = client
-    resp = tc.post(
-        "/api/kis-builder/registered/nope/enable", json={"enabled": True}
-    )
+    resp = tc.post("/api/kis-builder/registered/nope/enable", json={"enabled": True})
     assert resp.status_code == 404
 
 
@@ -201,3 +197,58 @@ def test_unregister_missing_returns_404(client) -> None:
     tc, _ = client
     resp = tc.delete("/api/kis-builder/registered/missing")
     assert resp.status_code == 404
+
+
+def test_activity_merges_signal_and_trade_counts(client, monkeypatch) -> None:
+    tc, _ = client
+    from services.dashboard.routes import kis_builder
+
+    tc.post(
+        "/api/kis-builder/register-paper",
+        json={"builder_state": _minimal_state(strategy_id="alpha")},
+    )
+    tc.post(
+        "/api/kis-builder/register-paper",
+        json={"builder_state": _minimal_state(strategy_id="beta")},
+    )
+    # Stub the infra-backed counters so the test is hermetic.
+    monkeypatch.setattr(kis_builder, "_signal_counts", lambda: {"alpha": 7})
+    monkeypatch.setattr(
+        kis_builder, "_trade_counts", lambda _ids: {"alpha": 3, "beta": 1}
+    )
+
+    resp = tc.get("/api/kis-builder/registered/activity")
+    assert resp.status_code == 200, resp.text
+    by_id = {a["id"]: a for a in resp.json()["activity"]}
+    assert by_id["alpha"] == {"id": "alpha", "signals": 7, "trades": 3}
+    # beta has trades but no signals → signals defaults to 0.
+    assert by_id["beta"] == {"id": "beta", "signals": 0, "trades": 1}
+
+
+def test_activity_degrades_to_zero_on_infra_failure(client, monkeypatch) -> None:
+    tc, _ = client
+    from services.dashboard.routes import kis_builder
+
+    tc.post(
+        "/api/kis-builder/register-paper",
+        json={"builder_state": _minimal_state(strategy_id="alpha")},
+    )
+    # Both sources unavailable → empty dicts, panel still renders with zeros.
+    monkeypatch.setattr(kis_builder, "_signal_counts", lambda: {})
+    monkeypatch.setattr(kis_builder, "_trade_counts", lambda _ids: {})
+
+    resp = tc.get("/api/kis-builder/registered/activity")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["activity"] == [{"id": "alpha", "signals": 0, "trades": 0}]
+
+
+def test_activity_empty_when_none_registered(client, monkeypatch) -> None:
+    tc, _ = client
+    from services.dashboard.routes import kis_builder
+
+    monkeypatch.setattr(kis_builder, "_signal_counts", lambda: {})
+    monkeypatch.setattr(kis_builder, "_trade_counts", lambda _ids: {})
+
+    resp = tc.get("/api/kis-builder/registered/activity")
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"activity": []}
