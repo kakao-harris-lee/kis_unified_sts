@@ -602,11 +602,27 @@ class StreamingIndicatorEngine:
         return len(orphans)
 
     def is_warm(self, symbol: str) -> bool:
-        """Whether enough candles exist to compute indicators."""
+        """Whether enough candles exist to compute indicators.
+
+        For multi-timeframe strategies (e.g. bb_reversion_15m via
+        ``mtf_base_15m``) the 1m accumulator filling first is not enough: the
+        deepest numeric timeframe must also hold ``bb_period`` closed candles,
+        else ``get_indicators_tf`` returns ``{}`` and the strategy never
+        signals. Reporting warm too early lets the orchestrator prewarm
+        short-circuit (``if is_warm(symbol): continue``) and skip the deep
+        ClickHouse load that seeds those higher-timeframe bars. The deepest
+        timeframe subsumes the shallower ones (same 1m stream), so gating on it
+        alone suffices. 'daily' is excluded — it is loaded from ClickHouse
+        separately, never aggregated from the 1m feed.
+        """
         acc = self._accumulators.get(symbol)
-        if acc is None:
+        if acc is None or len(acc.candles) < self.bb_period:
             return False
-        return len(acc.candles) >= self.bb_period
+        if self._numeric_mtf_timeframes:
+            deepest_tf = max(self._numeric_mtf_timeframes)
+            if self.mtf_total_appended(symbol, deepest_tf) < self.bb_period:
+                return False
+        return True
 
     def get_tick_age_seconds(self, symbol: str, now: datetime | None = None) -> float | None:
         """Return seconds elapsed since last tick for symbol, or None if never seen."""
