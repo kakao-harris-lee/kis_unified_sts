@@ -1,7 +1,15 @@
 import importlib.util
 import pathlib
 
-_REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]  # tests/unit/backtest/ -> repo root
+import pytest
+
+# gate_futures_strategy.py imports optuna at module level (optional `optimization` extra,
+# not installed in CI). Skip rather than abort collection when it is absent.
+pytest.importorskip("optuna")
+
+_REPO_ROOT = (
+    pathlib.Path(__file__).resolve().parents[3]
+)  # tests/unit/backtest/ -> repo root
 _spec = importlib.util.spec_from_file_location(
     "gfs", _REPO_ROOT / "scripts" / "gate_futures_strategy.py"
 )

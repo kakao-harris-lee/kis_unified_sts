@@ -1,9 +1,16 @@
 import importlib.util
 import pathlib
 
+import pytest
+
+# gate_futures_strategy.py imports optuna at module level (optional `optimization` extra,
+# not installed in CI). Skip rather than abort collection when it is absent.
+pytest.importorskip("optuna")
+
 _REPO = pathlib.Path(__file__).resolve().parents[3]
 _spec = importlib.util.spec_from_file_location(
-    "gfs", _REPO / "scripts" / "gate_futures_strategy.py")
+    "gfs", _REPO / "scripts" / "gate_futures_strategy.py"
+)
 gfs = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(gfs)
 
@@ -15,7 +22,8 @@ def test_gate_yaml_loader_minimal(tmp_path):
         "impact_score_max: 60\n"
         "event_window_minutes: 10\n"
         "require_overnight_us_direction: false\n"
-        "permissive_on_missing: true\n")
+        "permissive_on_missing: true\n"
+    )
     cfg = gfs.load_gate_config(str(y))
     assert cfg.regime_percentile_max == 75.0
     assert cfg.impact_score_max == 60
@@ -30,23 +38,27 @@ def test_head_to_head_delta_computation():
     baseline = {"sharpe_ratio": 5.0, "max_drawdown_pct": 4.5}
     gated = {"sharpe_ratio": 5.8, "max_drawdown_pct": 4.0}
     ok, delta = gfs.head_to_head_verdict(
-        baseline_oos=baseline, gated_oos=gated, delta_min=0.5,
-        gated_gate_pass=True)
+        baseline_oos=baseline, gated_oos=gated, delta_min=0.5, gated_gate_pass=True
+    )
     assert ok is True
     assert round(delta, 4) == 0.8
 
     # Δ below threshold → FAIL
     ok2, _ = gfs.head_to_head_verdict(
-        baseline_oos=baseline, gated_oos={"sharpe_ratio": 5.2,
-                                           "max_drawdown_pct": 4.0},
-        delta_min=0.5, gated_gate_pass=True)
+        baseline_oos=baseline,
+        gated_oos={"sharpe_ratio": 5.2, "max_drawdown_pct": 4.0},
+        delta_min=0.5,
+        gated_gate_pass=True,
+    )
     assert ok2 is False
 
     # MDD worsens → FAIL
     ok3, _ = gfs.head_to_head_verdict(
-        baseline_oos=baseline, gated_oos={"sharpe_ratio": 6.0,
-                                           "max_drawdown_pct": 6.0},
-        delta_min=0.5, gated_gate_pass=True)
+        baseline_oos=baseline,
+        gated_oos={"sharpe_ratio": 6.0, "max_drawdown_pct": 6.0},
+        delta_min=0.5,
+        gated_gate_pass=True,
+    )
     assert ok3 is False
 
 
@@ -55,8 +67,8 @@ def test_head_to_head_requires_gated_gate_pass():
     baseline = {"sharpe_ratio": 5.0, "max_drawdown_pct": 4.5}
     gated = {"sharpe_ratio": 10.0, "max_drawdown_pct": 3.0}
     ok, _ = gfs.head_to_head_verdict(
-        baseline_oos=baseline, gated_oos=gated, delta_min=0.5,
-        gated_gate_pass=False)
+        baseline_oos=baseline, gated_oos=gated, delta_min=0.5, gated_gate_pass=False
+    )
     assert ok is False
 
 
@@ -76,16 +88,16 @@ def test_chinputs_handles_tz_aware_vol_keys():
     """Regression for the T7 head-to-head failure: CH returns tz-aware
     datetimes for DateTime64(3,'UTC') columns; bisect must not blow up."""
     import datetime as dt
+
     aware = dt.datetime(2026, 2, 15, 9, 30, tzinfo=dt.UTC)
     naive_ts = dt.datetime(2026, 2, 15, 9, 35)  # caller's incoming ts
     inputs = gfs._CHInputs(
-        vol_rows=[(aware, 50.0)],
-        event_rows=[(aware, 30)],
-        macro_map={})
+        vol_rows=[(aware, 50.0)], event_rows=[(aware, 30)], macro_map={}
+    )
     # MUST NOT raise; bisect compares naive-vs-naive after __init__ normalizes
     v = inputs.latest_vol_at(naive_ts)
     assert v is not None
     assert v[1] == 50.0  # regime_percentile preserved
     ev = inputs.events_within(naive_ts, 60)
     assert len(ev) == 1
-    assert ev[0][1] == 30   # impact_score preserved
+    assert ev[0][1] == 30  # impact_score preserved
