@@ -7,11 +7,15 @@ contracts are not changed.
 
 from __future__ import annotations
 
+import os
+import re
 from datetime import UTC, datetime
 from io import BytesIO
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+import yaml
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -469,3 +473,268 @@ def _symbol_item(code_or_query: str) -> dict[str, str]:
         "exchange": "kospi",
         "exchange_name": "KOSPI",
     }
+
+
+# ============================================================================
+# Builder → Paper trading registration (Phase 2 of 4)
+# ============================================================================
+#
+# A strategy "registered" here is materialized as a YAML file under
+# config/strategies/built/<id>.yaml that uses the builder_v1 / builder_v1_exit
+# entry/exit classes added in #356. The orchestrator picks it up exactly like
+# any other strategy in config/strategies/{stock,futures}/, with `enabled:
+# false` by default so registration is non-destructive.
+#
+# Stock-only enforced at the API boundary; futures BuilderState gets a 400
+# instead of silently no-opping at runtime.
+
+
+# Persist under the dashboard container's mounted ./config (read-write for
+# this endpoint family even though most of config/ is mounted read-only on
+# kis-trade-app — dashboard's mount is rw). Path resolved relative to the
+# config root so backtest/CLI tooling reads the same files.
+_BUILT_STRATEGIES_DIR = Path(
+    os.environ.get("KIS_BUILT_STRATEGIES_DIR", "config/strategies/built")
+)
+_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{3,64}$")
+
+
+class RegisterPaperRequest(BaseModel):
+    """Body of POST /register-paper."""
+
+    builder_state: dict[str, Any] = Field(
+        ..., description="Full BuilderState JSON (matching shared/strategy_builder/schema.py)"
+    )
+    stop_loss_pct: float = Field(default=5.0, ge=0)
+    take_profit_pct: float = Field(default=10.0, ge=0)
+    order_amount: int = Field(default=1_000_000, ge=0)
+    cooldown_seconds: int = Field(default=0, ge=0)
+    min_confidence: float = Field(default=0.5, ge=0.0, le=1.0)
+
+
+class RegisteredStrategy(BaseModel):
+    """A built strategy listed by GET /registered."""
+
+    id: str
+    name: str
+    description: str | None = None
+    asset_class: str
+    enabled: bool
+    registered_at: str | None = None
+    path: str
+
+
+class RegisteredListResponse(BaseModel):
+    """GET /registered response."""
+
+    strategies: list[RegisteredStrategy]
+    total: int
+
+
+def _safe_id(raw: str) -> str:
+    """Reject ids that would escape the built-strategies directory."""
+    if not _ID_PATTERN.match(raw):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Invalid strategy id: must be 3-64 chars of "
+                "alphanumeric/underscore/hyphen"
+            ),
+        )
+    return raw
+
+
+def _strategy_path(strategy_id: str) -> Path:
+    return _BUILT_STRATEGIES_DIR / f"{strategy_id}.yaml"
+
+
+def _load_strategy_file(strategy_id: str) -> dict[str, Any]:
+    path = _strategy_path(strategy_id)
+    if not path.exists():
+        raise HTTPException(
+            status_code=404, detail=f"Strategy not registered: {strategy_id}"
+        )
+    with path.open(encoding="utf-8") as fh:
+        return yaml.safe_load(fh) or {}
+
+
+def _validate_builder_state(payload: dict[str, Any]) -> dict[str, Any]:
+    """Reuse the schema validator from shared.strategy_builder.
+
+    Raises HTTPException(400) on parse failure so the operator sees a clean
+    message instead of a 500.
+    """
+    try:
+        from shared.strategy_builder.schema import BuilderState
+
+        state = BuilderState.model_validate(payload)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=400, detail=f"Invalid BuilderState: {exc}"
+        ) from exc
+    if state.asset_class != "stock":
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "builder→paper registration is stock-only in Phase 1. "
+                "Futures strategies stay on the dedicated entry classes "
+                "(setup_a/setup_c/bb_reversion_15m)."
+            ),
+        )
+    # `mode="json"` dumps StrEnum values as plain strings so yaml.safe_dump
+    # can serialize the result without a custom representer. Datetimes/UUIDs
+    # are similarly coerced into strings.
+    return state.model_dump(mode="json")
+
+
+def _build_strategy_yaml(
+    *,
+    state: dict[str, Any],
+    stop_loss_pct: float,
+    take_profit_pct: float,
+    order_amount: int,
+    cooldown_seconds: int,
+    min_confidence: float,
+    enabled: bool = False,
+) -> dict[str, Any]:
+    """Materialize the YAML dict the builder_v1 classes will consume."""
+    metadata = state.get("metadata", {})
+    return {
+        "strategy": {
+            "name": metadata.get("id", "built"),
+            "asset_class": state.get("asset_class", "stock"),
+            "enabled": enabled,
+            "description": metadata.get("description") or metadata.get("name", ""),
+            "entry": {
+                "type": "builder_v1",
+                "params": {
+                    "builder_state": state,
+                    "cooldown_seconds": cooldown_seconds,
+                    "min_confidence": min_confidence,
+                },
+            },
+            "exit": {
+                "type": "builder_v1_exit",
+                "params": {
+                    "builder_state": state,
+                    "stop_loss_pct": stop_loss_pct,
+                    "take_profit_pct": take_profit_pct,
+                    "min_confidence": min_confidence,
+                },
+            },
+            "position": {
+                "type": "fixed",
+                "params": {
+                    "order_amount_per_stock": order_amount,
+                },
+            },
+            "_builder_meta": {
+                "registered_at": datetime.now(UTC).isoformat(),
+                "schema_version": "builder_v1",
+                "source": "kis-builder/register-paper",
+            },
+        }
+    }
+
+
+@router.post("/register-paper", response_model=RegisteredStrategy)
+async def register_paper_strategy(body: RegisterPaperRequest) -> RegisteredStrategy:
+    """Materialize a BuilderState as config/strategies/built/<id>.yaml."""
+    state = _validate_builder_state(body.builder_state)
+    metadata = state.get("metadata", {})
+    raw_id = str(metadata.get("id") or "")
+    strategy_id = _safe_id(raw_id)
+
+    _BUILT_STRATEGIES_DIR.mkdir(parents=True, exist_ok=True)
+    yaml_doc = _build_strategy_yaml(
+        state=state,
+        stop_loss_pct=body.stop_loss_pct,
+        take_profit_pct=body.take_profit_pct,
+        order_amount=body.order_amount,
+        cooldown_seconds=body.cooldown_seconds,
+        min_confidence=body.min_confidence,
+        enabled=False,  # Phase-1 safe default
+    )
+    path = _strategy_path(strategy_id)
+    with path.open("w", encoding="utf-8") as fh:
+        yaml.safe_dump(yaml_doc, fh, allow_unicode=True, sort_keys=False)
+
+    return RegisteredStrategy(
+        id=strategy_id,
+        name=metadata.get("name") or strategy_id,
+        description=metadata.get("description") or None,
+        asset_class=state.get("asset_class", "stock"),
+        enabled=False,
+        registered_at=yaml_doc["strategy"]["_builder_meta"]["registered_at"],
+        path=str(path),
+    )
+
+
+@router.get("/registered", response_model=RegisteredListResponse)
+async def list_registered_strategies() -> RegisteredListResponse:
+    """List all built strategies (registered + enable status)."""
+    if not _BUILT_STRATEGIES_DIR.exists():
+        return RegisteredListResponse(strategies=[], total=0)
+
+    items: list[RegisteredStrategy] = []
+    for path in sorted(_BUILT_STRATEGIES_DIR.glob("*.yaml")):
+        try:
+            with path.open(encoding="utf-8") as fh:
+                doc = yaml.safe_load(fh) or {}
+        except Exception:  # noqa: BLE001 — skip corrupt files
+            continue
+        strategy = doc.get("strategy", {})
+        meta = strategy.get("_builder_meta", {})
+        items.append(
+            RegisteredStrategy(
+                id=path.stem,
+                name=strategy.get("name", path.stem),
+                description=strategy.get("description") or None,
+                asset_class=strategy.get("asset_class", "stock"),
+                enabled=bool(strategy.get("enabled", False)),
+                registered_at=meta.get("registered_at"),
+                path=str(path),
+            )
+        )
+    return RegisteredListResponse(strategies=items, total=len(items))
+
+
+class EnableRequest(BaseModel):
+    enabled: bool
+
+
+@router.post("/registered/{strategy_id}/enable", response_model=RegisteredStrategy)
+async def toggle_registered_strategy(
+    strategy_id: str, body: EnableRequest
+) -> RegisteredStrategy:
+    """Flip strategy.enabled and write back."""
+    safe_id = _safe_id(strategy_id)
+    doc = _load_strategy_file(safe_id)
+    strategy = doc.setdefault("strategy", {})
+    strategy["enabled"] = bool(body.enabled)
+    with _strategy_path(safe_id).open("w", encoding="utf-8") as fh:
+        yaml.safe_dump(doc, fh, allow_unicode=True, sort_keys=False)
+
+    meta = strategy.get("_builder_meta", {})
+    return RegisteredStrategy(
+        id=safe_id,
+        name=strategy.get("name", safe_id),
+        description=strategy.get("description") or None,
+        asset_class=strategy.get("asset_class", "stock"),
+        enabled=strategy["enabled"],
+        registered_at=meta.get("registered_at"),
+        path=str(_strategy_path(safe_id)),
+    )
+
+
+@router.delete("/registered/{strategy_id}")
+async def unregister_strategy(strategy_id: str) -> dict[str, Any]:
+    """Delete the YAML file for a built strategy."""
+    safe_id = _safe_id(strategy_id)
+    path = _strategy_path(safe_id)
+    if not path.exists():
+        raise HTTPException(
+            status_code=404, detail=f"Strategy not registered: {safe_id}"
+        )
+    path.unlink()
+    return {"id": safe_id, "deleted": True}
