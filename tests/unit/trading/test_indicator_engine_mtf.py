@@ -630,18 +630,26 @@ def _seed_minutes(
 
 
 class TestIsWarmMtfAware:
-    """is_warm must account for the deepest numeric MTF timeframe.
+    """is_warm must account for the *strategy-required* MTF timeframe.
 
     Regression: a 15m strategy (mtf_base_15m) cannot emit signals until the
     15m accumulator holds ``bb_period`` closed candles. If is_warm reports warm
     as soon as the 1m accumulator fills, the orchestrator prewarm short-circuits
     (``if is_warm(symbol): continue``) and skips the deep ClickHouse load that
     seeds those 15m bars — producing zero signals indefinitely.
+
+    The gate keys on ``mtf_warmth_timeframe`` (the deepest timeframe the
+    *strategy* needs, from ``IndicatorContract.warmth_timeframe``), NOT on the
+    full accumulation set. An engine accumulating 5m/15m for telemetry while its
+    strategy only needs 1m must stay warm on 1m depth alone.
     """
 
     def test_not_warm_until_deepest_mtf_filled(self):
         engine = StreamingIndicatorEngine(
-            bb_period=20, mtf_timeframes=[5, 15], staleness_seconds=0
+            bb_period=20,
+            mtf_timeframes=[5, 15],
+            mtf_warmth_timeframe=15,
+            staleness_seconds=0,
         )
         # 60 1m candles -> 1m accumulator warm (>=20), but 15m only ~3 closed.
         _seed_minutes(engine, "TEST", 60)
@@ -654,7 +662,10 @@ class TestIsWarmMtfAware:
 
     def test_warm_once_deepest_mtf_filled(self):
         engine = StreamingIndicatorEngine(
-            bb_period=20, mtf_timeframes=[5, 15], staleness_seconds=0
+            bb_period=20,
+            mtf_timeframes=[5, 15],
+            mtf_warmth_timeframe=15,
+            staleness_seconds=0,
         )
         # ~22 distinct 15m buckets -> >=21 closed 15m candles.
         _seed_minutes(engine, "TEST", 330)
@@ -662,9 +673,12 @@ class TestIsWarmMtfAware:
         assert engine.is_warm("TEST")
 
     def test_deepest_tf_gates_not_shallowest(self):
-        # 5m fills well before 15m; warmth must follow the deepest (15m).
+        # 5m fills well before 15m; warmth must follow the strategy tf (15m).
         engine = StreamingIndicatorEngine(
-            bb_period=20, mtf_timeframes=[5, 15], staleness_seconds=0
+            bb_period=20,
+            mtf_timeframes=[5, 15],
+            mtf_warmth_timeframe=15,
+            staleness_seconds=0,
         )
         _seed_minutes(engine, "TEST", 120)
         assert engine.mtf_total_appended("TEST", 5) >= 20
@@ -679,9 +693,69 @@ class TestIsWarmMtfAware:
 
     def test_daily_does_not_gate_warmth(self):
         # 'daily' is loaded from ClickHouse separately, never fed from the 1m
-        # stream, so it must not gate 1m/MTF warmth.
+        # stream. The contract excludes it, so warmth_timeframe is 15m here.
         engine = StreamingIndicatorEngine(
-            bb_period=20, mtf_timeframes=[15, "daily"], staleness_seconds=0
+            bb_period=20,
+            mtf_timeframes=[15, "daily"],
+            mtf_warmth_timeframe=15,
+            staleness_seconds=0,
         )
         _seed_minutes(engine, "TEST", 330)
         assert engine.is_warm("TEST")
+
+    def test_stock_engine_not_blocked_by_unused_mtf(self):
+        # Regression: streaming.yaml accumulates [5,15] for stock telemetry, but
+        # a 1m-only strategy passes mtf_warmth_timeframe=None. The engine must
+        # warm on 1m depth alone — NOT wait ~3h for 15m bars to fill, which
+        # would block all entry signals (is_warm hard-gates them).
+        engine = StreamingIndicatorEngine(
+            bb_period=20,
+            mtf_timeframes=[5, 15],
+            mtf_warmth_timeframe=None,
+            staleness_seconds=0,
+        )
+        _seed_minutes(engine, "TEST", 25)
+        assert engine.mtf_total_appended("TEST", 15) < 20
+        assert engine.is_warm("TEST"), (
+            "1m-only strategy must not be gated by accumulated-but-unused 15m"
+        )
+
+    def test_warmth_tf_not_accumulated_falls_back_to_1m(self):
+        # Defensive: if warmth_timeframe is set to a tf the engine does not
+        # accumulate, the guard (warmth_tf in _numeric_mtf_timeframes) skips it
+        # rather than gating on mtf_total_appended==0 forever.
+        engine = StreamingIndicatorEngine(
+            bb_period=20,
+            mtf_timeframes=[5],
+            mtf_warmth_timeframe=15,
+            staleness_seconds=0,
+        )
+        _seed_minutes(engine, "TEST", 25)
+        assert engine.mtf_total_appended("TEST", 15) == 0
+        assert engine.is_warm("TEST")
+
+    def test_seed_candles_minute_fallback_feeds_mtf(self):
+        # Redis-cached candles carry an HHMM "minute" field but no "datetime".
+        # seed_candles must honor it so MTF bucketing advances instead of
+        # collapsing every candle into bucket 0 (which never closes a 15m bar).
+        engine = StreamingIndicatorEngine(
+            bb_period=20,
+            mtf_timeframes=[15],
+            mtf_warmth_timeframe=15,
+            staleness_seconds=0,
+        )
+        candles = [
+            {
+                "minute": (9 * 60 + i) // 60 * 100 + (9 * 60 + i) % 60,
+                "open": 300.0,
+                "high": 301.0,
+                "low": 299.0,
+                "close": 300.0,
+                "volume": 100,
+            }
+            for i in range(330)
+        ]
+        engine.seed_candles("TEST", candles)
+        assert engine.mtf_total_appended("TEST", 15) >= 20, (
+            "minute-keyed (Redis) candles must advance MTF buckets"
+        )

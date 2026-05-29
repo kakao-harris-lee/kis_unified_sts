@@ -1615,6 +1615,19 @@ class TradingOrchestrator:
                 mtf_timeframes = None
                 mtf_maxlen = 250
 
+            # Warmth gate must reflect what the *strategy* needs, not the broad
+            # streaming.yaml accumulation set. A stock engine accumulating 5m/15m
+            # for telemetry while its strategy only needs 1m must not block entry
+            # signals waiting on 15m bars. None => 1m-only warmth.
+            mtf_warmth_timeframe: int | None = None
+            if self._strategy_manager:
+                from shared.indicators.contracts import IndicatorContract
+
+                contract = IndicatorContract.from_required_keys(
+                    tuple(self._strategy_manager.required_indicators)
+                )
+                mtf_warmth_timeframe = contract.warmth_timeframe
+
             self._indicator_engine = StreamingIndicatorEngine(
                 bb_period=bb_period,
                 bb_std=bb_std,
@@ -1624,11 +1637,13 @@ class TradingOrchestrator:
                 ema_periods=ema_periods,
                 mtf_timeframes=mtf_timeframes,
                 mtf_maxlen=mtf_maxlen,
+                mtf_warmth_timeframe=mtf_warmth_timeframe,
             )
             logger.info(
                 f"Indicator engine initialized (bb={bb_period}, "
                 f"std={bb_std}, rsi={rsi_period}, high_n={high_period}, "
-                f"mtf_timeframes={mtf_timeframes}, mtf_maxlen={mtf_maxlen})"
+                f"mtf_timeframes={mtf_timeframes}, mtf_maxlen={mtf_maxlen}, "
+                f"mtf_warmth_tf={mtf_warmth_timeframe})"
             )
         except (ValidationError, ValueError, TypeError) as e:
             logger.warning(f"Indicator engine init failed: {e}")
