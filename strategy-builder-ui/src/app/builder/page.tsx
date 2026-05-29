@@ -134,9 +134,35 @@ export default function BuilderPage() {
   }, [builder, localStrategies, toast]);
 
   const handleCreateNew = useCallback(() => {
+    // Auto-pick an unused "내 전략 N" so the user doesn't collide with
+    // the previous draft or the default INITIAL_STATE name.
+    const existingNames = new Set(
+      localStrategies.strategies.map((s) => s.name),
+    );
+    let counter = 1;
+    let newName = "내 전략 1";
+    while (existingNames.has(newName)) {
+      counter += 1;
+      newName = `내 전략 ${counter}`;
+    }
+
+    // 1) Wipe back to INITIAL_STATE, 2) seed the unique name + a fresh
+    // empty description so the user lands on a clearly-blank canvas,
+    // 3) jump straight to the metadata step so they can rename or
+    // describe before defining conditions. Previously the button only
+    // did builder.reset() + switch to indicators, which left the user
+    // with the hard-coded "custom_strategy" placeholder and no feedback.
     builder.reset();
-    setBuilderTab("indicators");
-  }, [builder]);
+    builder.setMetadata({
+      name: newName,
+      description: "",
+      category: "custom",
+      tags: [],
+      author: "user",
+    });
+    setBuilderTab("metadata");
+    toast.success(`새 전략 "${newName}" — 정보를 입력하고 저장하세요.`);
+  }, [builder, localStrategies.strategies, toast]);
 
   // YAML export handler for PreviewPanel
   const handleExportYaml = useCallback(() => {
