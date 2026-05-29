@@ -303,6 +303,22 @@ async def test_exit_trailing_stop_disabled_when_pct_zero() -> None:
     assert signal is None
 
 
+@pytest.mark.asyncio
+async def test_exit_trailing_stop_seeds_from_position_highest_price() -> None:
+    # Simulate a process restart: a fresh exit instance (empty _hwm) inherits a
+    # position whose highest_price (restored from Redis) is already above entry.
+    # The trailing stop must arm immediately on a retrace, not reset to entry.
+    exit_strat = _trailing_exit(3.0)
+    pos = _Pos("005930", entry_price=10000.0)
+    pos.highest_price = 11000.0  # peak before the restart; 3% floor = 10670
+    assert not exit_strat._hwm  # fresh instance, no in-memory peak
+    # First tick after restart retraces below the 10670 floor → fire.
+    triggered, signal = await _step(exit_strat, pos, 10600.0)
+    assert triggered
+    assert signal is not None
+    assert signal.reason == ExitReason.TRAILING_STOP
+
+
 # --- Registry integration ----------------------------------------------
 
 

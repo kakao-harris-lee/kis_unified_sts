@@ -101,10 +101,14 @@ class BuilderStrategyExit(ExitSignalGenerator[BuilderStrategyExitConfig]):
         pnl_pct = (current_price - entry_price) / entry_price * 100.0
 
         pos_key = str(getattr(position, "id", "") or position.code)
+        # Seed the peak from the position's persisted high-water-mark so the
+        # trailing stop survives a process restart (Redis restores
+        # highest_price); falls back to entry_price for a fresh position.
+        hwm_seed = float(getattr(position, "highest_price", None) or entry_price)
         # Track the running peak price every cycle so the trailing stop
         # measures retrace from the high, not just the latest tick.
         if self.config.trailing_stop_pct > 0:
-            self._hwm[pos_key] = max(self._hwm.get(pos_key, entry_price), current_price)
+            self._hwm[pos_key] = max(self._hwm.get(pos_key, hwm_seed), current_price)
 
         # 1) Hard stop loss
         if self.config.stop_loss_pct > 0 and pnl_pct <= -self.config.stop_loss_pct:
@@ -135,7 +139,7 @@ class BuilderStrategyExit(ExitSignalGenerator[BuilderStrategyExitConfig]):
         # 3) Trailing stop — only after the position has shown a profit
         #    (peak above entry), so it never fires as a second stop-loss.
         if self.config.trailing_stop_pct > 0:
-            peak = self._hwm.get(pos_key, entry_price)
+            peak = self._hwm.get(pos_key, hwm_seed)
             if peak > entry_price:
                 stop_price = peak * (1.0 - self.config.trailing_stop_pct / 100.0)
                 if current_price <= stop_price:
