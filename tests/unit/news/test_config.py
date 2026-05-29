@@ -38,6 +38,17 @@ news_collector:
       group_similar: true
       published_after_minutes: 360
       timeout_seconds: 20
+    naver_search:
+      enabled: true
+      poll_interval_seconds: 300
+      client_id: "naver-client"
+      client_secret: "naver-secret"
+      queries:
+        - "인포스탁 개장전 주요이슈 점검"
+        - "테마별 등락율 순위"
+      display: 5
+      sort: "date"
+      timeout_seconds: 9
     dart:
       enabled: false
       poll_interval_seconds: 30
@@ -70,6 +81,13 @@ news_collector:
     assert cfg.sources.marketaux.api_token == "test-token"
     assert cfg.sources.marketaux.symbols == "NVDA,005930"
     assert cfg.sources.marketaux.must_have_entities is True
+    assert cfg.sources.naver_search.enabled is True
+    assert cfg.sources.naver_search.client_id == "naver-client"
+    assert cfg.sources.naver_search.queries == [
+        "인포스탁 개장전 주요이슈 점검",
+        "테마별 등락율 순위",
+    ]
+    assert cfg.sources.naver_search.display == 5
     assert cfg.sources.gdelt.max_records == 10
     assert cfg.sources.rss_feeds[0].name == "newsis_economy"
     assert cfg.dedupe.memory_size == 10

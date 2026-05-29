@@ -107,6 +107,7 @@ async def _build_and_run_from_config() -> int:
     from shared.news.config import NewsCollectorConfig
     from shared.news.sources.gdelt import GDELTNewsSource
     from shared.news.sources.marketaux import MarketauxNewsSource
+    from shared.news.sources.naver_search import NaverNewsSearchSource
     from shared.news.sources.reuters import ReutersRSSSource
     from shared.news.sources.rss import GenericRSSSource
     from shared.news.sources.yonhap import YonhapRSSSource
@@ -165,6 +166,28 @@ async def _build_and_run_from_config() -> int:
             logger.warning(
                 "Marketaux enabled but MARKETAUX_API_TOKEN is not configured"
             )
+    if cfg.sources.naver_search.enabled:
+        if (
+            cfg.sources.naver_search.client_id
+            and cfg.sources.naver_search.client_secret
+        ):
+            sources.append(
+                NaverNewsSearchSource(
+                    session=session,
+                    client_id=cfg.sources.naver_search.client_id,
+                    client_secret=cfg.sources.naver_search.client_secret,
+                    endpoint=cfg.sources.naver_search.endpoint,
+                    queries=cfg.sources.naver_search.queries,
+                    display=cfg.sources.naver_search.display,
+                    sort=cfg.sources.naver_search.sort,
+                    poll_interval_seconds=(
+                        cfg.sources.naver_search.poll_interval_seconds
+                    ),
+                    timeout=cfg.sources.naver_search.timeout_seconds,
+                )
+            )
+        else:
+            logger.warning("Naver Search enabled but credentials are not configured")
     if cfg.sources.gdelt.enabled:
         sources.append(
             GDELTNewsSource(
