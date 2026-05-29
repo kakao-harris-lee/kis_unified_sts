@@ -46,12 +46,19 @@ export {
   buildStrategy,
   previewStrategy,
   previewCodeFromState,
+  registerPaperStrategy,
+  listRegisteredStrategies,
+  setRegisteredEnabled,
+  unregisterStrategy,
   type StrategiesListResponse,
   type IndicatorsResponse,
   type BuildRequest,
   type BuildResponse,
   type PreviewResponse,
   type PreviewCodeResponse,
+  type RegisteredStrategy,
+  type RegisteredListResponse,
+  type RegisterPaperRequest,
 } from "./strategies";
 
 // Orders
