@@ -114,9 +114,9 @@ class TradeRecord:
             "entry_price": self.entry_price,
             "entry_timestamp": self.entry_timestamp.isoformat(),
             "exit_price": self.exit_price,
-            "exit_timestamp": self.exit_timestamp.isoformat()
-            if self.exit_timestamp
-            else None,
+            "exit_timestamp": (
+                self.exit_timestamp.isoformat() if self.exit_timestamp else None
+            ),
             "pnl": self.pnl,
             "model_name": self.model_name,
             "side": self.side,
@@ -132,9 +132,11 @@ class TradeRecord:
             entry_price=data["entry_price"],
             entry_timestamp=datetime.fromisoformat(data["entry_timestamp"]),
             exit_price=data.get("exit_price"),
-            exit_timestamp=datetime.fromisoformat(data["exit_timestamp"])
-            if data.get("exit_timestamp")
-            else None,
+            exit_timestamp=(
+                datetime.fromisoformat(data["exit_timestamp"])
+                if data.get("exit_timestamp")
+                else None
+            ),
             pnl=data.get("pnl"),
             model_name=data.get("model_name"),
             side=data.get("side", "LONG"),
@@ -199,6 +201,11 @@ class RegimePerformanceConfig:
     redis_enabled: bool = False
     redis_key_prefix: str = "regime_performance"
     redis_db: int = 1  # DB 1 is standard for this project
+    # Per AGENTS.md §2.4: every Redis key MUST define a TTL. Regime stats are
+    # running aggregates that span many trading days, so the default matches
+    # ``RUNNING_TOTALS_TTL_SECONDS`` in ``shared/streaming/trading_state.py``
+    # (30 days). Tune via YAML if a different retention is desired.
+    redis_ttl_seconds: int = 60 * 60 * 24 * 30  # 30 days
 
     def __post_init__(self):
         """Validate configuration values."""
@@ -231,6 +238,11 @@ class RegimePerformanceConfig:
         if self.redis_db < 0:
             raise ValueError(f"redis_db must be >= 0, got {self.redis_db}")
 
+        if self.redis_ttl_seconds <= 0:
+            raise ValueError(
+                f"redis_ttl_seconds must be > 0, got {self.redis_ttl_seconds}"
+            )
+
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> RegimePerformanceConfig:
         """Create config from dict with validation.
@@ -252,6 +264,7 @@ class RegimePerformanceConfig:
         redis_enabled = data.get("redis_enabled", False)
         redis_prefix = data.get("redis_key_prefix", "regime_performance")
         redis_db = data.get("redis_db", 1)
+        redis_ttl_seconds = data.get("redis_ttl_seconds", 60 * 60 * 24 * 30)
 
         # Type validation
         if not isinstance(max_trades, int):
@@ -270,6 +283,12 @@ class RegimePerformanceConfig:
             raise TypeError(f"redis_key_prefix must be str, got {type(redis_prefix)}")
         if not isinstance(redis_db, int):
             raise TypeError(f"redis_db must be int, got {type(redis_db)}")
+        if not isinstance(redis_ttl_seconds, int) or isinstance(
+            redis_ttl_seconds, bool
+        ):
+            raise TypeError(
+                f"redis_ttl_seconds must be int, got {type(redis_ttl_seconds)}"
+            )
 
         return cls(
             max_trades_per_regime=max_trades,
@@ -279,6 +298,7 @@ class RegimePerformanceConfig:
             redis_enabled=redis_enabled,
             redis_key_prefix=redis_prefix,
             redis_db=redis_db,
+            redis_ttl_seconds=redis_ttl_seconds,
         )
 
 
@@ -679,7 +699,10 @@ class RegimePerformanceTracker:
             stats = self.get_regime_stats(regime)
             key = f"{self.config.redis_key_prefix}:{regime}"
 
-            self._redis_client.set(key, json.dumps(stats))
+            # AGENTS.md §2.4 — every Redis key MUST define a TTL.
+            self._redis_client.set(
+                key, json.dumps(stats), ex=self.config.redis_ttl_seconds
+            )
             logger.debug(f"Persisted stats to Redis: {key}")
 
         except Exception as e:
