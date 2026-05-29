@@ -376,6 +376,16 @@ class ClickHouseClient:
             if self.config.client_key:
                 params["keyfile"] = self.config.client_key
 
+        # Keep the idle native connection alive so it is not reaped after ~1h,
+        # which otherwise surfaces as a noisy transparent reconnect on reuse.
+        # clickhouse_driver maps a 3-tuple to TCP_KEEPIDLE/INTVL/CNT.
+        if self.config.tcp_keepalive:
+            params["tcp_keepalive"] = (
+                self.config.tcp_keepalive_idle,
+                self.config.tcp_keepalive_interval,
+                self.config.tcp_keepalive_count,
+            )
+
         return params
 
     def get_sync_client(self) -> SyncClient:
