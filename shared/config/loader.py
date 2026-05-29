@@ -272,7 +272,7 @@ class ConfigLoader:
 
             # YAML 로드
             try:
-                with open(full_path, "r", encoding="utf-8") as f:
+                with open(full_path, encoding="utf-8") as f:
                     data = yaml.safe_load(f)
             except yaml.YAMLError as e:
                 raise ConfigError(f"Failed to parse YAML file: {full_path}") from e
@@ -360,6 +360,11 @@ class ConfigLoader:
 
         if asset_class:
             search_dirs.append(config_dir / "strategies" / asset_class)
+            # Builder-registered strategies (Phase 4: 2026-05-29) live in their
+            # own directory and carry their target asset_class in the YAML body;
+            # include them in asset-filtered loads so the orchestrator picks
+            # them up alongside hand-authored stock/futures strategies.
+            search_dirs.append(config_dir / "strategies" / "built")
         else:
             strategies_dir = config_dir / "strategies"
             if strategies_dir.exists():
@@ -379,11 +384,17 @@ class ConfigLoader:
                         use_cache=True,
                     )
 
+                    strategy_config = config.get("strategy", {})
+
+                    # asset_class 필터 — built/ 디렉토리는 stock/futures를 섞을
+                    # 수 있으므로 호출자가 자산을 지정한 경우 yaml 내용으로
+                    # 다시 거른다.
+                    if asset_class and strategy_config.get("asset_class") != asset_class:
+                        continue
+
                     # enabled 필터
-                    if enabled_only:
-                        strategy_config = config.get("strategy", {})
-                        if not strategy_config.get("enabled", True):
-                            continue
+                    if enabled_only and not strategy_config.get("enabled", True):
+                        continue
 
                     strategies.append(config)  # type: ignore
                 except Exception as e:
