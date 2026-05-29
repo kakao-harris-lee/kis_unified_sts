@@ -40,6 +40,7 @@ export {
 // Strategies
 export {
   listStrategies,
+  listKisBuilderPresets,
   listCustomStrategies,
   executeStrategy,
   listIndicators,

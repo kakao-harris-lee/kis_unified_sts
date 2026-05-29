@@ -14,6 +14,24 @@ export async function listStrategies(): Promise<StrategiesListResponse> {
   return apiGet<StrategiesListResponse>("/api/strategies");
 }
 
+/**
+ * KIS Strategy Builder presets (with full BuilderState per item).
+ *
+ * Two strategy listings live under different namespaces:
+ *
+ *   /api/strategies                 → STS registry YAMLs (Cockpit/Signals filters)
+ *   /api/kis-builder/strategies     → upstream KIS visual-builder presets
+ *
+ * The Strategy Builder UI consumes the latter — each entry carries a
+ * `builder_state` that the visual editor loads directly. They are not
+ * interchangeable; the former lacks `params` / `builder_state`, so the
+ * Builder rendered 0 presets when it called /api/strategies after the
+ * Caddy cutover (#351). Hit the explicit endpoint instead.
+ */
+export async function listKisBuilderPresets(): Promise<StrategiesListResponse> {
+  return apiGet<StrategiesListResponse>("/api/kis-builder/strategies");
+}
+
 export async function listCustomStrategies(): Promise<StrategiesListResponse> {
   return apiGet<StrategiesListResponse>("/api/strategies/custom");
 }
