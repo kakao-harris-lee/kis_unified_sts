@@ -2,7 +2,7 @@
  * Strategies API
  */
 
-import { apiGet, apiPost, type ApiResponse, type LogEntry } from "./client";
+import { apiGet, apiPost, apiDelete, type ApiResponse, type LogEntry } from "./client";
 import type { Signal, ExecuteRequest, ExecuteResponse, StrategyInfo } from "@/types/signal";
 import type { BuilderState } from "@/types/builder";
 
@@ -92,4 +92,65 @@ export async function previewCodeFromState(builderState: BuilderState): Promise<
   return apiPost<PreviewCodeResponse>("/api/strategies/preview-code", {
     builder_state: builderState,
   });
+}
+
+/**
+ * Builder→paper trading registration (Phase 3 client; backend in PR #357).
+ *
+ * The Strategy Builder shells out to the dashboard FastAPI under
+ * /api/kis-builder/* to materialize a BuilderState as a YAML file under
+ * config/strategies/built/. The orchestrator picks them up via the loader
+ * change in #358 once the operator flips enabled to true.
+ */
+
+export interface RegisteredStrategy {
+  id: string;
+  name: string;
+  description?: string | null;
+  asset_class: string;
+  enabled: boolean;
+  registered_at?: string | null;
+  path: string;
+}
+
+export interface RegisteredListResponse {
+  strategies: RegisteredStrategy[];
+  total: number;
+}
+
+export interface RegisterPaperRequest {
+  builder_state: BuilderState;
+  stop_loss_pct?: number;
+  take_profit_pct?: number;
+  order_amount?: number;
+  cooldown_seconds?: number;
+  min_confidence?: number;
+}
+
+export async function registerPaperStrategy(
+  body: RegisterPaperRequest,
+): Promise<RegisteredStrategy> {
+  return apiPost<RegisteredStrategy>("/api/kis-builder/register-paper", body);
+}
+
+export async function listRegisteredStrategies(): Promise<RegisteredListResponse> {
+  return apiGet<RegisteredListResponse>("/api/kis-builder/registered");
+}
+
+export async function setRegisteredEnabled(
+  strategyId: string,
+  enabled: boolean,
+): Promise<RegisteredStrategy> {
+  return apiPost<RegisteredStrategy>(
+    `/api/kis-builder/registered/${encodeURIComponent(strategyId)}/enable`,
+    { enabled },
+  );
+}
+
+export async function unregisterStrategy(
+  strategyId: string,
+): Promise<{ id: string; deleted: boolean }> {
+  return apiDelete<{ id: string; deleted: boolean }>(
+    `/api/kis-builder/registered/${encodeURIComponent(strategyId)}`,
+  );
 }

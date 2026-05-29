@@ -1,9 +1,23 @@
 "use client";
 
-import { useCallback, useState } from "react";
-import { Plus, Trash2, Copy, Clock, MoreVertical, FileCode2 } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import {
+  Plus,
+  Trash2,
+  Copy,
+  Clock,
+  MoreVertical,
+  FileCode2,
+  Play,
+  CheckCircle2,
+  Loader2,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { StoredStrategy } from "@/types/builder";
+import {
+  registerPaperStrategy,
+  listRegisteredStrategies,
+} from "@/lib/api";
 
 interface CustomStrategyListProps {
   strategies: StoredStrategy[];
@@ -23,6 +37,54 @@ export function CustomStrategyList({
   onCreateNew,
 }: CustomStrategyListProps) {
   const [menuOpen, setMenuOpen] = useState<string | null>(null);
+  // Track which builder IDs have a corresponding YAML under
+  // config/strategies/built/<id>.yaml so we can show a "registered" badge
+  // and avoid double-registering. Refreshes on mount and after any
+  // register call.
+  const [registeredIds, setRegisteredIds] = useState<Set<string>>(new Set());
+  const [registeringId, setRegisteringId] = useState<string | null>(null);
+
+  const refreshRegistered = useCallback(async () => {
+    try {
+      const resp = await listRegisteredStrategies();
+      setRegisteredIds(new Set(resp.strategies.map((s) => s.id)));
+    } catch {
+      // Best-effort. If the dashboard is offline the list stays empty;
+      // register attempts will surface their own error toast.
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshRegistered();
+  }, [refreshRegistered]);
+
+  const handleRegister = useCallback(
+    async (strategy: StoredStrategy, e: React.MouseEvent) => {
+      e.stopPropagation();
+      setMenuOpen(null);
+      // The Phase-1 backend (#356, #357) enforces stock-only at the API
+      // boundary; the frontend's BuilderState type doesn't yet carry an
+      // asset_class field so we send as-is and let the 400 message surface
+      // when a futures draft is built (no current UI to set futures anyway).
+      setRegisteringId(strategy.id);
+      try {
+        await registerPaperStrategy({
+          builder_state: strategy.state,
+        });
+        await refreshRegistered();
+        alert(
+          `'${strategy.name}' 전략이 페이퍼 트레이딩에 등록되었습니다.\n` +
+            "기본 상태는 비활성입니다. 활성화는 별도 작업이 필요합니다.",
+        );
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        alert(`등록 실패: ${msg}`);
+      } finally {
+        setRegisteringId(null);
+      }
+    },
+    [refreshRegistered],
+  );
 
   const formatDate = useCallback((dateStr: string) => {
     const date = new Date(dateStr);
@@ -102,8 +164,19 @@ export function CustomStrategyList({
                   <FileCode2 className="w-4 h-4 text-slate-500" />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <div className="font-medium text-sm text-slate-900 dark:text-white truncate">
-                    {strategy.name}
+                  <div className="flex items-center gap-1.5">
+                    <div className="font-medium text-sm text-slate-900 dark:text-white truncate">
+                      {strategy.name}
+                    </div>
+                    {registeredIds.has(strategy.id) && (
+                      <span
+                        title="페이퍼 트레이딩에 등록됨"
+                        className="inline-flex items-center gap-0.5 text-[10px] font-medium text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/30 px-1.5 py-0.5 rounded"
+                      >
+                        <CheckCircle2 className="w-2.5 h-2.5" />
+                        등록됨
+                      </span>
+                    )}
                   </div>
                   <div className="flex items-center gap-1 text-xs text-slate-500">
                     <Clock className="w-3 h-3" />
@@ -127,7 +200,26 @@ export function CustomStrategyList({
                     className="fixed inset-0 z-10"
                     onClick={handleBackdropClick}
                   />
-                  <div className="absolute right-0 top-full mt-1 z-20 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-lg py-1 min-w-[120px]">
+                  <div className="absolute right-0 top-full mt-1 z-20 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-lg py-1 min-w-[140px]">
+                    <button
+                      onClick={(e) => handleRegister(strategy, e)}
+                      disabled={
+                        registeringId === strategy.id ||
+                        registeredIds.has(strategy.id)
+                      }
+                      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {registeringId === strategy.id ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : registeredIds.has(strategy.id) ? (
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                      ) : (
+                        <Play className="w-3.5 h-3.5" />
+                      )}
+                      {registeredIds.has(strategy.id)
+                        ? "등록됨"
+                        : "페이퍼로 등록"}
+                    </button>
                     <button
                       onClick={(e) => handleDuplicate(strategy.id, e)}
                       className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700"
