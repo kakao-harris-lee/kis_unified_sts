@@ -120,26 +120,96 @@ async def list_custom_strategies() -> dict[str, list[Any]]:
 async def list_indicators() -> dict[str, Any]:
     return {
         "indicators": [
-            {"name": "ma", "label": "이동평균", "params": ["period"], "example": "ma(20)"},
-            {"name": "ema", "label": "지수이동평균", "params": ["period"], "example": "ema(12)"},
+            {
+                "name": "ma",
+                "label": "이동평균",
+                "params": ["period"],
+                "example": "ma(20)",
+            },
+            {
+                "name": "ema",
+                "label": "지수이동평균",
+                "params": ["period"],
+                "example": "ema(12)",
+            },
             {"name": "rsi", "label": "RSI", "params": ["period"], "example": "rsi(14)"},
-            {"name": "macd", "label": "MACD", "params": ["fast", "slow", "signal"], "example": "macd(12,26,9)"},
-            {"name": "williams_r", "label": "Williams %R", "params": ["period"], "example": "williams_r(14)"},
-            {"name": "stochastic", "label": "스토캐스틱", "params": ["k_period", "d_period"], "example": "stochastic(14,3)"},
-            {"name": "bollinger", "label": "볼린저 밴드", "params": ["period", "std"], "example": "bollinger(20,2)"},
+            {
+                "name": "macd",
+                "label": "MACD",
+                "params": ["fast", "slow", "signal"],
+                "example": "macd(12,26,9)",
+            },
+            {
+                "name": "williams_r",
+                "label": "Williams %R",
+                "params": ["period"],
+                "example": "williams_r(14)",
+            },
+            {
+                "name": "stochastic",
+                "label": "스토캐스틱",
+                "params": ["k_period", "d_period"],
+                "example": "stochastic(14,3)",
+            },
+            {
+                "name": "bollinger",
+                "label": "볼린저 밴드",
+                "params": ["period", "std"],
+                "example": "bollinger(20,2)",
+            },
             {"name": "vwap", "label": "VWAP", "params": [], "example": "vwap()"},
             {"name": "adx", "label": "ADX", "params": ["period"], "example": "adx(14)"},
-            {"name": "donchian", "label": "돈치안 채널", "params": ["period"], "example": "donchian(20)"},
-            {"name": "ichimoku", "label": "이치모쿠", "params": ["conversion", "base", "span_b"], "example": "ichimoku(9,26,52)"},
-            {"name": "supertrend", "label": "SuperTrend", "params": ["period", "multiplier"], "example": "supertrend(10,3)"},
-            {"name": "keltner", "label": "켈트너 채널", "params": ["period", "multiplier"], "example": "keltner(20,2)"},
+            {
+                "name": "donchian",
+                "label": "돈치안 채널",
+                "params": ["period"],
+                "example": "donchian(20)",
+            },
+            {
+                "name": "ichimoku",
+                "label": "이치모쿠",
+                "params": ["conversion", "base", "span_b"],
+                "example": "ichimoku(9,26,52)",
+            },
+            {
+                "name": "supertrend",
+                "label": "SuperTrend",
+                "params": ["period", "multiplier"],
+                "example": "supertrend(10,3)",
+            },
+            {
+                "name": "keltner",
+                "label": "켈트너 채널",
+                "params": ["period", "multiplier"],
+                "example": "keltner(20,2)",
+            },
             {"name": "cci", "label": "CCI", "params": ["period"], "example": "cci(20)"},
             {"name": "mfi", "label": "MFI", "params": ["period"], "example": "mfi(14)"},
             {"name": "obv", "label": "OBV", "params": [], "example": "obv()"},
-            {"name": "trix", "label": "TRIX", "params": ["period"], "example": "trix(15)"},
-            {"name": "engulfing", "label": "장악형 캔들", "params": [], "example": "engulfing()"},
-            {"name": "disparity", "label": "이격도", "params": ["period"], "example": "disparity(20)"},
-            {"name": "breakout_margin", "label": "돌파 여유율", "params": ["period"], "example": "breakout_margin(252)"},
+            {
+                "name": "trix",
+                "label": "TRIX",
+                "params": ["period"],
+                "example": "trix(15)",
+            },
+            {
+                "name": "engulfing",
+                "label": "장악형 캔들",
+                "params": [],
+                "example": "engulfing()",
+            },
+            {
+                "name": "disparity",
+                "label": "이격도",
+                "params": ["period"],
+                "example": "disparity(20)",
+            },
+            {
+                "name": "breakout_margin",
+                "label": "돌파 여유율",
+                "params": ["period"],
+                "example": "breakout_margin(252)",
+            },
         ],
         "variables": ["close", "open", "high", "low", "volume", "change"],
         "operators": {
@@ -154,7 +224,12 @@ async def list_indicators() -> dict[str, Any]:
 async def preview_code_from_state(request: dict[str, Any]) -> dict[str, Any]:
     try:
         state = kis_state_to_builder_state(request.get("builder_state", {}))
-        return {"status": "success", "code": preview_python(state), "buy_dsl": "", "sell_dsl": ""}
+        return {
+            "status": "success",
+            "code": preview_python(state),
+            "buy_dsl": "",
+            "sell_dsl": "",
+        }
     except Exception as exc:  # noqa: BLE001
         return {"status": "error", "message": str(exc)}
 
@@ -183,11 +258,18 @@ async def build_strategy(request: dict[str, Any]) -> dict[str, Any]:
 async def execute_strategy(request: ExecuteStrategyRequest) -> dict[str, Any]:
     logs: list[dict[str, str]] = []
     if not request.stocks:
-        return {"status": "error", "results": [], "logs": logs, "message": "종목을 입력해주세요"}
+        return {
+            "status": "error",
+            "results": [],
+            "logs": logs,
+            "message": "종목을 입력해주세요",
+        }
 
     if request.builder_state:
         source_state = request.builder_state
-        strategy_name = source_state.get("metadata", {}).get("name", request.strategy_id)
+        strategy_name = source_state.get("metadata", {}).get(
+            "name", request.strategy_id
+        )
     else:
         preset = get_kis_preset(request.strategy_id)
         if preset is None:
@@ -393,11 +475,17 @@ async def file_templates() -> dict[str, Any]:
 async def file_template(template_id: str) -> dict[str, Any]:
     preset = get_kis_preset(template_id)
     if preset is None:
-        raise HTTPException(status_code=404, detail=f"Template not found: {template_id}")
+        raise HTTPException(
+            status_code=404, detail=f"Template not found: {template_id}"
+        )
     state = kis_state_to_builder_state(preset.get("builder_state", {}))
     return {
         "success": True,
-        "data": {"id": template_id, "name": preset.get("name"), "yaml": builder_state_to_yaml(state)},
+        "data": {
+            "id": template_id,
+            "name": preset.get("name"),
+            "yaml": builder_state_to_yaml(state),
+        },
     }
 
 
@@ -405,13 +493,17 @@ async def file_template(template_id: str) -> dict[str, Any]:
 async def download_template(template_id: str) -> StreamingResponse:
     preset = get_kis_preset(template_id)
     if preset is None:
-        raise HTTPException(status_code=404, detail=f"Template not found: {template_id}")
+        raise HTTPException(
+            status_code=404, detail=f"Template not found: {template_id}"
+        )
     state = kis_state_to_builder_state(preset.get("builder_state", {}))
     content = builder_state_to_yaml(state).encode("utf-8")
     return StreamingResponse(
         BytesIO(content),
         media_type="application/x-yaml",
-        headers={"Content-Disposition": f'attachment; filename="{template_id}.kis.yaml"'},
+        headers={
+            "Content-Disposition": f'attachment; filename="{template_id}.kis.yaml"'
+        },
     )
 
 
@@ -447,11 +539,19 @@ async def symbol_status() -> dict[str, Any]:
 
 @router.post("/symbols/collect")
 async def collect_symbols() -> dict[str, Any]:
-    return {"success": True, "kospi_count": 0, "kosdaq_count": 0, "total_count": 0, "errors": []}
+    return {
+        "success": True,
+        "kospi_count": 0,
+        "kosdaq_count": 0,
+        "total_count": 0,
+        "errors": [],
+    }
 
 
 @router.get("/symbols/search")
-async def search_symbols(q: str = "", limit: int = 20, exchange: str | None = None) -> dict[str, Any]:
+async def search_symbols(
+    q: str = "", limit: int = 20, exchange: str | None = None
+) -> dict[str, Any]:
     _ = exchange
     item = _symbol_item(q) if q else None
     items = [item] if item else []
@@ -503,10 +603,16 @@ class RegisterPaperRequest(BaseModel):
     """Body of POST /register-paper."""
 
     builder_state: dict[str, Any] = Field(
-        ..., description="Full BuilderState JSON (matching shared/strategy_builder/schema.py)"
+        ...,
+        description="Full BuilderState JSON (matching shared/strategy_builder/schema.py)",
     )
     stop_loss_pct: float = Field(default=5.0, ge=0)
     take_profit_pct: float = Field(default=10.0, ge=0)
+    # None → derive from the draft's risk.trailing_stop toggle; an explicit
+    # value overrides. (SL/TP stay operator-default driven; trailing is new so
+    # there is no prior behavior to preserve, and honoring the builder toggle
+    # is what the Risk step's switch implies.)
+    trailing_stop_pct: float | None = Field(default=None, ge=0)
     order_amount: int = Field(default=1_000_000, ge=0)
     cooldown_seconds: int = Field(default=0, ge=0)
     min_confidence: float = Field(default=0.5, ge=0.0, le=1.0)
@@ -592,6 +698,7 @@ def _build_strategy_yaml(
     state: dict[str, Any],
     stop_loss_pct: float,
     take_profit_pct: float,
+    trailing_stop_pct: float,
     order_amount: int,
     cooldown_seconds: int,
     min_confidence: float,
@@ -619,6 +726,7 @@ def _build_strategy_yaml(
                     "builder_state": state,
                     "stop_loss_pct": stop_loss_pct,
                     "take_profit_pct": take_profit_pct,
+                    "trailing_stop_pct": trailing_stop_pct,
                     "min_confidence": min_confidence,
                 },
             },
@@ -645,11 +753,22 @@ async def register_paper_strategy(body: RegisterPaperRequest) -> RegisteredStrat
     raw_id = str(metadata.get("id") or "")
     strategy_id = _safe_id(raw_id)
 
+    # Trailing stop: explicit request value wins; otherwise honor the draft's
+    # risk.trailing_stop toggle (enabled → percent, disabled → 0 = off).
+    if body.trailing_stop_pct is not None:
+        trailing_stop_pct = body.trailing_stop_pct
+    else:
+        trailing = state.get("risk", {}).get("trailing_stop", {})
+        trailing_stop_pct = (
+            float(trailing.get("percent", 0.0)) if trailing.get("enabled") else 0.0
+        )
+
     _BUILT_STRATEGIES_DIR.mkdir(parents=True, exist_ok=True)
     yaml_doc = _build_strategy_yaml(
         state=state,
         stop_loss_pct=body.stop_loss_pct,
         take_profit_pct=body.take_profit_pct,
+        trailing_stop_pct=trailing_stop_pct,
         order_amount=body.order_amount,
         cooldown_seconds=body.cooldown_seconds,
         min_confidence=body.min_confidence,
