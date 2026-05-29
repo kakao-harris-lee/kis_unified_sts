@@ -405,6 +405,13 @@ def register_builtin_components() -> None:
         logger.debug("MACDEMACrossoverEntry not available")
 
     try:
+        from shared.strategy.entry.builder_strategy import BuilderStrategyEntry
+
+        EntryRegistry.register_class("builder_v1", BuilderStrategyEntry)
+    except ImportError:
+        logger.debug("BuilderStrategyEntry not available")
+
+    try:
         from shared.strategy.entry.technical_consensus import TechnicalConsensusEntry
 
         EntryRegistry.register_class("technical_consensus", TechnicalConsensusEntry)
@@ -495,6 +502,13 @@ def register_builtin_components() -> None:
         ExitRegistry.register_class("momentum_decay", MomentumDecayExit)
     except ImportError:
         logger.debug("MomentumDecayExit not available")
+
+    try:
+        from shared.strategy.exit.builder_strategy_exit import BuilderStrategyExit
+
+        ExitRegistry.register_class("builder_v1_exit", BuilderStrategyExit)
+    except ImportError:
+        logger.debug("BuilderStrategyExit not available")
 
     try:
         from shared.strategy.exit.rl_mppo_exit import RLMPPOExit
