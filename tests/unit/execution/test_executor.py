@@ -1,5 +1,6 @@
 """Test order executor."""
 from datetime import datetime
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -178,6 +179,53 @@ def test_resolve_futures_inquire_tr_id_and_path_by_session():
     tr_id, path = executor._resolve_futures_inquire_tr_id_and_path(is_mock=False, is_night=True)
     assert tr_id == config.futures_tr_code_inquire_night_real
     assert path.endswith("/trading/inquire-ngt-ccnl")
+
+
+@pytest.mark.asyncio
+async def test_request_json_reissues_once_on_token_expired():
+    """KIS server-side token expiry should invalidate local auth and retry once."""
+    from unittest.mock import AsyncMock
+
+    from shared.execution.config import ExecutionConfig
+    from shared.execution.executor import OrderExecutor
+
+    config = ExecutionConfig(trading_mode="MOCK")
+    auth_manager = MagicMock()
+    auth_manager.get_auth_headers.return_value = {"authorization": "Bearer fresh"}
+    executor = OrderExecutor(config=config, auth_manager=auth_manager)
+
+    expired_resp = AsyncMock()
+    expired_resp.status = 200
+    expired_resp.json.return_value = {
+        "rt_cd": "1",
+        "msg_cd": "EGW00123",
+        "msg1": "기간이 만료된 token 입니다.",
+    }
+    success_resp = AsyncMock()
+    success_resp.status = 200
+    success_resp.json.return_value = {"rt_cd": "0", "msg1": "정상처리"}
+
+    expired_cm = MagicMock()
+    expired_cm.__aenter__ = AsyncMock(return_value=expired_resp)
+    expired_cm.__aexit__ = AsyncMock(return_value=None)
+    success_cm = MagicMock()
+    success_cm.__aenter__ = AsyncMock(return_value=success_resp)
+    success_cm.__aexit__ = AsyncMock(return_value=None)
+
+    executor.session = MagicMock()
+    executor.session.request = MagicMock(side_effect=[expired_cm, success_cm])
+
+    data, status = await executor._request_json(
+        "POST",
+        "https://example.test/order",
+        headers={"authorization": "Bearer stale", "tr_id": "VTTC0802U", "custtype": "P"},
+        json={"PDNO": "005930"},
+    )
+
+    assert status == 200
+    assert data["rt_cd"] == "0"
+    auth_manager.invalidate.assert_called_once()
+    assert executor.session.request.call_count == 2
 
 
 def test_is_night_session_boundary():

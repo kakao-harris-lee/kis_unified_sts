@@ -29,6 +29,33 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+TOKEN_EXPIRED_MSG_CODES = {"EGW00123"}
+TOKEN_EXPIRED_MESSAGE_SNIPPETS = (
+    "기간이 만료된 token",
+    "expired token",
+    "token expired",
+)
+
+
+def is_token_expired_error(payload: Any) -> bool:
+    """Return True when a KIS response says the access token is expired.
+
+    KIS can reject a token before our local cache timestamp reaches the refresh
+    buffer, especially when another process reissues a token for the same app.
+    Runtime callers use this helper to invalidate the local cache and retry
+    once with a freshly issued token.
+    """
+    if isinstance(payload, dict):
+        msg_cd = str(payload.get("msg_cd") or payload.get("message") or "")
+        if msg_cd in TOKEN_EXPIRED_MSG_CODES:
+            return True
+        text = json.dumps(payload, ensure_ascii=False)
+    else:
+        text = str(payload or "")
+
+    lowered = text.lower()
+    return any(snippet.lower() in lowered for snippet in TOKEN_EXPIRED_MESSAGE_SNIPPETS)
+
 
 # =============================================================================
 # Configuration

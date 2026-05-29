@@ -6,6 +6,7 @@ particularly file permission handling to prevent credential leaks.
 """
 
 import json
+import inspect
 import os
 import stat
 import tempfile
@@ -78,7 +79,6 @@ def test_token_cache_no_world_readable_window():
     구현 자체가 os.open()을 사용하는지 확인하는 것으로 대체.
     """
     from shared.kis.auth import _save_token_cache_secure
-    import inspect
 
     # Check that implementation uses os.open (atomic permission setting)
     source = inspect.getsource(_save_token_cache_secure)
@@ -86,3 +86,11 @@ def test_token_cache_no_world_readable_window():
     # Must use os.open with explicit mode
     assert "os.open" in source, "Must use os.open for atomic permission setting"
     assert "0o600" in source, "Must explicitly set 0o600 permission"
+
+
+def test_is_token_expired_error_detects_kis_code_and_message():
+    from shared.kis.auth import is_token_expired_error
+
+    assert is_token_expired_error({"msg_cd": "EGW00123", "msg1": "ignored"})
+    assert is_token_expired_error({"rt_cd": "1", "msg1": "기간이 만료된 token 입니다."})
+    assert not is_token_expired_error({"msg_cd": "EGW00201", "msg1": "초당 거래건수 초과"})
