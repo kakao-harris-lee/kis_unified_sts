@@ -20,7 +20,12 @@ import aiohttp
 
 from shared.config.loader import ConfigLoader
 from shared.http import AsyncSessionMixin
-from shared.kis.auth import KISAuthConfig, KISAuthManager, is_token_expired_error
+from shared.kis.auth import (
+    KISAuthConfig,
+    KISAuthManager,
+    is_token_expired_error,
+    retry_once_on_token_expiry,
+)
 from shared.kis.error_rate import KISApiErrorRateTracker
 from shared.utils.parsing import parse_float
 
@@ -851,7 +856,7 @@ class KISClient(AsyncSessionMixin):
         )
         request_timeout = aiohttp.ClientTimeout(total=float(timeout_seconds))
 
-        async def request_balance() -> tuple[int, dict[str, Any] | None, str]:
+        async def request_balance(_attempt: int = 0) -> tuple[int, dict[str, Any] | None, str]:
             headers = await self.auth_manager.get_auth_headers_async()
             headers["tr_id"] = tr_id
             headers["custtype"] = "P"
@@ -874,21 +879,26 @@ class KISClient(AsyncSessionMixin):
                 text_s = text if isinstance(text, str) else str(text)
                 return int(response.status), data, text_s
 
+        def _balance_expired(result: tuple[int, dict[str, Any] | None, str]) -> bool:
+            status, data, text = result
+            if status == 200 and isinstance(data, dict) and data.get("rt_cd") == "0":
+                return False
+            return is_token_expired_error(data if data is not None else text)
+
         try:
-            status, data, text = await request_balance()
+            status, data, text = await retry_once_on_token_expiry(
+                request_balance,
+                self.auth_manager,
+                is_expired=_balance_expired,
+                context="Stock balance inquiry",
+            )
+
             if status != 200:
                 if "EGW00201" in text:
                     self._rate_limiter.penalty()
-                if is_token_expired_error(data if data is not None else text):
-                    logger.warning(
-                        "Stock balance inquiry token expired; invalidating token and retrying once"
-                    )
-                    self.auth_manager.invalidate()
-                    status, data, text = await request_balance()
-                if status != 200:
-                    KISApiErrorRateTracker.get_instance().record_error()
-                    logger.error(f"Stock balance inquiry failed ({status}): {text}")
-                    return []
+                KISApiErrorRateTracker.get_instance().record_error()
+                logger.error(f"Stock balance inquiry failed ({status}): {text}")
+                return []
 
             if data is None:
                 KISApiErrorRateTracker.get_instance().record_error()
@@ -896,22 +906,9 @@ class KISClient(AsyncSessionMixin):
                 return []
 
             if data.get("rt_cd") != "0":
-                if is_token_expired_error(data):
-                    logger.warning(
-                        "Stock balance inquiry token expired; invalidating token and retrying once"
-                    )
-                    self.auth_manager.invalidate()
-                    status, data, text = await request_balance()
-                    if status != 200 or data is None or data.get("rt_cd") != "0":
-                        KISApiErrorRateTracker.get_instance().record_error()
-                        message = (
-                            data.get("msg1", "") if isinstance(data, dict) else text
-                        )
-                        logger.error(f"Stock balance inquiry error: {message}")
-                        return []
-                else:
-                    logger.error(f"Stock balance inquiry error: {data.get('msg1', '')}")
-                    return []
+                KISApiErrorRateTracker.get_instance().record_error()
+                logger.error(f"Stock balance inquiry error: {data.get('msg1', '')}")
+                return []
 
             self._rate_limiter.reset_backoff()
             KISApiErrorRateTracker.get_instance().record_success()

@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 
 import aiohttp
 
-from shared.kis.auth import is_token_expired_error
+from shared.kis.auth import is_token_expired_error, retry_once_on_token_expiry
 
 from .config import ExecutionConfig, TradingMode
 from .exceptions import RateLimitExceeded
@@ -686,20 +686,21 @@ class OrderExecutor:
                     }
                 return data if isinstance(data, dict) else {"output": data}, int(response.status)
 
-        try:
-            data, status = await do_request(headers)
-            if is_token_expired_error(data):
-                logger.warning(
-                    "KIS request token expired; invalidating token and retrying once"
-                )
-                if hasattr(self.auth_manager, "invalidate"):
-                    self.auth_manager.invalidate()
+        async def attempt(retry: int) -> tuple[dict[str, Any], int]:
+            current_headers = headers
+            if retry:
                 tr_id = str(headers.get("tr_id") or "")
-                if tr_id:
-                    refreshed_headers = await self._build_auth_headers(tr_id)
-                    if refreshed_headers is not None:
-                        data, status = await do_request(refreshed_headers)
-            return data, status
+                refreshed = await self._build_auth_headers(tr_id) if tr_id else None
+                if refreshed is not None:
+                    current_headers = refreshed
+            return await do_request(current_headers)
+
+        try:
+            return await retry_once_on_token_expiry(
+                attempt,
+                self.auth_manager,
+                is_expired=lambda result: is_token_expired_error(result[0]),
+            )
         except Exception as e:
             logger.error(f"KIS request error ({method} {url}): {e}")
             raise
