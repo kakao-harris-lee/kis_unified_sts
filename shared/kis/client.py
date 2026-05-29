@@ -7,6 +7,7 @@ Implements MarketDataSource protocol for integration with MarketDataProvider.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import time
@@ -19,7 +20,12 @@ import aiohttp
 
 from shared.config.loader import ConfigLoader
 from shared.http import AsyncSessionMixin
-from shared.kis.auth import KISAuthConfig, KISAuthManager
+from shared.kis.auth import (
+    KISAuthConfig,
+    KISAuthManager,
+    is_token_expired_error,
+    retry_once_on_token_expiry,
+)
 from shared.kis.error_rate import KISApiErrorRateTracker
 from shared.utils.parsing import parse_float
 
@@ -826,11 +832,8 @@ class KISClient(AsyncSessionMixin):
 
         await self._rate_limiter.acquire()
         session = await self._get_session()
-        headers = await self.auth_manager.get_auth_headers_async()
 
         tr_id = "TTTC8434R" if self.config.is_real else "VTTC8434R"
-        headers["tr_id"] = tr_id
-        headers["custtype"] = "P"
 
         params = {
             "CANO": account_no[:8],
@@ -853,44 +856,79 @@ class KISClient(AsyncSessionMixin):
         )
         request_timeout = aiohttp.ClientTimeout(total=float(timeout_seconds))
 
-        try:
+        async def request_balance(_attempt: int = 0) -> tuple[int, dict[str, Any] | None, str]:
+            headers = await self.auth_manager.get_auth_headers_async()
+            headers["tr_id"] = tr_id
+            headers["custtype"] = "P"
             async with session.get(
                 url, headers=headers, params=params, timeout=request_timeout
             ) as response:
-                if response.status != 200:
-                    text = await response.text()
-                    if "EGW00201" in text:
-                        self._rate_limiter.penalty()
-                    KISApiErrorRateTracker.get_instance().record_error()
-                    logger.error(
-                        f"Stock balance inquiry failed ({response.status}): {text}"
-                    )
-                    return []
+                text = await response.text()
+                data = None
+                try:
+                    if isinstance(text, str):
+                        data = json.loads(text)
+                except json.JSONDecodeError:
+                    data = None
+                if data is None:
+                    try:
+                        parsed = await response.json()
+                        data = parsed if isinstance(parsed, dict) else None
+                    except Exception:
+                        data = None
+                text_s = text if isinstance(text, str) else str(text)
+                return int(response.status), data, text_s
 
-                data = await response.json()
-                if data.get("rt_cd") != "0":
-                    logger.error(f"Stock balance inquiry error: {data.get('msg1', '')}")
-                    return []
+        def _balance_expired(result: tuple[int, dict[str, Any] | None, str]) -> bool:
+            status, data, text = result
+            if status == 200 and isinstance(data, dict) and data.get("rt_cd") == "0":
+                return False
+            return is_token_expired_error(data if data is not None else text)
 
-                self._rate_limiter.reset_backoff()
-                KISApiErrorRateTracker.get_instance().record_success()
-                positions = []
-                for item in data.get("output1", []):
-                    qty = int(item.get("hldg_qty", 0))
-                    if qty <= 0:
-                        continue
-                    positions.append(
-                        {
-                            "code": item.get("pdno", ""),
-                            "name": item.get("prdt_name", ""),
-                            "side": "long",
-                            "quantity": qty,
-                            "avg_price": float(item.get("pchs_avg_pric", 0)),
-                            "current_price": float(item.get("prpr", 0)),
-                            "unrealized_pnl": float(item.get("evlu_pfls_amt", 0)),
-                        }
-                    )
-                return positions
+        try:
+            status, data, text = await retry_once_on_token_expiry(
+                request_balance,
+                self.auth_manager,
+                is_expired=_balance_expired,
+                context="Stock balance inquiry",
+            )
+
+            if status != 200:
+                if "EGW00201" in text:
+                    self._rate_limiter.penalty()
+                KISApiErrorRateTracker.get_instance().record_error()
+                logger.error(f"Stock balance inquiry failed ({status}): {text}")
+                return []
+
+            if data is None:
+                KISApiErrorRateTracker.get_instance().record_error()
+                logger.error(f"Stock balance inquiry returned non-JSON: {text[:300]}")
+                return []
+
+            if data.get("rt_cd") != "0":
+                KISApiErrorRateTracker.get_instance().record_error()
+                logger.error(f"Stock balance inquiry error: {data.get('msg1', '')}")
+                return []
+
+            self._rate_limiter.reset_backoff()
+            KISApiErrorRateTracker.get_instance().record_success()
+            positions = []
+            for item in data.get("output1", []):
+                qty = int(item.get("hldg_qty", 0))
+                if qty <= 0:
+                    continue
+                positions.append(
+                    {
+                        "code": item.get("pdno", ""),
+                        "name": item.get("prdt_name", ""),
+                        "side": "long",
+                        "quantity": qty,
+                        "avg_price": float(item.get("pchs_avg_pric", 0)),
+                        "current_price": float(item.get("prpr", 0)),
+                        "unrealized_pnl": float(item.get("evlu_pfls_amt", 0)),
+                    }
+                )
+            return positions
 
         except Exception as e:
             logger.warning(f"Stock balance inquiry exception: {e}")
