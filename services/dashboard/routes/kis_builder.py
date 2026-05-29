@@ -738,3 +738,107 @@ async def unregister_strategy(strategy_id: str) -> dict[str, Any]:
         )
     path.unlink()
     return {"id": safe_id, "deleted": True}
+
+
+# ============================================================================
+# Activity counts (signals from Redis, closed trades from ClickHouse)
+# ============================================================================
+#
+# Built strategies emit signals tagged with the StrategyManager's
+# TradingStrategy.name, which for a built YAML is metadata.id (see
+# _build_strategy_yaml: strategy.name = metadata.id). The StrategyManager
+# overrides signal.strategy with that name, and the same value lands on
+# market.stock_trades.strategy — so both sources key on the bare builder id.
+
+
+class StrategyActivity(BaseModel):
+    """Recent signal + closed-trade counts for one built strategy."""
+
+    id: str
+    signals: int
+    trades: int
+
+
+class ActivityResponse(BaseModel):
+    """GET /registered/activity response."""
+
+    activity: list[StrategyActivity]
+
+
+def _registered_ids() -> list[str]:
+    if not _BUILT_STRATEGIES_DIR.exists():
+        return []
+    return [path.stem for path in sorted(_BUILT_STRATEGIES_DIR.glob("*.yaml"))]
+
+
+def _signal_counts() -> dict[str, int]:
+    """Count recent stock signals grouped by strategy (Redis).
+
+    Returns {} if Redis is unavailable so the panel degrades to zero counts
+    rather than 500-ing. The Redis list is a recent window (capped), so this
+    is a recent-activity indicator, not a lifetime total.
+    """
+    try:
+        from shared.streaming.trading_state import TradingStateReader
+
+        signals = TradingStateReader("stock").get_signals(start=0, count=500)
+    except Exception:  # noqa: BLE001 — degrade gracefully on infra failure
+        return {}
+    counts: dict[str, int] = {}
+    for sig in signals:
+        strat = str(sig.get("strategy") or "")
+        if strat:
+            counts[strat] = counts.get(strat, 0) + 1
+    return counts
+
+
+def _trade_counts(ids: list[str]) -> dict[str, int]:
+    """Count closed stock trades per strategy from ClickHouse market.stock_trades.
+
+    Only the given ids are queried. Returns {} on any failure (ClickHouse
+    down, table missing) so the panel still renders.
+    """
+    if not ids:
+        return {}
+    try:
+        from clickhouse_driver import Client as SyncClient
+
+        from shared.db.config import ClickHouseConfig
+
+        cfg = ClickHouseConfig.from_env()
+        client = SyncClient(
+            host=cfg.host, port=cfg.port, user=cfg.user, password=cfg.password
+        )
+        try:
+            rows = client.execute(
+                "SELECT strategy, count() FROM market.stock_trades "
+                "WHERE strategy IN %(ids)s GROUP BY strategy",
+                {"ids": tuple(ids)},
+            )
+        finally:
+            client.disconnect()
+    except Exception:  # noqa: BLE001 — degrade gracefully on infra failure
+        return {}
+    return {str(strat): int(count) for strat, count in rows}
+
+
+@router.get("/registered/activity", response_model=ActivityResponse)
+async def registered_activity() -> ActivityResponse:
+    """Per-strategy recent signal + closed-trade counts for the panel.
+
+    Signals come from Redis (recent window), trades from ClickHouse. Both
+    sources degrade to zero on infra failure so the panel always renders.
+    """
+    ids = _registered_ids()
+    signal_counts = _signal_counts()
+    trade_counts = _trade_counts(ids)
+    return ActivityResponse(
+        activity=[
+            StrategyActivity(
+                id=sid,
+                signals=signal_counts.get(sid, 0),
+                trades=trade_counts.get(sid, 0),
+            )
+            for sid in ids
+        ]
+    )
