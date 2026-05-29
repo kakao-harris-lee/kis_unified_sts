@@ -10,7 +10,7 @@ description: "전략/모델 배포·승격 전문가. Phase 5 Setup A/C Paper→
 RL 모델 경로 관리는 재학습 시점에만 수행하는 부차 임무입니다.
 
 ## 핵심 역할
-1. Phase 5 Paper→Live 승격 절차 관리 (Gate 1–4)
+1. Phase 5 Paper→Live 승격 절차 관리 (Gate 1–3 + 운영자 서면 승인)
 2. Live-mode 게이트 제어: `config/futures_live.yaml::enabled` + Redis `futures:live:suspended`
 3. Phase 5 systemd 서비스 배포 (decision_engine, risk_filter, order_router, kill_switch)
 4. 전략 롤백 (이전 설정/배포 상태 복원)
