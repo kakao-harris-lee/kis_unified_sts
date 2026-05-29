@@ -27,6 +27,22 @@ class ClickHouseConfig(ServiceConfigBase):
     pool_size: int = Field(default=5, description="Connection pool size")
     connect_timeout: int = Field(default=10, description="Connection timeout seconds")
 
+    # TCP keepalive settings — keep the idle native connection alive so the
+    # server/NAT does not reap it after ~1h of inactivity (which surfaces as a
+    # noisy transparent reconnect WARNING on the next query).
+    tcp_keepalive: bool = Field(
+        default=True, description="Enable TCP keepalive on the native connection"
+    )
+    tcp_keepalive_idle: int = Field(
+        default=60, description="Seconds idle before the first keepalive probe"
+    )
+    tcp_keepalive_interval: int = Field(
+        default=15, description="Seconds between keepalive probes"
+    )
+    tcp_keepalive_count: int = Field(
+        default=4, description="Failed probes before dropping the connection"
+    )
+
     # TLS/SSL settings
     secure: bool = Field(default=False, description="Enable TLS/SSL connection")
     verify_ssl: bool = Field(default=True, description="Verify SSL certificates")
@@ -83,6 +99,12 @@ class ClickHouseConfig(ServiceConfigBase):
             "yes",
         )
 
+        tcp_keepalive = os.environ.get("CLICKHOUSE_TCP_KEEPALIVE", "true").lower() in (
+            "true",
+            "1",
+            "yes",
+        )
+
         return cls(
             host=os.environ.get("CLICKHOUSE_HOST", "localhost"),
             port=native_port,
@@ -95,6 +117,16 @@ class ClickHouseConfig(ServiceConfigBase):
             ca_cert=os.environ.get("CLICKHOUSE_CA_CERT"),
             client_cert=os.environ.get("CLICKHOUSE_CLIENT_CERT"),
             client_key=os.environ.get("CLICKHOUSE_CLIENT_KEY"),
+            tcp_keepalive=tcp_keepalive,
+            tcp_keepalive_idle=int(
+                os.environ.get("CLICKHOUSE_TCP_KEEPALIVE_IDLE", "60")
+            ),
+            tcp_keepalive_interval=int(
+                os.environ.get("CLICKHOUSE_TCP_KEEPALIVE_INTERVAL", "15")
+            ),
+            tcp_keepalive_count=int(
+                os.environ.get("CLICKHOUSE_TCP_KEEPALIVE_COUNT", "4")
+            ),
         )
 
     def __str__(self) -> str:

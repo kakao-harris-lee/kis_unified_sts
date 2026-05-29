@@ -51,3 +51,38 @@ def test_get_clickhouse_client_factory():
     config = ClickHouseConfig()
     client = get_clickhouse_client(config)
     assert client is not None
+
+
+def test_build_connection_params_includes_tcp_keepalive():
+    """When keepalive is enabled, params carry the (idle, interval, count) tuple.
+
+    clickhouse_driver maps a 3-tuple to SO_KEEPALIVE + TCP_KEEPIDLE/INTVL/CNT.
+    """
+    from shared.db.client import ClickHouseClient
+    from shared.db.config import ClickHouseConfig
+
+    config = ClickHouseConfig()
+    ClickHouseClient.reset_singleton()
+    client = ClickHouseClient(config)
+
+    params = client._build_connection_params()
+
+    assert params["tcp_keepalive"] == (
+        config.tcp_keepalive_idle,
+        config.tcp_keepalive_interval,
+        config.tcp_keepalive_count,
+    )
+
+
+def test_build_connection_params_omits_keepalive_when_disabled():
+    """When keepalive is disabled, the param is absent (driver default applies)."""
+    from shared.db.client import ClickHouseClient
+    from shared.db.config import ClickHouseConfig
+
+    config = ClickHouseConfig(tcp_keepalive=False)
+    ClickHouseClient.reset_singleton()
+    client = ClickHouseClient(config)
+
+    params = client._build_connection_params()
+
+    assert "tcp_keepalive" not in params
