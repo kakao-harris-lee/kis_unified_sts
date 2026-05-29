@@ -26,7 +26,7 @@ import {
 } from "@/components/builder";
 import { useStrategyBuilder, INITIAL_STATE } from "@/hooks/useStrategyBuilder";
 import { useLocalStrategies } from "@/hooks/useLocalStrategies";
-import { listStrategies, previewCodeFromState } from "@/lib/api";
+import { listKisBuilderPresets, previewCodeFromState } from "@/lib/api";
 import { parseYamlToBuilderState } from "@/lib/builder/yamlImporter";
 import type { StrategyInfo } from "@/types/signal";
 import type { BuilderState } from "@/types/builder";
@@ -70,7 +70,7 @@ export default function BuilderPage() {
   useEffect(() => {
     async function loadStrategies() {
       try {
-        const response = await listStrategies();
+        const response = await listKisBuilderPresets();
         const strategies: BackendPresetStrategy[] = (response.strategies || [])
           .filter((s: StrategyInfo) => s.builder_state)
           .map((s: StrategyInfo) => ({
