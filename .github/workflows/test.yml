@@ -24,6 +24,20 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+      clickhouse:
+        # Orchestrator/persistence tests connect to ClickHouse (native :9000).
+        # Without this service the suite hit "Connection refused (localhost:9000)"
+        # in CI while passing locally where ClickHouse is running.
+        image: clickhouse/clickhouse-server:24.3
+        ports:
+          - 9000:9000
+          - 8123:8123
+        options: >-
+          --health-cmd "clickhouse-client --query 'SELECT 1'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+          --health-start-period 30s
 
     steps:
       - name: Checkout code
@@ -51,6 +65,8 @@ jobs:
           pytest tests/ --ignore=tests/performance -v --cov=shared --cov=services --cov=domains --cov-report=xml --cov-report=term-missing
         env:
           REDIS_URL: redis://localhost:6379/1
+          CLICKHOUSE_HOST: localhost
+          CLICKHOUSE_PORT: "9000"
           ENVIRONMENT: test
 
       - name: Upload coverage to Codecov
