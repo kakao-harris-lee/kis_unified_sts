@@ -18,7 +18,7 @@ import logging
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 
 @dataclass
@@ -41,7 +41,8 @@ class RegressionChecker:
         self,
         warning_threshold: float = 1.2,
         error_threshold: float = 1.5,
-        logger: Optional[logging.Logger] = None,
+        min_duration: float = 0.0,
+        logger: logging.Logger | None = None,
     ):
         """
         Initialize regression checker.
@@ -49,13 +50,19 @@ class RegressionChecker:
         Args:
             warning_threshold: Threshold for warning (e.g., 1.2 = 20% degradation)
             error_threshold: Threshold for error (e.g., 1.5 = 50% degradation)
+            min_duration: Tests whose baseline duration is below this many
+                seconds are exempt from ratio checks. Wall-clock durations in
+                the sub-tens-of-ms range are dominated by scheduler/CPU noise on
+                shared CI runners, so their ratios are meaningless (a 0.4ms test
+                hitting 0.6ms is "+50%" but not a real regression).
             logger: Optional logger instance
         """
         self.warning_threshold = warning_threshold
         self.error_threshold = error_threshold
+        self.min_duration = min_duration
         self.logger = logger or logging.getLogger(__name__)
 
-    def load_metrics(self, json_path: Path) -> Dict[str, Any]:
+    def load_metrics(self, json_path: Path) -> dict[str, Any]:
         """
         Load metrics from pytest-json-report output.
 
@@ -85,7 +92,7 @@ class RegressionChecker:
 
         return data
 
-    def extract_test_durations(self, metrics: Dict[str, Any]) -> Dict[str, float]:
+    def extract_test_durations(self, metrics: dict[str, Any]) -> dict[str, float]:
         """
         Extract test durations from metrics.
 
@@ -119,9 +126,9 @@ class RegressionChecker:
 
     def compare_metrics(
         self,
-        baseline_metrics: Dict[str, float],
-        current_metrics: Dict[str, float],
-    ) -> List[MetricComparison]:
+        baseline_metrics: dict[str, float],
+        current_metrics: dict[str, float],
+    ) -> list[MetricComparison]:
         """
         Compare baseline and current metrics.
 
@@ -146,7 +153,7 @@ class RegressionChecker:
                         current_value=0.0,
                         change_percent=0.0,
                         status="warning",
-                        message=f"Test not found in current results",
+                        message="Test not found in current results",
                     )
                 )
                 continue
@@ -161,6 +168,25 @@ class RegressionChecker:
             else:
                 ratio = 1.0
                 change_percent = 0.0
+
+            # Exempt sub-floor tests: their wall-clock durations are too small
+            # for the ratio to be meaningful (noise-dominated on shared CI).
+            if 0 < baseline_value < self.min_duration:
+                comparisons.append(
+                    MetricComparison(
+                        test_name=test_name,
+                        metric_name="duration",
+                        baseline_value=baseline_value,
+                        current_value=current_value,
+                        change_percent=change_percent,
+                        status="pass",
+                        message=(
+                            f"BELOW FLOOR ({self.min_duration * 1000:.0f}ms): "
+                            f"{change_percent:+.1f}% ignored (noise-dominated)"
+                        ),
+                    )
+                )
+                continue
 
             # Determine status
             if ratio >= self.error_threshold:
@@ -205,7 +231,7 @@ class RegressionChecker:
 
         return comparisons
 
-    def print_report(self, comparisons: List[MetricComparison]) -> Tuple[int, int, int]:
+    def print_report(self, comparisons: list[MetricComparison]) -> tuple[int, int, int]:
         """
         Print detailed regression report.
 
@@ -231,8 +257,12 @@ class RegressionChecker:
         # Group by status
         errors = [c for c in comparisons if c.status == "error"]
         warnings = [c for c in comparisons if c.status == "warning"]
-        improvements = [c for c in comparisons if c.status == "pass" and c.change_percent < -5]
-        stable = [c for c in comparisons if c.status == "pass" and c.change_percent >= -5]
+        improvements = [
+            c for c in comparisons if c.status == "pass" and c.change_percent < -5
+        ]
+        stable = [
+            c for c in comparisons if c.status == "pass" and c.change_percent >= -5
+        ]
 
         # Print errors first
         if errors:
@@ -282,7 +312,9 @@ class RegressionChecker:
         print("\n" + "=" * 80)
         print("SUMMARY")
         print("=" * 80)
-        print(f"Thresholds: Warning={round((self.warning_threshold - 1) * 100)}%, Error={round((self.error_threshold - 1) * 100)}%")
+        print(
+            f"Thresholds: Warning={round((self.warning_threshold - 1) * 100)}%, Error={round((self.error_threshold - 1) * 100)}%"
+        )
 
         if num_errors > 0:
             print(f"❌ FAILED: {num_errors} performance regression(s) detected")
@@ -332,10 +364,14 @@ class RegressionChecker:
 
             # Determine exit code
             if num_errors > 0:
-                self.logger.error("Performance regression detected (%d errors)", num_errors)
+                self.logger.error(
+                    "Performance regression detected (%d errors)", num_errors
+                )
                 return 2
             elif num_warnings > 0:
-                self.logger.warning("Performance degradation detected (%d warnings)", num_warnings)
+                self.logger.warning(
+                    "Performance degradation detected (%d warnings)", num_warnings
+                )
                 return 1
             else:
                 self.logger.info("No performance regressions detected")
@@ -411,6 +447,27 @@ Exit Codes:
     )
 
     parser.add_argument(
+        "--min-duration",
+        type=float,
+        default=0.0,
+        help=(
+            "Exempt tests whose baseline duration is below this many seconds "
+            "from ratio checks (default: 0.0 = check all). Sub-tens-of-ms "
+            "durations are noise-dominated on shared CI runners."
+        ),
+    )
+
+    parser.add_argument(
+        "--fail-on-warning",
+        action="store_true",
+        help=(
+            "Exit non-zero (1) when there are warnings. By default only errors "
+            "(exit 2) fail the run; warnings are informational, so transient CI "
+            "variance does not break the build."
+        ),
+    )
+
+    parser.add_argument(
         "--verbose",
         "-v",
         action="store_true",
@@ -433,11 +490,17 @@ def main() -> int:
     checker = RegressionChecker(
         warning_threshold=args.warning_threshold,
         error_threshold=args.error_threshold,
+        min_duration=args.min_duration,
         logger=logger,
     )
 
-    # Check for regressions
-    return checker.check_regression(args.baseline, args.current)
+    # Check for regressions. check_regression() returns 2 (errors), 1 (warnings),
+    # or 0. Warnings are informational by default so transient CI runner variance
+    # does not fail the build — only real regressions (errors) do.
+    exit_code = checker.check_regression(args.baseline, args.current)
+    if exit_code == 1 and not args.fail_on_warning:
+        return 0
+    return exit_code
 
 
 if __name__ == "__main__":

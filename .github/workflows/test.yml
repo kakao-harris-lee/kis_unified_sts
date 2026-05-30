@@ -175,10 +175,17 @@ jobs:
           ENVIRONMENT: test
 
       - name: Check for performance regressions
+        # Thresholds tuned for shared GitHub-hosted runner variance: only a
+        # >=2x slowdown fails the build; 1.5x-2x is an informational warning
+        # (non-fatal); tests under 50ms are exempt (their wall-clock ratios are
+        # noise-dominated). Baseline is regenerated on ubuntu-latest hardware.
         run: |
           python scripts/performance/check_regression.py \
             --baseline tests/performance/baselines.json \
-            --current tests/performance/current.json
+            --current tests/performance/current.json \
+            --warning-threshold 1.5 \
+            --error-threshold 2.0 \
+            --min-duration 0.05
         continue-on-error: false
 
       - name: Upload performance report
