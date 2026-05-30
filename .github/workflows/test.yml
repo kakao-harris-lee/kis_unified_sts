@@ -24,6 +24,27 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+      clickhouse:
+        # Orchestrator/persistence tests connect to ClickHouse (native :9000).
+        # Without this service the suite hit "Connection refused (localhost:9000)"
+        # in CI while passing locally where ClickHouse is running.
+        # A password is set on the built-in "default" superuser (the empty-password
+        # default login is rejected by recent images); the client env below
+        # matches it. "default" retains CREATE DATABASE privileges that the
+        # orchestrator's _ensure_db_schema needs.
+        image: clickhouse/clickhouse-server:24.3
+        env:
+          CLICKHOUSE_PASSWORD: ci_password
+          CLICKHOUSE_DB: market
+        ports:
+          - 9000:9000
+          - 8123:8123
+        options: >-
+          --health-cmd "clickhouse-client --password ci_password --query 'SELECT 1'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+          --health-start-period 30s
 
     steps:
       - name: Checkout code
@@ -51,6 +72,11 @@ jobs:
           pytest tests/ --ignore=tests/performance -v --cov=shared --cov=services --cov=domains --cov-report=xml --cov-report=term-missing
         env:
           REDIS_URL: redis://localhost:6379/1
+          CLICKHOUSE_HOST: localhost
+          CLICKHOUSE_PORT: "9000"
+          CLICKHOUSE_USER: default
+          CLICKHOUSE_PASSWORD: ci_password
+          CLICKHOUSE_DB: market
           ENVIRONMENT: test
 
       - name: Upload coverage to Codecov
