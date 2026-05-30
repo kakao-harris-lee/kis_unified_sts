@@ -64,6 +64,8 @@ RL 재학습/복귀 검토 (명시적)      → rl-pipeline 스킬 (DEPRECATED, 
 ### 2차: 전문가 선택
 키워드 매칭으로 가장 적합한 전문가 1명 또는 파이프라인 선택.
 
+**모호어 처리 — "롤백"**: 전략/모델 되돌리기(이전 설정·배포 버전 복원)는 `model-deployer`, 장애·운영 복구(프로세스/연결/포지션 정합성 복구)는 `incident-responder`. 맥락이 불분명하면 직전 작업이 배포면 model-deployer, 장애 대응 중이면 incident-responder로 라우팅한다.
+
 ```
 "BB 기반 새 전략 만들어줘"            → strategy-architect
 "RL 대체할 지표 리서치해줘"           → indicator-specialist
