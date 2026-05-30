@@ -9,7 +9,7 @@ KIS Unified Trading Platform의 전략 개발, RegimeGate 검증, 전략 승격,
 운영 1차 방향은 **지표 기반 전략(Williams %R/RSI/MACD) + RegimeGate + Setup A/C**이며,
 RL_mppo는 deprecate(2026-05-15)되어 재학습 옵션으로만 보존된다.
 
-## 전문가 풀 (16명)
+## 전문가 풀 (21명)
 
 ### 전략 개발 팀
 | 에이전트 | 전문 영역 | 트리거 키워드 |
@@ -47,6 +47,15 @@ RL_mppo는 deprecate(2026-05-15)되어 재학습 옵션으로만 보존된다.
 | `execution-specialist` | 주문 실행/KIS 정합/ATS | 주문 실행, 체결, 슬리피지, ATS, 라우팅, rate limit, KIS API, order_router |
 | `llm-analyst` | LLM 시장분석/브리핑 콘텐츠 | LLM 분석, 브리핑 내용, 시장 분석, KRX, news, macro, 프롬프트, 스코어링 |
 
+### 종합 코드 감사 팀 (병렬 감사 → 통합)
+| 에이전트 | 전문 영역 | 트리거 키워드 |
+|---------|----------|-------------|
+| `architecture-auditor` | 아키텍처 감사 (렌즈) | 아키텍처, 레이어, 의존성, 패턴 준수, god-object |
+| `security-auditor` | 보안 취약점 감사 (렌즈) | 보안, 취약점, 인젝션, 시크릿, 인증, 자금경로 |
+| `performance-auditor` | 성능 병목 감사 (렌즈) | 성능, 병목, 레이턴시, 쿼리, 메모리, hot path |
+| `style-auditor` | 코드 스타일 감사 (렌즈) | 스타일, 타입힌트, docstring, 네이밍, 매직넘버 |
+| `review-synthesizer` | 4개 감사 결과 통합 (fan-in) | 통합 리포트, 종합, 우선순위, 차단 판정 |
+
 ## 도메인별 서브 오케스트레이터
 
 복잡한 도메인 작업은 전용 오케스트레이터 스킬이 관리:
@@ -55,6 +64,7 @@ RL_mppo는 deprecate(2026-05-15)되어 재학습 옵션으로만 보존된다.
 |------|------|-------------|------|
 | `strategy-lab` | 파이프라인 (1차) | indicator-specialist → strategy-architect → backtest-engineer → regime-gate-analyst → model-evaluator → model-deployer | 운영 전략 개발 수명주기 |
 | `ops-harness` | 전문가 풀 | ops-monitor, incident-responder, alert-manager | 운영/모니터링 |
+| `code-audit` | 팬아웃/팬인 | architecture/security/performance/style-auditor (병렬) → review-synthesizer | 종합 다중 렌즈 코드 감사 → 단일 리포트 |
 | `rl-pipeline` | 파이프라인 (DEPRECATED) | indicator-specialist(보조) → model-evaluator → model-deployer | RL 재학습 전용 (운영 경로 아님) |
 
 ## 라우팅 규칙
@@ -63,7 +73,8 @@ RL_mppo는 deprecate(2026-05-15)되어 재학습 옵션으로만 보존된다.
 ```
 전략/지표/게이트/빌더/백테스트 관련 → 전략 개발 팀 (→ strategy-lab 스킬)
 전략 평가/승격/배포 관련          → 전략/모델 승격 팀 (→ strategy-lab Phase 4-5)
-코드 리뷰/테스트/정리             → 코드 유지보수 팀
+단일 PR 게이트 리뷰/테스트/정리    → 코드 유지보수 팀 (code-reviewer)
+종합·다중 렌즈 코드 감사 (요청)    → code-audit 스킬 (4 감사관 병렬 → 통합 리포트)
 시스템/장애/알림 관련             → 운영/모니터링 팀 (→ ops-harness 스킬)
 데이터 수집/백필/품질 관련         → data-engineer
 주문 실행/체결/ATS/KIS API 관련   → execution-specialist
@@ -97,6 +108,9 @@ RL 재학습/복귀 검토 (명시적)      → rl-pipeline 스킬 (DEPRECATED, 
 "슬리피지 모델 검증해줘"              → execution-specialist
 "ATS 라우팅 규칙 손봐줘"             → execution-specialist
 "장전 브리핑 분석 내용 개선해줘"       → llm-analyst
+"이 PR 종합 감사해줘"                 → code-audit (4 감사관 병렬 → 통합)
+"보안+성능+아키텍처 같이 점검해줘"     → code-audit
+"shared/execution 전체 코드 감사"      → code-audit (경로 모드)
 "RL 모델 재학습 검토" (예외)          → rl-pipeline (DEPRECATED)
 ```
 
@@ -144,6 +158,17 @@ Phase 4: ops-monitor → 복구 후 재검증
 
 "헬스체크하고 알림 상태도 확인해줘"
 → ops-monitor + alert-manager (병렬)
+```
+
+### 종합 코드 감사 (code-audit 위임, 팬아웃→팬인)
+```
+범위 결정 (diff / PR #N / 경로)
+    ↓ fan-out (4개 병렬, 동일 범위)
+architecture-auditor + security-auditor + performance-auditor + style-auditor
+    ↓ fan-in
+review-synthesizer → 중복제거·심각도정규화·우선순위·차단판정 → 단일 리포트
+    ↓ (선택)
+차단 항목 → refactorer / execution-specialist / data-engineer 등으로 수정 위임
 ```
 
 ## 사용법
