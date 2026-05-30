@@ -1,5 +1,6 @@
 import importlib.util
 import pathlib
+import sys
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]  # tests/unit/backtest/ -> repo root
 _spec = importlib.util.spec_from_file_location(
@@ -7,6 +8,30 @@ _spec = importlib.util.spec_from_file_location(
 )
 gfs = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(gfs)
+
+
+def test_gate_script_imports_without_optuna(monkeypatch):
+    """Regression: the script must import without optuna installed.
+
+    CI runners do not install the heavy `optuna` dep, yet these unit tests
+    exec_module the whole script. optuna is only needed at study-creation time
+    inside main(), so module import + the pure helpers must not require it.
+    Simulate optuna being absent and exec a fresh copy of the module.
+    """
+    monkeypatch.setitem(sys.modules, "optuna", None)
+    monkeypatch.setitem(sys.modules, "optuna.samplers", None)
+
+    spec = importlib.util.spec_from_file_location(
+        "gfs_no_optuna", _REPO_ROOT / "scripts" / "gate_futures_strategy.py"
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)  # must NOT raise ModuleNotFoundError
+
+    out = mod.apply_params(
+        {"strategy": {"entry": {"params": {"a": 1}}, "exit": {"params": {}}}},
+        {"entry.params.a": 9},
+    )
+    assert out["strategy"]["entry"]["params"]["a"] == 9
 
 
 def test_apply_dotted_params_deepcopies_and_sets_nested():
