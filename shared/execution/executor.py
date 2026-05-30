@@ -12,6 +12,8 @@ from zoneinfo import ZoneInfo
 
 import aiohttp
 
+from shared.kis.auth import is_token_expired_error, retry_once_on_token_expiry
+
 from .config import ExecutionConfig, TradingMode
 from .exceptions import RateLimitExceeded
 from .models import ExecutionVenue, OrderRequest, OrderResponse, OrderSide
@@ -662,14 +664,14 @@ class OrderExecutor:
             except RateLimitExceeded:
                 return {"rt_cd": "RATE_LIMIT", "msg1": "Rate limit exceeded"}, 429
 
-        try:
+        async def do_request(current_headers: dict[str, Any]) -> tuple[dict[str, Any], int]:
             request_timeout = aiohttp.ClientTimeout(
                 total=float(self.config.order_request_timeout_seconds)
             )
             async with self.session.request(
                 method,
                 url,
-                headers=headers,
+                headers=current_headers,
                 params=params,
                 json=json,
                 timeout=request_timeout,
@@ -683,6 +685,22 @@ class OrderExecutor:
                         "msg1": text,
                     }
                 return data if isinstance(data, dict) else {"output": data}, int(response.status)
+
+        async def attempt(retry: int) -> tuple[dict[str, Any], int]:
+            current_headers = headers
+            if retry:
+                tr_id = str(headers.get("tr_id") or "")
+                refreshed = await self._build_auth_headers(tr_id) if tr_id else None
+                if refreshed is not None:
+                    current_headers = refreshed
+            return await do_request(current_headers)
+
+        try:
+            return await retry_once_on_token_expiry(
+                attempt,
+                self.auth_manager,
+                is_expired=lambda result: is_token_expired_error(result[0]),
+            )
         except Exception as e:
             logger.error(f"KIS request error ({method} {url}): {e}")
             raise

@@ -1021,6 +1021,22 @@ class TradingOrchestrator:
             TradingState.WAITING,
         )
 
+    def _strategy_label(self) -> str:
+        """Human-readable strategy label for start-up notifications.
+
+        ``config.strategy_name`` is ``None`` in multi-strategy mode (the futures
+        Setup A/C default, which loads every enabled strategy), so reporting it
+        verbatim renders a misleading "Strategy: None". Prefer the actually
+        loaded names; fall back to "all enabled" before the manager exists
+        (daemon pre-session message) and "none loaded" if it loaded nothing.
+        """
+        if self.config.strategy_name:
+            return self.config.strategy_name
+        if self._strategy_manager is not None:
+            names = self._strategy_manager.strategy_names
+            return ", ".join(names) if names else "none loaded"
+        return "all enabled"
+
     async def start(self):
         """거래 시작"""
         if self.state == TradingState.RUNNING:
@@ -1086,7 +1102,7 @@ class TradingOrchestrator:
         await self._notify(
             f"🚀 Trading Started\n"
             f"Asset: {self.config.asset_class}\n"
-            f"Strategy: {self.config.strategy_name}\n"
+            f"Strategy: {self._strategy_label()}\n"
             f"Capital: {self.config.initial_capital:,.0f}"
         )
 
@@ -4122,7 +4138,7 @@ class TradingOrchestrator:
             f"🤖 Trading Orchestrator Started\n"
             f"Mode: {'Paper' if self.config.paper_trading else 'Live'}\n"
             f"Asset: {self.config.asset_class}\n"
-            f"Strategy: {self.config.strategy_name}"
+            f"Strategy: {self._strategy_label()}"
         )
 
         while self._running:

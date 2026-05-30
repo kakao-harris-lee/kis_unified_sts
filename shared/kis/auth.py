@@ -20,14 +20,86 @@ import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Optional, TypeVar
 
 from shared.resilience import CircuitBreaker, CircuitBreakerConfig
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
     import aiohttp
 
+_T = TypeVar("_T")
+
 logger = logging.getLogger(__name__)
+
+TOKEN_EXPIRED_MSG_CODES = {"EGW00123"}
+TOKEN_EXPIRED_MESSAGE_SNIPPETS = (
+    "기간이 만료된 token",
+    "expired token",
+    "token expired",
+)
+
+
+def is_token_expired_error(payload: Any) -> bool:
+    """Return True when a KIS response says the access token is expired.
+
+    KIS can reject a token before our local cache timestamp reaches the refresh
+    buffer, especially when another process reissues a token for the same app.
+    Runtime callers use this helper to invalidate the local cache and retry
+    once with a freshly issued token.
+    """
+    if isinstance(payload, dict):
+        msg_cd = str(payload.get("msg_cd") or payload.get("message") or "")
+        if msg_cd in TOKEN_EXPIRED_MSG_CODES:
+            return True
+        text = json.dumps(payload, ensure_ascii=False)
+    else:
+        text = str(payload or "")
+
+    lowered = text.lower()
+    return any(snippet.lower() in lowered for snippet in TOKEN_EXPIRED_MESSAGE_SNIPPETS)
+
+
+async def retry_once_on_token_expiry(
+    request_fn: Callable[[int], Awaitable[_T]],
+    auth_manager: Any,
+    *,
+    is_expired: Callable[[_T], bool],
+    context: str = "KIS request",
+) -> _T:
+    """Run an async KIS request, retrying exactly once on a server-side token expiry.
+
+    Consolidates the invalidate-and-retry orchestration shared by the runtime
+    callers (balance inquiry, order execution) so the "retry once" contract is
+    defined in one place instead of being copy-pasted per call site.
+
+    Args:
+        request_fn: Coroutine factory invoked with the attempt index (``0`` for
+            the first call, ``1`` for the retry). It must fetch/build fresh auth
+            headers on each call so the reissued token is actually used on retry.
+        auth_manager: Object whose cached token is cleared before the retry. The
+            retry only fires when it exposes a callable ``invalidate``; otherwise
+            resending the same stale token is futile and the first result stands.
+        is_expired: Predicate on the request result returning ``True`` when the
+            response indicates the access token expired.
+        context: Human-readable label used in the warning log line.
+
+    Returns:
+        The first result when it is not an expiry or cannot be retried, otherwise
+        the result of the single retry.
+    """
+    result = await request_fn(0)
+    if not is_expired(result):
+        return result
+
+    invalidate = getattr(auth_manager, "invalidate", None)
+    if not callable(invalidate):
+        return result
+
+    logger.warning("%s token expired; invalidating cached token and retrying once", context)
+    invalidate()
+    return await request_fn(1)
 
 
 # =============================================================================

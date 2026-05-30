@@ -6,6 +6,7 @@ particularly file permission handling to prevent credential leaks.
 """
 
 import json
+import inspect
 import os
 import stat
 import tempfile
@@ -78,7 +79,6 @@ def test_token_cache_no_world_readable_window():
     구현 자체가 os.open()을 사용하는지 확인하는 것으로 대체.
     """
     from shared.kis.auth import _save_token_cache_secure
-    import inspect
 
     # Check that implementation uses os.open (atomic permission setting)
     source = inspect.getsource(_save_token_cache_secure)
@@ -86,3 +86,77 @@ def test_token_cache_no_world_readable_window():
     # Must use os.open with explicit mode
     assert "os.open" in source, "Must use os.open for atomic permission setting"
     assert "0o600" in source, "Must explicitly set 0o600 permission"
+
+
+def test_is_token_expired_error_detects_kis_code_and_message():
+    from shared.kis.auth import is_token_expired_error
+
+    assert is_token_expired_error({"msg_cd": "EGW00123", "msg1": "ignored"})
+    assert is_token_expired_error({"rt_cd": "1", "msg1": "기간이 만료된 token 입니다."})
+    assert not is_token_expired_error({"msg_cd": "EGW00201", "msg1": "초당 거래건수 초과"})
+
+
+@pytest.mark.asyncio
+async def test_retry_once_skips_retry_when_not_expired():
+    """A healthy first response returns immediately without invalidating."""
+    from unittest.mock import MagicMock
+
+    from shared.kis.auth import retry_once_on_token_expiry
+
+    auth_manager = MagicMock()
+    attempts: list[int] = []
+
+    async def request_fn(attempt: int) -> str:
+        attempts.append(attempt)
+        return "ok"
+
+    result = await retry_once_on_token_expiry(
+        request_fn, auth_manager, is_expired=lambda r: r == "expired"
+    )
+
+    assert result == "ok"
+    assert attempts == [0]
+    auth_manager.invalidate.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_retry_once_invalidates_and_retries_on_expiry():
+    """An expired first response triggers exactly one invalidate + one retry."""
+    from unittest.mock import MagicMock
+
+    from shared.kis.auth import retry_once_on_token_expiry
+
+    auth_manager = MagicMock()
+    attempts: list[int] = []
+
+    async def request_fn(attempt: int) -> str:
+        attempts.append(attempt)
+        return "expired" if attempt == 0 else "ok"
+
+    result = await retry_once_on_token_expiry(
+        request_fn, auth_manager, is_expired=lambda r: r == "expired"
+    )
+
+    assert result == "ok"
+    assert attempts == [0, 1]
+    auth_manager.invalidate.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_retry_once_no_retry_when_auth_manager_cannot_invalidate():
+    """Without a callable invalidate, resending a stale token is futile and skipped."""
+    from shared.kis.auth import retry_once_on_token_expiry
+
+    attempts: list[int] = []
+
+    async def request_fn(attempt: int) -> str:
+        attempts.append(attempt)
+        return "expired"
+
+    # auth_manager is None: getattr(None, "invalidate", None) is not callable.
+    result = await retry_once_on_token_expiry(
+        request_fn, None, is_expired=lambda r: r == "expired"
+    )
+
+    assert result == "expired"
+    assert attempts == [0]

@@ -1,7 +1,10 @@
+import json
 import os
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-from shared.kis.client import KISClient, KISAuthConfig
+
+import pytest
+
+from shared.kis.client import KISAuthConfig, KISClient
 
 @pytest.fixture
 def mock_auth_manager():
@@ -157,3 +160,54 @@ async def test_get_stock_balance_normalizes_hyphenated_account(mock_auth_manager
         call_args = mock_get.call_args
         assert call_args[1]["params"]["CANO"] == "87654321"
         assert call_args[1]["params"]["ACNT_PRDT_CD"] == "01"
+
+
+@pytest.mark.asyncio
+async def test_get_stock_balance_reissues_once_on_token_expired(mock_auth_manager):
+    config = KISAuthConfig(app_key="test", app_secret="test", is_real=False)
+    client = KISClient(config)
+
+    expired_resp = AsyncMock()
+    expired_resp.status = 200
+    expired_resp.text.return_value = json.dumps(
+        {"rt_cd": "1", "msg_cd": "EGW00123", "msg1": "기간이 만료된 token 입니다."}
+    )
+
+    success_resp = AsyncMock()
+    success_resp.status = 200
+    success_resp.text.return_value = json.dumps(
+        {
+            "rt_cd": "0",
+            "output1": [
+                {
+                    "pdno": "005930",
+                    "prdt_name": "삼성전자",
+                    "hldg_qty": "3",
+                    "pchs_avg_pric": "70000",
+                    "prpr": "71000",
+                    "evlu_pfls_amt": "3000",
+                }
+            ],
+        }
+    )
+
+    expired_cm = MagicMock()
+    expired_cm.__aenter__ = AsyncMock(return_value=expired_resp)
+    expired_cm.__aexit__ = AsyncMock(return_value=None)
+    success_cm = MagicMock()
+    success_cm.__aenter__ = AsyncMock(return_value=success_resp)
+    success_cm.__aexit__ = AsyncMock(return_value=None)
+
+    with (
+        patch("aiohttp.ClientSession.get") as mock_get,
+        patch.dict(os.environ, {"KIS_STOCK_ACCOUNT_NO": "87654321-01"}, clear=False),
+    ):
+        mock_get.side_effect = [expired_cm, success_cm]
+        client._session = MagicMock()
+        client._session.get = mock_get
+
+        positions = await client.get_stock_balance()
+
+        assert positions[0]["code"] == "005930"
+        mock_auth_manager.invalidate.assert_called_once()
+        assert mock_auth_manager.get_auth_headers_async.await_count == 2
