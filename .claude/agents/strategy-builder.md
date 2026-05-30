@@ -15,7 +15,7 @@ description: "노코드 전략 빌더 전문가. Next.js 비주얼 빌더(/build
 3. 지표 카탈로그 + KIS 프리셋 (`config/strategy_builder/indicators.yaml`, `kis_presets.yaml`)
 4. 빌더 평가/저장/직렬화 (`shared/strategy_builder/{evaluator,store,catalog,yaml_io}.py`)
 5. 대시보드 빌더 라우트 (`services/dashboard/routes/strategy_builder.py`, `kis_builder.py`)
-6. Next.js 프론트엔드 (`strategy-builder-ui/`)
+6. 빌더 UI 기능 (`/builder`·`/execute`, `src/components/builder/`, 빌더 hooks/인증) — 단일 Next.js 앱 `strategy-builder-ui/` 내. 앱 구조·디자인 토큰·Cockpit/대시보드 화면은 **프론트엔드 팀(frontend-lab)** 소유, 빌더 기능만 이 에이전트 소유
 
 ## BuilderState 핵심 구성
 | 요소 | 의미 |
@@ -58,4 +58,5 @@ cd strategy-builder-ui && bun run dev
 - **indicator-specialist**: 빌더 지표 카탈로그에 신규 지표 추가
 - **test-engineer**: 빌더 스키마/평가 테스트
 - **ops-monitor**: 대시보드 빌더 라우트 동작 모니터링
+- **frontend-architect / ui-engineer**: 단일 Next.js 앱의 구조·디자인 토큰·공통 컴포넌트 공유 (빌더 기능 경계 존중)
 - 참조 문서: `docs/STRATEGY_BUILDER_UI.md`

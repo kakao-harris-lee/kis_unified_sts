@@ -9,7 +9,7 @@ KIS Unified Trading Platform의 전략 개발, RegimeGate 검증, 전략 승격,
 운영 1차 방향은 **지표 기반 전략(Williams %R/RSI/MACD) + RegimeGate + Setup A/C**이며,
 RL_mppo는 deprecate(2026-05-15)되어 재학습 옵션으로만 보존된다.
 
-## 전문가 풀 (21명)
+## 전문가 풀 (24명)
 
 ### 전략 개발 팀
 | 에이전트 | 전문 영역 | 트리거 키워드 |
@@ -56,6 +56,13 @@ RL_mppo는 deprecate(2026-05-15)되어 재학습 옵션으로만 보존된다.
 | `style-auditor` | 코드 스타일 감사 (렌즈) | 스타일, 타입힌트, docstring, 네이밍, 매직넘버 |
 | `review-synthesizer` | 4개 감사 결과 통합 (fan-in) | 통합 리포트, 종합, 우선순위, 차단 판정 |
 
+### 프론트엔드 팀 (Next.js 단일 앱)
+| 에이전트 | 전문 영역 | 트리거 키워드 |
+|---------|----------|-------------|
+| `frontend-architect` | Next.js 구조/데이터페칭/디자인토큰/빌드 | 프론트 아키텍처, App Router, 디자인 토큰, 빌드, Next.js 구조 |
+| `ui-engineer` | Cockpit/대시보드 컴포넌트/반응형/차트 | UI, 컴포넌트, 화면, Cockpit, 반응형, 모바일, 차트, 스타일 |
+| `frontend-realtime-engineer` | WebSocket/React Query/API 배선 | 실시간, WebSocket, React Query, API 연동, 낙관적 업데이트 |
+
 ## 도메인별 서브 오케스트레이터
 
 복잡한 도메인 작업은 전용 오케스트레이터 스킬이 관리:
@@ -65,6 +72,7 @@ RL_mppo는 deprecate(2026-05-15)되어 재학습 옵션으로만 보존된다.
 | `strategy-lab` | 파이프라인 (1차) | indicator-specialist → strategy-architect → backtest-engineer → regime-gate-analyst → model-evaluator → model-deployer | 운영 전략 개발 수명주기 |
 | `ops-harness` | 전문가 풀 | ops-monitor, incident-responder, alert-manager | 운영/모니터링 |
 | `code-audit` | 팬아웃/팬인 | architecture/security/performance/style-auditor (병렬) → review-synthesizer | 종합 다중 렌즈 코드 감사 → 단일 리포트 |
+| `frontend-lab` | 파이프라인 (설계→구현) | frontend-architect → ui-engineer + frontend-realtime-engineer (병렬) | Next.js 단일 앱 화면/기능 개발 (builder 제외) |
 | `rl-pipeline` | 파이프라인 (DEPRECATED) | indicator-specialist(보조) → model-evaluator → model-deployer | RL 재학습 전용 (운영 경로 아님) |
 
 ## 라우팅 규칙
@@ -79,6 +87,7 @@ RL_mppo는 deprecate(2026-05-15)되어 재학습 옵션으로만 보존된다.
 데이터 수집/백필/품질 관련         → data-engineer
 주문 실행/체결/ATS/KIS API 관련   → execution-specialist
 LLM 분석/브리핑 콘텐츠 관련        → llm-analyst
+프론트엔드/대시보드/UI/Next.js 관련 → 프론트엔드 팀 (→ frontend-lab 스킬; builder 기능은 strategy-builder)
 RL 재학습/복귀 검토 (명시적)      → rl-pipeline 스킬 (DEPRECATED, 예외적)
 ```
 
@@ -111,6 +120,10 @@ RL 재학습/복귀 검토 (명시적)      → rl-pipeline 스킬 (DEPRECATED, 
 "이 PR 종합 감사해줘"                 → code-audit (4 감사관 병렬 → 통합)
 "보안+성능+아키텍처 같이 점검해줘"     → code-audit
 "shared/execution 전체 코드 감사"      → code-audit (경로 모드)
+"대시보드에 새 화면 추가해줘"          → frontend-lab (풀 파이프라인)
+"Cockpit 포지션 카드 모바일 개선"      → ui-engineer
+"실시간 시그널이 안 갱신돼"            → frontend-realtime-engineer
+"디자인 토큰/테마 정리해줘"            → frontend-architect
 "RL 모델 재학습 검토" (예외)          → rl-pipeline (DEPRECATED)
 ```
 
@@ -169,6 +182,15 @@ architecture-auditor + security-auditor + performance-auditor + style-auditor
 review-synthesizer → 중복제거·심각도정규화·우선순위·차단판정 → 단일 리포트
     ↓ (선택)
 차단 항목 → refactorer / execution-specialist / data-engineer 등으로 수정 위임
+```
+
+### 프론트엔드 화면 개발 (frontend-lab 위임, 설계→구현 병렬)
+```
+frontend-architect → 라우트 구조 + 데이터 페칭 전략 + 디자인 토큰
+    ↓ (병렬)
+ui-engineer (컴포넌트/반응형/스타일) + frontend-realtime-engineer (WebSocket/React Query 배선)
+    ↓
+code-audit (style/architecture-auditor) + npm run build/타입체크
 ```
 
 ## 사용법
