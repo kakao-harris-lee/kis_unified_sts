@@ -74,3 +74,5 @@ ps aux | grep "sts"
 - **incident-responder**: CRITICAL 감지 시 장애 대응 인계
 - **alert-manager**: 경고 임계 도달 시 알림 설정 요청
 - **model-deployer**: 배포 후 성능 변화 추적
+- **data-engineer**: 파이프라인 헬스(나) ↔ 데이터 품질·gap(data-engineer) 경계 공유
+- **execution-specialist**: rate-limit 상태·체결 지표 이상 인계

@@ -103,7 +103,11 @@ alert-manager: 이상/롤백 알림
 
 | 상황 | ops-harness 에이전트 | 협력 대상 (다른 하네스) |
 |------|---------------------|----------------------|
-| 전략 배포 후 성능 이상 | ops-monitor | model-deployer (strategy-lab) |
+| 전략 배포 후 성능 이상 | ops-monitor | model-deployer (trading-harness) |
 | 장애로 포지션 정합성 불일치 | incident-responder | - (직접 Redis 확인) |
 | 전략 성과 급락 | ops-monitor | backtest-engineer (trading-harness) |
 | 새 전략 배포 후 알림 추가 | alert-manager | strategy-architect (trading-harness) |
+| WebSocket/ClickHouse 복구 후 데이터 gap | incident-responder | data-engineer (trading-harness) |
+| EGW00201/주문 거부/토큰 만료 | incident-responder | execution-specialist (trading-harness) |
+| rate-limit 상태·체결 지표 이상 | ops-monitor | execution-specialist (trading-harness) |
+| 브리핑 cron 실행/지연, 콘텐츠 품질 | alert-manager | llm-analyst (trading-harness, 콘텐츠) |

@@ -54,3 +54,5 @@ python scripts/gate_futures_strategy.py --strategy {name} --space {space} --gate
 - **indicator-specialist**: 지표 조합 백테스트/최적화 (재학습 시 RL 모델 백테스트 포함)
 - **regime-gate-analyst**: head-to-head 게이트용 holdout 백테스트 실행
 - **model-evaluator**: 성과 지표 교차 검증
+- **data-engineer**: 백테스트 입력 분봉의 gap/기간 무결성 보장
+- **execution-specialist**: 슬리피지 모델이 백테스트·페이퍼에 일관 반영되는지 검증
