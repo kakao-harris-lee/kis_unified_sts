@@ -63,7 +63,7 @@ model-deployer: 이전 모델로 롤백
     ↓
 model-evaluator: 롤백 모델 성과 재확인
     ↓
-ops-monitor: 롤백 후 성능 모니터링
+ops-monitor (ops-harness): 롤백 후 성능 모니터링   # 교차 스킬 호출
 ```
 
 ### 4. 계층적 RL 실험

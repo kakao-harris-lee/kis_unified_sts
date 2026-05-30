@@ -9,7 +9,7 @@ KIS Unified Trading Platform의 전략 개발, RegimeGate 검증, 전략 승격,
 운영 1차 방향은 **지표 기반 전략(Williams %R/RSI/MACD) + RegimeGate + Setup A/C**이며,
 RL_mppo는 deprecate(2026-05-15)되어 재학습 옵션으로만 보존된다.
 
-## 전문가 풀 (13명)
+## 전문가 풀 (16명)
 
 ### 전략 개발 팀
 | 에이전트 | 전문 영역 | 트리거 키워드 |
@@ -38,7 +38,14 @@ RL_mppo는 deprecate(2026-05-15)되어 재학습 옵션으로만 보존된다.
 |---------|----------|-------------|
 | `ops-monitor` | 시스템 모니터링/성능 | 헬스체크, 상태, 성능, 모니터링, 리소스 |
 | `incident-responder` | 장애 대응/복구 | 장애, 에러, 크래시, 끊김, 복구 |
-| `alert-manager` | 알림/Cron 관리 | Telegram, 알림, Cron, 브리핑, 알림 규칙 |
+| `alert-manager` | 알림/Cron 관리 | Telegram, 알림, Cron, 브리핑 전달, 알림 규칙 |
+
+### 데이터·실행·분석 팀
+| 에이전트 | 전문 영역 | 트리거 키워드 |
+|---------|----------|-------------|
+| `data-engineer` | 데이터 수집/백필/품질 | 수집, 백필, backfill, 분봉, gap, 데이터 품질, warmup, screener 데이터 |
+| `execution-specialist` | 주문 실행/KIS 정합/ATS | 주문 실행, 체결, 슬리피지, ATS, 라우팅, rate limit, KIS API, order_router |
+| `llm-analyst` | LLM 시장분석/브리핑 콘텐츠 | LLM 분석, 브리핑 내용, 시장 분석, KRX, news, macro, 프롬프트, 스코어링 |
 
 ## 도메인별 서브 오케스트레이터
 
@@ -58,11 +65,16 @@ RL_mppo는 deprecate(2026-05-15)되어 재학습 옵션으로만 보존된다.
 전략 평가/승격/배포 관련          → 전략/모델 승격 팀 (→ strategy-lab Phase 4-5)
 코드 리뷰/테스트/정리             → 코드 유지보수 팀
 시스템/장애/알림 관련             → 운영/모니터링 팀 (→ ops-harness 스킬)
+데이터 수집/백필/품질 관련         → data-engineer
+주문 실행/체결/ATS/KIS API 관련   → execution-specialist
+LLM 분석/브리핑 콘텐츠 관련        → llm-analyst
 RL 재학습/복귀 검토 (명시적)      → rl-pipeline 스킬 (DEPRECATED, 예외적)
 ```
 
 ### 2차: 전문가 선택
 키워드 매칭으로 가장 적합한 전문가 1명 또는 파이프라인 선택.
+
+**모호어 처리 — "롤백"**: 전략/모델 되돌리기(이전 설정·배포 버전 복원)는 `model-deployer`, 장애·운영 복구(프로세스/연결/포지션 정합성 복구)는 `incident-responder`. 맥락이 불분명하면 직전 작업이 배포면 model-deployer, 장애 대응 중이면 incident-responder로 라우팅한다.
 
 ```
 "BB 기반 새 전략 만들어줘"            → strategy-architect
@@ -80,6 +92,11 @@ RL 재학습/복귀 검토 (명시적)      → rl-pipeline 스킬 (DEPRECATED, 
 "WebSocket 끊겼어"                   → incident-responder
 "Telegram 알림 설정해줘"             → alert-manager
 "전체 헬스체크"                      → ops-harness
+"분봉 데이터 gap 메워줘"              → data-engineer
+"백필 무결성 확인해줘"                → data-engineer
+"슬리피지 모델 검증해줘"              → execution-specialist
+"ATS 라우팅 규칙 손봐줘"             → execution-specialist
+"장전 브리핑 분석 내용 개선해줘"       → llm-analyst
 "RL 모델 재학습 검토" (예외)          → rl-pipeline (DEPRECATED)
 ```
 
