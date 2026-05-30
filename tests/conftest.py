@@ -99,3 +99,23 @@ def _reset_config_loader_singleton():
         ConfigLoader._cache.clear()
     except (ImportError, AttributeError):
         pass
+
+
+@pytest.fixture(autouse=True)
+def _reset_clickhouse_client_singleton():
+    """Reset ClickHouseClient singleton between tests to prevent config pollution.
+
+    ClickHouseClient is a singleton: the first ``ClickHouseClient(cfg)`` call
+    locks the config and subsequent calls ignore their argument. A test that
+    instantiates it with throwaway/credential-less config (e.g. TLS tests that
+    strip CLICKHOUSE_* env) would otherwise leave the singleton pinned to the
+    wrong credentials, making later DB-touching tests fail auth in the full
+    suite while passing in isolation.
+    """
+    yield
+    try:
+        from shared.db.client import ClickHouseClient
+
+        ClickHouseClient.reset_singleton()
+    except (ImportError, AttributeError):
+        pass
