@@ -1,6 +1,6 @@
 # Vite Dashboard → Next.js Migration Plan
 
-**Status**: draft (2026-05-28)
+**Status**: ✅ DONE (2026-05-31) — phases 0–5 shipped (PRs #346, #350, #353, #355, #359–#361). Residual cleanup tracked in docs/superpowers/specs/2026-05-31-nextjs-consolidation-cleanup-design.md.
 **Owner**: operator
 **Driver**: PR introducing Caddy 5080 (this PR) — consolidates two web entries
 behind one external port. Long-term goal is one codebase for the whole UI.

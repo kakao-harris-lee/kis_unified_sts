@@ -1,7 +1,10 @@
 """FastAPI dashboard application.
 
-Serves the React SPA frontend and provides API endpoints for trading data.
-The React app is built from dashboard-frontend/ and served as static files.
+API-only service: provides trading-data endpoints under /api/* plus /health,
+/docs, /metrics, and the /ws WebSocket. The UI is served separately by the
+Next.js app (strategy-builder-ui) and reaches these endpoints through Caddy on
+:5080. (The Vite SPA that used to be served from here was removed in the
+Next.js consolidation — see docs/plans/2026-05-28-vite-dashboard-to-nextjs-migration.md.)
 """
 
 from __future__ import annotations
@@ -187,7 +190,7 @@ def create_app(
 
 
 def _register_routes(app: FastAPI) -> None:
-    """Register API routes and React SPA static file serving."""
+    """Register API routers, the /ws WebSocket, and the root pointer endpoint."""
     from services.dashboard.routes import (
         health,
         kis_builder,
