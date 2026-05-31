@@ -1,7 +1,6 @@
 """Unit tests for WebSocket health monitoring."""
-import pytest
+
 import time
-from unittest.mock import MagicMock, patch
 
 
 class TestHealthStatusInitialization:
@@ -155,13 +154,16 @@ class TestHealthStatusComprehensive:
     """Tests for comprehensive health status reporting."""
 
     def test_health_status_all_fields_present(self, mock_adapter):
-        """Test health status contains all required fields."""
+        """Test health status contains all required fields including new counters."""
         status = mock_adapter.get_health_status()
 
         assert "connected" in status
         assert "running" in status
         assert "last_message_ts" in status
         assert "staleness_seconds" in status
+        assert "messages_received" in status
+        assert "messages_dropped" in status
+        assert "queue_depth" in status
 
     def test_health_status_field_types(self, mock_adapter):
         """Test health status field types are correct."""
@@ -169,8 +171,21 @@ class TestHealthStatusComprehensive:
 
         assert isinstance(status["connected"], bool)
         assert isinstance(status["running"], bool)
-        assert status["last_message_ts"] is None or isinstance(status["last_message_ts"], float)
-        assert status["staleness_seconds"] is None or isinstance(status["staleness_seconds"], float)
+        assert status["last_message_ts"] is None or isinstance(
+            status["last_message_ts"], float
+        )
+        assert status["staleness_seconds"] is None or isinstance(
+            status["staleness_seconds"], float
+        )
+        assert isinstance(status["messages_received"], int)
+        assert isinstance(status["messages_dropped"], int)
+        assert isinstance(status["queue_depth"], int)
+
+    def test_initial_counters_are_zero(self, mock_adapter):
+        """messages_received and messages_dropped start at zero."""
+        status = mock_adapter.get_health_status()
+        assert status["messages_received"] == 0
+        assert status["messages_dropped"] == 0
 
     def test_health_status_with_all_states_true(self, mock_adapter):
         """Test health status when all states are true."""
