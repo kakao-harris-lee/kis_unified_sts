@@ -156,8 +156,12 @@ services:
 
   # =============================================================================
   # Caddy reverse proxy — single external entry on host port 5080.
-  # Routes /builder, /execute, /_next/*, /api/kis-builder/* → strategy-builder-ui:3100.
-  # Everything else → strategy-builder-ui:3100 (Next.js UI + /_next assets).
+  # STS API → dashboard:8001 (FastAPI, API-only): /api/kis-builder/*,
+  #   /api/{trading,signals,trades,strategies,strategy-lab,strategy-builder,
+  #   metrics,health}*, plus /health, /docs, /openapi.json, /redoc, /metrics.
+  # Everything else → strategy-builder-ui:3100 (Next.js): UI pages, /_next/*,
+  #   and the upstream-compat /api/{auth,account,orders,market,symbols,files}
+  #   proxy handled by the Next.js catch-all.
   # HTTP-only; operator constraint allows only port 5080 externally.
   # =============================================================================
   caddy:
