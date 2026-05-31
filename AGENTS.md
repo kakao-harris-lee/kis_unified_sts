@@ -10,7 +10,7 @@ Treat `CLAUDE.md` and project memory (`/home/deploy/.claude/projects/-home-deplo
 - `config/`: YAML configs (`strategies/{stock,futures}`, `exit/`, `ml/`, infra configs).
 - `cli/main.py`: `sts` command entrypoint.
 - `tests/unit`, `tests/integration`: backend test suites.
-- `dashboard-frontend/`: React + Vite UI.
+- `strategy-builder-ui/`: Next.js (App Router) UI — the single frontend. Serves the dashboard (Cockpit/positions/signals/trades) and the strategy builder/executor.
 
 ## Architecture & Trading Rules
 - Configuration-driven only: do not hardcode thresholds, symbols, or risk values; place them in YAML.
@@ -30,7 +30,7 @@ Treat `CLAUDE.md` and project memory (`/home/deploy/.claude/projects/-home-deplo
 - `ruff check .` / `black --check .` / `mypy shared/ --ignore-missing-imports --no-error-summary`.
 - `docker compose up -d`: start local stack.
 - `sts --help`: inspect CLI flows (trade, paper, backtest, optimize, mlflow).
-- Frontend: `cd dashboard-frontend && npm run dev|build|lint`.
+- Frontend: `cd strategy-builder-ui && npm run dev|build|lint`.
 
 ## Testing, Commits, and PRs
 - Test naming: `tests/**/test_*.py`; use markers `unit`, `integration`, `slow`, `backtest`.

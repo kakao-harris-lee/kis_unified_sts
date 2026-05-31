@@ -157,7 +157,7 @@ services:
   # =============================================================================
   # Caddy reverse proxy — single external entry on host port 5080.
   # Routes /builder, /execute, /_next/*, /api/kis-builder/* → strategy-builder-ui:3100.
-  # Everything else → dashboard:8001 (Vite SPA + FastAPI).
+  # Everything else → strategy-builder-ui:3100 (Next.js UI + /_next assets).
   # HTTP-only; operator constraint allows only port 5080 externally.
   # =============================================================================
   caddy:
