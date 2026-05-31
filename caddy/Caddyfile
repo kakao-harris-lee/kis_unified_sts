@@ -12,7 +12,8 @@
 #   /api/trading*,
 #   /health, /docs,
 #   /openapi.json,
-#   /redoc, /metrics    → dashboard:8001 (STS native endpoints)
+#   /redoc, /metrics,
+#   /ws (WebSocket)     → dashboard:8001 (STS native endpoints)
 #   everything else     → strategy-builder-ui:3100 (Next.js)
 #                          ← the Next.js catch-all proxy at
 #                            /api/[...path]/route.ts handles legacy
@@ -51,6 +52,7 @@
 		path /api/metrics /api/metrics/*
 		path /api/trading /api/trading/*
 		path /health /docs /openapi.json /redoc /metrics
+		path /ws
 	}
 	handle @to_dashboard {
 		reverse_proxy dashboard:8001
