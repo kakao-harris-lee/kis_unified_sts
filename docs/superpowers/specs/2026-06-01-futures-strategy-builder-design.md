@@ -61,6 +61,20 @@
 > `strategy-builder-ui/UPSTREAM.md` 참조)다. 본 작업은 **라이브 경로(constants.ts +
 > kis-builder/register-paper)** 를 기준으로 한다.
 
+### 발견된 선행조건: camelCase↔snake_case 직렬화 (PR 1)
+
+검토 중 경험적으로 확인된 **기존 잠재 버그**: 프론트 `BuilderState`는 camelCase
+(`indicatorId`/`displayName`/`indicatorAlias`/`stopLoss`)이고 `registerPaperStrategy`는 변환 없이
+그대로 전송하지만(`apiPost` = `JSON.stringify`), Python 스키마(`shared/strategy_builder/schema.py`)는
+**snake_case + `extra="forbid"` + alias 없음**이라 **실전 전략 등록 시 stock·futures 모두 HTTP 400**이
+난다(`BuilderState.model_validate(camelCase)` → REJECTED 확인). register-paper는 #356/#357로 최근
+추가되어 실제 상태로 미검증된 상태다.
+
+→ 선물 빌더가 동작하려면(주식 포함) 이 정합이 **필수 선행 조건**이다. 운영 결정(2026-06-01)에 따라
+**별도 선행 PR(PR 1)** 로 분리한다. 해법: 빌더 입력 모델에 `alias_generator=to_camel`
++ `populate_by_name=True`를 추가해 camel(프론트)·snake(테스트/YAML)을 모두 수용하고, `model_dump`는
+snake로 유지하여 런타임/YAML은 불변. 상세 태스크: `docs/superpowers/plans/2026-06-01-futures-strategy-builder.md` PR 1.
+
 ---
 
 ## 2. 스코프 & 비목표
