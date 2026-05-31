@@ -982,6 +982,16 @@ class TradingOrchestrator:
         # Reusable ClickHouse client for the flush loop (created at task start).
         self._shadow_loggers_ch_client: Any | None = None
 
+        # Feed drop tracking: remember the drop count from the previous
+        # _record_market_metrics call so we can emit a WARNING only when the
+        # delta increases (not on every tick).
+        self._feed_drop_last: dict[str, int] = {"stock": 0, "futures": 0}
+        # Cumulative warmup-miss counter (symbol returned < min_candles bars).
+        self._warmup_miss_count: int = 0
+        # Feed-observability thresholds loaded lazily from streaming.yaml.
+        # None means "not loaded yet"; populated on first _record_market_metrics call.
+        self._feed_obs_cfg: dict[str, Any] | None = None
+
         logger.info(
             f"TradingOrchestrator initialized: "
             f"{config.asset_class}/{config.strategy_name}"
@@ -1285,7 +1295,8 @@ class TradingOrchestrator:
             except Exception as e:
                 logger.warning(
                     "prev_close prefetch failed for %s: %s — Setup A will skip",
-                    symbol, e,
+                    symbol,
+                    e,
                 )
                 continue
             prev_close = float(price.get("prev_close", 0) or 0)
@@ -1293,7 +1304,8 @@ class TradingOrchestrator:
                 self._futures_daily_reference[symbol] = {"prev_close": prev_close}
                 logger.info(
                     "prev_close prefetched: %s = %s (Setup A gap_pct ready)",
-                    symbol, prev_close,
+                    symbol,
+                    prev_close,
                 )
 
     def _init_price_feeds(self, kis_config) -> Any | None:
@@ -3600,7 +3612,15 @@ class TradingOrchestrator:
             ValueError,
             IndexError,
         ) as e:
-            logger.debug(f"ClickHouse prewarm failed for {symbol}: {e}")
+            logger.warning(
+                "ClickHouse prewarm query failed for %s "
+                "(asset=%s db=%s table=%s): %s",
+                symbol,
+                self.config.asset_class,
+                db,
+                table,
+                e,
+            )
             return []
 
     async def _fetch_daily_candles_from_clickhouse(
@@ -3699,6 +3719,10 @@ class TradingOrchestrator:
         """
         logger.info(f"Prewarm starting for {len(symbols)} symbols")
 
+        # Load warmup observability threshold from config (config-driven, no hardcoding).
+        obs_cfg = self._get_feed_obs_cfg()
+        warmup_min_candles: int = int(obs_cfg.get("warmup_min_candles", 20))
+
         # 1st priority: Redis candle cache (instant, works for all assets)
         redis_hits = await self._load_candle_cache_from_redis()
 
@@ -3716,7 +3740,9 @@ class TradingOrchestrator:
                 # Futures need more candles for 15m resampling strategies
                 # (e.g. BB period=43 on 15m bars → 43*15=645 1-min candles).
                 ch_limit = 700 if self.config.asset_class == "futures" else 120
-                candles = await self._fetch_candles_from_clickhouse(symbol, limit=ch_limit)
+                candles = await self._fetch_candles_from_clickhouse(
+                    symbol, limit=ch_limit
+                )
                 if candles:
                     ch_hits += 1
                 elif self._kis_client.is_rate_limited:
@@ -3735,8 +3761,30 @@ class TradingOrchestrator:
                 if candles:
                     self._indicator_engine.seed_candles(symbol, candles)
                     logger.info(f"Prewarm {symbol}: {len(candles)} candles seeded")
+                    if len(candles) < warmup_min_candles:
+                        # Not a hard miss (some bars returned) but below threshold —
+                        # indicators may be under-initialised.
+                        logger.warning(
+                            "Prewarm %s: only %d candles returned "
+                            "(asset=%s, min_expected=%d); indicators may be under-initialised",
+                            symbol,
+                            len(candles),
+                            self.config.asset_class,
+                            warmup_min_candles,
+                        )
+                        self._warmup_miss_count += 1
+                        self._metrics.record_warmup_miss(self._warmup_miss_count)
                 else:
-                    logger.debug(f"Prewarm {symbol}: no candles returned")
+                    # All sources returned 0 bars — emit a visible WARNING.
+                    self._warmup_miss_count += 1
+                    self._metrics.record_warmup_miss(self._warmup_miss_count)
+                    logger.warning(
+                        "Prewarm %s: no candles returned from any source "
+                        "(asset=%s); symbol will start cold (warmup_misses=%d)",
+                        symbol,
+                        self.config.asset_class,
+                        self._warmup_miss_count,
+                    )
 
                 # Fetch and seed daily candles from ClickHouse (for multi-timeframe strategies)
                 daily_candles = await self._fetch_daily_candles_from_clickhouse(
@@ -5233,8 +5281,24 @@ class TradingOrchestrator:
         except (InfrastructureError, ValidationError) as e:
             logger.error(f"Risk state update failed: {e}", exc_info=True)
 
+    def _get_feed_obs_cfg(self) -> dict[str, Any]:
+        """Load feed observability thresholds from streaming.yaml (cached)."""
+        if self._feed_obs_cfg is None:
+            try:
+                cfg = ConfigLoader.load("streaming.yaml")
+                self._feed_obs_cfg = cfg.get("feed_observability", {})
+            except Exception:
+                self._feed_obs_cfg = {}
+        return self._feed_obs_cfg
+
     def _record_market_metrics(self):
-        """Record staleness metrics."""
+        """Record staleness and feed-health metrics, warn on drops/stale data."""
+        obs_cfg = self._get_feed_obs_cfg()
+        drop_warn_threshold: int = int(obs_cfg.get("drop_warn_threshold", 1))
+        stale_warn_threshold: float = float(
+            obs_cfg.get("stale_warn_threshold_seconds", 60.0)
+        )
+
         # Report REST-sourced staleness. For futures the snapshot is populated
         # from WebSocket cache, so this metric reflects WebSocket freshness.
         if self._market_data_snapshot:
@@ -5246,10 +5310,57 @@ class TradingOrchestrator:
             ws_staleness = self._stock_price_feed.get_staleness_seconds()
             if ws_staleness is not None:
                 self._metrics.record_websocket_staleness("stock", ws_staleness)
+                if ws_staleness >= stale_warn_threshold:
+                    logger.warning(
+                        "stock feed stale: no tick for %.1fs (threshold=%.1fs)",
+                        ws_staleness,
+                        stale_warn_threshold,
+                    )
+            # Check for new drops since the last metric cycle.
+            # stock feed exposes 'dropped_count' via get_health_status().
+            try:
+                stock_health = self._stock_price_feed.get_health_status()
+                total_stock_drops: int = int(stock_health.get("dropped_count", 0))
+                delta = total_stock_drops - self._feed_drop_last["stock"]
+                if delta >= drop_warn_threshold:
+                    logger.warning(
+                        "stock feed dropped %d messages (total=%d) since last check",
+                        delta,
+                        total_stock_drops,
+                    )
+                self._feed_drop_last["stock"] = total_stock_drops
+                self._metrics.record_feed_drops("stock", total_stock_drops)
+            except Exception as exc:
+                logger.debug("stock feed health check failed: %s", exc)
+
         if self._futures_price_feed:
             ws_staleness = self._futures_price_feed.get_staleness_seconds()
             if ws_staleness is not None:
                 self._metrics.record_websocket_staleness("futures", ws_staleness)
+                if ws_staleness >= stale_warn_threshold:
+                    logger.warning(
+                        "futures feed stale: no tick for %.1fs (threshold=%.1fs)",
+                        ws_staleness,
+                        stale_warn_threshold,
+                    )
+            # futures feed exposes 'messages_dropped' via get_health_status()
+            # (spread from adapter health).
+            try:
+                futures_health = self._futures_price_feed.get_health_status()
+                total_futures_drops: int = int(
+                    futures_health.get("messages_dropped", 0)
+                )
+                delta = total_futures_drops - self._feed_drop_last["futures"]
+                if delta >= drop_warn_threshold:
+                    logger.warning(
+                        "futures feed dropped %d messages (total=%d) since last check",
+                        delta,
+                        total_futures_drops,
+                    )
+                self._feed_drop_last["futures"] = total_futures_drops
+                self._metrics.record_feed_drops("futures", total_futures_drops)
+            except Exception as exc:
+                logger.debug("futures feed health check failed: %s", exc)
 
         # Universe / indicator health
         if self._indicator_engine:
@@ -7843,6 +7954,8 @@ class TradingOrchestrator:
                     self._entry_slippage_stats.get("avg_adverse_ticks", 0.0)
                 ),
                 "start_time": self.start_time.isoformat() if self.start_time else None,
+                "feed_drops": dict(self._feed_drop_last),
+                "warmup_misses": self._warmup_miss_count,
             },
             "positions": position_stats,
             "strategies": strategy_info,

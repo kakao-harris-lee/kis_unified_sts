@@ -67,6 +67,19 @@ futures_feed:
   orderbook_stale_threshold_seconds: 3.0    # trade-only 지속 시 호가 stale 판단 임계값
   orderbook_missing_warn_interval_seconds: 30.0  # 호가 누락 경고 최소 간격
 
+# Feed observability thresholds
+feed_observability:
+  # Emit WARNING when tick drops increase by at least this delta since last check.
+  # Set to 0 to warn on every single drop (noisy); 1 means any new drop triggers a warning.
+  drop_warn_threshold: 1
+  # Emit WARNING when last_message_age_s (futures adapter) or staleness_seconds (stock)
+  # exceeds this value.  Use a value larger than the failover.staleness_threshold_seconds
+  # (30s) so warning fires before failover, but after transient quiet periods.
+  stale_warn_threshold_seconds: 60.0
+  # Emit WARNING when warmup returns fewer bars than this minimum for any symbol.
+  # 0 means warn only when warmup returns 0 bars.
+  warmup_min_candles: 20
+
 # KIS REST API Rate Limiter 설정
 rate_limiter:
   default_rate: ${KIS_API_RATE_LIMIT:5}   # 초당 최대 요청 수

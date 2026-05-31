@@ -315,6 +315,18 @@ class MetricsCollector:
             "Price improvement in basis points per venue",
             ["venue"],
         )
+        # Feed-level drop counters: cumulative messages dropped by WebSocket feed queues.
+        # Rising value → queue overrun → investigate throughput or feed lag.
+        self.prom_feed_drops_total = Gauge(
+            "trading_feed_drops_total",
+            "Cumulative messages dropped by the WebSocket price feed (queue full)",
+            ["feed"],
+        )
+        # Warmup miss counter: symbols that returned 0 bars from ClickHouse warmup.
+        self.prom_warmup_misses_total = Gauge(
+            "trading_warmup_misses_total",
+            "Cumulative symbols that returned fewer bars than the minimum warmup threshold",
+        )
 
         # Histograms
         self.prom_trade_pnl = Histogram(
@@ -539,6 +551,25 @@ class MetricsCollector:
         if HAS_PROMETHEUS:
             self.prom_websocket_staleness.labels(feed=feed).set(staleness_seconds)
 
+    def record_feed_drops(self, feed: str, total_drops: int) -> None:
+        """Feed message drop counter 기록 (stock/futures).
+
+        Args:
+            feed: "stock" or "futures".
+            total_drops: Cumulative drop count from feed health status.
+        """
+        if HAS_PROMETHEUS:
+            self.prom_feed_drops_total.labels(feed=feed).set(total_drops)
+
+    def record_warmup_miss(self, cumulative_misses: int) -> None:
+        """Warmup miss (symbol returned < min bars) counter 기록.
+
+        Args:
+            cumulative_misses: Cumulative count of warmup-miss events.
+        """
+        if HAS_PROMETHEUS:
+            self.prom_warmup_misses_total.set(cumulative_misses)
+
     def record_order_queue_depth(self, depth: int):
         """Order queue depth 기록"""
         self.metrics.order_queue_depth = depth
@@ -591,9 +622,7 @@ class MetricsCollector:
             self.prom_shadow_logger_dropped_batches.labels(logger=logger).set(
                 dropped_batches
             )
-            self.prom_shadow_logger_dropped_rows.labels(logger=logger).set(
-                dropped_rows
-            )
+            self.prom_shadow_logger_dropped_rows.labels(logger=logger).set(dropped_rows)
             self.prom_shadow_logger_last_flush_rows.labels(logger=logger).set(
                 last_flush_rows
             )
