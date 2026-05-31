@@ -164,8 +164,11 @@ class TestFeedDropWarnings:
             orch._feed_drop_last["futures"] == 7
         ), "Orchestrator should read 'messages_dropped' (futures adapter key)"
 
-    def test_metrics_collector_called_with_feed_drops(self):
-        """A: record_feed_drops is called with cumulative count for each feed."""
+    def test_metrics_collector_called_with_feed_drop_delta(self):
+        """A: record_feed_drops is called with the delta (not cumulative total).
+
+        Baseline is 0, feed reports 10 drops → delta = 10.
+        """
         orch = _make_minimal_orchestrator("stock")
         _patch_feed_obs_cfg(orch)
 
@@ -176,6 +179,7 @@ class TestFeedDropWarnings:
 
         orch._record_market_metrics()
 
+        # Orchestrator passes delta (new drops since last check), not cumulative.
         orch._metrics.record_feed_drops.assert_called_with("stock", 10)
 
     def test_stale_feed_triggers_warning(self, caplog):
@@ -271,7 +275,7 @@ class TestWarmupMissWarnings:
         assert any(
             "no candles returned" in m for m in warning_msgs
         ), f"Expected 'no candles returned' warning; got: {warning_msgs}"
-        orch._metrics.record_warmup_miss.assert_called_with(1)
+        orch._metrics.record_warmup_miss.assert_called()
 
     @pytest.mark.asyncio
     async def test_below_min_candles_logs_warning(self, caplog):
@@ -310,7 +314,7 @@ class TestWarmupMissWarnings:
         assert any(
             "under-initialised" in m or "only" in m for m in warning_msgs
         ), f"Expected under-initialised warning; got: {warning_msgs}"
-        orch._metrics.record_warmup_miss.assert_called_with(1)
+        orch._metrics.record_warmup_miss.assert_called()
 
     @pytest.mark.asyncio
     async def test_sufficient_candles_no_miss(self, caplog):
@@ -444,3 +448,229 @@ class TestStatusIncludesFeedHealth:
 
         assert status["stats"]["feed_drops"] == {"stock": 7, "futures": 0}
         assert status["stats"]["warmup_misses"] == 2
+
+
+# ---------------------------------------------------------------------------
+# NEW FIX 4: Real-object tests — adapter counters, feed propagation, restart clamp
+# ---------------------------------------------------------------------------
+
+
+class TestRealAdapterDropCounters:
+    """Fix 4: Tests using a REAL KISWebSocketAdapter to prevent regression.
+
+    These tests would FAIL if someone reverted _messages_dropped to hardcoded 0.
+    """
+
+    def _make_real_adapter(self):
+        """Construct a real KISWebSocketAdapter without a network connection."""
+        from unittest.mock import patch
+
+        from shared.kis.auth import KISAuthConfig
+        from shared.kis.websocket import KISWebSocketAdapter
+
+        config = KISAuthConfig(
+            app_key="test_key",
+            app_secret="test_secret",
+            is_real=False,
+        )
+        with patch("shared.kis.websocket.websocket.WebSocketApp"):
+            return KISWebSocketAdapter(config)
+
+    def test_adapter_initial_counters_are_zero(self):
+        """Real adapter starts with messages_received=0 and messages_dropped=0."""
+        adapter = self._make_real_adapter()
+        status = adapter.get_health_status()
+        assert "messages_received" in status, "messages_received key must be present"
+        assert "messages_dropped" in status, "messages_dropped key must be present"
+        assert status["messages_received"] == 0
+        assert status["messages_dropped"] == 0
+
+    def test_adapter_messages_received_increments_on_message(self):
+        """Each _on_message call increments messages_received."""
+        adapter = self._make_real_adapter()
+        adapter._on_message(None, "msg1")
+        adapter._on_message(None, "msg2")
+        adapter._on_message(None, "msg3")
+
+        status = adapter.get_health_status()
+        assert status["messages_received"] == 3
+
+    def test_adapter_messages_dropped_increments_on_queue_full(self):
+        """When the queue is full, messages_dropped increments by 1 per overflow."""
+        import queue as _queue
+
+        adapter = self._make_real_adapter()
+
+        # Fill the queue to capacity with dummy messages so put_nowait raises Full.
+        while True:
+            try:
+                adapter._message_queue.put_nowait("filler")
+            except _queue.Full:
+                break
+
+        received_before = adapter.get_health_status()["messages_received"]
+        dropped_before = adapter.get_health_status()["messages_dropped"]
+
+        # This message should trigger the queue.Full path.
+        adapter._on_message(None, "overflow_msg")
+
+        status = adapter.get_health_status()
+        assert status["messages_received"] == received_before + 1
+        assert status["messages_dropped"] == dropped_before + 1, (
+            "messages_dropped must increase by 1 when queue is full; "
+            "reverted to hardcoded 0?"
+        )
+
+    def test_adapter_no_drops_without_overflow(self):
+        """Normal message delivery does not increment messages_dropped."""
+        adapter = self._make_real_adapter()
+        # Drain queue so put_nowait always succeeds.
+        import queue as _queue
+
+        while not adapter._message_queue.empty():
+            try:
+                adapter._message_queue.get_nowait()
+            except _queue.Empty:
+                break
+
+        adapter._on_message(None, "msg1")
+        adapter._on_message(None, "msg2")
+
+        status = adapter.get_health_status()
+        assert status["messages_dropped"] == 0
+
+
+class TestFuturesFeedPropagatesAdapterDrops:
+    """Fix 4: Real KISFuturesPriceFeed.get_health_status() must expose messages_dropped."""
+
+    def test_futures_feed_health_includes_messages_dropped(self):
+        """messages_dropped must appear in futures feed health (spread from adapter)."""
+        from unittest.mock import patch
+
+        from shared.kis.auth import KISAuthConfig
+
+        config = KISAuthConfig(
+            app_key="test_key",
+            app_secret="test_secret",
+            is_real=False,
+        )
+
+        with (
+            patch("shared.kis.websocket.websocket.WebSocketApp"),
+            patch(
+                "shared.kis.futures_feed._load_futures_feed_config",
+                return_value={
+                    "max_symbols": 10,
+                    "subscription_delay": 0.1,
+                    "connection_timeout": 5.0,
+                    "shutdown_timeout": 5.0,
+                    "orderbook_stale_threshold_seconds": 3.0,
+                    "orderbook_missing_warn_interval_seconds": 30.0,
+                },
+            ),
+        ):
+            from shared.kis.futures_feed import KISFuturesPriceFeed
+
+            feed = KISFuturesPriceFeed(config)
+
+        status = feed.get_health_status()
+        assert "messages_dropped" in status, (
+            "KISFuturesPriceFeed.get_health_status() must expose 'messages_dropped' "
+            "from the adapter — key is missing, did Feed.get_health_status() lose the spread?"
+        )
+        assert (
+            "messages_received" in status
+        ), "KISFuturesPriceFeed.get_health_status() must expose 'messages_received' from adapter"
+
+    def test_futures_feed_health_adapter_drops_reflect_real_counter(self):
+        """messages_dropped in feed health reflects real adapter counter (not 0)."""
+        import queue as _queue
+        from unittest.mock import patch
+
+        from shared.kis.auth import KISAuthConfig
+
+        config = KISAuthConfig(
+            app_key="test_key",
+            app_secret="test_secret",
+            is_real=False,
+        )
+
+        with (
+            patch("shared.kis.websocket.websocket.WebSocketApp"),
+            patch(
+                "shared.kis.futures_feed._load_futures_feed_config",
+                return_value={
+                    "max_symbols": 10,
+                    "subscription_delay": 0.1,
+                    "connection_timeout": 5.0,
+                    "shutdown_timeout": 5.0,
+                    "orderbook_stale_threshold_seconds": 3.0,
+                    "orderbook_missing_warn_interval_seconds": 30.0,
+                },
+            ),
+        ):
+            from shared.kis.futures_feed import KISFuturesPriceFeed
+
+            feed = KISFuturesPriceFeed(config)
+
+        # Fill adapter queue to force a drop.
+        while True:
+            try:
+                feed._adapter._message_queue.put_nowait("filler")
+            except _queue.Full:
+                break
+        feed._adapter._on_message(None, "overflow")
+
+        status = feed.get_health_status()
+        assert (
+            status["messages_dropped"] == 1
+        ), "Feed health must reflect actual drop count from adapter"
+
+
+class TestDeltaClampRestartSafety:
+    """Fix 4: Delta clamp prevents negative delta when feed restarts."""
+
+    def test_counter_backward_resets_baseline_and_warns(self, caplog):
+        """If total drops go backwards (feed restarted), delta = new total, not negative."""
+        import logging
+
+        orch = _make_minimal_orchestrator("futures")
+        _patch_feed_obs_cfg(orch, {"drop_warn_threshold": 1})
+        # Simulate prior session: 50 drops seen
+        orch._feed_drop_last["futures"] = 50
+
+        mock_feed = MagicMock()
+        mock_feed.get_staleness_seconds.return_value = 0.5
+        # Feed restarted: counter reset to 3 (< 50 → backwards)
+        mock_feed.get_health_status.return_value = {"messages_dropped": 3}
+        orch._futures_price_feed = mock_feed
+
+        with caplog.at_level(logging.WARNING, logger="services.trading.orchestrator"):
+            orch._record_market_metrics()
+
+        # Baseline should have been reset to 0, delta = 3, so WARNING fires.
+        assert orch._feed_drop_last["futures"] == 3
+        assert any(
+            "futures feed dropped" in r.message for r in caplog.records
+        ), "After restart, the new drops (delta=3) should trigger a warning"
+        # record_feed_drops called with delta=3 (not -47)
+        orch._metrics.record_feed_drops.assert_called_with("futures", 3)
+
+    def test_counter_backward_stock_resets_baseline(self):
+        """Stock: backwards counter triggers baseline reset; no negative delta."""
+        orch = _make_minimal_orchestrator("stock")
+        _patch_feed_obs_cfg(
+            orch, {"drop_warn_threshold": 100}
+        )  # high threshold → no warning
+        orch._feed_drop_last["stock"] = 100
+
+        mock_feed = MagicMock()
+        mock_feed.get_staleness_seconds.return_value = 0.5
+        mock_feed.get_health_status.return_value = {"dropped_count": 5}
+        orch._stock_price_feed = mock_feed
+
+        orch._record_market_metrics()
+
+        # baseline reset → delta = 5, no warning (threshold=100), but counter updated
+        assert orch._feed_drop_last["stock"] == 5
+        orch._metrics.record_feed_drops.assert_called_with("stock", 5)

@@ -317,13 +317,15 @@ class MetricsCollector:
         )
         # Feed-level drop counters: cumulative messages dropped by WebSocket feed queues.
         # Rising value → queue overrun → investigate throughput or feed lag.
-        self.prom_feed_drops_total = Gauge(
+        # Counter semantics: callers pass the delta (new drops since last check).
+        self.prom_feed_drops_total = Counter(
             "trading_feed_drops_total",
             "Cumulative messages dropped by the WebSocket price feed (queue full)",
             ["feed"],
         )
         # Warmup miss counter: symbols that returned 0 bars from ClickHouse warmup.
-        self.prom_warmup_misses_total = Gauge(
+        # Counter semantics: callers call once per miss event.
+        self.prom_warmup_misses_total = Counter(
             "trading_warmup_misses_total",
             "Cumulative symbols that returned fewer bars than the minimum warmup threshold",
         )
@@ -551,24 +553,24 @@ class MetricsCollector:
         if HAS_PROMETHEUS:
             self.prom_websocket_staleness.labels(feed=feed).set(staleness_seconds)
 
-    def record_feed_drops(self, feed: str, total_drops: int) -> None:
-        """Feed message drop counter 기록 (stock/futures).
+    def record_feed_drops(self, feed: str, delta: int) -> None:
+        """Feed message drop Counter 기록 (stock/futures).
 
         Args:
             feed: "stock" or "futures".
-            total_drops: Cumulative drop count from feed health status.
+            delta: New drops since the last call (not cumulative total).
         """
-        if HAS_PROMETHEUS:
-            self.prom_feed_drops_total.labels(feed=feed).set(total_drops)
+        if HAS_PROMETHEUS and delta > 0:
+            self.prom_feed_drops_total.labels(feed=feed).inc(delta)
 
-    def record_warmup_miss(self, cumulative_misses: int) -> None:
-        """Warmup miss (symbol returned < min bars) counter 기록.
+    def record_warmup_miss(self, count: int = 1) -> None:
+        """Warmup miss (symbol returned < min bars) Counter 기록.
 
         Args:
-            cumulative_misses: Cumulative count of warmup-miss events.
+            count: Number of miss events to record (default 1 per miss).
         """
         if HAS_PROMETHEUS:
-            self.prom_warmup_misses_total.set(cumulative_misses)
+            self.prom_warmup_misses_total.inc(count)
 
     def record_order_queue_depth(self, depth: int):
         """Order queue depth 기록"""

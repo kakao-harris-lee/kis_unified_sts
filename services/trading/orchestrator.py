@@ -985,6 +985,7 @@ class TradingOrchestrator:
         # Feed drop tracking: remember the drop count from the previous
         # _record_market_metrics call so we can emit a WARNING only when the
         # delta increases (not on every tick).
+        # Process-local — resets to 0 whenever the feed object is recreated.
         self._feed_drop_last: dict[str, int] = {"stock": 0, "futures": 0}
         # Cumulative warmup-miss counter (symbol returned < min_candles bars).
         self._warmup_miss_count: int = 0
@@ -3773,11 +3774,11 @@ class TradingOrchestrator:
                             warmup_min_candles,
                         )
                         self._warmup_miss_count += 1
-                        self._metrics.record_warmup_miss(self._warmup_miss_count)
+                        self._metrics.record_warmup_miss()
                 else:
                     # All sources returned 0 bars — emit a visible WARNING.
                     self._warmup_miss_count += 1
-                    self._metrics.record_warmup_miss(self._warmup_miss_count)
+                    self._metrics.record_warmup_miss()
                     logger.warning(
                         "Prewarm %s: no candles returned from any source "
                         "(asset=%s); symbol will start cold (warmup_misses=%d)",
@@ -5321,6 +5322,10 @@ class TradingOrchestrator:
             try:
                 stock_health = self._stock_price_feed.get_health_status()
                 total_stock_drops: int = int(stock_health.get("dropped_count", 0))
+                # Clamp: if total went backwards the feed was restarted and its
+                # counter reset.  Treat the new total as the full delta.
+                if total_stock_drops < self._feed_drop_last["stock"]:
+                    self._feed_drop_last["stock"] = 0  # baseline reset
                 delta = total_stock_drops - self._feed_drop_last["stock"]
                 if delta >= drop_warn_threshold:
                     logger.warning(
@@ -5329,7 +5334,7 @@ class TradingOrchestrator:
                         total_stock_drops,
                     )
                 self._feed_drop_last["stock"] = total_stock_drops
-                self._metrics.record_feed_drops("stock", total_stock_drops)
+                self._metrics.record_feed_drops("stock", delta)
             except Exception as exc:
                 logger.debug("stock feed health check failed: %s", exc)
 
@@ -5350,6 +5355,10 @@ class TradingOrchestrator:
                 total_futures_drops: int = int(
                     futures_health.get("messages_dropped", 0)
                 )
+                # Clamp: if total went backwards the feed was restarted and its
+                # counter reset.  Treat the new total as the full delta.
+                if total_futures_drops < self._feed_drop_last["futures"]:
+                    self._feed_drop_last["futures"] = 0  # baseline reset
                 delta = total_futures_drops - self._feed_drop_last["futures"]
                 if delta >= drop_warn_threshold:
                     logger.warning(
@@ -5358,7 +5367,7 @@ class TradingOrchestrator:
                         total_futures_drops,
                     )
                 self._feed_drop_last["futures"] = total_futures_drops
-                self._metrics.record_feed_drops("futures", total_futures_drops)
+                self._metrics.record_feed_drops("futures", delta)
             except Exception as exc:
                 logger.debug("futures feed health check failed: %s", exc)
 
