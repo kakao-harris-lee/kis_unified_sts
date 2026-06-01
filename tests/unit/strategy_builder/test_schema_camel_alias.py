@@ -88,3 +88,9 @@ def test_model_dump_is_snake_case() -> None:
     assert "asset_class" in dumped
     assert "assetClass" not in dumped
     assert "indicator_id" in dumped["indicators"][0]
+    # Nested subtrees must also dump snake_case (guards against by_alias=True
+    # accidentally leaking camelCase into the materialized YAML).
+    assert "stop_loss" in dumped["risk"]
+    assert "stopLoss" not in dumped["risk"]
+    assert "indicator_alias" in dumped["entry"]["conditions"][0]["left"]
+    assert "indicatorAlias" not in dumped["entry"]["conditions"][0]["left"]
