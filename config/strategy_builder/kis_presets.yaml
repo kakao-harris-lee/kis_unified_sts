@@ -1553,7 +1553,7 @@ strategy_builder_kis:
           - id: vwap_1
             indicatorId: vwap
             alias: vwap
-            params: {period: 14}
+            params: {}
             output: value
         entry:
           logic: AND
