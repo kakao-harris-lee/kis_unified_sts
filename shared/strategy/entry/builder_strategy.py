@@ -5,10 +5,10 @@ STS paper trading runtime. Reads a serialized ``BuilderState`` from YAML
 config and evaluates entry conditions per cycle via
 ``StrategyBuilderEvaluator``.
 
-Stock-only by design (Phase 1 of the builder→paper bridge, 2026-05-29):
-futures strategies stay on the dedicated entry classes (setup_a, setup_c,
-bb_reversion_15m). When ``builder_state.asset_class != "stock"`` the
-entry no-ops with a one-time warning.
+Entry is long-only (Phase 1). Stock and futures both emit
+``signal_direction="long"``; short selling is a Phase-2 follow-up. The
+platform's short capability is unaffected (Setup A/C still trade both
+directions) — only the builder UI is long-only for now.
 
 The YAML shape this class consumes:
 
@@ -39,7 +39,6 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
-from zoneinfo import ZoneInfo
 
 from shared.config.mixins import ConfigMixin
 from shared.models.signal import Signal, SignalType
@@ -47,7 +46,6 @@ from shared.strategy.base import EntryContext, EntrySignalGenerator
 from shared.strategy_builder.evaluator import StrategyBuilderEvaluator
 from shared.strategy_builder.schema import BuilderState, SymbolSeries
 
-_KST = ZoneInfo("Asia/Seoul")
 logger = logging.getLogger(__name__)
 
 
@@ -73,7 +71,6 @@ class BuilderStrategyEntry(EntrySignalGenerator[BuilderStrategyConfig]):
         self._evaluator = StrategyBuilderEvaluator()
         self._state: BuilderState | None = None
         self._last_signal_at: dict[str, datetime] = {}
-        self._asset_mismatch_warned = False
         self._parse_state()
 
     def _validate_config(self) -> None:
@@ -107,14 +104,6 @@ class BuilderStrategyEntry(EntrySignalGenerator[BuilderStrategyConfig]):
 
     async def generate(self, context: EntryContext) -> Signal | None:
         if self._state is None:
-            return None
-        if self._state.asset_class != "stock":
-            if not self._asset_mismatch_warned:
-                logger.warning(
-                    "builder_v1 entry skipping: asset_class=%s (stock-only in Phase 1)",
-                    self._state.asset_class,
-                )
-                self._asset_mismatch_warned = True
             return None
 
         data = context.market_data or {}

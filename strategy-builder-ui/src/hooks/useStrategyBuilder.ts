@@ -474,6 +474,7 @@ export const INITIAL_STATE: BuilderState = {
     tags: [],
     author: "user",
   },
+  assetClass: "stock",
   indicators: [],
   entry: {
     logic: "AND",
@@ -501,6 +502,9 @@ function builderReducer(state: BuilderState, action: BuilderAction): BuilderStat
         ...state,
         metadata: { ...state.metadata, ...action.payload },
       };
+
+    case "SET_ASSET_CLASS":
+      return { ...state, assetClass: action.payload };
 
     case "ADD_INDICATOR":
       return {
@@ -706,7 +710,7 @@ function builderReducer(state: BuilderState, action: BuilderAction): BuilderStat
         return ind;
       });
 
-      return { ...loaded, indicators: fixedIndicators };
+      return { ...loaded, assetClass: loaded.assetClass ?? "stock", indicators: fixedIndicators };
     }
 
     case "RESET":
@@ -731,6 +735,12 @@ export function useStrategyBuilder(initialState?: BuilderState) {
   const setMetadata = useCallback((updates: Partial<BuilderMetadata>) => {
     dispatch({ type: "SET_METADATA", payload: updates });
   }, []);
+
+  const setAssetClass = useCallback(
+    (assetClass: "stock" | "futures") =>
+      dispatch({ type: "SET_ASSET_CLASS", payload: assetClass }),
+    [],
+  );
 
   // ============================================================
   // Indicator Actions
@@ -1185,6 +1195,7 @@ export function useStrategyBuilder(initialState?: BuilderState) {
     state,
     // Metadata
     setMetadata,
+    setAssetClass,
     // Indicators
     addIndicator,
     addIndicatorWithAutoConditions,

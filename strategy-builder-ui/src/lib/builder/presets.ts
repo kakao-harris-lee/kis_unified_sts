@@ -27,6 +27,7 @@ export const PRESET_STRATEGIES: PresetStrategy[] = [
         tags: ["ma", "crossover", "trend"],
         author: "KIS",
       },
+      assetClass: "stock",
       indicators: [
         { id: "sma_1", indicatorId: "sma", alias: "sma_fast", params: { period: 5 }, output: "value" },
         { id: "sma_2", indicatorId: "sma", alias: "sma_slow", params: { period: 20 }, output: "value" },
@@ -74,6 +75,7 @@ export const PRESET_STRATEGIES: PresetStrategy[] = [
         tags: ["momentum", "rate_of_change"],
         author: "KIS",
       },
+      assetClass: "stock",
       indicators: [
         { id: "roc_1", indicatorId: "roc", alias: "roc_1", params: { period: 60 }, output: "value" },
       ],
@@ -120,6 +122,7 @@ export const PRESET_STRATEGIES: PresetStrategy[] = [
         tags: ["disparity", "ma", "reversal"],
         author: "KIS",
       },
+      assetClass: "stock",
       indicators: [
         { id: "sma_1", indicatorId: "sma", alias: "sma_1", params: { period: 20 }, output: "value" },
       ],
@@ -166,6 +169,7 @@ export const PRESET_STRATEGIES: PresetStrategy[] = [
         tags: ["mean_reversion", "reversal"],
         author: "KIS",
       },
+      assetClass: "stock",
       indicators: [
         { id: "sma_1", indicatorId: "sma", alias: "sma_1", params: { period: 5 }, output: "value" },
       ],
@@ -212,6 +216,7 @@ export const PRESET_STRATEGIES: PresetStrategy[] = [
         tags: ["trend", "ma", "filter"],
         author: "KIS",
       },
+      assetClass: "stock",
       indicators: [
         { id: "sma_1", indicatorId: "sma", alias: "sma_1", params: { period: 60 }, output: "value" },
       ],
@@ -258,6 +263,7 @@ export const PRESET_STRATEGIES: PresetStrategy[] = [
         tags: ["volatility", "breakout", "atr"],
         author: "KIS",
       },
+      assetClass: "stock",
       indicators: [
         { id: "atr_1", indicatorId: "atr", alias: "atr_1", params: { period: 14 }, output: "value" },
       ],

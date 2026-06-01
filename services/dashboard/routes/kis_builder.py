@@ -614,6 +614,7 @@ class RegisterPaperRequest(BaseModel):
     stop_loss_pct: float = Field(default=5.0, ge=0)
     take_profit_pct: float = Field(default=10.0, ge=0)
     order_amount: int = Field(default=1_000_000, ge=0)
+    contracts: int = Field(default=1, ge=1, description="Futures contract count (futures only)")
     cooldown_seconds: int = Field(default=0, ge=0)
     min_confidence: float = Field(default=0.5, ge=0.0, le=1.0)
 
@@ -678,13 +679,15 @@ def _validate_builder_state(payload: dict[str, Any]) -> dict[str, Any]:
         raise HTTPException(
             status_code=400, detail=f"Invalid BuilderState: {exc}"
         ) from exc
-    if state.asset_class != "stock":
+    # Builder→paper supports stock and (long-only, paper) futures. Futures
+    # live activation stays behind config/futures_live.yaml + the Redis
+    # suspend flag — registration only materializes a paper YAML.
+    if state.asset_class not in ("stock", "futures"):
         raise HTTPException(
             status_code=400,
             detail=(
-                "builder→paper registration is stock-only in Phase 1. "
-                "Futures strategies stay on the dedicated entry classes "
-                "(setup_a/setup_c/bb_reversion_15m)."
+                f"Unsupported asset_class: {state.asset_class!r} "
+                "(expected 'stock' or 'futures')."
             ),
         )
     # `mode="json"` dumps StrEnum values as plain strings so yaml.safe_dump
@@ -699,12 +702,18 @@ def _build_strategy_yaml(
     stop_loss_pct: float,
     take_profit_pct: float,
     order_amount: int,
+    contracts: int = 1,
     cooldown_seconds: int,
     min_confidence: float,
     enabled: bool = False,
 ) -> dict[str, Any]:
     """Materialize the YAML dict the builder_v1 classes will consume."""
     metadata = state.get("metadata", {})
+    asset_class = state.get("asset_class", "stock")
+    if asset_class == "futures":
+        position = {"type": "fixed", "params": {"fixed_quantity": contracts}}
+    else:
+        position = {"type": "fixed", "params": {"order_amount_per_stock": order_amount}}
     return {
         "strategy": {
             "name": metadata.get("id", "built"),
@@ -728,12 +737,7 @@ def _build_strategy_yaml(
                     "min_confidence": min_confidence,
                 },
             },
-            "position": {
-                "type": "fixed",
-                "params": {
-                    "order_amount_per_stock": order_amount,
-                },
-            },
+            "position": position,
             "_builder_meta": {
                 "registered_at": datetime.now(UTC).isoformat(),
                 "schema_version": "builder_v1",
@@ -757,6 +761,7 @@ async def register_paper_strategy(body: RegisterPaperRequest) -> RegisteredStrat
         stop_loss_pct=body.stop_loss_pct,
         take_profit_pct=body.take_profit_pct,
         order_amount=body.order_amount,
+        contracts=body.contracts,
         cooldown_seconds=body.cooldown_seconds,
         min_confidence=body.min_confidence,
         enabled=False,  # Phase-1 safe default
