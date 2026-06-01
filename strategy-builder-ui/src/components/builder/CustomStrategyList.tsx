@@ -62,10 +62,9 @@ export function CustomStrategyList({
     async (strategy: StoredStrategy, e: React.MouseEvent) => {
       e.stopPropagation();
       setMenuOpen(null);
-      // The Phase-1 backend (#356, #357) enforces stock-only at the API
-      // boundary; the frontend's BuilderState type doesn't yet carry an
-      // asset_class field so we send as-is and let the 400 message surface
-      // when a futures draft is built (no current UI to set futures anyway).
+      // builder_state now carries assetClass (stock/futures); the backend
+      // routes futures to contract sizing + auto-enforced exit safety. Phase 1
+      // futures registers as 1 contract (backend default).
       setRegisteringId(strategy.id);
       try {
         await registerPaperStrategy({

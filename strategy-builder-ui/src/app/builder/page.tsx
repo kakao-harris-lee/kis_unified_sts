@@ -400,6 +400,34 @@ export default function BuilderPage() {
           <div className="grid lg:grid-cols-2 gap-4">
             {/* Builder Panel */}
             <div className={cn("card flex flex-col", showPreview && "hidden lg:block")} style={{ maxHeight: "calc(100vh - 180px)" }}>
+              {/* Asset Class Toggle */}
+              <div className="mb-4 flex items-center gap-2">
+                <span className="text-sm font-medium text-slate-700 dark:text-slate-300">자산군</span>
+                <div role="group" aria-label="자산군" className="inline-flex rounded-lg border border-slate-200 dark:border-slate-700 p-0.5">
+                  {(["stock", "futures"] as const).map((ac) => (
+                    <button
+                      key={ac}
+                      type="button"
+                      aria-pressed={builder.state.assetClass === ac}
+                      onClick={() => builder.setAssetClass(ac)}
+                      className={cn(
+                        "px-3 py-1 text-sm rounded-md transition-colors",
+                        builder.state.assetClass === ac
+                          ? "bg-blue-600 text-white"
+                          : "text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800",
+                      )}
+                    >
+                      {ac === "stock" ? "주식" : "선물"}
+                    </button>
+                  ))}
+                </div>
+                {builder.state.assetClass === "futures" && (
+                  <span className="text-xs text-amber-600 dark:text-amber-400">
+                    선물은 long-only (Phase 1) · EOD 15:15·하드스톱 자동 적용
+                  </span>
+                )}
+              </div>
+
               {/* Stepper Navigation - compact horizontal */}
               <nav
                 className="flex items-center mb-4 overflow-x-auto scrollbar-thin"
@@ -470,6 +498,7 @@ export default function BuilderPage() {
                     onUpdateIndicator={builder.updateIndicator}
                     onRemoveIndicator={builder.removeIndicator}
                     createIndicator={builder.createIndicator}
+                    assetClass={builder.state.assetClass}
                   />
                 )}
 
