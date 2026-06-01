@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 from datetime import date
+from pathlib import Path
 
 import pandas as pd
+import yaml
 
 from scripts.analysis.stock_builder_preset_experiment import (
     resolve_symbols,
     run_experiment,
 )
+
+_REPO_ROOT = Path(__file__).resolve().parents[4]
 
 
 def _fake_daily_loader(symbol: str, start: date, end: date) -> pd.DataFrame:
@@ -33,6 +37,18 @@ def test_resolve_symbols_uses_fallback_when_no_explicit_symbols():
     }
 
     assert resolve_symbols(config) == ["000660", "005380"]
+
+
+def test_default_config_warmup_covers_52_week_preset():
+    config = yaml.safe_load(
+        (_REPO_ROOT / "config/stock_builder_preset_experiment.yaml").read_text(
+            encoding="utf-8"
+        )
+    )["experiment"]
+    preset_ids = {item["id"] for item in config["presets"]}
+
+    assert "week52_high" in preset_ids
+    assert config["warmup_days"] >= 420
 
 
 def test_run_experiment_keeps_same_symbol_ledgers_independent():

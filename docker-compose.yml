@@ -104,6 +104,7 @@ services:
     volumes:
       - ./config:/app/config:ro
       - ./logs:/app/logs
+      - ./reports:/app/reports:ro
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
       interval: 30s

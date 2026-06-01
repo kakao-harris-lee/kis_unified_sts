@@ -3,10 +3,13 @@ from __future__ import annotations
 import importlib
 import json
 from datetime import UTC, datetime
+from pathlib import Path
 
 import yaml
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 def test_stock_builder_preset_experiment_report_endpoint(tmp_path, monkeypatch):
@@ -70,3 +73,12 @@ def test_stock_builder_preset_experiment_report_endpoint(tmp_path, monkeypatch):
     assert body["reports"][0]["filename"] == "unit.json"
     assert body["latest_report"]["summaries"][0]["strategy_id"] == "trend_filter"
     assert body["latest_log"]["lines"][-1] == "json=unit.json"
+
+
+def test_dashboard_compose_mounts_experiment_reports():
+    compose = yaml.safe_load(
+        (_REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    )
+    dashboard_volumes = compose["services"]["dashboard"]["volumes"]
+
+    assert "./reports:/app/reports:ro" in dashboard_volumes

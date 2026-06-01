@@ -4,7 +4,9 @@ experiment:
   start_date: "2026-06-01"
   end_date: "2026-06-05"
   output_dir: "reports/stock_builder_preset_experiment"
-  warmup_days: 280
+  # Calendar days. 52-week presets need at least 252 trading bars plus a
+  # one-day shift; 420 calendar days gives enough room for weekends/holidays.
+  warmup_days: 420
 
   # Strategy-isolated virtual ledger. Each preset starts with this capital,
   # so strategies do not compete for cash or positions.
