@@ -23,6 +23,7 @@ import {
   MetadataEditor,
   PreviewPanel,
   CustomStrategyList,
+  ActiveStrategiesPanel,
 } from "@/components/builder";
 import { useStrategyBuilder, INITIAL_STATE } from "@/hooks/useStrategyBuilder";
 import { useLocalStrategies } from "@/hooks/useLocalStrategies";
@@ -393,6 +394,9 @@ export default function BuilderPage() {
               onCreateNew={handleCreateNew}
             />
           </div>
+
+          {/* Active (runtime) strategies — read-only */}
+          <ActiveStrategiesPanel assetClass={builder.state.assetClass} />
         </div>
 
         {/* Right: Visual Builder */}
