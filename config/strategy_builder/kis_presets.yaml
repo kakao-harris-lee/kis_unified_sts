@@ -1427,3 +1427,193 @@ strategy_builder_kis:
           stopLoss: {enabled: true, percent: 4}
           takeProfit: {enabled: true, percent: 8}
           trailingStop: {enabled: false, percent: 3}
+
+    - id: approx_williams_r
+      name: Williams %R 반전 (근사)
+      description: "⚠️ 실제 williams_r 전략의 표현가능 지표 조건만 근사한 시작 템플릿입니다. 실제 전략과 동일하게 동작하지 않습니다(2-bar 반전 상태·종목별 cooldown·confidence 스케일 제외). 빌더에서 자유롭게 수정하세요."
+      category: 근사 템플릿
+      params: []
+      builder_state:
+        metadata:
+          id: approx_williams_r
+          name: Williams %R 반전 (근사)
+          description: "williams_r 근사 — 실제 전략과 동일하지 않음"
+          category: custom
+          tags: [approx, williams_r, oscillator]
+          author: STS
+        asset_class: stock
+        indicators:
+          - id: wr_1
+            indicatorId: williams_r
+            alias: wr
+            params: {period: 14}
+            output: value
+          - id: bb_1
+            indicatorId: bollinger
+            alias: bb
+            params: {period: 20, std: 2}
+            output: middle
+        entry:
+          logic: AND
+          conditions:
+            - id: e1
+              left: {type: indicator, indicatorAlias: wr, indicatorOutput: value}
+              operator: cross_above
+              right: {type: value, value: -80}
+            - id: e2
+              left: {type: price, priceField: close}
+              operator: greater_than
+              right: {type: indicator, indicatorAlias: bb, indicatorOutput: middle}
+        exit:
+          logic: AND
+          conditions: []
+        risk:
+          stopLoss: {enabled: true, percent: 5}
+          takeProfit: {enabled: false, percent: 10}
+          trailingStop: {enabled: false, percent: 3}
+
+    - id: approx_technical_consensus
+      name: 기술적 합의 (근사)
+      description: "⚠️ 실제 technical_consensus 전략의 표현가능 지표 조건만 근사한 시작 템플릿입니다. 실제 전략과 동일하게 동작하지 않습니다(N-of-M 가중 투표·종목별 cooldown 제외). 빌더에서 자유롭게 수정하세요."
+      category: 근사 템플릿
+      params: []
+      builder_state:
+        metadata:
+          id: approx_technical_consensus
+          name: 기술적 합의 (근사)
+          description: "technical_consensus 근사 — 실제 전략과 동일하지 않음"
+          category: custom
+          tags: [approx, consensus, rsi, macd, williams_r]
+          author: STS
+        asset_class: stock
+        indicators:
+          - id: rsi_1
+            indicatorId: rsi
+            alias: rsi
+            params: {period: 14}
+            output: value
+          - id: macd_1
+            indicatorId: macd
+            alias: macd
+            params: {fast: 12, slow: 26, signal: 9}
+            output: histogram
+          - id: wr_1
+            indicatorId: williams_r
+            alias: wr
+            params: {period: 14}
+            output: value
+        entry:
+          logic: AND
+          conditions:
+            - id: e1
+              left: {type: indicator, indicatorAlias: rsi, indicatorOutput: value}
+              operator: greater_than
+              right: {type: value, value: 35}
+            - id: e2
+              left: {type: indicator, indicatorAlias: macd, indicatorOutput: histogram}
+              operator: greater_than
+              right: {type: value, value: 0}
+            - id: e3
+              left: {type: indicator, indicatorAlias: wr, indicatorOutput: value}
+              operator: greater_than
+              right: {type: value, value: -80}
+        exit:
+          logic: AND
+          conditions: []
+        risk:
+          stopLoss: {enabled: true, percent: 5}
+          takeProfit: {enabled: false, percent: 10}
+          trailingStop: {enabled: false, percent: 3}
+
+    - id: approx_trend_vwap
+      name: VWAP 추세 지속 (근사)
+      description: "⚠️ 실제 trend_continuation_vwap 전략의 표현가능 지표 조건만 근사한 시작 템플릿입니다. 실제 전략과 동일하게 동작하지 않습니다(regime 게이트·KST 시간창·RVOL·종목별 cooldown 제외). 빌더에서 자유롭게 수정하세요."
+      category: 근사 템플릿
+      params: []
+      builder_state:
+        metadata:
+          id: approx_trend_vwap
+          name: VWAP 추세 지속 (근사)
+          description: "trend_continuation_vwap 근사 — 실제 전략과 동일하지 않음"
+          category: custom
+          tags: [approx, vwap, trend, sma]
+          author: STS
+        asset_class: stock
+        indicators:
+          - id: sma_20
+            indicatorId: sma
+            alias: sma_20
+            params: {period: 20}
+            output: value
+          - id: sma_60
+            indicatorId: sma
+            alias: sma_60
+            params: {period: 60}
+            output: value
+          - id: vwap_1
+            indicatorId: vwap
+            alias: vwap
+            params: {period: 14}
+            output: value
+        entry:
+          logic: AND
+          conditions:
+            - id: e1
+              left: {type: indicator, indicatorAlias: sma_20, indicatorOutput: value}
+              operator: greater_than
+              right: {type: indicator, indicatorAlias: sma_60, indicatorOutput: value}
+            - id: e2
+              left: {type: price, priceField: close}
+              operator: greater_than
+              right: {type: indicator, indicatorAlias: vwap, indicatorOutput: value}
+        exit:
+          logic: AND
+          conditions: []
+        risk:
+          stopLoss: {enabled: true, percent: 5}
+          takeProfit: {enabled: false, percent: 10}
+          trailingStop: {enabled: false, percent: 3}
+
+    - id: approx_pattern_pullback
+      name: 추세 내 눌림목 (근사)
+      description: "⚠️ 실제 pattern_pullback 전략의 표현가능 지표 조건만 근사한 시작 템플릿입니다. 실제 전략과 동일하게 동작하지 않습니다(다중 패턴 랭킹·60일 수익률·ATR%·종목별 cooldown 제외). 빌더에서 자유롭게 수정하세요."
+      category: 근사 템플릿
+      params: []
+      builder_state:
+        metadata:
+          id: approx_pattern_pullback
+          name: 추세 내 눌림목 (근사)
+          description: "pattern_pullback 근사 — 실제 전략과 동일하지 않음"
+          category: custom
+          tags: [approx, pullback, sma, rsi]
+          author: STS
+        asset_class: stock
+        indicators:
+          - id: sma_200
+            indicatorId: sma
+            alias: sma_200
+            params: {period: 200}
+            output: value
+          - id: rsi_1
+            indicatorId: rsi
+            alias: rsi
+            params: {period: 14}
+            output: value
+        entry:
+          logic: AND
+          conditions:
+            - id: e1
+              left: {type: price, priceField: close}
+              operator: greater_than
+              right: {type: indicator, indicatorAlias: sma_200, indicatorOutput: value}
+            - id: e2
+              left: {type: indicator, indicatorAlias: rsi, indicatorOutput: value}
+              operator: less_than
+              right: {type: value, value: 45}
+        exit:
+          logic: AND
+          conditions: []
+        risk:
+          stopLoss: {enabled: true, percent: 5}
+          takeProfit: {enabled: false, percent: 10}
+          trailingStop: {enabled: false, percent: 3}

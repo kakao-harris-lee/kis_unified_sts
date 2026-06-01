@@ -182,3 +182,27 @@ async def test_kis_builder_compat_routes_execute_paper_signal():
 
     assert response["status"] == "success"
     assert response["results"][0]["action"] == "BUY"
+
+
+def test_approx_templates_present_parse_and_labeled():
+    """The 4 stock approximation templates exist, are labeled '근사 템플릿',
+    target stock, and their builder_state parses as a BuilderState."""
+    from shared.strategy_builder.schema import BuilderState
+
+    infos = {s["id"]: s for s in list_kis_strategy_infos()}
+    approx_ids = {
+        "approx_williams_r",
+        "approx_technical_consensus",
+        "approx_trend_vwap",
+        "approx_pattern_pullback",
+    }
+    assert approx_ids <= set(infos), f"missing: {approx_ids - set(infos)}"
+
+    for aid in approx_ids:
+        preset = get_kis_preset(aid)
+        assert preset is not None
+        assert preset["category"] == "근사 템플릿", aid
+        assert "동일" in preset["description"], aid
+        state = BuilderState.model_validate(preset["builder_state"])
+        assert state.asset_class == "stock", aid
+        assert len(state.entry.conditions) >= 2, aid
