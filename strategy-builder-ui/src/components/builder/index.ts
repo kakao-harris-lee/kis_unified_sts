@@ -8,3 +8,4 @@ export * from "./RiskManager";
 export * from "./MetadataEditor";
 export * from "./PreviewPanel";
 export * from "./CustomStrategyList";
+export { ActiveStrategiesPanel } from "./ActiveStrategiesPanel";
