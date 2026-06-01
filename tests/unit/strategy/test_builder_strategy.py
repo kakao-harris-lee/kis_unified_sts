@@ -126,16 +126,22 @@ async def test_entry_no_signal_when_indicator_missing() -> None:
 
 
 @pytest.mark.asyncio
-async def test_entry_skips_non_stock_asset() -> None:
+async def test_entry_emits_long_signal_for_futures() -> None:
     entry = BuilderStrategyEntry(
         BuilderStrategyConfig(builder_state=_make_state(asset_class="futures"))
     )
     ctx = EntryContext(
         market_data={"code": "101S6000", "close": 1000.0},
-        indicators={"rsi.value": 50.0},
+        indicators={"rsi.value": 50.0},  # rsi > 30 → entry condition passes
         timestamp=datetime.now(UTC),
     )
-    assert await entry.generate(ctx) is None
+    signal = await entry.generate(ctx)
+    assert signal is not None
+    assert signal.signal_type == SignalType.ENTRY
+    assert signal.metadata["signal_direction"] == "long"  # Phase 1: long-only
+    assert signal.code == "101S6000"  # futures symbol flows through
+    assert signal.metadata["builder_state_id"] == "test_strategy"
+    assert 0.0 < signal.confidence <= 1.0
 
 
 # --- Exit tests ---------------------------------------------------------
