@@ -10,6 +10,7 @@ const compatRoots = new Set([
   "market",
   "files",
   "symbols",
+  "experiments",
 ]);
 
 export const dynamic = "force-dynamic";

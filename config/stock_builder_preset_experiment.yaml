@@ -1,0 +1,63 @@
+experiment:
+  id: "bullish_builder_presets_2026w23"
+  description: "상승장 우호 KIS Strategy Builder preset 동일 바스켓 1주 페이퍼 비교"
+  start_date: "2026-06-01"
+  end_date: "2026-06-05"
+  output_dir: "reports/stock_builder_preset_experiment"
+  warmup_days: 280
+
+  # Strategy-isolated virtual ledger. Each preset starts with this capital,
+  # so strategies do not compete for cash or positions.
+  initial_capital: 10000000
+  order_amount_per_stock: 1000000
+  max_positions_per_strategy: 5
+  min_signal_strength: 0.5
+
+  costs:
+    commission_rate: 0.00015
+    slippage_rate: 0.0001
+    tax_rate: 0.0023
+
+  basket_source:
+    type: "redis_daily_watchlist"
+    redis_key: "system:daily_watchlist:latest"
+    strategies:
+      - "trend_pullback"
+      - "momentum_breakout"
+      - "technical_consensus"
+    max_symbols: 20
+
+  # Used when the Redis watchlist is empty, unavailable, or intentionally
+  # bypassed. Keep this as a stable liquid-stock baseline for reproducibility.
+  fallback_symbols:
+    - "000660"  # SK하이닉스
+    - "035720"  # 카카오
+    - "005380"  # 현대차
+    - "068270"  # 셀트리온
+    - "105560"  # KB금융
+    - "055550"  # 신한지주
+    - "042660"  # 한화오션
+    - "006400"  # 삼성SDI
+    - "051910"  # LG화학
+    - "207940"  # 삼성바이오로직스
+    - "373220"  # LG에너지솔루션
+    - "000270"  # 기아
+    - "086790"  # 하나금융지주
+    - "009150"  # 삼성전기
+    - "028260"  # 삼성물산
+    - "003550"  # LG
+    - "034730"  # SK
+    - "034020"  # 두산에너빌리티
+
+  presets:
+    - id: "trend_pullback"
+    - id: "vwap_reclaim"
+    - id: "momentum"
+    - id: "macd_signal_cross"
+    - id: "week52_high"
+    - id: "donchian_breakout"
+    - id: "trend_filter"
+    - id: "adx_trend_continuation"
+    - id: "supertrend_follow"
+    - id: "keltner_breakout"
+    - id: "golden_cross"
