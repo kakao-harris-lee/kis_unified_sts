@@ -141,6 +141,7 @@ export interface RegisterPaperRequest {
   stop_loss_pct?: number;
   take_profit_pct?: number;
   order_amount?: number;
+  contracts?: number;
   cooldown_seconds?: number;
   min_confidence?: number;
 }
