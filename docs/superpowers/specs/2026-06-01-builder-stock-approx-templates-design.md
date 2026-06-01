@@ -48,14 +48,15 @@
 ### A. 템플릿 정의 (표현 가능한 조각만)
 모든 조건은 빌더 카탈로그 지표 + 선언적 조건으로 표현. 코드 전략의 **표현 불가 계층(상태/투표/regime/시간/스크리너/lookback)은 의도적으로 제외**하며 description에 명시.
 
-| 템플릿 (id) | 이름 | 지표 | 진입 조건 (logic) | 제외(비동일) |
+| 템플릿 (id) | 이름 | 지표 | 진입 조건 (AND) | 제외(비동일) |
 |---|---|---|---|---|
-| `approx_williams_r` | Williams %R 반전 (근사) | williams_r(14), bollinger(20,2) | AND: `williams_r cross_above -80`, `close > bb.middle` | 2-bar momentum 번들, 종목별 cooldown, confidence 스케일 |
-| `approx_technical_consensus` | 기술적 합의 (근사) | rsi(14), macd(12,26,9), williams_r(14) | AND: `rsi > 35`, `macd.histogram > 0`, `williams_r > -80` | N-of-M 가중 투표, cooldown |
-| `approx_trend_vwap` | VWAP 추세 지속 (근사) | sma(20), sma(60), vwap | AND: `close > sma_20`, `sma_20 > sma_60`, `close > vwap` | regime 게이트, KST 시간창, RVOL, cooldown |
-| `approx_pattern_pullback` | 추세 내 눌림목 (근사) | sma(200), sma(20), rsi(14) | AND: `close > sma_200`, `close <= sma_20`, `rsi < 45` | 다중 패턴 랭킹, 60일 수익률, ATR%, cooldown |
+| `approx_williams_r` | Williams %R 반전 (근사) | williams_r(14), bollinger(20,2) | `williams_r cross_above -80`, `close > bb.middle` | 2-bar momentum 번들, 종목별 cooldown, confidence 스케일 |
+| `approx_technical_consensus` | 기술적 합의 (근사) | rsi(14), macd(12,26,9), williams_r(14) | `rsi > 35`, `macd.histogram > 0`, `williams_r > -80` | N-of-M 가중 투표, cooldown |
+| `approx_trend_vwap` | VWAP 추세 지속 (근사) | sma(20), sma(60), vwap | `sma_20 > sma_60`, `close > vwap` | regime 게이트, KST 시간창, RVOL, cooldown, `close>sma_20`(아래 제약) |
+| `approx_pattern_pullback` | 추세 내 눌림목 (근사) | sma(200), rsi(14) | `close > sma_200`, `rsi < 45` | 다중 패턴 랭킹, 60일 수익률, ATR%, cooldown, `close<=sma_20`(아래 제약) |
 
-- exit: 각 템플릿은 사용자가 risk 단계에서 SL/TP를 설정하도록 빈 exit 조건 그룹 + 합리적 risk 기본값(예: stop_loss 5%) 제공. (선물 안전장치는 stock이라 무관.)
+- exit: 각 템플릿은 사용자가 risk 단계에서 SL/TP를 설정하도록 빈 exit 조건 그룹 + 합리적 risk 기본값(stop_loss 5%) 제공.
+- **제약 — 샘플 BUY 테스트 호환**: 기존 테스트 `test_kis_builder_states_convert_and_generate_sample_buy_signals`는 **모든 preset이 합성 샘플 시리즈에서 BUY를 내야** 한다. 합성기 `build_sample_series_for_state`의 `_force_condition_pass`는 조건을 **독립 처리하며 공유 시리즈(예: `close`)를 덮어쓴다** → **같은 시리즈를 비교하는 진입 조건이 2개면 모순되어 통과 못 함**. 따라서 각 진입 조건은 **서로 다른 시리즈를 강제**하도록 설계했다(위 4개 모두 조건별 강제 시리즈가 disjoint). 이 때문에 `trend_vwap`의 `close>sma_20`, `pattern_pullback`의 `close<=sma_20`(둘 다 `close`를 중복 강제)는 제외했다 — 의도(추세+VWAP 재탈환 / 추세+과매도)는 유지.
 - 진입 조건은 **합리적 시작점**일 뿐 — 사용자가 캔버스에서 수정/확장하는 것을 전제.
 
 ### B. 라벨링 (명시적 "근사·비동일")
