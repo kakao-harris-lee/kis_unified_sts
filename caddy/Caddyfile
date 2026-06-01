@@ -18,7 +18,8 @@
 #                          ← the Next.js catch-all proxy at
 #                            /api/[...path]/route.ts handles legacy
 #                            upstream-Builder calls (/api/auth, /api/account,
-#                            /api/orders, /api/market, /api/symbols, /api/files)
+#                            /api/orders, /api/market, /api/symbols, /api/files,
+#                            /api/experiments)
 #                            by rewriting them to /api/kis-builder/<path> on
 #                            dashboard. Keeps the upstream UI working without
 #                            us editing every call site.

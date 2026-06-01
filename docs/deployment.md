@@ -172,8 +172,8 @@ pytest tests/ -q
 ### 5. 로컬 서버 실행
 
 ```bash
-# Dashboard 서버
-uvicorn services.dashboard.app:create_app --factory --reload --port 8001
+# Dashboard + UI + Caddy
+docker compose up -d dashboard strategy-builder-ui caddy
 ```
 
 ---
@@ -338,7 +338,7 @@ sudo systemctl start kis-trading
 
 ## 모니터링 설정
 
-운영 모니터링 화면은 React Dashboard(`http://localhost:8001`)를 사용합니다.
+운영 모니터링 화면은 Caddy 단일 진입점(`http://localhost:5080`)을 사용합니다.
 Prometheus(`http://localhost:9090`)는 메트릭 수집 및 알림 규칙 검증용으로 유지합니다.
 
 ### Prometheus 알림 규칙

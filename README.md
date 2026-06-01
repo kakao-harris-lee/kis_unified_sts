@@ -97,7 +97,7 @@ docker compose up -d
 
 ### 접속 URL
 
-- Dashboard: http://localhost:8001
+- Dashboard: http://localhost:5080
 - Prometheus: http://localhost:9090
 
 ### CLI 사용

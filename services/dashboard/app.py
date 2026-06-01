@@ -22,9 +22,9 @@ from shared.strategy.registry import register_builtin_components
 
 logger = logging.getLogger(__name__)
 
-# All dashboard UI is now served by the Next.js app at strategy-builder-ui:3100
-# (post-Vite-migration, 2026-05-28). This FastAPI service is API-only; Caddy
-# at :5080 routes /api/*, /health, /docs to here and everything else to Next.js.
+# All dashboard UI is served through Caddy on host port 5080. Internally, Caddy
+# routes API traffic to this FastAPI service on dashboard:8001 and UI traffic
+# to strategy-builder-ui:3100. Neither internal service port is host-published.
 
 # OpenAPI tags for documentation organization
 OPENAPI_TAGS = [
@@ -230,11 +230,11 @@ def _register_routes(app: FastAPI) -> None:
 
     # Dashboard FastAPI is API-only after the Vite → Next.js migration.
     # Direct hits to / return a minimal pointer; UI traffic is served by
-    # strategy-builder-ui:3100 via Caddy on :5080.
+    # strategy-builder-ui:3100 through Caddy on :5080.
     @app.get("/")
     async def root():
         return {
             "service": "kis-dashboard",
-            "ui": "http://localhost:5080/  (Caddy)  or  http://localhost:3100/  (direct)",
+            "ui": "http://localhost:5080/",
             "api_docs": "/docs",
         }

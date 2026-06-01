@@ -103,8 +103,11 @@ if pnl_pct >= self.config.exit.breakeven_threshold:
 
 #### 운영 대시보드 (Dashboard)
 
-React 프론트엔드 (host port 8001, FastAPI 정적 호스팅) — 실시간 운영 모니터링 단일 화면.
-KIS Unified STS의 사용자-facing 웹 포트는 8001뿐이다. host 3000은 별도 `bid-vector` 프로젝트용이므로 이 repo에서 사용하지 않는다. 별도 웹서비스/API가 생기기 전까지 추가 host port를 예약하지 않는다.
+Next.js 프론트엔드 + FastAPI API는 Caddy 단일 진입점(host port 5080)으로 제공한다.
+KIS Unified STS의 사용자-facing 웹 포트는 5080뿐이다. `dashboard:8001`과
+`strategy-builder-ui:3100`은 Docker network 내부 포트이며 host publish 하지 않는다.
+host 3000은 별도 `bid-vector` 프로젝트용이므로 이 repo에서 사용하지 않는다.
+별도 웹서비스/API가 생기기 전까지 추가 host port를 예약하지 않는다.
 
 - `/` — Cockpit (HeaderBar + Positions + Signals/Fills + Quick Actions)
 - `/positions`, `/signals`, `/trades` — drill-down 페이지 (모바일 카드/sheet 패턴)

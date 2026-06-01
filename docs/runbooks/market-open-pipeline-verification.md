@@ -79,10 +79,9 @@ Replace `localhost` with the actual host if you run these from a workstation.
       ```
       *Expected*: `caddy_root=200`.
 
-- [ ] Dashboard direct health (bypassing Caddy, to isolate Caddy vs app):
+- [ ] Dashboard container health (bypassing Caddy without host port publish):
       ```bash
-      curl -fsS http://localhost:8001/health -w '\n' || \
-      curl -fsS http://localhost:8001/ -o /dev/null -w 'dash_root=%{http_code}\n'
+      docker compose exec -T dashboard curl -fsS http://localhost:8001/health -w '\n'
       ```
       *Expected*: 200 / healthy JSON.
 
