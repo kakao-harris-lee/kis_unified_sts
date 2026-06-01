@@ -39,7 +39,6 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
-from zoneinfo import ZoneInfo
 
 from shared.config.mixins import ConfigMixin
 from shared.models.signal import Signal, SignalType
@@ -47,7 +46,6 @@ from shared.strategy.base import EntryContext, EntrySignalGenerator
 from shared.strategy_builder.evaluator import StrategyBuilderEvaluator
 from shared.strategy_builder.schema import BuilderState, SymbolSeries
 
-_KST = ZoneInfo("Asia/Seoul")
 logger = logging.getLogger(__name__)
 
 
