@@ -368,3 +368,25 @@ async def test_futures_exit_no_eod_close_before_cutoff() -> None:
     )
     triggered, _ = await exit_strat.should_exit(ctx)
     assert not triggered
+
+
+@pytest.mark.asyncio
+async def test_futures_exit_take_profit_not_preempted_by_safety() -> None:
+    # A gain beyond TP must still fire TARGET_REACHED on futures: the futures
+    # safety block (EOD/hard-stop) sits before TP but neither fires on a +gain
+    # intraday, so control falls through to the take-profit branch.
+    exit_strat = BuilderStrategyExit(
+        BuilderStrategyExitConfig(
+            builder_state=_futures_state(), stop_loss_pct=0, take_profit_pct=10.0
+        )
+    )
+    ctx = ExitContext(
+        position=_Pos("101S6000", entry_price=400.0),
+        market_data={"close": 444.0},  # +11% → beyond TP 10%
+        indicators={},
+        timestamp=datetime(2026, 6, 1, 1, 0, tzinfo=UTC),  # 10:00 KST intraday
+    )
+    triggered, signal = await exit_strat.should_exit(ctx)
+    assert triggered
+    assert signal is not None
+    assert signal.reason == ExitReason.TARGET_REACHED
