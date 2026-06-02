@@ -6,12 +6,8 @@ import {
   Sparkles,
   Save,
   BarChart3,
-  ArrowRight,
-  ArrowLeft,
   Loader2,
   Info,
-  Check,
-  AlertTriangle,
 } from "lucide-react";
 import { useToast } from "@/components/ui";
 import { cn } from "@/lib/utils";
@@ -24,23 +20,22 @@ import {
   PreviewPanel,
   CustomStrategyList,
   ActiveStrategiesPanel,
+  FunnelStage,
+  StageRail,
+  BuilderActionBar,
+  type StageRailItem,
 } from "@/components/builder";
 import { useStrategyBuilder, INITIAL_STATE } from "@/hooks/useStrategyBuilder";
 import { useLocalStrategies } from "@/hooks/useLocalStrategies";
-import { listKisBuilderPresets, previewCodeFromState } from "@/lib/api";
+import { listKisBuilderPresets, previewCodeFromState, registerPaperStrategy } from "@/lib/api";
 import { parseYamlToBuilderState } from "@/lib/builder/yamlImporter";
+import {
+  computeStageStatuses,
+  firstIncompleteStageId,
+  type StageId,
+} from "@/lib/builder/stageStatus";
 import type { StrategyInfo } from "@/types/signal";
 import type { BuilderState } from "@/types/builder";
-
-type BuilderTab = "indicators" | "entry" | "exit" | "risk" | "metadata";
-
-const STEPS: readonly { id: BuilderTab; label: string; shortLabel: string; stepNum: number }[] = [
-  { id: "indicators", label: "지표 선택", shortLabel: "지표", stepNum: 1 },
-  { id: "entry", label: "진입 조건", shortLabel: "진입", stepNum: 2 },
-  { id: "exit", label: "청산 조건", shortLabel: "청산", stepNum: 3 },
-  { id: "risk", label: "리스크 관리", shortLabel: "리스크", stepNum: 4 },
-  { id: "metadata", label: "전략 정보", shortLabel: "정보", stepNum: 5 },
-] as const;
 
 interface BackendPresetStrategy {
   id: string;
@@ -51,7 +46,9 @@ interface BackendPresetStrategy {
 }
 
 export default function BuilderPage() {
-  const [builderTab, setBuilderTab] = useState<BuilderTab>("indicators");
+  const [activeStage, setActiveStage] = useState<StageId>("metadata");
+  const [registering, setRegistering] = useState(false);
+  const [lastRegistered, setLastRegistered] = useState<{ name: string } | null>(null);
   const [showImport, setShowImport] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
 
@@ -97,6 +94,56 @@ export default function BuilderPage() {
     setPythonError("");
   }, [builder.state.entry, builder.state.exit, builder.state.indicators]);
 
+  const STAGES = useMemo(
+    () =>
+      [
+        { id: "metadata", stepNum: 1, label: "전략 정보", shortLabel: "정보" },
+        { id: "indicators", stepNum: 2, label: "지표 선택", shortLabel: "지표" },
+        { id: "entry", stepNum: 3, label: "진입 조건", shortLabel: "진입" },
+        { id: "exit", stepNum: 4, label: "청산 조건", shortLabel: "청산" },
+        { id: "risk", stepNum: 5, label: "리스크 관리", shortLabel: "리스크" },
+      ] as const,
+    [],
+  );
+
+  const stageStatuses = useMemo(
+    () => computeStageStatuses(builder.state),
+    [builder.state],
+  );
+
+  const railStages: StageRailItem[] = STAGES.map((s) => ({
+    id: s.id,
+    stepNum: s.stepNum,
+    shortLabel: s.shortLabel,
+    status: stageStatuses[s.id],
+  }));
+
+  const handleJumpToStage = useCallback((id: StageId) => {
+    setActiveStage(id);
+    document
+      .getElementById(`stage-${id}`)
+      ?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, []);
+
+  const handleRegisterDraft = useCallback(async () => {
+    if (!builder.isValid) {
+      toast.error(builder.validationErrors.join("\n"));
+      const first = firstIncompleteStageId(builder.state);
+      if (first) handleJumpToStage(first);
+      return;
+    }
+    setRegistering(true);
+    try {
+      const result = await registerPaperStrategy({ builder_state: builder.state });
+      setLastRegistered({ name: result.name });
+      toast.success(`'${result.name}' 전략을 페이퍼에 등록했습니다.`);
+    } catch (err) {
+      toast.error(`등록 실패: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setRegistering(false);
+    }
+  }, [builder, toast, handleJumpToStage]);
+
   const handleImport = useCallback((_file: File, content: string) => {
     try {
       const { state: newState, warnings } = parseYamlToBuilderState(content);
@@ -128,11 +175,13 @@ export default function BuilderPage() {
   const handleSaveCustomStrategy = useCallback(() => {
     if (!builder.isValid) {
       toast.error(builder.validationErrors.join("\n"));
+      const first = firstIncompleteStageId(builder.state);
+      if (first) handleJumpToStage(first);
       return;
     }
     localStrategies.save(builder.state);
     toast.success(`"${builder.state.metadata.name}" 전략이 저장되었습니다.`);
-  }, [builder, localStrategies, toast]);
+  }, [builder, localStrategies, toast, handleJumpToStage]);
 
   const handleCreateNew = useCallback(() => {
     // Auto-pick an unused "내 전략 N" so the user doesn't collide with
@@ -150,9 +199,7 @@ export default function BuilderPage() {
     // 1) Wipe back to INITIAL_STATE, 2) seed the unique name + a fresh
     // empty description so the user lands on a clearly-blank canvas,
     // 3) jump straight to the metadata step so they can rename or
-    // describe before defining conditions. Previously the button only
-    // did builder.reset() + switch to indicators, which left the user
-    // with the hard-coded "custom_strategy" placeholder and no feedback.
+    // describe before defining conditions.
     builder.reset();
     builder.setMetadata({
       name: newName,
@@ -161,9 +208,9 @@ export default function BuilderPage() {
       tags: [],
       author: "user",
     });
-    setBuilderTab("metadata");
+    handleJumpToStage("metadata");
     toast.success(`새 전략 "${newName}" — 정보를 입력하고 저장하세요.`);
-  }, [builder, localStrategies.strategies, toast]);
+  }, [builder, localStrategies.strategies, toast, handleJumpToStage]);
 
   // YAML export handler for PreviewPanel
   const handleExportYaml = useCallback(() => {
@@ -229,60 +276,6 @@ export default function BuilderPage() {
   const builderYamlContent = useMemo(() => {
     return builder.toYamlString;
   }, [builder.toYamlString]);
-
-  // Step status computation
-  const getStepStatus = useCallback((tabId: BuilderTab): "complete" | "warning" | "empty" => {
-    switch (tabId) {
-      case "metadata":
-        return builder.state.metadata.name.trim() ? "complete" : "empty";
-      case "indicators":
-        return builder.state.indicators.length > 0 ? "complete" : "empty";
-      case "entry":
-        return builder.state.entry.conditions.length > 0 ? "complete" : "warning";
-      case "exit":
-        return builder.state.exit.conditions.length > 0 ? "complete" : "warning";
-      case "risk":
-        return builder.state.risk.stopLoss.enabled ||
-               builder.state.risk.takeProfit.enabled ||
-               builder.state.risk.trailingStop.enabled
-               ? "complete" : "empty";
-      default:
-        return "empty";
-    }
-  }, [builder.state]);
-
-  // Navigation
-  const currentStepIndex = STEPS.findIndex(s => s.id === builderTab);
-
-  const goToNextStep = useCallback(() => {
-    const nextIndex = currentStepIndex + 1;
-    if (nextIndex < STEPS.length) {
-      setBuilderTab(STEPS[nextIndex].id);
-    }
-  }, [currentStepIndex]);
-
-  const goToPrevStep = useCallback(() => {
-    const prevIndex = currentStepIndex - 1;
-    if (prevIndex >= 0) {
-      setBuilderTab(STEPS[prevIndex].id);
-    }
-  }, [currentStepIndex]);
-
-  // Keyboard navigation for steps
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement) return;
-      if (e.key === "ArrowRight" && e.altKey) {
-        e.preventDefault();
-        goToNextStep();
-      } else if (e.key === "ArrowLeft" && e.altKey) {
-        e.preventDefault();
-        goToPrevStep();
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [goToNextStep, goToPrevStep]);
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-6">
@@ -399,203 +392,122 @@ export default function BuilderPage() {
           <ActiveStrategiesPanel assetClass={builder.state.assetClass} />
         </div>
 
-        {/* Right: Visual Builder */}
-        <div className="lg:col-span-2">
-          <div className="grid lg:grid-cols-2 gap-4">
-            {/* Builder Panel */}
-            <div className={cn("card flex flex-col", showPreview && "hidden lg:block")} style={{ maxHeight: "calc(100vh - 180px)" }}>
-              {/* Asset Class Toggle */}
-              <div className="mb-4 flex items-center gap-2">
-                <span className="text-sm font-medium text-slate-700 dark:text-slate-300">자산군</span>
-                <div role="group" aria-label="자산군" className="inline-flex rounded-lg border border-slate-200 dark:border-slate-700 p-0.5">
-                  {(["stock", "futures"] as const).map((ac) => (
-                    <button
-                      key={ac}
-                      type="button"
-                      aria-pressed={builder.state.assetClass === ac}
-                      onClick={() => builder.setAssetClass(ac)}
-                      className={cn(
-                        "px-3 py-1 text-sm rounded-md transition-colors",
-                        builder.state.assetClass === ac
-                          ? "bg-blue-600 text-white"
-                          : "text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800",
-                      )}
-                    >
-                      {ac === "stock" ? "주식" : "선물"}
-                    </button>
-                  ))}
-                </div>
-                {builder.state.assetClass === "futures" && (
-                  <span className="text-xs text-amber-600 dark:text-amber-400">
-                    선물은 long-only (Phase 1) · EOD 15:15·하드스톱 자동 적용
-                  </span>
-                )}
-              </div>
+        {/* Right: Funnel Feed + Preview */}
+        <div className="lg:col-span-2 grid lg:grid-cols-[auto_minmax(0,1fr)_minmax(0,340px)] gap-4">
+          {/* Left mini-rail */}
+          <StageRail stages={railStages} activeId={activeStage} onJump={handleJumpToStage} />
 
-              {/* Stepper Navigation - compact horizontal */}
-              <nav
-                className="flex items-center mb-4 overflow-x-auto scrollbar-thin"
-                role="tablist"
-                aria-label="전략 빌더 단계"
-              >
-                {STEPS.map((step, index) => {
-                  const status = getStepStatus(step.id);
-                  const isActive = builderTab === step.id;
-                  const isPast = index < currentStepIndex;
-
-                  return (
-                    <div key={step.id} className="flex items-center flex-shrink-0">
-                      <button
-                        onClick={() => setBuilderTab(step.id)}
-                        role="tab"
-                        aria-selected={isActive}
-                        aria-controls={`panel-${step.id}`}
-                        id={`tab-${step.id}`}
-                        className={cn(
-                          "flex items-center gap-1 px-2 py-1 rounded text-[11px] font-medium transition-all whitespace-nowrap focus-ring",
-                          isActive && "bg-primary text-white shadow-sm",
-                          !isActive && status === "complete" && "text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/20",
-                          !isActive && status === "warning" && "text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-900/20",
-                          !isActive && status === "empty" && "text-slate-400 dark:text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-800",
-                        )}
-                      >
-                        {/* Status icon - inline, no circle */}
-                        {!isActive && status === "complete" ? (
-                          <Check className="w-3 h-3 flex-shrink-0" />
-                        ) : !isActive && status === "warning" ? (
-                          <AlertTriangle className="w-3 h-3 flex-shrink-0" />
-                        ) : (
-                          <span className="w-3 text-center flex-shrink-0">{step.stepNum}</span>
-                        )}
-                        <span>{step.shortLabel}</span>
-                      </button>
-                      {/* Connector */}
-                      {index < STEPS.length - 1 && (
-                        <div
-                          className={cn(
-                            "w-3 h-px mx-0.5 flex-shrink-0",
-                            isPast ? "bg-emerald-300 dark:bg-emerald-700" : "bg-slate-200 dark:bg-slate-700"
-                          )}
-                          aria-hidden="true"
-                        />
-                      )}
-                    </div>
-                  );
-                })}
-              </nav>
-
-              {/* Tab Content - scrollable */}
-              <div
-                className="flex-1 overflow-y-auto min-h-0 pr-1 scrollbar-thin"
-                role="tabpanel"
-                id={`panel-${builderTab}`}
-                aria-labelledby={`tab-${builderTab}`}
-              >
-                {builderTab === "metadata" && (
-                  <MetadataEditor metadata={builder.state.metadata} onChange={builder.setMetadata} />
-                )}
-
-                {builderTab === "indicators" && (
-                  <IndicatorSelector
-                    selectedIndicators={builder.state.indicators}
-                    onAddIndicator={builder.addIndicatorWithAutoConditions}
-                    onUpdateIndicator={builder.updateIndicator}
-                    onRemoveIndicator={builder.removeIndicator}
-                    createIndicator={builder.createIndicator}
-                    assetClass={builder.state.assetClass}
-                  />
-                )}
-
-                {builderTab === "entry" && (
-                  <ConditionBuilder
-                    title="진입 조건"
-                    conditionGroup={builder.state.entry}
-                    indicators={builder.state.indicators}
-                    onAddCondition={builder.addEntryCondition}
-                    onAddIndicator={builder.addIndicator}
-                    createIndicator={builder.createIndicator}
-                    onUpdateCondition={builder.updateEntryCondition}
-                    onRemoveCondition={builder.removeEntryCondition}
-                    onReorderConditions={builder.reorderEntryConditions}
-                    onSetLogic={builder.setEntryLogic}
-                  />
-                )}
-
-                {builderTab === "exit" && (
-                  <ConditionBuilder
-                    title="청산 조건"
-                    conditionGroup={builder.state.exit}
-                    indicators={builder.state.indicators}
-                    onAddCondition={builder.addExitCondition}
-                    onAddIndicator={builder.addIndicator}
-                    createIndicator={builder.createIndicator}
-                    onUpdateCondition={builder.updateExitCondition}
-                    onRemoveCondition={builder.removeExitCondition}
-                    onReorderConditions={builder.reorderExitConditions}
-                    onSetLogic={builder.setExitLogic}
-                  />
-                )}
-
-                {builderTab === "risk" && (
-                  <RiskManager risk={builder.state.risk} onChange={builder.setRisk} />
-                )}
-              </div>
-
-              {/* Step Navigation Footer - always visible */}
-              <div className="flex-shrink-0 mt-4 flex items-center justify-between border-t border-slate-100 dark:border-slate-700 pt-3">
-                <button
-                  onClick={goToPrevStep}
-                  disabled={currentStepIndex === 0}
-                  className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-lg transition-colors text-slate-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800 disabled:opacity-30 disabled:cursor-not-allowed focus-ring"
-                  aria-label="이전 단계"
-                >
-                  <ArrowLeft className="w-4 h-4" aria-hidden="true" />
-                  이전
-                </button>
-
-                {currentStepIndex < STEPS.length - 1 ? (
+          {/* Funnel feed */}
+          <div className={cn("min-w-0", showPreview && "hidden lg:block")}>
+            {/* Asset Class Toggle */}
+            <div className="mb-4 flex flex-wrap items-center gap-2">
+              <span className="text-sm font-medium text-slate-700 dark:text-slate-300">자산군</span>
+              <div role="group" aria-label="자산군" className="inline-flex rounded-lg border border-slate-200 dark:border-slate-700 p-0.5">
+                {(["stock", "futures"] as const).map((ac) => (
                   <button
-                    onClick={goToNextStep}
-                    className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-lg transition-colors bg-primary text-white hover:bg-primary-dark focus-ring"
-                    aria-label="다음 단계"
+                    key={ac}
+                    type="button"
+                    aria-pressed={builder.state.assetClass === ac}
+                    onClick={() => builder.setAssetClass(ac)}
+                    className={cn(
+                      "px-3 py-1 text-sm rounded-md transition-colors",
+                      builder.state.assetClass === ac
+                        ? "bg-blue-600 text-white"
+                        : "text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800",
+                    )}
                   >
-                    다음
-                    <ArrowRight className="w-4 h-4" aria-hidden="true" />
+                    {ac === "stock" ? "주식" : "선물"}
                   </button>
-                ) : (
-                  <button
-                    onClick={handleSaveCustomStrategy}
-                    disabled={!builder.isValid}
-                    className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-lg transition-colors bg-primary text-white hover:bg-primary-dark disabled:opacity-50 disabled:cursor-not-allowed focus-ring"
-                    aria-label="전략 저장하기"
-                  >
-                    <Save className="w-4 h-4" aria-hidden="true" />
-                    저장하기
-                  </button>
-                )}
+                ))}
               </div>
-            </div>
-
-            {/* Preview Panel */}
-            <div className={cn("card", !showPreview && "hidden lg:block")}>
-              {showPreview && (
-                <button
-                  onClick={() => setShowPreview(false)}
-                  className="lg:hidden mb-3 text-sm text-slate-500 hover:text-slate-700"
-                >
-                  &larr; 빌더로 돌아가기
-                </button>
+              {builder.state.assetClass === "futures" && (
+                <span className="text-xs text-amber-600 dark:text-amber-400">
+                  선물은 long-only (Phase 1) · EOD 15:15·하드스톱 자동 적용
+                </span>
               )}
-              <PreviewPanel
-                yamlContent={builderYamlContent}
-                pythonContent={pythonContent}
-                pythonLoading={pythonLoading}
-                pythonError={pythonError}
-                onExport={handleExportYaml}
-                onExportPython={handleExportPython}
-                onRequestPython={handleRequestPython}
-              />
             </div>
+
+            <div className="space-y-1">
+              <FunnelStage id="metadata" stepNum={1} title="전략 정보" status={stageStatuses.metadata}>
+                <MetadataEditor metadata={builder.state.metadata} onChange={builder.setMetadata} />
+              </FunnelStage>
+
+              <FunnelStage id="indicators" stepNum={2} title="지표 선택" status={stageStatuses.indicators}>
+                <IndicatorSelector
+                  selectedIndicators={builder.state.indicators}
+                  onAddIndicator={builder.addIndicatorWithAutoConditions}
+                  onUpdateIndicator={builder.updateIndicator}
+                  onRemoveIndicator={builder.removeIndicator}
+                  createIndicator={builder.createIndicator}
+                  assetClass={builder.state.assetClass}
+                />
+              </FunnelStage>
+
+              <FunnelStage id="entry" stepNum={3} title="진입 조건" status={stageStatuses.entry}>
+                <ConditionBuilder
+                  title="진입 조건"
+                  conditionGroup={builder.state.entry}
+                  indicators={builder.state.indicators}
+                  onAddCondition={builder.addEntryCondition}
+                  onAddIndicator={builder.addIndicator}
+                  createIndicator={builder.createIndicator}
+                  onUpdateCondition={builder.updateEntryCondition}
+                  onRemoveCondition={builder.removeEntryCondition}
+                  onReorderConditions={builder.reorderEntryConditions}
+                  onSetLogic={builder.setEntryLogic}
+                />
+              </FunnelStage>
+
+              <FunnelStage id="exit" stepNum={4} title="청산 조건" status={stageStatuses.exit}>
+                <ConditionBuilder
+                  title="청산 조건"
+                  conditionGroup={builder.state.exit}
+                  indicators={builder.state.indicators}
+                  onAddCondition={builder.addExitCondition}
+                  onAddIndicator={builder.addIndicator}
+                  createIndicator={builder.createIndicator}
+                  onUpdateCondition={builder.updateExitCondition}
+                  onRemoveCondition={builder.removeExitCondition}
+                  onReorderConditions={builder.reorderExitConditions}
+                  onSetLogic={builder.setExitLogic}
+                />
+              </FunnelStage>
+
+              <FunnelStage id="risk" stepNum={5} title="리스크 관리" status={stageStatuses.risk} showConnector={false}>
+                <RiskManager risk={builder.state.risk} onChange={builder.setRisk} />
+              </FunnelStage>
+            </div>
+
+            <BuilderActionBar
+              isValid={builder.isValid}
+              validationErrors={builder.validationErrors}
+              registering={registering}
+              lastRegistered={lastRegistered}
+              onSave={handleSaveCustomStrategy}
+              onRegister={handleRegisterDraft}
+              onDismissGuidance={() => setLastRegistered(null)}
+            />
+          </div>
+
+          {/* Preview Panel */}
+          <div className={cn("card self-start sticky top-20", !showPreview && "hidden lg:block")}>
+            {showPreview && (
+              <button
+                onClick={() => setShowPreview(false)}
+                className="lg:hidden mb-3 text-sm text-slate-500 hover:text-slate-700"
+              >
+                &larr; 빌더로 돌아가기
+              </button>
+            )}
+            <PreviewPanel
+              yamlContent={builderYamlContent}
+              pythonContent={pythonContent}
+              pythonLoading={pythonLoading}
+              pythonError={pythonError}
+              onExport={handleExportYaml}
+              onExportPython={handleExportPython}
+              onRequestPython={handleRequestPython}
+            />
           </div>
         </div>
       </div>
