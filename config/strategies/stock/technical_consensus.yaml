@@ -4,7 +4,10 @@ strategy:
   # Limited daily pilot enabled 2026-05-22 after scanner support for daily
   # RSI/Williams/MACD aliases was added. Keep sizing small until recent
   # candidate evidence accumulates.
-  enabled: true
+  # DISABLED 2026-06-02: 0% win over 10 paper trades (2026-05-12..06-03,
+  # -309k KRW, all stop_loss). Re-enable only after Optuna re-tune of entry
+  # quality + stop placement for the current regime.
+  enabled: false
   timeframe: daily
   description: "Daily RSI/Williams %R/MACD 2-of-3 consensus entry experiment"
 
