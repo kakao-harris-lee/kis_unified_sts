@@ -111,12 +111,16 @@ export default function BuilderPage() {
     [builder.state],
   );
 
-  const railStages: StageRailItem[] = STAGES.map((s) => ({
-    id: s.id,
-    stepNum: s.stepNum,
-    shortLabel: s.shortLabel,
-    status: stageStatuses[s.id],
-  }));
+  const railStages: StageRailItem[] = useMemo(
+    () =>
+      STAGES.map((s) => ({
+        id: s.id,
+        stepNum: s.stepNum,
+        shortLabel: s.shortLabel,
+        status: stageStatuses[s.id],
+      })),
+    [STAGES, stageStatuses],
+  );
 
   const handleJumpToStage = useCallback((id: StageId) => {
     setActiveStage(id);
