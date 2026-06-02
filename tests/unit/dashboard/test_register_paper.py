@@ -1,4 +1,5 @@
 """Tests for the builder→paper registration endpoints (Phase 2)."""
+
 from __future__ import annotations
 
 import pytest
@@ -75,6 +76,7 @@ def client(tmp_path, monkeypatch):
     importlib.reload(kis_builder)
 
     from fastapi import FastAPI
+
     app = FastAPI()
     app.include_router(kis_builder.router)
     return TestClient(app), tmp_path / "built"
@@ -102,7 +104,48 @@ def test_register_paper_creates_yaml(client) -> None:
     assert strategy["entry"]["type"] == "builder_v1"
     assert strategy["exit"]["type"] == "builder_v1_exit"
     assert strategy["position"]["type"] == "fixed"
-    assert strategy["entry"]["params"]["builder_state"]["metadata"]["id"] == "test_built"
+    assert (
+        strategy["entry"]["params"]["builder_state"]["metadata"]["id"] == "test_built"
+    )
+
+
+def test_register_paper_trailing_from_draft(client) -> None:
+    """Trailing stop derives from the builder draft's risk.trailing_stop toggle."""
+    tc, built_dir = client
+    state = _minimal_state(strategy_id="trail_on")
+    state["risk"]["trailing_stop"] = {"enabled": True, "percent": 3.0}
+    resp = tc.post("/api/kis-builder/register-paper", json={"builder_state": state})
+    assert resp.status_code == 200, resp.text
+    doc = yaml.safe_load((built_dir / "trail_on.yaml").read_text(encoding="utf-8"))
+    assert doc["strategy"]["exit"]["params"]["trailing_stop_pct"] == 3.0
+
+
+def test_register_paper_trailing_disabled_default(client) -> None:
+    """Draft trailing disabled and no override → trailing_stop_pct is 0 (off)."""
+    tc, built_dir = client
+    resp = tc.post(
+        "/api/kis-builder/register-paper",
+        json={"builder_state": _minimal_state(strategy_id="trail_off")},
+    )
+    assert resp.status_code == 200, resp.text
+    doc = yaml.safe_load((built_dir / "trail_off.yaml").read_text(encoding="utf-8"))
+    assert doc["strategy"]["exit"]["params"]["trailing_stop_pct"] == 0.0
+
+
+def test_register_paper_trailing_explicit_override(client) -> None:
+    """An explicit request trailing_stop_pct wins over the draft toggle."""
+    tc, built_dir = client
+    state = _minimal_state(strategy_id="trail_override")
+    state["risk"]["trailing_stop"] = {"enabled": False, "percent": 3.0}
+    resp = tc.post(
+        "/api/kis-builder/register-paper",
+        json={"builder_state": state, "trailing_stop_pct": 2.0},
+    )
+    assert resp.status_code == 200, resp.text
+    doc = yaml.safe_load(
+        (built_dir / "trail_override.yaml").read_text(encoding="utf-8")
+    )
+    assert doc["strategy"]["exit"]["params"]["trailing_stop_pct"] == 2.0
 
 
 def test_register_paper_accepts_futures(client) -> None:
@@ -153,9 +196,7 @@ def test_register_paper_rejects_invalid_state(client) -> None:
 def test_register_paper_rejects_bad_id(client) -> None:
     tc, _ = client
     state = _minimal_state(strategy_id="../escape")
-    resp = tc.post(
-        "/api/kis-builder/register-paper", json={"builder_state": state}
-    )
+    resp = tc.post("/api/kis-builder/register-paper", json={"builder_state": state})
     assert resp.status_code == 400
     assert "Invalid strategy id" in resp.json()["detail"]
 
@@ -187,26 +228,20 @@ def test_toggle_registered_strategy_flips_enabled(client) -> None:
         json={"builder_state": _minimal_state(strategy_id="alpha")},
     )
     # Enable
-    resp = tc.post(
-        "/api/kis-builder/registered/alpha/enable", json={"enabled": True}
-    )
+    resp = tc.post("/api/kis-builder/registered/alpha/enable", json={"enabled": True})
     assert resp.status_code == 200
     assert resp.json()["enabled"] is True
     # Persisted
     doc = yaml.safe_load((built_dir / "alpha.yaml").read_text(encoding="utf-8"))
     assert doc["strategy"]["enabled"] is True
     # Disable
-    resp = tc.post(
-        "/api/kis-builder/registered/alpha/enable", json={"enabled": False}
-    )
+    resp = tc.post("/api/kis-builder/registered/alpha/enable", json={"enabled": False})
     assert resp.json()["enabled"] is False
 
 
 def test_toggle_missing_strategy_returns_404(client) -> None:
     tc, _ = client
-    resp = tc.post(
-        "/api/kis-builder/registered/nope/enable", json={"enabled": True}
-    )
+    resp = tc.post("/api/kis-builder/registered/nope/enable", json={"enabled": True})
     assert resp.status_code == 404
 
 

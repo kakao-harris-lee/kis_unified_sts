@@ -2,13 +2,15 @@
 
 Pairs with ``shared.strategy.entry.builder_strategy.BuilderStrategyEntry``.
 Reads the same ``BuilderState`` and evaluates the exit-condition group
-plus the simple risk toggles (stop_loss / take_profit) on every cycle.
+plus the risk toggles (stop_loss / take_profit / trailing_stop) every cycle.
 
-Trailing stop is intentionally not implemented in v1 — adding it well
-requires per-position high-water-mark state that lives in the exit
-class. Builder users who turn on the toggle should expect a no-op for
-the trailing branch until a follow-up PR; SL/TP/conditions still work.
+The trailing stop keeps a per-position high-water-mark (peak price since
+entry). It arms only once the position has shown a profit (HWM above the
+entry price) so it never doubles as a second stop-loss; once armed it
+exits when price retraces ``trailing_stop_pct`` below the peak. Builder
+drafts are long-only (stock), so the peak is the running max price.
 """
+
 from __future__ import annotations
 
 import logging
@@ -35,8 +37,9 @@ class BuilderStrategyExitConfig(ConfigMixin):
     # Risk toggles (mirror BuilderState.risk.* — kept separate so the
     # operator can override defaults at deploy time without re-saving the
     # builder draft).
-    stop_loss_pct: float = 5.0      # 0 disables; positive percent (5.0 = 5%)
-    take_profit_pct: float = 0.0    # 0 disables
+    stop_loss_pct: float = 5.0  # 0 disables; positive percent (5.0 = 5%)
+    take_profit_pct: float = 0.0  # 0 disables
+    trailing_stop_pct: float = 0.0  # 0 disables; retrace from peak that exits
     # Confidence threshold for emitting condition-based exit. Mirrors entry.
     min_confidence: float = 0.5
 
@@ -50,18 +53,29 @@ class BuilderStrategyExit(ExitSignalGenerator[BuilderStrategyExitConfig]):
         super().__init__(config)
         self._evaluator = StrategyBuilderEvaluator()
         self._state: BuilderState | None = None
+        # Per-position peak price since entry, for the trailing stop. Keyed by
+        # position id (falls back to code). Persists across cycles because the
+        # exit instance is long-lived; cleared whenever a position exits.
+        self._hwm: dict[str, float] = {}
         self._parse_state()
-        self._is_futures = self._state is not None and self._state.asset_class == "futures"
-        self._safety: FuturesSafety | None = load_futures_safety() if self._is_futures else None
+        self._is_futures = (
+            self._state is not None and self._state.asset_class == "futures"
+        )
+        self._safety: FuturesSafety | None = (
+            load_futures_safety() if self._is_futures else None
+        )
 
     def _validate_config(self) -> None:
         assert self.config.stop_loss_pct >= 0
         assert self.config.take_profit_pct >= 0
+        assert self.config.trailing_stop_pct >= 0
         assert 0.0 <= self.config.min_confidence <= 1.0
 
     def _parse_state(self) -> None:
         if not self.config.builder_state:
-            logger.warning("builder_v1_exit has empty builder_state; will only use SL/TP")
+            logger.warning(
+                "builder_v1_exit has empty builder_state; will only use SL/TP"
+            )
             return
         try:
             self._state = BuilderState.model_validate(self.config.builder_state)
@@ -75,9 +89,7 @@ class BuilderStrategyExit(ExitSignalGenerator[BuilderStrategyExitConfig]):
             return f"builder_v1_exit::{self._state.metadata.id}"
         return "builder_v1_exit"
 
-    async def should_exit(
-        self, context: ExitContext
-    ) -> tuple[bool, ExitSignal | None]:
+    async def should_exit(self, context: ExitContext) -> tuple[bool, ExitSignal | None]:
         position = context.position
         market_data = context.market_data or {}
         current_price = float(
@@ -94,11 +106,22 @@ class BuilderStrategyExit(ExitSignalGenerator[BuilderStrategyExitConfig]):
             return False, None
         pnl_pct = (current_price - entry_price) / entry_price * 100.0
 
+        pos_key = str(getattr(position, "id", "") or position.code)
+        # Seed the peak from the position's persisted high-water-mark so the
+        # trailing stop survives a process restart (Redis restores
+        # highest_price); falls back to entry_price for a fresh position.
+        hwm_seed = float(getattr(position, "highest_price", None) or entry_price)
+        # Track the running peak price every cycle so the trailing stop
+        # measures retrace from the high, not just the latest tick.
+        if self.config.trailing_stop_pct > 0:
+            self._hwm[pos_key] = max(self._hwm.get(pos_key, hwm_seed), current_price)
+
         # Futures auto-enforced safety (cannot be disabled by the user).
         if self._is_futures and self._safety is not None:
             # EOD time close (KST) — highest priority.
             now_kst = to_kst(context.timestamp)
             if now_kst.time() >= self._safety.eod_close_time:
+                self._hwm.pop(pos_key, None)
                 return True, self._make_signal(
                     position=position,
                     current_price=current_price,
@@ -114,7 +137,12 @@ class BuilderStrategyExit(ExitSignalGenerator[BuilderStrategyExitConfig]):
             user_stop = self.config.stop_loss_pct
             effective_stop = cap if user_stop <= 0 else min(user_stop, cap)
             if pnl_pct <= -effective_stop:
-                note = "futures_hard_stop" if effective_stop == cap else "stop_loss_within_cap"
+                self._hwm.pop(pos_key, None)
+                note = (
+                    "futures_hard_stop"
+                    if effective_stop == cap
+                    else "stop_loss_within_cap"
+                )
                 return True, self._make_signal(
                     position=position,
                     current_price=current_price,
@@ -127,6 +155,7 @@ class BuilderStrategyExit(ExitSignalGenerator[BuilderStrategyExitConfig]):
 
         # 1) Hard stop loss
         if self.config.stop_loss_pct > 0 and pnl_pct <= -self.config.stop_loss_pct:
+            self._hwm.pop(pos_key, None)
             return True, self._make_signal(
                 position=position,
                 current_price=current_price,
@@ -139,6 +168,7 @@ class BuilderStrategyExit(ExitSignalGenerator[BuilderStrategyExitConfig]):
 
         # 2) Take profit
         if self.config.take_profit_pct > 0 and pnl_pct >= self.config.take_profit_pct:
+            self._hwm.pop(pos_key, None)
             return True, self._make_signal(
                 position=position,
                 current_price=current_price,
@@ -149,7 +179,25 @@ class BuilderStrategyExit(ExitSignalGenerator[BuilderStrategyExitConfig]):
                 note="take_profit",
             )
 
-        # 3) Builder exit conditions
+        # 3) Trailing stop — only after the position has shown a profit
+        #    (peak above entry), so it never fires as a second stop-loss.
+        if self.config.trailing_stop_pct > 0:
+            peak = self._hwm.get(pos_key, hwm_seed)
+            if peak > entry_price:
+                stop_price = peak * (1.0 - self.config.trailing_stop_pct / 100.0)
+                if current_price <= stop_price:
+                    self._hwm.pop(pos_key, None)
+                    return True, self._make_signal(
+                        position=position,
+                        current_price=current_price,
+                        entry_price=entry_price,
+                        pnl_pct=pnl_pct,
+                        reason=ExitReason.TRAILING_STOP,
+                        confidence=1.0,
+                        note="trailing_stop",
+                    )
+
+        # 4) Builder exit conditions
         if self._state is None or not self._state.exit.conditions:
             return False, None
 
@@ -167,6 +215,7 @@ class BuilderStrategyExit(ExitSignalGenerator[BuilderStrategyExitConfig]):
         if not evaluation.passed or evaluation.score < self.config.min_confidence:
             return False, None
 
+        self._hwm.pop(pos_key, None)
         return True, self._make_signal(
             position=position,
             current_price=current_price,
