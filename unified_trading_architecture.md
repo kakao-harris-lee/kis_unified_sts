@@ -41,7 +41,7 @@ quant_moment_sts/
 │   └── orchestrator.py       # 통합 관리
 ├── config/                    # 환경 설정
 ├── dashboard/                 # 백엔드 대시보드
-├── dashboard-frontend/        # React 프론트엔드
+├── strategy-builder-ui/       # Next.js 프론트엔드 (단일 앱)
 ├── database/                  # DB 스키마
 └── services/                  # 서비스 레이어
 ```

@@ -2,7 +2,7 @@
 
 ## Base URL
 
-- Dashboard API: `http://localhost:8001`
+- Dashboard API: `http://localhost:5080`
 
 ## Authentication
 
@@ -266,7 +266,7 @@ trading_pnl_total{strategy="bb_reversion"} 1500000
 
 실시간 데이터 스트리밍을 위한 WebSocket 연결
 
-**URL:** `ws://localhost:8001/ws`
+**URL:** `ws://localhost:5080/ws`
 
 #### Authentication
 
@@ -393,7 +393,7 @@ Rate limit 초과 시 `429 Too Many Requests` 응답과 함께 `Retry-After` 헤
 ```python
 import requests
 
-API_URL = "http://localhost:8001"
+API_URL = "http://localhost:5080"
 API_KEY = "your_api_key"
 
 headers = {"X-API-Key": API_KEY}
@@ -419,7 +419,7 @@ import websockets
 import json
 
 async def connect():
-    uri = "ws://localhost:8001/ws"
+    uri = "ws://localhost:5080/ws"
     async with websockets.connect(uri) as ws:
         # Authenticate
         await ws.send(json.dumps({

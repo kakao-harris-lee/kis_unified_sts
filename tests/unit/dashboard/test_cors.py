@@ -5,17 +5,43 @@ from unittest.mock import patch
 from httpx import ASGITransport, AsyncClient
 
 
+def _reset_config_loader() -> None:
+    """Drop the ConfigLoader singleton so the next load re-resolves its dir."""
+    try:
+        from shared.config.loader import ConfigLoader
+
+        ConfigLoader._instance = None
+        ConfigLoader._config_dir = None
+        ConfigLoader._cache.clear()
+    except (ImportError, AttributeError):
+        pass
+
+
 @pytest.fixture(autouse=True)
 def clean_env():
-    """Clean environment variables before each test."""
-    env_vars = ["ENVIRONMENT"]
+    """Isolate CORS tests from full-suite config pollution.
+
+    ``create_app()`` resolves CORS origins through ``ConfigLoader``. A prior
+    test in the full suite that leaves ``KIS_CONFIG_DIR`` pointing at a fixture
+    config lacking the ``development`` overlay makes ``load_api_config()`` skip
+    the dev merge and serve production origins, so the localhost CORS header
+    silently disappears (these tests pass in isolation but fail in the full
+    suite). Clear that override and reset the ConfigLoader singleton so
+    create_app() always loads the repo's real config/api.yaml.
+    """
+    env_vars = ["ENVIRONMENT", "KIS_CONFIG_DIR"]
     old_values = {k: os.environ.get(k) for k in env_vars}
+    # Drop any leaked config-dir override so ConfigLoader falls back to the
+    # repo's config/ (which carries the development overlay).
+    os.environ.pop("KIS_CONFIG_DIR", None)
+    _reset_config_loader()
     yield
     for k, v in old_values.items():
         if v is None:
             os.environ.pop(k, None)
         else:
             os.environ[k] = v
+    _reset_config_loader()
 
 
 @pytest.mark.asyncio
@@ -56,13 +82,13 @@ async def test_cors_allows_localhost_origin_in_dev():
         response = await client.options(
             "/health",
             headers={
-                "Origin": "http://localhost:3000",
+                "Origin": "http://localhost:5080",
                 "Access-Control-Request-Method": "GET",
             },
         )
 
-        # Should allow localhost:3000
-        assert response.headers.get("access-control-allow-origin") == "http://localhost:3000"
+        # Should allow localhost:5080 (canonical dashboard port; see CLAUDE.md)
+        assert response.headers.get("access-control-allow-origin") == "http://localhost:5080"
 
 
 @pytest.mark.asyncio

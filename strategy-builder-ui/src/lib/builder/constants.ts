@@ -631,6 +631,7 @@ export const INDICATORS: IndicatorDefinition[] = [
     params: [],
     outputs: [{ id: "value", name: "값" }],
     defaultOutput: "value",
+    futuresApplicability: "degraded",
   },
   {
     id: "ad",
@@ -691,6 +692,7 @@ export const INDICATORS: IndicatorDefinition[] = [
     params: [{ name: "period", type: "number", default: 14, min: 1, max: 500 }],
     outputs: [{ id: "value", name: "값" }],
     defaultOutput: "value",
+    futuresApplicability: "degraded",
   },
   {
     id: "vwma",
@@ -701,6 +703,7 @@ export const INDICATORS: IndicatorDefinition[] = [
     params: [{ name: "period", type: "number", default: 20, min: 1, max: 500 }],
     outputs: [{ id: "value", name: "값" }],
     defaultOutput: "value",
+    futuresApplicability: "degraded",
   },
   {
     id: "eom",
@@ -714,6 +717,7 @@ export const INDICATORS: IndicatorDefinition[] = [
     ],
     outputs: [{ id: "value", name: "값" }],
     defaultOutput: "value",
+    futuresApplicability: "degraded",
   },
 
   // ============================================================

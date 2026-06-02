@@ -365,6 +365,10 @@ class TestChandelierExit:
             entry_price=entry_price,
             quantity=100,
             current_price=close,
+            # ChandelierExit uses position.highest_price (post-entry high) when
+            # use_position_high_since_entry is set (the default); align it with
+            # the indicator high so the trailing-stop scenarios are exercised.
+            highest_price=highest_high,
         )
         return ExitContext(
             position=position,

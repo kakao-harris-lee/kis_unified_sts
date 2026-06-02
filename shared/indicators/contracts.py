@@ -87,6 +87,30 @@ class IndicatorContract:
             if req.kind == IndicatorKind.BASE and req.timeframe is not None
         )
 
+    @property
+    def mtf_timeframes(self) -> tuple[int, ...]:
+        """Sorted distinct timeframes (in minutes) required across momentum + mtf_base."""
+        return tuple(
+            sorted(
+                {
+                    req.timeframe.minutes
+                    for req in (*self.momentum_requests, *self.mtf_base_requests)
+                    if req.timeframe is not None
+                }
+            )
+        )
+
+    @property
+    def warmth_timeframe(self) -> int | None:
+        """Deepest intraday timeframe (minutes) used to judge warmth.
+
+        Daily (>= 1440 min) is excluded: it is seeded from a separate ClickHouse
+        daily store, not from intraday 1m accumulation, so it must not gate is_warm.
+        Returns None when the strategy needs no intraday MTF accumulation.
+        """
+        intraday = [tf for tf in self.mtf_timeframes if tf < 1440]
+        return max(intraday) if intraday else None
+
     @classmethod
     def from_required_keys(cls, keys: list[str] | tuple[str, ...]) -> IndicatorContract:
         requests: list[IndicatorRequest] = []

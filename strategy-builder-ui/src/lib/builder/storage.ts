@@ -140,6 +140,8 @@ export function importFromJson(json: string): StoredStrategy | null {
     if (!state.metadata?.name || !state.indicators || !state.entry || !state.exit) {
       return null;
     }
+    // Normalize legacy JSON without assetClass at the import boundary
+    state.assetClass = state.assetClass ?? "stock";
     return saveStrategy(state);
   } catch {
     return null;

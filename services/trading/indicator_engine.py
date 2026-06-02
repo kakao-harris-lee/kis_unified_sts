@@ -244,6 +244,7 @@ class StreamingIndicatorEngine:
         mtf_maxlen: int = 250,
         ema_periods: list[int] | None = None,
         daily_ema_periods: list[int] | None = None,
+        mtf_warmth_timeframe: int | None = None,
     ):
         self.bb_period = bb_period
         self.bb_std = bb_std
@@ -261,6 +262,11 @@ class StreamingIndicatorEngine:
             tf for tf in self._mtf_timeframes if isinstance(tf, int)
         ]
         self._has_daily = 'daily' in self._mtf_timeframes
+        # Timeframe (minutes) whose closed-candle depth gates is_warm(). Derived
+        # from strategy requirements (IndicatorContract.warmth_timeframe), NOT from
+        # the broad streaming.yaml accumulation set, so stock engines that only
+        # need 1m are not blocked waiting on 15m bars. None => 1m-only warmth.
+        self._mtf_warmth_timeframe = mtf_warmth_timeframe
         self._mtf_maxlen = mtf_maxlen
         self._mtf_accumulators: dict[
             str, dict[int, MultiTimeframeCandleAccumulator]
@@ -427,6 +433,13 @@ class StreamingIndicatorEngine:
                             dt = datetime.fromisoformat(dt)
                         if hasattr(dt, "hour"):
                             candle_minute = dt.hour * 100 + dt.minute
+                # Redis-cached candles carry an HHMM "minute" field but no
+                # "datetime"; honor it so MTF bucketing works for Redis seeds
+                # instead of collapsing every candle into bucket 0.
+                if candle_minute is None:
+                    raw_minute = c.get("minute")
+                    if raw_minute is not None:
+                        candle_minute = int(raw_minute)
                 if candle_minute is None:
                     candle_minute = 0
 
@@ -602,11 +615,36 @@ class StreamingIndicatorEngine:
         return len(orphans)
 
     def is_warm(self, symbol: str) -> bool:
-        """Whether enough candles exist to compute indicators."""
+        """Whether enough candles exist to compute indicators.
+
+        For multi-timeframe strategies (e.g. bb_reversion_15m via
+        ``mtf_base_15m``) the 1m accumulator filling first is not enough: the
+        strategy's deepest timeframe must also hold ``bb_period`` closed
+        candles, else ``get_indicators_tf`` returns ``{}`` and the strategy
+        never signals. Reporting warm too early lets the orchestrator prewarm
+        short-circuit (``if is_warm(symbol): continue``) and skip the deep
+        ClickHouse load that seeds those higher-timeframe bars.
+
+        The gate uses ``_mtf_warmth_timeframe`` — the deepest *strategy-required*
+        intraday timeframe (``IndicatorContract.warmth_timeframe``) — NOT the
+        broad streaming.yaml accumulation set. A stock engine that accumulates
+        5m/15m for telemetry but whose strategy only needs 1m must not be blocked
+        waiting on 15m bars (only ~8 closed from a 120-candle prewarm). When the
+        warmth timeframe is unset (1m-only strategy) or not actually accumulated,
+        only the 1m depth gates warmth. 'daily' is excluded by the contract — it
+        is loaded from ClickHouse separately, never aggregated from the 1m feed.
+        """
         acc = self._accumulators.get(symbol)
-        if acc is None:
+        if acc is None or len(acc.candles) < self.bb_period:
             return False
-        return len(acc.candles) >= self.bb_period
+        # Warm unless a strategy-required (and actually accumulated) intraday
+        # timeframe is still short of bb_period closed candles.
+        warmth_tf = self._mtf_warmth_timeframe
+        return not (
+            warmth_tf is not None
+            and warmth_tf in self._numeric_mtf_timeframes
+            and self.mtf_total_appended(symbol, warmth_tf) < self.bb_period
+        )
 
     def get_tick_age_seconds(self, symbol: str, now: datetime | None = None) -> float | None:
         """Return seconds elapsed since last tick for symbol, or None if never seen."""
