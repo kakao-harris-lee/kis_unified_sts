@@ -40,6 +40,8 @@
 
 - `strategy-builder-ui/src/app/builder/page.tsx` — 가로 스텝퍼 + 다음/이전 네비 제거, 세로 깔때기 피드로 재구성
 - `strategy-builder-ui/src/components/builder/CustomStrategyList.tsx` — `alert()` → toast 교체 (액션바와 동일한 등록 피드백 경로 공유)
+- `strategy-builder-ui/src/components/builder/index.ts` — 신규 컴포넌트 export 추가
+- **테스트 인프라 추가**: `strategy-builder-ui`에 테스트 러너가 없으므로 vitest + React Testing Library + jsdom를 스캐폴딩한다(`package.json` test 스크립트, `vitest.config.ts`, `vitest.setup.ts`). 프론트엔드 dev-tooling 한정 변경.
 
 ### 신규 컴포넌트 (3개)
 
@@ -147,13 +149,17 @@ Phase 1 paper-only + 수동 enable 정책을 준수한다. UI는 "안내"만 제
 
 ---
 
-## 7. 테스트
+## 7. 테스트 & 검증
 
+테스트 러너로 **vitest + React Testing Library + jsdom**를 신규 도입한다(§2). TDD로 작성:
+
+- `computeStageStatuses` / `firstIncompleteStageId` (순수 함수): status 매핑, 첫 미충족 스테이지.
 - `FunnelStage`: status별 chip 렌더, 커넥터 표시, anchor id.
-- `StageRail`: stages → chip 매핑, `onJump` 호출, active 하이라이트(IntersectionObserver mock).
+- `StageRail`: stages → chip 매핑, `onJump` 호출.
 - `BuilderActionBar`: invalid → 버튼 disabled, `onSave`/`onRegister` 호출, 등록 중 disabled, 안내 카드 렌더.
-- 등록 흐름: `registerPaperStrategy` mock 성공/실패 → toast + 배지 갱신 경로.
-- 회귀: 기존 `useStrategyBuilder` 리듀서, YAML import/export, Python preview 동작 보존.
+- `CustomStrategyList`: `registerPaperStrategy` mock 성공/실패 → `alert()` 대신 toast 호출.
+
+**페이지 통합(`page.tsx`)**은 RTL 풀 통합 대신 `tsc --noEmit` + `eslint` + `next build` + 수동 브라우저 확인으로 검증한다(API/Provider 모킹 비용 대비 실익 낮음).
 
 ---
 
