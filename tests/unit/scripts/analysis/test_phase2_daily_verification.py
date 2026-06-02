@@ -181,11 +181,13 @@ class TestEvaluateGates:
         assert report.all_passed  # other 3 gates pass
 
     def test_har_rv_gate_passes_date_param_not_datetime(self):
-        """Regression: fit_date is a ClickHouse Date column, so the verification
-        query must bind a date (not datetime), otherwise ClickHouse raises
+        """Regression: the gate compares against a Date-typed expression
+        (``toDate(created_at, 'Asia/Seoul')``), so the verification query must
+        bind a ``date`` (not datetime), otherwise ClickHouse raises
         ``Code: 53. Cannot convert string '... HH:MM:SS' to type Date`` and the
-        gate fails on every trading day.  Captured param must be a ``date``
-        whose value matches the KST trading_date.
+        gate fails on every trading day.  For a past trading_date the bound
+        param is that date itself (the previous-trading-day branch only applies
+        when verifying the current day before the 16:35 KST refit).
         """
         captured: list[dict] = []
         report = evaluate_gates(
@@ -218,6 +220,29 @@ class TestEvaluateGates:
         gate = next(g for g in report.gates if g.name == "har_rv_refit_today")
         assert gate.passed is False
         assert gate.actual == 0
+
+    def test_har_rv_helper_uses_created_at_not_fit_date(self):
+        """The refit gate must query ``created_at`` (run time), never
+        ``fit_date == today``: fit_date lags >= 1 day, so that comparison never
+        matched and the gate FAILed every trading day (false alarm)."""
+        captured: dict = {}
+
+        def _execute(query: str, params: dict | None = None) -> list[tuple]:
+            captured["q"] = query
+            captured["p"] = params
+            return [(1,)]
+
+        client = MagicMock()
+        client.execute = _execute
+        # Past trading date → expected_day resolves to that date itself.
+        start, end = _trading_day_bounds(date(2026, 5, 14))
+        n = _mod._count_har_rv_refits(client, start, end)
+        assert n == 1
+        assert "created_at" in captured["q"]
+        assert "fit_date" not in captured["q"]
+        bound = captured["p"]["d"]
+        assert isinstance(bound, date) and not isinstance(bound, datetime)
+        assert bound == date(2026, 5, 14)
 
     def test_info_metrics_populated(self):
         report = evaluate_gates(
