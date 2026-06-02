@@ -19,6 +19,7 @@ import {
   MetadataEditor,
   PreviewPanel,
   CustomStrategyList,
+  RegisteredStrategiesPanel,
   ActiveStrategiesPanel,
   FunnelStage,
   StageRail,
@@ -419,6 +420,9 @@ export default function BuilderPage() {
 
           {/* Active (runtime) strategies — read-only */}
           <ActiveStrategiesPanel assetClass={builder.state.assetClass} />
+
+          {/* Registered paper-trading strategies */}
+          <RegisteredStrategiesPanel />
         </div>
 
         {/* Right: Funnel Feed + Preview */}
