@@ -38,7 +38,9 @@ describe("BuilderActionBar", () => {
 
   it("등록 중에는 등록 버튼이 비활성", () => {
     render(<BuilderActionBar {...baseProps} registering={true} />);
-    expect(screen.getByRole("button", { name: /페이퍼로 등록/ })).toBeDisabled();
+    const btn = screen.getByRole("button", { name: /페이퍼로 등록/ });
+    expect(btn).toBeDisabled();
+    expect(btn.querySelector(".animate-spin")).not.toBeNull();
   });
 
   it("lastRegistered가 있으면 안내 카드를 노출하고 닫기로 dismiss", async () => {

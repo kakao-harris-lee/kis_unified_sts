@@ -47,7 +47,7 @@ function StatusChip({ status }: { status: StageStatus }) {
     return (
       <span
         data-testid="stage-status-complete"
-        className="inline-flex items-center gap-1 text-xs font-medium text-emerald-600 dark:text-emerald-400"
+        className="inline-flex items-center gap-1 text-xs font-medium text-emerald-600 dark:text-emerald-400 px-2 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-900/30"
       >
         <Check className="w-3.5 h-3.5" aria-hidden="true" /> 완료
       </span>
@@ -57,7 +57,7 @@ function StatusChip({ status }: { status: StageStatus }) {
     return (
       <span
         data-testid="stage-status-warning"
-        className="inline-flex items-center gap-1 text-xs font-medium text-amber-600 dark:text-amber-400"
+        className="inline-flex items-center gap-1 text-xs font-medium text-amber-600 dark:text-amber-400 px-2 py-0.5 rounded-full bg-amber-50 dark:bg-amber-900/30"
       >
         <AlertTriangle className="w-3.5 h-3.5" aria-hidden="true" /> 조건 없음
       </span>
@@ -66,7 +66,7 @@ function StatusChip({ status }: { status: StageStatus }) {
   return (
     <span
       data-testid="stage-status-empty"
-      className="inline-flex items-center gap-1 text-xs font-medium text-slate-400 dark:text-slate-500"
+      className="inline-flex items-center gap-1 text-xs font-medium text-slate-400 dark:text-slate-500 px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800"
     >
       비어있음
     </span>

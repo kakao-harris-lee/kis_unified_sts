@@ -31,4 +31,18 @@ describe("FunnelStage", () => {
     );
     expect(container.querySelector("#stage-risk")).not.toBeNull();
   });
+
+  it("기본적으로 connector를 표시한다", () => {
+    const { container } = render(
+      <FunnelStage id="x" stepNum={1} title="T" status="empty">x</FunnelStage>,
+    );
+    expect(container.querySelector(".bg-gradient-to-b")).not.toBeNull();
+  });
+
+  it("showConnector=false 일 때 connector를 숨긴다", () => {
+    const { container } = render(
+      <FunnelStage id="x" stepNum={1} title="T" status="empty" showConnector={false}>x</FunnelStage>,
+    );
+    expect(container.querySelector(".bg-gradient-to-b")).toBeNull();
+  });
 });
