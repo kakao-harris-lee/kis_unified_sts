@@ -29,6 +29,7 @@ import json
 import logging
 import os
 import time
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
@@ -92,6 +93,20 @@ MAX_ORDER_AMOUNT = 100_000_000  # 1억원 maximum per trade
 MAX_ORDER_QUANTITY = 1_000_000  # Safety cap for quantity
 MAX_YAML_FILE_SIZE = 1_024 * 1_024  # 1MB max for YAML config files
 REENTRY_GUARD_SCOPES = {"symbol", "symbol_strategy"}
+
+# Futures Setup A/C strategy → kospi.signals_all.setup_type code. Only these
+# two are persisted to signals_all (the Phase 2 verification gates count
+# setup_type IN ('A','C')); other strategies are not written.
+_SETUP_TYPE_BY_STRATEGY = {
+    "setup_a_gap_reversion": "A",
+    "setup_c_event_reaction": "C",
+}
+# Column order matches shared/backtest/signals_writer.py (Phase 5 risk_filter).
+_SIGNALS_ALL_INSERT_SQL = (
+    "INSERT INTO kospi.signals_all "
+    "(signal_id, generated_at, setup_type, direction, entry_price, stop_loss, "
+    "take_profit, confidence, executed, skip_reason, reason_tags) VALUES"
+)
 
 
 @dataclass(frozen=True)
@@ -7072,6 +7087,14 @@ class TradingOrchestrator:
             self._state_publisher.publish_signal(signal, "entry", True)
             self._metrics.record_signal("entry", strategy=signal.strategy)
 
+        # Persist executed Setup A/C entry to kospi.signals_all so the Phase 2
+        # verification gates can measure the interim orchestrator paper path
+        # (best-effort; no-op for non-futures / non-A/C). This runs only on an
+        # actual fill (_process_filled_entry), so executed=True is correct.
+        await self._persist_setup_signal_row(
+            signal, direction=direction, entry_price=fill_price, executed=True
+        )
+
         # Mock mirror (fire-and-forget)
         if self._mock_mirror:
             side = "SELL" if is_short else "BUY"
@@ -7670,6 +7693,94 @@ class TradingOrchestrator:
         )
         direction = str(direction).strip().lower()
         return "short" if direction == "short" else "long"
+
+    @staticmethod
+    def _build_signals_all_row(
+        signal: Signal,
+        direction: str,
+        entry_price: float,
+        executed: bool,
+    ) -> tuple | None:
+        """Build a ``kospi.signals_all`` row tuple for a Setup A/C signal.
+
+        Returns ``None`` for non-Setup-A/C strategies (not persisted). Column
+        order/semantics mirror shared/backtest/signals_writer.py so rows from
+        the orchestrator and the Phase 5 risk_filter are interchangeable.
+        """
+        setup_type = _SETUP_TYPE_BY_STRATEGY.get(getattr(signal, "strategy", "") or "")
+        if setup_type is None:
+            return None
+
+        generated_at = getattr(signal, "timestamp", None) or datetime.now(UTC)
+        if generated_at.tzinfo is not None:
+            # DateTime64(3,'UTC') expects naive UTC (see signals_writer.py).
+            generated_at = generated_at.astimezone(UTC).replace(tzinfo=None)
+
+        metadata = getattr(signal, "metadata", {}) or {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+
+        return (
+            str(uuid.uuid4()),
+            generated_at,
+            setup_type,
+            direction or "long",
+            float(entry_price or getattr(signal, "price", 0) or 0),
+            float(metadata.get("stop_loss", 0) or 0),
+            float(metadata.get("take_profit", 0) or 0),
+            float(getattr(signal, "confidence", 0) or 0),
+            1 if executed else 0,
+            "",
+            [],
+        )
+
+    async def _persist_setup_signal_row(
+        self,
+        signal: Signal,
+        *,
+        direction: str,
+        entry_price: float,
+        executed: bool,
+    ) -> None:
+        """Best-effort persist a futures Setup A/C signal to ``kospi.signals_all``.
+
+        Phase 2 verification gates (``setup_a_signals_today``, the 30-day
+        cumulative gate) read ``kospi.signals_all``, which is otherwise written
+        only by the Phase 5 ``risk_filter`` service. While that pipeline is
+        inactive, the interim orchestrator paper path records here so the gates
+        measure the running system.
+
+        NON-BLOCKING + failure-tolerant: a ClickHouse error is logged and
+        swallowed — observability must never disrupt the trading loop. When the
+        Phase 5 risk_filter is activated, reconcile this write to avoid
+        duplicate signals_all rows.
+        """
+        if self.config.asset_class != "futures":
+            return
+        row = self._build_signals_all_row(signal, direction, entry_price, executed)
+        if row is None:
+            return
+        try:
+            from clickhouse_driver import Client as CHSyncClient
+
+            ch_cfg = ClickHouseConfig.from_env(database="kospi")
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(
+                None,
+                lambda: CHSyncClient(
+                    host=ch_cfg.host,
+                    port=ch_cfg.port,
+                    user=ch_cfg.user,
+                    password=ch_cfg.password,
+                    database=ch_cfg.database,
+                ).execute(_SIGNALS_ALL_INSERT_SQL, [row]),
+            )
+        except Exception:
+            logger.debug(
+                "signals_all persist failed for %s (best-effort)",
+                getattr(signal, "code", "?"),
+                exc_info=True,
+            )
 
     def _calculate_quantity(self, signal: Signal) -> int:
         """Calculate order quantity based on config.

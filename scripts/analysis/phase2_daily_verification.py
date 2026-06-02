@@ -155,19 +155,39 @@ def _count_llm_vetoes(client: Any, start_utc: datetime, end_utc: datetime) -> in
 
 
 def _count_har_rv_refits(client: Any, start_utc: datetime, end_utc: datetime) -> int:
-    """Gate 5 helper — HAR-RV daily refit row count for the trading day.
+    """Gate 5 helper — confirm the HAR-RV daily refit persisted a model for
+    the most recent *due* cycle.
 
-    ``har_rv_fits.fit_date`` is a ClickHouse ``Date`` column. Passing a
-    ``DateTime`` parameter (as the other ``DateTime64`` gates do) triggers
-    ``Code: 53. Cannot convert string '... HH:MM:SS' to type Date``, so we
-    compare against the KST trading date directly. The refit cron fires at
-    15:35 KST (06:35 UTC), so the UTC date stored in ``fit_date`` always
-    equals the KST trading date.
+    Use ``created_at`` (the run/insert time), NOT ``fit_date``: the refit
+    fits data as-of the prior session, so ``fit_date`` lags by ≥1 day
+    (e.g. a refit inserted 2026-06-01 07:35 UTC writes ``fit_date=2026-05-31``).
+    Comparing ``fit_date == today`` therefore never matches at check time.
+
+    Timing: the refit cron fires at **16:35 KST**, but Phase 2 verification
+    runs at **16:00 KST** — i.e. *before* that day's refit. So when we verify
+    the current day before 16:35 KST, the most recent *completed* refit is the
+    previous trading day's. After 16:35 KST (e.g. a manual re-run), today's
+    refit is expected. We count rows whose ``created_at`` (KST date) matches
+    that expected day; a genuinely missing/failed refit still surfaces as 0.
     """
+    from datetime import time as _dt_time
+
+    from shared.collector.historical import get_previous_trading_day
+
     trading_date_kst = start_utc.astimezone(KST).date()
+    now_kst = datetime.now(KST)
+    refit_due_today = not (
+        now_kst.date() == trading_date_kst and now_kst.time() < _dt_time(16, 35)
+    )
+    if refit_due_today:
+        expected_day = trading_date_kst
+    else:
+        expected_day = get_previous_trading_day(trading_date_kst) or trading_date_kst
+
     rows = client.execute(
-        "SELECT count() FROM kospi.har_rv_fits WHERE fit_date = %(d)s",
-        {"d": trading_date_kst},
+        "SELECT count() FROM kospi.har_rv_fits "
+        "WHERE toDate(created_at, 'Asia/Seoul') = %(d)s",
+        {"d": expected_day},
     )
     return int(rows[0][0]) if rows else 0
 
@@ -351,7 +371,11 @@ def evaluate_gates(
                 passed=har_rv_count >= 1,
                 actual=har_rv_count,
                 expected=">= 1",
-                detail="HAR-RV daily refit should produce >= 1 row per trading day.",
+                detail=(
+                    "HAR-RV refit must have persisted a model (created_at) for "
+                    "the most recent due cycle — previous trading day when "
+                    "checked before the 16:35 KST refit, else today."
+                ),
             )
         )
     except Exception as exc:
