@@ -12,7 +12,9 @@ export default function SlideToConfirm({ label, onConfirm }: Props) {
   const [progress, setProgress] = useState(0)
   const [dragging, setDragging] = useState(false)
   const startX = useRef(0)
-  const trackWidth = useRef(0)
+  // State, not a ref: trackWidth is read during render (the knob transform), so
+  // it must be reactive — reading a ref during render is unsupported.
+  const [trackWidth, setTrackWidth] = useState(0)
 
   const reset = useCallback(() => setProgress(0), [])
 
@@ -20,14 +22,14 @@ export default function SlideToConfirm({ label, onConfirm }: Props) {
     if (!trackRef.current) return
     trackRef.current.setPointerCapture(e.pointerId)
     startX.current = e.clientX
-    trackWidth.current = trackRef.current.getBoundingClientRect().width
+    setTrackWidth(trackRef.current.getBoundingClientRect().width)
     setDragging(true)
   }
 
   const onPointerMove = (e: React.PointerEvent) => {
     if (!dragging) return
     const dx = e.clientX - startX.current
-    const ratio = Math.max(0, Math.min(1, dx / (trackWidth.current - 56)))
+    const ratio = Math.max(0, Math.min(1, dx / (trackWidth - 56)))
     setProgress(ratio)
     if (ratio >= COMMIT_THRESHOLD) {
       setDragging(false)
@@ -94,7 +96,7 @@ export default function SlideToConfirm({ label, onConfirm }: Props) {
       <div
         className="absolute top-0 left-0 h-full w-14 bg-rose-700 rounded shadow"
         style={{
-          transform: `translateX(${progress * (trackWidth.current - 56)}px)`,
+          transform: `translateX(${progress * (trackWidth - 56)}px)`,
           transition: dragging ? 'none' : 'transform 200ms',
         }}
       />
