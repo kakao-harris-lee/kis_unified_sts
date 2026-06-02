@@ -10,7 +10,8 @@ Imported from upstream commit:
 
 Local integration notes:
 
-- Runs on port `3100` to avoid the existing `3000` owner on this host.
+- Runs on internal container port `3100`; host access goes through Caddy on
+  `5080` so the existing `3000` owner on this host stays separate.
 - Next.js rewrites keep upstream `/api/*` calls intact while proxying Strategy
   Builder traffic to the STS compatibility routes under `/api/kis-builder/*`.
 - Keep upstream UI changes minimal; prefer adapting in STS backend compatibility

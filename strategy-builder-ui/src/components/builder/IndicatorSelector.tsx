@@ -19,6 +19,7 @@ interface IndicatorSelectorProps {
   onUpdateIndicator: (id: string, updates: Partial<BuilderIndicator>) => void;
   onRemoveIndicator: (id: string) => void;
   createIndicator: (indicatorId: string, alias?: string) => BuilderIndicator | null;
+  assetClass: "stock" | "futures";
 }
 
 // 카테고리 아이콘
@@ -38,6 +39,7 @@ export function IndicatorSelector({
   onUpdateIndicator,
   onRemoveIndicator,
   createIndicator,
+  assetClass,
 }: IndicatorSelectorProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [expandedIndicator, setExpandedIndicator] = useState<string | null>(null);
@@ -441,6 +443,13 @@ export function IndicatorSelector({
                         <AlertTriangle className="w-3 h-3" />
                         백테스트 미지원
                       </span>
+                    ) : assetClass === "futures" && def.futuresApplicability === "degraded" ? (
+                      <span
+                        className="inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] font-medium bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400 rounded"
+                        title="코스피200 미니의 낮은 유동성에서 신뢰도 저하 — 선물 권장 안 함"
+                      >
+                        선물 권장 안 함
+                      </span>
                     ) : isAdded && !isJustAdded ? (
                       <span className="text-xs text-slate-400">+1 더 추가</span>
                     ) : null}
@@ -573,6 +582,13 @@ export function IndicatorSelector({
                                 ) : def.leanUnsupported ? (
                                   <span className="flex items-center gap-0.5 text-[10px] text-amber-500 ml-auto" title="Lean 백테스트 미지원">
                                     <AlertTriangle className="w-3 h-3" />
+                                  </span>
+                                ) : assetClass === "futures" && def.futuresApplicability === "degraded" ? (
+                                  <span
+                                    className="ml-auto inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] font-medium bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400 rounded"
+                                    title="코스피200 미니의 낮은 유동성에서 신뢰도 저하 — 선물 권장 안 함"
+                                  >
+                                    선물 권장 안 함
                                   </span>
                                 ) : isAdded && !isJustAdded ? (
                                   <span className="px-1.5 py-0.5 text-[10px] bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded">

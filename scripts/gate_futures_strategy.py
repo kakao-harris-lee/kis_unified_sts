@@ -18,10 +18,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import optuna
 import pandas as pd
 import yaml
-from optuna.samplers import TPESampler
 
 from shared.backtest.adapter import BacktestStrategyAdapter
 from shared.backtest.config import BacktestConfig
@@ -250,6 +248,11 @@ def main(argv=None) -> int:
         if len(opt_df) < 500 or len(oos_df) < 500:
             print("ERROR: split leaves too few bars on one side.")
             return 2
+
+    # Lazy import: optuna is only needed for the optimization run, not for
+    # module import or the pure helpers exercised by unit tests (CI has no optuna).
+    import optuna
+    from optuna.samplers import TPESampler
 
     study = optuna.create_study(
         direction="maximize",

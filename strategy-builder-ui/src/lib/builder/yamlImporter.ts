@@ -96,7 +96,7 @@ export function parseYamlToBuilderState(yamlString: string): {
     author: parsed.metadata?.author || "user",
   };
 
-  return { state: { metadata, indicators, entry, exit, risk }, warnings };
+  return { state: { metadata, assetClass: "stock", indicators, entry, exit, risk }, warnings };
 }
 
 /**

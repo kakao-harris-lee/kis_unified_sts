@@ -103,8 +103,11 @@ if pnl_pct >= self.config.exit.breakeven_threshold:
 
 #### 운영 대시보드 (Dashboard)
 
-React 프론트엔드 (host port 8001, FastAPI 정적 호스팅) — 실시간 운영 모니터링 단일 화면.
-KIS Unified STS의 사용자-facing 웹 포트는 8001뿐이다. host 3000은 별도 `bid-vector` 프로젝트용이므로 이 repo에서 사용하지 않는다. 별도 웹서비스/API가 생기기 전까지 추가 host port를 예약하지 않는다.
+Next.js 프론트엔드 + FastAPI API는 Caddy 단일 진입점(host port 5080)으로 제공한다.
+KIS Unified STS의 사용자-facing 웹 포트는 5080뿐이다. `dashboard:8001`과
+`strategy-builder-ui:3100`은 Docker network 내부 포트이며 host publish 하지 않는다.
+host 3000은 별도 `bid-vector` 프로젝트용이므로 이 repo에서 사용하지 않는다.
+별도 웹서비스/API가 생기기 전까지 추가 host port를 예약하지 않는다.
 
 - `/` — Cockpit (HeaderBar + Positions + Signals/Fills + Quick Actions)
 - `/positions`, `/signals`, `/trades` — drill-down 페이지 (모바일 카드/sheet 패턴)
@@ -372,7 +375,7 @@ config = MyServiceConfig.from_yaml(apply_env_overrides=True)
 
 ### 데이터 피드 아키텍처
 
-- **WebSocket 전용**: REST polling 제거됨. 주식(`H0STCNT0`), 선물(`H0IFASP0`) 모두 WebSocket으로 실시간 수신.
+- **WebSocket 전용**: REST polling 제거됨. 주식(`H0STCNT0`), 선물 체결(`H0IFCNT0`) + 선물 호가(`H0IFASP0`) 모두 WebSocket으로 실시간 수신.
 - **Pre-market ClickHouse warmup**: 장 시작 전 ClickHouse에서 최근 분봉을 로드하여 지표 웜업 시간 단축.
 - **Redis 기반 포지션 복구**: 프로세스 재시작 시 `trading:{asset}:positions` Redis 키에서 오픈 포지션을 복원.
 - **Redis DB 1 전용**: DB 0은 다른 프로젝트가 사용. 모든 Redis 접속은 DB 1을 명시해야 한다.
@@ -477,6 +480,33 @@ sts paper start --strategy bb_reversion --asset stock
 
 ---
 
+## 🤖 에이전트 하네스 (멀티 에이전트 팀)
+
+도메인 전문 에이전트 팀이 `.claude/agents/`(24개 정의)와 `.claude/skills/`(오케스트레이터 6개)에 정의되어 있다. 진입점은 `trading-harness` 스킬(전문가 풀 라우터)이며, 요청 키워드로 적절한 에이전트/파이프라인에 위임한다.
+
+| 팀 | 에이전트 |
+|----|---------|
+| 전략 개발 | `strategy-architect`, `indicator-specialist`, `regime-gate-analyst`, `strategy-builder`, `backtest-engineer` |
+| 전략/모델 승격 | `model-evaluator`, `model-deployer` |
+| 코드 유지보수 | `code-reviewer`, `test-engineer`, `refactorer` |
+| 운영/모니터링 | `ops-monitor`, `incident-responder`, `alert-manager` |
+| 데이터·실행·분석 | `data-engineer`(수집/백필/품질), `execution-specialist`(주문/KIS/ATS), `llm-analyst`(LLM 분석 **콘텐츠**) |
+| 종합 코드 감사 | `architecture-auditor`, `security-auditor`, `performance-auditor`, `style-auditor`, `review-synthesizer` |
+| 프론트엔드 (Next.js 단일 앱) | `frontend-architect`, `ui-engineer`, `frontend-realtime-engineer` |
+
+**오케스트레이터 스킬**:
+
+- `trading-harness` — 전체 라우터 (전문가 풀)
+- `strategy-lab` — 1차 전략 개발 파이프라인 (설계→백테스트→게이트→평가→승격)
+- `ops-harness` — 운영/모니터링
+- `code-audit` — 종합 코드 감사 (아키텍처·보안·성능·스타일 4개 감사관 **병렬** → `review-synthesizer` **통합 리포트**)
+- `frontend-lab` — Next.js 단일 앱(`strategy-builder-ui/`) 화면/기능 개발
+- `rl-pipeline` — **DEPRECATED** (RL 재학습 전용, 운영 경로 아님)
+
+상세 역할/트리거/협업은 각 `.claude/agents/*.md` 및 `.claude/skills/*/skill.md` 참조. 새 에이전트/스킬은 `harness` 메타 스킬로 생성·점검한다.
+
+---
+
 ## ⚠️ 개발 규칙
 
 ### 0. 브랜치 워크플로우 필수
@@ -510,7 +540,14 @@ gh pr create --title "..." --body "..."
 
 ### 4. 테스트 필수
 
-모든 PR 전 `pytest tests/ -v` 실행.
+모든 PR 전 `.venv/bin/pytest tests/ -v` 실행 (시스템 pytest 아님 — **venv 필수**).
+
+**CI 인프라 & 테스트 안정성 (2026-05-30 정리, `.github/workflows/test.yml`):**
+
+- **CI는 Redis(6379) + ClickHouse(native 9000) 서비스를 띄운다.** 인프라에 접속하는 테스트는 CI에서 실제로 연결된다. ClickHouse 이미지는 **빈 비밀번호 `default` 로그인을 거부(`Code 516`)**하므로 CI는 `CLICKHOUSE_PASSWORD`를 서비스/클라이언트 양쪽에 설정한다.
+- **선택적 의존성 import는 가드한다.** 모듈 레벨 `import optuna`(또는 다른 optional extra)는 collection 단계에서 `ModuleNotFoundError`를 던져 **전체 스위트를 abort**(exit 2)시킨다 → `main()` 내부 lazy import 또는 `pytest.importorskip("...")`를 사용한다.
+- **싱글톤은 conftest에서 리셋한다.** `ClickHouseClient`/`ConfigLoader`는 **첫 config로 고정되는 싱글톤**이라 cross-test 오염을 일으킨다(격리 실행은 통과, 풀 스위트는 실패). `tests/conftest.py`의 autouse fixture가 매 테스트 후 리셋한다 (`ClickHouseClient.reset_singleton()` 등).
+- **성능 회귀 체크** (`scripts/performance/check_regression.py`)는 baseline 대비 wall-clock 비교다. baseline(`tests/performance/baselines.json`)은 **CI와 동일 하드웨어(ubuntu-latest)에서 재생성**해야 하며(다른 하드웨어 baseline은 false regression 유발), 러너 variance를 위해 `--min-duration 0.05`(50ms 미만 면제) + `--error-threshold 2.0`(≥2배만 실패) + warning non-fatal로 운용한다.
 
 ### 5. 타임존 규칙 — KST 필수
 

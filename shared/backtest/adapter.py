@@ -285,22 +285,14 @@ class BacktestStrategyAdapter:
         self._indicator_contract = IndicatorContract.from_required_keys(
             strategy.required_indicators
         )
-        mtf_timeframes = sorted(
-            {
-                req.timeframe.minutes
-                for req in (
-                    *self._indicator_contract.momentum_requests,
-                    *self._indicator_contract.mtf_base_requests,
-                )
-                if req.timeframe is not None
-            }
-        )
+        mtf_timeframes = list(self._indicator_contract.mtf_timeframes)
 
         self._indicator_engine = StreamingIndicatorEngine(
             bb_period=bb_period,
             bb_std=bb_std,
             rsi_period=rsi_period,
             mtf_timeframes=mtf_timeframes,
+            mtf_warmth_timeframe=self._indicator_contract.warmth_timeframe,
         )
         self._indicator_resolver = StreamingIndicatorResolver(
             engine=self._indicator_engine,

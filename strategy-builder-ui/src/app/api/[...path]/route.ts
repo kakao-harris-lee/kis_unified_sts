@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 
-const apiBase = process.env.KIS_BUILDER_API_BASE || "http://localhost:8001";
+const apiBase = process.env.KIS_BUILDER_API_BASE || "http://localhost:5080";
 const apiKey = process.env.KIS_BUILDER_API_KEY || process.env.DASHBOARD_API_KEY || "";
 const compatRoots = new Set([
   "strategies",
@@ -10,6 +10,7 @@ const compatRoots = new Set([
   "market",
   "files",
   "symbols",
+  "experiments",
 ]);
 
 export const dynamic = "force-dynamic";

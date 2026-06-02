@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { useToast } from "@/components/ui";
 import {
   Plus,
   Trash2,
@@ -36,6 +37,7 @@ export function CustomStrategyList({
   onDuplicate,
   onCreateNew,
 }: CustomStrategyListProps) {
+  const toast = useToast();
   const [menuOpen, setMenuOpen] = useState<string | null>(null);
   // Track which builder IDs have a corresponding YAML under
   // config/strategies/built/<id>.yaml so we can show a "registered" badge
@@ -62,28 +64,26 @@ export function CustomStrategyList({
     async (strategy: StoredStrategy, e: React.MouseEvent) => {
       e.stopPropagation();
       setMenuOpen(null);
-      // The Phase-1 backend (#356, #357) enforces stock-only at the API
-      // boundary; the frontend's BuilderState type doesn't yet carry an
-      // asset_class field so we send as-is and let the 400 message surface
-      // when a futures draft is built (no current UI to set futures anyway).
+      // builder_state now carries assetClass (stock/futures); the backend
+      // routes futures to contract sizing + auto-enforced exit safety. Phase 1
+      // futures registers as 1 contract (backend default).
       setRegisteringId(strategy.id);
       try {
         await registerPaperStrategy({
           builder_state: strategy.state,
         });
         await refreshRegistered();
-        alert(
-          `'${strategy.name}' 전략이 페이퍼 트레이딩에 등록되었습니다.\n` +
-            "기본 상태는 비활성입니다. 활성화는 별도 작업이 필요합니다.",
+        toast.success(
+          `'${strategy.name}' 전략을 페이퍼에 등록했습니다 (비활성). 활성화는 운영자 작업입니다.`,
         );
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        alert(`등록 실패: ${msg}`);
+        toast.error(`등록 실패: ${msg}`);
       } finally {
         setRegisteringId(null);
       }
     },
-    [refreshRegistered],
+    [refreshRegistered, toast],
   );
 
   const formatDate = useCallback((dateStr: string) => {
@@ -187,6 +187,7 @@ export function CustomStrategyList({
 
               {/* Menu Button */}
               <button
+                aria-label="전략 메뉴"
                 onClick={(e) => handleMenuToggle(strategy.id, e)}
                 className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors"
               >

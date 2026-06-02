@@ -109,14 +109,40 @@ def test_register_paper_creates_yaml(client) -> None:
     )
 
 
-def test_register_paper_rejects_futures(client) -> None:
+def test_register_paper_accepts_futures(client) -> None:
+    # Futures builder strategies are now supported (long-only, paper). The
+    # materialized YAML uses contract-count sizing, not KRW amount.
+    tc, built_dir = client
+    resp = tc.post(
+        "/api/kis-builder/register-paper",
+        json={
+            "builder_state": _minimal_state(
+                asset_class="futures", strategy_id="fut_built"
+            ),
+            "contracts": 2,
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["asset_class"] == "futures"
+
+    doc = yaml.safe_load((built_dir / "fut_built.yaml").read_text(encoding="utf-8"))
+    position = doc["strategy"]["position"]
+    assert position["type"] == "fixed"
+    assert position["params"]["fixed_quantity"] == 2
+    assert "order_amount_per_stock" not in position["params"]
+
+
+def test_register_paper_rejects_unknown_asset_class(client) -> None:
     tc, _ = client
     resp = tc.post(
         "/api/kis-builder/register-paper",
-        json={"builder_state": _minimal_state(asset_class="futures")},
+        json={
+            "builder_state": _minimal_state(
+                asset_class="options", strategy_id="bad_built"
+            )
+        },
     )
     assert resp.status_code == 400
-    assert "stock-only" in resp.json()["detail"]
 
 
 def test_register_paper_rejects_invalid_state(client) -> None:

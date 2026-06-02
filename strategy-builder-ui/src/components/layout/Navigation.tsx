@@ -12,6 +12,7 @@ import {
   Briefcase,
   Activity,
   Receipt,
+  FlaskConical,
 } from "lucide-react";
 import { useAuth } from "@/hooks";
 import { SettingsModal } from "@/components/settings";
@@ -24,6 +25,7 @@ const navItems = [
   { href: "/positions", label: "Positions", icon: Briefcase },
   { href: "/signals", label: "Signals", icon: Activity },
   { href: "/trades", label: "Trades", icon: Receipt },
+  { href: "/experiments", label: "실험", icon: FlaskConical },
   { href: "/builder", label: "전략 빌더", icon: Sparkles },
   { href: "/execute", label: "전략 실행", icon: Play },
 ];
@@ -43,9 +45,13 @@ export function Navigation() {
     <>
       <header className="sticky top-0 z-50 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800">
         <div className="w-full px-4">
-          <div className="flex items-center justify-between h-16">
+          <div className="relative flex h-16 w-full max-w-full min-w-0 items-center justify-between gap-2 overflow-hidden pr-10 sm:overflow-visible sm:pr-0">
             {/* 로고 */}
-            <Link href="/" className="flex items-center gap-3 focus-ring rounded-lg" aria-label="KIS Strategy Builder 홈">
+            <Link
+              href="/"
+              className="flex shrink-0 items-center gap-3 focus-ring rounded-lg"
+              aria-label="KIS Strategy Builder 홈"
+            >
               <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center">
                 <TrendingUp className="w-6 h-6 text-white" aria-hidden="true" />
               </div>
@@ -60,7 +66,10 @@ export function Navigation() {
             </Link>
 
             {/* 네비게이션 */}
-            <nav className="flex items-center gap-1" aria-label="메인 네비게이션">
+            <nav
+              className="flex max-w-[calc(100vw-128px)] flex-none items-center gap-1 overflow-x-auto px-1 [scrollbar-width:none] sm:max-w-none sm:flex-1 [&::-webkit-scrollbar]:hidden"
+              aria-label="메인 네비게이션"
+            >
               {navItems.map((item) => {
                 const isActive = pathname === item.href;
                 const Icon = item.icon;
@@ -70,7 +79,7 @@ export function Navigation() {
                     href={item.href}
                     aria-current={isActive ? "page" : undefined}
                     aria-label={item.label}
-                    className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors focus-ring ${
+                    className={`flex shrink-0 items-center gap-2 px-2 sm:px-4 py-2 rounded-lg text-sm font-medium transition-colors focus-ring ${
                       isActive
                         ? "bg-primary/10 text-primary"
                         : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
@@ -84,11 +93,11 @@ export function Navigation() {
             </nav>
 
             {/* 우측 영역: 모드 표시 + 설정 톱니바퀴 */}
-            <div className="flex items-center gap-2">
+            <div className="fixed right-4 top-4 z-[60] flex shrink-0 items-center gap-2 bg-white dark:bg-slate-900 sm:static sm:z-10">
               {/* 현재 모드 배지 - 인증된 경우에만 표시 */}
               {status.authenticated && (
                 <span
-                  className={`px-2 py-1 rounded text-xs font-bold ${modeColor}`}
+                  className={`hidden sm:inline-flex px-2 py-1 rounded text-xs font-bold ${modeColor}`}
                   role="status"
                   aria-label={`현재 모드: ${modeLabel}투자`}
                 >
