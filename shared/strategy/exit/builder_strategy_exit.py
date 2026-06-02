@@ -15,15 +15,15 @@ import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
-from zoneinfo import ZoneInfo
 
 from shared.config.mixins import ConfigMixin
 from shared.models.signal import ExitReason, ExitSignal
 from shared.strategy.base import ExitContext, ExitSignalGenerator, MarketStateProtocol
+from shared.strategy.market_time import to_kst
 from shared.strategy_builder.evaluator import StrategyBuilderEvaluator
+from shared.strategy_builder.futures_safety import FuturesSafety, load_futures_safety
 from shared.strategy_builder.schema import BuilderState, SymbolSeries
 
-_KST = ZoneInfo("Asia/Seoul")
 logger = logging.getLogger(__name__)
 
 
@@ -51,6 +51,8 @@ class BuilderStrategyExit(ExitSignalGenerator[BuilderStrategyExitConfig]):
         self._evaluator = StrategyBuilderEvaluator()
         self._state: BuilderState | None = None
         self._parse_state()
+        self._is_futures = self._state is not None and self._state.asset_class == "futures"
+        self._safety: FuturesSafety | None = load_futures_safety() if self._is_futures else None
 
     def _validate_config(self) -> None:
         assert self.config.stop_loss_pct >= 0
@@ -91,6 +93,37 @@ class BuilderStrategyExit(ExitSignalGenerator[BuilderStrategyExitConfig]):
         if entry_price <= 0:
             return False, None
         pnl_pct = (current_price - entry_price) / entry_price * 100.0
+
+        # Futures auto-enforced safety (cannot be disabled by the user).
+        if self._is_futures and self._safety is not None:
+            # EOD time close (KST) — highest priority.
+            now_kst = to_kst(context.timestamp)
+            if now_kst.time() >= self._safety.eod_close_time:
+                return True, self._make_signal(
+                    position=position,
+                    current_price=current_price,
+                    entry_price=entry_price,
+                    pnl_pct=pnl_pct,
+                    reason=ExitReason.EOD_CLOSE,
+                    confidence=1.0,
+                    note="futures_eod_close",
+                )
+            # Hard-stop cap: take the tighter of the user's stop and the cap;
+            # the cap also applies when the user disabled their stop (<= 0).
+            cap = self._safety.hard_stop_pct
+            user_stop = self.config.stop_loss_pct
+            effective_stop = cap if user_stop <= 0 else min(user_stop, cap)
+            if pnl_pct <= -effective_stop:
+                note = "futures_hard_stop" if effective_stop == cap else "stop_loss_within_cap"
+                return True, self._make_signal(
+                    position=position,
+                    current_price=current_price,
+                    entry_price=entry_price,
+                    pnl_pct=pnl_pct,
+                    reason=ExitReason.STOP_LOSS,
+                    confidence=1.0,
+                    note=note,
+                )
 
         # 1) Hard stop loss
         if self.config.stop_loss_pct > 0 and pnl_pct <= -self.config.stop_loss_pct:

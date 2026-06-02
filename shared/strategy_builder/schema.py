@@ -8,6 +8,17 @@ from typing import Any, Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic.alias_generators import to_camel
+
+# Builder input models accept BOTH the frontend's camelCase payload (via the
+# generated alias) and snake_case (populate_by_name) used by tests / the
+# materialized YAML. model_dump(by_alias=False, the default) keeps snake_case
+# so the runtime + YAML are unaffected.
+_BUILDER_MODEL_CONFIG = ConfigDict(
+    alias_generator=to_camel,
+    populate_by_name=True,
+    extra="forbid",
+)
 
 
 class IndicatorCategory(StrEnum):
@@ -92,6 +103,8 @@ class BuilderMetadata(BaseModel):
     tags: list[str] = Field(default_factory=lambda: ["strategy_builder"])
     author: str = "STS"
 
+    model_config = _BUILDER_MODEL_CONFIG
+
     @field_validator("id", "name")
     @classmethod
     def not_blank(cls, value: str) -> str:
@@ -109,7 +122,7 @@ class BuilderIndicator(BaseModel):
     params: dict[str, int | float | str] = Field(default_factory=dict)
     output: str = "value"
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = _BUILDER_MODEL_CONFIG
 
     @field_validator("alias")
     @classmethod
@@ -130,7 +143,7 @@ class ConditionOperand(BaseModel):
     value: float | None = None
     price_field: Literal["close", "open", "high", "low", "volume"] | None = None
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = _BUILDER_MODEL_CONFIG
 
     @model_validator(mode="after")
     def validate_operand(self) -> ConditionOperand:
@@ -149,19 +162,21 @@ class BuilderCondition(BaseModel):
     operator: ConditionOperator
     right: ConditionOperand
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = _BUILDER_MODEL_CONFIG
 
 
 class BuilderConditionGroup(BaseModel):
     logic: ConditionLogic = ConditionLogic.AND
     conditions: list[BuilderCondition] = Field(default_factory=list)
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = _BUILDER_MODEL_CONFIG
 
 
 class RiskToggle(BaseModel):
     enabled: bool = False
     percent: float = Field(default=0.0, ge=0)
+
+    model_config = _BUILDER_MODEL_CONFIG
 
 
 class RiskManagement(BaseModel):
@@ -169,6 +184,8 @@ class RiskManagement(BaseModel):
     stop_loss: RiskToggle = Field(default_factory=lambda: RiskToggle(enabled=True, percent=5.0))
     take_profit: RiskToggle = Field(default_factory=lambda: RiskToggle(enabled=False, percent=10.0))
     trailing_stop: RiskToggle = Field(default_factory=lambda: RiskToggle(enabled=False, percent=3.0))
+
+    model_config = _BUILDER_MODEL_CONFIG
 
 
 class BuilderState(BaseModel):
@@ -179,7 +196,7 @@ class BuilderState(BaseModel):
     exit: BuilderConditionGroup = Field(default_factory=BuilderConditionGroup)
     risk: RiskManagement = Field(default_factory=RiskManagement)
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = _BUILDER_MODEL_CONFIG
 
     @model_validator(mode="after")
     def validate_condition_aliases(self) -> BuilderState:

@@ -120,21 +120,34 @@ class KISFuturesPriceFeed:
     def get_health_status(self) -> dict[str, Any]:
         """Get detailed health status for diagnostics.
 
+        Spreads adapter health (connected, messages_received, messages_dropped,
+        queue_depth, …) then overlays feed-specific keys so that feed-level
+        staleness / is_healthy semantics always win.
+
         Returns:
             Dictionary with health metrics:
             - running: bool - whether feed is running
             - last_tick_ts: float | None - timestamp of last tick
-            - staleness_seconds: float | None - seconds since last tick
-            - is_healthy: bool - overall health status
+            - staleness_seconds: float | None - seconds since last tick (tick-based)
+            - is_healthy: bool - overall health status (tick-based)
             - symbol_count: int - number of tracked symbols
             - cached_symbols: list[str] - symbols with cached data
+            - messages_received: int - from adapter (cumulative)
+            - messages_dropped: int - from adapter (cumulative, queue-full drops)
+            - queue_depth: int - from adapter
+            - connected: bool - WebSocket connection state
         """
         with self._prices_lock:
             cached_symbols = list(self._prices.keys())
 
         staleness = self.get_staleness_seconds()
+        # Read adapter health once; spread it first so feed keys override.
+        adapter_health = self._adapter.get_health_status()
 
         return {
+            **adapter_health,
+            # Feed-specific keys override adapter values for staleness/health
+            # semantics (tick-based, not WS-message-based).
             "running": self._running,
             "last_tick_ts": self._last_tick_ts,
             "staleness_seconds": staleness,

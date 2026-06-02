@@ -178,7 +178,7 @@ If the dashboard API is running:
 # Start dashboard
 python -m services.dashboard.app
 
-# Access at http://localhost:8001
+# Access at http://localhost:5080
 # View real-time positions, P&L chart, trade log
 ```
 

@@ -1,0 +1,5 @@
+# Auto-enforced safety guards for builder-generated FUTURES strategies.
+# Applied by builder_v1_exit regardless of the user's risk settings.
+futures_safety:
+  hard_stop_pct: 3.0        # max allowable loss (percent) before a forced exit
+  eod_close_time: "15:15"   # KST; force-close builder futures positions at/after this time

@@ -23,6 +23,7 @@ Usage:
 Reference:
     - Migrated from kospi_mini_sts/src/collector/kis_websocket.py
 """
+
 from __future__ import annotations
 
 import base64
@@ -60,7 +61,7 @@ TR_FUTURES_CNT = "H0IFCNT0"  # 선물옵션 체결
 MESSAGE_QUEUE_MAXSIZE = 10000
 
 # Symbol validation pattern (alphanumeric, 5-10 chars)
-SYMBOL_PATTERN = re.compile(r'^[0-9A-Za-z]{5,10}$')
+SYMBOL_PATTERN = re.compile(r"^[0-9A-Za-z]{5,10}$")
 
 # Field indices for H0IFASP0 (orderbook)
 ORDERBOOK_FIELDS = {
@@ -69,17 +70,20 @@ ORDERBOOK_FIELDS = {
     #  - bid_price L1-L5: 7-11
     #  - ask_qty   L1-L5: 12-16
     #  - bid_qty   L1-L5: 17-21
-    'bid_price': [7, 8, 9, 10, 11],  # L1-L5
-    'bid_qty': [17, 18, 19, 20, 21],
-    'ask_price': [2, 3, 4, 5, 6],
-    'ask_qty': [12, 13, 14, 15, 16],
+    "bid_price": [7, 8, 9, 10, 11],  # L1-L5
+    "bid_qty": [17, 18, 19, 20, 21],
+    "ask_price": [2, 3, 4, 5, 6],
+    "ask_qty": [12, 13, 14, 15, 16],
 }
-ORDERBOOK_MIN_FIELDS = max(
-    max(ORDERBOOK_FIELDS["bid_price"]),
-    max(ORDERBOOK_FIELDS["bid_qty"]),
-    max(ORDERBOOK_FIELDS["ask_price"]),
-    max(ORDERBOOK_FIELDS["ask_qty"]),
-) + 1
+ORDERBOOK_MIN_FIELDS = (
+    max(
+        max(ORDERBOOK_FIELDS["bid_price"]),
+        max(ORDERBOOK_FIELDS["bid_qty"]),
+        max(ORDERBOOK_FIELDS["ask_price"]),
+        max(ORDERBOOK_FIELDS["ask_qty"]),
+    )
+    + 1
+)
 
 # Field indices for H0IFCNT0 (trade)
 # [0]=종목코드, [1]=체결시간, [2]=전일대비, [3]=부호, [4]=대비율
@@ -87,13 +91,13 @@ ORDERBOOK_MIN_FIELDS = max(
 # [9]=체결수량, [10]=누적체결수량, [11]=누적거래대금
 # [18]=미결제약정
 TRADE_FIELDS = {
-    'current_price': 5,
-    'open_price': 6,
-    'high_price': 7,
-    'low_price': 8,
-    'tick_volume': 9,
-    'cumulative_volume': 10,
-    'open_interest': 18,
+    "current_price": 5,
+    "open_price": 6,
+    "high_price": 7,
+    "low_price": 8,
+    "tick_volume": 9,
+    "cumulative_volume": 10,
+    "open_interest": 18,
 }
 
 # Value bounds for validation
@@ -103,6 +107,7 @@ MIN_PRICE = -1e9
 
 class WSMessageType(str, Enum):
     """WebSocket message types."""
+
     SUBSCRIBE = "1"
     UNSUBSCRIBE = "2"
 
@@ -113,9 +118,7 @@ class WSMessageType(str, Enum):
 
 
 def _safe_float(
-    fields: List[str],
-    index: int,
-    default: Optional[float] = None
+    fields: List[str], index: int, default: Optional[float] = None
 ) -> Optional[float]:
     """Safely extract and validate float from fields.
 
@@ -141,9 +144,7 @@ def _safe_float(
 
 
 def parse_futures_orderbook(
-    symbol: str,
-    data: str,
-    timestamp: float
+    symbol: str, data: str, timestamp: float
 ) -> Optional[TickData]:
     """Parse futures orderbook (호가) data.
 
@@ -205,11 +206,7 @@ def parse_futures_orderbook(
         return None
 
 
-def parse_futures_trade(
-    symbol: str,
-    data: str,
-    timestamp: float
-) -> Optional[TickData]:
+def parse_futures_trade(symbol: str, data: str, timestamp: float) -> Optional[TickData]:
     """Parse futures trade (체결) data.
 
     Pure function for easy testing.
@@ -239,15 +236,15 @@ def parse_futures_trade(
             ask_price_1=0.0,
             ask_qty_1=0.0,
             # 체결가 및 OHLC
-            current_price=_safe_float(fields, TRADE_FIELDS['current_price']),
-            open_price=_safe_float(fields, TRADE_FIELDS['open_price']),
-            high_price=_safe_float(fields, TRADE_FIELDS['high_price']),
-            low_price=_safe_float(fields, TRADE_FIELDS['low_price']),
+            current_price=_safe_float(fields, TRADE_FIELDS["current_price"]),
+            open_price=_safe_float(fields, TRADE_FIELDS["open_price"]),
+            high_price=_safe_float(fields, TRADE_FIELDS["high_price"]),
+            low_price=_safe_float(fields, TRADE_FIELDS["low_price"]),
             # 거래량
-            tick_volume=_safe_float(fields, TRADE_FIELDS['tick_volume']),
-            cumulative_volume=_safe_float(fields, TRADE_FIELDS['cumulative_volume']),
+            tick_volume=_safe_float(fields, TRADE_FIELDS["tick_volume"]),
+            cumulative_volume=_safe_float(fields, TRADE_FIELDS["cumulative_volume"]),
             # 미결제약정
-            open_interest=_safe_float(fields, TRADE_FIELDS['open_interest']),
+            open_interest=_safe_float(fields, TRADE_FIELDS["open_interest"]),
         )
     except Exception as e:
         logger.warning(f"[KIS WS] Failed to parse trade: {e}")
@@ -317,6 +314,11 @@ class KISWebSocketAdapter(BaseAPIAdapter):
 
         # Health monitoring
         self._last_message_ts: Optional[float] = None
+        # Counters for message throughput and queue-drop tracking.
+        # Both are incremented under _state_lock (same lock that guards
+        # _last_message_ts) for thread-safe reads in get_health_status().
+        self._messages_received: int = 0
+        self._messages_dropped: int = 0
 
     # -------------------------------------------------------------------------
     # Thread-Safe State Accessors
@@ -372,11 +374,16 @@ class KISWebSocketAdapter(BaseAPIAdapter):
                 - running: bool - Thread running state
                 - last_message_ts: float | None - Unix timestamp of last message
                 - staleness_seconds: float | None - Seconds since last message
+                - messages_received: int - Total messages received
+                - messages_dropped: int - Total messages dropped (queue full)
+                - queue_depth: int - Current message queue size
         """
         with self._state_lock:
             last_msg_ts = self._last_message_ts
             connected = self._connected
             running = self._running
+            messages_received = self._messages_received
+            messages_dropped = self._messages_dropped
 
         staleness = None
         if last_msg_ts is not None:
@@ -387,6 +394,9 @@ class KISWebSocketAdapter(BaseAPIAdapter):
             "running": running,
             "last_message_ts": last_msg_ts,
             "staleness_seconds": staleness,
+            "messages_received": messages_received,
+            "messages_dropped": messages_dropped,
+            "queue_depth": self._message_queue.qsize(),
         }
 
     # -------------------------------------------------------------------------
@@ -422,9 +432,7 @@ class KISWebSocketAdapter(BaseAPIAdapter):
         # Start WebSocket in background thread
         self._set_running(True)
         self._ws_thread = threading.Thread(
-            target=self._run_websocket,
-            daemon=True,
-            name="KISWebSocket"
+            target=self._run_websocket, daemon=True, name="KISWebSocket"
         )
         self._ws_thread.start()
 
@@ -436,9 +444,7 @@ class KISWebSocketAdapter(BaseAPIAdapter):
         logger.info(f"[KIS WS] Connected to {self.ws_url}")
 
     def subscribe(
-        self,
-        symbols: List[str],
-        callback: Callable[[TickData], None]
+        self, symbols: List[str], callback: Callable[[TickData], None]
     ) -> None:
         """Subscribe to symbols and start receiving data.
 
@@ -547,7 +553,9 @@ class KISWebSocketAdapter(BaseAPIAdapter):
             logger.info("[KIS WS] Approval key obtained")
 
         except requests.RequestException as e:
-            logger.error(f"[KIS WS] Network error getting approval key: {type(e).__name__}")
+            logger.error(
+                f"[KIS WS] Network error getting approval key: {type(e).__name__}"
+            )
             raise
         except Exception as e:
             logger.error(f"[KIS WS] Failed to get approval key: {type(e).__name__}")
@@ -577,15 +585,20 @@ class KISWebSocketAdapter(BaseAPIAdapter):
 
         Uses bounded queue with overflow handling.
         """
-        # Track timestamp for health monitoring
+        # Track timestamp and received count for health monitoring.
+        # _messages_received is incremented here (every message); _state_lock
+        # is acquired once for both fields to keep the critical section short.
         with self._state_lock:
             self._last_message_ts = time.time()
+            self._messages_received += 1
 
         try:
             self._message_queue.put_nowait(message)
         except queue.Full:
-            # Drop oldest message to make room
+            # Drop oldest message to make room; record the drop under the lock.
             logger.warning("[KIS WS] Message queue full, dropping oldest message")
+            with self._state_lock:
+                self._messages_dropped += 1
             try:
                 self._message_queue.get_nowait()
                 self._message_queue.put_nowait(message)
@@ -619,7 +632,7 @@ class KISWebSocketAdapter(BaseAPIAdapter):
                     "tr_id": tr_id,
                     "tr_key": symbol,
                 }
-            }
+            },
         }
 
         if self.ws and self.is_connected:
@@ -640,7 +653,7 @@ class KISWebSocketAdapter(BaseAPIAdapter):
                     "tr_id": tr_id,
                     "tr_key": symbol,
                 }
-            }
+            },
         }
 
         if self.ws and self.is_connected:

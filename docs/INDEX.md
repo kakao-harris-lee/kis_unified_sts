@@ -20,7 +20,7 @@ For "what's the project doing right now?" → [PROJECT_STATUS.md](PROJECT_STATUS
 | Doc | Use |
 |-----|-----|
 | [api.md](api.md) | API surface reference. |
-| [ports.md](ports.md) | Host port ownership: dashboard 8001, no reserved extra port. |
+| [ports.md](ports.md) | Host port ownership: Caddy 5080 only; service ports stay internal. |
 | [strategies.md](strategies.md) | 설정 기반 전략 시스템 가이드 — YAML 정의, 레지스트리 패턴. |
 | [config_patterns.md](config_patterns.md) | `ServiceConfigBase` 기반 통합 설정 패턴. |
 | [deployment.md](deployment.md) | 플랫폼 배포 가이드. |

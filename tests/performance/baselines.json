@@ -1,1 +1,1590 @@
-{"created": 1772976862.3029609, "duration": 17.60778784751892, "exitcode": 0, "root": "/Users/harris/Development/private/kis_unified_sts/.auto-claude/worktrees/tasks/036-load-stress-testing-performance-slas", "environment": {}, "summary": {"passed": 14, "skipped": 18, "total": 32, "collected": 32}, "collectors": [{"nodeid": "", "outcome": "passed", "result": [{"nodeid": "tests/performance", "type": "Dir"}]}, {"nodeid": "tests/performance/test_clickhouse_load.py", "outcome": "skipped", "result": [], "longrepr": "('/Users/harris/Development/private/kis_unified_sts/.auto-claude/worktrees/tasks/036-load-stress-testing-performance-slas/tests/performance/test_clickhouse_load.py', 39, 'Skipped: clickhouse-driver not installed')"}, {"nodeid": "tests/performance/test_orchestrator_hot_path_benchmark.py::TestOrchestratorHotPathBenchmark", "outcome": "passed", "result": [{"nodeid": "tests/performance/test_orchestrator_hot_path_benchmark.py::TestOrchestratorHotPathBenchmark::test_entry_path_100_symbols", "type": "Function", "lineno": 181}, {"nodeid": "tests/performance/test_orchestrator_hot_path_benchmark.py::TestOrchestratorHotPathBenchmark::test_exit_path_50_symbols", "type": "Function", "lineno": 226}, {"nodeid": "tests/performance/test_orchestrator_hot_path_benchmark.py::TestOrchestratorHotPathBenchmark::test_entry_path_scalability_200_symbols", "type": "Function", "lineno": 271}, {"nodeid": "tests/performance/test_orchestrator_hot_path_benchmark.py::TestOrchestratorHotPathBenchmark::test_dict_operations_count", "type": "Function", "lineno": 314}, {"nodeid": "tests/performance/test_orchestrator_hot_path_benchmark.py::TestOrchestratorHotPathBenchmark::test_cache_memory_overhead", "type": "Function", "lineno": 349}, {"nodeid": "tests/performance/test_orchestrator_hot_path_benchmark.py::TestOrchestratorHotPathBenchmark::test_realistic_throughput", "type": "Function", "lineno": 383}, {"nodeid": "tests/performance/test_orchestrator_hot_path_benchmark.py::TestOrchestratorHotPathBenchmark::test_aggregate_cost_reduction", "type": "Function", "lineno": 436}]}, {"nodeid": "tests/performance/test_orchestrator_hot_path_benchmark.py", "outcome": "passed", "result": [{"nodeid": "tests/performance/test_orchestrator_hot_path_benchmark.py::TestOrchestratorHotPathBenchmark", "type": "Class"}]}, {"nodeid": "tests/performance/test_orchestrator_scalability.py::TestOrchestratorScalability", "outcome": "passed", "result": [{"nodeid": "tests/performance/test_orchestrator_scalability.py::TestOrchestratorScalability::test_cycle_time_1_position", "type": "Function", "lineno": 263}, {"nodeid": "tests/performance/test_orchestrator_scalability.py::TestOrchestratorScalability::test_cycle_time_5_positions", "type": "Function", "lineno": 289}, {"nodeid": "tests/performance/test_orchestrator_scalability.py::TestOrchestratorScalability::test_cycle_time_10_positions", "type": "Function", "lineno": 315}, {"nodeid": "tests/performance/test_orchestrator_scalability.py::TestOrchestratorScalability::test_cycle_time_20_positions", "type": "Function", "lineno": 345}, {"nodeid": "tests/performance/test_orchestrator_scalability.py::TestOrchestratorScalability::test_memory_usage_scaling", "type": "Function", "lineno": 371}, {"nodeid": "tests/performance/test_orchestrator_scalability.py::TestOrchestratorScalability::test_scalability_summary", "type": "Function", "lineno": 420}]}, {"nodeid": "tests/performance/test_orchestrator_scalability.py", "outcome": "passed", "result": [{"nodeid": "tests/performance/test_orchestrator_scalability.py::TestOrchestratorScalability", "type": "Class"}]}, {"nodeid": "tests/performance/test_redis_load.py::TestRedisPositionStateCRUD", "outcome": "passed", "result": [{"nodeid": "tests/performance/test_redis_load.py::TestRedisPositionStateCRUD::test_position_write_throughput", "type": "Function", "lineno": 306}, {"nodeid": "tests/performance/test_redis_load.py::TestRedisPositionStateCRUD::test_position_read_throughput", "type": "Function", "lineno": 336}, {"nodeid": "tests/performance/test_redis_load.py::TestRedisPositionStateCRUD::test_position_read_all_throughput", "type": "Function", "lineno": 366}, {"nodeid": "tests/performance/test_redis_load.py::TestRedisPositionStateCRUD::test_concurrent_access_10_workers", "type": "Function", "lineno": 397}, {"nodeid": "tests/performance/test_redis_load.py::TestRedisPositionStateCRUD::test_concurrent_access_50_workers", "type": "Function", "lineno": 456}, {"nodeid": "tests/performance/test_redis_load.py::TestRedisPositionStateCRUD::test_latency_percentiles", "type": "Function", "lineno": 517}]}, {"nodeid": "tests/performance/test_redis_load.py", "outcome": "passed", "result": [{"nodeid": "tests/performance/test_redis_load.py::TestRedisPositionStateCRUD", "type": "Class"}]}, {"nodeid": "tests/performance/test_rl_inference_latency.py::TestBenchmarkInfrastructure", "outcome": "passed", "result": [{"nodeid": "tests/performance/test_rl_inference_latency.py::TestBenchmarkInfrastructure::test_benchmark_helper_functions", "type": "Function", "lineno": 147}]}, {"nodeid": "tests/performance/test_rl_inference_latency.py::TestRLInferenceLatency", "outcome": "passed", "result": [{"nodeid": "tests/performance/test_rl_inference_latency.py::TestRLInferenceLatency::test_single_inference_latency", "type": "Function", "lineno": 218}, {"nodeid": "tests/performance/test_rl_inference_latency.py::TestRLInferenceLatency::test_batch_inference_latency", "type": "Function", "lineno": 261}, {"nodeid": "tests/performance/test_rl_inference_latency.py::TestRLInferenceLatency::test_latency_percentiles", "type": "Function", "lineno": 310}, {"nodeid": "tests/performance/test_rl_inference_latency.py::TestRLInferenceLatency::test_cold_start_latency", "type": "Function", "lineno": 369}, {"nodeid": "tests/performance/test_rl_inference_latency.py::TestRLInferenceLatency::test_warm_inference_latency", "type": "Function", "lineno": 412}, {"nodeid": "tests/performance/test_rl_inference_latency.py::TestRLInferenceLatency::test_inference_consistency", "type": "Function", "lineno": 464}]}, {"nodeid": "tests/performance/test_rl_inference_latency.py", "outcome": "passed", "result": [{"nodeid": "tests/performance/test_rl_inference_latency.py::TestBenchmarkInfrastructure", "type": "Class"}, {"nodeid": "tests/performance/test_rl_inference_latency.py::TestRLInferenceLatency", "type": "Class"}]}, {"nodeid": "tests/performance/test_websocket_load.py::TestWebSocketLoad", "outcome": "passed", "result": [{"nodeid": "tests/performance/test_websocket_load.py::TestWebSocketLoad::test_publish_throughput_100_messages", "type": "Function", "lineno": 265}, {"nodeid": "tests/performance/test_websocket_load.py::TestWebSocketLoad::test_publish_throughput_1000_messages", "type": "Function", "lineno": 291}, {"nodeid": "tests/performance/test_websocket_load.py::TestWebSocketLoad::test_end_to_end_latency_100_msgs", "type": "Function", "lineno": 317}, {"nodeid": "tests/performance/test_websocket_load.py::TestWebSocketLoad::test_end_to_end_latency_500_msgs", "type": "Function", "lineno": 349}, {"nodeid": "tests/performance/test_websocket_load.py::TestWebSocketLoad::test_peak_load_1000_msgs", "type": "Function", "lineno": 381}, {"nodeid": "tests/performance/test_websocket_load.py::TestWebSocketLoad::test_sustained_load_5000_msgs", "type": "Function", "lineno": 414}]}, {"nodeid": "tests/performance/test_websocket_load.py", "outcome": "passed", "result": [{"nodeid": "tests/performance/test_websocket_load.py::TestWebSocketLoad", "type": "Class"}]}, {"nodeid": "tests/performance", "outcome": "passed", "result": [{"nodeid": "tests/performance/test_clickhouse_load.py", "type": "Module"}, {"nodeid": "tests/performance/test_orchestrator_hot_path_benchmark.py", "type": "Module"}, {"nodeid": "tests/performance/test_orchestrator_scalability.py", "type": "Module"}, {"nodeid": "tests/performance/test_redis_load.py", "type": "Module"}, {"nodeid": "tests/performance/test_rl_inference_latency.py", "type": "Module"}, {"nodeid": "tests/performance/test_websocket_load.py", "type": "Module"}]}], "tests": [{"nodeid": "tests/performance/test_orchestrator_hot_path_benchmark.py::TestOrchestratorHotPathBenchmark::test_entry_path_100_symbols", "lineno": 181, "outcome": "passed", "keywords": ["test_entry_path_100_symbols", "TestOrchestratorHotPathBenchmark", "test_orchestrator_hot_path_benchmark.py", "performance", "tests", "036-load-stress-testing-performance-slas", ""], "setup": {"duration": 0.06561570800840855, "outcome": "passed"}, "call": {"duration": 0.07406912499573082, "outcome": "passed"}, "teardown": {"duration": 6.166700040921569e-05, "outcome": "passed"}}, {"nodeid": "tests/performance/test_orchestrator_hot_path_benchmark.py::TestOrchestratorHotPathBenchmark::test_exit_path_50_symbols", "lineno": 226, "outcome": "passed", "keywords": ["test_exit_path_50_symbols", "TestOrchestratorHotPathBenchmark", "test_orchestrator_hot_path_benchmark.py", "performance", "tests", "036-load-stress-testing-performance-slas", ""], "setup": {"duration": 9.670801227912307e-05, "outcome": "passed"}, "call": {"duration": 0.030040333978831768, "outcome": "passed"}, "teardown": {"duration": 5.670799873769283e-05, "outcome": "passed"}}, {"nodeid": "tests/performance/test_orchestrator_hot_path_benchmark.py::TestOrchestratorHotPathBenchmark::test_entry_path_scalability_200_symbols", "lineno": 271, "outcome": "passed", "keywords": ["test_entry_path_scalability_200_symbols", "TestOrchestratorHotPathBenchmark", "test_orchestrator_hot_path_benchmark.py", "performance", "tests", "036-load-stress-testing-performance-slas", ""], "setup": {"duration": 9.637500625103712e-05, "outcome": "passed"}, "call": {"duration": 0.07505587500054389, "outcome": "passed"}, "teardown": {"duration": 6.612500874325633e-05, "outcome": "passed"}}, {"nodeid": "tests/performance/test_orchestrator_hot_path_benchmark.py::TestOrchestratorHotPathBenchmark::test_dict_operations_count", "lineno": 314, "outcome": "passed", "keywords": ["test_dict_operations_count", "TestOrchestratorHotPathBenchmark", "test_orchestrator_hot_path_benchmark.py", "performance", "tests", "036-load-stress-testing-performance-slas", ""], "setup": {"duration": 9.687495185062289e-05, "outcome": "passed"}, "call": {"duration": 6.920803571119905e-05, "outcome": "passed"}, "teardown": {"duration": 3.4916040021926165e-05, "outcome": "passed"}}, {"nodeid": "tests/performance/test_orchestrator_hot_path_benchmark.py::TestOrchestratorHotPathBenchmark::test_cache_memory_overhead", "lineno": 349, "outcome": "passed", "keywords": ["test_cache_memory_overhead", "TestOrchestratorHotPathBenchmark", "test_orchestrator_hot_path_benchmark.py", "performance", "tests", "036-load-stress-testing-performance-slas", ""], "setup": {"duration": 7.329200161620975e-05, "outcome": "passed"}, "call": {"duration": 0.00017845898400992155, "outcome": "passed"}, "teardown": {"duration": 3.770802868530154e-05, "outcome": "passed"}}, {"nodeid": "tests/performance/test_orchestrator_hot_path_benchmark.py::TestOrchestratorHotPathBenchmark::test_realistic_throughput", "lineno": 383, "outcome": "passed", "keywords": ["test_realistic_throughput", "TestOrchestratorHotPathBenchmark", "test_orchestrator_hot_path_benchmark.py", "performance", "tests", "036-load-stress-testing-performance-slas", ""], "setup": {"duration": 7.225002627819777e-05, "outcome": "passed"}, "call": {"duration": 0.01068879198282957, "outcome": "passed"}, "teardown": {"duration": 4.195794463157654e-05, "outcome": "passed"}}, {"nodeid": "tests/performance/test_orchestrator_hot_path_benchmark.py::TestOrchestratorHotPathBenchmark::test_aggregate_cost_reduction", "lineno": 436, "outcome": "passed", "keywords": ["test_aggregate_cost_reduction", "TestOrchestratorHotPathBenchmark", "test_orchestrator_hot_path_benchmark.py", "performance", "tests", "036-load-stress-testing-performance-slas", ""], "setup": {"duration": 7.945799734443426e-05, "outcome": "passed"}, "call": {"duration": 0.07368608401156962, "outcome": "passed"}, "teardown": {"duration": 6.216700421646237e-05, "outcome": "passed"}}, {"nodeid": "tests/performance/test_orchestrator_scalability.py::TestOrchestratorScalability::test_cycle_time_1_position", "lineno": 263, "outcome": "passed", "keywords": ["test_cycle_time_1_position", "TestOrchestratorScalability", "test_orchestrator_scalability.py", "performance", "tests", "036-load-stress-testing-performance-slas", ""], "setup": {"duration": 0.00010129198199138045, "outcome": "passed"}, "call": {"duration": 0.015382374986074865, "outcome": "passed"}, "teardown": {"duration": 5.862500984221697e-05, "outcome": "passed"}}, {"nodeid": "tests/performance/test_orchestrator_scalability.py::TestOrchestratorScalability::test_cycle_time_5_positions", "lineno": 289, "outcome": "passed", "keywords": ["test_cycle_time_5_positions", "TestOrchestratorScalability", "test_orchestrator_scalability.py", "performance", "tests", "036-load-stress-testing-performance-slas", ""], "setup": {"duration": 9.233300806954503e-05, "outcome": "passed"}, "call": {"duration": 0.013280290993861854, "outcome": "passed"}, "teardown": {"duration": 5.51670091226697e-05, "outcome": "passed"}}, {"nodeid": "tests/performance/test_orchestrator_scalability.py::TestOrchestratorScalability::test_cycle_time_10_positions", "lineno": 315, "outcome": "passed", "keywords": ["test_cycle_time_10_positions", "TestOrchestratorScalability", "test_orchestrator_scalability.py", "performance", "tests", "036-load-stress-testing-performance-slas", ""], "setup": {"duration": 8.987501496449113e-05, "outcome": "passed"}, "call": {"duration": 0.013583082996774465, "outcome": "passed"}, "teardown": {"duration": 5.8624951634556055e-05, "outcome": "passed"}}, {"nodeid": "tests/performance/test_orchestrator_scalability.py::TestOrchestratorScalability::test_cycle_time_20_positions", "lineno": 345, "outcome": "passed", "keywords": ["test_cycle_time_20_positions", "TestOrchestratorScalability", "test_orchestrator_scalability.py", "performance", "tests", "036-load-stress-testing-performance-slas", ""], "setup": {"duration": 9.099999442696571e-05, "outcome": "passed"}, "call": {"duration": 0.01467241597129032, "outcome": "passed"}, "teardown": {"duration": 5.466700531542301e-05, "outcome": "passed"}}, {"nodeid": "tests/performance/test_orchestrator_scalability.py::TestOrchestratorScalability::test_memory_usage_scaling", "lineno": 371, "outcome": "passed", "keywords": ["test_memory_usage_scaling", "TestOrchestratorScalability", "test_orchestrator_scalability.py", "performance", "tests", "036-load-stress-testing-performance-slas", ""], "setup": {"duration": 8.845800766721368e-05, "outcome": "passed"}, "call": {"duration": 0.05268158297985792, "outcome": "passed"}, "teardown": {"duration": 7.183296838775277e-05, "outcome": "passed"}}, {"nodeid": "tests/performance/test_orchestrator_scalability.py::TestOrchestratorScalability::test_scalability_summary", "lineno": 420, "outcome": "passed", "keywords": ["test_scalability_summary", "TestOrchestratorScalability", "test_orchestrator_scalability.py", "performance", "tests", "036-load-stress-testing-performance-slas", ""], "setup": {"duration": 0.00011966697638854384, "outcome": "passed"}, "call": {"duration": 0.052066707983613014, "outcome": "passed"}, "teardown": {"duration": 5.8792007621377707e-05, "outcome": "passed"}}, {"nodeid": "tests/performance/test_redis_load.py::TestRedisPositionStateCRUD::test_position_write_throughput", "lineno": 306, "outcome": "skipped", "keywords": ["test_position_write_throughput", "TestRedisPositionStateCRUD", "test_redis_load.py", "integration", "skipif", "performance", "tests", "036-load-stress-testing-performance-slas", ""], "setup": {"duration": 5.4292031563818455e-05, "outcome": "skipped", "longrepr": "('/Users/harris/Development/private/kis_unified_sts/.auto-claude/worktrees/tasks/036-load-stress-testing-performance-slas/tests/performance/test_redis_load.py', 307, 'Skipped: Redis not available (start with: docker-compose up -d redis)')"}, "teardown": {"duration": 3.8167054299265146e-05, "outcome": "passed"}}, {"nodeid": "tests/performance/test_redis_load.py::TestRedisPositionStateCRUD::test_position_read_throughput", "lineno": 336, "outcome": "skipped", "keywords": ["test_position_read_throughput", "TestRedisPositionStateCRUD", "test_redis_load.py", "integration", "skipif", "performance", "tests", "036-load-stress-testing-performance-slas", ""], "setup": {"duration": 3.529200330376625e-05, "outcome": "skipped", "longrepr": "('/Users/harris/Development/private/kis_unified_sts/.auto-claude/worktrees/tasks/036-load-stress-testing-performance-slas/tests/performance/test_redis_load.py', 337, 'Skipped: Redis not available (start with: docker-compose up -d redis)')"}, "teardown": {"duration": 3.516697324812412e-05, "outcome": "passed"}}, {"nodeid": "tests/performance/test_redis_load.py::TestRedisPositionStateCRUD::test_position_read_all_throughput", "lineno": 366, "outcome": "skipped", "keywords": ["test_position_read_all_throughput", "TestRedisPositionStateCRUD", "test_redis_load.py", "integration", "skipif", "performance", "tests", "036-load-stress-testing-performance-slas", ""], "setup": {"duration": 3.2415962778031826e-05, "outcome": "skipped", "longrepr": "('/Users/harris/Development/private/kis_unified_sts/.auto-claude/worktrees/tasks/036-load-stress-testing-performance-slas/tests/performance/test_redis_load.py', 367, 'Skipped: Redis not available (start with: docker-compose up -d redis)')"}, "teardown": {"duration": 3.433396341279149e-05, "outcome": "passed"}}, {"nodeid": "tests/performance/test_redis_load.py::TestRedisPositionStateCRUD::test_concurrent_access_10_workers", "lineno": 397, "outcome": "skipped", "keywords": ["test_concurrent_access_10_workers", "TestRedisPositionStateCRUD", "test_redis_load.py", "integration", "skipif", "performance", "tests", "036-load-stress-testing-performance-slas", ""], "setup": {"duration": 3.308296436443925e-05, "outcome": "skipped", "longrepr": "('/Users/harris/Development/private/kis_unified_sts/.auto-claude/worktrees/tasks/036-load-stress-testing-performance-slas/tests/performance/test_redis_load.py', 398, 'Skipped: Redis not available (start with: docker-compose up -d redis)')"}, "teardown": {"duration": 3.44999716617167e-05, "outcome": "passed"}}, {"nodeid": "tests/performance/test_redis_load.py::TestRedisPositionStateCRUD::test_concurrent_access_50_workers", "lineno": 456, "outcome": "skipped", "keywords": ["test_concurrent_access_50_workers", "TestRedisPositionStateCRUD", "test_redis_load.py", "integration", "skipif", "performance", "tests", "036-load-stress-testing-performance-slas", ""], "setup": {"duration": 3.15000070258975e-05, "outcome": "skipped", "longrepr": "('/Users/harris/Development/private/kis_unified_sts/.auto-claude/worktrees/tasks/036-load-stress-testing-performance-slas/tests/performance/test_redis_load.py', 457, 'Skipped: Redis not available (start with: docker-compose up -d redis)')"}, "teardown": {"duration": 3.27499583363533e-05, "outcome": "passed"}}, {"nodeid": "tests/performance/test_redis_load.py::TestRedisPositionStateCRUD::test_latency_percentiles", "lineno": 517, "outcome": "skipped", "keywords": ["test_latency_percentiles", "TestRedisPositionStateCRUD", "test_redis_load.py", "integration", "skipif", "performance", "tests", "036-load-stress-testing-performance-slas", ""], "setup": {"duration": 3.14170029014349e-05, "outcome": "skipped", "longrepr": "('/Users/harris/Development/private/kis_unified_sts/.auto-claude/worktrees/tasks/036-load-stress-testing-performance-slas/tests/performance/test_redis_load.py', 518, 'Skipped: Redis not available (start with: docker-compose up -d redis)')"}, "teardown": {"duration": 3.3374992199242115e-05, "outcome": "passed"}}, {"nodeid": "tests/performance/test_rl_inference_latency.py::TestBenchmarkInfrastructure::test_benchmark_helper_functions", "lineno": 147, "outcome": "passed", "keywords": ["test_benchmark_helper_functions", "TestBenchmarkInfrastructure", "test_rl_inference_latency.py", "performance", "tests", "036-load-stress-testing-performance-slas", ""], "setup": {"duration": 0.0001604999997653067, "outcome": "passed"}, "call": {"duration": 0.015711415966507047, "outcome": "passed"}, "teardown": {"duration": 5.77080063521862e-05, "outcome": "passed"}}, {"nodeid": "tests/performance/test_rl_inference_latency.py::TestRLInferenceLatency::test_single_inference_latency", "lineno": 218, "outcome": "skipped", "keywords": ["test_single_inference_latency", "TestRLInferenceLatency", "test_rl_inference_latency.py", "performance", "tests", "036-load-stress-testing-performance-slas", ""], "setup": {"duration": 0.0004817090230062604, "outcome": "passed", "log": [{"name": "test_rl_inference_latency", "msg": "sb3-contrib not installed, skipping RL inference benchmarks", "args": null, "levelname": "WARNING", "levelno": 30, "pathname": "/Users/harris/Development/private/kis_unified_sts/.auto-claude/worktrees/tasks/036-load-stress-testing-performance-slas/tests/performance/test_rl_inference_latency.py", "filename": "test_rl_inference_latency.py", "module": "test_rl_inference_latency", "exc_info": null, "exc_text": null, "stack_info": null, "lineno": 138, "funcName": "_load_model_for_benchmark", "created": 1772976862.297494, "msecs": 297.0, "relativeCreated": 17943.238735198975, "thread": 8604762624, "threadName": "MainThread", "processName": "MainProcess", "process": 84767}]}, "call": {"duration": 6.125000072643161e-05, "outcome": "skipped", "longrepr": "('/Users/harris/Development/private/kis_unified_sts/.auto-claude/worktrees/tasks/036-load-stress-testing-performance-slas/tests/performance/test_rl_inference_latency.py', 226, 'Skipped: RL model not available for benchmarking')"}, "teardown": {"duration": 5.954195512458682e-05, "outcome": "passed"}}, {"nodeid": "tests/performance/test_rl_inference_latency.py::TestRLInferenceLatency::test_batch_inference_latency", "lineno": 261, "outcome": "skipped", "keywords": ["test_batch_inference_latency", "TestRLInferenceLatency", "test_rl_inference_latency.py", "performance", "tests", "036-load-stress-testing-performance-slas", ""], "setup": {"duration": 0.00031054194550961256, "outcome": "passed", "log": [{"name": "test_rl_inference_latency", "msg": "sb3-contrib not installed, skipping RL inference benchmarks", "args": null, "levelname": "WARNING", "levelno": 30, "pathname": "/Users/harris/Development/private/kis_unified_sts/.auto-claude/worktrees/tasks/036-load-stress-testing-performance-slas/tests/performance/test_rl_inference_latency.py", "filename": "test_rl_inference_latency.py", "module": "test_rl_inference_latency", "exc_info": null, "exc_text": null, "stack_info": null, "lineno": 138, "funcName": "_load_model_for_benchmark", "created": 1772976862.298236, "msecs": 298.0, "relativeCreated": 17943.98069381714, "thread": 8604762624, "threadName": "MainThread", "processName": "MainProcess", "process": 84767}]}, "call": {"duration": 4.9499969463795424e-05, "outcome": "skipped", "longrepr": "('/Users/harris/Development/private/kis_unified_sts/.auto-claude/worktrees/tasks/036-load-stress-testing-performance-slas/tests/performance/test_rl_inference_latency.py', 269, 'Skipped: RL model not available for benchmarking')"}, "teardown": {"duration": 5.237502045929432e-05, "outcome": "passed"}}, {"nodeid": "tests/performance/test_rl_inference_latency.py::TestRLInferenceLatency::test_latency_percentiles", "lineno": 310, "outcome": "skipped", "keywords": ["test_latency_percentiles", "TestRLInferenceLatency", "test_rl_inference_latency.py", "performance", "tests", "036-load-stress-testing-performance-slas", ""], "setup": {"duration": 0.00030158297158777714, "outcome": "passed", "log": [{"name": "test_rl_inference_latency", "msg": "sb3-contrib not installed, skipping RL inference benchmarks", "args": null, "levelname": "WARNING", "levelno": 30, "pathname": "/Users/harris/Development/private/kis_unified_sts/.auto-claude/worktrees/tasks/036-load-stress-testing-performance-slas/tests/performance/test_rl_inference_latency.py", "filename": "test_rl_inference_latency.py", "module": "test_rl_inference_latency", "exc_info": null, "exc_text": null, "stack_info": null, "lineno": 138, "funcName": "_load_model_for_benchmark", "created": 1772976862.298851, "msecs": 298.0, "relativeCreated": 17944.59581375122, "thread": 8604762624, "threadName": "MainThread", "processName": "MainProcess", "process": 84767}]}, "call": {"duration": 4.791701212525368e-05, "outcome": "skipped", "longrepr": "('/Users/harris/Development/private/kis_unified_sts/.auto-claude/worktrees/tasks/036-load-stress-testing-performance-slas/tests/performance/test_rl_inference_latency.py', 320, 'Skipped: RL model not available for benchmarking')"}, "teardown": {"duration": 5.1125010941177607e-05, "outcome": "passed"}}, {"nodeid": "tests/performance/test_rl_inference_latency.py::TestRLInferenceLatency::test_cold_start_latency", "lineno": 369, "outcome": "skipped", "keywords": ["test_cold_start_latency", "TestRLInferenceLatency", "test_rl_inference_latency.py", "performance", "tests", "036-load-stress-testing-performance-slas", ""], "setup": {"duration": 0.0001989169977605343, "outcome": "passed"}, "call": {"duration": 7.291702786460519e-05, "outcome": "skipped", "longrepr": "('/Users/harris/Development/private/kis_unified_sts/.auto-claude/worktrees/tasks/036-load-stress-testing-performance-slas/tests/performance/test_rl_inference_latency.py', 381, 'Skipped: Model not found: models/futures/rl/mppo_best/best_model.zip')"}, "teardown": {"duration": 4.341697786003351e-05, "outcome": "passed"}}, {"nodeid": "tests/performance/test_rl_inference_latency.py::TestRLInferenceLatency::test_warm_inference_latency", "lineno": 412, "outcome": "skipped", "keywords": ["test_warm_inference_latency", "TestRLInferenceLatency", "test_rl_inference_latency.py", "performance", "tests", "036-load-stress-testing-performance-slas", ""], "setup": {"duration": 0.0003816249663941562, "outcome": "passed", "log": [{"name": "test_rl_inference_latency", "msg": "sb3-contrib not installed, skipping RL inference benchmarks", "args": null, "levelname": "WARNING", "levelno": 30, "pathname": "/Users/harris/Development/private/kis_unified_sts/.auto-claude/worktrees/tasks/036-load-stress-testing-performance-slas/tests/performance/test_rl_inference_latency.py", "filename": "test_rl_inference_latency.py", "module": "test_rl_inference_latency", "exc_info": null, "exc_text": null, "stack_info": null, "lineno": 138, "funcName": "_load_model_for_benchmark", "created": 1772976862.300053, "msecs": 300.0, "relativeCreated": 17945.79768180847, "thread": 8604762624, "threadName": "MainThread", "processName": "MainProcess", "process": 84767}]}, "call": {"duration": 5.22089540027082e-05, "outcome": "skipped", "longrepr": "('/Users/harris/Development/private/kis_unified_sts/.auto-claude/worktrees/tasks/036-load-stress-testing-performance-slas/tests/performance/test_rl_inference_latency.py', 422, 'Skipped: RL model not available for benchmarking')"}, "teardown": {"duration": 5.974998930469155e-05, "outcome": "passed"}}, {"nodeid": "tests/performance/test_rl_inference_latency.py::TestRLInferenceLatency::test_inference_consistency", "lineno": 464, "outcome": "skipped", "keywords": ["test_inference_consistency", "TestRLInferenceLatency", "test_rl_inference_latency.py", "performance", "tests", "036-load-stress-testing-performance-slas", ""], "setup": {"duration": 0.0003061249735765159, "outcome": "passed", "log": [{"name": "test_rl_inference_latency", "msg": "sb3-contrib not installed, skipping RL inference benchmarks", "args": null, "levelname": "WARNING", "levelno": 30, "pathname": "/Users/harris/Development/private/kis_unified_sts/.auto-claude/worktrees/tasks/036-load-stress-testing-performance-slas/tests/performance/test_rl_inference_latency.py", "filename": "test_rl_inference_latency.py", "module": "test_rl_inference_latency", "exc_info": null, "exc_text": null, "stack_info": null, "lineno": 138, "funcName": "_load_model_for_benchmark", "created": 1772976862.300695, "msecs": 300.0, "relativeCreated": 17946.439743041992, "thread": 8604762624, "threadName": "MainThread", "processName": "MainProcess", "process": 84767}]}, "call": {"duration": 4.75830165669322e-05, "outcome": "skipped", "longrepr": "('/Users/harris/Development/private/kis_unified_sts/.auto-claude/worktrees/tasks/036-load-stress-testing-performance-slas/tests/performance/test_rl_inference_latency.py', 472, 'Skipped: RL model not available for benchmarking')"}, "teardown": {"duration": 5.4374977480620146e-05, "outcome": "passed"}}, {"nodeid": "tests/performance/test_websocket_load.py::TestWebSocketLoad::test_publish_throughput_100_messages", "lineno": 265, "outcome": "skipped", "keywords": ["test_publish_throughput_100_messages", "TestWebSocketLoad", "test_websocket_load.py", "integration", "skipif", "performance", "tests", "036-load-stress-testing-performance-slas", ""], "setup": {"duration": 3.9083999581635e-05, "outcome": "skipped", "longrepr": "('/Users/harris/Development/private/kis_unified_sts/.auto-claude/worktrees/tasks/036-load-stress-testing-performance-slas/tests/performance/test_websocket_load.py', 266, 'Skipped: Redis not available (start with: docker-compose up -d redis)')"}, "teardown": {"duration": 3.6209006793797016e-05, "outcome": "passed"}}, {"nodeid": "tests/performance/test_websocket_load.py::TestWebSocketLoad::test_publish_throughput_1000_messages", "lineno": 291, "outcome": "skipped", "keywords": ["test_publish_throughput_1000_messages", "TestWebSocketLoad", "test_websocket_load.py", "integration", "skipif", "performance", "tests", "036-load-stress-testing-performance-slas", ""], "setup": {"duration": 3.408401971682906e-05, "outcome": "skipped", "longrepr": "('/Users/harris/Development/private/kis_unified_sts/.auto-claude/worktrees/tasks/036-load-stress-testing-performance-slas/tests/performance/test_websocket_load.py', 292, 'Skipped: Redis not available (start with: docker-compose up -d redis)')"}, "teardown": {"duration": 4.0583021473139524e-05, "outcome": "passed"}}, {"nodeid": "tests/performance/test_websocket_load.py::TestWebSocketLoad::test_end_to_end_latency_100_msgs", "lineno": 317, "outcome": "skipped", "keywords": ["test_end_to_end_latency_100_msgs", "TestWebSocketLoad", "test_websocket_load.py", "integration", "skipif", "performance", "tests", "036-load-stress-testing-performance-slas", ""], "setup": {"duration": 3.67090106010437e-05, "outcome": "skipped", "longrepr": "('/Users/harris/Development/private/kis_unified_sts/.auto-claude/worktrees/tasks/036-load-stress-testing-performance-slas/tests/performance/test_websocket_load.py', 318, 'Skipped: Redis not available (start with: docker-compose up -d redis)')"}, "teardown": {"duration": 5.683401832357049e-05, "outcome": "passed"}}, {"nodeid": "tests/performance/test_websocket_load.py::TestWebSocketLoad::test_end_to_end_latency_500_msgs", "lineno": 349, "outcome": "skipped", "keywords": ["test_end_to_end_latency_500_msgs", "TestWebSocketLoad", "test_websocket_load.py", "integration", "skipif", "performance", "tests", "036-load-stress-testing-performance-slas", ""], "setup": {"duration": 4.395900759845972e-05, "outcome": "skipped", "longrepr": "('/Users/harris/Development/private/kis_unified_sts/.auto-claude/worktrees/tasks/036-load-stress-testing-performance-slas/tests/performance/test_websocket_load.py', 350, 'Skipped: Redis not available (start with: docker-compose up -d redis)')"}, "teardown": {"duration": 4.050001734867692e-05, "outcome": "passed"}}, {"nodeid": "tests/performance/test_websocket_load.py::TestWebSocketLoad::test_peak_load_1000_msgs", "lineno": 381, "outcome": "skipped", "keywords": ["test_peak_load_1000_msgs", "slow", "pytestmark", "TestWebSocketLoad", "test_websocket_load.py", "integration", "skipif", "performance", "tests", "036-load-stress-testing-performance-slas", ""], "setup": {"duration": 4.33750101365149e-05, "outcome": "skipped", "longrepr": "('/Users/harris/Development/private/kis_unified_sts/.auto-claude/worktrees/tasks/036-load-stress-testing-performance-slas/tests/performance/test_websocket_load.py', 382, 'Skipped: Redis not available (start with: docker-compose up -d redis)')"}, "teardown": {"duration": 3.2832962460815907e-05, "outcome": "passed"}}, {"nodeid": "tests/performance/test_websocket_load.py::TestWebSocketLoad::test_sustained_load_5000_msgs", "lineno": 414, "outcome": "skipped", "keywords": ["test_sustained_load_5000_msgs", "TestWebSocketLoad", "test_websocket_load.py", "integration", "skipif", "performance", "tests", "036-load-stress-testing-performance-slas", ""], "setup": {"duration": 3.14170029014349e-05, "outcome": "skipped", "longrepr": "('/Users/harris/Development/private/kis_unified_sts/.auto-claude/worktrees/tasks/036-load-stress-testing-performance-slas/tests/performance/test_websocket_load.py', 415, 'Skipped: Redis not available (start with: docker-compose up -d redis)')"}, "teardown": {"duration": 7.675000233575702e-05, "outcome": "passed"}}]}
+{
+  "created": 1780153185.8466973,
+  "duration": 23.381126642227173,
+  "exitcode": 0,
+  "root": "/home/runner/work/kis_unified_sts/kis_unified_sts",
+  "environment": {
+    "hardware": "github-actions-ubuntu-latest",
+    "note": "Regenerated on the same hardware the performance check runs on (GitHub-hosted ubuntu-latest) to remove systematic hardware bias. Source: PR #376 perf run 26686962754.",
+    "regenerated": "2026-05-31"
+  },
+  "summary": {
+    "skipped": 15,
+    "passed": 26,
+    "total": 41,
+    "collected": 41
+  },
+  "collectors": [
+    {
+      "nodeid": "",
+      "outcome": "passed",
+      "result": [
+        {
+          "nodeid": "tests/performance",
+          "type": "Dir"
+        }
+      ]
+    },
+    {
+      "nodeid": "tests/performance/test_clickhouse_load.py::TestClickHouseLoadBenchmarks",
+      "outcome": "passed",
+      "result": [
+        {
+          "nodeid": "tests/performance/test_clickhouse_load.py::TestClickHouseLoadBenchmarks::test_warmup_query_1_day",
+          "type": "Function",
+          "lineno": 289
+        },
+        {
+          "nodeid": "tests/performance/test_clickhouse_load.py::TestClickHouseLoadBenchmarks::test_warmup_query_7_days",
+          "type": "Function",
+          "lineno": 317
+        },
+        {
+          "nodeid": "tests/performance/test_clickhouse_load.py::TestClickHouseLoadBenchmarks::test_warmup_query_30_days",
+          "type": "Function",
+          "lineno": 345
+        },
+        {
+          "nodeid": "tests/performance/test_clickhouse_load.py::TestClickHouseLoadBenchmarks::test_warmup_query_100_days",
+          "type": "Function",
+          "lineno": 376
+        },
+        {
+          "nodeid": "tests/performance/test_clickhouse_load.py::TestClickHouseLoadBenchmarks::test_minute_candle_query_1_day",
+          "type": "Function",
+          "lineno": 404
+        },
+        {
+          "nodeid": "tests/performance/test_clickhouse_load.py::TestClickHouseLoadBenchmarks::test_minute_candle_query_7_days",
+          "type": "Function",
+          "lineno": 432
+        },
+        {
+          "nodeid": "tests/performance/test_clickhouse_load.py::TestClickHouseLoadBenchmarks::test_concurrent_queries_5_workers",
+          "type": "Function",
+          "lineno": 460
+        },
+        {
+          "nodeid": "tests/performance/test_clickhouse_load.py::TestClickHouseLoadBenchmarks::test_concurrent_queries_20_workers",
+          "type": "Function",
+          "lineno": 489
+        },
+        {
+          "nodeid": "tests/performance/test_clickhouse_load.py::TestClickHouseLoadBenchmarks::test_query_latency_percentiles",
+          "type": "Function",
+          "lineno": 520
+        }
+      ]
+    },
+    {
+      "nodeid": "tests/performance/test_clickhouse_load.py",
+      "outcome": "passed",
+      "result": [
+        {
+          "nodeid": "tests/performance/test_clickhouse_load.py::TestClickHouseLoadBenchmarks",
+          "type": "Class"
+        }
+      ]
+    },
+    {
+      "nodeid": "tests/performance/test_orchestrator_hot_path_benchmark.py::TestOrchestratorHotPathBenchmark",
+      "outcome": "passed",
+      "result": [
+        {
+          "nodeid": "tests/performance/test_orchestrator_hot_path_benchmark.py::TestOrchestratorHotPathBenchmark::test_entry_path_100_symbols",
+          "type": "Function",
+          "lineno": 181
+        },
+        {
+          "nodeid": "tests/performance/test_orchestrator_hot_path_benchmark.py::TestOrchestratorHotPathBenchmark::test_exit_path_50_symbols",
+          "type": "Function",
+          "lineno": 226
+        },
+        {
+          "nodeid": "tests/performance/test_orchestrator_hot_path_benchmark.py::TestOrchestratorHotPathBenchmark::test_entry_path_scalability_200_symbols",
+          "type": "Function",
+          "lineno": 271
+        },
+        {
+          "nodeid": "tests/performance/test_orchestrator_hot_path_benchmark.py::TestOrchestratorHotPathBenchmark::test_dict_operations_count",
+          "type": "Function",
+          "lineno": 314
+        },
+        {
+          "nodeid": "tests/performance/test_orchestrator_hot_path_benchmark.py::TestOrchestratorHotPathBenchmark::test_cache_memory_overhead",
+          "type": "Function",
+          "lineno": 349
+        },
+        {
+          "nodeid": "tests/performance/test_orchestrator_hot_path_benchmark.py::TestOrchestratorHotPathBenchmark::test_realistic_throughput",
+          "type": "Function",
+          "lineno": 383
+        },
+        {
+          "nodeid": "tests/performance/test_orchestrator_hot_path_benchmark.py::TestOrchestratorHotPathBenchmark::test_aggregate_cost_reduction",
+          "type": "Function",
+          "lineno": 436
+        }
+      ]
+    },
+    {
+      "nodeid": "tests/performance/test_orchestrator_hot_path_benchmark.py",
+      "outcome": "passed",
+      "result": [
+        {
+          "nodeid": "tests/performance/test_orchestrator_hot_path_benchmark.py::TestOrchestratorHotPathBenchmark",
+          "type": "Class"
+        }
+      ]
+    },
+    {
+      "nodeid": "tests/performance/test_orchestrator_scalability.py::TestOrchestratorScalability",
+      "outcome": "passed",
+      "result": [
+        {
+          "nodeid": "tests/performance/test_orchestrator_scalability.py::TestOrchestratorScalability::test_cycle_time_1_position",
+          "type": "Function",
+          "lineno": 263
+        },
+        {
+          "nodeid": "tests/performance/test_orchestrator_scalability.py::TestOrchestratorScalability::test_cycle_time_5_positions",
+          "type": "Function",
+          "lineno": 289
+        },
+        {
+          "nodeid": "tests/performance/test_orchestrator_scalability.py::TestOrchestratorScalability::test_cycle_time_10_positions",
+          "type": "Function",
+          "lineno": 315
+        },
+        {
+          "nodeid": "tests/performance/test_orchestrator_scalability.py::TestOrchestratorScalability::test_cycle_time_20_positions",
+          "type": "Function",
+          "lineno": 345
+        },
+        {
+          "nodeid": "tests/performance/test_orchestrator_scalability.py::TestOrchestratorScalability::test_memory_usage_scaling",
+          "type": "Function",
+          "lineno": 371
+        },
+        {
+          "nodeid": "tests/performance/test_orchestrator_scalability.py::TestOrchestratorScalability::test_scalability_summary",
+          "type": "Function",
+          "lineno": 420
+        }
+      ]
+    },
+    {
+      "nodeid": "tests/performance/test_orchestrator_scalability.py",
+      "outcome": "passed",
+      "result": [
+        {
+          "nodeid": "tests/performance/test_orchestrator_scalability.py::TestOrchestratorScalability",
+          "type": "Class"
+        }
+      ]
+    },
+    {
+      "nodeid": "tests/performance/test_redis_load.py::TestRedisPositionStateCRUD",
+      "outcome": "passed",
+      "result": [
+        {
+          "nodeid": "tests/performance/test_redis_load.py::TestRedisPositionStateCRUD::test_position_write_throughput",
+          "type": "Function",
+          "lineno": 306
+        },
+        {
+          "nodeid": "tests/performance/test_redis_load.py::TestRedisPositionStateCRUD::test_position_read_throughput",
+          "type": "Function",
+          "lineno": 336
+        },
+        {
+          "nodeid": "tests/performance/test_redis_load.py::TestRedisPositionStateCRUD::test_position_read_all_throughput",
+          "type": "Function",
+          "lineno": 366
+        },
+        {
+          "nodeid": "tests/performance/test_redis_load.py::TestRedisPositionStateCRUD::test_concurrent_access_10_workers",
+          "type": "Function",
+          "lineno": 397
+        },
+        {
+          "nodeid": "tests/performance/test_redis_load.py::TestRedisPositionStateCRUD::test_concurrent_access_50_workers",
+          "type": "Function",
+          "lineno": 456
+        },
+        {
+          "nodeid": "tests/performance/test_redis_load.py::TestRedisPositionStateCRUD::test_latency_percentiles",
+          "type": "Function",
+          "lineno": 517
+        }
+      ]
+    },
+    {
+      "nodeid": "tests/performance/test_redis_load.py",
+      "outcome": "passed",
+      "result": [
+        {
+          "nodeid": "tests/performance/test_redis_load.py::TestRedisPositionStateCRUD",
+          "type": "Class"
+        }
+      ]
+    },
+    {
+      "nodeid": "tests/performance/test_rl_inference_latency.py::TestBenchmarkInfrastructure",
+      "outcome": "passed",
+      "result": [
+        {
+          "nodeid": "tests/performance/test_rl_inference_latency.py::TestBenchmarkInfrastructure::test_benchmark_helper_functions",
+          "type": "Function",
+          "lineno": 147
+        }
+      ]
+    },
+    {
+      "nodeid": "tests/performance/test_rl_inference_latency.py::TestRLInferenceLatency",
+      "outcome": "passed",
+      "result": [
+        {
+          "nodeid": "tests/performance/test_rl_inference_latency.py::TestRLInferenceLatency::test_single_inference_latency",
+          "type": "Function",
+          "lineno": 218
+        },
+        {
+          "nodeid": "tests/performance/test_rl_inference_latency.py::TestRLInferenceLatency::test_batch_inference_latency",
+          "type": "Function",
+          "lineno": 261
+        },
+        {
+          "nodeid": "tests/performance/test_rl_inference_latency.py::TestRLInferenceLatency::test_latency_percentiles",
+          "type": "Function",
+          "lineno": 310
+        },
+        {
+          "nodeid": "tests/performance/test_rl_inference_latency.py::TestRLInferenceLatency::test_cold_start_latency",
+          "type": "Function",
+          "lineno": 369
+        },
+        {
+          "nodeid": "tests/performance/test_rl_inference_latency.py::TestRLInferenceLatency::test_warm_inference_latency",
+          "type": "Function",
+          "lineno": 412
+        },
+        {
+          "nodeid": "tests/performance/test_rl_inference_latency.py::TestRLInferenceLatency::test_inference_consistency",
+          "type": "Function",
+          "lineno": 464
+        }
+      ]
+    },
+    {
+      "nodeid": "tests/performance/test_rl_inference_latency.py",
+      "outcome": "passed",
+      "result": [
+        {
+          "nodeid": "tests/performance/test_rl_inference_latency.py::TestBenchmarkInfrastructure",
+          "type": "Class"
+        },
+        {
+          "nodeid": "tests/performance/test_rl_inference_latency.py::TestRLInferenceLatency",
+          "type": "Class"
+        }
+      ]
+    },
+    {
+      "nodeid": "tests/performance/test_websocket_load.py::TestWebSocketLoad",
+      "outcome": "passed",
+      "result": [
+        {
+          "nodeid": "tests/performance/test_websocket_load.py::TestWebSocketLoad::test_publish_throughput_100_messages",
+          "type": "Function",
+          "lineno": 265
+        },
+        {
+          "nodeid": "tests/performance/test_websocket_load.py::TestWebSocketLoad::test_publish_throughput_1000_messages",
+          "type": "Function",
+          "lineno": 291
+        },
+        {
+          "nodeid": "tests/performance/test_websocket_load.py::TestWebSocketLoad::test_end_to_end_latency_100_msgs",
+          "type": "Function",
+          "lineno": 317
+        },
+        {
+          "nodeid": "tests/performance/test_websocket_load.py::TestWebSocketLoad::test_end_to_end_latency_500_msgs",
+          "type": "Function",
+          "lineno": 349
+        },
+        {
+          "nodeid": "tests/performance/test_websocket_load.py::TestWebSocketLoad::test_peak_load_1000_msgs",
+          "type": "Function",
+          "lineno": 381
+        },
+        {
+          "nodeid": "tests/performance/test_websocket_load.py::TestWebSocketLoad::test_sustained_load_5000_msgs",
+          "type": "Function",
+          "lineno": 414
+        }
+      ]
+    },
+    {
+      "nodeid": "tests/performance/test_websocket_load.py",
+      "outcome": "passed",
+      "result": [
+        {
+          "nodeid": "tests/performance/test_websocket_load.py::TestWebSocketLoad",
+          "type": "Class"
+        }
+      ]
+    },
+    {
+      "nodeid": "tests/performance",
+      "outcome": "passed",
+      "result": [
+        {
+          "nodeid": "tests/performance/test_clickhouse_load.py",
+          "type": "Module"
+        },
+        {
+          "nodeid": "tests/performance/test_orchestrator_hot_path_benchmark.py",
+          "type": "Module"
+        },
+        {
+          "nodeid": "tests/performance/test_orchestrator_scalability.py",
+          "type": "Module"
+        },
+        {
+          "nodeid": "tests/performance/test_redis_load.py",
+          "type": "Module"
+        },
+        {
+          "nodeid": "tests/performance/test_rl_inference_latency.py",
+          "type": "Module"
+        },
+        {
+          "nodeid": "tests/performance/test_websocket_load.py",
+          "type": "Module"
+        }
+      ]
+    }
+  ],
+  "tests": [
+    {
+      "nodeid": "tests/performance/test_clickhouse_load.py::TestClickHouseLoadBenchmarks::test_warmup_query_1_day",
+      "lineno": 289,
+      "outcome": "skipped",
+      "keywords": [
+        "test_warmup_query_1_day",
+        "TestClickHouseLoadBenchmarks",
+        "test_clickhouse_load.py",
+        "integration",
+        "skipif",
+        "performance",
+        "tests",
+        "kis_unified_sts",
+        ""
+      ],
+      "setup": {
+        "duration": 0.00019373199999961344,
+        "outcome": "skipped",
+        "longrepr": "('/home/runner/work/kis_unified_sts/kis_unified_sts/tests/performance/test_clickhouse_load.py', 290, 'Skipped: ClickHouse not available (start with: docker-compose up -d clickhouse)')"
+      },
+      "teardown": {
+        "duration": 0.0001051699999976563,
+        "outcome": "passed"
+      }
+    },
+    {
+      "nodeid": "tests/performance/test_clickhouse_load.py::TestClickHouseLoadBenchmarks::test_warmup_query_7_days",
+      "lineno": 317,
+      "outcome": "skipped",
+      "keywords": [
+        "test_warmup_query_7_days",
+        "TestClickHouseLoadBenchmarks",
+        "test_clickhouse_load.py",
+        "integration",
+        "skipif",
+        "performance",
+        "tests",
+        "kis_unified_sts",
+        ""
+      ],
+      "setup": {
+        "duration": 8.230499999228869e-05,
+        "outcome": "skipped",
+        "longrepr": "('/home/runner/work/kis_unified_sts/kis_unified_sts/tests/performance/test_clickhouse_load.py', 318, 'Skipped: ClickHouse not available (start with: docker-compose up -d clickhouse)')"
+      },
+      "teardown": {
+        "duration": 8.093700000699755e-05,
+        "outcome": "passed"
+      }
+    },
+    {
+      "nodeid": "tests/performance/test_clickhouse_load.py::TestClickHouseLoadBenchmarks::test_warmup_query_30_days",
+      "lineno": 345,
+      "outcome": "skipped",
+      "keywords": [
+        "test_warmup_query_30_days",
+        "TestClickHouseLoadBenchmarks",
+        "test_clickhouse_load.py",
+        "integration",
+        "skipif",
+        "performance",
+        "tests",
+        "kis_unified_sts",
+        ""
+      ],
+      "setup": {
+        "duration": 7.044999999550328e-05,
+        "outcome": "skipped",
+        "longrepr": "('/home/runner/work/kis_unified_sts/kis_unified_sts/tests/performance/test_clickhouse_load.py', 346, 'Skipped: ClickHouse not available (start with: docker-compose up -d clickhouse)')"
+      },
+      "teardown": {
+        "duration": 7.73830000042608e-05,
+        "outcome": "passed"
+      }
+    },
+    {
+      "nodeid": "tests/performance/test_clickhouse_load.py::TestClickHouseLoadBenchmarks::test_warmup_query_100_days",
+      "lineno": 376,
+      "outcome": "skipped",
+      "keywords": [
+        "test_warmup_query_100_days",
+        "TestClickHouseLoadBenchmarks",
+        "test_clickhouse_load.py",
+        "integration",
+        "skipif",
+        "performance",
+        "tests",
+        "kis_unified_sts",
+        ""
+      ],
+      "setup": {
+        "duration": 8.192900000381087e-05,
+        "outcome": "skipped",
+        "longrepr": "('/home/runner/work/kis_unified_sts/kis_unified_sts/tests/performance/test_clickhouse_load.py', 377, 'Skipped: ClickHouse not available (start with: docker-compose up -d clickhouse)')"
+      },
+      "teardown": {
+        "duration": 7.700599999793667e-05,
+        "outcome": "passed"
+      }
+    },
+    {
+      "nodeid": "tests/performance/test_clickhouse_load.py::TestClickHouseLoadBenchmarks::test_minute_candle_query_1_day",
+      "lineno": 404,
+      "outcome": "skipped",
+      "keywords": [
+        "test_minute_candle_query_1_day",
+        "TestClickHouseLoadBenchmarks",
+        "test_clickhouse_load.py",
+        "integration",
+        "skipif",
+        "performance",
+        "tests",
+        "kis_unified_sts",
+        ""
+      ],
+      "setup": {
+        "duration": 6.959499999936725e-05,
+        "outcome": "skipped",
+        "longrepr": "('/home/runner/work/kis_unified_sts/kis_unified_sts/tests/performance/test_clickhouse_load.py', 405, 'Skipped: ClickHouse not available (start with: docker-compose up -d clickhouse)')"
+      },
+      "teardown": {
+        "duration": 0.00010193500000355016,
+        "outcome": "passed"
+      }
+    },
+    {
+      "nodeid": "tests/performance/test_clickhouse_load.py::TestClickHouseLoadBenchmarks::test_minute_candle_query_7_days",
+      "lineno": 432,
+      "outcome": "skipped",
+      "keywords": [
+        "test_minute_candle_query_7_days",
+        "TestClickHouseLoadBenchmarks",
+        "test_clickhouse_load.py",
+        "integration",
+        "skipif",
+        "performance",
+        "tests",
+        "kis_unified_sts",
+        ""
+      ],
+      "setup": {
+        "duration": 7.302599999547965e-05,
+        "outcome": "skipped",
+        "longrepr": "('/home/runner/work/kis_unified_sts/kis_unified_sts/tests/performance/test_clickhouse_load.py', 433, 'Skipped: ClickHouse not available (start with: docker-compose up -d clickhouse)')"
+      },
+      "teardown": {
+        "duration": 6.736299999943185e-05,
+        "outcome": "passed"
+      }
+    },
+    {
+      "nodeid": "tests/performance/test_clickhouse_load.py::TestClickHouseLoadBenchmarks::test_concurrent_queries_5_workers",
+      "lineno": 460,
+      "outcome": "skipped",
+      "keywords": [
+        "test_concurrent_queries_5_workers",
+        "TestClickHouseLoadBenchmarks",
+        "test_clickhouse_load.py",
+        "integration",
+        "skipif",
+        "performance",
+        "tests",
+        "kis_unified_sts",
+        ""
+      ],
+      "setup": {
+        "duration": 6.90869999999677e-05,
+        "outcome": "skipped",
+        "longrepr": "('/home/runner/work/kis_unified_sts/kis_unified_sts/tests/performance/test_clickhouse_load.py', 461, 'Skipped: ClickHouse not available (start with: docker-compose up -d clickhouse)')"
+      },
+      "teardown": {
+        "duration": 7.682700000088971e-05,
+        "outcome": "passed"
+      }
+    },
+    {
+      "nodeid": "tests/performance/test_clickhouse_load.py::TestClickHouseLoadBenchmarks::test_concurrent_queries_20_workers",
+      "lineno": 489,
+      "outcome": "skipped",
+      "keywords": [
+        "test_concurrent_queries_20_workers",
+        "TestClickHouseLoadBenchmarks",
+        "test_clickhouse_load.py",
+        "integration",
+        "skipif",
+        "performance",
+        "tests",
+        "kis_unified_sts",
+        ""
+      ],
+      "setup": {
+        "duration": 7.340199999816832e-05,
+        "outcome": "skipped",
+        "longrepr": "('/home/runner/work/kis_unified_sts/kis_unified_sts/tests/performance/test_clickhouse_load.py', 490, 'Skipped: ClickHouse not available (start with: docker-compose up -d clickhouse)')"
+      },
+      "teardown": {
+        "duration": 6.999000000007527e-05,
+        "outcome": "passed"
+      }
+    },
+    {
+      "nodeid": "tests/performance/test_clickhouse_load.py::TestClickHouseLoadBenchmarks::test_query_latency_percentiles",
+      "lineno": 520,
+      "outcome": "skipped",
+      "keywords": [
+        "test_query_latency_percentiles",
+        "TestClickHouseLoadBenchmarks",
+        "test_clickhouse_load.py",
+        "integration",
+        "skipif",
+        "performance",
+        "tests",
+        "kis_unified_sts",
+        ""
+      ],
+      "setup": {
+        "duration": 6.38460000033092e-05,
+        "outcome": "skipped",
+        "longrepr": "('/home/runner/work/kis_unified_sts/kis_unified_sts/tests/performance/test_clickhouse_load.py', 521, 'Skipped: ClickHouse not available (start with: docker-compose up -d clickhouse)')"
+      },
+      "teardown": {
+        "duration": 0.00010259199999040902,
+        "outcome": "passed"
+      }
+    },
+    {
+      "nodeid": "tests/performance/test_orchestrator_hot_path_benchmark.py::TestOrchestratorHotPathBenchmark::test_entry_path_100_symbols",
+      "lineno": 181,
+      "outcome": "passed",
+      "keywords": [
+        "test_entry_path_100_symbols",
+        "TestOrchestratorHotPathBenchmark",
+        "test_orchestrator_hot_path_benchmark.py",
+        "performance",
+        "tests",
+        "kis_unified_sts",
+        ""
+      ],
+      "setup": {
+        "duration": 0.03154887899999892,
+        "outcome": "passed"
+      },
+      "call": {
+        "duration": 0.10119068299999867,
+        "outcome": "passed"
+      },
+      "teardown": {
+        "duration": 0.00018041299999538296,
+        "outcome": "passed"
+      }
+    },
+    {
+      "nodeid": "tests/performance/test_orchestrator_hot_path_benchmark.py::TestOrchestratorHotPathBenchmark::test_exit_path_50_symbols",
+      "lineno": 226,
+      "outcome": "passed",
+      "keywords": [
+        "test_exit_path_50_symbols",
+        "TestOrchestratorHotPathBenchmark",
+        "test_orchestrator_hot_path_benchmark.py",
+        "performance",
+        "tests",
+        "kis_unified_sts",
+        ""
+      ],
+      "setup": {
+        "duration": 0.000290903999996317,
+        "outcome": "passed"
+      },
+      "call": {
+        "duration": 0.04153578999999752,
+        "outcome": "passed"
+      },
+      "teardown": {
+        "duration": 0.00017525699999509925,
+        "outcome": "passed"
+      }
+    },
+    {
+      "nodeid": "tests/performance/test_orchestrator_hot_path_benchmark.py::TestOrchestratorHotPathBenchmark::test_entry_path_scalability_200_symbols",
+      "lineno": 271,
+      "outcome": "passed",
+      "keywords": [
+        "test_entry_path_scalability_200_symbols",
+        "TestOrchestratorHotPathBenchmark",
+        "test_orchestrator_hot_path_benchmark.py",
+        "performance",
+        "tests",
+        "kis_unified_sts",
+        ""
+      ],
+      "setup": {
+        "duration": 0.00027948900000751564,
+        "outcome": "passed"
+      },
+      "call": {
+        "duration": 0.10399510199999895,
+        "outcome": "passed"
+      },
+      "teardown": {
+        "duration": 0.00020432099999823095,
+        "outcome": "passed"
+      }
+    },
+    {
+      "nodeid": "tests/performance/test_orchestrator_hot_path_benchmark.py::TestOrchestratorHotPathBenchmark::test_dict_operations_count",
+      "lineno": 314,
+      "outcome": "passed",
+      "keywords": [
+        "test_dict_operations_count",
+        "TestOrchestratorHotPathBenchmark",
+        "test_orchestrator_hot_path_benchmark.py",
+        "performance",
+        "tests",
+        "kis_unified_sts",
+        ""
+      ],
+      "setup": {
+        "duration": 0.00021058600000856131,
+        "outcome": "passed"
+      },
+      "call": {
+        "duration": 0.00010881200000767421,
+        "outcome": "passed"
+      },
+      "teardown": {
+        "duration": 8.935099999973772e-05,
+        "outcome": "passed"
+      }
+    },
+    {
+      "nodeid": "tests/performance/test_orchestrator_hot_path_benchmark.py::TestOrchestratorHotPathBenchmark::test_cache_memory_overhead",
+      "lineno": 349,
+      "outcome": "passed",
+      "keywords": [
+        "test_cache_memory_overhead",
+        "TestOrchestratorHotPathBenchmark",
+        "test_orchestrator_hot_path_benchmark.py",
+        "performance",
+        "tests",
+        "kis_unified_sts",
+        ""
+      ],
+      "setup": {
+        "duration": 0.00020777799998938917,
+        "outcome": "passed"
+      },
+      "call": {
+        "duration": 0.00021987599998851692,
+        "outcome": "passed"
+      },
+      "teardown": {
+        "duration": 0.0001272200000101975,
+        "outcome": "passed"
+      }
+    },
+    {
+      "nodeid": "tests/performance/test_orchestrator_hot_path_benchmark.py::TestOrchestratorHotPathBenchmark::test_realistic_throughput",
+      "lineno": 383,
+      "outcome": "passed",
+      "keywords": [
+        "test_realistic_throughput",
+        "TestOrchestratorHotPathBenchmark",
+        "test_orchestrator_hot_path_benchmark.py",
+        "performance",
+        "tests",
+        "kis_unified_sts",
+        ""
+      ],
+      "setup": {
+        "duration": 0.00016160399999876063,
+        "outcome": "passed"
+      },
+      "call": {
+        "duration": 0.014667013999996925,
+        "outcome": "passed"
+      },
+      "teardown": {
+        "duration": 0.00011483000000112042,
+        "outcome": "passed"
+      }
+    },
+    {
+      "nodeid": "tests/performance/test_orchestrator_hot_path_benchmark.py::TestOrchestratorHotPathBenchmark::test_aggregate_cost_reduction",
+      "lineno": 436,
+      "outcome": "passed",
+      "keywords": [
+        "test_aggregate_cost_reduction",
+        "TestOrchestratorHotPathBenchmark",
+        "test_orchestrator_hot_path_benchmark.py",
+        "performance",
+        "tests",
+        "kis_unified_sts",
+        ""
+      ],
+      "setup": {
+        "duration": 0.00016977900000370028,
+        "outcome": "passed"
+      },
+      "call": {
+        "duration": 0.10151042500000074,
+        "outcome": "passed"
+      },
+      "teardown": {
+        "duration": 0.0001823260000008986,
+        "outcome": "passed"
+      }
+    },
+    {
+      "nodeid": "tests/performance/test_orchestrator_scalability.py::TestOrchestratorScalability::test_cycle_time_1_position",
+      "lineno": 263,
+      "outcome": "passed",
+      "keywords": [
+        "test_cycle_time_1_position",
+        "TestOrchestratorScalability",
+        "test_orchestrator_scalability.py",
+        "performance",
+        "tests",
+        "kis_unified_sts",
+        ""
+      ],
+      "setup": {
+        "duration": 0.0002317650000094318,
+        "outcome": "passed"
+      },
+      "call": {
+        "duration": 0.0374951399999901,
+        "outcome": "passed"
+      },
+      "teardown": {
+        "duration": 0.00014042999998764572,
+        "outcome": "passed"
+      }
+    },
+    {
+      "nodeid": "tests/performance/test_orchestrator_scalability.py::TestOrchestratorScalability::test_cycle_time_5_positions",
+      "lineno": 289,
+      "outcome": "passed",
+      "keywords": [
+        "test_cycle_time_5_positions",
+        "TestOrchestratorScalability",
+        "test_orchestrator_scalability.py",
+        "performance",
+        "tests",
+        "kis_unified_sts",
+        ""
+      ],
+      "setup": {
+        "duration": 0.0001868129999991197,
+        "outcome": "passed"
+      },
+      "call": {
+        "duration": 0.030196075000006317,
+        "outcome": "passed"
+      },
+      "teardown": {
+        "duration": 0.00012929800000449632,
+        "outcome": "passed"
+      }
+    },
+    {
+      "nodeid": "tests/performance/test_orchestrator_scalability.py::TestOrchestratorScalability::test_cycle_time_10_positions",
+      "lineno": 315,
+      "outcome": "passed",
+      "keywords": [
+        "test_cycle_time_10_positions",
+        "TestOrchestratorScalability",
+        "test_orchestrator_scalability.py",
+        "performance",
+        "tests",
+        "kis_unified_sts",
+        ""
+      ],
+      "setup": {
+        "duration": 0.0002227100000027349,
+        "outcome": "passed"
+      },
+      "call": {
+        "duration": 0.03159450699999411,
+        "outcome": "passed"
+      },
+      "teardown": {
+        "duration": 0.00013595599999405295,
+        "outcome": "passed"
+      }
+    },
+    {
+      "nodeid": "tests/performance/test_orchestrator_scalability.py::TestOrchestratorScalability::test_cycle_time_20_positions",
+      "lineno": 345,
+      "outcome": "passed",
+      "keywords": [
+        "test_cycle_time_20_positions",
+        "TestOrchestratorScalability",
+        "test_orchestrator_scalability.py",
+        "performance",
+        "tests",
+        "kis_unified_sts",
+        ""
+      ],
+      "setup": {
+        "duration": 0.00019995899999969424,
+        "outcome": "passed"
+      },
+      "call": {
+        "duration": 0.0335701519999958,
+        "outcome": "passed"
+      },
+      "teardown": {
+        "duration": 0.0001380729999880259,
+        "outcome": "passed"
+      }
+    },
+    {
+      "nodeid": "tests/performance/test_orchestrator_scalability.py::TestOrchestratorScalability::test_memory_usage_scaling",
+      "lineno": 371,
+      "outcome": "passed",
+      "keywords": [
+        "test_memory_usage_scaling",
+        "TestOrchestratorScalability",
+        "test_orchestrator_scalability.py",
+        "performance",
+        "tests",
+        "kis_unified_sts",
+        ""
+      ],
+      "setup": {
+        "duration": 0.00020494999999698393,
+        "outcome": "passed"
+      },
+      "call": {
+        "duration": 0.13277427300000966,
+        "outcome": "passed"
+      },
+      "teardown": {
+        "duration": 0.00013325700000166307,
+        "outcome": "passed"
+      }
+    },
+    {
+      "nodeid": "tests/performance/test_orchestrator_scalability.py::TestOrchestratorScalability::test_scalability_summary",
+      "lineno": 420,
+      "outcome": "passed",
+      "keywords": [
+        "test_scalability_summary",
+        "TestOrchestratorScalability",
+        "test_orchestrator_scalability.py",
+        "performance",
+        "tests",
+        "kis_unified_sts",
+        ""
+      ],
+      "setup": {
+        "duration": 0.00023286699999403027,
+        "outcome": "passed"
+      },
+      "call": {
+        "duration": 0.12404105599999582,
+        "outcome": "passed"
+      },
+      "teardown": {
+        "duration": 0.00013600599999108454,
+        "outcome": "passed"
+      }
+    },
+    {
+      "nodeid": "tests/performance/test_redis_load.py::TestRedisPositionStateCRUD::test_position_write_throughput",
+      "lineno": 306,
+      "outcome": "passed",
+      "keywords": [
+        "test_position_write_throughput",
+        "TestRedisPositionStateCRUD",
+        "test_redis_load.py",
+        "integration",
+        "skipif",
+        "performance",
+        "tests",
+        "kis_unified_sts",
+        ""
+      ],
+      "setup": {
+        "duration": 0.0008495139999951107,
+        "outcome": "passed"
+      },
+      "call": {
+        "duration": 1.5557372979999968,
+        "outcome": "passed"
+      },
+      "teardown": {
+        "duration": 0.0005900430000025381,
+        "outcome": "passed"
+      }
+    },
+    {
+      "nodeid": "tests/performance/test_redis_load.py::TestRedisPositionStateCRUD::test_position_read_throughput",
+      "lineno": 336,
+      "outcome": "passed",
+      "keywords": [
+        "test_position_read_throughput",
+        "TestRedisPositionStateCRUD",
+        "test_redis_load.py",
+        "integration",
+        "skipif",
+        "performance",
+        "tests",
+        "kis_unified_sts",
+        ""
+      ],
+      "setup": {
+        "duration": 0.0007900220000038871,
+        "outcome": "passed"
+      },
+      "call": {
+        "duration": 1.4472763870000023,
+        "outcome": "passed"
+      },
+      "teardown": {
+        "duration": 0.00043821399999899313,
+        "outcome": "passed"
+      }
+    },
+    {
+      "nodeid": "tests/performance/test_redis_load.py::TestRedisPositionStateCRUD::test_position_read_all_throughput",
+      "lineno": 366,
+      "outcome": "passed",
+      "keywords": [
+        "test_position_read_all_throughput",
+        "TestRedisPositionStateCRUD",
+        "test_redis_load.py",
+        "integration",
+        "skipif",
+        "performance",
+        "tests",
+        "kis_unified_sts",
+        ""
+      ],
+      "setup": {
+        "duration": 0.0006302169999941043,
+        "outcome": "passed"
+      },
+      "call": {
+        "duration": 0.4668296279999993,
+        "outcome": "passed"
+      },
+      "teardown": {
+        "duration": 0.00043158799999787334,
+        "outcome": "passed"
+      }
+    },
+    {
+      "nodeid": "tests/performance/test_redis_load.py::TestRedisPositionStateCRUD::test_concurrent_access_10_workers",
+      "lineno": 397,
+      "outcome": "passed",
+      "keywords": [
+        "test_concurrent_access_10_workers",
+        "TestRedisPositionStateCRUD",
+        "test_redis_load.py",
+        "integration",
+        "skipif",
+        "performance",
+        "tests",
+        "kis_unified_sts",
+        ""
+      ],
+      "setup": {
+        "duration": 0.0006458029999976134,
+        "outcome": "passed"
+      },
+      "call": {
+        "duration": 0.3202677629999897,
+        "outcome": "passed"
+      },
+      "teardown": {
+        "duration": 0.0004040329999952519,
+        "outcome": "passed"
+      }
+    },
+    {
+      "nodeid": "tests/performance/test_redis_load.py::TestRedisPositionStateCRUD::test_concurrent_access_50_workers",
+      "lineno": 456,
+      "outcome": "passed",
+      "keywords": [
+        "test_concurrent_access_50_workers",
+        "TestRedisPositionStateCRUD",
+        "test_redis_load.py",
+        "integration",
+        "skipif",
+        "performance",
+        "tests",
+        "kis_unified_sts",
+        ""
+      ],
+      "setup": {
+        "duration": 0.0009676949999999351,
+        "outcome": "passed"
+      },
+      "call": {
+        "duration": 0.8031267500000041,
+        "outcome": "passed"
+      },
+      "teardown": {
+        "duration": 0.0010425140000052124,
+        "outcome": "passed"
+      }
+    },
+    {
+      "nodeid": "tests/performance/test_redis_load.py::TestRedisPositionStateCRUD::test_latency_percentiles",
+      "lineno": 517,
+      "outcome": "passed",
+      "keywords": [
+        "test_latency_percentiles",
+        "TestRedisPositionStateCRUD",
+        "test_redis_load.py",
+        "integration",
+        "skipif",
+        "performance",
+        "tests",
+        "kis_unified_sts",
+        ""
+      ],
+      "setup": {
+        "duration": 0.0005815399999988813,
+        "outcome": "passed"
+      },
+      "call": {
+        "duration": 0.27791381999999487,
+        "outcome": "passed"
+      },
+      "teardown": {
+        "duration": 0.0008754249999896047,
+        "outcome": "passed"
+      }
+    },
+    {
+      "nodeid": "tests/performance/test_rl_inference_latency.py::TestBenchmarkInfrastructure::test_benchmark_helper_functions",
+      "lineno": 147,
+      "outcome": "passed",
+      "keywords": [
+        "test_benchmark_helper_functions",
+        "TestBenchmarkInfrastructure",
+        "test_rl_inference_latency.py",
+        "performance",
+        "tests",
+        "kis_unified_sts",
+        ""
+      ],
+      "setup": {
+        "duration": 0.00024566799999092837,
+        "outcome": "passed"
+      },
+      "call": {
+        "duration": 0.005186599000012393,
+        "outcome": "passed"
+      },
+      "teardown": {
+        "duration": 0.000150337000007994,
+        "outcome": "passed"
+      }
+    },
+    {
+      "nodeid": "tests/performance/test_rl_inference_latency.py::TestRLInferenceLatency::test_single_inference_latency",
+      "lineno": 218,
+      "outcome": "skipped",
+      "keywords": [
+        "test_single_inference_latency",
+        "TestRLInferenceLatency",
+        "test_rl_inference_latency.py",
+        "performance",
+        "tests",
+        "kis_unified_sts",
+        ""
+      ],
+      "setup": {
+        "duration": 0.0006923229999955538,
+        "outcome": "passed",
+        "log": [
+          {
+            "name": "test_rl_inference_latency",
+            "msg": "sb3-contrib not installed, skipping RL inference benchmarks",
+            "args": null,
+            "levelname": "WARNING",
+            "levelno": 30,
+            "pathname": "/home/runner/work/kis_unified_sts/kis_unified_sts/tests/performance/test_rl_inference_latency.py",
+            "filename": "test_rl_inference_latency.py",
+            "module": "test_rl_inference_latency",
+            "exc_info": null,
+            "exc_text": null,
+            "stack_info": null,
+            "lineno": 138,
+            "funcName": "_load_model_for_benchmark",
+            "created": 1780153168.808647,
+            "msecs": 808.0,
+            "relativeCreated": 6691.568374633789,
+            "thread": 140628564417408,
+            "threadName": "MainThread",
+            "processName": "MainProcess",
+            "process": 2798
+          }
+        ]
+      },
+      "call": {
+        "duration": 0.00011742099999878519,
+        "outcome": "skipped",
+        "longrepr": "('/home/runner/work/kis_unified_sts/kis_unified_sts/tests/performance/test_rl_inference_latency.py', 226, 'Skipped: RL model not available for benchmarking')"
+      },
+      "teardown": {
+        "duration": 0.00011731799999381565,
+        "outcome": "passed"
+      }
+    },
+    {
+      "nodeid": "tests/performance/test_rl_inference_latency.py::TestRLInferenceLatency::test_batch_inference_latency",
+      "lineno": 261,
+      "outcome": "skipped",
+      "keywords": [
+        "test_batch_inference_latency",
+        "TestRLInferenceLatency",
+        "test_rl_inference_latency.py",
+        "performance",
+        "tests",
+        "kis_unified_sts",
+        ""
+      ],
+      "setup": {
+        "duration": 0.0005625130000055378,
+        "outcome": "passed",
+        "log": [
+          {
+            "name": "test_rl_inference_latency",
+            "msg": "sb3-contrib not installed, skipping RL inference benchmarks",
+            "args": null,
+            "levelname": "WARNING",
+            "levelno": 30,
+            "pathname": "/home/runner/work/kis_unified_sts/kis_unified_sts/tests/performance/test_rl_inference_latency.py",
+            "filename": "test_rl_inference_latency.py",
+            "module": "test_rl_inference_latency",
+            "exc_info": null,
+            "exc_text": null,
+            "stack_info": null,
+            "lineno": 138,
+            "funcName": "_load_model_for_benchmark",
+            "created": 1780153168.8100767,
+            "msecs": 810.0,
+            "relativeCreated": 6692.998170852661,
+            "thread": 140628564417408,
+            "threadName": "MainThread",
+            "processName": "MainProcess",
+            "process": 2798
+          }
+        ]
+      },
+      "call": {
+        "duration": 9.763500000303793e-05,
+        "outcome": "skipped",
+        "longrepr": "('/home/runner/work/kis_unified_sts/kis_unified_sts/tests/performance/test_rl_inference_latency.py', 269, 'Skipped: RL model not available for benchmarking')"
+      },
+      "teardown": {
+        "duration": 0.0001216289999916853,
+        "outcome": "passed"
+      }
+    },
+    {
+      "nodeid": "tests/performance/test_rl_inference_latency.py::TestRLInferenceLatency::test_latency_percentiles",
+      "lineno": 310,
+      "outcome": "skipped",
+      "keywords": [
+        "test_latency_percentiles",
+        "TestRLInferenceLatency",
+        "test_rl_inference_latency.py",
+        "performance",
+        "tests",
+        "kis_unified_sts",
+        ""
+      ],
+      "setup": {
+        "duration": 0.000544003999991105,
+        "outcome": "passed",
+        "log": [
+          {
+            "name": "test_rl_inference_latency",
+            "msg": "sb3-contrib not installed, skipping RL inference benchmarks",
+            "args": null,
+            "levelname": "WARNING",
+            "levelno": 30,
+            "pathname": "/home/runner/work/kis_unified_sts/kis_unified_sts/tests/performance/test_rl_inference_latency.py",
+            "filename": "test_rl_inference_latency.py",
+            "module": "test_rl_inference_latency",
+            "exc_info": null,
+            "exc_text": null,
+            "stack_info": null,
+            "lineno": 138,
+            "funcName": "_load_model_for_benchmark",
+            "created": 1780153168.8112216,
+            "msecs": 811.0,
+            "relativeCreated": 6694.143056869507,
+            "thread": 140628564417408,
+            "threadName": "MainThread",
+            "processName": "MainProcess",
+            "process": 2798
+          }
+        ]
+      },
+      "call": {
+        "duration": 9.689200000195797e-05,
+        "outcome": "skipped",
+        "longrepr": "('/home/runner/work/kis_unified_sts/kis_unified_sts/tests/performance/test_rl_inference_latency.py', 320, 'Skipped: RL model not available for benchmarking')"
+      },
+      "teardown": {
+        "duration": 0.00011674799999639163,
+        "outcome": "passed"
+      }
+    },
+    {
+      "nodeid": "tests/performance/test_rl_inference_latency.py::TestRLInferenceLatency::test_cold_start_latency",
+      "lineno": 369,
+      "outcome": "skipped",
+      "keywords": [
+        "test_cold_start_latency",
+        "TestRLInferenceLatency",
+        "test_rl_inference_latency.py",
+        "performance",
+        "tests",
+        "kis_unified_sts",
+        ""
+      ],
+      "setup": {
+        "duration": 0.00034818700000016634,
+        "outcome": "passed"
+      },
+      "call": {
+        "duration": 0.00012093099999788137,
+        "outcome": "skipped",
+        "longrepr": "('/home/runner/work/kis_unified_sts/kis_unified_sts/tests/performance/test_rl_inference_latency.py', 381, 'Skipped: Model not found: models/futures/rl/mppo_best/best_model.zip')"
+      },
+      "teardown": {
+        "duration": 0.0001030759999878228,
+        "outcome": "passed"
+      }
+    },
+    {
+      "nodeid": "tests/performance/test_rl_inference_latency.py::TestRLInferenceLatency::test_warm_inference_latency",
+      "lineno": 412,
+      "outcome": "skipped",
+      "keywords": [
+        "test_warm_inference_latency",
+        "TestRLInferenceLatency",
+        "test_rl_inference_latency.py",
+        "performance",
+        "tests",
+        "kis_unified_sts",
+        ""
+      ],
+      "setup": {
+        "duration": 0.0005096170000058464,
+        "outcome": "passed",
+        "log": [
+          {
+            "name": "test_rl_inference_latency",
+            "msg": "sb3-contrib not installed, skipping RL inference benchmarks",
+            "args": null,
+            "levelname": "WARNING",
+            "levelno": 30,
+            "pathname": "/home/runner/work/kis_unified_sts/kis_unified_sts/tests/performance/test_rl_inference_latency.py",
+            "filename": "test_rl_inference_latency.py",
+            "module": "test_rl_inference_latency",
+            "exc_info": null,
+            "exc_text": null,
+            "stack_info": null,
+            "lineno": 138,
+            "funcName": "_load_model_for_benchmark",
+            "created": 1780153168.8133225,
+            "msecs": 813.0,
+            "relativeCreated": 6696.24400138855,
+            "thread": 140628564417408,
+            "threadName": "MainThread",
+            "processName": "MainProcess",
+            "process": 2798
+          }
+        ]
+      },
+      "call": {
+        "duration": 8.591899999998986e-05,
+        "outcome": "skipped",
+        "longrepr": "('/home/runner/work/kis_unified_sts/kis_unified_sts/tests/performance/test_rl_inference_latency.py', 422, 'Skipped: RL model not available for benchmarking')"
+      },
+      "teardown": {
+        "duration": 0.00010636700000077326,
+        "outcome": "passed"
+      }
+    },
+    {
+      "nodeid": "tests/performance/test_rl_inference_latency.py::TestRLInferenceLatency::test_inference_consistency",
+      "lineno": 464,
+      "outcome": "skipped",
+      "keywords": [
+        "test_inference_consistency",
+        "TestRLInferenceLatency",
+        "test_rl_inference_latency.py",
+        "performance",
+        "tests",
+        "kis_unified_sts",
+        ""
+      ],
+      "setup": {
+        "duration": 0.0005318019999975832,
+        "outcome": "passed",
+        "log": [
+          {
+            "name": "test_rl_inference_latency",
+            "msg": "sb3-contrib not installed, skipping RL inference benchmarks",
+            "args": null,
+            "levelname": "WARNING",
+            "levelno": 30,
+            "pathname": "/home/runner/work/kis_unified_sts/kis_unified_sts/tests/performance/test_rl_inference_latency.py",
+            "filename": "test_rl_inference_latency.py",
+            "module": "test_rl_inference_latency",
+            "exc_info": null,
+            "exc_text": null,
+            "stack_info": null,
+            "lineno": 138,
+            "funcName": "_load_model_for_benchmark",
+            "created": 1780153168.81451,
+            "msecs": 814.0,
+            "relativeCreated": 6697.431564331055,
+            "thread": 140628564417408,
+            "threadName": "MainThread",
+            "processName": "MainProcess",
+            "process": 2798
+          }
+        ]
+      },
+      "call": {
+        "duration": 8.433600000046226e-05,
+        "outcome": "skipped",
+        "longrepr": "('/home/runner/work/kis_unified_sts/kis_unified_sts/tests/performance/test_rl_inference_latency.py', 472, 'Skipped: RL model not available for benchmarking')"
+      },
+      "teardown": {
+        "duration": 0.00010420499999952426,
+        "outcome": "passed"
+      }
+    },
+    {
+      "nodeid": "tests/performance/test_websocket_load.py::TestWebSocketLoad::test_publish_throughput_100_messages",
+      "lineno": 265,
+      "outcome": "passed",
+      "keywords": [
+        "test_publish_throughput_100_messages",
+        "TestWebSocketLoad",
+        "test_websocket_load.py",
+        "integration",
+        "skipif",
+        "performance",
+        "tests",
+        "kis_unified_sts",
+        ""
+      ],
+      "setup": {
+        "duration": 0.0005816219999985606,
+        "outcome": "passed"
+      },
+      "call": {
+        "duration": 0.031624843999992436,
+        "outcome": "passed"
+      },
+      "teardown": {
+        "duration": 0.00018487699999525375,
+        "outcome": "passed"
+      }
+    },
+    {
+      "nodeid": "tests/performance/test_websocket_load.py::TestWebSocketLoad::test_publish_throughput_1000_messages",
+      "lineno": 291,
+      "outcome": "passed",
+      "keywords": [
+        "test_publish_throughput_1000_messages",
+        "TestWebSocketLoad",
+        "test_websocket_load.py",
+        "integration",
+        "skipif",
+        "performance",
+        "tests",
+        "kis_unified_sts",
+        ""
+      ],
+      "setup": {
+        "duration": 0.0005731199999985392,
+        "outcome": "passed"
+      },
+      "call": {
+        "duration": 0.29870126199999447,
+        "outcome": "passed"
+      },
+      "teardown": {
+        "duration": 0.00017499999999870397,
+        "outcome": "passed"
+      }
+    },
+    {
+      "nodeid": "tests/performance/test_websocket_load.py::TestWebSocketLoad::test_end_to_end_latency_100_msgs",
+      "lineno": 317,
+      "outcome": "passed",
+      "keywords": [
+        "test_end_to_end_latency_100_msgs",
+        "TestWebSocketLoad",
+        "test_websocket_load.py",
+        "integration",
+        "skipif",
+        "performance",
+        "tests",
+        "kis_unified_sts",
+        ""
+      ],
+      "setup": {
+        "duration": 0.0005492290000006506,
+        "outcome": "passed"
+      },
+      "call": {
+        "duration": 1.0727519059999935,
+        "outcome": "passed"
+      },
+      "teardown": {
+        "duration": 0.00017269999999314223,
+        "outcome": "passed"
+      }
+    },
+    {
+      "nodeid": "tests/performance/test_websocket_load.py::TestWebSocketLoad::test_end_to_end_latency_500_msgs",
+      "lineno": 349,
+      "outcome": "passed",
+      "keywords": [
+        "test_end_to_end_latency_500_msgs",
+        "TestWebSocketLoad",
+        "test_websocket_load.py",
+        "integration",
+        "skipif",
+        "performance",
+        "tests",
+        "kis_unified_sts",
+        ""
+      ],
+      "setup": {
+        "duration": 0.0005418639999987818,
+        "outcome": "passed"
+      },
+      "call": {
+        "duration": 1.2841963700000036,
+        "outcome": "passed"
+      },
+      "teardown": {
+        "duration": 0.00020914200000277106,
+        "outcome": "passed"
+      }
+    },
+    {
+      "nodeid": "tests/performance/test_websocket_load.py::TestWebSocketLoad::test_peak_load_1000_msgs",
+      "lineno": 381,
+      "outcome": "passed",
+      "keywords": [
+        "test_peak_load_1000_msgs",
+        "slow",
+        "pytestmark",
+        "TestWebSocketLoad",
+        "test_websocket_load.py",
+        "integration",
+        "skipif",
+        "performance",
+        "tests",
+        "kis_unified_sts",
+        ""
+      ],
+      "setup": {
+        "duration": 0.0006861829999991187,
+        "outcome": "passed"
+      },
+      "call": {
+        "duration": 1.5348554729999933,
+        "outcome": "passed"
+      },
+      "teardown": {
+        "duration": 0.00020818599999472553,
+        "outcome": "passed"
+      }
+    },
+    {
+      "nodeid": "tests/performance/test_websocket_load.py::TestWebSocketLoad::test_sustained_load_5000_msgs",
+      "lineno": 414,
+      "outcome": "passed",
+      "keywords": [
+        "test_sustained_load_5000_msgs",
+        "TestWebSocketLoad",
+        "test_websocket_load.py",
+        "integration",
+        "skipif",
+        "performance",
+        "tests",
+        "kis_unified_sts",
+        ""
+      ],
+      "setup": {
+        "duration": 0.0007102360000033059,
+        "outcome": "passed"
+      },
+      "call": {
+        "duration": 12.801332692999992,
+        "outcome": "passed"
+      },
+      "teardown": {
+        "duration": 0.00028594699999473505,
+        "outcome": "passed"
+      }
+    }
+  ],
+  "warnings": [
+    {
+      "message": "SelectableGroups dict interface is deprecated. Use select.",
+      "category": "DeprecationWarning",
+      "when": "collect",
+      "filename": "/opt/hostedtoolcache/Python/3.11.15/x64/lib/python3.11/site-packages/opentelemetry/util/_importlib_metadata.py",
+      "lineno": 32
+    }
+  ]
+}

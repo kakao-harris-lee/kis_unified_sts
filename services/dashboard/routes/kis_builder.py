@@ -7,19 +7,22 @@ contracts are not changed.
 
 from __future__ import annotations
 
+import json
 import os
 import re
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from io import BytesIO
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 import yaml
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from shared.config.loader import ConfigLoader
 from shared.strategy_builder.evaluator import StrategyBuilderEvaluator
 from shared.strategy_builder.kis_compat import (
     apply_kis_preset_params,
@@ -120,26 +123,96 @@ async def list_custom_strategies() -> dict[str, list[Any]]:
 async def list_indicators() -> dict[str, Any]:
     return {
         "indicators": [
-            {"name": "ma", "label": "이동평균", "params": ["period"], "example": "ma(20)"},
-            {"name": "ema", "label": "지수이동평균", "params": ["period"], "example": "ema(12)"},
+            {
+                "name": "ma",
+                "label": "이동평균",
+                "params": ["period"],
+                "example": "ma(20)",
+            },
+            {
+                "name": "ema",
+                "label": "지수이동평균",
+                "params": ["period"],
+                "example": "ema(12)",
+            },
             {"name": "rsi", "label": "RSI", "params": ["period"], "example": "rsi(14)"},
-            {"name": "macd", "label": "MACD", "params": ["fast", "slow", "signal"], "example": "macd(12,26,9)"},
-            {"name": "williams_r", "label": "Williams %R", "params": ["period"], "example": "williams_r(14)"},
-            {"name": "stochastic", "label": "스토캐스틱", "params": ["k_period", "d_period"], "example": "stochastic(14,3)"},
-            {"name": "bollinger", "label": "볼린저 밴드", "params": ["period", "std"], "example": "bollinger(20,2)"},
+            {
+                "name": "macd",
+                "label": "MACD",
+                "params": ["fast", "slow", "signal"],
+                "example": "macd(12,26,9)",
+            },
+            {
+                "name": "williams_r",
+                "label": "Williams %R",
+                "params": ["period"],
+                "example": "williams_r(14)",
+            },
+            {
+                "name": "stochastic",
+                "label": "스토캐스틱",
+                "params": ["k_period", "d_period"],
+                "example": "stochastic(14,3)",
+            },
+            {
+                "name": "bollinger",
+                "label": "볼린저 밴드",
+                "params": ["period", "std"],
+                "example": "bollinger(20,2)",
+            },
             {"name": "vwap", "label": "VWAP", "params": [], "example": "vwap()"},
             {"name": "adx", "label": "ADX", "params": ["period"], "example": "adx(14)"},
-            {"name": "donchian", "label": "돈치안 채널", "params": ["period"], "example": "donchian(20)"},
-            {"name": "ichimoku", "label": "이치모쿠", "params": ["conversion", "base", "span_b"], "example": "ichimoku(9,26,52)"},
-            {"name": "supertrend", "label": "SuperTrend", "params": ["period", "multiplier"], "example": "supertrend(10,3)"},
-            {"name": "keltner", "label": "켈트너 채널", "params": ["period", "multiplier"], "example": "keltner(20,2)"},
+            {
+                "name": "donchian",
+                "label": "돈치안 채널",
+                "params": ["period"],
+                "example": "donchian(20)",
+            },
+            {
+                "name": "ichimoku",
+                "label": "이치모쿠",
+                "params": ["conversion", "base", "span_b"],
+                "example": "ichimoku(9,26,52)",
+            },
+            {
+                "name": "supertrend",
+                "label": "SuperTrend",
+                "params": ["period", "multiplier"],
+                "example": "supertrend(10,3)",
+            },
+            {
+                "name": "keltner",
+                "label": "켈트너 채널",
+                "params": ["period", "multiplier"],
+                "example": "keltner(20,2)",
+            },
             {"name": "cci", "label": "CCI", "params": ["period"], "example": "cci(20)"},
             {"name": "mfi", "label": "MFI", "params": ["period"], "example": "mfi(14)"},
             {"name": "obv", "label": "OBV", "params": [], "example": "obv()"},
-            {"name": "trix", "label": "TRIX", "params": ["period"], "example": "trix(15)"},
-            {"name": "engulfing", "label": "장악형 캔들", "params": [], "example": "engulfing()"},
-            {"name": "disparity", "label": "이격도", "params": ["period"], "example": "disparity(20)"},
-            {"name": "breakout_margin", "label": "돌파 여유율", "params": ["period"], "example": "breakout_margin(252)"},
+            {
+                "name": "trix",
+                "label": "TRIX",
+                "params": ["period"],
+                "example": "trix(15)",
+            },
+            {
+                "name": "engulfing",
+                "label": "장악형 캔들",
+                "params": [],
+                "example": "engulfing()",
+            },
+            {
+                "name": "disparity",
+                "label": "이격도",
+                "params": ["period"],
+                "example": "disparity(20)",
+            },
+            {
+                "name": "breakout_margin",
+                "label": "돌파 여유율",
+                "params": ["period"],
+                "example": "breakout_margin(252)",
+            },
         ],
         "variables": ["close", "open", "high", "low", "volume", "change"],
         "operators": {
@@ -154,7 +227,12 @@ async def list_indicators() -> dict[str, Any]:
 async def preview_code_from_state(request: dict[str, Any]) -> dict[str, Any]:
     try:
         state = kis_state_to_builder_state(request.get("builder_state", {}))
-        return {"status": "success", "code": preview_python(state), "buy_dsl": "", "sell_dsl": ""}
+        return {
+            "status": "success",
+            "code": preview_python(state),
+            "buy_dsl": "",
+            "sell_dsl": "",
+        }
     except Exception as exc:  # noqa: BLE001
         return {"status": "error", "message": str(exc)}
 
@@ -183,11 +261,18 @@ async def build_strategy(request: dict[str, Any]) -> dict[str, Any]:
 async def execute_strategy(request: ExecuteStrategyRequest) -> dict[str, Any]:
     logs: list[dict[str, str]] = []
     if not request.stocks:
-        return {"status": "error", "results": [], "logs": logs, "message": "종목을 입력해주세요"}
+        return {
+            "status": "error",
+            "results": [],
+            "logs": logs,
+            "message": "종목을 입력해주세요",
+        }
 
     if request.builder_state:
         source_state = request.builder_state
-        strategy_name = source_state.get("metadata", {}).get("name", request.strategy_id)
+        strategy_name = source_state.get("metadata", {}).get(
+            "name", request.strategy_id
+        )
     else:
         preset = get_kis_preset(request.strategy_id)
         if preset is None:
@@ -393,11 +478,17 @@ async def file_templates() -> dict[str, Any]:
 async def file_template(template_id: str) -> dict[str, Any]:
     preset = get_kis_preset(template_id)
     if preset is None:
-        raise HTTPException(status_code=404, detail=f"Template not found: {template_id}")
+        raise HTTPException(
+            status_code=404, detail=f"Template not found: {template_id}"
+        )
     state = kis_state_to_builder_state(preset.get("builder_state", {}))
     return {
         "success": True,
-        "data": {"id": template_id, "name": preset.get("name"), "yaml": builder_state_to_yaml(state)},
+        "data": {
+            "id": template_id,
+            "name": preset.get("name"),
+            "yaml": builder_state_to_yaml(state),
+        },
     }
 
 
@@ -405,13 +496,17 @@ async def file_template(template_id: str) -> dict[str, Any]:
 async def download_template(template_id: str) -> StreamingResponse:
     preset = get_kis_preset(template_id)
     if preset is None:
-        raise HTTPException(status_code=404, detail=f"Template not found: {template_id}")
+        raise HTTPException(
+            status_code=404, detail=f"Template not found: {template_id}"
+        )
     state = kis_state_to_builder_state(preset.get("builder_state", {}))
     content = builder_state_to_yaml(state).encode("utf-8")
     return StreamingResponse(
         BytesIO(content),
         media_type="application/x-yaml",
-        headers={"Content-Disposition": f'attachment; filename="{template_id}.kis.yaml"'},
+        headers={
+            "Content-Disposition": f'attachment; filename="{template_id}.kis.yaml"'
+        },
     )
 
 
@@ -447,11 +542,19 @@ async def symbol_status() -> dict[str, Any]:
 
 @router.post("/symbols/collect")
 async def collect_symbols() -> dict[str, Any]:
-    return {"success": True, "kospi_count": 0, "kosdaq_count": 0, "total_count": 0, "errors": []}
+    return {
+        "success": True,
+        "kospi_count": 0,
+        "kosdaq_count": 0,
+        "total_count": 0,
+        "errors": [],
+    }
 
 
 @router.get("/symbols/search")
-async def search_symbols(q: str = "", limit: int = 20, exchange: str | None = None) -> dict[str, Any]:
+async def search_symbols(
+    q: str = "", limit: int = 20, exchange: str | None = None
+) -> dict[str, Any]:
     _ = exchange
     item = _symbol_item(q) if q else None
     items = [item] if item else []
@@ -497,17 +600,21 @@ _BUILT_STRATEGIES_DIR = Path(
     os.environ.get("KIS_BUILT_STRATEGIES_DIR", "config/strategies/built")
 )
 _ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{3,64}$")
+_KST = ZoneInfo("Asia/Seoul")
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 class RegisterPaperRequest(BaseModel):
     """Body of POST /register-paper."""
 
     builder_state: dict[str, Any] = Field(
-        ..., description="Full BuilderState JSON (matching shared/strategy_builder/schema.py)"
+        ...,
+        description="Full BuilderState JSON (matching shared/strategy_builder/schema.py)",
     )
     stop_loss_pct: float = Field(default=5.0, ge=0)
     take_profit_pct: float = Field(default=10.0, ge=0)
     order_amount: int = Field(default=1_000_000, ge=0)
+    contracts: int = Field(default=1, ge=1, description="Futures contract count (futures only)")
     cooldown_seconds: int = Field(default=0, ge=0)
     min_confidence: float = Field(default=0.5, ge=0.0, le=1.0)
 
@@ -572,13 +679,15 @@ def _validate_builder_state(payload: dict[str, Any]) -> dict[str, Any]:
         raise HTTPException(
             status_code=400, detail=f"Invalid BuilderState: {exc}"
         ) from exc
-    if state.asset_class != "stock":
+    # Builder→paper supports stock and (long-only, paper) futures. Futures
+    # live activation stays behind config/futures_live.yaml + the Redis
+    # suspend flag — registration only materializes a paper YAML.
+    if state.asset_class not in ("stock", "futures"):
         raise HTTPException(
             status_code=400,
             detail=(
-                "builder→paper registration is stock-only in Phase 1. "
-                "Futures strategies stay on the dedicated entry classes "
-                "(setup_a/setup_c/bb_reversion_15m)."
+                f"Unsupported asset_class: {state.asset_class!r} "
+                "(expected 'stock' or 'futures')."
             ),
         )
     # `mode="json"` dumps StrEnum values as plain strings so yaml.safe_dump
@@ -593,12 +702,18 @@ def _build_strategy_yaml(
     stop_loss_pct: float,
     take_profit_pct: float,
     order_amount: int,
+    contracts: int = 1,
     cooldown_seconds: int,
     min_confidence: float,
     enabled: bool = False,
 ) -> dict[str, Any]:
     """Materialize the YAML dict the builder_v1 classes will consume."""
     metadata = state.get("metadata", {})
+    asset_class = state.get("asset_class", "stock")
+    if asset_class == "futures":
+        position = {"type": "fixed", "params": {"fixed_quantity": contracts}}
+    else:
+        position = {"type": "fixed", "params": {"order_amount_per_stock": order_amount}}
     return {
         "strategy": {
             "name": metadata.get("id", "built"),
@@ -622,12 +737,7 @@ def _build_strategy_yaml(
                     "min_confidence": min_confidence,
                 },
             },
-            "position": {
-                "type": "fixed",
-                "params": {
-                    "order_amount_per_stock": order_amount,
-                },
-            },
+            "position": position,
             "_builder_meta": {
                 "registered_at": datetime.now(UTC).isoformat(),
                 "schema_version": "builder_v1",
@@ -651,6 +761,7 @@ async def register_paper_strategy(body: RegisterPaperRequest) -> RegisteredStrat
         stop_loss_pct=body.stop_loss_pct,
         take_profit_pct=body.take_profit_pct,
         order_amount=body.order_amount,
+        contracts=body.contracts,
         cooldown_seconds=body.cooldown_seconds,
         min_confidence=body.min_confidence,
         enabled=False,  # Phase-1 safe default
@@ -738,3 +849,227 @@ async def unregister_strategy(strategy_id: str) -> dict[str, Any]:
         )
     path.unlink()
     return {"id": safe_id, "deleted": True}
+
+
+# ============================================================================
+# Builder preset experiment reports
+# ============================================================================
+
+
+def _resolve_project_path(raw: str | Path) -> Path:
+    path = Path(raw)
+    if path.is_absolute():
+        return path
+    return _REPO_ROOT / path
+
+
+def _display_path(path: Path) -> str:
+    try:
+        return str(path.resolve().relative_to(_REPO_ROOT))
+    except ValueError:
+        return str(path)
+
+
+def _load_experiment_config() -> dict[str, Any]:
+    raw_path = os.environ.get(
+        "STOCK_BUILDER_PRESET_EXPERIMENT_CONFIG",
+        "stock_builder_preset_experiment.yaml",
+    )
+    path = Path(raw_path)
+    if path.is_absolute() or path.exists():
+        cfg_path = _resolve_project_path(path)
+        if not cfg_path.exists():
+            raise HTTPException(
+                status_code=404,
+                detail=f"Experiment config not found: {_display_path(cfg_path)}",
+            )
+        data = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
+    else:
+        data = ConfigLoader.load(raw_path, use_cache=False)
+
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=500, detail="Experiment config is invalid")
+    exp = data.get("experiment", data)
+    if not isinstance(exp, dict):
+        raise HTTPException(status_code=500, detail="Experiment config is invalid")
+    return exp
+
+
+def _parse_config_date(value: Any) -> date:
+    if hasattr(value, "isoformat"):
+        return date.fromisoformat(value.isoformat())
+    return date.fromisoformat(str(value))
+
+
+def _parse_dt(value: Any) -> datetime | None:
+    if not value:
+        return None
+    try:
+        raw = str(value).replace("Z", "+00:00")
+        parsed = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed
+
+
+def _weekdays(start: date, end: date) -> list[date]:
+    if end < start:
+        return []
+    days: list[date] = []
+    cursor = start
+    while cursor <= end:
+        if cursor.weekday() < 5:
+            days.append(cursor)
+        cursor = cursor.fromordinal(cursor.toordinal() + 1)
+    return days
+
+
+def _read_report(path: Path) -> dict[str, Any] | None:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _list_experiment_reports(output_dir: Path) -> list[dict[str, Any]]:
+    if not output_dir.exists():
+        return []
+
+    reports: list[dict[str, Any]] = []
+    paths = sorted(
+        output_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True
+    )
+    for path in paths:
+        data = _read_report(path)
+        if data is None:
+            continue
+        exp = (
+            data.get("experiment", {})
+            if isinstance(data.get("experiment"), dict)
+            else {}
+        )
+        reports.append(
+            {
+                "filename": path.name,
+                "path": _display_path(path),
+                "mtime": datetime.fromtimestamp(
+                    path.stat().st_mtime, tz=UTC
+                ).isoformat(),
+                "generated_at": exp.get("generated_at"),
+                "start_date": exp.get("start_date"),
+                "end_date": exp.get("end_date"),
+                "summary_count": len(data.get("summaries") or []),
+                "trade_count": len(data.get("trades") or []),
+            }
+        )
+    return reports
+
+
+def _latest_log_tail(log_dir: Path, *, max_lines: int = 80) -> dict[str, Any] | None:
+    files = sorted(
+        log_dir.glob("stock_builder_preset_experiment_*.log"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    if not files:
+        return None
+    path = files[0]
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return None
+    return {
+        "path": _display_path(path),
+        "mtime": datetime.fromtimestamp(path.stat().st_mtime, tz=UTC).isoformat(),
+        "lines": lines[-max_lines:],
+    }
+
+
+def _experiment_progress(
+    config: dict[str, Any], reports: list[dict[str, Any]]
+) -> dict[str, Any]:
+    start = _parse_config_date(config["start_date"])
+    end = _parse_config_date(config["end_date"])
+    scheduled_days = _weekdays(start, end)
+    report_dates: set[date] = set()
+    for report in reports:
+        generated = _parse_dt(report.get("generated_at")) or _parse_dt(
+            report.get("mtime")
+        )
+        if generated is None:
+            continue
+        local_day = generated.astimezone(_KST).date()
+        if start <= local_day <= end and local_day.weekday() < 5:
+            report_dates.add(local_day)
+
+    today = datetime.now(_KST).date()
+    completed = len(report_dates)
+    total = len(scheduled_days)
+    if today < start:
+        status = "upcoming"
+    elif today > end and completed >= total:
+        status = "completed"
+    elif today > end:
+        status = "ended_incomplete"
+    elif completed > 0:
+        status = "running"
+    else:
+        status = "waiting_first_run"
+
+    next_run_date = next(
+        (day for day in scheduled_days if day not in report_dates and day >= today),
+        None,
+    )
+    return {
+        "status": status,
+        "total_scheduled_days": total,
+        "completed_report_days": completed,
+        "completion_pct": round((completed / total) * 100, 1) if total else 0.0,
+        "report_dates": [day.isoformat() for day in sorted(report_dates)],
+        "next_run_at_kst": (
+            f"{next_run_date.isoformat()}T16:35:00+09:00"
+            if next_run_date is not None
+            else None
+        ),
+        "last_report_at": reports[0].get("generated_at") if reports else None,
+    }
+
+
+@router.get("/experiments/stock-builder-preset")
+async def stock_builder_preset_experiment_report() -> dict[str, Any]:
+    """Return status and latest report for the stock builder preset experiment."""
+    config = _load_experiment_config()
+    output_dir = _resolve_project_path(
+        str(config.get("output_dir") or "reports/stock_builder_preset_experiment")
+    )
+    reports = _list_experiment_reports(output_dir)
+    latest_payload: dict[str, Any] | None = None
+    if reports:
+        latest_payload = _read_report(_resolve_project_path(reports[0]["path"]))
+
+    log_dir = _resolve_project_path(os.environ.get("KIS_LOG_DIR", "logs"))
+    preset_ids = [
+        str(item.get("id"))
+        for item in config.get("presets", [])
+        if isinstance(item, dict) and item.get("id")
+    ]
+    return {
+        "experiment": {
+            "id": str(config.get("id") or "stock_builder_preset_experiment"),
+            "description": str(config.get("description") or ""),
+            "start_date": _parse_config_date(config["start_date"]).isoformat(),
+            "end_date": _parse_config_date(config["end_date"]).isoformat(),
+            "output_dir": _display_path(output_dir),
+            "daily_run_time_kst": "16:35",
+            "presets": preset_ids,
+            "fallback_symbols": config.get("fallback_symbols") or [],
+            "basket_source": config.get("basket_source") or {},
+        },
+        "progress": _experiment_progress(config, reports),
+        "reports": reports,
+        "latest_report": latest_payload,
+        "latest_log": _latest_log_tail(log_dir),
+    }

@@ -31,3 +31,21 @@ export function useStrategies() {
 }
 
 export default useStrategies;
+
+/**
+ * Active (runtime-registry) strategies for one asset class, INCLUDING disabled
+ * ones (enabled_only=false) so the builder's read-only panel can show which are
+ * enabled. Separate query key per asset so the asset toggle re-fetches.
+ */
+export function useActiveStrategies(assetClass: "stock" | "futures") {
+  const { data, isLoading, isError } = useQuery<StrategiesResponse>({
+    queryKey: ["active-strategies", assetClass],
+    queryFn: () =>
+      strategiesApi
+        .list({ asset_class: assetClass, enabled_only: false })
+        .then((r) => r.data),
+    staleTime: 60000,
+  });
+
+  return { strategies: data?.strategies ?? [], isLoading, isError };
+}

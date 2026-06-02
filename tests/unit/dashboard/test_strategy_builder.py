@@ -109,3 +109,158 @@ def test_dashboard_registers_kis_builder_compat_routes():
     )
     assert executed.status_code == 200
     assert executed.json()["results"][0]["action"] == "BUY"
+
+
+@pytest.mark.asyncio
+async def test_register_paper_accepts_camelcase_state(tmp_path, monkeypatch) -> None:
+    from services.dashboard.routes import kis_builder
+
+    monkeypatch.setattr(kis_builder, "_BUILT_STRATEGIES_DIR", tmp_path)
+
+    camel = {
+        "metadata": {
+            "id": "camel_reg_test",
+            "name": "Camel Reg",
+            "description": "",
+            "category": "custom",
+            "tags": ["t"],
+            "author": "u",
+        },
+        "assetClass": "stock",
+        "indicators": [
+            {"id": "i1", "indicatorId": "rsi", "alias": "rsi", "params": {}, "output": "value"}
+        ],
+        "entry": {
+            "logic": "AND",
+            "conditions": [
+                {
+                    "id": "c1",
+                    "left": {"type": "indicator", "indicatorAlias": "rsi", "indicatorOutput": "value"},
+                    "operator": "greater_than",
+                    "right": {"type": "value", "value": 30.0},
+                }
+            ],
+        },
+        "exit": {"logic": "AND", "conditions": []},
+        "risk": {
+            "stopLoss": {"enabled": True, "percent": 5.0},
+            "takeProfit": {"enabled": False, "percent": 10.0},
+            "trailingStop": {"enabled": False, "percent": 3.0},
+        },
+    }
+
+    result = await kis_builder.register_paper_strategy(
+        kis_builder.RegisterPaperRequest(builder_state=camel)
+    )
+    assert result.asset_class == "stock"
+    assert (tmp_path / "camel_reg_test.yaml").exists()
+
+
+def _futures_register_state(strategy_id: str = "fut_reg_test") -> dict:
+    return {
+        "metadata": {
+            "id": strategy_id,
+            "name": "Fut Reg",
+            "description": "",
+            "category": "custom",
+            "tags": ["t"],
+            "author": "u",
+        },
+        "asset_class": "futures",
+        "indicators": [
+            {"indicator_id": "rsi", "alias": "rsi", "params": {}, "output": "value"}
+        ],
+        "entry": {
+            "logic": "AND",
+            "conditions": [
+                {
+                    "left": {"type": "indicator", "indicator_alias": "rsi", "indicator_output": "value"},
+                    "operator": "greater_than",
+                    "right": {"type": "value", "value": 30.0},
+                }
+            ],
+        },
+        "exit": {"logic": "AND", "conditions": []},
+        "risk": {"stop_loss": {"enabled": True, "percent": 5.0}},
+    }
+
+
+@pytest.mark.asyncio
+async def test_register_paper_accepts_futures_and_uses_contract_sizing(tmp_path, monkeypatch):
+    import yaml as _yaml
+
+    from services.dashboard.routes import kis_builder
+
+    monkeypatch.setattr(kis_builder, "_BUILT_STRATEGIES_DIR", tmp_path)
+
+    result = await kis_builder.register_paper_strategy(
+        kis_builder.RegisterPaperRequest(
+            builder_state=_futures_register_state(), contracts=2
+        )
+    )
+    assert result.asset_class == "futures"
+
+    doc = _yaml.safe_load((tmp_path / "fut_reg_test.yaml").read_text(encoding="utf-8"))
+    position = doc["strategy"]["position"]
+    assert position["type"] == "fixed"
+    assert position["params"]["fixed_quantity"] == 2
+    assert "order_amount_per_stock" not in position["params"]
+
+
+@pytest.mark.asyncio
+async def test_register_paper_rejects_unknown_asset_class(tmp_path, monkeypatch):
+    from fastapi import HTTPException
+
+    from services.dashboard.routes import kis_builder
+
+    monkeypatch.setattr(kis_builder, "_BUILT_STRATEGIES_DIR", tmp_path)
+    bad = _futures_register_state("bad_asset")
+    bad["asset_class"] = "options"
+
+    with pytest.raises(HTTPException) as exc:
+        await kis_builder.register_paper_strategy(
+            kis_builder.RegisterPaperRequest(builder_state=bad)
+        )
+    assert exc.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_register_paper_stock_still_uses_krw_sizing(tmp_path, monkeypatch):
+    import yaml as _yaml
+
+    from services.dashboard.routes import kis_builder
+
+    monkeypatch.setattr(kis_builder, "_BUILT_STRATEGIES_DIR", tmp_path)
+    stock = _futures_register_state("stock_reg_test")
+    stock["asset_class"] = "stock"
+
+    result = await kis_builder.register_paper_strategy(
+        kis_builder.RegisterPaperRequest(builder_state=stock, order_amount=2_000_000)
+    )
+    assert result.asset_class == "stock"
+    doc = _yaml.safe_load((tmp_path / "stock_reg_test.yaml").read_text(encoding="utf-8"))
+    position = doc["strategy"]["position"]
+    assert position["params"]["order_amount_per_stock"] == 2_000_000
+    assert "fixed_quantity" not in position["params"]
+
+
+@pytest.mark.asyncio
+async def test_register_paper_futures_defaults_to_one_contract(tmp_path, monkeypatch):
+    # Omitting `contracts` must materialize 1 contract (the safe Phase-1 default),
+    # not fall through to amount-based sizing (fixed_quantity must be 1, not 0).
+    import yaml as _yaml
+
+    from services.dashboard.routes import kis_builder
+
+    monkeypatch.setattr(kis_builder, "_BUILT_STRATEGIES_DIR", tmp_path)
+
+    result = await kis_builder.register_paper_strategy(
+        kis_builder.RegisterPaperRequest(
+            builder_state=_futures_register_state("fut_default_contracts")
+        )
+    )
+    assert result.asset_class == "futures"
+    doc = _yaml.safe_load(
+        (tmp_path / "fut_default_contracts.yaml").read_text(encoding="utf-8")
+    )
+    assert doc["strategy"]["position"]["params"]["fixed_quantity"] == 1

@@ -39,7 +39,11 @@ dependencies = [
     "python-dotenv>=1.0",
 
     # Async
-    "aiohttp>=3.9",
+    # Cap <3.14: aiohttp 3.14 made ClientResponse.__init__ require a
+    # stream_writer kwarg, which aioresponses 0.7.8 (latest) does not pass —
+    # breaking macro/news source tests. Lift the cap once aioresponses ships
+    # aiohttp-3.14 support.
+    "aiohttp>=3.9,<3.14",
     "asyncio>=3.4",
 
     # Data Processing

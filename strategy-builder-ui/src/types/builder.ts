@@ -42,6 +42,8 @@ export interface IndicatorDefinition {
   defaultOutput: string;
   implemented?: boolean; // false면 미구현 (기본값 true 취급)
   leanUnsupported?: boolean; // true면 Lean 백테스트 미지원 (p1 자체 실행은 가능)
+  /** "degraded": 코스피200 미니의 낮은 유동성에서 신뢰도 저하 (선물 모드 자문 경고용, 차단 아님) */
+  futuresApplicability?: "ok" | "degraded";
 }
 
 // ============================================================
@@ -123,6 +125,7 @@ export interface BuilderMetadata {
 
 export interface BuilderState {
   metadata: BuilderMetadata;
+  assetClass: "stock" | "futures";
   indicators: BuilderIndicator[];
   entry: BuilderConditionGroup;
   exit: BuilderConditionGroup;
@@ -206,6 +209,7 @@ export interface YamlStrategy {
 
 export type BuilderAction =
   | { type: "SET_METADATA"; payload: Partial<BuilderMetadata> }
+  | { type: "SET_ASSET_CLASS"; payload: "stock" | "futures" }
   | { type: "ADD_INDICATOR"; payload: BuilderIndicator }
   | { type: "ADD_INDICATOR_WITH_AUTO"; payload: BuilderIndicator }
   | { type: "UPDATE_INDICATOR"; payload: { id: string; updates: Partial<BuilderIndicator> } }

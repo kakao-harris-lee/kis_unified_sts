@@ -43,7 +43,7 @@ Current repo anchors:
 - Backtest runtime: `shared/backtest/{engine,adapter,daily_adapter,config}.py`,
   `cli/main.py sts backtest run`.
 - Paper runtime: `services/trading/orchestrator.py`.
-- Dashboard: `services/dashboard/routes/*`, `dashboard-frontend/src`.
+- Dashboard: `services/dashboard/routes/*`, `strategy-builder-ui/src`.
 
 ---
 
