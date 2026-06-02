@@ -2261,6 +2261,27 @@ class TradingOrchestrator:
         auto_track = bv_cfg.get("auto_track_external", False)
         alerts: list[str] = []
 
+        # In PAPER mode the broker (KIS mock) account is NOT the source of
+        # truth — the VirtualBroker holds the authoritative paper positions and
+        # the mock-mirror is fire-and-forget (and frequently fails). Treating
+        # the mock balance as authoritative caused real paper positions to be
+        # destroyed at break-even (remove_redis_only) and stray mock holdings to
+        # be ingested as `external` paper positions (auto_track_external), both
+        # churning P&L to zero. We therefore disable the destructive and
+        # broker-overriding branches for paper trackers and keep verification
+        # observe-only (still log/alert mismatches).
+        if getattr(self.config, "paper_trading", False):
+            if remove_redis_only or auto_track or reconcile_qty or reconcile_price:
+                logger.info(
+                    "Paper mode: broker is not authoritative for paper positions; "
+                    "running broker verification in observe-only mode "
+                    "(remove_redis_only/auto_track/reconcile disabled)"
+                )
+            remove_redis_only = False
+            auto_track = False
+            reconcile_qty = False
+            reconcile_price = False
+
         # 1. Matched — verify quantity and side
         for code in matched:
             rp = redis_by_code[code]
@@ -7015,6 +7036,15 @@ class TradingOrchestrator:
                 pos_metadata[key] = signal_meta[key]
         # Extract execution venue from execution metadata
         execution_venue = exec_meta.get("venue", "KRX")
+        # Persist an initial hard-stop when the signal carries an absolute stop
+        # price so the position is not recorded with stop_loss_price=0.
+        entry_stop_price: float | None = None
+        try:
+            raw_stop = signal_meta.get("stop_loss")
+            if raw_stop is not None and float(raw_stop) > 0:
+                entry_stop_price = float(raw_stop)
+        except (TypeError, ValueError):
+            entry_stop_price = None
         position = self._position_tracker.add_position(
             code=signal.code,
             name=signal.name or self._symbol_names.get(signal.code, signal.code),
@@ -7024,6 +7054,7 @@ class TradingOrchestrator:
             side=PositionSide.SHORT if is_short else PositionSide.LONG,
             metadata=pos_metadata,
             execution_venue=execution_venue,
+            stop_price=entry_stop_price,
         )
 
         if not position:

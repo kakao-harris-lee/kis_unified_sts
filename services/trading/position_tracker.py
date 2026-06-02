@@ -371,6 +371,7 @@ class PositionTracker:
         metadata: dict[str, Any] | None = None,
         execution_venue: str = "KRX",
         client_order_id: str | None = None,
+        stop_price: float | None = None,
     ) -> Position | None:
         """Add a new position
 
@@ -384,6 +385,10 @@ class PositionTracker:
             fee_rate: Trading fee rate (overrides config default)
             metadata: Additional metadata dict
             execution_venue: Execution venue (KRX/ATS)
+            stop_price: Optional initial hard-stop price. When supplied (and
+                positive) it is persisted on the position so reconciliation /
+                exports do not record ``stop_loss_price = 0``. The dynamic exit
+                strategy (e.g. ThreeStageExit) may later ratchet this value.
             client_order_id: Optional idempotency key, typically a stable
                 identifier derived from the originating signal or broker
                 client-order-id.  When supplied, a second call with the
@@ -454,6 +459,13 @@ class PositionTracker:
             execution_venue=execution_venue,
         )
 
+        # Persist an initial hard-stop when supplied so the position is never
+        # recorded with stop_loss_price=0. Strategies whose stop is purely
+        # derived at runtime (no absolute stop on the signal) keep the prior
+        # default of 0.0.
+        if stop_price is not None and stop_price > 0:
+            position.stop_price = float(stop_price)
+
         # Add to main dict
         self._positions[position_id] = position
 
@@ -504,14 +516,25 @@ class PositionTracker:
         idempotency key is registered \u2014 behavior matches the legacy
         callsites that have not yet adopted the contract.
         """
+        meta = getattr(signal, "metadata", None) or {}
         effective_coid = client_order_id
         if not effective_coid:
-            meta = getattr(signal, "metadata", None) or {}
             for meta_key in ("client_order_id", "signal_id"):
                 candidate = str(meta.get(meta_key, "") or "").strip()
                 if candidate:
                     effective_coid = candidate
                     break
+
+        # Forward an absolute stop price from the signal metadata when present
+        # so the persisted position carries a non-zero stop_loss_price.
+        stop_price: float | None = None
+        try:
+            raw_stop = meta.get("stop_loss")
+            if raw_stop is not None and float(raw_stop) > 0:
+                stop_price = float(raw_stop)
+        except (TypeError, ValueError):
+            stop_price = None
+
         return self.add_position(
             code=signal.code,
             name=signal.name,
@@ -520,6 +543,7 @@ class PositionTracker:
             strategy=signal.strategy,
             side=side,
             client_order_id=effective_coid,
+            stop_price=stop_price,
         )
 
     def add_recovered_position(self, position: Position) -> bool:
@@ -1262,25 +1286,42 @@ class PositionTracker:
                     ) = row
                     if (pos_id, code, self._db_datetime(entry_time)) in current_keys:
                         continue
+                    # Close the orphan at the best last-known price rather than
+                    # the entry price. Closing at entry would record pnl=0
+                    # (break-even) and silently discard real P&L — e.g. a
+                    # position that rallied +28~55% above entry would still be
+                    # logged as flat. ``high_since_entry`` is the only
+                    # last-known price column persisted on the open row, so it
+                    # is used as the exit-price proxy; we fall back to
+                    # ``entry_price`` only when it is unusable.
+                    entry_px = float(entry_price or 0.0)
+                    qty = int(quantity or 0)
+                    high_px = float(high_since_entry or 0.0)
+                    exit_px = high_px if high_px > 0 else entry_px
+                    side_norm = (side_str or "long").lower()
+                    if side_norm == "short":
+                        pnl = (entry_px - exit_px) * qty
+                    else:
+                        pnl = (exit_px - entry_px) * qty
                     close_rows.append(
                         (
                             pos_id,
                             code,
                             name,
                             self._db_datetime(entry_time),
-                            float(entry_price or 0.0),
-                            int(quantity or 0),
+                            entry_px,
+                            qty,
                             strategy,
                             execution_venue or "KRX",
                             float(stop_price or 0.0),
-                            float(high_since_entry or entry_price or 0.0),
+                            high_px or entry_px,
                             state_str or "survival",
                             0,
                             self._db_datetime(closed_at),
-                            float(entry_price or 0.0),
+                            exit_px,
                             exit_reason,
-                            0.0,
-                            side_str or "long",
+                            pnl,
+                            side_norm,
                             float(fee_rate_val or self.config.default_fee_rate),
                         )
                     )
