@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { signalsApi } from '@/lib/dashboard/api';
 import TableSkeleton from '@/components/dashboard/TableSkeleton';
 import RefreshIndicator from '@/components/dashboard/RefreshIndicator';
@@ -34,11 +34,16 @@ function Signals() {
   const [sideFilter, setSideFilter] = useState<string>('');
   const [filterSheetOpen, setFilterSheetOpen] = useState<boolean>(false);
 
-  // Reset filters when asset class changes - strategies are asset-specific
-  useEffect(() => {
+  // Reset filters when asset class changes - strategies are asset-specific.
+  // Adjust state during render (React's recommended pattern) rather than in an
+  // effect, which would trigger an extra render with the previous filters still
+  // applied to the query.
+  const [prevAsset, setPrevAsset] = useState(selectedAsset);
+  if (selectedAsset !== prevAsset) {
+    setPrevAsset(selectedAsset);
     setStrategyFilter('');
     setSideFilter('');
-  }, [selectedAsset]);
+  }
 
   const { data, isLoading, errorMessage, refetch, isRefetching, dataUpdatedAt } =
     useQueryWithError<SignalsResponse>({
