@@ -82,7 +82,7 @@ stock:
   # LLM scored news join (stream:news.scored -> stock candidate payload)
   scored_news_enabled: true
   scored_news_stream: "stream:news.scored"
-  scored_news_sources: ["marketaux"]
+  scored_news_sources: ["marketaux", "naver_search"]
   scored_news_lookback_seconds: 86400
   scored_news_max_entries: 500
   scored_news_max_per_stock: 3

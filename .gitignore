@@ -66,6 +66,7 @@ mlflow.db
 
 # Node.js
 node_modules/
+.next/
 
 # Screenshots / images (root level)
 *.png

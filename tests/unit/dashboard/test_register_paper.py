@@ -109,6 +109,45 @@ def test_register_paper_creates_yaml(client) -> None:
     )
 
 
+def test_register_paper_trailing_from_draft(client) -> None:
+    """Trailing stop derives from the builder draft's risk.trailing_stop toggle."""
+    tc, built_dir = client
+    state = _minimal_state(strategy_id="trail_on")
+    state["risk"]["trailing_stop"] = {"enabled": True, "percent": 3.0}
+    resp = tc.post("/api/kis-builder/register-paper", json={"builder_state": state})
+    assert resp.status_code == 200, resp.text
+    doc = yaml.safe_load((built_dir / "trail_on.yaml").read_text(encoding="utf-8"))
+    assert doc["strategy"]["exit"]["params"]["trailing_stop_pct"] == 3.0
+
+
+def test_register_paper_trailing_disabled_default(client) -> None:
+    """Draft trailing disabled and no override → trailing_stop_pct is 0 (off)."""
+    tc, built_dir = client
+    resp = tc.post(
+        "/api/kis-builder/register-paper",
+        json={"builder_state": _minimal_state(strategy_id="trail_off")},
+    )
+    assert resp.status_code == 200, resp.text
+    doc = yaml.safe_load((built_dir / "trail_off.yaml").read_text(encoding="utf-8"))
+    assert doc["strategy"]["exit"]["params"]["trailing_stop_pct"] == 0.0
+
+
+def test_register_paper_trailing_explicit_override(client) -> None:
+    """An explicit request trailing_stop_pct wins over the draft toggle."""
+    tc, built_dir = client
+    state = _minimal_state(strategy_id="trail_override")
+    state["risk"]["trailing_stop"] = {"enabled": False, "percent": 3.0}
+    resp = tc.post(
+        "/api/kis-builder/register-paper",
+        json={"builder_state": state, "trailing_stop_pct": 2.0},
+    )
+    assert resp.status_code == 200, resp.text
+    doc = yaml.safe_load(
+        (built_dir / "trail_override.yaml").read_text(encoding="utf-8")
+    )
+    assert doc["strategy"]["exit"]["params"]["trailing_stop_pct"] == 2.0
+
+
 def test_register_paper_accepts_futures(client) -> None:
     # Futures builder strategies are now supported (long-only, paper). The
     # materialized YAML uses contract-count sizing, not KRW amount.

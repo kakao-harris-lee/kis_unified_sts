@@ -613,6 +613,11 @@ class RegisterPaperRequest(BaseModel):
     )
     stop_loss_pct: float = Field(default=5.0, ge=0)
     take_profit_pct: float = Field(default=10.0, ge=0)
+    # None → derive from the draft's risk.trailing_stop toggle; an explicit
+    # value overrides. (SL/TP stay operator-default driven; trailing is new so
+    # there is no prior behavior to preserve, and honoring the builder toggle
+    # is what the Risk step's switch implies.)
+    trailing_stop_pct: float | None = Field(default=None, ge=0)
     order_amount: int = Field(default=1_000_000, ge=0)
     contracts: int = Field(
         default=1, ge=1, description="Futures contract count (futures only)"
@@ -703,6 +708,7 @@ def _build_strategy_yaml(
     state: dict[str, Any],
     stop_loss_pct: float,
     take_profit_pct: float,
+    trailing_stop_pct: float,
     order_amount: int,
     contracts: int = 1,
     cooldown_seconds: int,
@@ -736,6 +742,7 @@ def _build_strategy_yaml(
                     "builder_state": state,
                     "stop_loss_pct": stop_loss_pct,
                     "take_profit_pct": take_profit_pct,
+                    "trailing_stop_pct": trailing_stop_pct,
                     "min_confidence": min_confidence,
                 },
             },
@@ -757,11 +764,22 @@ async def register_paper_strategy(body: RegisterPaperRequest) -> RegisteredStrat
     raw_id = str(metadata.get("id") or "")
     strategy_id = _safe_id(raw_id)
 
+    # Trailing stop: explicit request value wins; otherwise honor the draft's
+    # risk.trailing_stop toggle (enabled → percent, disabled → 0 = off).
+    if body.trailing_stop_pct is not None:
+        trailing_stop_pct = body.trailing_stop_pct
+    else:
+        trailing = state.get("risk", {}).get("trailing_stop", {})
+        trailing_stop_pct = (
+            float(trailing.get("percent", 0.0)) if trailing.get("enabled") else 0.0
+        )
+
     _BUILT_STRATEGIES_DIR.mkdir(parents=True, exist_ok=True)
     yaml_doc = _build_strategy_yaml(
         state=state,
         stop_loss_pct=body.stop_loss_pct,
         take_profit_pct=body.take_profit_pct,
+        trailing_stop_pct=trailing_stop_pct,
         order_amount=body.order_amount,
         contracts=body.contracts,
         cooldown_seconds=body.cooldown_seconds,
