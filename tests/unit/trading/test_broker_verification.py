@@ -70,6 +70,10 @@ def orchestrator_mocks():
     orch.config = MagicMock()
     orch.config.asset_class = "stock"
     orch.config.symbols = []
+    # Broker-authoritative reconciliation (remove_redis_only / auto_track /
+    # price-qty reconcile) only applies in LIVE mode; in paper mode the broker
+    # is observe-only. These tests model the live/real broker path.
+    orch.config.paper_trading = False
     orch._position_tracker = tracker
     orch._kis_client = MagicMock()
     orch._kis_client.config = MagicMock()
