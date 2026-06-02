@@ -96,6 +96,11 @@ async def test_hard_stop_just_above_threshold_no_exit():
 
     # profit_pct just above hard_stop_pct (e.g., -6.99%)
     above = 100_000.0 * (1.0 + cfg.hard_stop_pct + 0.001)
+    # ChandelierExit uses position.highest_price (use_position_high_since_entry
+    # default=True, and Position.__post_init__ seeds it to entry_price). Align
+    # it with the non-triggering trailing high so chandelier_stop stays below
+    # close and no trailing exit fires.
+    position.highest_price = above + 10
     # Provide non-triggering trailing (close above chandelier_stop).
     ctx = _context(position, close=above, atr=100, highest_high=above + 10)
 
@@ -114,6 +119,11 @@ async def test_chandelier_trailing_stop_triggers():
     highest_high = 110_000.0
     atr = 1_000.0
     chandelier_stop = highest_high - atr * cfg.atr_multiplier  # = 107_000
+
+    # ChandelierExit prefers position.highest_price (use_position_high_since_entry
+    # default=True); set the post-entry high under test so the indicator path
+    # and the position path agree on chandelier_stop.
+    position.highest_price = highest_high
 
     ctx = _context(
         position,
@@ -140,6 +150,10 @@ async def test_chandelier_above_stop_no_exit():
     highest_high = 110_000.0
     atr = 1_000.0
     chandelier_stop = highest_high - atr * cfg.atr_multiplier
+
+    # ChandelierExit prefers position.highest_price (use_position_high_since_entry
+    # default=True); set the post-entry high under test.
+    position.highest_price = highest_high
 
     ctx = _context(
         position,
