@@ -369,8 +369,16 @@ export default function BuilderPage() {
                       <BarChart3 className="w-4 h-4 text-primary" aria-hidden="true" />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="font-medium text-sm text-slate-900 dark:text-white truncate">
-                        {preset.name}
+                      <div className="font-medium text-sm text-slate-900 dark:text-white truncate flex items-center gap-1.5">
+                        <span className="truncate">{preset.name}</span>
+                        {preset.category === "근사 템플릿" && (
+                          <span
+                            className="px-1.5 py-0.5 text-[10px] font-medium bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400 rounded whitespace-nowrap flex-shrink-0"
+                            title="실제 전략의 근사 — 동일하게 동작하지 않음"
+                          >
+                            근사
+                          </span>
+                        )}
                       </div>
                       <div className="text-xs text-slate-500 truncate">
                         {preset.category}
