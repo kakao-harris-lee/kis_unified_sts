@@ -1,7 +1,10 @@
 strategy:
   name: trend_continuation_vwap
   asset_class: stock
-  enabled: true
+  # DISABLED 2026-06-02: 0% win over 5 paper trades (2026-05-12..06-03,
+  # -249k KRW, stop_loss ~-5%). Re-enable only after Optuna re-tune of entry
+  # quality + stop placement for the current regime.
+  enabled: false
   description: "상승장 VWAP 회복 기반 추세 지속 파일럿"
   paper:
     enabled: true

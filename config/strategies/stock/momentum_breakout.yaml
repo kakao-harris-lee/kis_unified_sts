@@ -4,7 +4,10 @@ strategy:
   # Limited paper pilot re-enabled on 2026-05-22 after current LLM watchlist
   # review. The new daily quality gates keep overheated/weak-volume momentum
   # names out of the runtime while preserving the trend-mode entry path.
-  enabled: true
+  # DISABLED 2026-06-02: 0% win over 6 paper trades (2026-05-12..06-03,
+  # -403k KRW, all stop_loss). Re-enable only after Optuna re-tune of entry
+  # quality + stop placement for the current regime.
+  enabled: false
   description: "멀티 타임프레임 모멘텀 돌파 전략"
   paper:
     enabled: true
