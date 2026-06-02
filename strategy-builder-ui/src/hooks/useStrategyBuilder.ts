@@ -468,8 +468,8 @@ function generateAutoConditions(
 export const INITIAL_STATE: BuilderState = {
   metadata: {
     id: "",
-    name: "custom_strategy",
-    description: "직접 만든 전략입니다",
+    name: "",
+    description: "",
     category: "custom",
     tags: [],
     author: "user",

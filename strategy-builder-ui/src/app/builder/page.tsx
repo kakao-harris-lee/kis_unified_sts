@@ -129,6 +129,31 @@ export default function BuilderPage() {
       ?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, []);
 
+  // Scroll-spy: keep the active StageRail chip in sync with the stage nearest
+  // the top of the viewport as the user scrolls the funnel manually (not just
+  // on chip click). Click-jump still sets activeStage immediately; this keeps
+  // it correct afterwards.
+  useEffect(() => {
+    if (typeof IntersectionObserver === "undefined") return;
+    const els = STAGES.map((s) => document.getElementById(`stage-${s.id}`)).filter(
+      (el): el is HTMLElement => el !== null,
+    );
+    if (els.length === 0) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const topMost = entries
+          .filter((e) => e.isIntersecting)
+          .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
+        if (topMost) {
+          setActiveStage(topMost.target.id.replace("stage-", "") as StageId);
+        }
+      },
+      { rootMargin: "-15% 0px -75% 0px" },
+    );
+    els.forEach((el) => observer.observe(el));
+    return () => observer.disconnect();
+  }, [STAGES]);
+
   const handleRegisterDraft = useCallback(async () => {
     if (!builder.isValid) {
       toast.error(builder.validationErrors.join("\n"));

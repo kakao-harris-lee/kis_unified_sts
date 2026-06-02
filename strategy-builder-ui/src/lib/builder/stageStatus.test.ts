@@ -18,6 +18,13 @@ describe("computeStageStatus", () => {
     expect(computeStageStatus(withName(INITIAL_STATE, "내전략"), "metadata")).toBe("complete");
   });
 
+  it("기본 상태는 이름이 비어 metadata가 empty (placeholder 이름 금지)", () => {
+    // INITIAL_STATE must NOT ship a placeholder name like "custom_strategy",
+    // else a fresh form looks 완료 and can register an unnamed strategy.
+    expect(INITIAL_STATE.metadata.name).toBe("");
+    expect(computeStageStatus(INITIAL_STATE, "metadata")).toBe("empty");
+  });
+
   it("indicators: 비어있으면 empty", () => {
     expect(computeStageStatus(INITIAL_STATE, "indicators")).toBe("empty");
   });
