@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import ClassVar
+from typing import ClassVar, Literal
 
 from pydantic import BaseModel, Field
 
@@ -58,6 +58,25 @@ class MarketauxSourceConfig(SourceCommon):
     timeout_seconds: float = Field(default=20.0, gt=0)
 
 
+class NaverNewsSearchSourceConfig(SourceCommon):
+    enabled: bool = False
+    poll_interval_seconds: int = Field(default=300, gt=0)
+    client_id: str = ""
+    client_secret: str = ""
+    endpoint: str = "https://openapi.naver.com/v1/search/news.json"
+    queries: list[str] = Field(
+        default_factory=lambda: [
+            "인포스탁 개장전 주요이슈 점검",
+            "인포스탁 테마별 등락율 순위",
+            "개장전 주요이슈 점검",
+            "테마별 등락율 순위",
+        ]
+    )
+    display: int = Field(default=10, ge=1, le=100)
+    sort: Literal["sim", "date"] = "date"
+    timeout_seconds: float = Field(default=10.0, gt=0)
+
+
 class GenericRSSFeedConfig(SourceCommon):
     name: str
     rss_url: str
@@ -82,6 +101,9 @@ class SourcesConfig(BaseModel):
     dart: DartSourceConfig
     gdelt: GDELTSourceConfig = Field(default_factory=GDELTSourceConfig)
     marketaux: MarketauxSourceConfig = Field(default_factory=MarketauxSourceConfig)
+    naver_search: NaverNewsSearchSourceConfig = Field(
+        default_factory=NaverNewsSearchSourceConfig
+    )
     yonhap: YonhapSourceConfig
     reuters: ReutersSourceConfig
     mk: MKSourceConfig

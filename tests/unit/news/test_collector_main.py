@@ -71,6 +71,7 @@ def _make_cfg(**source_enables):
         "yonhap": True,
         "reuters": True,
         "marketaux": False,
+        "naver_search": False,
         "gdelt": False,
         "dart": True,
         "mk": True,
@@ -106,6 +107,14 @@ def _make_cfg(**source_enables):
     cfg.sources.marketaux.group_similar = True
     cfg.sources.marketaux.published_after_minutes = 720
     cfg.sources.marketaux.timeout_seconds = 20
+    cfg.sources.naver_search.poll_interval_seconds = 300
+    cfg.sources.naver_search.client_id = "naver-client"
+    cfg.sources.naver_search.client_secret = "naver-secret"
+    cfg.sources.naver_search.endpoint = "https://openapi.naver.com/v1/search/news.json"
+    cfg.sources.naver_search.queries = ["인포스탁 개장전 주요이슈 점검"]
+    cfg.sources.naver_search.display = 10
+    cfg.sources.naver_search.sort = "date"
+    cfg.sources.naver_search.timeout_seconds = 10
     cfg.sources.gdelt.poll_interval_seconds = 600
     cfg.sources.gdelt.query = '("Federal Reserve" OR "bond yields")'
     cfg.sources.gdelt.max_records = 10
@@ -131,6 +140,7 @@ async def test_build_and_run_all_sources_enabled(monkeypatch):
     """Exercises the full construction path when every source is enabled."""
     cfg = _make_cfg()
     cfg.sources.marketaux.enabled = True
+    cfg.sources.naver_search.enabled = True
     cfg.sources.gdelt.enabled = True
     cfg.sources.rss_feeds = [
         SimpleNamespace(
@@ -181,6 +191,10 @@ async def test_build_and_run_all_sources_enabled(monkeypatch):
         lambda *_a, **_kw: _NoopSource(),
     )
     monkeypatch.setattr(
+        "shared.news.sources.naver_search.NaverNewsSearchSource",
+        lambda *_a, **_kw: _NoopSource(),
+    )
+    monkeypatch.setattr(
         "shared.news.sources.gdelt.GDELTNewsSource",
         lambda *_a, **_kw: _NoopSource(),
     )
@@ -219,6 +233,53 @@ async def test_build_and_run_all_sources_enabled(monkeypatch):
     fake_ch.connect.assert_awaited()
     fake_ch.close.assert_awaited()
     fake_session.close.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_build_and_run_skips_naver_search_without_credentials(monkeypatch):
+    cfg = _make_cfg(
+        yonhap=False,
+        reuters=False,
+        marketaux=False,
+        naver_search=True,
+        gdelt=False,
+        dart=False,
+        mk=False,
+    )
+    cfg.sources.naver_search.client_id = ""
+    cfg.sources.naver_search.client_secret = ""
+
+    monkeypatch.setattr(
+        "shared.news.config.NewsCollectorConfig.from_yaml",
+        classmethod(lambda _cls, *_a, **_kw: cfg),
+    )
+    monkeypatch.setattr(
+        "redis.asyncio.from_url",
+        lambda *_a, **_kw: fakeredis.aioredis.FakeRedis(),
+    )
+    fake_ch = AsyncMock()
+    monkeypatch.setattr(
+        "shared.db.client.AsyncClickHouseClient",
+        lambda *_a, **_kw: fake_ch,
+    )
+    monkeypatch.setattr(
+        "shared.db.config.ClickHouseConfig.from_env",
+        classmethod(lambda _cls, database=None: MagicMock()),  # noqa: ARG005
+    )
+    fake_session = AsyncMock()
+    monkeypatch.setattr("aiohttp.ClientSession", lambda *_a, **_kw: fake_session)
+
+    captured = {}
+
+    async def fast_run(self):
+        captured["sources"] = self.sources
+        self._stop.set()
+
+    monkeypatch.setattr(NewsCollectorDaemon, "run", fast_run)
+
+    rc = await _build_and_run_from_config()
+    assert rc == 0
+    assert captured["sources"] == []
 
 
 @pytest.mark.asyncio

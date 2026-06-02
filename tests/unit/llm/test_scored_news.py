@@ -12,7 +12,7 @@ class _FakeRedis:
     def __init__(self, entries):
         self._entries = entries
 
-    def xrevrange(self, stream, max="+", min="-", count=500):  # noqa: A002
+    def xrevrange(self, stream, max="+", min="-", count=500):  # noqa: A002, ARG002
         return self._entries[:count]
 
 
@@ -26,6 +26,10 @@ class _Config:
     stock_scored_news_min_impact_score = 0.1
     stock_scored_news_positive_sentiment_threshold = 0.2
     stock_scored_news_negative_sentiment_threshold = -0.2
+
+
+class _NaverConfig(_Config):
+    stock_scored_news_sources = ["marketaux", "naver_search"]
 
 
 def _stock(code="005930", name="삼성전자"):
@@ -104,6 +108,30 @@ def test_collect_scored_news_uses_scored_at_when_raw_timestamp_missing():
     grouped = collect_scored_news_for_stocks([_stock()], _Config(), redis_client=redis)
 
     assert grouped["005930"][0]["published_at_ms"] > 0
+
+
+def test_collect_scored_news_groups_naver_search_items_by_stock():
+    redis = _FakeRedis(
+        [
+            (
+                "1-0",
+                _fields(
+                    news_id="naver_search_1",
+                    raw_source="naver_search",
+                    raw_title="삼성전자 장전 주요이슈 점검",
+                    raw_keywords_json=json.dumps(["인포스탁 개장전 주요이슈 점검"]),
+                    keywords_json=json.dumps(["삼성전자", "반도체"]),
+                ),
+            )
+        ]
+    )
+
+    grouped = collect_scored_news_for_stocks(
+        [_stock()], _NaverConfig(), redis_client=redis
+    )
+
+    assert grouped["005930"][0]["source"] == "naver_search"
+    assert grouped["005930"][0]["title"] == "삼성전자 장전 주요이슈 점검"
 
 
 def test_collect_scored_news_avoids_short_name_substring_false_positive():

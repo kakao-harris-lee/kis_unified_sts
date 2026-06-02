@@ -154,6 +154,11 @@ def test_llm_config_defaults_llm_scoring():
     assert cfg.stock_llm_scoring_temperature == 0.2
 
 
+def test_llm_config_defaults_scored_news_sources_include_naver_search():
+    cfg = LLMConfig()
+    assert cfg.stock_scored_news_sources == ["marketaux", "naver_search"]
+
+
 def test_llm_config_defaults_futures_prompt_addendum():
     """futures_prompt_addendum defaults to empty string."""
     cfg = LLMConfig()

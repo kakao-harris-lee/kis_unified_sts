@@ -1,4 +1,5 @@
 """Tests for the builder_v1 entry + exit (no-code Strategy Builder runtime)."""
+
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -162,9 +163,7 @@ class _Pos:
 @pytest.mark.asyncio
 async def test_exit_stop_loss_triggers_on_drawdown() -> None:
     exit_strat = BuilderStrategyExit(
-        BuilderStrategyExitConfig(
-            builder_state=_make_state(), stop_loss_pct=5.0
-        )
+        BuilderStrategyExitConfig(builder_state=_make_state(), stop_loss_pct=5.0)
     )
     ctx = ExitContext(
         position=_Pos("005930", entry_price=10000.0),
@@ -238,6 +237,92 @@ async def test_exit_holds_when_conditions_not_met() -> None:
     triggered, signal = await exit_strat.should_exit(ctx)
     assert not triggered
     assert signal is None
+
+
+# --- Trailing stop tests ------------------------------------------------
+
+
+def _trailing_exit(trailing_pct: float) -> BuilderStrategyExit:
+    return BuilderStrategyExit(
+        BuilderStrategyExitConfig(
+            builder_state=_make_state(),
+            stop_loss_pct=0,
+            take_profit_pct=0,
+            trailing_stop_pct=trailing_pct,
+        )
+    )
+
+
+async def _step(exit_strat: BuilderStrategyExit, pos: _Pos, price: float):
+    ctx = ExitContext(
+        position=pos,
+        market_data={"close": price},
+        indicators={"rsi.value": 50.0},  # never trips the rsi>70 exit
+        timestamp=datetime.now(UTC),
+    )
+    return await exit_strat.should_exit(ctx)
+
+
+@pytest.mark.asyncio
+async def test_exit_trailing_stop_triggers_after_peak() -> None:
+    exit_strat = _trailing_exit(3.0)
+    pos = _Pos("005930", entry_price=10000.0)
+    # Rally to 11000 (HWM=11000); 3% trail floor = 10670 → still above, hold.
+    triggered, _ = await _step(exit_strat, pos, 11000.0)
+    assert not triggered
+    # Retrace to 10600 (≤ 10670) → trailing stop fires.
+    triggered, signal = await _step(exit_strat, pos, 10600.0)
+    assert triggered
+    assert signal is not None
+    assert signal.reason == ExitReason.TRAILING_STOP
+
+
+@pytest.mark.asyncio
+async def test_exit_trailing_stop_holds_within_band() -> None:
+    exit_strat = _trailing_exit(3.0)
+    pos = _Pos("005930", entry_price=10000.0)
+    await _step(exit_strat, pos, 11000.0)  # HWM=11000
+    # Pull back to 10800 — still above 10670 floor → hold.
+    triggered, signal = await _step(exit_strat, pos, 10800.0)
+    assert not triggered
+    assert signal is None
+
+
+@pytest.mark.asyncio
+async def test_exit_trailing_stop_not_armed_before_profit() -> None:
+    # Price never exceeds entry → trailing must not fire (that is stop-loss's
+    # job). HWM stays at entry, so the trailing branch stays disarmed.
+    exit_strat = _trailing_exit(3.0)
+    pos = _Pos("005930", entry_price=10000.0)
+    triggered, signal = await _step(exit_strat, pos, 9600.0)  # -4%, SL is off
+    assert not triggered
+    assert signal is None
+
+
+@pytest.mark.asyncio
+async def test_exit_trailing_stop_disabled_when_pct_zero() -> None:
+    exit_strat = _trailing_exit(0.0)
+    pos = _Pos("005930", entry_price=10000.0)
+    await _step(exit_strat, pos, 12000.0)  # big rally
+    triggered, signal = await _step(exit_strat, pos, 10000.0)  # large retrace
+    assert not triggered
+    assert signal is None
+
+
+@pytest.mark.asyncio
+async def test_exit_trailing_stop_seeds_from_position_highest_price() -> None:
+    # Simulate a process restart: a fresh exit instance (empty _hwm) inherits a
+    # position whose highest_price (restored from Redis) is already above entry.
+    # The trailing stop must arm immediately on a retrace, not reset to entry.
+    exit_strat = _trailing_exit(3.0)
+    pos = _Pos("005930", entry_price=10000.0)
+    pos.highest_price = 11000.0  # peak before the restart; 3% floor = 10670
+    assert not exit_strat._hwm  # fresh instance, no in-memory peak
+    # First tick after restart retraces below the 10670 floor → fire.
+    triggered, signal = await _step(exit_strat, pos, 10600.0)
+    assert triggered
+    assert signal is not None
+    assert signal.reason == ExitReason.TRAILING_STOP
 
 
 # --- Registry integration ----------------------------------------------

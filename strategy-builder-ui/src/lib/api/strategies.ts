@@ -173,3 +173,17 @@ export async function unregisterStrategy(
     `/api/kis-builder/registered/${encodeURIComponent(strategyId)}`,
   );
 }
+
+export interface StrategyActivity {
+  id: string;
+  signals: number;
+  trades: number;
+}
+
+export interface ActivityResponse {
+  activity: StrategyActivity[];
+}
+
+export async function getRegisteredActivity(): Promise<ActivityResponse> {
+  return apiGet<ActivityResponse>("/api/kis-builder/registered/activity");
+}
