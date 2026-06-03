@@ -42,6 +42,7 @@ def cli(verbose: bool):
         backtest    백테스트 실행 및 관리
         optimize    파라미터 최적화
         mlflow      MLflow 관련 명령
+        data        Research market-data export/validation
         collect     데이터 수집 명령
         trade       트레이딩 제어 명령
         health      시스템 헬스 체크
@@ -275,7 +276,7 @@ def _run_tier_backtest(
 @click.option(
     "--symbol",
     default=None,
-    help="Stock code to load from ClickHouse (e.g., 005930)",
+    help="Symbol/code to load from configured market-data source (e.g., 005930)",
 )
 @click.option(
     "--tier",
@@ -373,19 +374,29 @@ def backtest_run(
         try:
             start_d = start.date() if start else None
             end_d = end.date() if end else None
-            if is_daily:
-                from shared.backtest.daily_adapter import load_stock_daily_from_clickhouse
-                df = load_stock_daily_from_clickhouse(symbol, start_d, end_d)
-            elif asset == "futures":
-                from shared.collector.historical import (
-                    load_futures_minute_from_clickhouse,
+            from shared.storage import (
+                MarketDataStoreError,
+                StorageConfig,
+                load_market_bars_for_backtest,
+            )
+
+            storage_config = StorageConfig.load_or_default()
+            df = load_market_bars_for_backtest(
+                symbol=symbol,
+                asset_class=asset,
+                timeframe="daily" if is_daily else "minute",
+                start=start_d,
+                end=end_d,
+                config=storage_config,
+            )
+            if df.empty:
+                source = storage_config.market_data.source
+                raise ValueError(
+                    f"No {timeframe} data found for {symbol} in {source} source"
                 )
-                df = load_futures_minute_from_clickhouse(symbol, start_d, end_d)
-            else:
-                from shared.collector.historical.stock import load_stock_minute_from_clickhouse
-                df = load_stock_minute_from_clickhouse(symbol, start_d, end_d)
-            click.echo(f"Loaded {symbol} from ClickHouse: {len(df)} rows ({timeframe})")
-        except ValueError as e:
+            source = storage_config.market_data.source
+            click.echo(f"Loaded {symbol} from {source}: {len(df)} rows ({timeframe})")
+        except (MarketDataStoreError, ValueError) as e:
             click.echo(f"Error: {e}", err=True)
             sys.exit(1)
     elif tier:
@@ -404,7 +415,7 @@ def backtest_run(
     else:
         click.echo("Error: Data source required. Use --data, --symbol, or --tier", err=True)
         click.echo("  --data <path>     Load from CSV file")
-        click.echo("  --symbol <code>   Load from ClickHouse (e.g., --symbol 005930)")
+        click.echo("  --symbol <code>   Load from configured market-data source")
         click.echo("  --tier <tier>     Run across tier stocks (top/mid/bottom/all)")
         sys.exit(1)
 
@@ -774,6 +785,173 @@ def mlflow_list():
     except ImportError:
         click.echo("MLflow not installed", err=True)
         sys.exit(1)
+
+
+# =============================================================================
+# Research Market Data Commands
+# =============================================================================
+
+
+@cli.group("data")
+def data_cmd():
+    """Research market-data export and validation commands.
+
+    \b
+    Examples:
+        sts data export-clickhouse --asset futures --database kospi --table kospi200f_1m --out data/market/futures/minute
+        sts data validate-parquet --root data/market
+    """
+    pass
+
+
+def _validate_clickhouse_identifier(value: str, label: str) -> str:
+    import re
+
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", value or ""):
+        raise click.BadParameter(f"invalid {label}: {value!r}")
+    return value
+
+
+def _resolve_parquet_export_root(out: str, *, asset: str, timeframe: str) -> Path:
+    """Accept either data/market or data/market/<asset>/<timeframe>."""
+    path = Path(out)
+    if path.name == timeframe and path.parent.name == asset:
+        return path.parent.parent
+    return path
+
+
+@data_cmd.command("validate-parquet")
+@click.option(
+    "--root", default=None, help="Parquet dataset root (default: storage config)"
+)
+@click.option(
+    "--allow-empty",
+    is_flag=True,
+    help="Return success even when the dataset has no parquet files",
+)
+def data_validate_parquet(root: str | None, allow_empty: bool):
+    """Validate the configured Parquet/DuckDB market-data dataset."""
+    from shared.storage import ParquetMarketDataStore, StorageConfig
+
+    if root is None:
+        root = StorageConfig.load_or_default().market_data.parquet.root
+
+    store = ParquetMarketDataStore(root)
+    manifest = store.dataset_manifest()
+    files = int(manifest.get("parquet_files", 0) or 0)
+    rows = int(manifest.get("row_count", 0) or 0)
+
+    click.echo(f"Parquet root: {manifest.get('root', root)}")
+    click.echo(f"Files: {files}")
+    click.echo(f"Rows: {rows}")
+    if manifest.get("min_datetime") or manifest.get("max_datetime"):
+        click.echo(
+            f"Range: {manifest.get('min_datetime')} -> {manifest.get('max_datetime')}"
+        )
+
+    if files == 0 and not allow_empty:
+        click.echo("Error: no parquet files found", err=True)
+        sys.exit(1)
+
+
+@data_cmd.command("export-clickhouse")
+@click.option(
+    "--asset",
+    type=click.Choice(["stock", "futures"]),
+    required=True,
+    help="Asset class to export",
+)
+@click.option("--database", required=True, help="ClickHouse database")
+@click.option("--table", default="", help="ClickHouse table")
+@click.option("--symbol", default=None, help="Optional code/symbol filter")
+@click.option(
+    "--timeframe",
+    type=click.Choice(["minute", "daily"]),
+    default="minute",
+    show_default=True,
+)
+@click.option("--start", type=click.DateTime(formats=["%Y-%m-%d"]), help="Start date")
+@click.option("--end", type=click.DateTime(formats=["%Y-%m-%d"]), help="End date")
+@click.option(
+    "--out",
+    default="data/market",
+    show_default=True,
+    help="Parquet root or data/market/<asset>/<timeframe> directory",
+)
+@click.option("--limit", type=int, default=0, help="Optional max rows for smoke export")
+def data_export_clickhouse(
+    asset: str,
+    database: str,
+    table: str,
+    symbol: str | None,
+    timeframe: str,
+    start,
+    end,
+    out: str,
+    limit: int,
+):
+    """Export standard OHLCV rows from ClickHouse into Parquet partitions."""
+    import pandas as pd
+    from clickhouse_driver import Client as CHSyncClient
+
+    from shared.storage import ParquetMarketDataStore
+
+    database = _validate_clickhouse_identifier(database, "database")
+    default_table = "kospi200f_1m" if asset == "futures" else "minute_candles"
+    table = _validate_clickhouse_identifier(table or default_table, "table")
+
+    time_column = "date" if timeframe == "daily" else "datetime"
+    conditions = []
+    params: dict[str, object] = {}
+    if symbol:
+        conditions.append("code = %(code)s")
+        params["code"] = symbol
+    if start:
+        conditions.append(f"{time_column} >= %(start)s")
+        params["start"] = start.date()
+    if end:
+        conditions.append(f"{time_column} <= %(end)s")
+        params["end"] = end.date()
+
+    where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    limit_sql = "LIMIT %(limit)s" if limit and limit > 0 else ""
+    if limit_sql:
+        params["limit"] = int(limit)
+
+    query = f"""
+        SELECT code, {time_column} AS datetime, open, high, low, close, volume
+        FROM {database}.{table}
+        {where}
+        ORDER BY code, {time_column}
+        {limit_sql}
+    """
+
+    client = CHSyncClient(
+        host=os.getenv("CLICKHOUSE_HOST", "localhost"),
+        port=int(os.getenv("CLICKHOUSE_NATIVE_PORT", "9000")),
+        user=os.getenv("CLICKHOUSE_USER", "default"),
+        password=os.getenv("CLICKHOUSE_PASSWORD", ""),
+    )
+    rows = client.execute(query, params)
+    if not rows:
+        click.echo("Error: ClickHouse query returned no rows", err=True)
+        sys.exit(1)
+
+    df = pd.DataFrame(
+        rows,
+        columns=["code", "datetime", "open", "high", "low", "close", "volume"],
+    )
+    parquet_root = _resolve_parquet_export_root(out, asset=asset, timeframe=timeframe)
+    store = ParquetMarketDataStore(parquet_root, asset_class=asset)
+    if timeframe == "daily":
+        written = store.append_daily_bars(df)
+    else:
+        written = store.append_minute_bars(df)
+
+    click.echo(
+        f"Exported {written} rows from {database}.{table} "
+        f"to {parquet_root}/{asset}/{timeframe}"
+    )
 
 
 # =============================================================================

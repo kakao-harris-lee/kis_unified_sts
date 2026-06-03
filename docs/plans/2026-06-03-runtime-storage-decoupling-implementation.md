@@ -42,7 +42,7 @@ ClickHouse 설치 여부와 무관하게 개발, 테스트, 모의투자, 실전
 
 ## Phase 0 — Inventory and Switches
 
-상태: 준비
+상태: 구현 완료 (`feat/runtime-storage-ledger`)
 
 작업:
 
@@ -83,7 +83,7 @@ market_data:
 
 ## Phase 1 — SQLite Runtime Ledger
 
-상태: 구현 예정
+상태: 구현 완료 (`feat/runtime-storage-ledger`)
 
 작업:
 
@@ -126,7 +126,7 @@ market_data:
 
 ## Phase 2 — PositionTracker Decoupling
 
-상태: 구현 예정
+상태: 구현 완료 (`feat/runtime-storage-ledger`)
 
 작업:
 
@@ -155,7 +155,12 @@ market_data:
 
 ## Phase 3 — Dashboard and Runtime Writers
 
-상태: 구현 예정
+상태: 대부분 구현 완료 (`feat/runtime-storage-ledger`)
+
+남은 항목:
+
+- ClickHouse analytics-only endpoint와 runtime endpoint의 allowlist를 Phase 6에서 명문화.
+- orchestrator shadow logger / prewarm historical reads는 아직 ClickHouse 경로가 남아 있으며 Phase 4/6 cleanup에서 분리.
 
 작업:
 
@@ -179,7 +184,22 @@ market_data:
 
 ## Phase 4 — Parquet/DuckDB MarketDataStore
 
-상태: 구현 예정
+상태: 부분 구현 (`feat/runtime-storage-ledger`)
+
+현재 구현:
+
+- `shared/storage/market_data_store.py` 추가.
+- `MarketDataStore` protocol, `ParquetMarketDataStore`, `ClickHouseMarketDataStore` adapter 추가.
+- `sts data validate-parquet`, `sts data export-clickhouse` 추가.
+- `sts backtest run --symbol`이 `config/storage.yaml::market_data.source`를 사용하도록 변경.
+- `duckdb` / `pyarrow` 의존성 추가.
+
+남은 항목:
+
+- 주요 backtest/tier runner 전체를 Parquet source로 확장.
+- ML/RL training loader의 Parquet/DuckDB source 지원.
+- ClickHouse sample vs Parquet sample parity test.
+- `manifest.yaml` schema/validation 고도화.
 
 작업:
 
@@ -271,15 +291,15 @@ COMPOSE_PROJECT_NAME=kis_research docker compose --profile research up -d clickh
 
 ## Suggested PR Breakdown
 
-| PR | Scope | Risk |
-|----|-------|------|
-| 1 | storage config + RuntimeLedger protocol + SQLite implementation | low |
-| 2 | PositionTracker SQLite backend + tests | medium |
-| 3 | dashboard reads from RuntimeLedger | medium |
-| 4 | LLM/news/scoring/forecasting mirror optionalization | medium |
-| 5 | Parquet/DuckDB MarketDataStore + export commands | medium |
-| 6 | compose profiles + env templates | medium |
-| 7 | direct ClickHouse import cleanup + policy tests | low |
+| PR | Scope | Risk | Status |
+|----|-------|------|--------|
+| 1 | storage config + RuntimeLedger protocol + SQLite implementation | low | implemented |
+| 2 | PositionTracker SQLite backend + tests | medium | implemented |
+| 3 | dashboard reads from RuntimeLedger | medium | implemented |
+| 4 | LLM/news/scoring/forecasting mirror optionalization | medium | implemented |
+| 5 | Parquet/DuckDB MarketDataStore + export commands | medium | partial |
+| 6 | compose profiles + env templates | medium | pending |
+| 7 | direct ClickHouse import cleanup + policy tests | low | pending |
 
 ## Test Matrix
 
@@ -307,9 +327,10 @@ COMPOSE_PROJECT_NAME=kis_research docker compose --profile research up -d clickh
 - [ ] `docker compose up -d` works without ClickHouse installed.
 - [ ] `sts trade start --asset stock --paper` works with Redis + SQLite only.
 - [ ] futures paper flow works with Redis + SQLite only.
-- [ ] dashboard trades/stats do not require ClickHouse.
+- [x] dashboard trades/stats do not require ClickHouse.
 - [ ] position recovery drill passes after process restart.
-- [ ] backtest supports `data.source=parquet`.
+- [x] `sts backtest run --symbol` supports `market_data.source=parquet`.
+- [ ] full backtest/tier runners support `data.source=parquet`.
 - [ ] ML training supports Parquet/DuckDB source or has documented ClickHouse-only exception.
 - [ ] ClickHouse profile still supports existing research workflows.
 - [ ] default pytest does not touch live Redis/ClickHouse.

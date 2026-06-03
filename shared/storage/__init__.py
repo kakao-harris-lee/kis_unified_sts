@@ -10,6 +10,14 @@ from shared.storage.config import (
     SQLiteStorageConfig,
     StorageConfig,
 )
+from shared.storage.market_data_store import (
+    ClickHouseMarketDataStore,
+    MarketDataStore,
+    MarketDataStoreError,
+    ParquetMarketDataStore,
+    create_market_data_store,
+    load_market_bars_for_backtest,
+)
 from shared.storage.runtime_ledger import (
     RuntimeLedger,
     RuntimeLedgerError,
@@ -17,15 +25,21 @@ from shared.storage.runtime_ledger import (
 )
 
 __all__ = [
+    "ClickHouseMarketDataStore",
     "ClickHouseMarketDataConfig",
     "ClickHouseMirrorConfig",
     "DashboardStorageConfig",
     "MarketDataStorageConfig",
+    "MarketDataStore",
+    "MarketDataStoreError",
     "ParquetMarketDataConfig",
+    "ParquetMarketDataStore",
     "RuntimeLedger",
     "RuntimeLedgerError",
     "RuntimeStorageConfig",
     "SQLiteRuntimeLedger",
     "SQLiteStorageConfig",
     "StorageConfig",
+    "create_market_data_store",
+    "load_market_bars_for_backtest",
 ]

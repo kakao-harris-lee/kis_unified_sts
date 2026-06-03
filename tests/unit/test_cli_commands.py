@@ -1,4 +1,5 @@
 """Test CLI commands."""
+
 import pytest
 from click.testing import CliRunner
 
@@ -52,6 +53,15 @@ class TestCLIHelp:
         assert result.exit_code == 0
         assert "mlflow" in result.output.lower()
 
+    def test_data_help(self, runner):
+        """Test data command help."""
+        from cli.main import cli
+
+        result = runner.invoke(cli, ["data", "--help"])
+        assert result.exit_code == 0
+        assert "export-clickhouse" in result.output
+        assert "validate-parquet" in result.output
+
 
 class TestBacktestCommands:
     """Test backtest commands."""
@@ -75,6 +85,28 @@ class TestCollectCommands:
         result = runner.invoke(cli, ["collect", "status"])
         assert result.exit_code == 0
         assert "Status" in result.output
+
+
+class TestDataCommands:
+    """Test research data commands."""
+
+    def test_validate_parquet_allows_empty_dataset(self, runner, tmp_path):
+        """Empty dataset validation can be used as a smoke check."""
+        from cli.main import cli
+
+        result = runner.invoke(
+            cli,
+            [
+                "data",
+                "validate-parquet",
+                "--root",
+                str(tmp_path / "market"),
+                "--allow-empty",
+            ],
+        )
+
+        assert result.exit_code == 0
+        assert "Files: 0" in result.output
 
 
 class TestTradeCommands:

@@ -296,6 +296,18 @@ dashboard:
 
 Avoid using ClickHouse env vars as implicit feature flags. Use explicit `enabled` flags.
 
+## Current Implementation Notes
+
+`feat/runtime-storage-ledger` implements the first runtime storage slice:
+
+- `shared.storage.RuntimeLedger` + `SQLiteRuntimeLedger` for orders/fills/trades/position snapshots/risk events/signal decisions/market context history.
+- `PositionTracker` can use `runtime_ledger_backend=sqlite|clickhouse|null`; orchestrator passes `config/storage.yaml` defaults.
+- dashboard trades/stats/health PnL prefer SQLite RuntimeLedger and degrade without ClickHouse.
+- news/scoring/forecasting/order fill writers only instantiate ClickHouse clients when `runtime_storage.clickhouse_mirror.enabled=true`.
+- `shared.storage.MarketDataStore` + `ParquetMarketDataStore` + `ClickHouseMarketDataStore` provide the initial Phase 4 market-data abstraction.
+- `sts data export-clickhouse` exports standard OHLCV rows into the Parquet layout, and `sts data validate-parquet` validates the dataset root.
+- `sts backtest run --symbol` uses `config/storage.yaml::market_data.source`, so `market_data.source=parquet` can run without ClickHouse for symbol-based backtests.
+
 ## Migration Principles
 
 1. Preserve current ClickHouse schema and paths until replacement backends are verified.
