@@ -24,6 +24,8 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+.coverage
+coverage.xml
 
 # MLflow
 mlruns/
@@ -40,6 +42,11 @@ pids/
 monitoring/prometheus/alert_rules.yml
 scripts/cron/
 scripts/test_model.py
+
+# Generated reports
+reports/**
+!reports/drills/
+!reports/drills/.gitkeep
 
 # KIS API documentation (binary files)
 kis_docs/
@@ -78,6 +85,7 @@ node_modules/
 .auto-claude-security.json
 .auto-claude-status
 .claude_settings.json
+.claude/scheduled_tasks.lock
 .worktrees/
 .security-key
 logs/security/
