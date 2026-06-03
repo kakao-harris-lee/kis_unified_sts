@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import sys
+from contextlib import suppress
 from datetime import timedelta
 from pathlib import Path
 
@@ -340,9 +341,9 @@ def backtest_run(
     from shared.config.loader import ConfigLoader
     from shared.strategy.registry import StrategyFactory, register_builtin_components
     from shared.validation.cli_validators import (
-        validate_csv_file,
-        validate_capital,
         ValidationError,
+        validate_capital,
+        validate_csv_file,
     )
 
     click.echo(f"Running backtest: {strategy} ({asset})")
@@ -694,7 +695,7 @@ def optimize(
         sts optimize -s bb_reversion -a stock -d ./data/005930.csv -n 100
         sts optimize -s bb_reversion -a stock -d data.csv --metric profit_factor
     """
-    from shared.validation.cli_validators import validate_csv_file, ValidationError
+    from shared.validation.cli_validators import ValidationError, validate_csv_file
 
     click.echo(f"Optimizing: {strategy} ({asset})")
     click.echo(f"Trials: {trials}, Metric: {metric}")
@@ -1061,9 +1062,9 @@ def backfill_today(all_products: bool, mini: bool, index: bool, futures: bool):
 
     from shared.collector.historical import (
         collect_today,
+        collect_today_all,
         collect_today_kospi200_index,
         collect_today_kospi200f,
-        collect_today_all,
     )
 
     if all_products:
@@ -1140,9 +1141,11 @@ def backfill_run(
 
     from shared.collector.historical import (
         backfill as do_backfill,
+    )
+    from shared.collector.historical import (
+        backfill_all,
         backfill_kospi200_index,
         backfill_kospi200f,
-        backfill_all,
     )
 
     click.echo(f"Starting backfill for {days} days...")
@@ -1411,8 +1414,8 @@ def stock_backfill_status(days: int):
         sts stock-backfill status --days 90
     """
     from shared.collector.historical.stock import (
-        get_stock_collection_status,
         STOCK_UNIVERSE,
+        get_stock_collection_status,
     )
 
     click.echo(f"Stock Minute Data Collection Status (last {days} days)")
@@ -1505,7 +1508,7 @@ def collect_start(symbol: tuple, interval: float, _output: str | None):
     click.echo(f"Interval: {interval}s")
 
     try:
-        from shared.collector import DataCollector, CollectorConfig
+        from shared.collector import CollectorConfig, DataCollector
 
         config = CollectorConfig(
             symbols=list(symbol),
@@ -1591,8 +1594,8 @@ def scan_daily(symbols: str | None):
         sts scan daily
         sts scan daily --symbols 005930,000660,035720
     """
-    from shared.collector.historical.stock import STOCK_UNIVERSE
     from services.daily_scanner import DailyScanner, DailyScannerConfig
+    from shared.collector.historical.stock import STOCK_UNIVERSE
 
     # Parse symbols
     if symbols:
@@ -1737,15 +1740,14 @@ def trade_start(
     click.echo(f"  Capital: {capital:,.0f}")
     click.echo(f"  Mode: {'Daemon' if daemon else 'Single Session'}")
 
-    if not paper:
-        if not click.confirm("⚠️  LIVE TRADING - Are you sure?"):
-            click.echo("Aborted.")
-            return
+    if not paper and not click.confirm("⚠️  LIVE TRADING - Are you sure?"):
+        click.echo("Aborted.")
+        return
 
     try:
         from services.trading.orchestrator import (
-            TradingOrchestrator,
             TradingConfig,
+            TradingOrchestrator,
         )
 
         if asset == "stock":
@@ -1801,10 +1803,8 @@ def trade_start(
                 if not shutdown_requested:
                     await orchestrator.stop()
 
-        try:
+        with suppress(KeyboardInterrupt):
             asyncio.run(run())
-        except KeyboardInterrupt:
-            pass  # Signal handler already initiated shutdown
 
     except ImportError as e:
         click.echo(f"Error: Required module not installed: {e}", err=True)
@@ -1921,9 +1921,9 @@ def paper_start(strategy: str, asset: str, capital: float, max_positions: int):
     click.echo("-" * 40)
 
     try:
-        from shared.paper.engine import PaperTradingEngine
-        from shared.paper.config import PaperTradingConfig
         from shared.config.loader import ConfigLoader
+        from shared.paper.config import PaperTradingConfig
+        from shared.paper.engine import PaperTradingEngine
 
         # Load strategy config
         try:
