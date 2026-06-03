@@ -15,10 +15,16 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import statistics
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+# Minimum number of comparable (non-exempt) tests required before median
+# runner-speed normalization kicks in. Below this the median is too unstable,
+# so we fall back to raw ratios (factor 1.0).
+MIN_NORMALIZATION_SAMPLES = 5
 
 
 @dataclass
@@ -124,10 +130,49 @@ class RegressionChecker:
 
         return durations
 
+    def runner_speed_factor(
+        self,
+        baseline_metrics: dict[str, float],
+        current_metrics: dict[str, float],
+    ) -> float:
+        """Estimate the runner's common-mode speed relative to the baseline run.
+
+        A shared GitHub-hosted runner can be globally slower (or faster) than the
+        instance the baseline was captured on, which shifts *every* test's
+        current/baseline ratio in the same direction together. Dividing each
+        ratio by this common factor before thresholding separates "this test
+        regressed" from "this whole runner is slow" — the latter being the
+        dominant source of flaky failures on shared CI.
+
+        The factor is the median current/baseline ratio across all comparable
+        tests (present in both runs, baseline at or above the noise floor). The
+        median is robust: a minority of genuinely regressed tests barely moves
+        it, so real regressions still stand out after normalization. Returns 1.0
+        (no normalization) when there are too few samples to be stable.
+
+        Args:
+            baseline_metrics: Baseline test durations
+            current_metrics: Current test durations
+
+        Returns:
+            Median runner-speed ratio, or 1.0 when below the sample floor.
+        """
+        ratios = [
+            current_metrics[name] / base
+            for name, base in baseline_metrics.items()
+            if base >= self.min_duration
+            and base > 0
+            and current_metrics.get(name, 0.0) > 0
+        ]
+        if len(ratios) < MIN_NORMALIZATION_SAMPLES:
+            return 1.0
+        return statistics.median(ratios)
+
     def compare_metrics(
         self,
         baseline_metrics: dict[str, float],
         current_metrics: dict[str, float],
+        runner_factor: float = 1.0,
     ) -> list[MetricComparison]:
         """
         Compare baseline and current metrics.
@@ -135,6 +180,9 @@ class RegressionChecker:
         Args:
             baseline_metrics: Baseline test durations
             current_metrics: Current test durations
+            runner_factor: Common-mode runner-speed ratio to divide out before
+                applying thresholds (see ``runner_speed_factor``). 1.0 disables
+                normalization.
 
         Returns:
             List of metric comparisons
@@ -188,13 +236,31 @@ class RegressionChecker:
                 )
                 continue
 
-            # Determine status
-            if ratio >= self.error_threshold:
+            # Divide out the runner's common-mode speed before thresholding, so a
+            # globally slow runner (every ratio shifted up together) does not
+            # masquerade as a per-test regression.
+            norm_ratio = ratio / runner_factor if runner_factor > 0 else ratio
+            norm_change = (norm_ratio - 1.0) * 100
+            normalized = abs(runner_factor - 1.0) >= 0.001
+            suffix = (
+                f" (raw {change_percent:+.1f}%, runner x{runner_factor:.2f})"
+                if normalized
+                else ""
+            )
+
+            # Determine status (thresholds apply to the runner-normalized ratio)
+            if norm_ratio >= self.error_threshold:
                 status = "error"
-                message = f"REGRESSION: {change_percent:+.1f}% slower (threshold: {(self.error_threshold - 1) * 100:.0f}%)"
-            elif ratio >= self.warning_threshold:
+                message = (
+                    f"REGRESSION: {norm_change:+.1f}% slower "
+                    f"(threshold: {(self.error_threshold - 1) * 100:.0f}%){suffix}"
+                )
+            elif norm_ratio >= self.warning_threshold:
                 status = "warning"
-                message = f"WARNING: {change_percent:+.1f}% slower (threshold: {(self.warning_threshold - 1) * 100:.0f}%)"
+                message = (
+                    f"WARNING: {norm_change:+.1f}% slower "
+                    f"(threshold: {(self.warning_threshold - 1) * 100:.0f}%){suffix}"
+                )
             else:
                 status = "pass"
                 if change_percent < -5:
@@ -231,12 +297,18 @@ class RegressionChecker:
 
         return comparisons
 
-    def print_report(self, comparisons: list[MetricComparison]) -> tuple[int, int, int]:
+    def print_report(
+        self,
+        comparisons: list[MetricComparison],
+        runner_factor: float = 1.0,
+    ) -> tuple[int, int, int]:
         """
         Print detailed regression report.
 
         Args:
             comparisons: List of metric comparisons
+            runner_factor: Common-mode runner-speed ratio that was divided out
+                (shown in the header when it deviates from 1.0).
 
         Returns:
             Tuple of (num_errors, num_warnings, num_passed)
@@ -252,6 +324,11 @@ class RegressionChecker:
             f"Total: {len(comparisons)} tests | "
             f"Errors: {num_errors} | Warnings: {num_warnings} | Pass: {num_passed}"
         )
+        if abs(runner_factor - 1.0) >= 0.001:
+            print(
+                f"Runner speed factor: x{runner_factor:.2f} "
+                f"(durations normalized to this before thresholding)"
+            )
         print("=" * 80)
 
         # Group by status
@@ -356,11 +433,22 @@ class RegressionChecker:
                 len(current_durations),
             )
 
+            # Estimate the runner's common-mode speed and divide it out, so a
+            # globally slow CI runner does not masquerade as a regression.
+            runner_factor = self.runner_speed_factor(
+                baseline_durations, current_durations
+            )
+            self.logger.info("Runner speed factor (median ratio): x%.3f", runner_factor)
+
             # Compare metrics
-            comparisons = self.compare_metrics(baseline_durations, current_durations)
+            comparisons = self.compare_metrics(
+                baseline_durations, current_durations, runner_factor
+            )
 
             # Print report
-            num_errors, num_warnings, num_passed = self.print_report(comparisons)
+            num_errors, num_warnings, num_passed = self.print_report(
+                comparisons, runner_factor
+            )
 
             # Determine exit code
             if num_errors > 0:
