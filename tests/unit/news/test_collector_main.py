@@ -139,6 +139,7 @@ class _NoopSource(NewsSource):
 async def test_build_and_run_all_sources_enabled(monkeypatch):
     """Exercises the full construction path when every source is enabled."""
     cfg = _make_cfg()
+    monkeypatch.setenv("RUNTIME_STORAGE_CLICKHOUSE_MIRROR_ENABLED", "true")
     cfg.sources.marketaux.enabled = True
     cfg.sources.naver_search.enabled = True
     cfg.sources.gdelt.enabled = True
@@ -232,6 +233,47 @@ async def test_build_and_run_all_sources_enabled(monkeypatch):
     assert rc == 0
     fake_ch.connect.assert_awaited()
     fake_ch.close.assert_awaited()
+    fake_session.close.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_build_and_run_clickhouse_disabled(monkeypatch):
+    """Default runtime path should not require ClickHouse."""
+    cfg = _make_cfg(
+        yonhap=False,
+        reuters=False,
+        marketaux=False,
+        naver_search=False,
+        gdelt=False,
+        dart=False,
+        mk=False,
+    )
+    monkeypatch.setenv("RUNTIME_STORAGE_CLICKHOUSE_MIRROR_ENABLED", "false")
+    monkeypatch.setattr(
+        "shared.news.config.NewsCollectorConfig.from_yaml",
+        classmethod(lambda _cls, *_a, **_kw: cfg),
+    )
+    monkeypatch.setattr(
+        "redis.asyncio.from_url",
+        lambda *_a, **_kw: fakeredis.aioredis.FakeRedis(),
+    )
+    fake_ch = AsyncMock()
+    monkeypatch.setattr(
+        "shared.db.client.AsyncClickHouseClient",
+        lambda *_a, **_kw: fake_ch,
+    )
+    fake_session = AsyncMock()
+    monkeypatch.setattr("aiohttp.ClientSession", lambda *_a, **_kw: fake_session)
+
+    async def fast_run(self):
+        self._stop.set()
+
+    monkeypatch.setattr(NewsCollectorDaemon, "run", fast_run)
+
+    rc = await _build_and_run_from_config()
+    assert rc == 0
+    fake_ch.connect.assert_not_awaited()
+    fake_ch.close.assert_not_awaited()
     fake_session.close.assert_awaited()
 
 

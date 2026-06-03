@@ -72,6 +72,23 @@ async def test_publish_batches_ch_writes(redis):
 
 
 @pytest.mark.asyncio
+async def test_publish_skips_clickhouse_when_mirror_disabled(redis):
+    pub = ScoredPublisher(
+        redis=redis,
+        ch_client=None,
+        stream=_STREAM,
+        maxlen=100,
+        ch_batch_size=1,
+    )
+    await pub.publish(_item("no_ch"))
+    await pub.flush()
+
+    entries = await redis.xrange(_STREAM)
+    assert len(entries) == 1
+    assert entries[0][1][b"news_id"] == b"no_ch"
+
+
+@pytest.mark.asyncio
 async def test_publish_flush_on_stop(redis):
     ch = AsyncMock()
     pub = ScoredPublisher(

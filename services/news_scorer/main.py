@@ -2,7 +2,7 @@
 
 Reads from ``stream:news.raw`` using a Redis consumer-group (XREADGROUP /
 XACK), scores each item via an injected :class:`~shared.scoring.base.Scorer`,
-and fan-outs the result to ``stream:news.scored`` + ClickHouse via
+and fan-outs the result to ``stream:news.scored`` plus optional ClickHouse via
 :class:`~shared.scoring.publisher.ScoredPublisher`.
 
 Error taxonomy
@@ -98,7 +98,7 @@ class NewsScorerDaemon:
 
     Args:
         redis: Async Redis client (``redis.asyncio`` or ``fakeredis.aioredis``).
-        ch_client: ClickHouse async client for batched inserts.
+        ch_client: Optional ClickHouse async client for mirror inserts.
         scorer: Primary :class:`~shared.scoring.base.Scorer` (LLM-backed).
         fallback: Fallback scorer used when the primary fails gracefully.
         input_stream: Redis stream key to consume from.
@@ -311,21 +311,26 @@ async def _build_and_run() -> int:
     import redis.asyncio as aioredis
     from openai import AsyncOpenAI
 
-    from shared.db.client import AsyncClickHouseClient
-    from shared.db.config import ClickHouseConfig
     from shared.scoring.budget import DailyBudget
     from shared.scoring.config import NewsScorerConfig
     from shared.scoring.fallback import FallbackScorer
     from shared.scoring.llm_scorer import LLMScorer
+    from shared.storage.config import StorageConfig
 
     cfg = NewsScorerConfig.from_yaml()
 
     redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/1")
     redis_client = aioredis.from_url(redis_url)
 
-    ch_config = ClickHouseConfig.from_env(database="kospi")
-    ch_client = AsyncClickHouseClient(ch_config)
-    await ch_client.connect()
+    ch_client = None
+    storage_config = StorageConfig.load_or_default()
+    if storage_config.runtime_storage.clickhouse_mirror.enabled:
+        from shared.db.client import AsyncClickHouseClient
+        from shared.db.config import ClickHouseConfig
+
+        ch_config = ClickHouseConfig.from_env(database="kospi")
+        ch_client = AsyncClickHouseClient(ch_config)
+        await ch_client.connect()
 
     openai_client = AsyncOpenAI(api_key=os.environ[cfg.scorer.api_key_env])
     budget = DailyBudget(
@@ -371,7 +376,8 @@ async def _build_and_run() -> int:
     finally:
         await openai_client.close()
         await redis_client.aclose()
-        await ch_client.close()
+        if ch_client is not None:
+            await ch_client.close()
 
     return 0
 

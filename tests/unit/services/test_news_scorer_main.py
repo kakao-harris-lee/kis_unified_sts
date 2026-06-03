@@ -74,6 +74,7 @@ async def test_build_and_run_returns_zero(monkeypatch: pytest.MonkeyPatch) -> No
 
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test-unit")
     monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/1")
+    monkeypatch.setenv("RUNTIME_STORAGE_CLICKHOUSE_MIRROR_ENABLED", "false")
 
     # --- NewsScorerConfig.from_yaml -----------------------------------------
     monkeypatch.setattr(
@@ -120,6 +121,7 @@ async def test_build_and_run_returns_zero(monkeypatch: pytest.MonkeyPatch) -> No
     rc = await _build_and_run()
 
     assert rc == 0
+    fake_ch.connect.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------
@@ -134,6 +136,7 @@ async def test_build_and_run_cleanup_awaited(monkeypatch: pytest.MonkeyPatch) ->
 
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test-unit")
     monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/1")
+    monkeypatch.setenv("RUNTIME_STORAGE_CLICKHOUSE_MIRROR_ENABLED", "true")
 
     monkeypatch.setattr(
         "shared.scoring.config.NewsScorerConfig.from_yaml",
@@ -194,6 +197,7 @@ async def test_build_and_run_cleanup_on_daemon_error(
     cfg = _make_scorer_cfg()
 
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test-unit")
+    monkeypatch.setenv("RUNTIME_STORAGE_CLICKHOUSE_MIRROR_ENABLED", "true")
 
     monkeypatch.setattr(
         "shared.scoring.config.NewsScorerConfig.from_yaml",

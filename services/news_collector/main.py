@@ -1,4 +1,4 @@
-"""News collector daemon — polls sources, dedups, publishes to Redis + CH."""
+"""News collector daemon — polls sources, dedups, publishes to Redis + optional CH."""
 
 from __future__ import annotations
 
@@ -102,8 +102,6 @@ async def _build_and_run_from_config() -> int:
     import aiohttp
     import redis.asyncio as aioredis
 
-    from shared.db.client import AsyncClickHouseClient
-    from shared.db.config import ClickHouseConfig
     from shared.news.config import NewsCollectorConfig
     from shared.news.sources.gdelt import GDELTNewsSource
     from shared.news.sources.marketaux import MarketauxNewsSource
@@ -111,14 +109,21 @@ async def _build_and_run_from_config() -> int:
     from shared.news.sources.reuters import ReutersRSSSource
     from shared.news.sources.rss import GenericRSSSource
     from shared.news.sources.yonhap import YonhapRSSSource
+    from shared.storage.config import StorageConfig
 
     cfg = NewsCollectorConfig.from_yaml()
     redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/1")
     redis_client = aioredis.from_url(redis_url)
 
-    # Real CH client wiring — AsyncClickHouseClient, not a non-existent get_instance()
-    ch = AsyncClickHouseClient(ClickHouseConfig.from_env(database="kospi"))
-    await ch.connect()
+    ch = None
+    storage_config = StorageConfig.load_or_default()
+    if storage_config.runtime_storage.clickhouse_mirror.enabled:
+        from shared.db.client import AsyncClickHouseClient
+        from shared.db.config import ClickHouseConfig
+
+        # Real CH client wiring — AsyncClickHouseClient, not a non-existent get_instance()
+        ch = AsyncClickHouseClient(ClickHouseConfig.from_env(database="kospi"))
+        await ch.connect()
 
     session = aiohttp.ClientSession()
     sources: list[NewsSource] = []
@@ -262,7 +267,8 @@ async def _build_and_run_from_config() -> int:
     finally:
         await session.close()
         await redis_client.aclose()
-        await ch.close()
+        if ch is not None:
+            await ch.close()
     return 0
 
 

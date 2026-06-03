@@ -1,4 +1,4 @@
-"""News stream publisher (Redis XADD) + ClickHouse batched writer."""
+"""News stream publisher (Redis XADD) plus optional ClickHouse mirror writer."""
 
 from __future__ import annotations
 
@@ -62,9 +62,7 @@ class NewsStreamPublisher:
             if item.body:
                 text = f"{text} {item.body.strip()}" if text else item.body.strip()
             if text:
-                await self.redis.publish(
-                    _PUBSUB_CHANNEL, text[:_PUBSUB_MAX_TEXT_CHARS]
-                )
+                await self.redis.publish(_PUBSUB_CHANNEL, text[:_PUBSUB_MAX_TEXT_CHARS])
         except Exception as e:  # noqa: BLE001 — pubsub fan-out is best-effort
             logger.warning("news:raw pubsub publish failed: %s", e)
 
@@ -72,7 +70,7 @@ class NewsStreamPublisher:
 
 
 class ClickHouseNewsWriter:
-    """Batches inserts into kospi.news_raw."""
+    """Batches optional inserts into kospi.news_raw."""
 
     _INSERT_SQL = (
         "INSERT INTO kospi.news_raw "
@@ -90,6 +88,8 @@ class ClickHouseNewsWriter:
         self._lock = asyncio.Lock()
 
     async def enqueue(self, item: NewsItem) -> None:
+        if self.ch is None or self.batch_size <= 0:
+            return
         row = (
             item.news_id,
             item.source,
@@ -113,6 +113,8 @@ class ClickHouseNewsWriter:
             await self.flush()
 
     async def flush(self) -> None:
+        if self.ch is None:
+            return
         async with self._lock:
             if not self._buffer:
                 return
