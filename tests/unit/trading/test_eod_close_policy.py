@@ -86,8 +86,8 @@ class TestStockEODPolicy:
         tracker.close_position.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_futures_rl_positions_not_force_closed(self):
-        """선물 RL 전략 포지션은 자체 EOD 안전장치가 있으므로 이 메서드에서 청산 금지."""
+    async def test_futures_setup_positions_force_closed(self):
+        """선물 Setup 포지션도 EOD guard에서 청산 대상이다."""
         cfg = TradingConfig(
             asset_class="futures",
             strategy_name="setup_a_gap_reversion",
@@ -107,4 +107,4 @@ class TestStockEODPolicy:
 
         await orch._close_intraday_positions({"A05603": {"close": 100}})
 
-        tracker.close_position.assert_not_called()
+        tracker.close_position.assert_called_once()
