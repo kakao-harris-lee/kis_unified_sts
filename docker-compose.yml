@@ -299,6 +299,33 @@ services:
     networks:
       - trading-network
 
+  # =============================================================================
+  # MLflow (실험 추적 서버 — sqlite backend + 로컬 아티팩트)
+  # =============================================================================
+  mlflow:
+    build:
+      context: .
+      dockerfile: Dockerfile.mlflow
+    container_name: kis-mlflow
+    restart: unless-stopped
+    ports:
+      # localhost-bound (dev/ops tool); MLFLOW_TRACKING_URI=http://localhost:5000
+      - "127.0.0.1:5000:5000"
+    volumes:
+      # Reuse the repo-root store so existing runs are preserved and the
+      # `sts mlflow` / scripts/optimize_strategies.py clients keep working.
+      # mlflow.db / mlruns are gitignored runtime data; mlflow.db must pre-exist.
+      - ./mlflow.db:/mlflow.db
+      - ./mlruns:/mlruns
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:5000/health', timeout=5).status==200 else 1)"]
+      interval: 30s
+      timeout: 6s
+      retries: 5
+      start_period: 20s
+    networks:
+      - trading-network
+
 # =============================================================================
 # 네트워크
 # =============================================================================
