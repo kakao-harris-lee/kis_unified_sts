@@ -33,13 +33,18 @@ import asyncio
 import json
 import logging
 import time
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
 
 from shared.llm.config import LLMConfig
 from shared.llm.data_classes import MarketAnalysis, MarketSignal, RiskMode
 from shared.llm.market_context import MarketContext
 from shared.llm.unified_market_analyzer import UnifiedMarketAnalyzer
+from shared.storage.config import StorageConfig
+from shared.storage.runtime_ledger import (
+    RuntimeLedger,
+    RuntimeLedgerError,
+    SQLiteRuntimeLedger,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +76,12 @@ class LLMContextPublisher:
         analyzer: UnifiedMarketAnalyzer instance.
     """
 
-    def __init__(self, asset_class: str, config: Optional[LLMConfig] = None):
+    def __init__(
+        self,
+        asset_class: str,
+        config: LLMConfig | None = None,
+        runtime_ledger: RuntimeLedger | None = None,
+    ):
         """Initialize LLM context publisher.
 
         Args:
@@ -81,6 +91,7 @@ class LLMContextPublisher:
         self.asset_class = asset_class
         self.config = config or LLMConfig.from_env()
         self.analyzer = UnifiedMarketAnalyzer(self.config)
+        self._runtime_ledger = runtime_ledger
 
         # Futures-specific prompt addendum (Phase 1.1-a).
         # Non-empty only when asset_class="futures" and the YAML key is set.
@@ -99,7 +110,7 @@ class LLMContextPublisher:
         # On-demand refresh lock (Phase 1.1-b).
         # Serialises concurrent request_refresh() calls so at most one analysis
         # is in-flight at a time; does not block the periodic loop.
-        self._refresh_lock: Optional[asyncio.Lock] = None
+        self._refresh_lock: asyncio.Lock | None = None
 
         # Setup Prometheus metrics (optional)
         if HAS_PROMETHEUS:
@@ -133,9 +144,11 @@ class LLMContextPublisher:
             ["asset_class"],
         )
 
-        logger.debug(f"Prometheus metrics initialized for LLM context ({self.asset_class})")
+        logger.debug(
+            f"Prometheus metrics initialized for LLM context ({self.asset_class})"
+        )
 
-    async def run_analysis(self, mode: str = "all") -> Optional[MarketContext]:
+    async def run_analysis(self, mode: str = "all") -> MarketContext | None:
         """Run market analysis and return MarketContext.
 
         This is the main entry point for getting LLM-derived market context.
@@ -155,7 +168,11 @@ class LLMContextPublisher:
             Never raises exceptions (fire-and-forget pattern).
         """
         try:
-            logger.debug("Running LLM market analysis (mode=%s, asset=%s)...", mode, self.asset_class)
+            logger.debug(
+                "Running LLM market analysis (mode=%s, asset=%s)...",
+                mode,
+                self.asset_class,
+            )
 
             # Run unified market analysis (verbose=False for production).
             # Pass the futures-specific prompt addendum when applicable — empty
@@ -179,7 +196,9 @@ class LLMContextPublisher:
             # Update success metrics
             if HAS_PROMETHEUS:
                 self.prom_analysis_success.labels(asset_class=self.asset_class).inc()
-                self.prom_last_update_time.labels(asset_class=self.asset_class).set(time.time())
+                self.prom_last_update_time.labels(asset_class=self.asset_class).set(
+                    time.time()
+                )
 
             return market_context
 
@@ -315,7 +334,10 @@ class LLMContextPublisher:
             confidence += 0.1
 
         # Boost for strong signals
-        if analysis.overall_signal in (MarketSignal.STRONG_BULLISH, MarketSignal.STRONG_BEARISH):
+        if analysis.overall_signal in (
+            MarketSignal.STRONG_BULLISH,
+            MarketSignal.STRONG_BEARISH,
+        ):
             confidence += 0.2
         elif analysis.overall_signal in (MarketSignal.BULLISH, MarketSignal.BEARISH):
             confidence += 0.1
@@ -378,7 +400,7 @@ class LLMContextPublisher:
         # queueing.
         try:
             await asyncio.wait_for(self._refresh_lock.acquire(), timeout=0.001)
-        except (TimeoutError, asyncio.TimeoutError):
+        except TimeoutError:
             logger.debug(
                 "LLMContextPublisher.request_refresh: refresh already in-flight "
                 "(asset=%s) — skipping duplicate call",
@@ -437,23 +459,110 @@ class LLMContextPublisher:
                 e,
                 exc_info=True,
             )
-        # Durable forward-only history for future backtest replay
-        # (spec 2026-05-19 P0). Best-effort: CH failure must not affect live.
+        # Durable forward-only history for future backtest replay. Best-effort:
+        # storage failure must not affect the live Redis path.
         self._append_market_context_history(context)
 
     def _append_market_context_history(self, context: MarketContext) -> None:
-        """Best-effort forward-only CH history (spec 2026-05-19 P0); CH failure is logged (warning) but never affects the live Redis path."""
+        """Best-effort forward-only history; storage failure never affects Redis."""
+        storage_config: StorageConfig | None = None
+        try:
+            storage_config = StorageConfig.load_or_default()
+            ledger = self._get_runtime_ledger(storage_config)
+            if ledger is not None:
+                ledger.record_market_context(
+                    self._runtime_ledger_market_context_record(context)
+                )
+        except RuntimeLedgerError as e:
+            logger.warning(
+                "llm_market_context runtime ledger append skipped: %s",
+                e,
+                exc_info=True,
+            )
+        except Exception as e:
+            logger.warning(
+                "llm_market_context runtime ledger append skipped: %s",
+                e,
+                exc_info=True,
+            )
+
+        if self._clickhouse_mirror_enabled(storage_config):
+            self._append_clickhouse_market_context_mirror(context)
+
+    def _get_runtime_ledger(
+        self, storage_config: StorageConfig | None = None
+    ) -> RuntimeLedger | None:
+        """Return configured RuntimeLedger, lazily creating SQLite backend."""
+        if ledger := getattr(self, "_runtime_ledger", None):
+            return ledger
+
+        try:
+            storage_config = storage_config or StorageConfig.load_or_default()
+            if storage_config.runtime_storage.backend != "sqlite":
+                return None
+
+            ledger = SQLiteRuntimeLedger(storage_config.runtime_storage.sqlite)
+            self._runtime_ledger = ledger
+            return ledger
+        except Exception as e:
+            logger.warning(
+                "llm_market_context runtime ledger unavailable: %s",
+                e,
+                exc_info=True,
+            )
+            return None
+
+    def _runtime_ledger_market_context_record(
+        self, context: MarketContext
+    ) -> dict[str, object]:
+        generated_at = context.generated_at
+        generated_at_text = (
+            generated_at.isoformat()
+            if isinstance(generated_at, datetime)
+            else str(generated_at)
+        )
+        asset_class = str(getattr(self, "asset_class", "unknown"))
+        context_id = f"llm_market_context:{asset_class}:{generated_at_text}"
+        return {
+            "context_id": context_id,
+            "idempotency_key": context_id,
+            "asset_class": asset_class,
+            "context_type": "llm_market_context",
+            "created_at": datetime.now(UTC).isoformat(),
+            "generated_at": generated_at,
+            "regime": context.regime,
+            "overall_signal": getattr(
+                context.overall_signal, "value", str(context.overall_signal)
+            ),
+            "risk_mode": getattr(context.risk_mode, "value", str(context.risk_mode)),
+            "risk_score": float(context.risk_score),
+            "confidence": float(context.confidence),
+            "sector_rotation": context.sector_rotation,
+            "metadata": context.metadata or {},
+        }
+
+    def _clickhouse_mirror_enabled(
+        self, storage_config: StorageConfig | None = None
+    ) -> bool:
+        try:
+            storage_config = storage_config or StorageConfig.load_or_default()
+            return bool(storage_config.runtime_storage.clickhouse_mirror.enabled)
+        except Exception:
+            return False
+
+    def _append_clickhouse_market_context_mirror(self, context: MarketContext) -> None:
+        """Best-effort ClickHouse mirror for explicitly enabled analytics setups."""
         try:
             from shared.db.client import get_clickhouse_client
             from shared.db.config import ClickHouseConfig
 
             gen = context.generated_at
             if getattr(gen, "tzinfo", None) is not None:
-                # ClickHouse DateTime64 expects naive datetimes
+                # ClickHouse DateTime64 expects naive datetimes.
                 gen = gen.replace(tzinfo=None)
             row = {
-                "ts": datetime.now(timezone.utc).replace(tzinfo=None),  # noqa: UP017
-                "asset": self.asset_class,
+                "ts": datetime.now(UTC).replace(tzinfo=None),
+                "asset": getattr(self, "asset_class", "unknown"),
                 "regime": context.regime,
                 "overall_signal": getattr(
                     context.overall_signal, "value", str(context.overall_signal)
@@ -464,14 +573,14 @@ class LLMContextPublisher:
                 "risk_score": float(context.risk_score),
                 "confidence": float(context.confidence),
                 "generated_at": gen,
-                "metadata_json": json.dumps(
-                    context.metadata or {}, ensure_ascii=False
-                ),
+                "metadata_json": json.dumps(context.metadata or {}, ensure_ascii=False),
             }
-            get_clickhouse_client(ClickHouseConfig.from_env()).insert_llm_market_context(
-                [row]
-            )
+            get_clickhouse_client(
+                ClickHouseConfig.from_env()
+            ).insert_llm_market_context([row])
         except Exception as e:
             logger.warning(
-                "llm_market_context history append skipped: %s", e, exc_info=True
+                "llm_market_context ClickHouse mirror append skipped: %s",
+                e,
+                exc_info=True,
             )
