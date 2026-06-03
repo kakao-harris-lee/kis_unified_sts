@@ -18,6 +18,12 @@ from shared.models.position import Position, PositionSide, PositionState
 from services.trading.position_tracker import PositionTracker, PositionTrackerConfig
 from shared.streaming.trading_state import TradingStatePublisher, TradingStateReader
 
+# serial: these tests read/write the shared Redis DB 1 key space
+# (trading:*:positions) via fixed keys, so concurrent xdist workers clobber each
+# other's state. Run in the serial pass — see the `serial` marker in
+# pyproject.toml and the split steps in .github/workflows/test.yml.
+pytestmark = pytest.mark.serial
+
 
 # -- Fixtures --
 

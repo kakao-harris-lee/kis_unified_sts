@@ -242,6 +242,7 @@ markers = [
     "integration: Integration tests",
     "slow: Slow tests",
     "backtest: Backtesting tests",
+    "serial: Must run serially — timing- or shared-external-state-sensitive; excluded from the `-n auto` parallel pass and run in a separate serial pass",
 ]
 
 [tool.coverage.run]

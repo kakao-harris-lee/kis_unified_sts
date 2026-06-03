@@ -31,6 +31,22 @@ if _env_file.exists():
 os.environ.setdefault("MLFLOW_HTTP_REQUEST_MAX_RETRIES", "1")
 os.environ.setdefault("MLFLOW_HTTP_REQUEST_TIMEOUT", "5")
 
+# --- pytest-xdist worker isolation -------------------------------------------
+# xdist workers are separate processes, so in-process singletons are already
+# isolated per worker. The remaining cross-worker hazard among the *parallel*
+# tests is Hypothesis' example database: by default every worker reads/writes
+# the same SQLite file and they contend/corrupt each other. Give each worker
+# its own directory. Tests that touch shared *external* state (e.g. Redis DB 1)
+# or assert on uncontended wall-clock timing are instead marked ``serial`` and
+# run in a separate non-parallel pass — see the ``serial`` marker in
+# pyproject.toml and the split steps in .github/workflows/test.yml.
+_xdist_worker = os.environ.get("PYTEST_XDIST_WORKER")
+if _xdist_worker:
+    os.environ.setdefault(
+        "HYPOTHESIS_STORAGE_DIRECTORY",
+        str(Path("/tmp") / f"hypothesis-{_xdist_worker}"),
+    )
+
 
 def pytest_configure(config):
     """Configure pytest before test collection.

@@ -1,6 +1,37 @@
 # CI Parallel Test Execution — Notes
 
-**Status**: Available locally, NOT enabled in CI (2026-05-09).
+**Status**: **ENABLED in CI (2026-06-03)** via a two-pass split — `-n auto -m "not serial"`
+parallel pass + a serial pass for `serial`-marked tests. Previously local-only
+(2026-05-09) pending the parallel-unsafe-test fixes described below.
+
+## Update 2026-06-03 — enabled via parallel + serial split
+
+The `test` job's "Run tests" step now runs:
+
+```bash
+pytest tests/ --ignore=tests/performance -n auto -m "not serial" --cov=... --cov-report= && \
+pytest tests/ --ignore=tests/performance -m serial --cov=... --cov-append --cov-report=xml ...
+```
+
+Rather than fix every parallel-unsafe test for in-process worker isolation, the
+genuinely-unsafe tests are marked `@pytest.mark.serial` (registered in
+`pyproject.toml`) and run in a second, non-parallel pass where there is no
+concurrent worker to race them. xdist workers are separate **processes**, so
+in-process singletons are already isolated; the only cross-worker hazards are
+*external* shared state, which the serial pass removes:
+
+- `tests/integration/test_graceful_shutdown.py` — shared Redis DB 1 keys
+- `tests/integration/test_redis_tls.py` — real Redis, short socket timeouts
+- `tests/unit/kis/test_rate_limiter.py::...test_acquire_respects_penalty` — wall-clock timing
+- `tests/unit/dashboard/routes/test_health.py::...test_caches_response_1s` — 1s cache window
+
+Hypothesis' shared example DB is isolated per worker via
+`HYPOTHESIS_STORAGE_DIRECTORY` in `tests/conftest.py` (parallel pass).
+
+Validated: full suite at `-n auto` (16 workers, the worst-case contention,
+≥ CI's 2–4) — parallel pass 0 failures, serial pass 0 failures.
+
+### Original (2026-05-09) analysis below
 
 ## TL;DR
 
