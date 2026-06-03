@@ -353,7 +353,7 @@ docker compose --env-file .env.dev --profile research up -d clickhouse mlflow
 
 ## Acceptance Checklist
 
-확인일: 2026-06-03 (PR #402)
+확인일: 2026-06-04 (PR #402)
 
 검증 근거:
 
@@ -364,9 +364,14 @@ docker compose --env-file .env.dev --profile research up -d clickhouse mlflow
   - `docker compose --env-file .env.dev --profile research config --services` includes ClickHouse/MLflow.
   - `.env.paper.example` renders `kis_paper`, Redis DB 1, and `data/runtime/paper/runtime.db`.
   - `.env.live.example` renders `kis_live`, Redis DB 1, and `data/runtime/live/runtime.db`.
+- Compose runtime smoke:
+  - Existing KIS app/research/monitoring stacks were stopped first.
+  - `docker compose --env-file .env.dev up -d --remove-orphans` started the dev stack without ClickHouse/MLflow services.
+  - Dashboard health, trades route, stream-exporter metrics, Redis DB 1, and SQLite runtime storage were verified.
+  - Dev stack was stopped after smoke; no KIS compose stack remains running.
 
-- [ ] `docker compose up -d` works without ClickHouse installed.
-  - 미검증: existing runtime stack 방해를 피하려고 실제 `up -d` smoke는 수행하지 않았다. Compose config render는 통과.
+- [x] `docker compose up -d` works without ClickHouse installed.
+  - 확인: `.env.dev` smoke가 ClickHouse/MLflow 없이 정상 기동했고 검증 후 down 처리했다.
 - [x] dev/paper/live compose config renders without ClickHouse service.
 - [ ] `sts trade start --asset stock --paper` works with Redis + SQLite only.
   - 미완료/미검증: stock paper E2E smoke가 필요하다.
