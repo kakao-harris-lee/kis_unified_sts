@@ -14,7 +14,6 @@ import asyncio
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
-import services.trading.orchestrator as orch_mod
 from services.trading.orchestrator import (
     _SETUP_TYPE_BY_STRATEGY,
     TradingOrchestrator,
@@ -120,7 +119,7 @@ class TestPersistBestEffort:
         def _boom(**_kwargs):
             raise RuntimeError("clickhouse down")
 
-        monkeypatch.setattr(orch_mod.ClickHouseConfig, "from_env", _boom)
+        monkeypatch.setattr("shared.storage.create_sync_clickhouse_client", _boom)
         orch = self._orch("futures")
         # Must NOT raise — observability must never disrupt trading.
         asyncio.run(
@@ -136,7 +135,7 @@ class TestPersistBestEffort:
         def _boom(**_kwargs):
             raise AssertionError("from_env must not be called for non-futures")
 
-        monkeypatch.setattr(orch_mod.ClickHouseConfig, "from_env", _boom)
+        monkeypatch.setattr("shared.storage.create_sync_clickhouse_client", _boom)
         orch = self._orch("stock")
         # stock → returns before any ClickHouse access (no AssertionError).
         asyncio.run(
@@ -152,7 +151,7 @@ class TestPersistBestEffort:
         def _boom(**_kwargs):
             raise AssertionError("from_env must not be called for non-A/C strategy")
 
-        monkeypatch.setattr(orch_mod.ClickHouseConfig, "from_env", _boom)
+        monkeypatch.setattr("shared.storage.create_sync_clickhouse_client", _boom)
         orch = self._orch("futures")
         asyncio.run(
             orch._persist_setup_signal_row(

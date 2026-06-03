@@ -95,15 +95,8 @@ class TestStartShadowLoggersFlush:
                 return_value=sl_yaml,
             ),
             patch(
-                "services.trading.orchestrator.ClickHouseConfig.from_env",
-                return_value=MagicMock(
-                    host="localhost", port=9000, user="default",
-                    password="pw", database="kospi",
-                ),
-            ),
-            patch.dict(
-                "sys.modules",
-                {"clickhouse_driver": MagicMock(Client=MagicMock(return_value=ch_mock))},
+                "shared.storage.create_sync_clickhouse_client",
+                return_value=ch_mock,
             ),
         ):
             await _start_fn(stub)
@@ -125,7 +118,7 @@ class TestStartShadowLoggersFlush:
                 return_value=sl_yaml,
             ),
             patch(
-                "services.trading.orchestrator.ClickHouseConfig.from_env",
+                "shared.storage.create_sync_clickhouse_client",
                 side_effect=OSError("CH unreachable"),
             ),
         ):
@@ -147,7 +140,7 @@ class TestStartShadowLoggersFlush:
                 side_effect=MissingConfigError("not found"),
             ),
             patch(
-                "services.trading.orchestrator.ClickHouseConfig.from_env",
+                "shared.storage.create_sync_clickhouse_client",
                 side_effect=OSError("no CH in test env"),
             ),
         ):
