@@ -74,6 +74,17 @@ async def test_log_fill_batches_ch_writes(redis):
 
 
 @pytest.mark.asyncio
+async def test_log_fill_skips_clickhouse_when_mirror_disabled(redis):
+    fl = FillLogger(redis=redis, ch_client=None, stream=_STREAM, maxlen=1000)
+    await fl.log_fill(**_payload(order_id="ord-no-ch"))
+    await fl.flush()
+
+    entries = await redis.xrange(_STREAM)
+    assert len(entries) == 1
+    assert entries[0][1][b"order_id"] == b"ord-no-ch"
+
+
+@pytest.mark.asyncio
 async def test_explicit_flush(redis):
     ch = AsyncMock()
     fl = FillLogger(

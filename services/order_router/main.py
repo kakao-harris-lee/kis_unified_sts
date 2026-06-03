@@ -366,8 +366,6 @@ async def _build_and_run() -> int:
     from services.order_router.config import Phase4ExecutionConfig
     from shared.collector.historical.futures import get_front_month_code
     from shared.config.loader import ConfigLoader
-    from shared.db.client import AsyncClickHouseClient
-    from shared.db.config import ClickHouseConfig
     from shared.execution.config import ExecutionConfig
     from shared.execution.contract_spec import (
         ContractSpecRegistry,
@@ -381,13 +379,20 @@ async def _build_and_run() -> int:
     from shared.execution.pseudo_oco import PseudoOCO
     from shared.kis.auth import KISAuthConfig
     from shared.kis.futures_feed import KISFuturesPriceFeed
+    from shared.storage.config import StorageConfig
 
     redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/1")
     redis_client = aioredis.from_url(redis_url)
 
-    ch_config = ClickHouseConfig.from_env(database="kospi")
-    ch_client = AsyncClickHouseClient(ch_config)
-    await ch_client.connect()
+    ch_client = None
+    storage_config = StorageConfig.load_or_default()
+    if storage_config.runtime_storage.clickhouse_mirror.enabled:
+        from shared.db.client import AsyncClickHouseClient
+        from shared.db.config import ClickHouseConfig
+
+        ch_config = ClickHouseConfig.from_env(database="kospi")
+        ch_client = AsyncClickHouseClient(ch_config)
+        await ch_client.connect()
 
     phase4_config = Phase4ExecutionConfig.from_yaml()
     kill_config = KillSwitchConfig.from_yaml()
@@ -460,7 +465,8 @@ async def _build_and_run() -> int:
         await fill_logger.flush()
         await futures_feed.stop()
         await redis_client.aclose()
-        await ch_client.close()
+        if ch_client is not None:
+            await ch_client.close()
     return 0
 
 

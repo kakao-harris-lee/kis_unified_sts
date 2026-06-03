@@ -1,9 +1,10 @@
-"""Fan-out order fill events → Redis stream + ClickHouse batch.
+"""Fan-out order fill events to Redis stream plus optional ClickHouse mirror.
 
 Phase 4 Task 3 — mirrors :class:`shared.scoring.publisher.ScoredPublisher` so
 the consumer-group invariant from Phase 2 carries forward unchanged: any
-ClickHouse failure is re-raised so the caller can leave the source signal
-message pending for redelivery rather than half-XACKing.
+When the optional ClickHouse mirror is enabled, failures are re-raised so the
+caller can leave the source signal message pending for redelivery rather than
+half-XACKing.
 
 Schema source: ``infra/clickhouse/migrations/V3__create_order_fills.sql`` and
 ``docs/plans/2026-04-20-futures-paradigm-phase4-execution.md`` §5.1/§5.2.
@@ -35,11 +36,11 @@ def _ms_to_naive_utc(ms: int) -> datetime:
 
 
 class FillLogger:
-    """Log every order fill to Redis stream + ClickHouse batch buffer.
+    """Log every order fill to Redis stream plus optional ClickHouse buffer.
 
     Args:
         redis: ``redis.asyncio`` (or ``fakeredis``) connection.
-        ch_client: ``aiochclient`` :class:`AsyncClickHouseClient` instance.
+        ch_client: Optional ``aiochclient`` :class:`AsyncClickHouseClient` mirror.
         stream: Target Redis stream key (default ``stream:order.fill``).
         maxlen: ``MAXLEN ~`` cap passed to ``XADD`` to bound stream size.
         ch_batch_size: Rows accumulated before flushing to CH (spec §5.2 = 10).
@@ -59,6 +60,7 @@ class FillLogger:
         self.stream = stream
         self.maxlen = maxlen
         self.ch_batch_size = ch_batch_size
+        self._mirror_enabled = ch_client is not None and ch_batch_size > 0
         self._buffer: list[tuple] = []
         self._lock = asyncio.Lock()
 
@@ -110,6 +112,8 @@ class FillLogger:
         }
         await self.redis.xadd(self.stream, fields, maxlen=self.maxlen, approximate=True)
         await self.redis.expire(self.stream, _STREAM_TTL_SECONDS)
+        if not self._mirror_enabled:
+            return
 
         row = (
             signal_id,
@@ -137,13 +141,13 @@ class FillLogger:
             await self.flush()
 
     async def flush(self) -> None:
-        """Flush buffered rows to ClickHouse; re-raise on failure.
+        """Flush buffered rows to ClickHouse when the optional mirror is enabled.
 
-        Same rationale as :class:`ScoredPublisher.flush` — swallowing a CH
-        error here would XADD-succeed + CH-fail + caller-XACK, producing an
-        unrecoverable Redis/CH split-brain. The order_router daemon relies on
-        this re-raise to leave the source signal message pending.
+        Same rationale as :class:`ScoredPublisher.flush` when enabled:
+        swallowing a CH error would XADD-succeed + CH-fail + caller-XACK.
         """
+        if not self._mirror_enabled:
+            return
         async with self._lock:
             if not self._buffer:
                 return
