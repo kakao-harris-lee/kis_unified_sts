@@ -53,6 +53,13 @@ if _env_file.exists():
 os.environ.setdefault("MLFLOW_HTTP_REQUEST_MAX_RETRIES", "1")
 os.environ.setdefault("MLFLOW_HTTP_REQUEST_TIMEOUT", "5")
 
+# Pin MLflow to local sqlite for the whole test session. .env sets
+# MLFLOW_TRACKING_URI to the docker mlflow server (http://localhost:5000), and
+# clients now honor it (resolve_tracking_uri) — but the suite must never depend
+# on that server running. Override (not setdefault) so the .env value can't leak
+# in; individual tests still pass explicit throwaway URIs where needed.
+os.environ["MLFLOW_TRACKING_URI"] = "sqlite:///mlflow.db"
+
 # --- pytest-xdist worker isolation -------------------------------------------
 # xdist workers are separate processes, so in-process singletons are already
 # isolated per worker. The remaining cross-worker hazard among the *parallel*

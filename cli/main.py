@@ -762,7 +762,9 @@ def mlflow_list():
     try:
         import mlflow as mlf
 
-        mlf.set_tracking_uri("sqlite:///mlflow.db")
+        from shared.backtest.mlflow_uri import resolve_tracking_uri
+
+        mlf.set_tracking_uri(resolve_tracking_uri())
         experiments = mlf.search_experiments()
 
         click.echo("MLflow Experiments:")
