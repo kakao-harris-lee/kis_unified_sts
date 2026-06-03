@@ -10,7 +10,6 @@ from __future__ import annotations
 import argparse
 import os
 from dataclasses import dataclass
-from datetime import datetime
 
 import pandas as pd
 from clickhouse_driver import Client

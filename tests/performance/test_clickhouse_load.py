@@ -27,6 +27,7 @@ This latency directly impacts trading start time and indicator accuracy.
 
 from __future__ import annotations
 
+import os
 import statistics
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -42,9 +43,19 @@ from shared.db.client import ClickHouseClient
 from shared.db.config import ClickHouseConfig
 from shared.db.models import DailyCandle, MinuteCandle
 
+_LIVE_INFRA_ENV = "KIS_RUN_LIVE_INFRA_TESTS"
+
+
+def _live_infra_enabled() -> bool:
+    """Return whether live ClickHouse tests may touch infrastructure."""
+    return os.getenv(_LIVE_INFRA_ENV, "").lower() in {"1", "true", "yes"}
+
 
 def _is_clickhouse_available() -> bool:
     """Check if ClickHouse is available for testing."""
+    if not _live_infra_enabled():
+        return False
+
     try:
         config = ClickHouseConfig.from_env()
         client = ClickHouseClient(config=config)

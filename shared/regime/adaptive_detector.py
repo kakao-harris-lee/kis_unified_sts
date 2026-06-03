@@ -188,7 +188,6 @@ class AdaptiveRegimeDetector:
         close = df["close"].values
         high = df["high"].values
         low = df["low"].values
-        volume = df["volume"].values
 
         # 1. MFI (Money Flow Index)
         mfi = self._calc_mfi(df, period=self.config.mfi_period)

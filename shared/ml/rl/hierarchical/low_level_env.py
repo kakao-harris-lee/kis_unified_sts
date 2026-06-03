@@ -21,7 +21,7 @@ import logging
 
 import numpy as np
 
-from shared.ml.rl.env import Action, FuturesTradingEnv, PositionSide, RLEnvConfig
+from shared.ml.rl.env import Action, FuturesTradingEnv, RLEnvConfig
 
 logger = logging.getLogger(__name__)
 

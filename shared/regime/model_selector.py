@@ -4,9 +4,9 @@ Maps detected regimes to optimal RL models or strategy profiles,
 with cooldown logic to prevent thrashing.
 """
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Union
+from typing import Dict, Optional, Union
 
 from .adaptive_detector import AdaptiveRegimeState
 from .models import RegimeSignal, RegimeState

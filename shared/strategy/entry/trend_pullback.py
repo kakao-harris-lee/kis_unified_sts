@@ -19,7 +19,7 @@ Entry Conditions (Long):
 import logging
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta
-from typing import Any, Optional
+from typing import Optional
 from zoneinfo import ZoneInfo
 
 _KST = ZoneInfo("Asia/Seoul")

@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 
 from shared.config.base import ServiceConfigBase
 from shared.config.loader import ConfigLoader
-from shared.exceptions import InfrastructureError, TradingSystemError, ValidationError
+from shared.exceptions import InfrastructureError, TradingSystemError
 from shared.streaming.client import RedisClient
 from shared.streaming.publisher import StreamPublisher
 

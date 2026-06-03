@@ -28,7 +28,7 @@ import os
 import re
 from datetime import datetime
 from enum import Enum
-from typing import TYPE_CHECKING, Annotated, Any, Callable, Optional
+from typing import TYPE_CHECKING, Annotated, Any, Callable
 
 from shared.api.error_sanitizer import sanitize_error_message
 from shared.exceptions import (

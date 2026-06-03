@@ -659,5 +659,5 @@ All remaining broad catches are intentional and follow the pattern:
 ## See Also
 
 - [Error Handling Guide](./error_handling_guide.md) - Best practices and migration guide
-- [VERIFICATION_REPORT.md](../VERIFICATION_REPORT.md) - Migration verification results
+- [VERIFICATION_REPORT.md](archive/verification/VERIFICATION_REPORT.md) - Migration verification results
 - [shared/exceptions/__init__.py](../shared/exceptions/__init__.py) - Exception source code

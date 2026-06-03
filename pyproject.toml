@@ -240,6 +240,7 @@ asyncio_mode = "auto"
 markers = [
     "unit: Unit tests",
     "integration: Integration tests",
+    "live_infra: Tests that touch live Redis/ClickHouse services; skipped unless KIS_RUN_LIVE_INFRA_TESTS=1",
     "slow: Slow tests",
     "backtest: Backtesting tests",
 ]

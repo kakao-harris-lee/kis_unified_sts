@@ -174,7 +174,6 @@ def print_auth_status():
 
 if __name__ == "__main__":
     # 새 API Key 생성 유틸리티
-    import stat
     import sys
 
     if len(sys.argv) > 1 and sys.argv[1] == "generate":

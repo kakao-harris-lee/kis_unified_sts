@@ -18,7 +18,7 @@ Usage:
 from __future__ import annotations
 
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
@@ -276,9 +276,6 @@ def compare_results(
     # Analyze trade-by-trade if available
     if hasattr(engine_with_slip, 'closed_positions') and engine_with_slip.closed_positions:
         print(f"\nAnalyzing {len(engine_with_slip.closed_positions)} closed positions...")
-
-        entry_slippages = []
-        exit_slippages = []
 
         for pos in engine_with_slip.closed_positions[:10]:  # Sample first 10
             # Entry slippage is embedded in entry_price

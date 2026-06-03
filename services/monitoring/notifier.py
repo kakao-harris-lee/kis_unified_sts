@@ -27,7 +27,6 @@ from typing import Any
 from pydantic import Field
 
 from shared.config.base import ServiceConfigBase
-from shared.exceptions import APIError, NetworkError
 
 logger = logging.getLogger(__name__)
 

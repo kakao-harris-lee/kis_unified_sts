@@ -95,7 +95,7 @@ def run_single_backtest(strategy_name: str, asset: str, data: pd.DataFrame):
     # Load strategy config
     try:
         strategy_config = ConfigLoader.load_strategy(asset, strategy_name)
-    except FileNotFoundError as e:
+    except FileNotFoundError:
         print(f"Error: Strategy config not found: {asset}/{strategy_name}")
         raise
 

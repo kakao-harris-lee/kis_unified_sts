@@ -37,7 +37,6 @@ from shared.ml.rl.hierarchical.high_level_env import (
     DirectionalHighLevelEnv,
     HighLevelAction,
     HighLevelConfig,
-    HighLevelDirectionalAction,
     HighLevelEnv,
 )
 from shared.ml.rl.hierarchical.low_level_env import LowLevelEnv
@@ -292,9 +291,6 @@ class HierarchicalTrainer:
         Returns:
             {"low_level": model, "high_level": model}
         """
-        from sb3_contrib import MaskablePPO
-        from stable_baselines3 import PPO
-        from stable_baselines3.common.vec_env import DummyVecEnv
 
         logger.info("=== Joint Training: High-level + Low-level ===")
 

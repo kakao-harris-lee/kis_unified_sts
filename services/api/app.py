@@ -23,7 +23,6 @@ from __future__ import annotations
 import logging
 import os
 from contextlib import asynccontextmanager
-from typing import Any
 
 from shared.api.cors import get_cors_config, load_api_config
 from shared.api.error_sanitizer import sanitize_error_message

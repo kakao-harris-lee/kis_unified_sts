@@ -113,7 +113,6 @@ class TrendContinuationVWAPEntry(EntrySignalGenerator[TrendContinuationVWAPConfi
 
     async def generate(self, context: EntryContext) -> Signal | None:
         data = context.market_data or {}
-        indicators = context.indicators or {}
         code = str(data.get("code", "") or "")
         name = str(data.get("name", "") or code)
         close = self._value(context, "close", default=0.0)

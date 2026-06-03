@@ -6,6 +6,7 @@ Loads .env for integration tests that need infrastructure credentials.
 
 import os
 import sys
+from contextlib import suppress
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,27 @@ import pytest
 # Add project root to Python path immediately at module load time
 project_root = Path(__file__).parent.parent.resolve()
 sys.path.insert(0, str(project_root))
+
+_LIVE_INFRA_TEST_PATHS = {
+    # These tests connect to real Redis DB 1 and/or ClickHouse. Some of them
+    # write/delete runtime-shaped keys such as trading:{asset}:positions and
+    # risk:portfolio:state, so they must never run accidentally while paper
+    # trading is active on the same host.
+    "tests/integration/test_clickhouse_tls.py",
+    "tests/integration/test_cross_asset_trading.py",
+    "tests/integration/test_graceful_shutdown.py",
+    "tests/integration/test_llm_market_context.py",
+    "tests/integration/test_rate_limiter_redis.py",
+    "tests/integration/test_redis_tls.py",
+    "tests/performance/test_clickhouse_load.py",
+    "tests/performance/test_redis_load.py",
+    "tests/performance/test_websocket_load.py",
+    "tests/services/trading/test_risk_integration.py",
+    "tests/shared/risk/test_persistence.py",
+    "tests/unit/db/test_async_client_integration.py",
+}
+
+_LIVE_INFRA_ENV = "KIS_RUN_LIVE_INFRA_TESTS"
 
 # Load .env so tests can access infrastructure credentials (ClickHouse, Redis, etc.)
 _env_file = project_root / ".env"
@@ -45,6 +67,38 @@ def pytest_configure(config):
     sys.path.insert(0, project_root_str)
 
 
+def pytest_collection_modifyitems(config, items):
+    """Skip live-infra tests unless explicitly enabled.
+
+    The production/paper runtime and integration tests both use Redis DB 1 by
+    policy. Skipping these tests by default prevents accidental deletion or
+    overwrite of active paper-trading keys during ordinary local test runs.
+    """
+    allow_live_infra = os.getenv(_LIVE_INFRA_ENV, "").lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+    skip_live_infra = pytest.mark.skip(
+        reason=(
+            "live Redis/ClickHouse test skipped by default; set "
+            f"{_LIVE_INFRA_ENV}=1 only on an isolated test host or after "
+            "stopping paper trading"
+        )
+    )
+
+    for item in items:
+        try:
+            rel_path = Path(str(item.fspath)).resolve().relative_to(project_root)
+        except ValueError:
+            continue
+
+        if rel_path.as_posix() in _LIVE_INFRA_TEST_PATHS:
+            item.add_marker(pytest.mark.live_infra)
+            if not allow_live_infra:
+                item.add_marker(skip_live_infra)
+
+
 @pytest.fixture(autouse=True)
 def _clean_prometheus_registry():
     """Clean up Prometheus metric registry between tests to prevent pollution.
@@ -73,12 +127,10 @@ def _clean_prometheus_registry():
             collector = REGISTRY._names_to_collectors.get(name)
             if collector is not None:
                 collectors_to_remove.add(id(collector))
-        for name, collector in list(REGISTRY._names_to_collectors.items()):
+        for _name, collector in list(REGISTRY._names_to_collectors.items()):
             if id(collector) in collectors_to_remove:
-                try:
+                with suppress(Exception):
                     REGISTRY.unregister(collector)
-                except Exception:
-                    pass
 
 
 @pytest.fixture(autouse=True)

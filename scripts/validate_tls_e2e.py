@@ -13,7 +13,7 @@ import os
 import sys
 import ssl
 import subprocess
-from typing import Dict, List, Tuple
+from typing import List
 from pathlib import Path
 
 # Add project root to path
@@ -128,7 +128,7 @@ def test_redis_tls_disabled(result: ValidationResult) -> None:
         # Test RedisRateLimiter
         from shared.execution.rate_limiter import RedisRateLimiter
         try:
-            limiter = RedisRateLimiter(
+            RedisRateLimiter(
                 redis_url='redis://localhost:6379/1',
                 key_prefix='test_tls_validation'
             )
@@ -487,7 +487,6 @@ def verify_environment_files(result: ValidationResult) -> None:
         content = env_path.read_text()
 
         # Check Redis TLS vars
-        redis_ok = True
         for var in required_redis_vars:
             if var in content:
                 print_success(f"{env_file} includes {var}")
@@ -495,10 +494,8 @@ def verify_environment_files(result: ValidationResult) -> None:
             else:
                 print_error(f"{env_file} missing {var}")
                 result.add_fail(f"{env_file} missing {var}")
-                redis_ok = False
 
         # Check ClickHouse TLS vars
-        ch_ok = True
         for var in required_ch_vars:
             if var in content:
                 print_success(f"{env_file} includes {var}")
@@ -506,7 +503,6 @@ def verify_environment_files(result: ValidationResult) -> None:
             else:
                 print_error(f"{env_file} missing {var}")
                 result.add_fail(f"{env_file} missing {var}")
-                ch_ok = False
 
 
 def print_manual_verification_guide() -> None:
@@ -598,8 +594,6 @@ The following steps should be performed manually to verify TLS encryption:
 def main():
     """Main entry point"""
     print_header("TLS Configuration End-to-End Validation")
-
-    verbose = '--verbose' in sys.argv or '-v' in sys.argv
 
     result = ValidationResult()
 

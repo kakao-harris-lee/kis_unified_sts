@@ -22,7 +22,7 @@ import torch
 from torch.utils.data import Dataset
 
 from shared.config import ConfigLoader
-from shared.ml.rl.env import Action, FuturesTradingEnv, RLEnvConfig
+from shared.ml.rl.env import FuturesTradingEnv, RLEnvConfig
 
 logger = logging.getLogger(__name__)
 

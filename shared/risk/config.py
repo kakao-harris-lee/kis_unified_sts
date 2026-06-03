@@ -336,7 +336,7 @@ class RedisConfig:
     """Redis persistence configuration"""
 
     key_prefix: str = "risk:portfolio"
-    state_ttl: int = 604800  # 7 days
+    state_ttl: int = 86400  # 24 hours
     db: int = 1
 
     def __post_init__(self):
@@ -367,7 +367,7 @@ class RedisConfig:
         """Create from dict."""
         return cls(
             key_prefix=str(data.get("key_prefix", "risk:portfolio")),
-            state_ttl=int(data.get("state_ttl", 604800)),
+            state_ttl=int(data.get("state_ttl", 86400)),
             db=int(data.get("db", 1)),
         )
 

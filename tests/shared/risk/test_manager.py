@@ -8,11 +8,13 @@ Tests portfolio-level risk management including:
 - State persistence
 """
 
-import pytest
 from datetime import date, datetime
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
-from shared.risk.config import RiskConfig
+import pytest
+
+from shared.models.position import Position, PositionSide
+from shared.risk.config import RedisConfig, RiskConfig
 from shared.risk.manager import RiskManager
 from shared.risk.models import (
     BlockReason,
@@ -20,7 +22,6 @@ from shared.risk.models import (
     PortfolioMetrics,
     RiskState,
 )
-from shared.models.position import Position, PositionSide
 
 
 @pytest.fixture
@@ -559,6 +560,28 @@ class TestRedisPersistence:
             assert call_args[1]["ex"] == 86400
 
     @pytest.mark.asyncio
+    async def test_save_to_redis_uses_configured_key_prefix_and_ttl(self):
+        """Test saving state uses configured Redis namespace and TTL"""
+        manager = RiskManager(
+            RiskConfig(
+                redis=RedisConfig(
+                    key_prefix="test:risk:portfolio",
+                    state_ttl=123,
+                )
+            )
+        )
+
+        with patch("shared.streaming.client.RedisClient") as mock_redis_class:
+            mock_client = MagicMock()
+            mock_redis_class.get_client.return_value = mock_client
+
+            await manager.save_to_redis()
+
+            call_args = mock_client.set.call_args
+            assert call_args[0][0] == "test:risk:portfolio:state"
+            assert call_args[1]["ex"] == 123
+
+    @pytest.mark.asyncio
     async def test_save_to_redis_error_handling(self, manager):
         """Test save error handling doesn't raise"""
         with patch("shared.streaming.client.RedisClient") as mock_redis_class:
@@ -596,6 +619,38 @@ class TestRedisPersistence:
             assert result is True
             assert manager.state.daily_pnl == 75000
             assert manager.metrics.total_positions == 2
+
+    @pytest.mark.asyncio
+    async def test_load_from_redis_uses_configured_key_prefix(self):
+        """Test loading state uses configured Redis namespace"""
+        import json
+
+        manager = RiskManager(
+            RiskConfig(redis=RedisConfig(key_prefix="test:risk:portfolio"))
+        )
+        state_data = {
+            "state": {
+                "daily_pnl": 75000,
+                "is_blocked": False,
+                "drawdown_level": "safe",
+                "last_reset_date": date.today().isoformat(),
+                "last_updated": datetime.now().isoformat(),
+            },
+            "metrics": {
+                "total_positions": 2,
+                "portfolio_value": 10075000,
+            },
+        }
+
+        with patch("shared.streaming.client.RedisClient") as mock_redis_class:
+            mock_client = MagicMock()
+            mock_client.get.return_value = json.dumps(state_data)
+            mock_redis_class.get_client.return_value = mock_client
+
+            result = await manager.load_from_redis()
+
+            assert result is True
+            mock_client.get.assert_called_once_with("test:risk:portfolio:state")
 
     @pytest.mark.asyncio
     async def test_load_from_redis_no_data(self, manager):

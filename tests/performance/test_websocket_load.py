@@ -45,9 +45,19 @@ from shared.streaming.consumer import StreamConsumer
 from shared.streaming.message import StreamMessage
 from shared.streaming.publisher import StreamPublisher
 
+_LIVE_INFRA_ENV = "KIS_RUN_LIVE_INFRA_TESTS"
+
+
+def _live_infra_enabled() -> bool:
+    """Return whether live Redis tests may touch infrastructure."""
+    return os.getenv(_LIVE_INFRA_ENV, "").lower() in {"1", "true", "yes"}
+
 
 def _is_redis_available() -> bool:
     """Check if Redis is available for testing."""
+    if not _live_infra_enabled():
+        return False
+
     try:
         client = RedisClient.get_client()
         client.ping()

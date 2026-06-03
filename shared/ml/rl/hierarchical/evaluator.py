@@ -33,7 +33,6 @@ from shared.ml.rl.evaluator import RLEvaluator
 from shared.ml.rl.hierarchical.high_level_env import (
     DirectionalHighLevelConfig,
     DirectionalHighLevelEnv,
-    HighLevelAction,
     HighLevelConfig,
     HighLevelDirectionalAction,
     HighLevelEnv,

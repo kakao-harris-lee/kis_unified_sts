@@ -30,7 +30,6 @@ from typing import Any, Callable, Coroutine
 
 from shared.exceptions import (
     APIError,
-    InfrastructureError,
     NetworkError,
     TradingSystemError,
 )

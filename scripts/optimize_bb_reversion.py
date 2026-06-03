@@ -24,16 +24,12 @@ import pandas as pd
 
 from shared.backtest.config import BacktestConfig
 from shared.backtest.engine import BacktestEngine
-from shared.backtest.optimizer import ParamSpec, StrategyOptimizer
 from shared.collector.historical.stock import (
     STOCK_UNIVERSE,
     load_stock_minute_from_clickhouse,
 )
 from shared.config.loader import ConfigLoader
 from shared.strategy.registry import (
-    EntryRegistry,
-    ExitRegistry,
-    SizerRegistry,
     StrategyFactory,
     register_builtin_components,
 )

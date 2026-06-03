@@ -25,7 +25,7 @@ from shared.config import ConfigLoader
 from shared.ml.base import get_device
 from shared.ml.rl.decision_transformer.dataset import TrajectoryDataset
 from shared.ml.rl.decision_transformer.model import DTAgent, DTConfig
-from shared.ml.rl.env import Action, FuturesTradingEnv, RLEnvConfig
+from shared.ml.rl.env import FuturesTradingEnv, RLEnvConfig
 
 logger = logging.getLogger(__name__)
 

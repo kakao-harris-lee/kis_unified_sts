@@ -311,7 +311,6 @@ def precompute_tft_aux(
     if not tft_aux_cfg.get("enabled", False):
         return None, None
 
-    import torch
     from shared.ml.tft.dataset import compute_time_features
     from shared.ml.tft.model import TFTModel
 

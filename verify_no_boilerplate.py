@@ -11,7 +11,6 @@ are considered to have boilerplate and should be flagged.
 """
 import os
 import re
-from pathlib import Path
 
 # Files that are allowed to define from_yaml/from_env (base classes)
 ALLOWED_BASE_FILES = {

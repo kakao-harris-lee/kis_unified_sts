@@ -48,8 +48,8 @@ Usage:
 from __future__ import annotations
 
 import logging
-from datetime import datetime, date
-from typing import TYPE_CHECKING, Any, Optional
+from datetime import date, datetime
+from typing import TYPE_CHECKING, Any
 
 from shared.risk.config import RiskConfig
 from shared.risk.models import (
@@ -65,8 +65,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-RISK_STATE_KEY = "risk:portfolio:state"
-RISK_STATE_TTL_SECONDS = 86400
+RISK_STATE_KEY_SUFFIX = "state"
 
 
 class RiskManager:
@@ -113,6 +112,9 @@ class RiskManager:
             f"max_positions={config.max_total_positions}, "
             f"initial_capital={config.initial_capital:,} KRW"
         )
+
+    def _risk_state_key(self) -> str:
+        return f"{self.config.redis.key_prefix}:{RISK_STATE_KEY_SUFFIX}"
 
     def _serialize_state(self) -> dict[str, Any]:
         """Serialize risk state to dict for Redis persistence
@@ -374,10 +376,7 @@ class RiskManager:
                 self._peak_portfolio_value = current
 
         # Calculate drawdown percentage
-        if peak > 0:
-            drawdown_pct = ((peak - current) / peak) * 100
-        else:
-            drawdown_pct = 0.0
+        drawdown_pct = ((peak - current) / peak) * 100 if peak > 0 else 0.0
 
         # Update state with calculated drawdown
         self.state.drawdown_pct = drawdown_pct
@@ -417,10 +416,13 @@ class RiskManager:
         self._last_reset_date = self.state.last_reset_date
 
         # Auto-unblock if configured
-        if self.config.monitoring.auto_unblock_on_reset and self.state.is_blocked:
-            if self.state.block_reason == BlockReason.DAILY_LOSS_LIMIT:
-                logger.info("Auto-unblocking trading after daily reset")
-                self.state.unblock_trading()
+        if (
+            self.config.monitoring.auto_unblock_on_reset
+            and self.state.is_blocked
+            and self.state.block_reason == BlockReason.DAILY_LOSS_LIMIT
+        ):
+            logger.info("Auto-unblocking trading after daily reset")
+            self.state.unblock_trading()
 
     def _check_and_reset_daily(self):
         """Check if date has changed and reset daily metrics if needed
@@ -496,7 +498,7 @@ class RiskManager:
 
     async def send_alert(
         self,
-        notifier: Optional[TelegramNotifier],
+        notifier: TelegramNotifier | None,
         alert_type: str,
         message: str,
         is_critical: bool = True,
@@ -532,7 +534,8 @@ class RiskManager:
         """Save risk state to Redis for persistence
 
         Persists current risk state and portfolio metrics to Redis DB 1.
-        Uses JSON encoding with the key pattern: risk:portfolio:state
+        Uses JSON encoding with the configured key pattern:
+        {config.redis.key_prefix}:state
 
         Raises:
             No exceptions raised - errors are logged but do not propagate
@@ -550,9 +553,9 @@ class RiskManager:
 
             # Store in Redis as JSON string
             redis_client.set(
-                RISK_STATE_KEY,
+                self._risk_state_key(),
                 json.dumps(state_data),
-                ex=RISK_STATE_TTL_SECONDS,
+                ex=self.config.redis.state_ttl,
             )
 
             logger.debug(
@@ -568,7 +571,8 @@ class RiskManager:
         """Load risk state from Redis on restart
 
         Recovers persisted risk state and portfolio metrics from Redis DB 1.
-        Uses JSON decoding from the key pattern: risk:portfolio:state
+        Uses JSON decoding from the configured key pattern:
+        {config.redis.key_prefix}:state
 
         Returns:
             True if state was successfully loaded, False if no state found or error occurred
@@ -585,7 +589,7 @@ class RiskManager:
             redis_client = RedisClient.get_client()
 
             # Load from Redis
-            raw_data = redis_client.get(RISK_STATE_KEY)
+            raw_data = redis_client.get(self._risk_state_key())
 
             if not raw_data:
                 logger.info("No risk state found in Redis (fresh start)")

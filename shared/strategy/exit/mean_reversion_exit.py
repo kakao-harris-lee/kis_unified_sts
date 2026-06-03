@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, time
+from datetime import time
 from typing import Any, Optional
 
 from shared.config.mixins import ConfigMixin

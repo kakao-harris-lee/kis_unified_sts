@@ -133,9 +133,8 @@ risk_management:
     # Redis key prefix for risk state
     key_prefix: "risk:portfolio"
 
-    # State TTL (seconds) - 7 days
-    state_ttl: 604800
+    # State TTL (seconds) - 24 hours
+    state_ttl: 86400
 
     # Use Redis DB 1 (DB 0 is for other projects)
     db: 1
-

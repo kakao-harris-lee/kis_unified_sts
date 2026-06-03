@@ -10,16 +10,28 @@ To skip these tests when Redis is unavailable:
 import asyncio
 import json
 import os
-import pytest
 from datetime import date, datetime
 
+import pytest
 
 # Skip all tests in this module if Redis is not available
 pytestmark = [pytest.mark.integration]
 
+_TEST_RISK_KEY_PREFIX = "test:risk:portfolio"
+_TEST_RISK_STATE_KEY = f"{_TEST_RISK_KEY_PREFIX}:state"
+_LIVE_INFRA_ENV = "KIS_RUN_LIVE_INFRA_TESTS"
+
+
+def live_infra_enabled():
+    """Return whether live Redis/ClickHouse tests may touch infrastructure."""
+    return os.getenv(_LIVE_INFRA_ENV, "").lower() in {"1", "true", "yes"}
+
 
 def redis_available():
     """Check if Redis is available."""
+    if not live_infra_enabled():
+        return False
+
     try:
         import redis
 
@@ -47,24 +59,28 @@ async def redis_cleanup(redis_url):
     r = redis.Redis.from_url(redis_url, decode_responses=True)
 
     # Clean up before test
-    r.delete("risk:portfolio:state")
+    r.delete(_TEST_RISK_STATE_KEY)
 
     yield
 
     # Clean up after test
-    r.delete("risk:portfolio:state")
+    r.delete(_TEST_RISK_STATE_KEY)
     r.close()
 
 
 @pytest.fixture
 def basic_config():
     """Create basic risk config for testing."""
-    from shared.risk.config import RiskConfig
+    from shared.risk.config import RedisConfig, RiskConfig
 
     return RiskConfig(
         daily_loss_limit_pct=5.0,
         max_total_positions=20,
         initial_capital=10_000_000,
+        redis=RedisConfig(
+            key_prefix=_TEST_RISK_KEY_PREFIX,
+            state_ttl=86400,
+        ),
     )
 
 
@@ -341,6 +357,7 @@ async def test_alerts_sent_persistence(basic_config, redis_cleanup):
 async def test_redis_key_format(basic_config, redis_cleanup, redis_url):
     """Test that correct Redis key format is used."""
     import redis
+
     from shared.risk.manager import RiskManager
 
     manager = RiskManager(basic_config)
@@ -349,13 +366,13 @@ async def test_redis_key_format(basic_config, redis_cleanup, redis_url):
 
     # Directly check Redis
     r = redis.Redis.from_url(redis_url, decode_responses=True)
-    raw_data = r.get("risk:portfolio:state")
+    raw_data = r.get(_TEST_RISK_STATE_KEY)
 
     assert raw_data is not None
     data = json.loads(raw_data)
     assert "state" in data
     assert "metrics" in data
-    ttl = r.ttl("risk:portfolio:state")
+    ttl = r.ttl(_TEST_RISK_STATE_KEY)
     assert 0 < ttl <= 86400
 
     r.close()
@@ -427,11 +444,12 @@ async def test_date_serialization(basic_config, redis_cleanup):
 async def test_error_recovery_corrupted_data(basic_config, redis_cleanup, redis_url):
     """Test that corrupted Redis data doesn't crash the manager."""
     import redis
+
     from shared.risk.manager import RiskManager
 
     # Write corrupted data to Redis
     r = redis.Redis.from_url(redis_url, decode_responses=True)
-    r.set("risk:portfolio:state", "invalid json data {{{")
+    r.set(_TEST_RISK_STATE_KEY, "invalid json data {{{")
     r.close()
 
     # Try to load - should handle gracefully

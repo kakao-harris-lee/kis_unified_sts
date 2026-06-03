@@ -11,7 +11,7 @@ Default: 'assert' for backtest/optimize, 'off' for live/paper
 """
 import logging
 from enum import Enum
-from typing import Any, Optional
+from typing import Optional
 
 class LookaheadGuardMode(str, Enum):
     OFF = "off"

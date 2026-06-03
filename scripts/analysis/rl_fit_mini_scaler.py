@@ -79,7 +79,6 @@ def main() -> int:
     joblib.dump(scaler, OUT_PATH)
     logger.info(f"Saved mini-fit scaler to {OUT_PATH}")
 
-    import numpy as np
     logger.info(f"Features: {RL_FEATURE_COLUMNS}")
     logger.info(f"scaler.data_min_ (first 5): {scaler.data_min_[:5]}")
     logger.info(f"scaler.data_max_ (first 5): {scaler.data_max_[:5]}")
@@ -89,7 +88,6 @@ def main() -> int:
     prod_path = ROOT / "models/futures/rl/scaler.joblib"
     if prod_path.exists():
         prod = joblib.load(prod_path)
-        import numpy as np
         logger.info("\n--- Scaler range comparison (mini vs prod) ---")
         for i, col in enumerate(RL_FEATURE_COLUMNS):
             mini_r = scaler.data_range_[i]

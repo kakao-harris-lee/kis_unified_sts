@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import json
+import os
 import statistics
 import time
 from dataclasses import asdict
@@ -42,9 +43,19 @@ import redis
 from shared.models.position import Position, PositionSide, PositionState
 from shared.streaming.client import RedisClient
 
+_LIVE_INFRA_ENV = "KIS_RUN_LIVE_INFRA_TESTS"
+
+
+def _live_infra_enabled() -> bool:
+    """Return whether live Redis tests may touch infrastructure."""
+    return os.getenv(_LIVE_INFRA_ENV, "").lower() in {"1", "true", "yes"}
+
 
 def _is_redis_available() -> bool:
     """Check if Redis is available for testing."""
+    if not _live_infra_enabled():
+        return False
+
     try:
         client = RedisClient.get_client()
         client.ping()

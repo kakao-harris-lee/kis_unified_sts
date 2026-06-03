@@ -20,9 +20,19 @@ import pytest
 # Mark all tests in this module as integration tests
 pytestmark = [pytest.mark.integration]
 
+_LIVE_INFRA_ENV = "KIS_RUN_LIVE_INFRA_TESTS"
+
+
+def live_infra_enabled():
+    """Return whether live Redis tests may touch infrastructure."""
+    return os.getenv(_LIVE_INFRA_ENV, "").lower() in {"1", "true", "yes"}
+
 
 def redis_available():
     """Check if Redis is available."""
+    if not live_infra_enabled():
+        return False
+
     try:
         import redis
 

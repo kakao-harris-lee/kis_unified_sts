@@ -921,7 +921,7 @@ When handling exceptions in trading system code:
 ## Additional Resources
 
 - [Exception Hierarchy Documentation](./exception_hierarchy.md) - Complete exception reference
-- [VERIFICATION_REPORT.md](../VERIFICATION_REPORT.md) - Migration verification results
+- [VERIFICATION_REPORT.md](archive/verification/VERIFICATION_REPORT.md) - Migration verification results
 - [shared/exceptions/__init__.py](../shared/exceptions/__init__.py) - Exception source code
 - [CLAUDE.md](../CLAUDE.md) - Project architecture and patterns
 

@@ -818,9 +818,6 @@ class RetrainingPipeline:
                     return False
                 model_path = challenger_files[0]
 
-            # Register model in MLflow Model Registry
-            version = datetime.now().strftime("%Y%m%d_%H%M%S")
-
             # Extract metrics for registration
             metrics = {
                 "sharpe": challenger_metrics.get("sharpe_ratio", 0.0),

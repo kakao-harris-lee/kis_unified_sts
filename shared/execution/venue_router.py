@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import datetime, time
-from typing import Any, Dict, Optional
+from typing import Dict, Optional
 
 from shared.execution.config import ATSRoutingConfig, ExecutionVenuePreference
 from shared.execution.models import ExecutionVenue, OrderRequest, OrderSide

@@ -23,10 +23,20 @@ from shared.models.position import Position, PositionSide, PositionState
 from services.trading.position_tracker import PositionTracker, PositionTrackerConfig
 from shared.streaming.trading_state import TradingStatePublisher, TradingStateReader
 
+_LIVE_INFRA_ENV = "KIS_RUN_LIVE_INFRA_TESTS"
+
+
+def live_infra_enabled():
+    """Return whether live Redis tests may touch infrastructure."""
+    return os.getenv(_LIVE_INFRA_ENV, "").lower() in {"1", "true", "yes"}
+
 
 # Helper to check if Redis is available
 def is_redis_available(redis_url: str = "redis://localhost:6379/1") -> bool:
     """Check if Redis is available at the given URL."""
+    if not live_infra_enabled():
+        return False
+
     try:
         r = redis.Redis.from_url(redis_url, decode_responses=True, socket_connect_timeout=1)
         r.ping()

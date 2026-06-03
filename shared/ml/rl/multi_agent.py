@@ -20,7 +20,7 @@ import numpy as np
 
 from shared.config import ConfigLoader
 from shared.ml.rl.env import RLEnvConfig
-from shared.regime.hmm_detector import HMMConfig, HMMRegimeDetector, HMMRegimeState
+from shared.regime.hmm_detector import HMMRegimeDetector, HMMRegimeState
 
 logger = logging.getLogger(__name__)
 
