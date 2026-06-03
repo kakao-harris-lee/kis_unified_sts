@@ -14,8 +14,11 @@ import pytest
 from unittest.mock import patch
 
 
-# Skip all tests in this module if Redis is not available
-pytestmark = [pytest.mark.integration]
+# Skip all tests in this module if Redis is not available.
+# serial: connects to a real Redis with short socket timeouts; under the
+# parallel pass, Redis contention from other xdist workers times the connection
+# out (run in the serial pass instead — see pyproject `serial` marker).
+pytestmark = [pytest.mark.integration, pytest.mark.serial]
 
 _LIVE_INFRA_ENV = "KIS_RUN_LIVE_INFRA_TESTS"
 

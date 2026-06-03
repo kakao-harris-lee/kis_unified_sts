@@ -104,6 +104,9 @@ class TestHealthSummary:
         res = client.get("/api/health/summary", params={"asset_class": "futures"})
         assert res.status_code == 200
 
+    # serial: the two requests must land within the real 1s cache window;
+    # parallel CPU starvation can space them further apart and break the cache.
+    @pytest.mark.serial
     def test_caches_response_1s(self, client):
         a = client.get("/api/health/summary").json()
         b = client.get("/api/health/summary").json()

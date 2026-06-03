@@ -63,13 +63,23 @@ jobs:
           pip install prometheus-client clickhouse-connect gymnasium
 
       - name: Run tests
-        # tests/performance/ is excluded here because the dedicated
-        # `performance` job below runs them with proper Redis isolation
-        # (DB 0) and a regression-baseline check.  Latency p99
-        # assertions in those tests are environment-dependent and
-        # shouldn't block functional CI.
+        # Two passes:
+        #  1. Parallel (pytest-xdist `-n auto`) over everything NOT marked
+        #     `serial` — the bulk of the suite, ~3-4x faster than serial.
+        #  2. Serial over `serial`-marked tests (timing- or shared-external-
+        #     state-sensitive: real Redis DB 1 keys, uncontended wall-clock
+        #     assertions — see the `serial` marker in pyproject.toml). Running
+        #     them with no concurrent workers removes the cross-worker races.
+        # `&&` fails the step if the parallel pass fails; coverage from the
+        # parallel pass is appended to by the serial pass before reporting.
+        # tests/performance/ is excluded here; the dedicated `performance` job
+        # below runs it with its own Redis isolation and regression baseline.
         run: |
-          pytest tests/ --ignore=tests/performance -v --cov=shared --cov=services --cov=domains --cov-report=xml --cov-report=term-missing
+          pytest tests/ --ignore=tests/performance -n auto -m "not serial" \
+            -q --cov=shared --cov=services --cov=domains --cov-report= && \
+          pytest tests/ --ignore=tests/performance -m serial \
+            -q --cov=shared --cov=services --cov=domains --cov-append \
+            --cov-report=xml --cov-report=term-missing
         env:
           REDIS_URL: redis://localhost:6379/1
           CLICKHOUSE_HOST: localhost

@@ -74,6 +74,7 @@ class TestRateLimiterBackoff:
         limiter.reset_backoff()  # Should not raise
         assert limiter._consecutive_penalties == 0
 
+    @pytest.mark.serial  # asserts on uncontended wall-clock; flakes under parallel CPU load
     @pytest.mark.asyncio
     async def test_acquire_respects_penalty(self):
         limiter = _RateLimiter(max_requests=100)
