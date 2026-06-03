@@ -70,6 +70,7 @@ from shared.regime.performance_tracker import (
 from shared.risk.config import RiskConfig
 from shared.risk.manager import RiskManager
 from shared.risk.models import DrawdownLevel
+from shared.storage.config import StorageConfig
 from shared.strategy.base import EntryContext, MarketStateAdapter
 from shared.utils.calc import calc_order_quantity
 
@@ -1558,6 +1559,7 @@ class TradingOrchestrator:
             TypeError,
         ):
             pt_cfg = {}
+        storage_cfg = StorageConfig.load_or_default()
         self._position_tracker = PositionTracker(
             config=PositionTrackerConfig(
                 max_positions=global_max,
@@ -1565,6 +1567,8 @@ class TradingOrchestrator:
                 batch_size=int(pt_cfg.get("batch_size", 50)),
                 flush_interval_seconds=float(pt_cfg.get("flush_interval_seconds", 5.0)),
                 asset_class=self.config.asset_class,
+                runtime_ledger_backend=storage_cfg.runtime_storage.backend,
+                runtime_ledger_sqlite_path=storage_cfg.runtime_storage.sqlite.path,
             )
         )
 
@@ -2420,10 +2424,12 @@ class TradingOrchestrator:
     async def _ensure_db_schema(self):
         """Ensure ClickHouse persistence tables exist."""
         try:
-            from shared.db.client import SCHEMAS, SyncClient
-
             if not self._position_tracker:
                 return
+            if not self._position_tracker._uses_clickhouse_persistence():
+                return
+
+            from shared.db.client import SCHEMAS, SyncClient
 
             ch, database = self._position_tracker._get_db_client()
 
