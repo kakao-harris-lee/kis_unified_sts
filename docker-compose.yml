@@ -300,8 +300,14 @@ services:
       - trading-network
 
   # =============================================================================
-  # MLflow (실험 추적 서버 — sqlite backend + 로컬 아티팩트)
+  # MLflow (실험 추적 UI 서버 — sqlite backend + 로컬 아티팩트)
   # =============================================================================
+  # UI-only over the shared store: the app clients (shared/backtest/mlflow_tracker.py,
+  # cli `sts mlflow`, scripts/optimize_strategies.py) WRITE directly to
+  # ./mlflow.db via `sqlite:///mlflow.db` — they do not route writes through this
+  # server. This container serves the browse UI over that same store. Routing
+  # client writes through the server (set MLFLOW_TRACKING_URI + `--serve-artifacts`
+  # proxy + migrate existing absolute artifact URIs) is a separate follow-up.
   mlflow:
     build:
       context: .
@@ -309,14 +315,31 @@ services:
     container_name: kis-mlflow
     restart: unless-stopped
     ports:
-      # localhost-bound (dev/ops tool); MLFLOW_TRACKING_URI=http://localhost:5000
+      # localhost-bound (dev/ops tool); browse at http://localhost:5000
       - "127.0.0.1:5000:5000"
+    # ${PWD} = repo root (run `docker compose` from here). Existing runs store
+    # ABSOLUTE artifact paths in mlflow.db (e.g.
+    # /home/.../kis_unified_sts/mlruns/<id>/...), so mlruns must be mounted at
+    # that same absolute path — and the artifact root must match it — or the UI
+    # cannot resolve artifacts (figures, trades.csv, models). A plain `:/mlruns`
+    # mount silently breaks artifact display.
+    command:
+      - mlflow
+      - server
+      - --backend-store-uri
+      - sqlite:////mlflow.db
+      - --default-artifact-root
+      - file://${PWD}/mlruns
+      - --host
+      - 0.0.0.0
+      - --port
+      - "5000"
     volumes:
-      # Reuse the repo-root store so existing runs are preserved and the
-      # `sts mlflow` / scripts/optimize_strategies.py clients keep working.
-      # mlflow.db / mlruns are gitignored runtime data; mlflow.db must pre-exist.
+      # mlflow.db / mlruns are gitignored runtime data and must pre-exist on the
+      # host (a bind mount over a missing file/dir is created as an empty dir,
+      # which breaks the sqlite backend). `make` target / runbook ensures this.
       - ./mlflow.db:/mlflow.db
-      - ./mlruns:/mlruns
+      - ./mlruns:${PWD}/mlruns
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:5000/health', timeout=5).status==200 else 1)"]
       interval: 30s

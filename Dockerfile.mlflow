@@ -10,6 +10,11 @@ EXPOSE 5000
 # Backend store + artifact root are bind-mounted from the repo root in
 # docker-compose (./mlflow.db, ./mlruns) so existing runs are preserved and
 # new runs persist on the host.
+#
+# NOTE: docker-compose OVERRIDES this CMD with a `--default-artifact-root` that
+# matches the ABSOLUTE artifact paths baked into existing mlflow.db rows
+# (file://${PWD}/mlruns) — required for the UI to resolve artifacts. This CMD is
+# only a standalone `docker run` fallback; prefer `docker compose up mlflow`.
 CMD ["mlflow", "server", \
      "--backend-store-uri", "sqlite:////mlflow.db", \
      "--default-artifact-root", "file:///mlruns", \
