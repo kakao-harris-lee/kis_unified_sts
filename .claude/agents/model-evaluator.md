@@ -48,10 +48,6 @@ gate_on     |  1.7   | -4%  |  59%    | +410  |  130   | ✓ (Δ+3.26)
 sts backtest run --strategy <name> --asset futures --data <data>
 sts backtest best --strategy <name> --asset futures
 python scripts/gate_futures_strategy.py --gate --head-to-head --holdout-split <date>
-python scripts/analysis/counterfactual_weekly_report.py
-# (부차) RL 재학습 모델 평가
-sts rl evaluate --model mppo_best
-sts rl evaluate-hierarchical
 ```
 
 ## 참조 구조
@@ -59,7 +55,6 @@ sts rl evaluate-hierarchical
 - Optuna 최적화: `shared/backtest/optimizer.py`
 - MLflow 추적: `shared/backtest/mlflow_tracker.py`
 - Counterfactual: `scripts/analysis/regime_gate_counterfactual.py`
-- (부차) RL 평가기: `shared/ml/rl/evaluator.py`, `shared/ml/rl/hierarchical/`
 
 ## 출력 형식
 - 성과 테이블: 모든 지표 포함 비교 매트릭스

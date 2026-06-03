@@ -6,11 +6,10 @@ Tests the complete shutdown flow:
 3. Position recovery after restart
 4. Edge cases (Redis failure, concurrent signals, etc.)
 """
+
 import asyncio
-import json
-import signal
 from datetime import datetime
-from unittest.mock import MagicMock, patch, AsyncMock
+from unittest.mock import patch, AsyncMock
 
 import pytest
 
@@ -63,6 +62,7 @@ def cleanup_redis(state_reader):
     # Clean up before test
     try:
         import redis
+
         r = redis.Redis(host="localhost", port=6379, db=1, decode_responses=True)
         r.delete("trading:stock:positions")
         r.delete("trading:futures:positions")
@@ -74,6 +74,7 @@ def cleanup_redis(state_reader):
     # Clean up after test
     try:
         import redis
+
         r = redis.Redis(host="localhost", port=6379, db=1, decode_responses=True)
         r.delete("trading:stock:positions")
         r.delete("trading:futures:positions")
@@ -146,6 +147,7 @@ async def test_sigterm_during_trading():
         # Initialize tracker and state publisher
         orchestrator._init_strategy_infrastructure()
         from shared.streaming.trading_state import TradingStatePublisher
+
         orchestrator._state_publisher = TradingStatePublisher(asset_class="stock")
 
         # Add test positions manually
@@ -184,13 +186,15 @@ async def test_sigterm_during_trading():
 
         # Step 2: Simulate state transitions
         # Update prices to trigger state transitions
-        orchestrator._position_tracker.update_prices({
-            "005930": 71500.0,  # +2.14% -> BREAKEVEN
-            "000660": 126500.0,  # +5.42% -> MAXIMIZE
-        })
+        orchestrator._position_tracker.update_prices(
+            {
+                "005930": 71500.0,  # +2.14% -> BREAKEVEN
+                "000660": 126500.0,  # +5.42% -> MAXIMIZE
+            }
+        )
 
         # Force state update
-        transitions = orchestrator._position_tracker.update_states()
+        orchestrator._position_tracker.update_states()
 
         # Verify states changed
         pos1 = orchestrator._position_tracker.get_position("pos-001")
@@ -209,12 +213,16 @@ async def test_sigterm_during_trading():
         reader = TradingStateReader(asset_class="stock")
         redis_positions = reader.get_positions()
 
-        assert len(redis_positions) == 3, f"Expected 3 positions in Redis, got {len(redis_positions)}"
+        assert (
+            len(redis_positions) == 3
+        ), f"Expected 3 positions in Redis, got {len(redis_positions)}"
 
         # Verify all position IDs are present
         redis_ids = {p["id"] for p in redis_positions}
         expected_ids = {"pos-001", "pos-002", "pos-003"}
-        assert redis_ids == expected_ids, f"Position IDs mismatch: {redis_ids} vs {expected_ids}"
+        assert (
+            redis_ids == expected_ids
+        ), f"Position IDs mismatch: {redis_ids} vs {expected_ids}"
 
         # Verify state preservation
         redis_pos_map = {p["id"]: p for p in redis_positions}
@@ -244,7 +252,9 @@ async def test_sigterm_during_trading():
         # We'll call it directly here for testing
         recovered_count = await orchestrator2._recover_positions_from_redis()
 
-        assert recovered_count == 3, f"Expected to recover 3 positions, got {recovered_count}"
+        assert (
+            recovered_count == 3
+        ), f"Expected to recover 3 positions, got {recovered_count}"
         assert orchestrator2._position_tracker.position_count == 3
 
         # Verify recovered positions maintain state
@@ -265,10 +275,23 @@ async def test_sigterm_during_trading():
         assert recovered_pos3.code == "035720"
 
         # Verify indices were rebuilt correctly
-        assert len(orchestrator2._position_tracker.get_positions_by_symbol("005930")) == 1
-        assert len(orchestrator2._position_tracker.get_positions_by_symbol("000660")) == 1
-        assert len(orchestrator2._position_tracker.get_positions_by_symbol("035720")) == 1
-        assert len(orchestrator2._position_tracker.get_positions_by_strategy("bb_reversion")) == 3
+        assert (
+            len(orchestrator2._position_tracker.get_positions_by_symbol("005930")) == 1
+        )
+        assert (
+            len(orchestrator2._position_tracker.get_positions_by_symbol("000660")) == 1
+        )
+        assert (
+            len(orchestrator2._position_tracker.get_positions_by_symbol("035720")) == 1
+        )
+        assert (
+            len(
+                orchestrator2._position_tracker.get_positions_by_strategy(
+                    "bb_reversion"
+                )
+            )
+            == 3
+        )
 
 
 # -- Test: State transition during shutdown --
@@ -304,6 +327,7 @@ async def test_state_transition_during_shutdown():
         orchestrator = TradingOrchestrator(config)
         orchestrator._init_strategy_infrastructure()
         from shared.streaming.trading_state import TradingStatePublisher
+
         orchestrator._state_publisher = TradingStatePublisher(asset_class="stock")
 
         # Add position in SURVIVAL state
@@ -320,7 +344,9 @@ async def test_state_transition_during_shutdown():
 
         # Verify initial state
         initial_pos = orchestrator._position_tracker.get_position("edge-001")
-        assert initial_pos.state == PositionState.SURVIVAL, "Initial state should be SURVIVAL"
+        assert (
+            initial_pos.state == PositionState.SURVIVAL
+        ), "Initial state should be SURVIVAL"
 
         # Trigger state transition (SURVIVAL -> BREAKEVEN)
         # Price increase: 70000 -> 71500 = +2.14% (exceeds 2% breakeven threshold)
@@ -336,7 +362,9 @@ async def test_state_transition_during_shutdown():
 
         # Verify state changed in tracker
         updated_pos = orchestrator._position_tracker.get_position("edge-001")
-        assert updated_pos.state == PositionState.BREAKEVEN, "State should transition to BREAKEVEN"
+        assert (
+            updated_pos.state == PositionState.BREAKEVEN
+        ), "State should transition to BREAKEVEN"
 
         # Immediate flush on state transition with throttle=0
         # This simulates the orchestrator's immediate flush behavior
@@ -350,14 +378,18 @@ async def test_state_transition_during_shutdown():
         reader = TradingStateReader(asset_class="stock")
         redis_positions = reader.get_positions()
 
-        assert len(redis_positions) == 1, f"Expected 1 position in Redis, got {len(redis_positions)}"
+        assert (
+            len(redis_positions) == 1
+        ), f"Expected 1 position in Redis, got {len(redis_positions)}"
         redis_pos = redis_positions[0]
 
         # Verify all critical fields in Redis
         assert redis_pos["id"] == "edge-001"
         assert redis_pos["code"] == "005930"
         assert redis_pos["name"] == "Samsung Electronics"
-        assert redis_pos["state"] == "breakeven", f"Redis state should be 'breakeven', got {redis_pos['state']}"
+        assert (
+            redis_pos["state"] == "breakeven"
+        ), f"Redis state should be 'breakeven', got {redis_pos['state']}"
         assert redis_pos["entry_price"] == 70000.0
         assert redis_pos["quantity"] == 10
         assert redis_pos["strategy"] == "bb_reversion"
@@ -371,7 +403,9 @@ async def test_state_transition_during_shutdown():
 
         redis_pos_after = redis_positions_after[0]
         assert redis_pos_after["id"] == "edge-001"
-        assert redis_pos_after["state"] == "breakeven", "State should remain 'breakeven' after shutdown"
+        assert (
+            redis_pos_after["state"] == "breakeven"
+        ), "State should remain 'breakeven' after shutdown"
         assert redis_pos_after["code"] == "005930"
         assert redis_pos_after["entry_price"] == 70000.0
 
@@ -380,12 +414,16 @@ async def test_state_transition_during_shutdown():
         orchestrator2._init_strategy_infrastructure()
 
         recovered_count = await orchestrator2._recover_positions_from_redis()
-        assert recovered_count == 1, f"Expected to recover 1 position, got {recovered_count}"
+        assert (
+            recovered_count == 1
+        ), f"Expected to recover 1 position, got {recovered_count}"
 
         # Verify recovered position has correct state
         recovered_pos = orchestrator2._position_tracker.get_position("edge-001")
         assert recovered_pos is not None, "Position should be recovered"
-        assert recovered_pos.state == PositionState.BREAKEVEN, "Recovered state should be BREAKEVEN"
+        assert (
+            recovered_pos.state == PositionState.BREAKEVEN
+        ), "Recovered state should be BREAKEVEN"
         assert recovered_pos.code == "005930"
         assert recovered_pos.entry_price == 70000.0
         assert recovered_pos.quantity == 10
@@ -412,7 +450,11 @@ async def test_redis_failure_during_shutdown():
     - Graceful degradation: shutdown succeeds even if persistence fails
     - Timeout enforcement: prevents indefinite hangs
     """
-    from services.trading.orchestrator import TradingOrchestrator, TradingConfig, TradingState
+    from services.trading.orchestrator import (
+        TradingOrchestrator,
+        TradingConfig,
+        TradingState,
+    )
 
     config = TradingConfig.stock(strategy_name="bb_reversion", symbols=["005930"])
 
@@ -423,6 +465,7 @@ async def test_redis_failure_during_shutdown():
         orchestrator = TradingOrchestrator(config)
         orchestrator._init_strategy_infrastructure()
         from shared.streaming.trading_state import TradingStatePublisher
+
         orchestrator._state_publisher = TradingStatePublisher(asset_class="stock")
 
         # Add multiple test positions to verify they remain in tracker
@@ -449,16 +492,19 @@ async def test_redis_failure_during_shutdown():
             orchestrator._position_tracker.add_recovered_position(pos)
 
         # Verify positions in tracker before shutdown
-        assert orchestrator._position_tracker.position_count == 2, "Should have 2 positions before shutdown"
+        assert (
+            orchestrator._position_tracker.position_count == 2
+        ), "Should have 2 positions before shutdown"
 
         # Mock Redis to raise ConnectionError on publish
         # This simulates network failure during shutdown flush
         if orchestrator._state_publisher:
-            original_publish = orchestrator._state_publisher.publish_positions_update
 
             def failing_publish(*args, **kwargs):
                 """Simulate Redis connection failure."""
-                raise ConnectionError("Simulated Redis connection failure during shutdown")
+                raise ConnectionError(
+                    "Simulated Redis connection failure during shutdown"
+                )
 
             orchestrator._state_publisher.publish_positions_update = failing_publish
 
@@ -466,7 +512,9 @@ async def test_redis_failure_during_shutdown():
         tracker_ref = orchestrator._position_tracker
 
         # Verify initial state before shutdown
-        assert orchestrator.state == TradingState.IDLE, f"Expected IDLE state, got {orchestrator.state}"
+        assert (
+            orchestrator.state == TradingState.IDLE
+        ), f"Expected IDLE state, got {orchestrator.state}"
 
         # Stop should complete without hanging (within timeout)
         # CRITICAL: This should NOT raise an exception despite Redis failure
@@ -482,18 +530,24 @@ async def test_redis_failure_during_shutdown():
         elapsed = asyncio.get_event_loop().time() - start_time
 
         # Verify no exception propagated to caller
-        assert exception_raised is None, f"Shutdown should not raise exception, got: {exception_raised}"
+        assert (
+            exception_raised is None
+        ), f"Shutdown should not raise exception, got: {exception_raised}"
 
         # Verify shutdown completed quickly (not waiting full timeout)
         # Should complete within timeout + small buffer (0.5s)
         assert elapsed < 2.5, f"Shutdown took {elapsed:.2f}s, expected < 2.5s"
 
         # Verify orchestrator transitioned to STOPPED state
-        assert orchestrator.state == TradingState.STOPPED, f"Expected STOPPED state, got {orchestrator.state}"
+        assert (
+            orchestrator.state == TradingState.STOPPED
+        ), f"Expected STOPPED state, got {orchestrator.state}"
 
         # Verify positions still in tracker memory (not lost despite Redis failure)
         # Use saved tracker reference since stop() clears orchestrator._position_tracker
-        assert tracker_ref.position_count == 2, "Positions should remain in tracker despite Redis failure"
+        assert (
+            tracker_ref.position_count == 2
+        ), "Positions should remain in tracker despite Redis failure"
 
         # Verify specific positions still accessible
         pos1 = tracker_ref.get_position("redis-fail-001")
@@ -501,14 +555,20 @@ async def test_redis_failure_during_shutdown():
 
         assert pos1 is not None, "Position 1 should still exist in tracker"
         assert pos1.code == "005930", "Position 1 code should be preserved"
-        assert pos1.state == PositionState.SURVIVAL, "Position 1 state should be preserved"
+        assert (
+            pos1.state == PositionState.SURVIVAL
+        ), "Position 1 state should be preserved"
 
         assert pos2 is not None, "Position 2 should still exist in tracker"
         assert pos2.code == "000660", "Position 2 code should be preserved"
-        assert pos2.state == PositionState.BREAKEVEN, "Position 2 state should be preserved"
+        assert (
+            pos2.state == PositionState.BREAKEVEN
+        ), "Position 2 state should be preserved"
 
         # Verify orchestrator is truly stopped (main loop not running)
-        assert orchestrator.state == TradingState.STOPPED, "Orchestrator should be in STOPPED state"
+        assert (
+            orchestrator.state == TradingState.STOPPED
+        ), "Orchestrator should be in STOPPED state"
 
 
 # -- Test: 100% position recovery accuracy --
@@ -528,7 +588,7 @@ async def test_full_position_recovery():
     """
     from services.trading.orchestrator import TradingOrchestrator, TradingConfig
 
-    config = TradingConfig.futures(strategy_name="rl_mppo")
+    config = TradingConfig.futures(strategy_name="setup_a_gap_reversion")
 
     with patch("services.trading.orchestrator.MarketDataProvider") as MockProvider:
         mock_provider = AsyncMock()
@@ -537,6 +597,7 @@ async def test_full_position_recovery():
         orchestrator = TradingOrchestrator(config)
         orchestrator._init_strategy_infrastructure()
         from shared.streaming.trading_state import TradingStatePublisher
+
         orchestrator._state_publisher = TradingStatePublisher(asset_class="futures")
 
         # Create diverse position set
@@ -570,7 +631,7 @@ async def test_full_position_recovery():
                 highest_price=840.0,
                 lowest_price=834.0,
                 state=PositionState.BREAKEVEN,
-                strategy="rl_mppo",
+                strategy="setup_a_gap_reversion",
                 fee_rate=0.00015,
                 stop_price=842.0,
             ),
@@ -660,7 +721,11 @@ async def test_redis_graceful_degradation_on_publish_failure():
 
     This tests graceful degradation: persistence failure != shutdown failure.
     """
-    from services.trading.orchestrator import TradingOrchestrator, TradingConfig, TradingState
+    from services.trading.orchestrator import (
+        TradingOrchestrator,
+        TradingConfig,
+        TradingState,
+    )
     import time
 
     config = TradingConfig.stock(strategy_name="bb_reversion", symbols=["005930"])
@@ -672,6 +737,7 @@ async def test_redis_graceful_degradation_on_publish_failure():
         orchestrator = TradingOrchestrator(config)
         orchestrator._init_strategy_infrastructure()
         from shared.streaming.trading_state import TradingStatePublisher
+
         orchestrator._state_publisher = TradingStatePublisher(asset_class="stock")
 
         # Add test position
@@ -690,6 +756,7 @@ async def test_redis_graceful_degradation_on_publish_failure():
 
         # Mock publish to always fail
         if orchestrator._state_publisher:
+
             def always_fail(*args, **kwargs):
                 raise ConnectionError("Simulated Redis failure")
 
@@ -705,10 +772,14 @@ async def test_redis_graceful_degradation_on_publish_failure():
         elapsed = time.time() - start_time
 
         # Verify no exception propagated
-        assert exception_raised is None, f"stop() should not raise, got: {exception_raised}"
+        assert (
+            exception_raised is None
+        ), f"stop() should not raise, got: {exception_raised}"
 
         # Verify orchestrator reached STOPPED state
-        assert orchestrator.state == TradingState.STOPPED, f"Expected STOPPED, got {orchestrator.state}"
+        assert (
+            orchestrator.state == TradingState.STOPPED
+        ), f"Expected STOPPED, got {orchestrator.state}"
 
         # Verify shutdown completed in reasonable time (not hanging on timeout)
         assert elapsed < 3.0, f"Shutdown took {elapsed:.2f}s, expected < 3.0s"

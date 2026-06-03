@@ -370,7 +370,7 @@ function HistoryTab() {
   } = useQuery<DbStats>({
     queryKey: ['db-statistics', selectedAsset],
     queryFn: async () => {
-      const r = await tradesApi.getRlStatistics({ asset_class: selectedAsset });
+      const r = await tradesApi.getClosedStatistics({ asset_class: selectedAsset });
       return r.data;
     },
     refetchInterval: 30000,
@@ -384,7 +384,7 @@ function HistoryTab() {
   } = useQuery<DbTrade[]>({
     queryKey: ['db-trades', selectedAsset],
     queryFn: async () => {
-      const r = await tradesApi.getRlTrades({ asset_class: selectedAsset, limit: 100 });
+      const r = await tradesApi.getClosedTrades({ asset_class: selectedAsset, limit: 100 });
       return Array.isArray(r.data) ? r.data : [];
     },
     refetchInterval: 30000,

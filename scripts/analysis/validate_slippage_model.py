@@ -65,7 +65,7 @@ def create_realistic_futures_data(
     all_data = []
     current_price = base_price
 
-    for day in pd.date_range(start, end, freq='D'):
+    for day in pd.date_range(start, end, freq="D"):
         # Skip weekends
         if day.weekday() >= 5:
             continue
@@ -121,17 +121,21 @@ def create_realistic_futures_data(
 
             current_price = close_price
 
-            all_data.append({
-                'datetime': timestamp,
-                'open': round(open_price, 2),
-                'high': round(high_price, 2),
-                'low': round(low_price, 2),
-                'close': round(close_price, 2),
-                'volume': volume,
-            })
+            all_data.append(
+                {
+                    "datetime": timestamp,
+                    "open": round(open_price, 2),
+                    "high": round(high_price, 2),
+                    "low": round(low_price, 2),
+                    "close": round(close_price, 2),
+                    "volume": volume,
+                }
+            )
 
     df = pd.DataFrame(all_data)
-    print(f"Generated {len(df)} bars, price range: {df['close'].min():.2f} - {df['close'].max():.2f}")
+    print(
+        f"Generated {len(df)} bars, price range: {df['close'].min():.2f} - {df['close'].max():.2f}"
+    )
 
     return df
 
@@ -143,9 +147,9 @@ def run_backtest_without_slippage(
     point_value: float = 250_000,
 ) -> tuple[object, BacktestEngine]:
     """Run backtest with old fixed slippage (0.01%)."""
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("Running backtest WITHOUT SlippageModel (old fixed slippage)")
-    print("="*80)
+    print("=" * 80)
 
     # Create config without slippage model
     config = BacktestConfig.futures(
@@ -174,15 +178,15 @@ def run_backtest_with_slippage(
     point_value: float = 250_000,
 ) -> tuple[object, BacktestEngine]:
     """Run backtest with new SlippageModel."""
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("Running backtest WITH SlippageModel (new dynamic slippage)")
-    print("="*80)
+    print("=" * 80)
 
     # Load slippage model config from execution.yaml
-    exec_config = ConfigLoader.load('config/execution.yaml')
-    slippage_config_dict = exec_config.get('slippage_model', {})
+    exec_config = ConfigLoader.load("config/execution.yaml")
+    slippage_config_dict = exec_config.get("slippage_model", {})
 
-    print(f"Slippage model config loaded:")
+    print("Slippage model config loaded:")
     print(f"  enabled: {slippage_config_dict.get('enabled')}")
     print(f"  base_spread_bps: {slippage_config_dict.get('base_spread_bps')}")
     print(f"  depth_impact_factor: {slippage_config_dict.get('depth_impact_factor')}")
@@ -218,26 +222,26 @@ def compare_results(
     engine_with_slip: BacktestEngine,
 ) -> dict:
     """Compare backtest results and generate validation report."""
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("COMPARISON RESULTS")
-    print("="*80)
+    print("=" * 80)
 
     comparison = {
-        'no_slippage': {
-            'final_capital': result_no_slip.final_capital,
-            'total_return': result_no_slip.total_return_pct,
-            'total_trades': result_no_slip.total_trades,
-            'win_rate': result_no_slip.win_rate,
-            'profit_factor': result_no_slip.profit_factor,
-            'max_drawdown': result_no_slip.max_drawdown_pct,
+        "no_slippage": {
+            "final_capital": result_no_slip.final_capital,
+            "total_return": result_no_slip.total_return_pct,
+            "total_trades": result_no_slip.total_trades,
+            "win_rate": result_no_slip.win_rate,
+            "profit_factor": result_no_slip.profit_factor,
+            "max_drawdown": result_no_slip.max_drawdown_pct,
         },
-        'with_slippage': {
-            'final_capital': result_with_slip.final_capital,
-            'total_return': result_with_slip.total_return_pct,
-            'total_trades': result_with_slip.total_trades,
-            'win_rate': result_with_slip.win_rate,
-            'profit_factor': result_with_slip.profit_factor,
-            'max_drawdown': result_with_slip.max_drawdown_pct,
+        "with_slippage": {
+            "final_capital": result_with_slip.final_capital,
+            "total_return": result_with_slip.total_return_pct,
+            "total_trades": result_with_slip.total_trades,
+            "win_rate": result_with_slip.win_rate,
+            "profit_factor": result_with_slip.profit_factor,
+            "max_drawdown": result_with_slip.max_drawdown_pct,
         },
     }
 
@@ -246,17 +250,17 @@ def compare_results(
     capital_diff_pct = (capital_diff / result_no_slip.final_capital) * 100
     return_diff = result_with_slip.total_return_pct - result_no_slip.total_return_pct
 
-    print(f"\nFinal Capital:")
+    print("\nFinal Capital:")
     print(f"  Without slippage: {result_no_slip.final_capital:,.0f} KRW")
     print(f"  With slippage:    {result_with_slip.final_capital:,.0f} KRW")
     print(f"  Difference:       {capital_diff:,.0f} KRW ({capital_diff_pct:+.2f}%)")
 
-    print(f"\nTotal Return:")
+    print("\nTotal Return:")
     print(f"  Without slippage: {result_no_slip.total_return_pct:+.2f}%")
     print(f"  With slippage:    {result_with_slip.total_return_pct:+.2f}%")
     print(f"  Difference:       {return_diff:+.2f}%")
 
-    print(f"\nTrade Statistics:")
+    print("\nTrade Statistics:")
     print(f"  Total trades: {result_with_slip.total_trades}")
     print(f"  Win rate (no slip):   {result_no_slip.win_rate:.1f}%")
     print(f"  Win rate (with slip): {result_with_slip.win_rate:.1f}%")
@@ -264,7 +268,7 @@ def compare_results(
     # Calculate average slippage per trade
     if result_with_slip.total_trades > 0:
         avg_slippage_per_trade = abs(capital_diff) / result_with_slip.total_trades
-        print(f"\nAverage Slippage Cost per Trade:")
+        print("\nAverage Slippage Cost per Trade:")
         print(f"  {avg_slippage_per_trade:,.0f} KRW")
 
         # Estimate in basis points (assuming avg position size)
@@ -274,18 +278,25 @@ def compare_results(
             print(f"  ~{avg_slippage_bps:.1f} bps (basis points)")
 
     # Analyze trade-by-trade if available
-    if hasattr(engine_with_slip, 'closed_positions') and engine_with_slip.closed_positions:
-        print(f"\nAnalyzing {len(engine_with_slip.closed_positions)} closed positions...")
+    if (
+        hasattr(engine_with_slip, "closed_positions")
+        and engine_with_slip.closed_positions
+    ):
+        print(
+            f"\nAnalyzing {len(engine_with_slip.closed_positions)} closed positions..."
+        )
 
         for pos in engine_with_slip.closed_positions[:10]:  # Sample first 10
             # Entry slippage is embedded in entry_price
             # We can't directly extract it without comparison, but we know it's there
-            print(f"  Position: {pos.side} entry={pos.entry_price:.2f} exit={pos.exit_price:.2f} pnl={pos.pnl:,.0f}")
+            print(
+                f"  Position: {pos.side} entry={pos.entry_price:.2f} exit={pos.exit_price:.2f} pnl={pos.pnl:,.0f}"
+            )
 
-    comparison['differences'] = {
-        'capital_diff': capital_diff,
-        'capital_diff_pct': capital_diff_pct,
-        'return_diff': return_diff,
+    comparison["differences"] = {
+        "capital_diff": capital_diff,
+        "capital_diff_pct": capital_diff_pct,
+        "return_diff": return_diff,
     }
 
     return comparison
@@ -302,47 +313,57 @@ def validate_slippage_model(comparison: dict) -> bool:
     Returns:
         True if validation passes, False otherwise
     """
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("VALIDATION REPORT")
-    print("="*80)
+    print("=" * 80)
 
     all_passed = True
 
     # Criterion 1: Slippage model produces lower P&L
-    capital_diff_pct = comparison['differences']['capital_diff_pct']
+    capital_diff_pct = comparison["differences"]["capital_diff_pct"]
 
-    print(f"\n1. Slippage Impact Test:")
-    print(f"   Expected: Final capital WITH slippage < Final capital WITHOUT slippage")
+    print("\n1. Slippage Impact Test:")
+    print("   Expected: Final capital WITH slippage < Final capital WITHOUT slippage")
     if capital_diff_pct < 0:
         print(f"   ✓ PASS: Capital reduced by {abs(capital_diff_pct):.2f}%")
     else:
-        print(f"   ✗ FAIL: Capital increased by {capital_diff_pct:.2f}% (should be negative)")
+        print(
+            f"   ✗ FAIL: Capital increased by {capital_diff_pct:.2f}% (should be negative)"
+        )
         all_passed = False
 
     # Criterion 2: Slippage is within reasonable range
     # For KOSPI200 mini with 1.5 bps base + depth impact, expect 0.5-5% overall impact
-    print(f"\n2. Slippage Magnitude Test:")
-    print(f"   Expected: Capital impact between 0.1% and 10% (realistic range)")
+    print("\n2. Slippage Magnitude Test:")
+    print("   Expected: Capital impact between 0.1% and 10% (realistic range)")
     if 0.1 <= abs(capital_diff_pct) <= 10.0:
-        print(f"   ✓ PASS: Impact of {abs(capital_diff_pct):.2f}% is within realistic range")
+        print(
+            f"   ✓ PASS: Impact of {abs(capital_diff_pct):.2f}% is within realistic range"
+        )
     else:
-        print(f"   ⚠ WARNING: Impact of {abs(capital_diff_pct):.2f}% may be outside expected range")
+        print(
+            f"   ⚠ WARNING: Impact of {abs(capital_diff_pct):.2f}% may be outside expected range"
+        )
         # Don't fail, just warn
 
     # Criterion 3: Trade count consistency
-    print(f"\n3. Trade Consistency Test:")
-    print(f"   Expected: Both backtests generate trades")
-    trades_no_slip = comparison['no_slippage']['total_trades']
-    trades_with_slip = comparison['with_slippage']['total_trades']
+    print("\n3. Trade Consistency Test:")
+    print("   Expected: Both backtests generate trades")
+    trades_no_slip = comparison["no_slippage"]["total_trades"]
+    trades_with_slip = comparison["with_slippage"]["total_trades"]
 
     if trades_no_slip > 0 and trades_with_slip > 0:
-        print(f"   ✓ PASS: Both backtests generated trades ({trades_no_slip} vs {trades_with_slip})")
+        print(
+            f"   ✓ PASS: Both backtests generated trades ({trades_no_slip} vs {trades_with_slip})"
+        )
     else:
-        print(f"   ✗ FAIL: Insufficient trades (no_slip={trades_no_slip}, with_slip={trades_with_slip})")
+        print(
+            f"   ✗ FAIL: Insufficient trades (no_slip={trades_no_slip}, with_slip={trades_with_slip})"
+        )
         all_passed = False
 
     # Overall validation
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     if all_passed:
         print("✓ VALIDATION PASSED: Slippage model is working correctly")
         print("  - Produces realistic slippage impact")
@@ -350,32 +371,29 @@ def validate_slippage_model(comparison: dict) -> bool:
         print("  - Results are within expected ranges")
     else:
         print("✗ VALIDATION FAILED: Issues detected")
-    print("="*80)
+    print("=" * 80)
 
     return all_passed
 
 
 def main():
     """Main validation script."""
-    print("="*80)
+    print("=" * 80)
     print("KOSPI200 MINI FUTURES SLIPPAGE MODEL VALIDATION")
-    print("="*80)
+    print("=" * 80)
     print(f"Script: {__file__}")
     print(f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
     # Register built-in components
     register_builtin_components()
 
-    # Load RL strategy config
+    # Load the default futures indicator strategy config.
     try:
-        strategy_config = ConfigLoader.load_strategy('futures', 'rl_mppo')
+        strategy_config = ConfigLoader.load_strategy("futures", "setup_a_gap_reversion")
         print(f"\nLoaded strategy: {strategy_config['strategy']['name']}")
     except Exception as e:
         print(f"Error loading strategy config: {e}")
-        print("Note: This is expected if RL model files are not available.")
         print("The validation can still proceed with the strategy framework.")
-        # For validation purposes, we can use a simpler strategy
-        # But let's try to continue with RL config structure
         raise
 
     # Create realistic test data
@@ -389,7 +407,7 @@ def main():
     initial_capital = 100_000_000  # 100M KRW
     point_value = 250_000  # KOSPI200 mini futures point value
 
-    print(f"\nBacktest Configuration:")
+    print("\nBacktest Configuration:")
     print(f"  Initial Capital: {initial_capital:,} KRW")
     print(f"  Point Value: {point_value:,} KRW/point")
     print(f"  Data Period: {data['datetime'].min()} to {data['datetime'].max()}")
@@ -405,6 +423,7 @@ def main():
     except Exception as e:
         print(f"Error running backtest without slippage: {e}")
         import traceback
+
         traceback.print_exc()
         return False
 
@@ -418,35 +437,37 @@ def main():
     except Exception as e:
         print(f"Error running backtest with slippage: {e}")
         import traceback
+
         traceback.print_exc()
         return False
 
     # Compare results
     comparison = compare_results(
-        result_no_slip, result_with_slip,
-        engine_no_slip, engine_with_slip
+        result_no_slip, result_with_slip, engine_no_slip, engine_with_slip
     )
 
     # Validate
     validation_passed = validate_slippage_model(comparison)
 
     # Generate summary report
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("SUMMARY")
-    print("="*80)
+    print("=" * 80)
     print(f"Validation Status: {'PASSED ✓' if validation_passed else 'FAILED ✗'}")
-    print(f"\nKey Findings:")
-    print(f"  - Slippage model reduces P&L by {abs(comparison['differences']['capital_diff_pct']):.2f}%")
-    print(f"  - This represents realistic market impact for KOSPI200 mini futures")
-    print(f"  - Configured slippage: 1.5 bps base + depth impact (0.8x factor)")
-    print(f"  - Time-of-day multipliers: 1.0x-1.8x (higher at market open/close)")
-    print(f"\nConclusion:")
+    print("\nKey Findings:")
+    print(
+        f"  - Slippage model reduces P&L by {abs(comparison['differences']['capital_diff_pct']):.2f}%"
+    )
+    print("  - This represents realistic market impact for KOSPI200 mini futures")
+    print("  - Configured slippage: 1.5 bps base + depth impact (0.8x factor)")
+    print("  - Time-of-day multipliers: 1.0x-1.8x (higher at market open/close)")
+    print("\nConclusion:")
     if validation_passed:
         print("  The SlippageModel implementation is working correctly and produces")
         print("  realistic slippage estimates that improve backtest accuracy.")
     else:
         print("  Issues were detected. Please review the validation report above.")
-    print("="*80)
+    print("=" * 80)
 
     return validation_passed
 
@@ -458,5 +479,6 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"\nFATAL ERROR: {e}")
         import traceback
+
         traceback.print_exc()
         sys.exit(1)

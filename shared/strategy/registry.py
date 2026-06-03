@@ -248,7 +248,9 @@ class StrategyFactory:
         gate_yaml = entry_params.get("regime_gate")
         # Filter the gate section out for the entry config (CONFIG_CLASS
         # doesn't accept it). Build a fresh dict — do NOT mutate entry_params.
-        entry_params_filtered = {k: v for k, v in entry_params.items() if k != "regime_gate"}
+        entry_params_filtered = {
+            k: v for k, v in entry_params.items() if k != "regime_gate"
+        }
 
         entry = EntryRegistry.create(entry_type, entry_params_filtered)
 
@@ -256,6 +258,7 @@ class StrategyFactory:
         # preserves backward-compat for entry adapters that don't support gates.
         if hasattr(entry, "_gate_cfg"):
             from shared.strategy.gates.regime_gate import regime_gate_cfg_from_yaml
+
             entry._gate_cfg = regime_gate_cfg_from_yaml(gate_yaml)
 
         # 청산 로직 생성
@@ -469,13 +472,6 @@ def register_builtin_components() -> None:
         logger.debug("PatternPullbackEntry not available")
 
     try:
-        from shared.strategy.entry.rl_mppo import RLMPPOEntry
-
-        EntryRegistry.register_class("rl_mppo", RLMPPOEntry)
-    except ImportError:
-        logger.debug("RLMPPOEntry not available")
-
-    try:
         from shared.strategy.entry.setup_adapters import (
             SetupAEntryAdapter,
             SetupCEntryAdapter,
@@ -509,13 +505,6 @@ def register_builtin_components() -> None:
         ExitRegistry.register_class("builder_v1_exit", BuilderStrategyExit)
     except ImportError:
         logger.debug("BuilderStrategyExit not available")
-
-    try:
-        from shared.strategy.exit.rl_mppo_exit import RLMPPOExit
-
-        ExitRegistry.register_class("rl_mppo_exit", RLMPPOExit)
-    except ImportError:
-        logger.debug("RLMPPOExit not available")
 
     try:
         from shared.strategy.exit.trix_golden_exit import TrixGoldenExit
@@ -555,6 +544,13 @@ def register_builtin_components() -> None:
         ExitRegistry.register_class("atr_dynamic", ATRDynamicExit)
     except ImportError:
         logger.debug("ATRDynamicExit not available")
+
+    try:
+        from shared.strategy.exit.setup_target_exit import SetupTargetExit
+
+        ExitRegistry.register_class("setup_target_exit", SetupTargetExit)
+    except ImportError:
+        logger.debug("SetupTargetExit not available")
 
     try:
         from shared.strategy.exit.chandelier_exit import ChandelierExit

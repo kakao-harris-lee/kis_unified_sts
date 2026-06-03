@@ -990,9 +990,8 @@ class TradingOrchestrator:
         # events from prior sessions do NOT re-trigger flatten on restart.
         self._ks_last_seen_event_id: str | None = None
 
-        # Shadow-loggers flush loop (Phase 2 — LLM-primary RL-minimization plan).
-        # Periodically drains shared.strategy.rl_shadow_logger and
-        # shared.strategy.llm_veto_logger buffers into ClickHouse.
+        # Shadow-loggers flush loop. Periodically drains the LLM veto buffer into
+        # ClickHouse.
         self._shadow_loggers_flush_task: asyncio.Task | None = None
         # Reusable ClickHouse client for the flush loop (created at task start).
         self._shadow_loggers_ch_client: Any | None = None
@@ -2464,7 +2463,7 @@ class TradingOrchestrator:
 
         - asset_class='stock' → market.stock_trades (모든 주식 전략)
                              + market.swing_positions (SWING_STRATEGIES만, state 추적용)
-        - asset_class='futures' + strategy.startswith('rl_') → kospi.rl_trades
+        - asset_class='futures' → kospi.rl_trades (legacy table name)
         - 그 외 → no-op (로그만)
         """
         try:
@@ -2475,8 +2474,8 @@ class TradingOrchestrator:
                 await self._position_tracker.save_stock_trade_to_db(closed)
                 if strategy in self.SWING_STRATEGIES:
                     await self._position_tracker.save_closed_to_db(closed)
-            elif self.config.asset_class == "futures" and strategy.startswith("rl_"):
-                await self._position_tracker.save_rl_trade_to_db(
+            elif self.config.asset_class == "futures":
+                await self._position_tracker.save_futures_trade_to_db(
                     closed, self.config.asset_class
                 )
             else:
@@ -4022,8 +4021,8 @@ class TradingOrchestrator:
         Policy (CLAUDE.md):
         - asset_class='stock': EOD 전량 청산 금지. 전략 시그널 기반 청산만 허용.
           → no-op.
-        - asset_class='futures': RL 전략은 자체 EOD 안전장치(rl_mppo_exit)를 가지므로
-          여기서는 그 외 legacy intraday 전략만 청산.
+        - asset_class='futures': strategy-native exits may handle EOD per YAML;
+          this guard only closes non-swing intraday positions still open at stop.
         """
         if self.config.asset_class == "stock":
             logger.debug(
@@ -4035,7 +4034,6 @@ class TradingOrchestrator:
             pos
             for pos in self._position_tracker.positions
             if pos.strategy not in self.SWING_STRATEGIES
-            and not pos.strategy.startswith("rl_")
         ]
         for pos in intraday_positions:
             price_data = data.get(pos.code, {})
@@ -4908,7 +4906,7 @@ class TradingOrchestrator:
                 await asyncio.sleep(60)  # Wait 1 minute before retry on error
 
     # ------------------------------------------------------------------
-    # Shadow-loggers periodic flush (Phase 2 — LLM-primary RL minimization)
+    # Shadow-loggers periodic flush
     # ------------------------------------------------------------------
 
     async def _start_shadow_loggers_flush(self) -> None:
@@ -4963,26 +4961,19 @@ class TradingOrchestrator:
         )
 
     async def _shadow_loggers_flush_loop(self, interval_seconds: float) -> None:
-        """Periodically drain both shadow-logger in-memory buffers to ClickHouse.
+        """Periodically drain the LLM veto in-memory buffer to ClickHouse.
 
         Called by :meth:`_start_shadow_loggers_flush`.  Runs until cancelled
         by :meth:`_stop_market_data_loop`.  The final in-flight buffer drain
         is handled separately by :meth:`_shadow_loggers_final_flush` which
         runs after this task is cancelled (in :meth:`_stop_impl`).
 
-        **Independence invariant**: each logger's flush runs in its own
-        try/except block so a failure in one does NOT skip the other on
-        the same tick. Without this, an `rl_shadow` flush exception would
-        silently leave the LLM veto buffer growing until shutdown.
-
         Args:
             interval_seconds: How often to flush (loaded from
                 ``config/shadow_loggers.yaml`` ``flush_interval_seconds``).
         """
         from shared.strategy import llm_veto_logger as veto_mod
-        from shared.strategy import rl_shadow_logger as rl_mod
         from shared.strategy.llm_veto_logger import flush_llm_veto_events
-        from shared.strategy.rl_shadow_logger import flush_rl_shadow_predictions
 
         logger.info(
             "shadow_loggers flush loop running (interval=%.1fs)", interval_seconds
@@ -4995,24 +4986,7 @@ class TradingOrchestrator:
                 logger.info("shadow_loggers flush loop cancelled")
                 break
 
-            # Independent try/except per logger so one failure does not
-            # cascade into skipping the other (best-effort + observable).
-            rl_count = 0
             veto_count = 0
-
-            try:
-                rl_count = await flush_rl_shadow_predictions(
-                    self._shadow_loggers_ch_client
-                )
-            except asyncio.CancelledError:
-                logger.info("shadow_loggers flush loop cancelled mid-rl-flush")
-                break
-            except Exception as e:
-                logger.warning(
-                    "shadow_loggers rl_shadow flush error (%s) — retrying on next tick",
-                    e,
-                    exc_info=True,
-                )
 
             try:
                 veto_count = await flush_llm_veto_events(self._shadow_loggers_ch_client)
@@ -5031,15 +5005,6 @@ class TradingOrchestrator:
             # last_flush_unix gauge staleness alert.
             now_unix = time.time()
             try:
-                rl_dropped_batches, rl_dropped_rows = rl_mod.dropped_counts()
-                self._metrics.record_shadow_logger_state(
-                    logger="rl_shadow",
-                    pending_rows=rl_mod.pending_count(),
-                    dropped_batches=rl_dropped_batches,
-                    dropped_rows=rl_dropped_rows,
-                    last_flush_rows=rl_count,
-                    last_flush_unix=now_unix,
-                )
                 veto_dropped_batches, veto_dropped_rows = veto_mod.dropped_counts()
                 self._metrics.record_shadow_logger_state(
                     logger="llm_veto",
@@ -5054,16 +5019,13 @@ class TradingOrchestrator:
                 # flush loop.
                 logger.debug("shadow_loggers metric publish failed: %s", e)
 
-            if rl_count or veto_count:
+            if veto_count:
                 logger.info(
-                    "shadow_loggers flush: rl_shadow=%d veto=%d rows",
-                    rl_count,
+                    "shadow_loggers flush: llm_veto=%d rows",
                     veto_count,
                 )
             else:
-                logger.debug(
-                    "shadow_loggers flush: no pending rows (rl_shadow=0 veto=0)"
-                )
+                logger.debug("shadow_loggers flush: no pending rows (llm_veto=0)")
 
     async def _shadow_loggers_final_flush(self) -> None:
         """Drain remaining shadow-logger buffer rows to ClickHouse on shutdown.
@@ -5074,9 +5036,6 @@ class TradingOrchestrator:
         ``config/shadow_loggers.yaml::final_flush_on_stop``); if the flag is
         false or the CH client was never initialised, this is a no-op.
 
-        **Independence invariant**: the rl_shadow and llm_veto final
-        flushes run in independent try/except blocks so a failure in one
-        does NOT lose the other's buffer at shutdown.
         """
         if not getattr(self, "_shadow_loggers_final_flush_enabled", True):
             logger.debug(
@@ -5090,23 +5049,8 @@ class TradingOrchestrator:
             )
             return
 
-        rl_count = 0
         veto_count = 0
         try:
-            from shared.strategy.rl_shadow_logger import flush_rl_shadow_predictions
-
-            try:
-                rl_count = await flush_rl_shadow_predictions(
-                    self._shadow_loggers_ch_client
-                )
-            except Exception as e:
-                logger.warning(
-                    "shadow_loggers final flush rl_shadow failed (%s) — "
-                    "some rl_shadow rows may be lost",
-                    e,
-                    exc_info=True,
-                )
-
             from shared.strategy.llm_veto_logger import flush_llm_veto_events
 
             try:
@@ -5120,8 +5064,7 @@ class TradingOrchestrator:
                 )
 
             logger.info(
-                "shadow_loggers final flush on stop: rl_shadow=%d veto=%d rows",
-                rl_count,
+                "shadow_loggers final flush on stop: llm_veto=%d rows",
                 veto_count,
             )
         finally:
@@ -7010,11 +6953,12 @@ class TradingOrchestrator:
         # Forward exit parameter overrides from signal.metadata (e.g. trend mode)
         signal_meta = getattr(signal, "metadata", None) or {}
         for key in (
+            "stop_loss",
+            "take_profit",
             "exit_stop_atr_multiplier",
             "exit_trail_activation_atr",
             "exit_trail_atr_multiplier",
             "exit_max_hold_days",
-            "obs",  # RL obs vector for live-vs-train drift diagnostics
         ):
             if key in signal_meta:
                 pos_metadata[key] = signal_meta[key]
@@ -7556,9 +7500,7 @@ class TradingOrchestrator:
 
         # Persist to ClickHouse (asset-class routed; details in _persist_closed_position)
         strategy = getattr(signal, "strategy", getattr(closed, "strategy", ""))
-        if self.config.asset_class == "stock" or (
-            self.config.asset_class == "futures" and strategy.startswith("rl_")
-        ):
+        if self.config.asset_class in {"stock", "futures"}:
             task = asyncio.create_task(
                 self._persist_closed_position(closed, strategy), name="persist_closed"
             )

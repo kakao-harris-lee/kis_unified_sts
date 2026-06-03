@@ -127,18 +127,6 @@ visualization = [
     "seaborn>=0.13",
 ]
 
-ml = [
-    "torch>=2.0",
-    "clickhouse-connect>=0.7",
-    # RL (Reinforcement Learning)
-    "gymnasium>=0.29",
-    "sb3-contrib>=2.3",              # MaskablePPO
-    "stable-baselines3>=2.3",        # DQN, A2C, PPO
-    "tensorboard>=2.15",
-    "scikit-learn>=1.3",             # MinMaxScaler
-    "transformers>=4.35",            # Decision Transformer
-]
-
 api = [
     "fastapi>=0.109",
     "uvicorn[standard]>=0.25",
@@ -150,7 +138,7 @@ monitoring = [
 ]
 
 all = [
-    "kis-unified-sts[dev,optimization,visualization,ml,api,monitoring]",
+    "kis-unified-sts[dev,optimization,visualization,api,monitoring]",
 ]
 
 [project.scripts]

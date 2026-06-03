@@ -17,7 +17,7 @@ import scripts.analysis.setup_ac_signal_timing as _mod
 def _line(ts: str, n: int) -> str:
     return (
         f"{ts},123 - services.trading.strategy_manager - INFO - "
-        f"Signal cycle: {n} signals from [rl_mppo, setup_a_gap_reversion, "
+        f"Signal cycle: {n} signals from [setup_a_gap_reversion, setup_a_gap_reversion, "
         f"setup_c_event_reaction]"
     )
 

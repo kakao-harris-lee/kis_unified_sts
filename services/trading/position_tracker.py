@@ -336,7 +336,7 @@ class PositionTracker:
 
         # Batch accumulators for DB inserts
         self._pending_swing_positions: list[tuple[Any, ...]] = []
-        self._pending_rl_trades: list[tuple[Any, ...]] = []
+        self._pending_futures_trades: list[tuple[Any, ...]] = []
         self._pending_stock_trades: list[tuple[Any, ...]] = []
         self._batch_lock: asyncio.Lock = asyncio.Lock()
         self._runtime_ledger: RuntimeLedger | None = runtime_ledger
@@ -558,6 +558,11 @@ class PositionTracker:
         except (TypeError, ValueError):
             stop_price = None
 
+        position_metadata: dict[str, Any] = {}
+        for key in ("stop_loss", "take_profit"):
+            if key in meta:
+                position_metadata[key] = meta[key]
+
         return self.add_position(
             code=signal.code,
             name=signal.name,
@@ -567,6 +572,7 @@ class PositionTracker:
             side=side,
             client_order_id=effective_coid,
             stop_price=stop_price,
+            metadata=position_metadata,
         )
 
     def add_recovered_position(self, position: Position) -> bool:
@@ -1292,11 +1298,11 @@ class PositionTracker:
         "execution_venue, stop_loss_price, high_since_entry, current_state, is_open, "
         "exit_date, exit_price, exit_reason, pnl, side, fee_rate)"
     )
-    _RL_TRADE_INSERT_COLS = (
+    _FUTURES_TRADE_INSERT_COLS = (
         "(id, asset_class, code, name, side, strategy, execution_venue, entry_date, entry_price, "
         "exit_date, exit_price, quantity, pnl, pnl_pct, hold_seconds, exit_reason, metadata_json)"
     )
-    _RL_TRADES_SCHEMA_TEMPLATE = """
+    _FUTURES_TRADES_SCHEMA_TEMPLATE = """
         CREATE TABLE IF NOT EXISTS {database}.rl_trades (
             id String,
             asset_class LowCardinality(String),
@@ -1320,7 +1326,7 @@ class PositionTracker:
         PARTITION BY toYYYYMM(exit_date)
         ORDER BY (asset_class, strategy, exit_date, id)
         TTL exit_date + INTERVAL 180 DAY
-        COMMENT 'Closed RL trade records for performance analytics'
+        COMMENT 'Closed futures trade records for performance analytics'
     """
 
     _STOCK_TRADE_INSERT_COLS = (
@@ -1715,16 +1721,18 @@ class PositionTracker:
             logger.error(f"Failed to accumulate closed position {position.id[:8]}: {e}")
             return False
 
-    async def save_rl_trade_to_db(self, position: Position, asset_class: str) -> bool:
-        """Persist a closed RL trade to the configured runtime ledger.
+    async def save_futures_trade_to_db(
+        self, position: Position, asset_class: str
+    ) -> bool:
+        """Persist a closed futures trade to the configured runtime ledger.
 
         This method uses a batching strategy to optimize database performance by
-        accumulating closed RL trades and flushing them in bulk. During backtesting
+        accumulating closed futures trades and flushing them in bulk. During backtesting
         with Optuna, hundreds of positions may close per trial, making batching
         critical to avoid overwhelming ClickHouse with individual inserts.
 
         Batching Behavior:
-            - Trades are accumulated in an in-memory buffer (_pending_rl_trades)
+            - Trades are accumulated in an in-memory buffer (_pending_futures_trades)
             - Not immediately written to the database
             - Batched inserts reduce ClickHouse connection overhead and write amplification
 
@@ -1748,10 +1756,10 @@ class PositionTracker:
         Example:
             ```python
             # Normal usage - automatic batching
-            await tracker.save_rl_trade_to_db(position, "futures")
+            await tracker.save_futures_trade_to_db(position, "futures")
 
             # Force immediate flush (e.g., for testing or critical trades)
-            await tracker.save_rl_trade_to_db(position, "futures")
+            await tracker.save_futures_trade_to_db(position, "futures")
             await tracker.flush_pending_positions()
             ```
         """
@@ -1773,14 +1781,14 @@ class PositionTracker:
                     ),
                 )
                 logger.info(
-                    "Saved RL trade to runtime ledger: %s (id=%s)",
+                    "Saved futures trade to runtime ledger: %s (id=%s)",
                     position.code,
                     position.id[:8],
                 )
                 return True
             except RuntimeLedgerError as e:
                 logger.error(
-                    "Failed to save RL trade %s to runtime ledger: %s",
+                    "Failed to save futures trade %s to runtime ledger: %s",
                     position.id[:8],
                     e,
                 )
@@ -1819,29 +1827,30 @@ class PositionTracker:
             )
 
             async with self._batch_lock:
-                self._pending_rl_trades.append(row)
-                batch_size = len(self._pending_rl_trades)
+                self._pending_futures_trades.append(row)
+                batch_size = len(self._pending_futures_trades)
 
             logger.info(
-                f"Accumulated RL trade: {position.code} "
+                f"Accumulated futures trade: {position.code} "
                 f"(strategy={position.strategy}, pnl={pnl:+,.0f}, id={position.id[:8]}, batch={batch_size}/{self.config.batch_size})"
             )
 
             # Flush if batch threshold reached
             if batch_size >= self.config.batch_size:
-                await self._flush_rl_trades_batch()
+                await self._flush_futures_trades_batch()
 
             return True
 
         except (ValidationError, InfrastructureError) as e:
-            logger.error(f"Failed to accumulate RL trade {position.id[:8]}: {e}")
+            logger.error(f"Failed to accumulate futures trade {position.id[:8]}: {e}")
             return False
 
     async def save_stock_trade_to_db(self, position: Position) -> bool:
         """Persist a closed stock trade to the configured runtime ledger.
 
-        This method is the stock-specific counterpart to save_rl_trade_to_db and uses
-        the same batching strategy to optimise database performance.
+        This method is the stock-specific counterpart to
+        save_futures_trade_to_db and uses the same batching strategy to optimise
+        database performance.
 
         Batching Behavior:
             - Trades are accumulated in an in-memory buffer (_pending_stock_trades)
@@ -2054,18 +2063,18 @@ class PositionTracker:
         )
         return count
 
-    async def _flush_rl_trades_batch(self) -> int:
-        """Flush accumulated RL trades batch to ClickHouse.
+    async def _flush_futures_trades_batch(self) -> int:
+        """Flush accumulated futures trades batch to ClickHouse.
 
         Returns:
             Number of trades flushed
         """
-        count, self._pending_rl_trades = await self._flush_batch(
-            self._pending_rl_trades,
+        count, self._pending_futures_trades = await self._flush_batch(
+            self._pending_futures_trades,
             table_name="rl_trades",
-            insert_cols=self._RL_TRADE_INSERT_COLS,
-            label="RL trades",
-            pre_execute_sql=self._RL_TRADES_SCHEMA_TEMPLATE,
+            insert_cols=self._FUTURES_TRADE_INSERT_COLS,
+            label="futures trades",
+            pre_execute_sql=self._FUTURES_TRADES_SCHEMA_TEMPLATE,
         )
         return count
 
@@ -2090,7 +2099,7 @@ class PositionTracker:
         Typically called during graceful shutdown or manual flush triggers.
 
         Returns:
-            Tuple of (swing_positions_flushed, rl_trades_flushed)
+            Tuple of (swing_positions_flushed, futures_trades_flushed)
         """
         if not self._uses_clickhouse_persistence():
             ledger = self._get_runtime_ledger()
@@ -2099,16 +2108,16 @@ class PositionTracker:
             return 0, 0
 
         swing_count = await self._flush_swing_positions_batch()
-        rl_count = await self._flush_rl_trades_batch()
+        futures_count = await self._flush_futures_trades_batch()
         stock_count = await self._flush_stock_trades_batch()
 
-        if swing_count > 0 or rl_count > 0 or stock_count > 0:
+        if swing_count > 0 or futures_count > 0 or stock_count > 0:
             logger.info(
                 f"Manual flush completed: {swing_count} swing positions, "
-                f"{rl_count} RL trades, {stock_count} stock trades"
+                f"{futures_count} futures trades, {stock_count} stock trades"
             )
 
-        return swing_count, rl_count
+        return swing_count, futures_count
 
     def _start_auto_flush_task(self) -> None:
         """Start background timer-based flush task.
@@ -2140,13 +2149,13 @@ class PositionTracker:
             while True:
                 try:
                     await asyncio.sleep(self.config.flush_interval_seconds)
-                    swing_count, rl_count = await self.flush_pending_positions()
+                    swing_count, futures_count = await self.flush_pending_positions()
 
                     # Only log if we actually flushed something
-                    if swing_count > 0 or rl_count > 0:
+                    if swing_count > 0 or futures_count > 0:
                         logger.info(
                             f"Auto-flush triggered: {swing_count} swing positions, "
-                            f"{rl_count} RL trades"
+                            f"{futures_count} futures trades"
                         )
                 except asyncio.CancelledError:
                     logger.info("Auto-flush task cancelled")
@@ -2189,11 +2198,11 @@ class PositionTracker:
 
         # Final flush to ensure all pending positions are written
         # flush_pending_positions also flushes _pending_stock_trades via _flush_stock_trades_batch
-        swing_count, rl_count = await self.flush_pending_positions()
-        if swing_count > 0 or rl_count > 0:
+        swing_count, futures_count = await self.flush_pending_positions()
+        if swing_count > 0 or futures_count > 0:
             logger.info(
                 f"Final flush on shutdown: {swing_count} swing positions, "
-                f"{rl_count} RL trades"
+                f"{futures_count} futures trades"
             )
 
         # Stop CH insert fail tracker publish loop (Phase 3 Track A observability)

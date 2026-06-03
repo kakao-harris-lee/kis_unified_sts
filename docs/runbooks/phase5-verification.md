@@ -130,7 +130,7 @@ After Gate 4's first 2-contract success:
 - [ ] Rollback drill performed at least once (output committed to
       `reports/drills/`)
 - [ ] CLAUDE.md updated per spec §7.2 (Setup A/C in "현재 운용 전략",
-      `rl_mppo` annotated as 병행, link to `futures_contract_spec`)
+      ML/RL removed, link to `futures_contract_spec`)
 - [ ] Operator written sign-off (PR comment or commit on this file)
 
 Spec: `docs/plans/2026-04-20-futures-paradigm-phase5-rollout.md` §2 + §8.

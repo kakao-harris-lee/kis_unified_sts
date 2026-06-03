@@ -10,18 +10,15 @@ generates them *throughout* the session rather than only before the old
 
 Why a log monitor (not kospi.signals_all)
 -----------------------------------------
-``kospi.signals_all`` is written by the Phase 5 ``risk_filter`` systemd
-service, which is NOT running under the current ``sts rl paper`` orchestrator
-deployment — so it has been empty since cutover regardless of orchestrator
-behaviour. The orchestrator's own ``strategy_manager`` log line is the
-authoritative, deployment-correct source:
+``kospi.signals_all`` can lag runtime behavior when optional ClickHouse mirrors
+are disabled, so the orchestrator's own ``strategy_manager`` log line is the
+deployment-correct source:
 
     ... services.trading.strategy_manager - INFO -
-        Signal cycle: <N> signals from [rl_mppo, setup_a_gap_reversion,
+        Signal cycle: <N> signals from [setup_a_gap_reversion,
                                         setup_c_event_reaction]
 
-rl_mppo is shadow-mode (emits 0 Signals by design — see master plan v4.11),
-so a non-zero cycle count is effectively Setup A/C activity.
+A non-zero cycle count is Setup A/C indicator-strategy activity.
 
 Verdict
 -------
@@ -57,7 +54,7 @@ _LOG_DIR = _REPO_ROOT / "logs"
 
 # strategy_manager line — server logs in KST local time.
 #   2026-05-14 09:00:12,913 - services.trading.strategy_manager - INFO -
-#       Signal cycle: 0 signals from [rl_mppo, ...]
+#       Signal cycle: 0 signals from [setup_a_gap_reversion, ...]
 _LINE_RE = re.compile(
     r"^(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}),\d+ - "
     r"services\.trading\.strategy_manager - INFO - "

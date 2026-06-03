@@ -190,6 +190,6 @@ expired contract code (e.g. A05603 after the March 2026 expiry).
 keeps using the previous month's symbol.
 
 **Recovery**: Phase 4 daemons inherit symbol selection from the
-`TradingOrchestrator` rollover convention (CLAUDE.md §RL Symbol Policy:
-"sts rl paper" path). Restart the daemons after expiry (cron-driven daily
+`TradingOrchestrator` rollover convention (current `sts trade start --asset futures`
+path). Restart the daemons after expiry (cron-driven daily
 restart pattern from Phase 1/2 already covers this).

@@ -374,7 +374,7 @@ def _statistics_from_trade_dicts(trades: list[dict]) -> dict[str, float]:
     }
 
 
-def _ledger_trade_to_rl_dict(trade: dict) -> dict:
+def _ledger_trade_to_closed_dict(trade: dict) -> dict:
     return {
         "id": trade.get("id", ""),
         "asset_class": trade.get("asset_class", "unknown"),
@@ -402,13 +402,17 @@ def _ledger_fill_to_dict(fill: dict) -> dict:
         filled_at = filled_at.isoformat()
     return {
         "signal_id": payload.get("signal_id", ""),
-        "symbol": fill.get("symbol") or payload.get("symbol") or payload.get("code", ""),
+        "symbol": fill.get("symbol")
+        or payload.get("symbol")
+        or payload.get("code", ""),
         "side": fill.get("side") or payload.get("side", ""),
         "filled_price": fill.get("price") or payload.get("filled_price", 0.0),
         "quantity": fill.get("quantity") or payload.get("quantity", 0),
         "filled_at": filled_at,
         "trade_role": "entry" if role == "entry" else "exit",
-        "asset_class": fill.get("asset_class") or payload.get("asset_class") or "unknown",
+        "asset_class": fill.get("asset_class")
+        or payload.get("asset_class")
+        or "unknown",
         "order_id": fill.get("order_id") or payload.get("order_id", ""),
     }
 
@@ -434,7 +438,7 @@ def _load_runtime_ledger_fills(
         ledger.close()
 
 
-def _build_rl_statistics_sql(
+def _build_closed_statistics_sql(
     asset_class: str, strategy: str | None
 ) -> tuple[str, dict]:
     """SELECT for aggregate stats from one asset's trades table."""
@@ -462,8 +466,8 @@ def _build_rl_statistics_sql(
     return sql, params
 
 
-@router.get("/rl/statistics")
-async def get_db_rl_statistics(
+@router.get("/closed/statistics")
+async def get_db_closed_statistics(
     asset_class: str = Query("futures"),
     strategy: str | None = Query(None),
 ):
@@ -487,7 +491,7 @@ async def get_db_rl_statistics(
 
     try:
         if asset_class in _TRADES_SOURCE:
-            sql, params = _build_rl_statistics_sql(asset_class, strategy)
+            sql, params = _build_closed_statistics_sql(asset_class, strategy)
             return await _execute(sql, params)
 
         # asset_class == "all": merge counts from both asset tables.
@@ -497,7 +501,7 @@ async def get_db_rl_statistics(
         max_win = float("-inf")
         max_loss = float("inf")
         for ac in _TRADES_SOURCE:
-            sql, params = _build_rl_statistics_sql(ac, strategy)
+            sql, params = _build_closed_statistics_sql(ac, strategy)
             part = await _execute(sql, params)
             total += part.get("total_trades", 0)
             wins += part.get("winning_trades", 0)
@@ -581,12 +585,11 @@ async def get_recent_fills(
 
 
 # Trades source routing per asset_class.
-#   - futures: kospi.rl_trades (has asset_class column)
+#   - futures: kospi.rl_trades (legacy table name, has asset_class column)
 #   - stock:   market.stock_trades (no asset_class column — implicit)
-# Why split DBs+tables: legacy schemas evolved separately; futures uses RL paper
-# pipeline writing to kospi.rl_trades, stock uses the orchestrator writing to
-# market.stock_trades. Phase 7 plan §4 calls this out as deferred follow-up;
-# this helper does the runtime routing so the Cockpit shows both.
+# Why split DBs+tables: legacy schemas evolved separately. Futures closed trades
+# still live in kospi.rl_trades for historical compatibility, but the dashboard
+# exposes this as strategy-neutral closed-trade data.
 _TRADES_SOURCE: dict[str, tuple[str, str, bool]] = {
     # asset_class -> (database, table, has_asset_class_column)
     "futures": ("kospi", "rl_trades", True),
@@ -594,7 +597,7 @@ _TRADES_SOURCE: dict[str, tuple[str, str, bool]] = {
 }
 
 
-def _build_rl_trades_sql(
+def _build_closed_trades_sql(
     asset_class: str,
     strategy: str | None,
     code: str | None,
@@ -628,8 +631,8 @@ def _build_rl_trades_sql(
     return sql, params
 
 
-@router.get("/rl")
-async def get_db_rl_trades(
+@router.get("/closed")
+async def get_db_closed_trades(
     asset_class: str = Query("futures"),
     strategy: str | None = Query(None),
     code: str | None = Query(None),
@@ -649,7 +652,7 @@ async def get_db_rl_trades(
         limit=limit,
     )
     if ledger_available:
-        return [_ledger_trade_to_rl_dict(row) for row in ledger_rows]
+        return [_ledger_trade_to_closed_dict(row) for row in ledger_rows]
 
     async def _execute(sql: str, params: dict):
         loop = asyncio.get_running_loop()
@@ -659,13 +662,13 @@ async def get_db_rl_trades(
 
     try:
         if asset_class in _TRADES_SOURCE:
-            sql, params = _build_rl_trades_sql(asset_class, strategy, code, limit)
+            sql, params = _build_closed_trades_sql(asset_class, strategy, code, limit)
             return await _execute(sql, params)
 
         # asset_class == "all": query both, sort+truncate in app layer.
         merged: list[dict] = []
         for ac in _TRADES_SOURCE:
-            sql, params = _build_rl_trades_sql(ac, strategy, code, limit)
+            sql, params = _build_closed_trades_sql(ac, strategy, code, limit)
             merged.extend(await _execute(sql, params))
         merged.sort(key=lambda r: r.get("exit_date") or "", reverse=True)
         return merged[:limit]

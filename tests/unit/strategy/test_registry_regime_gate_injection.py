@@ -5,6 +5,7 @@ the config dict, builds a GateConfig via regime_gate_cfg_from_yaml(), and
 attaches it to the constructed adapter.  Missing section or enabled:false
 → None (adapter no-op branch).
 """
+
 from __future__ import annotations
 
 import pytest
@@ -14,6 +15,7 @@ import pytest
 def _register_builtins():
     """Ensure builtin components are registered before each test."""
     from shared.strategy.registry import register_builtin_components
+
     register_builtin_components()
 
 
@@ -28,7 +30,7 @@ def _base_setup_a_cfg(regime_gate_section=None):
                 "type": "setup_a_gap_reversion",
                 "params": {},
             },
-            "exit": {"type": "rl_mppo_exit", "params": {}},
+            "exit": {"type": "setup_target_exit", "params": {}},
             "position": {"type": "fixed", "params": {"quantity": 1}},
         }
     }
@@ -39,25 +41,30 @@ def _base_setup_a_cfg(regime_gate_section=None):
 
 def test_factory_injects_none_when_no_regime_gate_section():
     from shared.strategy.registry import StrategyFactory
+
     strat = StrategyFactory.create(_base_setup_a_cfg())
     assert strat.entry._gate_cfg is None
 
 
 def test_factory_injects_none_when_section_disabled():
     from shared.strategy.registry import StrategyFactory
-    strat = StrategyFactory.create(
-        _base_setup_a_cfg({"enabled": False}))
+
+    strat = StrategyFactory.create(_base_setup_a_cfg({"enabled": False}))
     assert strat.entry._gate_cfg is None
 
 
 def test_factory_injects_gate_cfg_when_enabled():
     from shared.strategy.gates.regime_gate import GateConfig
     from shared.strategy.registry import StrategyFactory
+
     strat = StrategyFactory.create(
-        _base_setup_a_cfg({
-            "enabled": True,
-            "regime_percentile_max": 55.0,
-        }))
+        _base_setup_a_cfg(
+            {
+                "enabled": True,
+                "regime_percentile_max": 55.0,
+            }
+        )
+    )
     assert isinstance(strat.entry._gate_cfg, GateConfig)
     assert strat.entry._gate_cfg.regime_percentile_max == 55.0
 
@@ -66,6 +73,7 @@ def test_factory_does_not_mutate_input_cfg():
     """Critical: ConfigLoader caches the dict; mutating it would silently
     disable the gate on subsequent StrategyFactory.create() calls."""
     from shared.strategy.registry import StrategyFactory
+
     cfg = _base_setup_a_cfg({"enabled": True, "regime_percentile_max": 55.0})
     # Snapshot the regime_gate section before factory call
     rg_before = dict(cfg["strategy"]["entry"]["params"]["regime_gate"])
@@ -76,7 +84,8 @@ def test_factory_does_not_mutate_input_cfg():
     # The cfg dict's regime_gate section must remain intact (not popped)
     assert rg_after == rg_before, (
         f"StrategyFactory mutated the input cfg: "
-        f"before={rg_before}, after={rg_after}")
+        f"before={rg_before}, after={rg_after}"
+    )
     # Both adapters must have the gate cfg (not None on second call)
     assert s1.entry._gate_cfg is not None, "first call lost gate"
     assert s2.entry._gate_cfg is not None, "second call lost gate (mutation bug)"

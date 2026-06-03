@@ -104,7 +104,7 @@ def _seed_runtime_ledger(db_path):
             "code": "101S6000",
             "name": "KOSPI200 Futures",
             "side": "short",
-            "strategy": "rl_mppo",
+            "strategy": "setup_a_gap_reversion",
             "entry_time": "2026-06-03T09:00:00+09:00",
             "entry_price": 350.0,
             "exit_time": "2026-06-03T09:30:00+09:00",
@@ -209,9 +209,7 @@ async def test_trades_list_empty_ledger_does_not_fallback_to_redis(
     app = create_app()
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.get(
-            "/api/trades?asset_class=stock&strategy=missing"
-        )
+        response = await client.get("/api/trades?asset_class=stock&strategy=missing")
 
     assert response.status_code == 200
     data = response.json()
@@ -264,8 +262,10 @@ async def test_trade_statistics_empty_ledger_does_not_fallback_to_redis(
 
 
 @pytest.mark.asyncio
-async def test_trades_rl_reads_runtime_ledger_without_clickhouse(monkeypatch, tmp_path):
-    """``/api/trades/rl`` should not call ClickHouse when RuntimeLedger is configured."""
+async def test_trades_closed_reads_runtime_ledger_without_clickhouse(
+    monkeypatch, tmp_path
+):
+    """``/api/trades/closed`` should not call ClickHouse when RuntimeLedger is configured."""
     from services.dashboard.app import create_app
     from services.dashboard.routes import trades as trades_route
 
@@ -281,7 +281,7 @@ async def test_trades_rl_reads_runtime_ledger_without_clickhouse(monkeypatch, tm
     app = create_app()
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.get("/api/trades/rl?asset_class=futures")
+        response = await client.get("/api/trades/closed?asset_class=futures")
 
     assert response.status_code == 200
     data = response.json()
@@ -292,10 +292,10 @@ async def test_trades_rl_reads_runtime_ledger_without_clickhouse(monkeypatch, tm
 
 
 @pytest.mark.asyncio
-async def test_trades_rl_statistics_reads_runtime_ledger_without_clickhouse(
+async def test_trades_closed_statistics_reads_runtime_ledger_without_clickhouse(
     monkeypatch, tmp_path
 ):
-    """``/api/trades/rl/statistics`` should aggregate from RuntimeLedger."""
+    """``/api/trades/closed/statistics`` should aggregate from RuntimeLedger."""
     from services.dashboard.app import create_app
     from services.dashboard.routes import trades as trades_route
 
@@ -311,7 +311,7 @@ async def test_trades_rl_statistics_reads_runtime_ledger_without_clickhouse(
     app = create_app()
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.get("/api/trades/rl/statistics?asset_class=all")
+        response = await client.get("/api/trades/closed/statistics?asset_class=all")
 
     assert response.status_code == 200
     data = response.json()

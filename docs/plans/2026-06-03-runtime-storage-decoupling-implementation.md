@@ -286,7 +286,7 @@ docker compose --env-file .env.dev --profile research up -d clickhouse mlflow
 - runtime-facing roots allowlist 작성:
   - covered: `services/`, `core/`, `cli/`, `shared/strategy/gates/`
   - allowed backend locations: `shared/db/*`, `shared/storage/clickhouse_*`, `shared/storage/market_data_store.py`
-  - research/maintenance: `scripts/`, `jobs/`, `shared/ml/`, analysis docs
+  - research/maintenance: `scripts/`, `jobs/`, analysis docs
 - `tests/unit/storage/test_clickhouse_policy.py` guard 추가.
 - runtime services의 ClickHouse client 생성 경로를 `shared.storage.clickhouse_backend` helper로 이동.
 - docs index/runtime architecture에 policy 반영.
@@ -353,7 +353,7 @@ docker compose --env-file .env.dev --profile research up -d clickhouse mlflow
 
 ## Acceptance Checklist
 
-확인일: 2026-06-03 (`bee5823`, PR #402)
+확인일: 2026-06-03 (PR #402)
 
 검증 근거:
 

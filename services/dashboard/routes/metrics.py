@@ -1,4 +1,5 @@
 """Metrics API endpoints for dashboard."""
+
 from __future__ import annotations
 
 import asyncio
@@ -62,8 +63,8 @@ def _candidate_databases() -> list[str]:
 def _query_venue_counts_for_database(database: str) -> dict[str, int]:
     """Query execution venue counts for one ClickHouse database.
 
-    Aggregates both RL closed trades and closed swing positions when those
-    tables exist. Missing tables are ignored gracefully.
+    Aggregates both legacy futures closed trades and closed swing positions
+    when those tables exist. Missing tables are ignored gracefully.
     """
     from shared.storage import create_sync_clickhouse_client
 
@@ -82,9 +83,7 @@ def _query_venue_counts_for_database(database: str) -> dict[str, int]:
 
         subqueries: list[str] = []
         if "rl_trades" in available_tables:
-            subqueries.append(
-                f"SELECT execution_venue FROM {database}.rl_trades"
-            )
+            subqueries.append(f"SELECT execution_venue FROM {database}.rl_trades")
         if "swing_positions" in available_tables:
             subqueries.append(
                 f"SELECT execution_venue FROM {database}.swing_positions WHERE is_open = 0"
@@ -124,7 +123,9 @@ def _collect_venue_metrics_sync() -> Dict[str, Any]:
         try:
             db_counts = _query_venue_counts_for_database(database)
         except Exception as e:
-            logger.warning("Failed to query venue counts for database %s: %s", database, e)
+            logger.warning(
+                "Failed to query venue counts for database %s: %s", database, e
+            )
             continue
         total_counts["KRX"] += db_counts.get("KRX", 0)
         total_counts["ATS"] += db_counts.get("ATS", 0)

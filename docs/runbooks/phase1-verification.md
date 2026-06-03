@@ -102,12 +102,10 @@ All checkboxes must be ✅ before Phase 2 begins.
   ```
   Expected: all tests pass, line coverage ≥ 80% for the six `--cov` targets.
 
-## 7. `rl_mppo` unaffected
+## 7. ML/RL removed
 
-- [ ] `rl_mppo` paper trading P&L over 48h post-deploy compared to 48h pre-deploy:
-  - React Dashboard / ClickHouse checks: open position count, daily PnL KRW, tick-to-fill latency.
-  - Acceptance: no statistically significant shift.
-  - Cron `scripts/cron/rl_paper.sh` still runs on schedule.
+- [ ] No `sts rl`/`sts tft` runtime command or RL paper cron is required for this gate.
+- [ ] Futures validation uses Setup A/C and indicator/strategy-native exits.
 
 ## 8. Prometheus metrics emitting
 

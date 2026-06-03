@@ -71,7 +71,7 @@ def _make_position(position_id: str) -> Position:
         entry_price=800.0,
         entry_time=datetime.now(),
         current_price=798.0,
-        strategy="rl_mppo",
+        strategy="setup_a_gap_reversion",
     )
 
 

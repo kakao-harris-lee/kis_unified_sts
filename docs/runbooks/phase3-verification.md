@@ -428,17 +428,16 @@ python scripts/walk_forward_sensitivity.py \
 - [ ] No need to write to real CH from the gate; Phase 4 runtime will drive
       real persistence.
 
-## 7. `rl_mppo` unaffected
+## 7. ML/RL removed
 
-- [ ] `services/trading/` and `shared/ml/rl/` were NOT modified in this PR —
+- [ ] No `sts rl`/`sts tft` runtime command or `shared/ml/rl` path is required by this PR —
       confirm:
   ```bash
   git log origin/main..HEAD --name-only | \
-      grep -E "services/trading/|shared/ml/rl/" && echo "REGRESSION" || echo "OK"
+      grep -E "shared/ml/rl|shared/strategy/entry/rl_mppo|shared/strategy/exit/rl_mppo_exit" && echo "REGRESSION" || echo "OK"
   ```
   Expected: `OK`.
-- [ ] `rl_mppo` paper trading React Dashboard / ClickHouse checks show no regressions
-      in open positions / daily PnL / latency after the Phase 3 branch merges.
+- [ ] Futures validation uses Setup A/C and indicator/strategy-native exits.
 
 ## 8. Prometheus metrics compile
 

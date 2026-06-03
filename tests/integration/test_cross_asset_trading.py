@@ -10,10 +10,11 @@ Tests the complete cross-asset trading lifecycle:
 These tests verify that the platform can manage real capital across
 independent asset classes without state corruption or missed exits.
 """
+
 import asyncio
 import json
 import os
-from datetime import datetime, time
+from datetime import datetime
 from unittest.mock import MagicMock, patch, AsyncMock, Mock
 
 import pytest
@@ -38,7 +39,9 @@ def is_redis_available(redis_url: str = "redis://localhost:6379/1") -> bool:
         return False
 
     try:
-        r = redis.Redis.from_url(redis_url, decode_responses=True, socket_connect_timeout=1)
+        r = redis.Redis.from_url(
+            redis_url, decode_responses=True, socket_connect_timeout=1
+        )
         r.ping()
         r.close()
         return True
@@ -101,7 +104,7 @@ def mock_futures_config():
 
     return TradingConfig(
         asset_class="futures",
-        strategy_name="rl_mppo",
+        strategy_name="setup_a_gap_reversion",
         symbols=["101S6000"],  # KOSPI200 futures
         initial_capital=10_000_000,  # 10M KRW
         paper_trading=True,
@@ -220,7 +223,7 @@ def create_futures_position(
     side: PositionSide = PositionSide.LONG,
     entry_price: float = 350000.0,
     quantity: int = 1,
-    strategy: str = "rl_mppo",
+    strategy: str = "setup_a_gap_reversion",
     state: PositionState = PositionState.SURVIVAL,
     current_price: float = None,
 ) -> Position:
@@ -371,7 +374,7 @@ class TestCrossAssetTrading:
 
         # Futures config
         assert mock_futures_config.asset_class == "futures"
-        assert mock_futures_config.strategy_name == "rl_mppo"
+        assert mock_futures_config.strategy_name == "setup_a_gap_reversion"
         assert "101S6000" in mock_futures_config.symbols
         assert mock_futures_config.initial_capital == 10_000_000
         assert mock_futures_config.paper_trading is True
@@ -433,7 +436,7 @@ class TestCrossAssetTrading:
     @pytest.mark.asyncio
     @pytest.mark.skipif(
         not is_redis_available(),
-        reason="Redis is not available. Start Redis with: docker-compose -f docker-compose.dev.yml up redis -d"
+        reason="Redis is not available. Start Redis with: docker-compose -f docker-compose.dev.yml up redis -d",
     )
     async def test_concurrent_stock_futures_lifecycle(
         self, redis_url, tracker_config, mock_stock_config, mock_futures_config
@@ -453,7 +456,6 @@ class TestCrossAssetTrading:
         - Position state management
         - Cross-asset isolation
         """
-        import redis
 
         # ============================================
         # Phase 1: Initialize Position Trackers
@@ -509,7 +511,7 @@ class TestCrossAssetTrading:
             side=PositionSide.LONG,
             entry_price=350000.0,
             quantity=1,
-            strategy="rl_mppo",
+            strategy="setup_a_gap_reversion",
         )
 
         # Entry: Short KOSPI200 Futures (hedging)
@@ -520,7 +522,7 @@ class TestCrossAssetTrading:
             side=PositionSide.SHORT,
             entry_price=351000.0,
             quantity=1,
-            strategy="rl_mppo",
+            strategy="setup_a_gap_reversion",
         )
 
         futures_tracker.add_recovered_position(futures_pos_1)
@@ -554,8 +556,12 @@ class TestCrossAssetTrading:
         stock_positions_from_redis = stock_reader.get_positions()
         futures_positions_from_redis = futures_reader.get_positions()
 
-        assert len(stock_positions_from_redis) == 2, "Should have 2 stock positions in Redis"
-        assert len(futures_positions_from_redis) == 2, "Should have 2 futures positions in Redis"
+        assert (
+            len(stock_positions_from_redis) == 2
+        ), "Should have 2 stock positions in Redis"
+        assert (
+            len(futures_positions_from_redis) == 2
+        ), "Should have 2 futures positions in Redis"
 
         # Verify position IDs are correctly isolated
         stock_ids = {p["id"] for p in stock_positions_from_redis}
@@ -574,15 +580,19 @@ class TestCrossAssetTrading:
         # Phase 5: Concurrent Position Updates
         # ============================================
         # Simulate price movements for stock positions
-        stock_tracker.update_prices({
-            "005930": 72000.0,  # +2.86% profit for STOCK-001
-            "000660": 125000.0,  # +4.17% profit for STOCK-002
-        })
+        stock_tracker.update_prices(
+            {
+                "005930": 72000.0,  # +2.86% profit for STOCK-001
+                "000660": 125000.0,  # +4.17% profit for STOCK-002
+            }
+        )
 
         # Simulate price movements for futures positions
-        futures_tracker.update_prices({
-            "101S6000": 352000.0,  # Updates both FUTURES-001 and FUTURES-002
-        })
+        futures_tracker.update_prices(
+            {
+                "101S6000": 352000.0,  # Updates both FUTURES-001 and FUTURES-002
+            }
+        )
 
         # Verify stock position updates
         stock_pos_1_updated = stock_tracker.get_position("STOCK-001")
@@ -603,7 +613,9 @@ class TestCrossAssetTrading:
 
         futures_pos_2_updated = futures_tracker.get_position("FUTURES-002")
         assert futures_pos_2_updated.current_price == 352000.0
-        assert futures_pos_2_updated.unrealized_pnl < 0  # Short position loses when price rises
+        assert (
+            futures_pos_2_updated.unrealized_pnl < 0
+        )  # Short position loses when price rises
 
         # ============================================
         # Phase 6: Position State Transitions
@@ -629,13 +641,17 @@ class TestCrossAssetTrading:
         # Phase 7: Exit Positions
         # ============================================
         # Close stock position (profitable exit)
-        closed_stock_pos = stock_tracker.close_position("STOCK-001", exit_price=73000.0, reason="TAKE_PROFIT")
+        closed_stock_pos = stock_tracker.close_position(
+            "STOCK-001", exit_price=73000.0, reason="TAKE_PROFIT"
+        )
         assert closed_stock_pos is not None
         assert closed_stock_pos.id == "STOCK-001"
         assert closed_stock_pos.exit_price == 73000.0
 
         # Close futures position (profitable exit)
-        closed_futures_pos = futures_tracker.close_position("FUTURES-001", exit_price=353000.0, reason="TAKE_PROFIT")
+        closed_futures_pos = futures_tracker.close_position(
+            "FUTURES-001", exit_price=353000.0, reason="TAKE_PROFIT"
+        )
         assert closed_futures_pos is not None
         assert closed_futures_pos.id == "FUTURES-001"
         assert closed_futures_pos.exit_price == 353000.0
@@ -652,17 +668,15 @@ class TestCrossAssetTrading:
         # Phase 8: Portfolio P&L Aggregation
         # ============================================
         # Calculate total portfolio P&L across assets
-        stock_total_pnl = sum(
-            pos.unrealized_pnl for pos in stock_tracker.positions
-        )
-        futures_total_pnl = sum(
-            pos.unrealized_pnl for pos in futures_tracker.positions
-        )
+        stock_total_pnl = sum(pos.unrealized_pnl for pos in stock_tracker.positions)
+        futures_total_pnl = sum(pos.unrealized_pnl for pos in futures_tracker.positions)
         portfolio_total_pnl = stock_total_pnl + futures_total_pnl
 
         assert stock_total_pnl > 0, "Stock portfolio should be profitable"
         # Note: FUTURES-002 is SHORT and lost money when price rose from 351000 to 353000
-        assert futures_total_pnl < 0, "Remaining futures position (SHORT) should have loss"
+        assert (
+            futures_total_pnl < 0
+        ), "Remaining futures position (SHORT) should have loss"
         # Overall portfolio should still be positive due to stock gains
         assert portfolio_total_pnl > 0, "Total portfolio should be profitable"
 
@@ -701,7 +715,9 @@ class TestCrossAssetTrading:
         for pos_data in stock_positions_data:
             side_str = pos_data.get("side", "long")
             side = PositionSide(side_str)
-            entry_time = datetime.fromisoformat(pos_data.get("entry_time", datetime.now().isoformat()))
+            entry_time = datetime.fromisoformat(
+                pos_data.get("entry_time", datetime.now().isoformat())
+            )
             entry_price = float(pos_data["entry_price"])
             current_price = float(pos_data.get("current_price", entry_price))
 
@@ -714,8 +730,12 @@ class TestCrossAssetTrading:
                 entry_price=entry_price,
                 entry_time=entry_time,
                 current_price=current_price,
-                highest_price=float(pos_data.get("highest_price", max(entry_price, current_price))),
-                lowest_price=float(pos_data.get("lowest_price", min(entry_price, current_price))),
+                highest_price=float(
+                    pos_data.get("highest_price", max(entry_price, current_price))
+                ),
+                lowest_price=float(
+                    pos_data.get("lowest_price", min(entry_price, current_price))
+                ),
                 state=PositionState(pos_data.get("state", "survival").lower()),
                 strategy=pos_data.get("strategy", ""),
                 fee_rate=float(pos_data.get("fee_rate", 0.003)),
@@ -725,7 +745,9 @@ class TestCrossAssetTrading:
         for pos_data in futures_positions_data:
             side_str = pos_data.get("side", "long")
             side = PositionSide(side_str)
-            entry_time = datetime.fromisoformat(pos_data.get("entry_time", datetime.now().isoformat()))
+            entry_time = datetime.fromisoformat(
+                pos_data.get("entry_time", datetime.now().isoformat())
+            )
             entry_price = float(pos_data["entry_price"])
             current_price = float(pos_data.get("current_price", entry_price))
 
@@ -738,8 +760,12 @@ class TestCrossAssetTrading:
                 entry_price=entry_price,
                 entry_time=entry_time,
                 current_price=current_price,
-                highest_price=float(pos_data.get("highest_price", max(entry_price, current_price))),
-                lowest_price=float(pos_data.get("lowest_price", min(entry_price, current_price))),
+                highest_price=float(
+                    pos_data.get("highest_price", max(entry_price, current_price))
+                ),
+                lowest_price=float(
+                    pos_data.get("lowest_price", min(entry_price, current_price))
+                ),
                 state=PositionState(pos_data.get("state", "survival").lower()),
                 strategy=pos_data.get("strategy", ""),
                 fee_rate=float(pos_data.get("fee_rate", 0.003)),
@@ -760,14 +786,14 @@ class TestCrossAssetTrading:
 
         recovered_futures_pos = futures_recovered_positions[0]
         assert recovered_futures_pos.code == "101S6000"
-        assert recovered_futures_pos.strategy == "rl_mppo"
+        assert recovered_futures_pos.strategy == "setup_a_gap_reversion"
 
         # Redis cleanup is handled by the fixture
 
     @pytest.mark.asyncio
     @pytest.mark.skipif(
         not is_redis_available(),
-        reason="Redis is not available. Start Redis with: docker-compose -f docker-compose.dev.yml up redis -d"
+        reason="Redis is not available. Start Redis with: docker-compose -f docker-compose.dev.yml up redis -d",
     )
     async def test_redis_position_key_isolation(self, redis_url):
         """Test Redis key isolation between stock and futures asset classes.
@@ -848,7 +874,9 @@ class TestCrossAssetTrading:
         futures_positions_raw = r.hgetall("trading:futures:positions")
 
         assert len(stock_positions_raw) == 2, "Should have exactly 2 stock positions"
-        assert len(futures_positions_raw) == 2, "Should have exactly 2 futures positions"
+        assert (
+            len(futures_positions_raw) == 2
+        ), "Should have exactly 2 futures positions"
 
         # Step 6: Verify no cross-contamination
         stock_position_ids = set(stock_positions_raw.keys())
@@ -876,7 +904,7 @@ class TestCrossAssetTrading:
         # Parse futures position data
         futures_pos_1_data = json.loads(futures_positions_raw["FUTURES-ISO-001"])
         assert futures_pos_1_data["code"] == "101S6000"
-        assert futures_pos_1_data["strategy"] == "rl_mppo"
+        assert futures_pos_1_data["strategy"] == "setup_a_gap_reversion"
         assert float(futures_pos_1_data["entry_price"]) == 350000.0
 
         # Step 8: Verify TradingStateReader reads correct asset-specific data
@@ -931,8 +959,12 @@ class TestCrossAssetTrading:
         stock_positions_after_close = r.hgetall("trading:stock:positions")
         futures_positions_after_close = r.hgetall("trading:futures:positions")
 
-        assert len(stock_positions_after_close) == 1, "Should have 1 stock position after close"
-        assert len(futures_positions_after_close) == 1, "Should have 1 futures position after close"
+        assert (
+            len(stock_positions_after_close) == 1
+        ), "Should have 1 stock position after close"
+        assert (
+            len(futures_positions_after_close) == 1
+        ), "Should have 1 futures position after close"
         assert "STOCK-ISO-001" not in stock_positions_after_close
         assert "FUTURES-ISO-001" not in futures_positions_after_close
 
@@ -968,7 +1000,6 @@ class TestCrossAssetTrading:
         """
         from shared.risk.manager import RiskManager
         from shared.risk.config import RiskConfig
-        from shared.risk.models import BlockReason
 
         # Step 1: Test cross-asset position count enforcement
         # Set up risk manager with low position limit (5 total)
@@ -1042,15 +1073,23 @@ class TestCrossAssetTrading:
         # Verify portfolio metrics
         metrics = risk_manager.get_portfolio_metrics()
         assert metrics.total_positions == 5, "Should have 5 total positions"
-        assert metrics.exposure_by_asset["stock"].position_count == 3, "Should have 3 stock positions"
-        assert metrics.exposure_by_asset["futures"].position_count == 2, "Should have 2 futures positions"
+        assert (
+            metrics.exposure_by_asset["stock"].position_count == 3
+        ), "Should have 3 stock positions"
+        assert (
+            metrics.exposure_by_asset["futures"].position_count == 2
+        ), "Should have 2 futures positions"
 
         # At limit (5/5), new positions should be blocked
         can_open_stock = risk_manager.can_open_position("stock")
         can_open_futures = risk_manager.can_open_position("futures")
 
-        assert can_open_stock is False, "Should not allow opening stock position (at limit)"
-        assert can_open_futures is False, "Should not allow opening futures position (at limit)"
+        assert (
+            can_open_stock is False
+        ), "Should not allow opening stock position (at limit)"
+        assert (
+            can_open_futures is False
+        ), "Should not allow opening futures position (at limit)"
 
         # Step 2: Test cross-asset daily loss limit enforcement
         # Create new risk manager with low daily loss limit
@@ -1114,24 +1153,38 @@ class TestCrossAssetTrading:
         # Verify daily loss percentage
         loss_pct = abs(total_daily_loss) / risk_config_loss_limit.initial_capital * 100
         assert loss_pct == 2.5, "Daily loss should be 2.5%"
-        assert loss_pct > risk_config_loss_limit.daily_loss_limit_pct, "Should exceed limit"
+        assert (
+            loss_pct > risk_config_loss_limit.daily_loss_limit_pct
+        ), "Should exceed limit"
 
         # Check that new position entry is blocked for both asset classes
         can_open_stock_loss = risk_manager_loss.can_open_position("stock")
         can_open_futures_loss = risk_manager_loss.can_open_position("futures")
 
-        assert can_open_stock_loss is False, "Stock entry should be blocked due to daily loss"
-        assert can_open_futures_loss is False, "Futures entry should be blocked due to daily loss"
+        assert (
+            can_open_stock_loss is False
+        ), "Stock entry should be blocked due to daily loss"
+        assert (
+            can_open_futures_loss is False
+        ), "Futures entry should be blocked due to daily loss"
 
         # Verify the internal daily loss tracking
         # The _daily_pnl test attribute should reflect the simulated loss
-        assert risk_manager_loss._daily_pnl == total_daily_loss, "Daily PnL tracking should match simulated loss"
+        assert (
+            risk_manager_loss._daily_pnl == total_daily_loss
+        ), "Daily PnL tracking should match simulated loss"
 
         # Step 3: Verify cross-asset metrics are accurate
         metrics_loss = risk_manager_loss.get_portfolio_metrics()
-        assert metrics_loss.total_positions == 3, "Should have 3 total positions (2 stock + 1 futures)"
-        assert metrics_loss.exposure_by_asset["stock"].position_count == 2, "Should have 2 stock positions"
-        assert metrics_loss.exposure_by_asset["futures"].position_count == 1, "Should have 1 futures position"
+        assert (
+            metrics_loss.total_positions == 3
+        ), "Should have 3 total positions (2 stock + 1 futures)"
+        assert (
+            metrics_loss.exposure_by_asset["stock"].position_count == 2
+        ), "Should have 2 stock positions"
+        assert (
+            metrics_loss.exposure_by_asset["futures"].position_count == 1
+        ), "Should have 1 futures position"
 
     @pytest.mark.asyncio
     @pytest.mark.skipif(
@@ -1158,12 +1211,14 @@ class TestCrossAssetTrading:
         - Verify Redis keys: trading:stock:positions and trading:futures:positions
         - Restart and recover all 5 positions
         """
-        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from services.trading.orchestrator import TradingOrchestrator
 
         # ============================================
         # Phase 1: Setup Stock Orchestrator
         # ============================================
-        with patch("services.trading.orchestrator.MarketDataProvider") as MockStockProvider:
+        with patch(
+            "services.trading.orchestrator.MarketDataProvider"
+        ) as MockStockProvider:
             mock_stock_provider = AsyncMock()
             MockStockProvider.return_value = mock_stock_provider
 
@@ -1171,7 +1226,9 @@ class TestCrossAssetTrading:
 
             # Initialize strategy infrastructure
             stock_orchestrator._init_strategy_infrastructure()
-            stock_orchestrator._state_publisher = TradingStatePublisher(asset_class="stock")
+            stock_orchestrator._state_publisher = TradingStatePublisher(
+                asset_class="stock"
+            )
 
             # Add stock test positions
             stock_positions = [
@@ -1209,7 +1266,9 @@ class TestCrossAssetTrading:
         # ============================================
         # Phase 2: Setup Futures Orchestrator
         # ============================================
-        with patch("services.trading.orchestrator.MarketDataProvider") as MockFuturesProvider:
+        with patch(
+            "services.trading.orchestrator.MarketDataProvider"
+        ) as MockFuturesProvider:
             mock_futures_provider = AsyncMock()
             MockFuturesProvider.return_value = mock_futures_provider
 
@@ -1217,7 +1276,9 @@ class TestCrossAssetTrading:
 
             # Initialize strategy infrastructure
             futures_orchestrator._init_strategy_infrastructure()
-            futures_orchestrator._state_publisher = TradingStatePublisher(asset_class="futures")
+            futures_orchestrator._state_publisher = TradingStatePublisher(
+                asset_class="futures"
+            )
 
             # Add futures test positions
             futures_positions = [
@@ -1250,19 +1311,23 @@ class TestCrossAssetTrading:
         # Phase 3: Simulate State Transitions
         # ============================================
         # Update stock prices to trigger state transitions
-        stock_orchestrator._position_tracker.update_prices({
-            "005930": 71500.0,  # +2.14% -> BREAKEVEN
-            "000660": 126500.0,  # +5.42% -> MAXIMIZE
-        })
+        stock_orchestrator._position_tracker.update_prices(
+            {
+                "005930": 71500.0,  # +2.14% -> BREAKEVEN
+                "000660": 126500.0,  # +5.42% -> MAXIMIZE
+            }
+        )
 
         # Update futures prices
-        futures_orchestrator._position_tracker.update_prices({
-            "101S6000": 352000.0,  # LONG +0.57%, SHORT -0.28%
-        })
+        futures_orchestrator._position_tracker.update_prices(
+            {
+                "101S6000": 352000.0,  # LONG +0.57%, SHORT -0.28%
+            }
+        )
 
         # Force state updates
-        stock_transitions = stock_orchestrator._position_tracker.update_states()
-        futures_transitions = futures_orchestrator._position_tracker.update_states()
+        stock_orchestrator._position_tracker.update_states()
+        futures_orchestrator._position_tracker.update_states()
 
         # Verify stock states changed
         stock_pos_1 = stock_orchestrator._position_tracker.get_position("STOCK-SD-001")
@@ -1301,7 +1366,9 @@ class TestCrossAssetTrading:
         futures_positions_raw = r.hgetall("trading:futures:positions")
 
         assert len(stock_positions_raw) == 3, "Should have 3 stock positions in Redis"
-        assert len(futures_positions_raw) == 2, "Should have 2 futures positions in Redis"
+        assert (
+            len(futures_positions_raw) == 2
+        ), "Should have 2 futures positions in Redis"
 
         # Verify position IDs are correctly isolated
         stock_ids = set(stock_positions_raw.keys())
@@ -1330,8 +1397,12 @@ class TestCrossAssetTrading:
         stock_positions_after_shutdown = r.hgetall("trading:stock:positions")
         futures_positions_after_shutdown = r.hgetall("trading:futures:positions")
 
-        assert len(stock_positions_after_shutdown) == 3, "Stock positions should persist after shutdown"
-        assert len(futures_positions_after_shutdown) == 2, "Futures positions should persist after shutdown"
+        assert (
+            len(stock_positions_after_shutdown) == 3
+        ), "Stock positions should persist after shutdown"
+        assert (
+            len(futures_positions_after_shutdown) == 2
+        ), "Futures positions should persist after shutdown"
 
         # ============================================
         # Phase 7: Verify Position Recovery from Redis
@@ -1363,7 +1434,9 @@ class TestCrossAssetTrading:
 
         # Read futures positions from Redis (returns list of position dicts)
         futures_positions_read = futures_reader.get_positions()
-        assert len(futures_positions_read) == 2, "Should have 2 futures positions in Redis"
+        assert (
+            len(futures_positions_read) == 2
+        ), "Should have 2 futures positions in Redis"
 
         # Verify futures position details
         futures_ids_read = {pos["id"] for pos in futures_positions_read}
@@ -1410,10 +1483,15 @@ class TestCrossAssetTrading:
         - Stocks: swing positions allowed, no forced EOD close
         """
         from shared.strategy.base import ExitContext
-        from shared.strategy.exit.rl_mppo_exit import RLMPPOExit, RLMPPOExitConfig
-        from shared.strategy.exit.three_stage import ThreeStageExit, ThreeStageExitConfig
+        from shared.strategy.exit.setup_target_exit import (
+            SetupTargetExit,
+            SetupTargetExitConfig,
+        )
+        from shared.strategy.exit.three_stage import (
+            ThreeStageExit,
+            ThreeStageExitConfig,
+        )
         from shared.models.signal import ExitReason
-        from shared.strategy.market_time import now_kst
         from zoneinfo import ZoneInfo
 
         # ============================================
@@ -1446,15 +1524,13 @@ class TestCrossAssetTrading:
         # ============================================
         # Phase 2: Setup Exit Strategies
         # ============================================
-        # Futures exit strategy (RL M-PPO)
-        futures_exit_config = RLMPPOExitConfig(
-            model_path="models/futures/rl/mppo_best/best_model.zip",
-            min_exit_confidence=0.5,
-            hard_stop_pct=-0.03,
+        # Futures exit strategy (strategy-native setup target/EOD exit)
+        futures_exit_config = SetupTargetExitConfig(
+            eod_close_enabled=True,
             eod_close_hour=15,
             eod_close_minute=15,
         )
-        futures_exit_strategy = RLMPPOExit(futures_exit_config)
+        futures_exit_strategy = SetupTargetExit(futures_exit_config)
 
         # Stock exit strategy (Three-Stage with swing positions allowed)
         stock_exit_config = ThreeStageExitConfig(
@@ -1483,48 +1559,42 @@ class TestCrossAssetTrading:
             }
         }
 
-        # Mock stock price snapshot
-        mock_stock_snapshot = {
-            "005930": {
-                "last_price": 73500.0,
-                "bid_price": 73450.0,
-                "ask_price": 73550.0,
-                "volume": 5000000,
-            }
-        }
-
         # ============================================
         # Phase 4: Test Futures EOD Close at 15:15
         # ============================================
         # Mock time to 15:15 (futures EOD)
         eod_time = datetime(2024, 3, 15, 15, 15, 0, tzinfo=ZoneInfo("Asia/Seoul"))
 
-        with patch("shared.strategy.exit.rl_mppo_exit.now_kst", return_value=eod_time):
+        with (
+            patch(
+                "shared.strategy.exit.setup_target_exit.now_kst", return_value=eod_time
+            ),
+            patch(
+                "shared.strategy.exit.setup_target_exit.is_trading_day_kst",
+                return_value=True,
+            ),
+        ):
             # Create exit context for futures
             futures_exit_ctx = ExitContext(
                 position=futures_position,
-                market_data=mock_market_data,
+                market_data=mock_market_data.get_symbol_snapshot.return_value[
+                    "101S6000"
+                ],
                 timestamp=eod_time,
                 metadata={"is_backtest": False},  # Real trading mode
             )
 
-            # Check if futures should exit
-            with patch.object(
-                futures_exit_strategy,
-                "_get_current_price",
-                return_value=352.0,
-            ):
-                futures_should_exit, futures_signal = await futures_exit_strategy.should_exit(
-                    futures_exit_ctx
-                )
+            futures_should_exit, futures_signal = (
+                await futures_exit_strategy.should_exit(futures_exit_ctx)
+            )
 
             # Verify futures exits at EOD
             assert futures_should_exit, "Futures position should exit at 15:15 EOD"
             assert futures_signal is not None, "Futures exit signal should be generated"
-            assert futures_signal.reason == ExitReason.EOD_CLOSE, (
-                f"Futures should exit with EOD_CLOSE reason, got {futures_signal.reason}"
-            )
-            assert futures_signal.priority == 1, "EOD close should have high priority (1)"
+            assert (
+                futures_signal.reason == ExitReason.EOD_CLOSE
+            ), f"Futures should exit with EOD_CLOSE reason, got {futures_signal.reason}"
+            assert futures_signal.priority >= 1, "EOD close should be prioritized"
 
         # ============================================
         # Phase 5: Test Stock Swing Position at Same Time
@@ -1533,8 +1603,12 @@ class TestCrossAssetTrading:
         # Stock should NOT exit because EOD is configured at 23:59 (swing allowed)
 
         with patch("shared.strategy.exit.three_stage.now_kst", return_value=eod_time):
-            with patch("shared.strategy.exit.three_stage.is_trading_day_kst", return_value=True):
-                with patch("shared.strategy.exit.three_stage.to_kst", return_value=eod_time):
+            with patch(
+                "shared.strategy.exit.three_stage.is_trading_day_kst", return_value=True
+            ):
+                with patch(
+                    "shared.strategy.exit.three_stage.to_kst", return_value=eod_time
+                ):
                     # Create exit context for stock
                     stock_exit_ctx = ExitContext(
                         position=stock_position,
@@ -1549,8 +1623,8 @@ class TestCrossAssetTrading:
                         "_get_current_price",
                         return_value=73500.0,
                     ):
-                        stock_should_exit, stock_signal = await stock_exit_strategy.should_exit(
-                            stock_exit_ctx
+                        stock_should_exit, stock_signal = (
+                            await stock_exit_strategy.should_exit(stock_exit_ctx)
                         )
 
             # Verify stock does NOT exit at 15:15

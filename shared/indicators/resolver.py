@@ -33,13 +33,13 @@ class StreamingIndicatorResolver:
             result.update(base)
 
         if self.contract.needs_ohlcv:
-            rl_feats = self.engine.get_rl_features(symbol)
-            if rl_feats:
-                # Prefix RL features to avoid overwriting base indicators
-                # (e.g. RL "atr" is normalized, base "atr" is raw)
-                for k, v in rl_feats.items():
+            features = self.engine.get_indicator_features(symbol)
+            if features:
+                # Prefix feature bundle values to avoid overwriting base
+                # indicators (e.g. normalized "atr" vs raw "atr").
+                for k, v in features.items():
                     if k in result:
-                        result[f"rl_{k}"] = v
+                        result[f"feature_{k}"] = v
                     else:
                         result[k] = v
             else:
@@ -66,19 +66,19 @@ class StreamingIndicatorResolver:
     def collect_exit_indicators(self, symbol: str) -> dict[str, Any]:
         """Collect indicator payload for exit evaluation.
 
-        Keeps current behavior (base + rl + momentum if declared) without
+        Keeps current behavior (base + feature bundle + momentum if declared) without
         inferring additional hidden requirements.
         """
         result = self.collect_entry_indicators(symbol)
 
-        # Exit paths often benefit from RL features even when ohlcv is absent.
+        # Exit paths often benefit from indicator features even when ohlcv is absent.
         # Keep this optional and additive to avoid behavior regressions.
         if "ohlcv" not in result:
-            rl_feats = self.engine.get_rl_features(symbol)
-            if rl_feats:
-                for k, v in rl_feats.items():
+            features = self.engine.get_indicator_features(symbol)
+            if features:
+                for k, v in features.items():
                     if k in result:
-                        result[f"rl_{k}"] = v
+                        result[f"feature_{k}"] = v
                     else:
                         result[k] = v
         return result

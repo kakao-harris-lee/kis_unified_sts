@@ -27,8 +27,8 @@ router = APIRouter(prefix="/api/health", tags=["health"])
 # ---------------------------------------------------------------------------
 
 _PID_FILES: dict[str, Path] = {
-    "futures": Path("/home/deploy/project/kis_unified_sts/pids/rl_paper.pid"),
-    "stock": Path("/home/deploy/project/kis_unified_sts/pids/stock_paper.pid"),
+    "futures": Path("/home/deploy/project/kis_unified_sts/pids/futures_trading.pid"),
+    "stock": Path("/home/deploy/project/kis_unified_sts/pids/stock_trading.pid"),
 }
 
 

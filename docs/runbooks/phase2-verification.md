@@ -86,10 +86,10 @@ All checkboxes must be ✅ before Phase 3 begins.
   rate(news_scoring_fallback_total[48h]) / rate(news_scored_total[48h]) < 0.05
   ```
 
-## 7. `rl_mppo` unaffected
+## 7. ML/RL removed
 
-- [ ] `rl_mppo` paper trading daily PnL + latency before vs after scorer deploy — no statistically significant shift.
-- React Dashboard / ClickHouse checks: open positions, daily PnL, tick-to-fill latency.
+- [ ] No `sts rl`/`sts tft` runtime command or RL shadow logger is required for this gate.
+- [ ] Futures validation uses Setup A/C and indicator/strategy-native exits.
 
 ## 8. Prometheus metrics spot-check
 

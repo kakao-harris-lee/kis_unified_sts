@@ -45,14 +45,14 @@ Edit `config/decision_engine.yaml` → `enabled: false`. Commit so it sticks.
 
 - [ ] `grep "^enabled:" config/decision_engine.yaml` → `enabled: false`
 
-### 4. Verify only `rl_mppo` (legacy main strategy) continues running
+### 4. Verify standard orchestrators continue running
 
 ```bash
-systemctl is-active kis-rl-paper kis-stock-trading   # both should be active
-ps aux | grep -E "rl_mppo|paper_trader" | grep -v grep
+systemctl is-active kis-futures-trading kis-stock-trading
+ps aux | grep -E "sts trade start|services.trading" | grep -v grep
 ```
 
-- [ ] Phase 4/5 stack stopped; legacy `rl_mppo` paper account untouched
+- [ ] Phase 4/5 stack stopped; standard stock/futures trading path remains available
 
 ### 5. Collect logs (incident bundle)
 

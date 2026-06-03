@@ -3,11 +3,10 @@
 Tests the orchestrator startup sequence to ensure components initialize
 in the correct order and dependencies are properly established.
 """
+
 import asyncio
 import pytest
-from datetime import date, time
-from unittest.mock import AsyncMock, MagicMock, patch, call
-from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 
 @pytest.mark.integration
@@ -30,31 +29,46 @@ class TestStartupSequence:
         )
 
         # Mock component initialization methods to track order
-        with patch.object(
-            TradingOrchestrator, "_init_kis_client", return_value=None
-        ) as mock_kis, patch.object(
-            TradingOrchestrator, "_init_futures_slippage_controller", return_value=None
-        ) as mock_futures_slip, patch.object(
-            TradingOrchestrator, "_init_price_feeds", return_value=None
-        ) as mock_price_feeds, patch.object(
-            TradingOrchestrator, "_init_data_provider", return_value=None
-        ) as mock_data_provider, patch.object(
-            TradingOrchestrator, "_init_tick_stream_publisher", return_value=None
-        ) as mock_tick_stream, patch.object(
-            TradingOrchestrator, "_init_strategy_infrastructure", return_value=None
-        ) as mock_strategy_infra, patch.object(
-            TradingOrchestrator, "_init_indicator_engine", return_value=None
-        ) as mock_indicator, patch.object(
-            TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
-        ) as mock_execution, patch.object(
-            TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
-        ) as mock_positions, patch.object(
-            TradingOrchestrator, "_start_market_data_loop", new_callable=AsyncMock
-        ) as mock_market_data, patch.object(
-            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock(), stop=AsyncMock())
-        ) as mock_pipeline, patch(
-            "services.monitoring.metrics.get_metrics_collector"
-        ) as mock_metrics:
+        with (
+            patch.object(
+                TradingOrchestrator, "_init_kis_client", return_value=None
+            ) as mock_kis,
+            patch.object(
+                TradingOrchestrator,
+                "_init_futures_slippage_controller",
+                return_value=None,
+            ) as mock_futures_slip,
+            patch.object(
+                TradingOrchestrator, "_init_price_feeds", return_value=None
+            ) as mock_price_feeds,
+            patch.object(
+                TradingOrchestrator, "_init_data_provider", return_value=None
+            ) as mock_data_provider,
+            patch.object(
+                TradingOrchestrator, "_init_tick_stream_publisher", return_value=None
+            ) as mock_tick_stream,
+            patch.object(
+                TradingOrchestrator, "_init_strategy_infrastructure", return_value=None
+            ) as mock_strategy_infra,
+            patch.object(
+                TradingOrchestrator, "_init_indicator_engine", return_value=None
+            ) as mock_indicator,
+            patch.object(
+                TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
+            ) as mock_execution,
+            patch.object(
+                TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
+            ) as mock_positions,
+            patch.object(
+                TradingOrchestrator, "_start_market_data_loop", new_callable=AsyncMock
+            ) as mock_market_data,
+            patch.object(
+                TradingOrchestrator,
+                "_create_pipeline",
+                return_value=MagicMock(start=AsyncMock(), stop=AsyncMock()),
+            ),
+            patch("services.monitoring.metrics.get_metrics_collector") as mock_metrics,
+        ):
 
             # Configure mocks to track call order
             def track_init(name):
@@ -125,31 +139,34 @@ class TestStartupSequence:
             # This should only be called after KIS client is initialized
             assert kis_init_called, "KIS client must be initialized first"
 
-        with patch.object(
-            TradingOrchestrator, "_init_kis_client", side_effect=mock_init_kis
-        ), patch.object(
-            TradingOrchestrator, "_init_price_feeds", side_effect=check_kis_init
-        ), patch.object(
-            TradingOrchestrator, "_init_futures_slippage_controller"
-        ), patch.object(
-            TradingOrchestrator, "_init_data_provider"
-        ), patch.object(
-            TradingOrchestrator, "_init_tick_stream_publisher"
-        ), patch.object(
-            TradingOrchestrator, "_init_strategy_infrastructure"
-        ), patch.object(
-            TradingOrchestrator, "_init_indicator_engine"
-        ), patch.object(
-            TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_start_market_data_loop", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock(), stop=AsyncMock())
-        ), patch(
-            "services.monitoring.metrics.get_metrics_collector"
-        ) as mock_metrics:
+        with (
+            patch.object(
+                TradingOrchestrator, "_init_kis_client", side_effect=mock_init_kis
+            ),
+            patch.object(
+                TradingOrchestrator, "_init_price_feeds", side_effect=check_kis_init
+            ),
+            patch.object(TradingOrchestrator, "_init_futures_slippage_controller"),
+            patch.object(TradingOrchestrator, "_init_data_provider"),
+            patch.object(TradingOrchestrator, "_init_tick_stream_publisher"),
+            patch.object(TradingOrchestrator, "_init_strategy_infrastructure"),
+            patch.object(TradingOrchestrator, "_init_indicator_engine"),
+            patch.object(
+                TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator, "_start_market_data_loop", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator,
+                "_create_pipeline",
+                return_value=MagicMock(start=AsyncMock(), stop=AsyncMock()),
+            ),
+            patch("services.monitoring.metrics.get_metrics_collector") as mock_metrics,
+        ):
             mock_metrics.return_value = MagicMock(
                 start_prometheus_server=MagicMock(),
                 register_strategies=MagicMock(),
@@ -176,33 +193,42 @@ class TestStartupSequence:
             strategy_init_called = True
 
         def check_strategy_init(*args):
-            assert strategy_init_called, "Strategy infrastructure must be initialized before indicator engine"
+            assert (
+                strategy_init_called
+            ), "Strategy infrastructure must be initialized before indicator engine"
 
-        with patch.object(
-            TradingOrchestrator, "_init_kis_client", return_value=None
-        ), patch.object(
-            TradingOrchestrator, "_init_futures_slippage_controller"
-        ), patch.object(
-            TradingOrchestrator, "_init_price_feeds", return_value=None
-        ), patch.object(
-            TradingOrchestrator, "_init_data_provider"
-        ), patch.object(
-            TradingOrchestrator, "_init_tick_stream_publisher"
-        ), patch.object(
-            TradingOrchestrator, "_init_strategy_infrastructure", side_effect=mock_strategy_init
-        ), patch.object(
-            TradingOrchestrator, "_init_indicator_engine", side_effect=check_strategy_init
-        ), patch.object(
-            TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_start_market_data_loop", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock(), stop=AsyncMock())
-        ), patch(
-            "services.monitoring.metrics.get_metrics_collector"
-        ) as mock_metrics:
+        with (
+            patch.object(TradingOrchestrator, "_init_kis_client", return_value=None),
+            patch.object(TradingOrchestrator, "_init_futures_slippage_controller"),
+            patch.object(TradingOrchestrator, "_init_price_feeds", return_value=None),
+            patch.object(TradingOrchestrator, "_init_data_provider"),
+            patch.object(TradingOrchestrator, "_init_tick_stream_publisher"),
+            patch.object(
+                TradingOrchestrator,
+                "_init_strategy_infrastructure",
+                side_effect=mock_strategy_init,
+            ),
+            patch.object(
+                TradingOrchestrator,
+                "_init_indicator_engine",
+                side_effect=check_strategy_init,
+            ),
+            patch.object(
+                TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator, "_start_market_data_loop", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator,
+                "_create_pipeline",
+                return_value=MagicMock(start=AsyncMock(), stop=AsyncMock()),
+            ),
+            patch("services.monitoring.metrics.get_metrics_collector") as mock_metrics,
+        ):
             mock_metrics.return_value = MagicMock(
                 start_prometheus_server=MagicMock(),
                 register_strategies=MagicMock(),
@@ -233,34 +259,43 @@ class TestStartupSequence:
         def check_price_feeds(data_source):
             nonlocal data_source_passed
             data_source_passed = data_source
-            assert price_feeds_init_called, "Price feeds must be initialized before data provider"
-            assert data_source is not None, "Data source should be passed to data provider"
+            assert (
+                price_feeds_init_called
+            ), "Price feeds must be initialized before data provider"
+            assert (
+                data_source is not None
+            ), "Data source should be passed to data provider"
 
-        with patch.object(
-            TradingOrchestrator, "_init_kis_client", return_value=None
-        ), patch.object(
-            TradingOrchestrator, "_init_futures_slippage_controller"
-        ), patch.object(
-            TradingOrchestrator, "_init_price_feeds", side_effect=mock_price_feeds
-        ), patch.object(
-            TradingOrchestrator, "_init_data_provider", side_effect=check_price_feeds
-        ), patch.object(
-            TradingOrchestrator, "_init_tick_stream_publisher"
-        ), patch.object(
-            TradingOrchestrator, "_init_strategy_infrastructure"
-        ), patch.object(
-            TradingOrchestrator, "_init_indicator_engine"
-        ), patch.object(
-            TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_start_market_data_loop", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock(), stop=AsyncMock())
-        ), patch(
-            "services.monitoring.metrics.get_metrics_collector"
-        ) as mock_metrics:
+        with (
+            patch.object(TradingOrchestrator, "_init_kis_client", return_value=None),
+            patch.object(TradingOrchestrator, "_init_futures_slippage_controller"),
+            patch.object(
+                TradingOrchestrator, "_init_price_feeds", side_effect=mock_price_feeds
+            ),
+            patch.object(
+                TradingOrchestrator,
+                "_init_data_provider",
+                side_effect=check_price_feeds,
+            ),
+            patch.object(TradingOrchestrator, "_init_tick_stream_publisher"),
+            patch.object(TradingOrchestrator, "_init_strategy_infrastructure"),
+            patch.object(TradingOrchestrator, "_init_indicator_engine"),
+            patch.object(
+                TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator, "_start_market_data_loop", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator,
+                "_create_pipeline",
+                return_value=MagicMock(start=AsyncMock(), stop=AsyncMock()),
+            ),
+            patch("services.monitoring.metrics.get_metrics_collector") as mock_metrics,
+        ):
             mock_metrics.return_value = MagicMock(
                 start_prometheus_server=MagicMock(),
                 register_strategies=MagicMock(),
@@ -293,31 +328,32 @@ class TestStartupSequence:
             pipeline_mock.stop = AsyncMock()
             return pipeline_mock
 
-        with patch.object(
-            TradingOrchestrator, "_init_kis_client", return_value=None
-        ), patch.object(
-            TradingOrchestrator, "_init_futures_slippage_controller"
-        ), patch.object(
-            TradingOrchestrator, "_init_price_feeds", return_value=None
-        ), patch.object(
-            TradingOrchestrator, "_init_data_provider"
-        ), patch.object(
-            TradingOrchestrator, "_init_tick_stream_publisher"
-        ), patch.object(
-            TradingOrchestrator, "_init_strategy_infrastructure"
-        ), patch.object(
-            TradingOrchestrator, "_init_indicator_engine"
-        ), patch.object(
-            TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_start_market_data_loop", side_effect=mock_market_data
-        ), patch.object(
-            TradingOrchestrator, "_create_pipeline", side_effect=check_market_data_before_pipeline
-        ), patch(
-            "services.monitoring.metrics.get_metrics_collector"
-        ) as mock_metrics:
+        with (
+            patch.object(TradingOrchestrator, "_init_kis_client", return_value=None),
+            patch.object(TradingOrchestrator, "_init_futures_slippage_controller"),
+            patch.object(TradingOrchestrator, "_init_price_feeds", return_value=None),
+            patch.object(TradingOrchestrator, "_init_data_provider"),
+            patch.object(TradingOrchestrator, "_init_tick_stream_publisher"),
+            patch.object(TradingOrchestrator, "_init_strategy_infrastructure"),
+            patch.object(TradingOrchestrator, "_init_indicator_engine"),
+            patch.object(
+                TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator,
+                "_start_market_data_loop",
+                side_effect=mock_market_data,
+            ),
+            patch.object(
+                TradingOrchestrator,
+                "_create_pipeline",
+                side_effect=check_market_data_before_pipeline,
+            ),
+            patch("services.monitoring.metrics.get_metrics_collector") as mock_metrics,
+        ):
             mock_metrics.return_value = MagicMock(
                 start_prometheus_server=MagicMock(),
                 register_strategies=MagicMock(),
@@ -344,33 +380,36 @@ class TestStartupSequence:
             execution_init_called = True
 
         async def check_execution(*args):
-            assert execution_init_called, "Execution layer must be initialized before position recovery"
+            assert (
+                execution_init_called
+            ), "Execution layer must be initialized before position recovery"
 
-        with patch.object(
-            TradingOrchestrator, "_init_kis_client", return_value=None
-        ), patch.object(
-            TradingOrchestrator, "_init_futures_slippage_controller"
-        ), patch.object(
-            TradingOrchestrator, "_init_price_feeds", return_value=None
-        ), patch.object(
-            TradingOrchestrator, "_init_data_provider"
-        ), patch.object(
-            TradingOrchestrator, "_init_tick_stream_publisher"
-        ), patch.object(
-            TradingOrchestrator, "_init_strategy_infrastructure"
-        ), patch.object(
-            TradingOrchestrator, "_init_indicator_engine"
-        ), patch.object(
-            TradingOrchestrator, "_init_execution_layer", side_effect=mock_execution
-        ), patch.object(
-            TradingOrchestrator, "_load_swing_positions", side_effect=check_execution
-        ), patch.object(
-            TradingOrchestrator, "_start_market_data_loop", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock(), stop=AsyncMock())
-        ), patch(
-            "services.monitoring.metrics.get_metrics_collector"
-        ) as mock_metrics:
+        with (
+            patch.object(TradingOrchestrator, "_init_kis_client", return_value=None),
+            patch.object(TradingOrchestrator, "_init_futures_slippage_controller"),
+            patch.object(TradingOrchestrator, "_init_price_feeds", return_value=None),
+            patch.object(TradingOrchestrator, "_init_data_provider"),
+            patch.object(TradingOrchestrator, "_init_tick_stream_publisher"),
+            patch.object(TradingOrchestrator, "_init_strategy_infrastructure"),
+            patch.object(TradingOrchestrator, "_init_indicator_engine"),
+            patch.object(
+                TradingOrchestrator, "_init_execution_layer", side_effect=mock_execution
+            ),
+            patch.object(
+                TradingOrchestrator,
+                "_load_swing_positions",
+                side_effect=check_execution,
+            ),
+            patch.object(
+                TradingOrchestrator, "_start_market_data_loop", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator,
+                "_create_pipeline",
+                return_value=MagicMock(start=AsyncMock(), stop=AsyncMock()),
+            ),
+            patch("services.monitoring.metrics.get_metrics_collector") as mock_metrics,
+        ):
             mock_metrics.return_value = MagicMock(
                 start_prometheus_server=MagicMock(),
                 register_strategies=MagicMock(),
@@ -415,45 +454,62 @@ class TestStartupSequence:
 
         def check_all_ready():
             for component, ready in components_ready.items():
-                assert ready, f"Component {component} must be ready before pipeline starts"
+                assert (
+                    ready
+                ), f"Component {component} must be ready before pipeline starts"
             pipeline_mock = MagicMock()
             pipeline_mock.start = AsyncMock()
             pipeline_mock.stop = AsyncMock()
             return pipeline_mock
 
-        with patch.object(
-            TradingOrchestrator, "_init_kis_client", side_effect=mark_ready("kis_client")
-        ), patch.object(
-            TradingOrchestrator, "_init_futures_slippage_controller"
-        ), patch.object(
-            TradingOrchestrator, "_init_price_feeds", side_effect=mark_ready("price_feeds")
-        ), patch.object(
-            TradingOrchestrator, "_init_data_provider", side_effect=mark_ready("data_provider")
-        ), patch.object(
-            TradingOrchestrator, "_init_tick_stream_publisher"
-        ), patch.object(
-            TradingOrchestrator,
-            "_init_strategy_infrastructure",
-            side_effect=mark_ready("strategy_infra"),
-        ), patch.object(
-            TradingOrchestrator,
-            "_init_indicator_engine",
-            side_effect=mark_ready("indicator_engine"),
-        ), patch.object(
-            TradingOrchestrator,
-            "_init_execution_layer",
-            side_effect=mark_ready_async("execution_layer"),
-        ), patch.object(
-            TradingOrchestrator, "_load_swing_positions", side_effect=mark_ready_async("positions")
-        ), patch.object(
-            TradingOrchestrator,
-            "_start_market_data_loop",
-            side_effect=mark_ready_async("market_data"),
-        ), patch.object(
-            TradingOrchestrator, "_create_pipeline", side_effect=check_all_ready
-        ), patch(
-            "services.monitoring.metrics.get_metrics_collector"
-        ) as mock_metrics:
+        with (
+            patch.object(
+                TradingOrchestrator,
+                "_init_kis_client",
+                side_effect=mark_ready("kis_client"),
+            ),
+            patch.object(TradingOrchestrator, "_init_futures_slippage_controller"),
+            patch.object(
+                TradingOrchestrator,
+                "_init_price_feeds",
+                side_effect=mark_ready("price_feeds"),
+            ),
+            patch.object(
+                TradingOrchestrator,
+                "_init_data_provider",
+                side_effect=mark_ready("data_provider"),
+            ),
+            patch.object(TradingOrchestrator, "_init_tick_stream_publisher"),
+            patch.object(
+                TradingOrchestrator,
+                "_init_strategy_infrastructure",
+                side_effect=mark_ready("strategy_infra"),
+            ),
+            patch.object(
+                TradingOrchestrator,
+                "_init_indicator_engine",
+                side_effect=mark_ready("indicator_engine"),
+            ),
+            patch.object(
+                TradingOrchestrator,
+                "_init_execution_layer",
+                side_effect=mark_ready_async("execution_layer"),
+            ),
+            patch.object(
+                TradingOrchestrator,
+                "_load_swing_positions",
+                side_effect=mark_ready_async("positions"),
+            ),
+            patch.object(
+                TradingOrchestrator,
+                "_start_market_data_loop",
+                side_effect=mark_ready_async("market_data"),
+            ),
+            patch.object(
+                TradingOrchestrator, "_create_pipeline", side_effect=check_all_ready
+            ),
+            patch("services.monitoring.metrics.get_metrics_collector") as mock_metrics,
+        ):
             mock_metrics.return_value = MagicMock(
                 start_prometheus_server=MagicMock(),
                 register_strategies=MagicMock(),
@@ -469,7 +525,7 @@ class TestStartupSequence:
         from services.trading.orchestrator import TradingOrchestrator, TradingConfig
 
         config = TradingConfig.futures(
-            strategy_name="rl_mppo",
+            strategy_name="setup_a_gap_reversion",
             initial_capital=5_000_000,
         )
 
@@ -479,33 +535,34 @@ class TestStartupSequence:
             nonlocal slippage_init_called
             slippage_init_called = True
 
-        with patch.object(
-            TradingOrchestrator, "_init_kis_client", return_value=None
-        ), patch.object(
-            TradingOrchestrator,
-            "_init_futures_slippage_controller",
-            side_effect=mock_slippage_init,
-        ), patch.object(
-            TradingOrchestrator, "_init_price_feeds", return_value=None
-        ), patch.object(
-            TradingOrchestrator, "_init_data_provider"
-        ), patch.object(
-            TradingOrchestrator, "_init_tick_stream_publisher"
-        ), patch.object(
-            TradingOrchestrator, "_init_strategy_infrastructure"
-        ), patch.object(
-            TradingOrchestrator, "_init_indicator_engine"
-        ), patch.object(
-            TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_start_market_data_loop", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock(), stop=AsyncMock())
-        ), patch(
-            "services.monitoring.metrics.get_metrics_collector"
-        ) as mock_metrics:
+        with (
+            patch.object(TradingOrchestrator, "_init_kis_client", return_value=None),
+            patch.object(
+                TradingOrchestrator,
+                "_init_futures_slippage_controller",
+                side_effect=mock_slippage_init,
+            ),
+            patch.object(TradingOrchestrator, "_init_price_feeds", return_value=None),
+            patch.object(TradingOrchestrator, "_init_data_provider"),
+            patch.object(TradingOrchestrator, "_init_tick_stream_publisher"),
+            patch.object(TradingOrchestrator, "_init_strategy_infrastructure"),
+            patch.object(TradingOrchestrator, "_init_indicator_engine"),
+            patch.object(
+                TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator, "_start_market_data_loop", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator,
+                "_create_pipeline",
+                return_value=MagicMock(start=AsyncMock(), stop=AsyncMock()),
+            ),
+            patch("services.monitoring.metrics.get_metrics_collector") as mock_metrics,
+        ):
             mock_metrics.return_value = MagicMock(
                 start_prometheus_server=MagicMock(),
                 register_strategies=MagicMock(),
@@ -535,37 +592,39 @@ class TestStartupSequence:
         def mock_slippage_init(self_ref):
             nonlocal slippage_did_work
             # Call the real method
-            original_method = TradingOrchestrator._init_futures_slippage_controller.__get__(
-                self_ref, TradingOrchestrator
+            original_method = (
+                TradingOrchestrator._init_futures_slippage_controller.__get__(
+                    self_ref, TradingOrchestrator
+                )
             )
             original_method()
             # Check if controller was set
             if self_ref._futures_slippage_controller is not None:
                 slippage_did_work = True
 
-        with patch.object(
-            TradingOrchestrator, "_init_kis_client", return_value=None
-        ), patch.object(
-            TradingOrchestrator, "_init_price_feeds", return_value=None
-        ), patch.object(
-            TradingOrchestrator, "_init_data_provider"
-        ), patch.object(
-            TradingOrchestrator, "_init_tick_stream_publisher"
-        ), patch.object(
-            TradingOrchestrator, "_init_strategy_infrastructure"
-        ), patch.object(
-            TradingOrchestrator, "_init_indicator_engine"
-        ), patch.object(
-            TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_start_market_data_loop", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock(), stop=AsyncMock())
-        ), patch(
-            "services.monitoring.metrics.get_metrics_collector"
-        ) as mock_metrics:
+        with (
+            patch.object(TradingOrchestrator, "_init_kis_client", return_value=None),
+            patch.object(TradingOrchestrator, "_init_price_feeds", return_value=None),
+            patch.object(TradingOrchestrator, "_init_data_provider"),
+            patch.object(TradingOrchestrator, "_init_tick_stream_publisher"),
+            patch.object(TradingOrchestrator, "_init_strategy_infrastructure"),
+            patch.object(TradingOrchestrator, "_init_indicator_engine"),
+            patch.object(
+                TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator, "_start_market_data_loop", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator,
+                "_create_pipeline",
+                return_value=MagicMock(start=AsyncMock(), stop=AsyncMock()),
+            ),
+            patch("services.monitoring.metrics.get_metrics_collector") as mock_metrics,
+        ):
             mock_metrics.return_value = MagicMock(
                 start_prometheus_server=MagicMock(),
                 register_strategies=MagicMock(),
@@ -608,31 +667,38 @@ class TestComponentDependencies:
             assert strategy_infra_initialized, "Strategy infrastructure must be ready"
             indicator_params_verified = True
 
-        with patch.object(
-            TradingOrchestrator, "_init_kis_client", return_value=None
-        ), patch.object(
-            TradingOrchestrator, "_init_futures_slippage_controller"
-        ), patch.object(
-            TradingOrchestrator, "_init_price_feeds", return_value=None
-        ), patch.object(
-            TradingOrchestrator, "_init_data_provider"
-        ), patch.object(
-            TradingOrchestrator, "_init_tick_stream_publisher"
-        ), patch.object(
-            TradingOrchestrator, "_init_strategy_infrastructure", side_effect=mock_strategy_init
-        ), patch.object(
-            TradingOrchestrator, "_init_indicator_engine", side_effect=mock_indicator_init
-        ), patch.object(
-            TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_start_market_data_loop", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock(), stop=AsyncMock())
-        ), patch(
-            "services.monitoring.metrics.get_metrics_collector"
-        ) as mock_metrics:
+        with (
+            patch.object(TradingOrchestrator, "_init_kis_client", return_value=None),
+            patch.object(TradingOrchestrator, "_init_futures_slippage_controller"),
+            patch.object(TradingOrchestrator, "_init_price_feeds", return_value=None),
+            patch.object(TradingOrchestrator, "_init_data_provider"),
+            patch.object(TradingOrchestrator, "_init_tick_stream_publisher"),
+            patch.object(
+                TradingOrchestrator,
+                "_init_strategy_infrastructure",
+                side_effect=mock_strategy_init,
+            ),
+            patch.object(
+                TradingOrchestrator,
+                "_init_indicator_engine",
+                side_effect=mock_indicator_init,
+            ),
+            patch.object(
+                TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator, "_start_market_data_loop", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator,
+                "_create_pipeline",
+                return_value=MagicMock(start=AsyncMock(), stop=AsyncMock()),
+            ),
+            patch("services.monitoring.metrics.get_metrics_collector") as mock_metrics,
+        ):
             mock_metrics.return_value = MagicMock(
                 start_prometheus_server=MagicMock(),
                 register_strategies=MagicMock(),
@@ -663,31 +729,32 @@ class TestComponentDependencies:
             if config.paper_trading:
                 paper_broker_initialized = True
 
-        with patch.object(
-            TradingOrchestrator, "_init_kis_client", return_value=None
-        ), patch.object(
-            TradingOrchestrator, "_init_futures_slippage_controller"
-        ), patch.object(
-            TradingOrchestrator, "_init_price_feeds", return_value=None
-        ), patch.object(
-            TradingOrchestrator, "_init_data_provider"
-        ), patch.object(
-            TradingOrchestrator, "_init_tick_stream_publisher"
-        ), patch.object(
-            TradingOrchestrator, "_init_strategy_infrastructure"
-        ), patch.object(
-            TradingOrchestrator, "_init_indicator_engine"
-        ), patch.object(
-            TradingOrchestrator, "_init_execution_layer", side_effect=mock_execution_init
-        ), patch.object(
-            TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_start_market_data_loop", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock(), stop=AsyncMock())
-        ), patch(
-            "services.monitoring.metrics.get_metrics_collector"
-        ) as mock_metrics:
+        with (
+            patch.object(TradingOrchestrator, "_init_kis_client", return_value=None),
+            patch.object(TradingOrchestrator, "_init_futures_slippage_controller"),
+            patch.object(TradingOrchestrator, "_init_price_feeds", return_value=None),
+            patch.object(TradingOrchestrator, "_init_data_provider"),
+            patch.object(TradingOrchestrator, "_init_tick_stream_publisher"),
+            patch.object(TradingOrchestrator, "_init_strategy_infrastructure"),
+            patch.object(TradingOrchestrator, "_init_indicator_engine"),
+            patch.object(
+                TradingOrchestrator,
+                "_init_execution_layer",
+                side_effect=mock_execution_init,
+            ),
+            patch.object(
+                TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator, "_start_market_data_loop", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator,
+                "_create_pipeline",
+                return_value=MagicMock(start=AsyncMock(), stop=AsyncMock()),
+            ),
+            patch("services.monitoring.metrics.get_metrics_collector") as mock_metrics,
+        ):
             mock_metrics.return_value = MagicMock(
                 start_prometheus_server=MagicMock(),
                 register_strategies=MagicMock(),
@@ -718,31 +785,30 @@ class TestStartupState:
             symbols=["005930"],
         )
 
-        with patch.object(
-            TradingOrchestrator, "_init_kis_client", return_value=None
-        ), patch.object(
-            TradingOrchestrator, "_init_futures_slippage_controller"
-        ), patch.object(
-            TradingOrchestrator, "_init_price_feeds", return_value=None
-        ), patch.object(
-            TradingOrchestrator, "_init_data_provider"
-        ), patch.object(
-            TradingOrchestrator, "_init_tick_stream_publisher"
-        ), patch.object(
-            TradingOrchestrator, "_init_strategy_infrastructure"
-        ), patch.object(
-            TradingOrchestrator, "_init_indicator_engine"
-        ), patch.object(
-            TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_start_market_data_loop", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock(), stop=AsyncMock())
-        ), patch(
-            "services.monitoring.metrics.get_metrics_collector"
-        ) as mock_metrics:
+        with (
+            patch.object(TradingOrchestrator, "_init_kis_client", return_value=None),
+            patch.object(TradingOrchestrator, "_init_futures_slippage_controller"),
+            patch.object(TradingOrchestrator, "_init_price_feeds", return_value=None),
+            patch.object(TradingOrchestrator, "_init_data_provider"),
+            patch.object(TradingOrchestrator, "_init_tick_stream_publisher"),
+            patch.object(TradingOrchestrator, "_init_strategy_infrastructure"),
+            patch.object(TradingOrchestrator, "_init_indicator_engine"),
+            patch.object(
+                TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator, "_start_market_data_loop", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator,
+                "_create_pipeline",
+                return_value=MagicMock(start=AsyncMock(), stop=AsyncMock()),
+            ),
+            patch("services.monitoring.metrics.get_metrics_collector") as mock_metrics,
+        ):
             mock_metrics.return_value = MagicMock(
                 start_prometheus_server=MagicMock(),
                 register_strategies=MagicMock(),
@@ -771,31 +837,30 @@ class TestStartupState:
             symbols=["005930"],
         )
 
-        with patch.object(
-            TradingOrchestrator, "_init_kis_client", return_value=None
-        ), patch.object(
-            TradingOrchestrator, "_init_futures_slippage_controller"
-        ), patch.object(
-            TradingOrchestrator, "_init_price_feeds", return_value=None
-        ), patch.object(
-            TradingOrchestrator, "_init_data_provider"
-        ), patch.object(
-            TradingOrchestrator, "_init_tick_stream_publisher"
-        ), patch.object(
-            TradingOrchestrator, "_init_strategy_infrastructure"
-        ), patch.object(
-            TradingOrchestrator, "_init_indicator_engine"
-        ), patch.object(
-            TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_start_market_data_loop", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock(), stop=AsyncMock())
-        ), patch(
-            "services.monitoring.metrics.get_metrics_collector"
-        ) as mock_metrics:
+        with (
+            patch.object(TradingOrchestrator, "_init_kis_client", return_value=None),
+            patch.object(TradingOrchestrator, "_init_futures_slippage_controller"),
+            patch.object(TradingOrchestrator, "_init_price_feeds", return_value=None),
+            patch.object(TradingOrchestrator, "_init_data_provider"),
+            patch.object(TradingOrchestrator, "_init_tick_stream_publisher"),
+            patch.object(TradingOrchestrator, "_init_strategy_infrastructure"),
+            patch.object(TradingOrchestrator, "_init_indicator_engine"),
+            patch.object(
+                TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator, "_start_market_data_loop", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator,
+                "_create_pipeline",
+                return_value=MagicMock(start=AsyncMock(), stop=AsyncMock()),
+            ),
+            patch("services.monitoring.metrics.get_metrics_collector") as mock_metrics,
+        ):
             mock_metrics.return_value = MagicMock(
                 start_prometheus_server=MagicMock(),
                 register_strategies=MagicMock(),
@@ -838,33 +903,32 @@ class TestStartupState:
             assert pipeline_started, "Pipeline must start before Prometheus"
             prometheus_started = True
 
-        with patch.object(
-            TradingOrchestrator, "_init_kis_client", return_value=None
-        ), patch.object(
-            TradingOrchestrator, "_init_futures_slippage_controller"
-        ), patch.object(
-            TradingOrchestrator, "_init_price_feeds", return_value=None
-        ), patch.object(
-            TradingOrchestrator, "_init_data_provider"
-        ), patch.object(
-            TradingOrchestrator, "_init_tick_stream_publisher"
-        ), patch.object(
-            TradingOrchestrator, "_init_strategy_infrastructure"
-        ), patch.object(
-            TradingOrchestrator, "_init_indicator_engine"
-        ), patch.object(
-            TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_start_market_data_loop", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator,
-            "_create_pipeline",
-            return_value=MagicMock(start=mock_pipeline_start, stop=AsyncMock()),
-        ), patch(
-            "services.trading.orchestrator.get_metrics_collector"
-        ) as mock_metrics:
+        with (
+            patch.object(TradingOrchestrator, "_init_kis_client", return_value=None),
+            patch.object(TradingOrchestrator, "_init_futures_slippage_controller"),
+            patch.object(TradingOrchestrator, "_init_price_feeds", return_value=None),
+            patch.object(TradingOrchestrator, "_init_data_provider"),
+            patch.object(TradingOrchestrator, "_init_tick_stream_publisher"),
+            patch.object(TradingOrchestrator, "_init_strategy_infrastructure"),
+            patch.object(TradingOrchestrator, "_init_indicator_engine"),
+            patch.object(
+                TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator, "_start_market_data_loop", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator,
+                "_create_pipeline",
+                return_value=MagicMock(start=mock_pipeline_start, stop=AsyncMock()),
+            ),
+            patch(
+                "services.trading.orchestrator.get_metrics_collector"
+            ) as mock_metrics,
+        ):
             mock_metrics_instance = MagicMock()
             mock_metrics_instance.start_prometheus_server = mock_prometheus_start
             mock_metrics_instance.register_strategies = MagicMock()
@@ -904,31 +968,32 @@ class TestTradingLoop:
             # Simulate loop running
             await asyncio.sleep(0.1)
 
-        with patch.object(
-            TradingOrchestrator, "_init_kis_client", return_value=None
-        ), patch.object(
-            TradingOrchestrator, "_init_futures_slippage_controller"
-        ), patch.object(
-            TradingOrchestrator, "_init_price_feeds", return_value=None
-        ), patch.object(
-            TradingOrchestrator, "_init_data_provider"
-        ), patch.object(
-            TradingOrchestrator, "_init_tick_stream_publisher"
-        ), patch.object(
-            TradingOrchestrator, "_init_strategy_infrastructure"
-        ), patch.object(
-            TradingOrchestrator, "_init_indicator_engine"
-        ), patch.object(
-            TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_start_market_data_loop", side_effect=mock_market_data_loop
-        ), patch.object(
-            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock(), stop=AsyncMock())
-        ), patch(
-            "services.monitoring.metrics.get_metrics_collector"
-        ) as mock_metrics:
+        with (
+            patch.object(TradingOrchestrator, "_init_kis_client", return_value=None),
+            patch.object(TradingOrchestrator, "_init_futures_slippage_controller"),
+            patch.object(TradingOrchestrator, "_init_price_feeds", return_value=None),
+            patch.object(TradingOrchestrator, "_init_data_provider"),
+            patch.object(TradingOrchestrator, "_init_tick_stream_publisher"),
+            patch.object(TradingOrchestrator, "_init_strategy_infrastructure"),
+            patch.object(TradingOrchestrator, "_init_indicator_engine"),
+            patch.object(
+                TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator,
+                "_start_market_data_loop",
+                side_effect=mock_market_data_loop,
+            ),
+            patch.object(
+                TradingOrchestrator,
+                "_create_pipeline",
+                return_value=MagicMock(start=AsyncMock(), stop=AsyncMock()),
+            ),
+            patch("services.monitoring.metrics.get_metrics_collector") as mock_metrics,
+        ):
             mock_metrics.return_value = MagicMock(
                 start_prometheus_server=MagicMock(),
                 register_strategies=MagicMock(),
@@ -970,31 +1035,36 @@ class TestTradingLoop:
                 data_processed.append(data)
                 await asyncio.sleep(0.01)
 
-        with patch.object(
-            TradingOrchestrator, "_init_kis_client", return_value=None
-        ), patch.object(
-            TradingOrchestrator, "_init_futures_slippage_controller"
-        ), patch.object(
-            TradingOrchestrator, "_init_price_feeds", return_value=None
-        ), patch.object(
-            TradingOrchestrator, "_init_data_provider", side_effect=mock_init_data_provider
-        ), patch.object(
-            TradingOrchestrator, "_init_tick_stream_publisher"
-        ), patch.object(
-            TradingOrchestrator, "_init_strategy_infrastructure"
-        ), patch.object(
-            TradingOrchestrator, "_init_indicator_engine"
-        ), patch.object(
-            TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_start_market_data_loop", side_effect=mock_market_data_loop
-        ), patch.object(
-            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock(), stop=AsyncMock())
-        ), patch(
-            "services.monitoring.metrics.get_metrics_collector"
-        ) as mock_metrics:
+        with (
+            patch.object(TradingOrchestrator, "_init_kis_client", return_value=None),
+            patch.object(TradingOrchestrator, "_init_futures_slippage_controller"),
+            patch.object(TradingOrchestrator, "_init_price_feeds", return_value=None),
+            patch.object(
+                TradingOrchestrator,
+                "_init_data_provider",
+                side_effect=mock_init_data_provider,
+            ),
+            patch.object(TradingOrchestrator, "_init_tick_stream_publisher"),
+            patch.object(TradingOrchestrator, "_init_strategy_infrastructure"),
+            patch.object(TradingOrchestrator, "_init_indicator_engine"),
+            patch.object(
+                TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator,
+                "_start_market_data_loop",
+                side_effect=mock_market_data_loop,
+            ),
+            patch.object(
+                TradingOrchestrator,
+                "_create_pipeline",
+                return_value=MagicMock(start=AsyncMock(), stop=AsyncMock()),
+            ),
+            patch("services.monitoring.metrics.get_metrics_collector") as mock_metrics,
+        ):
             mock_metrics.return_value = MagicMock(
                 start_prometheus_server=MagicMock(),
                 register_strategies=MagicMock(),
@@ -1029,31 +1099,32 @@ class TestTradingLoop:
                 symbols_processed.add(symbol)
                 await asyncio.sleep(0.01)
 
-        with patch.object(
-            TradingOrchestrator, "_init_kis_client", return_value=None
-        ), patch.object(
-            TradingOrchestrator, "_init_futures_slippage_controller"
-        ), patch.object(
-            TradingOrchestrator, "_init_price_feeds", return_value=None
-        ), patch.object(
-            TradingOrchestrator, "_init_data_provider"
-        ), patch.object(
-            TradingOrchestrator, "_init_tick_stream_publisher"
-        ), patch.object(
-            TradingOrchestrator, "_init_strategy_infrastructure"
-        ), patch.object(
-            TradingOrchestrator, "_init_indicator_engine"
-        ), patch.object(
-            TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_start_market_data_loop", side_effect=mock_market_data_loop
-        ), patch.object(
-            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock(), stop=AsyncMock())
-        ), patch(
-            "services.monitoring.metrics.get_metrics_collector"
-        ) as mock_metrics:
+        with (
+            patch.object(TradingOrchestrator, "_init_kis_client", return_value=None),
+            patch.object(TradingOrchestrator, "_init_futures_slippage_controller"),
+            patch.object(TradingOrchestrator, "_init_price_feeds", return_value=None),
+            patch.object(TradingOrchestrator, "_init_data_provider"),
+            patch.object(TradingOrchestrator, "_init_tick_stream_publisher"),
+            patch.object(TradingOrchestrator, "_init_strategy_infrastructure"),
+            patch.object(TradingOrchestrator, "_init_indicator_engine"),
+            patch.object(
+                TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator,
+                "_start_market_data_loop",
+                side_effect=mock_market_data_loop,
+            ),
+            patch.object(
+                TradingOrchestrator,
+                "_create_pipeline",
+                return_value=MagicMock(start=AsyncMock(), stop=AsyncMock()),
+            ),
+            patch("services.monitoring.metrics.get_metrics_collector") as mock_metrics,
+        ):
             mock_metrics.return_value = MagicMock(
                 start_prometheus_server=MagicMock(),
                 register_strategies=MagicMock(),
@@ -1102,31 +1173,32 @@ class TestTradingLoop:
             if loop_task_holder[0] is not None:
                 await asyncio.wait_for(loop_task_holder[0], timeout=1.0)
 
-        with patch.object(
-            TradingOrchestrator, "_init_kis_client", return_value=None
-        ), patch.object(
-            TradingOrchestrator, "_init_futures_slippage_controller"
-        ), patch.object(
-            TradingOrchestrator, "_init_price_feeds", return_value=None
-        ), patch.object(
-            TradingOrchestrator, "_init_data_provider"
-        ), patch.object(
-            TradingOrchestrator, "_init_tick_stream_publisher"
-        ), patch.object(
-            TradingOrchestrator, "_init_strategy_infrastructure"
-        ), patch.object(
-            TradingOrchestrator, "_init_indicator_engine"
-        ), patch.object(
-            TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_start_market_data_loop", side_effect=mock_start_market_data_loop
-        ), patch.object(
-            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock(), stop=AsyncMock())
-        ), patch(
-            "services.monitoring.metrics.get_metrics_collector"
-        ) as mock_metrics:
+        with (
+            patch.object(TradingOrchestrator, "_init_kis_client", return_value=None),
+            patch.object(TradingOrchestrator, "_init_futures_slippage_controller"),
+            patch.object(TradingOrchestrator, "_init_price_feeds", return_value=None),
+            patch.object(TradingOrchestrator, "_init_data_provider"),
+            patch.object(TradingOrchestrator, "_init_tick_stream_publisher"),
+            patch.object(TradingOrchestrator, "_init_strategy_infrastructure"),
+            patch.object(TradingOrchestrator, "_init_indicator_engine"),
+            patch.object(
+                TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator,
+                "_start_market_data_loop",
+                side_effect=mock_start_market_data_loop,
+            ),
+            patch.object(
+                TradingOrchestrator,
+                "_create_pipeline",
+                return_value=MagicMock(start=AsyncMock(), stop=AsyncMock()),
+            ),
+            patch("services.monitoring.metrics.get_metrics_collector") as mock_metrics,
+        ):
             from services.trading.orchestrator import TradingState
 
             mock_metrics.return_value = MagicMock(
@@ -1176,31 +1248,32 @@ class TestTradingLoop:
                     pass
                 await asyncio.sleep(0.01)
 
-        with patch.object(
-            TradingOrchestrator, "_init_kis_client", return_value=None
-        ), patch.object(
-            TradingOrchestrator, "_init_futures_slippage_controller"
-        ), patch.object(
-            TradingOrchestrator, "_init_price_feeds", return_value=None
-        ), patch.object(
-            TradingOrchestrator, "_init_data_provider"
-        ), patch.object(
-            TradingOrchestrator, "_init_tick_stream_publisher"
-        ), patch.object(
-            TradingOrchestrator, "_init_strategy_infrastructure"
-        ), patch.object(
-            TradingOrchestrator, "_init_indicator_engine"
-        ), patch.object(
-            TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_start_market_data_loop", side_effect=mock_market_data_loop
-        ), patch.object(
-            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock(), stop=AsyncMock())
-        ), patch(
-            "services.monitoring.metrics.get_metrics_collector"
-        ) as mock_metrics:
+        with (
+            patch.object(TradingOrchestrator, "_init_kis_client", return_value=None),
+            patch.object(TradingOrchestrator, "_init_futures_slippage_controller"),
+            patch.object(TradingOrchestrator, "_init_price_feeds", return_value=None),
+            patch.object(TradingOrchestrator, "_init_data_provider"),
+            patch.object(TradingOrchestrator, "_init_tick_stream_publisher"),
+            patch.object(TradingOrchestrator, "_init_strategy_infrastructure"),
+            patch.object(TradingOrchestrator, "_init_indicator_engine"),
+            patch.object(
+                TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator,
+                "_start_market_data_loop",
+                side_effect=mock_market_data_loop,
+            ),
+            patch.object(
+                TradingOrchestrator,
+                "_create_pipeline",
+                return_value=MagicMock(start=AsyncMock(), stop=AsyncMock()),
+            ),
+            patch("services.monitoring.metrics.get_metrics_collector") as mock_metrics,
+        ):
             mock_metrics.return_value = MagicMock(
                 start_prometheus_server=MagicMock(),
                 register_strategies=MagicMock(),
@@ -1221,7 +1294,7 @@ class TestTradingLoop:
         from services.trading.orchestrator import TradingOrchestrator, TradingConfig
 
         config = TradingConfig.futures(
-            strategy_name="rl_mppo",
+            strategy_name="setup_a_gap_reversion",
             initial_capital=5_000_000,
         )
 
@@ -1238,31 +1311,32 @@ class TestTradingLoop:
                 futures_data_processed.append(data)
                 await asyncio.sleep(0.01)
 
-        with patch.object(
-            TradingOrchestrator, "_init_kis_client", return_value=None
-        ), patch.object(
-            TradingOrchestrator, "_init_futures_slippage_controller"
-        ), patch.object(
-            TradingOrchestrator, "_init_price_feeds", return_value=None
-        ), patch.object(
-            TradingOrchestrator, "_init_data_provider"
-        ), patch.object(
-            TradingOrchestrator, "_init_tick_stream_publisher"
-        ), patch.object(
-            TradingOrchestrator, "_init_strategy_infrastructure"
-        ), patch.object(
-            TradingOrchestrator, "_init_indicator_engine"
-        ), patch.object(
-            TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_start_market_data_loop", side_effect=mock_market_data_loop
-        ), patch.object(
-            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock(), stop=AsyncMock())
-        ), patch(
-            "services.monitoring.metrics.get_metrics_collector"
-        ) as mock_metrics:
+        with (
+            patch.object(TradingOrchestrator, "_init_kis_client", return_value=None),
+            patch.object(TradingOrchestrator, "_init_futures_slippage_controller"),
+            patch.object(TradingOrchestrator, "_init_price_feeds", return_value=None),
+            patch.object(TradingOrchestrator, "_init_data_provider"),
+            patch.object(TradingOrchestrator, "_init_tick_stream_publisher"),
+            patch.object(TradingOrchestrator, "_init_strategy_infrastructure"),
+            patch.object(TradingOrchestrator, "_init_indicator_engine"),
+            patch.object(
+                TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator,
+                "_start_market_data_loop",
+                side_effect=mock_market_data_loop,
+            ),
+            patch.object(
+                TradingOrchestrator,
+                "_create_pipeline",
+                return_value=MagicMock(start=AsyncMock(), stop=AsyncMock()),
+            ),
+            patch("services.monitoring.metrics.get_metrics_collector") as mock_metrics,
+        ):
             mock_metrics.return_value = MagicMock(
                 start_prometheus_server=MagicMock(),
                 register_strategies=MagicMock(),
@@ -1297,32 +1371,30 @@ class TestPauseResume:
             symbols=["005930"],
         )
 
-        with patch.object(
-            TradingOrchestrator, "_init_kis_client", return_value=None
-        ), patch.object(
-            TradingOrchestrator, "_init_futures_slippage_controller"
-        ), patch.object(
-            TradingOrchestrator, "_init_price_feeds", return_value=None
-        ), patch.object(
-            TradingOrchestrator, "_init_data_provider"
-        ), patch.object(
-            TradingOrchestrator, "_init_tick_stream_publisher"
-        ), patch.object(
-            TradingOrchestrator, "_init_strategy_infrastructure"
-        ), patch.object(
-            TradingOrchestrator, "_init_indicator_engine"
-        ), patch.object(
-            TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_start_market_data_loop", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock(), stop=AsyncMock())
-        ), patch(
-            "services.monitoring.metrics.get_metrics_collector"
-        ) as mock_metrics, patch.object(
-            TradingOrchestrator, "_notify", new_callable=AsyncMock
+        with (
+            patch.object(TradingOrchestrator, "_init_kis_client", return_value=None),
+            patch.object(TradingOrchestrator, "_init_futures_slippage_controller"),
+            patch.object(TradingOrchestrator, "_init_price_feeds", return_value=None),
+            patch.object(TradingOrchestrator, "_init_data_provider"),
+            patch.object(TradingOrchestrator, "_init_tick_stream_publisher"),
+            patch.object(TradingOrchestrator, "_init_strategy_infrastructure"),
+            patch.object(TradingOrchestrator, "_init_indicator_engine"),
+            patch.object(
+                TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator, "_start_market_data_loop", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator,
+                "_create_pipeline",
+                return_value=MagicMock(start=AsyncMock(), stop=AsyncMock()),
+            ),
+            patch("services.monitoring.metrics.get_metrics_collector") as mock_metrics,
+            patch.object(TradingOrchestrator, "_notify", new_callable=AsyncMock),
         ):
             mock_metrics.return_value = MagicMock(
                 start_prometheus_server=MagicMock(),
@@ -1386,32 +1458,30 @@ class TestPauseResume:
             ),
         ]
 
-        with patch.object(
-            TradingOrchestrator, "_init_kis_client", return_value=None
-        ), patch.object(
-            TradingOrchestrator, "_init_futures_slippage_controller"
-        ), patch.object(
-            TradingOrchestrator, "_init_price_feeds", return_value=None
-        ), patch.object(
-            TradingOrchestrator, "_init_data_provider"
-        ), patch.object(
-            TradingOrchestrator, "_init_tick_stream_publisher"
-        ), patch.object(
-            TradingOrchestrator, "_init_strategy_infrastructure"
-        ), patch.object(
-            TradingOrchestrator, "_init_indicator_engine"
-        ), patch.object(
-            TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_start_market_data_loop", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock(), stop=AsyncMock())
-        ), patch(
-            "services.monitoring.metrics.get_metrics_collector"
-        ) as mock_metrics, patch.object(
-            TradingOrchestrator, "_notify", new_callable=AsyncMock
+        with (
+            patch.object(TradingOrchestrator, "_init_kis_client", return_value=None),
+            patch.object(TradingOrchestrator, "_init_futures_slippage_controller"),
+            patch.object(TradingOrchestrator, "_init_price_feeds", return_value=None),
+            patch.object(TradingOrchestrator, "_init_data_provider"),
+            patch.object(TradingOrchestrator, "_init_tick_stream_publisher"),
+            patch.object(TradingOrchestrator, "_init_strategy_infrastructure"),
+            patch.object(TradingOrchestrator, "_init_indicator_engine"),
+            patch.object(
+                TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator, "_start_market_data_loop", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator,
+                "_create_pipeline",
+                return_value=MagicMock(start=AsyncMock(), stop=AsyncMock()),
+            ),
+            patch("services.monitoring.metrics.get_metrics_collector") as mock_metrics,
+            patch.object(TradingOrchestrator, "_notify", new_callable=AsyncMock),
         ):
             mock_metrics.return_value = MagicMock(
                 start_prometheus_server=MagicMock(),
@@ -1455,32 +1525,30 @@ class TestPauseResume:
             symbols=["005930"],
         )
 
-        with patch.object(
-            TradingOrchestrator, "_init_kis_client", return_value=None
-        ), patch.object(
-            TradingOrchestrator, "_init_futures_slippage_controller"
-        ), patch.object(
-            TradingOrchestrator, "_init_price_feeds", return_value=None
-        ), patch.object(
-            TradingOrchestrator, "_init_data_provider"
-        ), patch.object(
-            TradingOrchestrator, "_init_tick_stream_publisher"
-        ), patch.object(
-            TradingOrchestrator, "_init_strategy_infrastructure"
-        ), patch.object(
-            TradingOrchestrator, "_init_indicator_engine"
-        ), patch.object(
-            TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_start_market_data_loop", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock(), stop=AsyncMock())
-        ), patch(
-            "services.monitoring.metrics.get_metrics_collector"
-        ) as mock_metrics, patch.object(
-            TradingOrchestrator, "_notify", new_callable=AsyncMock
+        with (
+            patch.object(TradingOrchestrator, "_init_kis_client", return_value=None),
+            patch.object(TradingOrchestrator, "_init_futures_slippage_controller"),
+            patch.object(TradingOrchestrator, "_init_price_feeds", return_value=None),
+            patch.object(TradingOrchestrator, "_init_data_provider"),
+            patch.object(TradingOrchestrator, "_init_tick_stream_publisher"),
+            patch.object(TradingOrchestrator, "_init_strategy_infrastructure"),
+            patch.object(TradingOrchestrator, "_init_indicator_engine"),
+            patch.object(
+                TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator, "_start_market_data_loop", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator,
+                "_create_pipeline",
+                return_value=MagicMock(start=AsyncMock(), stop=AsyncMock()),
+            ),
+            patch("services.monitoring.metrics.get_metrics_collector") as mock_metrics,
+            patch.object(TradingOrchestrator, "_notify", new_callable=AsyncMock),
         ):
             mock_metrics.return_value = MagicMock(
                 start_prometheus_server=MagicMock(),
@@ -1532,32 +1600,28 @@ class TestPauseResume:
         mock_pipeline.start = AsyncMock()
         mock_pipeline.stop = AsyncMock()
 
-        with patch.object(
-            TradingOrchestrator, "_init_kis_client", return_value=None
-        ), patch.object(
-            TradingOrchestrator, "_init_futures_slippage_controller"
-        ), patch.object(
-            TradingOrchestrator, "_init_price_feeds", return_value=None
-        ), patch.object(
-            TradingOrchestrator, "_init_data_provider"
-        ), patch.object(
-            TradingOrchestrator, "_init_tick_stream_publisher"
-        ), patch.object(
-            TradingOrchestrator, "_init_strategy_infrastructure"
-        ), patch.object(
-            TradingOrchestrator, "_init_indicator_engine"
-        ), patch.object(
-            TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_start_market_data_loop", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_create_pipeline", return_value=mock_pipeline
-        ), patch(
-            "services.monitoring.metrics.get_metrics_collector"
-        ) as mock_metrics, patch.object(
-            TradingOrchestrator, "_notify", new_callable=AsyncMock
+        with (
+            patch.object(TradingOrchestrator, "_init_kis_client", return_value=None),
+            patch.object(TradingOrchestrator, "_init_futures_slippage_controller"),
+            patch.object(TradingOrchestrator, "_init_price_feeds", return_value=None),
+            patch.object(TradingOrchestrator, "_init_data_provider"),
+            patch.object(TradingOrchestrator, "_init_tick_stream_publisher"),
+            patch.object(TradingOrchestrator, "_init_strategy_infrastructure"),
+            patch.object(TradingOrchestrator, "_init_indicator_engine"),
+            patch.object(
+                TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator, "_start_market_data_loop", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator, "_create_pipeline", return_value=mock_pipeline
+            ),
+            patch("services.monitoring.metrics.get_metrics_collector") as mock_metrics,
+            patch.object(TradingOrchestrator, "_notify", new_callable=AsyncMock),
         ):
             mock_metrics.return_value = MagicMock(
                 start_prometheus_server=MagicMock(),
@@ -1587,7 +1651,7 @@ class TestPauseResume:
         from services.trading.orchestrator import TradingOrchestrator, TradingConfig
 
         config = TradingConfig.futures(
-            strategy_name="rl_mppo",
+            strategy_name="setup_a_gap_reversion",
         )
 
         # Track market data processing
@@ -1605,44 +1669,50 @@ class TestPauseResume:
                     # Wait for resume signal
                     await resume_event.wait()
 
-                state_value = orchestrator_holder[0].state.value if orchestrator_holder[0] else "unknown"
-                market_data_events.append({
-                    "iteration": i,
-                    "price": 250.0 + i * 0.1,
-                    "state": state_value,
-                })
+                state_value = (
+                    orchestrator_holder[0].state.value
+                    if orchestrator_holder[0]
+                    else "unknown"
+                )
+                market_data_events.append(
+                    {
+                        "iteration": i,
+                        "price": 250.0 + i * 0.1,
+                        "state": state_value,
+                    }
+                )
                 await asyncio.sleep(0.01)
 
         async def mock_start_market_data_loop():
             # Mimic real implementation: create task instead of blocking
             asyncio.create_task(_loop_body())
 
-        with patch.object(
-            TradingOrchestrator, "_init_kis_client", return_value=None
-        ), patch.object(
-            TradingOrchestrator, "_init_futures_slippage_controller"
-        ), patch.object(
-            TradingOrchestrator, "_init_price_feeds", return_value=None
-        ), patch.object(
-            TradingOrchestrator, "_init_data_provider"
-        ), patch.object(
-            TradingOrchestrator, "_init_tick_stream_publisher"
-        ), patch.object(
-            TradingOrchestrator, "_init_strategy_infrastructure"
-        ), patch.object(
-            TradingOrchestrator, "_init_indicator_engine"
-        ), patch.object(
-            TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_start_market_data_loop", side_effect=mock_start_market_data_loop
-        ), patch.object(
-            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock(), stop=AsyncMock())
-        ), patch(
-            "services.monitoring.metrics.get_metrics_collector"
-        ) as mock_metrics, patch.object(
-            TradingOrchestrator, "_notify", new_callable=AsyncMock
+        with (
+            patch.object(TradingOrchestrator, "_init_kis_client", return_value=None),
+            patch.object(TradingOrchestrator, "_init_futures_slippage_controller"),
+            patch.object(TradingOrchestrator, "_init_price_feeds", return_value=None),
+            patch.object(TradingOrchestrator, "_init_data_provider"),
+            patch.object(TradingOrchestrator, "_init_tick_stream_publisher"),
+            patch.object(TradingOrchestrator, "_init_strategy_infrastructure"),
+            patch.object(TradingOrchestrator, "_init_indicator_engine"),
+            patch.object(
+                TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator,
+                "_start_market_data_loop",
+                side_effect=mock_start_market_data_loop,
+            ),
+            patch.object(
+                TradingOrchestrator,
+                "_create_pipeline",
+                return_value=MagicMock(start=AsyncMock(), stop=AsyncMock()),
+            ),
+            patch("services.monitoring.metrics.get_metrics_collector") as mock_metrics,
+            patch.object(TradingOrchestrator, "_notify", new_callable=AsyncMock),
         ):
             mock_metrics.return_value = MagicMock(
                 start_prometheus_server=MagicMock(),
@@ -1701,41 +1771,42 @@ class TestPauseResume:
         async def mock_execute_order(*args, **kwargs):
             """Track order execution attempts"""
             signal = args[0] if args else kwargs.get("signal")
-            order_attempts.append({
-                "code": signal.code,
-                "direction": signal.signal_type,
-            })
+            order_attempts.append(
+                {
+                    "code": signal.code,
+                    "direction": signal.signal_type,
+                }
+            )
             # Simulate successful order
             return MagicMock(success=True, order_id=f"ORDER_{len(order_attempts)}")
 
-        with patch.object(
-            TradingOrchestrator, "_init_kis_client", return_value=None
-        ), patch.object(
-            TradingOrchestrator, "_init_futures_slippage_controller"
-        ), patch.object(
-            TradingOrchestrator, "_init_price_feeds", return_value=None
-        ), patch.object(
-            TradingOrchestrator, "_init_data_provider"
-        ), patch.object(
-            TradingOrchestrator, "_init_tick_stream_publisher"
-        ), patch.object(
-            TradingOrchestrator, "_init_strategy_infrastructure"
-        ), patch.object(
-            TradingOrchestrator, "_init_indicator_engine"
-        ), patch.object(
-            TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_start_market_data_loop", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock(), stop=AsyncMock())
-        ), patch.object(
-            TradingOrchestrator, "_execute_entry", side_effect=mock_execute_order
-        ), patch(
-            "services.monitoring.metrics.get_metrics_collector"
-        ) as mock_metrics, patch.object(
-            TradingOrchestrator, "_notify", new_callable=AsyncMock
+        with (
+            patch.object(TradingOrchestrator, "_init_kis_client", return_value=None),
+            patch.object(TradingOrchestrator, "_init_futures_slippage_controller"),
+            patch.object(TradingOrchestrator, "_init_price_feeds", return_value=None),
+            patch.object(TradingOrchestrator, "_init_data_provider"),
+            patch.object(TradingOrchestrator, "_init_tick_stream_publisher"),
+            patch.object(TradingOrchestrator, "_init_strategy_infrastructure"),
+            patch.object(TradingOrchestrator, "_init_indicator_engine"),
+            patch.object(
+                TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator, "_start_market_data_loop", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator,
+                "_create_pipeline",
+                return_value=MagicMock(start=AsyncMock(), stop=AsyncMock()),
+            ),
+            patch.object(
+                TradingOrchestrator, "_execute_entry", side_effect=mock_execute_order
+            ),
+            patch("services.monitoring.metrics.get_metrics_collector") as mock_metrics,
+            patch.object(TradingOrchestrator, "_notify", new_callable=AsyncMock),
         ):
             mock_metrics.return_value = MagicMock(
                 start_prometheus_server=MagicMock(),
@@ -1789,32 +1860,30 @@ class TestPauseResume:
             symbols=["005930"],
         )
 
-        with patch.object(
-            TradingOrchestrator, "_init_kis_client", return_value=None
-        ), patch.object(
-            TradingOrchestrator, "_init_futures_slippage_controller"
-        ), patch.object(
-            TradingOrchestrator, "_init_price_feeds", return_value=None
-        ), patch.object(
-            TradingOrchestrator, "_init_data_provider"
-        ), patch.object(
-            TradingOrchestrator, "_init_tick_stream_publisher"
-        ), patch.object(
-            TradingOrchestrator, "_init_strategy_infrastructure"
-        ), patch.object(
-            TradingOrchestrator, "_init_indicator_engine"
-        ), patch.object(
-            TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_start_market_data_loop", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock(), stop=AsyncMock())
-        ), patch(
-            "services.monitoring.metrics.get_metrics_collector"
-        ) as mock_metrics, patch.object(
-            TradingOrchestrator, "_notify", new_callable=AsyncMock
+        with (
+            patch.object(TradingOrchestrator, "_init_kis_client", return_value=None),
+            patch.object(TradingOrchestrator, "_init_futures_slippage_controller"),
+            patch.object(TradingOrchestrator, "_init_price_feeds", return_value=None),
+            patch.object(TradingOrchestrator, "_init_data_provider"),
+            patch.object(TradingOrchestrator, "_init_tick_stream_publisher"),
+            patch.object(TradingOrchestrator, "_init_strategy_infrastructure"),
+            patch.object(TradingOrchestrator, "_init_indicator_engine"),
+            patch.object(
+                TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator, "_start_market_data_loop", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator,
+                "_create_pipeline",
+                return_value=MagicMock(start=AsyncMock(), stop=AsyncMock()),
+            ),
+            patch("services.monitoring.metrics.get_metrics_collector") as mock_metrics,
+            patch.object(TradingOrchestrator, "_notify", new_callable=AsyncMock),
         ):
             mock_metrics.return_value = MagicMock(
                 start_prometheus_server=MagicMock(),
@@ -1859,10 +1928,9 @@ class TestPauseResume:
             symbols=["005930"],
         )
 
-        with patch(
-            "services.monitoring.metrics.get_metrics_collector"
-        ) as mock_metrics, patch.object(
-            TradingOrchestrator, "_notify", new_callable=AsyncMock
+        with (
+            patch("services.monitoring.metrics.get_metrics_collector") as mock_metrics,
+            patch.object(TradingOrchestrator, "_notify", new_callable=AsyncMock),
         ):
             mock_metrics.return_value = MagicMock(
                 start_prometheus_server=MagicMock(),
@@ -1891,10 +1959,9 @@ class TestPauseResume:
             symbols=["005930"],
         )
 
-        with patch(
-            "services.monitoring.metrics.get_metrics_collector"
-        ) as mock_metrics, patch.object(
-            TradingOrchestrator, "_notify", new_callable=AsyncMock
+        with (
+            patch("services.monitoring.metrics.get_metrics_collector") as mock_metrics,
+            patch.object(TradingOrchestrator, "_notify", new_callable=AsyncMock),
         ):
             mock_metrics.return_value = MagicMock(
                 start_prometheus_server=MagicMock(),
@@ -1930,32 +1997,30 @@ class TestGracefulShutdown:
         mock_futures_feed = MagicMock()
         mock_futures_feed.stop = AsyncMock()
 
-        with patch.object(
-            TradingOrchestrator, "_init_kis_client", return_value=None
-        ), patch.object(
-            TradingOrchestrator, "_init_futures_slippage_controller"
-        ), patch.object(
-            TradingOrchestrator, "_init_price_feeds"
-        ), patch.object(
-            TradingOrchestrator, "_init_data_provider"
-        ), patch.object(
-            TradingOrchestrator, "_init_tick_stream_publisher"
-        ), patch.object(
-            TradingOrchestrator, "_init_strategy_infrastructure"
-        ), patch.object(
-            TradingOrchestrator, "_init_indicator_engine"
-        ), patch.object(
-            TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_start_market_data_loop", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock(), stop=AsyncMock())
-        ), patch(
-            "services.monitoring.metrics.get_metrics_collector"
-        ) as mock_metrics, patch.object(
-            TradingOrchestrator, "_notify", new_callable=AsyncMock
+        with (
+            patch.object(TradingOrchestrator, "_init_kis_client", return_value=None),
+            patch.object(TradingOrchestrator, "_init_futures_slippage_controller"),
+            patch.object(TradingOrchestrator, "_init_price_feeds"),
+            patch.object(TradingOrchestrator, "_init_data_provider"),
+            patch.object(TradingOrchestrator, "_init_tick_stream_publisher"),
+            patch.object(TradingOrchestrator, "_init_strategy_infrastructure"),
+            patch.object(TradingOrchestrator, "_init_indicator_engine"),
+            patch.object(
+                TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator, "_start_market_data_loop", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator,
+                "_create_pipeline",
+                return_value=MagicMock(start=AsyncMock(), stop=AsyncMock()),
+            ),
+            patch("services.monitoring.metrics.get_metrics_collector") as mock_metrics,
+            patch.object(TradingOrchestrator, "_notify", new_callable=AsyncMock),
         ):
             mock_metrics.return_value = MagicMock(
                 start_prometheus_server=MagicMock(),
@@ -2018,36 +2083,37 @@ class TestGracefulShutdown:
         mock_state_publisher.publish_status = MagicMock()
 
         mock_data_provider = MagicMock()
-        mock_data_provider.get_data = AsyncMock(return_value={"005930": {"close": 72000}})
+        mock_data_provider.get_data = AsyncMock(
+            return_value={"005930": {"close": 72000}}
+        )
 
-        with patch.object(
-            TradingOrchestrator, "_init_kis_client", return_value=None
-        ), patch.object(
-            TradingOrchestrator, "_init_futures_slippage_controller"
-        ), patch.object(
-            TradingOrchestrator, "_init_price_feeds"
-        ), patch.object(
-            TradingOrchestrator, "_init_data_provider"
-        ), patch.object(
-            TradingOrchestrator, "_init_tick_stream_publisher"
-        ), patch.object(
-            TradingOrchestrator, "_init_strategy_infrastructure"
-        ), patch.object(
-            TradingOrchestrator, "_init_indicator_engine"
-        ), patch.object(
-            TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_start_market_data_loop", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_stop_market_data_loop", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock(), stop=AsyncMock())
-        ), patch(
-            "services.monitoring.metrics.get_metrics_collector"
-        ) as mock_metrics, patch.object(
-            TradingOrchestrator, "_notify", new_callable=AsyncMock
+        with (
+            patch.object(TradingOrchestrator, "_init_kis_client", return_value=None),
+            patch.object(TradingOrchestrator, "_init_futures_slippage_controller"),
+            patch.object(TradingOrchestrator, "_init_price_feeds"),
+            patch.object(TradingOrchestrator, "_init_data_provider"),
+            patch.object(TradingOrchestrator, "_init_tick_stream_publisher"),
+            patch.object(TradingOrchestrator, "_init_strategy_infrastructure"),
+            patch.object(TradingOrchestrator, "_init_indicator_engine"),
+            patch.object(
+                TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator, "_start_market_data_loop", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator, "_stop_market_data_loop", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator,
+                "_create_pipeline",
+                return_value=MagicMock(start=AsyncMock(), stop=AsyncMock()),
+            ),
+            patch("services.monitoring.metrics.get_metrics_collector") as mock_metrics,
+            patch.object(TradingOrchestrator, "_notify", new_callable=AsyncMock),
         ):
             mock_metrics.return_value = MagicMock(
                 start_prometheus_server=MagicMock(),
@@ -2082,7 +2148,7 @@ class TestGracefulShutdown:
         from shared.models.position import Position, PositionSide
 
         config = TradingConfig.futures(
-            strategy_name="rl_mppo",
+            strategy_name="setup_a_gap_reversion",
         )
 
         # Create test positions with various states
@@ -2091,7 +2157,7 @@ class TestGracefulShutdown:
                 id="swing_pos",
                 code="101S6000",
                 name="KOSPI200 선물",
-                strategy="rl_mppo",
+                strategy="setup_a_gap_reversion",
                 entry_price=350.0,
                 quantity=1,
                 side=PositionSide.LONG,
@@ -2113,40 +2179,43 @@ class TestGracefulShutdown:
             serialized_positions.extend(positions)
 
         mock_state_publisher = MagicMock()
-        mock_state_publisher.publish_positions_update = MagicMock(side_effect=capture_positions)
+        mock_state_publisher.publish_positions_update = MagicMock(
+            side_effect=capture_positions
+        )
         mock_state_publisher.publish_status = MagicMock()
 
         mock_data_provider = MagicMock()
-        mock_data_provider.get_data = AsyncMock(return_value={"101S6000": {"close": 352.0}})
+        mock_data_provider.get_data = AsyncMock(
+            return_value={"101S6000": {"close": 352.0}}
+        )
 
-        with patch.object(
-            TradingOrchestrator, "_init_kis_client", return_value=None
-        ), patch.object(
-            TradingOrchestrator, "_init_futures_slippage_controller"
-        ), patch.object(
-            TradingOrchestrator, "_init_price_feeds"
-        ), patch.object(
-            TradingOrchestrator, "_init_data_provider"
-        ), patch.object(
-            TradingOrchestrator, "_init_tick_stream_publisher"
-        ), patch.object(
-            TradingOrchestrator, "_init_strategy_infrastructure"
-        ), patch.object(
-            TradingOrchestrator, "_init_indicator_engine"
-        ), patch.object(
-            TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_start_market_data_loop", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_stop_market_data_loop", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock(), stop=AsyncMock())
-        ), patch(
-            "services.monitoring.metrics.get_metrics_collector"
-        ) as mock_metrics, patch.object(
-            TradingOrchestrator, "_notify", new_callable=AsyncMock
+        with (
+            patch.object(TradingOrchestrator, "_init_kis_client", return_value=None),
+            patch.object(TradingOrchestrator, "_init_futures_slippage_controller"),
+            patch.object(TradingOrchestrator, "_init_price_feeds"),
+            patch.object(TradingOrchestrator, "_init_data_provider"),
+            patch.object(TradingOrchestrator, "_init_tick_stream_publisher"),
+            patch.object(TradingOrchestrator, "_init_strategy_infrastructure"),
+            patch.object(TradingOrchestrator, "_init_indicator_engine"),
+            patch.object(
+                TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator, "_start_market_data_loop", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator, "_stop_market_data_loop", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator,
+                "_create_pipeline",
+                return_value=MagicMock(start=AsyncMock(), stop=AsyncMock()),
+            ),
+            patch("services.monitoring.metrics.get_metrics_collector") as mock_metrics,
+            patch.object(TradingOrchestrator, "_notify", new_callable=AsyncMock),
         ):
             mock_metrics.return_value = MagicMock(
                 start_prometheus_server=MagicMock(),
@@ -2169,7 +2238,7 @@ class TestGracefulShutdown:
             pos = serialized_positions[0]
             assert pos.id == "swing_pos"
             assert pos.code == "101S6000"
-            assert pos.strategy == "rl_mppo"
+            assert pos.strategy == "setup_a_gap_reversion"
             assert pos.entry_price == 350.0
             assert pos.quantity == 1
             assert pos.side == PositionSide.LONG
@@ -2210,34 +2279,31 @@ class TestGracefulShutdown:
         async def slow_stop():
             await asyncio.sleep(2.0)  # Longer than timeout
 
-        with patch.object(
-            TradingOrchestrator, "_init_kis_client", return_value=None
-        ), patch.object(
-            TradingOrchestrator, "_init_futures_slippage_controller"
-        ), patch.object(
-            TradingOrchestrator, "_init_price_feeds"
-        ), patch.object(
-            TradingOrchestrator, "_init_data_provider"
-        ), patch.object(
-            TradingOrchestrator, "_init_tick_stream_publisher"
-        ), patch.object(
-            TradingOrchestrator, "_init_strategy_infrastructure"
-        ), patch.object(
-            TradingOrchestrator, "_init_indicator_engine"
-        ), patch.object(
-            TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_start_market_data_loop", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock(), stop=AsyncMock())
-        ), patch(
-            "services.monitoring.metrics.get_metrics_collector"
-        ) as mock_metrics, patch.object(
-            TradingOrchestrator, "_notify", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_stop_impl", side_effect=slow_stop
+        with (
+            patch.object(TradingOrchestrator, "_init_kis_client", return_value=None),
+            patch.object(TradingOrchestrator, "_init_futures_slippage_controller"),
+            patch.object(TradingOrchestrator, "_init_price_feeds"),
+            patch.object(TradingOrchestrator, "_init_data_provider"),
+            patch.object(TradingOrchestrator, "_init_tick_stream_publisher"),
+            patch.object(TradingOrchestrator, "_init_strategy_infrastructure"),
+            patch.object(TradingOrchestrator, "_init_indicator_engine"),
+            patch.object(
+                TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator, "_start_market_data_loop", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator,
+                "_create_pipeline",
+                return_value=MagicMock(start=AsyncMock(), stop=AsyncMock()),
+            ),
+            patch("services.monitoring.metrics.get_metrics_collector") as mock_metrics,
+            patch.object(TradingOrchestrator, "_notify", new_callable=AsyncMock),
+            patch.object(TradingOrchestrator, "_stop_impl", side_effect=slow_stop),
         ):
             mock_metrics.return_value = MagicMock(
                 start_prometheus_server=MagicMock(),
@@ -2288,34 +2354,31 @@ class TestGracefulShutdown:
         mock_mock_mirror = MagicMock()
         mock_mock_mirror.cleanup = AsyncMock()
 
-        with patch.object(
-            TradingOrchestrator, "_init_kis_client", return_value=None
-        ), patch.object(
-            TradingOrchestrator, "_init_futures_slippage_controller"
-        ), patch.object(
-            TradingOrchestrator, "_init_price_feeds"
-        ), patch.object(
-            TradingOrchestrator, "_init_data_provider"
-        ), patch.object(
-            TradingOrchestrator, "_init_tick_stream_publisher"
-        ), patch.object(
-            TradingOrchestrator, "_init_strategy_infrastructure"
-        ), patch.object(
-            TradingOrchestrator, "_init_indicator_engine"
-        ), patch.object(
-            TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_start_market_data_loop", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_stop_market_data_loop", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_create_pipeline", return_value=mock_pipeline
-        ), patch(
-            "services.monitoring.metrics.get_metrics_collector"
-        ) as mock_metrics, patch.object(
-            TradingOrchestrator, "_notify", new_callable=AsyncMock
+        with (
+            patch.object(TradingOrchestrator, "_init_kis_client", return_value=None),
+            patch.object(TradingOrchestrator, "_init_futures_slippage_controller"),
+            patch.object(TradingOrchestrator, "_init_price_feeds"),
+            patch.object(TradingOrchestrator, "_init_data_provider"),
+            patch.object(TradingOrchestrator, "_init_tick_stream_publisher"),
+            patch.object(TradingOrchestrator, "_init_strategy_infrastructure"),
+            patch.object(TradingOrchestrator, "_init_indicator_engine"),
+            patch.object(
+                TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator, "_start_market_data_loop", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator, "_stop_market_data_loop", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator, "_create_pipeline", return_value=mock_pipeline
+            ),
+            patch("services.monitoring.metrics.get_metrics_collector") as mock_metrics,
+            patch.object(TradingOrchestrator, "_notify", new_callable=AsyncMock),
         ):
             mock_metrics.return_value = MagicMock(
                 start_prometheus_server=MagicMock(),
@@ -2388,36 +2451,37 @@ class TestGracefulShutdown:
         mock_state_publisher.publish_status = MagicMock()
 
         mock_data_provider = MagicMock()
-        mock_data_provider.get_data = AsyncMock(return_value={"005930": {"close": 72000}})
+        mock_data_provider.get_data = AsyncMock(
+            return_value={"005930": {"close": 72000}}
+        )
 
-        with patch.object(
-            TradingOrchestrator, "_init_kis_client", return_value=None
-        ), patch.object(
-            TradingOrchestrator, "_init_futures_slippage_controller"
-        ), patch.object(
-            TradingOrchestrator, "_init_price_feeds"
-        ), patch.object(
-            TradingOrchestrator, "_init_data_provider"
-        ), patch.object(
-            TradingOrchestrator, "_init_tick_stream_publisher"
-        ), patch.object(
-            TradingOrchestrator, "_init_strategy_infrastructure"
-        ), patch.object(
-            TradingOrchestrator, "_init_indicator_engine"
-        ), patch.object(
-            TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_start_market_data_loop", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_stop_market_data_loop", new_callable=AsyncMock
-        ), patch.object(
-            TradingOrchestrator, "_create_pipeline", return_value=MagicMock(start=AsyncMock(), stop=AsyncMock())
-        ), patch(
-            "services.monitoring.metrics.get_metrics_collector"
-        ) as mock_metrics, patch.object(
-            TradingOrchestrator, "_notify", new_callable=AsyncMock
+        with (
+            patch.object(TradingOrchestrator, "_init_kis_client", return_value=None),
+            patch.object(TradingOrchestrator, "_init_futures_slippage_controller"),
+            patch.object(TradingOrchestrator, "_init_price_feeds"),
+            patch.object(TradingOrchestrator, "_init_data_provider"),
+            patch.object(TradingOrchestrator, "_init_tick_stream_publisher"),
+            patch.object(TradingOrchestrator, "_init_strategy_infrastructure"),
+            patch.object(TradingOrchestrator, "_init_indicator_engine"),
+            patch.object(
+                TradingOrchestrator, "_init_execution_layer", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator, "_load_swing_positions", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator, "_start_market_data_loop", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator, "_stop_market_data_loop", new_callable=AsyncMock
+            ),
+            patch.object(
+                TradingOrchestrator,
+                "_create_pipeline",
+                return_value=MagicMock(start=AsyncMock(), stop=AsyncMock()),
+            ),
+            patch("services.monitoring.metrics.get_metrics_collector") as mock_metrics,
+            patch.object(TradingOrchestrator, "_notify", new_callable=AsyncMock),
         ):
             mock_metrics.return_value = MagicMock(
                 start_prometheus_server=MagicMock(),

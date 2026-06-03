@@ -7,7 +7,7 @@ Treat `CLAUDE.md` and project memory (`/home/deploy/.claude/projects/-home-deplo
 - `shared/`: core reusable logic (strategy, execution, indicators, streaming, models).
 - `services/`: runtime apps (`trading/`, `api/`, `dashboard/`, `monitoring/`).
 - `domains/`: domain-specific code (keep minimal; prefer shared implementations).
-- `config/`: YAML configs (`strategies/{stock,futures}`, `exit/`, `ml/`, infra configs).
+- `config/`: YAML configs (`strategies/{stock,futures}`, `exit/`, infra configs).
 - `cli/main.py`: `sts` command entrypoint.
 - `tests/unit`, `tests/integration`: backend test suites.
 - `strategy-builder-ui/`: Next.js (App Router) UI — the single frontend. Serves the dashboard (Cockpit/positions/signals/trades) and the strategy builder/executor.
@@ -15,8 +15,8 @@ Treat `CLAUDE.md` and project memory (`/home/deploy/.claude/projects/-home-deplo
 ## Architecture & Trading Rules
 - Configuration-driven only: do not hardcode thresholds, symbols, or risk values; place them in YAML.
 - Keep code DRY: shared behavior belongs in `shared/`, not duplicated by asset domain.
-- Standard runtime path is `services/trading/orchestrator.py` (including futures RL paper/live flow).
-- Futures: `rl_mppo` entry + `rl_mppo_exit` policy are default; preserve long/short symmetry.
+- Standard runtime path is `services/trading/orchestrator.py` for stock and futures paper/live flow.
+- Futures: ML/RL paths are removed; use Setup A/C plus LLM market context and explicit indicator/strategy-native exits. Preserve long/short symmetry.
 - Stock swing behavior: do not force blanket EOD liquidation; exits should remain strategy-signal based.
 
 ## Infrastructure Rules (Redis/Caching)

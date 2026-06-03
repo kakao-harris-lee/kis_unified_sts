@@ -4,14 +4,14 @@
 
 Production crontab on the deploy server. Maintained manually via `crontab -e` â€” this document is the registration reference.
 
-### RL / Futures Paper Trading
+### Futures Paper Trading
 
-- `55 8 * * 1-5 /home/deploy/project/kis_unified_sts/scripts/cron/rl_paper.sh start`
-  - Starts: RL Maskable PPO paper trading (or profile matrix comparison if enabled)
+- `55 8 * * 1-5 /home/deploy/project/kis_unified_sts/scripts/cron/futures_trading.sh start`
+  - Starts: Setup A/C futures paper trading via the standard orchestrator
   - Time: 08:55 (5 min before market open)
   
-- `40 15 * * 1-5 /home/deploy/project/kis_unified_sts/scripts/cron/rl_paper.sh stop`
-  - Stops: RL paper trading gracefully
+- `40 15 * * 1-5 /home/deploy/project/kis_unified_sts/scripts/cron/futures_trading.sh stop`
+  - Stops: futures paper trading gracefully
   - Time: 15:40 (25 min before market close, allows position exit)
 
 ### Stock Trading Orchestrator
@@ -78,7 +78,7 @@ Production crontab on the deploy server. Maintained manually via `crontab -e` â€
 
 | Time | Command | Service |
 |------|---------|---------|
-| 08:55 | `rl_paper.sh start` | RL futures paper trading |
+| 08:55 | `futures_trading.sh start` | Setup A/C futures paper trading |
 | 08:55 | `stock_trading.sh start` | Stock orchestrator |
 | 09:02-15:52 | `stock_trading.sh start` | Stock watchdog restart/no-op |
 | 09:00 | `llm_intraday.sh` | LLM refresh #1 |
@@ -87,7 +87,7 @@ Production crontab on the deploy server. Maintained manually via `crontab -e` â€
 | 15:00 | `llm_intraday.sh` | LLM refresh #4 |
 | 15:30 | `llm_market_close.sh` | End-of-day briefing |
 | 15:40 | `publish_equity_snapshot.sh` | Daily equity snapshot |
-| 15:40 | `rl_paper.sh stop` | Stop RL paper trading |
+| 15:40 | `futures_trading.sh stop` | Stop futures paper trading |
 | 16:00 | `stock_trading.sh stop` | Stop stock trading |
 | 03:00 (Sun) | Log gzip | Maintenance |
 | 04:00 (Sun) | Log delete | Maintenance |
@@ -134,13 +134,13 @@ tail -50 /home/deploy/project/kis_unified_sts/logs/stock_trading_$(date +%Y%m%d)
 # Expected: "Trading started" and no errors
 ```
 
-### RL Paper Trading
+### Futures Paper Trading
 
 ```bash
-# Check if RL paper trading started
-tail -50 /home/deploy/project/kis_unified_sts/logs/rl_paper_$(date +%Y%m%d).log
+# Check if futures paper trading started
+tail -50 /home/deploy/project/kis_unified_sts/logs/futures_trading_$(date +%Y%m%d).log
 
-# Expected: "RL paper trading started" or "Matrix profile comparison started"
+# Expected: futures trading startup/status log lines
 ```
 
 ### Equity Snapshot

@@ -2,6 +2,7 @@
 
 CLAUDE.md: "EOD 전량 청산 금지. Intraday trading이 아님. 상승 여력 종목 보유 유지."
 """
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -63,7 +64,7 @@ class TestStockEODPolicy:
         """
         cfg = TradingConfig(
             asset_class="futures",
-            strategy_name="rl_mppo",
+            strategy_name="setup_a_gap_reversion",
             initial_capital=10_000_000,
             order_amount_per_trade=1_000_000,
             symbols=["A05603"],
@@ -89,7 +90,7 @@ class TestStockEODPolicy:
         """선물 RL 전략 포지션은 자체 EOD 안전장치가 있으므로 이 메서드에서 청산 금지."""
         cfg = TradingConfig(
             asset_class="futures",
-            strategy_name="rl_mppo",
+            strategy_name="setup_a_gap_reversion",
             initial_capital=10_000_000,
             order_amount_per_trade=1_000_000,
             symbols=["A05603"],
@@ -97,7 +98,7 @@ class TestStockEODPolicy:
         orch = TradingOrchestrator(cfg)
 
         tracker = MagicMock()
-        rl_pos = _make_open_position("A05603", "rl_mppo")
+        rl_pos = _make_open_position("A05603", "setup_a_gap_reversion")
         tracker.positions = [rl_pos]
         tracker.close_position = MagicMock()
         orch._position_tracker = tracker

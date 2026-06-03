@@ -1,8 +1,7 @@
 """Tests for position persistence (save_closed_to_db, load_from_db side/fee_rate, _get_db_client)."""
 
-import asyncio
 from datetime import datetime
-from unittest.mock import MagicMock, patch, AsyncMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -169,7 +168,7 @@ class TestSaveClosedToDb:
                 exit_price=345.0,
                 quantity=1,
                 side=PositionSide.SHORT,
-                strategy="rl_mppo",
+                strategy="setup_a_gap_reversion",
             )
             result = await tracker.save_closed_to_db(pos)
             # Explicitly flush the batch to trigger the database write
@@ -199,8 +198,11 @@ class TestSaveClosedToDb:
 
         # Flush fails gracefully and re-enqueues the rows
         from shared.exceptions import InfrastructureError
+
         with patch.object(
-            tracker, "_get_db_client", side_effect=InfrastructureError("connection refused")
+            tracker,
+            "_get_db_client",
+            side_effect=InfrastructureError("connection refused"),
         ):
             flushed, _ = await tracker.flush_pending_positions()
 
@@ -244,11 +246,11 @@ class TestSaveToDbWithSideAndFeeRate:
         assert row[17] == 0.005  # fee_rate
 
 
-class TestSaveRlTradeToDb:
-    """Test save_rl_trade_to_db method."""
+class TestSaveFuturesTradeToDb:
+    """Test save_futures_trade_to_db method."""
 
     @pytest.mark.asyncio
-    async def test_saves_rl_trade(self):
+    async def test_saves_futures_trade(self):
         tracker = PositionTracker(config=PositionTrackerConfig(database="testdb"))
 
         mock_client = MagicMock()
@@ -264,10 +266,10 @@ class TestSaveRlTradeToDb:
                 exit_price=345.0,
                 quantity=1,
                 side=PositionSide.SHORT,
-                strategy="rl_mppo",
+                strategy="setup_a_gap_reversion",
             )
             pos.metadata = {"snapshot_id": "snap-1", "model_version": "mppo-v3"}
-            result = await tracker.save_rl_trade_to_db(pos, asset_class="futures")
+            result = await tracker.save_futures_trade_to_db(pos, asset_class="futures")
             # Explicitly flush the batch to trigger the database write
             await tracker.flush_pending_positions()
 
@@ -280,17 +282,17 @@ class TestSaveRlTradeToDb:
         assert len(rows) == 1
         row = rows[0]
         assert row[1] == "futures"  # asset_class
-        assert row[5] == "rl_mppo"  # strategy
+        assert row[5] == "setup_a_gap_reversion"  # strategy
         assert row[12] == 5.0  # pnl = (350 - 345) * 1
         assert row[13] > 0.0  # pnl_pct
         assert row[14] > 0  # hold_seconds
         assert "model_version" in row[16]  # metadata_json
 
     @pytest.mark.asyncio
-    async def test_skips_rl_trade_if_not_closed(self):
+    async def test_skips_futures_trade_if_not_closed(self):
         tracker = PositionTracker(config=PositionTrackerConfig(database="testdb"))
-        pos = _make_position(strategy="rl_mppo")
-        result = await tracker.save_rl_trade_to_db(pos, asset_class="futures")
+        pos = _make_position(strategy="setup_a_gap_reversion")
+        result = await tracker.save_futures_trade_to_db(pos, asset_class="futures")
         assert result is False
 
 
@@ -314,7 +316,7 @@ class TestLoadFromDbSideAndFeeRate:
                 datetime(2026, 2, 19, 9, 0, 0),
                 350.0,  # entry_price
                 1,  # quantity
-                "rl_mppo",  # strategy
+                "setup_a_gap_reversion",  # strategy
                 340.0,  # stop_loss_price
                 355.0,  # high_since_entry
                 "survival",  # current_state

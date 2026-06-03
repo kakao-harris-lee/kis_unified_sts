@@ -50,7 +50,7 @@ async def test_trading_status_account_passthrough():
     mock_reader = MagicMock()
     mock_reader.get_status.return_value = {
         "state": "running",
-        "config": {"strategy": "rl_mppo", "asset_class": "futures"},
+        "config": {"strategy": "setup_a_gap_reversion", "asset_class": "futures"},
         "stats": {"total_pnl": 1234.0, "start_time": "2026-05-15T00:00:00+00:00"},
         "positions": {"open_positions": 2, "unrealized_pnl": 2500000.0},
         "regime": "neutral",
@@ -90,7 +90,7 @@ async def test_trading_status_account_null_when_absent():
     mock_reader = MagicMock()
     mock_reader.get_status.return_value = {
         "state": "running",
-        "config": {"strategy": "rl_mppo"},
+        "config": {"strategy": "setup_a_gap_reversion"},
         "stats": {"start_time": "2026-05-15T00:00:00+00:00"},
         "positions": {},
         "regime": "neutral",

@@ -17,7 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from shared.models.position import Position, PositionSide, PositionState
+from shared.models.position import Position, PositionSide
 
 
 def _make_position(
@@ -327,7 +327,7 @@ class TestBrokerVerification:
             side=PositionSide.SHORT,
             quantity=1,
             entry_price=330.0,
-            strategy="rl_mppo",
+            strategy="setup_a_gap_reversion",
         )
         tracker.add_recovered_position(pos)
 

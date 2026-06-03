@@ -1,6 +1,6 @@
 # Adaptive Regime Detection Configuration
 # Combines MarketClassifier (MFI/ADX), volatility metrics, and trend strength
-# into a unified multi-state classifier for regime-aware model selection
+# into a unified multi-state classifier for regime-aware strategy selection
 
 # === Detector Configuration ===
 detector:
@@ -59,32 +59,32 @@ regime_states:
   TRENDING_BULL:
     description: "Strong uptrend with high ADX and bullish MFI"
     typical_strategy: "trend_following"
-    expected_models: ["rl_mppo_profile_balanced", "rl_mppo_profile_pnl"]
+    candidate_strategies: ["setup_c_event_reaction", "williams_r_15m"]
 
   TRENDING_BEAR:
     description: "Strong downtrend with high ADX and bearish MFI"
     typical_strategy: "trend_following_short"
-    expected_models: ["rl_mppo_profile_pnl", "rl_mppo_profile_balanced"]
+    candidate_strategies: ["setup_c_event_reaction", "williams_r_15m"]
 
   VOLATILE_SIDEWAYS:
     description: "High volatility without clear trend (low ADX, high ATR)"
     typical_strategy: "volatility_mean_reversion"
-    expected_models: ["rl_mppo_profile_winrate"]
+    candidate_strategies: ["setup_a_gap_reversion", "bb_reversion_15m"]
 
   CALM_SIDEWAYS:
     description: "Low volatility and weak trend (low ADX, low ATR)"
     typical_strategy: "mean_reversion"
-    expected_models: ["rl_mppo_profile_winrate"]
+    candidate_strategies: ["setup_a_gap_reversion", "bb_reversion_15m"]
 
   MEAN_REVERTING:
     description: "Oscillating between overbought/oversold with weak trend"
     typical_strategy: "mean_reversion"
-    expected_models: ["rl_mppo_profile_balanced"]
+    candidate_strategies: ["setup_a_gap_reversion", "bb_reversion_15m"]
 
   UNKNOWN:
     description: "Insufficient data or conflicting signals"
     typical_strategy: "default"
-    expected_models: ["rl_mppo_profile_balanced"]
+    candidate_strategies: ["setup_a_gap_reversion"]
 
 # === Feature Engineering ===
 features:
