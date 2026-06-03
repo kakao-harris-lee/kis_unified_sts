@@ -1,8 +1,9 @@
 # Runtime Storage Decoupling Implementation Plan
 
 - 작성일: 2026-06-03
-- 상태: Implementation in progress — Phase 0-3/5-7 implemented, Phase 4 and E2E acceptance remain
+- 상태: Implementation in progress — Phase 0-3/5-7 implemented, Phase 4 backtest/research and E2E acceptance remain
 - 설계 문서: [../runtime_storage_architecture.md](../runtime_storage_architecture.md)
+- 관련 결정: [2026-06-03-ml-rl-removal-llm-indicator-futures.md](2026-06-03-ml-rl-removal-llm-indicator-futures.md)
 
 ## 목표
 
@@ -13,7 +14,7 @@ ClickHouse 설치 여부와 무관하게 개발, 테스트, 모의투자, 실전
 - Redis Streams는 유지한다.
 - Redis DB 1은 runtime state와 streams에 계속 사용한다.
 - paper/live 영구 ledger는 SQLite WAL을 기본으로 사용한다.
-- 백테스트/ML historical data는 Parquet + DuckDB를 기본으로 지원한다.
+- 백테스트 및 운영 분석 historical data는 Parquet + DuckDB를 기본으로 지원한다.
 - ClickHouse는 optional research profile 또는 best-effort mirror로만 사용한다.
 
 ## 현재 문제
@@ -26,7 +27,7 @@ ClickHouse 설치 여부와 무관하게 개발, 테스트, 모의투자, 실전
 | `TradingOrchestrator` | prewarm candles, shadow logger flush, closed-position persistence |
 | Dashboard routes | trade stats, today PnL, health/metrics 조회 |
 | News/scoring/forecasting | Redis stream fan-out과 동시에 ClickHouse batch write |
-| Backtest/ML CLI | ClickHouse를 historical data source로 가정하는 경로 다수 |
+| Backtest/research CLI | ClickHouse를 historical data source로 가정하는 경로 다수 |
 | Compose | Redis는 포함하지만 ClickHouse는 외부 host 설치를 기대 |
 
 이 때문에 ClickHouse가 없는 서버에서는 runtime 일부가 degraded 또는 실패하고, paper/live 환경 이동성이 낮다.
@@ -51,7 +52,8 @@ ClickHouse 설치 여부와 무관하게 개발, 테스트, 모의투자, 실전
   - runtime critical
   - runtime best-effort
   - dashboard read
-  - research/backtest/ML
+  - research/backtest
+  - legacy ML/RL removal target
   - maintenance/script only
 - `config/storage.yaml` 추가.
 - `RuntimeStorageConfig`, `MarketDataStorageConfig` 추가.
@@ -198,7 +200,7 @@ market_data:
 남은 항목:
 
 - 주요 backtest/tier runner 전체를 Parquet source로 확장.
-- ML/RL training loader의 Parquet/DuckDB source 지원.
+- ML/RL training loader 지원은 제거 계획으로 이관. runtime-storage acceptance에서는 더 이상 추적하지 않는다.
 - ClickHouse sample vs Parquet sample parity test.
 - `manifest.yaml` schema/validation 고도화.
 
@@ -233,7 +235,7 @@ sts data validate-parquet --root data/market
 완료 기준:
 
 - 주요 backtest command가 `data.source=parquet`으로 실행된다.
-- ML training loader가 Parquet/DuckDB source를 지원한다.
+- ML/RL training path는 runtime-storage acceptance가 아니라 제거 계획에서 archive/decommission으로 정리된다.
 
 ## Phase 5 — Compose Profiles and Environment Separation
 
@@ -377,8 +379,8 @@ docker compose --env-file .env.dev --profile research up -d clickhouse mlflow
 - [x] `sts backtest run --symbol` supports `market_data.source=parquet`.
 - [ ] full backtest/tier runners support `data.source=parquet`.
   - 미완료: `_run_tier_backtest`가 여전히 `load_stock_minute_from_clickhouse` / `load_stock_daily_from_clickhouse`를 직접 사용한다.
-- [ ] ML training supports Parquet/DuckDB source or has documented ClickHouse-only exception.
-  - 미완료: RL/ML CLI와 training scripts는 아직 `load_data_from_clickhouse` 및 `source: clickhouse` 설정에 의존한다.
+- [x] ML/RL training support is removed from runtime-storage acceptance and tracked by [2026-06-03-ml-rl-removal-llm-indicator-futures.md](2026-06-03-ml-rl-removal-llm-indicator-futures.md).
+  - 변경: RL/ML CLI와 training scripts는 Parquet/DuckDB 지원 대상이 아니라 decommission/archive 대상이다.
 - [x] ClickHouse research profile renders optional ClickHouse/MLflow services.
 - [x] default pytest does not touch live Redis/ClickHouse.
   - `tests/conftest.py`가 live-infra tests를 `KIS_RUN_LIVE_INFRA_TESTS=1` opt-in으로 스킵한다. CI는 isolated Redis/ClickHouse services를 사용한다.

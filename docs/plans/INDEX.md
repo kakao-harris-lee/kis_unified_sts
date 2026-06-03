@@ -1,6 +1,6 @@
 # Plans Index
 
-Last updated: 2026-06-03 (runtime storage Phase 6/7 policy guard).
+Last updated: 2026-06-03 (ML/RL removal decision + runtime storage checklist cleanup).
 
 This index categorizes plans by **status** so a returning operator/engineer
 can quickly find what's still operative vs what's historical reference.
@@ -13,14 +13,14 @@ see [../PROJECT_STATUS.md](../PROJECT_STATUS.md).
 ## 🟢 Active — under active execution
 
 The current master plan + the documents it directly references for
-ongoing Phase 2 / Phase 5 work.
+ongoing futures/runtime work.
 
 | Plan | Status |
 |------|--------|
-| [2026-05-03-llm-primary-rl-minimization.md](2026-05-03-llm-primary-rl-minimization.md) | **Master plan, v4.0** — Phase 2 cutover READY (2026-05-11). |
+| [2026-06-03-ml-rl-removal-llm-indicator-futures.md](2026-06-03-ml-rl-removal-llm-indicator-futures.md) | **Active decision** — remove ML/RL from futures runtime roadmap; move to LLM context + indicator/rule strategies. |
+| [2026-05-03-llm-primary-rl-minimization.md](2026-05-03-llm-primary-rl-minimization.md) | Superseded for future work by the 2026-06-03 removal decision; keep as historical LLM-primary cutover record. |
 | [2026-04-20-futures-paradigm-master.md](2026-04-20-futures-paradigm-master.md) | Parent of the LLM-primary plan. Defines the futures paradigm rollout. |
 | [2026-04-20-futures-paradigm-phase5-rollout.md](2026-04-20-futures-paradigm-phase5-rollout.md) | Phase 5 Gate 1–4 rollout spec — referenced by 7 docs / runbooks. |
-| [2026-04-20-futures-paradigm-rl-repurposing-v2.md](2026-04-20-futures-paradigm-rl-repurposing-v2.md) | RL "auxiliary filter" v2 strategy — selectively superseded by the LLM-primary plan but still authoritative for the auxiliary-RL direction. |
 | [2026-05-26-strategy-lab-extension-design.md](2026-05-26-strategy-lab-extension-design.md) | Visual Strategy Lab redesign: UI-built strategies, generated signals, and paper buy/sell execution. |
 | [2026-06-03-runtime-storage-decoupling-implementation.md](2026-06-03-runtime-storage-decoupling-implementation.md) | ClickHouse를 optional research backend로 내리고 Redis/SQLite/Parquet 중심 runtime을 구현하는 계획. Phase 6/7 direct import policy guard implemented. |
 
@@ -42,7 +42,8 @@ by `docs/runbooks/phase[1-4]-verification.md`.
 | [2026-04-20-futures-paradigm-phase3-implementation-plan.md](2026-04-20-futures-paradigm-phase3-implementation-plan.md) | Phase 3 implementation breakdown. |
 | [2026-04-20-futures-paradigm-phase4-implementation-plan.md](2026-04-20-futures-paradigm-phase4-implementation-plan.md) | Phase 4 implementation breakdown. |
 | [2026-04-20-futures-paradigm-phase5-implementation-plan.md](2026-04-20-futures-paradigm-phase5-implementation-plan.md) | Phase 5 implementation breakdown. |
-| [2026-04-15-rl-retraining-data-refresh.md](2026-04-15-rl-retraining-data-refresh.md) | RL retraining pipeline data-refresh spec — pipeline still in production. |
+| [2026-04-20-futures-paradigm-rl-repurposing-v2.md](2026-04-20-futures-paradigm-rl-repurposing-v2.md) | RL auxiliary-filter v2 strategy — superseded by the 2026-06-03 ML/RL removal decision; historical reference only. |
+| [2026-04-15-rl-retraining-data-refresh.md](2026-04-15-rl-retraining-data-refresh.md) | RL retraining pipeline data-refresh spec — superseded by the 2026-06-03 ML/RL removal decision; historical reference only. |
 | [2026-04-15-paper-trading-quality-recovery.md](2026-04-15-paper-trading-quality-recovery.md) | Paper-trading quality fixes — most landed; cited from runbooks. |
 | [2026-02-20-position-recovery-design.md](2026-02-20-position-recovery-design.md) | Position-recovery sentinel/restart design — still authoritative. |
 | [2026-02-26-stock-strategy-redesign.md](2026-02-26-stock-strategy-redesign.md) | Stock-side BB / vr_composite redesign cited by impl docs. |
