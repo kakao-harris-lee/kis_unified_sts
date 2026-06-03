@@ -1,5 +1,7 @@
 """Test CLI commands."""
 
+from datetime import date, datetime
+
 import pytest
 from click.testing import CliRunner
 
@@ -107,6 +109,120 @@ class TestDataCommands:
 
         assert result.exit_code == 0
         assert "Files: 0" in result.output
+
+    def test_export_clickhouse_minute_end_date_is_exclusive_next_day(
+        self, runner, monkeypatch, tmp_path
+    ):
+        """Minute export should include the full --end date."""
+        import clickhouse_driver
+
+        from cli.main import cli
+
+        captured = {}
+
+        class FakeClient:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def execute(self, query, params):
+                captured["query"] = query
+                captured["params"] = params
+                return [
+                    (
+                        "005930",
+                        datetime(2026, 6, 3, 9, 0),
+                        71000.0,
+                        71100.0,
+                        70900.0,
+                        71050.0,
+                        1000,
+                    )
+                ]
+
+        monkeypatch.setattr(clickhouse_driver, "Client", FakeClient)
+
+        result = runner.invoke(
+            cli,
+            [
+                "data",
+                "export-clickhouse",
+                "--asset",
+                "stock",
+                "--database",
+                "market",
+                "--timeframe",
+                "minute",
+                "--start",
+                "2026-06-03",
+                "--end",
+                "2026-06-03",
+                "--out",
+                str(tmp_path / "market"),
+            ],
+        )
+
+        assert result.exit_code == 0
+        assert "datetime < %(end_exclusive)s" in captured["query"]
+        assert captured["params"]["start"] == datetime(2026, 6, 3)
+        assert captured["params"]["end_exclusive"] == datetime(2026, 6, 4)
+        assert "end" not in captured["params"]
+
+    def test_export_clickhouse_daily_end_date_stays_inclusive(
+        self, runner, monkeypatch, tmp_path
+    ):
+        """Daily export keeps inclusive date filtering."""
+        import clickhouse_driver
+
+        from cli.main import cli
+
+        captured = {}
+
+        class FakeClient:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def execute(self, query, params):
+                captured["query"] = query
+                captured["params"] = params
+                return [
+                    (
+                        "005930",
+                        date(2026, 6, 3),
+                        71000.0,
+                        71100.0,
+                        70900.0,
+                        71050.0,
+                        1000,
+                    )
+                ]
+
+        monkeypatch.setattr(clickhouse_driver, "Client", FakeClient)
+
+        result = runner.invoke(
+            cli,
+            [
+                "data",
+                "export-clickhouse",
+                "--asset",
+                "stock",
+                "--database",
+                "market",
+                "--timeframe",
+                "daily",
+                "--start",
+                "2026-06-03",
+                "--end",
+                "2026-06-03",
+                "--out",
+                str(tmp_path / "market"),
+            ],
+        )
+
+        assert result.exit_code == 0
+        assert "date <= %(end)s" in captured["query"]
+        assert captured["params"]["start"] == date(2026, 6, 3)
+        assert captured["params"]["end"] == date(2026, 6, 3)
+        assert "end_exclusive" not in captured["params"]
 
 
 class TestTradeCommands:

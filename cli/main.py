@@ -908,10 +908,16 @@ def data_export_clickhouse(
         params["code"] = symbol
     if start:
         conditions.append(f"{time_column} >= %(start)s")
-        params["start"] = start.date()
+        params["start"] = start.date() if timeframe == "daily" else start
     if end:
-        conditions.append(f"{time_column} <= %(end)s")
-        params["end"] = end.date()
+        if timeframe == "daily":
+            conditions.append(f"{time_column} <= %(end)s")
+            params["end"] = end.date()
+        else:
+            # CLI dates are day-level. Use a half-open range so
+            # --end 2026-06-03 includes the full 2026-06-03 minute session.
+            conditions.append(f"{time_column} < %(end_exclusive)s")
+            params["end_exclusive"] = end + timedelta(days=1)
 
     where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
     limit_sql = "LIMIT %(limit)s" if limit and limit > 0 else ""
