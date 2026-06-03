@@ -65,13 +65,10 @@ def _query_venue_counts_for_database(database: str) -> dict[str, int]:
     Aggregates both RL closed trades and closed swing positions when those
     tables exist. Missing tables are ignored gracefully.
     """
-    from clickhouse_driver import Client as SyncClient
-
-    from shared.db.config import ClickHouseConfig
+    from shared.storage import create_sync_clickhouse_client
 
     database = _normalize_database_name(database)
-    cfg = ClickHouseConfig.from_env(database=database)
-    client = SyncClient(host=cfg.host, port=cfg.port, user=cfg.user, password=cfg.password)
+    client = create_sync_clickhouse_client(database=database)
 
     try:
         table_rows = client.execute(

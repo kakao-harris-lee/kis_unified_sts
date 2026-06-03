@@ -275,26 +275,45 @@ docker compose --env-file .env.dev --profile research up -d clickhouse mlflow
 
 ## Phase 6 — Cleanup and Policy
 
-상태: 구현 예정
+상태: 구현 완료 (`feat/runtime-storage-ledger`)
 
 작업:
 
 - direct ClickHouse imports 금지 규칙 문서화.
-- `rg "clickhouse_driver|ClickHouseClient|AsyncClickHouseClient"` allowlist 작성.
-- lint 또는 test guard 추가.
-- old scripts는 research/maintenance category로 정리.
-- ClickHouse TLS docs는 optional research/backend docs로 위치 조정.
+- runtime-facing roots allowlist 작성:
+  - covered: `services/`, `core/`, `cli/`, `shared/strategy/gates/`
+  - allowed backend locations: `shared/db/*`, `shared/storage/clickhouse_*`, `shared/storage/market_data_store.py`
+  - research/maintenance: `scripts/`, `jobs/`, `shared/ml/`, analysis docs
+- `tests/unit/storage/test_clickhouse_policy.py` guard 추가.
+- runtime services의 ClickHouse client 생성 경로를 `shared.storage.clickhouse_backend` helper로 이동.
+- docs index/runtime architecture에 policy 반영.
 
 검증:
 
-- direct import allowlist test.
-- default pytest does not connect to live Redis/ClickHouse.
+- direct import allowlist test: `tests/unit/storage/test_clickhouse_policy.py`.
+- default storage config keeps ClickHouse mirror disabled and market-data source `parquet`.
 - docs index updated.
 
 완료 기준:
 
 - runtime package에서 direct ClickHouse dependency가 storage backend 외에는 없다.
 - 운영 문서가 SQLite runtime ledger와 ClickHouse optional profile을 기준으로 정렬된다.
+
+## Phase 7 — Direct Import Guard PR
+
+상태: 구현 완료 (`feat/runtime-storage-ledger`)
+
+작업:
+
+- `shared/storage/clickhouse_backend.py` 추가.
+- `services/trading/orchestrator.py`, dashboard routes, news/scoring/forecasting/order/macro services, `daily_scanner`, `llm_context_publisher`, `core/state_manager`, `cli/main.py`, `shared/strategy/gates/adapter_helper.py`의 direct ClickHouse client construction 제거.
+- policy guard가 runtime-facing roots에서 `clickhouse_driver`, `ClickHouseClient`, `AsyncClickHouseClient`, `get_clickhouse_client` direct import를 차단하도록 고정.
+
+검증:
+
+- policy guard unit test.
+- affected storage/CLI/orchestrator tests.
+- ruff focused check.
 
 ## Suggested PR Breakdown
 
@@ -306,7 +325,7 @@ docker compose --env-file .env.dev --profile research up -d clickhouse mlflow
 | 4 | LLM/news/scoring/forecasting mirror optionalization | medium | implemented |
 | 5 | Parquet/DuckDB MarketDataStore + export commands | medium | partial |
 | 6 | compose profiles + env templates | medium | implemented |
-| 7 | direct ClickHouse import cleanup + policy tests | low | pending |
+| 7 | direct ClickHouse import cleanup + policy tests | low | implemented |
 
 ## Test Matrix
 

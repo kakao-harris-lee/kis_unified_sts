@@ -332,14 +332,9 @@ async def get_trades_by_strategy():
 
 def _query_ch(sql: str, params: dict | None = None) -> tuple[list, list]:
     """Execute a ClickHouse query and return (rows, column_types)."""
-    from clickhouse_driver import Client as SyncClient
+    from shared.storage import create_sync_clickhouse_client
 
-    from shared.db.config import ClickHouseConfig
-
-    cfg = ClickHouseConfig.from_env()
-    client = SyncClient(
-        host=cfg.host, port=cfg.port, user=cfg.user, password=cfg.password
-    )
+    client = create_sync_clickhouse_client()
     try:
         return client.execute(sql, params or {}, with_column_types=True)
     finally:

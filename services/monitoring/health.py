@@ -310,9 +310,9 @@ def create_database_check(connection_string: str) -> HealthCheckFunc:
             loop = asyncio.get_event_loop()
 
             def _sync_check():
-                from clickhouse_driver import Client
+                from shared.storage import create_sync_clickhouse_client_from_url
 
-                client = Client.from_url(connection_string)
+                client = create_sync_clickhouse_client_from_url(connection_string)
                 result = client.execute("SELECT 1")
                 return result
 

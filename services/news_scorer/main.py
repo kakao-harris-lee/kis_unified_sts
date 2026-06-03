@@ -315,6 +315,7 @@ async def _build_and_run() -> int:
     from shared.scoring.config import NewsScorerConfig
     from shared.scoring.fallback import FallbackScorer
     from shared.scoring.llm_scorer import LLMScorer
+    from shared.storage import create_async_clickhouse_client
     from shared.storage.config import StorageConfig
 
     cfg = NewsScorerConfig.from_yaml()
@@ -325,12 +326,7 @@ async def _build_and_run() -> int:
     ch_client = None
     storage_config = StorageConfig.load_or_default()
     if storage_config.runtime_storage.clickhouse_mirror.enabled:
-        from shared.db.client import AsyncClickHouseClient
-        from shared.db.config import ClickHouseConfig
-
-        ch_config = ClickHouseConfig.from_env(database="kospi")
-        ch_client = AsyncClickHouseClient(ch_config)
-        await ch_client.connect()
+        ch_client = await create_async_clickhouse_client(database="kospi")
 
     openai_client = AsyncOpenAI(api_key=os.environ[cfg.scorer.api_key_env])
     budget = DailyBudget(

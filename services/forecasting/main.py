@@ -190,6 +190,7 @@ def _install_signal_handlers(
 
 
 async def _main() -> None:
+    from shared.storage import create_sync_clickhouse_client
     from shared.storage.config import StorageConfig
     from shared.streaming.client import RedisClient
 
@@ -204,18 +205,7 @@ async def _main() -> None:
     ch = None
     storage_config = StorageConfig.load_or_default()
     if storage_config.runtime_storage.clickhouse_mirror.enabled:
-        from clickhouse_driver import Client
-
-        from shared.db.config import ClickHouseConfig
-
-        ch_cfg = ClickHouseConfig.from_env(database="kospi")
-        ch = Client(
-            host=ch_cfg.host,
-            port=ch_cfg.port,
-            user=ch_cfg.user,
-            password=ch_cfg.password,
-            database="kospi",
-        )
+        ch = create_sync_clickhouse_client(database="kospi")
 
     # LLM client (optional)
     llm_client = None

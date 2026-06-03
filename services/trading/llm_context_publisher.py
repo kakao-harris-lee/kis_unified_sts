@@ -553,8 +553,7 @@ class LLMContextPublisher:
     def _append_clickhouse_market_context_mirror(self, context: MarketContext) -> None:
         """Best-effort ClickHouse mirror for explicitly enabled analytics setups."""
         try:
-            from shared.db.client import get_clickhouse_client
-            from shared.db.config import ClickHouseConfig
+            from shared.storage import get_clickhouse_client_wrapper
 
             gen = context.generated_at
             if getattr(gen, "tzinfo", None) is not None:
@@ -575,9 +574,7 @@ class LLMContextPublisher:
                 "generated_at": gen,
                 "metadata_json": json.dumps(context.metadata or {}, ensure_ascii=False),
             }
-            get_clickhouse_client(
-                ClickHouseConfig.from_env()
-            ).insert_llm_market_context([row])
+            get_clickhouse_client_wrapper().insert_llm_market_context([row])
         except Exception as e:
             logger.warning(
                 "llm_market_context ClickHouse mirror append skipped: %s",

@@ -47,7 +47,6 @@ from services.trading.pipeline import TradingPipeline
 from services.trading.position_tracker import PositionTracker, PositionTrackerConfig
 from services.trading.strategy_manager import StrategyManager, StrategyManagerConfig
 from shared.config.loader import ConfigLoader
-from shared.db.config import ClickHouseConfig
 from shared.exceptions import (
     APIError,
     ConfigurationError,
@@ -3612,22 +3611,14 @@ class TradingOrchestrator:
             table = "minute_candles"
 
         try:
-            from clickhouse_driver import Client as CHSyncClient
+            from shared.storage import create_sync_clickhouse_client
 
             # Reuse the shared env parsing so the native driver does not
             # accidentally point at the HTTP port (8123).
-            ch_cfg = ClickHouseConfig.from_env(database=db)
-
             loop = asyncio.get_event_loop()
             rows = await loop.run_in_executor(
                 None,
-                lambda: CHSyncClient(
-                    host=ch_cfg.host,
-                    port=ch_cfg.port,
-                    user=ch_cfg.user,
-                    password=ch_cfg.password,
-                    database=ch_cfg.database,
-                ).execute(
+                lambda: create_sync_clickhouse_client(database=db).execute(
                     "SELECT code, datetime, open, high, low, close, volume "
                     f"FROM {table} "
                     "WHERE code = %(code)s "
@@ -3650,6 +3641,7 @@ class TradingOrchestrator:
             return candles
         except (
             InfrastructureError,
+            ImportError,
             OSError,
             ConnectionError,
             ValueError,
@@ -3682,30 +3674,22 @@ class TradingOrchestrator:
         """
         try:
             import pandas as pd
-            from clickhouse_driver import Client as CHSyncClient
 
             from shared.collector.historical.daily_quality import (
                 clean_daily_candle_frame,
                 load_daily_quality_config,
                 quality_fetch_limit,
             )
+            from shared.storage import create_sync_clickhouse_client
 
-            ch_cfg = ClickHouseConfig.from_env(
-                database=os.getenv("CLICKHOUSE_STOCK_DATABASE", "market")
-            )
+            database = os.getenv("CLICKHOUSE_STOCK_DATABASE", "market")
             quality_config = load_daily_quality_config()
             fetch_limit = quality_fetch_limit(limit, quality_config)
 
             loop = asyncio.get_event_loop()
             rows = await loop.run_in_executor(
                 None,
-                lambda: CHSyncClient(
-                    host=ch_cfg.host,
-                    port=ch_cfg.port,
-                    user=ch_cfg.user,
-                    password=ch_cfg.password,
-                    database=ch_cfg.database,
-                ).execute(
+                lambda: create_sync_clickhouse_client(database=database).execute(
                     "SELECT "
                     "code, date, "
                     "argMax(open, created_at) AS open, "
@@ -3747,6 +3731,7 @@ class TradingOrchestrator:
             return candles
         except (
             InfrastructureError,
+            ImportError,
             OSError,
             ConnectionError,
             ValueError,
@@ -4952,20 +4937,13 @@ class TradingOrchestrator:
             sl_cfg.get("final_flush_on_stop", True)
         )
 
-        # Build a reusable ClickHouse client (mirroring the pattern used in
-        # _fetch_candles_from_clickhouse — Native driver, DB=kospi).
+        # Build a reusable optional ClickHouse mirror client. The storage helper
+        # keeps driver wiring out of the runtime service.
         try:
-            from clickhouse_driver import Client as CHSyncClient
+            from shared.storage import create_sync_clickhouse_client
 
-            ch_cfg = ClickHouseConfig.from_env(
+            self._shadow_loggers_ch_client = create_sync_clickhouse_client(
                 database=os.getenv("CLICKHOUSE_FUTURES_DATABASE", "kospi")
-            )
-            self._shadow_loggers_ch_client = CHSyncClient(
-                host=ch_cfg.host,
-                port=ch_cfg.port,
-                user=ch_cfg.user,
-                password=ch_cfg.password,
-                database=ch_cfg.database,
             )
         except Exception as e:
             logger.warning(
@@ -7798,19 +7776,14 @@ class TradingOrchestrator:
         if row is None:
             return
         try:
-            from clickhouse_driver import Client as CHSyncClient
+            from shared.storage import create_sync_clickhouse_client
 
-            ch_cfg = ClickHouseConfig.from_env(database="kospi")
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(
                 None,
-                lambda: CHSyncClient(
-                    host=ch_cfg.host,
-                    port=ch_cfg.port,
-                    user=ch_cfg.user,
-                    password=ch_cfg.password,
-                    database=ch_cfg.database,
-                ).execute(_SIGNALS_ALL_INSERT_SQL, [row]),
+                lambda: create_sync_clickhouse_client(database="kospi").execute(
+                    _SIGNALS_ALL_INSERT_SQL, [row]
+                ),
             )
         except Exception:
             logger.debug(

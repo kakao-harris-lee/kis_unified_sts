@@ -52,7 +52,10 @@ def _patch_external_clients(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_cli_us_session_runs_and_closes(monkeypatch, _patch_external_clients):
+async def test_cli_us_session_runs_and_closes_mirror_client(
+    monkeypatch, _patch_external_clients
+):
+    monkeypatch.setenv("RUNTIME_STORAGE_CLICKHOUSE_MIRROR_ENABLED", "true")
     yahoo_stub = MagicMock()
     yahoo_stub.fetch_us_close_snapshot = AsyncMock(
         return_value=_snap("overnight_us_close")
@@ -68,6 +71,28 @@ async def test_cli_us_session_runs_and_closes(monkeypatch, _patch_external_clien
     yahoo_stub.fetch_us_close_snapshot.assert_awaited_once()
     _patch_external_clients.connect.assert_awaited()
     _patch_external_clients.close.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_cli_us_session_skips_clickhouse_when_mirror_disabled(
+    monkeypatch, _patch_external_clients
+):
+    monkeypatch.delenv("RUNTIME_STORAGE_CLICKHOUSE_MIRROR_ENABLED", raising=False)
+    yahoo_stub = MagicMock()
+    yahoo_stub.fetch_us_close_snapshot = AsyncMock(
+        return_value=_snap("overnight_us_close")
+    )
+    monkeypatch.setattr(
+        "shared.macro.sources.yahoo.YahooMacroSource",
+        lambda *_a, **_kw: yahoo_stub,
+    )
+
+    rc = await _cli("us")
+
+    assert rc == 0
+    yahoo_stub.fetch_us_close_snapshot.assert_awaited_once()
+    _patch_external_clients.connect.assert_not_awaited()
+    _patch_external_clients.close.assert_not_awaited()
 
 
 @pytest.mark.asyncio

@@ -288,9 +288,9 @@ class StateManager(MultiStreamConsumer):
 
         try:
             # Import lazily to avoid import-time dependency failures in minimal envs.
-            from shared.db.client import ClickHouseClient  # type: ignore
+            from shared.storage import create_clickhouse_client_wrapper
 
-            client = ClickHouseClient(cfg)
+            client = create_clickhouse_client_wrapper(cfg)
             candles = client.get_minute_candles(code, start=start, end=now)
         except Exception as e:
             logger.debug(f"ClickHouse warm-up unavailable: {e}")

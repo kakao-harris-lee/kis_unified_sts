@@ -327,15 +327,10 @@ def _today_pnl_from_runtime_ledger(asset: str) -> tuple[int, bool]:
 
 def _today_pnl_from_clickhouse(asset: str) -> int:
     try:
-        from clickhouse_driver import Client as SyncClient
-
-        from shared.db.config import ClickHouseConfig
+        from shared.storage import create_sync_clickhouse_client
 
         multiplier = _futures_multiplier_krw_per_point()
-        cfg = ClickHouseConfig.from_env()
-        client = SyncClient(
-            host=cfg.host, port=cfg.port, user=cfg.user, password=cfg.password
-        )
+        client = create_sync_clickhouse_client()
         try:
             queries: list[tuple[str, dict]] = []
             if asset in ("futures", "all"):

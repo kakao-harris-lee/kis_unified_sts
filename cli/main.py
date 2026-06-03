@@ -892,9 +892,8 @@ def data_export_clickhouse(
 ):
     """Export standard OHLCV rows from ClickHouse into Parquet partitions."""
     import pandas as pd
-    from clickhouse_driver import Client as CHSyncClient
 
-    from shared.storage import ParquetMarketDataStore
+    from shared.storage import ParquetMarketDataStore, create_sync_clickhouse_client
 
     database = _validate_clickhouse_identifier(database, "database")
     default_table = "kospi200f_1m" if asset == "futures" else "minute_candles"
@@ -932,12 +931,7 @@ def data_export_clickhouse(
         {limit_sql}
     """
 
-    client = CHSyncClient(
-        host=os.getenv("CLICKHOUSE_HOST", "localhost"),
-        port=int(os.getenv("CLICKHOUSE_NATIVE_PORT", "9000")),
-        user=os.getenv("CLICKHOUSE_USER", "default"),
-        password=os.getenv("CLICKHOUSE_PASSWORD", ""),
-    )
+    client = create_sync_clickhouse_client(database=database)
     rows = client.execute(query, params)
     if not rows:
         click.echo("Error: ClickHouse query returned no rows", err=True)
@@ -2142,14 +2136,9 @@ def _write_temp_rl_config(
 
 def _select_default_mini_symbol(database: str, table: str) -> str:
     """Pick the densest A05* symbol from ClickHouse as mini validation symbol."""
-    from clickhouse_driver import Client as CHSyncClient
+    from shared.storage import create_sync_clickhouse_client
 
-    client = CHSyncClient(
-        host=os.getenv("CLICKHOUSE_HOST", "localhost"),
-        port=int(os.getenv("CLICKHOUSE_NATIVE_PORT", "9000")),
-        user=os.getenv("CLICKHOUSE_USER", "default"),
-        password=os.getenv("CLICKHOUSE_PASSWORD", ""),
-    )
+    client = create_sync_clickhouse_client(database=database)
     rows = client.execute(
         f"""
         SELECT code, count() AS c

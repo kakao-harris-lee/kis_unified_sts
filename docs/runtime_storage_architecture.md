@@ -249,6 +249,35 @@ It should not be required for:
 - running normal local unit/integration tests
 - serving the primary cockpit when SQLite/Redis has sufficient data
 
+## Runtime ClickHouse Dependency Policy
+
+Runtime-facing code must not import ClickHouse drivers or legacy ClickHouse
+client wrappers directly. ClickHouse access is allowed only behind backend
+helpers and explicit storage configuration.
+
+Allowed backend locations:
+
+- `shared/db/client.py` and `shared/db/utils.py` — legacy low-level ClickHouse clients.
+- `shared/storage/clickhouse_backend.py` — runtime-safe factory helpers used only when a ClickHouse mirror or analytics backend is explicitly enabled.
+- `shared/storage/clickhouse_runtime_ledger.py` — temporary rollback/mirror adapter.
+- `shared/storage/market_data_store.py` — optional ClickHouse historical-data adapter.
+- scripts, jobs, `shared/ml/`, and analysis tooling — research/maintenance paths, not runtime prerequisites.
+
+Runtime-facing roots covered by the policy guard:
+
+- `services/`
+- `core/`
+- `cli/`
+- `shared/strategy/gates/`
+
+The guard test is `tests/unit/storage/test_clickhouse_policy.py`. It fails if
+those roots import `clickhouse_driver` or
+`shared.db.client.ClickHouseClient` / `AsyncClickHouseClient` /
+`get_clickhouse_client` directly. Runtime code should call
+`shared.storage.create_sync_clickhouse_client`,
+`create_async_clickhouse_client`, or `get_clickhouse_client_wrapper` instead,
+after checking the relevant `StorageConfig` enabled flag.
+
 ## Compose Strategy
 
 Use compose profiles.
@@ -316,6 +345,7 @@ Avoid using ClickHouse env vars as implicit feature flags. Use explicit `enabled
 - `sts backtest run --symbol` uses `config/storage.yaml::market_data.source`, so `market_data.source=parquet` can run without ClickHouse for symbol-based backtests.
 - `docker-compose.yml` injects Redis DB 1 and storage env into runtime services, mounts `./data/runtime:/app/data/runtime`, and keeps `clickhouse`/`mlflow` behind `profiles: ["research"]`.
 - `.env.dev`, `.env.paper.example`, `.env.live.example`, and `.env.production.example` separate dev/paper/live by project name, host ports, Redis volume, and SQLite ledger path rather than Redis DB number.
+- Runtime-facing code now uses storage ClickHouse helpers instead of importing ClickHouse clients directly; a unit policy guard prevents regressions.
 
 ## Migration Principles
 
