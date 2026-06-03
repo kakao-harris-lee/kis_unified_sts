@@ -10,10 +10,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 from threading import Lock
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Query
 
 from services.dashboard.routes.trading import _normalize_asset_class
+from shared.execution.contract_spec import ContractSpecRegistry
+from shared.storage.config import StorageConfig
+from shared.storage.runtime_ledger import SQLiteRuntimeLedger
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/health", tags=["health"])
@@ -253,20 +257,81 @@ async def get_kill_switch() -> dict[str, Any]:
 
 _summary_cache: dict[str, Any] = {"data": None, "expires_at": 0.0, "asset": None}
 _summary_lock = Lock()
+_KST = ZoneInfo("Asia/Seoul")
+_DEFAULT_FUTURES_MULTIPLIER_KRW = 50_000
 
 
-def _today_pnl_krw(asset: str) -> int:
-    """Today's realized PnL in KRW for the selected asset view.
+def _futures_multiplier_krw_per_point() -> int:
+    try:
+        registry = ContractSpecRegistry.from_yaml("config/execution.yaml")
+        spec = registry.specs.get("kospi200_mini")
+        if spec is not None:
+            return int(spec.multiplier_krw_per_point)
+    except Exception:  # noqa: BLE001
+        pass
+    return _DEFAULT_FUTURES_MULTIPLIER_KRW
 
-    Futures ``rl_trades.pnl`` is stored in index points and converted by the
-    configured contract multiplier. Stock ``stock_trades.pnl`` is already KRW.
-    Returns 0 on failure so the Cockpit stays available if ClickHouse is down.
-    """
+
+def _is_today_kst(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, bytes):
+        value = value.decode(errors="ignore")
+    try:
+        dt = datetime.fromisoformat(str(value))
+    except ValueError:
+        return False
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=_KST)
+    return dt.astimezone(_KST).date() == datetime.now(_KST).date()
+
+
+def _today_pnl_from_runtime_ledger(asset: str) -> tuple[int, bool]:
+    """Return (today_pnl_krw, ledger_available)."""
+    try:
+        config = StorageConfig.load_or_default()
+        if config.runtime_storage.backend != "sqlite":
+            return 0, False
+        db_path = Path(config.runtime_storage.sqlite.path)
+        if not db_path.exists() or db_path.is_dir():
+            return 0, False
+
+        multiplier = _futures_multiplier_krw_per_point()
+        total = 0.0
+        ledger = SQLiteRuntimeLedger(config.runtime_storage.sqlite)
+        try:
+            targets = ("futures", "stock") if asset == "all" else (asset,)
+            for target in targets:
+                for row in ledger.query_trades(
+                    {"asset_class": target, "limit": 10_000}
+                ):
+                    payload = (
+                        row.get("payload")
+                        if isinstance(row.get("payload"), dict)
+                        else {}
+                    )
+                    exit_time = row.get("exit_time") or payload.get("exit_time")
+                    if not _is_today_kst(exit_time):
+                        continue
+                    pnl = float(row.get("pnl") or payload.get("pnl") or 0.0)
+                    row_asset = row.get("asset_class") or payload.get("asset_class")
+                    if row_asset == "futures":
+                        pnl *= multiplier
+                    total += pnl
+        finally:
+            ledger.close()
+        return int(total), True
+    except Exception:  # noqa: BLE001
+        return 0, False
+
+
+def _today_pnl_from_clickhouse(asset: str) -> int:
     try:
         from clickhouse_driver import Client as SyncClient
 
         from shared.db.config import ClickHouseConfig
 
+        multiplier = _futures_multiplier_krw_per_point()
         cfg = ClickHouseConfig.from_env()
         client = SyncClient(
             host=cfg.host, port=cfg.port, user=cfg.user, password=cfg.password
@@ -276,7 +341,7 @@ def _today_pnl_krw(asset: str) -> int:
             if asset in ("futures", "all"):
                 queries.append(
                     (
-                        "SELECT sum(pnl * 50000) FROM kospi.rl_trades "
+                        f"SELECT sum(pnl * {multiplier}) FROM kospi.rl_trades "
                         "WHERE asset_class = 'futures' "
                         "AND toDate(exit_date, 'Asia/Seoul') = toDate(now(), 'Asia/Seoul')",
                         {},
@@ -300,6 +365,18 @@ def _today_pnl_krw(asset: str) -> int:
             client.disconnect()
     except Exception:  # noqa: BLE001
         return 0
+
+
+def _today_pnl_krw(asset: str) -> int:
+    """Today's realized PnL in KRW for the selected asset view.
+
+    SQLite RuntimeLedger is the primary runtime source. ClickHouse is a
+    best-effort fallback for older deployments without a runtime ledger file.
+    """
+    pnl, ledger_available = _today_pnl_from_runtime_ledger(asset)
+    if ledger_available:
+        return pnl
+    return _today_pnl_from_clickhouse(asset)
 
 
 @router.get("/summary")
