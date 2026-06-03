@@ -97,7 +97,9 @@ async def retry_once_on_token_expiry(
     if not callable(invalidate):
         return result
 
-    logger.warning("%s token expired; invalidating cached token and retrying once", context)
+    logger.warning(
+        "%s token expired; invalidating cached token and retrying once", context
+    )
     invalidate()
     return await request_fn(1)
 
@@ -135,6 +137,8 @@ class KISAuthConfig:
             self.app_key = os.getenv("KIS_APP_KEY", "")
         if not self.app_secret:
             self.app_secret = os.getenv("KIS_APP_SECRET", "")
+        if not self.token_cache_dir:
+            self.token_cache_dir = os.getenv("KIS_TOKEN_CACHE_DIR") or None
 
     @property
     def base_url(self) -> str:
@@ -232,15 +236,11 @@ def _save_token_cache_secure(cache: TokenCache, cache_path: Path) -> None:
     # O_WRONLY: 쓰기 전용
     # O_TRUNC: 기존 파일 내용 삭제
     # 0o600: owner read/write only (rw-------)
-    fd = os.open(
-        str(cache_path),
-        os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
-        0o600
-    )
+    fd = os.open(str(cache_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
 
     try:
         # file descriptor를 파일 객체로 변환
-        with os.fdopen(fd, 'w') as f:
+        with os.fdopen(fd, "w") as f:
             json.dump(cache.to_dict(), f, indent=2)
     except Exception:
         # 예외 발생 시 file descriptor leak 방지
@@ -320,9 +320,7 @@ class KISAuthManager:
 
         with cls._instance_lock:
             if key not in cls._instances:
-                cls._instances[key] = cls(
-                    config, circuit_breaker, use_singleton=False
-                )
+                cls._instances[key] = cls(config, circuit_breaker, use_singleton=False)
             return cls._instances[key]
 
     @classmethod
@@ -421,9 +419,7 @@ class KISAuthManager:
     def _check_circuit(self):
         """Circuit Breaker 상태 확인"""
         if self._circuit and not self._circuit.can_execute():
-            raise CircuitOpenError(
-                "Circuit breaker is open, cannot issue token"
-            )
+            raise CircuitOpenError("Circuit breaker is open, cannot issue token")
 
     # -------------------------------------------------------------------------
     # Sync API

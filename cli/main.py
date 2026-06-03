@@ -10,6 +10,7 @@ Usage:
 from __future__ import annotations
 
 import logging
+import os
 import sys
 from contextlib import suppress
 from datetime import timedelta
@@ -1716,12 +1717,18 @@ def trade():
     default=False,
     help="Daemon mode (run daily) or single session",
 )
+@click.option(
+    "--yes-live",
+    is_flag=True,
+    help="Confirm live trading non-interactively. Requires KIS_REAL_TRADING=true.",
+)
 def trade_start(
     strategy: str,
     asset: str,
     capital: float,
     paper: bool,
     daemon: bool,
+    yes_live: bool,
 ):
     """트레이딩 시작
 
@@ -1740,9 +1747,22 @@ def trade_start(
     click.echo(f"  Capital: {capital:,.0f}")
     click.echo(f"  Mode: {'Daemon' if daemon else 'Single Session'}")
 
-    if not paper and not click.confirm("⚠️  LIVE TRADING - Are you sure?"):
-        click.echo("Aborted.")
-        return
+    if not paper:
+        live_env = os.getenv("KIS_REAL_TRADING", "").lower() in {
+            "1",
+            "true",
+            "yes",
+        }
+        if yes_live:
+            if not live_env:
+                click.echo(
+                    "Error: --yes-live requires KIS_REAL_TRADING=true",
+                    err=True,
+                )
+                sys.exit(1)
+        elif not click.confirm("⚠️  LIVE TRADING - Are you sure?"):
+            click.echo("Aborted.")
+            return
 
     try:
         from services.trading.orchestrator import (

@@ -261,6 +261,20 @@ class TestTradeCommands:
         assert result.exit_code == 0
         assert "Status" in result.output
 
+    def test_live_noninteractive_confirm_requires_live_env(self, runner, monkeypatch):
+        """--yes-live is reserved for explicit live environments."""
+        from cli.main import cli
+
+        monkeypatch.delenv("KIS_REAL_TRADING", raising=False)
+
+        result = runner.invoke(
+            cli,
+            ["trade", "start", "--asset", "stock", "--live", "--yes-live"],
+        )
+
+        assert result.exit_code == 1
+        assert "--yes-live requires KIS_REAL_TRADING=true" in result.output
+
 
 class TestHealthCommand:
     """Test health command."""

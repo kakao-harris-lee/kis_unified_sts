@@ -286,6 +286,7 @@ after checking the relevant `StorageConfig` enabled flag.
 Use compose profiles.
 
 - Base compose: app, dashboard, forecasting, strategy-builder UI, Redis, Prometheus, stream exporter.
+- Trading profile: optional `trader` daemon service that runs `sts trade start` from compose.
 - Runtime storage: SQLite file volume mounted into app/dashboard/forecasting.
 - Research profile: optional ClickHouse + MLflow + dataset tooling.
 - `.env.dev`, `.env.paper.example`, `.env.live.example` carry `COMPOSE_PROJECT_NAME`, unique host ports, Redis DB 1, and runtime SQLite paths.
@@ -301,10 +302,16 @@ docker compose --env-file .env.paper up -d
 cp .env.live.example .env.live
 docker compose --env-file .env.live up -d
 
+docker compose --env-file .env.paper --profile trading up -d trader
+
+TRADING_LIVE_CONFIRM=I_UNDERSTAND_LIVE_TRADING \
+  docker compose --env-file .env.live --profile trading up -d trader
+
 docker compose --env-file .env.dev --profile research up -d clickhouse mlflow
 ```
 
 The base compose should not require `CLICKHOUSE_HOST` to be reachable.
+The `trader` profile is excluded from the base service set, so paper/live dashboards can run without starting the trading loop. Live trader startup also requires both `KIS_REAL_TRADING=true` and `TRADING_LIVE_CONFIRM=I_UNDERSTAND_LIVE_TRADING`.
 
 ## Configuration
 
@@ -347,6 +354,7 @@ Avoid using ClickHouse env vars as implicit feature flags. Use explicit `enabled
 - `sts data export-clickhouse` exports standard OHLCV rows into the Parquet layout, and `sts data validate-parquet` validates the dataset root.
 - `sts backtest run --symbol` uses `config/storage.yaml::market_data.source`, so `market_data.source=parquet` can run without ClickHouse for symbol-based backtests.
 - `docker-compose.yml` injects Redis DB 1 and storage env into runtime services, mounts `./data/runtime:/app/data/runtime`, and keeps `clickhouse`/`mlflow` behind `profiles: ["research"]`. MLflow is optional experiment tracking for backtests, not an ML/RL runtime requirement.
+- `docker-compose.yml` includes a `profiles: ["trading"]` `trader` service for compose-managed paper/live trading loops. It uses the same runtime storage mounts and requires an explicit live confirmation token before non-interactive live mode.
 - `.env.dev`, `.env.paper.example`, `.env.live.example`, and `.env.production.example` separate dev/paper/live by project name, host ports, Redis volume, and SQLite ledger path rather than Redis DB number.
 - Runtime-facing code now uses storage ClickHouse helpers instead of importing ClickHouse clients directly; a unit policy guard prevents regressions.
 

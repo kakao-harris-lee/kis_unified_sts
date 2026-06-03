@@ -245,6 +245,7 @@ sts data validate-parquet --root data/market
 
 - base `docker-compose.yml`에서 Redis DB 1, runtime storage, market-data env를 runtime services에 명시.
 - `profiles: ["research"]`로 ClickHouse와 MLflow 서비스 분리.
+- `profiles: ["trading"]`로 `sts trade start` daemon service 분리.
 - `./data/runtime:/app/data/runtime` volume을 app/dashboard/forecasting에 추가.
 - `.env.dev`, `.env.paper.example`, `.env.live.example` 템플릿 추가.
 - `COMPOSE_PROJECT_NAME`, unique host ports, Redis volume 분리 사용법 문서화.
@@ -260,6 +261,11 @@ docker compose --env-file .env.paper up -d
 cp .env.live.example .env.live
 docker compose --env-file .env.live up -d
 
+docker compose --env-file .env.paper --profile trading up -d trader
+
+TRADING_LIVE_CONFIRM=I_UNDERSTAND_LIVE_TRADING \
+  docker compose --env-file .env.live --profile trading up -d trader
+
 docker compose --env-file .env.dev --profile research up -d clickhouse mlflow
 ```
 
@@ -269,12 +275,16 @@ docker compose --env-file .env.dev --profile research up -d clickhouse mlflow
 - `docker compose --env-file .env.dev --profile research config --services` includes ClickHouse/MLflow.
 - `docker compose --env-file .env.paper.example config` renders `kis_paper`, Redis DB 1, and `data/runtime/paper/runtime.db`.
 - `docker compose --env-file .env.live.example config` renders `kis_live`, Redis DB 1, and `data/runtime/live/runtime.db`.
+- `docker compose --env-file .env.paper.example config --services` excludes `trader`.
+- `docker compose --env-file .env.paper.example --profile trading config --services` includes `trader`.
+- live `trader` startup refuses to run unless `TRADING_LIVE_CONFIRM=I_UNDERSTAND_LIVE_TRADING`.
 - Runtime `up -d` health smoke remains a deployment validation step to avoid disturbing an existing long-running stack.
 
 완료 기준:
 
 - ClickHouse 설치가 없는 서버에서 dev/paper compose config가 렌더링된다.
 - research profile만 ClickHouse와 MLflow를 compose service set에 포함한다.
+- trading profile만 trading loop daemon을 compose service set에 포함한다.
 
 ## Phase 6 — Cleanup and Policy
 
@@ -364,6 +374,9 @@ docker compose --env-file .env.dev --profile research up -d clickhouse mlflow
   - `docker compose --env-file .env.dev --profile research config --services` includes ClickHouse/MLflow.
   - `.env.paper.example` renders `kis_paper`, Redis DB 1, and `data/runtime/paper/runtime.db`.
   - `.env.live.example` renders `kis_live`, Redis DB 1, and `data/runtime/live/runtime.db`.
+  - `.env.paper.example` excludes `trader` by default and includes it only with `--profile trading`.
+  - `.env.live.example --profile trading` renders `kis_live-trader` with live KIS env, Redis DB 1, and `data/runtime/live/runtime.db`.
+  - live `trader` entrypoint exits before `sts trade start` unless `TRADING_LIVE_CONFIRM=I_UNDERSTAND_LIVE_TRADING`.
 - Compose runtime smoke:
   - Existing KIS app/research/monitoring stacks were stopped first.
   - `docker compose --env-file .env.dev up -d --remove-orphans` started the dev stack without ClickHouse/MLflow services.
@@ -373,6 +386,8 @@ docker compose --env-file .env.dev --profile research up -d clickhouse mlflow
 - [x] `docker compose up -d` works without ClickHouse installed.
   - 확인: `.env.dev` smoke가 ClickHouse/MLflow 없이 정상 기동했고 검증 후 down 처리했다.
 - [x] dev/paper/live compose config renders without ClickHouse service.
+- [x] paper/live trading loop can be managed by an optional compose profile.
+  - 확인: 기본 service set에는 `trader`가 없고 `--profile trading`에서만 포함된다. live trader는 `KIS_REAL_TRADING=true`와 explicit confirm token 없이는 시작하지 않는다.
 - [ ] `sts trade start --asset stock --paper` works with Redis + SQLite only.
   - 미완료/미검증: stock paper E2E smoke가 필요하다.
 - [ ] futures paper flow works with Redis + SQLite only.
