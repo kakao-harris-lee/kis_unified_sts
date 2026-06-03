@@ -39,6 +39,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
+from shared.backtest.mlflow_uri import resolve_tracking_uri
+
 logger = logging.getLogger(__name__)
 
 # Optional imports
@@ -259,7 +261,8 @@ class ModelRegistry:
         """
         Args:
             model_name: Model name for registry (default: "rl_mppo")
-            tracking_uri: MLflow tracking URI (default: sqlite:///mlflow.db)
+            tracking_uri: MLflow tracking URI. Defaults to MLFLOW_TRACKING_URI
+                (the docker mlflow server when set) or local sqlite.
 
         Raises:
             ImportError: If MLflow is not installed
@@ -271,7 +274,7 @@ class ModelRegistry:
             )
 
         self.model_name = model_name
-        self.tracking_uri = tracking_uri or "sqlite:///mlflow.db"
+        self.tracking_uri = resolve_tracking_uri(tracking_uri)
 
         mlflow.set_tracking_uri(self.tracking_uri)
         self.client = MlflowClient()

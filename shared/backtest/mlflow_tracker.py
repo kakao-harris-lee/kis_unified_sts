@@ -29,6 +29,7 @@ from typing import Any, Generator
 
 import pandas as pd
 
+from shared.backtest.mlflow_uri import resolve_tracking_uri
 from shared.backtest.result import BacktestResult
 
 logger = logging.getLogger(__name__)
@@ -83,7 +84,8 @@ class MLflowTracker:
         """
         Args:
             experiment_name: MLflow 실험 이름
-            tracking_uri: MLflow tracking URI (기본: sqlite:///mlflow.db)
+            tracking_uri: MLflow tracking URI. Defaults to MLFLOW_TRACKING_URI
+                (the docker mlflow server when set) or local sqlite.
         """
         if not HAS_MLFLOW:
             raise ImportError(
@@ -91,7 +93,7 @@ class MLflowTracker:
             )
 
         self.experiment_name = experiment_name
-        self.tracking_uri = tracking_uri or "sqlite:///mlflow.db"
+        self.tracking_uri = resolve_tracking_uri(tracking_uri)
 
         mlflow.set_tracking_uri(self.tracking_uri)
         mlflow.set_experiment(experiment_name)
