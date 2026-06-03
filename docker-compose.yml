@@ -1,6 +1,47 @@
 # KIS Unified Trading Platform - Docker Compose
 # 개발/운영 환경 통합 구성
 
+x-redis-runtime-env: &redis-runtime-env
+  REDIS_HOST: "${REDIS_HOST:-redis}"
+  REDIS_PORT: "${REDIS_PORT:-6379}"
+  REDIS_DB: "${REDIS_DB:-1}"
+  REDIS_STOCK_DB: "${REDIS_STOCK_DB:-1}"
+  REDIS_FUTURES_DB: "${REDIS_FUTURES_DB:-1}"
+  REDIS_SYSTEM_DB: "${REDIS_SYSTEM_DB:-1}"
+  REDIS_PASSWORD: "${REDIS_PASSWORD:-changeme}"
+  REDIS_URL: "${REDIS_URL:-redis://:${REDIS_PASSWORD:-changeme}@redis:6379/1}"
+  REDIS_TLS_ENABLED: "${REDIS_TLS_ENABLED:-false}"
+  REDIS_TLS_CERT_REQS: "${REDIS_TLS_CERT_REQS:-required}"
+  REDIS_TLS_CA_CERTS: "${REDIS_TLS_CA_CERTS:-}"
+
+x-runtime-storage-env: &runtime-storage-env
+  ENVIRONMENT: "${ENVIRONMENT:-dev}"
+  RUNTIME_STORAGE_BACKEND: "${RUNTIME_STORAGE_BACKEND:-sqlite}"
+  RUNTIME_STORAGE_SQLITE_PATH: "${RUNTIME_STORAGE_SQLITE_PATH:-data/runtime/dev/runtime.db}"
+  RUNTIME_STORAGE_SQLITE_WAL: "${RUNTIME_STORAGE_SQLITE_WAL:-true}"
+  RUNTIME_STORAGE_SQLITE_BUSY_TIMEOUT_MS: "${RUNTIME_STORAGE_SQLITE_BUSY_TIMEOUT_MS:-5000}"
+  RUNTIME_STORAGE_SQLITE_SYNCHRONOUS: "${RUNTIME_STORAGE_SQLITE_SYNCHRONOUS:-NORMAL}"
+  RUNTIME_STORAGE_CLICKHOUSE_MIRROR_ENABLED: "${RUNTIME_STORAGE_CLICKHOUSE_MIRROR_ENABLED:-false}"
+  RUNTIME_STORAGE_CLICKHOUSE_DATABASE: "${RUNTIME_STORAGE_CLICKHOUSE_DATABASE:-market}"
+  MARKET_DATA_SOURCE: "${MARKET_DATA_SOURCE:-parquet}"
+  MARKET_DATA_PARQUET_ROOT: "${MARKET_DATA_PARQUET_ROOT:-data/market}"
+  MARKET_DATA_CLICKHOUSE_ENABLED: "${MARKET_DATA_CLICKHOUSE_ENABLED:-false}"
+  MARKET_DATA_CLICKHOUSE_STOCK_DATABASE: "${MARKET_DATA_CLICKHOUSE_STOCK_DATABASE:-market}"
+  MARKET_DATA_CLICKHOUSE_FUTURES_DATABASE: "${MARKET_DATA_CLICKHOUSE_FUTURES_DATABASE:-kospi}"
+  DASHBOARD_TRADE_STATS_SOURCE: "${DASHBOARD_TRADE_STATS_SOURCE:-runtime_ledger}"
+
+x-clickhouse-optional-env: &clickhouse-optional-env
+  CLICKHOUSE_HOST: "${CLICKHOUSE_HOST:-clickhouse}"
+  CLICKHOUSE_PORT: "${CLICKHOUSE_PORT:-8123}"
+  CLICKHOUSE_NATIVE_PORT: "${CLICKHOUSE_NATIVE_PORT:-9000}"
+  CLICKHOUSE_USER: "${CLICKHOUSE_USER:-default}"
+  CLICKHOUSE_PASSWORD: "${CLICKHOUSE_PASSWORD:-}"
+  CLICKHOUSE_STOCK_DATABASE: "${CLICKHOUSE_STOCK_DATABASE:-market}"
+  CLICKHOUSE_FUTURES_DATABASE: "${CLICKHOUSE_FUTURES_DATABASE:-kospi}"
+  CLICKHOUSE_SECURE: "${CLICKHOUSE_SECURE:-false}"
+  CLICKHOUSE_VERIFY_SSL: "${CLICKHOUSE_VERIFY_SSL:-true}"
+  CLICKHOUSE_CA_CERT: "${CLICKHOUSE_CA_CERT:-}"
+
 services:
   # =============================================================================
   # 트레이딩 애플리케이션
@@ -9,35 +50,26 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: kis-trading-app
+    container_name: ${COMPOSE_PROJECT_NAME:-kis}-trading-app
     restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
-      # KIS API 인증 (환경변수)
-      - KIS_APP_KEY=${KIS_APP_KEY}
-      - KIS_APP_SECRET=${KIS_APP_SECRET}
-      - KIS_IS_REAL=${KIS_IS_REAL:-false}
-      # API 인증
-      - API_KEY=${API_KEY}
-      - API_KEY_HEADER=${API_KEY_HEADER:-X-API-Key}
-      - METRICS_REQUIRE_AUTH=${METRICS_REQUIRE_AUTH:-false}
-      # Telegram 알림
-      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
-      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
-      # Redis
-      - REDIS_HOST=host.docker.internal
-      - REDIS_PORT=6379
-      - REDIS_DB=1
-      - REDIS_PASSWORD=${REDIS_PASSWORD:-changeme}
-      # Redis TLS Configuration (see docs/TLS_SETUP.md)
-      - REDIS_TLS_ENABLED=${REDIS_TLS_ENABLED:-false}
-      - REDIS_TLS_CERT_REQS=${REDIS_TLS_CERT_REQS:-required}
-      - REDIS_TLS_CA_CERTS=${REDIS_TLS_CA_CERTS:-}
-      # 환경
-      - ENVIRONMENT=${ENVIRONMENT:-production}
+      <<: [*redis-runtime-env, *runtime-storage-env, *clickhouse-optional-env]
+      KIS_APP_KEY: "${KIS_APP_KEY:-}"
+      KIS_APP_SECRET: "${KIS_APP_SECRET:-}"
+      KIS_IS_REAL: "${KIS_IS_REAL:-false}"
+      API_KEY: "${API_KEY:-}"
+      API_KEY_HEADER: "${API_KEY_HEADER:-X-API-Key}"
+      METRICS_REQUIRE_AUTH: "${METRICS_REQUIRE_AUTH:-false}"
+      TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN:-}"
+      TELEGRAM_CHAT_ID: "${TELEGRAM_CHAT_ID:-}"
     volumes:
       - ./config:/app/config:ro
       - ./logs:/app/logs
       - ./.cache:/app/.cache
+      - ./data/runtime:/app/data/runtime
+      - ./data/market:/app/data/market:ro
     depends_on:
       redis:
         condition: service_healthy
@@ -62,49 +94,26 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.dashboard
-    container_name: kis-dashboard
+    container_name: ${COMPOSE_PROJECT_NAME:-kis}-dashboard
     restart: unless-stopped
     expose:
       - "8001"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
-      # API 인증
-      - API_KEY=${API_KEY}
-      # Dashboard 인증
-      - DASHBOARD_REQUIRE_AUTH=${DASHBOARD_REQUIRE_AUTH:-true}
-      - DASHBOARD_API_KEY=${DASHBOARD_API_KEY:-}
-      - DASHBOARD_DEV_MODE=${DASHBOARD_DEV_MODE:-false}
-      # Metrics 인증
-      - METRICS_REQUIRE_AUTH=${METRICS_REQUIRE_AUTH:-false}
-      # Redis
-      - REDIS_HOST=host.docker.internal
-      - REDIS_PORT=6379
-      - REDIS_DB=1
-      # Empty default: host Redis runs without auth (production deploy). Set REDIS_PASSWORD in .env to override.
-      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
-      # Redis TLS Configuration (see docs/TLS_SETUP.md)
-      - REDIS_TLS_ENABLED=${REDIS_TLS_ENABLED:-false}
-      - REDIS_TLS_CERT_REQS=${REDIS_TLS_CERT_REQS:-required}
-      - REDIS_TLS_CA_CERTS=${REDIS_TLS_CA_CERTS:-}
-      # Trading
-      - TRADING_ASSET_CLASS=stock
-      # ClickHouse
-      - CLICKHOUSE_HOST=host.docker.internal
-      - CLICKHOUSE_PORT=9000
-      - CLICKHOUSE_USER=${CLICKHOUSE_USER:-default}
-      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD:-}
-      - CLICKHOUSE_STOCK_DATABASE=${CLICKHOUSE_STOCK_DATABASE:-market}
-      # ClickHouse TLS Configuration (see docs/TLS_SETUP.md)
-      - CLICKHOUSE_SECURE=${CLICKHOUSE_SECURE:-false}
-      - CLICKHOUSE_VERIFY_SSL=${CLICKHOUSE_VERIFY_SSL:-true}
-      - CLICKHOUSE_CA_CERT=${CLICKHOUSE_CA_CERT:-}
-      # 환경
-      - ENVIRONMENT=${ENVIRONMENT:-production}
+      <<: [*redis-runtime-env, *runtime-storage-env, *clickhouse-optional-env]
+      API_KEY: "${API_KEY:-}"
+      DASHBOARD_REQUIRE_AUTH: "${DASHBOARD_REQUIRE_AUTH:-true}"
+      DASHBOARD_API_KEY: "${DASHBOARD_API_KEY:-}"
+      DASHBOARD_DEV_MODE: "${DASHBOARD_DEV_MODE:-false}"
+      METRICS_REQUIRE_AUTH: "${METRICS_REQUIRE_AUTH:-false}"
+      TRADING_ASSET_CLASS: "${TRADING_ASSET_CLASS:-stock}"
     volumes:
       - ./config:/app/config:ro
       - ./logs:/app/logs
       - ./reports:/app/reports:ro
+      - ./data/runtime:/app/data/runtime
+      - ./data/market:/app/data/market:ro
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
       interval: 30s
@@ -126,7 +135,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.strategy_builder_ui
-    container_name: kis-strategy-builder-ui
+    container_name: ${COMPOSE_PROJECT_NAME:-kis}-strategy-builder-ui
     restart: unless-stopped
     # External access goes through caddy on host port 5080. Port 3100 is
     # container-internal only and must not be published on the host.
@@ -167,10 +176,10 @@ services:
   # =============================================================================
   caddy:
     image: caddy:2
-    container_name: kis-caddy
+    container_name: ${COMPOSE_PROJECT_NAME:-kis}-caddy
     restart: unless-stopped
     ports:
-      - "5080:5080"
+      - "${DASHBOARD_HOST_PORT:-5080}:5080"
     volumes:
       - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
@@ -195,24 +204,18 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.forecasting
-    container_name: kis-forecasting
+    container_name: ${COMPOSE_PROJECT_NAME:-kis}-forecasting
     restart: unless-stopped
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
-      - REDIS_HOST=host.docker.internal
-      - REDIS_PORT=6379
-      - REDIS_DB=1
-      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
-      - CLICKHOUSE_HOST=host.docker.internal
-      - CLICKHOUSE_PORT=9000
-      - CLICKHOUSE_USER=${CLICKHOUSE_USER:-default}
-      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD:-}
-      - CLICKHOUSE_STOCK_DATABASE=kospi
-      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      <<: [*redis-runtime-env, *runtime-storage-env, *clickhouse-optional-env]
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
     volumes:
       - ./config:/app/config:ro
       - ./logs:/app/logs
+      - ./data/runtime:/app/data/runtime
+      - ./data/market:/app/data/market:ro
     networks:
       - trading-network
     logging:
@@ -226,15 +229,24 @@ services:
   # =============================================================================
   redis:
     image: redis:7-alpine
-    container_name: kis-redis
+    container_name: ${COMPOSE_PROJECT_NAME:-kis}-redis
     restart: unless-stopped
     ports:
-      - "127.0.0.1:6379:6379"
+      - "127.0.0.1:${REDIS_HOST_PORT:-6379}:6379"
     environment:
-      - REDIS_PASSWORD=${REDIS_PASSWORD:-changeme}
+      REDIS_PASSWORD: "${REDIS_PASSWORD:-changeme}"
     volumes:
       - redis-data:/data
-    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru --requirepass ${REDIS_PASSWORD:-changeme}
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --maxmemory
+      - 256mb
+      - --maxmemory-policy
+      - allkeys-lru
+      - --requirepass
+      - "${REDIS_PASSWORD:-changeme}"
     healthcheck:
       test: ["CMD", "sh", "-c", "REDISCLI_AUTH=$${REDIS_PASSWORD:-changeme} redis-cli ping || exit 1"]
       interval: 10s
@@ -244,14 +256,41 @@ services:
       - trading-network
 
   # =============================================================================
+  # ClickHouse (optional research / analytics mirror profile)
+  # =============================================================================
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.3
+    container_name: ${COMPOSE_PROJECT_NAME:-kis}-clickhouse
+    restart: unless-stopped
+    profiles: ["research"]
+    ports:
+      - "127.0.0.1:${CLICKHOUSE_NATIVE_HOST_PORT:-9000}:9000"
+      - "127.0.0.1:${CLICKHOUSE_HTTP_HOST_PORT:-8123}:8123"
+    environment:
+      CLICKHOUSE_DB: "${CLICKHOUSE_STOCK_DATABASE:-market}"
+      CLICKHOUSE_USER: "${CLICKHOUSE_USER:-default}"
+      CLICKHOUSE_PASSWORD: "${CLICKHOUSE_PASSWORD:-}"
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+    healthcheck:
+      test: ["CMD-SHELL", "clickhouse-client --host localhost --port 9000 --user \"$${CLICKHOUSE_USER:-default}\" --password \"$${CLICKHOUSE_PASSWORD:-}\" --query 'SELECT 1'"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks:
+      - trading-network
+
+  # =============================================================================
   # Prometheus (메트릭 수집)
   # =============================================================================
   prometheus:
     image: prom/prometheus:v2.48.0
-    container_name: kis-prometheus
+    container_name: ${COMPOSE_PROJECT_NAME:-kis}-prometheus
     restart: unless-stopped
     ports:
-      - "127.0.0.1:9090:9090"
+      - "127.0.0.1:${PROMETHEUS_HOST_PORT:-9090}:9090"
     volumes:
       - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus-data:/prometheus
@@ -273,26 +312,19 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.stream_exporter
-    container_name: kis-stream-exporter
+    container_name: ${COMPOSE_PROJECT_NAME:-kis}-stream-exporter
     restart: unless-stopped
     command: ["python", "/app/services/monitoring/stream_exporter.py"]
     ports:
-      - "127.0.0.1:9093:9093"
+      - "127.0.0.1:${STREAM_EXPORTER_HOST_PORT:-9093}:9093"
     environment:
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - REDIS_DB=1
-      - REDIS_PASSWORD=${REDIS_PASSWORD:-changeme}
-      # Redis TLS Configuration (see docs/TLS_SETUP.md)
-      - REDIS_TLS_ENABLED=${REDIS_TLS_ENABLED:-false}
-      - REDIS_TLS_CERT_REQS=${REDIS_TLS_CERT_REQS:-required}
-      - REDIS_TLS_CA_CERTS=${REDIS_TLS_CA_CERTS:-}
-      - STREAM_EXPORTER_PORT=9093
-      - STREAM_EXPORTER_STREAMS=market:ticks,raw_data
-      - STREAM_EXPORTER_READ_COUNT=200
-      - STREAM_EXPORTER_BLOCK_MS=1000
-      - STREAM_EXPORTER_SYMBOL_TTL_SECONDS=1800
-      - STREAM_EXPORTER_MAX_SYMBOLS_PER_ASSET=60
+      <<: *redis-runtime-env
+      STREAM_EXPORTER_PORT: "9093"
+      STREAM_EXPORTER_STREAMS: "market:ticks,raw_data"
+      STREAM_EXPORTER_READ_COUNT: "200"
+      STREAM_EXPORTER_BLOCK_MS: "1000"
+      STREAM_EXPORTER_SYMBOL_TTL_SECONDS: "1800"
+      STREAM_EXPORTER_MAX_SYMBOLS_PER_ASSET: "60"
     depends_on:
       redis:
         condition: service_healthy
@@ -312,11 +344,12 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.mlflow
-    container_name: kis-mlflow
+    container_name: ${COMPOSE_PROJECT_NAME:-kis}-mlflow
     restart: unless-stopped
+    profiles: ["research"]
     ports:
       # localhost-bound (dev/ops tool); browse at http://localhost:5000
-      - "127.0.0.1:5000:5000"
+      - "127.0.0.1:${MLFLOW_HOST_PORT:-5000}:5000"
     # ${PWD} = repo root (run `docker compose` from here). Existing runs store
     # ABSOLUTE artifact paths in mlflow.db (e.g.
     # /home/.../kis_unified_sts/mlruns/<id>/...), so mlruns must be mounted at
@@ -361,6 +394,7 @@ networks:
 # =============================================================================
 volumes:
   redis-data:
+  clickhouse-data:
   prometheus-data:
   caddy-data:
   caddy-config:

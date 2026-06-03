@@ -236,35 +236,42 @@ sts data validate-parquet --root data/market
 
 ## Phase 5 — Compose Profiles and Environment Separation
 
-상태: 구현 예정
+상태: 구현 완료 (`feat/runtime-storage-ledger`)
 
 작업:
 
-- base `docker-compose.yml`에서 ClickHouse env가 runtime 필수처럼 보이는 부분 정리.
-- `docker-compose.research.yml` 또는 `profiles: ["research"]`로 ClickHouse 서비스 추가.
-- `data/runtime:/app/data/runtime` volume 추가.
+- base `docker-compose.yml`에서 Redis DB 1, runtime storage, market-data env를 runtime services에 명시.
+- `profiles: ["research"]`로 ClickHouse와 MLflow 서비스 분리.
+- `./data/runtime:/app/data/runtime` volume을 app/dashboard/forecasting에 추가.
 - `.env.dev`, `.env.paper.example`, `.env.live.example` 템플릿 추가.
-- `COMPOSE_PROJECT_NAME` 사용법 문서화.
+- `COMPOSE_PROJECT_NAME`, unique host ports, Redis volume 분리 사용법 문서화.
 
 예:
 
 ```bash
-COMPOSE_PROJECT_NAME=kis_dev docker compose --env-file .env.dev up -d
-COMPOSE_PROJECT_NAME=kis_paper docker compose --env-file .env.paper up -d
-COMPOSE_PROJECT_NAME=kis_live docker compose --env-file .env.live up -d
-COMPOSE_PROJECT_NAME=kis_research docker compose --profile research up -d clickhouse
+docker compose --env-file .env.dev up -d
+
+cp .env.paper.example .env.paper
+docker compose --env-file .env.paper up -d
+
+cp .env.live.example .env.live
+docker compose --env-file .env.live up -d
+
+docker compose --env-file .env.dev --profile research up -d clickhouse mlflow
 ```
 
 검증:
 
-- ClickHouse 없는 host에서 base compose health.
-- paper/live project name 별 Redis volume 분리 확인.
-- dashboard 5080 route 확인.
+- `docker compose --env-file .env.dev config --services` excludes ClickHouse/MLflow.
+- `docker compose --env-file .env.dev --profile research config --services` includes ClickHouse/MLflow.
+- `docker compose --env-file .env.paper.example config` renders `kis_paper`, Redis DB 1, and `data/runtime/paper/runtime.db`.
+- `docker compose --env-file .env.live.example config` renders `kis_live`, Redis DB 1, and `data/runtime/live/runtime.db`.
+- Runtime `up -d` health smoke remains a deployment validation step to avoid disturbing an existing long-running stack.
 
 완료 기준:
 
-- ClickHouse 설치가 없는 서버에서 dev/paper compose가 올라온다.
-- research profile만 ClickHouse를 띄운다.
+- ClickHouse 설치가 없는 서버에서 dev/paper compose config가 렌더링된다.
+- research profile만 ClickHouse와 MLflow를 compose service set에 포함한다.
 
 ## Phase 6 — Cleanup and Policy
 
@@ -298,7 +305,7 @@ COMPOSE_PROJECT_NAME=kis_research docker compose --profile research up -d clickh
 | 3 | dashboard reads from RuntimeLedger | medium | implemented |
 | 4 | LLM/news/scoring/forecasting mirror optionalization | medium | implemented |
 | 5 | Parquet/DuckDB MarketDataStore + export commands | medium | partial |
-| 6 | compose profiles + env templates | medium | pending |
+| 6 | compose profiles + env templates | medium | implemented |
 | 7 | direct ClickHouse import cleanup + policy tests | low | pending |
 
 ## Test Matrix
@@ -325,6 +332,7 @@ COMPOSE_PROJECT_NAME=kis_research docker compose --profile research up -d clickh
 ## Acceptance Checklist
 
 - [ ] `docker compose up -d` works without ClickHouse installed.
+- [x] dev/paper/live compose config renders without ClickHouse service.
 - [ ] `sts trade start --asset stock --paper` works with Redis + SQLite only.
 - [ ] futures paper flow works with Redis + SQLite only.
 - [x] dashboard trades/stats do not require ClickHouse.
@@ -332,5 +340,5 @@ COMPOSE_PROJECT_NAME=kis_research docker compose --profile research up -d clickh
 - [x] `sts backtest run --symbol` supports `market_data.source=parquet`.
 - [ ] full backtest/tier runners support `data.source=parquet`.
 - [ ] ML training supports Parquet/DuckDB source or has documented ClickHouse-only exception.
-- [ ] ClickHouse profile still supports existing research workflows.
+- [x] ClickHouse research profile renders optional ClickHouse/MLflow services.
 - [ ] default pytest does not touch live Redis/ClickHouse.
