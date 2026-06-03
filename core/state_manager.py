@@ -18,8 +18,7 @@ import os
 import threading
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any, Optional
-
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from shared.config.loader import ConfigLoader
@@ -52,8 +51,10 @@ class StateManagerConfig:
     )
 
     consumer_group: str = os.environ.get("STATE_MANAGER_GROUP", "stock_state_manager")
-    consumer_name: Optional[str] = os.environ.get("STATE_MANAGER_CONSUMER", None)
-    component_name: Optional[str] = os.environ.get("STATE_MANAGER_COMPONENT", "state_manager")
+    consumer_name: str | None = os.environ.get("STATE_MANAGER_CONSUMER", None)
+    component_name: str | None = os.environ.get(
+        "STATE_MANAGER_COMPONENT", "state_manager"
+    )
 
     warmup_minutes: int = int(os.environ.get("STATE_WARMUP_MINUTES", "240"))
     max_bars: int = int(os.environ.get("STATE_MAX_BARS", "600"))
@@ -63,7 +64,9 @@ class StateManagerConfig:
     )
 
     # ConfigLoader path (relative to config dir)
-    clickhouse_config_path: str = os.environ.get("CLICKHOUSE_CONFIG_PATH", "clickhouse.yaml")
+    clickhouse_config_path: str = os.environ.get(
+        "CLICKHOUSE_CONFIG_PATH", "clickhouse.yaml"
+    )
 
 
 class StateManager(MultiStreamConsumer):
@@ -79,24 +82,27 @@ class StateManager(MultiStreamConsumer):
         }
         super().__init__(
             streams=streams,
-            consumer_name=self.config.consumer_name or f"{self.config.consumer_group}_1",
+            consumer_name=self.config.consumer_name
+            or f"{self.config.consumer_group}_1",
             component_name=self.config.component_name,
         )
 
         self._lock = threading.RLock()
-        self._thread: Optional[threading.Thread] = None
+        self._thread: threading.Thread | None = None
 
         try:
             self._tz = ZoneInfo(self.config.timezone)
         except Exception:
-            logger.warning(f"Unknown timezone '{self.config.timezone}', falling back to UTC")
+            logger.warning(
+                f"Unknown timezone '{self.config.timezone}', falling back to UTC"
+            )
             self._tz = ZoneInfo("UTC")
 
         self._active_codes: set[str] = set()
         self._frames: dict[str, Any] = {}
         self._builders: dict[str, MinuteBar] = {}
 
-        self._clickhouse_config: Optional[ClickHouseConfig] = None
+        self._clickhouse_config: ClickHouseConfig | None = None
 
         # Bootstrap from latest universe snapshot if present (fast start)
         self._bootstrap_universe_from_latest_key()
@@ -211,9 +217,8 @@ class StateManager(MultiStreamConsumer):
             return
 
         ts = parse_float(payload.get("timestamp") or message.timestamp)
-        minute = (
-            datetime.fromtimestamp(ts, tz=self._tz)
-            .replace(second=0, microsecond=0, tzinfo=None)
+        minute = datetime.fromtimestamp(ts, tz=self._tz).replace(
+            second=0, microsecond=0, tzinfo=None
         )
 
         vol = parse_int(payload.get("tick_volume"))
