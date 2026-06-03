@@ -75,8 +75,9 @@ dependencies = [
     "clickhouse-driver>=0.2",
     "aiochclient>=2.4",
 
-    # MLflow (Backtesting)
-    "mlflow>=2.9",
+    # MLflow (Backtesting). Cap below 4 so a fresh install can't pull a major
+    # with a different sqlite schema than the pinned Dockerfile.mlflow server.
+    "mlflow>=2.9,<4",
 
     # LLM Analysis
     "openai>=1.0",
