@@ -77,6 +77,130 @@ async def test_trades_statistics():
     assert "total_pnl" in data
 
 
+def _seed_runtime_ledger(db_path):
+    from shared.storage.runtime_ledger import SQLiteRuntimeLedger
+
+    ledger = SQLiteRuntimeLedger(db_path)
+    ledger.record_trade(
+        {
+            "id": "trade-stock-1",
+            "asset_class": "stock",
+            "code": "005930",
+            "name": "Samsung",
+            "side": "long",
+            "strategy": "bb_reversion",
+            "entry_time": "2026-06-03T09:00:00+09:00",
+            "entry_price": 71000.0,
+            "exit_time": "2026-06-03T10:00:00+09:00",
+            "exit_price": 72000.0,
+            "quantity": 10,
+            "exit_reason": "signal_exit",
+        }
+    )
+    ledger.record_trade(
+        {
+            "id": "trade-futures-1",
+            "asset_class": "futures",
+            "code": "101S6000",
+            "name": "KOSPI200 Futures",
+            "side": "short",
+            "strategy": "rl_mppo",
+            "entry_time": "2026-06-03T09:00:00+09:00",
+            "entry_price": 350.0,
+            "exit_time": "2026-06-03T09:30:00+09:00",
+            "exit_price": 345.0,
+            "quantity": 1,
+            "exit_reason": "model_exit",
+        }
+    )
+    ledger.close()
+
+
+def _configure_runtime_ledger_env(monkeypatch, db_path):
+    monkeypatch.setenv("RUNTIME_STORAGE_BACKEND", "sqlite")
+    monkeypatch.setenv("RUNTIME_STORAGE_SQLITE_PATH", str(db_path))
+    monkeypatch.setenv("DASHBOARD_TRADE_STATS_SOURCE", "runtime_ledger")
+
+
+@pytest.mark.asyncio
+async def test_trades_list_reads_runtime_ledger(monkeypatch, tmp_path):
+    """``/api/trades`` should prefer RuntimeLedger when SQLite DB exists."""
+    from services.dashboard.app import create_app
+
+    db_path = tmp_path / "runtime.db"
+    _seed_runtime_ledger(db_path)
+    _configure_runtime_ledger_env(monkeypatch, db_path)
+
+    app = create_app()
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/api/trades?asset_class=stock")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total"] == 1
+    assert data["trades"][0]["id"] == "trade-stock-1"
+    assert data["trades"][0]["symbol"] == "005930"
+    assert data["trades"][0]["pnl"] == 10000.0
+
+
+@pytest.mark.asyncio
+async def test_trades_rl_reads_runtime_ledger_without_clickhouse(monkeypatch, tmp_path):
+    """``/api/trades/rl`` should not call ClickHouse when RuntimeLedger is configured."""
+    from services.dashboard.app import create_app
+    from services.dashboard.routes import trades as trades_route
+
+    db_path = tmp_path / "runtime.db"
+    _seed_runtime_ledger(db_path)
+    _configure_runtime_ledger_env(monkeypatch, db_path)
+
+    def _boom(*_args, **_kwargs):
+        raise AssertionError("ClickHouse should not be queried")
+
+    monkeypatch.setattr(trades_route, "_query_ch", _boom)
+
+    app = create_app()
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/api/trades/rl?asset_class=futures")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 1
+    assert data[0]["id"] == "trade-futures-1"
+    assert data[0]["code"] == "101S6000"
+    assert data[0]["pnl"] == 5.0
+
+
+@pytest.mark.asyncio
+async def test_trades_rl_statistics_reads_runtime_ledger_without_clickhouse(
+    monkeypatch, tmp_path
+):
+    """``/api/trades/rl/statistics`` should aggregate from RuntimeLedger."""
+    from services.dashboard.app import create_app
+    from services.dashboard.routes import trades as trades_route
+
+    db_path = tmp_path / "runtime.db"
+    _seed_runtime_ledger(db_path)
+    _configure_runtime_ledger_env(monkeypatch, db_path)
+
+    def _boom(*_args, **_kwargs):
+        raise AssertionError("ClickHouse should not be queried")
+
+    monkeypatch.setattr(trades_route, "_query_ch", _boom)
+
+    app = create_app()
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/api/trades/rl/statistics?asset_class=all")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total_trades"] == 2
+    assert data["winning_trades"] == 2
+    assert data["total_pnl"] == 10005.0
+
+
 @pytest.mark.asyncio
 async def test_trades_fills_returns_empty_on_ch_failure(monkeypatch):
     """``/api/trades/fills`` returns ``{"fills": []}`` when ClickHouse is unavailable.
