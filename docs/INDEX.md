@@ -1,6 +1,6 @@
 # Documentation Index
 
-Last updated: 2026-05-09 (after PR #205 docs cleanup).
+Last updated: 2026-06-03 (runtime storage decoupling design).
 
 Top-level `docs/` index.  For plans see [plans/INDEX.md](plans/INDEX.md);
 for runbooks see [README.md § 운영 런북](../README.md#운영-런북-runbooks).
@@ -24,6 +24,7 @@ For "what's the project doing right now?" → [PROJECT_STATUS.md](PROJECT_STATUS
 | [strategies.md](strategies.md) | 설정 기반 전략 시스템 가이드 — YAML 정의, 레지스트리 패턴. |
 | [config_patterns.md](config_patterns.md) | `ServiceConfigBase` 기반 통합 설정 패턴. |
 | [deployment.md](deployment.md) | 플랫폼 배포 가이드. |
+| [runtime_storage_architecture.md](runtime_storage_architecture.md) | Redis Streams + SQLite runtime ledger + Parquet/DuckDB research store 설계. |
 | [exception_hierarchy.md](exception_hierarchy.md) | Typed exception hierarchy — broad `except Exception` 제거 정책. |
 | [error_handling_guide.md](error_handling_guide.md) | 에러 핸들링 베스트 프랙티스 + recovery 전략. |
 | [TLS_SETUP.md](TLS_SETUP.md) | Redis / ClickHouse TLS 활성화 가이드. |

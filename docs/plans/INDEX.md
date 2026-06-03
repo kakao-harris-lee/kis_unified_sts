@@ -1,6 +1,6 @@
 # Plans Index
 
-Last updated: 2026-05-26 (after Strategy Lab extension design).
+Last updated: 2026-06-03 (runtime storage decoupling plan).
 
 This index categorizes plans by **status** so a returning operator/engineer
 can quickly find what's still operative vs what's historical reference.
@@ -22,6 +22,7 @@ ongoing Phase 2 / Phase 5 work.
 | [2026-04-20-futures-paradigm-phase5-rollout.md](2026-04-20-futures-paradigm-phase5-rollout.md) | Phase 5 Gate 1–4 rollout spec — referenced by 7 docs / runbooks. |
 | [2026-04-20-futures-paradigm-rl-repurposing-v2.md](2026-04-20-futures-paradigm-rl-repurposing-v2.md) | RL "auxiliary filter" v2 strategy — selectively superseded by the LLM-primary plan but still authoritative for the auxiliary-RL direction. |
 | [2026-05-26-strategy-lab-extension-design.md](2026-05-26-strategy-lab-extension-design.md) | Visual Strategy Lab redesign: UI-built strategies, generated signals, and paper buy/sell execution. |
+| [2026-06-03-runtime-storage-decoupling-implementation.md](2026-06-03-runtime-storage-decoupling-implementation.md) | ClickHouse를 optional research backend로 내리고 Redis/SQLite/Parquet 중심 runtime을 구현하는 계획. |
 
 ## 🟡 Reference — completed but still cited
 
