@@ -138,7 +138,7 @@ Total: **41 PRs (#168–#208)** assembled over 2 days. Live list: `git log --one
 - **#204** — plan v4.0 → v4.1
 - **#205** — archive 2 stale snapshots + `docs/INDEX.md`
 - **#206** — plan v4.1 → v4.2
-- **#207** — pytest-xdist as opt-in dev tool (CI keeps serial; 2 parallel-unsafe tests documented for post-cutover fix)
+- **#207 → #399** — pytest-xdist enabled in CI: parallel pass (`-n auto -m "not serial"`) + serial pass for `serial`-marked tests; test gate ~16m → ~3.5m
 - **#208** — plan v4.2 → v4.8
 
 ### Production verification (Day 3)
