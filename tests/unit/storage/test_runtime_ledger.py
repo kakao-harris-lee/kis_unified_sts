@@ -89,6 +89,12 @@ def test_sqlite_runtime_ledger_records_core_tables(tmp_path):
     assert trades[0]["pnl_pct"] == pytest.approx(1.40845, rel=1e-4)
     assert trades[0]["hold_seconds"] == 3600
     assert trades[0]["payload"]["exit_reason"] == "signal_exit"
+    fills = ledger.query_fills({"asset_class": "stock", "code": "005930"})
+    assert len(fills) == 1
+    assert fills[0]["id"] == "fill-1"
+    assert fills[0]["order_id"] == "order-1"
+    assert fills[0]["price"] == 71010.0
+    assert fills[0]["payload"]["venue"] == "KRX"
     ledger.close()
 
 

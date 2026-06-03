@@ -1,7 +1,7 @@
 """Tests for shared/execution/fill_logger.py — Phase 4 Task 3."""
 
 from datetime import datetime
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import fakeredis.aioredis
 import pytest
@@ -82,6 +82,46 @@ async def test_log_fill_skips_clickhouse_when_mirror_disabled(redis):
     entries = await redis.xrange(_STREAM)
     assert len(entries) == 1
     assert entries[0][1][b"order_id"] == b"ord-no-ch"
+
+
+@pytest.mark.asyncio
+async def test_log_fill_records_runtime_ledger_when_mirror_disabled(redis):
+    ledger = MagicMock()
+    fl = FillLogger(
+        redis=redis,
+        ch_client=None,
+        runtime_ledger=ledger,
+        stream=_STREAM,
+        maxlen=1000,
+        asset_class="futures",
+    )
+
+    await fl.log_fill(**_payload(order_id="ord-ledger"))
+
+    ledger.record_fill.assert_called_once()
+    payload = ledger.record_fill.call_args.args[0]
+    assert payload["id"] == "fill:ord-ledger:entry:1700000000125"
+    assert payload["idempotency_key"] == payload["id"]
+    assert payload["asset_class"] == "futures"
+    assert payload["symbol"] == "A05603"
+    assert payload["price"] == 331.22
+    assert payload["latency_ms"] == 125
+
+
+@pytest.mark.asyncio
+async def test_log_fill_reraises_runtime_ledger_failure(redis):
+    ledger = MagicMock()
+    ledger.record_fill.side_effect = RuntimeError("ledger down")
+    fl = FillLogger(
+        redis=redis,
+        ch_client=None,
+        runtime_ledger=ledger,
+        stream=_STREAM,
+        maxlen=1000,
+    )
+
+    with pytest.raises(RuntimeError, match="ledger down"):
+        await fl.log_fill(**_payload(order_id="ord-ledger-fail"))
 
 
 @pytest.mark.asyncio

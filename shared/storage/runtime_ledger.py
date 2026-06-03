@@ -71,6 +71,12 @@ class RuntimeLedger(Protocol):
         """Query closed trades by common filters."""
         ...
 
+    def query_fills(
+        self, filters: Mapping[str, Any] | None = None
+    ) -> list[dict[str, Any]]:
+        """Query order fills by common filters."""
+        ...
+
     def flush(self) -> None:
         """Flush pending writes."""
         ...
@@ -714,6 +720,41 @@ class SQLiteRuntimeLedger:
 
         sql += " ORDER BY exit_time DESC, id DESC"
         limit = int(_coalesce(filters, "limit", default=500))
+        if limit > 0:
+            sql += " LIMIT ?"
+            params.append(limit)
+
+        with self._lock:
+            rows = self._require_conn().execute(sql, params).fetchall()
+        return [self._row_to_dict(row) for row in rows]
+
+    def query_fills(
+        self, filters: Mapping[str, Any] | None = None
+    ) -> list[dict[str, Any]]:
+        filters = filters or {}
+        sql = "SELECT * FROM fills WHERE 1=1"
+        params: list[Any] = []
+
+        for field, keys in (
+            ("asset_class", ("asset_class",)),
+            ("symbol", ("symbol", "code")),
+            ("side", ("side",)),
+            ("order_id", ("order_id",)),
+        ):
+            value = _coalesce(filters, *keys)
+            if value is not None:
+                sql += f" AND {field} = ?"
+                params.append(value)
+
+        if start := _coalesce(filters, "start", "start_time", "from"):
+            sql += " AND filled_at >= ?"
+            params.append(start)
+        if end := _coalesce(filters, "end", "end_time", "to"):
+            sql += " AND filled_at <= ?"
+            params.append(end)
+
+        sql += " ORDER BY filled_at DESC, id DESC"
+        limit = int(_coalesce(filters, "limit", default=100))
         if limit > 0:
             sql += " LIMIT ?"
             params.append(limit)

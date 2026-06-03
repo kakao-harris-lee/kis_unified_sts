@@ -214,7 +214,7 @@ async def get_trades(
         symbol=symbol,
         limit=max(limit * page, limit),
     )
-    using_ledger = ledger_available and bool(ledger_rows)
+    using_ledger = ledger_available
     if using_ledger:
         raw_by_asset = [
             (str(trade.get("asset_class") or asset), trade) for trade in ledger_rows
@@ -247,7 +247,7 @@ async def get_trade_statistics():
     """Get overall trade statistics."""
     asset = _normalize_asset_class(os.environ.get("TRADING_ASSET_CLASS", "stock"))
     ledger_rows, ledger_available = _load_runtime_ledger_trades(asset)
-    raw = ledger_rows if ledger_available and ledger_rows else _load_trades(asset)
+    raw = ledger_rows if ledger_available else _load_trades(asset)
     trades = [
         _to_trade_response(
             t, t.get("asset_class", asset) if isinstance(t, dict) else asset
@@ -293,7 +293,7 @@ async def get_trades_by_strategy():
     """Get trade performance grouped by strategy."""
     asset = _normalize_asset_class(os.environ.get("TRADING_ASSET_CLASS", "stock"))
     ledger_rows, ledger_available = _load_runtime_ledger_trades(asset)
-    raw = ledger_rows if ledger_available and ledger_rows else _load_trades(asset)
+    raw = ledger_rows if ledger_available else _load_trades(asset)
     trades = [
         _to_trade_response(
             t, t.get("asset_class", asset) if isinstance(t, dict) else asset
@@ -392,6 +392,46 @@ def _ledger_trade_to_rl_dict(trade: dict) -> dict:
         "hold_seconds": trade.get("hold_seconds", 0),
         "exit_reason": trade.get("exit_reason", ""),
     }
+
+
+def _ledger_fill_to_dict(fill: dict) -> dict:
+    payload = fill.get("payload") if isinstance(fill.get("payload"), dict) else {}
+    role = payload.get("trade_role", "")
+    filled_at = fill.get("filled_at") or payload.get("filled_at")
+    if isinstance(filled_at, datetime):
+        filled_at = filled_at.isoformat()
+    return {
+        "signal_id": payload.get("signal_id", ""),
+        "symbol": fill.get("symbol") or payload.get("symbol") or payload.get("code", ""),
+        "side": fill.get("side") or payload.get("side", ""),
+        "filled_price": fill.get("price") or payload.get("filled_price", 0.0),
+        "quantity": fill.get("quantity") or payload.get("quantity", 0),
+        "filled_at": filled_at,
+        "trade_role": "entry" if role == "entry" else "exit",
+        "asset_class": fill.get("asset_class") or payload.get("asset_class") or "unknown",
+        "order_id": fill.get("order_id") or payload.get("order_id", ""),
+    }
+
+
+def _load_runtime_ledger_fills(
+    asset_class: str,
+    *,
+    limit: int = 100,
+) -> tuple[list[dict], bool]:
+    ledger = _get_runtime_ledger()
+    if ledger is None:
+        return [], False
+    try:
+        rows: list[dict] = []
+        for target in _target_assets(asset_class):
+            rows.extend(ledger.query_fills({"asset_class": target, "limit": limit}))
+        fills = [_ledger_fill_to_dict(row) for row in rows]
+        fills.sort(key=lambda f: _parse_tz_aware(f.get("filled_at")), reverse=True)
+        return fills[:limit], True
+    except RuntimeLedgerError:
+        return [], False
+    finally:
+        ledger.close()
 
 
 def _build_rl_statistics_sql(
@@ -504,6 +544,10 @@ async def get_recent_fills(
     panel degrades gracefully.
     """
     asset = _normalize_asset_class(asset_class)
+    ledger_fills, ledger_available = _load_runtime_ledger_fills(asset, limit=limit)
+    if ledger_available:
+        return {"fills": ledger_fills}
+
     if asset == "stock":
         # order_fills currently only holds futures fills.
         return {"fills": []}

@@ -379,14 +379,17 @@ async def _build_and_run() -> int:
     from shared.execution.pseudo_oco import PseudoOCO
     from shared.kis.auth import KISAuthConfig
     from shared.kis.futures_feed import KISFuturesPriceFeed
-    from shared.storage import create_async_clickhouse_client
+    from shared.storage import SQLiteRuntimeLedger, create_async_clickhouse_client
     from shared.storage.config import StorageConfig
 
     redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/1")
     redis_client = aioredis.from_url(redis_url)
 
     ch_client = None
+    runtime_ledger = None
     storage_config = StorageConfig.load_or_default()
+    if storage_config.runtime_storage.backend == "sqlite":
+        runtime_ledger = SQLiteRuntimeLedger(storage_config.runtime_storage.sqlite)
     if storage_config.runtime_storage.clickhouse_mirror.enabled:
         ch_client = await create_async_clickhouse_client(database="kospi")
 
@@ -406,6 +409,8 @@ async def _build_and_run() -> int:
         stream="stream:order.fill",
         maxlen=phase4_config.final_stream_maxlen,
         ch_batch_size=10,  # spec §5.2 — kept here as a buffer-tuning constant
+        runtime_ledger=runtime_ledger,
+        asset_class="futures",
     )
 
     # ExecutionConfig is a plain Pydantic BaseModel (not ServiceConfigBase),
@@ -461,6 +466,8 @@ async def _build_and_run() -> int:
         await fill_logger.flush()
         await futures_feed.stop()
         await redis_client.aclose()
+        if runtime_ledger is not None:
+            runtime_ledger.close()
         if ch_client is not None:
             await ch_client.close()
     return 0

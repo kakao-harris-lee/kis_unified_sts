@@ -219,10 +219,34 @@ class TestDataCommands:
         )
 
         assert result.exit_code == 0
+        assert "FROM market.daily_candles" in captured["query"]
         assert "date <= %(end)s" in captured["query"]
         assert captured["params"]["start"] == date(2026, 6, 3)
         assert captured["params"]["end"] == date(2026, 6, 3)
         assert "end_exclusive" not in captured["params"]
+
+    def test_export_clickhouse_futures_daily_requires_table(self, runner, tmp_path):
+        """Futures daily export has no safe default table."""
+        from cli.main import cli
+
+        result = runner.invoke(
+            cli,
+            [
+                "data",
+                "export-clickhouse",
+                "--asset",
+                "futures",
+                "--database",
+                "kospi",
+                "--timeframe",
+                "daily",
+                "--out",
+                str(tmp_path / "market"),
+            ],
+        )
+
+        assert result.exit_code == 1
+        assert "futures daily export requires --table" in result.output
 
 
 class TestTradeCommands:

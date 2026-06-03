@@ -16,6 +16,7 @@ from uuid import uuid4
 
 import yaml
 
+from shared.storage.clickhouse_backend import create_sync_clickhouse_client
 from shared.storage.config import MarketDataStorageConfig, StorageConfig
 
 AssetClass = Literal["stock", "futures"]
@@ -343,24 +344,24 @@ class ClickHouseMarketDataStore:
         end: date | datetime | None = None,
         limit: int | None = None,
     ) -> "Any":
-        start_date = _date_only(start)
-        end_date = _date_only(end)
         if self.asset_class == "futures":
-            from shared.collector.historical import load_futures_minute_from_clickhouse
-
-            df = load_futures_minute_from_clickhouse(
+            table = self.futures_table or "kospi200f_1m"
+            return self._query_minute_bars(
                 symbol,
-                start_date,
-                end_date,
-                table_name=self.futures_table,
+                database=self.futures_database,
+                table=table,
+                start=start,
+                end=end,
+                limit=limit,
             )
-        else:
-            from shared.collector.historical.stock import (
-                load_stock_minute_from_clickhouse,
-            )
-
-            df = load_stock_minute_from_clickhouse(symbol, start_date, end_date)
-        return _limit_frame(df, limit)
+        return self._query_minute_bars(
+            symbol,
+            database=self.stock_database,
+            table="minute_candles",
+            start=start,
+            end=end,
+            limit=limit,
+        )
 
     def get_daily_bars(
         self,
@@ -373,12 +374,14 @@ class ClickHouseMarketDataStore:
             raise MarketDataStoreError(
                 "daily ClickHouse adapter currently supports stock only"
             )
-        from shared.backtest.daily_adapter import load_stock_daily_from_clickhouse
-
-        df = load_stock_daily_from_clickhouse(
-            symbol, _date_only(start), _date_only(end)
+        return self._query_daily_bars(
+            symbol,
+            database=self.stock_database,
+            table="daily_candles",
+            start=start,
+            end=end,
+            limit=limit,
         )
-        return _limit_frame(df, limit)
 
     def append_minute_bars(self, rows: Iterable[Mapping[str, Any]] | "Any") -> int:
         raise MarketDataStoreError(
@@ -398,6 +401,105 @@ class ClickHouseMarketDataStore:
             "futures_database": self.futures_database,
             "futures_table": self.futures_table,
         }
+
+    def _query_minute_bars(
+        self,
+        symbol: str,
+        *,
+        database: str,
+        table: str,
+        start: date | datetime | None,
+        end: date | datetime | None,
+        limit: int | None,
+    ) -> "Any":
+        database = _validate_identifier(database, "database")
+        table = _validate_identifier(table, "table")
+        conditions = ["code = %(code)s"]
+        params: dict[str, Any] = {"code": symbol}
+        start_value = _normalize_boundary(start)
+        if start_value is not None:
+            conditions.append("datetime >= %(start)s")
+            params["start"] = start_value
+        end_value = _normalize_boundary(end, end=True)
+        if end_value is not None:
+            conditions.append("datetime <= %(end)s")
+            params["end"] = end_value
+
+        limit_sql = "LIMIT %(limit)s" if limit is not None and limit > 0 else ""
+        if limit_sql:
+            params["limit"] = int(limit)
+
+        query = f"""
+            SELECT code, datetime, open, high, low, close, volume
+            FROM {database}.{table}
+            WHERE {" AND ".join(conditions)}
+            ORDER BY datetime ASC
+            {limit_sql}
+        """
+        rows = self._execute(query, params, database=database)
+        if not rows:
+            raise ValueError(
+                f"No minute data found for {symbol} in {database}.{table}"
+            )
+        pd = _require_pandas()
+        return _normalize_frame(pd.DataFrame(rows, columns=_BAR_COLUMNS))
+
+    def _query_daily_bars(
+        self,
+        symbol: str,
+        *,
+        database: str,
+        table: str,
+        start: date | datetime | None,
+        end: date | datetime | None,
+        limit: int | None,
+    ) -> "Any":
+        database = _validate_identifier(database, "database")
+        table = _validate_identifier(table, "table")
+        conditions = ["code = %(code)s"]
+        params: dict[str, Any] = {"code": symbol}
+        start_date = _date_only(start)
+        if start_date is not None:
+            conditions.append("date >= %(start)s")
+            params["start"] = start_date
+        end_date = _date_only(end)
+        if end_date is not None:
+            conditions.append("date <= %(end)s")
+            params["end"] = end_date
+
+        limit_sql = "LIMIT %(limit)s" if limit is not None and limit > 0 else ""
+        if limit_sql:
+            params["limit"] = int(limit)
+
+        query = f"""
+            SELECT
+                code,
+                date AS datetime,
+                argMax(open, created_at) AS open,
+                argMax(high, created_at) AS high,
+                argMax(low, created_at) AS low,
+                argMax(close, created_at) AS close,
+                argMax(volume, created_at) AS volume
+            FROM {database}.{table}
+            WHERE {" AND ".join(conditions)}
+            GROUP BY code, date
+            ORDER BY date ASC
+            {limit_sql}
+        """
+        rows = self._execute(query, params, database=database)
+        if not rows:
+            raise ValueError(f"No daily data found for {symbol} in {database}.{table}")
+        pd = _require_pandas()
+        return _normalize_frame(pd.DataFrame(rows, columns=_BAR_COLUMNS))
+
+    def _execute(
+        self, query: str, params: Mapping[str, Any], *, database: str
+    ) -> list[tuple]:
+        client = create_sync_clickhouse_client(database=database)
+        try:
+            return client.execute(query, dict(params))
+        finally:
+            client.disconnect()
 
 
 def _date_only(value: date | datetime | None) -> date | None:

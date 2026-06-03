@@ -155,3 +155,99 @@ def test_load_market_bars_for_backtest_uses_storage_config(tmp_path):
 
     assert len(df) == 1
     assert df.iloc[0]["code"] == "101S6000"
+
+
+def test_clickhouse_market_data_store_uses_configured_futures_database(monkeypatch):
+    from shared.storage import ClickHouseMarketDataStore
+
+    captured: dict[str, object] = {}
+
+    class FakeClient:
+        def __init__(self, database: str):
+            captured["database"] = database
+
+        def execute(self, query, params):
+            captured["query"] = query
+            captured["params"] = params
+            return [
+                (
+                    "101S6000",
+                    datetime(2026, 6, 3, 9, 0),
+                    380.0,
+                    381.0,
+                    379.5,
+                    380.5,
+                    100,
+                )
+            ]
+
+        def disconnect(self):
+            captured["disconnected"] = True
+
+    monkeypatch.setattr(
+        "shared.storage.market_data_store.create_sync_clickhouse_client",
+        lambda database: FakeClient(database),
+    )
+
+    store = ClickHouseMarketDataStore(
+        asset_class="futures",
+        futures_database="custom_kospi",
+        futures_table="custom_1m",
+    )
+    df = store.get_minute_bars(
+        "101S6000",
+        start=date(2026, 6, 3),
+        end=date(2026, 6, 3),
+    )
+
+    assert captured["database"] == "custom_kospi"
+    assert "FROM custom_kospi.custom_1m" in str(captured["query"])
+    assert captured["params"]["code"] == "101S6000"
+    assert captured["disconnected"] is True
+    assert len(df) == 1
+    assert df.iloc[0]["code"] == "101S6000"
+
+
+def test_clickhouse_market_data_store_daily_uses_configured_stock_database(
+    monkeypatch,
+):
+    from shared.storage import ClickHouseMarketDataStore
+
+    captured: dict[str, object] = {}
+
+    class FakeClient:
+        def __init__(self, database: str):
+            captured["database"] = database
+
+        def execute(self, query, params):
+            captured["query"] = query
+            captured["params"] = params
+            return [
+                (
+                    "005930",
+                    date(2026, 6, 3),
+                    71000.0,
+                    71100.0,
+                    70900.0,
+                    71050.0,
+                    1000,
+                )
+            ]
+
+        def disconnect(self):
+            captured["disconnected"] = True
+
+    monkeypatch.setattr(
+        "shared.storage.market_data_store.create_sync_clickhouse_client",
+        lambda database: FakeClient(database),
+    )
+
+    store = ClickHouseMarketDataStore(asset_class="stock", stock_database="stockdb")
+    df = store.get_daily_bars("005930", start=date(2026, 6, 3))
+
+    assert captured["database"] == "stockdb"
+    assert "FROM stockdb.daily_candles" in str(captured["query"])
+    assert captured["params"]["code"] == "005930"
+    assert captured["disconnected"] is True
+    assert len(df) == 1
+    assert df.iloc[0]["code"] == "005930"

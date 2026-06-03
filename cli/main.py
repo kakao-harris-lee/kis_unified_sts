@@ -896,7 +896,18 @@ def data_export_clickhouse(
     from shared.storage import ParquetMarketDataStore, create_sync_clickhouse_client
 
     database = _validate_clickhouse_identifier(database, "database")
-    default_table = "kospi200f_1m" if asset == "futures" else "minute_candles"
+    if timeframe == "daily" and asset == "futures" and not table:
+        click.echo(
+            "Error: futures daily export requires --table because no default daily "
+            "futures table is configured",
+            err=True,
+        )
+        sys.exit(1)
+    default_table = (
+        "daily_candles"
+        if timeframe == "daily"
+        else ("kospi200f_1m" if asset == "futures" else "minute_candles")
+    )
     table = _validate_clickhouse_identifier(table or default_table, "table")
 
     time_column = "date" if timeframe == "daily" else "datetime"

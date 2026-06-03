@@ -41,9 +41,12 @@ class FillLogger:
     Args:
         redis: ``redis.asyncio`` (or ``fakeredis``) connection.
         ch_client: Optional ``aiochclient`` :class:`AsyncClickHouseClient` mirror.
+        runtime_ledger: Optional durable runtime ledger. This is the primary
+            persistence path when the ClickHouse mirror is disabled.
         stream: Target Redis stream key (default ``stream:order.fill``).
         maxlen: ``MAXLEN ~`` cap passed to ``XADD`` to bound stream size.
         ch_batch_size: Rows accumulated before flushing to CH (spec §5.2 = 10).
+        asset_class: Optional asset-class tag recorded in the runtime ledger.
     """
 
     def __init__(
@@ -51,15 +54,19 @@ class FillLogger:
         *,
         redis: Any,
         ch_client: Any,
+        runtime_ledger: Any | None = None,
         stream: str = "stream:order.fill",
         maxlen: int = 10_000,
         ch_batch_size: int = 10,
+        asset_class: str | None = None,
     ) -> None:
         self.redis = redis
         self.ch = ch_client
+        self.runtime_ledger = runtime_ledger
         self.stream = stream
         self.maxlen = maxlen
         self.ch_batch_size = ch_batch_size
+        self.asset_class = asset_class
         self._mirror_enabled = ch_client is not None and ch_batch_size > 0
         self._buffer: list[tuple] = []
         self._lock = asyncio.Lock()
@@ -112,6 +119,32 @@ class FillLogger:
         }
         await self.redis.xadd(self.stream, fields, maxlen=self.maxlen, approximate=True)
         await self.redis.expire(self.stream, _STREAM_TTL_SECONDS)
+        if self.runtime_ledger is not None:
+            try:
+                await asyncio.to_thread(
+                    self.runtime_ledger.record_fill,
+                    self._runtime_ledger_payload(
+                        signal_id=signal_id,
+                        order_id=order_id,
+                        symbol=symbol,
+                        side=side,
+                        order_type=order_type,
+                        requested_price=requested_price,
+                        filled_price=filled_price,
+                        tick_size_points=tick_size_points,
+                        slippage_ticks=slippage_ticks,
+                        quantity=quantity,
+                        requested_at_ms=requested_at_ms,
+                        filled_at_ms=filled_at_ms,
+                        latency_ms=latency_ms,
+                        venue=venue,
+                        trade_role=trade_role,
+                        broker_error_code=broker_error_code,
+                    ),
+                )
+            except Exception:
+                logger.exception("runtime ledger fill persist failed: %s", order_id)
+                raise
         if not self._mirror_enabled:
             return
 
@@ -160,3 +193,51 @@ class FillLogger:
                 "order_fills flush failed; %d rows pending redelivery", len(rows)
             )
             raise
+
+    def _runtime_ledger_payload(
+        self,
+        *,
+        signal_id: str,
+        order_id: str,
+        symbol: str,
+        side: str,
+        order_type: str,
+        requested_price: float,
+        filled_price: float,
+        tick_size_points: float,
+        slippage_ticks: float,
+        quantity: int,
+        requested_at_ms: int,
+        filled_at_ms: int,
+        latency_ms: int,
+        venue: str,
+        trade_role: str,
+        broker_error_code: str,
+    ) -> dict[str, Any]:
+        fill_id = f"fill:{order_id}:{trade_role}:{filled_at_ms}"
+        return {
+            "id": fill_id,
+            "idempotency_key": fill_id,
+            "fill_id": fill_id,
+            "signal_id": signal_id,
+            "order_id": order_id,
+            "asset_class": self.asset_class,
+            "symbol": symbol,
+            "code": symbol,
+            "side": side,
+            "order_type": order_type,
+            "requested_price": float(requested_price),
+            "filled_price": float(filled_price),
+            "price": float(filled_price),
+            "tick_size_points": float(tick_size_points),
+            "slippage_ticks": float(slippage_ticks),
+            "quantity": int(quantity),
+            "requested_at": _ms_to_naive_utc(requested_at_ms).isoformat(),
+            "filled_at": _ms_to_naive_utc(filled_at_ms).isoformat(),
+            "requested_at_ms": int(requested_at_ms),
+            "filled_at_ms": int(filled_at_ms),
+            "latency_ms": int(latency_ms),
+            "venue": venue,
+            "trade_role": trade_role,
+            "broker_error_code": broker_error_code,
+        }
