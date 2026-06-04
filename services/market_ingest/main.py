@@ -116,6 +116,10 @@ class MarketIngestDaemon:
                         len(new_symbols),
                     )
                     await self._apply_symbols(new_symbols)
+                elif not new_symbols:
+                    logger.debug(
+                        "symbol_provider returned empty list; keeping current symbols"
+                    )
         finally:
             await self.feed.stop()
             self.publisher.close()
@@ -123,3 +127,102 @@ class MarketIngestDaemon:
 
     async def stop(self) -> None:
         self._stop.set()
+
+
+async def _build_and_run() -> int:
+    """Production entrypoint. INGEST_ASSET=stock|futures selects feed + universe."""
+    import os
+    import signal as signal_mod
+
+    import redis.asyncio as aioredis
+
+    from services.monitoring.tick_stream_publisher import (
+        TickStreamPublisher,
+        TickStreamPublisherConfig,
+    )
+    from shared.kis.auth import KISAuthConfig
+
+    asset = os.environ.get("INGEST_ASSET", "").strip().lower()
+    if asset not in ("stock", "futures"):
+        logger.error("INGEST_ASSET must be 'stock' or 'futures' (got %r)", asset)
+        return 64
+
+    publisher = TickStreamPublisher(TickStreamPublisherConfig.from_env())
+
+    cleanup_redis: Any | None = None
+    if asset == "stock":
+        from shared.kis.stock_feed import KISStockPriceFeed
+
+        auth = KISAuthConfig(
+            app_key=os.environ.get("KIS_STOCK_APP_KEY", ""),
+            app_secret=os.environ.get("KIS_STOCK_APP_SECRET", ""),
+            is_real=os.environ.get("KIS_STOCK_MARKET", "mock").lower() == "real",
+        )
+        feed: Any = KISStockPriceFeed(config=auth)
+        redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/1")
+        redis_client = aioredis.from_url(redis_url)
+        cleanup_redis = redis_client
+        target_key = os.environ.get(
+            "TRADE_TARGETS_LATEST_KEY", "system:trade_targets:latest"
+        )
+        max_symbols = int(os.environ.get("INGEST_MAX_SYMBOLS", "40"))
+
+        async def symbol_provider() -> list[str]:
+            raw = await redis_client.get(target_key)
+            if isinstance(raw, bytes):
+                raw = raw.decode("utf-8", errors="replace")
+            return _parse_trade_targets(raw, max_symbols)
+
+        refresh_interval = float(os.environ.get("INGEST_REFRESH_SECONDS", "30"))
+        restart_on_change = False
+    else:
+        from shared.collector.historical.futures import get_front_month_code
+        from shared.kis.futures_feed import KISFuturesPriceFeed
+
+        auth = KISAuthConfig(
+            app_key=os.environ.get("KIS_FUTURES_APP_KEY", ""),
+            app_secret=os.environ.get("KIS_FUTURES_APP_SECRET", ""),
+            is_real=os.environ.get("KIS_FUTURES_MARKET", "real").lower() == "real",
+        )
+        feed = KISFuturesPriceFeed(config=auth)
+
+        async def symbol_provider() -> list[str]:
+            return [get_front_month_code(product="mini")]
+
+        # Re-resolve hourly so a quarterly rollover triggers a restart-on-change.
+        refresh_interval = float(os.environ.get("INGEST_REFRESH_SECONDS", "3600"))
+        restart_on_change = True
+
+    daemon = MarketIngestDaemon(
+        asset=asset,
+        feed=feed,
+        publisher=publisher,
+        symbol_provider=symbol_provider,
+        refresh_interval_seconds=refresh_interval,
+        restart_on_symbol_change=restart_on_change,
+    )
+
+    loop = asyncio.get_running_loop()
+    for sig in (signal_mod.SIGTERM, signal_mod.SIGINT):
+        loop.add_signal_handler(sig, lambda: asyncio.create_task(daemon.stop()))
+
+    try:
+        await daemon.run()
+    finally:
+        if cleanup_redis is not None:
+            await cleanup_redis.aclose()
+    return 0
+
+
+def main() -> int:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
+    return asyncio.run(_build_and_run())
+
+
+if __name__ == "__main__":
+    import sys
+
+    sys.exit(main())
