@@ -18,7 +18,6 @@ Error taxonomy
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import json
 import logging
 import signal
@@ -56,6 +55,7 @@ from shared.scoring.base import Scorer
 from shared.scoring.budget import BudgetExceeded
 from shared.scoring.publisher import ScoredPublisher
 from shared.scoring.validators import ScoringValidationError
+from shared.streaming.stage import StreamStage
 
 logger = logging.getLogger(__name__)
 
@@ -93,7 +93,7 @@ def _news_from_stream_fields(fields: dict[bytes, bytes]) -> NewsItem:
     )
 
 
-class NewsScorerDaemon:
+class NewsScorerDaemon(StreamStage):
     """Consumer-group daemon that scores news items from a Redis stream.
 
     Args:
@@ -127,14 +127,17 @@ class NewsScorerDaemon:
         xread_block_ms: int,
         batch_size: int,
     ) -> None:
-        self.redis = redis
+        super().__init__(
+            redis=redis,
+            input_stream=input_stream,
+            consumer_group=consumer_group,
+            worker_id=worker_id,
+            xread_block_ms=xread_block_ms,
+            batch_size=batch_size,
+            xreadgroup_error_sleep_seconds=1.0,
+        )
         self.scorer = scorer
         self.fallback = fallback
-        self.input_stream = input_stream
-        self.consumer_group = consumer_group
-        self.worker_id = worker_id
-        self.batch_size = batch_size
-        self.xread_block_ms = xread_block_ms
         self.publisher = ScoredPublisher(
             redis=redis,
             ch_client=ch_client,
@@ -142,59 +145,14 @@ class NewsScorerDaemon:
             maxlen=output_maxlen,
             ch_batch_size=ch_batch_size,
         )
-        self._stop = asyncio.Event()
 
-    async def run(self) -> None:
-        """Main consumer loop. Blocks until :meth:`stop` is called."""
-        # Create the consumer group; ignore error if it already exists (BUSYGROUP).
-        with contextlib.suppress(Exception):
-            await self.redis.xgroup_create(
-                self.input_stream,
-                self.consumer_group,
-                id="0",
-                mkstream=True,
-            )
-
-        try:
-            while not self._stop.is_set():
-                try:
-                    messages = await self.redis.xreadgroup(
-                        groupname=self.consumer_group,
-                        consumername=self.worker_id,
-                        streams={self.input_stream: ">"},
-                        count=self.batch_size,
-                        block=self.xread_block_ms,
-                    )
-                except Exception:
-                    logger.exception("xreadgroup error; sleeping 1s before retry")
-                    await asyncio.sleep(1.0)
-                    continue
-
-                # Update backlog gauge on every poll cycle (even when idle).
-                await self._update_backlog_metric()
-
-                if not messages:
-                    # Yield to the event loop so other coroutines (e.g. stop signal,
-                    # asyncio.sleep in tests) can run even when the stream is idle.
-                    await asyncio.sleep(0)
-                    continue
-
-                for _stream, msgs in messages:
-                    for msg_id, data in msgs:
-                        await self._process(msg_id, data)
-        finally:
-            await self.publisher.flush()
-
-    async def stop(self) -> None:
-        """Signal the run loop to exit after the current batch."""
-        self._stop.set()
-
-    async def _process(self, msg_id: bytes, fields: dict[bytes, bytes]) -> None:
+    async def handle_message(
+        self, msg_id: bytes, fields: dict[bytes, bytes]
+    ) -> bool:
         """Score one stream message and publish the result.
 
-        Handles the full error taxonomy documented in the module docstring:
-        parse errors are dropped+ACKed; known scorer failures use fallback+ACK;
-        unknown failures leave the message pending for retry.
+        Returns True ⇒ framework XACKs (parse poison-pill, fallback, success);
+        False ⇒ leave pending for retry (unknown scorer error, publish error).
         """
         # --- parse ---
         try:
@@ -204,8 +162,7 @@ class NewsScorerDaemon:
             logger.exception(
                 "Unparseable stream message; ACKing to avoid poison-pill loop"
             )
-            await self.redis.xack(self.input_stream, self.consumer_group, msg_id)
-            return
+            return True  # poison-pill: consume (base XACKs)
 
         # --- score ---
         start = asyncio.get_event_loop().time()
@@ -236,8 +193,7 @@ class NewsScorerDaemon:
                 "Unhandled scorer error news_id=%s; leaving message pending",
                 news.news_id,
             )
-            # Do NOT ACK — leave pending so the message can be retried.
-            return
+            return False  # leave pending for retry (base does NOT XACK)
 
         record_news_scoring_duration(
             self.scorer.version, asyncio.get_event_loop().time() - start
@@ -259,11 +215,15 @@ class NewsScorerDaemon:
             logger.exception(
                 "Publisher failed news_id=%s; leaving message pending", news.news_id
             )
-            # Do NOT ACK — leave pending so the message can be retried.
-            return
+            return False  # leave pending for retry (base does NOT XACK)
 
-        # --- ACK ---
-        await self.redis.xack(self.input_stream, self.consumer_group, msg_id)
+        return True  # success: framework XACKs
+
+    async def post_poll(self, message_count: int) -> None:
+        await self._update_backlog_metric()
+
+    async def on_shutdown(self) -> None:
+        await self.publisher.flush()
 
     async def _update_backlog_metric(self) -> None:
         """Query XPENDING and update the backlog gauge. Errors are non-fatal."""
