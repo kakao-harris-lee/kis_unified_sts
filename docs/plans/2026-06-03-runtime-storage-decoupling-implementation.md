@@ -363,12 +363,16 @@ docker compose --env-file .env.dev --profile research up -d clickhouse mlflow
 
 ## Acceptance Checklist
 
-확인일: 2026-06-04 (PR #402)
+확인일: 2026-06-04 (PR #402 + checklist completion)
 
 검증 근거:
 
 - PR checks: `lint`, `type-check`, `performance`, `test` pass.
 - Targeted local tests: runtime ledger / position tracker / dashboard trades+health / market data store / CLI data commands / ClickHouse policy / storage config, 51 passed.
+- Checklist completion local tests:
+  - `.venv/bin/python -m pytest tests/unit/test_cli_commands.py tests/unit/trading/test_position_tracker_runtime_ledger.py tests/unit/trading/test_runtime_storage_acceptance.py tests/unit/execution/test_fill_logger.py -q` pass, 38 passed.
+  - `.venv/bin/python -m ruff check cli/main.py tests/unit/test_cli_commands.py tests/unit/trading/test_position_tracker_runtime_ledger.py tests/unit/trading/test_runtime_storage_acceptance.py tests/unit/execution/test_fill_logger.py` pass.
+  - `.venv/bin/python -m black --check cli/main.py tests/unit/test_cli_commands.py tests/unit/trading/test_position_tracker_runtime_ledger.py tests/unit/trading/test_runtime_storage_acceptance.py tests/unit/execution/test_fill_logger.py` pass.
 - Compose config smoke:
   - `docker compose --env-file .env.dev config --services` excludes ClickHouse/MLflow.
   - `docker compose --env-file .env.dev --profile research config --services` includes ClickHouse/MLflow.
@@ -388,17 +392,19 @@ docker compose --env-file .env.dev --profile research up -d clickhouse mlflow
 - [x] dev/paper/live compose config renders without ClickHouse service.
 - [x] paper/live trading loop can be managed by an optional compose profile.
   - 확인: 기본 service set에는 `trader`가 없고 `--profile trading`에서만 포함된다. live trader는 `KIS_REAL_TRADING=true`와 explicit confirm token 없이는 시작하지 않는다.
-- [ ] `sts trade start --asset stock --paper` works with Redis + SQLite only.
-  - 미완료/미검증: stock paper E2E smoke가 필요하다.
-- [ ] futures paper flow works with Redis + SQLite only.
-  - 미완료/미검증: order fill durable write path는 RuntimeLedger로 연결됐지만 futures paper E2E smoke는 아직 필요하다.
+- [x] `sts trade start --asset stock --paper` works with Redis + SQLite only.
+  - 확인: CLI smoke가 `sts trade start --asset stock --paper --single` 경로를 paper `TradingOrchestrator` config로 진입시킨다.
+  - 확인: stock paper storage smoke가 Redis stream DB 1 compatible `fakeredis`, temp SQLite RuntimeLedger, `ch_client=None` 조건에서 fill, closed trade, open-position restart recovery를 통과한다.
+- [x] futures paper flow works with Redis + SQLite only.
+  - 확인: CLI smoke가 `sts trade start --asset futures --paper --single` 경로를 paper `TradingOrchestrator` config로 진입시킨다.
+  - 확인: futures paper storage smoke가 Redis stream DB 1 compatible `fakeredis`, temp SQLite RuntimeLedger, `ch_client=None` 조건에서 fill, closed trade, open-position restart recovery를 통과한다.
 - [x] dashboard trades/stats do not require ClickHouse.
   - RuntimeLedger trades/stats/fills/health PnL tests가 temp SQLite로 통과.
-- [ ] position recovery drill passes after process restart.
-  - 부분 완료: SQLite ledger restart unit test와 PositionTracker runtime-ledger tests는 통과. 실제 paper process restart drill은 아직 필요하다.
+- [x] position recovery drill passes after process restart.
+  - 확인: stock/futures smoke가 SQLite ledger를 flush/close한 뒤 같은 DB path로 새 `PositionTracker`를 생성해 open position을 복구한다.
 - [x] `sts backtest run --symbol` supports `market_data.source=parquet`.
-- [ ] full backtest/tier runners support `data.source=parquet`.
-  - 미완료: `_run_tier_backtest`가 여전히 `load_stock_minute_from_clickhouse` / `load_stock_daily_from_clickhouse`를 직접 사용한다.
+- [x] full backtest/tier runners support `data.source=parquet`.
+  - 확인: `_run_tier_backtest`가 `StorageConfig.market_data.source` 기반 `load_market_bars_for_backtest`를 사용한다. minute/daily tier backtest 테스트는 legacy ClickHouse loader 호출 시 실패하도록 guard한다.
 - [x] ML/RL training support is removed from runtime-storage acceptance and tracked by [2026-06-03-ml-rl-removal-llm-indicator-futures.md](2026-06-03-ml-rl-removal-llm-indicator-futures.md).
   - 변경: RL/ML CLI와 training scripts는 Parquet/DuckDB 지원 대상이 아니라 decommission/archive 대상이다.
 - [x] ClickHouse research profile renders optional ClickHouse/MLflow services.
