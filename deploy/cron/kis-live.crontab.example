@@ -1,0 +1,21 @@
+# KIS Unified STS — LIVE trading crontab (host venv + cron, validated code only).
+#
+# Install on the host ONLY AFTER (see docs/runbooks/paper-live-code-separation.md):
+#   1. Created the live clone /home/deploy/project/kis_unified_sts_live and pinned
+#      it to a validated annotated tag (scripts/ops/promote_live.sh <tag>).
+#   2. Built its .venv and wrote .env (= .env.live, with real KIS live credentials
+#      and REDIS_PORT=6382, KIS_REAL_TRADING=true).
+#   3. Started the live compose redis: docker compose --env-file .env up -d redis
+#
+# All times are KST. Each trade-start is gated by live_preflight.sh, which REFUSES
+# to run unless the clone is a clean annotated tag with live Redis (6382) reachable.
+CRON_TZ=Asia/Seoul
+KIS_LIVE_PROJECT=/home/deploy/project/kis_unified_sts_live
+KIS_LIVE_PYTHON=/home/deploy/project/kis_unified_sts_live/.venv/bin/python
+KIS_LIVE_LOG=/home/deploy/project/kis_unified_sts_live/logs
+
+# Futures LIVE (Setup A/C) — start 5 min before open.
+55 8 * * 1-5 cd $KIS_LIVE_PROJECT && set -a && . ./.env && set +a && bash scripts/ops/live_preflight.sh && /usr/bin/flock -nx /tmp/kis_live_futures.lock $KIS_LIVE_PYTHON -m cli.main trade start --asset futures --live --yes-live --daemon >> $KIS_LIVE_LOG/live_futures_$(date +\%Y\%m\%d).log 2>&1
+
+# Futures LIVE watchdog — re-assert every 5 min during the session.
+2-57/5 9-15 * * 1-5 cd $KIS_LIVE_PROJECT && set -a && . ./.env && set +a && bash scripts/ops/live_preflight.sh && /usr/bin/flock -nx /tmp/kis_live_futures.lock $KIS_LIVE_PYTHON -m cli.main trade start --asset futures --live --yes-live --single >> $KIS_LIVE_LOG/live_futures_watchdog_$(date +\%Y\%m\%d).log 2>&1
