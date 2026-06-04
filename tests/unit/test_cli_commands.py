@@ -1,4 +1,7 @@
 """Test CLI commands."""
+
+from datetime import date, datetime
+
 import pytest
 from click.testing import CliRunner
 
@@ -52,6 +55,15 @@ class TestCLIHelp:
         assert result.exit_code == 0
         assert "mlflow" in result.output.lower()
 
+    def test_data_help(self, runner):
+        """Test data command help."""
+        from cli.main import cli
+
+        result = runner.invoke(cli, ["data", "--help"])
+        assert result.exit_code == 0
+        assert "export-clickhouse" in result.output
+        assert "validate-parquet" in result.output
+
 
 class TestBacktestCommands:
     """Test backtest commands."""
@@ -77,6 +89,166 @@ class TestCollectCommands:
         assert "Status" in result.output
 
 
+class TestDataCommands:
+    """Test research data commands."""
+
+    def test_validate_parquet_allows_empty_dataset(self, runner, tmp_path):
+        """Empty dataset validation can be used as a smoke check."""
+        from cli.main import cli
+
+        result = runner.invoke(
+            cli,
+            [
+                "data",
+                "validate-parquet",
+                "--root",
+                str(tmp_path / "market"),
+                "--allow-empty",
+            ],
+        )
+
+        assert result.exit_code == 0
+        assert "Files: 0" in result.output
+
+    def test_export_clickhouse_minute_end_date_is_exclusive_next_day(
+        self, runner, monkeypatch, tmp_path
+    ):
+        """Minute export should include the full --end date."""
+        import clickhouse_driver
+
+        from cli.main import cli
+
+        captured = {}
+
+        class FakeClient:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def execute(self, query, params):
+                captured["query"] = query
+                captured["params"] = params
+                return [
+                    (
+                        "005930",
+                        datetime(2026, 6, 3, 9, 0),
+                        71000.0,
+                        71100.0,
+                        70900.0,
+                        71050.0,
+                        1000,
+                    )
+                ]
+
+        monkeypatch.setattr(clickhouse_driver, "Client", FakeClient)
+
+        result = runner.invoke(
+            cli,
+            [
+                "data",
+                "export-clickhouse",
+                "--asset",
+                "stock",
+                "--database",
+                "market",
+                "--timeframe",
+                "minute",
+                "--start",
+                "2026-06-03",
+                "--end",
+                "2026-06-03",
+                "--out",
+                str(tmp_path / "market"),
+            ],
+        )
+
+        assert result.exit_code == 0
+        assert "datetime < %(end_exclusive)s" in captured["query"]
+        assert captured["params"]["start"] == datetime(2026, 6, 3)
+        assert captured["params"]["end_exclusive"] == datetime(2026, 6, 4)
+        assert "end" not in captured["params"]
+
+    def test_export_clickhouse_daily_end_date_stays_inclusive(
+        self, runner, monkeypatch, tmp_path
+    ):
+        """Daily export keeps inclusive date filtering."""
+        import clickhouse_driver
+
+        from cli.main import cli
+
+        captured = {}
+
+        class FakeClient:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def execute(self, query, params):
+                captured["query"] = query
+                captured["params"] = params
+                return [
+                    (
+                        "005930",
+                        date(2026, 6, 3),
+                        71000.0,
+                        71100.0,
+                        70900.0,
+                        71050.0,
+                        1000,
+                    )
+                ]
+
+        monkeypatch.setattr(clickhouse_driver, "Client", FakeClient)
+
+        result = runner.invoke(
+            cli,
+            [
+                "data",
+                "export-clickhouse",
+                "--asset",
+                "stock",
+                "--database",
+                "market",
+                "--timeframe",
+                "daily",
+                "--start",
+                "2026-06-03",
+                "--end",
+                "2026-06-03",
+                "--out",
+                str(tmp_path / "market"),
+            ],
+        )
+
+        assert result.exit_code == 0
+        assert "FROM market.daily_candles" in captured["query"]
+        assert "date <= %(end)s" in captured["query"]
+        assert captured["params"]["start"] == date(2026, 6, 3)
+        assert captured["params"]["end"] == date(2026, 6, 3)
+        assert "end_exclusive" not in captured["params"]
+
+    def test_export_clickhouse_futures_daily_requires_table(self, runner, tmp_path):
+        """Futures daily export has no safe default table."""
+        from cli.main import cli
+
+        result = runner.invoke(
+            cli,
+            [
+                "data",
+                "export-clickhouse",
+                "--asset",
+                "futures",
+                "--database",
+                "kospi",
+                "--timeframe",
+                "daily",
+                "--out",
+                str(tmp_path / "market"),
+            ],
+        )
+
+        assert result.exit_code == 1
+        assert "futures daily export requires --table" in result.output
+
+
 class TestTradeCommands:
     """Test trade commands."""
 
@@ -88,6 +260,20 @@ class TestTradeCommands:
         result = runner.invoke(cli, ["trade", "status"])
         assert result.exit_code == 0
         assert "Status" in result.output
+
+    def test_live_noninteractive_confirm_requires_live_env(self, runner, monkeypatch):
+        """--yes-live is reserved for explicit live environments."""
+        from cli.main import cli
+
+        monkeypatch.delenv("KIS_REAL_TRADING", raising=False)
+
+        result = runner.invoke(
+            cli,
+            ["trade", "start", "--asset", "stock", "--live", "--yes-live"],
+        )
+
+        assert result.exit_code == 1
+        assert "--yes-live requires KIS_REAL_TRADING=true" in result.output
 
 
 class TestHealthCommand:

@@ -1,4 +1,4 @@
-"""News collector daemon — polls sources, dedups, publishes to Redis + CH."""
+"""News collector daemon — polls sources, dedups, publishes to Redis + optional CH."""
 
 from __future__ import annotations
 
@@ -92,18 +92,14 @@ class NewsCollectorDaemon:
 async def _build_and_run_from_config() -> int:
     """Production entry point. Resolves sources from YAML config.
 
-    CONCERN: ClickHouseClient.get_instance().async_client does not exist in this
-    codebase. The actual pattern is AsyncClickHouseClient from shared.db.client.
-    We instantiate AsyncClickHouseClient directly and connect it here.
-    # WIP: real CH client wiring — integration test does not hit CH
+    ClickHouse mirror wiring is optional and stays behind storage helpers so
+    this service can start without the driver when the mirror is disabled.
     """
     import os
 
     import aiohttp
     import redis.asyncio as aioredis
 
-    from shared.db.client import AsyncClickHouseClient
-    from shared.db.config import ClickHouseConfig
     from shared.news.config import NewsCollectorConfig
     from shared.news.sources.gdelt import GDELTNewsSource
     from shared.news.sources.marketaux import MarketauxNewsSource
@@ -111,14 +107,17 @@ async def _build_and_run_from_config() -> int:
     from shared.news.sources.reuters import ReutersRSSSource
     from shared.news.sources.rss import GenericRSSSource
     from shared.news.sources.yonhap import YonhapRSSSource
+    from shared.storage import create_async_clickhouse_client
+    from shared.storage.config import StorageConfig
 
     cfg = NewsCollectorConfig.from_yaml()
     redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/1")
     redis_client = aioredis.from_url(redis_url)
 
-    # Real CH client wiring — AsyncClickHouseClient, not a non-existent get_instance()
-    ch = AsyncClickHouseClient(ClickHouseConfig.from_env(database="kospi"))
-    await ch.connect()
+    ch = None
+    storage_config = StorageConfig.load_or_default()
+    if storage_config.runtime_storage.clickhouse_mirror.enabled:
+        ch = await create_async_clickhouse_client(database="kospi")
 
     session = aiohttp.ClientSession()
     sources: list[NewsSource] = []
@@ -262,7 +261,8 @@ async def _build_and_run_from_config() -> int:
     finally:
         await session.close()
         await redis_client.aclose()
-        await ch.close()
+        if ch is not None:
+            await ch.close()
     return 0
 
 

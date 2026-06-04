@@ -5,8 +5,8 @@ Tests for security-critical aspects of KIS authentication,
 particularly file permission handling to prevent credential leaks.
 """
 
-import json
 import inspect
+import json
 import os
 import stat
 import tempfile
@@ -32,7 +32,7 @@ def test_token_cache_file_created_with_secure_permissions():
             app_key="test_key",
             token="secret_token_data",
             expires_at=12345.0,
-            issued_at="2024-01-01T00:00:00"
+            issued_at="2024-01-01T00:00:00",
         )
 
         # Save using secure method
@@ -47,7 +47,7 @@ def test_token_cache_file_created_with_secure_permissions():
         assert file_mode == 0o600, f"Expected 0o600, got {oct(file_mode)}"
 
         # Verify content is correct
-        with open(cache_path, 'r') as f:
+        with open(cache_path, "r") as f:
             data = json.load(f)
 
         assert data["app_key"] == "test_key"
@@ -62,7 +62,7 @@ def test_token_cache_secure_save_handles_errors():
         app_key="test",
         token="token",
         expires_at=12345.0,
-        issued_at="2024-01-01T00:00:00"
+        issued_at="2024-01-01T00:00:00",
     )
 
     # Try to save to invalid path (no permission)
@@ -93,7 +93,22 @@ def test_is_token_expired_error_detects_kis_code_and_message():
 
     assert is_token_expired_error({"msg_cd": "EGW00123", "msg1": "ignored"})
     assert is_token_expired_error({"rt_cd": "1", "msg1": "기간이 만료된 token 입니다."})
-    assert not is_token_expired_error({"msg_cd": "EGW00201", "msg1": "초당 거래건수 초과"})
+    assert not is_token_expired_error(
+        {"msg_cd": "EGW00201", "msg1": "초당 거래건수 초과"}
+    )
+
+
+def test_auth_config_uses_env_token_cache_dir(monkeypatch):
+    from shared.kis.auth import KISAuthConfig
+
+    monkeypatch.setenv("KIS_TOKEN_CACHE_DIR", "/app/.cache")
+
+    assert KISAuthConfig(is_real=False).token_cache_path == Path(
+        "/app/.cache/.kis_token_mock"
+    )
+    assert KISAuthConfig(is_real=True).token_cache_path == Path(
+        "/app/.cache/.kis_token_real"
+    )
 
 
 @pytest.mark.asyncio

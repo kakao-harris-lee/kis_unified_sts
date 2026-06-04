@@ -60,7 +60,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
-          pip install prometheus-client clickhouse-connect gymnasium
+          pip install prometheus-client clickhouse-connect
 
       - name: Run tests
         # Two passes:
@@ -175,7 +175,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
-          pip install prometheus-client clickhouse-connect gymnasium pytest-json-report
+          pip install prometheus-client clickhouse-connect pytest-json-report
 
       - name: Run performance tests
         run: |

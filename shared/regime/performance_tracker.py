@@ -17,7 +17,7 @@ Usage:
         code="101S6000",
         price=350.5,
         timestamp=datetime.now(),
-        model_name="rl_mppo_profile_balanced",
+        model_name="setup_a_gap_reversion",
     )
 
     # Record exit
@@ -27,7 +27,7 @@ Usage:
         price=352.0,
         timestamp=datetime.now(),
         pnl=1500.0,
-        model_name="rl_mppo_profile_balanced",
+        model_name="setup_a_gap_reversion",
     )
 
     # Get regime stats

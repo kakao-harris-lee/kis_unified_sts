@@ -45,6 +45,8 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from shared.exceptions import InfrastructureError, TradingSystemError, ValidationError
 from shared.models.position import Position, PositionSide, PositionState
+from shared.storage.config import StorageConfig
+from shared.storage.runtime_ledger import RuntimeLedger, RuntimeLedgerError
 from shared.utils.calc import validate_price
 
 if TYPE_CHECKING:
@@ -105,6 +107,12 @@ class PositionTrackerConfig:
     # Asset class for this tracker instance (used to guard stock-only paths)
     asset_class: str = ""  # e.g. 'stock', 'futures'
 
+    # Runtime ledger backend.
+    # "clickhouse" preserves the legacy batching path. Orchestrator runtime
+    # passes the explicit backend from config/storage.yaml (default: sqlite).
+    runtime_ledger_backend: str = "clickhouse"  # sqlite|clickhouse|null
+    runtime_ledger_sqlite_path: str = ""
+
     def __post_init__(self):
         """Validate configuration values."""
         self._validate()
@@ -164,6 +172,11 @@ class PositionTrackerConfig:
             raise ValueError(
                 f"flush_interval_seconds must be >= 0, got {self.flush_interval_seconds}"
             )
+        if self.runtime_ledger_backend not in {"sqlite", "clickhouse", "null"}:
+            raise ValueError(
+                "runtime_ledger_backend must be one of sqlite|clickhouse|null, "
+                f"got {self.runtime_ledger_backend!r}"
+            )
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> PositionTrackerConfig:
@@ -189,6 +202,9 @@ class PositionTrackerConfig:
         database = data.get("database", "")
         batch_size = data.get("batch_size", 50)
         flush_interval = data.get("flush_interval_seconds", 5.0)
+        asset_class = data.get("asset_class", "")
+        runtime_ledger_backend = data.get("runtime_ledger_backend", "clickhouse")
+        runtime_ledger_sqlite_path = data.get("runtime_ledger_sqlite_path", "")
 
         # Type validation
         if not isinstance(max_positions, int):
@@ -225,6 +241,9 @@ class PositionTrackerConfig:
             database=str(database),
             batch_size=int(batch_size),
             flush_interval_seconds=float(flush_interval),
+            asset_class=str(asset_class),
+            runtime_ledger_backend=str(runtime_ledger_backend),
+            runtime_ledger_sqlite_path=str(runtime_ledger_sqlite_path),
         )
 
 
@@ -271,6 +290,7 @@ class PositionTracker:
         uuid_generator: Callable[[], str] | None = None,
         redis_client: Any | None = None,
         ch_fail_tracker: ClickHouseInsertFailTracker | None = None,
+        runtime_ledger: RuntimeLedger | None = None,
     ):
         """
         Args:
@@ -316,16 +336,19 @@ class PositionTracker:
 
         # Batch accumulators for DB inserts
         self._pending_swing_positions: list[tuple[Any, ...]] = []
-        self._pending_rl_trades: list[tuple[Any, ...]] = []
+        self._pending_futures_trades: list[tuple[Any, ...]] = []
         self._pending_stock_trades: list[tuple[Any, ...]] = []
         self._batch_lock: asyncio.Lock = asyncio.Lock()
+        self._runtime_ledger: RuntimeLedger | None = runtime_ledger
 
         # Auto-flush background task
         self._auto_flush_task: asyncio.Task | None = None
 
         # ClickHouse insert failure rate tracker (Phase 3 Track A observability)
         self._ch_fail_tracker: ClickHouseInsertFailTracker | None = (
-            ch_fail_tracker or self._build_ch_fail_tracker(redis_client)
+            (ch_fail_tracker or self._build_ch_fail_tracker(redis_client))
+            if self._uses_clickhouse_persistence()
+            else None
         )
 
         logger.info(
@@ -535,6 +558,11 @@ class PositionTracker:
         except (TypeError, ValueError):
             stop_price = None
 
+        position_metadata: dict[str, Any] = {}
+        for key in ("stop_loss", "take_profit"):
+            if key in meta:
+                position_metadata[key] = meta[key]
+
         return self.add_position(
             code=signal.code,
             name=signal.name,
@@ -544,6 +572,7 @@ class PositionTracker:
             side=side,
             client_order_id=effective_coid,
             stop_price=stop_price,
+            metadata=position_metadata,
         )
 
     def add_recovered_position(self, position: Position) -> bool:
@@ -1047,6 +1076,187 @@ class PositionTracker:
         # deque with maxlen automatically discards oldest items
         self._events.append(event)
 
+    def _uses_clickhouse_persistence(self) -> bool:
+        """Return True when legacy ClickHouse persistence is selected."""
+        return self.config.runtime_ledger_backend == "clickhouse"
+
+    def _get_runtime_ledger(self) -> RuntimeLedger | None:
+        """Return the configured RuntimeLedger, lazily creating SQLite backend."""
+        backend = self.config.runtime_ledger_backend
+        if backend == "null" or backend == "clickhouse":
+            return None
+
+        if self._runtime_ledger is not None:
+            return self._runtime_ledger
+
+        try:
+            from shared.storage.runtime_ledger import SQLiteRuntimeLedger
+
+            storage_config = StorageConfig.load_or_default()
+            sqlite_config = storage_config.runtime_storage.sqlite
+            if self.config.runtime_ledger_sqlite_path:
+                sqlite_config = sqlite_config.model_copy(
+                    update={"path": self.config.runtime_ledger_sqlite_path}
+                )
+            self._runtime_ledger = SQLiteRuntimeLedger(sqlite_config)
+            return self._runtime_ledger
+        except Exception as e:
+            logger.error("Failed to initialize runtime ledger: %s", e, exc_info=True)
+            return None
+
+    def _position_asset_class(self, fallback: str = "unknown") -> str:
+        """Return normalized tracker asset class for ledger rows."""
+        return str(self.config.asset_class or fallback or "unknown")
+
+    def _position_snapshot_payload(
+        self,
+        position: Position,
+        *,
+        asset_class: str | None = None,
+        is_open: bool | None = None,
+    ) -> dict[str, Any]:
+        """Build a RuntimeLedger position snapshot payload."""
+        open_flag = position.exit_time is None if is_open is None else is_open
+        return {
+            "id": position.id,
+            "position_id": position.id,
+            "asset_class": asset_class or self._position_asset_class(),
+            "code": position.code,
+            "symbol": position.code,
+            "name": position.name,
+            "side": position.side.value,
+            "strategy": position.strategy,
+            "quantity": position.quantity,
+            "entry_time": position.entry_time,
+            "entry_price": position.entry_price,
+            "current_price": position.current_price,
+            "highest_price": position.highest_price,
+            "lowest_price": position.lowest_price,
+            "stop_price": position.stop_price,
+            "state": position.state.value,
+            "is_open": int(open_flag),
+            "exit_time": position.exit_time,
+            "exit_price": position.exit_price,
+            "exit_reason": position.exit_reason,
+            "pnl": self._calc_realized_pnl(position) if not open_flag else None,
+            "fee_rate": position.fee_rate,
+            "execution_venue": position.execution_venue,
+            "metadata": position.metadata,
+        }
+
+    def _trade_payload(
+        self,
+        position: Position,
+        *,
+        asset_class: str,
+    ) -> dict[str, Any]:
+        """Build a RuntimeLedger trade payload from a closed position."""
+        pnl = self._calc_realized_pnl(position)
+        hold_seconds = self._closed_hold_seconds(position)
+        metadata = position.metadata if isinstance(position.metadata, dict) else {}
+        entry_notional = max(position.entry_price * position.quantity, 1e-9)
+        return {
+            "id": position.id,
+            "trade_id": position.id,
+            "idempotency_key": f"{asset_class}:{position.id}",
+            "asset_class": asset_class,
+            "code": position.code,
+            "symbol": position.code,
+            "name": position.name,
+            "side": position.side.value,
+            "strategy": position.strategy,
+            "execution_venue": position.execution_venue,
+            "entry_time": position.entry_time,
+            "entry_price": position.entry_price,
+            "exit_time": position.exit_time,
+            "exit_price": position.exit_price,
+            "quantity": position.quantity,
+            "pnl": pnl,
+            "pnl_pct": (pnl / entry_notional) * 100.0,
+            "hold_seconds": hold_seconds,
+            "exit_reason": position.exit_reason or "",
+            "exit_state": position.state.value if position.state else "",
+            "commission": float(metadata.get("commission", 0.0)),
+            "slippage": float(metadata.get("slippage", 0.0)),
+            "fee_rate": position.fee_rate,
+            "metadata": metadata,
+        }
+
+    @staticmethod
+    def _parse_ledger_datetime(value: Any) -> datetime:
+        """Parse ledger datetime values, falling back to now for malformed rows."""
+        if isinstance(value, datetime):
+            return value
+        if isinstance(value, str) and value:
+            try:
+                return datetime.fromisoformat(value)
+            except ValueError:
+                pass
+        return datetime.now()
+
+    @staticmethod
+    def _parse_ledger_side(value: Any) -> PositionSide:
+        try:
+            return PositionSide(str(value or PositionSide.LONG.value).lower())
+        except ValueError:
+            return PositionSide.LONG
+
+    @staticmethod
+    def _parse_ledger_state(value: Any) -> PositionState:
+        try:
+            return PositionState(str(value or PositionState.SURVIVAL.value).lower())
+        except ValueError:
+            return PositionState.SURVIVAL
+
+    def _position_from_ledger_row(self, row: dict[str, Any]) -> Position | None:
+        """Convert a RuntimeLedger position snapshot row into a Position."""
+        payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+        position_id = row.get("position_id") or payload.get("id")
+        code = row.get("symbol") or payload.get("code") or payload.get("symbol")
+        if not position_id or not code:
+            logger.warning("Skipping ledger position row with missing id/code: %s", row)
+            return None
+
+        side = self._parse_ledger_side(row.get("side") or payload.get("side"))
+        state = self._parse_ledger_state(row.get("state") or payload.get("state"))
+        entry_price = float(row.get("entry_price") or payload.get("entry_price") or 0.0)
+        current_price = float(
+            row.get("current_price") or payload.get("current_price") or entry_price
+        )
+        position = Position(
+            id=str(position_id),
+            code=str(code),
+            name=str(row.get("name") or payload.get("name") or code),
+            side=side,
+            quantity=int(row.get("quantity") or payload.get("quantity") or 0),
+            entry_price=entry_price,
+            entry_time=self._parse_ledger_datetime(
+                row.get("entry_time") or payload.get("entry_time")
+            ),
+            current_price=current_price,
+            highest_price=float(
+                row.get("high_since_entry")
+                or payload.get("highest_price")
+                or payload.get("high_since_entry")
+                or entry_price
+            ),
+            lowest_price=float(
+                row.get("low_since_entry")
+                or payload.get("lowest_price")
+                or payload.get("low_since_entry")
+                or entry_price
+            ),
+            state=state,
+            strategy=str(row.get("strategy") or payload.get("strategy") or ""),
+            fee_rate=float(payload.get("fee_rate") or self.config.default_fee_rate),
+            metadata=dict(payload.get("metadata") or {}),
+            execution_venue=str(payload.get("execution_venue") or "KRX"),
+        )
+        position.stop_price = float(
+            row.get("stop_price") or payload.get("stop_price") or 0.0
+        )
+        return position
+
     def get_stats(self) -> dict[str, Any]:
         """Get tracker statistics"""
         total_pnl = sum(p.unrealized_pnl for p in self._positions.values())
@@ -1088,11 +1298,11 @@ class PositionTracker:
         "execution_venue, stop_loss_price, high_since_entry, current_state, is_open, "
         "exit_date, exit_price, exit_reason, pnl, side, fee_rate)"
     )
-    _RL_TRADE_INSERT_COLS = (
+    _FUTURES_TRADE_INSERT_COLS = (
         "(id, asset_class, code, name, side, strategy, execution_venue, entry_date, entry_price, "
         "exit_date, exit_price, quantity, pnl, pnl_pct, hold_seconds, exit_reason, metadata_json)"
     )
-    _RL_TRADES_SCHEMA_TEMPLATE = """
+    _FUTURES_TRADES_SCHEMA_TEMPLATE = """
         CREATE TABLE IF NOT EXISTS {database}.rl_trades (
             id String,
             asset_class LowCardinality(String),
@@ -1116,7 +1326,7 @@ class PositionTracker:
         PARTITION BY toYYYYMM(exit_date)
         ORDER BY (asset_class, strategy, exit_date, id)
         TTL exit_date + INTERVAL 180 DAY
-        COMMENT 'Closed RL trade records for performance analytics'
+        COMMENT 'Closed futures trade records for performance analytics'
     """
 
     _STOCK_TRADE_INSERT_COLS = (
@@ -1127,20 +1337,14 @@ class PositionTracker:
     )
 
     def _get_db_client(self):
-        """Get ClickHouse client and database name for position persistence.
+        """Get legacy ClickHouse client and database name for position persistence.
 
         Returns:
-            Tuple of (ClickHouseClient, database_name)
+            Tuple of (backend client, database_name)
         """
-        from shared.db.client import ClickHouseClient
-        from shared.db.config import ClickHouseConfig
+        from shared.storage.clickhouse_runtime_ledger import get_clickhouse_db_client
 
-        cfg = ClickHouseConfig.from_env(database=self.config.database or None)
-        ch = ClickHouseClient(cfg)
-        database = self.config.database if self.config.database else cfg.database
-        if not database.replace("_", "").isalnum():
-            raise ValueError(f"Invalid database name: {database}")
-        return ch, database
+        return get_clickhouse_db_client(self.config.database)
 
     @staticmethod
     def _db_datetime(value: datetime | None) -> datetime | None:
@@ -1184,13 +1388,31 @@ class PositionTracker:
         return hold_seconds
 
     async def save_to_db(self) -> int:
-        """Persist all open positions to ClickHouse swing_positions table.
+        """Persist all open positions to the configured runtime ledger.
 
         Returns:
             Number of positions saved
         """
         if not self._positions:
             return 0
+
+        if not self._uses_clickhouse_persistence():
+            ledger = self._get_runtime_ledger()
+            if ledger is None:
+                return 0
+            try:
+                for position in self._positions.values():
+                    await asyncio.to_thread(
+                        ledger.record_position_snapshot,
+                        self._position_snapshot_payload(position, is_open=True),
+                    )
+                logger.info(
+                    "Saved %d open positions to runtime ledger", len(self._positions)
+                )
+                return len(self._positions)
+            except RuntimeLedgerError as e:
+                logger.error("Failed to save open positions to runtime ledger: %s", e)
+                return 0
 
         try:
             ch, database = self._get_db_client()
@@ -1242,11 +1464,19 @@ class PositionTracker:
         *,
         exit_reason: str = "reconciled_broker_absent",
     ) -> dict[str, int]:
-        """Synchronize ClickHouse open rows with current active positions.
+        """Synchronize open-position ledger rows with current active positions.
 
         Current tracker positions are inserted as open rows. Existing ClickHouse
         open rows absent by both id and code are closed via replacement rows.
         """
+        if not self._uses_clickhouse_persistence():
+            open_saved = await self.save_to_db()
+            logger.info(
+                "Reconciled runtime ledger open positions: open_saved=%d",
+                open_saved,
+            )
+            return {"open_saved": open_saved, "closed_orphans": 0}
+
         try:
             ch, database = self._get_db_client()
             current_positions = list(self._positions.values())
@@ -1380,7 +1610,7 @@ class PositionTracker:
             return {"open_saved": 0, "closed_orphans": 0}
 
     async def save_closed_to_db(self, position: Position) -> bool:
-        """Accumulate closed position for batch insertion to ClickHouse.
+        """Persist a closed position snapshot to the configured runtime ledger.
 
         This method uses a batching strategy to optimize database performance by
         accumulating closed positions and flushing them in bulk. Individual row
@@ -1420,6 +1650,31 @@ class PositionTracker:
         """
         if not position.exit_price or not position.exit_time:
             return False
+
+        if not self._uses_clickhouse_persistence():
+            ledger = self._get_runtime_ledger()
+            if ledger is None:
+                return False
+            if self._closed_hold_seconds(position) is None:
+                return False
+            try:
+                await asyncio.to_thread(
+                    ledger.record_position_snapshot,
+                    self._position_snapshot_payload(position, is_open=False),
+                )
+                logger.info(
+                    "Saved closed position snapshot to runtime ledger: %s (id=%s)",
+                    position.code,
+                    position.id[:8],
+                )
+                return True
+            except RuntimeLedgerError as e:
+                logger.error(
+                    "Failed to save closed position %s to runtime ledger: %s",
+                    position.id[:8],
+                    e,
+                )
+                return False
 
         try:
             if self._closed_hold_seconds(position) is None:
@@ -1466,16 +1721,18 @@ class PositionTracker:
             logger.error(f"Failed to accumulate closed position {position.id[:8]}: {e}")
             return False
 
-    async def save_rl_trade_to_db(self, position: Position, asset_class: str) -> bool:
-        """Accumulate closed RL trade for batch insertion to ClickHouse.
+    async def save_futures_trade_to_db(
+        self, position: Position, asset_class: str
+    ) -> bool:
+        """Persist a closed futures trade to the configured runtime ledger.
 
         This method uses a batching strategy to optimize database performance by
-        accumulating closed RL trades and flushing them in bulk. During backtesting
+        accumulating closed futures trades and flushing them in bulk. During backtesting
         with Optuna, hundreds of positions may close per trial, making batching
         critical to avoid overwhelming ClickHouse with individual inserts.
 
         Batching Behavior:
-            - Trades are accumulated in an in-memory buffer (_pending_rl_trades)
+            - Trades are accumulated in an in-memory buffer (_pending_futures_trades)
             - Not immediately written to the database
             - Batched inserts reduce ClickHouse connection overhead and write amplification
 
@@ -1499,15 +1756,43 @@ class PositionTracker:
         Example:
             ```python
             # Normal usage - automatic batching
-            await tracker.save_rl_trade_to_db(position, "futures")
+            await tracker.save_futures_trade_to_db(position, "futures")
 
             # Force immediate flush (e.g., for testing or critical trades)
-            await tracker.save_rl_trade_to_db(position, "futures")
+            await tracker.save_futures_trade_to_db(position, "futures")
             await tracker.flush_pending_positions()
             ```
         """
         if not position.exit_price or not position.exit_time:
             return False
+
+        if not self._uses_clickhouse_persistence():
+            ledger = self._get_runtime_ledger()
+            if ledger is None:
+                return False
+            if self._closed_hold_seconds(position) is None:
+                return False
+            try:
+                await asyncio.to_thread(
+                    ledger.record_trade,
+                    self._trade_payload(
+                        position,
+                        asset_class=str(asset_class or "unknown"),
+                    ),
+                )
+                logger.info(
+                    "Saved futures trade to runtime ledger: %s (id=%s)",
+                    position.code,
+                    position.id[:8],
+                )
+                return True
+            except RuntimeLedgerError as e:
+                logger.error(
+                    "Failed to save futures trade %s to runtime ledger: %s",
+                    position.id[:8],
+                    e,
+                )
+                return False
 
         try:
             pnl = self._calc_realized_pnl(position)
@@ -1542,29 +1827,30 @@ class PositionTracker:
             )
 
             async with self._batch_lock:
-                self._pending_rl_trades.append(row)
-                batch_size = len(self._pending_rl_trades)
+                self._pending_futures_trades.append(row)
+                batch_size = len(self._pending_futures_trades)
 
             logger.info(
-                f"Accumulated RL trade: {position.code} "
+                f"Accumulated futures trade: {position.code} "
                 f"(strategy={position.strategy}, pnl={pnl:+,.0f}, id={position.id[:8]}, batch={batch_size}/{self.config.batch_size})"
             )
 
             # Flush if batch threshold reached
             if batch_size >= self.config.batch_size:
-                await self._flush_rl_trades_batch()
+                await self._flush_futures_trades_batch()
 
             return True
 
         except (ValidationError, InfrastructureError) as e:
-            logger.error(f"Failed to accumulate RL trade {position.id[:8]}: {e}")
+            logger.error(f"Failed to accumulate futures trade {position.id[:8]}: {e}")
             return False
 
     async def save_stock_trade_to_db(self, position: Position) -> bool:
-        """Accumulate closed stock trade for batch insertion to ClickHouse market.stock_trades.
+        """Persist a closed stock trade to the configured runtime ledger.
 
-        This method is the stock-specific counterpart to save_rl_trade_to_db and uses
-        the same batching strategy to optimise database performance.
+        This method is the stock-specific counterpart to
+        save_futures_trade_to_db and uses the same batching strategy to optimise
+        database performance.
 
         Batching Behavior:
             - Trades are accumulated in an in-memory buffer (_pending_stock_trades)
@@ -1596,6 +1882,31 @@ class PositionTracker:
                 f"save_stock_trade_to_db: position {position.id[:8]} has no exit data; skipping"
             )
             return False
+
+        if not self._uses_clickhouse_persistence():
+            ledger = self._get_runtime_ledger()
+            if ledger is None:
+                return False
+            if self._closed_hold_seconds(position) is None:
+                return False
+            try:
+                await asyncio.to_thread(
+                    ledger.record_trade,
+                    self._trade_payload(position, asset_class="stock"),
+                )
+                logger.info(
+                    "Saved stock trade to runtime ledger: %s (id=%s)",
+                    position.code,
+                    position.id[:8],
+                )
+                return True
+            except RuntimeLedgerError as e:
+                logger.error(
+                    "Failed to save stock trade %s to runtime ledger: %s",
+                    position.id[:8],
+                    e,
+                )
+                return False
 
         try:
             pnl = self._calc_realized_pnl(position)
@@ -1715,16 +2026,15 @@ class PositionTracker:
 
         except Exception as e:
             # Catch BOTH InfrastructureError (wrapped CH errors) AND raw
-            # clickhouse_driver exceptions (ServerException, NetworkError,
-            # SocketTimeoutError, etc.) so the kill_switch fail-rate metric
+            # upstream driver exceptions (server, network, timeout, etc.)
+            # so the kill_switch fail-rate metric
             # reflects every failure mode, not just the wrapped subset.
             # Re-enqueue rows so they are retried on the next flush.
             async with self._batch_lock:
                 pending_list.extend(rows)
 
             # Distinguish wrapped vs raw for log clarity (InfrastructureError
-            # is the project's normalised exception; raw clickhouse_driver
-            # errors are upstream).
+            # is the project's normalised exception; raw driver errors are upstream).
             if isinstance(e, InfrastructureError):
                 logger.error(f"Failed to flush {label} batch: {e}")
             else:
@@ -1753,18 +2063,18 @@ class PositionTracker:
         )
         return count
 
-    async def _flush_rl_trades_batch(self) -> int:
-        """Flush accumulated RL trades batch to ClickHouse.
+    async def _flush_futures_trades_batch(self) -> int:
+        """Flush accumulated futures trades batch to ClickHouse.
 
         Returns:
             Number of trades flushed
         """
-        count, self._pending_rl_trades = await self._flush_batch(
-            self._pending_rl_trades,
+        count, self._pending_futures_trades = await self._flush_batch(
+            self._pending_futures_trades,
             table_name="rl_trades",
-            insert_cols=self._RL_TRADE_INSERT_COLS,
-            label="RL trades",
-            pre_execute_sql=self._RL_TRADES_SCHEMA_TEMPLATE,
+            insert_cols=self._FUTURES_TRADE_INSERT_COLS,
+            label="futures trades",
+            pre_execute_sql=self._FUTURES_TRADES_SCHEMA_TEMPLATE,
         )
         return count
 
@@ -1789,19 +2099,25 @@ class PositionTracker:
         Typically called during graceful shutdown or manual flush triggers.
 
         Returns:
-            Tuple of (swing_positions_flushed, rl_trades_flushed)
+            Tuple of (swing_positions_flushed, futures_trades_flushed)
         """
+        if not self._uses_clickhouse_persistence():
+            ledger = self._get_runtime_ledger()
+            if ledger is not None:
+                await asyncio.to_thread(ledger.flush)
+            return 0, 0
+
         swing_count = await self._flush_swing_positions_batch()
-        rl_count = await self._flush_rl_trades_batch()
+        futures_count = await self._flush_futures_trades_batch()
         stock_count = await self._flush_stock_trades_batch()
 
-        if swing_count > 0 or rl_count > 0 or stock_count > 0:
+        if swing_count > 0 or futures_count > 0 or stock_count > 0:
             logger.info(
                 f"Manual flush completed: {swing_count} swing positions, "
-                f"{rl_count} RL trades, {stock_count} stock trades"
+                f"{futures_count} futures trades, {stock_count} stock trades"
             )
 
-        return swing_count, rl_count
+        return swing_count, futures_count
 
     def _start_auto_flush_task(self) -> None:
         """Start background timer-based flush task.
@@ -1833,13 +2149,13 @@ class PositionTracker:
             while True:
                 try:
                     await asyncio.sleep(self.config.flush_interval_seconds)
-                    swing_count, rl_count = await self.flush_pending_positions()
+                    swing_count, futures_count = await self.flush_pending_positions()
 
                     # Only log if we actually flushed something
-                    if swing_count > 0 or rl_count > 0:
+                    if swing_count > 0 or futures_count > 0:
                         logger.info(
                             f"Auto-flush triggered: {swing_count} swing positions, "
-                            f"{rl_count} RL trades"
+                            f"{futures_count} futures trades"
                         )
                 except asyncio.CancelledError:
                     logger.info("Auto-flush task cancelled")
@@ -1882,11 +2198,11 @@ class PositionTracker:
 
         # Final flush to ensure all pending positions are written
         # flush_pending_positions also flushes _pending_stock_trades via _flush_stock_trades_batch
-        swing_count, rl_count = await self.flush_pending_positions()
-        if swing_count > 0 or rl_count > 0:
+        swing_count, futures_count = await self.flush_pending_positions()
+        if swing_count > 0 or futures_count > 0:
             logger.info(
                 f"Final flush on shutdown: {swing_count} swing positions, "
-                f"{rl_count} RL trades"
+                f"{futures_count} futures trades"
             )
 
         # Stop CH insert fail tracker publish loop (Phase 3 Track A observability)
@@ -1903,11 +2219,35 @@ class PositionTracker:
         return (position.entry_price - position.exit_price) * position.quantity
 
     async def load_from_db(self) -> int:
-        """Load open positions from ClickHouse on startup.
+        """Load open positions from the configured runtime ledger on startup.
 
         Returns:
             Number of positions loaded
         """
+        if not self._uses_clickhouse_persistence():
+            ledger = self._get_runtime_ledger()
+            if ledger is None:
+                return 0
+            try:
+                asset_class = self.config.asset_class or None
+                rows = await asyncio.to_thread(ledger.load_open_positions, asset_class)
+                loaded = 0
+                for row in rows:
+                    position = self._position_from_ledger_row(row)
+                    if position is None:
+                        continue
+                    if position.id in self._positions:
+                        continue
+                    if self.add_recovered_position(position):
+                        loaded += 1
+
+                if loaded:
+                    logger.info("Loaded %d positions from runtime ledger", loaded)
+                return loaded
+            except RuntimeLedgerError as e:
+                logger.error("Failed to load positions from runtime ledger: %s", e)
+                return 0
+
         try:
             ch, database = self._get_db_client()
 

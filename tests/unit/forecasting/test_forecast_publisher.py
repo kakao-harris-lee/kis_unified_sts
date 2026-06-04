@@ -1,4 +1,5 @@
 """Tests for forecast Redis + ClickHouse publisher."""
+
 from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
@@ -55,6 +56,14 @@ def test_publish_vol_inserts_clickhouse(redis_mock, ch_mock):
     assert "INSERT" in sql.upper()
 
 
+def test_publish_vol_skips_clickhouse_when_disabled(redis_mock):
+    pub = ForecastPublisher(redis=redis_mock, clickhouse=None, vol_ttl_s=120)
+    vf = _make_vf()
+    pub.publish_vol_forecast(vf)
+
+    redis_mock.set.assert_called_once()
+
+
 def test_publish_vol_skips_nan(redis_mock, ch_mock):
     pub = ForecastPublisher(redis=redis_mock, clickhouse=ch_mock, vol_ttl_s=120)
     vf = _make_vf(forecast_pct=float("nan"))
@@ -86,11 +95,32 @@ def test_publish_event_publishes_pubsub_and_persists(redis_mock, ch_mock):
     pub.publish_event_score(es)
     redis_mock.publish.assert_called_once_with("forecasting:events", es.to_json())
     # also SET forecast:event:latest
-    set_calls = [c for c in redis_mock.set.call_args_list if c.args[0] == "forecast:event:latest"]
+    set_calls = [
+        c for c in redis_mock.set.call_args_list if c.args[0] == "forecast:event:latest"
+    ]
     assert len(set_calls) == 1
     ch_mock.execute.assert_called_once()
     sql = ch_mock.execute.call_args[0][0]
     assert "kospi.event_scores" in sql
+
+
+def test_publish_event_skips_clickhouse_when_disabled(redis_mock):
+    pub = ForecastPublisher(redis=redis_mock, clickhouse=None, vol_ttl_s=120)
+    es = EventScore(
+        asof=datetime.now(UTC),
+        impact_score=85,
+        event_type="FOMC",
+        source="rule",
+        raw_text=None,
+        ttl_minutes=30,
+    )
+    pub.publish_event_score(es)
+
+    redis_mock.publish.assert_called_once_with("forecasting:events", es.to_json())
+    set_calls = [
+        c for c in redis_mock.set.call_args_list if c.args[0] == "forecast:event:latest"
+    ]
+    assert len(set_calls) == 1
 
 
 def test_publish_event_handles_clickhouse_failure(redis_mock, ch_mock):

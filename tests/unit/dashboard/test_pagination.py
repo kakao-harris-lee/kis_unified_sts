@@ -1,4 +1,5 @@
 """Test API pagination."""
+
 import pytest
 from datetime import datetime
 from unittest.mock import patch
@@ -9,26 +10,37 @@ def _make_trades(count: int = 25):
     """Create mock trade dicts for testing."""
     trades = []
     for i in range(count):
-        trades.append({
-            "id": f"trade_{i}",
-            "symbol": "005930" if i % 2 == 0 else "000660",
-            "side": "BUY",
-            "quantity": 10,
-            "entry_price": 50000.0,
-            "exit_price": 51000.0 if i % 3 != 0 else 49000.0,
-            "pnl": 10000.0 if i % 3 != 0 else -10000.0,
-            "pnl_pct": 2.0 if i % 3 != 0 else -2.0,
-            "strategy": "v35" if i % 2 == 0 else "breakout",
-            "entry_time": datetime.now().isoformat(),
-            "exit_time": datetime.now().isoformat(),
-        })
+        trades.append(
+            {
+                "id": f"trade_{i}",
+                "symbol": "005930" if i % 2 == 0 else "000660",
+                "side": "BUY",
+                "quantity": 10,
+                "entry_price": 50000.0,
+                "exit_price": 51000.0 if i % 3 != 0 else 49000.0,
+                "pnl": 10000.0 if i % 3 != 0 else -10000.0,
+                "pnl_pct": 2.0 if i % 3 != 0 else -2.0,
+                "strategy": "v35" if i % 2 == 0 else "breakout",
+                "entry_time": datetime.now().isoformat(),
+                "exit_time": datetime.now().isoformat(),
+            }
+        )
     return trades
 
 
 @pytest.fixture
 def mock_trades():
     """Patch _load_trades to return test data."""
-    with patch("services.dashboard.routes.trades._load_trades", return_value=_make_trades(25)):
+    with (
+        patch(
+            "services.dashboard.routes.trades._load_runtime_ledger_trades",
+            return_value=([], False),
+        ),
+        patch(
+            "services.dashboard.routes.trades._load_trades",
+            return_value=_make_trades(25),
+        ),
+    ):
         yield
 
 

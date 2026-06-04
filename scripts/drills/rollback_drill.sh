@@ -96,15 +96,15 @@ step3_inspect_config() {
     fi
 }
 
-# ---- Step 4: rl_mppo legacy paper status -------------------------------------
-step4_legacy_status() {
-    for unit in kis-rl-paper kis-stock-trading; do
+# ---- Step 4: trading process status ------------------------------------------
+step4_trading_status() {
+    for unit in kis-futures-trading kis-stock-trading; do
         echo "--- ${unit} ---"
         systemctl is-active "${unit}" 2>/dev/null || echo "is-active: query failed"
     done
     echo ""
-    echo "Live processes (rl_mppo / paper_trader):"
-    ps -eo pid,etime,cmd | grep -E "rl_mppo|paper_trader" | grep -v grep || echo "(none found)"
+    echo "Live trading processes:"
+    ps -eo pid,etime,cmd | grep -E "sts trade start|services.trading" | grep -v grep || echo "(none found)"
 }
 
 # ---- Step 5: log/ledger snapshot ---------------------------------------------
@@ -188,7 +188,7 @@ DRILL_START_MS="$(now_ms)"
 run_step 1 "flatten_all dry-run"            step1_flatten_dryrun
 run_step 2 "Inspect systemd units (no stop)" step2_inspect_units
 run_step 3 "Inspect decision_engine.yaml"    step3_inspect_config
-run_step 4 "rl_mppo legacy paper status"     step4_legacy_status
+run_step 4 "Trading process status"          step4_trading_status
 run_step 5 "Log/ledger snapshot"             step5_log_snapshot
 run_step 6 "Cooldown rule reminder"          step6_cooldown_note
 run_step 7 "Incident bundle dir layout"      step7_incident_bundle_layout

@@ -21,8 +21,6 @@ except ImportError:
         from aiochclient import ChClient
         from aiohttp import ClientSession, TCPConnector
 
-from shared.monitoring.drift_metrics import DriftMetrics
-
 from .config import ClickHouseConfig
 from .models import DailyCandle, MinuteCandle
 
@@ -112,7 +110,7 @@ SCHEMAS = {
         PARTITION BY toYYYYMM(exit_date)
         ORDER BY (asset_class, strategy, exit_date, id)
         TTL exit_date + INTERVAL 5 YEAR
-        COMMENT 'Closed futures RL trade records. Stocks use stock_trades (separate table). 5-year retention matches order_fills (Phase 5 legal-review §5).'
+        COMMENT 'Closed futures trade records. Stocks use stock_trades (separate table). 5-year retention matches order_fills (Phase 5 legal-review §5).'
     """,
     "stock_trades": """
         CREATE TABLE IF NOT EXISTS {database}.stock_trades (
@@ -140,27 +138,7 @@ SCHEMAS = {
         PARTITION BY toYYYYMM(exit_date)
         ORDER BY (strategy, exit_date, id)
         TTL exit_date + INTERVAL 180 DAY
-        COMMENT 'Closed stock trade records (paper + live). Separate from rl_trades which is futures-only.'
-    """,
-    "rl_drift_metrics": """
-        CREATE TABLE IF NOT EXISTS {database}.rl_drift_metrics (
-            timestamp DateTime,
-            code String,
-            strategy LowCardinality(String),
-            kl_divergence Float64,
-            psi_score Float64,
-            confidence_mean Float64,
-            confidence_std Float64,
-            sharpe_5d Nullable(Float64),
-            sharpe_20d Nullable(Float64),
-            win_rate_5d Nullable(Float64),
-            win_rate_20d Nullable(Float64),
-            created_at DateTime DEFAULT now()
-        ) ENGINE = MergeTree()
-        PARTITION BY toYYYYMM(timestamp)
-        ORDER BY (strategy, timestamp)
-        TTL timestamp + INTERVAL 180 DAY
-        COMMENT 'RL model drift detection metrics for production monitoring'
+        COMMENT 'Closed stock trade records (paper + live). Separate from the legacy futures rl_trades table.'
     """,
     "regime_gate_decisions": """
         CREATE TABLE IF NOT EXISTS {database}.regime_gate_decisions (
@@ -265,22 +243,6 @@ def _minute_candle_from_row(row: tuple) -> MinuteCandle:
         close=row[5],
         volume=row[6],
         value=row[7],
-    )
-
-
-def _drift_metrics_to_tuple(metrics: DriftMetrics) -> tuple:
-    return (
-        metrics.timestamp,
-        metrics.code,
-        metrics.strategy,
-        metrics.kl_divergence,
-        metrics.psi_score,
-        metrics.confidence_mean,
-        metrics.confidence_std,
-        metrics.sharpe_5d,
-        metrics.sharpe_20d,
-        metrics.win_rate_5d,
-        metrics.win_rate_20d,
     )
 
 
@@ -522,24 +484,6 @@ class ClickHouseClient:
             return len(candles)
         except Exception as e:
             logger.error(f"Failed to insert minute candles: {e}")
-            return 0
-
-    def insert_drift_metrics(self, metrics: list[DriftMetrics]) -> int:
-        """Batch insert drift metrics."""
-        if not metrics:
-            return 0
-        try:
-            client = self.get_sync_client()
-            data = [_drift_metrics_to_tuple(m) for m in metrics]
-            client.execute(
-                f"INSERT INTO {self.config.database}.rl_drift_metrics "
-                "(timestamp, code, strategy, kl_divergence, psi_score, confidence_mean, "
-                "confidence_std, sharpe_5d, sharpe_20d, win_rate_5d, win_rate_20d) VALUES",
-                data,
-            )
-            return len(metrics)
-        except Exception as e:
-            logger.error(f"Failed to insert drift metrics: {e}")
             return 0
 
     def insert_regime_gate_decisions(self, rows: list[dict]) -> int:

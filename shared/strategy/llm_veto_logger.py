@@ -8,8 +8,8 @@ discarded.  Buffered rows can be flushed to ClickHouse table
 orchestrator or any caller via ``flush_llm_veto_events()``.
 
 Design notes:
-    - **Mirrors rl_shadow_logger**: same bounded-deque pattern, same best-effort
-      delivery semantics, same ``dropped_counts()`` API for Prometheus alerting.
+    - **Best-effort delivery**: bounded-deque buffering with a
+      ``dropped_counts()`` API for Prometheus alerting.
     - **Non-blocking**: ``record_veto()`` appends to an in-memory deque and
       returns immediately — no I/O on the hot path.
     - **Thread-safe deque**: Python's ``collections.deque`` append/popleft are
@@ -23,10 +23,7 @@ Design notes:
       drains this buffer every ``flush_interval_seconds`` (default 60s, see
       ``config/shadow_loggers.yaml``).  A final drain runs in
       ``_shadow_loggers_final_flush`` on shutdown when
-      ``final_flush_on_stop: true`` (default).  Each logger's flush is wrapped
-      in its own try/except so a failure here does not skip the rl_shadow
-      flush on the same tick (and vice versa).
-      Tests: ``tests/unit/trading/test_shadow_loggers_flush.py``.
+      ``final_flush_on_stop: true`` (default).
 
 Required payload keys for the ClickHouse flush:
     ``ts``              (datetime, tz-aware UTC)
@@ -136,12 +133,11 @@ async def flush_llm_veto_events(ch_client: Any) -> int:
     drained batch is dropped and ``_dropped_batch_count`` /
     ``_dropped_row_count`` are incremented (read via :func:`dropped_counts`).
 
-    Re-queueing the failed batch (via ``appendleft``) was rejected for the
-    same reason as in ``rl_shadow_logger``: the bounded deque means concurrent
-    producer rows arriving during the failed insert window would be displaced
-    — silently corrupting the counterfactual dataset.  Use
-    :func:`dropped_counts` (and Prometheus alerting on a non-zero rate) to
-    catch persistent CH issues.
+    Re-queueing the failed batch (via ``appendleft``) was rejected because the
+    bounded deque means concurrent producer rows arriving during the failed
+    insert window would be displaced, silently corrupting the counterfactual
+    dataset. Use :func:`dropped_counts` and Prometheus alerting on a non-zero
+    rate to catch persistent CH issues.
     """
     import asyncio
 
@@ -207,7 +203,7 @@ def _do_insert(ch_client: Any, rows: list[dict[str, Any]]) -> None:
                 str(row.get("overall_signal", "")),
                 float(row.get("confidence", 0.0)),
                 str(row.get("setup", "")),
-                0,           # executed = 0 (vetoed)
+                0,  # executed = 0 (vetoed)
                 "llm_veto",  # skip_reason
             )
         )

@@ -9,8 +9,8 @@ For integration tests with real Redis, see tests/integration/test_position_recov
 import json
 import pytest
 from datetime import datetime
-from unittest.mock import AsyncMock, MagicMock, patch, call
-from shared.models.position import Position, PositionSide, PositionState
+from unittest.mock import MagicMock, call
+from shared.models.position import PositionSide, PositionState
 
 
 class TestRedisPositionSave:
@@ -31,7 +31,10 @@ class TestRedisPositionSave:
     @pytest.fixture
     def position_tracker_with_redis(self, mock_redis):
         """Create PositionTracker with mocked Redis integration"""
-        from services.trading.position_tracker import PositionTracker, PositionTrackerConfig
+        from services.trading.position_tracker import (
+            PositionTracker,
+            PositionTrackerConfig,
+        )
 
         config = PositionTrackerConfig(max_positions=10)
         tracker = PositionTracker(config=config)
@@ -61,26 +64,13 @@ class TestRedisPositionSave:
         self._save_position_to_redis(tracker, position)
 
         # Verify Redis hset was called with correct data
-        expected_data = {
-            "id": position.id,
-            "code": "005930",
-            "name": "Samsung Electronics",
-            "side": "long",
-            "entry_price": "71000",
-            "current_price": "71000",
-            "quantity": "10",
-            "strategy": "bb_reversion",
-            "state": "SURVIVAL",
-            "entry_time": position.entry_time.isoformat(),
-            "highest_price": "71000",
-            "lowest_price": "71000",
-        }
-
         # Check that hset was called (we're simulating the save operation)
         # In real implementation, tracker.add_position would trigger this
         mock_redis.hset.assert_called()
 
-    def test_add_short_position_saves_side_correctly(self, position_tracker_with_redis, mock_redis):
+    def test_add_short_position_saves_side_correctly(
+        self, position_tracker_with_redis, mock_redis
+    ):
         """Test that short positions are saved with correct side"""
         tracker = position_tracker_with_redis
 
@@ -90,7 +80,7 @@ class TestRedisPositionSave:
             name="KOSPI200 Mini",
             entry_price=360.5,
             quantity=2,
-            strategy="rl_mppo",
+            strategy="setup_a_gap_reversion",
             side=PositionSide.SHORT,
         )
 
@@ -104,7 +94,9 @@ class TestRedisPositionSave:
         # In real implementation, we'd verify the Redis data contains "side": "short"
         assert mock_redis.hset.called
 
-    def test_update_position_price_updates_redis(self, position_tracker_with_redis, mock_redis):
+    def test_update_position_price_updates_redis(
+        self, position_tracker_with_redis, mock_redis
+    ):
         """Test that updating position price updates Redis"""
         tracker = position_tracker_with_redis
 
@@ -130,7 +122,9 @@ class TestRedisPositionSave:
         # Verify Redis was updated
         assert mock_redis.hset.called
 
-    def test_update_position_state_updates_redis(self, position_tracker_with_redis, mock_redis):
+    def test_update_position_state_updates_redis(
+        self, position_tracker_with_redis, mock_redis
+    ):
         """Test that state transitions are persisted to Redis"""
         tracker = position_tracker_with_redis
 
@@ -159,7 +153,9 @@ class TestRedisPositionSave:
         # Verify state update was saved
         assert mock_redis.hset.called
 
-    def test_close_position_removes_from_redis(self, position_tracker_with_redis, mock_redis):
+    def test_close_position_removes_from_redis(
+        self, position_tracker_with_redis, mock_redis
+    ):
         """Test that closing a position removes it from Redis"""
         tracker = position_tracker_with_redis
 
@@ -175,7 +171,9 @@ class TestRedisPositionSave:
         position_id = position.id
 
         # Close position
-        closed = tracker.close_position(position_id, exit_price=72000, reason="TAKE_PROFIT")
+        closed = tracker.close_position(
+            position_id, exit_price=72000, reason="TAKE_PROFIT"
+        )
 
         assert closed is not None
 
@@ -185,7 +183,9 @@ class TestRedisPositionSave:
         # Verify Redis hdel was called
         mock_redis.hdel.assert_called()
 
-    def test_multiple_positions_all_saved_to_redis(self, position_tracker_with_redis, mock_redis):
+    def test_multiple_positions_all_saved_to_redis(
+        self, position_tracker_with_redis, mock_redis
+    ):
         """Test that multiple positions are all saved to Redis"""
         tracker = position_tracker_with_redis
 
@@ -206,7 +206,9 @@ class TestRedisPositionSave:
         assert len(positions) == 3
         assert mock_redis.hset.call_count >= 3
 
-    def test_position_metadata_saved_to_redis(self, position_tracker_with_redis, mock_redis):
+    def test_position_metadata_saved_to_redis(
+        self, position_tracker_with_redis, mock_redis
+    ):
         """Test that position metadata is preserved in Redis"""
         tracker = position_tracker_with_redis
 
@@ -235,10 +237,6 @@ class TestRedisPositionSave:
 
     def test_redis_key_format_stock(self):
         """Test Redis key format for stock positions"""
-        from services.trading.position_tracker import PositionTracker
-
-        tracker = PositionTracker()
-
         # In real implementation, Redis key would be set based on asset class
         expected_key = "trading:stock:positions"
 
@@ -293,7 +291,9 @@ class TestRedisPositionSave:
         assert isinstance(redis_data["side"], str)
         assert redis_data["side"] in ["long", "short"]
 
-    def test_position_update_incremental_saves(self, position_tracker_with_redis, mock_redis):
+    def test_position_update_incremental_saves(
+        self, position_tracker_with_redis, mock_redis
+    ):
         """Test that incremental updates save efficiently to Redis"""
         tracker = position_tracker_with_redis
 
@@ -328,7 +328,9 @@ class TestRedisPositionSave:
         # Should return False or handle gracefully
         assert result is False
 
-    def test_redis_connection_failure_handled(self, position_tracker_with_redis, mock_redis):
+    def test_redis_connection_failure_handled(
+        self, position_tracker_with_redis, mock_redis
+    ):
         """Test that Redis connection failures are handled gracefully"""
         tracker = position_tracker_with_redis
 
@@ -361,25 +363,25 @@ class TestRedisPositionSave:
         if position is None:
             return False
 
-        if not hasattr(tracker, '_redis_client') or tracker._redis_client is None:
+        if not hasattr(tracker, "_redis_client") or tracker._redis_client is None:
             return False
 
         try:
             redis_data = self._serialize_position(position)
-            redis_key = getattr(tracker, '_redis_key', 'trading:positions')
+            redis_key = getattr(tracker, "_redis_key", "trading:positions")
             tracker._redis_client.hset(redis_key, position.id, json.dumps(redis_data))
             return True
-        except Exception as e:
+        except Exception:
             # In real implementation, would log error
             return False
 
     def _remove_position_from_redis(self, tracker, position_id):
         """Helper to remove position from Redis (simulates actual implementation)"""
-        if not hasattr(tracker, '_redis_client') or tracker._redis_client is None:
+        if not hasattr(tracker, "_redis_client") or tracker._redis_client is None:
             return False
 
         try:
-            redis_key = getattr(tracker, '_redis_key', 'trading:positions')
+            redis_key = getattr(tracker, "_redis_key", "trading:positions")
             tracker._redis_client.hdel(redis_key, position_id)
             return True
         except Exception:
@@ -496,9 +498,7 @@ class TestRedisPositionSaveEdgeCases:
 
     def test_save_large_metadata(self, tracker):
         """Test saving position with large metadata"""
-        large_metadata = {
-            f"key_{i}": f"value_{i}" for i in range(100)
-        }
+        large_metadata = {f"key_{i}": f"value_{i}" for i in range(100)}
 
         position = tracker.add_position(
             code="005930",
@@ -600,7 +600,10 @@ class TestRedisPositionLoad:
     @pytest.fixture
     def position_tracker(self, mock_redis):
         """Create PositionTracker with mocked Redis"""
-        from services.trading.position_tracker import PositionTracker, PositionTrackerConfig
+        from services.trading.position_tracker import (
+            PositionTracker,
+            PositionTrackerConfig,
+        )
 
         config = PositionTrackerConfig(max_positions=10)
         tracker = PositionTracker(config=config)
@@ -715,7 +718,7 @@ class TestRedisPositionLoad:
             "highest_price": "361.0",
             "lowest_price": "358.5",
             "quantity": "2",
-            "strategy": "rl_mppo",
+            "strategy": "setup_a_gap_reversion",
             "state": "SURVIVAL",
             "entry_time": datetime.now().isoformat(),
             "fee_rate": "0.00003",
@@ -736,7 +739,7 @@ class TestRedisPositionLoad:
         position = _positions[0] if _positions else None
         assert position is not None
         assert position.side == PositionSide.SHORT
-        assert position.strategy == "rl_mppo"
+        assert position.strategy == "setup_a_gap_reversion"
 
     def test_load_positions_with_different_states(self, position_tracker, mock_redis):
         """Test loading positions in different states"""
@@ -823,22 +826,24 @@ class TestRedisPositionLoad:
         # Mix valid and invalid data
         mock_redis.hgetall.return_value = {
             b"pos_001": b"not valid json",  # Corrupted data
-            b"pos_002": json.dumps({
-                "id": "pos_002",
-                "code": "005930",
-                "name": "Samsung",
-                "side": "long",
-                "entry_price": "71000",
-                "current_price": "71000",
-                "highest_price": "71000",
-                "lowest_price": "71000",
-                "quantity": "10",
-                "strategy": "test",
-                "state": "SURVIVAL",
-                "entry_time": datetime.now().isoformat(),
-                "fee_rate": "0.00015",
-                "metadata": "{}",
-            }).encode(),  # Valid data
+            b"pos_002": json.dumps(
+                {
+                    "id": "pos_002",
+                    "code": "005930",
+                    "name": "Samsung",
+                    "side": "long",
+                    "entry_price": "71000",
+                    "current_price": "71000",
+                    "highest_price": "71000",
+                    "lowest_price": "71000",
+                    "quantity": "10",
+                    "strategy": "test",
+                    "state": "SURVIVAL",
+                    "entry_time": datetime.now().isoformat(),
+                    "fee_rate": "0.00015",
+                    "metadata": "{}",
+                }
+            ).encode(),  # Valid data
         }
 
         # Load positions - should skip corrupted and load valid
@@ -920,7 +925,7 @@ class TestRedisPositionLoad:
             "highest_price": "360.5",
             "lowest_price": "360.5",
             "quantity": "2",
-            "strategy": "rl_mppo",
+            "strategy": "setup_a_gap_reversion",
             "state": "SURVIVAL",
             "entry_time": datetime.now().isoformat(),
             "fee_rate": str(custom_fee_rate),
@@ -953,7 +958,9 @@ class TestRedisPositionLoad:
         assert loaded_count == 0
         assert position_tracker.position_count == 0
 
-    def test_load_does_not_duplicate_existing_positions(self, position_tracker, mock_redis):
+    def test_load_does_not_duplicate_existing_positions(
+        self, position_tracker, mock_redis
+    ):
         """Test that loading from Redis doesn't duplicate already existing positions"""
         # Add a position directly to tracker
         position_tracker.add_position(
@@ -989,7 +996,7 @@ class TestRedisPositionLoad:
         }
 
         # Load positions - should skip duplicates
-        loaded_count = self._load_positions_from_redis(position_tracker)
+        self._load_positions_from_redis(position_tracker)
 
         # Should still have only 1 position (not 2)
         assert position_tracker.position_count == 1
@@ -1038,11 +1045,11 @@ class TestRedisPositionLoad:
         Returns:
             Number of positions successfully loaded
         """
-        if not hasattr(tracker, '_redis_client') or tracker._redis_client is None:
+        if not hasattr(tracker, "_redis_client") or tracker._redis_client is None:
             return 0
 
         try:
-            redis_key = getattr(tracker, '_redis_key', 'trading:positions')
+            redis_key = getattr(tracker, "_redis_key", "trading:positions")
             positions_data = tracker._redis_client.hgetall(redis_key)
 
             loaded_count = 0
@@ -1051,18 +1058,26 @@ class TestRedisPositionLoad:
                 try:
                     # Decode and parse JSON
                     if isinstance(position_json, bytes):
-                        position_json = position_json.decode('utf-8')
+                        position_json = position_json.decode("utf-8")
 
                     position_dict = json.loads(position_json)
 
                     # Validate required fields
-                    required_fields = ['id', 'code', 'name', 'side', 'entry_price',
-                                       'quantity', 'strategy', 'state']
+                    required_fields = [
+                        "id",
+                        "code",
+                        "name",
+                        "side",
+                        "entry_price",
+                        "quantity",
+                        "strategy",
+                        "state",
+                    ]
                     if not all(field in position_dict for field in required_fields):
                         continue
 
                     # Check if position already exists (avoid duplicates)
-                    if tracker.get_positions_by_symbol(position_dict['code']):
+                    if tracker.get_positions_by_symbol(position_dict["code"]):
                         continue
 
                     # Deserialize position
@@ -1095,30 +1110,38 @@ class TestRedisPositionLoad:
         try:
             # Parse metadata
             metadata = {}
-            if 'metadata' in data and data['metadata']:
-                metadata = json.loads(data['metadata']) if isinstance(data['metadata'], str) else data['metadata']
+            if "metadata" in data and data["metadata"]:
+                metadata = (
+                    json.loads(data["metadata"])
+                    if isinstance(data["metadata"], str)
+                    else data["metadata"]
+                )
 
             # Create Position object
             # Note: In real implementation, this would use Position constructor
             # For testing, we simulate by creating a minimal position structure
             from shared.models.position import Position
 
-            entry_time = datetime.fromisoformat(data['entry_time']) if 'entry_time' in data else datetime.now()
+            entry_time = (
+                datetime.fromisoformat(data["entry_time"])
+                if "entry_time" in data
+                else datetime.now()
+            )
 
             position = Position(
-                id=data['id'],
-                code=data['code'],
-                name=data['name'],
-                side=PositionSide(data['side']),
-                entry_price=float(data['entry_price']),
-                quantity=int(data['quantity']),
+                id=data["id"],
+                code=data["code"],
+                name=data["name"],
+                side=PositionSide(data["side"]),
+                entry_price=float(data["entry_price"]),
+                quantity=int(data["quantity"]),
                 entry_time=entry_time,
-                current_price=float(data.get('current_price', data['entry_price'])),
-                highest_price=float(data.get('highest_price', data['entry_price'])),
-                lowest_price=float(data.get('lowest_price', data['entry_price'])),
-                state=PositionState(data['state'].lower()),
-                strategy=data['strategy'],
-                fee_rate=float(data.get('fee_rate', 0.00015)),
+                current_price=float(data.get("current_price", data["entry_price"])),
+                highest_price=float(data.get("highest_price", data["entry_price"])),
+                lowest_price=float(data.get("lowest_price", data["entry_price"])),
+                state=PositionState(data["state"].lower()),
+                strategy=data["strategy"],
+                fee_rate=float(data.get("fee_rate", 0.00015)),
                 metadata=metadata,
             )
 
@@ -1146,7 +1169,10 @@ class TestRedisCleanup:
     @pytest.fixture
     def position_tracker(self, mock_redis):
         """Create PositionTracker with mocked Redis"""
-        from services.trading.position_tracker import PositionTracker, PositionTrackerConfig
+        from services.trading.position_tracker import (
+            PositionTracker,
+            PositionTrackerConfig,
+        )
 
         config = PositionTrackerConfig(max_positions=10)
         tracker = PositionTracker(config=config)
@@ -1218,12 +1244,20 @@ class TestRedisCleanup:
         """Test that partial cleanup removes only closed positions"""
         # Add three positions
         pos1 = position_tracker.add_position(
-            code="005930", name="Samsung", entry_price=71000, quantity=10, strategy="test"
+            code="005930",
+            name="Samsung",
+            entry_price=71000,
+            quantity=10,
+            strategy="test",
         )
-        pos2 = position_tracker.add_position(
-            code="000660", name="SK Hynix", entry_price=120000, quantity=5, strategy="test"
+        position_tracker.add_position(
+            code="000660",
+            name="SK Hynix",
+            entry_price=120000,
+            quantity=5,
+            strategy="test",
         )
-        pos3 = position_tracker.add_position(
+        position_tracker.add_position(
             code="035720", name="Kakao", entry_price=50000, quantity=20, strategy="test"
         )
 
@@ -1279,7 +1313,9 @@ class TestRedisCleanup:
             # Exception should be caught and logged, not propagate
             pass
 
-    def test_close_nonexistent_position_no_redis_call(self, position_tracker, mock_redis):
+    def test_close_nonexistent_position_no_redis_call(
+        self, position_tracker, mock_redis
+    ):
         """Test that closing non-existent position doesn't call Redis"""
         # Try to close a position that doesn't exist
         closed = position_tracker.close_position(
@@ -1299,7 +1335,7 @@ class TestRedisCleanup:
             name="KOSPI200 Mini",
             entry_price=360.5,
             quantity=2,
-            strategy="rl_mppo",
+            strategy="setup_a_gap_reversion",
             side=PositionSide.SHORT,
         )
 
@@ -1394,7 +1430,9 @@ class TestRedisCleanup:
         # Verify pos2 is still tracked
         assert len(position_tracker.get_positions_by_symbol("000660")) > 0
 
-    def test_cleanup_with_metadata_preserved_until_close(self, position_tracker, mock_redis):
+    def test_cleanup_with_metadata_preserved_until_close(
+        self, position_tracker, mock_redis
+    ):
         """Test that position metadata is preserved in Redis until cleanup"""
         metadata = {
             "signal_strength": 0.85,
@@ -1443,18 +1481,30 @@ class TestRedisCleanup:
 
         # Add positions to each
         stock_pos = stock_tracker.add_position(
-            code="005930", name="Samsung", entry_price=71000, quantity=10, strategy="test"
+            code="005930",
+            name="Samsung",
+            entry_price=71000,
+            quantity=10,
+            strategy="test",
         )
         futures_pos = futures_tracker.add_position(
-            code="A05000", name="KOSPI Mini", entry_price=360, quantity=2, strategy="test"
+            code="A05000",
+            name="KOSPI Mini",
+            entry_price=360,
+            quantity=2,
+            strategy="test",
         )
 
         # Close stock position
-        stock_tracker.close_position(stock_pos.id, exit_price=72000, reason="TAKE_PROFIT")
+        stock_tracker.close_position(
+            stock_pos.id, exit_price=72000, reason="TAKE_PROFIT"
+        )
         mock_redis.hdel(stock_tracker._redis_key, stock_pos.id)
 
         # Close futures position
-        futures_tracker.close_position(futures_pos.id, exit_price=365, reason="TAKE_PROFIT")
+        futures_tracker.close_position(
+            futures_pos.id, exit_price=365, reason="TAKE_PROFIT"
+        )
         mock_redis.hdel(futures_tracker._redis_key, futures_pos.id)
 
         # Verify both cleanup calls used correct Redis keys

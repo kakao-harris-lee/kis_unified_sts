@@ -29,8 +29,6 @@ from shared.collector.historical.calendar import (
     trading_day_lag,
 )
 from shared.config.base import ServiceConfigBase
-from shared.db.client import get_clickhouse_client
-from shared.db.config import ClickHouseConfig
 from shared.exceptions import InfrastructureError
 from shared.streaming.client import RedisClient
 
@@ -426,7 +424,9 @@ class DailyScanner:
             List of ``DailyBar`` ordered oldest → newest. Empty on error.
         """
         try:
-            client = get_clickhouse_client(ClickHouseConfig.from_env())
+            from shared.storage import get_clickhouse_client_wrapper
+
+            client = get_clickhouse_client_wrapper()
             end_date = date.today()
             start_date = end_date - timedelta(days=lookback_days)
             candles = client.get_daily_candles(code, start_date, end_date)

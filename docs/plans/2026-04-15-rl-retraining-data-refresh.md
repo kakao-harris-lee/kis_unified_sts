@@ -1,5 +1,7 @@
 # RL Model Retraining & Data Refresh Plan
 
+**Status**: Superseded 2026-06-03 by [2026-06-03-ml-rl-removal-llm-indicator-futures.md](2026-06-03-ml-rl-removal-llm-indicator-futures.md). Do not resume this retraining pipeline unless the operator explicitly reverses the ML/RL removal decision. This file is retained as historical context only.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans.
 
 **Goal:** 선물 RL (`rl_mppo`)이 학습 eval Sharpe 3.19에서 실운용 15.9% 승률 / avg -0.70 PnL/trade로 악화된 성능 괴리를 복구한다. Obs 파이프라인·프로파일 매트릭스 정합은 이미 확인/수정 (PR 2026-04-15 paper-trading-quality-recovery). 남은 원인 후보는 (a) scaler 도메인 부정합 (101S6000 연결선물 학습 vs A05xxx 미니 거래), (b) 시장 레짐 변화 (2026-04 관세 충격/KOSPI200 레벨), (c) 학습 데이터 노후화.

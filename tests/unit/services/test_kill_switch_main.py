@@ -5,6 +5,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from services.kill_switch.main import (
+    _EVENTS_STREAM,
+    _FORCE_FLATTEN_KEY,
     ApiErrorRateCondition,
     ClickHouseInsertFailCondition,
     ConsecutiveLossesCondition,
@@ -12,11 +14,10 @@ from services.kill_switch.main import (
     KillSwitchDaemon,
     NewsPipelineLagCondition,
     WeeklyLossCondition,
-    _EVENTS_STREAM,
-    _FORCE_FLATTEN_KEY,
     _build_api_error_rate_provider,
     _build_clickhouse_insert_fail_provider,
     _build_news_pipeline_lag_provider,
+    _clickhouse_insert_fail_condition_enabled,
 )
 
 # ---------------------------------------------------------------------------
@@ -106,6 +107,18 @@ class TestClickHouseInsertFail:
         c = ClickHouseInsertFailCondition(threshold=0.1, rate_provider=lambda: 0.0)
         assert c.check(snapshot=None) is False
 
+    def test_condition_registration_disabled_when_mirror_disabled(self, monkeypatch):
+        monkeypatch.setenv("RUNTIME_STORAGE_CLICKHOUSE_MIRROR_ENABLED", "false")
+        condition = MagicMock(enabled=True, threshold=0.1)
+
+        assert _clickhouse_insert_fail_condition_enabled(condition) is False
+
+    def test_condition_registration_enabled_when_mirror_enabled(self, monkeypatch):
+        monkeypatch.setenv("RUNTIME_STORAGE_CLICKHOUSE_MIRROR_ENABLED", "true")
+        condition = MagicMock(enabled=True, threshold=0.1)
+
+        assert _clickhouse_insert_fail_condition_enabled(condition) is True
+
 
 # ---------------------------------------------------------------------------
 # Daemon-level tests — trigger pipeline, sentinel, telegram, exit.
@@ -115,7 +128,7 @@ class TestClickHouseInsertFail:
 class _AlwaysTrigger:
     name = "test_condition"
 
-    def check(self, *, snapshot):  # noqa: D401
+    def check(self, *, snapshot):  # noqa: ARG002,D401
         return True
 
     @property
@@ -126,7 +139,7 @@ class _AlwaysTrigger:
 class _NeverTrigger:
     name = "never"
 
-    def check(self, *, snapshot):
+    def check(self, *, snapshot):  # noqa: ARG002
         return False
 
     @property
@@ -342,9 +355,7 @@ class TestForceFlatCallbackRedisSignalling:
                         _EVENTS_STREAM,
                         {"event": "force_flatten_requested", "reason": reason},
                     )
-                    await redis_mock.expire(
-                        _EVENTS_STREAM, _EVENTS_STREAM_TTL_SECONDS
-                    )
+                    await redis_mock.expire(_EVENTS_STREAM, _EVENTS_STREAM_TTL_SECONDS)
                 except Exception:
                     import logging as _logging
 

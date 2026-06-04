@@ -2,7 +2,7 @@
 
 Background
 ----------
-2026-04-15 → 2026-05-03: paper-mode futures RL trader produced 0 trades for
+2026-04-15 → 2026-05-03: paper-mode futures trading produced 0 trades for
 18 days because pipeline.with_retry silently caught
 ``TypeError("can't compare offset-naive and offset-aware datetimes")`` on
 every signal cycle. Root causes were spread across the entry pipeline:
@@ -29,6 +29,7 @@ import pytest
 
 # --- IndicatorEngine.get_indicators staleness guard ---------------------------
 
+
 def test_get_indicators_handles_naive_last_tick_ts_with_aware_now():
     """Legacy on_tick path may have left a naive last_tick_ts; querying with
     a tz-aware ``now`` argument used to raise inside the staleness guard."""
@@ -42,8 +43,12 @@ def test_get_indicators_handles_naive_last_tick_ts_with_aware_now():
     # Two candles to clear the bb_period gate
     from services.trading.indicator_engine import Candle as _Candle
 
-    acc.candles.append(_Candle(open=100.0, high=100.0, low=100.0, close=100.0, volume=1.0, minute=900))
-    acc.candles.append(_Candle(open=101.0, high=101.0, low=101.0, close=101.0, volume=1.0, minute=901))
+    acc.candles.append(
+        _Candle(open=100.0, high=100.0, low=100.0, close=100.0, volume=1.0, minute=900)
+    )
+    acc.candles.append(
+        _Candle(open=101.0, high=101.0, low=101.0, close=101.0, volume=1.0, minute=901)
+    )
     acc.last_tick_ts = datetime.now()  # NAIVE (legacy)
     engine._accumulators["TEST"] = acc
 
@@ -64,8 +69,12 @@ def test_get_indicators_handles_aware_last_tick_ts_with_naive_now():
     acc = CandleAccumulator(maxlen=10)
     from services.trading.indicator_engine import Candle as _Candle
 
-    acc.candles.append(_Candle(open=100.0, high=100.0, low=100.0, close=100.0, volume=1.0, minute=900))
-    acc.candles.append(_Candle(open=101.0, high=101.0, low=101.0, close=101.0, volume=1.0, minute=901))
+    acc.candles.append(
+        _Candle(open=100.0, high=100.0, low=100.0, close=100.0, volume=1.0, minute=900)
+    )
+    acc.candles.append(
+        _Candle(open=101.0, high=101.0, low=101.0, close=101.0, volume=1.0, minute=901)
+    )
     acc.last_tick_ts = datetime.now(UTC)  # tz-aware
     engine._accumulators["TEST"] = acc
 
@@ -73,6 +82,7 @@ def test_get_indicators_handles_aware_last_tick_ts_with_naive_now():
 
 
 # --- Position.get_hold_duration ----------------------------------------------
+
 
 def test_position_hold_duration_aware_entry_time():
     """entry_time may be set tz-aware (datetime.now(UTC)); duration must
@@ -87,7 +97,7 @@ def test_position_hold_duration_aware_entry_time():
         entry_price=350.0,
         quantity=1,
         entry_time=datetime.now(UTC) - timedelta(seconds=5),
-        strategy="rl_mppo",
+        strategy="setup_a_gap_reversion",
     )
     assert pos.get_hold_duration_seconds() >= 4.0
     assert pos.get_hold_duration() >= 0.0
@@ -105,12 +115,13 @@ def test_position_hold_duration_naive_entry_time():
         entry_price=350.0,
         quantity=1,
         entry_time=datetime.now() - timedelta(seconds=5),
-        strategy="rl_mppo",
+        strategy="setup_a_gap_reversion",
     )
     assert pos.get_hold_duration_seconds() >= 4.0
 
 
 # --- MarketDataCache.is_stale -------------------------------------------------
+
 
 def test_market_data_cache_is_stale_aware_fetched_at():
     from services.trading.data_provider import MarketDataCache
@@ -132,6 +143,7 @@ def test_market_data_cache_is_stale_naive_fetched_at():
 
 
 # --- pipeline.with_retry now logs traceback -----------------------------------
+
 
 @pytest.mark.asyncio
 async def test_with_retry_emits_traceback(caplog):
@@ -158,6 +170,7 @@ async def test_with_retry_emits_traceback(caplog):
 
 
 # --- WebSocket feed timestamp normalization -----------------------------------
+
 
 def test_futures_feed_callback_ts_construction_is_tz_aware():
     """KIS futures_feed.py post-fix builds the callback ts as

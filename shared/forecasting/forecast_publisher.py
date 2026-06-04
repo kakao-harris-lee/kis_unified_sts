@@ -1,4 +1,5 @@
-"""Publish VolForecast / EventScore to Redis + ClickHouse."""
+"""Publish VolForecast / EventScore to Redis plus optional ClickHouse mirror."""
+
 from __future__ import annotations
 
 import logging
@@ -15,7 +16,7 @@ _EVENT_CHANNEL = "forecasting:events"
 
 
 class ForecastPublisher:
-    """Redis (pub/sub + SET with TTL) + ClickHouse persistence.
+    """Redis (pub/sub + SET with TTL) plus optional ClickHouse persistence.
 
     All publish methods are non-raising — infrastructure failures are
     logged and forecast generation continues.
@@ -37,7 +38,9 @@ class ForecastPublisher:
             self._redis.set(_VOL_KEY, vf.to_json(), ex=self._vol_ttl_s)
         except Exception as e:  # noqa: BLE001
             logger.warning("Redis SET %s failed: %s", _VOL_KEY, e)
-        # 2. ClickHouse persist
+        # 2. Optional ClickHouse mirror
+        if self._ch is None:
+            return
         try:
             self._ch.execute(
                 "INSERT INTO kospi.vol_forecasts "
@@ -65,12 +68,12 @@ class ForecastPublisher:
             logger.warning("Redis publish %s failed: %s", _EVENT_CHANNEL, e)
         # 2. Redis SET latest (fallback path)
         try:
-            self._redis.set(
-                _EVENT_LATEST_KEY, es.to_json(), ex=es.ttl_minutes * 60
-            )
+            self._redis.set(_EVENT_LATEST_KEY, es.to_json(), ex=es.ttl_minutes * 60)
         except Exception as e:  # noqa: BLE001
             logger.warning("Redis SET %s failed: %s", _EVENT_LATEST_KEY, e)
-        # 3. ClickHouse persist
+        # 3. Optional ClickHouse mirror
+        if self._ch is None:
+            return
         try:
             source_value = 1 if es.source == "rule" else 2
             self._ch.execute(

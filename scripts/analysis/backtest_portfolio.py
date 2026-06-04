@@ -484,8 +484,6 @@ class PriorityDailyPortfolioBacktestEngine(BacktestEngine):
         sort_cols = ["datetime"] + (["code"] if "code" in data.columns else [])
         data = data.sort_values(sort_cols).reset_index(drop=True)
 
-        if hasattr(self.strategy, "precompute_rl_features"):
-            self.strategy.precompute_rl_features(data)
         if hasattr(self.strategy, "prescan_data"):
             self.strategy.prescan_data(data)
 

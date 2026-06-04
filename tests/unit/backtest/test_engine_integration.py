@@ -14,7 +14,6 @@ import pytest
 from shared.backtest.config import BacktestConfig, RiskConfig
 from shared.backtest.engine import BacktestEngine, ExitReason, SignalType
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -122,22 +121,14 @@ class _ExitCheckStrategy:
         return False, None
 
 
-class _RLFeatureStrategy:
-    """Strategy that uses RL preprocessing hooks."""
+class _PrescanStrategy:
+    """Strategy that uses the data prescan hook."""
 
-    name = "rl_feature"
+    name = "prescan_feature"
 
     def __init__(self):
-        self.precompute_called = False
         self.prescan_called = False
         self._bought = False
-
-    def precompute_rl_features(self, data: pd.DataFrame):
-        """RL feature precomputation hook."""
-        self.precompute_called = True
-        # Verify data is valid
-        assert not data.empty
-        assert "close" in data.columns
 
     def prescan_data(self, data: pd.DataFrame):
         """Data prescan hook (e.g., for daily volume totals)."""
@@ -161,7 +152,9 @@ class TestDayChangeScenarios:
 
     def test_close_on_day_change_enabled(self):
         """When close_on_day_change=True, positions close at day boundary."""
-        risk = RiskConfig(close_on_day_change=True, stop_loss_pct=999.0, take_profit_pct=999.0)
+        risk = RiskConfig(
+            close_on_day_change=True, stop_loss_pct=999.0, take_profit_pct=999.0
+        )
         config = BacktestConfig(risk=risk)
         strategy = _AlwaysBuyStrategy()
 
@@ -184,7 +177,9 @@ class TestDayChangeScenarios:
 
     def test_close_on_day_change_disabled(self):
         """When close_on_day_change=False, positions carry over days."""
-        risk = RiskConfig(close_on_day_change=False, stop_loss_pct=999.0, take_profit_pct=999.0)
+        risk = RiskConfig(
+            close_on_day_change=False, stop_loss_pct=999.0, take_profit_pct=999.0
+        )
         config = BacktestConfig(risk=risk)
         strategy = _AlwaysBuyStrategy()
 
@@ -264,12 +259,16 @@ class TestDailyLimits:
 
     def test_max_daily_trades_zero_means_unlimited(self):
         """max_daily_trades=0 should allow unlimited trades."""
-        risk = RiskConfig(max_daily_trades=0, stop_loss_pct=999.0, take_profit_pct=999.0)
+        risk = RiskConfig(
+            max_daily_trades=0, stop_loss_pct=999.0, take_profit_pct=999.0
+        )
         config = BacktestConfig(risk=risk)
         strategy = _BuyEveryNBarsStrategy(n=5)
 
         # Also use a strategy with tight max_daily_trades to compare
-        risk_limited = RiskConfig(max_daily_trades=1, stop_loss_pct=999.0, take_profit_pct=999.0)
+        risk_limited = RiskConfig(
+            max_daily_trades=1, stop_loss_pct=999.0, take_profit_pct=999.0
+        )
         config_limited = BacktestConfig(risk=risk_limited)
         strategy_limited = _BuyEveryNBarsStrategy(n=5)
 
@@ -423,40 +422,27 @@ class TestExitStrategyIntegration:
 
 
 # ---------------------------------------------------------------------------
-# Test: RL Features
+# Test: Data Prescan Hooks
 # ---------------------------------------------------------------------------
 
 
-class TestRLFeatures:
-    """Test RL-specific preprocessing hooks."""
-
-    def test_precompute_rl_features_called(self):
-        """precompute_rl_features should be called before main loop."""
-        strategy = _RLFeatureStrategy()
-        config = BacktestConfig()
-
-        data = _make_ohlcv(100)
-        engine = BacktestEngine(strategy, config)
-        result = engine.run(data)
-
-        # Hook should have been called
-        assert strategy.precompute_called is True
-        assert result.total_bars == 100
+class TestDataPrescanHooks:
+    """Test strategy data prescan hooks."""
 
     def test_prescan_data_called(self):
         """prescan_data should be called before main loop."""
-        strategy = _RLFeatureStrategy()
+        strategy = _PrescanStrategy()
         config = BacktestConfig()
 
         data = _make_ohlcv(100)
         engine = BacktestEngine(strategy, config)
-        result = engine.run(data)
+        engine.run(data)
 
         # Hook should have been called
         assert strategy.prescan_called is True
 
-    def test_rl_hooks_called_in_correct_order(self):
-        """RL hooks should be called before iterating bars."""
+    def test_prescan_hook_called_before_iterating_bars(self):
+        """prescan_data should be called before iterating bars."""
 
         class _OrderCheckStrategy:
             name = "order_check"
@@ -464,14 +450,11 @@ class TestRLFeatures:
             def __init__(self):
                 self.call_order = []
 
-            def precompute_rl_features(self, data: pd.DataFrame):
-                self.call_order.append("precompute")
-
             def prescan_data(self, data: pd.DataFrame):
                 self.call_order.append("prescan")
 
             def on_bar(self, bar: dict) -> SignalType:
-                if len(self.call_order) == 2 and not hasattr(self, "_first_bar"):
+                if len(self.call_order) == 1 and not hasattr(self, "_first_bar"):
                     self.call_order.append("on_bar")
                     self._first_bar = True
                 return SignalType.HOLD
@@ -483,21 +466,17 @@ class TestRLFeatures:
         engine = BacktestEngine(strategy, config)
         engine.run(data)
 
-        # Expected order: precompute → prescan → on_bar
-        assert strategy.call_order == ["precompute", "prescan", "on_bar"]
+        # Expected order: prescan -> on_bar
+        assert strategy.call_order == ["prescan", "on_bar"]
 
-    def test_rl_features_receive_full_dataset(self):
-        """RL preprocessing should receive the complete dataset."""
+    def test_prescan_receives_full_dataset(self):
+        """Data prescan should receive the complete dataset."""
 
         class _DataCheckStrategy:
             name = "data_check"
 
             def __init__(self):
-                self.precompute_rows = 0
                 self.prescan_rows = 0
-
-            def precompute_rl_features(self, data: pd.DataFrame):
-                self.precompute_rows = len(data)
 
             def prescan_data(self, data: pd.DataFrame):
                 self.prescan_rows = len(data)
@@ -512,13 +491,12 @@ class TestRLFeatures:
         engine = BacktestEngine(strategy, config)
         result = engine.run(data)
 
-        # Both hooks should receive full 100 rows
-        assert strategy.precompute_rows == 100
+        # Hook should receive full 100 rows
         assert strategy.prescan_rows == 100
         assert result.total_bars == 100
 
-    def test_rl_features_without_hooks_still_works(self):
-        """Strategies without RL hooks should still work normally."""
+    def test_strategies_without_hooks_still_work(self):
+        """Strategies without prescan hooks should still work normally."""
 
         class _NoHooksStrategy:
             name = "no_hooks"
@@ -572,33 +550,32 @@ class TestComplexIntegrationScenarios:
 
         assert strategy_exits > 0 or force_closes > 0
 
-    def test_rl_features_with_multi_day_data(self):
-        """RL preprocessing should work correctly with multi-day data."""
-        strategy = _RLFeatureStrategy()
+    def test_prescan_with_multi_day_data(self):
+        """Data prescan should work correctly with multi-day data."""
+        strategy = _PrescanStrategy()
         config = BacktestConfig()
 
         data = _make_multi_day_ohlcv(days=3, bars_per_day=30)
         engine = BacktestEngine(strategy, config)
         result = engine.run(data)
 
-        # Hooks should be called with full 90 bars
-        assert strategy.precompute_called is True
+        # Hook should be called with full 90 bars
         assert strategy.prescan_called is True
         assert result.total_bars == 90
 
-    def test_exit_strategy_with_rl_features(self):
-        """Exit strategy and RL features should coexist."""
+    def test_exit_strategy_with_prescan_hook(self):
+        """Exit strategy and prescan hook should coexist."""
 
-        class _RLExitStrategy:
-            name = "rl_exit"
+        class _PrescanExitStrategy:
+            name = "prescan_exit"
 
             def __init__(self):
-                self.precompute_called = False
+                self.prescan_called = False
                 self.position = None
                 self._bars_held = 0
 
-            def precompute_rl_features(self, data: pd.DataFrame):
-                self.precompute_called = True
+            def prescan_data(self, data: pd.DataFrame):
+                self.prescan_called = True
 
             def set_position(self, position):
                 self.position = position
@@ -614,29 +591,31 @@ class TestComplexIntegrationScenarios:
 
             def check_exit(self, bar: dict) -> tuple[bool, ExitReason | None]:
                 if self._bars_held >= 5:
-                    return True, ExitReason.RL_EXIT
+                    return True, ExitReason.STRATEGY_EXIT
                 return False, None
 
-        strategy = _RLExitStrategy()
+        strategy = _PrescanExitStrategy()
         config = BacktestConfig()
 
         data = _make_ohlcv(50)
         engine = BacktestEngine(strategy, config)
         result = engine.run(data)
 
-        # Both features should work
-        assert strategy.precompute_called is True
-        rl_exits = [
-            t for t in result.trades if t.exit_reason == ExitReason.RL_EXIT.value
+        # Both features should work.
+        assert strategy.prescan_called is True
+        strategy_exits = [
+            t for t in result.trades if t.exit_reason == ExitReason.STRATEGY_EXIT.value
         ]
-        assert len(rl_exits) >= 1
+        assert len(strategy_exits) >= 1
 
     def test_futures_contract_with_day_change(self):
         """Test futures-specific behavior with day changes."""
         config = BacktestConfig.futures(
             initial_capital=10_000_000, contracts=1, point_value=250_000
         )
-        config.risk = RiskConfig(close_on_day_change=True, stop_loss_pct=999.0, take_profit_pct=999.0)
+        config.risk = RiskConfig(
+            close_on_day_change=True, stop_loss_pct=999.0, take_profit_pct=999.0
+        )
         strategy = _AlwaysBuyStrategy()
 
         data = _make_multi_day_ohlcv(days=2, bars_per_day=30)
@@ -659,7 +638,7 @@ class TestComplexIntegrationScenarios:
         class _PreprocessStrategy:
             name = "preprocess"
 
-            def precompute_rl_features(self, data: pd.DataFrame):
+            def prescan_data(self, data: pd.DataFrame):
                 pass  # Hook exists but does nothing
 
             def on_bar(self, bar: dict) -> SignalType:

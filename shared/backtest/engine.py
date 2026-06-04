@@ -192,10 +192,6 @@ class BacktestEngine:
         logger.info(f"Starting backtest: {len(data)} bars")
         logger.info(f"Period: {start_date} ~ {end_date}")
 
-        # Pre-compute RL features for entire dataset (vectorized, ~2s vs ~59min)
-        if hasattr(self.strategy, "precompute_rl_features"):
-            self.strategy.precompute_rl_features(data)
-
         # Pre-scan data for daily volume totals (enables prev_day_volume from day 2)
         if hasattr(self.strategy, "prescan_data"):
             self.strategy.prescan_data(data)
@@ -354,7 +350,8 @@ class BacktestEngine:
         if self._gate is not None and signal in (SignalType.BUY, SignalType.SELL):
             direction = "long" if signal == SignalType.BUY else "short"
             allow, _reason, _regime_pct = self._gate.allow(
-                ts=timestamp, asset=code, signal_direction=direction)
+                ts=timestamp, asset=code, signal_direction=direction
+            )
             if not allow:
                 signal = SignalType.HOLD
 

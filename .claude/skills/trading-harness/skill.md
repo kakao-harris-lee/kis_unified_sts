@@ -210,7 +210,7 @@ code-audit (style/architecture-auditor) + npm run build/타입체크
 2. `black . && ruff check .` 통과
 3. CLAUDE.md 규칙 준수 (하드코딩 금지, DRY, Strategy Pattern, KST, Look-ahead 금지)
 4. YAML config 존재 및 유효성
-5. DEPRECATED 전략(`rl_mppo`, `llm_directed_indicator`) 미사용
+5. REMOVED/DEPRECATED 전략(`rl_mppo`, `llm_directed_indicator`) 미사용
 
 전략 Paper→Live 승격 시:
 1. 종합 승격 판정 PASS (model-evaluator)

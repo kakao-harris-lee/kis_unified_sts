@@ -125,5 +125,5 @@ model-evaluator: before/after 비교 판정
 - **슬리피지 필수**: 백테스트/페이퍼 모두 (모델 검증은 `execution-specialist`)
 - **데이터 정합 우선**: 백테스트 입력 분봉의 gap/기간 무결성은 `data-engineer`가 보장
 - **KST 타임존**: 시간 필터 전 KST 변환
-- **DEPRECATED 회피**: `rl_mppo`, `llm_directed_indicator`는 신규 설계 미사용
+- **REMOVED/DEPRECATED 회피**: removed `rl_mppo`, deprecated `llm_directed_indicator`는 신규 설계 미사용
 - **Live는 게이트 뒤**: 선물 live는 Phase 5 Gate 통과 + 운영자 승인 후에만 (실행 경로는 `execution-specialist`)

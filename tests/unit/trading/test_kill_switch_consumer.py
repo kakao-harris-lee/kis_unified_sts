@@ -30,7 +30,7 @@ def _make_position(
     side: str = "long",
     quantity: int = 1,
     current_price: float = 360.0,
-    strategy: str = "rl_mppo",
+    strategy: str = "setup_a_gap_reversion",
 ) -> MagicMock:
     """Build a minimal Position mock."""
     from shared.models.position import PositionSide
@@ -61,7 +61,7 @@ class _FakeOrchestrator:
         from services.trading.orchestrator import TradingConfig
 
         self.config = TradingConfig.stock(
-            strategy_name="rl_mppo",
+            strategy_name="setup_a_gap_reversion",
             symbols=["A05603"],
             initial_capital=10_000_000,
         )
@@ -154,7 +154,7 @@ def _make_closed_pos(
     closed = MagicMock()
     closed.id = position_id
     closed.unrealized_pnl = 0.0
-    closed.strategy = "rl_mppo"
+    closed.strategy = "setup_a_gap_reversion"
     return closed
 
 

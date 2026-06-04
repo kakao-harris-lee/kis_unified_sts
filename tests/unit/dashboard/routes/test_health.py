@@ -1,5 +1,8 @@
 """Health endpoints — process / data-freshness / kill-switch / summary."""
+
+from datetime import datetime, timedelta
 from unittest.mock import patch
+from zoneinfo import ZoneInfo
 
 import pytest
 from fastapi.testclient import TestClient
@@ -34,14 +37,22 @@ class TestProcessHealth:
         body = res.json()
         assert "processes" in body
         for p in body["processes"]:
-            assert {"asset_class", "pid", "uptime_s", "last_activity_s", "alive"} <= set(p.keys())
+            assert {
+                "asset_class",
+                "pid",
+                "uptime_s",
+                "last_activity_s",
+                "alive",
+            } <= set(p.keys())
 
     def test_alive_when_pid_running(self, client):
         res = client.get("/api/health/process")
         assert res.status_code == 200
 
     def test_dead_process_has_zero_pid(self, client):
-        with patch("services.dashboard.routes.health._read_pid_file", return_value=None):
+        with patch(
+            "services.dashboard.routes.health._read_pid_file", return_value=None
+        ):
             res = client.get("/api/health/process")
             assert res.status_code == 200
             for p in res.json()["processes"]:
@@ -56,7 +67,14 @@ class TestDataFreshness:
         body = res.json()
         assert "sources" in body
         for src in body["sources"]:
-            assert {"source", "asset_class", "symbol_count", "fresh_count", "fresh_ratio", "last_tick_s"} <= set(src.keys())
+            assert {
+                "source",
+                "asset_class",
+                "symbol_count",
+                "fresh_count",
+                "fresh_ratio",
+                "last_tick_s",
+            } <= set(src.keys())
 
     def test_fresh_ratio_is_float_between_zero_and_one(self, client):
         res = client.get("/api/health/data-freshness")
@@ -98,11 +116,77 @@ class TestHealthSummary:
         res = client.get("/api/health/summary")
         assert res.status_code == 200
         body = res.json()
-        assert {"processes", "data_sources", "kill_switch", "today_pnl"} <= set(body.keys())
+        assert {"processes", "data_sources", "kill_switch", "today_pnl"} <= set(
+            body.keys()
+        )
 
     def test_supports_asset_class_filter(self, client):
         res = client.get("/api/health/summary", params={"asset_class": "futures"})
         assert res.status_code == 200
+
+    def test_today_pnl_reads_runtime_ledger(self, client, monkeypatch, tmp_path):
+        from services.dashboard.routes import health
+        from shared.storage.runtime_ledger import SQLiteRuntimeLedger
+
+        db_path = tmp_path / "runtime.db"
+        monkeypatch.setenv("RUNTIME_STORAGE_BACKEND", "sqlite")
+        monkeypatch.setenv("RUNTIME_STORAGE_SQLITE_PATH", str(db_path))
+        monkeypatch.setattr(health, "_futures_multiplier_krw_per_point", lambda: 50_000)
+
+        def _boom(_asset):
+            raise AssertionError("ClickHouse fallback should not be called")
+
+        monkeypatch.setattr(health, "_today_pnl_from_clickhouse", _boom)
+
+        kst = ZoneInfo("Asia/Seoul")
+        today = datetime.now(kst).replace(hour=10, minute=0, second=0, microsecond=0)
+        yesterday = today - timedelta(days=1)
+
+        ledger = SQLiteRuntimeLedger(db_path)
+        ledger.record_trade(
+            {
+                "id": "stock-today",
+                "asset_class": "stock",
+                "code": "005930",
+                "side": "long",
+                "entry_time": today.isoformat(),
+                "entry_price": 1000.0,
+                "exit_time": today.isoformat(),
+                "exit_price": 1100.0,
+                "quantity": 10,
+            }
+        )
+        ledger.record_trade(
+            {
+                "id": "futures-today",
+                "asset_class": "futures",
+                "code": "101S6000",
+                "side": "long",
+                "entry_time": today.isoformat(),
+                "entry_price": 350.0,
+                "exit_time": today.isoformat(),
+                "exit_price": 351.0,
+                "quantity": 1,
+            }
+        )
+        ledger.record_trade(
+            {
+                "id": "stock-yesterday",
+                "asset_class": "stock",
+                "code": "000000",
+                "side": "long",
+                "entry_time": yesterday.isoformat(),
+                "entry_price": 1000.0,
+                "exit_time": yesterday.isoformat(),
+                "exit_price": 2000.0,
+                "quantity": 1,
+            }
+        )
+        ledger.close()
+
+        res = client.get("/api/health/summary", params={"asset_class": "all"})
+        assert res.status_code == 200
+        assert res.json()["today_pnl"] == 51_000
 
     # serial: the two requests must land within the real 1s cache window;
     # parallel CPU starvation can space them further apart and break the cache.

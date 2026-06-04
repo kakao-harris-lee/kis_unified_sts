@@ -306,20 +306,9 @@ class BacktestStrategyAdapter:
         # Strategy name for conditional enrichment
         self._strategy_name = strategy.name
 
-        # Backtest toggle: RL precompute can drift from live indicator path.
-        self._use_precomputed_rl_features = bool(
-            strategy_config.get("strategy", {})
-            .get("backtest", {})
-            .get("use_precomputed_rl_features", False)
-        )
-
-        # Position state for RL strategies (synced from BacktestEngine)
+        # Position state synced from BacktestEngine.
         self._current_position: dict[str, Any] | None = None
         self.last_entry_signal = None
-
-        # Pre-computed RL features (populated by precompute_rl_features)
-        self._precomputed_rl_features: list[dict[str, float]] | None = None
-        self._bar_index: int = 0
 
         # Adaptive regime detection (optional, controlled by config flag)
         self._regime_detection_enabled = bool(
@@ -451,58 +440,8 @@ class BacktestStrategyAdapter:
         """Pre-warm daily indicators for minute strategies that need them."""
         self._indicator_engine.seed_daily_candles(symbol, candles)
 
-    def precompute_rl_features(self, data: pd.DataFrame) -> None:
-        """Vectorized RL feature pre-computation for entire backtest dataset.
-
-        Computes all 25 RL features in one pass using RLFeatureCalculator,
-        replacing per-bar derive_features_from_ohlcv() calls (~18ms each).
-        Features are injected into indicators dict during on_bar()/check_exit(),
-        taking priority in build_rl_observation()'s lookup chain.
-        """
-        if not self._use_precomputed_rl_features:
-            self._precomputed_rl_features = None
-            self._bar_index = 0
-            logger.info(
-                "Skipping RL feature precompute (backtest.use_precomputed_rl_features=false)"
-            )
-            return
-
-        from shared.ml.rl.features import RL_FEATURE_COLUMNS, RLFeatureCalculator
-
-        calculator = RLFeatureCalculator()
-        features_df = calculator.calculate(data)
-
-        # Forward-fill NaN from warmup period, then fill remaining with neutral
-        for col in RL_FEATURE_COLUMNS:
-            if col in features_df.columns:
-                features_df[col] = features_df[col].ffill()
-
-        neutral = {
-            col: (
-                1.0
-                if "ratio" in col
-                else (
-                    50.0
-                    if col in ("rsi", "stoch_k", "stoch_d")
-                    else 0.5 if col == "bb_position" else 0.0
-                )
-            )
-            for col in RL_FEATURE_COLUMNS
-        }
-        features_df = features_df.fillna(neutral)
-
-        # Extract only RL feature columns as list of dicts
-        self._precomputed_rl_features = features_df[RL_FEATURE_COLUMNS].to_dict(
-            "records"
-        )
-        self._bar_index = 0
-        logger.info(
-            f"Pre-computed {len(self._precomputed_rl_features)} bars "
-            f"of RL features ({len(RL_FEATURE_COLUMNS)} features each)"
-        )
-
     def set_position(self, position: dict[str, Any] | None) -> None:
-        """BacktestEngine → adapter position sync for RL context."""
+        """BacktestEngine → adapter position sync for strategy context."""
         self._current_position = position
 
     def log_model_switch(
@@ -515,7 +454,7 @@ class BacktestStrategyAdapter:
     ) -> None:
         """Log a model switch event for backtest tracking.
 
-        Called by adaptive strategies (e.g., RLMPPOEntry) when switching models.
+        Called by adaptive strategies when switching models.
 
         Args:
             timestamp: Time of the switch
@@ -601,13 +540,6 @@ class BacktestStrategyAdapter:
         # strategies that read market_data directly, such as atr_dynamic, see
         # ATR/trailing inputs instead of silently falling back to zero.
         exit_market_data = {**bar, **indicators}
-
-        # Inject pre-computed RL features (one-bar lag: exit sees same bar as on_bar)
-        if self._precomputed_rl_features is not None:
-            idx = max(0, self._bar_index - 1)
-            if idx < len(self._precomputed_rl_features):
-                indicators.update(self._precomputed_rl_features[idx])
-                exit_market_data.update(self._precomputed_rl_features[idx])
 
         # Build Position model from engine's position dict
         pos = self._current_position
@@ -730,14 +662,6 @@ class BacktestStrategyAdapter:
         for key, value in daily_indicators.items():
             indicators[f"daily_{key}"] = value
 
-        # Inject pre-computed RL features (preferred for backtest throughput).
-        # RL observation builder reads canonical feature names only, so
-        # pre-computed values must overwrite base indicator keys.
-        if self._precomputed_rl_features is not None:
-            if self._bar_index < len(self._precomputed_rl_features):
-                indicators.update(self._precomputed_rl_features[self._bar_index])
-            self._bar_index += 1
-
         # Derive market_state from MFI using MarketClassifier (matches live orchestrator)
         mfi = indicators.get("mfi")
         if mfi is not None:
@@ -787,7 +711,7 @@ class BacktestStrategyAdapter:
             regime_confidence=regime_confidence,
         )
 
-        # Build position list for RL action masks + observation
+        # Build position list for strategies that need current exposure context.
         current_positions = []
         if self._current_position:
             pos = self._current_position

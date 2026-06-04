@@ -102,11 +102,11 @@ class TestAddRecoveredPosition:
             quantity=1,
             entry_price=837.0,
             entry_time=datetime.now(),
-            strategy="rl_mppo",
+            strategy="setup_a_gap_reversion",
         )
         tracker.add_recovered_position(pos)
         assert len(tracker.get_positions_by_symbol("A01603")) == 1
-        assert len(tracker.get_positions_by_strategy("rl_mppo")) == 1
+        assert len(tracker.get_positions_by_strategy("setup_a_gap_reversion")) == 1
 
     def test_duplicate_id_rejected(self, tracker):
         pos = Position(
@@ -149,7 +149,7 @@ class TestAddRecoveredPosition:
             entry_price=837.0,
             entry_time=datetime.now(),
             current_price=835.0,
-            strategy="rl_mppo",
+            strategy="setup_a_gap_reversion",
         )
         tracker.add_recovered_position(pos)
         recovered = tracker.get_position("short-001")
@@ -211,7 +211,7 @@ class TestRecoverPositionsFromRedis:
             quantity=1,
             entry_price=837.0,
             current_price=835.0,
-            strategy="rl_mppo",
+            strategy="setup_a_gap_reversion",
             entry_time=datetime.now(),
         )
         with patch("shared.streaming.trading_state.TradingStateReader") as MockReader:
@@ -232,7 +232,7 @@ class TestRecoverPositionsFromRedis:
         yesterday = datetime.now() - timedelta(days=1)
         stale_pos = _make_redis_position(
             pos_id="stale-001",
-            strategy="rl_mppo",  # not in SWING_STRATEGIES
+            strategy="setup_a_gap_reversion",  # not in SWING_STRATEGIES
             entry_time=yesterday,
         )
         with patch("shared.streaming.trading_state.TradingStateReader") as MockReader:

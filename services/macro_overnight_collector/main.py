@@ -49,6 +49,8 @@ _CH_INSERT = (
 
 
 async def _write_ch(ch_client: Any, snap) -> None:
+    if ch_client is None:
+        return
     row = (
         datetime.fromtimestamp(snap.ts_ms / 1000, tz=UTC).replace(tzinfo=None),
         snap.session,
@@ -102,19 +104,21 @@ async def _cli(session_kind: str) -> int:
     import aiohttp
     import redis.asyncio as aioredis
 
-    from shared.db.client import AsyncClickHouseClient
-    from shared.db.config import ClickHouseConfig
     from shared.macro.config import MacroCollectorConfig
     from shared.macro.sources.ecos import ECOSSource
     from shared.macro.sources.yahoo import YahooMacroSource
+    from shared.storage import create_async_clickhouse_client
+    from shared.storage.config import StorageConfig
 
     cfg = MacroCollectorConfig.from_yaml()
     stream = cfg.redis_stream
     maxlen = cfg.redis_maxlen
     redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/1")
     r = aioredis.from_url(redis_url)
-    ch = AsyncClickHouseClient(ClickHouseConfig.from_env(database="kospi"))
-    await ch.connect()
+    ch = None
+    storage_config = StorageConfig.load_or_default()
+    if storage_config.runtime_storage.clickhouse_mirror.enabled:
+        ch = await create_async_clickhouse_client(database="kospi")
 
     try:
         if session_kind == "us":
@@ -140,7 +144,8 @@ async def _cli(session_kind: str) -> int:
             rc = 2
     finally:
         await r.aclose()
-        await ch.close()
+        if ch is not None:
+            await ch.close()
     return rc
 
 

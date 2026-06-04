@@ -12,8 +12,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from shared.models.signal import Signal, SignalType
 from core.indicator_engine import IndicatorEngine, _IndicatorDefaults
+from shared.models.signal import Signal, SignalType
 
 logger = logging.getLogger(__name__)
 
@@ -79,15 +79,16 @@ class StrategyEngine:
         rsi_v = float(row.get("rsi") or 50.0)
         macd_hist_v = float(row.get("macd_hist") or 0.0)
 
-        if not (close_v < bb_lower_v and rsi_v < float(self.v35.rsi_oversold) and macd_hist_v > 0):
+        if not (
+            close_v < bb_lower_v
+            and rsi_v < float(self.v35.rsi_oversold)
+            and macd_hist_v > 0
+        ):
             return None
 
         confidence = self._calculate_confidence(rsi_v, macd_hist_v)
         ts = row.get("datetime")
-        if isinstance(ts, datetime):
-            when = ts
-        else:
-            when = datetime.now()
+        when = ts if isinstance(ts, datetime) else datetime.now()
 
         return Signal(
             code=code,
@@ -108,7 +109,11 @@ class StrategyEngine:
             rsi_score = 0.5
         else:
             rsi_score = min(
-                1.0, max(0.0, (float(self.v35.rsi_oversold) - rsi) / float(self.v35.rsi_oversold))
+                1.0,
+                max(
+                    0.0,
+                    (float(self.v35.rsi_oversold) - rsi) / float(self.v35.rsi_oversold),
+                ),
             )
 
         if macd_hist <= 0:

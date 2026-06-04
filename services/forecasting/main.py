@@ -1,4 +1,5 @@
 """Forecasting service — asyncio daemon publishing vol + event scores."""
+
 from __future__ import annotations
 
 import asyncio
@@ -87,9 +88,7 @@ class ForecastingService:
             )
             return
         try:
-            self._forecaster = VolatilityForecaster.from_json(
-                raw, self._config.har_rv
-            )
+            self._forecaster = VolatilityForecaster.from_json(raw, self._config.har_rv)
             logger.info("Loaded HAR-RV model from Redis")
         except Exception as e:  # noqa: BLE001
             logger.warning("Could not deserialize saved model: %s", e)
@@ -106,7 +105,7 @@ class ForecastingService:
                     self._stop_event.wait(),
                     timeout=self._config.forecast_loop_interval_seconds,
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 continue
 
     async def _tick_forecast(self) -> None:
@@ -134,9 +133,7 @@ class ForecastingService:
             pubsub = self._redis.pubsub()
             pubsub.subscribe("news:raw")
         except Exception as e:  # noqa: BLE001
-            logger.warning(
-                "Could not subscribe to news:raw: %s — event loop idle", e
-            )
+            logger.warning("Could not subscribe to news:raw: %s — event loop idle", e)
             await self._stop_event.wait()
             return
 
@@ -178,9 +175,7 @@ def _install_signal_handlers(
 ) -> None:
     for sig in (signal.SIGINT, signal.SIGTERM):
         try:
-            loop.add_signal_handler(
-                sig, lambda: asyncio.create_task(service.stop())
-            )
+            loop.add_signal_handler(sig, lambda: asyncio.create_task(service.stop()))
         except (NotImplementedError, RuntimeError):
             # Signal handlers are not available on all platforms (e.g. Windows
             # or non-main threads). Best-effort installation.
@@ -195,9 +190,8 @@ def _install_signal_handlers(
 
 
 async def _main() -> None:
-    from clickhouse_driver import Client
-
-    from shared.db.config import ClickHouseConfig
+    from shared.storage import create_sync_clickhouse_client
+    from shared.storage.config import StorageConfig
     from shared.streaming.client import RedisClient
 
     logging.basicConfig(
@@ -208,14 +202,10 @@ async def _main() -> None:
     cfg = ForecastingConfig.from_yaml()
     redis = RedisClient.get_client()
 
-    ch_cfg = ClickHouseConfig.from_env(database="kospi")
-    ch = Client(
-        host=ch_cfg.host,
-        port=ch_cfg.port,
-        user=ch_cfg.user,
-        password=ch_cfg.password,
-        database="kospi",
-    )
+    ch = None
+    storage_config = StorageConfig.load_or_default()
+    if storage_config.runtime_storage.clickhouse_mirror.enabled:
+        ch = create_sync_clickhouse_client(database="kospi")
 
     # LLM client (optional)
     llm_client = None
@@ -229,9 +219,7 @@ async def _main() -> None:
                 openai.AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
             )
         except Exception as e:  # noqa: BLE001
-            logger.warning(
-                "LLM client init failed: %s — event scorer rule-only", e
-            )
+            logger.warning("LLM client init failed: %s — event scorer rule-only", e)
 
     taxonomy_path = Path("config/event_taxonomy.yaml")
     service = ForecastingService(

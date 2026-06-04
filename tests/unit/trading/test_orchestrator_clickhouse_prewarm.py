@@ -43,7 +43,7 @@ async def test_fetch_candles_from_clickhouse_uses_shared_native_port_config():
     fake_module = types.SimpleNamespace(Client=FakeClient)
 
     with patch(
-        "services.trading.orchestrator.ClickHouseConfig.from_env",
+        "shared.db.config.ClickHouseConfig.from_env",
         return_value=FakeCHConfig(),
     ) as from_env_mock, patch.dict(sys.modules, {"clickhouse_driver": fake_module}):
         candles = await orch._fetch_candles_from_clickhouse("005930", limit=5)
@@ -64,7 +64,7 @@ async def test_fetch_candles_from_clickhouse_futures_uses_kospi_mini():
         def __init__(self, **kwargs):
             pass
 
-        def execute(self, query, params):
+        def execute(self, query, _params):
             captured_query.append(query)
             return []
 
@@ -78,7 +78,7 @@ async def test_fetch_candles_from_clickhouse_futures_uses_kospi_mini():
     fake_module = types.SimpleNamespace(Client=FakeClient)
 
     with patch(
-        "services.trading.orchestrator.ClickHouseConfig.from_env",
+        "shared.db.config.ClickHouseConfig.from_env",
         return_value=FakeCHConfig(),
     ) as from_env_mock, patch.dict(sys.modules, {"clickhouse_driver": fake_module}):
         candles = await orch._fetch_candles_from_clickhouse("A05606", limit=700)

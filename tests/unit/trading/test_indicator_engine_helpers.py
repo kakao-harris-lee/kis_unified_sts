@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import math
 
-import pytest
 
 from services.trading.indicator_engine import Candle, StreamingIndicatorEngine
 
@@ -72,7 +71,9 @@ class TestEMAHelpers:
         ema_long = StreamingIndicatorEngine._ema_last(values, span=10)
 
         # Shorter span should be more responsive (closer to recent values)
-        assert ema_short > ema_long, "Short-span EMA should react faster to rising prices"
+        assert (
+            ema_short > ema_long
+        ), "Short-span EMA should react faster to rising prices"
 
     def test_ema_series_span_one(self):
         """EMA with span=1 should track values closely (alpha=1.0)."""
@@ -147,13 +148,31 @@ class TestATRHelpers:
         we add only 13 padding candles (total 15: gap at index 1 = TR[1], in last 14).
         """
         candles = [
-            Candle(open=100.0, high=102.0, low=98.0, close=100.0, volume=1000.0, minute=900),
-            Candle(open=110.0, high=112.0, low=108.0, close=110.0, volume=1000.0, minute=901),  # Gap up
+            Candle(
+                open=100.0, high=102.0, low=98.0, close=100.0, volume=1000.0, minute=900
+            ),
+            Candle(
+                open=110.0,
+                high=112.0,
+                low=108.0,
+                close=110.0,
+                volume=1000.0,
+                minute=901,
+            ),  # Gap up
         ]
         # Add exactly 13 more candles so total is 15 candles = 14 TRs.
         # The gap TR at index 1 is then the first of the 14 TRs used for ATR.
         for i in range(2, 15):
-            candles.append(Candle(open=110.0, high=112.0, low=108.0, close=110.0, volume=1000.0, minute=900 + i))
+            candles.append(
+                Candle(
+                    open=110.0,
+                    high=112.0,
+                    low=108.0,
+                    close=110.0,
+                    volume=1000.0,
+                    minute=900 + i,
+                )
+            )
 
         atr = StreamingIndicatorEngine._calc_atr_raw(candles, period=14)
         # Gap TR = 12.0 is included; remaining 13 TRs = 4.0 each.
@@ -182,7 +201,9 @@ class TestATRHelpers:
         """Normalized ATR scales appropriately with price."""
         # Low price candles
         candles_low = self._create_candles(20, base_price=10.0)
-        atr_norm_low = StreamingIndicatorEngine._calc_atr_normalized(candles_low, period=14)
+        atr_norm_low = StreamingIndicatorEngine._calc_atr_normalized(
+            candles_low, period=14
+        )
 
         # High price candles (same volatility pattern, 10x price)
         candles_high = []
@@ -197,7 +218,9 @@ class TestATRHelpers:
                     minute=c.minute,
                 )
             )
-        atr_norm_high = StreamingIndicatorEngine._calc_atr_normalized(candles_high, period=14)
+        atr_norm_high = StreamingIndicatorEngine._calc_atr_normalized(
+            candles_high, period=14
+        )
 
         # Normalized ATR should be similar despite 10x price difference
         assert math.isclose(atr_norm_low, atr_norm_high, rel_tol=0.1)
@@ -278,7 +301,9 @@ class TestStochasticHelper:
         k, d = StreamingIndicatorEngine._calc_stochastic(candles, period=14, smooth=3)
 
         # D should be close to K for stable prices
-        assert math.isclose(k, d, abs_tol=10.0), f"K={k}, D={d} should be close for stable prices"
+        assert math.isclose(
+            k, d, abs_tol=10.0
+        ), f"K={k}, D={d} should be close for stable prices"
 
     def test_stochastic_range_bounds(self):
         """Stochastic K and D should be in [0, 100] range."""
@@ -376,7 +401,10 @@ class TestMFIHelper:
         """MFI should be in [0, 100] range."""
         engine = StreamingIndicatorEngine()
         # Mixed up/down movements
-        prices = [(100 + (i % 3) * 5, 90 + (i % 3) * 5, 95 + (i % 3) * 5, 1000 + i * 100) for i in range(20)]
+        prices = [
+            (100 + (i % 3) * 5, 90 + (i % 3) * 5, 95 + (i % 3) * 5, 1000 + i * 100)
+            for i in range(20)
+        ]
 
         candles = self._create_candles_with_volume(prices)
         mfi = engine._calc_mfi(candles, period=14)
@@ -472,7 +500,9 @@ class TestADXHelper:
     def test_adx_range_bounds(self):
         """ADX should be non-negative."""
         # Mixed movements
-        prices = [(100 + (i % 5) * 3, 95 + (i % 5) * 3, 98 + (i % 5) * 3) for i in range(30)]
+        prices = [
+            (100 + (i % 5) * 3, 95 + (i % 5) * 3, 98 + (i % 5) * 3) for i in range(30)
+        ]
         candles = self._create_candles(prices)
 
         adx = StreamingIndicatorEngine._calc_adx(candles, period=14)
@@ -601,16 +631,18 @@ class TestHelperIntegration:
             series = StreamingIndicatorEngine._ema_series(values, span)
             last = StreamingIndicatorEngine._ema_last(values, span)
 
-            assert math.isclose(last, series[-1], rel_tol=1e-9), (
-                f"_ema_last mismatch for values={values}, span={span}"
-            )
+            assert math.isclose(
+                last, series[-1], rel_tol=1e-9
+            ), f"_ema_last mismatch for values={values}, span={span}"
 
 
-class TestRLFeatures:
-    """Tests for RL features calculation and market-wide MFI."""
+class TestIndicatorFeatures:
+    """Tests for indicator feature calculation and market-wide MFI."""
 
-    def _build_rl_warm_engine(self, symbol: str = "005930", num_candles: int = 30) -> StreamingIndicatorEngine:
-        """Build an engine with sufficient candles for RL features (requires 26+ for MACD).
+    def _build_indicator_warm_engine(
+        self, symbol: str = "005930", num_candles: int = 30
+    ) -> StreamingIndicatorEngine:
+        """Build an engine with sufficient candles for MACD-derived features.
 
         Creates candles with realistic price movement and volume patterns.
         staleness_seconds=0 disables staleness guard for testing.
@@ -657,43 +689,55 @@ class TestRLFeatures:
 
         return engine
 
-    def test_get_rl_features_returns_all_25_features(self):
-        """RL features should return all 25 expected keys when warm."""
-        engine = self._build_rl_warm_engine(num_candles=30)
-        features = engine.get_rl_features("005930")
+    def test_get_indicator_features_returns_all_25_features(self):
+        """indicator features should return all 25 expected keys when warm."""
+        engine = self._build_indicator_warm_engine(num_candles=30)
+        features = engine.get_indicator_features("005930")
 
         expected_keys = {
             "returns",
-            "ma_ratio_5", "ma_ratio_10", "ma_ratio_20",
+            "ma_ratio_5",
+            "ma_ratio_10",
+            "ma_ratio_20",
             "rsi",
             "bb_position",
             "volume_ratio",
             "volatility",
             "hl_range",
             "candle_body",
-            "macd", "macd_signal", "macd_hist",
-            "sma_ratio_60", "sma_ratio_120",
-            "ema_ratio_5", "ema_ratio_10", "ema_ratio_20",
-            "bb_upper_dist", "bb_lower_dist", "bb_width",
+            "macd",
+            "macd_signal",
+            "macd_hist",
+            "sma_ratio_60",
+            "sma_ratio_120",
+            "ema_ratio_5",
+            "ema_ratio_10",
+            "ema_ratio_20",
+            "bb_upper_dist",
+            "bb_lower_dist",
+            "bb_width",
             "atr",
-            "stoch_k", "stoch_d",
+            "stoch_k",
+            "stoch_d",
             "price_change_5",
         }
 
-        assert set(features.keys()) == expected_keys, (
-            f"Missing or extra keys. Expected {expected_keys}, got {set(features.keys())}"
-        )
+        assert (
+            set(features.keys()) == expected_keys
+        ), f"Missing or extra keys. Expected {expected_keys}, got {set(features.keys())}"
 
-    def test_get_rl_features_all_values_finite(self):
-        """All RL feature values should be finite numbers."""
-        engine = self._build_rl_warm_engine(num_candles=30)
-        features = engine.get_rl_features("005930")
+    def test_get_indicator_features_all_values_finite(self):
+        """All indicator feature values should be finite numbers."""
+        engine = self._build_indicator_warm_engine(num_candles=30)
+        features = engine.get_indicator_features("005930")
 
         for key, value in features.items():
-            assert math.isfinite(value), f"Feature '{key}' has non-finite value: {value}"
+            assert math.isfinite(
+                value
+            ), f"Feature '{key}' has non-finite value: {value}"
 
-    def test_get_rl_features_insufficient_data(self):
-        """RL features should return empty dict with <26 candles (MACD requirement)."""
+    def test_get_indicator_features_insufficient_data(self):
+        """indicator features should return empty dict with <26 candles (MACD requirement)."""
         engine = StreamingIndicatorEngine()
         symbol = "TEST"
 
@@ -704,81 +748,92 @@ class TestRLFeatures:
             cumulative += 1000
             engine.on_tick(
                 symbol,
-                {"close": 100.0 + minute, "high": 105.0 + minute, "low": 95.0 + minute, "volume": cumulative},
+                {
+                    "close": 100.0 + minute,
+                    "high": 105.0 + minute,
+                    "low": 95.0 + minute,
+                    "volume": cumulative,
+                },
                 ts,
             )
 
-        features = engine.get_rl_features(symbol)
+        features = engine.get_indicator_features(symbol)
         assert features == {}, "Should return empty dict when insufficient data"
 
-    def test_get_rl_features_nonexistent_symbol(self):
-        """RL features should return empty dict for unknown symbol."""
+    def test_get_indicator_features_nonexistent_symbol(self):
+        """indicator features should return empty dict for unknown symbol."""
         engine = StreamingIndicatorEngine()
-        features = engine.get_rl_features("NONEXISTENT")
+        features = engine.get_indicator_features("NONEXISTENT")
         assert features == {}
 
-    def test_get_rl_features_ma_ratios_reflect_trend(self):
+    def test_get_indicator_features_ma_ratios_reflect_trend(self):
         """MA ratios should be >1.0 for uptrending prices."""
-        engine = self._build_rl_warm_engine(num_candles=30)
-        features = engine.get_rl_features("005930")
+        engine = self._build_indicator_warm_engine(num_candles=30)
+        features = engine.get_indicator_features("005930")
 
         # Price is increasing in our test data, so close/MA should be >1.0
         assert features["ma_ratio_5"] > 1.0, "ma_ratio_5 should be >1.0 for uptrend"
         assert features["ma_ratio_10"] > 1.0, "ma_ratio_10 should be >1.0 for uptrend"
         assert features["ma_ratio_20"] > 1.0, "ma_ratio_20 should be >1.0 for uptrend"
 
-    def test_get_rl_features_bb_position_in_range(self):
+    def test_get_indicator_features_bb_position_in_range(self):
         """BB position should typically be between 0 and 1."""
-        engine = self._build_rl_warm_engine(num_candles=30)
-        features = engine.get_rl_features("005930")
+        engine = self._build_indicator_warm_engine(num_candles=30)
+        features = engine.get_indicator_features("005930")
 
         # BB position can be <0 or >1 if price is outside bands, but typically in [0, 1]
         assert math.isfinite(features["bb_position"]), "bb_position should be finite"
 
-    def test_get_rl_features_rsi_in_valid_range(self):
+    def test_get_indicator_features_rsi_in_valid_range(self):
         """RSI should be between 0 and 100."""
-        engine = self._build_rl_warm_engine(num_candles=30)
-        features = engine.get_rl_features("005930")
+        engine = self._build_indicator_warm_engine(num_candles=30)
+        features = engine.get_indicator_features("005930")
 
-        assert 0.0 <= features["rsi"] <= 100.0, f"RSI should be in [0, 100], got {features['rsi']}"
+        assert (
+            0.0 <= features["rsi"] <= 100.0
+        ), f"RSI should be in [0, 100], got {features['rsi']}"
 
-    def test_get_rl_features_stochastic_in_valid_range(self):
+    def test_get_indicator_features_stochastic_in_valid_range(self):
         """Stochastic K and D should be between 0 and 100."""
-        engine = self._build_rl_warm_engine(num_candles=30)
-        features = engine.get_rl_features("005930")
+        engine = self._build_indicator_warm_engine(num_candles=30)
+        features = engine.get_indicator_features("005930")
 
-        assert 0.0 <= features["stoch_k"] <= 100.0, f"stoch_k should be in [0, 100], got {features['stoch_k']}"
-        assert 0.0 <= features["stoch_d"] <= 100.0, f"stoch_d should be in [0, 100], got {features['stoch_d']}"
+        assert (
+            0.0 <= features["stoch_k"] <= 100.0
+        ), f"stoch_k should be in [0, 100], got {features['stoch_k']}"
+        assert (
+            0.0 <= features["stoch_d"] <= 100.0
+        ), f"stoch_d should be in [0, 100], got {features['stoch_d']}"
 
-    def test_get_rl_features_macd_components(self):
+    def test_get_indicator_features_macd_components(self):
         """MACD histogram should equal macd - macd_signal."""
-        engine = self._build_rl_warm_engine(num_candles=30)
-        features = engine.get_rl_features("005930")
+        engine = self._build_indicator_warm_engine(num_candles=30)
+        features = engine.get_indicator_features("005930")
 
         expected_hist = features["macd"] - features["macd_signal"]
-        assert math.isclose(features["macd_hist"], expected_hist, rel_tol=1e-9), (
-            f"MACD histogram mismatch: {features['macd_hist']} vs {expected_hist}"
-        )
+        assert math.isclose(
+            features["macd_hist"], expected_hist, rel_tol=1e-9
+        ), f"MACD histogram mismatch: {features['macd_hist']} vs {expected_hist}"
 
-    def test_get_rl_features_volume_ratio_reflects_activity(self):
+    def test_get_indicator_features_volume_ratio_reflects_activity(self):
         """Volume ratio should be positive for active trading."""
-        engine = self._build_rl_warm_engine(num_candles=30)
-        features = engine.get_rl_features("005930")
+        engine = self._build_indicator_warm_engine(num_candles=30)
+        features = engine.get_indicator_features("005930")
 
         assert features["volume_ratio"] > 0.0, "volume_ratio should be positive"
 
-    def test_get_rl_features_with_120_candles(self):
-        """RL features should work correctly with 120+ candles (for sma_ratio_120)."""
-        engine = self._build_rl_warm_engine(num_candles=125)
-        features = engine.get_rl_features("005930")
+    def test_get_indicator_features_with_120_candles(self):
+        """indicator features should work correctly with 120+ candles (for sma_ratio_120)."""
+        engine = self._build_indicator_warm_engine(num_candles=125)
+        features = engine.get_indicator_features("005930")
 
         # With 125 candles, sma_ratio_120 should be computed (not default 1.0)
         assert features["sma_ratio_120"] != 1.0 or features["sma_ratio_120"] > 0.0
 
-    def test_get_rl_features_bb_distances_positive(self):
+    def test_get_indicator_features_bb_distances_positive(self):
         """BB distances should be positive (distance from bands to price)."""
-        engine = self._build_rl_warm_engine(num_candles=30)
-        features = engine.get_rl_features("005930")
+        engine = self._build_indicator_warm_engine(num_candles=30)
+        features = engine.get_indicator_features("005930")
 
         # bb_upper_dist = (upper - close) / close should be positive when price < upper
         # bb_lower_dist = (close - lower) / close should be positive when price > lower
@@ -786,22 +841,24 @@ class TestRLFeatures:
         assert features["bb_lower_dist"] >= -1.0, "bb_lower_dist should be reasonable"
         assert features["bb_width"] > 0.0, "bb_width should be positive"
 
-    def test_get_rl_features_atr_positive(self):
+    def test_get_indicator_features_atr_positive(self):
         """ATR should be positive for volatile markets."""
-        engine = self._build_rl_warm_engine(num_candles=30)
-        features = engine.get_rl_features("005930")
+        engine = self._build_indicator_warm_engine(num_candles=30)
+        features = engine.get_indicator_features("005930")
 
         assert features["atr"] >= 0.0, "ATR should be non-negative"
 
-    def test_get_rl_features_consistent_across_calls(self):
-        """RL features should be deterministic for same data."""
-        engine = self._build_rl_warm_engine(num_candles=30)
+    def test_get_indicator_features_consistent_across_calls(self):
+        """indicator features should be deterministic for same data."""
+        engine = self._build_indicator_warm_engine(num_candles=30)
 
-        features1 = engine.get_rl_features("005930")
-        features2 = engine.get_rl_features("005930")
+        features1 = engine.get_indicator_features("005930")
+        features2 = engine.get_indicator_features("005930")
 
         for key in features1.keys():
-            assert features1[key] == features2[key], f"Feature '{key}' not deterministic"
+            assert (
+                features1[key] == features2[key]
+            ), f"Feature '{key}' not deterministic"
 
 
 class TestMarketWideMFI:
@@ -857,7 +914,9 @@ class TestMarketWideMFI:
         market_mfi = engine.get_market_mfi()
 
         assert market_mfi is not None, "Market MFI should not be None with warm symbols"
-        assert 0.0 <= market_mfi <= 100.0, f"Market MFI should be in [0, 100], got {market_mfi}"
+        assert (
+            0.0 <= market_mfi <= 100.0
+        ), f"Market MFI should be in [0, 100], got {market_mfi}"
 
     def test_get_market_mfi_with_active_symbols_filter(self):
         """Market MFI should respect active_symbols filter."""
@@ -911,7 +970,12 @@ class TestMarketWideMFI:
             cumulative += 1000
             engine.on_tick(
                 symbol,
-                {"close": 100.0 + minute, "high": 105.0 + minute, "low": 95.0 + minute, "volume": cumulative},
+                {
+                    "close": 100.0 + minute,
+                    "high": 105.0 + minute,
+                    "low": 95.0 + minute,
+                    "volume": cumulative,
+                },
                 ts,
             )
 
@@ -958,7 +1022,12 @@ class TestMarketWideMFI:
             cumulative_warm += 1000
             engine.on_tick(
                 "WARM",
-                {"close": 100.0 + minute, "high": 105.0 + minute, "low": 95.0 + minute, "volume": cumulative_warm},
+                {
+                    "close": 100.0 + minute,
+                    "high": 105.0 + minute,
+                    "low": 95.0 + minute,
+                    "volume": cumulative_warm,
+                },
                 ts,
             )
         cumulative_warm += 1000
@@ -975,7 +1044,12 @@ class TestMarketWideMFI:
             cumulative_cold += 1000
             engine.on_tick(
                 "COLD",
-                {"close": 200.0 + minute, "high": 205.0 + minute, "low": 195.0 + minute, "volume": cumulative_cold},
+                {
+                    "close": 200.0 + minute,
+                    "high": 205.0 + minute,
+                    "low": 195.0 + minute,
+                    "volume": cumulative_cold,
+                },
                 ts,
             )
 

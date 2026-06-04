@@ -423,11 +423,10 @@ Warning Alerts → Slack → #trading-alerts (business hours)
 | `test_clickhouse_load.py` | 6 scenarios (1d-100d, concurrent) | Query latency, throughput (qps) | ClickHouse |
 | `test_redis_load.py` | 6 scenarios (CRUD, concurrent) | Ops/s, latency p50/p95/p99 | Redis |
 | `test_orchestrator_scalability.py` | 6 scenarios (1-20 positions) | Cycle time, memory, scalability factor | None (pure) |
-| `test_rl_inference_latency.py` | 7 scenarios (cold/warm, batch) | Latency p50/p95/p99, CV, cold start | sb3-contrib, model files |
 | `test_orchestrator_hot_path_benchmark.py` | 7 scenarios (entry/exit, cache) | Execution time, speedup ratio, memory overhead | None (pure) |
 
-**Total Test Scenarios:** 38 scenarios across 6 modules
-**Total Metrics Tracked:** 50+ distinct performance metrics
+**Total Test Scenarios:** 31 scenarios across 5 modules
+**Total Metrics Tracked:** 40+ distinct performance metrics
 
 ---
 

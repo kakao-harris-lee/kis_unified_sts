@@ -42,7 +42,7 @@ the production TR IDs in `config/kis/tr_ids.yaml`. Confirm:
 
 ## 4. Trading session compliance
 
-- [ ] Day-session window 09:00–15:30 KST stock / 09:00–15:45 KST futures, EOD-flat at 15:15 KST (`eod_close_hour=15, eod_close_minute=15` in `shared/strategy/exit/{three_stage,williams_r_exit,atr_dynamic,rl_mppo_exit}.py`) — verified, no after-hours fills
+- [ ] Day-session window 09:00–15:30 KST stock / 09:00–15:45 KST futures, EOD-flat at 15:15 KST (`eod_close_hour=15, eod_close_minute=15` in `shared/strategy/exit/{three_stage,williams_r_exit,atr_dynamic,setup_target_exit}.py`) — verified, no after-hours fills
 - [ ] Night session (`야간 18:00–05:00`) explicitly disabled in `config/market_schedule.yaml` — confirm
 - [ ] Holiday calendar source: `services/trading/holiday_cache.py` → KIS official 휴장일 — last refresh date: <YYYY-MM-DD>
 

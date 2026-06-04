@@ -25,7 +25,7 @@ Config files live in `config/` with this structure:
 - `strategies/{stock,futures}/` — Strategy YAML files
 - `exit/` — Exit strategy configs (three_stage, market_regime, time_decay)
 - `kis/` — API authentication
-- `ml/` — ML model configs (cnn_lstm, rl_mppo)
+- `ml/` — legacy non-runtime ML config only
 
 ### Strategy Pattern with Registry
 
@@ -73,8 +73,8 @@ Shared logic goes in `shared/` modules — never duplicate across `domains/stock
 | `stochrsi_trend`       | `StochRSITrendEntry`              | `shared/strategy/entry/stochrsi_trend.py`       |
 | `v35_optimized`        | `V35OptimizedEntry`               | `shared/strategy/entry/v35_optimized.py`        |
 | `volume_accumulation`  | `VolumeAccumulationBreakoutEntry` | `shared/strategy/entry/volume_accumulation.py`  |
-| `rl_mppo`              | `RLMPPOEntry`                     | `shared/strategy/entry/rl_mppo.py`              |
-| `futures_dl_trend`     | `DLTrendEntry`                    | `domains/futures/strategies/dl_trend.py`        |
+| `setup_a_gap_reversion`| `SetupAEntryAdapter`              | `shared/strategy/entry/setup_adapters.py`       |
+| `setup_c_event_reaction`| `SetupCEntryAdapter`             | `shared/strategy/entry/setup_adapters.py`       |
 
 ### Registered Exit Strategies
 
@@ -85,6 +85,7 @@ Shared logic goes in `shared/` modules — never duplicate across `domains/stock
 | `market_regime`  | `MarketRegimeExit`  | `shared/strategy/exit/market_regime.py`  |
 | `time_decay`     | `TimeDecayExit`     | `shared/strategy/exit/time_decay.py`     |
 | `momentum_decay` | `MomentumDecayExit` | `shared/strategy/exit/momentum_decay.py` |
+| `setup_target_exit` | `SetupTargetExit` | `shared/strategy/exit/setup_target_exit.py` |
 
 ## Adding a New Strategy
 
@@ -110,8 +111,7 @@ sts stock-backfill run --days 7
 sts websocket start
 sts trade start --strategy bb_reversion --asset stock --paper
 sts paper start --strategy bb_reversion --asset stock
-sts rl train --algo mppo
-sts rl evaluate --model mppo_best
+sts trade start --strategy setup_a_gap_reversion --asset futures --paper
 ```
 
 ## Git Worktree Workflow

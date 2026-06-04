@@ -1,0 +1,22 @@
+runtime_storage:
+  backend: sqlite
+  sqlite:
+    path: data/runtime/${ENVIRONMENT:dev}/runtime.db
+    wal: true
+    busy_timeout_ms: 5000
+    synchronous: NORMAL
+  clickhouse_mirror:
+    enabled: false
+    database: ${CLICKHOUSE_STOCK_DATABASE:market}
+
+market_data:
+  source: parquet
+  parquet:
+    root: data/market
+  clickhouse:
+    enabled: false
+    stock_database: ${CLICKHOUSE_STOCK_DATABASE:market}
+    futures_database: ${CLICKHOUSE_FUTURES_DATABASE:kospi}
+
+dashboard:
+  trade_stats_source: runtime_ledger

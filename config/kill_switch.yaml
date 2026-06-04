@@ -51,6 +51,7 @@ kill_switch:
       # collector's output stream (canonical: config/news_sources.yaml::redis_stream).
       stream_key: "stream:news.raw"
     clickhouse_insert_fail_rate:
+      # Effective only when runtime_storage.clickhouse_mirror.enabled=true.
       enabled: true
       threshold: 0.1             # 10% of inserts failing in 5-min window (fraction 0–1)
 

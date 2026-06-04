@@ -1,12 +1,10 @@
 """Regime detection module.
 
-This module provides adaptive regime detection, model selection, and performance tracking
-for trading strategies. It supports multiple detection methods (basic, HMM, adaptive) and
-enables regime-aware strategy routing.
+This module provides adaptive regime detection, performance tracking, and
+regime-aware strategy routing for trading strategies.
 
 Key Components:
     - Adaptive Regime Detection: Multi-metric regime classification with dynamic switching
-    - Model Selection: Automatic model switching based on regime performance
     - Performance Tracking: Regime-specific performance monitoring and model evaluation
     - Basic Detectors: Traditional regime detection methods
     - Strategy Routing: Regime-aware strategy selection
@@ -14,11 +12,9 @@ Key Components:
 Example:
     >>> from shared.regime import (
     ...     AdaptiveRegimeDetector,
-    ...     AdaptiveModelSelector,
     ...     RegimePerformanceTracker
     ... )
     >>> detector = AdaptiveRegimeDetector()
-    >>> selector = AdaptiveModelSelector()
     >>> tracker = RegimePerformanceTracker()
 """
 
@@ -27,11 +23,6 @@ from .adaptive_detector import (
     AdaptiveRegimeDetector,
     AdaptiveRegimeState,
     AdaptiveRegimeConfig,
-)
-from .model_selector import (
-    AdaptiveModelSelector,
-    ModelSwitchingConfig,
-    ModelMapping,
 )
 from .performance_tracker import (
     RegimePerformanceTracker,
@@ -49,11 +40,6 @@ from .models import (
 
 # Traditional detectors
 from .detector import StockRegimeDetector
-from .hmm_detector import (
-    HMMRegimeDetector,
-    HMMConfig,
-    HMMRegimeState,
-)
 
 # Strategy routing
 from .router import StrategyRouter
@@ -61,13 +47,10 @@ from .router import StrategyRouter
 __all__ = [
     # Main adaptive components
     "AdaptiveRegimeDetector",
-    "AdaptiveModelSelector",
     "RegimePerformanceTracker",
     # Adaptive configuration
     "AdaptiveRegimeState",
     "AdaptiveRegimeConfig",
-    "ModelSwitchingConfig",
-    "ModelMapping",
     "RegimePerformanceConfig",
     "TradeRecord",
     "RegimeStats",
@@ -77,9 +60,6 @@ __all__ = [
     "RegimeConfig",
     # Traditional detectors
     "StockRegimeDetector",
-    "HMMRegimeDetector",
-    "HMMConfig",
-    "HMMRegimeState",
     # Routing
     "StrategyRouter",
 ]

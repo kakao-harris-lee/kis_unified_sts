@@ -1,4 +1,4 @@
-"""Fan-out ScoredItem → Redis stream + ClickHouse batch."""
+"""Fan-out ScoredItem to Redis stream plus optional ClickHouse mirror."""
 
 from __future__ import annotations
 
@@ -22,11 +22,11 @@ _CH_INSERT = (
 
 
 class ScoredPublisher:
-    """Fan-out a :class:`ScoredItem` to Redis XADD and a ClickHouse batch buffer.
+    """Fan-out a :class:`ScoredItem` to Redis XADD and optional CH batch buffer.
 
     Args:
         redis: ``redis.asyncio`` (or fakeredis) connection.
-        ch_client: ``aiochclient`` :class:`AsyncClickHouseClient` instance.
+        ch_client: Optional ``aiochclient`` :class:`AsyncClickHouseClient` mirror.
         stream: Target Redis stream key (e.g. ``stream:news.scored``).
         maxlen: ``MAXLEN ~`` cap passed to ``XADD`` to bound stream size.
         ch_batch_size: Number of rows to accumulate before flushing to CH.
@@ -46,11 +46,12 @@ class ScoredPublisher:
         self.stream = stream
         self.maxlen = maxlen
         self.ch_batch_size = ch_batch_size
+        self._mirror_enabled = ch_client is not None and ch_batch_size > 0
         self._buffer: list[tuple] = []
         self._lock = asyncio.Lock()
 
     async def publish(self, item: ScoredItem) -> None:
-        """Write *item* to the Redis stream and enqueue for CH batch insert.
+        """Write *item* to the Redis stream and enqueue for optional CH mirror.
 
         The Redis TTL policy requires ``expire`` after every ``XADD``.
         The ClickHouse ``scored_at`` is written as a **tz-naive** datetime so
@@ -78,6 +79,8 @@ class ScoredPublisher:
         await self.redis.xadd(self.stream, fields, maxlen=self.maxlen, approximate=True)
         # Mandatory TTL refresh after every write (project Redis TTL policy).
         await self.redis.expire(self.stream, _STREAM_TTL_SECONDS)
+        if not self._mirror_enabled:
+            return
 
         # ClickHouse row — scored_at must be tz-naive (aiochclient constraint).
         scored_at = datetime.fromtimestamp(item.scored_at_ms / 1000, tz=UTC).replace(
@@ -106,12 +109,12 @@ class ScoredPublisher:
     async def flush(self) -> None:
         """Flush any buffered rows to ClickHouse immediately.
 
-        Re-raises on ClickHouse failure so `publish()` (its only caller that
-        matters for the consumer-group invariant) propagates the error and
-        the daemon can leave the source message pending for redelivery.
-        Swallowing here would XACK successful stream-XADD's while the CH
-        row is lost — a Redis/CH split-brain we never recover from.
+        When the optional mirror is enabled, re-raises on ClickHouse failure so
+        `publish()` propagates the error and the daemon can leave the source
+        message pending for redelivery. When disabled, this is a no-op.
         """
+        if not self._mirror_enabled:
+            return
         async with self._lock:
             if not self._buffer:
                 return

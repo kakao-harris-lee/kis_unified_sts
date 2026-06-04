@@ -83,9 +83,9 @@ def test_record_signal_candidate_increments_counter():
 
 
 def test_record_signal_final_increments_counter():
-    before = _sample("signal_final_total", {"setup": "rl_mppo"}) or 0
-    record_signal_final(setup="rl_mppo")
-    after = _sample("signal_final_total", {"setup": "rl_mppo"}) or 0
+    before = _sample("signal_final_total", {"setup": "setup_a_gap_reversion"}) or 0
+    record_signal_final(setup="setup_a_gap_reversion")
+    after = _sample("signal_final_total", {"setup": "setup_a_gap_reversion"}) or 0
     assert after == before + 1
 
 
@@ -109,8 +109,10 @@ def test_record_signal_rejected_increments_counter():
 
 
 def test_record_signal_generator_duration_observes_histogram():
-    record_signal_generator_duration(setup="rl_mppo", seconds=0.08)
-    cnt = _sample("signal_generator_duration_seconds_count", {"setup": "rl_mppo"})
+    record_signal_generator_duration(setup="setup_a_gap_reversion", seconds=0.08)
+    cnt = _sample(
+        "signal_generator_duration_seconds_count", {"setup": "setup_a_gap_reversion"}
+    )
     assert (cnt or 0) >= 1
 
 

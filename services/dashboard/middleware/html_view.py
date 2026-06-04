@@ -19,10 +19,19 @@ from starlette.responses import HTMLResponse, Response
 _PAGE_META: dict[str, tuple[str, str]] = {
     "/api/trading/status": ("Trading Status", "Current trading system status"),
     "/api/trading/positions": ("Open Positions", "Currently open positions"),
-    "/api/trades/rl/statistics": ("RL Statistics", "RL trade performance statistics"),
-    "/api/trades/rl": ("RL Trades", "RL closed trade records"),
-    "/api/trades/statistics": ("Trade Statistics", "Overall trade performance statistics"),
-    "/api/trades/by-strategy": ("Strategy Performance", "Performance grouped by strategy"),
+    "/api/trades/closed/statistics": (
+        "Closed Trade Statistics",
+        "Closed trade performance statistics",
+    ),
+    "/api/trades/closed": ("Closed Trades", "Closed trade records"),
+    "/api/trades/statistics": (
+        "Trade Statistics",
+        "Overall trade performance statistics",
+    ),
+    "/api/trades/by-strategy": (
+        "Strategy Performance",
+        "Performance grouped by strategy",
+    ),
     "/api/trades": ("Trade History", "Completed trade records"),
     "/api/signals/history": ("Signal History", "Signal generation history"),
     "/api/signals": ("Signals", "Trading signals"),
@@ -46,7 +55,11 @@ def _wants_html(request: Request) -> bool:
 def _get_page_meta(path: str) -> tuple[str, str] | None:
     """Match path to page metadata, longest prefix first."""
     for prefix in sorted(_PAGE_META, key=len, reverse=True):
-        if path == prefix or path.startswith(prefix + "/") or path.startswith(prefix + "?"):
+        if (
+            path == prefix
+            or path.startswith(prefix + "/")
+            or path.startswith(prefix + "?")
+        ):
             return _PAGE_META[prefix]
     return None
 
@@ -98,9 +111,7 @@ def _render_data_table(items: list[dict]) -> str:
     header = "".join(f"<th>{escape(k)}</th>" for k in keys)
     rows = []
     for item in items:
-        cells = "".join(
-            f"<td>{_render_value(item.get(k), 1)}</td>" for k in keys
-        )
+        cells = "".join(f"<td>{_render_value(item.get(k), 1)}</td>" for k in keys)
         rows.append(f"<tr>{cells}</tr>")
 
     return (
@@ -114,7 +125,11 @@ def _build_html(title: str, description: str, data: object, path: str) -> str:
     if isinstance(data, dict):
         body = _render_value(data)
     elif isinstance(data, list):
-        body = _render_data_table(data) if data and isinstance(data[0], dict) else _render_value(data)
+        body = (
+            _render_data_table(data)
+            if data and isinstance(data[0], dict)
+            else _render_value(data)
+        )
     else:
         body = f"<pre>{escape(json.dumps(data, indent=2, default=str))}</pre>"
 
@@ -246,7 +261,9 @@ class HTMLViewMiddleware(BaseHTTPMiddleware):
         try:
             data = json.loads(raw)
         except (json.JSONDecodeError, ValueError):
-            return Response(content=raw, status_code=200, headers=dict(response.headers))
+            return Response(
+                content=raw, status_code=200, headers=dict(response.headers)
+            )
 
         html = _build_html(title, description, data, path)
         return HTMLResponse(content=html, status_code=200)

@@ -472,7 +472,7 @@ class TestTradingOrchestrator:
         """시장 메트릭 기록 시 open positions gauge 동기화."""
         from services.trading.orchestrator import TradingOrchestrator, TradingConfig
 
-        config = TradingConfig.futures(strategy_name="rl_mppo")
+        config = TradingConfig.futures(strategy_name="setup_a_gap_reversion")
         orch = TradingOrchestrator(config)
         orch._metrics = MagicMock()
         orch._position_tracker = MagicMock()
@@ -493,7 +493,7 @@ class TestTradingOrchestrator:
         from shared.models.signal import Signal
         from shared.paper.models import OrderSide as PaperOrderSide
 
-        config = TradingConfig.futures(strategy_name="rl_mppo")
+        config = TradingConfig.futures(strategy_name="setup_a_gap_reversion")
         config.paper_trading = True
         orch = TradingOrchestrator(config)
 
@@ -515,7 +515,7 @@ class TestTradingOrchestrator:
         signal = Signal(
             code="A01603",
             name="KOSPI200 Futures",
-            strategy="rl_mppo",
+            strategy="setup_a_gap_reversion",
             price=100.0,
             confidence=0.8,
             metadata={"signal_direction": "short"},
@@ -538,7 +538,7 @@ class TestTradingOrchestrator:
         )
         from shared.models.signal import Signal
 
-        config = TradingConfig.futures(strategy_name="rl_mppo")
+        config = TradingConfig.futures(strategy_name="setup_a_gap_reversion")
         config.paper_trading = True
         orch = TradingOrchestrator(config)
         orch._futures_slippage_controller = FuturesSlippageController(
@@ -565,7 +565,7 @@ class TestTradingOrchestrator:
 
         signal = Signal(
             code="A05603",
-            strategy="rl_mppo",
+            strategy="setup_a_gap_reversion",
             price=330.45,
             confidence=0.7,
         )
@@ -592,7 +592,7 @@ class TestTradingOrchestrator:
         )
         from shared.models.signal import Signal
 
-        config = TradingConfig.futures(strategy_name="rl_mppo")
+        config = TradingConfig.futures(strategy_name="setup_a_gap_reversion")
         config.paper_trading = True
         orch = TradingOrchestrator(config)
         orch._futures_slippage_controller = FuturesSlippageController(
@@ -621,7 +621,7 @@ class TestTradingOrchestrator:
 
         signal = Signal(
             code="A05603",
-            strategy="rl_mppo",
+            strategy="setup_a_gap_reversion",
             price=330.50,
             confidence=0.8,
         )
@@ -648,7 +648,7 @@ class TestTradingOrchestrator:
         )
         from shared.models.signal import Signal
 
-        config = TradingConfig.futures(strategy_name="rl_mppo")
+        config = TradingConfig.futures(strategy_name="setup_a_gap_reversion")
         config.paper_trading = True
         orch = TradingOrchestrator(config)
         orch._futures_slippage_controller = FuturesSlippageController(
@@ -683,7 +683,7 @@ class TestTradingOrchestrator:
 
         signal = Signal(
             code="A05603",
-            strategy="rl_mppo",
+            strategy="setup_a_gap_reversion",
             price=330.49,
             confidence=0.8,
         )
@@ -721,7 +721,7 @@ class TestTradingOrchestrator:
         )
         from shared.models.signal import Signal
 
-        config = TradingConfig.futures(strategy_name="rl_mppo")
+        config = TradingConfig.futures(strategy_name="setup_a_gap_reversion")
         config.paper_trading = True
         orch = TradingOrchestrator(config)
         orch._futures_slippage_controller = FuturesSlippageController(
@@ -761,7 +761,7 @@ class TestTradingOrchestrator:
         signal_ts = datetime.now(UTC) - timedelta(milliseconds=100)
         signal = Signal(
             code="A05603",
-            strategy="rl_mppo",
+            strategy="setup_a_gap_reversion",
             price=330.49,
             confidence=0.8,
             timestamp=signal_ts,
@@ -793,7 +793,7 @@ class TestTradingOrchestrator:
         )
         from shared.models.signal import Signal
 
-        config = TradingConfig.futures(strategy_name="rl_mppo")
+        config = TradingConfig.futures(strategy_name="setup_a_gap_reversion")
         config.paper_trading = True
         orch = TradingOrchestrator(config)
         orch._futures_slippage_controller = FuturesSlippageController(
@@ -825,7 +825,7 @@ class TestTradingOrchestrator:
 
         signal = Signal(
             code="A05603",
-            strategy="rl_mppo",
+            strategy="setup_a_gap_reversion",
             price=330.49,
             confidence=0.8,
         )
@@ -850,7 +850,7 @@ class TestTradingOrchestrator:
         from services.trading.orchestrator import TradingOrchestrator, TradingConfig
         from shared.models.signal import Signal
 
-        config = TradingConfig.futures(strategy_name="rl_mppo")
+        config = TradingConfig.futures(strategy_name="setup_a_gap_reversion")
         config.paper_trading = True
         orch = TradingOrchestrator(config)
 
@@ -872,7 +872,7 @@ class TestTradingOrchestrator:
 
         signal = Signal(
             code="A05603",
-            strategy="rl_mppo",
+            strategy="setup_a_gap_reversion",
             price=330.49,
             confidence=0.8,
         )
@@ -889,7 +889,7 @@ class TestTradingOrchestrator:
         from services.trading.orchestrator import TradingOrchestrator, TradingConfig
         from shared.execution.models import OrderResponse
 
-        config = TradingConfig.futures(strategy_name="rl_mppo")
+        config = TradingConfig.futures(strategy_name="setup_a_gap_reversion")
         config.paper_trading = False
         orch = TradingOrchestrator(config)
 
@@ -920,7 +920,7 @@ class TestTradingOrchestrator:
         from services.trading.orchestrator import TradingOrchestrator, TradingConfig
         from shared.execution.models import OrderResponse
 
-        config = TradingConfig.futures(strategy_name="rl_mppo")
+        config = TradingConfig.futures(strategy_name="setup_a_gap_reversion")
         config.paper_trading = False
         orch = TradingOrchestrator(config)
 
@@ -957,7 +957,7 @@ class TestTradingOrchestrator:
         from shared.models.signal import ExitSignal, ExitReason
         from shared.paper.models import OrderSide as PaperOrderSide
 
-        config = TradingConfig.futures(strategy_name="rl_mppo")
+        config = TradingConfig.futures(strategy_name="setup_a_gap_reversion")
         config.paper_trading = True
         orch = TradingOrchestrator(config)
 
@@ -1005,7 +1005,7 @@ class TestTradingOrchestrator:
         from services.trading.orchestrator import TradingOrchestrator, TradingConfig
         from shared.config.loader import ConfigLoader
 
-        config = TradingConfig.futures(strategy_name="rl_mppo")
+        config = TradingConfig.futures(strategy_name="setup_a_gap_reversion")
         config.paper_trading = True
         orch = TradingOrchestrator(config)
 

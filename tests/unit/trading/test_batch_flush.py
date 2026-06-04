@@ -1,13 +1,13 @@
 """Tests for batch flush functionality in PositionTracker.
 
-Tests the batching mechanism for closed positions and RL trades,
+Tests the batching mechanism for closed positions and futures trades,
 including accumulation, threshold triggers, manual flush, timer-based
 flush, and shutdown flush.
 """
 
 import asyncio
 from datetime import datetime
-from unittest.mock import MagicMock, patch, AsyncMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -84,8 +84,8 @@ class TestBatchAccumulation:
         assert len(tracker._pending_swing_positions) == 3
 
     @pytest.mark.asyncio
-    async def test_accumulates_rl_trades_without_flush(self):
-        """RL trades should accumulate in batch without immediate DB write."""
+    async def test_accumulates_futures_trades_without_flush(self):
+        """futures trades should accumulate in batch without immediate DB write."""
         config = PositionTrackerConfig(batch_size=10, flush_interval_seconds=999)
         tracker = PositionTracker(config=config)
 
@@ -94,22 +94,24 @@ class TestBatchAccumulation:
         mock_ch.get_sync_client.return_value = mock_client
 
         with patch.object(tracker, "_get_db_client", return_value=(mock_ch, "testdb")):
-            # Save 3 RL trades (below threshold of 10)
+            # Save 3 futures trades (below threshold of 10)
             for i in range(3):
                 pos = _make_position(
                     id=f"rl-{i}",
                     code="101S6000",
-                    strategy="rl_mppo",
+                    strategy="setup_a_gap_reversion",
                     exit_price=350.0,
                 )
-                result = await tracker.save_rl_trade_to_db(pos, asset_class="futures")
+                result = await tracker.save_futures_trade_to_db(
+                    pos, asset_class="futures"
+                )
                 assert result is True
 
         # Should NOT have written to DB yet
         assert mock_client.execute.call_count == 0
 
         # Should have 3 trades in pending batch
-        assert len(tracker._pending_rl_trades) == 3
+        assert len(tracker._pending_futures_trades) == 3
 
 
 class TestBatchSizeThresholdTrigger:
@@ -142,8 +144,8 @@ class TestBatchSizeThresholdTrigger:
         assert len(tracker._pending_swing_positions) == 0
 
     @pytest.mark.asyncio
-    async def test_flushes_rl_trades_at_threshold(self):
-        """Should auto-flush RL trades when batch reaches configured batch_size."""
+    async def test_flushes_futures_trades_at_threshold(self):
+        """Should auto-flush futures trades when batch reaches configured batch_size."""
         config = PositionTrackerConfig(batch_size=3, flush_interval_seconds=999)
         tracker = PositionTracker(config=config)
 
@@ -152,21 +154,21 @@ class TestBatchSizeThresholdTrigger:
         mock_ch.get_sync_client.return_value = mock_client
 
         with patch.object(tracker, "_get_db_client", return_value=(mock_ch, "testdb")):
-            # Save 3 RL trades (exactly at threshold)
+            # Save 3 futures trades (exactly at threshold)
             for i in range(3):
                 pos = _make_position(
                     id=f"rl-{i}",
                     code="101S6000",
-                    strategy="rl_mppo",
+                    strategy="setup_a_gap_reversion",
                     exit_price=350.0,
                 )
-                await tracker.save_rl_trade_to_db(pos, asset_class="futures")
+                await tracker.save_futures_trade_to_db(pos, asset_class="futures")
 
         # Should have flushed automatically (2 calls: schema + insert)
         assert mock_client.execute.call_count == 2
 
         # Batch should be empty after flush
-        assert len(tracker._pending_rl_trades) == 0
+        assert len(tracker._pending_futures_trades) == 0
 
     @pytest.mark.asyncio
     async def test_multiple_threshold_flushes(self):
@@ -218,11 +220,11 @@ class TestManualFlush:
             assert mock_client.execute.call_count == 0
 
             # Manual flush
-            swing_count, rl_count = await tracker.flush_pending_positions()
+            swing_count, futures_count = await tracker.flush_pending_positions()
 
         # Should have flushed 3 swing positions
         assert swing_count == 3
-        assert rl_count == 0
+        assert futures_count == 0
 
         # DB should have been called once
         assert mock_client.execute.call_count == 1
@@ -231,8 +233,8 @@ class TestManualFlush:
         assert len(tracker._pending_swing_positions) == 0
 
     @pytest.mark.asyncio
-    async def test_manual_flush_rl_trades(self):
-        """Manual flush should write accumulated RL trades to DB."""
+    async def test_manual_flush_futures_trades(self):
+        """Manual flush should write accumulated futures trades to DB."""
         config = PositionTrackerConfig(batch_size=100, flush_interval_seconds=999)
         tracker = PositionTracker(config=config)
 
@@ -241,32 +243,32 @@ class TestManualFlush:
         mock_ch.get_sync_client.return_value = mock_client
 
         with patch.object(tracker, "_get_db_client", return_value=(mock_ch, "testdb")):
-            # Accumulate 2 RL trades (below threshold)
+            # Accumulate 2 futures trades (below threshold)
             for i in range(2):
                 pos = _make_position(
                     id=f"rl-{i}",
                     code="101S6000",
-                    strategy="rl_mppo",
+                    strategy="setup_a_gap_reversion",
                     exit_price=350.0,
                 )
-                await tracker.save_rl_trade_to_db(pos, asset_class="futures")
+                await tracker.save_futures_trade_to_db(pos, asset_class="futures")
 
             # Manual flush
-            swing_count, rl_count = await tracker.flush_pending_positions()
+            swing_count, futures_count = await tracker.flush_pending_positions()
 
-        # Should have flushed 2 RL trades
+        # Should have flushed 2 futures trades
         assert swing_count == 0
-        assert rl_count == 2
+        assert futures_count == 2
 
         # DB should have been called twice (schema + insert)
         assert mock_client.execute.call_count == 2
 
         # Batch should be empty
-        assert len(tracker._pending_rl_trades) == 0
+        assert len(tracker._pending_futures_trades) == 0
 
     @pytest.mark.asyncio
     async def test_manual_flush_both_types(self):
-        """Manual flush should handle both swing positions and RL trades."""
+        """Manual flush should handle both swing positions and futures trades."""
         config = PositionTrackerConfig(batch_size=100, flush_interval_seconds=999)
         tracker = PositionTracker(config=config)
 
@@ -280,26 +282,26 @@ class TestManualFlush:
                 pos = _make_position(id=f"pos-{i}", exit_price=72000)
                 await tracker.save_closed_to_db(pos)
 
-            # Add RL trades
+            # Add futures trades
             for i in range(3):
                 pos = _make_position(
                     id=f"rl-{i}",
                     code="101S6000",
-                    strategy="rl_mppo",
+                    strategy="setup_a_gap_reversion",
                     exit_price=350.0,
                 )
-                await tracker.save_rl_trade_to_db(pos, asset_class="futures")
+                await tracker.save_futures_trade_to_db(pos, asset_class="futures")
 
             # Manual flush
-            swing_count, rl_count = await tracker.flush_pending_positions()
+            swing_count, futures_count = await tracker.flush_pending_positions()
 
         # Should have flushed both types
         assert swing_count == 2
-        assert rl_count == 3
+        assert futures_count == 3
 
         # Both batches should be empty
         assert len(tracker._pending_swing_positions) == 0
-        assert len(tracker._pending_rl_trades) == 0
+        assert len(tracker._pending_futures_trades) == 0
 
     @pytest.mark.asyncio
     async def test_manual_flush_empty_batches(self):
@@ -313,11 +315,11 @@ class TestManualFlush:
 
         with patch.object(tracker, "_get_db_client", return_value=(mock_ch, "testdb")):
             # Flush without accumulating anything
-            swing_count, rl_count = await tracker.flush_pending_positions()
+            swing_count, futures_count = await tracker.flush_pending_positions()
 
         # Should return 0 for both
         assert swing_count == 0
-        assert rl_count == 0
+        assert futures_count == 0
 
         # Should NOT have called DB
         assert mock_client.execute.call_count == 0
@@ -485,7 +487,7 @@ class TestShutdownFlush:
 
     @pytest.mark.asyncio
     async def test_stop_auto_flush_flushes_both_types(self):
-        """Shutdown flush should handle both swing positions and RL trades."""
+        """Shutdown flush should handle both swing positions and futures trades."""
         config = PositionTrackerConfig(batch_size=100, flush_interval_seconds=1.0)
         tracker = PositionTracker(config=config)
 
@@ -499,15 +501,15 @@ class TestShutdownFlush:
                 pos = _make_position(id=f"pos-{i}", exit_price=72000)
                 await tracker.save_closed_to_db(pos)
 
-            # Add RL trades
+            # Add futures trades
             for i in range(3):
                 pos = _make_position(
                     id=f"rl-{i}",
                     code="101S6000",
-                    strategy="rl_mppo",
+                    strategy="setup_a_gap_reversion",
                     exit_price=350.0,
                 )
-                await tracker.save_rl_trade_to_db(pos, asset_class="futures")
+                await tracker.save_futures_trade_to_db(pos, asset_class="futures")
 
             # Stop (triggers final flush)
             await tracker.stop_auto_flush()
@@ -517,7 +519,7 @@ class TestShutdownFlush:
 
         # Both batches should be empty
         assert len(tracker._pending_swing_positions) == 0
-        assert len(tracker._pending_rl_trades) == 0
+        assert len(tracker._pending_futures_trades) == 0
 
 
 class TestBatchFlushThreadSafety:

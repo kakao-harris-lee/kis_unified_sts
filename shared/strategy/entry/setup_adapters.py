@@ -45,8 +45,8 @@ entry direction, the signal is dropped entirely.
   ``"STRONG_BULLISH"``) + ``confidence >= veto_min_confidence`` → **veto**.
 
 Vetoed signals are:
-1. Buffered via :mod:`shared.strategy.llm_veto_logger` (mirrors
-   ``rl_shadow_logger``) for counterfactual ClickHouse flush (follow-up PR).
+1. Buffered via :mod:`shared.strategy.llm_veto_logger` for counterfactual
+   ClickHouse flush.
 2. Sent to the futures Telegram channel so operators have immediate visibility.
 3. Returned as ``None`` (signal dropped, no orchestrator emission).
 
@@ -247,7 +247,9 @@ class SetupAEntryConfig(ServiceConfigBase):
     :class:`LLMTuningConfig` (Phase 1.1).
     """
 
-    _default_config_file: ClassVar[str] = "strategies/futures/setup_a_gap_reversion.yaml"
+    _default_config_file: ClassVar[str] = (
+        "strategies/futures/setup_a_gap_reversion.yaml"
+    )
     _default_section: ClassVar[str] = "strategy.entry.params"
 
     enabled: bool = Field(default=True, description="Enable/disable the adapter")
@@ -296,7 +298,9 @@ class SetupCEntryConfig(ServiceConfigBase):
     The ``llm_tuning`` section is a typed :class:`LLMTuningConfig` (Phase 1.1).
     """
 
-    _default_config_file: ClassVar[str] = "strategies/futures/setup_c_event_reaction.yaml"
+    _default_config_file: ClassVar[str] = (
+        "strategies/futures/setup_c_event_reaction.yaml"
+    )
     _default_section: ClassVar[str] = "strategy.entry.params"
 
     enabled: bool = Field(default=True, description="Enable/disable the adapter")
@@ -537,7 +541,11 @@ def _get_llm_context(context: EntryContext) -> Any | None:
     # Decision-engine MarketContext is a frozen dataclass; LLM MarketContext is
     # a standard dataclass.  We distinguish them by duck-typing the LLM-specific
     # fields rather than importing the class (avoids circular-import risk).
-    if hasattr(mc, "regime") and hasattr(mc, "risk_score") and hasattr(mc, "confidence"):
+    if (
+        hasattr(mc, "regime")
+        and hasattr(mc, "risk_score")
+        and hasattr(mc, "confidence")
+    ):
         return mc
     return None
 
@@ -571,9 +579,7 @@ def _apply_llm_tuning_setup_a(
     # RiskMode is an Enum whose .value is a Korean string (e.g. "위험회피").
     # Normalise to the enum's .name (e.g. "RISK_OFF") for YAML-friendly comparison.
     risk_mode: str = (
-        risk_mode_raw.name
-        if hasattr(risk_mode_raw, "name")
-        else str(risk_mode_raw)
+        risk_mode_raw.name if hasattr(risk_mode_raw, "name") else str(risk_mode_raw)
     )
     risk_score: float = float(llm_ctx.risk_score)
 
@@ -595,7 +601,9 @@ def _apply_llm_tuning_setup_a(
     # 2. Risk-score confidence scaling
     adjusted_confidence = float(decision_signal.confidence)
     if risk_score > tuning.risk_off_threshold and risk_mode == "RISK_OFF":
-        adjusted_confidence = adjusted_confidence * tuning.risk_off_confidence_multiplier
+        adjusted_confidence = (
+            adjusted_confidence * tuning.risk_off_confidence_multiplier
+        )
         logger.debug(
             "SetupA LLM tuning: confidence scaled %.3f → %.3f "
             "(risk_score=%.1f > %.1f, RISK_OFF)",
@@ -637,9 +645,7 @@ def _apply_llm_tuning_setup_c(
     risk_mode_raw = llm_ctx.risk_mode
     # Normalise to .name for YAML-friendly comparison (same as Setup A).
     risk_mode: str = (
-        risk_mode_raw.name
-        if hasattr(risk_mode_raw, "name")
-        else str(risk_mode_raw)
+        risk_mode_raw.name if hasattr(risk_mode_raw, "name") else str(risk_mode_raw)
     )
 
     # 1. Direction gating (same logic as Setup A)
@@ -741,9 +747,8 @@ def _apply_llm_veto(
     regime: str = str(llm_ctx.regime)
 
     veto_triggered = (
-        (direction == "long" and overall_signal == tuning.veto_long_block_signal)
-        or (direction == "short" and overall_signal == tuning.veto_short_block_signal)
-    )
+        direction == "long" and overall_signal == tuning.veto_long_block_signal
+    ) or (direction == "short" and overall_signal == tuning.veto_short_block_signal)
 
     if not veto_triggered:
         return False, None
@@ -896,7 +901,7 @@ class SetupAEntryAdapter(EntrySignalGenerator[SetupAEntryConfig]):
         self,
         config: SetupAEntryConfig,
         forecast_client: Any | None = None,
-        gate_cfg: GateConfig | None = None,   # P2-③ T5
+        gate_cfg: GateConfig | None = None,  # P2-③ T5
     ) -> None:
         super().__init__(config)
         from shared.decision.setups.gap_reversion import (
@@ -941,9 +946,7 @@ class SetupAEntryAdapter(EntrySignalGenerator[SetupAEntryConfig]):
             return fi.gap_threshold_vol_mult * forecast.forecast_pct
         return self.config.min_kr_gap_pct
 
-    def _gap_within_reversion_range(
-        self, gap_pct: float, forecast: Any | None
-    ) -> bool:
+    def _gap_within_reversion_range(self, gap_pct: float, forecast: Any | None) -> bool:
         """Return True if ``gap_pct`` is within the reversion-acceptable range.
 
         When forecast integration is enabled and a fresh forecast is supplied,
@@ -983,18 +986,18 @@ class SetupAEntryAdapter(EntrySignalGenerator[SetupAEntryConfig]):
         Raises:
             AssertionError: When any numeric param is out of valid range.
         """
-        assert 0 <= self.config.valid_minutes_min <= self.config.valid_minutes_max, (
-            "valid_minutes_min must be <= valid_minutes_max"
-        )
+        assert (
+            0 <= self.config.valid_minutes_min <= self.config.valid_minutes_max
+        ), "valid_minutes_min must be <= valid_minutes_max"
         assert self.config.min_sp500_gap_pct >= 0.0, "min_sp500_gap_pct must be >= 0"
         assert self.config.min_kr_gap_pct >= 0.0, "min_kr_gap_pct must be >= 0"
-        assert 0.0 <= self.config.retrace_min <= self.config.retrace_max <= 1.0, (
-            "retrace_min/max must be in [0,1] and retrace_min <= retrace_max"
-        )
+        assert (
+            0.0 <= self.config.retrace_min <= self.config.retrace_max <= 1.0
+        ), "retrace_min/max must be in [0,1] and retrace_min <= retrace_max"
         assert self.config.stop_atr_mult > 0.0, "stop_atr_mult must be > 0"
-        assert 0.0 < self.config.target_gap_fill_ratio <= 1.0, (
-            "target_gap_fill_ratio must be in (0, 1]"
-        )
+        assert (
+            0.0 < self.config.target_gap_fill_ratio <= 1.0
+        ), "target_gap_fill_ratio must be in (0, 1]"
         assert self.config.signal_ttl_minutes > 0, "signal_ttl_minutes must be > 0"
 
     @property
@@ -1158,7 +1161,7 @@ class SetupCEntryAdapter(EntrySignalGenerator[SetupCEntryConfig]):
         self,
         config: SetupCEntryConfig,
         forecast_client: Any | None = None,
-        gate_cfg: GateConfig | None = None,   # P2-③ T5
+        gate_cfg: GateConfig | None = None,  # P2-③ T5
     ) -> None:
         super().__init__(config)
         from shared.decision.setups.event_reaction import (
@@ -1224,14 +1227,14 @@ class SetupCEntryAdapter(EntrySignalGenerator[SetupCEntryConfig]):
             AssertionError: When any numeric param is out of valid range.
         """
         assert self.config.window_minutes > 0, "window_minutes must be > 0"
-        assert self.config.breakout_buffer_atr_mult > 0.0, (
-            "breakout_buffer_atr_mult must be > 0"
-        )
+        assert (
+            self.config.breakout_buffer_atr_mult > 0.0
+        ), "breakout_buffer_atr_mult must be > 0"
         assert self.config.target_atr_mult > 0.0, "target_atr_mult must be > 0"
         assert self.config.signal_ttl_minutes > 0, "signal_ttl_minutes must be > 0"
-        assert 1 <= self.config.min_impact_tier <= 3, (
-            "min_impact_tier must be between 1 and 3"
-        )
+        assert (
+            1 <= self.config.min_impact_tier <= 3
+        ), "min_impact_tier must be between 1 and 3"
 
     @property
     def name(self) -> str:

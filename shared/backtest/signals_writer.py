@@ -1,4 +1,4 @@
-"""Batched writer for ``kospi.signals_all``.
+"""Optional batched writer for ``kospi.signals_all``.
 
 Phase 3 persists every (candidate, layer_result) pair — rejected and accepted
 alike — so the backtest can be replayed against different filter configurations
@@ -7,8 +7,9 @@ without re-running Setup logic.
 Lessons carried from Phase 1/2:
 - tz-aware datetimes are stripped to naive before sending to
   ``DateTime64(3, 'UTC')`` (aiochclient otherwise serializes with ``+00:00``).
-- CH failures are logged and **re-raised** (no silent swallow) so the caller
-  can decide whether to abort the run.
+- When the optional ClickHouse mirror is enabled, CH failures are logged and
+  **re-raised** (no silent swallow) so the caller can decide whether to abort
+  the run.
 """
 
 from __future__ import annotations
@@ -42,6 +43,7 @@ class SignalsAllWriter:
     ):
         self.ch = ch_client
         self.batch_size = batch_size
+        self._mirror_enabled = ch_client is not None and batch_size > 0
         self._buffer: list[tuple] = []
         self._lock = asyncio.Lock()
 
@@ -63,6 +65,8 @@ class SignalsAllWriter:
                 signal_id`` actually matches. Backtest harness callers without
                 a pre-existing id fall through to a fresh ``uuid4`` per row.
         """
+        if not self._mirror_enabled:
+            return
         generated_at = signal.generated_at
         if generated_at.tzinfo is not None:
             generated_at = generated_at.astimezone(UTC).replace(tzinfo=None)
@@ -87,6 +91,8 @@ class SignalsAllWriter:
             await self.flush()
 
     async def flush(self) -> None:
+        if not self._mirror_enabled:
+            return
         async with self._lock:
             if not self._buffer:
                 return

@@ -47,10 +47,9 @@ def futures_clickhouse_client() -> Any | None:
     PERMISSIVE degrade branch — never propagates to trading hot path).
     """
     try:
-        from shared.db.client import get_clickhouse_client
-        from shared.db.config import ClickHouseConfig
-        cfg = ClickHouseConfig.from_env(database=_futures_clickhouse_database())
-        return get_clickhouse_client(cfg)
+        from shared.storage import get_clickhouse_client_wrapper
+
+        return get_clickhouse_client_wrapper(_futures_clickhouse_database())
     except Exception as e:  # noqa: BLE001
         logger.debug("futures_clickhouse_client construction failed: %s", e)
         return None

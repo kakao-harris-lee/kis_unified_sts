@@ -12,8 +12,11 @@ RUN pip install --upgrade pip && \
     pip install redis prometheus-client
 
 # Copy only modules required by stream_exporter to keep image small/fast.
-RUN mkdir -p /app/shared /app/services/monitoring
+RUN mkdir -p /app/shared/config /app/services/monitoring && \
+    touch /app/shared/config/__init__.py
 COPY shared/__init__.py /app/shared/__init__.py
+COPY shared/config/tls.py /app/shared/config/tls.py
+COPY shared/exceptions /app/shared/exceptions
 COPY shared/streaming /app/shared/streaming
 COPY services/monitoring/stream_exporter.py /app/services/monitoring/stream_exporter.py
 

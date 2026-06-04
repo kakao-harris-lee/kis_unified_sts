@@ -192,7 +192,7 @@ class RiskFilterDaemon:
 
 
 async def _build_and_run() -> int:
-    """Production entrypoint. Wires Redis + ClickHouse + RiskFilterLayer + runs."""
+    """Production entrypoint. Wires Redis + optional CH + RiskFilterLayer."""
     import os
     import signal as signal_mod
     import socket
@@ -200,18 +200,19 @@ async def _build_and_run() -> int:
     import redis.asyncio as aioredis
 
     from shared.backtest.signals_writer import SignalsAllWriter
-    from shared.db.client import AsyncClickHouseClient
-    from shared.db.config import ClickHouseConfig
     from shared.risk.config import FuturesRiskConfig, load_trading_windows
     from shared.risk.layer import RiskFilterLayer
     from shared.risk.runtime_state import RuntimeRiskState
+    from shared.storage import create_async_clickhouse_client
+    from shared.storage.config import StorageConfig
 
     redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/1")
     redis_client = aioredis.from_url(redis_url)
 
-    ch_config = ClickHouseConfig.from_env(database="kospi")
-    ch_client = AsyncClickHouseClient(ch_config)
-    await ch_client.connect()
+    ch_client = None
+    storage_config = StorageConfig.load_or_default()
+    if storage_config.runtime_storage.clickhouse_mirror.enabled:
+        ch_client = await create_async_clickhouse_client(database="kospi")
 
     risk_config = FuturesRiskConfig.from_yaml()
     trading_windows = load_trading_windows()
@@ -242,7 +243,8 @@ async def _build_and_run() -> int:
         await daemon.run()
     finally:
         await redis_client.aclose()
-        await ch_client.close()
+        if ch_client is not None:
+            await ch_client.close()
     return 0
 
 

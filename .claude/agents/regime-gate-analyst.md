@@ -42,7 +42,6 @@ python scripts/gate_futures_strategy.py --strategy bb_reversion_15m \
 python scripts/probe_bb_reversion_15m_gate.py
 # Counterfactual EOD-proxy PnL
 python scripts/analysis/regime_gate_counterfactual.py
-python scripts/analysis/counterfactual_weekly_report.py
 ```
 
 ## 출력 형식

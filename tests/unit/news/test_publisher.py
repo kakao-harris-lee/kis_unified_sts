@@ -106,6 +106,13 @@ async def test_ch_writer_batches_and_flushes_on_size():
 
 
 @pytest.mark.asyncio
+async def test_ch_writer_noop_when_disabled():
+    writer = ClickHouseNewsWriter(None, batch_size=1, flush_interval_seconds=60)
+    await writer.enqueue(_item("disabled"))
+    await writer.flush()
+
+
+@pytest.mark.asyncio
 async def test_ch_writer_flush_explicit():
     ch_client = AsyncMock()
     writer = ClickHouseNewsWriter(ch_client, batch_size=100, flush_interval_seconds=60)

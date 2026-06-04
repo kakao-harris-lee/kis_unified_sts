@@ -332,10 +332,7 @@ async def _build_and_run() -> int:
             )
         )
 
-    if (
-        cc.clickhouse_insert_fail_rate.enabled
-        and cc.clickhouse_insert_fail_rate.threshold is not None
-    ):
+    if _clickhouse_insert_fail_condition_enabled(cc.clickhouse_insert_fail_rate):
         conditions.append(
             ClickHouseInsertFailCondition(
                 threshold=float(cc.clickhouse_insert_fail_rate.threshold),
@@ -422,6 +419,23 @@ async def _build_and_run() -> int:
     return 0
 
 
+def _clickhouse_insert_fail_condition_enabled(condition: Any) -> bool:
+    """Return true only when the optional ClickHouse mirror is active."""
+    if not condition.enabled or condition.threshold is None:
+        return False
+    try:
+        from shared.storage.config import StorageConfig
+
+        storage_config = StorageConfig.load_or_default()
+        return bool(storage_config.runtime_storage.clickhouse_mirror.enabled)
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "clickhouse_insert_fail_rate condition disabled; storage config unavailable",
+            exc_info=True,
+        )
+        return False
+
+
 # ---------------------------------------------------------------------------
 # Provider factories for Phase 0.4 provider-backed conditions.
 # ---------------------------------------------------------------------------
@@ -452,7 +466,9 @@ def _build_api_error_rate_provider(
             # connection pool's underlying sync path via a temporary sync client
             # built from the same URL. This is called at most every
             # ``check_interval_seconds`` so the overhead is acceptable.
-            url: str = str(redis_client.connection_pool.connection_kwargs.get("url", ""))
+            url: str = str(
+                redis_client.connection_pool.connection_kwargs.get("url", "")
+            )
             if not url:
                 # Fallback: reconstruct URL from kwargs
                 kwargs = redis_client.connection_pool.connection_kwargs

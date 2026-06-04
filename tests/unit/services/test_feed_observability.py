@@ -353,22 +353,11 @@ class TestWarmupMissWarnings:
         """B: _fetch_candles_from_clickhouse exception → WARNING (not just DEBUG)."""
         orch = _make_minimal_orchestrator("stock")
 
-        # Patch ClickHouseConfig.from_env and the CH client constructor so we
-        # can simulate a connection error without real infra.
-        with (
-            patch("services.trading.orchestrator.ClickHouseConfig") as mock_ch_cfg_cls,
-            patch("asyncio.get_event_loop") as mock_loop,
-        ):
+        # Patch the executor so we can simulate a connection error without real infra.
+        with patch("asyncio.get_event_loop") as mock_loop:
             # Make the executor call raise an OSError (connection refused).
             mock_loop.return_value.run_in_executor = AsyncMock(
                 side_effect=OSError("Connection refused")
-            )
-            mock_ch_cfg_cls.from_env.return_value = MagicMock(
-                host="localhost",
-                port=9000,
-                user="default",
-                password="",
-                database="market",
             )
 
             with caplog.at_level(

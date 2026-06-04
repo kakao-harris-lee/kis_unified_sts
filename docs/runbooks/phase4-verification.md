@@ -16,7 +16,7 @@ Two-week paper-uptime gate per `docs/plans/2026-04-20-futures-paradigm-phase4-ex
       raise this until Phase 3 final sign-off via
       `scripts/walk_forward_paper_foldin.py` passes. Phase 5's 1→2→5
       ladder explicitly gates on this.
-- [ ] `rl_mppo` paper account & keys are SEPARATE from Phase 4 paper account (avoid double-entry on the same KOSPI200 mini contract)
+- [ ] Setup A/C paper account and keys are configured; no legacy RL paper account is required.
 - [ ] `KIS_FUTURES_*` credentials configured for Phase 4 paper account
 - [ ] `TELEGRAM_FUTURES_*` configured for kill-switch alerts
 - [ ] V3 migration applied: `clickhouse-client --query "DESC kospi.order_fills"` shows 16 columns
@@ -45,7 +45,7 @@ Add Weekly Edge Review to crontab:
 - [ ] `clickhouse-client --query "SELECT count() FROM kospi.order_fills WHERE filled_at >= now() - INTERVAL 7 DAY"` ≥ 10
 - [ ] `clickhouse-client --query "SELECT avg(slippage_ticks) FROM kospi.order_fills WHERE filled_at >= now() - INTERVAL 7 DAY"` ≤ 0.5 (warn) / ≤ 0.4 (gate)
 - [ ] `redis-cli -n 1 XLEN stream:signal.candidate` reasonable (no runaway growth)
-- [ ] `rl_mppo` React Dashboard / ClickHouse checks show zero regression vs pre-Phase-4 baseline (independent paper account)
+- [ ] Setup A/C dashboard / RuntimeLedger checks show no missing fills, positions, or daily PnL records.
 - [ ] Weekly Edge Review Telegram delivered Mon 05:00 KST with no negative-EV alerts on either Setup A or C
 
 ### Week 2 endpoint (gate decision)
@@ -75,7 +75,7 @@ sudo systemctl stop kis-order-router kis-risk-filter kis-decision-engine kis-kil
 sudo systemctl disable kis-order-router kis-risk-filter kis-decision-engine kis-kill-switch
 ```
 
-`rl_mppo` paper continues unaffected (separate orchestrator path).
+Legacy RL paper is removed. Rollback stops Phase 4 daemons and leaves the standard stock/futures orchestrator path available.
 
 ## Gate go/no-go
 

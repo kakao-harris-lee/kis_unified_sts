@@ -25,10 +25,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from shared.monitoring.drift_metrics import DriftMetrics
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -252,19 +249,13 @@ class MetricsCollector:
             "trading_data_symbols_fetched",
             "Symbols with valid market data in last fetch",
         )
-        self.prom_rl_entry_action_probability = Gauge(
-            "trading_rl_entry_action_probability",
-            "RL entry action probability (masked and normalized)",
-            ["strategy", "action"],
-        )
         self.prom_signal_evaluations = Counter(
             "trading_signal_evaluations_total",
             "Total signal evaluation cycles",
         )
-        # Shadow loggers (Phase 2 paper validation — see
-        # shared/strategy/{rl_shadow,llm_veto}_logger.py).  These metrics
-        # let operators detect persistent CH flush failures that would
-        # silently drop counterfactual data.
+        # Shadow logger health. These metrics let operators detect persistent
+        # CH flush failures that would silently drop LLM-veto counterfactual
+        # data.
         self.prom_shadow_logger_pending = Gauge(
             "trading_shadow_logger_pending_rows",
             "Rows currently buffered awaiting next flush",
@@ -289,21 +280,6 @@ class MetricsCollector:
             "trading_shadow_logger_last_flush_unix_seconds",
             "Unix timestamp of the most recent flush attempt (success or fail)",
             ["logger"],
-        )
-        self.prom_rl_kl_divergence = Gauge(
-            "trading_rl_kl_divergence",
-            "RL model KL divergence for observation distribution drift",
-            ["strategy", "metric_type"],
-        )
-        self.prom_rl_observation_mean_drift = Gauge(
-            "trading_rl_observation_mean_drift",
-            "RL model observation mean drift",
-            ["strategy"],
-        )
-        self.prom_rl_observation_std_drift = Gauge(
-            "trading_rl_observation_std_drift",
-            "RL model observation std drift",
-            ["strategy"],
         )
         self.prom_venue_order_count = Gauge(
             "trading_venue_order_count",
@@ -441,69 +417,6 @@ class MetricsCollector:
             reason=normalized,
         ).inc()
 
-    def record_rl_entry_action_probabilities(
-        self,
-        *,
-        strategy: str,
-        long_prob: float,
-        short_prob: float,
-        hold_prob: float,
-    ) -> None:
-        """RL entry 행동 확률 기록 (long/short/hold)."""
-        if not HAS_PROMETHEUS:
-            return
-
-        self.prom_rl_entry_action_probability.labels(
-            strategy=strategy, action="long"
-        ).set(max(0.0, min(1.0, float(long_prob))))
-        self.prom_rl_entry_action_probability.labels(
-            strategy=strategy, action="short"
-        ).set(max(0.0, min(1.0, float(short_prob))))
-        self.prom_rl_entry_action_probability.labels(
-            strategy=strategy, action="hold"
-        ).set(max(0.0, min(1.0, float(hold_prob))))
-
-    def record_drift_metrics(
-        self,
-        *,
-        strategy: str,
-        drift_metrics: DriftMetrics,
-    ) -> None:
-        """RL 모델 드리프트 메트릭 기록.
-
-        Args:
-            strategy: 전략 이름 (e.g., 'rl_mppo')
-            drift_metrics: DriftMetrics 객체 (KL divergence, PSI, confidence 등)
-        """
-        if not HAS_PROMETHEUS:
-            return
-
-        try:
-            # KL divergence 기록
-            self.prom_rl_kl_divergence.labels(strategy=strategy, metric_type="kl").set(
-                float(drift_metrics.kl_divergence)
-            )
-
-            # PSI 기록
-            self.prom_rl_kl_divergence.labels(strategy=strategy, metric_type="psi").set(
-                float(drift_metrics.psi_score)
-            )
-
-            # Confidence 분포 메트릭 기록
-            self.prom_rl_observation_mean_drift.labels(strategy=strategy).set(
-                float(drift_metrics.confidence_mean)
-            )
-            self.prom_rl_observation_std_drift.labels(strategy=strategy).set(
-                float(drift_metrics.confidence_std)
-            )
-
-            logger.debug(
-                f"Drift metrics recorded for {strategy}: "
-                f"KL={drift_metrics.kl_divergence:.4f}, PSI={drift_metrics.psi_score:.4f}"
-            )
-        except Exception as e:
-            logger.warning(f"Failed to record drift metrics: {e}")
-
     def record_order_latency(self, latency_ms: float):
         """주문 레이턴시 기록"""
         self.metrics.order_latency_ms = (
@@ -610,7 +523,7 @@ class MetricsCollector:
         """Record shadow logger flush state for Prometheus alerting.
 
         Args:
-            logger: Logger name label — "rl_shadow" or "llm_veto".
+            logger: Logger name label. The active runtime logger is "llm_veto".
             pending_rows: ``pending_count()`` from the logger module.
             dropped_batches: First element of ``dropped_counts()``.
             dropped_rows: Second element of ``dropped_counts()``.

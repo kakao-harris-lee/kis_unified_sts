@@ -931,14 +931,9 @@ def _trade_counts(ids: list[str]) -> dict[str, int]:
     if not ids:
         return {}
     try:
-        from clickhouse_driver import Client as SyncClient
+        from shared.storage import create_sync_clickhouse_client
 
-        from shared.db.config import ClickHouseConfig
-
-        cfg = ClickHouseConfig.from_env()
-        client = SyncClient(
-            host=cfg.host, port=cfg.port, user=cfg.user, password=cfg.password
-        )
+        client = create_sync_clickhouse_client()
         try:
             rows = client.execute(
                 "SELECT strategy, count() FROM market.stock_trades "

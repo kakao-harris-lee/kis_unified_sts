@@ -37,7 +37,7 @@ source .venv/bin/activate
 cat .auto-claude/specs/041-websocket-failover-with-rest-fallback/manual_integration_test.md
 
 # Execute test scenarios manually following the guide
-sts rl paper --strategy rl_mppo --asset futures
+sts trade start --strategy setup_a_gap_reversion --asset futures --paper
 # ... follow guide steps
 ```
 

@@ -5,6 +5,8 @@ Backtest Comparison Script: ATR Dynamic vs Three Stage Exit
 This script runs backtests for both exit strategies and compares performance metrics.
 """
 
+# ruff: noqa: E402
+
 import json
 import sys
 from pathlib import Path
@@ -91,14 +93,18 @@ def run_single_backtest(strategy_name: str, asset: str, tier: str = "top"):
             results = engine.run(df)
 
             if results:
-                all_results.append({
-                    "stock_code": stock_code,
-                    "metrics": results,
-                })
+                all_results.append(
+                    {
+                        "stock_code": stock_code,
+                        "metrics": results,
+                    }
+                )
                 successful_runs += 1
-                print(f"✓ {stock_code}: Total Return={results.get('total_return_pct', 0):.2f}%, "
-                      f"Sharpe={results.get('sharpe_ratio', 0):.3f}, "
-                      f"Win Rate={results.get('win_rate', 0):.2f}%")
+                print(
+                    f"✓ {stock_code}: Total Return={results.get('total_return_pct', 0):.2f}%, "
+                    f"Sharpe={results.get('sharpe_ratio', 0):.3f}, "
+                    f"Win Rate={results.get('win_rate', 0):.2f}%"
+                )
 
         except Exception as e:
             print(f"Error processing {stock_code}: {e}")
@@ -123,7 +129,7 @@ def run_single_backtest(strategy_name: str, asset: str, tier: str = "top"):
 
     return {
         "strategy_name": strategy_name,
-        "exit_type": strategy_config['strategy']['exit']['type'],
+        "exit_type": strategy_config["strategy"]["exit"]["type"],
         "successful_runs": successful_runs,
         "total_stocks": len(tier_stocks),
         "aggregate_metrics": aggregate_metrics,
@@ -230,9 +236,9 @@ def compare_results(result_a: dict, result_b: dict) -> dict:
 
 def main():
     """Run backtest comparison and generate report."""
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("BACKTEST COMPARISON: ATR Dynamic vs Three Stage Exit")
-    print("="*80 + "\n")
+    print("=" * 80 + "\n")
 
     # Run backtest A (atr_dynamic)
     result_a = run_single_backtest(
@@ -252,40 +258,56 @@ def main():
     comparison = compare_results(result_a, result_b)
 
     # Print comparison report
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("COMPARISON REPORT")
-    print("="*80 + "\n")
+    print("=" * 80 + "\n")
 
-    print(f"1. Sharpe Ratio:")
+    print("1. Sharpe Ratio:")
     print(f"   ATR Dynamic:  {comparison['sharpe_ratio']['atr_dynamic']:>8.3f}")
     print(f"   Three Stage:  {comparison['sharpe_ratio']['three_stage']:>8.3f}")
-    print(f"   Difference:   {comparison['sharpe_ratio']['difference']:>8.3f} "
-          f"({comparison['sharpe_ratio']['improvement_pct']:+.1f}%)")
-    print(f"   Winner: {'✓ ATR Dynamic' if comparison['sharpe_ratio']['difference'] > 0 else '✓ Three Stage'}\n")
+    print(
+        f"   Difference:   {comparison['sharpe_ratio']['difference']:>8.3f} "
+        f"({comparison['sharpe_ratio']['improvement_pct']:+.1f}%)"
+    )
+    print(
+        f"   Winner: {'✓ ATR Dynamic' if comparison['sharpe_ratio']['difference'] > 0 else '✓ Three Stage'}\n"
+    )
 
-    print(f"2. Win Rate:")
+    print("2. Win Rate:")
     print(f"   ATR Dynamic:  {comparison['win_rate']['atr_dynamic']:>8.2f}%")
     print(f"   Three Stage:  {comparison['win_rate']['three_stage']:>8.2f}%")
-    print(f"   Difference:   {comparison['win_rate']['difference']:>8.2f}% "
-          f"({comparison['win_rate']['improvement_pct']:+.1f}%)")
-    print(f"   Winner: {'✓ ATR Dynamic' if comparison['win_rate']['difference'] > 0 else '✓ Three Stage'}\n")
+    print(
+        f"   Difference:   {comparison['win_rate']['difference']:>8.2f}% "
+        f"({comparison['win_rate']['improvement_pct']:+.1f}%)"
+    )
+    print(
+        f"   Winner: {'✓ ATR Dynamic' if comparison['win_rate']['difference'] > 0 else '✓ Three Stage'}\n"
+    )
 
-    print(f"3. Max Drawdown:")
+    print("3. Max Drawdown:")
     print(f"   ATR Dynamic:  {comparison['max_drawdown']['atr_dynamic']:>8.2f}%")
     print(f"   Three Stage:  {comparison['max_drawdown']['three_stage']:>8.2f}%")
-    print(f"   Difference:   {comparison['max_drawdown']['difference']:>8.2f}% "
-          f"({comparison['max_drawdown']['improvement_pct']:+.1f}%)")
-    print(f"   Winner: {'✓ ATR Dynamic' if comparison['max_drawdown']['difference'] < 0 else '✓ Three Stage'}\n")
+    print(
+        f"   Difference:   {comparison['max_drawdown']['difference']:>8.2f}% "
+        f"({comparison['max_drawdown']['improvement_pct']:+.1f}%)"
+    )
+    print(
+        f"   Winner: {'✓ ATR Dynamic' if comparison['max_drawdown']['difference'] < 0 else '✓ Three Stage'}\n"
+    )
 
-    print(f"4. Average Holding Time:")
+    print("4. Average Holding Time:")
     print(f"   ATR Dynamic:  {comparison['holding_time']['atr_dynamic']:>8.1f} bars")
     print(f"   Three Stage:  {comparison['holding_time']['three_stage']:>8.1f} bars")
     print(f"   Difference:   {comparison['holding_time']['difference']:>8.1f} bars\n")
 
-    print("="*80)
-    print(f"SUMMARY: ATR Dynamic shows improvement in {comparison['summary']['improvements_count']}/3 key metrics")
-    print(f"Verdict: {'✓ ATR Dynamic OUTPERFORMS Three Stage' if comparison['summary']['atr_dynamic_superior'] else '⚠ Three Stage performs better'}")
-    print("="*80 + "\n")
+    print("=" * 80)
+    print(
+        f"SUMMARY: ATR Dynamic shows improvement in {comparison['summary']['improvements_count']}/3 key metrics"
+    )
+    print(
+        f"Verdict: {'✓ ATR Dynamic OUTPERFORMS Three Stage' if comparison['summary']['atr_dynamic_superior'] else '⚠ Three Stage performs better'}"
+    )
+    print("=" * 80 + "\n")
 
     # Save results to JSON
     output = {
@@ -317,5 +339,6 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"\n✗ Error: {e}")
         import traceback
+
         traceback.print_exc()
         sys.exit(1)

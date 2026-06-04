@@ -10,6 +10,7 @@
   3. ``get_summary()`` 미지원 broker → ``balance`` / ``get_equity()`` / ``initial_balance``로 fallback
   4. broker 예외 발생 → ``account`` 키 생략 (status 응답 자체는 정상)
 """
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock
@@ -23,7 +24,7 @@ from services.trading.orchestrator import TradingConfig, TradingOrchestrator
 def orchestrator() -> TradingOrchestrator:
     cfg = TradingConfig(
         asset_class="futures",
-        strategy_name="rl_mppo",
+        strategy_name="setup_a_gap_reversion",
         initial_capital=100_000_000.0,
         order_amount_per_trade=1_000_000.0,
         paper_trading=True,
@@ -58,7 +59,7 @@ class TestAccountSummaryFromGetSummary:
                 "initial_balance": 100_000_000.0,
                 "balance": 95_000_000.0,
                 "equity": 97_500_000.0,
-                "total_pnl": -3_000_000.0,    # closed trade pnl 누적
+                "total_pnl": -3_000_000.0,  # closed trade pnl 누적
                 "open_positions": 2,
             }
         )
@@ -94,7 +95,9 @@ class TestAccountSummaryFromGetSummary:
 class TestAccountSummaryFallback:
     def test_fallback_uses_balance_and_get_equity(self, orchestrator):
         # get_summary 미지원, 개별 속성/메서드만 노출
-        broker = MagicMock(spec=["balance", "initial_balance", "get_equity", "positions"])
+        broker = MagicMock(
+            spec=["balance", "initial_balance", "get_equity", "positions"]
+        )
         broker.balance = 95_000_000.0
         broker.initial_balance = 100_000_000.0
         broker.get_equity = MagicMock(return_value=97_500_000.0)
