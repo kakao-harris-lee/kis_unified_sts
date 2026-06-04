@@ -54,7 +54,6 @@ COPY domains/ ./domains/
 COPY services/ ./services/
 COPY cli/ ./cli/
 COPY config/ ./config/
-COPY scripts/docker/ ./scripts/docker/
 COPY pyproject.toml README.md ./
 
 # Create non-root user
@@ -67,6 +66,6 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     ENVIRONMENT=production
 
-# Trading loop image (env-driven; default paper). The dashboard API ships as a
-# separate image (Dockerfile.dashboard → services.dashboard.app on :8001).
-CMD ["bash", "scripts/docker/trading_loop_entrypoint.sh"]
+# Trading loop image (default paper; override args at runtime). The dashboard
+# API ships as a separate image (Dockerfile.dashboard → services.dashboard.app on :8001).
+CMD ["python", "-m", "cli.main", "trade", "start", "--asset", "stock", "--paper", "--daemon"]

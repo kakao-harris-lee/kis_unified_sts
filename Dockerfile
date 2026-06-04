@@ -35,6 +35,6 @@ RUN useradd -m -u 1000 appuser && \
     chown -R appuser:appuser /app
 USER appuser
 
-# 기본 명령어: 트레이딩 루프 (env-driven; 기본 paper). 대시보드 API는
-# Dockerfile.dashboard 가 services.dashboard.app 을 :8001 로 서빙한다.
-CMD ["bash", "scripts/docker/trading_loop_entrypoint.sh"]
+# 기본 명령어: 트레이딩 루프 (paper 기본; 런타임 인자로 override 가능). 대시보드
+# API는 Dockerfile.dashboard 가 services.dashboard.app 을 :8001 로 서빙한다.
+CMD ["python", "-m", "cli.main", "trade", "start", "--asset", "stock", "--paper", "--daemon"]
