@@ -1044,6 +1044,13 @@ def backfill():
 
 @backfill.command("today")
 @click.option(
+    "--sink",
+    type=click.Choice(["parquet", "clickhouse"]),
+    default="parquet",
+    show_default=True,
+    help="Storage sink for collected bars",
+)
+@click.option(
     "--all",
     "-a",
     "all_products",
@@ -1065,7 +1072,13 @@ def backfill():
     default=False,
     help="Collect KOSPI200 full-size futures (default: False)",
 )
-def backfill_today(all_products: bool, mini: bool, index: bool, futures: bool):
+def backfill_today(
+    sink: str,
+    all_products: bool,
+    mini: bool,
+    index: bool,
+    futures: bool,
+):
     """오늘 데이터 수집 (장 마감 후 실행)
 
     \b
@@ -1075,6 +1088,27 @@ def backfill_today(all_products: bool, mini: bool, index: bool, futures: bool):
         sts backfill today --index --futures
     """
     import asyncio
+
+    if sink == "parquet":
+        from shared.collector.historical.parquet_backfill import (
+            collect_today_futures_parquet,
+        )
+
+        click.echo("Collecting today's data to Parquet...")
+        result = asyncio.run(
+            collect_today_futures_parquet(
+                all_products=all_products,
+                mini=mini,
+                index=index,
+                futures=futures,
+            )
+        )
+        click.echo(
+            "Done! "
+            f"tasks={result.tasks}, skipped={result.skipped}, "
+            f"rows={result.rows}, failed={result.failed}"
+        )
+        return
 
     from shared.collector.historical import (
         collect_today,
@@ -1101,6 +1135,13 @@ def backfill_today(all_products: bool, mini: bool, index: bool, futures: bool):
 
 
 @backfill.command("run")
+@click.option(
+    "--sink",
+    type=click.Choice(["parquet", "clickhouse"]),
+    default="parquet",
+    show_default=True,
+    help="Storage sink for collected bars",
+)
 @click.option(
     "--days",
     "-d",
@@ -1137,6 +1178,7 @@ def backfill_today(all_products: bool, mini: bool, index: bool, futures: bool):
     help="Force re-collect all selected products/days (ignore saved state)",
 )
 def backfill_run(
+    sink: str,
     days: int,
     all_products: bool,
     mini: bool,
@@ -1154,6 +1196,29 @@ def backfill_run(
         sts backfill run --days 30 --futures --no-resume
     """
     import asyncio
+
+    if sink == "parquet":
+        from shared.collector.historical.parquet_backfill import (
+            backfill_futures_parquet,
+        )
+
+        click.echo(f"Starting Parquet backfill for {days} days...")
+        result = asyncio.run(
+            backfill_futures_parquet(
+                days=days,
+                all_products=all_products,
+                mini=mini,
+                index=index,
+                futures=futures,
+                resume=not no_resume,
+            )
+        )
+        click.echo(
+            "Backfill complete! "
+            f"tasks={result.tasks}, skipped={result.skipped}, "
+            f"rows={result.rows}, failed={result.failed}"
+        )
+        return
 
     from shared.collector.historical import (
         backfill as do_backfill,
@@ -1185,13 +1250,20 @@ def backfill_run(
 
 @backfill.command("status")
 @click.option(
+    "--sink",
+    type=click.Choice(["parquet", "clickhouse"]),
+    default="parquet",
+    show_default=True,
+    help="Storage sink to inspect",
+)
+@click.option(
     "--days",
     "-d",
     default=30,
     type=int,
     help="Period to check (default: 30 days)",
 )
-def backfill_status(days: int):
+def backfill_status(sink: str, days: int):
     """데이터 수집 현황 조회
 
     \b
@@ -1199,6 +1271,30 @@ def backfill_status(days: int):
         sts backfill status
         sts backfill status --days 90
     """
+    if sink == "parquet":
+        from shared.collector.historical.parquet_backfill import (
+            get_parquet_backfill_status,
+        )
+
+        status = get_parquet_backfill_status(days=days, asset_class="futures")
+        click.echo(f"Parquet Backfill Status (last {days} days)")
+        click.echo("=" * 50)
+        click.echo(f"Root: {status['root']}")
+        click.echo(f"Files: {status['parquet_files']}")
+        click.echo(f"Rows: {status['row_count']}")
+        if status.get("min_datetime") or status.get("max_datetime"):
+            click.echo(
+                f"Range: {status.get('min_datetime')} ~ {status.get('max_datetime')}"
+            )
+        click.echo()
+        for row in status.get("tasks", []):
+            click.echo(
+                f"{row['asset_class']}/{row['timeframe']}/{row['dataset']} "
+                f"{row['status']}: tasks={row['tasks']} rows={row['rows'] or 0} "
+                f"range={row['min_date']}~{row['max_date']}"
+            )
+        return
+
     from shared.collector.historical.backfill import get_data_status
 
     click.echo(f"Data Collection Status (last {days} days)")
@@ -1246,7 +1342,14 @@ def stock_backfill():
 
 
 @stock_backfill.command("today")
-def stock_backfill_today():
+@click.option(
+    "--sink",
+    type=click.Choice(["parquet", "clickhouse"]),
+    default="parquet",
+    show_default=True,
+    help="Storage sink for collected bars",
+)
+def stock_backfill_today(sink: str):
     """오늘 주식 분봉 데이터 수집 (장 마감 후 실행)
 
     \b
@@ -1254,6 +1357,20 @@ def stock_backfill_today():
         sts stock-backfill today
     """
     import asyncio
+
+    if sink == "parquet":
+        from shared.collector.historical.parquet_backfill import (
+            collect_today_stock_minute_parquet,
+        )
+
+        click.echo("Collecting stock minute data to Parquet for today...")
+        result = asyncio.run(collect_today_stock_minute_parquet())
+        click.echo(
+            "Collection complete! "
+            f"tasks={result.tasks}, skipped={result.skipped}, "
+            f"rows={result.rows}, failed={result.failed}"
+        )
+        return
 
     from shared.collector.historical.stock import collect_stock_minute_today
 
@@ -1263,6 +1380,13 @@ def stock_backfill_today():
 
 
 @stock_backfill.command("run")
+@click.option(
+    "--sink",
+    type=click.Choice(["parquet", "clickhouse"]),
+    default="parquet",
+    show_default=True,
+    help="Storage sink for collected bars",
+)
 @click.option(
     "--days",
     "-d",
@@ -1282,7 +1406,7 @@ def stock_backfill_today():
     default=False,
     help="Force re-collect all days (ignore saved state)",
 )
-def stock_backfill_run(days: int, codes: tuple, no_resume: bool):
+def stock_backfill_run(sink: str, days: int, codes: tuple, no_resume: bool):
     """주식 분봉 데이터 백필 실행
 
     \b
@@ -1293,11 +1417,32 @@ def stock_backfill_run(days: int, codes: tuple, no_resume: bool):
     """
     import asyncio
 
+    codes_list = list(codes) if codes else None
+
+    if sink == "parquet":
+        from shared.collector.historical.parquet_backfill import (
+            backfill_stock_minute_parquet,
+        )
+
+        click.echo(f"Starting stock minute Parquet backfill for {days} days...")
+        result = asyncio.run(
+            backfill_stock_minute_parquet(
+                days=days,
+                codes=codes_list,
+                resume=not no_resume,
+            )
+        )
+        click.echo(
+            "Backfill complete! "
+            f"tasks={result.tasks}, skipped={result.skipped}, "
+            f"rows={result.rows}, failed={result.failed}"
+        )
+        return
+
     from shared.collector.historical.stock import backfill_stock_minute
 
     click.echo(f"Starting stock minute backfill for {days} days...")
 
-    codes_list = list(codes) if codes else None
     asyncio.run(
         backfill_stock_minute(days=days, codes=codes_list, resume=not no_resume)
     )
@@ -1352,6 +1497,13 @@ def stock_backfill_refresh(days: int, code_days: int | None):
 
 @stock_backfill.command("daily")
 @click.option(
+    "--sink",
+    type=click.Choice(["parquet", "clickhouse"]),
+    default="parquet",
+    show_default=True,
+    help="Storage sink for collected bars",
+)
+@click.option(
     "--days",
     "-d",
     default=100,
@@ -1364,7 +1516,7 @@ def stock_backfill_refresh(days: int, code_days: int | None):
     multiple=True,
     help="Specific stock codes to backfill (default: stock universe)",
 )
-def stock_backfill_daily(days: int, codes: tuple):
+def stock_backfill_daily(sink: str, days: int, codes: tuple):
     """주식 일봉 데이터 백필 실행.
 
     \b
@@ -1374,9 +1526,26 @@ def stock_backfill_daily(days: int, codes: tuple):
     """
     import asyncio
 
+    codes_list = list(codes) if codes else None
+
+    if sink == "parquet":
+        from shared.collector.historical.parquet_backfill import (
+            collect_stock_daily_parquet,
+        )
+
+        click.echo(f"Starting stock daily Parquet backfill for {days} days...")
+        result = asyncio.run(
+            collect_stock_daily_parquet(codes=codes_list, days=days, verbose=True)
+        )
+        click.echo(
+            "Daily backfill complete! "
+            f"tasks={result.tasks}, skipped={result.skipped}, "
+            f"rows={result.rows}, failed={result.failed}"
+        )
+        return
+
     from shared.collector.historical.daily_stock import collect_daily_candles
 
-    codes_list = list(codes) if codes else None
     click.echo(f"Starting stock daily backfill for {days} days...")
     rows = asyncio.run(collect_daily_candles(codes=codes_list, days=days, verbose=True))
     click.echo(f"Daily backfill complete! rows={rows:,}")
@@ -1384,14 +1553,40 @@ def stock_backfill_daily(days: int, codes: tuple):
 
 @stock_backfill.command("daily-status")
 @click.option(
+    "--sink",
+    type=click.Choice(["parquet", "clickhouse"]),
+    default="parquet",
+    show_default=True,
+    help="Storage sink to inspect",
+)
+@click.option(
     "--days",
     "-d",
     default=100,
     type=int,
     help="Period to check (default: 100 days)",
 )
-def stock_backfill_daily_status(days: int):
+def stock_backfill_daily_status(sink: str, days: int):
     """주식 일봉 데이터 수집 현황 조회."""
+    if sink == "parquet":
+        from shared.collector.historical.parquet_backfill import (
+            get_parquet_backfill_status,
+        )
+        from shared.collector.historical.stock_universe import STOCK_UNIVERSE
+
+        status = get_parquet_backfill_status(days=days, asset_class="stock")
+        click.echo(f"Stock Parquet Status (last {days} days)")
+        click.echo("=" * 50)
+        click.echo(f"Universe: {len(STOCK_UNIVERSE)} stocks")
+        click.echo(f"Root: {status['root']}")
+        click.echo(f"Files: {status['parquet_files']}")
+        click.echo(f"Rows: {status['row_count']}")
+        if status.get("min_datetime") or status.get("max_datetime"):
+            click.echo(
+                f"Range: {status.get('min_datetime')} ~ {status.get('max_datetime')}"
+            )
+        return
+
     from shared.collector.historical.daily_stock import get_daily_collection_status
     from shared.collector.historical.stock_universe import STOCK_UNIVERSE
 
@@ -1415,13 +1610,20 @@ def stock_backfill_daily_status(days: int):
 
 @stock_backfill.command("status")
 @click.option(
+    "--sink",
+    type=click.Choice(["parquet", "clickhouse"]),
+    default="parquet",
+    show_default=True,
+    help="Storage sink to inspect",
+)
+@click.option(
     "--days",
     "-d",
     default=30,
     type=int,
     help="Period to check (default: 30 days)",
 )
-def stock_backfill_status(days: int):
+def stock_backfill_status(sink: str, days: int):
     """주식 분봉 데이터 수집 현황 조회
 
     \b
@@ -1429,6 +1631,31 @@ def stock_backfill_status(days: int):
         sts stock-backfill status
         sts stock-backfill status --days 90
     """
+    if sink == "parquet":
+        from shared.collector.historical.parquet_backfill import (
+            get_parquet_backfill_status,
+        )
+        from shared.collector.historical.stock_universe import STOCK_UNIVERSE
+
+        status = get_parquet_backfill_status(days=days, asset_class="stock")
+        click.echo(f"Stock Parquet Status (last {days} days)")
+        click.echo("=" * 50)
+        click.echo(f"Universe: {len(STOCK_UNIVERSE)} stocks")
+        click.echo(f"Root: {status['root']}")
+        click.echo(f"Files: {status['parquet_files']}")
+        click.echo(f"Rows: {status['row_count']}")
+        if status.get("min_datetime") or status.get("max_datetime"):
+            click.echo(
+                f"Range: {status.get('min_datetime')} ~ {status.get('max_datetime')}"
+            )
+        click.echo()
+        for row in status.get("tasks", []):
+            click.echo(
+                f"{row['asset_class']}/{row['timeframe']}/{row['dataset']} "
+                f"{row['status']}: tasks={row['tasks']} rows={row['rows'] or 0}"
+            )
+        return
+
     from shared.collector.historical.stock import (
         STOCK_UNIVERSE,
         get_stock_collection_status,

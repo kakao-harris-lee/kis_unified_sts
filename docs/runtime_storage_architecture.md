@@ -352,6 +352,7 @@ Avoid using ClickHouse env vars as implicit feature flags. Use explicit `enabled
 - news/scoring/forecasting/order fill writers only instantiate ClickHouse clients when `runtime_storage.clickhouse_mirror.enabled=true`.
 - `shared.storage.MarketDataStore` + `ParquetMarketDataStore` + `ClickHouseMarketDataStore` provide the initial Phase 4 market-data abstraction.
 - `sts data export-clickhouse` exports standard OHLCV rows into the Parquet layout, and `sts data validate-parquet` validates the dataset root.
+- `sts backfill` and `sts stock-backfill` default to `--sink parquet`. They write KIS historical candles directly to `ParquetMarketDataStore` with code/day replace-write semantics and track resume/status in `data/market/_metadata/backfill_state.sqlite3`. The legacy ClickHouse ingestion path remains available only when `--sink clickhouse` is passed explicitly.
 - `sts backtest run --symbol` uses `config/storage.yaml::market_data.source`, so `market_data.source=parquet` can run without ClickHouse for symbol-based backtests.
 - `docker-compose.yml` injects Redis DB 1 and storage env into runtime services, mounts `./data/runtime:/app/data/runtime`, and keeps `clickhouse`/`mlflow` behind `profiles: ["research"]`. MLflow is optional experiment tracking for backtests, not an ML/RL runtime requirement.
 - `docker-compose.yml` includes a `profiles: ["trading"]` `trader` service for compose-managed paper/live trading loops. It uses the same runtime storage mounts and requires an explicit live confirmation token before non-interactive live mode.
@@ -364,7 +365,7 @@ Avoid using ClickHouse env vars as implicit feature flags. Use explicit `enabled
 2. Introduce interfaces first, then move call sites behind the interfaces.
 3. Default new runtime storage to SQLite in dev/paper, not ClickHouse.
 4. Make ClickHouse mirror best-effort. It may log warnings, but it must not change live decision behavior.
-5. Keep data export/import commands so ClickHouse datasets can be converted to Parquet.
+5. Keep data export/import commands so legacy ClickHouse datasets can be converted to Parquet, but make new KIS backfill write to Parquet first.
 6. Tests that touch live Redis/ClickHouse stay behind `KIS_RUN_LIVE_INFRA_TESTS=1`.
 
 ## Acceptance Criteria

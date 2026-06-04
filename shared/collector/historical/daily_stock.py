@@ -19,7 +19,6 @@ from datetime import date, datetime, timedelta
 from typing import List, Tuple, Dict, Any
 
 import httpx
-import clickhouse_connect
 
 from shared.config.secrets import SecretsManager
 from .calendar import get_trading_days_range
@@ -49,6 +48,8 @@ MAX_DAILY_DAYS = int(os.getenv("STOCK_DAILY_MAX_DAYS", "100"))
 
 def ensure_daily_candles_table():
     """Ensure daily_candles table exists."""
+    import clickhouse_connect
+
     config = _get_clickhouse_config()
     kwargs = {
         "host": config["host"],

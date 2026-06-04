@@ -388,6 +388,64 @@ class TestDataCommands:
         assert "futures daily export requires --table" in result.output
 
 
+class TestBackfillCommands:
+    """Test historical backfill command routing."""
+
+    def test_futures_backfill_defaults_to_parquet(self, runner, monkeypatch):
+        """Default futures backfill should route to the Parquet sink."""
+        from cli.main import cli
+        from shared.collector.historical import parquet_backfill
+
+        captured = {}
+
+        async def fake_backfill_futures_parquet(**kwargs):
+            captured.update(kwargs)
+            return parquet_backfill.ParquetBackfillResult(tasks=2, rows=3)
+
+        monkeypatch.setattr(
+            parquet_backfill,
+            "backfill_futures_parquet",
+            fake_backfill_futures_parquet,
+        )
+
+        result = runner.invoke(
+            cli, ["backfill", "run", "--days", "2", "--no-mini", "--index"]
+        )
+
+        assert result.exit_code == 0
+        assert captured["days"] == 2
+        assert captured["mini"] is False
+        assert captured["index"] is True
+        assert "rows=3" in result.output
+
+    def test_stock_backfill_defaults_to_parquet(self, runner, monkeypatch):
+        """Default stock backfill should route to the Parquet sink."""
+        from cli.main import cli
+        from shared.collector.historical import parquet_backfill
+
+        captured = {}
+
+        async def fake_backfill_stock_minute_parquet(**kwargs):
+            captured.update(kwargs)
+            return parquet_backfill.ParquetBackfillResult(tasks=1, rows=1)
+
+        monkeypatch.setattr(
+            parquet_backfill,
+            "backfill_stock_minute_parquet",
+            fake_backfill_stock_minute_parquet,
+        )
+
+        result = runner.invoke(
+            cli,
+            ["stock-backfill", "run", "--days", "1", "-c", "005930"],
+        )
+
+        assert result.exit_code == 0
+        assert captured["days"] == 1
+        assert captured["codes"] == ["005930"]
+        assert "rows=1" in result.output
+
+
 class TestTradeCommands:
     """Test trade commands."""
 
