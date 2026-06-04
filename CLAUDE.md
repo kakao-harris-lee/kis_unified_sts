@@ -109,6 +109,12 @@ KIS Unified STS의 사용자-facing 웹 포트는 5080뿐이다. `dashboard:8001
 host 3000은 별도 `bid-vector` 프로젝트용이므로 이 repo에서 사용하지 않는다.
 별도 웹서비스/API가 생기기 전까지 추가 host port를 예약하지 않는다.
 
+**단일 API = `services/dashboard` (FastAPI, :8001).** 과거의 별도 REST 게이트웨이
+`services/api`(:8000, `/api/v1/*`)는 dashboard API로 **통합·제거**됐다 (프론트가 실제로
+쓰는 경로가 dashboard 하나였고, 두 앱이 trading/strategies/metrics/health 를 중복
+노출했음). Prometheus `/metrics` 도 dashboard 로 이전됐다. 신규 API는 `services/dashboard`
+에만 추가하고, `app`/`services.api`/`:8000` 경로를 되살리지 않는다.
+
 - `/` — Cockpit (HeaderBar + Positions + Signals/Fills + Quick Actions)
 - `/positions`, `/signals`, `/trades` — drill-down 페이지 (모바일 카드/sheet 패턴)
 - **자산군 탭** (선물/주식/통합): URL `?asset=` + localStorage 동기화, 모든 페이지 공통

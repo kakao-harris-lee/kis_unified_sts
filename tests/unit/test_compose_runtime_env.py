@@ -41,18 +41,21 @@ def test_paper_and_live_env_templates_separate_kis_markets():
     assert live["KIS_TOKEN_CACHE_DIR"] == "/app/.cache"
 
 
-def test_compose_app_passes_kis_market_env_to_trading_runtime():
+def test_compose_trader_passes_kis_market_env_to_trading_runtime():
+    # The legacy services/api `app` container was removed in the dashboard-API
+    # consolidation; the trader (trading loop) is now the KIS trading runtime
+    # that must receive the KIS market env.
     compose = yaml.safe_load(
         (_REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
     )
-    app_env = compose["services"]["app"]["environment"]
+    trader_env = compose["services"]["trader"]["environment"]
 
-    assert "KIS_IS_REAL" in app_env
-    assert "KIS_REAL_TRADING" in app_env
-    assert "KIS_MARKET" in app_env
-    assert "KIS_STOCK_MARKET" in app_env
-    assert "KIS_FUTURES_MARKET" in app_env
-    assert app_env["KIS_TOKEN_CACHE_DIR"] == "${KIS_TOKEN_CACHE_DIR:-/app/.cache}"
+    assert "KIS_IS_REAL" in trader_env
+    assert "KIS_REAL_TRADING" in trader_env
+    assert "KIS_MARKET" in trader_env
+    assert "KIS_STOCK_MARKET" in trader_env
+    assert "KIS_FUTURES_MARKET" in trader_env
+    assert trader_env["KIS_TOKEN_CACHE_DIR"] == "${KIS_TOKEN_CACHE_DIR:-/app/.cache}"
 
 
 def test_compose_trader_is_profile_gated_and_uses_runtime_env():

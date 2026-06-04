@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 PUBLIC_PATHS = {
     "/",
     "/health",
+    "/metrics",
     "/docs",
     "/redoc",
     "/openapi.json",

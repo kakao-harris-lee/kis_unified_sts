@@ -109,22 +109,22 @@ jobs:
 
       - name: Test image health
         run: |
-          # Pull the image
-          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}
+          # Smoke-test the dashboard image (the consolidated STS FastAPI API;
+          # the legacy services/api gateway image no longer serves HTTP).
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-dashboard:sha-${{ github.sha }}
 
-          # Run container
-          docker run -d --name test-api \
-            -p 8000:8000 \
-            -e ENVIRONMENT=test \
-            -e API_KEY=test-key \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}
+          # Run container (dev mode disables API-key auth so /health is reachable)
+          docker run -d --name test-dashboard \
+            -p 8001:8001 \
+            -e DASHBOARD_DEV_MODE=true \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-dashboard:sha-${{ github.sha }}
 
           # Wait for startup
           sleep 10
 
           # Health check
-          curl -f http://localhost:8000/health/live || exit 1
+          curl -f http://localhost:8001/health || exit 1
 
           # Cleanup
-          docker stop test-api
-          docker rm test-api
+          docker stop test-dashboard
+          docker rm test-dashboard

@@ -1,8 +1,8 @@
 """Shared CORS configuration utilities.
 
-Provides a single source of truth for CORS settings used by both
-the API server (`services/api/app.py`) and the dashboard
-(`services/dashboard/app.py`).
+Provides a single source of truth for CORS settings used by the dashboard
+FastAPI service (`services/dashboard/app.py`) — the single STS API after the
+legacy `services/api` gateway was consolidated into it.
 
 Security:
 - Never combines wildcard origins (`["*"]`) with `allow_credentials=True`.

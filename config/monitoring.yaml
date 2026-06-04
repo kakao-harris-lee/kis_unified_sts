@@ -136,15 +136,15 @@ monitoring:
         enabled: true
         timeout_seconds: 10
 
-    # Liveness probe 설정
+    # Liveness probe 설정 (dashboard FastAPI 는 단일 /health 를 노출한다)
     liveness:
-      path: "/health/live"
+      path: "/health"
       # 실패 임계값 (연속 실패 시 unhealthy)
       failure_threshold: 3
 
     # Readiness probe 설정
     readiness:
-      path: "/health/ready"
+      path: "/health"
       # 필수 컴포넌트 (이 컴포넌트가 unhealthy면 not ready)
       required_components:
         - system

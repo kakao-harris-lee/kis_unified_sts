@@ -1,5 +1,12 @@
 # API Documentation
 
+> **API 통합 (2026-06):** 과거의 별도 REST 게이트웨이 `services/api`(:8000,
+> `/api/v1/*`, `/health/live`, `/health/ready`)는 **`services/dashboard` FastAPI
+> 로 통합·제거**됐다. 단일 API는 Caddy(:5080) 뒤의 dashboard(:8001)이며 라우트는
+> `/api/{trading,signals,trades,strategies,strategy-lab,strategy-builder,metrics,
+> health}*`, `/health`, `/metrics`, `/ws` 이다. 아래 일부 `/api/v1/*`·`/health/live`
+> 예시는 구 게이트웨이 기준의 historical 문서다.
+
 ## Base URL
 
 - Dashboard API: `http://localhost:5080`

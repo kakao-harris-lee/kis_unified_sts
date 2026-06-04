@@ -12,7 +12,8 @@ LOG_DIR="$PROJECT_DIR/logs"
 LOG_FILE="$LOG_DIR/dashboard_$(date +%Y%m%d).log"
 VENV="$PROJECT_DIR/.venv/bin/activate"
 PID_FILE="$PROJECT_DIR/pids/dashboard.pid"
-PORT=8000
+# Single consolidated API = services.dashboard on :8001 (legacy services.api gateway removed).
+PORT=8001
 
 mkdir -p "$LOG_DIR"
 mkdir -p "$PROJECT_DIR/pids"
@@ -44,11 +45,12 @@ start_dashboard() {
     cd "$PROJECT_DIR"
     source "$VENV"
 
-    # Start FastAPI with uvicorn
-    nohup uvicorn services.api.app:app \
+    # Start the dashboard FastAPI (single worker: the in-process WebSocket
+    # publisher must not be duplicated across workers).
+    nohup uvicorn services.dashboard.app:create_app --factory \
         --host 0.0.0.0 \
         --port $PORT \
-        --workers 2 \
+        --workers 1 \
         >> "$LOG_FILE" 2>&1 &
 
     echo $! > "$PID_FILE"

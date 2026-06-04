@@ -7,9 +7,12 @@ api:
   debug: false
 
   # 서버 설정
+  # NOTE: 실제 바인딩 포트는 컨테이너 CMD(uvicorn ... --port)가 정한다.
+  # 단일 API 통합 이후 dashboard FastAPI 는 :8001 로 서빙된다(이전 게이트웨이 :8000 제거).
+  # 이 값은 메타/문서용이며 CORS·title 등 다른 키만 코드에서 사용된다.
   server:
     host: "0.0.0.0"
-    port: 8000
+    port: 8001
 
   # CORS 설정
   cors:

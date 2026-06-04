@@ -1835,8 +1835,8 @@ def trade_start(
 @click.option(
     "--url",
     "-u",
-    default="http://localhost:8000",
-    help="API server URL",
+    default="http://localhost:8001",
+    help="Dashboard API URL",
 )
 def trade_status(url: str):
     """트레이딩 상태 조회
@@ -1844,12 +1844,12 @@ def trade_status(url: str):
     \b
     Example:
         sts trade status
-        sts trade status --url http://localhost:8000
+        sts trade status --url http://localhost:8001
     """
     try:
         import httpx
 
-        response = httpx.get(f"{url}/api/v1/trading/status", timeout=5.0)
+        response = httpx.get(f"{url}/api/trading/status", timeout=5.0)
         if response.status_code == 200:
             data = response.json()
             click.echo("Trading Status:")
@@ -1862,15 +1862,15 @@ def trade_status(url: str):
         click.echo("Trading Status:")
         click.echo("-" * 40)
         click.echo("  Status: Not running")
-        click.echo("  Note: Start API server with 'uvicorn services.api.app:app'")
+        click.echo("  Note: Start API server with 'uvicorn services.dashboard.app:create_app --factory'")
 
 
 @trade.command("stop")
 @click.option(
     "--url",
     "-u",
-    default="http://localhost:8000",
-    help="API server URL",
+    default="http://localhost:8001",
+    help="Dashboard API URL",
 )
 def trade_stop(url: str):
     """트레이딩 종료
@@ -1878,13 +1878,13 @@ def trade_stop(url: str):
     \b
     Example:
         sts trade stop
-        sts trade stop --url http://localhost:8000
+        sts trade stop --url http://localhost:8001
     """
     try:
         import httpx
 
         response = httpx.post(
-            f"{url}/api/v1/trading/stop",
+            f"{url}/api/trading/stop",
             timeout=10.0,
         )
         if response.status_code == 200:
@@ -2096,8 +2096,8 @@ def paper_history(_limit: int, _fmt: str):
 @click.option(
     "--url",
     "-u",
-    default="http://localhost:8000",
-    help="API server URL",
+    default="http://localhost:8001",
+    help="Dashboard API URL",
 )
 def health(url: str):
     """시스템 헬스 체크
@@ -2105,7 +2105,7 @@ def health(url: str):
     \b
     Example:
         sts health
-        sts health --url http://localhost:8000
+        sts health --url http://localhost:8001
     """
     try:
         import httpx
@@ -2122,9 +2122,10 @@ def health(url: str):
         else:
             click.echo(f"Health Check: ✗ ({response.status_code})")
 
-        # Readiness (optional - not all servers have this endpoint)
+        # Readiness: the dashboard exposes a single /health (no separate
+        # /health/ready); reuse it as the readiness signal.
         try:
-            response = httpx.get(f"{url}/health/ready", timeout=5.0)
+            response = httpx.get(f"{url}/health", timeout=5.0)
             if response.status_code == 200:
                 data = response.json()
                 click.echo("Readiness: ✓")
@@ -2141,7 +2142,7 @@ def health(url: str):
 
     except httpx.ConnectError:
         click.echo("Health Check: ✗ (Connection refused)")
-        click.echo("Note: Start API server with 'uvicorn services.api.app:app'")
+        click.echo("Note: Start API server with 'uvicorn services.dashboard.app:create_app --factory'")
     except ImportError:
         click.echo("Error: httpx not installed (pip install httpx)", err=True)
         sys.exit(1)

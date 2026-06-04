@@ -93,7 +93,9 @@ export async function apiDelete<T>(path: string): Promise<T> {
  */
 export function getWsBase(): string {
   if (API_BASE) return API_BASE.replace(/^http/, "ws");
-  if (typeof window === "undefined") return "ws://localhost:8000";
+  // SSR has no window and never opens a socket; return same-origin ("") so the
+  // browser path below is the only place a concrete ws:// URL is built.
+  if (typeof window === "undefined") return "";
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
   return `${protocol}//${window.location.host}`;
 }

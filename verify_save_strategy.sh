@@ -2,7 +2,9 @@
 # Verification script for POST /api/strategies endpoint
 # This script requires the FastAPI server to be running
 
-BASE_URL="http://localhost:8000"
+# Dashboard FastAPI (the single STS API after the services/api consolidation).
+# Override with DASHBOARD_PORT or hit Caddy on :5080 in a full stack.
+BASE_URL="http://localhost:${DASHBOARD_PORT:-8001}"
 
 echo "=========================================="
 echo "Testing POST /api/strategies endpoint"

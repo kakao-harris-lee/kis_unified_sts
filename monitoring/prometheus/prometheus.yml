@@ -16,10 +16,13 @@ scrape_configs:
     static_configs:
       - targets: ['localhost:9090']
 
-  # KIS Trading API 메트릭 (호스트에서 실행 중)
-  - job_name: 'kis-trading-api'
+  # KIS Dashboard API 메트릭 (compose network; legacy services/api gateway 통합됨).
+  # Caddy 가 /metrics 를 dashboard 로 라우팅하지만, 같은 네트워크의 Prometheus 는
+  # dashboard:8001 을 직접 스크랩한다. 호스트에서 대시보드를 띄우면
+  # host.docker.internal:8001 로 바꾼다.
+  - job_name: 'kis-dashboard'
     static_configs:
-      - targets: ['host.docker.internal:8000']
+      - targets: ['dashboard:8001']
     metrics_path: /metrics
     scrape_interval: 5s
     scrape_timeout: 5s
