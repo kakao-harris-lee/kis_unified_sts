@@ -86,18 +86,22 @@ def _run_tier_backtest(
     from shared.backtest.config import RiskConfig
     from shared.collector.historical.stock import (
         STOCK_UNIVERSE,
-        load_stock_minute_from_clickhouse,
     )
     from shared.config.loader import ConfigLoader
+    from shared.storage import (
+        MarketDataStoreError,
+        StorageConfig,
+        load_market_bars_for_backtest,
+    )
     from shared.strategy.registry import StrategyFactory, register_builtin_components
 
     if is_daily:
         from shared.backtest.daily_adapter import (
             DailyBacktestAdapter,
-            load_stock_daily_from_clickhouse,
         )
 
     register_builtin_components()
+    storage_config = StorageConfig.load_or_default()
 
     if tier == "all":
         stocks = STOCK_UNIVERSE
@@ -106,8 +110,10 @@ def _run_tier_backtest(
 
     tf_label = "daily" if is_daily else "minute"
     click.echo(
-        f"Tier backtest: {strategy} ({asset}, {tf_label}) — {len(stocks)} stocks ({tier})"
+        f"Tier backtest: {strategy} ({asset}, {tf_label}) — "
+        f"{len(stocks)} stocks ({tier})"
     )
+    click.echo(f"Market data source: {storage_config.market_data.source}")
     click.echo("=" * 80)
 
     strategy_config = ConfigLoader.load_strategy(asset, strategy)
@@ -135,11 +141,20 @@ def _run_tier_backtest(
         stock_tier = stock["tier"]
 
         try:
-            if is_daily:
-                df = load_stock_daily_from_clickhouse(code, start_d, end_d)
-            else:
-                df = load_stock_minute_from_clickhouse(code, start_d, end_d)
-        except ValueError:
+            df = load_market_bars_for_backtest(
+                symbol=code,
+                asset_class=asset,
+                timeframe="daily" if is_daily else "minute",
+                start=start_d,
+                end=end_d,
+                config=storage_config,
+            )
+            if df.empty:
+                raise ValueError(
+                    f"No {tf_label} data found for {code} in "
+                    f"{storage_config.market_data.source} source"
+                )
+        except (MarketDataStoreError, ValueError):
             click.echo(f"  {code} {name}: No data — skipped")
             results.append(
                 {
@@ -304,7 +319,7 @@ def _run_tier_backtest(
     "--tier",
     default=None,
     type=click.Choice(["top", "mid", "bottom", "all"]),
-    help="Run backtest across tier stocks from ClickHouse (top/mid/bottom/all)",
+    help="Run backtest across tier stocks from configured market-data source",
 )
 @click.option(
     "--track/--no-track",
@@ -1862,7 +1877,9 @@ def trade_status(url: str):
         click.echo("Trading Status:")
         click.echo("-" * 40)
         click.echo("  Status: Not running")
-        click.echo("  Note: Start API server with 'uvicorn services.dashboard.app:create_app --factory'")
+        click.echo(
+            "  Note: Start API server with 'uvicorn services.dashboard.app:create_app --factory'"
+        )
 
 
 @trade.command("stop")
@@ -2142,7 +2159,9 @@ def health(url: str):
 
     except httpx.ConnectError:
         click.echo("Health Check: ✗ (Connection refused)")
-        click.echo("Note: Start API server with 'uvicorn services.dashboard.app:create_app --factory'")
+        click.echo(
+            "Note: Start API server with 'uvicorn services.dashboard.app:create_app --factory'"
+        )
     except ImportError:
         click.echo("Error: httpx not installed (pip install httpx)", err=True)
         sys.exit(1)

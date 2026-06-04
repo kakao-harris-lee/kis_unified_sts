@@ -76,6 +76,145 @@ class TestBacktestCommands:
         # May succeed or fail depending on config directory
         assert result.exit_code in (0, 1)
 
+    @pytest.mark.parametrize(
+        ("timeframe", "is_daily"),
+        [("minute", False), ("daily", True)],
+    )
+    def test_tier_backtest_uses_configured_market_data_store(
+        self,
+        monkeypatch,
+        timeframe,
+        is_daily,
+        capsys,
+    ):
+        """Tier backtests should use StorageConfig market-data source, not CH loaders."""
+        import pandas as pd
+
+        import shared.backtest as backtest_module
+        import shared.backtest.adapter as adapter_module
+        import shared.backtest.daily_adapter as daily_adapter_module
+        import shared.storage as storage_module
+        import shared.strategy.registry as registry_module
+        from cli.main import _run_tier_backtest
+        from shared.collector.historical import stock as stock_module
+        from shared.config.loader import ConfigLoader
+        from shared.storage import StorageConfig
+
+        monkeypatch.setattr(
+            stock_module,
+            "STOCK_UNIVERSE",
+            [{"code": "005930", "name": "Samsung", "tier": "top"}],
+        )
+        monkeypatch.setattr(
+            ConfigLoader,
+            "load_strategy",
+            staticmethod(
+                lambda _asset, _strategy: {
+                    "strategy": {
+                        "name": "test_strategy",
+                        "timeframe": timeframe,
+                        "position": {"params": {"max_positions": 1}},
+                    }
+                }
+            ),
+        )
+        monkeypatch.setattr(
+            registry_module, "register_builtin_components", lambda: None
+        )
+        monkeypatch.setattr(
+            registry_module.StrategyFactory,
+            "create",
+            staticmethod(lambda _config: object()),
+        )
+
+        captured: dict[str, object] = {}
+
+        def fake_load_market_bars_for_backtest(**kwargs):
+            captured.update(kwargs)
+            return pd.DataFrame(
+                {
+                    "code": ["005930", "005930"],
+                    "datetime": [
+                        pd.Timestamp("2026-06-03 09:00:00"),
+                        pd.Timestamp("2026-06-03 09:01:00"),
+                    ],
+                    "open": [100.0, 101.0],
+                    "high": [101.0, 102.0],
+                    "low": [99.0, 100.0],
+                    "close": [101.0, 102.0],
+                    "volume": [1000, 1200],
+                }
+            )
+
+        def fail_clickhouse_loader(*_args, **_kwargs):
+            raise AssertionError("legacy ClickHouse loader should not be called")
+
+        monkeypatch.setattr(
+            storage_module,
+            "load_market_bars_for_backtest",
+            fake_load_market_bars_for_backtest,
+        )
+        monkeypatch.setattr(
+            stock_module,
+            "load_stock_minute_from_clickhouse",
+            fail_clickhouse_loader,
+        )
+        monkeypatch.setattr(
+            daily_adapter_module,
+            "load_stock_daily_from_clickhouse",
+            fail_clickhouse_loader,
+        )
+
+        class FakeResult:
+            total_trades = 1
+            total_return_pct = 1.2
+            win_rate = 100.0
+            sharpe_ratio = 1.5
+            max_drawdown_pct = -0.2
+
+        class FakeBacktestEngine:
+            def __init__(self, _strategy, _config):
+                pass
+
+            def run(self, df):
+                captured["rows"] = len(df)
+                return FakeResult()
+
+        monkeypatch.setattr(backtest_module, "BacktestEngine", FakeBacktestEngine)
+        monkeypatch.setattr(
+            adapter_module,
+            "BacktestStrategyAdapter",
+            lambda _strategy, _config: object(),
+        )
+        monkeypatch.setattr(
+            daily_adapter_module,
+            "DailyBacktestAdapter",
+            lambda _strategy, _config: object(),
+        )
+        monkeypatch.setattr(
+            StorageConfig,
+            "load_or_default",
+            classmethod(lambda cls: cls()),
+        )
+
+        _run_tier_backtest(
+            strategy="test_strategy",
+            asset="stock",
+            tier="top",
+            start=None,
+            end=None,
+            capital=10_000_000,
+            track=False,
+            experiment=None,
+            is_daily=is_daily,
+        )
+
+        assert captured["symbol"] == "005930"
+        assert captured["asset_class"] == "stock"
+        assert captured["timeframe"] == timeframe
+        assert captured["rows"] == 2
+        assert "Market data source: parquet" in capsys.readouterr().out
+
 
 class TestCollectCommands:
     """Test collect commands."""
@@ -251,6 +390,64 @@ class TestDataCommands:
 
 class TestTradeCommands:
     """Test trade commands."""
+
+    @pytest.mark.parametrize("asset", ["stock", "futures"])
+    def test_trade_start_paper_single_enters_orchestrator(
+        self,
+        runner,
+        monkeypatch,
+        asset,
+    ):
+        """Paper start should route to the orchestrator without live confirmation."""
+        from cli.main import cli
+        from services.trading import orchestrator as orchestrator_module
+
+        seen_configs = []
+
+        class FakeOrchestrator:
+            def __init__(self, config):
+                self.config = config
+                seen_configs.append(config)
+
+            async def run(self):
+                raise AssertionError("single-session smoke should not run daemon mode")
+
+            async def run_session(self):
+                return None
+
+            async def stop(self):
+                return None
+
+        monkeypatch.setattr(
+            orchestrator_module.TradingConfig,
+            "_get_futures_default_symbols",
+            staticmethod(lambda: ["101V6000"]),
+        )
+        monkeypatch.setattr(
+            orchestrator_module,
+            "TradingOrchestrator",
+            FakeOrchestrator,
+        )
+
+        result = runner.invoke(
+            cli,
+            [
+                "trade",
+                "start",
+                "--asset",
+                asset,
+                "--paper",
+                "--single",
+                "--capital",
+                "10000000",
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert len(seen_configs) == 1
+        assert seen_configs[0].asset_class == asset
+        assert seen_configs[0].paper_trading is True
+        assert "Starting Paper Trading" in result.output
 
     def test_trade_status(self, runner, mocker):
         """Test trade status command shows 'not running' when no server."""
