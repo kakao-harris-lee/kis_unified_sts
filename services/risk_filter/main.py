@@ -16,7 +16,6 @@ Error taxonomy (mirrors services.news_scorer.main):
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import json
 import logging
 import time
@@ -26,6 +25,7 @@ from typing import Any
 from shared.decision.signal import Signal
 from shared.risk.layer import RiskFilterLayer
 from shared.risk.runtime_state import RuntimeRiskState
+from shared.streaming.stage import StreamStage
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +68,7 @@ def _signal_from_stream_fields(fields: dict[bytes, bytes]) -> tuple[str, Signal]
     return signal_id, signal
 
 
-class RiskFilterDaemon:
+class RiskFilterDaemon(StreamStage):
     """Apply the 8-filter RiskFilterLayer to every candidate signal."""
 
     def __init__(
@@ -86,60 +86,29 @@ class RiskFilterDaemon:
         xread_block_ms: int,
         batch_size: int,
     ) -> None:
-        self.redis = redis
+        super().__init__(
+            redis=redis,
+            input_stream=candidate_stream,
+            consumer_group=consumer_group,
+            worker_id=worker_id,
+            xread_block_ms=xread_block_ms,
+            batch_size=batch_size,
+            xreadgroup_error_sleep_seconds=0.5,
+        )
         self.layer = layer
         self.signals_writer = signals_writer
         self.runtime_state = runtime_state
-        self.candidate_stream = candidate_stream
         self.final_stream = final_stream
-        self.consumer_group = consumer_group
-        self.worker_id = worker_id
         self.final_maxlen = final_maxlen
-        self.xread_block_ms = xread_block_ms
-        self.batch_size = batch_size
-        self._stop = asyncio.Event()
 
-    async def run(self) -> None:
-        with contextlib.suppress(Exception):
-            await self.redis.xgroup_create(
-                self.candidate_stream, self.consumer_group, id="0", mkstream=True
-            )
-
-        try:
-            while not self._stop.is_set():
-                try:
-                    messages = await self.redis.xreadgroup(
-                        groupname=self.consumer_group,
-                        consumername=self.worker_id,
-                        streams={self.candidate_stream: ">"},
-                        count=self.batch_size,
-                        block=self.xread_block_ms,
-                    )
-                except Exception:
-                    logger.exception("xreadgroup error; sleeping 0.5s")
-                    await asyncio.sleep(0.5)
-                    continue
-
-                if not messages:
-                    await asyncio.sleep(0)
-                    continue
-
-                for _stream, msgs in messages:
-                    for msg_id, data in msgs:
-                        await self._process(msg_id, data)
-        finally:
-            await self.signals_writer.flush()
-
-    async def stop(self) -> None:
-        self._stop.set()
-
-    async def _process(self, msg_id: bytes, fields: dict[bytes, bytes]) -> None:
+    async def handle_message(
+        self, msg_id: bytes, fields: dict[bytes, bytes]  # noqa: ARG002
+    ) -> bool:
         try:
             signal_id, signal = _signal_from_stream_fields(fields)
         except Exception:
             logger.exception("Unparseable candidate; ACKing as poison-pill")
-            await self.redis.xack(self.candidate_stream, self.consumer_group, msg_id)
-            return
+            return True  # poison-pill: consume (base XACKs)
 
         try:
             snapshot = await self.runtime_state.snapshot()
@@ -148,13 +117,8 @@ class RiskFilterDaemon:
             logger.exception(
                 "Filter evaluation failed signal_id=%s; leaving pending", signal_id
             )
-            return
+            return False  # leave pending (base does NOT XACK)
 
-        # Audit row first — every candidate, accepted or rejected.
-        # Thread the stream signal_id so kospi.signals_all rows match the
-        # later kospi.order_fills row on signal_id (spec §5.3 reconciliation
-        # JOIN). SignalsAllWriter falls back to a fresh uuid for backtest
-        # harness callers without a pre-existing id.
         try:
             await self.signals_writer.enqueue(
                 signal,
@@ -166,7 +130,7 @@ class RiskFilterDaemon:
             logger.exception(
                 "signals_all enqueue failed signal_id=%s; leaving pending", signal_id
             )
-            return
+            return False
 
         if result.passed:
             try:
@@ -186,9 +150,12 @@ class RiskFilterDaemon:
                     "final stream XADD failed signal_id=%s; leaving pending",
                     signal_id,
                 )
-                return
+                return False
 
-        await self.redis.xack(self.candidate_stream, self.consumer_group, msg_id)
+        return True  # passed+XADD ok, or rejected (audit-only): consume
+
+    async def on_shutdown(self) -> None:
+        await self.signals_writer.flush()
 
 
 async def _build_and_run() -> int:

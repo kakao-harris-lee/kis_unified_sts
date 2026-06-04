@@ -31,7 +31,6 @@ Error taxonomy:
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 from datetime import UTC, datetime, timedelta, timezone
 from datetime import time as dt_time
@@ -43,6 +42,7 @@ from shared.execution.contract_spec import ContractSpec
 from shared.execution.live_mode_guard import LiveModeGuard
 from shared.execution.passive_maker import PassiveMaker
 from shared.execution.pseudo_oco import PseudoOCO
+from shared.streaming.stage import StreamStage
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +92,7 @@ def _resolve_quantity(*, base_quantity: int, size_multiplier: float) -> int:
     return max(scaled, 1)
 
 
-class OrderRouterDaemon:
+class OrderRouterDaemon(StreamStage):
     def __init__(
         self,
         *,
@@ -111,15 +111,18 @@ class OrderRouterDaemon:
         live_mode_guard: LiveModeGuard | None = None,
         locked_symbol: str | None = None,
     ) -> None:
-        self.redis = redis
+        super().__init__(
+            redis=redis,
+            input_stream=final_stream,
+            consumer_group=consumer_group,
+            worker_id=worker_id,
+            xread_block_ms=xread_block_ms,
+            batch_size=batch_size,
+            xreadgroup_error_sleep_seconds=0.5,
+        )
         self.passive_maker = passive_maker
         self.pseudo_oco = pseudo_oco
         self.contract_spec = contract_spec
-        self.final_stream = final_stream
-        self.consumer_group = consumer_group
-        self.worker_id = worker_id
-        self.xread_block_ms = xread_block_ms
-        self.batch_size = batch_size
         self.passive_timeout_seconds = passive_timeout_seconds
         self.base_quantity = base_quantity
         self.sentinel_path = (
@@ -127,7 +130,6 @@ class OrderRouterDaemon:
         )
         self.live_mode_guard = live_mode_guard
         self.locked_symbol = locked_symbol
-        self._stop = asyncio.Event()
         self.refused_due_to_sentinel: bool = False
         self.live_suspended_count: int = 0
         # Phase 5 Gate-3 cap counters (observability + tests)
@@ -138,7 +140,7 @@ class OrderRouterDaemon:
     def _sentinel_present(self) -> bool:
         return self.sentinel_path is not None and self.sentinel_path.exists()
 
-    async def run(self) -> None:
+    async def on_startup(self) -> None:
         # Startup guard: refuse to consume if the kill switch tripped previously
         # and an operator has not yet run scripts/kill_switch_clear.sh.
         if self._sentinel_present():
@@ -148,49 +150,23 @@ class OrderRouterDaemon:
                 "Run scripts/kill_switch_clear.sh after operator review.",
                 self.sentinel_path,
             )
-            return
+            self._stop.set()  # prevent the consume loop from running any iteration
 
-        with contextlib.suppress(Exception):
-            await self.redis.xgroup_create(
-                self.final_stream, self.consumer_group, id="0", mkstream=True
+    async def pre_iteration_gate(self) -> bool:
+        # Per-iteration guard: a mid-session trip must drain pre-trip messages
+        # without placing further orders.
+        if self._sentinel_present():
+            self.refused_due_to_sentinel = True
+            logger.critical(
+                "Kill switch sentinel appeared at %s during run; exiting.",
+                self.sentinel_path,
             )
+            return False
+        return True
 
-        while not self._stop.is_set():
-            # Per-iteration guard: a mid-session trip must drain pre-trip
-            # messages without placing further orders.
-            if self._sentinel_present():
-                self.refused_due_to_sentinel = True
-                logger.critical(
-                    "Kill switch sentinel appeared at %s during run; exiting.",
-                    self.sentinel_path,
-                )
-                return
-
-            try:
-                messages = await self.redis.xreadgroup(
-                    groupname=self.consumer_group,
-                    consumername=self.worker_id,
-                    streams={self.final_stream: ">"},
-                    count=self.batch_size,
-                    block=self.xread_block_ms,
-                )
-            except Exception:
-                logger.exception("xreadgroup error; sleeping 0.5s")
-                await asyncio.sleep(0.5)
-                continue
-
-            if not messages:
-                await asyncio.sleep(0)
-                continue
-
-            for _stream, msgs in messages:
-                for msg_id, data in msgs:
-                    await self._process(msg_id, data)
-
-    async def stop(self) -> None:
-        self._stop.set()
-
-    async def _process(self, msg_id: bytes, fields: dict[bytes, bytes]) -> None:
+    async def handle_message(
+        self, msg_id: bytes, fields: dict[bytes, bytes]  # noqa: ARG002
+    ) -> bool:
         try:
             signal_id, signal = _signal_from_stream_fields(fields)
             size_multiplier = float(
@@ -198,17 +174,12 @@ class OrderRouterDaemon:
             )
         except Exception:
             logger.exception("Unparseable final signal; ACK as poison-pill")
-            await self.redis.xack(self.final_stream, self.consumer_group, msg_id)
-            return
+            return True  # poison-pill: consume
 
         quantity = _resolve_quantity(
             base_quantity=self.base_quantity, size_multiplier=size_multiplier
         )
 
-        # Live-mode guard (Phase 5 Task 5): consult BEFORE submitting the
-        # order. Suspended → XACK as skip (no retry; the signal is consumed).
-        # Disabled-by-default config makes this a no-op until Gate 2 flips
-        # `futures_live.enabled: true`.
         if (
             self.live_mode_guard is not None
             and await self.live_mode_guard.is_live_suspended(self.redis)
@@ -219,17 +190,10 @@ class OrderRouterDaemon:
                 signal_id,
                 signal.symbol,
             )
-            await self.redis.xack(self.final_stream, self.consumer_group, msg_id)
-            return
+            return True  # skip (consumed, no retry)
 
-        # Phase 5 Gate-3 hard caps (futures_live.yaml). Defense-in-depth
-        # alongside risk_filter — these caps are stricter than risk.yaml's
-        # caps and only matter once `futures_live.enabled: true` AND the
-        # caps are actually exceeded. With guard=None or guard.enabled=False,
-        # all checks below short-circuit to "allow".
         guard = self.live_mode_guard
 
-        # Symbol lock — Gate-3 only allows the front-month KOSPI200 mini.
         if (
             guard is not None
             and guard.symbol_lock_enabled
@@ -243,12 +207,8 @@ class OrderRouterDaemon:
                 self.locked_symbol,
                 signal_id,
             )
-            await self.redis.xack(self.final_stream, self.consumer_group, msg_id)
-            return
+            return True  # skip (consumed)
 
-        # Position-size cap — clamp quantity. risk_filter's
-        # ConsecutiveLossFilter may have already halved size; we still cap
-        # at the Gate-3 ceiling (default 1).
         if guard is not None and quantity > guard.max_position_size_contracts:
             self.position_size_capped_count += 1
             logger.warning(
@@ -259,12 +219,6 @@ class OrderRouterDaemon:
             )
             quantity = guard.max_position_size_contracts
 
-        # Daily-trade-count cap — atomic Redis INCR. Counted at order
-        # placement (not fill), which slightly over-counts on
-        # passive-timeout cancels. That's the intended bias for a
-        # defensive rail: budget burns when we *try*, not just when we
-        # succeed. Counter expires at next KST midnight (TTL set on first
-        # INCR of the day).
         if guard is not None:
             counter_key = f"{_DAILY_TRADE_KEY_PREFIX}{_kst_date_key()}"
             try:
@@ -274,9 +228,6 @@ class OrderRouterDaemon:
                         counter_key, _seconds_until_next_kst_midnight()
                     )
             except Exception:
-                # Fail-open on Redis errors here — kill_switch sentinel +
-                # live-mode-guard are the primary safety nets; double-counting
-                # via this cap when Redis is flapping would over-restrict.
                 logger.exception(
                     "daily_trade counter INCR failed; allowing signal_id=%s",
                     signal_id,
@@ -290,12 +241,8 @@ class OrderRouterDaemon:
                         guard.max_daily_trades,
                         signal_id,
                     )
-                    await self.redis.xack(
-                        self.final_stream, self.consumer_group, msg_id
-                    )
-                    return
+                    return True  # cap hit: skip (consumed)
 
-        # Place passive limit + log fill
         try:
             result = await self.passive_maker.place_passive_limit_futures(
                 signal=signal,
@@ -308,20 +255,16 @@ class OrderRouterDaemon:
             logger.exception(
                 "passive_maker raised signal_id=%s; leaving pending", signal_id
             )
-            return
+            return False  # leave pending (no XACK)
 
         if not result.is_filled:
-            # Missed (timeout/cancel) — final state, ACK and drop. The signal
-            # is consumed; no bracket to register, no retry.
             logger.info(
                 "passive limit not filled signal_id=%s reason=%s",
                 signal_id,
                 result.reason,
             )
-            await self.redis.xack(self.final_stream, self.consumer_group, msg_id)
-            return
+            return True  # final state, consumed, no bracket
 
-        # Register bracket on the entry fill
         try:
             from shared.execution.passive_maker import Fill
 
@@ -329,7 +272,7 @@ class OrderRouterDaemon:
                 order_id=result.order_id or "",
                 price=result.filled_price or 0.0,
                 quantity=quantity,
-                filled_at_ms=0,  # bracket cares about handle state, not entry timestamp
+                filled_at_ms=0,
             )
             await self.pseudo_oco.register_bracket(
                 signal=signal,
@@ -343,9 +286,9 @@ class OrderRouterDaemon:
                 signal_id,
                 result.order_id,
             )
-            return
+            return False  # leave pending
 
-        await self.redis.xack(self.final_stream, self.consumer_group, msg_id)
+        return True  # success: consume
 
 
 async def _build_and_run() -> int:
