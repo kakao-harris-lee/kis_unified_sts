@@ -146,9 +146,7 @@ class NewsScorerDaemon(StreamStage):
             ch_batch_size=ch_batch_size,
         )
 
-    async def handle_message(
-        self, msg_id: bytes, fields: dict[bytes, bytes]
-    ) -> bool:
+    async def handle_message(self, msg_id: bytes, fields: dict[bytes, bytes]) -> bool:
         """Score one stream message and publish the result.
 
         Returns True ⇒ framework XACKs (parse poison-pill, fallback, success);
@@ -219,7 +217,7 @@ class NewsScorerDaemon(StreamStage):
 
         return True  # success: framework XACKs
 
-    async def post_poll(self, message_count: int) -> None:
+    async def post_poll(self, _message_count: int) -> None:
         await self._update_backlog_metric()
 
     async def on_shutdown(self) -> None:

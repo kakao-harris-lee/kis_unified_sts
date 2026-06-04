@@ -1,4 +1,5 @@
 """Unit tests for shared.streaming.stage.StreamStage (consume loop)."""
+
 from __future__ import annotations
 
 import asyncio
@@ -24,7 +25,7 @@ class FakeRedis:
     async def xgroup_create(self, stream, group, id="0", mkstream=False):
         self.group_created = (stream, group, id, mkstream)
 
-    async def xreadgroup(self, *, groupname, consumername, streams, count, block):
+    async def xreadgroup(self, *, streams, **_kwargs):
         self.xreadgroup_calls += 1
         if self._batches:
             msgs = self._batches.pop(0)
@@ -33,7 +34,7 @@ class FakeRedis:
         await asyncio.sleep(0)
         return []
 
-    async def xack(self, stream, group, msg_id):
+    async def xack(self, _stream, _group, msg_id):
         self.acked.append(msg_id)
 
 
@@ -50,7 +51,7 @@ class RecordingStage(StreamStage):
         self.post_poll_counts: list[int] = []
         self.gate_calls = 0
 
-    async def handle_message(self, msg_id, fields):
+    async def handle_message(self, msg_id, _fields):
         self.handled.append(msg_id)
         return self._ack_result
 
@@ -69,14 +70,14 @@ class RecordingStage(StreamStage):
 
 
 def _stage(redis, **kw):
-    params = dict(
-        redis=redis,
-        input_stream="s:in",
-        consumer_group="g",
-        worker_id="w",
-        xread_block_ms=5,
-        batch_size=10,
-    )
+    params = {
+        "redis": redis,
+        "input_stream": "s:in",
+        "consumer_group": "g",
+        "worker_id": "w",
+        "xread_block_ms": 5,
+        "batch_size": 10,
+    }
     params.update(kw)
     return RecordingStage(**params)
 
@@ -146,13 +147,17 @@ async def test_post_poll_receives_message_count_including_idle():
 @pytest.mark.asyncio
 async def test_handle_message_exception_propagates_but_shutdown_runs():
     class Boom(RecordingStage):
-        async def handle_message(self, msg_id, fields):
+        async def handle_message(self, _msg_id, _fields):
             raise RuntimeError("boom")
 
     redis = FakeRedis([[(b"1-0", {})]])
     stage = Boom(
-        redis=redis, input_stream="s:in", consumer_group="g", worker_id="w",
-        xread_block_ms=5, batch_size=10,
+        redis=redis,
+        input_stream="s:in",
+        consumer_group="g",
+        worker_id="w",
+        xread_block_ms=5,
+        batch_size=10,
     )
     task = asyncio.create_task(stage.run())
     with pytest.raises(RuntimeError):
@@ -189,8 +194,12 @@ async def test_on_startup_exception_still_runs_shutdown():
 
     redis = FakeRedis([])
     stage = StartupBoom(
-        redis=redis, input_stream="s:in", consumer_group="g", worker_id="w",
-        xread_block_ms=5, batch_size=10,
+        redis=redis,
+        input_stream="s:in",
+        consumer_group="g",
+        worker_id="w",
+        xread_block_ms=5,
+        batch_size=10,
     )
     task = asyncio.create_task(stage.run())
     with pytest.raises(RuntimeError):

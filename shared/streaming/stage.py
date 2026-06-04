@@ -8,6 +8,7 @@ Subclasses implement ``handle_message`` (return ``True`` ⇒ the framework XACKs
 ``False`` ⇒ leave the message pending for retry) and may override the optional
 hooks ``on_startup`` / ``pre_iteration_gate`` / ``post_poll`` / ``on_shutdown``.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -62,7 +63,7 @@ class StreamStage(ABC):
 
     # -- optional hooks (no-op defaults) --------------------------------- #
 
-    async def on_startup(self) -> None:
+    async def on_startup(self) -> None:  # noqa: B027 - intentional optional hook
         """Called once before the consume loop. Override for startup guards."""
 
     async def pre_iteration_gate(self) -> bool:
@@ -73,13 +74,13 @@ class StreamStage(ABC):
         """
         return True
 
-    async def post_poll(self, message_count: int) -> None:
+    async def post_poll(self, message_count: int) -> None:  # noqa: B027
         """Called after each XREADGROUP returns (``message_count == 0`` when idle).
 
         Override for per-cycle observability (e.g. backlog gauge update).
         """
 
-    async def on_shutdown(self) -> None:
+    async def on_shutdown(self) -> None:  # noqa: B027 - intentional optional hook
         """Called in the loop's ``finally`` (even on exception).
 
         Override to flush writers/publishers.
@@ -117,9 +118,7 @@ class StreamStage(ABC):
                     await asyncio.sleep(self._xreadgroup_error_sleep)
                     continue
 
-                count = (
-                    sum(len(msgs) for _stream, msgs in messages) if messages else 0
-                )
+                count = sum(len(msgs) for _stream, msgs in messages) if messages else 0
                 await self.post_poll(count)
 
                 if not messages:
