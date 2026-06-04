@@ -5,7 +5,7 @@ import asyncio
 import logging
 from typing import Any, Dict
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Response
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -166,3 +166,23 @@ async def get_venue_metrics() -> Dict[str, Any]:
         logger.error(f"Error fetching venue metrics: {e}")
         # Return zeros on error to prevent dashboard crash
         return _empty_venue_metrics()
+
+
+@router.get("/metrics", include_in_schema=False)
+async def prometheus_metrics() -> Response:
+    """Expose Prometheus metrics in text exposition format.
+
+    Consolidated from the retired ``services/api`` gateway: the dashboard is now
+    the single FastAPI service, so it owns the Prometheus scrape target that
+    Caddy routes ``/metrics`` to. Auth-exempt via ``PUBLIC_PATHS`` so scrapers
+    do not need the dashboard API key. Degrades to an empty body (HTTP 200) when
+    the metrics backend is unavailable, keeping the scrape non-fatal.
+    """
+    try:
+        from services.monitoring import MetricsCollector
+
+        content = MetricsCollector().export_prometheus()
+        return Response(content=content, media_type="text/plain; version=0.0.4")
+    except Exception as e:  # noqa: BLE001 - scrape endpoint must not 500
+        logger.warning("Prometheus metrics export failed: %s", e)
+        return Response(content="", media_type="text/plain; version=0.0.4")

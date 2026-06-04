@@ -1,5 +1,6 @@
 # KIS Unified Trading Platform Dockerfile
-# Python 3.11 기반 FastAPI 애플리케이션
+# Python 3.11 기반 트레이딩 애플리케이션 이미지 (trading loop + CLI).
+# 대시보드 API는 별도 Dockerfile.dashboard 를 사용한다.
 
 FROM python:3.11-slim
 
@@ -34,12 +35,6 @@ RUN useradd -m -u 1000 appuser && \
     chown -R appuser:appuser /app
 USER appuser
 
-# 포트 노출
-EXPOSE 8000
-
-# 헬스체크
-HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8000/health/live || exit 1
-
-# 기본 명령어
-CMD ["python", "-m", "uvicorn", "services.api.app:app", "--host", "0.0.0.0", "--port", "8000"]
+# 기본 명령어: 트레이딩 루프 (env-driven; 기본 paper). 대시보드 API는
+# Dockerfile.dashboard 가 services.dashboard.app 을 :8001 로 서빙한다.
+CMD ["bash", "scripts/docker/trading_loop_entrypoint.sh"]

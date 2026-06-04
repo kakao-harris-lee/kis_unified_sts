@@ -1619,7 +1619,7 @@ def trade_status(url: str):
         click.echo("Trading Status:")
         click.echo("-" * 40)
         click.echo("  Status: Not running")
-        click.echo("  Note: Start API server with 'uvicorn services.api.app:app'")
+        click.echo("  Note: Start API server with 'uvicorn services.dashboard.app:create_app --factory'")
 
 
 @trade.command("stop")
@@ -1894,7 +1894,7 @@ def health(url: str):
 
     except httpx.ConnectError:
         click.echo("Health Check: ✗ (Connection refused)")
-        click.echo("Note: Start API server with 'uvicorn services.api.app:app'")
+        click.echo("Note: Start API server with 'uvicorn services.dashboard.app:create_app --factory'")
     except ImportError:
         click.echo("Error: httpx not installed (pip install httpx)", err=True)
         sys.exit(1)

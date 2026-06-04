@@ -3,60 +3,7 @@
 
 services:
   # =============================================================================
-  # 트레이딩 애플리케이션
-  # =============================================================================
-  app:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: kis-trading-app
-    restart: unless-stopped
-    environment:
-      # KIS API 인증 (환경변수)
-      - KIS_APP_KEY=${KIS_APP_KEY}
-      - KIS_APP_SECRET=${KIS_APP_SECRET}
-      - KIS_IS_REAL=${KIS_IS_REAL:-false}
-      # API 인증
-      - API_KEY=${API_KEY}
-      - API_KEY_HEADER=${API_KEY_HEADER:-X-API-Key}
-      - METRICS_REQUIRE_AUTH=${METRICS_REQUIRE_AUTH:-false}
-      # Telegram 알림
-      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
-      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
-      # Redis
-      - REDIS_HOST=host.docker.internal
-      - REDIS_PORT=6379
-      - REDIS_DB=1
-      - REDIS_PASSWORD=${REDIS_PASSWORD:-changeme}
-      # Redis TLS Configuration (see docs/TLS_SETUP.md)
-      - REDIS_TLS_ENABLED=${REDIS_TLS_ENABLED:-false}
-      - REDIS_TLS_CERT_REQS=${REDIS_TLS_CERT_REQS:-required}
-      - REDIS_TLS_CA_CERTS=${REDIS_TLS_CA_CERTS:-}
-      # 환경
-      - ENVIRONMENT=${ENVIRONMENT:-production}
-    volumes:
-      - ./config:/app/config:ro
-      - ./logs:/app/logs
-      - ./.cache:/app/.cache
-    depends_on:
-      redis:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health/live"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
-    networks:
-      - trading-network
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-
-  # =============================================================================
-  # 대시보드 API
+  # 대시보드 API (the single FastAPI service; legacy services/api gateway removed)
   # =============================================================================
   dashboard:
     build:
@@ -261,7 +208,7 @@ services:
       - '--storage.tsdb.retention.time=15d'
       - '--web.enable-lifecycle'
     depends_on:
-      app:
+      dashboard:
         condition: service_healthy
     networks:
       - trading-network
