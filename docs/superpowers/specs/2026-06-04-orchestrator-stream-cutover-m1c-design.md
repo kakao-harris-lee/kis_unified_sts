@@ -6,7 +6,9 @@
 
 ## 1. Goal & context
 
-M1a (ingest daemon, PR #410) and M1b (`StreamConsumerFeed`, PR #411) are merged: the producer publishes ticks to `market:ticks`/`raw_data`, and the consumer (`StreamConsumerFeed`) implements the `MarketDataSource` surface (`get_current_price` + `supports_instant_read` + `get_health_status`) and pushes each tick to the indicator engine (decision A). M1c connects them: the orchestrator, behind a flag, uses `StreamConsumerFeed` as its `data_source` and stops constructing its own KIS feed.
+M1a (ingest daemon, PR #410) and M1b (`StreamConsumerFeed`, PR #411) are merged: the producer publishes ticks to `market:ticks`/`raw_data`, and the consumer (`StreamConsumerFeed`) implements the `MarketDataSource` surface (`get_current_price` + `supports_instant_read` + `get_health_status`) and can push each tick to an indicator engine (decision A). M1c connects them: the orchestrator, behind a flag, uses `StreamConsumerFeed` as its `data_source` and stops constructing its own KIS feed.
+
+**Per-tick processing — preserve the full WS callback (planning finding).** The orchestrator's `_on_stock_tick` (orchestrator.py:1789–1821, defined in `_init_indicator_engine`) does **three** things per tick: (1) `indicator_engine.on_tick` (with `set_volume_baseline` guard), (2) `paper_broker.record_price_observation` (paper-mode mark-to-market), (3) `tick_stream_publisher.publish` (monitoring). M1b's `StreamConsumerFeed` only does (1). So the cut must **reuse the existing `_on_stock_tick`**, not just the indicator push — otherwise paper-mode loses per-tick price observations. The clean realization: `StreamConsumerFeed` gains `set_tick_callback(cb)` (mirroring the `KIS*PriceFeed` contract); the orchestrator wires the *same* `_on_stock_tick` to whichever stock feed is active. Publish (3) is gated off on the stream path because `_tick_stream_publisher` is `None` there (the M1a ingest daemon owns publishing) — so `_on_stock_tick`'s `if self._tick_stream_publisher:` guard no-ops, no double-publish.
 
 **Seam** (from the M1 audit): `_init_price_feeds(kis_config)` returns a `data_source` that `_init_data_provider` passes to `MarketDataProvider(kis_client=self._kis_client, data_source=...)`. Swapping the `data_source` is the whole cut — the strategy cycle, position management, and `_market_data_snapshot` poll read through `MarketDataProvider.get_data()` unchanged.
 
@@ -19,7 +21,7 @@ M1a (ingest daemon, PR #410) and M1b (`StreamConsumerFeed`, PR #411) are merged:
 | Flag | per-asset env `STOCK_MARKET_DATA_SOURCE` = `websocket` (default) \| `stream` |
 | 기본값 | `websocket` — 머지해도 운영 무변경(코드만 준비) |
 | 자산 범위 | **stock only** (futures `websocket` 고정 — orderbook 미해결) |
-| 지표 갱신 | StreamConsumerFeed가 per-tick `indicator_engine.on_tick` push (decision A) |
+| per-tick 처리 | StreamConsumerFeed가 `set_tick_callback`로 **기존 `_on_stock_tick` 재사용** → 지표 `on_tick` + `paper_broker.record_price_observation` 보존. publish는 ingest 소유(stream 경로는 `_tick_stream_publisher=None`으로 게이트오프) |
 | stale 동작 | **REST 폴백 유지** — `data_provider` failover가 `_kis_client`로 degrade (이미 배선) |
 | 롤백 | flag를 `websocket`로 → KIS feed 경로 복귀 (재시작만) |
 | 활성화 | operator 단계 (ingest 유닛 enable + flag flip + 라이브 SLO 검증) — 코드와 분리 |
@@ -33,16 +35,17 @@ M1a (ingest daemon, PR #410) and M1b (`StreamConsumerFeed`, PR #411) are merged:
 - `_kis_client` is retained unchanged (REST fallback).
 - **Wiring requirement:** `StreamConsumerFeed` needs an async Redis client (`redis.asyncio`). The orchestrator constructs/obtains one for the stream path (the plan wires this — e.g. `redis.asyncio.from_url(REDIS_URL)`), stored for shutdown.
 
-### 3.2 `_init_indicator_engine` — wire the indicator push, skip the WS callback
-- When the data source is the stream feed: set `self._stream_consumer_feed.indicator_engine = self._indicator_engine` (so it pushes `on_tick` per tick — decision A), and **skip** the `self._stock_price_feed.set_tick_callback(_on_stock_tick)` wiring (there is no KIS feed). The `_on_stock_tick` closure is simply not registered.
-- websocket path: unchanged.
+### 3.2 `_init_indicator_engine` — wire `_on_stock_tick` to the active stock feed
+- The existing stock-callback block is gated `if self._stock_price_feed:` (orchestrator.py:1787) and registers `_on_stock_tick`. Generalize the gate to the active stock feed: `stock_feed = self._stock_price_feed or self._stream_consumer_feed; if stock_feed: stock_feed.set_tick_callback(_on_stock_tick)`. The closure is **unchanged** — it does indicator `on_tick` + `paper_broker.record_price_observation` + (gated) publish. On the stream path `_stock_price_feed is None`, so the same `_on_stock_tick` binds to `StreamConsumerFeed`.
+- `StreamConsumerFeed` is constructed **without** an indicator engine on this path (the callback does `on_tick`) → no double push. When a `tick_callback` is set, `StreamConsumerFeed._apply_entry` invokes the callback **instead of** its own `_push_indicator`.
+- websocket path: `_stream_consumer_feed is None` → unchanged.
 
-### 3.3 `_start_market_data_loop` / `_stop_market_data_loop` — generalize feed lifecycle
-- Today these reference `self._stock_price_feed` directly for `start()`/`stop()`/`update_symbols()`. Generalize to operate on the active **feed-like data source** (anything exposing `start`/`stop`/`update_symbols` — both `KIS*PriceFeed` and `StreamConsumerFeed` do). When the stream feed is active, start/stop it and call `update_symbols(universe)` (for the health denominator; the stream already carries only subscribed symbols).
-- This is the largest edit — the existing `_stock_price_feed`-direct references become data-source-generic. Keep the futures path (`_futures_price_feed`) exactly as-is.
+### 3.3 `_start_market_data_loop` / `_stop_market_data_loop` — additive stream-feed lifecycle
+- **Additive, not a rewrite** (lower regression risk): keep the existing `if self._stock_price_feed:` / `if self._futures_price_feed:` blocks exactly as-is, and add a new sibling block `if self._stream_consumer_feed:` that `await`s `start()` + `update_symbols(self.config.symbols)` (start loop) and `await`s `stop()` + closes the async redis (stop loop). On the websocket path `_stream_consumer_feed is None` → the new blocks no-op; on the stream path `_stock_price_feed is None` → the existing stock block no-ops. Futures path (`_futures_price_feed`) untouched.
+- `update_symbols(universe)` feeds the health denominator (`symbol_count`); the stream already carries only subscribed symbols.
 
 ### 3.4 tick stream publisher
-- With the stream source, no `_on_stock_tick` callback fires → the orchestrator's `_tick_stream_publisher` is unfed (the M1a ingest daemon publishes ticks now). Skip constructing/feeding it on the stock-stream path (no-op either way; do not double-publish).
+- On the stream path, **skip constructing** `self._tick_stream_publisher` in `_init_tick_stream_publisher` (it stays `None`). The M1a ingest daemon owns publishing now. Because `_on_stock_tick`'s publish is guarded `if self._tick_stream_publisher:`, leaving it `None` makes the reused callback no-op the publish — no double-publish, no separate code branch.
 
 ## 4. stale behavior — REST fallback (kept)
 
@@ -66,12 +69,13 @@ The runbook is delivered as `docs/runbooks/stock-stream-cutover.md`.
 
 ## 7. Testing
 
-The orchestrator is large and heavily mocked; M1c tests focus on the **flag routing seam**, not a full orchestrator run:
-- With `STOCK_MARKET_DATA_SOURCE=stream` (stock): `_init_price_feeds` returns a `StreamConsumerFeed` (not a `KISStockPriceFeed`); `_stock_price_feed is None`; after `_init_indicator_engine`, the stream feed's `indicator_engine` is the orchestrator's engine and no `_on_stock_tick` callback was registered on a KIS feed.
-- With `STOCK_MARKET_DATA_SOURCE=websocket` / unset (default): current behavior unchanged — `_init_price_feeds` builds the KIS feed; existing orchestrator lifecycle tests stay green.
-- Futures path unaffected regardless of the flag.
-- The `_start/_stop_market_data_loop` generalization: a fake feed-like data source (with `start`/`stop`/`update_symbols`) is started/stopped/updated; assert the futures path still uses `_futures_price_feed`.
-- Reuse the existing orchestrator test fixtures/patterns (`tests/integration/test_orchestrator_lifecycle.py`, `tests/unit/trading/*`). Keep the whole `tests/` suite green (the change must be behaviorally inert when the flag is off).
+The orchestrator is directly constructible in tests (`TradingOrchestrator(TradingConfig.stock())`, per `tests/unit/trading/test_orchestrator.py`); M1c tests focus on the **flag routing seam** + the `StreamConsumerFeed.set_tick_callback` unit, not a full orchestrator run:
+- `StreamConsumerFeed` unit (`tests/unit/trading/test_stream_consumer_feed.py`): with a `tick_callback` set, `_apply_entry` invokes the callback `(symbol, price_dict, datetime)` **and does not** call the indicator engine's `on_tick`; with no callback, the M1b indicator push is unchanged (existing tests stay green).
+- With `STOCK_MARKET_DATA_SOURCE=stream` (stock, `_kis_client` stubbed truthy): `_init_price_feeds` returns a `StreamConsumerFeed`; `_stock_price_feed is None`; `_stream_consumer_feed is not None`. After `_init_indicator_engine`, the stream feed has a `tick_callback` set (the closure) and its `indicator_engine is None`. `_init_tick_stream_publisher` leaves `_tick_stream_publisher is None`.
+- With flag unset/`websocket` (default): `_init_price_feeds` does **not** take the stream branch — `_stream_consumer_feed is None`; existing behavior/tests unchanged.
+- Futures path unaffected regardless of the flag (`asset_class == "futures"` never reads the stock flag).
+- `_start/_stop_market_data_loop`: with a fake `_stream_consumer_feed` (recording `start`/`stop`/`update_symbols` calls) the new blocks start/stop/update it; with `_stream_consumer_feed is None` they no-op and the existing feed handling is untouched.
+- Keep the whole `tests/` suite green (the change is behaviorally inert when the flag is off).
 
 ## 8. Risks & mitigations
 
@@ -85,9 +89,10 @@ The orchestrator is large and heavily mocked; M1c tests focus on the **flag rout
 
 ## 9. Acceptance criteria
 
-- [ ] `STOCK_MARKET_DATA_SOURCE=stream` (stock) → orchestrator uses `StreamConsumerFeed`, builds no KIS stock feed (no WS connection), wires indicator push, skips `_on_stock_tick`.
-- [ ] flag off/unset → behavior identical to today (existing tests green).
-- [ ] `_start/_stop_market_data_loop` generalized to data-source feed lifecycle; futures path unchanged.
+- [ ] `STOCK_MARKET_DATA_SOURCE=stream` (stock) → orchestrator uses `StreamConsumerFeed`, builds no KIS stock feed (no WS connection), reuses `_on_stock_tick` via `set_tick_callback` (indicator + paper_broker preserved), `_tick_stream_publisher is None` (publish gated off).
+- [ ] `StreamConsumerFeed.set_tick_callback` invokes the callback per tick instead of the indicator push; no-callback path unchanged.
+- [ ] flag off/unset → behavior identical to today (existing tests green; `_stream_consumer_feed is None`).
+- [ ] `_start/_stop_market_data_loop` start/stop/update the stream feed (additive blocks) + close the async redis; futures path unchanged.
 - [ ] stale stream → REST fallback (failover loop) still degrades via `_kis_client`.
 - [ ] rollback by flag flip; runbook documents activation + SLO validation; futures excluded.
 - [ ] whole `tests/` suite green; lint clean.
@@ -100,8 +105,9 @@ The orchestrator is large and heavily mocked; M1c tests focus on the **flag rout
 - data_provider warmup source (ClickHouse→parquet is the separate runtime-storage migration).
 - M2+ (indicator/decision daemons).
 
-## 11. Open questions (resolved in the plan)
+## 11. Resolved during planning (verbatim audit 2026-06-04)
 
-- Exact env-flag read site + name constant placement (orchestrator config vs `os.environ`).
-- Whether `update_symbols` on the stream feed should mirror the universe-refresh loop or be a one-shot (health-denominator only).
-- async redis client lifecycle ownership (construct in `_init_price_feeds` vs a dedicated init).
+- **Env-flag read:** `os.getenv("STOCK_MARKET_DATA_SOURCE", "websocket").strip().lower()` read inside `_init_price_feeds` (matches the daemons' `os.environ.get` idiom; no new config field). Gate stock-only via the existing `self.config.asset_class == "stock"` branch.
+- **async redis lifecycle:** construct in `_init_price_feeds` stream branch with `redis.asyncio.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/1"))` (the exact idiom `services/risk_filter`, `services/market_ingest` use — DB 1; `from_url` is lazy so no connection at construction), store as `self._stream_redis`, and `await self._stream_redis.aclose()` in `_stop_market_data_loop`.
+- **`update_symbols`:** one-shot `update_symbols(self.config.symbols)` at start (health-denominator only); the universe-refresh loop already re-subscribes the KIS feed on the websocket path and is out of scope for the stream feed in M1c.
+- **`paper_broker` per-tick:** preserved by reusing `_on_stock_tick` via `set_tick_callback` (see §1, §3.2) — not dropped.
