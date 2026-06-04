@@ -22,7 +22,6 @@ import re
 from datetime import date, datetime, timedelta
 from typing import Any
 
-import clickhouse_connect
 import httpx
 
 from shared.config.secrets import SecretsManager
@@ -629,6 +628,8 @@ def parse_ohlcv(code: str, date_str: str, data: dict) -> list[tuple]:
 
 def get_db_client(database: str = None):
     """Get ClickHouse client."""
+    import clickhouse_connect
+
     config = _get_clickhouse_config()
     kwargs = {
         "host": config["host"],

@@ -26,7 +26,6 @@ from pathlib import Path
 from typing import List, Tuple, Dict, Any, Optional
 
 import httpx
-import clickhouse_connect
 
 from shared.config.secrets import SecretsManager
 from shared.config.tls import get_clickhouse_tls_params
@@ -233,8 +232,10 @@ def _get_semaphore() -> asyncio.Semaphore:
 # Database Operations
 # =============================================================================
 
-def get_stock_db_client() -> clickhouse_connect.driver.client.Client:
+def get_stock_db_client() -> Any:
     """Get ClickHouse client for stock database."""
+    import clickhouse_connect
+
     config = _get_clickhouse_config()
     kwargs = {
         "host": config["host"],
@@ -252,6 +253,8 @@ def get_stock_db_client() -> clickhouse_connect.driver.client.Client:
 
 def ensure_stock_database() -> None:
     """Ensure stock database and tables exist."""
+    import clickhouse_connect
+
     config = _get_clickhouse_config()
     kwargs = {
         "host": config["host"],

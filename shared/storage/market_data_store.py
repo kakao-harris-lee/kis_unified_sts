@@ -274,8 +274,8 @@ class ParquetMarketDataStore:
             return 0
 
         dt = df["datetime"]
-        for (code, year, month), group in df.groupby(
-            [df["code"], dt.dt.year, dt.dt.month],
+        for (code, year, month, day), group in df.groupby(
+            [df["code"], dt.dt.year, dt.dt.month, dt.dt.date],
             sort=True,
         ):
             directory = self._partition_dir(
@@ -283,11 +283,68 @@ class ParquetMarketDataStore:
                 code=str(code),
                 year=int(year),
                 month=int(month),
+                day=day,
             )
             directory.mkdir(parents=True, exist_ok=True)
             path = directory / f"part-{uuid4().hex}.parquet"
             group[_BAR_COLUMNS].to_parquet(path, index=False)
         return int(len(df))
+
+    def replace_minute_day(
+        self,
+        symbol: str,
+        trading_day: date | datetime,
+        rows: Iterable[Mapping[str, Any]] | "Any",
+    ) -> int:
+        """Replace one symbol/day of minute bars with an idempotent file write."""
+        return self._replace_day("minute", symbol, trading_day, rows)
+
+    def replace_daily_day(
+        self,
+        symbol: str,
+        trading_day: date | datetime,
+        rows: Iterable[Mapping[str, Any]] | "Any",
+    ) -> int:
+        """Replace one symbol/day of daily bars with an idempotent file write."""
+        return self._replace_day("daily", symbol, trading_day, rows)
+
+    def _replace_day(
+        self,
+        timeframe: Timeframe,
+        symbol: str,
+        trading_day: date | datetime,
+        rows: Iterable[Mapping[str, Any]] | "Any",
+    ) -> int:
+        import shutil
+
+        pd = _require_pandas()
+        day = pd.Timestamp(trading_day).date()
+        directory = self._partition_dir(
+            timeframe,
+            code=str(symbol),
+            year=day.year,
+            month=day.month,
+            day=day,
+        )
+        if directory.exists():
+            shutil.rmtree(directory)
+
+        df = _normalize_frame(rows)
+        if df.empty:
+            return 0
+
+        row_days = set(pd.to_datetime(df["datetime"]).dt.date)
+        row_codes = set(df["code"].astype(str))
+        if row_codes != {str(symbol)}:
+            raise MarketDataStoreError(
+                f"replacement rows must contain only code {symbol!r}"
+            )
+        if row_days != {day}:
+            raise MarketDataStoreError(
+                f"replacement rows must contain only trading day {day.isoformat()}"
+            )
+
+        return self._append_bars(timeframe, df)
 
     def _files(self, timeframe: Timeframe, symbol: str) -> list[Path]:
         symbol_dir = self.root / self.asset_class / timeframe / f"code={symbol}"
@@ -306,13 +363,16 @@ class ParquetMarketDataStore:
         code: str,
         year: int,
         month: int,
+        day: date | None = None,
     ) -> Path:
         base = (
             self.root / self.asset_class / timeframe / f"code={code}" / f"year={year}"
         )
+        day_part = f"day={day.isoformat()}" if day is not None else None
         if timeframe == "daily":
-            return base
-        return base / f"month={month:02d}"
+            return base / day_part if day_part is not None else base
+        minute_base = base / f"month={month:02d}"
+        return minute_base / day_part if day_part is not None else minute_base
 
 
 class ClickHouseMarketDataStore:
@@ -438,9 +498,7 @@ class ClickHouseMarketDataStore:
         """
         rows = self._execute(query, params, database=database)
         if not rows:
-            raise ValueError(
-                f"No minute data found for {symbol} in {database}.{table}"
-            )
+            raise ValueError(f"No minute data found for {symbol} in {database}.{table}")
         pd = _require_pandas()
         return _normalize_frame(pd.DataFrame(rows, columns=_BAR_COLUMNS))
 

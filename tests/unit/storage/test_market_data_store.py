@@ -115,6 +115,84 @@ def test_parquet_market_data_store_rejects_missing_columns(tmp_path):
         store.append_minute_bars([{"code": "005930", "close": 71000}])
 
 
+def test_parquet_market_data_store_replaces_minute_day(tmp_path):
+    from shared.storage import ParquetMarketDataStore
+
+    store = ParquetMarketDataStore(tmp_path / "market", asset_class="futures")
+    store.replace_minute_day(
+        "101S6000",
+        date(2026, 6, 3),
+        [
+            {
+                "code": "101S6000",
+                "datetime": datetime(2026, 6, 3, 9, 0),
+                "open": 380.0,
+                "high": 381.0,
+                "low": 379.5,
+                "close": 380.5,
+                "volume": 100,
+            }
+        ],
+    )
+    store.replace_minute_day(
+        "101S6000",
+        date(2026, 6, 3),
+        [
+            {
+                "code": "101S6000",
+                "datetime": datetime(2026, 6, 3, 9, 0),
+                "open": 381.0,
+                "high": 382.0,
+                "low": 380.5,
+                "close": 381.5,
+                "volume": 200,
+            },
+            {
+                "code": "101S6000",
+                "datetime": datetime(2026, 6, 3, 9, 1),
+                "open": 381.5,
+                "high": 382.5,
+                "low": 381.0,
+                "close": 382.0,
+                "volume": 300,
+            },
+        ],
+    )
+
+    df = store.get_minute_bars(
+        "101S6000",
+        start=date(2026, 6, 3),
+        end=date(2026, 6, 3),
+    )
+
+    assert len(df) == 2
+    assert list(df["close"]) == [381.5, 382.0]
+    assert list(df["volume"]) == [200, 300]
+
+
+def test_parquet_market_data_store_rejects_wrong_replace_day(tmp_path):
+    from shared.storage import MarketDataStoreError, ParquetMarketDataStore
+
+    store = ParquetMarketDataStore(tmp_path / "market", asset_class="stock")
+
+    with pytest.raises(MarketDataStoreError, match="only trading day"):
+        store.replace_daily_day(
+            "005930",
+            date(2026, 6, 3),
+            [
+                {
+                    "code": "005930",
+                    "date": date(2026, 6, 4),
+                    "open": 71000,
+                    "high": 72000,
+                    "low": 70500,
+                    "close": 71800,
+                    "volume": 12000,
+                }
+            ],
+        )
+
+
 def test_load_market_bars_for_backtest_uses_storage_config(tmp_path):
     from shared.storage import (
         MarketDataStorageConfig,
