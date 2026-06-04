@@ -24,7 +24,10 @@ python3 -m venv .venv
 # Live env: copy the template, fill REAL live KIS credentials.
 cp .env.live.example .env
 #   set KIS_FUTURES_APP_KEY/SECRET/ACCOUNT_NO (real), KIS_REAL_TRADING=true,
-#   KIS_FUTURES_MARKET=real, REDIS_PORT=6382, RUNTIME_STORAGE_SQLITE_PATH=data/runtime/live/runtime.db
+#   KIS_FUTURES_MARKET=real, REDIS_HOST=127.0.0.1, REDIS_PORT=6382,
+#   RUNTIME_STORAGE_SQLITE_PATH=data/runtime/live/runtime.db
+# (REDIS_HOST must be 127.0.0.1 — host cron reaches the live compose redis via its
+#  published host port; the template's default REDIS_HOST=redis only resolves inside compose.)
 ```
 
 ## 2. Start the isolated live Redis

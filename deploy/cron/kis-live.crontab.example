@@ -5,7 +5,7 @@
 #      it to a validated annotated tag (scripts/ops/promote_live.sh <tag>).
 #   2. Built its .venv and wrote .env (= .env.live, with real KIS live credentials
 #      and REDIS_PORT=6382, KIS_REAL_TRADING=true).
-#   3. Started the live compose redis: docker compose --env-file .env.live up -d redis
+#   3. Started the live compose redis: docker compose --env-file .env up -d redis
 #
 # All times are KST. Each trade-start is gated by live_preflight.sh, which REFUSES
 # to run unless the clone is a clean annotated tag with live Redis (6382) reachable.
