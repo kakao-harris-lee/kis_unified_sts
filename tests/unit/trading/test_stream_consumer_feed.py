@@ -133,3 +133,26 @@ def test_is_healthy_true_when_running_and_fresh():
     h = feed.get_health_status()
     assert h["fresh_symbol_count"] == 1
     assert h["staleness_seconds"] is not None and h["staleness_seconds"] < 30.0
+
+
+@pytest.mark.asyncio
+async def test_read_loop_consumes_xadded_ticks():
+    import asyncio
+
+    import fakeredis.aioredis
+
+    redis = fakeredis.aioredis.FakeRedis()
+    feed = StreamConsumerFeed(redis=redis, stream="market:ticks", xread_block_ms=20)
+    await feed.start()
+    try:
+        await redis.xadd("market:ticks", {"symbol": "005930", "close": "123.0"})
+        for _ in range(50):
+            if await feed.get_current_price("005930"):
+                break
+            await asyncio.sleep(0.02)
+        got = await feed.get_current_price("005930")
+        assert got["close"] == 123.0
+        assert feed.is_healthy() is True
+    finally:
+        await feed.stop()
+    assert feed._running is False

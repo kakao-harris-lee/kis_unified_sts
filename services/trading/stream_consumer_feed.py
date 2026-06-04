@@ -10,6 +10,7 @@ the optional ``supports_instant_read`` / ``get_health_status`` hooks.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from datetime import UTC, datetime
@@ -99,6 +100,7 @@ class StreamConsumerFeed:
         self._last_tick_ts: float | None = None
         self._last_id: str = "$"
         self._running = False
+        self._task: asyncio.Task[None] | None = None
 
     @property
     def supports_instant_read(self) -> bool:
@@ -162,3 +164,45 @@ class StreamConsumerFeed:
             "last_tick_ts": self._last_tick_ts,
             "is_healthy": self.is_healthy(),
         }
+
+    async def start(self) -> None:
+        if self._running:
+            return
+        self._running = True
+        self._task = asyncio.create_task(self._read_loop())
+        await asyncio.sleep(0)  # yield so _read_loop reaches its first xread
+
+    async def stop(self) -> None:
+        self._running = False
+        if self._task is not None:
+            self._task.cancel()
+            try:  # noqa: SIM105
+                await self._task
+            except asyncio.CancelledError:
+                pass
+            self._task = None
+
+    async def _read_loop(self) -> None:
+        while self._running:
+            try:
+                resp = await self.redis.xread(
+                    {self.stream: self._last_id},
+                    count=self.xread_count,
+                    block=self.xread_block_ms,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("xread error; sleeping 0.5s")
+                await asyncio.sleep(0.5)
+                continue
+            if not resp:
+                continue
+            for _stream, entries in resp:
+                for entry_id, fields in entries:
+                    self._last_id = (
+                        entry_id.decode()
+                        if isinstance(entry_id, bytes)
+                        else str(entry_id)
+                    )
+                    self._apply_entry(fields)
