@@ -11,14 +11,23 @@ from shared.decision.context import MarketContext, ScheduledEvent
 
 
 class _FakeEngine:
+    """Fake engine whose contract matches the REAL StreamingIndicatorEngine:
+    - get_indicators returns bb/rsi/atr/vwap/... (NO 'close' key)
+    - get_last_price returns the price separately
+    """
+
     def __init__(self, *, warm=True, atr=2.0, price=352.0, rng=(360.0, 340.0)):
         self._warm, self._atr, self._price, self._rng = warm, atr, price, rng
 
     def is_warm(self, _symbol):
         return self._warm
 
+    def get_last_price(self, _symbol):
+        return self._price if self._price > 0 else None
+
     def get_indicators(self, _symbol):
-        return {"close": self._price, "atr": self._atr}
+        # Real engine returns bb/rsi/atr/vwap/etc — no 'close' key.
+        return {"atr": self._atr}
 
     def get_recent_range(self, _symbol, _minutes=15):
         return self._rng
@@ -36,6 +45,27 @@ class _FakeDailyRef:
 
     def observe(self, *, price, now):
         self.observed.append((price, now))
+
+
+class _FakeDailyRefOrderProbe:
+    """Daily ref that proves observe() is called BEFORE prev_close() is read.
+
+    prev_close() returns a real value only after observe() has been called;
+    before that it returns 0.0 so an ordering bug would surface as 0.0 in
+    the built context.
+    """
+
+    def __init__(self):
+        self._observed = False
+
+    def observe(self, *, price, now):  # noqa: ARG002
+        self._observed = True
+
+    def prev_close(self):
+        return 350.0 if self._observed else 0.0
+
+    def today_open(self):
+        return 351.0 if self._observed else 0.0
 
 
 class _Macro:
@@ -92,3 +122,77 @@ async def test_observes_price_for_today_open():
     )
     await p()
     assert ref.observed and ref.observed[0][0] == 352.0
+
+
+@pytest.mark.asyncio
+async def test_observe_called_before_prev_close_read():
+    """observe() must run before prev_close() is read — ordering invariant."""
+    ref = _FakeDailyRefOrderProbe()
+    p = FuturesContextProvider(
+        engine=_FakeEngine(price=352.0),
+        daily_ref=ref,
+        symbol="A05",
+        macro_reader=lambda: None,
+        events_provider=lambda: [],
+        now_fn=lambda: datetime(2026, 6, 5, 9, 10, tzinfo=UTC),
+    )
+    ctx = await p()
+    assert ctx is not None
+    # If ordering is wrong prev_close returns 0.0 and the context would still
+    # be built (0.0 is a valid float for the field), but the value would be wrong.
+    assert ctx.prev_close == 350.0
+    assert ctx.today_open == 351.0
+
+
+@pytest.mark.asyncio
+async def test_returns_none_when_price_zero():
+    """get_last_price returning 0.0 / None must yield None from provider."""
+    p = FuturesContextProvider(
+        engine=_FakeEngine(price=0.0),
+        daily_ref=_FakeDailyRef(),
+        symbol="A05",
+        macro_reader=lambda: None,
+        events_provider=lambda: [],
+        now_fn=lambda: datetime(2026, 6, 5, 9, 10, tzinfo=UTC),
+    )
+    assert await p() is None
+
+
+@pytest.mark.asyncio
+async def test_macro_reader_exception_yields_none_macro():
+    """macro_reader raising must not crash; macro_overnight should be None."""
+
+    def _bad_macro():
+        raise RuntimeError("redis down")
+
+    p = FuturesContextProvider(
+        engine=_FakeEngine(),
+        daily_ref=_FakeDailyRef(),
+        symbol="A05",
+        macro_reader=_bad_macro,
+        events_provider=lambda: [],
+        now_fn=lambda: datetime(2026, 6, 5, 9, 10, tzinfo=UTC),
+    )
+    ctx = await p()
+    assert ctx is not None
+    assert ctx.macro_overnight is None
+
+
+@pytest.mark.asyncio
+async def test_events_provider_exception_yields_empty_events():
+    """events_provider raising must not crash; scheduled_events should be []."""
+
+    def _bad_events():
+        raise OSError("yaml missing")
+
+    p = FuturesContextProvider(
+        engine=_FakeEngine(),
+        daily_ref=_FakeDailyRef(),
+        symbol="A05",
+        macro_reader=lambda: None,
+        events_provider=_bad_events,
+        now_fn=lambda: datetime(2026, 6, 5, 9, 10, tzinfo=UTC),
+    )
+    ctx = await p()
+    assert ctx is not None
+    assert ctx.scheduled_events == []

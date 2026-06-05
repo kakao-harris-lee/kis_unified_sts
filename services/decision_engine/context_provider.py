@@ -45,11 +45,13 @@ class FuturesContextProvider:
         if not self._engine.is_warm(symbol):
             return None
 
-        ind = self._engine.get_indicators(symbol) or {}
-        current_price = float(ind.get("close", 0.0) or 0.0)
+        price = self._engine.get_last_price(symbol)
+        current_price = float(price) if price is not None else 0.0
         if current_price <= 0.0:
             return None
-        atr_14 = float(ind.get("atr", 0.0) or 0.0)
+        atr_14 = float(
+            (self._engine.get_indicators(symbol) or {}).get("atr", 0.0) or 0.0
+        )
 
         now = self._now_fn()
         now_kst = now.astimezone(_KST) if now.tzinfo else now.replace(tzinfo=_KST)

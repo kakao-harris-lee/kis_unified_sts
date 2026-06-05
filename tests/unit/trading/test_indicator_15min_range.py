@@ -28,3 +28,21 @@ def test_recent_range_returns_max_high_min_low_over_window():
 def test_recent_range_none_when_no_candles():
     eng = StreamingIndicatorEngine()
     assert eng.get_recent_range("UNKNOWN", minutes=15) is None
+
+
+def test_get_last_price_returns_most_recent_close():
+    """get_last_price returns the in-progress candle's close (latest tick)."""
+    eng = StreamingIndicatorEngine()
+    # Feed 5 completed minutes then one tick in minute 5 with a distinct close.
+    for i in range(5):
+        _feed_minute(eng, "A05", i, high=100 + i, low=99 + i, close=100 + i)
+    # One more tick in minute 5 (same minute as i=5 would be) — in-progress.
+    ts = datetime(2026, 6, 5, 9, 5, tzinfo=UTC)
+    eng.on_tick("A05", {"high": 110, "low": 108, "close": 109.5, "volume": 1}, ts)
+    price = eng.get_last_price("A05")
+    assert price == 109.5
+
+
+def test_get_last_price_none_for_unknown_symbol():
+    eng = StreamingIndicatorEngine()
+    assert eng.get_last_price("UNKNOWN") is None

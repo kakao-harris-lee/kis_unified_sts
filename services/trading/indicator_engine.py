@@ -133,6 +133,19 @@ class CandleAccumulator:
         self._volume += volume
         return None
 
+    @property
+    def latest_close(self) -> float | None:
+        """Freshest close price: in-progress candle close, or last completed candle.
+
+        Returns ``None`` when no tick has ever been received (``_current_minute``
+        is None). This is the preferred price source for the strategy daemon
+        because it reflects the most recent tick, not just the last *completed*
+        minute boundary.
+        """
+        if self._current_minute is None:
+            return None
+        return self._close
+
 
 class MultiTimeframeCandleAccumulator:
     """Aggregates 1-minute candles into higher timeframe candles (e.g., 5-minute).
@@ -876,6 +889,28 @@ class StreamingIndicatorEngine:
             return None
         window = candles[-minutes:]
         return (max(c.high for c in window), min(c.low for c in window))
+
+    def get_last_price(self, symbol: str) -> float | None:
+        """Return the freshest close price for *symbol*, or ``None`` if no data.
+
+        Prefers the in-progress 1-min candle close (updated every tick via
+        ``CandleAccumulator.latest_close``) so the strategy daemon sees the
+        most recent price rather than the last *completed* minute's close.
+        Falls back to the last completed candle's close when the in-progress
+        candle is unavailable (should not happen after the first tick).
+
+        Returns ``None`` for unknown symbols.
+        """
+        acc = self._accumulators.get(symbol)
+        if acc is None:
+            return None
+        price = acc.latest_close
+        if price is not None:
+            return price
+        # Fallback: last completed candle (e.g. right after seed_candles)
+        if acc.candles:
+            return acc.candles[-1].close
+        return None
 
     def get_indicator_features(self, symbol: str) -> dict[str, float]:
         """Compute all 25 indicator features from stored candle history (pure Python).
