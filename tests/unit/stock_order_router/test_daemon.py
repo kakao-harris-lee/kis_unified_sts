@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
+from typing import Any
 
 import fakeredis.aioredis
 import pytest
@@ -10,6 +12,7 @@ import pytest
 from services.stock_order_router.main import StockOrderRouterDaemon
 from shared.execution.fill_logger import FillLogger
 from shared.paper.broker import VirtualBroker
+from shared.paper.models import OrderSide, OrderType, VirtualOrder
 
 
 def _encode(d: dict[str, str]) -> dict[bytes, bytes]:
@@ -97,3 +100,73 @@ async def test_unparseable_is_poison_pill_drop() -> None:
     ack = await daemon.handle_message(b"1-0", {b"price": b"NaNaN", b"code": b"x"})
     assert ack is True
     assert await redis.xrange("order.fill.stock.shadow") == []
+
+
+class _UnfilledBroker:
+    """Broker whose order is rejected (``filled=False``)."""
+
+    async def submit_order(self, **kwargs: Any) -> VirtualOrder:
+        return VirtualOrder(
+            order_id="VO-REJECT",
+            symbol=kwargs["symbol"],
+            side=OrderSide.BUY,
+            order_type=OrderType.MARKET,
+            quantity=kwargs["quantity"],
+            price=kwargs["price"],
+            timestamp=datetime.now(UTC),
+            filled=False,
+            fill_price=None,
+            rejection_reason="insufficient_balance",
+        )
+
+
+class _RaisingFillLogger(FillLogger):
+    """FillLogger whose ``log_fill`` raises (simulates a ledger/stream fault)."""
+
+    async def log_fill(self, **kwargs: Any) -> None:  # noqa: ARG002
+        raise RuntimeError("fill stream down")
+
+
+@pytest.mark.asyncio
+async def test_unfilled_order_acks_without_fill_or_position() -> None:
+    redis = fakeredis.aioredis.FakeRedis()
+    daemon = _build_daemon(redis)
+    daemon.broker = _UnfilledBroker()  # type: ignore[assignment]
+
+    ack = await daemon.handle_message(b"1-0", _encode(_final()))
+
+    assert ack is True  # final state — consumed, not retried
+    assert await redis.xrange("order.fill.stock.shadow") == []
+    assert await redis.hget("trading:stock:positions", "005930") is None
+
+
+@pytest.mark.asyncio
+async def test_fill_logging_failure_leaves_pending_and_no_position() -> None:
+    redis = fakeredis.aioredis.FakeRedis()
+    daemon = _build_daemon(redis)
+    daemon.fill_logger = _RaisingFillLogger(
+        redis=redis,
+        stream="order.fill.stock.shadow",
+        maxlen=1000,
+        asset_class="stock",
+    )
+
+    ack = await daemon.handle_message(b"1-0", _encode(_final()))
+
+    assert ack is False  # NO XACK — retry
+    # Position must NOT be recorded when the fill could not be logged.
+    assert await redis.hget("trading:stock:positions", "005930") is None
+
+
+@pytest.mark.asyncio
+async def test_short_direction_is_dropped_no_order() -> None:
+    redis = fakeredis.aioredis.FakeRedis()
+    daemon = _build_daemon(redis)
+    fields = _final()
+    fields["direction"] = "short"
+
+    ack = await daemon.handle_message(b"1-0", _encode(fields))
+
+    assert ack is True  # consumed (stock is long-only), no order placed
+    assert await redis.xrange("order.fill.stock.shadow") == []
+    assert await redis.hget("trading:stock:positions", "005930") is None

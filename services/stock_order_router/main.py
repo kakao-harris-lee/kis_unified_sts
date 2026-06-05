@@ -32,7 +32,13 @@ logger = logging.getLogger(__name__)
 
 
 def _resolve_quantity(*, base_quantity: int, size_multiplier: float) -> int:
-    """Scale base share quantity by size_multiplier; floor at 1 (never zero)."""
+    """Scale base share quantity by size_multiplier; floor at 1 (never zero).
+
+    Uses ``math.floor`` (NOT the futures sibling's ``int(round(...))``): for
+    shares the conservative choice is to never round size *up*, so 0.5x on 9
+    shares yields 4, not 5. This divergence from the futures router is
+    deliberate — do not "align" it to ``round``.
+    """
     scaled = int(math.floor(base_quantity * size_multiplier))
     return max(scaled, 1)
 
@@ -67,7 +73,10 @@ class StockOrderRouterDaemon(StreamStage):
         self.positions_key = positions_key
 
     async def handle_message(
-        self, msg_id: bytes, fields: dict[bytes, bytes]  # noqa: ARG002
+        self,
+        # StreamStage passes msg_id for subclass tracing; unused here.
+        msg_id: bytes,  # noqa: ARG002
+        fields: dict[bytes, bytes],
     ) -> bool:
         try:
             signal_id, signal = stock_signal_from_stream_fields(fields)
@@ -77,6 +86,18 @@ class StockOrderRouterDaemon(StreamStage):
         except Exception:
             logger.exception("Unparseable stock final signal; ACK as poison-pill")
             return True  # poison-pill: consume
+
+        # Stock is long-only (CLAUDE.md); a non-long direction must never reach a
+        # BUY paper order. Consume it (final state) without executing.
+        if signal.direction != "long":
+            logger.warning(
+                "non-long stock signal direction=%s signal_id=%s code=%s — "
+                "stock is long-only; dropping (consumed, no order)",
+                signal.direction,
+                signal_id,
+                signal.code,
+            )
+            return True
 
         quantity = _resolve_quantity(
             base_quantity=signal.quantity, size_multiplier=size_multiplier
@@ -105,7 +126,7 @@ class StockOrderRouterDaemon(StreamStage):
 
         filled_price = float(order.fill_price or signal.price)
         now_ms = int(time.time() * 1000)
-        slippage = abs(filled_price - signal.price)
+        slippage_krw = abs(filled_price - signal.price)
 
         try:
             await self.fill_logger.log_fill(
@@ -116,8 +137,8 @@ class StockOrderRouterDaemon(StreamStage):
                 order_type="market",
                 requested_price=signal.price,
                 filled_price=filled_price,
-                tick_size_points=0.0,
-                slippage_ticks=slippage,
+                tick_size_points=0.0,  # stock has no fixed tick; informational only
+                slippage_ticks=slippage_krw,  # NOTE: KRW for stock (field name is the shared futures schema)
                 quantity=quantity,
                 requested_at_ms=now_ms,
                 filled_at_ms=now_ms,
@@ -131,7 +152,17 @@ class StockOrderRouterDaemon(StreamStage):
             return False
 
         # Record open position (read by M4-R OpenPositionFilter; M4-X consumes).
+        # Best-effort: the fill is already published; returning False here would
+        # re-run submit_order on retry → double-fill (FillLogger is not
+        # idempotent), so a missing/stale record is the lesser risk.
         try:
+            if await self.redis.hexists(self.positions_key, signal.code):
+                logger.warning(
+                    "overwriting existing position record for %s (signal_id=%s) — "
+                    "OpenPositionFilter should have blocked this upstream",
+                    signal.code,
+                    signal_id,
+                )
             await self.redis.hset(
                 self.positions_key,
                 signal.code,
@@ -147,9 +178,12 @@ class StockOrderRouterDaemon(StreamStage):
                 ),
             )
         except Exception:
-            # Best-effort: the fill is already published; do not retry the order.
-            logger.exception(
-                "position record failed signal_id=%s code=%s", signal_id, signal.code
+            # WARN (not exception-only): operator must know the record is missing.
+            logger.warning(
+                "position record failed signal_id=%s code=%s — fill published WITHOUT record",
+                signal_id,
+                signal.code,
+                exc_info=True,
             )
 
         return True
