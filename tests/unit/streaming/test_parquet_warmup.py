@@ -26,67 +26,87 @@ def test_seeds_candles_into_engine():
 
 
 class _StoreTailCheck:
-    """Returns MORE than lookback_minutes bars in ASC order.
+    """Returns MORE than lookback_minutes bars in ASC order with monotonic closes.
 
-    Old bars (rows 0..N-lookback_minutes-1) have close=BAD_PRICE (555.0).
-    Recent tail (last lookback_minutes rows) have close=GOOD_PRICE (350.0).
-    The warmup must seed from the RECENT tail, not the head.
+    close[i] = 100 + i, so every row has a distinct close that encodes its
+    position in the sequence.  This makes tail vs head distinguishable at the
+    LAST seeded bar — the correct check:
+
+      correct tail-slice  iloc[-240:] → rows 60-299 → last close = 100+299 = 399
+      buggy   head-slice  iloc[:240]  → rows  0-239 → last close = 100+239 = 339
+
+    The previous two-band design (BAD_PRICE / GOOD_PRICE) was ambiguous: a
+    head-slice of rows 0-239 still ends on GOOD_PRICE (row 239 is in the GOOD
+    band), so the test passed even on the bug.  Monotonic closes eliminate that
+    false-pass.
     """
 
-    BAD_PRICE = 555.0
-    GOOD_PRICE = 350.0
+    TOTAL_ROWS = 300
+    BASE = 100  # close[i] = BASE + i
 
-    def __init__(self, total_rows: int = 60) -> None:
-        self._total_rows = total_rows
+    @classmethod
+    def expected_last_close(cls) -> float:
+        """Last close after correct tail-slice of TOTAL_ROWS with lookback=240."""
+        return float(cls.BASE + cls.TOTAL_ROWS - 1)  # 100 + 299 = 399
 
     def get_minute_bars(self, symbol, start=None, end=None, limit=None):  # noqa: ARG002
-        lookback = 240  # default in warmup_engine_from_parquet
-        bad_count = max(0, self._total_rows - lookback)
         rows = [
             {
-                "open": self.BAD_PRICE,
-                "high": self.BAD_PRICE + 1,
-                "low": self.BAD_PRICE - 1,
-                "close": self.BAD_PRICE,
+                "open": float(self.BASE + i),
+                "high": float(self.BASE + i + 1),
+                "low": float(self.BASE + i - 1),
+                "close": float(self.BASE + i),
                 "volume": 1,
             }
-            for _ in range(bad_count)
-        ] + [
+            for i in range(self.TOTAL_ROWS)
+        ]
+        return pd.DataFrame(rows)
+
+
+class _StoreSmall:
+    """Returns fewer bars than the lookback window for the no-crash test."""
+
+    TOTAL_ROWS = 25
+
+    def get_minute_bars(self, symbol, start=None, end=None, limit=None):  # noqa: ARG002
+        rows = [
             {
-                "open": self.GOOD_PRICE,
-                "high": self.GOOD_PRICE + 1,
-                "low": self.GOOD_PRICE - 1,
-                "close": self.GOOD_PRICE,
+                "open": float(100 + i),
+                "high": float(101 + i),
+                "low": float(99 + i),
+                "close": float(100 + i),
                 "volume": 1,
             }
-            for _ in range(self._total_rows - bad_count)
+            for i in range(self.TOTAL_ROWS)
         ]
         return pd.DataFrame(rows)
 
 
 def test_uses_most_recent_bars_not_oldest():
-    """Regression: warmup must tail the most recent bars.
+    """Regression (#414): warmup must tail the most recent bars.
 
-    The store returns 300 bars in ASC order: the first 60 have close=555.0
-    (old/bad), the last 240 have close=350.0 (recent/good).  After warmup the
-    engine's last seeded close must be 350.0, not 555.0.
+    The store returns 300 ASC bars with close[i] = 100+i (monotonic).
+
+      correct tail-slice  iloc[-240:] → rows 60-299 → last close = 399.0
+      buggy   head-slice  iloc[:240]  → rows  0-239 → last close = 339.0
+
+    Asserting last close == 399.0 catches the head-slice bug; 339.0 would fail.
     """
-    store = _StoreTailCheck(total_rows=300)
+    store = _StoreTailCheck()
     eng = StreamingIndicatorEngine()
     warmup_engine_from_parquet(eng, store, "A05")
 
     assert eng.is_warm("A05"), "Engine should be warm after seeding ≥20 candles"
     last_price = eng.get_last_price("A05")
-    assert last_price == pytest.approx(_StoreTailCheck.GOOD_PRICE, abs=0.01), (
-        f"Warmup seeded from OLD bars (got {last_price}); expected recent close "
-        f"{_StoreTailCheck.GOOD_PRICE}"
+    expected = _StoreTailCheck.expected_last_close()
+    assert last_price == pytest.approx(expected, abs=0.01), (
+        f"Expected last close {expected} (tail-slice); got {last_price} "
+        f"(head-slice would give {_StoreTailCheck.BASE + 240 - 1}.0 = 339.0)"
     )
 
 
 def test_with_fewer_bars_than_lookback():
     """When fewer bars exist than lookback_minutes, all bars are used (no crash)."""
-    # Store returns only 25 bars (< 240 lookback) — engine should still warm.
-    store = _StoreTailCheck(total_rows=25)
     eng = StreamingIndicatorEngine()
-    warmup_engine_from_parquet(eng, store, "A05")
+    warmup_engine_from_parquet(eng, _StoreSmall(), "A05")
     assert eng.is_warm("A05") is True

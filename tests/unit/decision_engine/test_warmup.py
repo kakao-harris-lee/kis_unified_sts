@@ -1,4 +1,9 @@
-"""Parquet warmup seeds the engine so it is warm without live ticks."""
+"""Parquet warmup seeds the engine so it is warm without live ticks.
+
+This file provides a thin smoke test covering the futures-daemon warmup path.
+The canonical recency regression suite lives in
+tests/unit/streaming/test_parquet_warmup.py (shared helper).
+"""
 
 from __future__ import annotations
 
@@ -28,66 +33,61 @@ def test_warmup_seeds_candles_into_engine():
 
 
 class _StoreTailCheck:
-    """Returns MORE than lookback_minutes bars in ASC order.
+    """Returns MORE than lookback_minutes bars in ASC order with monotonic closes.
 
-    Old bars (rows 0..N-lookback_minutes-1) have close=BAD_PRICE (555.0).
-    Recent tail (last lookback_minutes rows) have close=GOOD_PRICE (350.0).
-    The warmup must seed from the RECENT tail, not the head.
+    close[i] = 100 + i, so every row has a distinct close that encodes its
+    position in the sequence.  This makes tail vs head distinguishable at the
+    LAST seeded bar:
+
+      correct tail-slice  iloc[-240:] → rows 60-299 → last close = 100+299 = 399
+      buggy   head-slice  iloc[:240]  → rows  0-239 → last close = 100+239 = 339
     """
 
-    BAD_PRICE = 555.0
-    GOOD_PRICE = 350.0
+    TOTAL_ROWS = 300
+    BASE = 100  # close[i] = BASE + i
 
-    def __init__(self, total_rows: int = 60) -> None:
-        self._total_rows = total_rows
+    @classmethod
+    def expected_last_close(cls) -> float:
+        return float(cls.BASE + cls.TOTAL_ROWS - 1)  # 399.0
+
+    def __init__(self, total_rows: int | None = None) -> None:
+        self._total_rows = total_rows if total_rows is not None else self.TOTAL_ROWS
 
     def get_minute_bars(self, symbol, start=None, end=None, limit=None):  # noqa: ARG002
-        lookback = 240  # default in _warmup_engine_from_parquet
-        bad_count = max(0, self._total_rows - lookback)
         rows = [
             {
-                "open": self.BAD_PRICE,
-                "high": self.BAD_PRICE + 1,
-                "low": self.BAD_PRICE - 1,
-                "close": self.BAD_PRICE,
+                "open": float(self.BASE + i),
+                "high": float(self.BASE + i + 1),
+                "low": float(self.BASE + i - 1),
+                "close": float(self.BASE + i),
                 "volume": 1,
             }
-            for _ in range(bad_count)
-        ] + [
-            {
-                "open": self.GOOD_PRICE,
-                "high": self.GOOD_PRICE + 1,
-                "low": self.GOOD_PRICE - 1,
-                "close": self.GOOD_PRICE,
-                "volume": 1,
-            }
-            for _ in range(self._total_rows - bad_count)
+            for i in range(self._total_rows)
         ]
         return pd.DataFrame(rows)
 
 
 def test_warmup_uses_most_recent_bars_not_oldest():
-    """Bug A regression: warmup must tail the most recent bars.
+    """Regression (#414): warmup must tail the most recent bars.
 
-    The store returns 300 bars in ASC order: the first 60 have close=555.0
-    (old/bad), the last 240 have close=350.0 (recent/good).  After warmup the
-    engine's last seeded close must be 350.0, not 555.0.
+    300 ASC bars, close[i]=100+i.  Tail-slice → last close 399.0;
+    head-slice → 339.0 → test fails → regression caught.
     """
-    store = _StoreTailCheck(total_rows=300)
+    store = _StoreTailCheck()
     eng = StreamingIndicatorEngine()
     _warmup_engine_from_parquet(eng, store, "A05")
 
     assert eng.is_warm("A05"), "Engine should be warm after seeding ≥20 candles"
     last_price = eng.get_last_price("A05")
-    assert last_price == pytest.approx(_StoreTailCheck.GOOD_PRICE, abs=0.01), (
-        f"Warmup seeded from OLD bars (got {last_price}); expected recent close "
-        f"{_StoreTailCheck.GOOD_PRICE}"
+    expected = _StoreTailCheck.expected_last_close()
+    assert last_price == pytest.approx(expected, abs=0.01), (
+        f"Expected last close {expected} (tail-slice); got {last_price} "
+        f"(head-slice would give {_StoreTailCheck.BASE + 240 - 1}.0 = 339.0)"
     )
 
 
 def test_warmup_with_fewer_bars_than_lookback():
     """When fewer bars exist than lookback_minutes, all bars are used (no crash)."""
-    # Store returns only 25 bars (< 240 lookback) — engine should still warm.
     store = _StoreTailCheck(total_rows=25)
     eng = StreamingIndicatorEngine()
     _warmup_engine_from_parquet(eng, store, "A05")
