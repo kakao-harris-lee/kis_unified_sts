@@ -20,83 +20,98 @@ The stream-pipeline decoupling roadmap's M2 (indicator daemon) + M3 (decision da
 | 자산 | **선물 먼저** (stock 별도 증분) |
 | 구현 | 기존 stub `decision_engine`를 실제 strategy 데몬으로 **리팩터** (신규 데몬 아님) |
 | 롤아웃 | **shadow 먼저** (default-off, 라이브 무영향, cutover 별도 증분) |
-| 의사결정 로직 | 지표 + Setup A/C + **regime gate(Redis read)** + macro/events context. **LLM veto/튜닝 미포함**(다음 증분) |
+| 의사결정 로직 | **pure Setup A/C** + 실 context(macro/events). **regime gate·LLM veto/튜닝 모두 미포함** — 이들은 orchestrator **어댑터-레이어** 로직이고 `MarketContext`/pure setup에는 regime/LLM 필드 자체가 없음(parity 증분에서 어댑터 포팅) |
 | shadow 대상 | `signal.candidate.futures.shadow` 스트림 + shadow recorder (counterfactual/EOD-proxy 비교) |
-| flag | `FUTURES_STRATEGY_DAEMON` = `off`(기본) \| `shadow` |
-| 프레임워크 | `StreamStage` 상속 (DRY; risk_filter/order_router/news_scorer와 동일) |
-| 지표 warmup | `ParquetMarketDataStore` 1분봉 시드 (post-clickhouse 정상) |
+| flag | `FUTURES_STRATEGY_DAEMON` = `off`(기본) \| `shadow` (candidate 스트림 타깃 선택) |
+| 프레임워크 | **기존 `DecisionEngineDaemon`(타이머 루프, 변경 없음) 재사용** + **M1b `StreamConsumerFeed` 재사용**(raw_data→지표엔진) + **신규 `FuturesContextProvider`**(주입형 context_provider). StreamStage 신규 작성 아님 |
+| 지표 warmup | `ParquetMarketDataStore` 1분봉 시드 (post-clickhouse 정상) — atr_14·15분 high/low 워밍 |
 
-## 3. Architecture
+## 3. Architecture (reuse-first)
+
+The existing `DecisionEngineDaemon` (`services/decision_engine/main.py`) is **already the right loop**: it polls an injected `context_provider() → MarketContext | None` every `tick_interval_seconds` (~60s), runs each `setup.check(ctx)`, and XADDs emitted `Signal.to_stream_dict()` (+`signal_id`) to a candidate stream — with a complete error taxonomy. The **only** missing piece is a real `context_provider` (the "Task 17" stub returns `None`). So this increment supplies that, plus a background tick→indicator feeder. **Three reused parts, one new part.**
 
 ```
 [market-ingest M1a] ──XADD──> raw_data (futures trade ticks)
-                                  │ XREADGROUP (consumer group)
+                                  │ XREAD (background task)
                                   ▼
-┌──────────────── FuturesStrategyStage(StreamStage) ─────────────────┐
-│ on_startup:                                                         │
-│   - build StreamingIndicatorEngine (daemon-local)                  │
-│   - parquet warmup: seed 1-min bars per symbol (is_warm gate)      │
-│   - build StrategyManager with Setup A/C (StrategyFactory/registry)│
-│   - connect Redis context reader (macro/events/regime keys)        │
-│ handle_message(msg_id, fields) -> bool:                            │
-│   1. parse tick fields -> (symbol, price_dict, ts)                 │
-│   2. indicator_engine.on_tick(symbol, price_dict, ts)   # µs       │
-│   3. decision-cadence gate: only at closed-bar boundary            │
-│        - resolver.collect_entry_indicators(symbol)                 │
-│        - read Redis context (macro_overnight, scheduled_events,    │
-│          regime state)                                             │
-│        - StrategyManager check_entries / check_exits (Setup A/C)   │
-│        - if signal: XADD signal.candidate.futures.shadow           │
-│   4. return True  # XACK
-│ on_shutdown: flush, close redis                                    │
-└────────────────────────────────────────────────────────────────────┘
-        (shadow: NOT wired to live risk_filter -> no double paper path)
+            StreamConsumerFeed (REUSED from M1b)  ──on_tick──>  StreamingIndicatorEngine
+                                                                  (daemon-local, warm state)
+                                                                       ▲ get_indicators / atr / 15m hi-lo
+   Redis stream:macro.overnight ──read_latest_macro_snapshot──┐       │
+   config/scheduled_events.yaml ──load_scheduled_events───────┤       │
+   parquet (prev_close/today_open + 1m warmup) ───────────────┤       │
+                                                              ▼       │
+                                          FuturesContextProvider (NEW) ┘
+                                              builds MarketContext per poll
+                                                       │
+                                                       ▼ injected as context_provider
+            DecisionEngineDaemon (REUSED, timer loop)  ── setup.check(ctx) ──> Signal
+                                                       │  XADD .to_stream_dict()+signal_id
+                                                       ▼
+                            signal.candidate.futures.shadow   (shadow mode; NOT the live stream)
 
-  [risk_filter] -> signal.final -> [order_router] (live gate suspended)
-        ^ unchanged; consumes the REAL signal.candidate.futures (orchestrator path)
+  [risk_filter] -> signal.final -> [order_router]  (UNCHANGED; consumes the real
+        stream:signal.candidate from the orchestrator path; untouched by shadow)
 ```
+
+The indicator engine is fed continuously (every tick via `StreamConsumerFeed`) so `atr_14` / 15-min high-low stay correct; the `DecisionEngineDaemon` timer (~60s ≈ 1-min bar) reads a fresh `MarketContext` each poll. Both indicator state and strategy live **in one daemon process** (the M2+M3 merge), off the orchestrator loop.
 
 ## 4. Components & responsibilities
 
-| Unit | Responsibility | Depends on | State |
+| Unit | New/Reused | Responsibility | Depends on |
 |---|---|---|---|
-| `FuturesStrategyStage` | StreamStage subclass: tick→on_tick→(cadence)→Setup A/C→candidate | raw_data stream, indicator engine, StrategyManager, Redis context, parquet warmup | per-symbol rolling (indicator engine) |
-| Indicator engine (daemon-local) | `StreamingIndicatorEngine` fed by ticks | — | per-symbol candle/MTF deques |
-| Context reader | read `macro_overnight`/`scheduled_events`/regime from Redis keys | Redis | none |
-| Setup A/C strategies | reused pure logic via `StrategyFactory`/registry (`setup_a_gap_reversion`, `setup_c_event_reaction`, `setup_target_exit`) | indicator dict + context | none |
-| Shadow publisher | XADD candidates to `signal.candidate.futures.shadow` + record for comparison | Redis | none |
+| `DecisionEngineDaemon` | **reused, unchanged** | timer loop: context→`setup.check`→XADD candidate (error taxonomy, graceful stop) | redis, setups, context_provider |
+| `StreamConsumerFeed` | **reused (M1b)** | consume `raw_data`, push each tick to the indicator engine | redis, indicator engine |
+| `StreamingIndicatorEngine` | **reused** | daemon-local rolling indicators (atr_14, 15m hi/lo, current_price) | — |
+| Setup A/C (`SetupAGapReversion`/`SetupCEventReaction`) | **reused, unchanged** | pure `check(MarketContext) → Signal` | `MarketContext` |
+| **`FuturesContextProvider`** | **NEW** | build `MarketContext` from indicator engine + parquet (prev_close/today_open) + macro (Redis) + events (YAML) | indicator engine, redis, parquet, events YAML |
+| `_build_and_run` (futures strategy entrypoint) | **modified** | wire all of the above; flag-select candidate stream; parquet warmup; signal handlers | all |
 
-**Single responsibility:** the daemon owns the futures strategy stage end-to-end (tick→candidate). The indicator engine is daemon-local (no cross-process snapshot). Setup A/C remain pure classes shared with the orchestrator (no duplication).
+**Single responsibility & reuse:** the proven daemon loop and the M1b feed are untouched; the only genuinely new unit is `FuturesContextProvider`, a pure builder of `MarketContext`. Setup A/C are the same pure classes (no duplication).
 
-## 5. Data flow & decision cadence
+## 5. `MarketContext` builder — exact fields
 
-- **Per tick:** parse → `indicator_engine.on_tick` only (cheap; keeps state warm).
-- **Decision cadence:** Setup A/C are evaluated only at closed-bar boundaries (the same decision-cadence gate the orchestrator uses via `StrategyManager.set_indicator_engine`), NOT every tick. Avoids per-tick candidate spam and matches orchestrator behavior.
-- **Inputs split:** ticks from `raw_data` (XREADGROUP); `macro_overnight` (SP500 overnight %), `scheduled_events` (event calendar), regime state from **Redis KEY reads** (per master spec §4.1). These are the inputs the stubbed `context_provider` failed to supply.
-- **Output:** `signal.candidate.futures.shadow` with the established 11-field candidate schema (`setup_type, direction, symbol, entry_price, stop_loss, take_profit, confidence, reason_tags_json, generated_at_ms, valid_until_ms, signal_id`) so it is schema-compatible with what `risk_filter` consumes (validates the contract before any cutover).
+`FuturesContextProvider` populates `MarketContext` (`shared/decision/context.py`). The two setups read **only** these (verbatim audit of `gap_reversion.py` / `event_reaction.py`):
+
+| Field | Source |
+|---|---|
+| `now` | `datetime.now(KST)` |
+| `symbol` | configured futures trade symbol (e.g. `A05xxx` mini front-month) |
+| `current_price` | indicator engine latest tick / `get_indicators` |
+| `prev_close`, `today_open` | parquet daily/session bars (the values the orchestrator's MarketDataProvider supplies) |
+| `atr_14` | indicator engine |
+| `last_15min_high`, `last_15min_low` | indicator engine (15-min window) |
+| `macro_overnight` | Redis `stream:macro.overnight` via `read_latest_macro_snapshot` (MacroSnapshot, `sp500_change_pct`) |
+| `scheduled_events` | `load_scheduled_events("config/scheduled_events.yaml")` (or Redis-backed; plan decides) |
+
+**Defaulted (NOT read by either setup → no extra infra):** `vwap = 0.0`, `atr_90th_percentile = 0.0`, `current_spread_ticks = 0.0`. This is the key simplification: **no orderbook** (Setup A/C don't use spread) and **no 60-day ATR-percentile warmup** are required. Decision cadence = the daemon's `tick_interval_seconds` (~60s, one MarketContext per minute); the indicator engine is kept warm by the continuous tick feed.
 
 ## 6. Decision-logic scope (this increment)
 
-Included: indicator computation + **Setup A/C** entry/exit + **regime gate** (Redis read) + **macro/events context**.
+Included: indicator computation (daemon-local) + **pure `SetupAGapReversion` / `SetupCEventReaction`** + real `MarketContext` (macro overnight + scheduled events).
 
-Deferred (next increment, before cutover): **LLM veto + LLM tuning** (the orchestrator adapter applies these on top of pure Setup A/C). They are refinements; the shadow can be extended with them once the core path is validated. Strict orchestrator parity + cutover is a separate increment.
+**Deferred (next increment — adapter-layer logic, ABSENT from the decision path):** the **regime gate**, **LLM veto**, and **LLM tuning** live in the orchestrator's `SetupAEntryAdapter`/`SetupCEntryAdapter` (`shared/strategy/entry/setup_adapters.py`), NOT in the pure decision setups — `MarketContext` has no `regime`/LLM field at all. Porting them is a parity step before cutover, out of scope here. (This corrects the brainstorm's tentative "include regime gate": the verbatim shows it isn't part of the decision setups.)
 
 ## 7. Shadow rollout & safety
 
-- **Flag:** `FUTURES_STRATEGY_DAEMON` = `off` (default) | `shadow`. Off → the daemon does nothing (the systemd unit ships disabled; merging is operationally inert).
-- **Shadow target:** the daemon publishes to `signal.candidate.futures.shadow` (a separate stream), **not** the live `signal.candidate.futures`. The existing `risk_filter` → `order_router` are untouched, so no second paper path is created and no live/paper position can result from the daemon.
-- **Validation:** a shadow recorder logs daemon candidates; they are compared against the orchestrator's actual futures signals via counterfactual / EOD-proxy PnL (the regime-gate-analyst validation method) to confirm the core stream path produces sound signals.
-- **No cutover here:** stopping the orchestrator's futures strategy stage and pointing the daemon at the live `signal.candidate.futures` is explicitly a later increment, gated by shadow validation + LLM parity + operator sign-off (Phase 5).
+- **Flag:** `FUTURES_STRATEGY_DAEMON` = `off` (default) | `shadow`, read in the entrypoint.
+  - `off`/unset → the entrypoint keeps the **inert stub** (`context_provider` returns `None`, 0 signals) — preserves the existing (Phase-5-gated, not-running) `kis-decision-engine` unit's current behavior; merging is operationally inert.
+  - `shadow` → wire the real `FuturesContextProvider` + `StreamConsumerFeed(raw_data)` + parquet warmup, publishing to **`signal.candidate.futures.shadow`**.
+- **Shadow target:** `signal.candidate.futures.shadow` is a **separate stream**; the existing `risk_filter` (consuming `stream:signal.candidate`) → `order_router` are **untouched** → no second paper/live path, no positions from the daemon.
+- **Validation:** a shadow recorder persists daemon candidates (plan picks SQLite-ledger shadow table vs JSONL); compared against the orchestrator's actual futures signals via counterfactual / EOD-proxy PnL (the regime-gate-analyst method) to confirm the core stream path is sound.
+- **systemd:** a unit (`kis-futures-strategy-daemon`, or `kis-decision-engine` with `FUTURES_STRATEGY_DAEMON=shadow`) is delivered **disabled**. Plan decides whether to reuse the decision_engine entrypoint/unit or add a sibling.
+- **No cutover here:** pointing the daemon at the live `stream:signal.candidate` + standing down the orchestrator's futures strategy stage is a later increment (gated by shadow validation + regime/LLM parity + Phase 5 operator sign-off).
 
 ## 8. Error handling
 
-Inherits `StreamStage` policy: parse error → XACK drop (poison-pill); processing failure → NO-XACK (retry); publish failure → NO-XACK. Indicator warmup incomplete → suppress signals until `is_warm(symbol)` (same gate as the orchestrator). Graceful shutdown (flush + close async redis). Redis context read failure → treat as "no context" (fail-safe: Setup C event reaction simply doesn't fire; Setup A gap reversion degrades to no-macro behavior — to be specified per strategy in the plan).
+Reuses the proven `DecisionEngineDaemon` taxonomy (its module docstring): a setup raising → log + skip that setup (others still run); `context_provider` returning `None` → no signal this tick, sleep; XADD failure → logged (and on a fatal error the supervisor/systemd restarts). The new `FuturesContextProvider` is **fail-safe**: indicator engine not warm → return `None` (no context, no signal); macro read failure / `macro_overnight=None` → still return a context but Setup A self-guards (it requires macro and returns `None`); no scheduled events → Setup C self-guards (no recent event → `None`). The `StreamConsumerFeed` background task owns its own XREAD retry (from M1b). Graceful shutdown: stop the feed, stop the daemon, close async redis.
 
 ## 9. Testing
 
-- **Unit:** `handle_message` performs tick→`on_tick`→(cadence)→Setup A/C→shadow XADD correctly; signals suppressed before `is_warm`; Redis context reads mocked; emitted candidate matches the 11-field schema `risk_filter` consumes.
-- **Integration:** fake-redis XADD to `raw_data` → daemon → assert candidate on `signal.candidate.futures.shadow`. Reuse the `test_signal_to_fill_e2e` harness pattern.
-- **Regression:** the orchestrator futures paper path is unchanged; with the flag `off`, behavior is identical to today; the stubbed `decision_engine` behavior (0 live signals) is preserved on the real stream.
+- **Unit — `FuturesContextProvider` (the new unit):** given a mocked indicator engine + mocked macro snapshot (Redis) + loaded events, it builds a `MarketContext` with every field correct (current_price/atr_14/15m hi-lo from engine; prev_close/today_open from market data; macro from Redis; events from YAML; vwap/percentile/spread defaulted). Returns `None` until the indicator engine is warm (`is_warm`).
+- **Unit — setups stay green:** existing `SetupAGapReversion`/`SetupCEventReaction` tests are unchanged (pure classes untouched). Add a test that a provider-built context flows through `setup.check` to a `Signal` whose `to_stream_dict()` matches the 11-field schema `risk_filter` parses (`_signal_from_stream_fields`).
+- **Integration:** fake-redis XADD ticks to `raw_data` → `StreamConsumerFeed` warms the engine → provider builds context → `DecisionEngineDaemon` publishes a candidate to `signal.candidate.futures.shadow`. Reuse the `test_signal_to_fill_e2e` harness pattern.
+- **Regression:** with flag `off`/unset, the entrypoint is the inert stub (0 signals) — existing `decision_engine` tests green; `DecisionEngineDaemon` class unchanged; orchestrator futures paper path unchanged.
 - Whole `tests/` suite green; ruff/black/mypy clean.
 
 ## 10. Out of scope
@@ -112,26 +127,28 @@ Inherits `StreamStage` policy: parse error → XACK drop (poison-pill); processi
 | 리스크 | 완화 |
 |---|---|
 | 데몬이 orchestrator 선물 경로와 충돌(이중 paper) | shadow 스트림 분리 + 실 risk_filter 미연결 → 라이브/paper 무영향 |
-| 지표 콜드스타트 미성숙 시그널 | parquet warmup + `is_warm` 게이트(orchestrator 동일) |
-| decision_engine 리팩터 회귀 | flag off → 무동작; 기존 stub 동작(0 신호) 보존; 기존 테스트 게이트 |
-| candidate 스키마 불일치 → risk_filter 파싱 실패 | 11-필드 스키마 단위테스트로 계약 고정(cutover 전 검증) |
-| Redis context 누락 | fail-safe(컨텍스트 없음으로 처리, 전략별 명시) |
+| 지표 콜드스타트 미성숙 시그널 | parquet warmup + `is_warm` 게이트 → warm 전 provider가 `None` 반환(루프 무신호) |
+| 기존 decision_engine 회귀 | `DecisionEngineDaemon` 클래스 **무변경**; flag off → 기존 stub(0 신호) 보존; 기존 테스트 게이트 |
+| candidate 스키마 불일치 → risk_filter 파싱 실패 | `to_stream_dict`↔`_signal_from_stream_fields` 왕복 단위테스트로 계약 고정 |
+| macro/events 누락 | fail-safe — `macro_overnight=None`이면 Setup A 미발화(이미 그 가드 있음); events 없으면 Setup C 미발화 |
+| prev_close/today_open 소스(데몬은 MarketDataProvider 없음) | parquet 일봉/세션 바에서 읽기(plan에서 정확 경로 확정) |
 | 운영 중 origin/main 이동(concurrent operator) | 각 단계 fetch+rebase |
 
 ## 12. Acceptance criteria
 
-- [ ] `FuturesStrategyStage(StreamStage)` consumes `raw_data`, runs daemon-local indicator engine + Setup A/C, publishes `signal.candidate.futures.shadow` (11-field schema).
-- [ ] Decision cadence: Setup A/C evaluated at closed-bar boundaries, not per-tick.
-- [ ] Inputs: ticks via XREADGROUP; macro/events/regime via Redis keys; warmup via parquet; `is_warm` gating.
-- [ ] regime gate applied; LLM veto/tuning explicitly absent (documented).
-- [ ] Flag `off` (default) → daemon inert, orchestrator futures path unchanged, existing tests green.
-- [ ] systemd unit delivered **disabled**; shadow does not touch live `signal.candidate.futures`.
+- [ ] `FuturesContextProvider` (NEW) builds a correct `MarketContext` from indicator engine + parquet (prev_close/today_open) + macro (Redis `stream:macro.overnight`) + events (YAML); returns `None` until warm; vwap/percentile/spread defaulted.
+- [ ] `StreamConsumerFeed` (reused) consumes `raw_data` and keeps the daemon-local `StreamingIndicatorEngine` warm; `DecisionEngineDaemon` (reused, unchanged) polls the provider and publishes `Signal.to_stream_dict()`+`signal_id` to `signal.candidate.futures.shadow`.
+- [ ] Emitted candidate round-trips through `risk_filter._signal_from_stream_fields` (11-field contract locked by test).
+- [ ] **No regime/LLM** in the daemon (documented as adapter-layer, deferred); no orderbook dependency.
+- [ ] Flag `off`/unset → entrypoint inert (stub, 0 signals); existing `decision_engine` + orchestrator futures tests green.
+- [ ] systemd unit delivered **disabled**; shadow stream not consumed by `risk_filter`.
 - [ ] Unit + integration + full suite green; lint/type clean.
 
 ## 13. Open questions (resolve in the plan)
 
-- Exact decision-cadence hook reuse (`StrategyManager.set_indicator_engine` gating vs an explicit closed-bar trigger in the daemon).
-- Redis key names for `macro_overnight` / `scheduled_events` / regime (reuse the orchestrator's existing keys — confirm exact keys).
-- Shadow recorder storage (SQLite runtime ledger shadow table vs a JSONL log) for counterfactual comparison.
-- Whether `decision_engine`'s current module/entrypoint is already `StreamStage`-shaped or needs reshaping (confirmed during planning).
-- Async redis client lifecycle in the daemon (mirror the M1/M0 daemon idiom).
+- `prev_close` / `today_open` source for the daemon (no MarketDataProvider): which parquet daily/session read to reuse.
+- `scheduled_events` source: `config/scheduled_events.yaml` (static) vs a Redis-backed loader — confirm what exists today and whether a YAML is present.
+- Shadow recorder storage: SQLite runtime-ledger shadow table vs JSONL log.
+- Entrypoint shape: modify `services/decision_engine/main.py::_build_and_run` to be flag-aware vs add a sibling `services/futures_strategy_daemon/main.py` reusing `DecisionEngineDaemon` (+ which systemd unit).
+- `StreamConsumerFeed` reuse details: it needs an `indicator_engine` + async redis + `stream="raw_data"`; confirm its `set_volume_baseline`/futures-tick handling suits futures (cumulative volume).
+- The indicator-engine getter for `last_15min_high`/`last_15min_low` (confirm the exact method/keys) + `atr_14` key name.
