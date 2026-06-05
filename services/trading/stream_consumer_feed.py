@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -84,6 +85,7 @@ class StreamConsumerFeed:
         redis: Any,
         stream: str,
         indicator_engine: Any | None = None,
+        tick_callback: Callable[[str, dict[str, Any], datetime], None] | None = None,
         stale_threshold_seconds: float = 30.0,
         xread_block_ms: int = 1000,
         xread_count: int = 200,
@@ -91,6 +93,7 @@ class StreamConsumerFeed:
         self.redis = redis
         self.stream = stream
         self.indicator_engine = indicator_engine
+        self._tick_callback = tick_callback
         self._stale_threshold = stale_threshold_seconds
         self.xread_block_ms = xread_block_ms
         self.xread_count = xread_count
@@ -112,6 +115,16 @@ class StreamConsumerFeed:
     def update_symbols(self, symbols: list[str]) -> None:
         self._subscribed = set(symbols)
 
+    def set_tick_callback(
+        self, callback: Callable[[str, dict[str, Any], datetime], None] | None
+    ) -> None:
+        """Register a per-tick callback (mirrors ``KIS*PriceFeed.set_tick_callback``).
+
+        When set, each tick invokes ``callback(symbol, price_dict, ts)`` and the
+        built-in indicator push is skipped — the callback owns per-tick processing.
+        """
+        self._tick_callback = callback
+
     def _apply_entry(self, fields: dict[Any, Any]) -> None:
         parsed = _parse_entry_fields(fields)
         if parsed is None:
@@ -121,7 +134,13 @@ class StreamConsumerFeed:
         now = time.time()
         self._symbol_tick_ts[symbol] = now
         self._last_tick_ts = now
-        if self.indicator_engine is not None:
+        if self._tick_callback is not None:
+            ts = datetime.fromtimestamp(price.get("timestamp", time.time()), UTC)
+            try:
+                self._tick_callback(symbol, price, ts)
+            except Exception:
+                logger.exception("tick_callback failed symbol=%s", symbol)
+        elif self.indicator_engine is not None:
             self._push_indicator(symbol, price)
 
     def _push_indicator(self, symbol: str, price: dict[str, Any]) -> None:
