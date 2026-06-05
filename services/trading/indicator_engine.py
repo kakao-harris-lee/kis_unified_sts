@@ -866,6 +866,8 @@ class StreamingIndicatorEngine:
         Used for Setup C's 15-minute breakout range. Returns ``None`` when the
         symbol has no candle history yet.
         """
+        if minutes <= 0:
+            return None
         acc = self._accumulators.get(symbol)
         if acc is None:
             return None

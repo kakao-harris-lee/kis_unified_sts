@@ -10,6 +10,10 @@ from services.decision_engine.daily_reference import FuturesDailyReference
 
 
 class _FakeStore:
+    """Honors the real store contract: ASC by datetime, returns ALL rows
+    (the real get_daily_bars LIMIT takes the head, so prev_close must not
+    rely on limit — it fetches all and tails after excluding today)."""
+
     def __init__(self, df: pd.DataFrame) -> None:
         self._df = df
 
@@ -17,16 +21,18 @@ class _FakeStore:
         return self._df
 
 
-def test_prev_close_is_last_daily_close_before_today():
+def test_prev_close_is_most_recent_close_before_today():
+    # ASC by datetime; includes today's (2026-06-05) partial bar which must be excluded
     df = pd.DataFrame(
         {
-            "date": ["2026-06-03", "2026-06-04"],
-            "close": [340.0, 351.5],
-            "open": [338.0, 349.0],
+            "datetime": ["2026-06-03", "2026-06-04", "2026-06-05"],
+            "close": [340.0, 351.5, 999.0],
+            "open": [338.0, 349.0, 352.0],
         }
     )
     ref = FuturesDailyReference(store=_FakeStore(df), symbol="A05")
-    assert ref.prev_close() == 351.5  # most recent daily close
+    ref.observe(price=352.0, now=datetime(2026, 6, 5, 9, 0, tzinfo=UTC))  # sets _today
+    assert ref.prev_close() == 351.5  # 06-04 close, NOT today's 999.0 nor oldest 340.0
 
 
 def test_today_open_tracks_first_observed_price_of_day():

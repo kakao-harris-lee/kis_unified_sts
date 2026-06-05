@@ -6,6 +6,7 @@ bars and today_open is captured from the first observed price of the session.
 
 from __future__ import annotations
 
+import contextlib
 from datetime import date, datetime
 from typing import Any
 
@@ -20,12 +21,31 @@ class FuturesDailyReference:
         self._today: date | None = None
 
     def prev_close(self) -> float:
-        """Most recent daily close from parquet, or 0.0 if unavailable."""
+        """Most recent daily close STRICTLY BEFORE today, or 0.0 if unavailable.
+
+        IMPORTANT: ``ParquetMarketDataStore.get_daily_bars`` orders ``datetime``
+        ASC and ``LIMIT`` takes the HEAD — so we must NOT use ``limit`` to get
+        recent bars. Fetch the (small) daily history, drop today's in-progress
+        bar (``self._today``, set by ``observe``), and take the tail.
+        """
+        import pandas as pd
+
         try:
-            df = self._store.get_daily_bars(self._symbol, limit=2)
+            df = self._store.get_daily_bars(self._symbol)
         except Exception:
             return 0.0
         if df is None or len(df) == 0 or "close" not in df.columns:
+            return 0.0
+        # Exclude today's (partial) bar so prev_close is yesterday's close.
+        dt_col = (
+            "datetime"
+            if "datetime" in df.columns
+            else ("date" if "date" in df.columns else None)
+        )
+        if self._today is not None and dt_col is not None:
+            with contextlib.suppress(Exception):
+                df = df[pd.to_datetime(df[dt_col]).dt.date < self._today]
+        if len(df) == 0:
             return 0.0
         try:
             return float(df["close"].iloc[-1])
