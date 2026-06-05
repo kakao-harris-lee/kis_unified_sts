@@ -16,9 +16,12 @@ Error taxonomy:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import math
+import os
+import socket
 import time
 from typing import Any
 
@@ -187,3 +190,109 @@ class StockOrderRouterDaemon(StreamStage):
             )
 
         return True
+
+
+# ---------------------------------------------------------------------------
+# Flag-gated entrypoint (shadow-first, default-off)
+# ---------------------------------------------------------------------------
+
+
+def _resolve_mode() -> str:
+    """Return the daemon mode from the env var (default 'off')."""
+    return os.getenv("STOCK_ORDER_ROUTER", "off").strip().lower()
+
+
+def _final_stream_for(mode: str) -> str:
+    """Input stream: shadow -> suffixed; else reserved live (unsuffixed)."""
+    return "signal.final.stock.shadow" if mode == "shadow" else "signal.final.stock"
+
+
+def _fill_stream_for(mode: str) -> str:
+    """Output fill stream: shadow -> suffixed; else reserved live (unsuffixed)."""
+    return "order.fill.stock.shadow" if mode == "shadow" else "order.fill.stock"
+
+
+async def _build_and_run() -> int:
+    """Flag-gated entrypoint.
+
+    off / unset: inert — log + close redis + return 0, constructing no broker,
+                 fill-logger, or daemon.
+    shadow:      full wiring to order.fill.stock.shadow.
+    """
+    import signal as signal_mod
+
+    import redis.asyncio as aioredis
+
+    redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/1")
+    redis_client = aioredis.from_url(redis_url)
+
+    mode = _resolve_mode()
+    if mode != "shadow":
+        logger.info("STOCK_ORDER_ROUTER=%s (off) — daemon inert, exiting", mode)
+        await redis_client.aclose()
+        return 0
+
+    from shared.storage import SQLiteRuntimeLedger
+    from shared.storage.config import StorageConfig
+
+    final_stream = os.environ.get("STOCK_FINAL_STREAM", _final_stream_for(mode))
+    fill_stream = os.environ.get("STOCK_FILL_STREAM", _fill_stream_for(mode))
+    positions_key = os.environ.get("STOCK_POSITIONS_KEY", "trading:stock:positions")
+
+    runtime_ledger = None
+    storage_config = StorageConfig.load_or_default()
+    if storage_config.runtime_storage.backend == "sqlite":
+        runtime_ledger = SQLiteRuntimeLedger(storage_config.runtime_storage.sqlite)
+
+    fill_logger = FillLogger(
+        redis=redis_client,
+        archive_client=None,
+        stream=fill_stream,
+        maxlen=10_000,
+        runtime_ledger=runtime_ledger,
+        asset_class="stock",
+    )
+
+    # Paper broker with modeled slippage (CLAUDE.md: 슬리피지 반영 필수).
+    slippage_rate = float(os.environ.get("STOCK_PAPER_SLIPPAGE_RATE", "0.001"))
+    broker = VirtualBroker(slippage_rate=slippage_rate)
+
+    worker_id = f"stock-order-router-{socket.gethostname()}-{os.getpid()}"
+    daemon = StockOrderRouterDaemon(
+        redis=redis_client,
+        broker=broker,
+        fill_logger=fill_logger,
+        final_stream=final_stream,
+        consumer_group="stock_order_router",
+        worker_id=worker_id,
+        positions_key=positions_key,
+        xread_block_ms=2000,
+        batch_size=10,
+    )
+
+    loop = asyncio.get_running_loop()
+    for sig in (signal_mod.SIGTERM, signal_mod.SIGINT):
+        loop.add_signal_handler(sig, lambda: asyncio.create_task(daemon.stop()))
+
+    try:
+        await daemon.run()
+    finally:
+        await fill_logger.flush()
+        await redis_client.aclose()
+        if runtime_ledger is not None:
+            runtime_ledger.close()
+    return 0
+
+
+def main() -> int:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
+    return asyncio.run(_build_and_run())
+
+
+if __name__ == "__main__":
+    import sys
+
+    sys.exit(main())

@@ -1,0 +1,21 @@
+[Unit]
+Description=KIS Stock Order Router (signal.final.stock.shadow -> paper fill -> order.fill.stock.shadow)
+After=network-online.target redis-server.service
+Wants=network-online.target
+Requires=redis-server.service
+
+[Service]
+Type=simple
+User=deploy
+WorkingDirectory=/home/deploy/project/kis_unified_sts
+EnvironmentFile=/home/deploy/project/kis_unified_sts/.env
+Environment=STOCK_ORDER_ROUTER=shadow
+ExecStart=/home/deploy/project/kis_unified_sts/.venv/bin/python -m services.stock_order_router.main
+Restart=on-failure
+RestartSec=10s
+TimeoutStopSec=30s
+KillSignal=SIGTERM
+
+# Delivered DISABLED. Enabling is an operator step (shadow validation gate).
+[Install]
+WantedBy=multi-user.target
