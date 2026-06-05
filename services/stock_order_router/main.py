@@ -249,12 +249,15 @@ async def _build_and_run() -> int:
         archive_client=None,
         stream=fill_stream,
         maxlen=10_000,
+        batch_size=10,
         runtime_ledger=runtime_ledger,
         asset_class="stock",
     )
 
     # Paper broker with modeled slippage (CLAUDE.md: 슬리피지 반영 필수).
-    slippage_rate = float(os.environ.get("STOCK_PAPER_SLIPPAGE_RATE", "0.001"))
+    slippage_rate = float(
+        os.environ.get("STOCK_PAPER_SLIPPAGE_RATE", "0.0001")
+    )  # match stock backtest configs
     broker = VirtualBroker(slippage_rate=slippage_rate)
 
     worker_id = f"stock-order-router-{socket.gethostname()}-{os.getpid()}"
