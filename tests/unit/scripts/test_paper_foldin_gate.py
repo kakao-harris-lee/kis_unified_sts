@@ -1,7 +1,7 @@
 """Tests for scripts/walk_forward_paper_foldin.py — paper-gate evaluation.
 
 Verifies the paper-only rules (3 + 4) against synthetic PaperTrade lists
-without touching ClickHouse. The bootstrap rule (1 + 2) is already covered
+without touching external storage. The bootstrap rule (1 + 2) is already covered
 by tests/unit/backtest/test_bootstrap.py.
 """
 

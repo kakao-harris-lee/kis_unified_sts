@@ -9,10 +9,10 @@
     "regenerated": "2026-05-31"
   },
   "summary": {
-    "skipped": 9,
+    "skipped": 0,
     "passed": 25,
-    "total": 34,
-    "collected": 34
+    "total": 25,
+    "collected": 25
   },
   "collectors": [
     {
@@ -22,67 +22,6 @@
         {
           "nodeid": "tests/performance",
           "type": "Dir"
-        }
-      ]
-    },
-    {
-      "nodeid": "tests/performance/test_clickhouse_load.py::TestClickHouseLoadBenchmarks",
-      "outcome": "passed",
-      "result": [
-        {
-          "nodeid": "tests/performance/test_clickhouse_load.py::TestClickHouseLoadBenchmarks::test_warmup_query_1_day",
-          "type": "Function",
-          "lineno": 289
-        },
-        {
-          "nodeid": "tests/performance/test_clickhouse_load.py::TestClickHouseLoadBenchmarks::test_warmup_query_7_days",
-          "type": "Function",
-          "lineno": 317
-        },
-        {
-          "nodeid": "tests/performance/test_clickhouse_load.py::TestClickHouseLoadBenchmarks::test_warmup_query_30_days",
-          "type": "Function",
-          "lineno": 345
-        },
-        {
-          "nodeid": "tests/performance/test_clickhouse_load.py::TestClickHouseLoadBenchmarks::test_warmup_query_100_days",
-          "type": "Function",
-          "lineno": 376
-        },
-        {
-          "nodeid": "tests/performance/test_clickhouse_load.py::TestClickHouseLoadBenchmarks::test_minute_candle_query_1_day",
-          "type": "Function",
-          "lineno": 404
-        },
-        {
-          "nodeid": "tests/performance/test_clickhouse_load.py::TestClickHouseLoadBenchmarks::test_minute_candle_query_7_days",
-          "type": "Function",
-          "lineno": 432
-        },
-        {
-          "nodeid": "tests/performance/test_clickhouse_load.py::TestClickHouseLoadBenchmarks::test_concurrent_queries_5_workers",
-          "type": "Function",
-          "lineno": 460
-        },
-        {
-          "nodeid": "tests/performance/test_clickhouse_load.py::TestClickHouseLoadBenchmarks::test_concurrent_queries_20_workers",
-          "type": "Function",
-          "lineno": 489
-        },
-        {
-          "nodeid": "tests/performance/test_clickhouse_load.py::TestClickHouseLoadBenchmarks::test_query_latency_percentiles",
-          "type": "Function",
-          "lineno": 520
-        }
-      ]
-    },
-    {
-      "nodeid": "tests/performance/test_clickhouse_load.py",
-      "outcome": "passed",
-      "result": [
-        {
-          "nodeid": "tests/performance/test_clickhouse_load.py::TestClickHouseLoadBenchmarks",
-          "type": "Class"
         }
       ]
     },
@@ -280,10 +219,6 @@
       "outcome": "passed",
       "result": [
         {
-          "nodeid": "tests/performance/test_clickhouse_load.py",
-          "type": "Module"
-        },
-        {
           "nodeid": "tests/performance/test_orchestrator_hot_path_benchmark.py",
           "type": "Module"
         },
@@ -303,231 +238,6 @@
     }
   ],
   "tests": [
-    {
-      "nodeid": "tests/performance/test_clickhouse_load.py::TestClickHouseLoadBenchmarks::test_warmup_query_1_day",
-      "lineno": 289,
-      "outcome": "skipped",
-      "keywords": [
-        "test_warmup_query_1_day",
-        "TestClickHouseLoadBenchmarks",
-        "test_clickhouse_load.py",
-        "integration",
-        "skipif",
-        "performance",
-        "tests",
-        "kis_unified_sts",
-        ""
-      ],
-      "setup": {
-        "duration": 0.00019373199999961344,
-        "outcome": "skipped",
-        "longrepr": "('/home/runner/work/kis_unified_sts/kis_unified_sts/tests/performance/test_clickhouse_load.py', 290, 'Skipped: ClickHouse not available (start with: docker-compose up -d clickhouse)')"
-      },
-      "teardown": {
-        "duration": 0.0001051699999976563,
-        "outcome": "passed"
-      }
-    },
-    {
-      "nodeid": "tests/performance/test_clickhouse_load.py::TestClickHouseLoadBenchmarks::test_warmup_query_7_days",
-      "lineno": 317,
-      "outcome": "skipped",
-      "keywords": [
-        "test_warmup_query_7_days",
-        "TestClickHouseLoadBenchmarks",
-        "test_clickhouse_load.py",
-        "integration",
-        "skipif",
-        "performance",
-        "tests",
-        "kis_unified_sts",
-        ""
-      ],
-      "setup": {
-        "duration": 8.230499999228869e-05,
-        "outcome": "skipped",
-        "longrepr": "('/home/runner/work/kis_unified_sts/kis_unified_sts/tests/performance/test_clickhouse_load.py', 318, 'Skipped: ClickHouse not available (start with: docker-compose up -d clickhouse)')"
-      },
-      "teardown": {
-        "duration": 8.093700000699755e-05,
-        "outcome": "passed"
-      }
-    },
-    {
-      "nodeid": "tests/performance/test_clickhouse_load.py::TestClickHouseLoadBenchmarks::test_warmup_query_30_days",
-      "lineno": 345,
-      "outcome": "skipped",
-      "keywords": [
-        "test_warmup_query_30_days",
-        "TestClickHouseLoadBenchmarks",
-        "test_clickhouse_load.py",
-        "integration",
-        "skipif",
-        "performance",
-        "tests",
-        "kis_unified_sts",
-        ""
-      ],
-      "setup": {
-        "duration": 7.044999999550328e-05,
-        "outcome": "skipped",
-        "longrepr": "('/home/runner/work/kis_unified_sts/kis_unified_sts/tests/performance/test_clickhouse_load.py', 346, 'Skipped: ClickHouse not available (start with: docker-compose up -d clickhouse)')"
-      },
-      "teardown": {
-        "duration": 7.73830000042608e-05,
-        "outcome": "passed"
-      }
-    },
-    {
-      "nodeid": "tests/performance/test_clickhouse_load.py::TestClickHouseLoadBenchmarks::test_warmup_query_100_days",
-      "lineno": 376,
-      "outcome": "skipped",
-      "keywords": [
-        "test_warmup_query_100_days",
-        "TestClickHouseLoadBenchmarks",
-        "test_clickhouse_load.py",
-        "integration",
-        "skipif",
-        "performance",
-        "tests",
-        "kis_unified_sts",
-        ""
-      ],
-      "setup": {
-        "duration": 8.192900000381087e-05,
-        "outcome": "skipped",
-        "longrepr": "('/home/runner/work/kis_unified_sts/kis_unified_sts/tests/performance/test_clickhouse_load.py', 377, 'Skipped: ClickHouse not available (start with: docker-compose up -d clickhouse)')"
-      },
-      "teardown": {
-        "duration": 7.700599999793667e-05,
-        "outcome": "passed"
-      }
-    },
-    {
-      "nodeid": "tests/performance/test_clickhouse_load.py::TestClickHouseLoadBenchmarks::test_minute_candle_query_1_day",
-      "lineno": 404,
-      "outcome": "skipped",
-      "keywords": [
-        "test_minute_candle_query_1_day",
-        "TestClickHouseLoadBenchmarks",
-        "test_clickhouse_load.py",
-        "integration",
-        "skipif",
-        "performance",
-        "tests",
-        "kis_unified_sts",
-        ""
-      ],
-      "setup": {
-        "duration": 6.959499999936725e-05,
-        "outcome": "skipped",
-        "longrepr": "('/home/runner/work/kis_unified_sts/kis_unified_sts/tests/performance/test_clickhouse_load.py', 405, 'Skipped: ClickHouse not available (start with: docker-compose up -d clickhouse)')"
-      },
-      "teardown": {
-        "duration": 0.00010193500000355016,
-        "outcome": "passed"
-      }
-    },
-    {
-      "nodeid": "tests/performance/test_clickhouse_load.py::TestClickHouseLoadBenchmarks::test_minute_candle_query_7_days",
-      "lineno": 432,
-      "outcome": "skipped",
-      "keywords": [
-        "test_minute_candle_query_7_days",
-        "TestClickHouseLoadBenchmarks",
-        "test_clickhouse_load.py",
-        "integration",
-        "skipif",
-        "performance",
-        "tests",
-        "kis_unified_sts",
-        ""
-      ],
-      "setup": {
-        "duration": 7.302599999547965e-05,
-        "outcome": "skipped",
-        "longrepr": "('/home/runner/work/kis_unified_sts/kis_unified_sts/tests/performance/test_clickhouse_load.py', 433, 'Skipped: ClickHouse not available (start with: docker-compose up -d clickhouse)')"
-      },
-      "teardown": {
-        "duration": 6.736299999943185e-05,
-        "outcome": "passed"
-      }
-    },
-    {
-      "nodeid": "tests/performance/test_clickhouse_load.py::TestClickHouseLoadBenchmarks::test_concurrent_queries_5_workers",
-      "lineno": 460,
-      "outcome": "skipped",
-      "keywords": [
-        "test_concurrent_queries_5_workers",
-        "TestClickHouseLoadBenchmarks",
-        "test_clickhouse_load.py",
-        "integration",
-        "skipif",
-        "performance",
-        "tests",
-        "kis_unified_sts",
-        ""
-      ],
-      "setup": {
-        "duration": 6.90869999999677e-05,
-        "outcome": "skipped",
-        "longrepr": "('/home/runner/work/kis_unified_sts/kis_unified_sts/tests/performance/test_clickhouse_load.py', 461, 'Skipped: ClickHouse not available (start with: docker-compose up -d clickhouse)')"
-      },
-      "teardown": {
-        "duration": 7.682700000088971e-05,
-        "outcome": "passed"
-      }
-    },
-    {
-      "nodeid": "tests/performance/test_clickhouse_load.py::TestClickHouseLoadBenchmarks::test_concurrent_queries_20_workers",
-      "lineno": 489,
-      "outcome": "skipped",
-      "keywords": [
-        "test_concurrent_queries_20_workers",
-        "TestClickHouseLoadBenchmarks",
-        "test_clickhouse_load.py",
-        "integration",
-        "skipif",
-        "performance",
-        "tests",
-        "kis_unified_sts",
-        ""
-      ],
-      "setup": {
-        "duration": 7.340199999816832e-05,
-        "outcome": "skipped",
-        "longrepr": "('/home/runner/work/kis_unified_sts/kis_unified_sts/tests/performance/test_clickhouse_load.py', 490, 'Skipped: ClickHouse not available (start with: docker-compose up -d clickhouse)')"
-      },
-      "teardown": {
-        "duration": 6.999000000007527e-05,
-        "outcome": "passed"
-      }
-    },
-    {
-      "nodeid": "tests/performance/test_clickhouse_load.py::TestClickHouseLoadBenchmarks::test_query_latency_percentiles",
-      "lineno": 520,
-      "outcome": "skipped",
-      "keywords": [
-        "test_query_latency_percentiles",
-        "TestClickHouseLoadBenchmarks",
-        "test_clickhouse_load.py",
-        "integration",
-        "skipif",
-        "performance",
-        "tests",
-        "kis_unified_sts",
-        ""
-      ],
-      "setup": {
-        "duration": 6.38460000033092e-05,
-        "outcome": "skipped",
-        "longrepr": "('/home/runner/work/kis_unified_sts/kis_unified_sts/tests/performance/test_clickhouse_load.py', 521, 'Skipped: ClickHouse not available (start with: docker-compose up -d clickhouse)')"
-      },
-      "teardown": {
-        "duration": 0.00010259199999040902,
-        "outcome": "passed"
-      }
-    },
     {
       "nodeid": "tests/performance/test_orchestrator_hot_path_benchmark.py::TestOrchestratorHotPathBenchmark::test_entry_path_100_symbols",
       "lineno": 181,
@@ -628,7 +338,7 @@
         "outcome": "passed"
       },
       "teardown": {
-        "duration": 8.935099999973772e-05,
+        "duration": 0.00008935099999973772,
         "outcome": "passed"
       }
     },

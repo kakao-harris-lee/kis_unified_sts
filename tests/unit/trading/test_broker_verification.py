@@ -242,7 +242,7 @@ class TestBrokerVerification:
                     "enabled": True,
                     "auto_track_external": True,
                     "remove_redis_only": True,
-                    "sync_clickhouse": True,
+                    "sync_runtime_ledger": True,
                     "notify_on_mismatch": False,
                 }
             },

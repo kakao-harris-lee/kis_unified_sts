@@ -125,10 +125,10 @@ monitoring:
         # 연결 URL은 환경변수: REDIS_URL
         timeout_seconds: 3
 
-      # ClickHouse 데이터베이스 체크
+      # RuntimeLedger SQLite 데이터베이스 체크
       database:
         enabled: true
-        # 연결 URL은 환경변수: CLICKHOUSE_URL
+        # 연결 URL은 환경변수: RUNTIME_STORAGE_SQLITE_PATH
         timeout_seconds: 5
 
       # KIS API 연결 체크

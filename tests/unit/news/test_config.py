@@ -9,8 +9,8 @@ def test_loads_from_yaml(tmp_path):
 news_collector:
   redis_stream: "stream:news.raw"
   redis_maxlen: 1000
-  clickhouse_batch_size: 5
-  clickhouse_flush_interval_seconds: 2
+  archive_batch_size: 5
+  archive_flush_interval_seconds: 2
   body_truncate_chars: 100
   dedupe:
     memory_size: 10

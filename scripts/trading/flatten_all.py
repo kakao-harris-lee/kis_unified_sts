@@ -144,8 +144,6 @@ async def _build_and_run(args: argparse.Namespace) -> int:
 
     import redis.asyncio as aioredis
 
-    from shared.db.client import AsyncClickHouseClient
-    from shared.db.config import ClickHouseConfig
     from shared.execution.config import ExecutionConfig
     from shared.execution.executor import OrderExecutor
     from shared.execution.fill_logger import FillLogger
@@ -182,11 +180,8 @@ async def _build_and_run(args: argparse.Namespace) -> int:
     # Wire executors
     redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/1")
     redis_client = aioredis.from_url(redis_url)
-    ch_config = ClickHouseConfig.from_env(database="kospi")
-    ch_client = AsyncClickHouseClient(ch_config)
-    await ch_client.connect()
 
-    fill_logger = FillLogger(redis=redis_client, ch_client=ch_client)
+    fill_logger = FillLogger(redis=redis_client, archive_client=None)
 
     # ConfigLoader path matches services.order_router.main wiring
     from shared.config.loader import ConfigLoader
@@ -213,7 +208,6 @@ async def _build_and_run(args: argparse.Namespace) -> int:
     finally:
         await fill_logger.flush()
         await feed.stop()
-        await ch_client.close()
         await redis_client.aclose()
 
     print(render_confirmed_summary(results))

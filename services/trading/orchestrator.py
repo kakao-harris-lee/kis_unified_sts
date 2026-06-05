@@ -990,11 +990,9 @@ class TradingOrchestrator:
         # events from prior sessions do NOT re-trigger flatten on restart.
         self._ks_last_seen_event_id: str | None = None
 
-        # Shadow-loggers flush loop. Periodically drains the LLM veto buffer into
-        # ClickHouse.
+        # Shadow-loggers flush loop. Periodically drains in-memory logger buffers.
         self._shadow_loggers_flush_task: asyncio.Task | None = None
-        # Reusable ClickHouse client for the flush loop (created at task start).
-        self._shadow_loggers_ch_client: Any | None = None
+        self._shadow_loggers_archive_client: Any | None = None
 
         # Feed drop tracking: remember the drop count from the previous
         # _record_market_metrics call so we can emit a WARNING only when the
@@ -1528,13 +1526,8 @@ class TradingOrchestrator:
         # Pre-register strategy names for Prometheus metric discovery
         self._metrics.register_strategies(self._strategy_manager.strategy_names)
 
-        # Position tracker (route to asset-specific ClickHouse database)
-        try:
-            from shared.config.secrets import SecretsManager
-
-            db_name = SecretsManager.clickhouse_database(self.config.asset_class)
-        except (ConfigurationError, KeyError, AttributeError):
-            db_name = ""
+        # Position tracker runtime storage is routed through RuntimeLedger.
+        db_name = ""
         # Derive global max_positions from sum of per-strategy limits
         global_max = 10
         if self._strategy_manager:
@@ -2258,7 +2251,7 @@ class TradingOrchestrator:
         reconcile_qty = bv_cfg.get("reconcile_quantity", True)
         reconcile_price = bv_cfg.get("reconcile_price", True)
         remove_redis_only = bv_cfg.get("remove_redis_only", False)
-        sync_clickhouse = bv_cfg.get("sync_clickhouse", False)
+        sync_runtime_ledger = bv_cfg.get("sync_runtime_ledger", False)
         notify = bv_cfg.get("notify_on_mismatch", True)
         auto_track = bv_cfg.get("auto_track_external", False)
         alerts: list[str] = []
@@ -2405,7 +2398,7 @@ class TradingOrchestrator:
             )
 
         if (
-            sync_clickhouse
+            sync_runtime_ledger
             and self.config.asset_class == "stock"
             and self._position_tracker is not None
         ):
@@ -2420,50 +2413,14 @@ class TradingOrchestrator:
             await self._notify(alert_text)
 
     async def _ensure_db_schema(self):
-        """Ensure ClickHouse persistence tables exist."""
-        try:
-            if not self._position_tracker:
-                return
-            if not self._position_tracker._uses_clickhouse_persistence():
-                return
-
-            from shared.db.client import SCHEMAS, SyncClient
-
-            ch, database = self._position_tracker._get_db_client()
-
-            def _sync_init():
-                # Create database if needed
-                temp_client = SyncClient(
-                    host=ch.config.host,
-                    port=ch.config.port,
-                    user=ch.config.user,
-                    password=ch.config.password,
-                )
-                temp_client.execute(f"CREATE DATABASE IF NOT EXISTS {database}")
-                temp_client.disconnect()
-
-                # Create persistence tables used by orchestrator.
-                client = ch.get_sync_client()
-                for table_name in ("swing_positions", "rl_trades"):
-                    schema = SCHEMAS.get(table_name)
-                    if schema:
-                        client.execute(schema.format(database=database))
-                client.execute(
-                    f"ALTER TABLE {database}.swing_positions "
-                    "ADD COLUMN IF NOT EXISTS execution_venue String DEFAULT 'KRX' "
-                    "AFTER strategy"
-                )
-
-            await asyncio.to_thread(_sync_init)
-        except (InfrastructureError, OSError, ConnectionError) as e:
-            logger.warning(f"Failed to ensure DB schema: {e}")
+        """RuntimeLedger schemas are initialized by the storage backend."""
+        return None
 
     async def _persist_closed_position(self, closed, strategy: str):
-        """Persist a closed position to ClickHouse with asset-class routing.
+        """Persist a closed position to RuntimeLedger with asset-class routing.
 
-        - asset_class='stock' → market.stock_trades (모든 주식 전략)
-                             + market.swing_positions (SWING_STRATEGIES만, state 추적용)
-        - asset_class='futures' → kospi.rl_trades (legacy table name)
+        - asset_class='stock' → stock trade row and swing position snapshot
+        - asset_class='futures' → futures trade row
         - 그 외 → no-op (로그만)
         """
         try:
@@ -3588,53 +3545,40 @@ class TradingOrchestrator:
         while self._market_data_running:
             await asyncio.sleep(300)  # 5-minute heartbeat
 
-    async def _fetch_candles_from_clickhouse(
+    async def _fetch_candles_from_market_data_store(
         self, symbol: str, limit: int = 120
     ) -> list[dict]:
-        """Fetch recent candles from ClickHouse for pre-market warmup.
+        """Fetch recent candles from the configured Parquet market-data store.
 
         limit=120 covers all indicator warmup needs:
         SMA(120), BB(20), RSI(14), MACD(26+9), Stochastic(14).
-
-        Stock data is in ``market.minute_candles`` (from stock_backfill.sh).
-        Futures data is in ``kospi.kospi_mini_1m`` (KOSPI200 mini) or
-        ``kospi.kospi200f_1m`` (KOSPI200 futures / 연결선물).
         """
-        is_futures = self.config.asset_class == "futures"
-
-        if is_futures:
-            db = os.getenv("CLICKHOUSE_FUTURES_DATABASE", "kospi")
-            table = "kospi_mini_1m"
-        else:
-            db = os.getenv("CLICKHOUSE_STOCK_DATABASE", "market")
-            table = "minute_candles"
-
         try:
-            from shared.storage import create_sync_clickhouse_client
+            from shared.storage import StorageConfig, load_market_bars_for_backtest
 
-            # Reuse the shared env parsing so the native driver does not
-            # accidentally point at the HTTP port (8123).
-            loop = asyncio.get_event_loop()
-            rows = await loop.run_in_executor(
-                None,
-                lambda: create_sync_clickhouse_client(database=db).execute(
-                    "SELECT code, datetime, open, high, low, close, volume "
-                    f"FROM {table} "
-                    "WHERE code = %(code)s "
-                    "ORDER BY datetime DESC LIMIT %(limit)s",
-                    {"code": symbol, "limit": limit},
-                ),
+            storage_config = StorageConfig.load_or_default()
+            df = await asyncio.to_thread(
+                load_market_bars_for_backtest,
+                symbol=symbol,
+                asset_class=self.config.asset_class,
+                timeframe="minute",
+                config=storage_config,
             )
+            if df.empty:
+                return []
+            if limit > 0 and len(df) > limit:
+                df = df.tail(limit).reset_index(drop=True)
+
             candles = []
-            for row in reversed(rows):  # oldest first
+            for row in df.itertuples(index=False):
                 candles.append(
                     {
-                        "datetime": row[1],
-                        "open": float(row[2]),
-                        "high": float(row[3]),
-                        "low": float(row[4]),
-                        "close": float(row[5]),
-                        "volume": int(row[6]),
+                        "datetime": row.datetime,
+                        "open": float(row.open),
+                        "high": float(row.high),
+                        "low": float(row.low),
+                        "close": float(row.close),
+                        "volume": int(row.volume),
                     }
                 )
             return candles
@@ -3647,20 +3591,17 @@ class TradingOrchestrator:
             IndexError,
         ) as e:
             logger.warning(
-                "ClickHouse prewarm query failed for %s "
-                "(asset=%s db=%s table=%s): %s",
+                "Parquet prewarm query failed for %s (asset=%s): %s",
                 symbol,
                 self.config.asset_class,
-                db,
-                table,
                 e,
             )
             return []
 
-    async def _fetch_daily_candles_from_clickhouse(
+    async def _fetch_daily_candles_from_market_data_store(
         self, symbol: str, limit: int = 252
     ) -> list[dict]:
-        """Fetch recent daily candles from ClickHouse.
+        """Fetch recent daily candles from the configured Parquet market-data store.
 
         Used for multi-timeframe strategies that need daily context.
 
@@ -3672,44 +3613,27 @@ class TradingOrchestrator:
             List of daily candle dicts with keys: date, open, high, low, close, volume
         """
         try:
-            import pandas as pd
-
             from shared.collector.historical.daily_quality import (
                 clean_daily_candle_frame,
                 load_daily_quality_config,
                 quality_fetch_limit,
             )
-            from shared.storage import create_sync_clickhouse_client
+            from shared.storage import StorageConfig, load_market_bars_for_backtest
 
-            database = os.getenv("CLICKHOUSE_STOCK_DATABASE", "market")
             quality_config = load_daily_quality_config()
             fetch_limit = quality_fetch_limit(limit, quality_config)
 
-            loop = asyncio.get_event_loop()
-            rows = await loop.run_in_executor(
-                None,
-                lambda: create_sync_clickhouse_client(database=database).execute(
-                    "SELECT "
-                    "code, date, "
-                    "argMax(open, created_at) AS open, "
-                    "argMax(high, created_at) AS high, "
-                    "argMax(low, created_at) AS low, "
-                    "argMax(close, created_at) AS close, "
-                    "argMax(volume, created_at) AS volume "
-                    "FROM daily_candles "
-                    "WHERE code = %(code)s "
-                    "GROUP BY code, date "
-                    "ORDER BY date DESC LIMIT %(limit)s",
-                    {"code": symbol, "limit": fetch_limit},
-                ),
+            storage_config = StorageConfig.load_or_default()
+            frame = await asyncio.to_thread(
+                load_market_bars_for_backtest,
+                symbol=symbol,
+                asset_class="stock",
+                timeframe="daily",
+                config=storage_config,
             )
-            if not rows:
+            if frame.empty:
                 return []
-
-            frame = pd.DataFrame(
-                rows,
-                columns=["code", "date", "open", "high", "low", "close", "volume"],
-            )
+            frame = frame.tail(fetch_limit).rename(columns={"datetime": "date"})
             frame = clean_daily_candle_frame(
                 frame,
                 config=quality_config,
@@ -3736,13 +3660,13 @@ class TradingOrchestrator:
             ValueError,
             IndexError,
         ) as e:
-            logger.debug(f"ClickHouse daily candle fetch failed for {symbol}: {e}")
+            logger.debug(f"Parquet daily candle fetch failed for {symbol}: {e}")
             return []
 
     async def _prewarm_symbols(self, symbols: list[str]) -> None:
         """Seed indicator engine with historical candles.
 
-        Priority: Redis candle cache → ClickHouse → KIS REST API.
+        Priority: Redis candle cache -> Parquet market data -> KIS REST API.
         """
         logger.info(f"Prewarm starting for {len(symbols)} symbols")
 
@@ -3753,9 +3677,9 @@ class TradingOrchestrator:
         # 1st priority: Redis candle cache (instant, works for all assets)
         redis_hits = await self._load_candle_cache_from_redis()
 
-        ch_hits = 0
+        parquet_hits = 0
         kis_hits = 0
-        daily_ch_hits = 0
+        daily_parquet_hits = 0
         for symbol in symbols:
             if self._indicator_engine.is_warm(symbol):
                 continue
@@ -3763,15 +3687,15 @@ class TradingOrchestrator:
             if symbol not in set(self.config.symbols):
                 continue
             try:
-                # ClickHouse first (no rate limit, faster).
+                # Parquet first (no rate limit, fast, serverless).
                 # Futures need more candles for 15m resampling strategies
                 # (e.g. BB period=43 on 15m bars → 43*15=645 1-min candles).
-                ch_limit = 700 if self.config.asset_class == "futures" else 120
-                candles = await self._fetch_candles_from_clickhouse(
-                    symbol, limit=ch_limit
+                parquet_limit = 700 if self.config.asset_class == "futures" else 120
+                candles = await self._fetch_candles_from_market_data_store(
+                    symbol, limit=parquet_limit
                 )
                 if candles:
-                    ch_hits += 1
+                    parquet_hits += 1
                 elif self._kis_client.is_rate_limited:
                     # Skip KIS REST when rate limiter is in penalty/cooldown
                     logger.debug(f"Prewarm {symbol}: skipping KIS REST (rate limited)")
@@ -3813,22 +3737,24 @@ class TradingOrchestrator:
                         self._warmup_miss_count,
                     )
 
-                # Fetch and seed daily candles from ClickHouse (for multi-timeframe strategies)
-                daily_candles = await self._fetch_daily_candles_from_clickhouse(
-                    symbol, limit=252
-                )
-                if daily_candles:
-                    daily_ch_hits += 1
-                    self._indicator_engine.seed_daily_candles(symbol, daily_candles)
-                    logger.info(
-                        f"Prewarm {symbol}: {len(daily_candles)} daily candles seeded"
+                if self.config.asset_class == "stock":
+                    daily_candles = (
+                        await self._fetch_daily_candles_from_market_data_store(
+                            symbol, limit=252
+                        )
                     )
+                    if daily_candles:
+                        daily_parquet_hits += 1
+                        self._indicator_engine.seed_daily_candles(symbol, daily_candles)
+                        logger.info(
+                            f"Prewarm {symbol}: {len(daily_candles)} daily candles seeded"
+                        )
             except (TimeoutError, Exception) as e:
                 logger.warning(f"Prewarm failed for {symbol}: {e}")
         logger.info(
             f"Prewarm complete: {redis_hits} from Redis, "
-            f"{ch_hits} from ClickHouse, {kis_hits} from KIS REST, "
-            f"{daily_ch_hits} daily candles from ClickHouse"
+            f"{parquet_hits} from Parquet, {kis_hits} from KIS REST, "
+            f"{daily_parquet_hits} daily candles from Parquet"
         )
 
     def _save_candle_cache_to_redis(self) -> None:
@@ -3983,8 +3909,7 @@ class TradingOrchestrator:
         except (InfrastructureError, OSError, ConnectionError) as e:
             logger.warning(f"Candle cache save on shutdown failed: {e}")
 
-        # Final flush of shadow-logger buffers to ClickHouse (Phase 2).
-        # Must run before _cleanup_resources() so the CH client is still valid.
+        # Final drain of shadow-logger buffers before cleanup.
         await self._shadow_loggers_final_flush()
 
         # Stop KIS API error-rate tracker (§10.3-A) — cancels publish loop
@@ -4913,9 +4838,7 @@ class TradingOrchestrator:
         """Start the background periodic flush task for shadow-mode loggers.
 
         Loads ``config/shadow_loggers.yaml`` for ``flush_interval_seconds``.
-        Builds a reusable ClickHouse sync client (one per process, reused
-        across flush cycles to avoid connection overhead).  Spawns
-        :meth:`_shadow_loggers_flush_loop` as an asyncio task.
+        Spawns :meth:`_shadow_loggers_flush_loop` as an asyncio task.
 
         If the config file is absent or malformed, falls back to the default
         60-second interval with a WARNING rather than crashing the orchestrator.
@@ -4935,22 +4858,7 @@ class TradingOrchestrator:
             sl_cfg.get("final_flush_on_stop", True)
         )
 
-        # Build a reusable optional ClickHouse mirror client. The storage helper
-        # keeps driver wiring out of the runtime service.
-        try:
-            from shared.storage import create_sync_clickhouse_client
-
-            self._shadow_loggers_ch_client = create_sync_clickhouse_client(
-                database=os.getenv("CLICKHOUSE_FUTURES_DATABASE", "kospi")
-            )
-        except Exception as e:
-            logger.warning(
-                "shadow_loggers: ClickHouse client init failed (%s) — "
-                "flush loop will not start; shadow data will remain in buffer",
-                e,
-                exc_info=True,
-            )
-            return
+        self._shadow_loggers_archive_client = None
 
         self._shadow_loggers_flush_task = asyncio.create_task(
             self._shadow_loggers_flush_loop(flush_interval),
@@ -4961,7 +4869,7 @@ class TradingOrchestrator:
         )
 
     async def _shadow_loggers_flush_loop(self, interval_seconds: float) -> None:
-        """Periodically drain the LLM veto in-memory buffer to ClickHouse.
+        """Periodically drain the LLM veto in-memory buffer.
 
         Called by :meth:`_start_shadow_loggers_flush`.  Runs until cancelled
         by :meth:`_stop_market_data_loop`.  The final in-flight buffer drain
@@ -4989,7 +4897,9 @@ class TradingOrchestrator:
             veto_count = 0
 
             try:
-                veto_count = await flush_llm_veto_events(self._shadow_loggers_ch_client)
+                veto_count = await flush_llm_veto_events(
+                    self._shadow_loggers_archive_client
+                )
             except asyncio.CancelledError:
                 logger.info("shadow_loggers flush loop cancelled mid-veto-flush")
                 break
@@ -5028,7 +4938,7 @@ class TradingOrchestrator:
                 logger.debug("shadow_loggers flush: no pending rows (llm_veto=0)")
 
     async def _shadow_loggers_final_flush(self) -> None:
-        """Drain remaining shadow-logger buffer rows to ClickHouse on shutdown.
+        """Drain remaining shadow-logger buffer rows on shutdown.
 
         Called from :meth:`_stop_impl` **after** the periodic flush task is
         cancelled by :meth:`_stop_market_data_loop`.  Respects the cached
@@ -5043,44 +4953,23 @@ class TradingOrchestrator:
             )
             return
 
-        if self._shadow_loggers_ch_client is None:
-            logger.debug(
-                "shadow_loggers final flush skipped (CH client not initialised)"
-            )
-            return
-
         veto_count = 0
+        from shared.strategy.llm_veto_logger import flush_llm_veto_events
+
         try:
-            from shared.strategy.llm_veto_logger import flush_llm_veto_events
-
-            try:
-                veto_count = await flush_llm_veto_events(self._shadow_loggers_ch_client)
-            except Exception as e:
-                logger.warning(
-                    "shadow_loggers final flush llm_veto failed (%s) — "
-                    "some veto rows may be lost",
-                    e,
-                    exc_info=True,
-                )
-
-            logger.info(
-                "shadow_loggers final flush on stop: llm_veto=%d rows",
-                veto_count,
+            veto_count = await flush_llm_veto_events(None)
+        except Exception as e:
+            logger.warning(
+                "shadow_loggers final flush llm_veto failed (%s)",
+                e,
+                exc_info=True,
             )
-        finally:
-            # Close the CH client cleanly (mirrors the disconnect pattern at
-            # _fetch_candles_from_clickhouse) so socket/connection resources
-            # are released before resource cleanup.
-            client = self._shadow_loggers_ch_client
-            self._shadow_loggers_ch_client = None
-            if client is not None:
-                try:
-                    client.disconnect()
-                except Exception as e:
-                    logger.debug(
-                        "shadow_loggers final flush: CH client disconnect error (%s) — ignoring",
-                        e,
-                    )
+
+        self._shadow_loggers_archive_client = None
+        logger.info(
+            "shadow_loggers final flush on stop: llm_veto=%d rows",
+            veto_count,
+        )
 
     async def _market_data_loop(self, interval: float) -> None:
         logger.info(
@@ -7498,7 +7387,7 @@ class TradingOrchestrator:
                 pnl=pnl, win=(pnl >= 0), strategy=getattr(signal, "strategy", "default")
             )
 
-        # Persist to ClickHouse (asset-class routed; details in _persist_closed_position)
+        # Persist to RuntimeLedger (asset-class routed; details in _persist_closed_position)
         strategy = getattr(signal, "strategy", getattr(closed, "strategy", ""))
         if self.config.asset_class in {"stock", "futures"}:
             task = asyncio.create_task(
@@ -7699,40 +7588,14 @@ class TradingOrchestrator:
         entry_price: float,
         executed: bool,
     ) -> None:
-        """Best-effort persist a futures Setup A/C signal to ``kospi.signals_all``.
+        """Legacy setup-signal persistence hook.
 
-        Phase 2 verification gates (``setup_a_signals_today``, the 30-day
-        cumulative gate) read ``kospi.signals_all``, which is otherwise written
-        only by the Phase 5 ``risk_filter`` service. While that pipeline is
-        inactive, the interim orchestrator paper path records here so the gates
-        measure the running system.
-
-        NON-BLOCKING + failure-tolerant: a ClickHouse error is logged and
-        swallowed — observability must never disrupt the trading loop. When the
-        Phase 5 risk_filter is activated, reconcile this write to avoid
-        duplicate signals_all rows.
+        External ``signals_all`` persistence has been removed. The
+        trading path keeps this hook as a non-blocking no-op until a Parquet or
+        RuntimeLedger signal archive is introduced.
         """
-        if self.config.asset_class != "futures":
-            return
-        row = self._build_signals_all_row(signal, direction, entry_price, executed)
-        if row is None:
-            return
-        try:
-            from shared.storage import create_sync_clickhouse_client
-
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(
-                None,
-                lambda: create_sync_clickhouse_client(database="kospi").execute(
-                    _SIGNALS_ALL_INSERT_SQL, [row]
-                ),
-            )
-        except Exception:
-            logger.debug(
-                "signals_all persist failed for %s (best-effort)",
-                getattr(signal, "code", "?"),
-                exc_info=True,
-            )
+        _ = signal, direction, entry_price, executed
+        return None
 
     def _calculate_quantity(self, signal: Signal) -> int:
         """Calculate order quantity based on config.

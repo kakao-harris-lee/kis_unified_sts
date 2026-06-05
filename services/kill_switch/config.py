@@ -41,9 +41,6 @@ class _ConditionsBlock(BaseModel):
     news_pipeline_lag_seconds: _NewsPipelineLagToggle = Field(
         default_factory=_NewsPipelineLagToggle
     )
-    clickhouse_insert_fail_rate: _ConditionToggle = Field(
-        default_factory=_ConditionToggle
-    )
 
 
 class KillSwitchConfig(ServiceConfigBase):

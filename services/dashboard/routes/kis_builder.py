@@ -871,14 +871,14 @@ async def unregister_strategy(strategy_id: str) -> dict[str, Any]:
     return {"id": safe_id, "deleted": True}
 
 
-# Activity counts (signals from Redis, closed trades from ClickHouse)
+# Activity counts (signals from Redis, closed trades from RuntimeLedger)
 # ============================================================================
 #
 # Built strategies emit signals tagged with the StrategyManager's
 # TradingStrategy.name, which for a built YAML is metadata.id (see
 # _build_strategy_yaml: strategy.name = metadata.id). The StrategyManager
 # overrides signal.strategy with that name, and the same value lands on
-# market.stock_trades.strategy — so both sources key on the bare builder id.
+# RuntimeLedger trades — so both sources key on the bare builder id.
 
 
 class StrategyActivity(BaseModel):
@@ -923,35 +923,42 @@ def _signal_counts() -> dict[str, int]:
 
 
 def _trade_counts(ids: list[str]) -> dict[str, int]:
-    """Count closed stock trades per strategy from ClickHouse market.stock_trades.
+    """Count closed stock trades per strategy from RuntimeLedger.
 
-    Only the given ids are queried. Returns {} on any failure (ClickHouse
-    down, table missing) so the panel still renders.
+    Only the given ids are queried. Returns {} on any failure so the panel still
+    renders.
     """
     if not ids:
         return {}
     try:
-        from shared.storage import create_sync_clickhouse_client
+        from shared.storage.config import StorageConfig
+        from shared.storage.runtime_ledger import SQLiteRuntimeLedger
 
-        client = create_sync_clickhouse_client()
+        config = StorageConfig.load_or_default()
+        db_path = Path(config.runtime_storage.sqlite.path)
+        if not db_path.exists() or db_path.is_dir():
+            return {}
+        ledger = SQLiteRuntimeLedger(config.runtime_storage.sqlite)
         try:
-            rows = client.execute(
-                "SELECT strategy, count() FROM market.stock_trades "
-                "WHERE strategy IN %(ids)s GROUP BY strategy",
-                {"ids": tuple(ids)},
-            )
+            rows = ledger.query_trades({"asset_class": "stock", "limit": 10_000})
         finally:
-            client.disconnect()
+            ledger.close()
     except Exception:  # noqa: BLE001 — degrade gracefully on infra failure
         return {}
-    return {str(strat): int(count) for strat, count in rows}
+    wanted = set(ids)
+    counts: dict[str, int] = {}
+    for row in rows:
+        strategy = str(row.get("strategy") or "")
+        if strategy in wanted:
+            counts[strategy] = counts.get(strategy, 0) + 1
+    return counts
 
 
 @router.get("/registered/activity", response_model=ActivityResponse)
 async def registered_activity() -> ActivityResponse:
     """Per-strategy recent signal + closed-trade counts for the panel.
 
-    Signals come from Redis (recent window), trades from ClickHouse. Both
+    Signals come from Redis (recent window), trades from RuntimeLedger. Both
     sources degrade to zero on infra failure so the panel always renders.
     """
     ids = _registered_ids()

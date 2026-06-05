@@ -1,4 +1,4 @@
-"""Tests for forecast Redis + ClickHouse publisher."""
+"""Tests for forecast Redis publisher."""
 
 from datetime import UTC, datetime
 from unittest.mock import MagicMock
@@ -18,7 +18,7 @@ def redis_mock():
 
 
 @pytest.fixture
-def ch_mock():
+def storage_mock():
     c = MagicMock()
     c.execute = MagicMock()
     return c
@@ -36,8 +36,10 @@ def _make_vf(forecast_pct=18.0):
     )
 
 
-def test_publish_vol_sets_redis_with_ttl(redis_mock, ch_mock):
-    pub = ForecastPublisher(redis=redis_mock, clickhouse=ch_mock, vol_ttl_s=120)
+def test_publish_vol_sets_redis_with_ttl(redis_mock, storage_mock):
+    pub = ForecastPublisher(
+        redis=redis_mock, storage_client=storage_mock, vol_ttl_s=120
+    )
     vf = _make_vf()
     pub.publish_vol_forecast(vf)
     redis_mock.set.assert_called_once()
@@ -46,44 +48,48 @@ def test_publish_vol_sets_redis_with_ttl(redis_mock, ch_mock):
     assert kwargs.get("ex") == 120 or (len(args) >= 3 and args[2] == 120)
 
 
-def test_publish_vol_inserts_clickhouse(redis_mock, ch_mock):
-    pub = ForecastPublisher(redis=redis_mock, clickhouse=ch_mock, vol_ttl_s=120)
+def test_publish_vol_does_not_write_storage(redis_mock, storage_mock):
+    pub = ForecastPublisher(
+        redis=redis_mock, storage_client=storage_mock, vol_ttl_s=120
+    )
     vf = _make_vf()
     pub.publish_vol_forecast(vf)
-    ch_mock.execute.assert_called_once()
-    sql = ch_mock.execute.call_args[0][0]
-    assert "kospi.vol_forecasts" in sql
-    assert "INSERT" in sql.upper()
+    storage_mock.execute.assert_not_called()
 
 
-def test_publish_vol_skips_clickhouse_when_disabled(redis_mock):
-    pub = ForecastPublisher(redis=redis_mock, clickhouse=None, vol_ttl_s=120)
+def test_publish_vol_works_without_storage(redis_mock):
+    pub = ForecastPublisher(redis=redis_mock, storage_client=None, vol_ttl_s=120)
     vf = _make_vf()
     pub.publish_vol_forecast(vf)
 
     redis_mock.set.assert_called_once()
 
 
-def test_publish_vol_skips_nan(redis_mock, ch_mock):
-    pub = ForecastPublisher(redis=redis_mock, clickhouse=ch_mock, vol_ttl_s=120)
+def test_publish_vol_skips_nan(redis_mock, storage_mock):
+    pub = ForecastPublisher(
+        redis=redis_mock, storage_client=storage_mock, vol_ttl_s=120
+    )
     vf = _make_vf(forecast_pct=float("nan"))
     pub.publish_vol_forecast(vf)
     redis_mock.set.assert_not_called()
-    ch_mock.execute.assert_not_called()
+    storage_mock.execute.assert_not_called()
 
 
-def test_publish_vol_handles_redis_failure(redis_mock, ch_mock):
+def test_publish_vol_handles_redis_failure(redis_mock, storage_mock):
     redis_mock.set.side_effect = RuntimeError("redis down")
-    pub = ForecastPublisher(redis=redis_mock, clickhouse=ch_mock, vol_ttl_s=120)
+    pub = ForecastPublisher(
+        redis=redis_mock, storage_client=storage_mock, vol_ttl_s=120
+    )
     vf = _make_vf()
     # Should not raise — log + continue
     pub.publish_vol_forecast(vf)
-    # ClickHouse still attempted
-    ch_mock.execute.assert_called_once()
+    storage_mock.execute.assert_not_called()
 
 
-def test_publish_event_publishes_pubsub_and_persists(redis_mock, ch_mock):
-    pub = ForecastPublisher(redis=redis_mock, clickhouse=ch_mock, vol_ttl_s=120)
+def test_publish_event_publishes_pubsub_and_sets_latest(redis_mock, storage_mock):
+    pub = ForecastPublisher(
+        redis=redis_mock, storage_client=storage_mock, vol_ttl_s=120
+    )
     es = EventScore(
         asof=datetime.now(UTC),
         impact_score=85,
@@ -99,13 +105,11 @@ def test_publish_event_publishes_pubsub_and_persists(redis_mock, ch_mock):
         c for c in redis_mock.set.call_args_list if c.args[0] == "forecast:event:latest"
     ]
     assert len(set_calls) == 1
-    ch_mock.execute.assert_called_once()
-    sql = ch_mock.execute.call_args[0][0]
-    assert "kospi.event_scores" in sql
+    storage_mock.execute.assert_not_called()
 
 
-def test_publish_event_skips_clickhouse_when_disabled(redis_mock):
-    pub = ForecastPublisher(redis=redis_mock, clickhouse=None, vol_ttl_s=120)
+def test_publish_event_works_without_storage(redis_mock):
+    pub = ForecastPublisher(redis=redis_mock, storage_client=None, vol_ttl_s=120)
     es = EventScore(
         asof=datetime.now(UTC),
         impact_score=85,
@@ -123,9 +127,11 @@ def test_publish_event_skips_clickhouse_when_disabled(redis_mock):
     assert len(set_calls) == 1
 
 
-def test_publish_event_handles_clickhouse_failure(redis_mock, ch_mock):
-    ch_mock.execute.side_effect = RuntimeError("clickhouse down")
-    pub = ForecastPublisher(redis=redis_mock, clickhouse=ch_mock, vol_ttl_s=120)
+def test_publish_event_ignores_storage_client(redis_mock, storage_mock):
+    storage_mock.execute.side_effect = RuntimeError("storage down")
+    pub = ForecastPublisher(
+        redis=redis_mock, storage_client=storage_mock, vol_ttl_s=120
+    )
     es = EventScore(
         asof=datetime.now(UTC),
         impact_score=85,
@@ -134,6 +140,7 @@ def test_publish_event_handles_clickhouse_failure(redis_mock, ch_mock):
         raw_text=None,
         ttl_minutes=30,
     )
-    # Redis publish still happens, ClickHouse failure logged
+    # Redis publish still happens; storage client is ignored.
     pub.publish_event_score(es)
     redis_mock.publish.assert_called_once()
+    storage_mock.execute.assert_not_called()

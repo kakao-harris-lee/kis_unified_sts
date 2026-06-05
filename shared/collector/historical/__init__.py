@@ -26,46 +26,20 @@ Usage:
 
 from __future__ import annotations
 
-import logging
-
-logger = logging.getLogger(__name__)
-
-
-def _missing_clickhouse(*_args, **_kwargs):
-    raise ModuleNotFoundError(
-        "clickhouse_connect is required for historical backfill utilities"
-    )
-
-
-try:
-    from .backfill import (
-        backfill,
-        collect_today,
-        backfill_kospi200_index,
-        collect_today_kospi200_index,
-        backfill_kospi200f,
-        collect_today_kospi200f,
-        backfill_all,
-        collect_today_all,
-        get_db_client,
-        ensure_database,
-        load_futures_minute_from_clickhouse,
-    )
-except ModuleNotFoundError as exc:
-    if exc.name != "clickhouse_connect":
-        raise
-    logger.warning("clickhouse_connect missing; backfill utilities disabled")
-    backfill = _missing_clickhouse
-    collect_today = _missing_clickhouse
-    backfill_kospi200_index = _missing_clickhouse
-    collect_today_kospi200_index = _missing_clickhouse
-    backfill_kospi200f = _missing_clickhouse
-    collect_today_kospi200f = _missing_clickhouse
-    backfill_all = _missing_clickhouse
-    collect_today_all = _missing_clickhouse
-    get_db_client = _missing_clickhouse
-    ensure_database = _missing_clickhouse
-    load_futures_minute_from_clickhouse = _missing_clickhouse
+from .backfill import (
+    backfill,
+    collect_today,
+    backfill_kospi200_index,
+    collect_today_kospi200_index,
+    backfill_kospi200f,
+    collect_today_kospi200f,
+    backfill_all,
+    collect_today_all,
+    get_db_client,
+    ensure_database,
+    load_futures_minute_from_parquet,
+    load_futures_minute_from_clickhouse,
+)
 from .calendar import (
     is_trading_day,
     is_after_market_close,
@@ -81,25 +55,17 @@ from .futures import (
     parse_code,
     KOSPI200F_FRONT_CODE,
 )
-try:
-    from .stock import (
-        collect_stock_minute_today,
-        backfill_stock_minute,
-        get_stock_codes_from_db,
-        get_stock_collection_status,
-        get_stock_db_client,
-        ensure_stock_database,
-    )
-except ModuleNotFoundError as exc:
-    if exc.name != "clickhouse_connect":
-        raise
-    logger.warning("clickhouse_connect missing; stock backfill utilities disabled")
-    collect_stock_minute_today = _missing_clickhouse
-    backfill_stock_minute = _missing_clickhouse
-    get_stock_codes_from_db = _missing_clickhouse
-    get_stock_collection_status = _missing_clickhouse
-    get_stock_db_client = _missing_clickhouse
-    ensure_stock_database = _missing_clickhouse
+
+from .stock import (
+    collect_stock_minute_today,
+    backfill_stock_minute,
+    get_stock_codes_from_db,
+    get_stock_collection_status,
+    get_stock_db_client,
+    ensure_stock_database,
+    load_stock_minute_from_parquet,
+    load_stock_minute_from_clickhouse,
+)
 
 __all__ = [
     # Futures backfill functions
@@ -113,6 +79,7 @@ __all__ = [
     "collect_today_all",
     "get_db_client",
     "ensure_database",
+    "load_futures_minute_from_parquet",
     "load_futures_minute_from_clickhouse",
     # Stock backfill functions
     "STOCK_UNIVERSE",
@@ -122,6 +89,8 @@ __all__ = [
     "get_stock_collection_status",
     "get_stock_db_client",
     "ensure_stock_database",
+    "load_stock_minute_from_parquet",
+    "load_stock_minute_from_clickhouse",
     # Calendar functions
     "is_trading_day",
     "is_after_market_close",

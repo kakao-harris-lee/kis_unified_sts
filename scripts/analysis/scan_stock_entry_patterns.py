@@ -22,7 +22,7 @@ if str(REPO_ROOT) not in sys.path:
 
 load_dotenv(REPO_ROOT / ".env")
 
-from shared.backtest.daily_adapter import load_stock_daily_from_clickhouse  # noqa: E402
+from shared.backtest.daily_adapter import load_stock_daily_from_parquet  # noqa: E402
 from shared.collector.historical.stock import STOCK_UNIVERSE  # noqa: E402
 from shared.config.loader import ConfigLoader  # noqa: E402
 
@@ -265,7 +265,7 @@ def _evaluate_signals(
 def scan_patterns(
     config: dict[str, Any],
     *,
-    loader: Loader = load_stock_daily_from_clickhouse,
+    loader: Loader = load_stock_daily_from_parquet,
 ) -> tuple[list[PatternResult], dict[str, Any]]:
     start = _parse_date(str(config["start"]))
     end = _parse_date(str(config["end"]))

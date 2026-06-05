@@ -46,7 +46,7 @@ entry direction, the signal is dropped entirely.
 
 Vetoed signals are:
 1. Buffered via :mod:`shared.strategy.llm_veto_logger` for counterfactual
-   ClickHouse flush.
+   analysis.
 2. Sent to the futures Telegram channel so operators have immediate visibility.
 3. Returned as ``None`` (signal dropped, no orchestrator emission).
 
@@ -770,7 +770,7 @@ def _apply_llm_veto(
 
     ts = ts.replace(tzinfo=UTC) if ts.tzinfo is None else ts.astimezone(UTC)
 
-    # Buffer the veto event for counterfactual ClickHouse flush (follow-up PR).
+    # Buffer the veto event for future counterfactual analysis.
     from shared.strategy.llm_veto_logger import record_veto
 
     record_veto(
@@ -1094,15 +1094,15 @@ class SetupAEntryAdapter(EntrySignalGenerator[SetupAEntryConfig]):
 
         # === P2-③ T5: RegimeGate check (after LLM veto, before Signal return) ===
         if self._gate_cfg is not None:
-            _redis, _ch = acquire_infra_clients()
-            if _redis is not None and _ch is not None:
+            _redis, _event_reader = acquire_infra_clients()
+            if _redis is not None:
                 blocked = apply_regime_gate(
                     gate_cfg=self._gate_cfg,
                     decision_signal=decision_signal,
                     context=context,
                     strategy_name=self.name,
                     redis=_redis,
-                    ch_client=_ch,
+                    event_reader=_event_reader,
                 )
                 if blocked:
                     return None
@@ -1328,15 +1328,15 @@ class SetupCEntryAdapter(EntrySignalGenerator[SetupCEntryConfig]):
 
         # === P2-③ T5: RegimeGate check (after LLM veto, before Signal return) ===
         if self._gate_cfg is not None:
-            _redis, _ch = acquire_infra_clients()
-            if _redis is not None and _ch is not None:
+            _redis, _event_reader = acquire_infra_clients()
+            if _redis is not None:
                 blocked = apply_regime_gate(
                     gate_cfg=self._gate_cfg,
                     decision_signal=decision_signal,
                     context=context,
                     strategy_name=self.name,
                     redis=_redis,
-                    ch_client=_ch,
+                    event_reader=_event_reader,
                 )
                 if blocked:
                     return None

@@ -1,5 +1,5 @@
 from scripts.analysis.stock_paper_daily_verification import (
-    ClickHousePositionSnapshot,
+    LedgerPositionSnapshot,
     GateIssue,
     RedisSnapshot,
     TradeMetrics,
@@ -63,7 +63,7 @@ def test_stock_paper_notification_escapes_gate_thresholds():
         active_trade_metrics=TradeMetrics(),
         active_issues=[],
         redis_snapshot=_redis_snapshot(),
-        clickhouse_position_snapshot=ClickHousePositionSnapshot(),
+        ledger_position_snapshot=LedgerPositionSnapshot(),
         markdown_path="reports/daily_verification/stock/2026-05-26.md",
     )
 

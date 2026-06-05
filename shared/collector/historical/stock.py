@@ -17,6 +17,7 @@ Usage:
     await collect_stock_minute_today()
     await backfill_stock_minute(days=7)
 """
+
 import os
 import asyncio
 import json
@@ -28,7 +29,6 @@ from typing import List, Tuple, Dict, Any, Optional
 import httpx
 
 from shared.config.secrets import SecretsManager
-from shared.config.tls import get_clickhouse_tls_params
 from .calendar import get_trading_days_range, is_after_market_close, is_trading_day
 from .stock_universe import STOCK_UNIVERSE
 
@@ -39,21 +39,10 @@ logger = logging.getLogger(__name__)
 # Configuration
 # =============================================================================
 
-def _get_clickhouse_config() -> Dict[str, Any]:
-    """Get ClickHouse configuration for stock database."""
-    tls_params = get_clickhouse_tls_params()
 
-    return {
-        "host": os.getenv("CLICKHOUSE_HOST", "localhost"),
-        "port": int(os.getenv("CLICKHOUSE_PORT", "8123")),
-        "database": os.getenv("CLICKHOUSE_STOCK_DATABASE", "market"),
-        "user": os.getenv("CLICKHOUSE_USER", "default"),
-        "password": os.getenv("CLICKHOUSE_PASSWORD", ""),
-        **tls_params,
-    }
-
-
-STATE_FILE = Path(os.getenv("STOCK_COLLECTOR_STATE_FILE", "logs/stock_minute_collector_state.json"))
+STATE_FILE = Path(
+    os.getenv("STOCK_COLLECTOR_STATE_FILE", "logs/stock_minute_collector_state.json")
+)
 MAX_MINUTE_PAGES = int(os.getenv("STOCK_MINUTE_MAX_PAGES", "20"))
 STOCK_MINUTE_END_HOUR = os.getenv("STOCK_MINUTE_END_HOUR", "153000")
 
@@ -80,6 +69,7 @@ def _minus_one_minute(date_str: str, time_str: str) -> str:
 # =============================================================================
 # Token Management (Stock Domain)
 # =============================================================================
+
 
 class StockKISToken:
     """한국투자증권 API 토큰 관리 (주식 도메인)"""
@@ -125,6 +115,7 @@ class StockKISToken:
             with open(self._cache_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 import time
+
                 token = data.get("token") or data.get("access_token")
                 expires_at = data.get("expires_at", 0)
                 if token and expires_at > time.time() + 60:
@@ -139,11 +130,14 @@ class StockKISToken:
         try:
             os.makedirs(os.path.dirname(self._cache_path), exist_ok=True)
             with open(self._cache_path, "w", encoding="utf-8") as f:
-                json.dump({
-                    "token": self._token,
-                    "access_token": self._token,
-                    "expires_at": self._expires_at,
-                }, f)
+                json.dump(
+                    {
+                        "token": self._token,
+                        "access_token": self._token,
+                        "expires_at": self._expires_at,
+                    },
+                    f,
+                )
         except Exception as e:
             logger.debug(f"Failed to save token cache: {e}")
 
@@ -169,6 +163,7 @@ class StockKISToken:
             }
 
             import requests
+
             resp = requests.post(url, json=payload, timeout=10)
             resp.raise_for_status()
             data = resp.json()
@@ -184,6 +179,7 @@ class StockKISToken:
 # Rate Limiting
 # =============================================================================
 
+
 class RateLimiter:
     """Simple rate limiter for API calls."""
 
@@ -194,6 +190,7 @@ class RateLimiter:
 
     async def wait(self):
         import time
+
         async with self._lock:
             now = time.time()
             elapsed = now - self._last_call
@@ -232,81 +229,22 @@ def _get_semaphore() -> asyncio.Semaphore:
 # Database Operations
 # =============================================================================
 
-def get_stock_db_client() -> Any:
-    """Get ClickHouse client for stock database."""
-    import clickhouse_connect
 
-    config = _get_clickhouse_config()
-    kwargs = {
-        "host": config["host"],
-        "port": config["port"],
-        "username": config["user"],
-        "password": config["password"],
-        "database": config["database"],
-        "secure": config["secure"],
-        "verify": config["verify"],
-    }
-    if config.get("ca_cert"):
-        kwargs["ca_cert"] = config["ca_cert"]
-    return clickhouse_connect.get_client(**kwargs)
+def get_stock_db_client() -> Any:
+    """Legacy DB client entrypoint removed with ClickHouse support."""
+    raise RuntimeError(
+        "ClickHouse has been removed; use Parquet stock-backfill commands"
+    )
 
 
 def ensure_stock_database() -> None:
-    """Ensure stock database and tables exist."""
-    import clickhouse_connect
-
-    config = _get_clickhouse_config()
-    kwargs = {
-        "host": config["host"],
-        "port": config["port"],
-        "username": config["user"],
-        "password": config["password"],
-        "secure": config["secure"],
-        "verify": config["verify"],
-    }
-    if config.get("ca_cert"):
-        kwargs["ca_cert"] = config["ca_cert"]
-    client = clickhouse_connect.get_client(**kwargs)
-
-    # Create database
-    client.command(f"CREATE DATABASE IF NOT EXISTS {config['database']}")
-
-    # Switch to database
-    client.command(f"USE {config['database']}")
-
-    # Create minute_candles table
-    client.command("""
-        CREATE TABLE IF NOT EXISTS minute_candles (
-            code String,
-            datetime DateTime('Asia/Seoul'),
-            open Float64,
-            high Float64,
-            low Float64,
-            close Float64,
-            volume UInt64,
-            value UInt64
-        ) ENGINE = ReplacingMergeTree()
-        ORDER BY (code, datetime)
-        PARTITION BY toYYYYMM(datetime)
-    """)
-
-    # Create collection_metadata table
-    client.command("""
-        CREATE TABLE IF NOT EXISTS collection_metadata (
-            code String,
-            data_type String,
-            last_date Date,
-            records_count UInt64,
-            updated_at DateTime DEFAULT now()
-        ) ENGINE = ReplacingMergeTree()
-        ORDER BY (code, data_type)
-    """)
-
-    client.close()
-    logger.debug("Stock database schema ensured")
+    """Legacy no-op retained for backward-compatible imports."""
+    return None
 
 
-def insert_stock_minute_batch(db_client, rows: List[Tuple], table_name: str = "minute_candles") -> int:
+def insert_stock_minute_batch(
+    db_client, rows: List[Tuple], table_name: str = "minute_candles"
+) -> int:
     """Insert stock minute data batch."""
     if not rows:
         return 0
@@ -314,7 +252,16 @@ def insert_stock_minute_batch(db_client, rows: List[Tuple], table_name: str = "m
     db_client.insert(
         table_name,
         rows,
-        column_names=["code", "datetime", "open", "high", "low", "close", "volume", "value"],
+        column_names=[
+            "code",
+            "datetime",
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume",
+            "value",
+        ],
     )
     return len(rows)
 
@@ -337,6 +284,7 @@ def delete_stock_minute_day(db_client, code: str, day: date) -> None:
 # =============================================================================
 # API Fetching
 # =============================================================================
+
 
 async def _request_stock_minute_page(
     client: httpx.AsyncClient,
@@ -409,10 +357,7 @@ async def _request_stock_minute_page(
 
 
 async def fetch_stock_minute_async(
-    client: httpx.AsyncClient,
-    code: str,
-    date_str: str,
-    max_retries: int = 3
+    client: httpx.AsyncClient, code: str, date_str: str, max_retries: int = 3
 ) -> Tuple[str, str, dict]:
     """
     Fetch stock minute data asynchronously.
@@ -551,11 +496,12 @@ def parse_stock_minute_ohlcv(code: str, _date_str: str, data: dict) -> List[Tupl
 # Collection State Management
 # =============================================================================
 
+
 def load_collection_state() -> Dict:
     """Load collection state from file."""
     if STATE_FILE.exists():
         try:
-            with open(STATE_FILE, 'r') as f:
+            with open(STATE_FILE, "r") as f:
                 return json.load(f)
         except Exception as e:
             logger.warning(f"Failed to load state file: {e}")
@@ -566,7 +512,7 @@ def save_collection_state(state: Dict) -> None:
     """Save collection state to file."""
     STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
     try:
-        with open(STATE_FILE, 'w') as f:
+        with open(STATE_FILE, "w") as f:
             json.dump(state, f, indent=2, default=str)
     except Exception as e:
         logger.error(f"Failed to save state file: {e}")
@@ -575,6 +521,7 @@ def save_collection_state(state: Dict) -> None:
 # =============================================================================
 # Main Collection Functions
 # =============================================================================
+
 
 async def collect_stock_batch(
     client: httpx.AsyncClient,
@@ -593,7 +540,7 @@ async def collect_stock_batch(
         return 0
 
     async def _run(
-        task_list: List[Tuple[str, date]]
+        task_list: List[Tuple[str, date]],
     ) -> Tuple[List[Tuple], List[Tuple[str, date]], List[Tuple[str, date]]]:
         coros = [
             fetch_stock_minute_async(client, code, dt.strftime("%Y%m%d"))
@@ -649,7 +596,9 @@ async def collect_stock_batch(
             except Exception as e:
                 logger.warning(f"Failed to delete existing rows for {code} {day}: {e}")
         insert_stock_minute_batch(db_client, all_rows)
-        print(f"Inserted {len(all_rows)} rows from {len(tasks)} tasks into minute_candles")
+        print(
+            f"Inserted {len(all_rows)} rows from {len(tasks)} tasks into minute_candles"
+        )
 
     return len(all_rows)
 
@@ -683,7 +632,7 @@ async def collect_stock_minute_today(verbose: bool = True) -> int:
         # Process in batches of 10
         batch_size = 10
         for i in range(0, len(tasks), batch_size):
-            batch = tasks[i:i + batch_size]
+            batch = tasks[i : i + batch_size]
             if verbose:
                 codes = [t[0] for t in batch]
                 print(f"Batch {i // batch_size + 1}: {codes}")
@@ -740,8 +689,7 @@ async def backfill_stock_minute(
     if resume:
         original_count = len(trading_days)
         trading_days = [
-            d for d in trading_days
-            if f"{d.isoformat()}:{codes_key}" not in completed
+            d for d in trading_days if f"{d.isoformat()}:{codes_key}" not in completed
         ]
         skipped = original_count - len(trading_days)
         if skipped > 0 and verbose:
@@ -793,95 +741,27 @@ async def backfill_stock_minute(
 
 
 def get_stock_codes_from_db(days: Optional[int] = None) -> List[str]:
-    """Get distinct stock codes from ClickHouse minute_candles."""
-    db_client = get_stock_db_client()
-    try:
-        if days:
-            start_date = date.today() - timedelta(days=days)
-            query = """
-                SELECT DISTINCT code
-                FROM minute_candles
-                WHERE toDate(datetime) >= {start:Date}
-                ORDER BY code
-            """
-            result = db_client.query(query, parameters={"start": start_date})
-        else:
-            query = """
-                SELECT DISTINCT code
-                FROM minute_candles
-                ORDER BY code
-            """
-            result = db_client.query(query)
-
-        return [row[0] for row in result.result_rows]
-    finally:
-        db_client.close()
+    """Return configured stock universe codes."""
+    _ = days
+    return [str(item["code"]) for item in STOCK_UNIVERSE]
 
 
 def get_stock_collection_status(days: int = 30) -> Dict:
-    """Get collection status with per-stock detail."""
-    try:
-        db_client = get_stock_db_client()
+    """Get Parquet stock minute collection status."""
+    from shared.collector.historical.parquet_backfill import (
+        get_parquet_backfill_status,
+    )
 
-        start_date = date.today() - timedelta(days=days)
-        result = db_client.query("""
-            SELECT
-                count(*) as rows,
-                count(DISTINCT toDate(datetime)) as days_collected,
-                count(DISTINCT code) as unique_codes,
-                min(datetime) as min_datetime,
-                max(datetime) as max_datetime
-            FROM minute_candles
-            WHERE datetime >= {start:Date}
-        """, parameters={"start": start_date})
-
-        row = result.result_rows[0] if result.result_rows else (0, 0, 0, None, None)
-
-        per_stock = db_client.query("""
-            SELECT
-                code,
-                count(*) as bars,
-                count(DISTINCT toDate(datetime)) as trading_days,
-                min(datetime) as earliest,
-                max(datetime) as latest
-            FROM minute_candles
-            WHERE datetime >= {start:Date}
-            GROUP BY code
-            ORDER BY bars DESC
-        """, parameters={"start": start_date})
-
-        stocks_detail = []
-        for sr in per_stock.result_rows:
-            stocks_detail.append({
-                "code": sr[0],
-                "bars": sr[1],
-                "trading_days": sr[2],
-                "earliest": str(sr[3]) if sr[3] else None,
-                "latest": str(sr[4]) if sr[4] else None,
-            })
-
-        db_client.close()
-
-        return {
-            "table": "minute_candles",
-            "rows": row[0],
-            "days_collected": row[1],
-            "unique_codes": row[2],
-            "min_datetime": str(row[3]) if row[3] else None,
-            "max_datetime": str(row[4]) if row[4] else None,
-            "stocks": stocks_detail,
-        }
-    except Exception as e:
-        return {"error": str(e)}
+    return get_parquet_backfill_status(days=days, asset_class="stock")
 
 
-def load_stock_minute_from_clickhouse(
+def load_stock_minute_from_parquet(
     code: str,
     start_date: date | None = None,
     end_date: date | None = None,
 ) -> Any:
     """
-    Load stock minute data from ClickHouse as a DataFrame suitable for BacktestEngine.
+    Load stock minute data from the configured Parquet market-data store.
 
     Args:
         code: Stock code (e.g., '005930')
@@ -895,42 +775,26 @@ def load_stock_minute_from_clickhouse(
     Raises:
         ValueError: If no data found for the given code/date range.
     """
-    import pandas as pd
+    from shared.storage import StorageConfig, load_market_bars_for_backtest
 
-    db_client = get_stock_db_client()
-
-    conditions = ["code = %(code)s"]
-    params: Dict[str, Any] = {"code": code}
-    if start_date:
-        conditions.append("datetime >= %(start)s")
-        params["start"] = start_date
-    if end_date:
-        conditions.append("datetime <= %(end)s")
-        params["end"] = datetime.combine(end_date, datetime.max.time())
-
-    where = " AND ".join(conditions)
-    query = f"""
-        SELECT code, datetime, open, high, low, close, volume
-        FROM minute_candles
-        WHERE {where}
-        ORDER BY datetime ASC
-    """
-
-    result = db_client.query(query, parameters=params)
-    db_client.close()
-
-    if not result.result_rows:
-        raise ValueError(f"No data found for {code} in ClickHouse (range: {start_date} ~ {end_date})")
-
-    df = pd.DataFrame(
-        result.result_rows,
-        columns=["code", "datetime", "open", "high", "low", "close", "volume"],
+    df = load_market_bars_for_backtest(
+        symbol=code,
+        asset_class="stock",
+        timeframe="minute",
+        start=start_date,
+        end=end_date,
+        config=StorageConfig.load_or_default(),
     )
-
-    # Ensure datetime is pandas Timestamp (ClickHouse returns Python datetime)
-    df["datetime"] = pd.to_datetime(df["datetime"])
+    if df.empty:
+        raise ValueError(
+            f"No data found for {code} in Parquet market data "
+            f"(range: {start_date} ~ {end_date})"
+        )
 
     return df
+
+
+load_stock_minute_from_clickhouse = load_stock_minute_from_parquet
 
 
 # =============================================================================
@@ -945,5 +809,6 @@ __all__ = [
     "get_stock_collection_status",
     "get_stock_db_client",
     "ensure_stock_database",
+    "load_stock_minute_from_parquet",
     "load_stock_minute_from_clickhouse",
 ]

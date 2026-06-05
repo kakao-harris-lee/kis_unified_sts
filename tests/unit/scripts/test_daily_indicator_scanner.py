@@ -1,6 +1,7 @@
 import asyncio
 import json
 from datetime import date
+from types import SimpleNamespace
 
 import pandas as pd
 
@@ -11,7 +12,7 @@ from scripts.daily_indicator_scanner import (
     compute_futures_daily_indicators,
     compute_indicators,
     extract_candidate_symbols,
-    get_clickhouse_client,
+    get_market_data_store,
     is_fresh_daily_data,
     latest_candle_date,
     load_daily_candles,
@@ -313,64 +314,62 @@ def test_publish_to_redis_ignores_stale_strategy_watchlist():
     assert compat["counts"] == {"pattern_pullback": 1}
 
 
-def test_get_clickhouse_client_loads_repo_env(tmp_path, monkeypatch):
+def test_get_market_data_store_loads_repo_env(tmp_path, monkeypatch):
     calls = {}
 
     def fake_load_dotenv(path, override=False):
         calls["dotenv"] = (path, override)
 
-    def fake_get_client(**kwargs):
-        calls["client"] = kwargs
-        return object()
+    def fake_load_or_default():
+        calls["storage"] = True
+        return SimpleNamespace(
+            market_data=SimpleNamespace(parquet=SimpleNamespace(root=str(tmp_path)))
+        )
 
     monkeypatch.setattr(scanner, "_REPO_ROOT", tmp_path)
     monkeypatch.setattr(scanner, "load_dotenv", fake_load_dotenv)
-    monkeypatch.setenv("CLICKHOUSE_USER", "u")
-    monkeypatch.setenv("CLICKHOUSE_PASSWORD", "p")
-    monkeypatch.setattr("clickhouse_connect.get_client", fake_get_client)
+    monkeypatch.setattr(scanner.StorageConfig, "load_or_default", fake_load_or_default)
 
-    get_clickhouse_client()
+    store = get_market_data_store()
 
     assert calls["dotenv"] == (tmp_path / ".env", False)
-    assert calls["client"]["username"] == "u"
-    assert calls["client"]["password"] == "p"
+    assert calls["storage"] is True
+    assert str(store.root) == str(tmp_path)
 
 
 def test_load_daily_candles_fetches_extra_and_filters_placeholder_run():
-    class Result:
-        result_rows = [
-            ("005930", date(2026, 1, 1), 50500, 50500, 50500, 50500, 1_000_000),
-            ("005930", date(2026, 1, 2), 50500, 50500, 50500, 50500, 1_000_000),
-            ("005930", date(2026, 1, 3), 50500, 50500, 50500, 50500, 1_000_000),
-            ("005930", date(2026, 1, 4), 100, 105, 95, 102, 900_000),
-            ("005930", date(2026, 1, 5), 102, 108, 101, 107, 950_000),
-        ]
-
     class Client:
         def __init__(self):
-            self.parameters = None
+            self.calls = []
 
-        def query(self, _query, parameters):
-            self.parameters = parameters
-            return Result()
+        def get_daily_bars(self, symbol, limit):
+            self.calls.append((symbol, limit))
+            return pd.DataFrame(
+                [
+                    ("005930", date(2026, 1, 1), 50500, 50500, 50500, 50500, 1_000_000),
+                    ("005930", date(2026, 1, 2), 50500, 50500, 50500, 50500, 1_000_000),
+                    ("005930", date(2026, 1, 3), 50500, 50500, 50500, 50500, 1_000_000),
+                    ("005930", date(2026, 1, 4), 100, 105, 95, 102, 900_000),
+                    ("005930", date(2026, 1, 5), 102, 108, 101, 107, 950_000),
+                ],
+                columns=["code", "datetime", "open", "high", "low", "close", "volume"],
+            )
 
     client = Client()
     cfg = DailyCandleQualityConfig(fetch_multiplier=3, repeated_ohlcv_run_min=3)
 
     df = load_daily_candles(client, "005930", days=2, quality_config=cfg)
 
-    assert client.parameters == {"code": "005930", "limit": 6}
+    assert client.calls == [("005930", 6)]
     assert df["date"].tolist() == [date(2026, 1, 4), date(2026, 1, 5)]
 
 
 def test_load_symbol_indicators_reports_no_data():
-    class Result:
-        result_rows = []
-
     class Client:
-        def query(self, _query, parameters):
-            assert parameters["code"] == "005930"
-            return Result()
+        def get_daily_bars(self, symbol, limit):
+            assert symbol == "005930"
+            assert limit > 0
+            return pd.DataFrame()
 
     indicators, reason = load_symbol_indicators(
         Client(),
@@ -414,26 +413,32 @@ def test_backfill_missing_candidate_candles_limits_and_dedupes(monkeypatch):
     assert calls == {"codes": ["005930"], "days": 100, "verbose": False}
 
 
-
 def test_compute_futures_daily_indicators_returns_required_keys():
     # 80 synthetic days with mild uptrend + small daily noise so RSI is well
     # defined (purely monotonic series would yield avg_loss == 0 → NaN RSI).
     closes = [1000.0 + i * 1.25 + (5.0 if i % 3 else -3.0) for i in range(80)]
-    df = pd.DataFrame({
-        "date": [date(2026, 1, 1)] * 80,  # placeholder; not used by compute
-        "open": closes,
-        "high": [c + 5.0 for c in closes],
-        "low": [c - 5.0 for c in closes],
-        "close": closes,
-        "volume": [1000] * 80,
-    })
+    df = pd.DataFrame(
+        {
+            "date": [date(2026, 1, 1)] * 80,  # placeholder; not used by compute
+            "open": closes,
+            "high": [c + 5.0 for c in closes],
+            "low": [c - 5.0 for c in closes],
+            "close": closes,
+            "volume": [1000] * 80,
+        }
+    )
 
     result = compute_futures_daily_indicators(df)
     assert result is not None
     # daily_regime_trend_filter consumes exactly these keys (see
     # shared/strategy/gates/daily_regime_trend_gate.py defaults).
-    for key in ("daily_close", "daily_ema_20", "daily_ema_20_prev",
-                "daily_ema_60", "daily_rsi_14"):
+    for key in (
+        "daily_close",
+        "daily_ema_20",
+        "daily_ema_20_prev",
+        "daily_ema_60",
+        "daily_rsi_14",
+    ):
         assert key in result, f"missing required key {key}"
     # Sanity: rising series → ema_20 > ema_60 (BULL regime), rsi > 50
     assert result["daily_ema_20"] > result["daily_ema_60"]
@@ -441,14 +446,16 @@ def test_compute_futures_daily_indicators_returns_required_keys():
 
 
 def test_compute_futures_daily_indicators_insufficient_history_returns_none():
-    df = pd.DataFrame({
-        "date": [date(2026, 1, 1)] * 30,
-        "open": [1000.0] * 30,
-        "high": [1001.0] * 30,
-        "low": [999.0] * 30,
-        "close": [1000.0] * 30,
-        "volume": [1000] * 30,
-    })
+    df = pd.DataFrame(
+        {
+            "date": [date(2026, 1, 1)] * 30,
+            "open": [1000.0] * 30,
+            "high": [1001.0] * 30,
+            "low": [999.0] * 30,
+            "close": [1000.0] * 30,
+            "volume": [1000] * 30,
+        }
+    )
     assert compute_futures_daily_indicators(df) is None
 
 
@@ -466,10 +473,9 @@ def test_scan_futures_symbols_aggregates_per_symbol():
         def query(self, _query, parameters):
             self.calls.append(parameters["code"])
             # date column unused by compute path → placeholders fine.
-            return Result([
-                (date(2026, 1, 1), c, c + 5.0, c - 5.0, c, 1000)
-                for c in closes
-            ])
+            return Result(
+                [(date(2026, 1, 1), c, c + 5.0, c - 5.0, c, 1000) for c in closes]
+            )
 
     client = Client()
     out = scan_futures_symbols(client, ["101S6000"])

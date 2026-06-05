@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate intraday volume-surge candidate generation from ClickHouse data.
+"""Validate intraday volume-surge candidate generation from Parquet data.
 
 This script builds a reproducible validation bundle for opening-volume-surge style
 entry timing checks:
@@ -27,7 +27,8 @@ from typing import Any
 import matplotlib
 import numpy as np
 import pandas as pd
-from clickhouse_driver import Client
+from shared.storage.config import StorageConfig
+from shared.storage.market_data_store import ParquetMarketDataStore
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -49,22 +50,11 @@ def _load_env_file(path: str = ".env") -> None:
             os.environ[key] = value
 
 
-def _native_clickhouse_port() -> int:
-    native = os.getenv("CLICKHOUSE_NATIVE_PORT")
-    if native:
-        return int(native)
-    port = int(os.getenv("CLICKHOUSE_PORT", "9000"))
-    # clickhouse-driver uses native protocol (usually 9000)
-    return 9000 if port == 8123 else port
-
-
-def _create_client(database: str) -> Client:
-    return Client(
-        host=os.getenv("CLICKHOUSE_HOST", "localhost"),
-        port=_native_clickhouse_port(),
-        user=os.getenv("CLICKHOUSE_USER", "default"),
-        password=os.getenv("CLICKHOUSE_PASSWORD", ""),
-        database=database,
+def _create_store() -> ParquetMarketDataStore:
+    storage_config = StorageConfig.load_or_default()
+    return ParquetMarketDataStore(
+        storage_config.market_data.parquet.root,
+        asset_class="stock",
     )
 
 
@@ -83,31 +73,28 @@ def _parse_codes(raw: str) -> list[str]:
 
 
 def _load_minute_data(
-    client: Client,
-    database: str,
-    table: str,
+    store: ParquetMarketDataStore,
     start: str,
     end: str,
     codes: list[str],
 ) -> pd.DataFrame:
-    where_codes = ""
-    if codes:
-        in_list = ", ".join(f"'{c}'" for c in codes)
-        where_codes = f" AND code IN ({in_list})"
-
-    query = (
-        f"SELECT code, datetime, open, high, low, close, volume, value "
-        f"FROM {database}.{table} "
-        f"WHERE datetime >= %(start)s AND datetime < %(end)s{where_codes} "
-        f"ORDER BY code, datetime"
-    )
-    rows = client.execute(query, {"start": start, "end": end})
-    df = pd.DataFrame(
-        rows,
-        columns=["code", "datetime", "open", "high", "low", "close", "volume", "value"],
-    )
+    if not codes:
+        dataset_dir = store.root / "stock" / "minute"
+        codes = sorted(
+            path.name.removeprefix("code=")
+            for path in dataset_dir.glob("code=*")
+            if path.is_dir()
+        )
+    frames = [store.get_minute_bars(code, start=start, end=end) for code in codes]
+    frames = [frame for frame in frames if not frame.empty]
+    if not frames:
+        return pd.DataFrame()
+    df = pd.concat(frames, ignore_index=True)
     if df.empty:
         return df
+    df["value"] = pd.to_numeric(df["close"], errors="coerce") * pd.to_numeric(
+        df["volume"], errors="coerce"
+    )
 
     df["datetime"] = pd.to_datetime(df["datetime"], errors="coerce")
     for col in ("open", "high", "low", "close"):
@@ -148,13 +135,21 @@ def _add_features(df: pd.DataFrame, cfg: FilterConfig) -> pd.DataFrame:
 
     intraday = work.groupby(["code", "date"], sort=False)
     work["prev_close"] = intraday["close"].shift(1)
-    work["ret_1m"] = (work["close"] / work["prev_close"] - 1.0).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    work["ret_1m"] = (
+        (work["close"] / work["prev_close"] - 1.0)
+        .replace([np.inf, -np.inf], np.nan)
+        .fillna(0.0)
+    )
 
     spread = (work["high"] - work["low"]).replace(0, np.nan)
-    work["range_pos"] = ((work["close"] - work["low"]) / spread).clip(0.0, 1.0).fillna(0.5)
+    work["range_pos"] = (
+        ((work["close"] - work["low"]) / spread).clip(0.0, 1.0).fillna(0.5)
+    )
     work["upper_shadow_ratio"] = (
-        (work["high"] - work[["open", "close"]].max(axis=1)) / spread
-    ).clip(lower=0.0).fillna(0.0)
+        ((work["high"] - work[["open", "close"]].max(axis=1)) / spread)
+        .clip(lower=0.0)
+        .fillna(0.0)
+    )
     work["body_ratio"] = ((work["close"] - work["open"]).abs() / spread).fillna(0.0)
 
     work["vol_ma20"] = intraday["volume"].transform(
@@ -180,8 +175,12 @@ def _add_features(df: pd.DataFrame, cfg: FilterConfig) -> pd.DataFrame:
         .reset_index(drop=True)
     )
 
-    work["vol_ratio_20"] = (work["volume"] / work["vol_ma20"]).replace([np.inf, -np.inf], np.nan)
-    work["vol_ratio_slot"] = (work["volume"] / work["vol_slot_ma5"]).replace([np.inf, -np.inf], np.nan)
+    work["vol_ratio_20"] = (work["volume"] / work["vol_ma20"]).replace(
+        [np.inf, -np.inf], np.nan
+    )
+    work["vol_ratio_slot"] = (work["volume"] / work["vol_slot_ma5"]).replace(
+        [np.inf, -np.inf], np.nan
+    )
 
     work = work.sort_values(["code", "datetime"]).reset_index(drop=True)
     intraday = work.groupby(["code", "date"], sort=False)
@@ -201,16 +200,16 @@ def _add_features(df: pd.DataFrame, cfg: FilterConfig) -> pd.DataFrame:
     # Forward returns (for quality check, not for signal generation).
     for horizon in (5, 15, 30):
         future_close = intraday["close"].shift(-horizon)
-        work[f"fwd_ret_{horizon}m_pct"] = (
-            (future_close / work["close"] - 1.0) * 100.0
-        )
+        work[f"fwd_ret_{horizon}m_pct"] = (future_close / work["close"] - 1.0) * 100.0
 
     return work
 
 
 def _candidate_mask(work: pd.DataFrame, cfg: FilterConfig) -> pd.Series:
     mask = pd.Series(True, index=work.index)
-    mask &= work["minute_of_day"].between(cfg.market_open_minute, cfg.market_close_minute)
+    mask &= work["minute_of_day"].between(
+        cfg.market_open_minute, cfg.market_close_minute
+    )
     mask &= work["vol_ma20"] >= cfg.min_intra_vol_ma20
     mask &= work["value_ma20"] >= cfg.min_intra_value_ma20
     mask &= work["vol_slot_ma5"] >= cfg.min_slot_vol_ma5
@@ -228,10 +227,14 @@ def _candidate_mask(work: pd.DataFrame, cfg: FilterConfig) -> pd.Series:
     return mask
 
 
-def _select_realtime_candidates(candidates: pd.DataFrame, top_per_minute: int) -> pd.DataFrame:
+def _select_realtime_candidates(
+    candidates: pd.DataFrame, top_per_minute: int
+) -> pd.DataFrame:
     out = candidates.sort_values(["datetime", "score"], ascending=[True, False]).copy()
     out["rank_at_minute"] = (
-        out.groupby("datetime")["score"].rank(method="dense", ascending=False).astype(int)
+        out.groupby("datetime")["score"]
+        .rank(method="dense", ascending=False)
+        .astype(int)
     )
     return out[out["rank_at_minute"] <= top_per_minute].copy()
 
@@ -239,7 +242,9 @@ def _select_realtime_candidates(candidates: pd.DataFrame, top_per_minute: int) -
 def _select_first_entries(realtime: pd.DataFrame) -> pd.DataFrame:
     out = realtime.sort_values(["code", "datetime"]).copy()
     out["date"] = pd.to_datetime(out["datetime"]).dt.date
-    return out.drop_duplicates(subset=["code", "date"], keep="first").reset_index(drop=True)
+    return out.drop_duplicates(subset=["code", "date"], keep="first").reset_index(
+        drop=True
+    )
 
 
 def _plot_entry_window(
@@ -286,9 +291,13 @@ def _plot_entry_window(
     colors = np.where(up, "#16a34a", "#f97316")
     ax_vol.bar(x, window["volume"], color=colors, alpha=0.8, label="Volume")
     if "vol_ma20" in window:
-        ax_vol.plot(x, window["vol_ma20"], color="#0284c7", linewidth=1.2, label="Vol MA20")
+        ax_vol.plot(
+            x, window["vol_ma20"], color="#0284c7", linewidth=1.2, label="Vol MA20"
+        )
     if "vol_slot_ma5" in window:
-        ax_vol.plot(x, window["vol_slot_ma5"], color="#7c3aed", linewidth=1.2, label="Slot MA5")
+        ax_vol.plot(
+            x, window["vol_slot_ma5"], color="#7c3aed", linewidth=1.2, label="Slot MA5"
+        )
     ax_vol.axvline(entry_idx, color="#dc2626", linestyle="--", linewidth=1.0)
     ax_vol.grid(alpha=0.25, linestyle=":")
     ax_vol.legend(loc="upper left")
@@ -324,12 +333,12 @@ def _write_summary(
     lines.append("## Dataset")
     lines.append(f"- Rows: {len(full_df):,}")
     lines.append(f"- Symbols: {full_df['code'].nunique():,}")
-    lines.append(
-        f"- Range: {full_df['datetime'].min()} ~ {full_df['datetime'].max()}"
-    )
+    lines.append(f"- Range: {full_df['datetime'].min()} ~ {full_df['datetime'].max()}")
     lines.append("")
     lines.append("## Distortion Filters")
-    lines.append(f"- Time window: {cfg.market_open_minute}~{cfg.market_close_minute} (minute-of-day)")
+    lines.append(
+        f"- Time window: {cfg.market_open_minute}~{cfg.market_close_minute} (minute-of-day)"
+    )
     lines.append(f"- min_vol_ma20: {cfg.min_intra_vol_ma20}")
     lines.append(f"- min_value_ma20: {cfg.min_intra_value_ma20}")
     lines.append(f"- min_slot_vol_ma5: {cfg.min_slot_vol_ma5}")
@@ -375,10 +384,7 @@ def _write_summary(
         lines.append("")
 
         top_symbols = (
-            entries.groupby("code")
-            .size()
-            .sort_values(ascending=False)
-            .head(15)
+            entries.groupby("code").size().sort_values(ascending=False).head(15)
         )
         lines.append("## Top Symbols by Entry Count")
         for code, count in top_symbols.items():
@@ -402,8 +408,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Validate volume-surge realtime candidates")
     p.add_argument("--start", default="2026-01-20 09:00:00")
     p.add_argument("--end", default="2026-02-28 00:00:00")
-    p.add_argument("--database", default=os.getenv("CLICKHOUSE_STOCK_DATABASE", "market"))
-    p.add_argument("--table", default="minute_candles")
     p.add_argument("--codes", default="", help="Comma-separated code list (optional)")
     p.add_argument("--output-dir", default="artifacts/ovs_validation")
     p.add_argument("--top-per-minute", type=int, default=3)
@@ -412,7 +416,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--chart-after-minutes", type=int, default=30)
 
     # Distortion filters
-    p.add_argument("--market-open-minute", type=int, default=545)   # 09:05
+    p.add_argument("--market-open-minute", type=int, default=545)  # 09:05
     p.add_argument("--market-close-minute", type=int, default=920)  # 15:20
     p.add_argument("--min-intra-vol-ma20", type=float, default=1000.0)
     p.add_argument("--min-intra-value-ma20", type=float, default=100_000_000.0)
@@ -457,11 +461,9 @@ def main() -> int:
     )
 
     codes = _parse_codes(args.codes)
-    client = _create_client(args.database)
+    store = _create_store()
     df = _load_minute_data(
-        client=client,
-        database=args.database,
-        table=args.table,
+        store=store,
         start=args.start,
         end=args.end,
         codes=codes,
@@ -481,7 +483,9 @@ def main() -> int:
     candidates = candidates.sort_values(["datetime", "score"], ascending=[True, False])
     candidates.to_csv(out_dir / "candidates_all.csv", index=False)
 
-    realtime = _select_realtime_candidates(candidates, top_per_minute=max(1, args.top_per_minute))
+    realtime = _select_realtime_candidates(
+        candidates, top_per_minute=max(1, args.top_per_minute)
+    )
     realtime.to_csv(out_dir / "candidates_top_per_minute.csv", index=False)
 
     entries = _select_first_entries(realtime)
@@ -490,7 +494,9 @@ def main() -> int:
     chart_rows: list[dict[str, Any]] = []
     if args.max_charts > 0 and not entries.empty:
         # Prioritize high-score entries for manual inspection
-        chart_targets = entries.sort_values("score", ascending=False).head(args.max_charts)
+        chart_targets = entries.sort_values("score", ascending=False).head(
+            args.max_charts
+        )
         for _, row in chart_targets.iterrows():
             code = str(row["code"])
             ts = pd.to_datetime(row["datetime"])

@@ -1,4 +1,4 @@
-"""News collector daemon — polls sources, dedups, publishes to Redis + optional CH."""
+"""News collector daemon — polls sources, dedups, publishes to Redis."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from services.monitoring.metrics import (
 )
 from shared.news.base import NewsSource
 from shared.news.dedupe import NewsDedupe
-from shared.news.publisher import ClickHouseNewsWriter, NewsStreamPublisher
+from shared.news.publisher import NewsArchiveNoopWriter, NewsStreamPublisher
 
 logger = logging.getLogger(__name__)
 
@@ -27,14 +27,14 @@ class NewsCollectorDaemon:
         self,
         *,
         redis: Any,
-        ch_client: Any,
+        archive_client: Any,
         sources: list[NewsSource],
         stream: str,
         stream_maxlen: int,
         dedupe_memory: int,
         dedupe_ttl_days: int,
-        ch_batch_size: int,
-        ch_flush_interval: int,
+        archive_batch_size: int,
+        archive_flush_interval: int,
         body_truncate_chars: int,
     ):
         self.redis = redis
@@ -43,16 +43,18 @@ class NewsCollectorDaemon:
         self.dedupe = NewsDedupe(
             redis, memory_size=dedupe_memory, ttl_days=dedupe_ttl_days
         )
-        self.ch_writer = ClickHouseNewsWriter(
-            ch_client,
-            batch_size=ch_batch_size,
-            flush_interval_seconds=ch_flush_interval,
+        self.archive_writer = NewsArchiveNoopWriter(
+            archive_client,
+            batch_size=archive_batch_size,
+            flush_interval_seconds=archive_flush_interval,
         )
         self.body_truncate_chars = body_truncate_chars
         self._stop = asyncio.Event()
 
     async def run(self) -> None:
-        flush_task = asyncio.create_task(self.ch_writer.run_periodic_flush(self._stop))
+        flush_task = asyncio.create_task(
+            self.archive_writer.run_periodic_flush(self._stop)
+        )
         source_tasks = [asyncio.create_task(self._loop(s)) for s in self.sources]
         try:
             await self._stop.wait()
@@ -77,7 +79,7 @@ class NewsCollectorDaemon:
                         item, max_body_chars=self.body_truncate_chars
                     )
                     record_news_collected(source.name)
-                    await self.ch_writer.enqueue(item)
+                    await self.archive_writer.enqueue(item)
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -92,8 +94,8 @@ class NewsCollectorDaemon:
 async def _build_and_run_from_config() -> int:
     """Production entry point. Resolves sources from YAML config.
 
-    ClickHouse mirror wiring is optional and stays behind storage helpers so
-    this service can start without the driver when the mirror is disabled.
+    News archive persistence is disabled until a Parquet/RuntimeLedger archive
+    target is introduced.
     """
     import os
 
@@ -107,17 +109,10 @@ async def _build_and_run_from_config() -> int:
     from shared.news.sources.reuters import ReutersRSSSource
     from shared.news.sources.rss import GenericRSSSource
     from shared.news.sources.yonhap import YonhapRSSSource
-    from shared.storage import create_async_clickhouse_client
-    from shared.storage.config import StorageConfig
 
     cfg = NewsCollectorConfig.from_yaml()
     redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/1")
     redis_client = aioredis.from_url(redis_url)
-
-    ch = None
-    storage_config = StorageConfig.load_or_default()
-    if storage_config.runtime_storage.clickhouse_mirror.enabled:
-        ch = await create_async_clickhouse_client(database="kospi")
 
     session = aiohttp.ClientSession()
     sources: list[NewsSource] = []
@@ -241,14 +236,14 @@ async def _build_and_run_from_config() -> int:
 
     daemon = NewsCollectorDaemon(
         redis=redis_client,
-        ch_client=ch,
+        archive_client=None,
         sources=sources,
         stream=cfg.redis_stream,
         stream_maxlen=cfg.redis_maxlen,
         dedupe_memory=cfg.dedupe.memory_size,
         dedupe_ttl_days=cfg.dedupe.redis_ttl_days,
-        ch_batch_size=cfg.clickhouse_batch_size,
-        ch_flush_interval=cfg.clickhouse_flush_interval_seconds,
+        archive_batch_size=cfg.archive_batch_size,
+        archive_flush_interval=cfg.archive_flush_interval_seconds,
         body_truncate_chars=cfg.body_truncate_chars,
     )
 
@@ -261,8 +256,6 @@ async def _build_and_run_from_config() -> int:
     finally:
         await session.close()
         await redis_client.aclose()
-        if ch is not None:
-            await ch.close()
     return 0
 
 

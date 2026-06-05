@@ -20,7 +20,7 @@ from shared.backtest.adapter import BacktestStrategyAdapter
 from shared.backtest.config import RiskConfig
 from shared.collector.historical.stock import (
     STOCK_UNIVERSE,
-    load_stock_minute_from_clickhouse,
+    load_stock_minute_from_parquet,
 )
 from shared.config.loader import ConfigLoader
 from shared.strategy.registry import StrategyFactory, register_builtin_components
@@ -59,9 +59,9 @@ def run_single_backtest(strategy_name: str, asset: str, tier: str = "top"):
         print(f"\n--- Processing {stock_code} ---")
 
         try:
-            # Load data from ClickHouse
-            df = load_stock_minute_from_clickhouse(
-                stock_code=stock_code,
+            # Load data from Parquet
+            df = load_stock_minute_from_parquet(
+                code=stock_code,
                 start_date=None,  # Use all available data
                 end_date=None,
             )

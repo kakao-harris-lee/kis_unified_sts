@@ -22,7 +22,7 @@ ongoing futures/runtime work.
 | [2026-04-20-futures-paradigm-master.md](2026-04-20-futures-paradigm-master.md) | Parent of the LLM-primary plan. Defines the futures paradigm rollout. |
 | [2026-04-20-futures-paradigm-phase5-rollout.md](2026-04-20-futures-paradigm-phase5-rollout.md) | Phase 5 Gate 1–4 rollout spec — referenced by 7 docs / runbooks. |
 | [2026-05-26-strategy-lab-extension-design.md](2026-05-26-strategy-lab-extension-design.md) | Visual Strategy Lab redesign: UI-built strategies, generated signals, and paper buy/sell execution. |
-| [2026-06-03-runtime-storage-decoupling-implementation.md](2026-06-03-runtime-storage-decoupling-implementation.md) | ClickHouse를 optional research backend로 내리고 Redis/SQLite/Parquet 중심 runtime을 구현하는 계획. Phase 6/7 direct import policy guard implemented. |
+| [2026-06-03-runtime-storage-decoupling-implementation.md](2026-06-03-runtime-storage-decoupling-implementation.md) | ClickHouse runtime/service/package dependency를 제거하고 Redis/SQLite/Parquet 중심 runtime을 구현한 계획. |
 
 ## 🟡 Reference — completed but still cited
 

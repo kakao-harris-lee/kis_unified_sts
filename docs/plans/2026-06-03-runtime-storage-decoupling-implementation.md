@@ -1,13 +1,13 @@
 # Runtime Storage Decoupling Implementation Plan
 
 - 작성일: 2026-06-03
-- 상태: Implementation in progress — Phase 0-3/5-7 implemented, Phase 4 backtest/research and E2E acceptance remain
+- 상태: Implementation completed — ClickHouse package/service/runtime dependency removed
 - 설계 문서: [../runtime_storage_architecture.md](../runtime_storage_architecture.md)
 - 관련 결정: [2026-06-03-ml-rl-removal-llm-indicator-futures.md](2026-06-03-ml-rl-removal-llm-indicator-futures.md)
 
 ## 목표
 
-ClickHouse 설치 여부와 무관하게 개발, 테스트, 모의투자, 실전투자 runtime을 실행할 수 있도록 storage 의존을 분리한다.
+ClickHouse 없이 개발, 테스트, 모의투자, 실전투자 runtime과 백테스트를 실행할 수 있도록 storage 의존을 분리한다.
 
 최종 목표:
 
@@ -15,7 +15,7 @@ ClickHouse 설치 여부와 무관하게 개발, 테스트, 모의투자, 실전
 - Redis DB 1은 runtime state와 streams에 계속 사용한다.
 - paper/live 영구 ledger는 SQLite WAL을 기본으로 사용한다.
 - 백테스트 및 운영 분석 historical data는 Parquet + DuckDB를 기본으로 지원한다.
-- ClickHouse는 optional research profile 또는 best-effort mirror로만 사용한다.
+- ClickHouse는 runtime, 수집, 백테스트, compose service set에서 사용하지 않는다.
 
 ## 현재 문제
 
@@ -36,9 +36,9 @@ ClickHouse 설치 여부와 무관하게 개발, 테스트, 모의투자, 실전
 
 1. 먼저 추상화 계층을 만든다. call site를 한 번에 바꾸지 않는다.
 2. runtime write path는 SQLite를 기본값으로 한다.
-3. ClickHouse mirror 실패는 live decision/order path에 영향을 주지 않는다.
+3. 서버 DB 장애는 live decision/order path에 영향을 주지 않는다.
 4. 환경 분리는 Redis DB 번호가 아니라 compose project/volume/env 파일로 한다.
-5. ClickHouse historical data는 Parquet export를 통해 점진적으로 이관한다.
+5. Historical data는 Parquet dataset으로 관리한다.
 6. live infra 테스트는 계속 `KIS_RUN_LIVE_INFRA_TESTS=1` opt-in 뒤에 둔다.
 
 ## Phase 0 — Inventory and Switches
@@ -67,15 +67,10 @@ runtime_storage:
   sqlite:
     path: data/runtime/${ENVIRONMENT}/runtime.db
     wal: true
-  clickhouse_mirror:
-    enabled: false
-
 market_data:
   source: parquet
   parquet:
     root: data/market
-  clickhouse:
-    enabled: false
 ```
 
 검증:
@@ -134,7 +129,6 @@ market_data:
 
 - `PositionTrackerConfig`에 `runtime_ledger_backend` 또는 ledger injection 추가.
 - `save_to_db`, `save_closed_to_db`, `load_from_db`를 `RuntimeLedger` 호출로 교체.
-- 기존 ClickHouse 구현은 `ClickHouseRuntimeLedger` 또는 `ClickHouseMirrorLedger`로 이동.
 - open position recovery 순서 정리.
 
 권장 recovery 순서:
@@ -142,12 +136,10 @@ market_data:
 1. broker/KIS account state
 2. Redis runtime state
 3. SQLite `position_snapshots`
-4. ClickHouse mirror, enabled일 때만
 
 검증:
 
 - 기존 `PositionTracker` unit tests를 SQLite backend로 확장.
-- ClickHouse backend tests는 mocked client 또는 live_infra opt-in으로 유지.
 - paper restart integration test에서 ClickHouse 없이 open positions 복구.
 
 완료 기준:
@@ -157,28 +149,20 @@ market_data:
 
 ## Phase 3 — Dashboard and Runtime Writers
 
-상태: 핵심 구현 완료, 잔여 cleanup 있음 (`feat/runtime-storage-ledger`)
-
-남은 항목:
-
-- orchestrator shadow logger / prewarm historical reads는 아직 optional ClickHouse helper 경로가 남아 있다.
-  - shadow logger는 ClickHouse init 실패 시 graceful degrade하지만 `runtime_storage.clickhouse_mirror.enabled`로 게이트되지 않는다.
-  - prewarm historical reads는 Redis cache → ClickHouse → KIS REST 순서이며 `MarketDataStore`/Parquet source로 아직 분리되지 않았다.
+상태: 구현 완료, market-data prewarm Parquet 전환 완료
 
 작업:
 
 - dashboard trades/stat routes가 `RuntimeLedger`를 우선 조회하도록 변경.
 - 오늘 PnL 계산을 SQLite trades 기반으로 제공.
-- ClickHouse stats는 optional analytics endpoint로 이동.
 - `llm_context_publisher`의 ClickHouse history append를 `RuntimeLedger.record_market_context`로 교체.
-- news/scoring/forecasting ClickHouse batch writer는 optional mirror로 변경.
-- ClickHouse insert fail kill-switch condition은 mirror가 enabled일 때만 활성화.
+- news/scoring/forecasting archive writer는 Redis/RuntimeLedger 중심으로 정리.
+- ClickHouse insert fail kill-switch condition 제거.
 
 검증:
 
 - dashboard API tests with temp SQLite.
 - ClickHouse disabled 상태에서 cockpit/trades/health endpoint가 200 또는 graceful degraded response.
-- mirror enabled mocked test.
 
 완료 기준:
 
@@ -187,21 +171,21 @@ market_data:
 
 ## Phase 4 — Parquet/DuckDB MarketDataStore
 
-상태: 부분 구현 (`feat/runtime-storage-ledger`)
+상태: 구현 완료
 
 현재 구현:
 
 - `shared/storage/market_data_store.py` 추가.
-- `MarketDataStore` protocol, `ParquetMarketDataStore`, `ClickHouseMarketDataStore` adapter 추가.
-- `sts data validate-parquet`, `sts data export-clickhouse` 추가.
-- `sts backtest run --symbol`이 `config/storage.yaml::market_data.source`를 사용하도록 변경.
+- `MarketDataStore` protocol, `ParquetMarketDataStore` 추가.
+- `sts data validate-parquet` 추가.
+- `sts backtest run --symbol`, 주요 strategy backtest scripts, optimizer/analysis backtest loaders가 Parquet market data를 사용하도록 변경.
+- `sts backfill`과 `sts stock-backfill`은 `--sink parquet`만 허용.
+- `MARKET_DATA_SOURCE=clickhouse`는 더 이상 유효하지 않음.
 - `duckdb` / `pyarrow` 의존성 추가.
 
 남은 항목:
 
-- 주요 backtest/tier runner 전체를 Parquet source로 확장.
 - ML/RL training loader 지원은 제거 계획으로 이관. runtime-storage acceptance에서는 더 이상 추적하지 않는다.
-- ClickHouse sample vs Parquet sample parity test.
 - `manifest.yaml` schema/validation 고도화.
 
 작업:
@@ -210,26 +194,18 @@ market_data:
 - `MarketDataStore` protocol 정의.
 - `ParquetMarketDataStore` 구현.
 - DuckDB query adapter 추가.
-- ClickHouse historical adapter는 기존 쿼리를 backend로 이동.
 - KIS REST fallback은 runtime prewarm에서 유지.
-- export command 추가.
 
 명령 예:
 
 ```bash
-sts data export-clickhouse \
-  --asset futures \
-  --database kospi \
-  --table kospi200f_1m \
-  --out data/market/futures/minute
-
 sts data validate-parquet --root data/market
 ```
 
 검증:
 
 - sample parquet fixture tests.
-- backtest loader parity test: ClickHouse sample vs Parquet sample.
+- Parquet loader/backtest tests.
 - manifest validation.
 
 완료 기준:
@@ -244,7 +220,7 @@ sts data validate-parquet --root data/market
 작업:
 
 - base `docker-compose.yml`에서 Redis DB 1, runtime storage, market-data env를 runtime services에 명시.
-- `profiles: ["research"]`로 ClickHouse와 MLflow 서비스 분리.
+- `profiles: ["research"]`로 MLflow 등 선택 실험 도구 분리.
 - `profiles: ["trading"]`로 `sts trade start` daemon service 분리.
 - `./data/runtime:/app/data/runtime` volume을 app/dashboard/forecasting에 추가.
 - `.env.dev`, `.env.paper.example`, `.env.live.example` 템플릿 추가.
@@ -266,13 +242,13 @@ docker compose --env-file .env.paper --profile trading up -d trader
 TRADING_LIVE_CONFIRM=I_UNDERSTAND_LIVE_TRADING \
   docker compose --env-file .env.live --profile trading up -d trader
 
-docker compose --env-file .env.dev --profile research up -d clickhouse mlflow
+docker compose --env-file .env.dev --profile research up -d mlflow
 ```
 
 검증:
 
-- `docker compose --env-file .env.dev config --services` excludes ClickHouse/MLflow.
-- `docker compose --env-file .env.dev --profile research config --services` includes ClickHouse/MLflow.
+- `docker compose --env-file .env.dev config --services` excludes optional research tools.
+- `docker compose --env-file .env.dev --profile research config --services` includes optional research tools only.
 - `docker compose --env-file .env.paper.example config` renders `kis_paper`, Redis DB 1, and `data/runtime/paper/runtime.db`.
 - `docker compose --env-file .env.live.example config` renders `kis_live`, Redis DB 1, and `data/runtime/live/runtime.db`.
 - `docker compose --env-file .env.paper.example config --services` excludes `trader`.
@@ -283,7 +259,7 @@ docker compose --env-file .env.dev --profile research up -d clickhouse mlflow
 완료 기준:
 
 - ClickHouse 설치가 없는 서버에서 dev/paper compose config가 렌더링된다.
-- research profile만 ClickHouse와 MLflow를 compose service set에 포함한다.
+- research profile만 optional research tooling을 compose service set에 포함한다.
 - trading profile만 trading loop daemon을 compose service set에 포함한다.
 
 ## Phase 6 — Cleanup and Policy
@@ -295,22 +271,22 @@ docker compose --env-file .env.dev --profile research up -d clickhouse mlflow
 - direct ClickHouse imports 금지 규칙 문서화.
 - runtime-facing roots allowlist 작성:
   - covered: `services/`, `core/`, `cli/`, `shared/strategy/gates/`
-  - allowed backend locations: `shared/db/*`, `shared/storage/clickhouse_*`, `shared/storage/market_data_store.py`
+  - compatibility locations: `shared/db/*`
   - research/maintenance: `scripts/`, `jobs/`, analysis docs
 - `tests/unit/storage/test_clickhouse_policy.py` guard 추가.
-- runtime services의 ClickHouse client 생성 경로를 `shared.storage.clickhouse_backend` helper로 이동.
+- runtime services의 ClickHouse client 생성 경로 제거.
 - docs index/runtime architecture에 policy 반영.
 
 검증:
 
 - direct import allowlist test: `tests/unit/storage/test_clickhouse_policy.py`.
-- default storage config keeps ClickHouse mirror disabled and market-data source `parquet`.
+- default storage config keeps market-data source `parquet`.
 - docs index updated.
 
 완료 기준:
 
-- runtime package에서 direct ClickHouse dependency가 storage backend 외에는 없다.
-- 운영 문서가 SQLite runtime ledger와 ClickHouse optional profile을 기준으로 정렬된다.
+- runtime package에서 direct ClickHouse dependency가 없다.
+- 운영 문서가 SQLite runtime ledger와 Parquet market data를 기준으로 정렬된다.
 
 ## Phase 7 — Direct Import Guard PR
 
@@ -318,7 +294,6 @@ docker compose --env-file .env.dev --profile research up -d clickhouse mlflow
 
 작업:
 
-- `shared/storage/clickhouse_backend.py` 추가.
 - `services/trading/orchestrator.py`, dashboard routes, news/scoring/forecasting/order/macro services, `daily_scanner`, `llm_context_publisher`, `core/state_manager`, `cli/main.py`, `shared/strategy/gates/adapter_helper.py`의 direct ClickHouse client construction 제거.
 - policy guard가 runtime-facing roots에서 `clickhouse_driver`, `ClickHouseClient`, `AsyncClickHouseClient`, `get_clickhouse_client` direct import를 차단하도록 고정.
 
@@ -336,7 +311,7 @@ docker compose --env-file .env.dev --profile research up -d clickhouse mlflow
 | 2 | PositionTracker SQLite backend + tests | medium | implemented |
 | 3 | dashboard reads from RuntimeLedger | medium | implemented |
 | 4 | LLM/news/scoring/forecasting mirror optionalization | medium | implemented |
-| 5 | Parquet/DuckDB MarketDataStore + export commands | medium | partial |
+| 5 | Parquet/DuckDB MarketDataStore | medium | implemented |
 | 6 | compose profiles + env templates | medium | implemented |
 | 7 | direct ClickHouse import cleanup + policy tests | low | implemented |
 
@@ -350,16 +325,12 @@ docker compose --env-file .env.dev --profile research up -d clickhouse mlflow
 | paper restart | off | on | recovers positions from broker/Redis/SQLite |
 | dashboard cockpit | off | on | usable with Redis/SQLite stats |
 | backtest parquet | off | off | loads Parquet/DuckDB data |
-| research clickhouse | on | optional | historical query/export works |
-| mirror failure | broken | on | live path continues, warning logged |
 
 ## Rollback Strategy
 
-- Keep ClickHouse backend available during migration.
-- Add config flag `runtime_storage.backend=clickhouse` for temporary rollback.
-- Do not delete ClickHouse tables or migrations.
-- Keep export commands idempotent.
-- For live rollout, first run SQLite in mirror mode while ClickHouse remains primary, then switch primary to SQLite after restart drill passes.
+- Roll back by reverting this storage cleanup commit/PR, not by enabling a hidden runtime DB backend.
+- Runtime data durability relies on SQLite RuntimeLedger backups and broker/KIS account reconciliation.
+- Market-data rollback relies on Parquet snapshots and manifest validation.
 
 ## Acceptance Checklist
 
@@ -374,8 +345,7 @@ docker compose --env-file .env.dev --profile research up -d clickhouse mlflow
   - `.venv/bin/python -m ruff check cli/main.py tests/unit/test_cli_commands.py tests/unit/trading/test_position_tracker_runtime_ledger.py tests/unit/trading/test_runtime_storage_acceptance.py tests/unit/execution/test_fill_logger.py` pass.
   - `.venv/bin/python -m black --check cli/main.py tests/unit/test_cli_commands.py tests/unit/trading/test_position_tracker_runtime_ledger.py tests/unit/trading/test_runtime_storage_acceptance.py tests/unit/execution/test_fill_logger.py` pass.
 - Compose config smoke:
-  - `docker compose --env-file .env.dev config --services` excludes ClickHouse/MLflow.
-  - `docker compose --env-file .env.dev --profile research config --services` includes ClickHouse/MLflow.
+  - `docker compose --env-file .env.dev config --services` excludes ClickHouse.
   - `.env.paper.example` renders `kis_paper`, Redis DB 1, and `data/runtime/paper/runtime.db`.
   - `.env.live.example` renders `kis_live`, Redis DB 1, and `data/runtime/live/runtime.db`.
   - `.env.paper.example` excludes `trader` by default and includes it only with `--profile trading`.
@@ -383,12 +353,12 @@ docker compose --env-file .env.dev --profile research up -d clickhouse mlflow
   - live `trader` entrypoint exits before `sts trade start` unless `TRADING_LIVE_CONFIRM=I_UNDERSTAND_LIVE_TRADING`.
 - Compose runtime smoke:
   - Existing KIS app/research/monitoring stacks were stopped first.
-  - `docker compose --env-file .env.dev up -d --remove-orphans` started the dev stack without ClickHouse/MLflow services.
+  - `docker compose --env-file .env.dev up -d --remove-orphans` started the dev stack without ClickHouse services.
   - Dashboard health, trades route, stream-exporter metrics, Redis DB 1, and SQLite runtime storage were verified.
   - Dev stack was stopped after smoke; no KIS compose stack remains running.
 
 - [x] `docker compose up -d` works without ClickHouse installed.
-  - 확인: `.env.dev` smoke가 ClickHouse/MLflow 없이 정상 기동했고 검증 후 down 처리했다.
+  - 확인: `.env.dev` smoke가 ClickHouse 없이 정상 기동했고 검증 후 down 처리했다.
 - [x] dev/paper/live compose config renders without ClickHouse service.
 - [x] paper/live trading loop can be managed by an optional compose profile.
   - 확인: 기본 service set에는 `trader`가 없고 `--profile trading`에서만 포함된다. live trader는 `KIS_REAL_TRADING=true`와 explicit confirm token 없이는 시작하지 않는다.
@@ -402,11 +372,12 @@ docker compose --env-file .env.dev --profile research up -d clickhouse mlflow
   - RuntimeLedger trades/stats/fills/health PnL tests가 temp SQLite로 통과.
 - [x] position recovery drill passes after process restart.
   - 확인: stock/futures smoke가 SQLite ledger를 flush/close한 뒤 같은 DB path로 새 `PositionTracker`를 생성해 open position을 복구한다.
-- [x] `sts backtest run --symbol` supports `market_data.source=parquet`.
-- [x] full backtest/tier runners support `data.source=parquet`.
-  - 확인: `_run_tier_backtest`가 `StorageConfig.market_data.source` 기반 `load_market_bars_for_backtest`를 사용한다. minute/daily tier backtest 테스트는 legacy ClickHouse loader 호출 시 실패하도록 guard한다.
+- [x] `sts backtest run --symbol` loads Parquet market data.
+- [x] full backtest/tier runners and strategy scripts support Parquet market data.
+  - 확인: `_run_tier_backtest`가 `load_market_bars_for_backtest`를 사용한다. minute/daily tier backtest 테스트는 legacy ClickHouse loader 호출 시 실패하도록 guard한다.
+- [x] market-data collection commands are Parquet-only.
+  - 확인: `sts backfill`과 `sts stock-backfill`은 `--sink parquet`만 허용한다.
 - [x] ML/RL training support is removed from runtime-storage acceptance and tracked by [2026-06-03-ml-rl-removal-llm-indicator-futures.md](2026-06-03-ml-rl-removal-llm-indicator-futures.md).
   - 변경: RL/ML CLI와 training scripts는 Parquet/DuckDB 지원 대상이 아니라 decommission/archive 대상이다.
-- [x] ClickHouse research profile renders optional ClickHouse/MLflow services.
 - [x] default pytest does not touch live Redis/ClickHouse.
-  - `tests/conftest.py`가 live-infra tests를 `KIS_RUN_LIVE_INFRA_TESTS=1` opt-in으로 스킵한다. CI는 isolated Redis/ClickHouse services를 사용한다.
+  - `tests/conftest.py`가 live-infra tests를 `KIS_RUN_LIVE_INFRA_TESTS=1` opt-in으로 스킵한다.

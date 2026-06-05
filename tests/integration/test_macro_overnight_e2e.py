@@ -11,9 +11,9 @@ from shared.macro.base import MacroSnapshot
 
 
 @pytest.mark.asyncio
-async def test_collect_us_session_publishes_and_writes():
+async def test_collect_us_session_publishes():
     redis = fakeredis.aioredis.FakeRedis()
-    ch = AsyncMock()
+    archive_client = AsyncMock()
     yahoo = MagicMock()
     yahoo.fetch_us_close_snapshot = AsyncMock(
         return_value=MacroSnapshot(
@@ -28,7 +28,7 @@ async def test_collect_us_session_publishes_and_writes():
     )
     rc = await collect_us_session(
         redis=redis,
-        ch_client=ch,
+        archive_client=archive_client,
         yahoo_source=yahoo,
         stream="stream:macro.overnight",
         maxlen=1000,
@@ -37,15 +37,15 @@ async def test_collect_us_session_publishes_and_writes():
     entries = await redis.xrange("stream:macro.overnight")
     assert len(entries) == 1
     assert entries[0][1][b"session"] == b"overnight_us_close"
-    ch.execute.assert_awaited()
+    archive_client.execute.assert_not_awaited()
     ttl = await redis.ttl("stream:macro.overnight")
     assert 0 < ttl <= 86400
 
 
 @pytest.mark.asyncio
-async def test_collect_fx_session_publishes_and_writes():
+async def test_collect_fx_session_publishes():
     redis = fakeredis.aioredis.FakeRedis()
-    ch = AsyncMock()
+    archive_client = AsyncMock()
     ecos = MagicMock()
     ecos.fetch_fx_snapshot = AsyncMock(
         return_value=MacroSnapshot(
@@ -58,7 +58,7 @@ async def test_collect_fx_session_publishes_and_writes():
     )
     rc = await collect_fx_session(
         redis=redis,
-        ch_client=ch,
+        archive_client=archive_client,
         ecos_source=ecos,
         stream="stream:macro.overnight",
         maxlen=1000,
@@ -67,3 +67,4 @@ async def test_collect_fx_session_publishes_and_writes():
     entries = await redis.xrange("stream:macro.overnight")
     assert len(entries) == 1
     assert entries[0][1][b"session"] == b"overnight_fx"
+    archive_client.execute.assert_not_awaited()

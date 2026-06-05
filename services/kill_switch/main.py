@@ -31,10 +31,9 @@ appends to the ``kill_switch:events`` stream so that any consuming process
   *signalling side only*. Until the consumer is wired, the sentinel remains
   a best-effort alert; operator manual intervention is still required.
 
-Phase 0.4 (LLM-primary plan §4) — all three provider-backed conditions
-(``ApiErrorRateCondition``, ``NewsPipelineLagCondition``,
-``ClickHouseInsertFailCondition``) are now instantiated in ``_build_and_run()``
-with callable providers that read from the appropriate observability sources.
+Phase 0.4 (LLM-primary plan §4) — provider-backed conditions
+(``ApiErrorRateCondition``, ``NewsPipelineLagCondition``) are instantiated in
+``_build_and_run()`` with callable providers that read from observability sources.
 """
 
 from __future__ import annotations
@@ -141,13 +140,6 @@ class NewsPipelineLagCondition(_ProviderBackedCondition):
         self, *, threshold_seconds: float, lag_provider: Callable[[], float]
     ) -> None:
         super().__init__(threshold=threshold_seconds, provider=lag_provider)
-
-
-class ClickHouseInsertFailCondition(_ProviderBackedCondition):
-    name = "clickhouse_insert_fail_rate"
-
-    def __init__(self, *, threshold: float, rate_provider: Callable[[], float]) -> None:
-        super().__init__(threshold=threshold, provider=rate_provider)
 
 
 # ---------------------------------------------------------------------------
@@ -332,14 +324,6 @@ async def _build_and_run() -> int:
             )
         )
 
-    if _clickhouse_insert_fail_condition_enabled(cc.clickhouse_insert_fail_rate):
-        conditions.append(
-            ClickHouseInsertFailCondition(
-                threshold=float(cc.clickhouse_insert_fail_rate.threshold),
-                rate_provider=_build_clickhouse_insert_fail_provider(redis_client),
-            )
-        )
-
     telegram = TelegramNotifier(
         bot_token=os.environ["TELEGRAM_FUTURES_BOT_TOKEN"],
         chat_id=os.environ["TELEGRAM_FUTURES_CHAT_ID"],
@@ -417,23 +401,6 @@ async def _build_and_run() -> int:
     finally:
         await redis_client.aclose()
     return 0
-
-
-def _clickhouse_insert_fail_condition_enabled(condition: Any) -> bool:
-    """Return true only when the optional ClickHouse mirror is active."""
-    if not condition.enabled or condition.threshold is None:
-        return False
-    try:
-        from shared.storage.config import StorageConfig
-
-        storage_config = StorageConfig.load_or_default()
-        return bool(storage_config.runtime_storage.clickhouse_mirror.enabled)
-    except Exception:  # noqa: BLE001
-        logger.warning(
-            "clickhouse_insert_fail_rate condition disabled; storage config unavailable",
-            exc_info=True,
-        )
-        return False
 
 
 # ---------------------------------------------------------------------------
@@ -538,52 +505,6 @@ def _build_news_pipeline_lag_provider(
             logger.debug(
                 "news_pipeline_lag provider: error reading %s — returning 0.0",
                 stream_key,
-                exc_info=True,
-            )
-            return 0.0
-
-    return _provider
-
-
-def _build_clickhouse_insert_fail_provider(
-    redis_client: Any,
-) -> Callable[[], float]:
-    """Return a synchronous callable for the ClickHouse insert failure rate.
-
-    Data source: Redis key ``kill_switch:metrics:clickhouse_insert_fail_rate``
-    written by ``services/trading/position_tracker.py`` when its RL-trades
-    batch flush encounters errors.  The key holds a float string (fraction 0–1)
-    representing the proportion of ClickHouse inserts that failed in the last
-    5-minute rolling window.
-
-    TODO(Phase 3 Track A): ``services/trading/position_tracker.py`` must write
-    this key after each batch flush attempt (failed_count / total_count rolling
-    window). Until that instrumentation is added the key will be absent and
-    this provider returns 0.0 (never triggers).
-    """
-    import redis as sync_redis  # type: ignore[import-untyped]
-
-    _METRIC_KEY = "kill_switch:metrics:clickhouse_insert_fail_rate"
-
-    def _provider() -> float:
-        try:
-            kwargs = redis_client.connection_pool.connection_kwargs
-            url: str = kwargs.get("url", "")
-            if not url:
-                host = kwargs.get("host", "localhost")
-                port = kwargs.get("port", 6379)
-                db = kwargs.get("db", 1)
-                url = f"redis://{host}:{port}/{db}"
-            r = sync_redis.from_url(url, socket_timeout=1.0)
-            raw = r.get(_METRIC_KEY)
-            r.close()
-            if raw is None:
-                return 0.0
-            return float(raw)
-        except Exception:
-            logger.debug(
-                "clickhouse_insert_fail provider: could not read %s — returning 0.0",
-                _METRIC_KEY,
                 exc_info=True,
             )
             return 0.0

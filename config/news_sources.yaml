@@ -1,8 +1,8 @@
 news_collector:
   redis_stream: "stream:news.raw"
   redis_maxlen: 100000
-  clickhouse_batch_size: 50
-  clickhouse_flush_interval_seconds: 10
+  archive_batch_size: 50
+  archive_flush_interval_seconds: 10
   body_truncate_chars: 2000
   dedupe:
     memory_size: 20000

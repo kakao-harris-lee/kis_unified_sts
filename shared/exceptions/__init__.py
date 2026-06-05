@@ -27,7 +27,7 @@ Usage:
     # External API errors (KIS API, rate limits, authentication)
     raise APIError("KIS API rate limit exceeded")
 
-    # Infrastructure errors (Redis, ClickHouse, database)
+    # Infrastructure errors (Redis, storage, database)
     raise InfrastructureError("Redis connection failed")
 
     # Configuration errors (missing/invalid config)
@@ -131,7 +131,7 @@ class InfrastructureError(TradingSystemError):
 
     Raised when infrastructure services fail, including:
     - Redis connection/operation errors
-    - ClickHouse query errors
+    - Storage query errors
     - Database connection failures
     - Message queue errors
 
@@ -201,6 +201,7 @@ class BusinessLogicError(TradingSystemError):
 # Network Errors
 # --------------
 
+
 class ConnectionTimeoutError(NetworkError):
     """Raised when a network connection times out.
 
@@ -263,6 +264,7 @@ class WebSocketDisconnectError(NetworkError):
 # Validation Errors
 # -----------------
 
+
 class DataValidationError(ValidationError):
     """Raised when data fails validation checks.
 
@@ -322,6 +324,7 @@ class TypeConversionError(ValidationError):
 # API Errors
 # ----------
 
+
 class KISRateLimitError(APIError):
     """Raised when KIS API rate limit is exceeded.
 
@@ -339,9 +342,7 @@ class KISRateLimitError(APIError):
             )
     """
 
-    def __init__(
-        self, endpoint: str = "", retry_after: float = 0.0, message: str = ""
-    ):
+    def __init__(self, endpoint: str = "", retry_after: float = 0.0, message: str = ""):
         self.endpoint = endpoint
         self.retry_after = retry_after
         self.message = message
@@ -375,6 +376,7 @@ class KISAuthenticationError(APIError):
 # Infrastructure Errors
 # ----------------------
 
+
 class RedisUnavailableError(InfrastructureError):
     """Raised when Redis is unavailable or operations fail.
 
@@ -398,39 +400,9 @@ class RedisUnavailableError(InfrastructureError):
         super().__init__(msg)
 
 
-class ClickHouseQueryError(InfrastructureError):
-    """Raised when ClickHouse query fails.
-
-    Attributes:
-        query: The query that failed (truncated if too long)
-        database: The database name
-        table: The table name (if applicable)
-        error_code: The ClickHouse error code (if available)
-    """
-
-    def __init__(
-        self,
-        query: str = "",
-        database: str = "",
-        table: str = "",
-        error_code: int | None = None,
-    ):
-        self.query = query[:200] if query else ""  # Truncate long queries
-        self.database = database
-        self.table = table
-        self.error_code = error_code
-        msg = "ClickHouse query failed"
-        if database:
-            msg += f" in database '{database}'"
-        if table:
-            msg += f" on table '{table}'"
-        if error_code:
-            msg += f" (error code: {error_code})"
-        super().__init__(msg)
-
-
 # Configuration Errors
 # --------------------
+
 
 class InvalidConfigError(ConfigurationError):
     """Raised when configuration is invalid.
@@ -489,6 +461,7 @@ class MissingConfigError(ConfigurationError):
 # Business Logic Errors
 # ----------------------
 
+
 class InsufficientBalanceError(BusinessLogicError):
     """Raised when account balance is insufficient for order.
 
@@ -507,9 +480,7 @@ class InsufficientBalanceError(BusinessLogicError):
             )
     """
 
-    def __init__(
-        self, required: float = 0.0, available: float = 0.0, symbol: str = ""
-    ):
+    def __init__(self, required: float = 0.0, available: float = 0.0, symbol: str = ""):
         self.required = required
         self.available = available
         self.symbol = symbol
@@ -551,9 +522,7 @@ class CircuitBreakerOpenError(BusinessLogicError):
         failure_count: Number of consecutive failures that triggered the breaker
     """
 
-    def __init__(
-        self, component: str, reset_time: float = 0.0, failure_count: int = 0
-    ):
+    def __init__(self, component: str, reset_time: float = 0.0, failure_count: int = 0):
         self.component = component
         self.reset_time = reset_time
         self.failure_count = failure_count
@@ -585,7 +554,6 @@ __all__ = [
     "KISAuthenticationError",
     # Infrastructure errors
     "RedisUnavailableError",
-    "ClickHouseQueryError",
     # Configuration errors
     "InvalidConfigError",
     "MissingConfigError",

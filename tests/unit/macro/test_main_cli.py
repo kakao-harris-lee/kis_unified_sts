@@ -28,19 +28,10 @@ def _snap(session: str) -> MacroSnapshot:
 
 @pytest.fixture(autouse=True)
 def _patch_external_clients(monkeypatch):
-    """Shared monkeypatches: fake Redis, AsyncMock CH, pass-through config."""
+    """Shared monkeypatches: fake Redis and pass-through config."""
     monkeypatch.setattr(
         "redis.asyncio.from_url",
         lambda *_a, **_kw: fakeredis.aioredis.FakeRedis(),
-    )
-    fake_ch = AsyncMock()
-    monkeypatch.setattr(
-        "shared.db.client.AsyncClickHouseClient",
-        lambda *_a, **_kw: fake_ch,
-    )
-    monkeypatch.setattr(
-        "shared.db.config.ClickHouseConfig.from_env",
-        classmethod(lambda _cls, database=None: MagicMock()),  # noqa: ARG005
     )
     from shared.macro.config import MacroCollectorConfig
 
@@ -48,14 +39,11 @@ def _patch_external_clients(monkeypatch):
         "shared.macro.config.MacroCollectorConfig.from_yaml",
         classmethod(lambda _cls, *_a, **_kw: MacroCollectorConfig()),
     )
-    return fake_ch
+    return None
 
 
 @pytest.mark.asyncio
-async def test_cli_us_session_runs_and_closes_mirror_client(
-    monkeypatch, _patch_external_clients
-):
-    monkeypatch.setenv("RUNTIME_STORAGE_CLICKHOUSE_MIRROR_ENABLED", "true")
+async def test_cli_us_session_runs(monkeypatch, _patch_external_clients):
     yahoo_stub = MagicMock()
     yahoo_stub.fetch_us_close_snapshot = AsyncMock(
         return_value=_snap("overnight_us_close")
@@ -69,30 +57,6 @@ async def test_cli_us_session_runs_and_closes_mirror_client(
 
     assert rc == 0
     yahoo_stub.fetch_us_close_snapshot.assert_awaited_once()
-    _patch_external_clients.connect.assert_awaited()
-    _patch_external_clients.close.assert_awaited()
-
-
-@pytest.mark.asyncio
-async def test_cli_us_session_skips_clickhouse_when_mirror_disabled(
-    monkeypatch, _patch_external_clients
-):
-    monkeypatch.delenv("RUNTIME_STORAGE_CLICKHOUSE_MIRROR_ENABLED", raising=False)
-    yahoo_stub = MagicMock()
-    yahoo_stub.fetch_us_close_snapshot = AsyncMock(
-        return_value=_snap("overnight_us_close")
-    )
-    monkeypatch.setattr(
-        "shared.macro.sources.yahoo.YahooMacroSource",
-        lambda *_a, **_kw: yahoo_stub,
-    )
-
-    rc = await _cli("us")
-
-    assert rc == 0
-    yahoo_stub.fetch_us_close_snapshot.assert_awaited_once()
-    _patch_external_clients.connect.assert_not_awaited()
-    _patch_external_clients.close.assert_not_awaited()
 
 
 @pytest.mark.asyncio

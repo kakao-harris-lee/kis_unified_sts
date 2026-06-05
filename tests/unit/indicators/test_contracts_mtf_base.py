@@ -6,15 +6,14 @@ def test_mtf_base_key_parsed_as_base_with_timeframe():
         ["bb_lower", "bb_upper", "bb_middle", "rsi", "mtf_base_15m"]
     )
     base_tf = [
-        r for r in c.requests
+        r
+        for r in c.requests
         if r.kind == IndicatorKind.BASE and r.timeframe is not None
     ]
     assert len(base_tf) == 1
     assert base_tf[0].timeframe.minutes == 15
     assert base_tf[0].source_key == "mtf_base_15m"
-    assert any(
-        r.name == "bb_lower" and r.timeframe is None for r in c.requests
-    )
+    assert any(r.name == "bb_lower" and r.timeframe is None for r in c.requests)
 
 
 def test_mtf_base_requests_property_exposes_only_tf_base():
@@ -62,7 +61,7 @@ def test_warmth_timeframe_none_for_1m_only_strategy():
 
 
 def test_warmth_timeframe_excludes_daily():
-    # 'daily' (mtf_base_1d => 1440 min) is seeded separately from ClickHouse and
+    # 'daily' (mtf_base_1d => 1440 min) is seeded separately from Parquet and
     # must not gate is_warm. Warmth follows the deepest *intraday* tf.
     c = IndicatorContract.from_required_keys(["mtf_base_15m", "mtf_base_1d"])
     assert 1440 in c.mtf_timeframes

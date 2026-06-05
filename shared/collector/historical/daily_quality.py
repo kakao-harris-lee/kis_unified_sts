@@ -47,7 +47,7 @@ def load_daily_quality_config() -> DailyCandleQualityConfig:
 
 
 def quality_fetch_limit(limit: int, config: DailyCandleQualityConfig) -> int:
-    """Return raw ClickHouse row limit needed before quality filtering."""
+    """Return raw row limit needed before quality filtering."""
     requested = max(1, int(limit))
     return requested * max(1, int(config.fetch_multiplier))
 

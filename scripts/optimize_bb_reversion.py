@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """bb_reversion 전략 파라미터 최적화 스크립트
 
-대표 종목(삼성전자, SK하이닉스, 카카오 등)의 ClickHouse 분봉 데이터로
+대표 종목(삼성전자, SK하이닉스, 카카오 등)의 Parquet 분봉 데이터로
 entry/exit 파라미터를 Optuna TPE로 탐색한다.
 
 Usage:
@@ -26,7 +26,7 @@ from shared.backtest.config import BacktestConfig
 from shared.backtest.engine import BacktestEngine
 from shared.collector.historical.stock import (
     STOCK_UNIVERSE,
-    load_stock_minute_from_clickhouse,
+    load_stock_minute_from_parquet,
 )
 from shared.config.loader import ConfigLoader
 from shared.strategy.registry import (
@@ -42,9 +42,9 @@ register_builtin_components()
 
 
 def load_data_for_symbol(code: str) -> pd.DataFrame | None:
-    """ClickHouse에서 종목 분봉 데이터 로드"""
+    """Parquet에서 종목 분봉 데이터 로드."""
     try:
-        df = load_stock_minute_from_clickhouse(code)
+        df = load_stock_minute_from_parquet(code)
         if df is not None and len(df) >= 100:
             return df
     except Exception as e:
@@ -153,14 +153,24 @@ def run_optimization(
             # Entry params
             "bb_period": trial.suggest_int("bb_period", 10, 30),
             "bb_std": trial.suggest_float("bb_std", 1.5, 3.0, step=0.1),
-            "bb_touch_buffer": trial.suggest_float("bb_touch_buffer", 1.00, 1.03, step=0.005),
+            "bb_touch_buffer": trial.suggest_float(
+                "bb_touch_buffer", 1.00, 1.03, step=0.005
+            ),
             "rsi_period": trial.suggest_int("rsi_period", 7, 21),
             "rsi_oversold": trial.suggest_int("rsi_oversold", 25, 45),
             # Exit params (prefixed with exit_)
-            "exit_stop_loss_pct": trial.suggest_float("exit_stop_loss_pct", -0.05, -0.01, step=0.005),
-            "exit_breakeven_threshold_pct": trial.suggest_float("exit_breakeven_threshold_pct", 0.01, 0.04, step=0.005),
-            "exit_maximize_threshold_pct": trial.suggest_float("exit_maximize_threshold_pct", 0.02, 0.08, step=0.005),
-            "exit_trailing_stop_pct": trial.suggest_float("exit_trailing_stop_pct", -0.05, -0.01, step=0.005),
+            "exit_stop_loss_pct": trial.suggest_float(
+                "exit_stop_loss_pct", -0.05, -0.01, step=0.005
+            ),
+            "exit_breakeven_threshold_pct": trial.suggest_float(
+                "exit_breakeven_threshold_pct", 0.01, 0.04, step=0.005
+            ),
+            "exit_maximize_threshold_pct": trial.suggest_float(
+                "exit_maximize_threshold_pct", 0.02, 0.08, step=0.005
+            ),
+            "exit_trailing_stop_pct": trial.suggest_float(
+                "exit_trailing_stop_pct", -0.05, -0.01, step=0.005
+            ),
         }
         try:
             return multi_symbol_objective(params, datasets, backtest_config)
@@ -188,7 +198,7 @@ def run_optimization(
     print("OPTIMIZATION RESULTS")
     print(f"{'='*60}")
     print(f"Best {metric}: {study.best_value:.4f}")
-    print(f"\nBest parameters:")
+    print("\nBest parameters:")
     for k, v in sorted(study.best_params.items()):
         print(f"  {k}: {v}")
 
@@ -197,10 +207,15 @@ def run_optimization(
     print("CURRENT vs BEST comparison")
     print(f"{'='*60}")
     current = {
-        "bb_period": 20, "bb_std": 2.0, "bb_touch_buffer": 1.01,
-        "rsi_period": 14, "rsi_oversold": 38,
-        "exit_stop_loss_pct": -0.03, "exit_breakeven_threshold_pct": 0.02,
-        "exit_maximize_threshold_pct": 0.03, "exit_trailing_stop_pct": -0.03,
+        "bb_period": 20,
+        "bb_std": 2.0,
+        "bb_touch_buffer": 1.01,
+        "rsi_period": 14,
+        "rsi_oversold": 38,
+        "exit_stop_loss_pct": -0.03,
+        "exit_breakeven_threshold_pct": 0.02,
+        "exit_maximize_threshold_pct": 0.03,
+        "exit_trailing_stop_pct": -0.03,
     }
     current_sharpe = multi_symbol_objective(current, datasets, backtest_config)
     print(f"{'Parameter':<35} {'Current':>10} {'Best':>10}")
@@ -229,7 +244,11 @@ def run_optimization(
     print(f"\n{'='*60}")
     print("TOP 5 TRIALS")
     print(f"{'='*60}")
-    trials_sorted = sorted(study.trials, key=lambda t: t.value if t.value is not None else -999, reverse=True)
+    trials_sorted = sorted(
+        study.trials,
+        key=lambda t: t.value if t.value is not None else -999,
+        reverse=True,
+    )
     for i, t in enumerate(trials_sorted[:5]):
         print(f"  #{i+1}: Sharpe={t.value:.4f} | {t.params}")
 
@@ -239,10 +258,17 @@ def run_optimization(
 def main():
     parser = argparse.ArgumentParser(description="bb_reversion 파라미터 최적화")
     parser.add_argument("--trials", "-n", type=int, default=100, help="Trial count")
-    parser.add_argument("--symbol", "-s", type=str, default=None, help="Single symbol code")
-    parser.add_argument("--tier", "-t", type=str, default=None,
-                        choices=["top", "mid", "bottom", "all"],
-                        help="Stock tier")
+    parser.add_argument(
+        "--symbol", "-s", type=str, default=None, help="Single symbol code"
+    )
+    parser.add_argument(
+        "--tier",
+        "-t",
+        type=str,
+        default=None,
+        choices=["top", "mid", "bottom", "all"],
+        help="Stock tier",
+    )
     args = parser.parse_args()
 
     if args.symbol:

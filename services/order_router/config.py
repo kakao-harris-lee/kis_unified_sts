@@ -1,7 +1,7 @@
 """Phase4ExecutionConfig — wires PR #133/#135 sub-threshold YAML debt.
 
 Closes the carried-forward notes:
-  - PR #132 note: ``FillLogger`` defaults not YAML-wired (now wired via Phase4ExecutionConfig.final_stream_maxlen + ch_batch_size).
+  - PR #132 note: ``FillLogger`` defaults not YAML-wired (now wired via Phase4ExecutionConfig.final_stream_maxlen).
   - PR #133 note: ``DEFAULT_EOD_TIME = dt_time(15, 10)`` and
     ``PassiveMaker.timeout_seconds=30`` not in ``config/execution.yaml``.
   - PR #135 sub-threshold: same.

@@ -3,7 +3,7 @@
 
 The report checks the live stock paper path end-to-end:
 
-1. ClickHouse closed-trade records in ``market.stock_trades``.
+1. RuntimeLedger closed-trade records.
 2. Redis trading-state lists/hashes for status, signals, trades, positions.
 3. Redis stock pipeline inputs used by the orchestrator: trade targets,
    universe, daily indicators, and data freshness.
@@ -59,9 +59,6 @@ class VerificationConfig:
     require_trade_targets: bool
     require_daily_indicators: bool
     skip_live_redis_gates_on_non_trading_day: bool
-    clickhouse_database: str
-    clickhouse_table: str
-    clickhouse_position_table: str
     redis_keys: dict[str, str]
 
 
@@ -138,7 +135,7 @@ class RedisSnapshot:
 
 
 @dataclass
-class ClickHousePositionSnapshot:
+class LedgerPositionSnapshot:
     open_positions_count: int = 0
     open_position_samples: list[str] = field(default_factory=list)
 
@@ -169,7 +166,7 @@ class VerificationReport:
     active_trade_metrics: TradeMetrics
     active_issues: list[GateIssue]
     redis_snapshot: RedisSnapshot
-    clickhouse_position_snapshot: ClickHousePositionSnapshot
+    ledger_position_snapshot: LedgerPositionSnapshot
     candidate_coverage: dict[str, dict[str, Any]] = field(default_factory=dict)
     json_path: str = ""
     markdown_path: str = ""
@@ -255,7 +252,6 @@ def _load_config() -> VerificationConfig:
     raw = ConfigLoader.load(CONFIG_PATH, use_cache=False)
     report = raw.get("report", {})
     targets = raw.get("targets", {})
-    clickhouse = raw.get("clickhouse", {})
     redis_cfg = raw.get("redis", {})
 
     return VerificationConfig(
@@ -300,20 +296,8 @@ def _load_config() -> VerificationConfig:
         skip_live_redis_gates_on_non_trading_day=_as_bool(
             targets.get("skip_live_redis_gates_on_non_trading_day"), True
         ),
-        clickhouse_database=str(clickhouse.get("database", "market")),
-        clickhouse_table=str(clickhouse.get("table", "stock_trades")),
-        clickhouse_position_table=str(
-            clickhouse.get("position_table", "swing_positions")
-        ),
         redis_keys={str(k): str(v) for k, v in redis_cfg.items()},
     )
-
-
-def _validate_identifier(value: str, *, label: str) -> str:
-    cleaned = value.strip()
-    if not cleaned or not cleaned.replace("_", "").isalnum():
-        raise ValueError(f"Invalid {label}: {value!r}")
-    return cleaned
 
 
 def _coerce_datetime(value: Any) -> datetime:
@@ -337,20 +321,11 @@ def _window_for(report_date: date, lookback_days: int) -> tuple[date, date]:
     return start, end
 
 
-def _build_clickhouse_client(database: str):
-    from clickhouse_driver import Client
+def _open_runtime_ledger():
+    from shared.storage import SQLiteRuntimeLedger, StorageConfig
 
-    from shared.db.config import ClickHouseConfig
-
-    cfg = ClickHouseConfig.from_env(database=database)
-    return Client(
-        host=cfg.host,
-        port=cfg.port,
-        user=cfg.user,
-        password=cfg.password,
-        database=cfg.database,
-        connect_timeout=cfg.connect_timeout,
-    )
+    storage_config = StorageConfig.load_or_default()
+    return SQLiteRuntimeLedger(storage_config.runtime_storage.sqlite)
 
 
 def fetch_trade_rows(
@@ -358,92 +333,70 @@ def fetch_trade_rows(
     window_start: date,
     window_end: date,
 ) -> list[TradeRow]:
-    database = _validate_identifier(config.clickhouse_database, label="database")
-    table = _validate_identifier(config.clickhouse_table, label="table")
     start_dt = datetime.combine(window_start, time.min)
     end_dt = datetime.combine(window_end, time.min)
-    client = _build_clickhouse_client(database)
+    ledger = _open_runtime_ledger()
     try:
-        rows = client.execute(
-            f"""
-            SELECT
-                id,
-                code,
-                name,
-                strategy,
-                side,
-                entry_date,
-                entry_price,
-                exit_date,
-                exit_price,
-                quantity,
-                pnl,
-                pnl_pct,
-                hold_seconds,
-                exit_reason
-            FROM {database}.{table}
-            WHERE exit_date >= %(start)s
-              AND exit_date < %(end)s
-            ORDER BY exit_date ASC, id ASC
-            """,
-            {"start": start_dt, "end": end_dt},
+        rows = ledger.query_trades(
+            {
+                "asset_class": "stock",
+                "start": start_dt.isoformat(),
+                "end": end_dt.isoformat(),
+                "limit": 0,
+            }
         )
     finally:
-        client.disconnect()
+        ledger.close()
 
     return [
         TradeRow(
-            id=str(row[0]),
-            code=str(row[1]),
-            name=str(row[2]),
-            strategy=str(row[3]),
-            side=str(row[4]),
-            entry_date=_coerce_datetime(row[5]),
-            entry_price=float(row[6] or 0.0),
-            exit_date=_coerce_datetime(row[7]),
-            exit_price=float(row[8] or 0.0),
-            quantity=int(row[9] or 0),
-            pnl=float(row[10] or 0.0),
-            pnl_pct=float(row[11] or 0.0),
-            hold_seconds=int(row[12] or 0),
-            exit_reason=str(row[13] or ""),
+            id=str(row.get("id") or ""),
+            code=str(row.get("symbol") or row.get("code") or ""),
+            name=str(row.get("name") or ""),
+            strategy=str(row.get("strategy") or ""),
+            side=str(row.get("side") or "long"),
+            entry_date=_coerce_datetime(
+                row.get("entry_time") or row.get("entry_date") or start_dt
+            ),
+            entry_price=float(row.get("entry_price") or 0.0),
+            exit_date=_coerce_datetime(
+                row.get("exit_time") or row.get("exit_date") or end_dt
+            ),
+            exit_price=float(row.get("exit_price") or 0.0),
+            quantity=int(row.get("quantity") or 0),
+            pnl=float(row.get("pnl") or 0.0),
+            pnl_pct=float(row.get("pnl_pct") or 0.0),
+            hold_seconds=int(row.get("hold_seconds") or 0),
+            exit_reason=str(row.get("exit_reason") or ""),
         )
         for row in rows
     ]
 
 
-def fetch_clickhouse_position_snapshot(
+def fetch_ledger_position_snapshot(
     config: VerificationConfig,
-) -> ClickHousePositionSnapshot:
-    """Fetch open swing-position state from ClickHouse.
+) -> LedgerPositionSnapshot:
+    """Fetch open swing-position state from RuntimeLedger.
 
     Redis is the runtime source of truth for current paper positions, but stale
-    open rows in ``swing_positions`` can pollute recovery/debug paths. Keep this
+    open rows in durable storage can pollute recovery/debug paths. Keep this
     as a separate operational snapshot instead of mixing it into trade metrics.
     """
-    database = _validate_identifier(config.clickhouse_database, label="database")
-    table = _validate_identifier(config.clickhouse_position_table, label="table")
-    client = _build_clickhouse_client(database)
+    _ = config
+    ledger = _open_runtime_ledger()
     try:
-        count_rows = client.execute(
-            f"SELECT count() FROM {database}.{table} FINAL WHERE is_open = 1"
-        )
-        sample_rows = client.execute(f"""
-            SELECT code, strategy, entry_date
-            FROM {database}.{table} FINAL
-            WHERE is_open = 1
-            ORDER BY entry_date ASC, code ASC
-            LIMIT 10
-            """)
+        rows = ledger.load_open_positions(asset_class="stock")
     finally:
-        client.disconnect()
+        ledger.close()
 
-    count = int(count_rows[0][0] or 0) if count_rows else 0
     samples = []
-    for code, strategy, entry_date in sample_rows:
+    for row in rows[:10]:
+        code = str(row.get("symbol") or row.get("code") or "")
+        strategy = str(row.get("strategy") or "")
+        entry_date = row.get("entry_time") or row.get("entry_date") or datetime.now(UTC)
         samples.append(f"{code}:{strategy}:{_coerce_datetime(entry_date).isoformat()}")
-    return ClickHousePositionSnapshot(
-        open_positions_count=count,
+    return LedgerPositionSnapshot(
+        open_positions_count=len(rows),
         open_position_samples=samples,
     )
 
@@ -1005,7 +958,7 @@ def evaluate_report(
     config: VerificationConfig,
     metrics: TradeMetrics,
     redis_snapshot: RedisSnapshot,
-    clickhouse_position_snapshot: ClickHousePositionSnapshot | None = None,
+    ledger_position_snapshot: LedgerPositionSnapshot | None = None,
     source_errors: list[str] | None = None,
 ) -> list[GateIssue]:
     issues: list[GateIssue] = []
@@ -1035,20 +988,20 @@ def evaluate_report(
 
     if (
         live_redis_gates_enabled
-        and clickhouse_position_snapshot is not None
-        and clickhouse_position_snapshot.open_positions_count
+        and ledger_position_snapshot is not None
+        and ledger_position_snapshot.open_positions_count
         > redis_snapshot.open_positions_count
     ):
-        samples = ",".join(clickhouse_position_snapshot.open_position_samples[:3])
+        samples = ",".join(ledger_position_snapshot.open_position_samples[:3])
         add(
             "FAIL",
-            "clickhouse_open_positions_exceed_redis",
+            "ledger_open_positions_exceed_redis",
             (
-                f"clickhouse={clickhouse_position_snapshot.open_positions_count} "
+                f"ledger={ledger_position_snapshot.open_positions_count} "
                 f"redis={redis_snapshot.open_positions_count} samples={samples}"
             ),
-            "ClickHouse open swing positions <= Redis runtime open positions",
-            "ClickHouse has open swing-position rows that are absent from the runtime Redis position state.",
+            "RuntimeLedger open positions <= Redis runtime open positions",
+            "RuntimeLedger has open position rows that are absent from the runtime Redis position state.",
         )
 
     if (
@@ -1473,10 +1426,10 @@ def _render_markdown(report: VerificationReport, config: VerificationConfig) -> 
         f"- Daily indicators: `{r.daily_indicators_exists}` count=`{r.daily_indicators_count}`",
         f"- Daily strategy candidates: total=`{r.daily_strategy_candidate_count}` counts=`{r.daily_strategy_counts}`",
         "",
-        "## ClickHouse Position State",
+        "## RuntimeLedger Position State",
         "",
-        f"- Open swing positions: `{report.clickhouse_position_snapshot.open_positions_count}`",
-        f"- Open swing samples: `{report.clickhouse_position_snapshot.open_position_samples}`",
+        f"- Open swing positions: `{report.ledger_position_snapshot.open_positions_count}`",
+        f"- Open swing samples: `{report.ledger_position_snapshot.open_position_samples}`",
         "",
     ]
     if report.source_errors:
@@ -1565,7 +1518,7 @@ def _format_notification(report: VerificationReport) -> str:
         f"monthly_expected: {code(f'{m.monthly_expected_return_pct:.2f}%')}, win_rate: {code(f'{m.win_rate_pct:.2f}%')}, mdd: {code(f'{m.max_drawdown_pct:.2f}%')}",
         f"active_trades: {code(active.trade_count)}, active_monthly_expected: {code(f'{active.monthly_expected_return_pct:.2f}%')}, active_win_rate: {code(f'{active.win_rate_pct:.2f}%')}",
         f"active_daily_candidates: {code(report.active_daily_candidate_count)}",
-        f"ch_open_positions: {code(report.clickhouse_position_snapshot.open_positions_count)}",
+        f"ledger_open_positions: {code(report.ledger_position_snapshot.open_positions_count)}",
     ]
     verdict_issues = _issues_for_verdict(report)
     if verdict_issues:
@@ -1612,7 +1565,7 @@ def build_report(
     report_date: date,
     rows: list[TradeRow],
     redis_snapshot: RedisSnapshot,
-    clickhouse_position_snapshot: ClickHousePositionSnapshot | None = None,
+    ledger_position_snapshot: LedgerPositionSnapshot | None = None,
     source_errors: list[str] | None = None,
     active_strategy_names: list[str] | None = None,
     active_daily_strategy_names: list[str] | None = None,
@@ -1626,7 +1579,7 @@ def build_report(
         monthly_trading_days=config.monthly_trading_days,
         reentry_churn_seconds=config.reentry_churn_seconds,
     )
-    clickhouse_snapshot = clickhouse_position_snapshot or ClickHousePositionSnapshot()
+    ledger_snapshot = ledger_position_snapshot or LedgerPositionSnapshot()
     active_names = sorted(set(active_strategy_names or []))
     active_since = {
         name: since
@@ -1646,7 +1599,7 @@ def build_report(
         config,
         metrics,
         redis_snapshot,
-        clickhouse_position_snapshot=clickhouse_snapshot,
+        ledger_position_snapshot=ledger_snapshot,
         source_errors=errors,
     )
     active_daily_names = sorted(
@@ -1708,7 +1661,7 @@ def build_report(
         active_trade_metrics=active_metrics,
         active_issues=active_issues,
         redis_snapshot=redis_snapshot,
-        clickhouse_position_snapshot=clickhouse_snapshot,
+        ledger_position_snapshot=ledger_snapshot,
         candidate_coverage=redis_snapshot.candidate_coverage,
     )
 
@@ -1748,8 +1701,8 @@ def empty_redis_snapshot(report_date: date) -> RedisSnapshot:
     )
 
 
-def empty_clickhouse_position_snapshot() -> ClickHousePositionSnapshot:
-    return ClickHousePositionSnapshot()
+def empty_ledger_position_snapshot() -> LedgerPositionSnapshot:
+    return LedgerPositionSnapshot()
 
 
 def _source_error(code: str, exc: Exception) -> str:
@@ -1798,13 +1751,13 @@ def main() -> int:
             rows = fetch_trade_rows(config, window_start, window_end)
         except Exception as exc:  # noqa: BLE001
             rows = []
-            source_errors.append(_source_error("clickhouse_query_failed", exc))
+            source_errors.append(_source_error("ledger_query_failed", exc))
         try:
-            clickhouse_position_snapshot = fetch_clickhouse_position_snapshot(config)
+            ledger_position_snapshot = fetch_ledger_position_snapshot(config)
         except Exception as exc:  # noqa: BLE001
-            clickhouse_position_snapshot = empty_clickhouse_position_snapshot()
+            ledger_position_snapshot = empty_ledger_position_snapshot()
             source_errors.append(
-                _source_error("clickhouse_open_positions_query_failed", exc)
+                _source_error("ledger_open_positions_query_failed", exc)
             )
         try:
             redis_snapshot = fetch_redis_snapshot(config, report_date)
@@ -1816,7 +1769,7 @@ def main() -> int:
             report_date=report_date,
             rows=rows,
             redis_snapshot=redis_snapshot,
-            clickhouse_position_snapshot=clickhouse_position_snapshot,
+            ledger_position_snapshot=ledger_position_snapshot,
             source_errors=source_errors,
             active_strategy_names=active_strategy_names,
             active_daily_strategy_names=active_daily_strategy_names,

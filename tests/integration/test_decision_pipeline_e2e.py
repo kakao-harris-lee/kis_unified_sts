@@ -1,7 +1,7 @@
 """End-to-end decision pipeline integration test.
 
 MarketContextReplay → BacktestDecisionHarness → SignalsAllWriter →
-`kospi.signals_all` INSERT (mocked via AsyncMock).
+compatibility no-op archive writer.
 
 Phase 3 is backtest-only: no order placement, `executed` is always 0.
 """
@@ -9,8 +9,6 @@ Phase 3 is backtest-only: no order placement, `executed` is always 0.
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock
-
 import pytest
 
 from shared.backtest.market_context_replay import MarketContextReplay
@@ -45,31 +43,26 @@ def _signal(tag: str = "test") -> Signal:
 
 
 @pytest.mark.asyncio
-async def test_enqueue_and_flush_hits_ch_execute_with_expected_sql():
-    ch = AsyncMock()
-    writer = SignalsAllWriter(ch_client=ch, batch_size=2)
+async def test_enqueue_and_flush_accepts_signals():
+    writer = SignalsAllWriter(batch_size=2)
     await writer.enqueue(
         _signal("a"),
         LayerResult(
             passed=True, skip_reason=None, size_multiplier=1.0, filter_outcomes=[]
         ),
     )
-    ch.execute.assert_not_awaited()
     await writer.enqueue(
         _signal("b"),
         LayerResult(
             passed=True, skip_reason=None, size_multiplier=1.0, filter_outcomes=[]
         ),
     )
-    ch.execute.assert_awaited_once()
-    sql = ch.execute.await_args.args[0]
-    assert "INSERT INTO kospi.signals_all" in sql
+    await writer.flush()
 
 
 @pytest.mark.asyncio
 async def test_skip_reason_recorded_for_rejected_signal():
-    ch = AsyncMock()
-    writer = SignalsAllWriter(ch_client=ch, batch_size=1)
+    writer = SignalsAllWriter(batch_size=1)
     rejected = LayerResult(
         passed=False,
         skip_reason="daily_mdd_exceeded",
@@ -77,44 +70,6 @@ async def test_skip_reason_recorded_for_rejected_signal():
         filter_outcomes=[],
     )
     await writer.enqueue(_signal(), rejected, executed=False)
-    ch.execute.assert_awaited_once()
-    rows = ch.execute.await_args.args[1]
-    assert len(rows) == 1
-    row = rows[0]
-    # column order: signal_id, generated_at, setup_type, direction, entry_price,
-    # stop_loss, take_profit, confidence, executed, skip_reason, reason_tags
-    assert row[8] == 0  # executed
-    assert row[9] == "daily_mdd_exceeded"  # skip_reason
-
-
-@pytest.mark.asyncio
-async def test_generated_at_stripped_of_tzinfo():
-    ch = AsyncMock()
-    writer = SignalsAllWriter(ch_client=ch, batch_size=1)
-    await writer.enqueue(
-        _signal(),
-        LayerResult(
-            passed=True, skip_reason=None, size_multiplier=1.0, filter_outcomes=[]
-        ),
-    )
-    ch.execute.assert_awaited_once()
-    generated_at = ch.execute.await_args.args[1][0][1]
-    assert isinstance(generated_at, datetime)
-    assert generated_at.tzinfo is None, "aiochclient rejects tz-aware datetimes"
-
-
-@pytest.mark.asyncio
-async def test_flush_reraises_on_ch_failure():
-    ch = AsyncMock()
-    ch.execute.side_effect = RuntimeError("clickhouse down")
-    writer = SignalsAllWriter(ch_client=ch, batch_size=1)
-    with pytest.raises(RuntimeError, match="clickhouse down"):
-        await writer.enqueue(
-            _signal(),
-            LayerResult(
-                passed=True, skip_reason=None, size_multiplier=1.0, filter_outcomes=[]
-            ),
-        )
 
 
 @pytest.mark.asyncio
@@ -122,8 +77,7 @@ async def test_full_pipeline_writes_candidates_to_signals_all():
     """End-to-end: replay → Setup → filter → SignalsAllWriter.
 
     Runs the same iteration the harness uses (Setup.check per ctx) but also
-    enqueues each candidate+layer_result pair to the writer, verifying that
-    rows land in ``kospi.signals_all`` via ``ch.execute``.
+    enqueues each candidate+layer_result pair to the writer.
     """
     df = _build_gap_down_df(n_session2_bars=90)
     replay = MarketContextReplay(
@@ -138,8 +92,7 @@ async def test_full_pipeline_writes_candidates_to_signals_all():
     layer = RiskFilterLayer(filters=[])  # no filters => pass-through
     state = RiskStateSnapshot()
 
-    ch = AsyncMock()
-    writer = SignalsAllWriter(ch_client=ch, batch_size=10)
+    writer = SignalsAllWriter(batch_size=10)
 
     candidates = 0
     for ctx in replay.iter_contexts():
@@ -152,6 +105,3 @@ async def test_full_pipeline_writes_candidates_to_signals_all():
     await writer.flush()
 
     assert candidates >= 1
-    assert ch.execute.await_count >= 1
-    total_rows = sum(len(call.args[1]) for call in ch.execute.await_args_list)
-    assert total_rows == candidates

@@ -3,9 +3,9 @@
 Responsibilities:
   - Subscribe to Redis Streams:
       - `market:ticks` (TickData-like payloads)
-      - `system:universe` (list of candidate symbols)
+  - `system:universe` (list of candidate symbols)
   - When new symbols appear in universe:
-      - Warm-up historical minute candles from ClickHouse
+      - Warm-up historical minute candles from Parquet market data
   - Merge incoming ticks into per-symbol OHLCV minute bars
   - Maintain per-symbol Polars DataFrames for strategy engines
 """
@@ -21,8 +21,7 @@ from datetime import datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from shared.config.loader import ConfigLoader
-from shared.db.config import ClickHouseConfig
+from shared.storage import MarketDataStore, StorageConfig, create_market_data_store
 from shared.streaming.client import RedisClient
 from shared.streaming.consumer import MultiStreamConsumer
 from shared.streaming.message import StreamMessage
@@ -63,10 +62,8 @@ class StateManagerConfig:
         os.environ.get("STATE_CLEANUP_REMOVED", "true").lower() == "true"
     )
 
-    # ConfigLoader path (relative to config dir)
-    clickhouse_config_path: str = os.environ.get(
-        "CLICKHOUSE_CONFIG_PATH", "clickhouse.yaml"
-    )
+    # StorageConfig path (relative to config dir)
+    storage_config_path: str = os.environ.get("STORAGE_CONFIG_PATH", "storage.yaml")
 
 
 class StateManager(MultiStreamConsumer):
@@ -102,7 +99,7 @@ class StateManager(MultiStreamConsumer):
         self._frames: dict[str, Any] = {}
         self._builders: dict[str, MinuteBar] = {}
 
-        self._clickhouse_config: ClickHouseConfig | None = None
+        self._market_data_store: MarketDataStore | None = None
 
         # Bootstrap from latest universe snapshot if present (fast start)
         self._bootstrap_universe_from_latest_key()
@@ -256,21 +253,16 @@ class StateManager(MultiStreamConsumer):
             )
 
     # ---------------------------------------------------------------------
-    # ClickHouse warm-up
+    # Parquet warm-up
     # ---------------------------------------------------------------------
-    def _get_clickhouse_config(self) -> ClickHouseConfig:
-        if self._clickhouse_config is not None:
-            return self._clickhouse_config
+    def _get_market_data_store(self) -> MarketDataStore:
+        if self._market_data_store is not None:
+            return self._market_data_store
 
-        raw = ConfigLoader.load(self.config.clickhouse_config_path)
-        if isinstance(raw, dict) and isinstance(raw.get("clickhouse"), dict):
-            data = raw["clickhouse"]
-        else:
-            data = raw if isinstance(raw, dict) else {}
-
-        cfg = ClickHouseConfig(**data)
-        self._clickhouse_config = cfg
-        return cfg
+        storage_config = StorageConfig.load_or_default(self.config.storage_config_path)
+        store = create_market_data_store(storage_config, asset_class="stock")
+        self._market_data_store = store
+        return store
 
     def _warmup_codes(self, codes: list[str]) -> None:
         for code in codes:
@@ -289,30 +281,30 @@ class StateManager(MultiStreamConsumer):
         now = datetime.now(self._tz).replace(tzinfo=None)
         start = now - timedelta(minutes=max(1, int(self.config.warmup_minutes)))
 
-        cfg = self._get_clickhouse_config()
-
         try:
-            # Import lazily to avoid import-time dependency failures in minimal envs.
-            from shared.storage import create_clickhouse_client_wrapper
-
-            client = create_clickhouse_client_wrapper(cfg)
-            candles = client.get_minute_candles(code, start=start, end=now)
+            bars = self._get_market_data_store().get_minute_bars(
+                code, start=start, end=now, limit=self.config.max_bars
+            )
         except Exception as e:
-            logger.debug(f"ClickHouse warm-up unavailable: {e}")
-            candles = []
+            logger.debug(f"Parquet market-data warm-up unavailable: {e}")
+            bars = []
 
         rows = [
             {
-                "code": c.code,
-                "datetime": c.datetime,
-                "open": float(c.open),
-                "high": float(c.high),
-                "low": float(c.low),
-                "close": float(c.close),
-                "volume": int(c.volume),
-                "value": int(c.value),
+                "code": str(row["code"]),
+                "datetime": row["datetime"],
+                "open": float(row["open"]),
+                "high": float(row["high"]),
+                "low": float(row["low"]),
+                "close": float(row["close"]),
+                "volume": int(row["volume"]),
+                "value": int(row.get("value") or row["close"] * row["volume"]),
             }
-            for c in candles
+            for row in (
+                bars.to_dict("records")
+                if hasattr(bars, "to_dict") and not getattr(bars, "empty", True)
+                else []
+            )
         ]
 
         if rows:

@@ -4,13 +4,12 @@ This test validates the complete end-to-end flow of ATS order routing:
 1. Configuration loading with ATS enabled
 2. VenueRouter selection logic
 3. OrderExecutor venue-specific routing
-4. ClickHouse persistence with execution_venue
+4. RuntimeLedger persistence with execution_venue
 5. Paper trading integration with venue logging
 """
+
 import pytest
 from datetime import datetime
-from unittest.mock import Mock, patch, AsyncMock
-import asyncio
 
 
 def _build_paper_execution_config():
@@ -91,9 +90,7 @@ def test_venue_router_selection():
     auto_band_time = datetime(2026, 5, 8, 10, 0, 0)
 
     # Test case 1: No market data (should use default venue)
-    decision = router.select_venue(
-        order, market_data=None, current_time=auto_band_time
-    )
+    decision = router.select_venue(order, market_data=None, current_time=auto_band_time)
     # Without market data, router uses default venue preference
     assert decision.venue in [ExecutionVenue.KRX, ExecutionVenue.ATS]
 
@@ -126,7 +123,7 @@ def test_venue_router_selection():
         ats_bid=69950.0,
         ats_ask=70050.0,
         ats_bid_qty=5.0,  # Very low depth
-        ats_ask_qty=5.0,   # Very low depth
+        ats_ask_qty=5.0,  # Very low depth
     )
     decision = router.select_venue(
         order, market_data=market_data_low_liquidity, current_time=auto_band_time
@@ -142,6 +139,7 @@ async def test_order_executor_venue_routing():
     """Test OrderExecutor routes to correct venue."""
     from shared.execution.executor import OrderExecutor
     from shared.execution.models import OrderRequest, OrderSide, ExecutionVenue
+
     exec_config = _build_paper_execution_config()
 
     # Create executor
@@ -176,25 +174,6 @@ async def test_order_executor_venue_routing():
     ats_response = await executor.execute_order(ats_order)
     assert ats_response.success
     assert ats_response.venue == ExecutionVenue.ATS
-
-
-@pytest.mark.integration
-def test_clickhouse_execution_venue_schema():
-    """Test ClickHouse schemas include execution_venue column."""
-    try:
-        from shared.db.client import SCHEMAS
-    except ImportError:
-        pytest.skip("clickhouse_driver not installed")
-
-    # Check rl_trades schema
-    rl_trades_schema = SCHEMAS.get("rl_trades", "")
-    assert "execution_venue" in rl_trades_schema, "rl_trades should have execution_venue column"
-    assert "LowCardinality(String)" in rl_trades_schema or "String" in rl_trades_schema
-
-    # Check swing_positions schema
-    swing_positions_schema = SCHEMAS.get("swing_positions", "")
-    assert "execution_venue" in swing_positions_schema, "swing_positions should have execution_venue column"
-    assert "String" in swing_positions_schema
 
 
 @pytest.mark.integration
@@ -234,9 +213,6 @@ def test_backtest_trade_model_venue():
 async def test_position_tracker_venue_logging():
     """Test PositionTracker logs execution_venue correctly."""
     from services.trading.position_tracker import PositionTracker, PositionTrackerConfig
-    from shared.models.position import Position
-    from shared.execution.models import ExecutionVenue
-    from datetime import datetime
 
     # Create position tracker with config
     config = PositionTrackerConfig(max_positions=10)
@@ -275,7 +251,6 @@ async def test_position_tracker_venue_logging():
 @pytest.mark.asyncio
 async def test_orchestrator_venue_integration():
     """Test TradingOrchestrator integrates VenueRouter correctly."""
-    from services.trading.orchestrator import TradingOrchestrator
     from shared.execution.venue_router import VenueRouter
     from shared.execution.config import ATSRoutingConfig
     from shared.config.loader import ConfigLoader
@@ -368,7 +343,6 @@ async def test_e2e_paper_trading_with_ats():
     from shared.execution.venue_router import VenueRouter
     from shared.config.loader import ConfigLoader
     from services.trading.position_tracker import PositionTracker, PositionTrackerConfig
-    from datetime import datetime
 
     # Load configs
     config_dict = ConfigLoader.load("execution.yaml")
@@ -433,7 +407,7 @@ async def test_e2e_paper_trading_with_ats():
     closed = tracker._closed_positions[0]
     assert closed.execution_venue == response.venue.value
 
-    print(f"✅ E2E Test Passed:")
+    print("✅ E2E Test Passed:")
     print(f"  - Venue selected: {routing_decision.venue.value}")
     print(f"  - Order executed: {response.success}")
     print(f"  - Venue logged: {closed.execution_venue}")

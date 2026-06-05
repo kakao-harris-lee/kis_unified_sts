@@ -188,7 +188,6 @@ _KILL_SWITCH_CONDITIONS = (
     "weekly_mdd_exceeded",
     "consecutive_losses",
     "kis_error_rate_high",
-    "clickhouse_insert_fail_rate_high",
     "news_pipeline_lag",
 )
 
@@ -325,53 +324,12 @@ def _today_pnl_from_runtime_ledger(asset: str) -> tuple[int, bool]:
         return 0, False
 
 
-def _today_pnl_from_clickhouse(asset: str) -> int:
-    try:
-        from shared.storage import create_sync_clickhouse_client
-
-        multiplier = _futures_multiplier_krw_per_point()
-        client = create_sync_clickhouse_client()
-        try:
-            queries: list[tuple[str, dict]] = []
-            if asset in ("futures", "all"):
-                queries.append(
-                    (
-                        f"SELECT sum(pnl * {multiplier}) FROM kospi.rl_trades "
-                        "WHERE asset_class = 'futures' "
-                        "AND toDate(exit_date, 'Asia/Seoul') = toDate(now(), 'Asia/Seoul')",
-                        {},
-                    )
-                )
-            if asset in ("stock", "all"):
-                queries.append(
-                    (
-                        "SELECT sum(pnl) FROM market.stock_trades "
-                        "WHERE toDate(exit_date, 'Asia/Seoul') = toDate(now(), 'Asia/Seoul')",
-                        {},
-                    )
-                )
-
-            total = 0
-            for query, params in queries:
-                result = client.execute(query, params)
-                total += int(result[0][0] or 0) if result else 0
-            return total
-        finally:
-            client.disconnect()
-    except Exception:  # noqa: BLE001
-        return 0
-
-
 def _today_pnl_krw(asset: str) -> int:
-    """Today's realized PnL in KRW for the selected asset view.
-
-    SQLite RuntimeLedger is the primary runtime source. ClickHouse is a
-    best-effort fallback for older deployments without a runtime ledger file.
-    """
+    """Today's realized PnL in KRW for the selected asset view."""
     pnl, ledger_available = _today_pnl_from_runtime_ledger(asset)
     if ledger_available:
         return pnl
-    return _today_pnl_from_clickhouse(asset)
+    return 0
 
 
 @router.get("/summary")

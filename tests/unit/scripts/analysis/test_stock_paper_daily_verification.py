@@ -36,9 +36,6 @@ def _config(**overrides):
         "require_trade_targets": True,
         "require_daily_indicators": True,
         "skip_live_redis_gates_on_non_trading_day": True,
-        "clickhouse_database": "market",
-        "clickhouse_table": "stock_trades",
-        "clickhouse_position_table": "swing_positions",
         "redis_keys": {},
     }
     base.update(overrides)
@@ -77,13 +74,13 @@ def _redis(**overrides):
     return mod.RedisSnapshot(**base)
 
 
-def _ch(**overrides):
+def _ledger(**overrides):
     base = {
         "open_positions_count": 0,
         "open_position_samples": [],
     }
     base.update(overrides)
-    return mod.ClickHousePositionSnapshot(**base)
+    return mod.LedgerPositionSnapshot(**base)
 
 
 def _trade(
@@ -163,7 +160,7 @@ def test_evaluate_report_flags_objective_failures():
     assert "equity_curve_not_upward" in codes
 
 
-def test_evaluate_report_flags_clickhouse_position_mismatch():
+def test_evaluate_report_flags_ledger_position_mismatch():
     cfg = _config()
     metrics = mod.TradeMetrics(
         trade_count=5,
@@ -180,20 +177,18 @@ def test_evaluate_report_flags_clickhouse_position_mismatch():
         cfg,
         metrics,
         _redis(open_positions_count=0),
-        clickhouse_position_snapshot=_ch(
+        ledger_position_snapshot=_ledger(
             open_positions_count=1,
             open_position_samples=["108490:external:2026-05-13T12:34:44"],
         ),
     )
 
-    assert [issue.code for issue in issues] == [
-        "clickhouse_open_positions_exceed_redis"
-    ]
-    assert "clickhouse=1 redis=0" in issues[0].observed
+    assert [issue.code for issue in issues] == ["ledger_open_positions_exceed_redis"]
+    assert "ledger=1 redis=0" in issues[0].observed
     assert "108490:external" in issues[0].observed
 
 
-def test_non_trading_day_skips_clickhouse_redis_position_mismatch():
+def test_non_trading_day_skips_ledger_redis_position_mismatch():
     cfg = _config()
     metrics = mod.TradeMetrics(
         trade_count=5,
@@ -210,7 +205,7 @@ def test_non_trading_day_skips_clickhouse_redis_position_mismatch():
         cfg,
         metrics,
         _redis(report_is_trading_day=False, open_positions_count=0),
-        clickhouse_position_snapshot=_ch(
+        ledger_position_snapshot=_ledger(
             open_positions_count=3,
             open_position_samples=[
                 "001740:external:2026-05-22T11:42:52",
@@ -751,7 +746,7 @@ def test_build_report_filters_active_strategy_metrics_after_activation():
     assert report.verdict == "PASS"
 
 
-def test_build_report_includes_clickhouse_position_snapshot_in_verdict():
+def test_build_report_includes_ledger_position_snapshot_in_verdict():
     cfg = _config(min_closed_trades_for_metric_gate=5)
     rows = [
         _trade(1, 350_000),
@@ -766,17 +761,16 @@ def test_build_report_includes_clickhouse_position_snapshot_in_verdict():
         report_date=date(2026, 5, 16),
         rows=rows,
         redis_snapshot=_redis(open_positions_count=0),
-        clickhouse_position_snapshot=_ch(
+        ledger_position_snapshot=_ledger(
             open_positions_count=1,
             open_position_samples=["108490:external:2026-05-13T12:34:44"],
         ),
     )
 
     assert report.verdict == "FAIL"
-    assert report.clickhouse_position_snapshot.open_positions_count == 1
+    assert report.ledger_position_snapshot.open_positions_count == 1
     assert any(
-        issue.code == "clickhouse_open_positions_exceed_redis"
-        for issue in report.issues
+        issue.code == "ledger_open_positions_exceed_redis" for issue in report.issues
     )
 
 
@@ -816,17 +810,18 @@ def test_load_repo_env_uses_repo_dotenv_without_overriding_existing(
     tmp_path, monkeypatch
 ):
     monkeypatch.setattr(mod, "_REPO_ROOT", tmp_path)
-    monkeypatch.delenv("CLICKHOUSE_PASSWORD", raising=False)
-    monkeypatch.setenv("CLICKHOUSE_USER", "already-set")
+    monkeypatch.delenv("RUNTIME_STORAGE_SQLITE_PATH", raising=False)
+    monkeypatch.setenv("RUNTIME_STORAGE_BACKEND", "already-set")
     (tmp_path / ".env").write_text(
-        "CLICKHOUSE_PASSWORD='secret-from-file'\nCLICKHOUSE_USER=file-user\n",
+        "RUNTIME_STORAGE_SQLITE_PATH='data/runtime/paper/runtime.db'\n"
+        "RUNTIME_STORAGE_BACKEND=file-backend\n",
         encoding="utf-8",
     )
 
     mod._load_repo_env()
 
-    assert os.environ["CLICKHOUSE_PASSWORD"] == "secret-from-file"
-    assert os.environ["CLICKHOUSE_USER"] == "already-set"
+    assert os.environ["RUNTIME_STORAGE_SQLITE_PATH"] == "data/runtime/paper/runtime.db"
+    assert os.environ["RUNTIME_STORAGE_BACKEND"] == "already-set"
 
 
 def test_load_config_default_capital_matches_stock_runtime(monkeypatch):

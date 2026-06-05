@@ -6,7 +6,7 @@
 
 **Architecture:** `NewsScorerDaemon` reads from `stream:news.raw` as consumer-group `news_scorer-v1`. For each message, it resolves a `Scorer` implementation (LLM by default, fallback on budget/timeout/JSON error), passes `NewsItem → ScoredItem`, and writes to Redis stream + ClickHouse batch. Budget guard (daily USD cap) intercepts before LLM calls; JSON schema validator ensures output sanity. Prompt version is embedded in `scorer_version` so historical audits stay stable when the prompt evolves.
 
-**Tech Stack:** Python 3.11+, asyncio, `redis.asyncio` (consumer-group: `XREADGROUP`/`XACK`/`XPENDING`), `openai>=1.0` (async client, JSON mode), `aiochclient`, `pydantic v2`, `pytest` + `pytest-asyncio` + `fakeredis` + `aioresponses`. Reuses `shared/news/base.py::NewsItem` and `shared/db/client.py::AsyncClickHouseClient` from Phase 1.
+**Tech Stack:** Python 3.11+, asyncio, `redis.asyncio` (consumer-group: `XREADGROUP`/`XACK`/`XPENDING`), `openai>=1.0` (async client, JSON mode), `pydantic v2`, `pytest` + `pytest-asyncio` + `fakeredis` + `aioresponses`. Reuses `shared/news/base.py::NewsItem` from Phase 1.
 
 **Parent spec:** `docs/plans/2026-04-20-futures-paradigm-phase2-scoring.md`
 **Depends on:** `feat/futures-paradigm-phase1` merged to main (Phase 1 48h gate passed).

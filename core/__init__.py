@@ -2,7 +2,7 @@
 
 This package contains the stock "real-time" pipeline building blocks:
 - `core.state_manager`: subscribes to `market:ticks` + `system:universe`,
-  warms up from ClickHouse, and maintains per-symbol Polars DataFrames.
+  warms up from Parquet market data, and maintains per-symbol Polars DataFrames.
 - `core.strategy_engine`: evaluates strategy logic (e.g., V35) using Polars
   vector operations.
 """

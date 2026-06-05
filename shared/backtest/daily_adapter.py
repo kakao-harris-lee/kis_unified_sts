@@ -579,71 +579,33 @@ class DailyBacktestAdapter:
         return SignalType.HOLD
 
 
-def load_stock_daily_from_clickhouse(
+def load_stock_daily_from_parquet(
     code: str,
     start_date=None,
     end_date=None,
 ) -> pd.DataFrame:
-    """Load stock daily data from ClickHouse market.daily_candles.
+    """Load stock daily data from the configured Parquet market-data store.
 
     Returns DataFrame with columns: code, datetime, open, high, low, close, volume
     Compatible with BacktestEngine (uses 'datetime' column name).
     """
-    import os
-
-    import clickhouse_connect
-
     from shared.collector.historical.daily_quality import (
         clean_daily_candle_frame,
         load_daily_quality_config,
     )
-    from shared.config.tls import get_clickhouse_tls_params
+    from shared.storage import StorageConfig, load_market_bars_for_backtest
 
-    tls_params = get_clickhouse_tls_params()
-
-    client = clickhouse_connect.get_client(
-        host=os.getenv("CLICKHOUSE_HOST", "localhost"),
-        port=int(os.getenv("CLICKHOUSE_PORT", "8123")),
-        username=os.getenv("CLICKHOUSE_USER", "default"),
-        password=os.getenv("CLICKHOUSE_PASSWORD", ""),
-        **tls_params,
+    df = load_market_bars_for_backtest(
+        symbol=code,
+        asset_class="stock",
+        timeframe="daily",
+        start=start_date,
+        end=end_date,
+        config=StorageConfig.load_or_default(),
     )
+    if df.empty:
+        raise ValueError(f"No daily data found for {code} in Parquet market data")
 
-    # Build parameterized query to prevent SQL injection
-    conditions = ["code = {code:String}"]
-    parameters = {"code": code}
-
-    if start_date:
-        conditions.append("date >= {start:Date}")
-        parameters["start"] = start_date
-    if end_date:
-        conditions.append("date <= {end:Date}")
-        parameters["end"] = end_date
-
-    where = " AND ".join(conditions)
-    query = f"""
-        SELECT
-            code,
-            date,
-            argMax(open, created_at) AS open,
-            argMax(high, created_at) AS high,
-            argMax(low, created_at) AS low,
-            argMax(close, created_at) AS close,
-            argMax(volume, created_at) AS volume
-        FROM market.daily_candles
-        WHERE {where}
-        GROUP BY code, date
-        ORDER BY date ASC
-    """
-
-    result = client.query(query, parameters=parameters)
-    if not result.result_rows:
-        raise ValueError(f"No daily data found for {code}")
-
-    df = pd.DataFrame(
-        result.result_rows,
-        columns=["code", "datetime", "open", "high", "low", "close", "volume"],
-    )
     df = df.rename(columns={"datetime": "date"})
     df = clean_daily_candle_frame(
         df,
@@ -656,3 +618,6 @@ def load_stock_daily_from_clickhouse(
 
     logger.info(f"Loaded {len(df)} daily bars for {code}")
     return df
+
+
+load_stock_daily_from_clickhouse = load_stock_daily_from_parquet

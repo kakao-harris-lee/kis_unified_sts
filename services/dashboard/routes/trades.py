@@ -1,11 +1,10 @@
 """Trades endpoints."""
 
-import asyncio
 import os
 from datetime import UTC, datetime
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
 from services.dashboard.routes.trading import _normalize_asset_class, _target_assets
@@ -325,22 +324,6 @@ async def get_trades_by_strategy():
     return results
 
 
-# ---------------------------------------------------------------------------
-# ClickHouse DB endpoints
-# ---------------------------------------------------------------------------
-
-
-def _query_ch(sql: str, params: dict | None = None) -> tuple[list, list]:
-    """Execute a ClickHouse query and return (rows, column_types)."""
-    from shared.storage import create_sync_clickhouse_client
-
-    client = create_sync_clickhouse_client()
-    try:
-        return client.execute(sql, params or {}, with_column_types=True)
-    finally:
-        client.disconnect()
-
-
 def _empty_db_stats() -> dict[str, float]:
     return {
         "total_trades": 0,
@@ -438,40 +421,12 @@ def _load_runtime_ledger_fills(
         ledger.close()
 
 
-def _build_closed_statistics_sql(
-    asset_class: str, strategy: str | None
-) -> tuple[str, dict]:
-    """SELECT for aggregate stats from one asset's trades table."""
-    db, table, has_ac = _TRADES_SOURCE[asset_class]
-    where = []
-    params: dict = {}
-    if has_ac:
-        where.append("asset_class = %(asset_class)s")
-        params["asset_class"] = asset_class
-    if strategy:
-        where.append("strategy = %(strategy)s")
-        params["strategy"] = strategy
-    where_sql = f" WHERE {' AND '.join(where)}" if where else ""
-    sql = (
-        f"SELECT count() as total_trades, "
-        f"countIf(pnl > 0) as winning_trades, "
-        f"countIf(pnl <= 0) as losing_trades, "
-        f"if(count() > 0, round(countIf(pnl > 0) / count() * 100, 2), 0) as win_rate, "
-        f"ifNull(sum(pnl), 0) as total_pnl, "
-        f"if(count() > 0, round(avg(pnl), 2), 0) as avg_pnl, "
-        f"ifNull(max(pnl), 0) as max_win, "
-        f"ifNull(min(pnl), 0) as max_loss "
-        f"FROM {db}.{table}{where_sql}"
-    )
-    return sql, params
-
-
 @router.get("/closed/statistics")
 async def get_db_closed_statistics(
     asset_class: str = Query("futures"),
     strategy: str | None = Query(None),
 ):
-    """Aggregate statistics from RuntimeLedger, falling back to ClickHouse."""
+    """Aggregate statistics from RuntimeLedger."""
     asset_class = _normalize_asset_class(asset_class)
     ledger_rows, ledger_available = _load_runtime_ledger_trades(
         asset_class,
@@ -480,53 +435,7 @@ async def get_db_closed_statistics(
     )
     if ledger_available:
         return _statistics_from_trade_dicts(ledger_rows)
-
-    async def _execute(sql: str, params: dict) -> dict:
-        loop = asyncio.get_running_loop()
-        rows, columns = await loop.run_in_executor(None, _query_ch, sql, params)
-        col_names = [c[0] for c in columns]
-        if rows and rows[0][0] > 0:
-            return dict(zip(col_names, rows[0]))
-        return _empty_db_stats()
-
-    try:
-        if asset_class in _TRADES_SOURCE:
-            sql, params = _build_closed_statistics_sql(asset_class, strategy)
-            return await _execute(sql, params)
-
-        # asset_class == "all": merge counts from both asset tables.
-        merged: dict = _empty_db_stats()
-        wins = losses = total = 0
-        sum_pnl = 0.0
-        max_win = float("-inf")
-        max_loss = float("inf")
-        for ac in _TRADES_SOURCE:
-            sql, params = _build_closed_statistics_sql(ac, strategy)
-            part = await _execute(sql, params)
-            total += part.get("total_trades", 0)
-            wins += part.get("winning_trades", 0)
-            losses += part.get("losing_trades", 0)
-            sum_pnl += float(part.get("total_pnl", 0) or 0)
-            if part.get("total_trades", 0) > 0:
-                max_win = max(max_win, float(part.get("max_win", 0) or 0))
-                max_loss = min(max_loss, float(part.get("max_loss", 0) or 0))
-        merged["total_trades"] = total
-        merged["winning_trades"] = wins
-        merged["losing_trades"] = losses
-        merged["win_rate"] = round(wins / total * 100, 2) if total > 0 else 0
-        merged["total_pnl"] = sum_pnl
-        merged["avg_pnl"] = round(sum_pnl / total, 2) if total > 0 else 0
-        merged["max_win"] = 0 if max_win == float("-inf") else max_win
-        merged["max_loss"] = 0 if max_loss == float("inf") else max_loss
-        return merged
-    except InfrastructureError as e:
-        raise HTTPException(
-            status_code=503, detail=f"ClickHouse unavailable: {e}"
-        ) from e
-    except Exception as e:
-        raise HTTPException(
-            status_code=503, detail=f"Database error: {type(e).__name__}"
-        ) from e
+    return _empty_db_stats()
 
 
 @router.get("/fills")
@@ -534,101 +443,12 @@ async def get_recent_fills(
     asset_class: str = Query(default="futures"),
     limit: int = Query(default=10, ge=1, le=100),
 ) -> dict:
-    """Recent order fills from ClickHouse ``kospi.order_fills``.
-
-    The ``order_fills`` table itself does not carry an ``asset_class`` column
-    (it was introduced in Phase 4 for futures). Until a multi-asset variant
-    lands, all rows are treated as ``futures``; the ``asset_class`` filter
-    short-circuits the query for non-futures requests unless ``all``.
-
-    ``trade_role`` is normalized to ``entry`` / ``exit`` for UI consumption —
-    ``stop_loss``/``take_profit``/``force_close`` all collapse to ``exit``.
-
-    Returns ``{"fills": []}`` if ClickHouse is unavailable so the cockpit
-    panel degrades gracefully.
-    """
+    """Recent order fills from RuntimeLedger."""
     asset = _normalize_asset_class(asset_class)
     ledger_fills, ledger_available = _load_runtime_ledger_fills(asset, limit=limit)
     if ledger_available:
         return {"fills": ledger_fills}
-
-    if asset == "stock":
-        # order_fills currently only holds futures fills.
-        return {"fills": []}
-
-    sql = (
-        "SELECT signal_id, symbol, side, filled_price, quantity, "
-        "filled_at, trade_role "
-        "FROM kospi.order_fills "
-        "ORDER BY filled_at DESC "
-        "LIMIT %(limit)s"
-    )
-    try:
-        loop = asyncio.get_running_loop()
-        rows, columns = await loop.run_in_executor(
-            None, _query_ch, sql, {"limit": limit}
-        )
-        col_names = [c[0] for c in columns]
-        fills = []
-        for row in rows:
-            rec = dict(zip(col_names, row))
-            role = rec.get("trade_role", "")
-            rec["trade_role"] = "entry" if role == "entry" else "exit"
-            rec["asset_class"] = "futures"
-            if isinstance(rec.get("filled_at"), datetime):
-                rec["filled_at"] = rec["filled_at"].isoformat()
-            fills.append(rec)
-        return {"fills": fills}
-    except Exception:
-        # ClickHouse unavailable or query error — return empty for graceful UI degrade.
-        return {"fills": []}
-
-
-# Trades source routing per asset_class.
-#   - futures: kospi.rl_trades (legacy table name, has asset_class column)
-#   - stock:   market.stock_trades (no asset_class column — implicit)
-# Why split DBs+tables: legacy schemas evolved separately. Futures closed trades
-# still live in kospi.rl_trades for historical compatibility, but the dashboard
-# exposes this as strategy-neutral closed-trade data.
-_TRADES_SOURCE: dict[str, tuple[str, str, bool]] = {
-    # asset_class -> (database, table, has_asset_class_column)
-    "futures": ("kospi", "rl_trades", True),
-    "stock": ("market", "stock_trades", False),
-}
-
-
-def _build_closed_trades_sql(
-    asset_class: str,
-    strategy: str | None,
-    code: str | None,
-    limit: int,
-) -> tuple[str, dict]:
-    """Build the SELECT for one asset class. Caller composes ALL/UNION cases."""
-    db, table, has_ac = _TRADES_SOURCE[asset_class]
-    where = []
-    params: dict = {}
-    if has_ac:
-        # Futures table is multi-asset; pin to this asset_class.
-        where.append("asset_class = %(asset_class)s")
-        params["asset_class"] = asset_class
-    if strategy:
-        where.append("strategy = %(strategy)s")
-        params["strategy"] = strategy
-    if code:
-        where.append("code = %(code)s")
-        params["code"] = code
-    where_sql = f"WHERE {' AND '.join(where)}" if where else ""
-    # Normalize the SELECT so both tables expose the same column set.
-    # `asset_class` is materialized as a literal when missing.
-    asset_select = "asset_class" if has_ac else f"'{asset_class}' AS asset_class"
-    sql = (
-        f"SELECT id, {asset_select}, code, name, strategy, side, "
-        f"entry_date, entry_price, exit_date, exit_price, quantity, "
-        f"pnl, pnl_pct, hold_seconds, exit_reason "
-        f"FROM {db}.{table} {where_sql} "
-        f"ORDER BY exit_date DESC LIMIT {int(limit)}"
-    )
-    return sql, params
+    return {"fills": []}
 
 
 @router.get("/closed")
@@ -638,12 +458,7 @@ async def get_db_closed_trades(
     code: str | None = Query(None),
     limit: int = Query(100, ge=1, le=500),
 ):
-    """Recent closed trades from RuntimeLedger, falling back to ClickHouse.
-
-    Stock and futures live in different (database, table) pairs with slightly
-    different schemas. This route normalizes the row shape across both so the
-    frontend doesn't have to special-case.
-    """
+    """Recent closed trades from RuntimeLedger."""
     asset_class = _normalize_asset_class(asset_class)
     ledger_rows, ledger_available = _load_runtime_ledger_trades(
         asset_class,
@@ -653,30 +468,4 @@ async def get_db_closed_trades(
     )
     if ledger_available:
         return [_ledger_trade_to_closed_dict(row) for row in ledger_rows]
-
-    async def _execute(sql: str, params: dict):
-        loop = asyncio.get_running_loop()
-        rows, columns = await loop.run_in_executor(None, _query_ch, sql, params)
-        col_names = [c[0] for c in columns]
-        return [dict(zip(col_names, row)) for row in rows]
-
-    try:
-        if asset_class in _TRADES_SOURCE:
-            sql, params = _build_closed_trades_sql(asset_class, strategy, code, limit)
-            return await _execute(sql, params)
-
-        # asset_class == "all": query both, sort+truncate in app layer.
-        merged: list[dict] = []
-        for ac in _TRADES_SOURCE:
-            sql, params = _build_closed_trades_sql(ac, strategy, code, limit)
-            merged.extend(await _execute(sql, params))
-        merged.sort(key=lambda r: r.get("exit_date") or "", reverse=True)
-        return merged[:limit]
-    except InfrastructureError as e:
-        raise HTTPException(
-            status_code=503, detail=f"ClickHouse unavailable: {e}"
-        ) from e
-    except Exception as e:
-        raise HTTPException(
-            status_code=503, detail=f"Database error: {type(e).__name__}"
-        ) from e
+    return []

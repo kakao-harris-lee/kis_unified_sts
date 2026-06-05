@@ -16,8 +16,8 @@ Per-directory policy:
 | counterfactual       |  365 days  |    1825 days  | low volume (52/yr), 5-yr keep   |
 | drills               |   90 days  | (keep forever)| infrequent, audit-relevant      |
 
-5-year retention for counterfactual matches ``kospi.rl_trades`` TTL
-(infra/clickhouse/migrations/V4__rl_trades_ttl_5year.sql).
+5-year retention for counterfactual keeps enough history for long-window
+strategy review.
 
 Idempotent.  Safe defaults — dry-run unless ``--apply`` is passed.
 
@@ -287,8 +287,10 @@ def main() -> int:
     verb = "would" if not args.apply else ""
     logger.info(
         "Summary: gzipped=%d %s deleted=%d %s bytes_freed=%d errors=%d",
-        grand_total.gzipped, verb,
-        grand_total.deleted, verb,
+        grand_total.gzipped,
+        verb,
+        grand_total.deleted,
+        verb,
         grand_total.bytes_freed,
         grand_total.errors,
     )

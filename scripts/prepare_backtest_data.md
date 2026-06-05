@@ -8,7 +8,7 @@ This guide provides instructions for preparing 6+ months of 1-minute OHLCV data 
 
 - **Minimum Duration**: 6 months of historical data
 - **Minimum Symbols**: 10-20 representative stocks from DEFAULT_SYMBOLS list
-- **Data Format**: 1-minute bars stored in ClickHouse `market.bars_1m` table
+- **Data Format**: 1-minute bars stored as Parquet under `data/market`
 - **Target Symbols**: 30 stocks from STOCK_UNIVERSE (defined in `shared/collector/historical/stock.py`)
 
 ## DEFAULT_SYMBOLS List
@@ -68,9 +68,9 @@ python3 scripts/verify_backtest_data.py
 #          (minimum required: 10 symbols)
 ```
 
-### Option B: Manual ClickHouse Query
+### Option B: Manual Parquet Inspection
 
-Connect to ClickHouse and run:
+Inspect the Parquet dataset with DuckDB or `sts data validate-parquet`.
 
 ```sql
 SELECT
@@ -121,7 +121,7 @@ python -m cli.main stock-backfill run --days 180
 # This will:
 # - Connect to KIS API
 # - Collect minute bars for all 30 stocks
-# - Store in ClickHouse market.bars_1m table
+# - Store in Parquet market-data layout
 # - Support resume on interruption
 ```
 
@@ -177,11 +177,11 @@ For 6 months of minute-bar data per symbol:
 
 **Solution:**
 ```bash
-# Check if ClickHouse is running
-docker-compose ps | grep clickhouse
+# Validate Parquet data
+sts data validate-parquet
 
 # Start services if needed
-docker-compose up -d clickhouse redis
+docker-compose up -d redis
 
 # Verify connection
 python -m cli.main health
@@ -267,7 +267,7 @@ This ensures continuous data availability for backtesting and paper trading.
 
 ## Summary Checklist
 
-- [ ] ClickHouse service running
+- [ ] Parquet market-data dataset available
 - [ ] KIS API credentials configured
 - [ ] Verification script executed successfully
 - [ ] At least 10-20 symbols have 6+ months of data

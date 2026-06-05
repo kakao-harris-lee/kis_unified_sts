@@ -21,7 +21,7 @@ print_entries() {
 # END STOCK_PIPELINE_PREMARKET
 
 # BEGIN STOCK_PAPER_DAILY_VERIFICATION
-# Stock paper objective gate: ClickHouse trades + Redis pipeline + target metrics.
+# Stock paper objective gate: RuntimeLedger trades + Redis pipeline + target metrics.
 10 16 * * 1-5 $STOCK_PAPER_VERIFICATION
 # END STOCK_PAPER_DAILY_VERIFICATION
 

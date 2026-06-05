@@ -1,1 +1,4 @@
-"""Database module for ClickHouse integration."""
+"""Compatibility database package.
+
+New code should use ``shared.storage`` RuntimeLedger/Parquet interfaces.
+"""

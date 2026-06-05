@@ -19,17 +19,19 @@ import asyncio
 import json
 import logging
 import os
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Optional
 
-import clickhouse_connect
 import numpy as np
 import pandas as pd
 import redis
 
-from shared.config.tls import build_redis_tls_params, get_clickhouse_tls_params
+from shared.config.tls import build_redis_tls_params
 from shared.indicators.volume import OBVCalculator
+from shared.storage.config import StorageConfig
+from shared.storage.market_data_store import ParquetMarketDataStore
 
 logger = logging.getLogger(__name__)
 
@@ -64,18 +66,9 @@ def _get_redis_client():
     return redis.Redis.from_url(redis_url, decode_responses=True, **tls_params)
 
 
-def _get_clickhouse_config():
-    """Get ClickHouse config from environment."""
-    tls_params = get_clickhouse_tls_params()
-
-    return {
-        "host": os.getenv("CLICKHOUSE_HOST", "localhost"),
-        "port": int(os.getenv("CLICKHOUSE_PORT", "8123")),
-        "username": os.getenv("CLICKHOUSE_USER", "default"),
-        "password": os.getenv("CLICKHOUSE_PASSWORD", ""),
-        "database": "market",
-        **tls_params,
-    }
+def _get_market_data_root() -> Path:
+    """Return the configured Parquet market-data root."""
+    return Path(StorageConfig.load_or_default().market_data.parquet.root)
 
 
 def _calculate_atr(df: pd.DataFrame, period: int = 14) -> np.ndarray:
@@ -302,18 +295,21 @@ class AccumulationScanner:
         """Initialize accumulation scanner.
 
         Args:
-            db_config: ClickHouse config dict (optional, uses env if None)
+            db_config: Legacy argument. When it contains ``root``, it overrides
+                the configured Parquet market-data root.
             min_score: Minimum score threshold (0-100)
             lookback_days: Days of data to analyze
         """
-        self.db_config = db_config or _get_clickhouse_config()
+        self.market_data_root = Path(
+            (db_config or {}).get("root") or _get_market_data_root()
+        )
         self.min_score = min_score
         self.lookback_days = lookback_days
 
     async def _fetch_daily_candles(
         self, codes: Optional[list[str]] = None
     ) -> dict[str, pd.DataFrame]:
-        """Fetch daily candles from ClickHouse.
+        """Fetch daily candles from Parquet market-data files.
 
         Args:
             codes: List of stock codes (None = all stocks)
@@ -321,61 +317,37 @@ class AccumulationScanner:
         Returns:
             Dict mapping code → DataFrame with OHLCV data
         """
-        client = clickhouse_connect.get_client(**self.db_config)
-
-        # Calculate date range
         end_date = datetime.now()
         start_date = end_date - timedelta(days=self.lookback_days)
-
-        query = """
-            SELECT code, date, open, high, low, close, volume, value
-            FROM market.daily_candles
-            WHERE date >= {start_date:Date}
-              AND date <= {end_date:Date}
-        """
-        params = {
-            "start_date": start_date.date() if hasattr(start_date, 'date') else start_date,
-            "end_date": end_date.date() if hasattr(end_date, 'date') else end_date,
-        }
+        store = ParquetMarketDataStore(self.market_data_root, asset_class="stock")
 
         if codes:
-            # Validate codes to prevent injection
             if not all(isinstance(c, str) and c.isalnum() for c in codes):
-                raise ValueError("Invalid stock codes: all codes must be alphanumeric strings")
-            query += " AND code IN {codes:Array(String)}"
-            params["codes"] = codes
-
-        query += " ORDER BY code, date"
-
-        result = client.query(query, parameters=params)
-        rows = result.result_rows
-
-        # Group by code
-        data_by_code = {}
-        for row in rows:
-            code = row[0]
-            if code not in data_by_code:
-                data_by_code[code] = []
-            data_by_code[code].append(
-                {
-                    "date": row[1],
-                    "open": row[2],
-                    "high": row[3],
-                    "low": row[4],
-                    "close": row[5],
-                    "volume": row[6],
-                    "value": row[7],
-                }
+                raise ValueError(
+                    "Invalid stock codes: all codes must be alphanumeric strings"
+                )
+            target_codes = list(dict.fromkeys(codes))
+        else:
+            dataset_dir = self.market_data_root / "stock" / "daily"
+            target_codes = sorted(
+                path.name.removeprefix("code=")
+                for path in dataset_dir.glob("code=*")
+                if path.is_dir()
             )
 
-        # Convert to DataFrames
-        result_dfs = {}
-        for code, records in data_by_code.items():
-            df = pd.DataFrame(records)
-            df = df.sort_values("date").reset_index(drop=True)
-            result_dfs[code] = df
+        result_dfs: dict[str, pd.DataFrame] = {}
+        for code in target_codes:
+            df = await asyncio.to_thread(
+                store.get_daily_bars,
+                code,
+                start_date,
+                end_date,
+                None,
+            )
+            if df.empty:
+                continue
+            result_dfs[code] = df.rename(columns={"datetime": "date"})
 
-        client.close()
         return result_dfs
 
     async def _get_market_data(self) -> pd.DataFrame:
@@ -418,9 +390,7 @@ class AccumulationScanner:
         strength_score = _calculate_strength_score(df, market_df)
 
         # Combined score
-        total_score = int(
-            obv_score + rvol_score + compression_score + strength_score
-        )
+        total_score = int(obv_score + rvol_score + compression_score + strength_score)
 
         # Get stock name (placeholder - should fetch from master table)
         name = code
@@ -491,9 +461,7 @@ class AccumulationScanner:
 
     REDIS_KEY = "system:accumulation:latest"
 
-    async def publish_candidates(
-        self, candidates: list[AccumulationCandidate]
-    ) -> None:
+    async def publish_candidates(self, candidates: list[AccumulationCandidate]) -> None:
         """Publish scan results to Redis.
 
         Args:
@@ -510,7 +478,9 @@ class AccumulationScanner:
             redis_client.set(self.REDIS_KEY, json.dumps(data), ex=172800)
 
         await asyncio.to_thread(_sync_publish)
-        logger.info(f"Published {len(candidates)} candidates to Redis key: {self.REDIS_KEY}")
+        logger.info(
+            f"Published {len(candidates)} candidates to Redis key: {self.REDIS_KEY}"
+        )
 
     async def run(
         self, codes: Optional[list[str]] = None

@@ -104,7 +104,7 @@ class IndicatorContract:
     def warmth_timeframe(self) -> int | None:
         """Deepest intraday timeframe (minutes) used to judge warmth.
 
-        Daily (>= 1440 min) is excluded: it is seeded from a separate ClickHouse
+        Daily (>= 1440 min) is excluded: it is seeded from a separate Parquet
         daily store, not from intraday 1m accumulation, so it must not gate is_warm.
         Returns None when the strategy needs no intraday MTF accumulation.
         """

@@ -21,26 +21,9 @@ x-runtime-storage-env: &runtime-storage-env
   RUNTIME_STORAGE_SQLITE_WAL: "${RUNTIME_STORAGE_SQLITE_WAL:-true}"
   RUNTIME_STORAGE_SQLITE_BUSY_TIMEOUT_MS: "${RUNTIME_STORAGE_SQLITE_BUSY_TIMEOUT_MS:-5000}"
   RUNTIME_STORAGE_SQLITE_SYNCHRONOUS: "${RUNTIME_STORAGE_SQLITE_SYNCHRONOUS:-NORMAL}"
-  RUNTIME_STORAGE_CLICKHOUSE_MIRROR_ENABLED: "${RUNTIME_STORAGE_CLICKHOUSE_MIRROR_ENABLED:-false}"
-  RUNTIME_STORAGE_CLICKHOUSE_DATABASE: "${RUNTIME_STORAGE_CLICKHOUSE_DATABASE:-market}"
   MARKET_DATA_SOURCE: "${MARKET_DATA_SOURCE:-parquet}"
   MARKET_DATA_PARQUET_ROOT: "${MARKET_DATA_PARQUET_ROOT:-data/market}"
-  MARKET_DATA_CLICKHOUSE_ENABLED: "${MARKET_DATA_CLICKHOUSE_ENABLED:-false}"
-  MARKET_DATA_CLICKHOUSE_STOCK_DATABASE: "${MARKET_DATA_CLICKHOUSE_STOCK_DATABASE:-market}"
-  MARKET_DATA_CLICKHOUSE_FUTURES_DATABASE: "${MARKET_DATA_CLICKHOUSE_FUTURES_DATABASE:-kospi}"
   DASHBOARD_TRADE_STATS_SOURCE: "${DASHBOARD_TRADE_STATS_SOURCE:-runtime_ledger}"
-
-x-clickhouse-optional-env: &clickhouse-optional-env
-  CLICKHOUSE_HOST: "${CLICKHOUSE_HOST:-clickhouse}"
-  CLICKHOUSE_PORT: "${CLICKHOUSE_PORT:-8123}"
-  CLICKHOUSE_NATIVE_PORT: "${CLICKHOUSE_NATIVE_PORT:-9000}"
-  CLICKHOUSE_USER: "${CLICKHOUSE_USER:-default}"
-  CLICKHOUSE_PASSWORD: "${CLICKHOUSE_PASSWORD:-}"
-  CLICKHOUSE_STOCK_DATABASE: "${CLICKHOUSE_STOCK_DATABASE:-market}"
-  CLICKHOUSE_FUTURES_DATABASE: "${CLICKHOUSE_FUTURES_DATABASE:-kospi}"
-  CLICKHOUSE_SECURE: "${CLICKHOUSE_SECURE:-false}"
-  CLICKHOUSE_VERIFY_SSL: "${CLICKHOUSE_VERIFY_SSL:-true}"
-  CLICKHOUSE_CA_CERT: "${CLICKHOUSE_CA_CERT:-}"
 
 services:
   # =============================================================================
@@ -57,7 +40,7 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
-      <<: [*redis-runtime-env, *runtime-storage-env, *clickhouse-optional-env]
+      <<: [*redis-runtime-env, *runtime-storage-env]
       KIS_APP_KEY: "${KIS_APP_KEY:-}"
       KIS_APP_SECRET: "${KIS_APP_SECRET:-}"
       KIS_IS_REAL: "${KIS_IS_REAL:-false}"
@@ -106,7 +89,7 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
-      <<: [*redis-runtime-env, *runtime-storage-env, *clickhouse-optional-env]
+      <<: [*redis-runtime-env, *runtime-storage-env]
       API_KEY: "${API_KEY:-}"
       DASHBOARD_REQUIRE_AUTH: "${DASHBOARD_REQUIRE_AUTH:-true}"
       DASHBOARD_API_KEY: "${DASHBOARD_API_KEY:-}"
@@ -214,7 +197,7 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
-      <<: [*redis-runtime-env, *runtime-storage-env, *clickhouse-optional-env]
+      <<: [*redis-runtime-env, *runtime-storage-env]
       OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
     volumes:
       - ./config:/app/config:ro
@@ -257,33 +240,6 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-    networks:
-      - trading-network
-
-  # =============================================================================
-  # ClickHouse (optional research / analytics mirror profile)
-  # =============================================================================
-  clickhouse:
-    image: clickhouse/clickhouse-server:24.3
-    container_name: ${COMPOSE_PROJECT_NAME:-kis}-clickhouse
-    restart: unless-stopped
-    profiles: ["research"]
-    ports:
-      - "127.0.0.1:${CLICKHOUSE_NATIVE_HOST_PORT:-9000}:9000"
-      - "127.0.0.1:${CLICKHOUSE_HTTP_HOST_PORT:-8123}:8123"
-    environment:
-      CLICKHOUSE_DB: "${CLICKHOUSE_STOCK_DATABASE:-market}"
-      CLICKHOUSE_USER: "${CLICKHOUSE_USER:-default}"
-      CLICKHOUSE_PASSWORD: "${CLICKHOUSE_PASSWORD:-}"
-      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
-    volumes:
-      - clickhouse-data:/var/lib/clickhouse
-    healthcheck:
-      test: ["CMD-SHELL", "clickhouse-client --host localhost --port 9000 --user \"$${CLICKHOUSE_USER:-default}\" --password \"$${CLICKHOUSE_PASSWORD:-}\" --query 'SELECT 1'"]
-      interval: 15s
-      timeout: 5s
-      retries: 10
-      start_period: 20s
     networks:
       - trading-network
 
@@ -399,7 +355,6 @@ networks:
 # =============================================================================
 volumes:
   redis-data:
-  clickhouse-data:
   prometheus-data:
   caddy-data:
   caddy-config:

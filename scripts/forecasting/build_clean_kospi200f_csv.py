@@ -6,9 +6,9 @@ on ~15% of days (the synthetic-continuous mirror falls back to thinly-traded
 far-month contracts when the active near-month wasn't streamed). This helper
 selects the dominant-volume A01* contract per day (same logic as
 shared/collector/historical/backfill.py:_build_continuous_rows) and writes a
-clean CSV with the same schema as data/kospi200f_1m_ch_101S6000.csv. NO
-production DB mutation — pure read + CSV write.
+clean CSV. NO production DB mutation — pure Parquet read + CSV write.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -19,16 +19,37 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
+from shared.storage.config import StorageConfig
+from shared.storage.market_data_store import ParquetMarketDataStore
 
-def _fetch_a01_rows(client, start: dt.date, end: dt.date) -> list[tuple]:
+
+def _fetch_a01_rows(
+    store: ParquetMarketDataStore, start: dt.date, end: dt.date
+) -> list[tuple]:
     """Fetch all A01* contract minute bars over [start, end) — exclusive end."""
-    return client.execute(
-        "SELECT code, datetime, open, high, low, close, volume "
-        "FROM kospi.kospi200f_1m "
-        "WHERE code LIKE 'A01%%' AND datetime >= %(s)s AND datetime < %(e)s "
-        "ORDER BY datetime, code",
-        {"s": start, "e": end},
+    dataset_dir = store.root / "futures" / "minute"
+    codes = sorted(
+        path.name.removeprefix("code=")
+        for path in dataset_dir.glob("code=A01*")
+        if path.is_dir()
     )
+    rows: list[tuple] = []
+    for code in codes:
+        df = store.get_minute_bars(code, start=start, end=end)
+        for row in df.itertuples(index=False):
+            rows.append(
+                (
+                    str(row.code),
+                    row.datetime.to_pydatetime(),
+                    float(row.open),
+                    float(row.high),
+                    float(row.low),
+                    float(row.close),
+                    int(row.volume),
+                )
+            )
+    rows.sort(key=lambda item: (item[1], item[0]))
+    return rows
 
 
 def select_dominant_per_day(rows: list[tuple]) -> list[tuple]:
@@ -95,28 +116,23 @@ def main(argv=None) -> int:
     )
     ap.add_argument("--out", required=True, help="output CSV path")
     ap.add_argument(
-        "--single-code", default=None,
+        "--single-code",
+        default=None,
         help="if set, write ONLY this contract code's bars (bypasses dominant-"
-             "volume selection); days lacking this code's data are dropped")
+        "volume selection); days lacking this code's data are dropped",
+    )
     a = ap.parse_args(argv)
     s = dt.date.fromisoformat(a.start)
     e_inclusive = dt.date.fromisoformat(a.end)
     e_exclusive = e_inclusive + dt.timedelta(days=1)
 
-    from clickhouse_driver import Client
-
-    from shared.db.config import ClickHouseConfig
-
-    ch_cfg = ClickHouseConfig.from_env(database="kospi")
-    client = Client(
-        host=ch_cfg.host,
-        port=ch_cfg.port,
-        user=ch_cfg.user,
-        password=ch_cfg.password,
-        database="kospi",
+    storage_config = StorageConfig.load_or_default()
+    store = ParquetMarketDataStore(
+        storage_config.market_data.parquet.root,
+        asset_class="futures",
     )
 
-    raw = _fetch_a01_rows(client, s, e_exclusive)
+    raw = _fetch_a01_rows(store, s, e_exclusive)
     if a.single_code:
         clean = filter_to_single_code(raw, a.single_code)
     else:

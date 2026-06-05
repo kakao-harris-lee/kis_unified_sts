@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""Reconcile ClickHouse stock swing open rows against Redis runtime positions.
+"""Reconcile RuntimeLedger stock swing open rows against Redis runtime positions.
 
-Default mode is a dry-run. With ``--apply``, the script inserts closed
-replacement rows into ``market.swing_positions`` for ClickHouse-only positions.
-The table uses ReplacingMergeTree(updated_at), so inserting a newer row with the
-same (code, entry_date, id) key is enough to make ``FINAL`` reads show closed.
+Default mode is a dry-run. With ``--apply``, the script appends closed position
+snapshots into RuntimeLedger for positions that exist in durable storage but no
+longer exist in Redis runtime state.
 """
 
 from __future__ import annotations
@@ -20,13 +19,6 @@ from typing import Any
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
-
-from scripts.analysis.stock_paper_daily_verification import (  # noqa: E402
-    _build_clickhouse_client,
-    _load_config,
-    _load_repo_env,
-    _validate_identifier,
-)
 
 
 @dataclass(frozen=True)
@@ -91,6 +83,30 @@ def _position_from_row(row: tuple[Any, ...]) -> SwingOpenPosition:
     )
 
 
+def _position_from_ledger_row(row: dict[str, Any]) -> SwingOpenPosition:
+    entry = row.get("entry_time") or row.get("entry_date") or datetime.now(UTC)
+    updated = row.get("snapshot_time") or row.get("updated_at") or entry
+    entry_price = float(row.get("entry_price") or 0.0)
+    return SwingOpenPosition(
+        id=str(row.get("position_id") or row.get("id") or ""),
+        code=str(row.get("symbol") or row.get("code") or ""),
+        name=str(row.get("name") or ""),
+        entry_date=_coerce_datetime(entry),
+        entry_price=entry_price,
+        quantity=int(row.get("quantity") or 0),
+        strategy=str(row.get("strategy") or ""),
+        execution_venue=str(row.get("venue") or "KRX"),
+        stop_loss_price=float(
+            row.get("stop_price") or row.get("stop_loss_price") or 0.0
+        ),
+        high_since_entry=float(row.get("high_since_entry") or entry_price),
+        current_state=str(row.get("state") or row.get("current_state") or "survival"),
+        side=str(row.get("side") or "long"),
+        fee_rate=float(row.get("fee_rate") or 0.0),
+        updated_at=_coerce_datetime(updated),
+    )
+
+
 def _redis_position_from_payload(payload: dict[str, Any]) -> RedisOpenPosition:
     return RedisOpenPosition(
         id=str(payload.get("id") or ""),
@@ -99,7 +115,7 @@ def _redis_position_from_payload(payload: dict[str, Any]) -> RedisOpenPosition:
 
 
 def plan_reconciliation(
-    clickhouse_positions: list[SwingOpenPosition],
+    ledger_positions: list[SwingOpenPosition],
     redis_positions: list[RedisOpenPosition],
     *,
     now: datetime,
@@ -107,13 +123,13 @@ def plan_reconciliation(
     code_filter: set[str] | None = None,
     id_filter: set[str] | None = None,
 ) -> list[ReconciliationCandidate]:
-    """Return ClickHouse-only open positions safe enough to close by replacement."""
+    """Return ledger-only open positions safe enough to close by replacement."""
     redis_ids = {p.id for p in redis_positions if p.id}
     redis_codes = {p.code for p in redis_positions if p.code}
     now_utc = _coerce_aware(now)
 
     candidates: list[ReconciliationCandidate] = []
-    for position in clickhouse_positions:
+    for position in ledger_positions:
         if code_filter and position.code not in code_filter:
             continue
         if id_filter and position.id not in id_filter:
@@ -146,61 +162,38 @@ def close_replacement_row(
     *,
     closed_at: datetime,
     exit_reason: str,
-) -> tuple[Any, ...]:
+) -> dict[str, Any]:
     position = candidate.position
-    return (
-        position.id,
-        position.code,
-        position.name,
-        position.entry_date,
-        position.entry_price,
-        position.quantity,
-        position.strategy,
-        position.execution_venue or "KRX",
-        position.stop_loss_price,
-        position.high_since_entry,
-        position.current_state,
-        0,
-        closed_at,
-        position.entry_price,
-        exit_reason,
-        0.0,
-        position.side or "long",
-        position.fee_rate,
-    )
+    return {
+        "id": position.id,
+        "position_id": position.id,
+        "asset_class": "stock",
+        "symbol": position.code,
+        "name": position.name,
+        "entry_time": position.entry_date.isoformat(),
+        "entry_price": position.entry_price,
+        "quantity": position.quantity,
+        "strategy": position.strategy,
+        "venue": position.execution_venue or "KRX",
+        "stop_price": position.stop_loss_price,
+        "high_since_entry": position.high_since_entry,
+        "state": position.current_state,
+        "is_open": 0,
+        "exit_time": closed_at.isoformat(),
+        "exit_price": position.entry_price,
+        "exit_reason": exit_reason,
+        "pnl": 0.0,
+        "side": position.side or "long",
+        "fee_rate": position.fee_rate,
+        "snapshot_time": closed_at.isoformat(),
+    }
 
 
-def _ensure_execution_venue_column(client: Any, database: str, table: str) -> None:
-    client.execute(
-        f"ALTER TABLE {database}.{table} "
-        "ADD COLUMN IF NOT EXISTS execution_venue String DEFAULT 'KRX' AFTER strategy"
-    )
-
-
-def fetch_clickhouse_open_positions(
-    client: Any, database: str, table: str
-) -> list[SwingOpenPosition]:
-    rows = client.execute(f"""
-        SELECT
-            id,
-            code,
-            name,
-            entry_date,
-            entry_price,
-            quantity,
-            strategy,
-            execution_venue,
-            stop_loss_price,
-            high_since_entry,
-            current_state,
-            side,
-            fee_rate,
-            updated_at
-        FROM {database}.{table} FINAL
-        WHERE is_open = 1
-        ORDER BY entry_date ASC, code ASC, id ASC
-        """)
-    return [_position_from_row(row) for row in rows]
+def fetch_runtime_ledger_open_positions(ledger: Any) -> list[SwingOpenPosition]:
+    return [
+        _position_from_ledger_row(row)
+        for row in ledger.load_open_positions(asset_class="stock")
+    ]
 
 
 def fetch_redis_open_positions() -> list[RedisOpenPosition]:
@@ -216,9 +209,7 @@ def fetch_redis_open_positions() -> list[RedisOpenPosition]:
 
 
 def apply_replacements(
-    client: Any,
-    database: str,
-    table: str,
+    ledger: Any,
     candidates: list[ReconciliationCandidate],
     *,
     closed_at: datetime,
@@ -226,7 +217,7 @@ def apply_replacements(
 ) -> int:
     if not candidates:
         return 0
-    rows = [
+    snapshots = [
         close_replacement_row(
             candidate,
             closed_at=closed_at,
@@ -234,17 +225,9 @@ def apply_replacements(
         )
         for candidate in candidates
     ]
-    client.execute(
-        f"""
-        INSERT INTO {database}.{table}
-        (id, code, name, entry_date, entry_price, quantity, strategy,
-         execution_venue, stop_loss_price, high_since_entry, current_state,
-         is_open, exit_date, exit_price, exit_reason, pnl, side, fee_rate)
-        VALUES
-        """,
-        rows,
-    )
-    return len(rows)
+    for snapshot in snapshots:
+        ledger.record_position_snapshot(snapshot)
+    return len(snapshots)
 
 
 def _candidate_payload(candidate: ReconciliationCandidate) -> dict[str, Any]:
@@ -270,7 +253,7 @@ def _parse_args() -> argparse.Namespace:
         "--min-age-days",
         type=int,
         default=1,
-        help="Only reconcile ClickHouse-only open rows at least this old.",
+        help="Only reconcile ledger-only open positions at least this old.",
     )
     parser.add_argument("--code", default="", help="Comma-separated code filter.")
     parser.add_argument("--id", default="", help="Comma-separated position id filter.")
@@ -289,17 +272,15 @@ def _parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = _parse_args()
-    _load_repo_env()
-    config = _load_config()
-    database = _validate_identifier(config.clickhouse_database, label="database")
-    table = _validate_identifier(config.clickhouse_position_table, label="table")
-    client = _build_clickhouse_client(database)
+    from shared.storage import SQLiteRuntimeLedger, StorageConfig
+
+    storage_config = StorageConfig.load_or_default()
+    ledger = SQLiteRuntimeLedger(storage_config.runtime_storage.sqlite)
     try:
-        _ensure_execution_venue_column(client, database, table)
-        clickhouse_positions = fetch_clickhouse_open_positions(client, database, table)
+        ledger_positions = fetch_runtime_ledger_open_positions(ledger)
         redis_positions = fetch_redis_open_positions()
         candidates = plan_reconciliation(
-            clickhouse_positions,
+            ledger_positions,
             redis_positions,
             now=datetime.now(UTC),
             min_age_days=max(0, int(args.min_age_days)),
@@ -310,9 +291,7 @@ def main() -> int:
         applied = 0
         if args.apply:
             applied = apply_replacements(
-                client,
-                database,
-                table,
+                ledger,
                 candidates,
                 closed_at=datetime.now(UTC).replace(tzinfo=None),
                 exit_reason=str(args.exit_reason),
@@ -320,7 +299,7 @@ def main() -> int:
 
         result = {
             "mode": "apply" if args.apply else "dry_run",
-            "clickhouse_open_positions": len(clickhouse_positions),
+            "ledger_open_positions": len(ledger_positions),
             "redis_open_positions": len(redis_positions),
             "candidate_count": len(candidates),
             "applied_count": applied,
@@ -331,7 +310,7 @@ def main() -> int:
         else:
             print(
                 f"{result['mode']}: candidates={len(candidates)} "
-                f"applied={applied} ch_open={len(clickhouse_positions)} "
+                f"applied={applied} ledger_open={len(ledger_positions)} "
                 f"redis_open={len(redis_positions)}"
             )
             for candidate in candidates:
@@ -343,7 +322,7 @@ def main() -> int:
                 )
         return 0
     finally:
-        client.disconnect()
+        ledger.close()
 
 
 if __name__ == "__main__":

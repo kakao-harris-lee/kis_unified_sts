@@ -6,9 +6,7 @@ import argparse
 import asyncio
 import json
 import logging
-import os
 import sys
-from datetime import UTC, datetime
 from typing import Any
 
 from services.monitoring.metrics import record_macro_collected
@@ -40,47 +38,17 @@ async def _publish_snapshot(redis: Any, stream: str, maxlen: int, snap) -> None:
     await redis.expire(stream, _STREAM_TTL_SECONDS)
 
 
-_CH_INSERT = (
-    "INSERT INTO kospi.macro_overnight "
-    "(ts, session, sp500_close, sp500_change_pct, nasdaq_close, nasdaq_change_pct, "
-    "eurex_kospi_close, eurex_kospi_change_pct, usdkrw, usdkrw_change_pct, dxy, "
-    "us10y_yield, vix, collected_from) VALUES"
-)
-
-
-async def _write_ch(ch_client: Any, snap) -> None:
-    if ch_client is None:
-        return
-    row = (
-        datetime.fromtimestamp(snap.ts_ms / 1000, tz=UTC).replace(tzinfo=None),
-        snap.session,
-        snap.sp500_close or 0.0,
-        snap.sp500_change_pct or 0.0,
-        snap.nasdaq_close or 0.0,
-        snap.nasdaq_change_pct or 0.0,
-        snap.eurex_kospi_close,
-        snap.eurex_kospi_change_pct,
-        snap.usdkrw or 0.0,
-        snap.usdkrw_change_pct or 0.0,
-        snap.dxy,
-        snap.us10y_yield,
-        snap.vix,
-        snap.collected_from,
-    )
-    await ch_client.execute(_CH_INSERT, [row])
-
-
 async def collect_us_session(
     *,
     redis: Any,
-    ch_client: Any,
+    archive_client: Any,
     yahoo_source: Any,
     stream: str,
     maxlen: int,
 ) -> int:
+    _ = archive_client
     snap = await yahoo_source.fetch_us_close_snapshot()
     await _publish_snapshot(redis, stream, maxlen, snap)
-    await _write_ch(ch_client, snap)
     record_macro_collected(snap.session)
     return 0
 
@@ -88,43 +56,38 @@ async def collect_us_session(
 async def collect_fx_session(
     *,
     redis: Any,
-    ch_client: Any,
+    archive_client: Any,
     ecos_source: Any,
     stream: str,
     maxlen: int,
 ) -> int:
+    _ = archive_client
     snap = await ecos_source.fetch_fx_snapshot()
     await _publish_snapshot(redis, stream, maxlen, snap)
-    await _write_ch(ch_client, snap)
     record_macro_collected(snap.session)
     return 0
 
 
 async def _cli(session_kind: str) -> int:
     import aiohttp
+    import os
     import redis.asyncio as aioredis
 
     from shared.macro.config import MacroCollectorConfig
     from shared.macro.sources.ecos import ECOSSource
     from shared.macro.sources.yahoo import YahooMacroSource
-    from shared.storage import create_async_clickhouse_client
-    from shared.storage.config import StorageConfig
 
     cfg = MacroCollectorConfig.from_yaml()
     stream = cfg.redis_stream
     maxlen = cfg.redis_maxlen
     redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/1")
     r = aioredis.from_url(redis_url)
-    ch = None
-    storage_config = StorageConfig.load_or_default()
-    if storage_config.runtime_storage.clickhouse_mirror.enabled:
-        ch = await create_async_clickhouse_client(database="kospi")
 
     try:
         if session_kind == "us":
             rc = await collect_us_session(
                 redis=r,
-                ch_client=ch,
+                archive_client=None,
                 yahoo_source=YahooMacroSource(),
                 stream=stream,
                 maxlen=maxlen,
@@ -134,7 +97,7 @@ async def _cli(session_kind: str) -> int:
             async with aiohttp.ClientSession() as session:
                 rc = await collect_fx_session(
                     redis=r,
-                    ch_client=ch,
+                    archive_client=None,
                     ecos_source=ECOSSource(api_key=ecos_key, session=session),
                     stream=stream,
                     maxlen=maxlen,
@@ -144,8 +107,6 @@ async def _cli(session_kind: str) -> int:
             rc = 2
     finally:
         await r.aclose()
-        if ch is not None:
-            await ch.close()
     return rc
 
 

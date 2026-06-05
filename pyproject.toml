@@ -73,10 +73,6 @@ dependencies = [
     "websocket-client>=1.6",
     "pycryptodome>=3.19",  # AES decryption
 
-    # Database
-    "clickhouse-driver>=0.2",
-    "aiochclient>=2.4",
-
     # MLflow (Backtesting). Cap below 4 so a fresh install can't pull a major
     # with a different sqlite schema than the pinned Dockerfile.mlflow server.
     "mlflow>=2.9,<4",
@@ -216,7 +212,6 @@ warn_unused_ignores = true
 [[tool.mypy.overrides]]
 module = [
     "redis.*",
-    "clickhouse_driver.*",
     "mlflow.*",
     "optuna.*",
 ]
@@ -231,7 +226,7 @@ asyncio_mode = "auto"
 markers = [
     "unit: Unit tests",
     "integration: Integration tests",
-    "live_infra: Tests that touch live Redis/ClickHouse services; skipped unless KIS_RUN_LIVE_INFRA_TESTS=1",
+    "live_infra: Tests that touch live Redis services; skipped unless KIS_RUN_LIVE_INFRA_TESTS=1",
     "slow: Slow tests",
     "backtest: Backtesting tests",
     "serial: Must run serially — timing- or shared-external-state-sensitive; excluded from the `-n auto` parallel pass and run in a separate serial pass",

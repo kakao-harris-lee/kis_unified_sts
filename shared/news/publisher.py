@@ -1,11 +1,9 @@
-"""News stream publisher (Redis XADD) plus optional ClickHouse mirror writer."""
+"""News stream publisher (Redis XADD + pubsub fan-out)."""
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
-from datetime import UTC, datetime
 from typing import Any
 
 from shared.news.base import NewsItem
@@ -69,65 +67,30 @@ class NewsStreamPublisher:
         return msg_id.decode() if isinstance(msg_id, bytes) else str(msg_id)
 
 
-class ClickHouseNewsWriter:
-    """Batches optional inserts into kospi.news_raw."""
-
-    _INSERT_SQL = (
-        "INSERT INTO kospi.news_raw "
-        "(news_id, source, published_at, received_at, title, body, url, "
-        "source_version, lang, keywords) VALUES"
-    )
+class NewsArchiveNoopWriter:
+    """Compatibility no-op for removed DB archive writer."""
 
     def __init__(
-        self, ch_client: Any, batch_size: int = 50, flush_interval_seconds: int = 10
+        self,
+        archive_client: Any,
+        batch_size: int = 50,
+        flush_interval_seconds: int = 10,
     ):
-        self.ch = ch_client
-        self.batch_size = batch_size
+        _ = archive_client, batch_size
         self.flush_interval = flush_interval_seconds
-        self._buffer: list[tuple] = []
-        self._lock = asyncio.Lock()
 
     async def enqueue(self, item: NewsItem) -> None:
-        if self.ch is None or self.batch_size <= 0:
-            return
-        row = (
-            item.news_id,
-            item.source,
-            datetime.fromtimestamp(item.published_at_ms / 1000, tz=UTC).replace(
-                tzinfo=None
-            ),
-            datetime.fromtimestamp(item.received_at_ms / 1000, tz=UTC).replace(
-                tzinfo=None
-            ),
-            item.title,
-            item.body,
-            item.url,
-            item.source_version,
-            item.lang,
-            item.keywords,
-        )
-        async with self._lock:
-            self._buffer.append(row)
-            should_flush = len(self._buffer) >= self.batch_size
-        if should_flush:
-            await self.flush()
+        _ = item
+        return None
 
     async def flush(self) -> None:
-        if self.ch is None:
-            return
-        async with self._lock:
-            if not self._buffer:
-                return
-            rows = self._buffer
-            self._buffer = []
-        try:
-            await self.ch.execute(self._INSERT_SQL, rows)
-        except Exception:
-            logger.exception("CH flush failed; dropping %d rows", len(rows))
+        return None
 
-    async def run_periodic_flush(self, stop_event: asyncio.Event) -> None:
+    async def run_periodic_flush(self, stop_event: Any) -> None:
         while not stop_event.is_set():
             try:
+                import asyncio
+
                 await asyncio.wait_for(stop_event.wait(), timeout=self.flush_interval)
             except TimeoutError:
                 await self.flush()

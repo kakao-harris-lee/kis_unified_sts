@@ -170,22 +170,15 @@ async def _build_and_run() -> int:
     from shared.risk.config import FuturesRiskConfig, load_trading_windows
     from shared.risk.layer import RiskFilterLayer
     from shared.risk.runtime_state import RuntimeRiskState
-    from shared.storage import create_async_clickhouse_client
-    from shared.storage.config import StorageConfig
 
     redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/1")
     redis_client = aioredis.from_url(redis_url)
-
-    ch_client = None
-    storage_config = StorageConfig.load_or_default()
-    if storage_config.runtime_storage.clickhouse_mirror.enabled:
-        ch_client = await create_async_clickhouse_client(database="kospi")
 
     risk_config = FuturesRiskConfig.from_yaml()
     trading_windows = load_trading_windows()
     layer = RiskFilterLayer.from_config(risk_config, trading_windows)
     runtime_state = RuntimeRiskState(redis=redis_client, asset_class="futures")
-    signals_writer = SignalsAllWriter(ch_client=ch_client, batch_size=10)
+    signals_writer = SignalsAllWriter(archive_client=None, batch_size=10)
 
     worker_id = f"risk-filter-{socket.gethostname()}-{os.getpid()}"
     daemon = RiskFilterDaemon(
@@ -210,8 +203,6 @@ async def _build_and_run() -> int:
         await daemon.run()
     finally:
         await redis_client.aclose()
-        if ch_client is not None:
-            await ch_client.close()
     return 0
 
 

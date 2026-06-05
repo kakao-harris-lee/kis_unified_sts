@@ -1,7 +1,5 @@
 """Tests for shared/scoring/publisher.py — ScoredPublisher fan-out."""
 
-from unittest.mock import AsyncMock
-
 import fakeredis.aioredis
 import pytest
 
@@ -39,10 +37,9 @@ def redis():
 
 @pytest.mark.asyncio
 async def test_publish_writes_to_stream(redis):
-    ch = AsyncMock()
     pub = ScoredPublisher(
         redis=redis,
-        ch_client=ch,
+        archive_client=None,
         stream=_STREAM,
         maxlen=100,
     )
@@ -56,60 +53,43 @@ async def test_publish_writes_to_stream(redis):
 
 
 @pytest.mark.asyncio
-async def test_publish_batches_ch_writes(redis):
-    ch = AsyncMock()
+async def test_publish_ignores_archive_client(redis):
+    archive_client = object()
     pub = ScoredPublisher(
         redis=redis,
-        ch_client=ch,
+        archive_client=archive_client,
         stream=_STREAM,
         maxlen=100,
-        ch_batch_size=2,
+        archive_batch_size=2,
     )
     await pub.publish(_item("a"))
-    ch.execute.assert_not_awaited()
     await pub.publish(_item("b"))
-    ch.execute.assert_awaited_once()
-
-
-@pytest.mark.asyncio
-async def test_publish_skips_clickhouse_when_mirror_disabled(redis):
-    pub = ScoredPublisher(
-        redis=redis,
-        ch_client=None,
-        stream=_STREAM,
-        maxlen=100,
-        ch_batch_size=1,
-    )
-    await pub.publish(_item("no_ch"))
-    await pub.flush()
 
     entries = await redis.xrange(_STREAM)
-    assert len(entries) == 1
-    assert entries[0][1][b"news_id"] == b"no_ch"
+    assert len(entries) == 2
 
 
 @pytest.mark.asyncio
 async def test_publish_flush_on_stop(redis):
-    ch = AsyncMock()
     pub = ScoredPublisher(
         redis=redis,
-        ch_client=ch,
+        archive_client=None,
         stream=_STREAM,
         maxlen=100,
-        ch_batch_size=10,
+        archive_batch_size=10,
     )
     await pub.publish(_item("a"))
     await pub.flush()
-    ch.execute.assert_awaited_once()
+    entries = await redis.xrange(_STREAM)
+    assert len(entries) == 1
 
 
 @pytest.mark.asyncio
 async def test_stream_has_ttl_after_publish(redis):
     """After publish, the stream key must carry a TTL (Redis TTL policy)."""
-    ch = AsyncMock()
     pub = ScoredPublisher(
         redis=redis,
-        ch_client=ch,
+        archive_client=None,
         stream=_STREAM,
         maxlen=100,
     )
@@ -122,52 +102,22 @@ async def test_stream_has_ttl_after_publish(redis):
 
 @pytest.mark.asyncio
 async def test_flush_noop_when_buffer_empty(redis):
-    """flush() on an empty buffer must not call ch.execute."""
-    ch = AsyncMock()
+    """flush() on an empty buffer is a no-op."""
     pub = ScoredPublisher(
         redis=redis,
-        ch_client=ch,
+        archive_client=None,
         stream=_STREAM,
         maxlen=100,
     )
     await pub.flush()
-    ch.execute.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_ch_execute_called_with_correct_fields(redis):
-    """CH row must include scored_at as naive datetime (no tz info)."""
-    from datetime import datetime
-
-    ch = AsyncMock()
-    pub = ScoredPublisher(
-        redis=redis,
-        ch_client=ch,
-        stream=_STREAM,
-        maxlen=100,
-        ch_batch_size=1,
-    )
-    item = _item("tz_check")
-    await pub.publish(item)
-
-    ch.execute.assert_awaited_once()
-    call_args = ch.execute.call_args
-    rows = call_args[0][1]  # positional arg: rows list
-    assert len(rows) == 1
-    row = rows[0]
-    # scored_at must be a naive datetime (no tzinfo)
-    scored_at = row[2]
-    assert isinstance(scored_at, datetime)
-    assert scored_at.tzinfo is None, "scored_at must be tz-naive for aiochclient"
 
 
 @pytest.mark.asyncio
 async def test_stream_fields_are_scalar_strings(redis):
     """All stream fields must be plain strings (not JSON blobs for scalar values)."""
-    ch = AsyncMock()
     pub = ScoredPublisher(
         redis=redis,
-        ch_client=ch,
+        archive_client=None,
         stream=_STREAM,
         maxlen=100,
     )
@@ -183,41 +133,3 @@ async def test_stream_fields_are_scalar_strings(redis):
 
     assert json.loads(fields[b"keywords_json"]) == ["fomc"]
     assert json.loads(fields[b"raw_keywords_json"]) == ["005930.KS", "삼성전자"]
-
-
-@pytest.mark.asyncio
-async def test_flush_reraises_clickhouse_failure(redis):
-    """CH failures MUST propagate so the daemon leaves the source message pending.
-
-    The consumer-group invariant (see services/news_scorer/main.py module
-    docstring "Publisher failure → NO XACK") only holds if publish()/flush()
-    actually raise on CH errors. Swallowing would cause XADD-succeeded +
-    CH-failed + XACK → unrecoverable Redis/CH split-brain.
-    """
-    ch = AsyncMock()
-    ch.execute.side_effect = RuntimeError("clickhouse down")
-    pub = ScoredPublisher(
-        redis=redis,
-        ch_client=ch,
-        stream=_STREAM,
-        maxlen=100,
-        ch_batch_size=1,
-    )
-    with pytest.raises(RuntimeError, match="clickhouse down"):
-        await pub.publish(_item("ch_fail"))
-
-
-@pytest.mark.asyncio
-async def test_explicit_flush_reraises_clickhouse_failure(redis):
-    ch = AsyncMock()
-    pub = ScoredPublisher(
-        redis=redis,
-        ch_client=ch,
-        stream=_STREAM,
-        maxlen=100,
-        ch_batch_size=10,  # no auto-flush
-    )
-    await pub.publish(_item("a"))
-    ch.execute.side_effect = RuntimeError("clickhouse down")
-    with pytest.raises(RuntimeError, match="clickhouse down"):
-        await pub.flush()

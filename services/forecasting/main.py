@@ -27,20 +27,20 @@ class ForecastingService:
         self,
         config: ForecastingConfig,
         redis_client: Any,
-        clickhouse_client: Any,
+        storage_client: Any,
         taxonomy_path: Path,
         llm_client: LLMScorerClient | None = None,
     ):
         self._config = config
         self._redis = redis_client
-        self._ch = clickhouse_client
+        self._storage_client = storage_client
         self._taxonomy = EventTaxonomy.load(taxonomy_path)
         self._llm = llm_client
         self._stop_event: asyncio.Event | None = None
         self._forecaster = VolatilityForecaster(config.har_rv)
         self._publisher = ForecastPublisher(
             redis=redis_client,
-            clickhouse=clickhouse_client,
+            storage_client=storage_client,
             vol_ttl_s=config.forecast_redis_ttl_seconds,
         )
         self._event_scorer = EventImpactScorer(
@@ -190,8 +190,6 @@ def _install_signal_handlers(
 
 
 async def _main() -> None:
-    from shared.storage import create_sync_clickhouse_client
-    from shared.storage.config import StorageConfig
     from shared.streaming.client import RedisClient
 
     logging.basicConfig(
@@ -201,11 +199,6 @@ async def _main() -> None:
 
     cfg = ForecastingConfig.from_yaml()
     redis = RedisClient.get_client()
-
-    ch = None
-    storage_config = StorageConfig.load_or_default()
-    if storage_config.runtime_storage.clickhouse_mirror.enabled:
-        ch = create_sync_clickhouse_client(database="kospi")
 
     # LLM client (optional)
     llm_client = None
@@ -225,7 +218,7 @@ async def _main() -> None:
     service = ForecastingService(
         config=cfg,
         redis_client=redis,
-        clickhouse_client=ch,
+        storage_client=None,
         taxonomy_path=taxonomy_path,
         llm_client=llm_client,
     )

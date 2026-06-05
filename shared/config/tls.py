@@ -1,19 +1,14 @@
-"""TLS configuration helpers for Redis and ClickHouse connections.
+"""TLS configuration helpers for Redis connections.
 
 Centralizes TLS parameter building from environment variables to avoid
 duplication across consumers. All boolean env vars accept "true", "1", "yes"
 (case-insensitive).
 
 Usage:
-    from shared.config.tls import build_redis_tls_params, get_clickhouse_tls_params
+    from shared.config.tls import build_redis_tls_params
 
-    # Redis
     tls_params = build_redis_tls_params()
     client = redis.Redis(host=host, port=port, **tls_params)
-
-    # ClickHouse
-    tls_params = get_clickhouse_tls_params()
-    client = clickhouse_connect.get_client(host=host, **tls_params)
 """
 
 import os
@@ -59,24 +54,3 @@ def build_redis_tls_params() -> dict:
 def is_redis_tls_enabled() -> bool:
     """Check if Redis TLS is enabled via env var."""
     return os.environ.get("REDIS_TLS_ENABLED", "false").lower() in _TRUTHY_VALUES
-
-
-def get_clickhouse_tls_params() -> dict:
-    """Build ClickHouse TLS connection parameters from environment variables.
-
-    Reads:
-        CLICKHOUSE_SECURE: Enable TLS ("true", "1", "yes")
-        CLICKHOUSE_VERIFY_SSL: Verify server certificate ("true", "1", "yes")
-        CLICKHOUSE_CA_CERT: Path to CA certificate
-
-    Returns:
-        Dict of kwargs to pass to clickhouse_connect.get_client().
-    """
-    secure = os.environ.get("CLICKHOUSE_SECURE", "false").lower() in _TRUTHY_VALUES
-    verify = os.environ.get("CLICKHOUSE_VERIFY_SSL", "true").lower() in _TRUTHY_VALUES
-    ca_cert = os.environ.get("CLICKHOUSE_CA_CERT")
-
-    params: dict = {"secure": secure, "verify": verify}
-    if ca_cert:
-        params["ca_cert"] = ca_cert
-    return params

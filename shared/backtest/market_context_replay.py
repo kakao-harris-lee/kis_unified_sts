@@ -100,9 +100,9 @@ class MarketContextReplay:
     # date).  Missing dates fall back to ``macro_snapshot``.
     macro_provider: Callable[[date], MacroSnapshot | None] | None = field(default=None)
 
-    # Drop bars with volume < min_volume before replay. The KOSPI200 futures
-    # ClickHouse table is known to carry phantom ``volume=2`` prints at
-    # recurring clock times every day (see docs/runbooks/phase3-verification.md
+    # Drop bars with volume < min_volume before replay. Legacy KOSPI200 futures
+    # datasets can carry phantom ``volume=2`` prints at recurring clock times
+    # every day (see docs/runbooks/phase3-verification.md
     # §4). With ``min_volume=30`` the bimodal distribution is cleaned up
     # (26% of rows dropped, anomalous >2% 1-min moves cut 17x to 0.28%).
     # Zero = no filter (backward compatible with existing tests).
@@ -162,7 +162,7 @@ class MarketContextReplay:
                     f"{big_pct:.1f}% of 1-min bars move >2% "
                     f"(max single-bar move {max_ret:.1%}). Typical clean "
                     f"KOSPI200 futures data is <0.5%. Backtest numbers on "
-                    f"this data are unreliable; regenerate from ClickHouse "
+                    f"this data are unreliable; regenerate the Parquet dataset "
                     f"or filter corrupted bars before trusting Optuna/WF "
                     f"results."
                 )

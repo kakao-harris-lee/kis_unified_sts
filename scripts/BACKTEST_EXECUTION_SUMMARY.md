@@ -10,7 +10,7 @@
 
 **File:** `scripts/run_trend_pullback_backtest.py`
 - Comprehensive standalone backtest runner
-- Supports 3 data modes: ClickHouse, CSV, Synthetic
+- Supports 3 data modes: Parquet, CSV, Synthetic
 - Implements all acceptance criteria validation:
   - Sharpe Ratio > 1.0 check
   - Positive returns validation
@@ -47,7 +47,7 @@
 Same environment issues as Subtask 1-1 and 1-2:
 
 1. **Python Dependencies Not Installed**
-   - Missing: pandas, numpy, clickhouse-driver, pyyaml, pydantic, etc.
+   - Missing: pandas, numpy, pyyaml, pydantic, etc.
    - Cause: Proxy blocking PyPI (403 Forbidden)
    - Impact: Cannot execute Python scripts requiring these modules
 
@@ -55,7 +55,7 @@ Same environment issues as Subtask 1-1 and 1-2:
    - Cannot use containerized execution
    - Dockerfile.test is available but not usable
 
-3. **ClickHouse Access Unavailable**
+3. **Parquet Data Unavailable**
    - Cannot verify real data availability
    - Cannot run backtest with production data
 
@@ -80,9 +80,9 @@ Expected output: 6+ months of data for 10-30 symbols
 
 **Step 2: Run Backtest**
 ```bash
-# Recommended: Real data from ClickHouse
+# Recommended: Real data from Parquet
 python3 scripts/run_trend_pullback_backtest.py \
-    --mode clickhouse \
+    --mode parquet \
     --symbol 005930 \
     --days 180 \
     --output-dir ./output/backtests/trend_pullback
@@ -131,7 +131,7 @@ GitHub Actions will have:
 ### Option B: Team Member Execution
 
 Forward to team member with proper environment:
-- ClickHouse running locally
+- Parquet market data available
 - Dependencies installed
 - 6+ months of data available
 
@@ -139,12 +139,12 @@ Forward to team member with proper environment:
 
 ```bash
 # Start infrastructure
-docker-compose up -d clickhouse redis
+docker-compose up -d redis
 
 # Run backtest in container
 docker-compose run --rm app \
     python3 scripts/run_trend_pullback_backtest.py \
-    --mode clickhouse \
+    --mode parquet \
     --symbol 005930 \
     --days 180
 ```
@@ -219,7 +219,7 @@ Based on strategy design and optimization (per config):
 
 ### Deferred (Requires Environment)
 - [ ] Install Python dependencies
-- [ ] Verify ClickHouse data availability
+- [ ] Verify Parquet data availability
 - [ ] Execute backtest script
 - [ ] Validate results meet criteria
 - [ ] Save results to MLflow

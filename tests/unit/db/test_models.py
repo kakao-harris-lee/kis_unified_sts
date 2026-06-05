@@ -1,4 +1,5 @@
-"""Test ClickHouse data models."""
+"""Test legacy market-data models."""
+
 from datetime import date, datetime
 
 
@@ -15,7 +16,7 @@ def test_daily_candle_creation():
         close=58500.0,
         volume=1000000,
         value=58500000000,
-        change_rate=0.86
+        change_rate=0.86,
     )
 
     assert candle.code == "005930"
@@ -35,7 +36,7 @@ def test_minute_candle_creation():
         low=57900.0,
         close=58050.0,
         volume=5000,
-        value=290250000
+        value=290250000,
     )
 
     assert candle.code == "005930"
@@ -54,7 +55,7 @@ def test_tick_data_creation():
         volume=100,
         bid_price=57990.0,
         ask_price=58010.0,
-        cumulative_volume=50000
+        cumulative_volume=50000,
     )
 
     assert tick.price == 58000.0

@@ -30,12 +30,12 @@ from shared.backtest.adapter import BacktestStrategyAdapter  # noqa: E402
 from shared.backtest.config import RiskConfig  # noqa: E402
 from shared.backtest.daily_adapter import (  # noqa: E402
     DailyBacktestAdapter,
-    load_stock_daily_from_clickhouse,
+    load_stock_daily_from_parquet,
 )
 from shared.backtest.engine import ExitReason, SignalType  # noqa: E402
 from shared.collector.historical.stock import (  # noqa: E402
     STOCK_UNIVERSE,
-    load_stock_minute_from_clickhouse,
+    load_stock_minute_from_parquet,
 )
 from shared.config.loader import ConfigLoader  # noqa: E402
 from shared.strategy.registry import (  # noqa: E402
@@ -217,7 +217,7 @@ def _seed_minute_strategy_daily_indicators(
     for stock in stocks:
         code = stock["code"]
         try:
-            daily_df = load_stock_daily_from_clickhouse(code, start, end)
+            daily_df = load_stock_daily_from_parquet(code, start, end)
         except Exception:
             missing.append(code)
             continue
@@ -676,9 +676,9 @@ def _load_symbol_data(
     end: date,
 ) -> pd.DataFrame | None:
     if timeframe == "daily":
-        df = load_stock_daily_from_clickhouse(code, start, end)
+        df = load_stock_daily_from_parquet(code, start, end)
     else:
-        df = load_stock_minute_from_clickhouse(code, start, end)
+        df = load_stock_minute_from_parquet(code, start, end)
 
     if df is None or df.empty:
         return None

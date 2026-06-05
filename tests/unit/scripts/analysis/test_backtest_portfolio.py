@@ -69,9 +69,7 @@ def test_load_symbol_data_uses_daily_loader_for_daily_strategy(monkeypatch):
         calls.append((code, start, end))
         return _daily_df(code).drop(columns=["code"])
 
-    monkeypatch.setattr(
-        portfolio, "load_stock_daily_from_clickhouse", fake_daily_loader
-    )
+    monkeypatch.setattr(portfolio, "load_stock_daily_from_parquet", fake_daily_loader)
 
     df = portfolio._load_symbol_data(
         code="005930",

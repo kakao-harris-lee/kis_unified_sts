@@ -351,7 +351,7 @@ python -m cli.main paper history --limit 200
 
 **Possible Causes:**
 1. Unhandled exception in strategy code
-2. Infrastructure issues (Redis, ClickHouse down)
+2. Infrastructure issues (Redis down or Parquet/SQLite paths unavailable)
 3. Network connectivity problems
 4. Memory/resource exhaustion
 
@@ -359,7 +359,7 @@ python -m cli.main paper history --limit 200
 ```bash
 # Check if services running
 redis-cli -n 1 ping
-clickhouse-client --query "SELECT 1"
+sts data validate-parquet --root data/market
 
 # Review error logs
 tail -200 logs/paper_trading.log | grep -i error
@@ -591,7 +591,7 @@ python -m cli.main paper start --strategy momentum_breakout --asset stock
 
 # Check infrastructure
 redis-cli -n 1 ping
-clickhouse-client --query "SELECT 1"
+sts data validate-parquet --root data/market
 ```
 
 ---

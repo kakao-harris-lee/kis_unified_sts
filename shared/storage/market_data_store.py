@@ -1,8 +1,7 @@
 """Market-data storage interfaces and Parquet/DuckDB implementation.
 
 Runtime services can keep using Redis/KIS fallbacks, while backtest and ML
-paths can choose a serverless Parquet dataset instead of requiring ClickHouse.
-ClickHouse adapters stay behind this module so callers can switch by config.
+paths use a serverless Parquet dataset queried through DuckDB.
 """
 
 from __future__ import annotations
@@ -16,7 +15,6 @@ from uuid import uuid4
 
 import yaml
 
-from shared.storage.clickhouse_backend import create_sync_clickhouse_client
 from shared.storage.config import MarketDataStorageConfig, StorageConfig
 
 AssetClass = Literal["stock", "futures"]
@@ -139,12 +137,6 @@ def _normalize_boundary(value: date | datetime | None, *, end: bool = False) -> 
     return ts.to_pydatetime()
 
 
-def _validate_identifier(value: str, label: str) -> str:
-    if not _IDENTIFIER_RE.fullmatch(value or ""):
-        raise MarketDataStoreError(f"Invalid {label}: {value!r}")
-    return value
-
-
 class ParquetMarketDataStore:
     """File-based market-data store queried through DuckDB."""
 
@@ -207,7 +199,7 @@ class ParquetMarketDataStore:
                 SELECT count(*) AS row_count,
                        min(datetime) AS min_datetime,
                        max(datetime) AS max_datetime
-                FROM read_parquet(?, union_by_name = true, hive_partitioning = true)
+                FROM read_parquet(?, union_by_name = true, hive_partitioning = false)
                 """,
                 [list(map(str, files))],
             ).fetchone()
@@ -375,191 +367,6 @@ class ParquetMarketDataStore:
         return minute_base / day_part if day_part is not None else minute_base
 
 
-class ClickHouseMarketDataStore:
-    """ClickHouse-backed adapter kept explicit for research/rollback paths."""
-
-    def __init__(
-        self,
-        *,
-        asset_class: AssetClass = "stock",
-        stock_database: str = "market",
-        futures_database: str = "kospi",
-        futures_table: str | None = None,
-    ):
-        self.asset_class = asset_class
-        self.stock_database = _validate_identifier(stock_database, "stock database")
-        self.futures_database = _validate_identifier(
-            futures_database, "futures database"
-        )
-        self.futures_table = (
-            _validate_identifier(futures_table, "futures table")
-            if futures_table
-            else None
-        )
-
-    def get_minute_bars(
-        self,
-        symbol: str,
-        start: date | datetime | None = None,
-        end: date | datetime | None = None,
-        limit: int | None = None,
-    ) -> "Any":
-        if self.asset_class == "futures":
-            table = self.futures_table or "kospi200f_1m"
-            return self._query_minute_bars(
-                symbol,
-                database=self.futures_database,
-                table=table,
-                start=start,
-                end=end,
-                limit=limit,
-            )
-        return self._query_minute_bars(
-            symbol,
-            database=self.stock_database,
-            table="minute_candles",
-            start=start,
-            end=end,
-            limit=limit,
-        )
-
-    def get_daily_bars(
-        self,
-        symbol: str,
-        start: date | datetime | None = None,
-        end: date | datetime | None = None,
-        limit: int | None = None,
-    ) -> "Any":
-        if self.asset_class != "stock":
-            raise MarketDataStoreError(
-                "daily ClickHouse adapter currently supports stock only"
-            )
-        return self._query_daily_bars(
-            symbol,
-            database=self.stock_database,
-            table="daily_candles",
-            start=start,
-            end=end,
-            limit=limit,
-        )
-
-    def append_minute_bars(self, rows: Iterable[Mapping[str, Any]] | "Any") -> int:
-        raise MarketDataStoreError(
-            "ClickHouseMarketDataStore append is not implemented"
-        )
-
-    def append_daily_bars(self, rows: Iterable[Mapping[str, Any]] | "Any") -> int:
-        raise MarketDataStoreError(
-            "ClickHouseMarketDataStore append is not implemented"
-        )
-
-    def dataset_manifest(self) -> dict[str, Any]:
-        return {
-            "source": "clickhouse",
-            "asset_class": self.asset_class,
-            "stock_database": self.stock_database,
-            "futures_database": self.futures_database,
-            "futures_table": self.futures_table,
-        }
-
-    def _query_minute_bars(
-        self,
-        symbol: str,
-        *,
-        database: str,
-        table: str,
-        start: date | datetime | None,
-        end: date | datetime | None,
-        limit: int | None,
-    ) -> "Any":
-        database = _validate_identifier(database, "database")
-        table = _validate_identifier(table, "table")
-        conditions = ["code = %(code)s"]
-        params: dict[str, Any] = {"code": symbol}
-        start_value = _normalize_boundary(start)
-        if start_value is not None:
-            conditions.append("datetime >= %(start)s")
-            params["start"] = start_value
-        end_value = _normalize_boundary(end, end=True)
-        if end_value is not None:
-            conditions.append("datetime <= %(end)s")
-            params["end"] = end_value
-
-        limit_sql = "LIMIT %(limit)s" if limit is not None and limit > 0 else ""
-        if limit_sql:
-            params["limit"] = int(limit)
-
-        query = f"""
-            SELECT code, datetime, open, high, low, close, volume
-            FROM {database}.{table}
-            WHERE {" AND ".join(conditions)}
-            ORDER BY datetime ASC
-            {limit_sql}
-        """
-        rows = self._execute(query, params, database=database)
-        if not rows:
-            raise ValueError(f"No minute data found for {symbol} in {database}.{table}")
-        pd = _require_pandas()
-        return _normalize_frame(pd.DataFrame(rows, columns=_BAR_COLUMNS))
-
-    def _query_daily_bars(
-        self,
-        symbol: str,
-        *,
-        database: str,
-        table: str,
-        start: date | datetime | None,
-        end: date | datetime | None,
-        limit: int | None,
-    ) -> "Any":
-        database = _validate_identifier(database, "database")
-        table = _validate_identifier(table, "table")
-        conditions = ["code = %(code)s"]
-        params: dict[str, Any] = {"code": symbol}
-        start_date = _date_only(start)
-        if start_date is not None:
-            conditions.append("date >= %(start)s")
-            params["start"] = start_date
-        end_date = _date_only(end)
-        if end_date is not None:
-            conditions.append("date <= %(end)s")
-            params["end"] = end_date
-
-        limit_sql = "LIMIT %(limit)s" if limit is not None and limit > 0 else ""
-        if limit_sql:
-            params["limit"] = int(limit)
-
-        query = f"""
-            SELECT
-                code,
-                date AS datetime,
-                argMax(open, created_at) AS open,
-                argMax(high, created_at) AS high,
-                argMax(low, created_at) AS low,
-                argMax(close, created_at) AS close,
-                argMax(volume, created_at) AS volume
-            FROM {database}.{table}
-            WHERE {" AND ".join(conditions)}
-            GROUP BY code, date
-            ORDER BY date ASC
-            {limit_sql}
-        """
-        rows = self._execute(query, params, database=database)
-        if not rows:
-            raise ValueError(f"No daily data found for {symbol} in {database}.{table}")
-        pd = _require_pandas()
-        return _normalize_frame(pd.DataFrame(rows, columns=_BAR_COLUMNS))
-
-    def _execute(
-        self, query: str, params: Mapping[str, Any], *, database: str
-    ) -> list[tuple]:
-        client = create_sync_clickhouse_client(database=database)
-        try:
-            return client.execute(query, dict(params))
-        finally:
-            client.disconnect()
-
-
 def _date_only(value: date | datetime | None) -> date | None:
     if value is None:
         return None
@@ -588,13 +395,7 @@ def create_market_data_store(
     else:
         market_config = config
 
-    if market_config.source == "clickhouse":
-        return ClickHouseMarketDataStore(
-            asset_class=asset_class,
-            stock_database=market_config.clickhouse.stock_database,
-            futures_database=market_config.clickhouse.futures_database,
-            futures_table=futures_table,
-        )
+    _ = futures_table
     return ParquetMarketDataStore(market_config.parquet.root, asset_class=asset_class)
 
 

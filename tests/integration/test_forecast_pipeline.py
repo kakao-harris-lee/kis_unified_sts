@@ -1,4 +1,5 @@
 """Integration tests for forecasting service main loop."""
+
 import asyncio
 from datetime import UTC, datetime
 from unittest.mock import MagicMock
@@ -8,6 +9,7 @@ import pytest
 
 def _fake_vol_forecast():
     from shared.forecasting.models import VolForecast
+
     return VolForecast(
         asof=datetime.now(UTC),
         horizon_minutes=15,
@@ -22,8 +24,7 @@ def _fake_vol_forecast():
 @pytest.fixture
 def cfg(tmp_path):
     yaml_path = tmp_path / "forecasting.yaml"
-    yaml_path.write_text(
-        """
+    yaml_path.write_text("""
 forecasting:
   publisher_enabled: true
   forecast_loop_interval_seconds: 1
@@ -41,9 +42,9 @@ forecasting:
     rule_first: true
     llm_fallback_enabled: false
     neutral_score_on_failure: 50
-"""
-    )
+""")
     from shared.forecasting.config import ForecastingConfig
+
     return ForecastingConfig.from_yaml(str(yaml_path))
 
 
@@ -63,8 +64,7 @@ async def test_service_start_starts_forecast_loop(cfg, tmp_path):
     pubsub_obj.close = MagicMock()
     redis.pubsub = MagicMock(return_value=pubsub_obj)
 
-    ch = MagicMock()
-    ch.execute = MagicMock(return_value=[])
+    storage = MagicMock()
 
     # Empty taxonomy file
     tax_path = tmp_path / "event_taxonomy.yaml"
@@ -73,7 +73,7 @@ async def test_service_start_starts_forecast_loop(cfg, tmp_path):
     service = ForecastingService(
         config=cfg,
         redis_client=redis,
-        clickhouse_client=ch,
+        storage_client=storage,
         taxonomy_path=tax_path,
         llm_client=None,
     )
@@ -90,9 +90,7 @@ async def test_service_start_starts_forecast_loop(cfg, tmp_path):
     await asyncio.wait_for(task, timeout=5)
 
     # Forecast was published at least once
-    assert any(
-        c.args[0] == "forecast:vol:current" for c in redis.set.call_args_list
-    )
+    assert any(c.args[0] == "forecast:vol:current" for c in redis.set.call_args_list)
 
 
 @pytest.mark.asyncio
@@ -108,14 +106,14 @@ async def test_service_stop_cancels_tasks(cfg, tmp_path):
     pubsub_obj.close = MagicMock()
     redis.pubsub = MagicMock(return_value=pubsub_obj)
 
-    ch = MagicMock()
+    storage = MagicMock()
     tax_path = tmp_path / "event_taxonomy.yaml"
     tax_path.write_text("events: []\nunknown_match_score: 40")
 
     service = ForecastingService(
         config=cfg,
         redis_client=redis,
-        clickhouse_client=ch,
+        storage_client=storage,
         taxonomy_path=tax_path,
         llm_client=None,
     )

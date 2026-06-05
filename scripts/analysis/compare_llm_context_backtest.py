@@ -10,7 +10,7 @@ Usage:
         --asset stock \\
         --data ./data/sample.csv
 
-    # From ClickHouse data
+    # From Parquet market data
     python scripts/analysis/compare_llm_context_backtest.py \\
         --strategy bb_reversion \\
         --asset stock \\
@@ -40,6 +40,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from shared.backtest import BacktestConfig, BacktestEngine
 from shared.config import ConfigLoader
+from shared.storage import StorageConfig, load_market_bars_for_backtest
 from shared.strategy import StrategyFactory
 
 
@@ -67,10 +68,10 @@ def _load_data_from_csv(csv_path: Path) -> pd.DataFrame:
     return df.sort_values("datetime").reset_index(drop=True)
 
 
-def _load_data_from_clickhouse(
+def _load_data_from_parquet(
     asset_class: str, symbol: str, start_date: str, end_date: str
 ) -> pd.DataFrame:
-    """Load OHLCV data from ClickHouse.
+    """Load OHLCV data from the configured Parquet market-data store.
 
     Args:
         asset_class: "stock" or "futures"
@@ -81,64 +82,20 @@ def _load_data_from_clickhouse(
     Returns:
         DataFrame with OHLCV data
     """
-    import os
-
-    from clickhouse_driver import Client as ClickHouseDriver
-    from dotenv import load_dotenv
-
-    load_dotenv(REPO_ROOT / ".env")
-
-    # ClickHouse config
-    host = os.getenv("CLICKHOUSE_HOST", "localhost")
-    port = int(os.getenv("CLICKHOUSE_NATIVE_PORT", "9000"))
-    user = os.getenv("CLICKHOUSE_USER", "default")
-    password = os.getenv("CLICKHOUSE_PASSWORD", "")
-
-    if asset_class == "stock":
-        database = os.getenv("CLICKHOUSE_DATABASE", "market")
-        table = "minute_candles"
-    else:
-        database = os.getenv("CLICKHOUSE_FUTURES_DATABASE", "futures")
-        table = os.getenv("FUTURES_CANDLE_TABLE", "kospi200f_1m")
-
-    client = ClickHouseDriver(host=host, port=port, user=user, password=password)
-
-    try:
-        query = f"""
-            SELECT
-                datetime,
-                open,
-                high,
-                low,
-                close,
-                volume,
-                code,
-                name
-            FROM {database}.{table}
-            WHERE code = %(code)s
-              AND datetime BETWEEN %(start)s AND %(end)s
-            ORDER BY datetime
-        """
-        rows = client.execute(
-            query,
-            {
-                "code": symbol,
-                "start": datetime.strptime(start_date, "%Y-%m-%d"),
-                "end": datetime.strptime(end_date, "%Y-%m-%d"),
-            },
-        )
-    finally:
-        client.disconnect()
-
-    if not rows:
-        raise ValueError(
-            f"No data found for {symbol} in {database}.{table} from {start_date} to {end_date}"
-        )
-
-    df = pd.DataFrame(
-        rows,
-        columns=["datetime", "open", "high", "low", "close", "volume", "code", "name"],
+    df = load_market_bars_for_backtest(
+        symbol=symbol,
+        asset_class=asset_class,  # type: ignore[arg-type]
+        timeframe="minute",
+        start=datetime.strptime(start_date, "%Y-%m-%d").date(),
+        end=datetime.strptime(end_date, "%Y-%m-%d").date(),
+        config=StorageConfig.load_or_default(),
     )
+    if df.empty:
+        raise ValueError(
+            f"No Parquet data found for {symbol} from {start_date} to {end_date}"
+        )
+    if "name" not in df.columns:
+        df["name"] = symbol
     return df.sort_values("datetime").reset_index(drop=True)
 
 
@@ -275,7 +232,9 @@ def _write_summary_md(
     lines.append("## Configuration")
     lines.append(f"- Strategy: {strategy_name}")
     lines.append(f"- Asset Class: {asset_class}")
-    lines.append(f"- Data Period: {data_info.get('start_date', 'N/A')} ~ {data_info.get('end_date', 'N/A')}")
+    lines.append(
+        f"- Data Period: {data_info.get('start_date', 'N/A')} ~ {data_info.get('end_date', 'N/A')}"
+    )
     lines.append(f"- Total Bars: {data_info.get('total_bars', 'N/A'):,}")
     if "symbol" in data_info:
         lines.append(f"- Symbol: {data_info['symbol']}")
@@ -351,9 +310,7 @@ def _write_summary_md(
 
     lines.append(verdict)
     lines.append("")
-    lines.append(
-        f"- Sharpe ratio improvement: {sharpe_improvement:+.1f}%"
-    )
+    lines.append(f"- Sharpe ratio improvement: {sharpe_improvement:+.1f}%")
     lines.append(
         f"- Return improvement: {_calculate_improvement(result_a['total_return_pct'], result_b['total_return_pct']):+.1f}%"
     )
@@ -402,9 +359,7 @@ def _print_results(result_a: dict[str, Any], result_b: dict[str, Any]) -> None:
             val_a_str = str(int(val_a))
             val_b_str = str(int(val_b))
 
-        print(
-            f"{label:<30} {val_a_str:>15} {val_b_str:>15} {improvement:>+14.1f}%"
-        )
+        print(f"{label:<30} {val_a_str:>15} {val_b_str:>15} {improvement:>+14.1f}%")
 
     print("=" * 80)
     print()
@@ -428,35 +383,47 @@ def main() -> int:
     )
 
     # Strategy config
-    parser.add_argument("--strategy", required=True, help="Strategy name (e.g., bb_reversion)")
-    parser.add_argument("--asset", default="stock", choices=["stock", "futures"], help="Asset class")
-    parser.add_argument("--initial-capital", type=float, default=10_000_000, help="Initial capital")
+    parser.add_argument(
+        "--strategy", required=True, help="Strategy name (e.g., bb_reversion)"
+    )
+    parser.add_argument(
+        "--asset", default="stock", choices=["stock", "futures"], help="Asset class"
+    )
+    parser.add_argument(
+        "--initial-capital", type=float, default=10_000_000, help="Initial capital"
+    )
 
     # Data source (mutually exclusive)
     data_group = parser.add_mutually_exclusive_group(required=True)
     data_group.add_argument("--data", type=Path, help="Path to CSV data file")
-    data_group.add_argument("--symbol", help="Symbol to load from ClickHouse")
+    data_group.add_argument("--symbol", help="Symbol to load from Parquet market data")
 
-    # ClickHouse options (required if --symbol is used)
-    parser.add_argument("--start-date", help="Start date (YYYY-MM-DD, required with --symbol)")
-    parser.add_argument("--end-date", help="End date (YYYY-MM-DD, required with --symbol)")
+    # Parquet options (required if --symbol is used)
+    parser.add_argument(
+        "--start-date", help="Start date (YYYY-MM-DD, required with --symbol)"
+    )
+    parser.add_argument(
+        "--end-date", help="End date (YYYY-MM-DD, required with --symbol)"
+    )
 
     # Output
-    parser.add_argument("--output-dir", default="artifacts/llm_ab_compare", help="Output directory")
+    parser.add_argument(
+        "--output-dir", default="artifacts/llm_ab_compare", help="Output directory"
+    )
 
     args = parser.parse_args()
 
-    # Validate ClickHouse args
+    # Validate Parquet args
     if args.symbol and (not args.start_date or not args.end_date):
         parser.error("--start-date and --end-date are required when using --symbol")
 
     # Load data
-    print(f"Loading data...")
+    print("Loading data...")
     if args.data:
         data = _load_data_from_csv(args.data)
         symbol = data["code"].iloc[0] if "code" in data.columns else "unknown"
     else:
-        data = _load_data_from_clickhouse(
+        data = _load_data_from_parquet(
             args.asset, args.symbol, args.start_date, args.end_date
         )
         symbol = args.symbol
@@ -472,16 +439,28 @@ def main() -> int:
     # Run backtests
     print("Running backtest A (without LLM context)...")
     result_a = _run_backtest(
-        args.strategy, args.asset, data, use_llm_context=False, initial_capital=args.initial_capital
+        args.strategy,
+        args.asset,
+        data,
+        use_llm_context=False,
+        initial_capital=args.initial_capital,
     )
-    print(f"  Sharpe: {result_a['sharpe_ratio']:.2f}, Return: {result_a['total_return_pct']:.2f}%")
+    print(
+        f"  Sharpe: {result_a['sharpe_ratio']:.2f}, Return: {result_a['total_return_pct']:.2f}%"
+    )
     print()
 
     print("Running backtest B (with LLM context)...")
     result_b = _run_backtest(
-        args.strategy, args.asset, data, use_llm_context=True, initial_capital=args.initial_capital
+        args.strategy,
+        args.asset,
+        data,
+        use_llm_context=True,
+        initial_capital=args.initial_capital,
     )
-    print(f"  Sharpe: {result_b['sharpe_ratio']:.2f}, Return: {result_b['total_return_pct']:.2f}%")
+    print(
+        f"  Sharpe: {result_b['sharpe_ratio']:.2f}, Return: {result_b['total_return_pct']:.2f}%"
+    )
     print()
 
     # Print comparison

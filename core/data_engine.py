@@ -1,4 +1,4 @@
-"""Data engine: merge ClickHouse history with real-time ticks into Polars windows."""
+"""Data engine: merge historical bars with real-time ticks into Polars windows."""
 
 from __future__ import annotations
 
@@ -68,9 +68,8 @@ class DataEngine:
         if ts <= 0:
             ts = datetime.now().timestamp()
 
-        minute = (
-            datetime.fromtimestamp(ts, tz=self._tz)
-            .replace(second=0, microsecond=0, tzinfo=None)
+        minute = datetime.fromtimestamp(ts, tz=self._tz).replace(
+            second=0, microsecond=0, tzinfo=None
         )
 
         vol = parse_int(payload.get("tick_volume"))

@@ -18,15 +18,12 @@ Historical Data Backfill Module
 import asyncio
 import logging
 import os
-import re
 from datetime import date, datetime, timedelta
 from typing import Any
 
 import httpx
 
 from shared.config.secrets import SecretsManager
-from shared.config.tls import get_clickhouse_tls_params
-
 from .calendar import get_trading_days_range, is_after_market_close
 from .futures import get_active_codes_for_date
 
@@ -36,22 +33,6 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 # Configuration
 # =============================================================================
-
-
-def _get_clickhouse_config() -> dict[str, Any]:
-    """Get ClickHouse configuration from environment."""
-    tls_params = get_clickhouse_tls_params()
-
-    return {
-        "host": os.getenv("CLICKHOUSE_HOST", "localhost"),
-        "port": int(os.getenv("CLICKHOUSE_PORT", "8123")),
-        "database": os.getenv(
-            "CLICKHOUSE_FUTURES_DATABASE", os.getenv("CLICKHOUSE_DATABASE", "kospi")
-        ),
-        "user": os.getenv("CLICKHOUSE_USER", "default"),
-        "password": os.getenv("CLICKHOUSE_PASSWORD", ""),
-        **tls_params,
-    }
 
 
 def _get_kis_config() -> dict[str, str]:
@@ -627,52 +608,22 @@ def parse_ohlcv(code: str, date_str: str, data: dict) -> list[tuple]:
 
 
 def get_db_client(database: str = None):
-    """Get ClickHouse client."""
-    import clickhouse_connect
-
-    config = _get_clickhouse_config()
-    kwargs = {
-        "host": config["host"],
-        "port": config["port"],
-        "database": database or config["database"],
-        "username": config["user"] or None,
-        "password": config["password"] or None,
-        "secure": config["secure"],
-        "verify": config["verify"],
-    }
-    if config.get("ca_cert"):
-        kwargs["ca_cert"] = config["ca_cert"]
-    return clickhouse_connect.get_client(
-        **kwargs,
+    """Legacy DB client entrypoint removed with ClickHouse support."""
+    _ = database
+    raise RuntimeError(
+        "ClickHouse has been removed; use Parquet backfill/status commands"
     )
 
 
 def ensure_database():
-    """Create database if not exists."""
-    config = _get_clickhouse_config()
-    client = get_db_client(database=None)
-    client.command(f"CREATE DATABASE IF NOT EXISTS {config['database']}")
-    client.close()
+    """Legacy no-op retained for backward-compatible imports."""
+    return None
 
 
 def ensure_table(client=None, table_name: str = "kospi_mini_1m"):
-    """Create table if not exists."""
-    if client is None:
-        client = get_db_client()
-
-    config = _get_clickhouse_config()
-    client.command(f"""
-        CREATE TABLE IF NOT EXISTS {config['database']}.{table_name} (
-            code String,
-            datetime DateTime,
-            open Float64,
-            high Float64,
-            low Float64,
-            close Float64,
-            volume UInt64
-        ) ENGINE = ReplacingMergeTree()
-        ORDER BY (code, datetime)
-    """)
+    """Legacy no-op retained for backward-compatible imports."""
+    _ = client, table_name
+    return None
 
 
 def ensure_kospi200f_table(client=None):
@@ -686,25 +637,9 @@ def ensure_kospi200_index_table(client=None):
 
 
 def insert_batch(client, rows: list[tuple], table_name: str = "kospi_mini_1m"):
-    """Batch insert OHLCV data."""
-    if not rows:
-        return
-
-    values = []
-    for row in rows:
-        code, dt, open_, high, low, close, volume = row
-        dt_str = (
-            dt.strftime("%Y-%m-%d %H:%M:%S") if hasattr(dt, "strftime") else str(dt)
-        )
-        values.append(
-            f"('{code}', '{dt_str}', {open_}, {high}, {low}, {close}, {volume})"
-        )
-
-    sql = f"""
-        INSERT INTO {table_name} (code, datetime, open, high, low, close, volume)
-        VALUES {', '.join(values)}
-    """
-    client.command(sql)
+    """Legacy DB insert removed."""
+    _ = client, rows, table_name
+    raise RuntimeError("ClickHouse inserts have been removed; write Parquet instead")
 
 
 def _load_continuous_source_rows(
@@ -830,120 +765,54 @@ def get_collected_pairs_in_range(
 
 
 def get_data_status(days: int = 30) -> dict[str, Any]:
-    """Get data collection status summary."""
-    end = date.today()
-    start = end - timedelta(days=days)
-    trading_days = get_trading_days_range(start, end)
+    """Get Parquet data collection status summary."""
+    from shared.collector.historical.parquet_backfill import (
+        get_parquet_backfill_status,
+    )
 
-    status = {
-        "period": f"{start} ~ {end}",
-        "trading_days": len(trading_days),
-        "tables": {},
-    }
-
-    try:
-        db_client = get_db_client()
-        config = _get_clickhouse_config()
-
-        for table_name in ["kospi_mini_1m", "kospi200f_1m", "kospi200_index_1m"]:
-            try:
-                result = db_client.query(
-                    f"""
-                    SELECT
-                        count() as rows,
-                        countDistinct(toDate(datetime)) as days,
-                        min(datetime) as min_dt,
-                        max(datetime) as max_dt
-                    FROM {config['database']}.{table_name}
-                    WHERE toDate(datetime) >= %(start)s AND toDate(datetime) <= %(end)s
-                    """,
-                    parameters={"start": start, "end": end},
-                )
-                row = (
-                    result.result_rows[0] if result.result_rows else (0, 0, None, None)
-                )
-                status["tables"][table_name] = {
-                    "rows": row[0],
-                    "days_collected": row[1],
-                    "min_datetime": str(row[2]) if row[2] else None,
-                    "max_datetime": str(row[3]) if row[3] else None,
-                }
-            except Exception as e:
-                status["tables"][table_name] = {"error": str(e)}
-
-        db_client.close()
-    except Exception as e:
-        status["error"] = str(e)
-
-    return status
+    return get_parquet_backfill_status(days=days, asset_class="futures")
 
 
-def load_futures_minute_from_clickhouse(
+def load_futures_minute_from_parquet(
     code: str,
     start_date: date | None = None,
     end_date: date | None = None,
     table_name: str | None = None,
-) -> "pd.DataFrame":
-    """Load futures minute candles from ClickHouse for backtest.
+) -> Any:
+    """Load futures minute candles from the configured Parquet market-data store.
 
     Args:
         code: Futures symbol (e.g., ``101S6000`` or ``A05603``).
         start_date: Inclusive lower bound (KST date).
         end_date: Inclusive upper bound (KST date).
-        table_name: Optional table override. Defaults to ``FUTURES_CANDLE_TABLE``
-            environment variable, then ``kospi200f_1m``.
+        table_name: Accepted for backward compatibility; ignored for Parquet.
 
     Returns:
         DataFrame columns: ``code, datetime, open, high, low, close, volume``.
 
     Raises:
-        ValueError: when no rows are found or table name is invalid.
+        ValueError: when no rows are found.
     """
-    import pandas as pd
+    _ = table_name
+    from shared.storage import StorageConfig, load_market_bars_for_backtest
 
-    config = _get_clickhouse_config()
-    table = table_name or os.getenv("FUTURES_CANDLE_TABLE", "kospi200f_1m")
-    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", table or ""):
-        raise ValueError(f"Invalid futures table name: {table!r}")
-
-    db_client = get_db_client()
-    conditions = ["code = %(code)s"]
-    params: dict[str, Any] = {"code": code}
-    if start_date:
-        conditions.append("datetime >= %(start)s")
-        params["start"] = start_date
-    if end_date:
-        conditions.append("datetime <= %(end)s")
-        params["end"] = datetime.combine(end_date, datetime.max.time())
-
-    where = " AND ".join(conditions)
-    query = f"""
-        SELECT code, datetime, open, high, low, close, volume
-        FROM {config['database']}.{table}
-        WHERE {where}
-        ORDER BY datetime ASC
-    """
-
-    try:
-        result = db_client.query(query, parameters=params)
-    finally:
-        db_client.close()
-
-    if not result.result_rows:
+    df = load_market_bars_for_backtest(
+        symbol=code,
+        asset_class="futures",
+        timeframe="minute",
+        start=start_date,
+        end=end_date,
+        config=StorageConfig.load_or_default(),
+    )
+    if df.empty:
         raise ValueError(
-            f"No futures data found for {code} in {config['database']}.{table} "
+            f"No futures data found for {code} in Parquet market data "
             f"(range: {start_date} ~ {end_date})"
         )
-
-    df = pd.DataFrame(
-        result.result_rows,
-        columns=["code", "datetime", "open", "high", "low", "close", "volume"],
-    )
-    dt = pd.to_datetime(df["datetime"])
-    if getattr(dt.dt, "tz", None) is not None:
-        dt = dt.dt.tz_localize(None)
-    df["datetime"] = dt
     return df
+
+
+load_futures_minute_from_clickhouse = load_futures_minute_from_parquet
 
 
 # =============================================================================

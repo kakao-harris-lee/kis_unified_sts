@@ -3,12 +3,13 @@
 import pytest
 
 
-def test_storage_config_loads_default_yaml_without_clickhouse_env(monkeypatch):
+def test_storage_config_loads_default_yaml_without_storage_env(monkeypatch):
     from shared.storage.config import StorageConfig
 
-    monkeypatch.delenv("CLICKHOUSE_HOST", raising=False)
-    monkeypatch.delenv("CLICKHOUSE_STOCK_DATABASE", raising=False)
-    monkeypatch.delenv("CLICKHOUSE_FUTURES_DATABASE", raising=False)
+    monkeypatch.delenv("RUNTIME_STORAGE_BACKEND", raising=False)
+    monkeypatch.delenv("RUNTIME_STORAGE_SQLITE_PATH", raising=False)
+    monkeypatch.delenv("MARKET_DATA_SOURCE", raising=False)
+    monkeypatch.delenv("MARKET_DATA_PARQUET_ROOT", raising=False)
     monkeypatch.delenv("ENVIRONMENT", raising=False)
 
     config = StorageConfig.from_yaml()
@@ -16,10 +17,8 @@ def test_storage_config_loads_default_yaml_without_clickhouse_env(monkeypatch):
     assert config.runtime_storage.backend == "sqlite"
     assert config.runtime_storage.sqlite.path == "data/runtime/dev/runtime.db"
     assert config.runtime_storage.sqlite.wal is True
-    assert config.runtime_storage.clickhouse_mirror.enabled is False
     assert config.market_data.source == "parquet"
     assert config.market_data.parquet.root == "data/market"
-    assert config.market_data.clickhouse.enabled is False
     assert config.dashboard.trade_stats_source == "runtime_ledger"
 
 
@@ -34,14 +33,9 @@ def test_storage_config_env_overrides_nested_fields(monkeypatch, tmp_path):
     monkeypatch.setenv("RUNTIME_STORAGE_SQLITE_WAL", "false")
     monkeypatch.setenv("RUNTIME_STORAGE_SQLITE_BUSY_TIMEOUT_MS", "1234")
     monkeypatch.setenv("RUNTIME_STORAGE_SQLITE_SYNCHRONOUS", "full")
-    monkeypatch.setenv("RUNTIME_STORAGE_CLICKHOUSE_MIRROR_ENABLED", "true")
-    monkeypatch.setenv("RUNTIME_STORAGE_CLICKHOUSE_DATABASE", "analytics")
-    monkeypatch.setenv("MARKET_DATA_SOURCE", "clickhouse")
+    monkeypatch.setenv("MARKET_DATA_SOURCE", "parquet")
     monkeypatch.setenv("MARKET_DATA_PARQUET_ROOT", str(parquet_root))
-    monkeypatch.setenv("MARKET_DATA_CLICKHOUSE_ENABLED", "true")
-    monkeypatch.setenv("MARKET_DATA_CLICKHOUSE_STOCK_DATABASE", "stockdb")
-    monkeypatch.setenv("MARKET_DATA_CLICKHOUSE_FUTURES_DATABASE", "futuresdb")
-    monkeypatch.setenv("DASHBOARD_TRADE_STATS_SOURCE", "clickhouse")
+    monkeypatch.setenv("DASHBOARD_TRADE_STATS_SOURCE", "runtime_ledger")
 
     config = StorageConfig.from_yaml()
 
@@ -50,20 +44,24 @@ def test_storage_config_env_overrides_nested_fields(monkeypatch, tmp_path):
     assert config.runtime_storage.sqlite.wal is False
     assert config.runtime_storage.sqlite.busy_timeout_ms == 1234
     assert config.runtime_storage.sqlite.synchronous == "FULL"
-    assert config.runtime_storage.clickhouse_mirror.enabled is True
-    assert config.runtime_storage.clickhouse_mirror.database == "analytics"
-    assert config.market_data.source == "clickhouse"
+    assert config.market_data.source == "parquet"
     assert config.market_data.parquet.root == str(parquet_root)
-    assert config.market_data.clickhouse.enabled is True
-    assert config.market_data.clickhouse.stock_database == "stockdb"
-    assert config.market_data.clickhouse.futures_database == "futuresdb"
-    assert config.dashboard.trade_stats_source == "clickhouse"
+    assert config.dashboard.trade_stats_source == "runtime_ledger"
 
 
 def test_storage_config_rejects_invalid_backend(monkeypatch):
     from shared.storage.config import StorageConfig
 
-    monkeypatch.setenv("RUNTIME_STORAGE_BACKEND", "clickhouse-ish")
+    monkeypatch.setenv("RUNTIME_STORAGE_BACKEND", "invalid-backend")
+
+    with pytest.raises(ValueError):
+        StorageConfig.from_yaml()
+
+
+def test_storage_config_rejects_clickhouse_market_data_source(monkeypatch):
+    from shared.storage.config import StorageConfig
+
+    monkeypatch.setenv("MARKET_DATA_SOURCE", "clickhouse")
 
     with pytest.raises(ValueError):
         StorageConfig.from_yaml()

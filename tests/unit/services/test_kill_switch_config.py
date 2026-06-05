@@ -17,8 +17,7 @@ def test_loads_default_yaml():
     assert cfg.conditions.weekly_loss.limit_pct == 0.07
     assert cfg.conditions.consecutive_losses.threshold == 6
     assert cfg.conditions.api_error_rate_5min.threshold == 0.2
-    assert cfg.conditions.news_pipeline_lag_seconds.threshold == 1800  # Phase 0.4: updated to 30 min
-    assert cfg.conditions.clickhouse_insert_fail_rate.threshold == 0.1
+    assert cfg.conditions.news_pipeline_lag_seconds.threshold == 1800
 
 
 def test_loads_custom_yaml(tmp_path):

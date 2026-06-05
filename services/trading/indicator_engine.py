@@ -275,7 +275,7 @@ class StreamingIndicatorEngine:
         # Cache for get_indicators_tf(): {(symbol, timeframe): (total_appended, indicators_dict)}
         self._mtf_base_cache: dict[tuple[str, int], tuple[int, dict[str, float]]] = {}
 
-        # Daily candles (loaded from ClickHouse, not aggregated from 1m)
+        # Daily candles (loaded from Parquet, not aggregated from 1m)
         # {symbol: deque[Candle]}
         self._daily_candles: dict[str, deque] = {}
         # Monotonic per-symbol count of daily candles ever appended. Same
@@ -629,7 +629,7 @@ class StreamingIndicatorEngine:
         candles, else ``get_indicators_tf`` returns ``{}`` and the strategy
         never signals. Reporting warm too early lets the orchestrator prewarm
         short-circuit (``if is_warm(symbol): continue``) and skip the deep
-        ClickHouse load that seeds those higher-timeframe bars.
+        Parquet load that seeds those higher-timeframe bars.
 
         The gate uses ``_mtf_warmth_timeframe`` — the deepest *strategy-required*
         intraday timeframe (``IndicatorContract.warmth_timeframe``) — NOT the
@@ -638,7 +638,7 @@ class StreamingIndicatorEngine:
         waiting on 15m bars (only ~8 closed from a 120-candle prewarm). When the
         warmth timeframe is unset (1m-only strategy) or not actually accumulated,
         only the 1m depth gates warmth. 'daily' is excluded by the contract — it
-        is loaded from ClickHouse separately, never aggregated from the 1m feed.
+        is loaded from Parquet separately, never aggregated from the 1m feed.
         """
         acc = self._accumulators.get(symbol)
         if acc is None or len(acc.candles) < self.bb_period:
@@ -1004,7 +1004,7 @@ class StreamingIndicatorEngine:
         """Feed a completed 1-minute candle to all multi-timeframe accumulators.
 
         Note: 'daily' timeframe is NOT fed here — daily candles are loaded
-        directly from ClickHouse via seed_daily_candles().
+        directly from Parquet via seed_daily_candles().
         """
         mtf_map = self._mtf_accumulators.get(symbol)
         if mtf_map is None:
@@ -1058,7 +1058,7 @@ class StreamingIndicatorEngine:
     ) -> list[dict[str, float]]:
         """Return recent daily candles for a symbol.
 
-        Daily candles are loaded from ClickHouse (not aggregated from 1m).
+        Daily candles are loaded from Parquet (not aggregated from 1m).
 
         Args:
             symbol: Symbol to get candles for.
@@ -1268,7 +1268,7 @@ class StreamingIndicatorEngine:
         """Compute daily timeframe indicators from daily candles.
 
         Uses pandas-based calculators from shared.indicators.daily on
-        the daily candles loaded from ClickHouse.
+        the daily candles loaded from Parquet.
 
         Args:
             symbol: Symbol to compute indicators for.

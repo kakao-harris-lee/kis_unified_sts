@@ -6,7 +6,7 @@
 
 **Architecture:** 4 new long-running services (`services/{decision_engine, risk_filter, order_router, kill_switch}/main.py`), V3 ClickHouse migration (`kospi.order_fills`), `shared/execution/executor.py` gains `place_passive_limit_futures()`, `shared/paper/broker.py` gains pseudo-OCO watcher. All services use `ServiceConfigBase` + Prometheus + systemd + graceful-shutdown on SIGTERM. Market orders permitted only for: `signal.valid_until` expiry force-close, session-end force-close (15:10 KST), kill-switch force-flat. Everything else passive limit.
 
-**Tech Stack:** Python 3.11+, asyncio, `redis.asyncio` (consumer groups), `aiochclient`, `pydantic v2`, `pytest` + `pytest-asyncio` + `fakeredis`. Reuses Phase 1-3 shared modules; no new heavy deps.
+**Tech Stack:** Python 3.11+, asyncio, `redis.asyncio` (consumer groups), `pydantic v2`, `pytest` + `pytest-asyncio` + `fakeredis`. Reuses Phase 1-3 shared modules; no new heavy deps.
 
 **Parent spec:** `docs/plans/2026-04-20-futures-paradigm-phase4-execution.md`
 **Depends on:** Phase 3 merged (all done: PRs #125/126/127/128/129).

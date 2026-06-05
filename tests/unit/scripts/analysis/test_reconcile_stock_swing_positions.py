@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 import scripts.analysis.reconcile_stock_swing_positions as mod
 
 
-def _ch_position(**overrides):
+def _ledger_position(**overrides):
     base = {
         "id": "pos-1",
         "code": "108490",
@@ -36,8 +36,8 @@ def _redis_position(**overrides):
     return mod.RedisOpenPosition(**base)
 
 
-def test_plan_reconciliation_selects_clickhouse_only_old_position():
-    position = _ch_position()
+def test_plan_reconciliation_selects_ledger_only_old_position():
+    position = _ledger_position()
 
     candidates = mod.plan_reconciliation(
         [position],
@@ -53,8 +53,8 @@ def test_plan_reconciliation_selects_clickhouse_only_old_position():
 
 
 def test_plan_reconciliation_skips_when_redis_has_same_id_or_code():
-    by_id = _ch_position(id="same-id", code="108490")
-    by_code = _ch_position(id="other-id", code="005930")
+    by_id = _ledger_position(id="same-id", code="108490")
+    by_code = _ledger_position(id="other-id", code="005930")
 
     candidates = mod.plan_reconciliation(
         [by_id, by_code],
@@ -70,9 +70,9 @@ def test_plan_reconciliation_skips_when_redis_has_same_id_or_code():
 
 
 def test_plan_reconciliation_honors_min_age_and_filters():
-    old_target = _ch_position(id="target", code="108490")
-    old_other = _ch_position(id="other", code="000660")
-    fresh_target = _ch_position(
+    old_target = _ledger_position(id="target", code="108490")
+    old_other = _ledger_position(id="other", code="000660")
+    fresh_target = _ledger_position(
         id="fresh",
         code="005930",
         entry_date=datetime(2026, 5, 17, 9, 0, 0),
@@ -92,7 +92,7 @@ def test_plan_reconciliation_honors_min_age_and_filters():
 
 def test_close_replacement_row_marks_position_closed_at_entry_price():
     candidate = mod.ReconciliationCandidate(
-        position=_ch_position(id="target"),
+        position=_ledger_position(id="target"),
         age_days=4,
         reason="redis_absent_id_and_code",
     )
@@ -104,35 +104,32 @@ def test_close_replacement_row_marks_position_closed_at_entry_price():
         exit_reason="reconciled_redis_absent",
     )
 
-    assert row[0] == "target"
-    assert row[7] == "KRX"
-    assert row[11] == 0
-    assert row[12] == closed_at
-    assert row[13] == 354750.0
-    assert row[14] == "reconciled_redis_absent"
-    assert row[15] == 0.0
+    assert row["position_id"] == "target"
+    assert row["venue"] == "KRX"
+    assert row["is_open"] == 0
+    assert row["exit_time"] == closed_at.isoformat()
+    assert row["exit_price"] == 354750.0
+    assert row["exit_reason"] == "reconciled_redis_absent"
+    assert row["pnl"] == 0.0
 
 
 def test_apply_replacements_inserts_expected_rows():
     candidate = mod.ReconciliationCandidate(
-        position=_ch_position(id="target"),
+        position=_ledger_position(id="target"),
         age_days=4,
         reason="redis_absent_id_and_code",
     )
-    client = MagicMock()
+    ledger = MagicMock()
     closed_at = datetime(2026, 5, 17, 3, 30, 0)
 
     applied = mod.apply_replacements(
-        client,
-        "market",
-        "swing_positions",
+        ledger,
         [candidate],
         closed_at=closed_at,
         exit_reason="reconciled_redis_absent",
     )
 
     assert applied == 1
-    sql, rows = client.execute.call_args.args
-    assert "INSERT INTO market.swing_positions" in sql
-    assert rows[0][0] == "target"
-    assert rows[0][11] == 0
+    row = ledger.record_position_snapshot.call_args.args[0]
+    assert row["position_id"] == "target"
+    assert row["is_open"] == 0

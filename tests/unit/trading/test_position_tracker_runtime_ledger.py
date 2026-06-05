@@ -105,7 +105,7 @@ async def test_closed_position_snapshot_and_stock_trade_use_runtime_ledger(tmp_p
 
 
 @pytest.mark.asyncio
-async def test_runtime_ledger_backend_does_not_fill_clickhouse_batches(tmp_path):
+async def test_runtime_ledger_backend_does_not_fill_legacy_batches(tmp_path):
     tracker, _ledger = _tracker_with_sqlite_ledger(tmp_path)
     position = _closed_position()
 
