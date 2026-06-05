@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import date
 from unittest.mock import patch
 
@@ -16,10 +17,10 @@ from services.daily_scanner import (
     _sma,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_bars(
     closes: list[float],
@@ -61,6 +62,7 @@ def _make_bars(
 # ---------------------------------------------------------------------------
 # Helper function tests
 # ---------------------------------------------------------------------------
+
 
 class TestSmaHelper:
     def test_basic(self):
@@ -112,6 +114,7 @@ class TestAtrHelper:
 # TrendPullback filter tests
 # ---------------------------------------------------------------------------
 
+
 class TestTrendPullbackFilter:
     def _scanner(self) -> DailyScanner:
         cfg = DailyScannerConfig(
@@ -132,8 +135,7 @@ class TestTrendPullbackFilter:
         scanner = self._scanner()
         # Rising phase builds up SMA, then a pullback lowers RSI below 45,
         # and the last bar recovers enough to stay above SMA(5).
-        closes = [90.0, 95.0, 100.0, 105.0, 110.0,
-                  108.0, 106.0, 104.0, 102.0, 106.0]
+        closes = [90.0, 95.0, 100.0, 105.0, 110.0, 108.0, 106.0, 104.0, 102.0, 106.0]
         bars = _make_bars(closes, [500_000] * len(closes))
         result = scanner.filter_trend_pullback("TEST", bars)
         assert result is True
@@ -176,6 +178,7 @@ class TestTrendPullbackFilter:
 # MomentumBreakout filter tests
 # ---------------------------------------------------------------------------
 
+
 class TestMomentumBreakoutFilter:
     def _scanner(self) -> DailyScanner:
         cfg = DailyScannerConfig(
@@ -191,7 +194,13 @@ class TestMomentumBreakoutFilter:
         scanner = self._scanner()
         # 20 bars of base then 5 bars near the high
         base_closes = [100.0] * 20
-        near_high_closes = [100.0, 100.5, 101.0, 101.5, 102.0]  # high_n = 103 (from high=close+1)
+        near_high_closes = [
+            100.0,
+            100.5,
+            101.0,
+            101.5,
+            102.0,
+        ]  # high_n = 103 (from high=close+1)
         closes = base_closes + near_high_closes
         # Last 5 bars have higher volume than base
         base_vols = [500_000] * 20
@@ -225,7 +234,13 @@ class TestMomentumBreakoutFilter:
         """Short-term volume not above threshold × long-term volume."""
         scanner = self._scanner()
         # Uniform volume across all bars → vol_ma5 == vol_ma20 → ratio=1.0 < 1.2
-        closes = [98.0, 99.0, 100.0, 101.0, 102.0] * 4 + [101.5, 101.6, 101.7, 101.8, 102.0]
+        closes = [98.0, 99.0, 100.0, 101.0, 102.0] * 4 + [
+            101.5,
+            101.6,
+            101.7,
+            101.8,
+            102.0,
+        ]
         volumes = [600_000] * len(closes)
         bars = _make_bars(closes, volumes)
         result = scanner.filter_momentum_breakout("TEST", bars)
@@ -242,6 +257,7 @@ class TestMomentumBreakoutFilter:
 # ---------------------------------------------------------------------------
 # MinimumEdge filter tests
 # ---------------------------------------------------------------------------
+
 
 class TestMinimumEdge:
     def _scanner(self) -> DailyScanner:
@@ -283,6 +299,7 @@ class TestMinimumEdge:
 # Daily freshness guard tests
 # ---------------------------------------------------------------------------
 
+
 class TestDailyFreshness:
     def test_accepts_latest_expected_trading_day(self):
         scanner = DailyScanner(DailyScannerConfig(max_stale_trading_days=0))
@@ -311,7 +328,27 @@ class TestDailyFreshness:
 # scan_universe integration test (mocked _load_daily_bars)
 # ---------------------------------------------------------------------------
 
+
 class TestScanAll:
+    class FakeTradeTrendRanker:
+        def summary(self):
+            return {"enabled": True, "status": "loaded"}
+
+        def rank_watchlists(self, watchlists):
+            ranked = {name: list(reversed(codes)) for name, codes in watchlists.items()}
+            return (
+                ranked,
+                {
+                    "TP002": {
+                        "trade_trend_priority": {
+                            "score": 1.0,
+                            "matched_sector": "semiconductor",
+                        }
+                    }
+                },
+                {"enabled": True, "status": "loaded"},
+            )
+
     def test_scan_returns_watchlist(self):
         """scan_universe routes codes into the correct lists."""
         # Use relaxed config so our synthetic bars pass filters
@@ -333,7 +370,9 @@ class TestScanAll:
 
         # Trend-pullback bars: rising then small dip, high volume, decent ATR
         tp_closes = [100.0, 102.0, 104.0, 106.0, 108.0, 110.0, 108.5]
-        tp_bars = _make_bars(tp_closes, [500_000] * len(tp_closes), high_delta=5.0, low_delta=5.0)
+        tp_bars = _make_bars(
+            tp_closes, [500_000] * len(tp_closes), high_delta=5.0, low_delta=5.0
+        )
 
         # Momentum-breakout bars: near N-day high, volume surge on last 5 bars
         mb_base = [100.0] * 10
@@ -343,7 +382,9 @@ class TestScanAll:
         mb_bars = _make_bars(mb_closes, mb_vols, high_delta=5.0, low_delta=5.0)
 
         # Code that should fail minimum edge (tiny ATR)
-        bad_bars = _make_bars([100.0] * 10, [500_000] * 10, high_delta=0.05, low_delta=0.05)
+        bad_bars = _make_bars(
+            [100.0] * 10, [500_000] * 10, high_delta=0.05, low_delta=0.05
+        )
 
         side_effect_map = {
             "TP001": tp_bars,
@@ -368,6 +409,44 @@ class TestScanAll:
         assert "EMPTY001" not in result["trend_pullback"]
         assert "EMPTY001" not in result["momentum_breakout"]
 
+    def test_scan_orders_watchlist_with_trade_trend_priority_metadata(self):
+        cfg = DailyScannerConfig(
+            tp_sma_period=5,
+            tp_rsi_period=5,
+            tp_rsi_max=45.0,
+            tp_trend_deviation_pct=5.0,
+            tp_min_volume_20d=100_000,
+            me_atr_period=5,
+            me_round_trip_cost=0.005,
+            me_min_atr_cost_ratio=2.0,
+            max_stale_trading_days=9999,
+        )
+        scanner = DailyScanner(cfg)
+        scanner._trade_trend_ranker = self.FakeTradeTrendRanker()
+        tp_bars = _make_bars(
+            [100.0, 102.0, 104.0, 106.0, 108.0, 110.0, 108.5],
+            [500_000] * 7,
+            high_delta=5.0,
+            low_delta=5.0,
+        )
+
+        with (
+            patch.object(scanner, "_load_daily_bars", return_value=tp_bars),
+            patch.object(scanner, "check_daily_freshness", return_value=True),
+            patch.object(scanner, "check_minimum_edge", return_value=True),
+            patch.object(scanner, "filter_trend_pullback", return_value=True),
+            patch.object(scanner, "filter_momentum_breakout", return_value=False),
+        ):
+            result = scanner.scan_universe(["TP001", "TP002"])
+
+        assert result["trend_pullback"][:2] == ["TP002", "TP001"]
+        assert (
+            scanner._last_watchlist_metadata["TP002"]["trade_trend_priority"][
+                "matched_sector"
+            ]
+            == "semiconductor"
+        )
+
     def test_scan_respects_max_watchlist_size(self):
         """Results are capped at max_watchlist_size."""
         cfg = DailyScannerConfig(
@@ -385,7 +464,9 @@ class TestScanAll:
         scanner = DailyScanner(cfg)
 
         tp_closes = [100.0, 102.0, 104.0, 106.0, 108.0, 110.0, 108.5]
-        tp_bars = _make_bars(tp_closes, [500_000] * len(tp_closes), high_delta=5.0, low_delta=5.0)
+        tp_bars = _make_bars(
+            tp_closes, [500_000] * len(tp_closes), high_delta=5.0, low_delta=5.0
+        )
 
         codes = [f"CODE{i:03d}" for i in range(10)]
 
@@ -411,11 +492,14 @@ class TestScanAll:
         tp_bars = _make_bars(
             [100.0, 102.0, 104.0, 106.0, 108.0, 110.0, 108.5],
             [500_000] * 7,
-            high_delta=5.0, low_delta=5.0,
+            high_delta=5.0,
+            low_delta=5.0,
         )
 
-        with patch.object(scanner, "_load_daily_bars", return_value=tp_bars), \
-             patch("services.daily_scanner.RedisClient") as mock_redis_cls:
+        with (
+            patch.object(scanner, "_load_daily_bars", return_value=tp_bars),
+            patch("services.daily_scanner.RedisClient") as mock_redis_cls,
+        ):
             mock_redis = mock_redis_cls.get_client.return_value
             result = scanner.scan_and_publish(["CODE001"])
 
@@ -423,3 +507,6 @@ class TestScanAll:
         assert "trend_pullback" in result
         assert "momentum_breakout" in result
         mock_redis.set.assert_called_once()
+        payload = json.loads(mock_redis.set.call_args.args[1])
+        assert "sources" in payload
+        assert "trade_trend_priority" in payload["sources"]

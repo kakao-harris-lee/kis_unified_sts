@@ -30,6 +30,7 @@ from shared.collector.historical.calendar import (
 )
 from shared.config.base import ServiceConfigBase
 from shared.exceptions import InfrastructureError
+from shared.scanner.trade_trend_priority import TradeTrendPriorityRanker
 from shared.storage.config import StorageConfig
 from shared.storage.market_data_store import ParquetMarketDataStore
 from shared.streaming.client import RedisClient
@@ -233,6 +234,9 @@ class DailyScanner:
 
     def __init__(self, config: Optional[DailyScannerConfig] = None) -> None:
         self.config = config or DailyScannerConfig()
+        self._trade_trend_ranker = TradeTrendPriorityRanker.from_default_config()
+        self._last_watchlist_metadata: dict[str, dict[str, object]] = {}
+        self._last_trade_trend_priority_summary: dict[str, object] = {}
 
     # ------------------------------------------------------------------
     # Filters
@@ -538,6 +542,8 @@ class DailyScanner:
             each mapping to a list of passing codes (up to ``max_watchlist_size``).
         """
         if not codes:
+            self._last_watchlist_metadata = {}
+            self._last_trade_trend_priority_summary = self._trade_trend_ranker.summary()
             return {"trend_pullback": [], "momentum_breakout": []}
 
         # Filter funnel metrics
@@ -580,6 +586,21 @@ class DailyScanner:
                 momentum_breakout_raw += 1
 
         cfg = self.config
+
+        ranked_watchlists, priority_metadata, priority_summary = (
+            self._trade_trend_ranker.rank_watchlists(
+                {
+                    "trend_pullback": trend_pullback,
+                    "momentum_breakout": momentum_breakout,
+                }
+            )
+        )
+        trend_pullback = ranked_watchlists.get("trend_pullback", trend_pullback)
+        momentum_breakout = ranked_watchlists.get(
+            "momentum_breakout", momentum_breakout
+        )
+        self._last_watchlist_metadata = priority_metadata
+        self._last_trade_trend_priority_summary = priority_summary
 
         # Log funnel metrics
         logger.info("=" * 60)
@@ -639,7 +660,12 @@ class DailyScanner:
                 "timestamp": date.today().isoformat(),
                 "strategies": result,
                 "counts": {k: len(v) for k, v in result.items()},
+                "sources": {
+                    "trade_trend_priority": self._last_trade_trend_priority_summary
+                },
             }
+            if self._last_watchlist_metadata:
+                payload["metadata"] = self._last_watchlist_metadata
             redis.set(
                 self.config.redis_key,
                 json.dumps(payload, ensure_ascii=False),

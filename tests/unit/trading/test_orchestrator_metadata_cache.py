@@ -499,6 +499,30 @@ class TestCacheInvalidation:
             }
         }
 
+    def test_dynamic_daily_watchlist_candidates_preserve_priority_metadata(self):
+        orch = _make_orchestrator()
+        orch._strategy_manager = MagicMock(strategy_names=["daily_pullback"])
+        orch._daily_indicators = {"005930": {"daily_close": 70000}}
+        orch._daily_watchlist = {
+            "strategies": {"daily_pullback": ["005930"]},
+            "metadata": {
+                "005930": {
+                    "trade_trend_priority": {
+                        "score": 1.0,
+                        "matched_sector": "semiconductor",
+                    }
+                }
+            },
+        }
+
+        codes, names, metadata = orch._load_dynamic_daily_watchlist_candidates()
+
+        assert codes == ["005930"]
+        assert metadata["005930"]["source"] == "daily_watchlist"
+        assert metadata["005930"]["trade_trend_priority"]["matched_sector"] == (
+            "semiconductor"
+        )
+
     def test_dynamic_daily_watchlist_candidates_can_be_disabled(self):
         orch = _make_orchestrator(include_daily_watchlist_in_dynamic_universe=False)
         orch._strategy_manager = MagicMock(strategy_names=["daily_pullback"])

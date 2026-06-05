@@ -2754,6 +2754,9 @@ class TradingOrchestrator:
                     "computed_at": payload.get("computed_at"),
                     "source": self.DAILY_INDICATORS_REDIS_KEY,
                 }
+                watchlist_metadata = payload.get("metadata", {})
+                if isinstance(watchlist_metadata, dict):
+                    self._daily_watchlist["metadata"] = watchlist_metadata
 
             # Invalidate enriched metadata cache after daily indicators update
             self._invalidate_enriched_metadata_cache()
@@ -2883,6 +2886,12 @@ class TradingOrchestrator:
 
         metadata = {
             code: {
+                **(
+                    watchlist.get("metadata", {}).get(code, {})
+                    if isinstance(watchlist.get("metadata"), dict)
+                    and isinstance(watchlist.get("metadata", {}).get(code), dict)
+                    else {}
+                ),
                 "source": "daily_watchlist",
                 "daily_strategy_candidates": strategies_for_code,
             }

@@ -40,6 +40,7 @@ from shared.collector.historical.daily_quality import (
     quality_fetch_limit,
 )
 from shared.collector.historical.stock_universe import STOCK_UNIVERSE
+from shared.scanner.trade_trend_priority import TradeTrendPriorityRanker
 from shared.storage.config import StorageConfig
 from shared.storage.market_data_store import ParquetMarketDataStore
 
@@ -760,6 +761,12 @@ def publish_to_redis(
             "strategies": merged,
             "counts": {name: len(codes) for name, codes in merged.items()},
         }
+        watchlist_metadata = (metadata or {}).get("metadata")
+        if isinstance(watchlist_metadata, dict) and watchlist_metadata:
+            compat_payload["metadata"] = watchlist_metadata
+        sources = (metadata or {}).get("sources")
+        if isinstance(sources, dict) and sources:
+            compat_payload["sources"] = sources
         redis_client.set(
             DAILY_WATCHLIST_COMPAT_KEY,
             json.dumps(compat_payload, ensure_ascii=False),
@@ -948,6 +955,8 @@ def main():
     errors = len(failures)
 
     strategy_candidates: dict[str, list[str]] = {}
+    watchlist_metadata: dict[str, dict[str, Any]] = {}
+    trade_trend_priority_summary: dict[str, Any] = {}
     if results and args.build_strategy_watchlist:
         strategy_candidates = asyncio.run(
             build_strategy_candidate_watchlist(
@@ -963,6 +972,12 @@ def main():
                     for name, codes in sorted(strategy_candidates.items())
                 ),
             )
+            ranker = TradeTrendPriorityRanker.from_default_config()
+            (
+                strategy_candidates,
+                watchlist_metadata,
+                trade_trend_priority_summary,
+            ) = ranker.rank_watchlists(strategy_candidates)
 
     # Augment with futures daily indicators (Setup A/C daily_regime_trend_filter
     # consumes daily_close / daily_ema_20 / daily_ema_60 / daily_rsi_14 for
@@ -994,6 +1009,10 @@ def main():
                 "strategies": strategy_candidates,
                 "strategy_counts": strategy_counts,
                 "strategy_watchlist_size": max(1, args.strategy_watchlist_size),
+                "metadata": watchlist_metadata,
+                "sources": {
+                    "trade_trend_priority": trade_trend_priority_summary,
+                },
             },
         )
     else:
