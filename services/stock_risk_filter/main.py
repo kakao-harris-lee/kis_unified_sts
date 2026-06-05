@@ -9,11 +9,21 @@ Error taxonomy (mirrors services.risk_filter.main):
 - Parse error            -> XACK (poison-pill drop)
 - Filter eval raises     -> NO XACK (leave pending)
 - final XADD raises      -> NO XACK
+
+Flag routing (STOCK_RISK_FILTER env var):
+  off (default / unset) — inert: log + close redis + return 0, no daemon
+                          constructed.
+  shadow                — full wiring: RiskFilterLayer + StockRiskFilterDaemon,
+                          consuming signal.candidate.stock.shadow and emitting
+                          signal.final.stock.shadow.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import os
+import socket
 import time
 from typing import Any
 
@@ -118,8 +128,7 @@ class StockRiskFilterDaemon(StreamStage):
 
 
 def _resolve_mode() -> str:
-    import os
-
+    """Return the daemon mode from the env var (default 'off')."""
     return os.getenv("STOCK_RISK_FILTER", "off").strip().lower()
 
 
@@ -135,10 +144,14 @@ def _streams_for(mode: str) -> tuple[str, str]:
 
 
 async def _build_and_run() -> int:
-    import asyncio
-    import os
+    """Flag-gated production entrypoint.
+
+    off / unset: inert — log and return 0, constructing NONE of the
+                 layer/runtime-state/daemon objects.
+    shadow:      full wiring — consume signal.candidate.stock.shadow through
+                 RiskFilterLayer and emit signal.final.stock.shadow.
+    """
     import signal as signal_mod
-    import socket
 
     import redis.asyncio as aioredis
 
@@ -169,7 +182,12 @@ async def _build_and_run() -> int:
         try:
             return bool(sync_redis.hexists(positions_key, code))
         except Exception:
-            return False  # fail-open
+            logger.warning(
+                "Redis error checking open position for %s; "
+                "assuming open (fail-closed)",
+                code,
+            )
+            return True  # fail-closed: block re-entry on uncertainty
 
     layer = RiskFilterLayer.from_config(
         config=config,
@@ -204,8 +222,6 @@ async def _build_and_run() -> int:
 
 
 def main() -> int:
-    import asyncio
-
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
