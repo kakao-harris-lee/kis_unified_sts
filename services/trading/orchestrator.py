@@ -892,6 +892,8 @@ class TradingOrchestrator:
 
         # WebSocket futures price feed (initialized in _initialize_components)
         self._futures_price_feed: Any | None = None
+        self._stream_consumer_feed: Any | None = None
+        self._stream_redis: Any | None = None
         self._futures_slippage_controller: Any | None = None
         self._futures_slippage_aux_symbols: list[str] = []
         self._entry_slippage_stats: dict[str, float] = {
@@ -1323,26 +1325,71 @@ class TradingOrchestrator:
                     prev_close,
                 )
 
+    def _load_stream_staleness_threshold(self) -> float:
+        """Staleness threshold for the stream feed — mirror the failover config."""
+        try:
+            failover_cfg = ConfigLoader.load("streaming.yaml").get("failover", {})
+            return float(failover_cfg.get("staleness_threshold_seconds", 30.0))
+        except (
+            InvalidConfigError,
+            MissingConfigError,
+            OSError,
+            yaml.YAMLError,
+            KeyError,
+            TypeError,
+            ValueError,
+        ):
+            return 30.0
+
     def _init_price_feeds(self, kis_config) -> Any | None:
         """Initialize WebSocket Price Feeds"""
         self._stock_price_feed = None
         self._futures_price_feed = None
+        self._stream_consumer_feed = None
+        self._stream_redis = None
         data_source = None
 
         if not self._kis_client or not kis_config:
             return None
 
         if self.config.asset_class == "stock":
-            try:
-                from shared.kis.stock_feed import KISStockPriceFeed
+            source_mode = (
+                os.getenv("STOCK_MARKET_DATA_SOURCE", "websocket").strip().lower()
+            )
+            if source_mode == "stream":
+                import redis.asyncio as aioredis
 
-                self._stock_price_feed = KISStockPriceFeed(
-                    config=kis_config,
+                from services.trading.stream_consumer_feed import StreamConsumerFeed
+
+                stream_name = os.getenv("MARKET_TICK_STREAM", "market:ticks")
+                self._stream_redis = aioredis.from_url(
+                    os.environ.get("REDIS_URL", "redis://localhost:6379/1")
                 )
-                data_source = self._stock_price_feed
-                logger.info("Stock WebSocket price feed initialized")
-            except (NetworkError, WebSocketDisconnectError, ConfigurationError) as e:
-                logger.warning(f"Stock WebSocket feed init failed: {e}")
+                self._stream_consumer_feed = StreamConsumerFeed(
+                    redis=self._stream_redis,
+                    stream=stream_name,
+                    stale_threshold_seconds=self._load_stream_staleness_threshold(),
+                )
+                data_source = self._stream_consumer_feed
+                logger.info(
+                    "Stock data source = STREAM (%s); KIS WebSocket feed skipped",
+                    stream_name,
+                )
+            else:
+                try:
+                    from shared.kis.stock_feed import KISStockPriceFeed
+
+                    self._stock_price_feed = KISStockPriceFeed(
+                        config=kis_config,
+                    )
+                    data_source = self._stock_price_feed
+                    logger.info("Stock WebSocket price feed initialized")
+                except (
+                    NetworkError,
+                    WebSocketDisconnectError,
+                    ConfigurationError,
+                ) as e:
+                    logger.warning(f"Stock WebSocket feed init failed: {e}")
         elif self.config.asset_class == "futures":
             try:
                 from shared.kis.futures_feed import KISFuturesPriceFeed
