@@ -78,7 +78,12 @@ async def test_event_breakout_produces_shadow_candidate():
     redis_ops = fakeredis.aioredis.FakeRedis(server=server, db=1)
     redis_assert = fakeredis.aioredis.FakeRedis(server=server, db=1)
 
-    engine = StreamingIndicatorEngine()
+    # staleness_seconds=0 disables the wall-clock staleness guard: the ticks carry
+    # simulated _BASE (2026) timestamps, so get_indicators (now=datetime.now()) would
+    # otherwise treat them as stale when this test runs hours after _BASE's wall-clock
+    # time, returning {} (no atr) and producing no candidate. In production ticks carry
+    # real-time timestamps, so the guard is correct there; this only de-flakes the test.
+    engine = StreamingIndicatorEngine(staleness_seconds=0)
     feed = StreamConsumerFeed(
         redis=redis_ops,
         stream="raw_data",

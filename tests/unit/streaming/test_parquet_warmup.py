@@ -1,9 +1,4 @@
-"""Parquet warmup seeds the engine so it is warm without live ticks.
-
-This file provides a thin smoke test covering the futures-daemon warmup path.
-The canonical recency regression suite lives in
-tests/unit/streaming/test_parquet_warmup.py (shared helper).
-"""
+"""Shared parquet warmup helper seeds the engine correctly."""
 
 from __future__ import annotations
 
@@ -11,9 +6,7 @@ import pandas as pd
 import pytest
 
 from services.trading.indicator_engine import StreamingIndicatorEngine
-from shared.streaming.parquet_warmup import (
-    warmup_engine_from_parquet as _warmup_engine_from_parquet,
-)
+from shared.streaming.parquet_warmup import warmup_engine_from_parquet
 
 
 class _Store:
@@ -25,10 +18,10 @@ class _Store:
         return pd.DataFrame(rows)
 
 
-def test_warmup_seeds_candles_into_engine():
+def test_seeds_candles_into_engine():
+    """30 seeded 1-min bars >= bb_period(20) → engine is warm."""
     eng = StreamingIndicatorEngine()
-    _warmup_engine_from_parquet(eng, _Store(), "A05")
-    # 30 seeded 1-min bars >= bb_period(20) -> warm
+    warmup_engine_from_parquet(eng, _Store(), "A05")
     assert eng.is_warm("A05") is True
 
 
@@ -37,10 +30,15 @@ class _StoreTailCheck:
 
     close[i] = 100 + i, so every row has a distinct close that encodes its
     position in the sequence.  This makes tail vs head distinguishable at the
-    LAST seeded bar:
+    LAST seeded bar — the correct check:
 
       correct tail-slice  iloc[-240:] → rows 60-299 → last close = 100+299 = 399
       buggy   head-slice  iloc[:240]  → rows  0-239 → last close = 100+239 = 339
+
+    The previous two-band design (BAD_PRICE / GOOD_PRICE) was ambiguous: a
+    head-slice of rows 0-239 still ends on GOOD_PRICE (row 239 is in the GOOD
+    band), so the test passed even on the bug.  Monotonic closes eliminate that
+    false-pass.
     """
 
     TOTAL_ROWS = 300
@@ -48,10 +46,8 @@ class _StoreTailCheck:
 
     @classmethod
     def expected_last_close(cls) -> float:
-        return float(cls.BASE + cls.TOTAL_ROWS - 1)  # 399.0
-
-    def __init__(self, total_rows: int | None = None) -> None:
-        self._total_rows = total_rows if total_rows is not None else self.TOTAL_ROWS
+        """Last close after correct tail-slice of TOTAL_ROWS with lookback=240."""
+        return float(cls.BASE + cls.TOTAL_ROWS - 1)  # 100 + 299 = 399
 
     def get_minute_bars(self, symbol, start=None, end=None, limit=None):  # noqa: ARG002
         rows = [
@@ -62,20 +58,43 @@ class _StoreTailCheck:
                 "close": float(self.BASE + i),
                 "volume": 1,
             }
-            for i in range(self._total_rows)
+            for i in range(self.TOTAL_ROWS)
         ]
         return pd.DataFrame(rows)
 
 
-def test_warmup_uses_most_recent_bars_not_oldest():
+class _StoreSmall:
+    """Returns fewer bars than the lookback window for the no-crash test."""
+
+    TOTAL_ROWS = 25
+
+    def get_minute_bars(self, symbol, start=None, end=None, limit=None):  # noqa: ARG002
+        rows = [
+            {
+                "open": float(100 + i),
+                "high": float(101 + i),
+                "low": float(99 + i),
+                "close": float(100 + i),
+                "volume": 1,
+            }
+            for i in range(self.TOTAL_ROWS)
+        ]
+        return pd.DataFrame(rows)
+
+
+def test_uses_most_recent_bars_not_oldest():
     """Regression (#414): warmup must tail the most recent bars.
 
-    300 ASC bars, close[i]=100+i.  Tail-slice → last close 399.0;
-    head-slice → 339.0 → test fails → regression caught.
+    The store returns 300 ASC bars with close[i] = 100+i (monotonic).
+
+      correct tail-slice  iloc[-240:] → rows 60-299 → last close = 399.0
+      buggy   head-slice  iloc[:240]  → rows  0-239 → last close = 339.0
+
+    Asserting last close == 399.0 catches the head-slice bug; 339.0 would fail.
     """
     store = _StoreTailCheck()
     eng = StreamingIndicatorEngine()
-    _warmup_engine_from_parquet(eng, store, "A05")
+    warmup_engine_from_parquet(eng, store, "A05")
 
     assert eng.is_warm("A05"), "Engine should be warm after seeding ≥20 candles"
     last_price = eng.get_last_price("A05")
@@ -86,9 +105,8 @@ def test_warmup_uses_most_recent_bars_not_oldest():
     )
 
 
-def test_warmup_with_fewer_bars_than_lookback():
+def test_with_fewer_bars_than_lookback():
     """When fewer bars exist than lookback_minutes, all bars are used (no crash)."""
-    store = _StoreTailCheck(total_rows=25)
     eng = StreamingIndicatorEngine()
-    _warmup_engine_from_parquet(eng, store, "A05")
+    warmup_engine_from_parquet(eng, _StoreSmall(), "A05")
     assert eng.is_warm("A05") is True

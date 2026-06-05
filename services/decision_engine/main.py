@@ -29,6 +29,9 @@ from typing import Any
 
 from shared.decision.context import MarketContext
 from shared.decision.setup_base import Setup
+from shared.streaming.parquet_warmup import (
+    warmup_engine_from_parquet as _warmup_engine_from_parquet,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -130,55 +133,6 @@ def _candidate_stream_for(mode: str) -> str:
         if mode == "shadow"
         else "stream:signal.candidate"
     )
-
-
-# ---------------------------------------------------------------------------
-# Parquet warmup helper (Task 6)
-# ---------------------------------------------------------------------------
-
-
-def _warmup_engine_from_parquet(
-    engine: Any, store: Any, symbol: str, lookback_minutes: int = 240
-) -> None:
-    """Seed the engine's 1-min candles from parquet so it is warm at startup.
-
-    Best-effort: on any read error, the engine simply warms from live ticks.
-
-    Args:
-        engine: :class:`StreamingIndicatorEngine` instance.
-        store: :class:`ParquetMarketDataStore` instance (or compatible duck-
-               typed store) with ``get_minute_bars(symbol, limit=N)``.
-        symbol: Futures symbol to warm (e.g. ``"A05"``).
-        lookback_minutes: Number of 1-min bars to seed (default 240 = 4 h).
-    """
-    from datetime import UTC, datetime, timedelta
-
-    # Bound the read to the last few calendar days so we don't load months of
-    # history on every startup, then take the tail so we always get the MOST
-    # RECENT bars (ParquetMarketDataStore orders ASC; a bare `limit=N` would
-    # return the OLDEST N bars — same bug class as FuturesDailyReference.prev_close).
-    start_bound = (datetime.now(UTC) - timedelta(days=5)).date().isoformat()
-    try:
-        df = store.get_minute_bars(symbol, start=start_bound)
-    except Exception:
-        logger.warning(
-            "parquet warmup read failed for %s; warming from live ticks", symbol
-        )
-        return
-    if df is None or len(df) == 0:
-        return
-    df = df.iloc[-lookback_minutes:]
-    candles = [
-        {
-            "open": float(r["open"]),
-            "high": float(r["high"]),
-            "low": float(r["low"]),
-            "close": float(r["close"]),
-            "volume": float(r.get("volume", 0) or 0),
-        }
-        for _, r in df.iterrows()
-    ]
-    engine.seed_candles(symbol, candles)
 
 
 # ---------------------------------------------------------------------------
