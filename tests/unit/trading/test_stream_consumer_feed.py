@@ -135,6 +135,51 @@ def test_is_healthy_true_when_running_and_fresh():
     assert h["staleness_seconds"] is not None and h["staleness_seconds"] < 30.0
 
 
+def test_set_tick_callback_invoked_instead_of_indicator_push():
+    eng = FakeIndicatorEngine()
+    feed = _feed(indicator_engine=eng)
+    seen: list[tuple] = []
+    feed.set_tick_callback(
+        lambda symbol, price, ts: seen.append((symbol, price["close"], ts))
+    )
+    feed._apply_entry(_entry(symbol="005930", close="100.0", volume="500"))
+    assert len(seen) == 1
+    symbol, close, ts = seen[0]
+    assert symbol == "005930" and close == 100.0
+    assert isinstance(ts, datetime)
+    # callback present => indicator engine is NOT pushed
+    assert eng.on_tick_calls == []
+    assert eng.baseline_calls == []
+    # price cache is still updated
+    assert feed._prices["005930"]["close"] == 100.0
+
+
+def test_set_tick_callback_via_constructor():
+    seen: list[str] = []
+    feed = _feed(tick_callback=lambda s, _p, _ts: seen.append(s))
+    feed._apply_entry(_entry(symbol="000660", close="50.0"))
+    assert seen == ["000660"]
+
+
+def test_no_callback_still_pushes_indicator():
+    eng = FakeIndicatorEngine()
+    feed = _feed(indicator_engine=eng)
+    feed._apply_entry(_entry(symbol="005930", close="100.0", volume="500"))
+    assert len(eng.on_tick_calls) == 1  # unchanged M1b behavior
+
+
+def test_tick_callback_exception_is_swallowed():
+    feed = _feed()
+
+    def boom(symbol, price, ts):
+        raise RuntimeError("callback blew up")
+
+    feed.set_tick_callback(boom)
+    # must not propagate out of _apply_entry
+    feed._apply_entry(_entry(symbol="005930", close="100.0"))
+    assert feed._prices["005930"]["close"] == 100.0
+
+
 @pytest.mark.asyncio
 async def test_read_loop_consumes_xadded_ticks():
     import asyncio
