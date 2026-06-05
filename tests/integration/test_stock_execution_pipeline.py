@@ -44,8 +44,8 @@ def _candidate(code: str) -> dict[str, str]:
 @pytest.mark.asyncio
 async def test_candidate_to_fill_and_reentry_blocked() -> None:
     server = fakeredis.FakeServer()
-    redis = fakeredis.aioredis.FakeRedis(server=server)
-    sync_redis = fakeredis.FakeStrictRedis(server=server)
+    redis = fakeredis.aioredis.FakeRedis(server=server, db=1)
+    sync_redis = fakeredis.FakeStrictRedis(server=server, db=1)
     positions_key = "trading:stock:positions"
 
     def _has_open_position(code: str) -> bool:
@@ -95,6 +95,7 @@ async def test_candidate_to_fill_and_reentry_blocked() -> None:
     assert await redis.hexists(positions_key, "005930")
 
     # 2nd candidate, same code -> OpenPositionFilter rejects -> no new final.
+    # True == consumed (OpenPositionFilter rejects → no XADD to final).
     assert await risk.handle_message(b"c2", _encode(_candidate("005930"))) is True
     final_after = await redis.xrange("signal.final.stock.shadow")
     assert len(final_after) == 1  # unchanged — re-entry blocked
