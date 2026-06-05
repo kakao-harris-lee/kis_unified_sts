@@ -1837,8 +1837,10 @@ class TradingOrchestrator:
 
             self._futures_price_feed.set_tick_callback(_on_futures_tick)
 
-        # Hook stock WebSocket ticks into indicator engine and monitoring stream.
-        if self._stock_price_feed:
+        # Hook stock ticks (WS feed or Redis stream feed) into the indicator
+        # engine, paper broker, and (gated) monitoring stream.
+        stock_feed = self._stock_price_feed or self._stream_consumer_feed
+        if stock_feed:
 
             def _on_stock_tick(symbol: str, data: dict[str, Any], ts: datetime) -> None:
                 if self._indicator_engine:
@@ -1872,7 +1874,7 @@ class TradingOrchestrator:
                             monitor_data["name"] = fallback_name
                     self._tick_stream_publisher.publish("stock", symbol, monitor_data)
 
-            self._stock_price_feed.set_tick_callback(_on_stock_tick)
+            stock_feed.set_tick_callback(_on_stock_tick)
 
     async def _init_execution_layer(self):
         """Initialize Execution Layer (Paper or Real)"""

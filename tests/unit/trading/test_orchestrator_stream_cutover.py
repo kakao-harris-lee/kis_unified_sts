@@ -66,3 +66,41 @@ def test_tick_stream_publisher_built_on_websocket_path(monkeypatch):
     orch._stream_consumer_feed = None
     orch._init_tick_stream_publisher()  # takes the normal (non-skip) path
     assert orch._tick_stream_publisher is None  # disabled-by-env, but path executed
+
+
+class _RecordingFeed:
+    """Stand-in for a stock feed that records its tick callback."""
+
+    def __init__(self) -> None:
+        self.callback = None
+
+    def set_tick_callback(self, callback) -> None:
+        self.callback = callback
+
+
+def test_init_indicator_engine_wires_callback_to_stream_feed():
+    orch = TradingOrchestrator(TradingConfig.stock())
+    # Minimal state the wiring block reads at top level:
+    orch._strategy_manager = None
+    orch._stock_price_feed = None
+    orch._futures_price_feed = None
+    fake = _RecordingFeed()
+    orch._stream_consumer_feed = fake
+
+    orch._init_indicator_engine()
+
+    assert fake.callback is not None  # _on_stock_tick bound to the stream feed
+    assert callable(fake.callback)
+
+
+def test_init_indicator_engine_wires_callback_to_ws_feed_when_present():
+    orch = TradingOrchestrator(TradingConfig.stock())
+    orch._strategy_manager = None
+    orch._futures_price_feed = None
+    orch._stream_consumer_feed = None
+    fake = _RecordingFeed()
+    orch._stock_price_feed = fake
+
+    orch._init_indicator_engine()
+
+    assert fake.callback is not None  # WS path unchanged
