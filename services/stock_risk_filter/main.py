@@ -89,6 +89,8 @@ class StockRiskFilterDaemon(StreamStage):
             return True  # rejected: consume (no final)
 
         try:
+            # signal_id is already carried by the decode_fields passthrough;
+            # do not re-set it explicitly.
             fields_out = dict(passthrough)
             fields_out["size_multiplier"] = str(result.size_multiplier)
             fields_out["filtered_at_ms"] = str(int(time.time() * 1000))
@@ -106,3 +108,5 @@ class StockRiskFilterDaemon(StreamStage):
             return False
 
         return True
+
+    # No on_shutdown override: stock daemon has no audit-sink to flush.

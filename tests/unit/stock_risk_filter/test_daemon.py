@@ -39,7 +39,7 @@ def _candidate(
     }
 
 
-def _build_daemon(redis) -> StockRiskFilterDaemon:
+def _build_daemon(redis: fakeredis.aioredis.FakeRedis) -> StockRiskFilterDaemon:
     layer = RiskFilterLayer.from_config(
         config=StockRiskConfig(),
         trading_windows=["09:00-15:30"],
@@ -59,7 +59,7 @@ def _build_daemon(redis) -> StockRiskFilterDaemon:
 
 
 @pytest.mark.asyncio
-async def test_passing_candidate_emits_final_with_size_multiplier():
+async def test_passing_candidate_emits_final_with_size_multiplier() -> None:
     redis = fakeredis.aioredis.FakeRedis()
     daemon = _build_daemon(redis)
     ack = await daemon.handle_message(b"1-0", _encode(_candidate()))
@@ -73,7 +73,7 @@ async def test_passing_candidate_emits_final_with_size_multiplier():
 
 
 @pytest.mark.asyncio
-async def test_outside_session_rejected_no_final():
+async def test_outside_session_rejected_no_final() -> None:
     redis = fakeredis.aioredis.FakeRedis()
     daemon = _build_daemon(redis)
     # 20:00 KST = 11:00 UTC — outside 09:00-15:30.
@@ -85,9 +85,34 @@ async def test_outside_session_rejected_no_final():
 
 
 @pytest.mark.asyncio
-async def test_unparseable_is_poison_pill_drop():
+async def test_unparseable_is_poison_pill_drop() -> None:
     redis = fakeredis.aioredis.FakeRedis()
     daemon = _build_daemon(redis)
     ack = await daemon.handle_message(b"1-0", {b"price": b"not-a-float", b"code": b"x"})
     assert ack is True  # consumed, not retried
     assert await redis.xrange("signal.final.stock.shadow") == []
+
+
+@pytest.mark.asyncio
+async def test_filter_eval_raises_leaves_pending() -> None:
+    redis = fakeredis.aioredis.FakeRedis()
+    daemon = _build_daemon(redis)
+
+    class _Boom:
+        def evaluate(self, *a: object, **k: object) -> object:  # noqa: ARG002
+            raise RuntimeError("boom")
+
+    daemon.layer = _Boom()  # type: ignore[assignment]
+    ack = await daemon.handle_message(b"1-0", _encode(_candidate()))
+    assert ack is False  # NO XACK -> message stays pending for retry
+    assert await redis.xrange("signal.final.stock.shadow") == []
+
+
+@pytest.mark.asyncio
+async def test_final_stream_has_ttl() -> None:
+    redis = fakeredis.aioredis.FakeRedis()
+    daemon = _build_daemon(redis)
+    ack = await daemon.handle_message(b"1-0", _encode(_candidate()))
+    assert ack is True
+    ttl = await redis.ttl("signal.final.stock.shadow")
+    assert 0 < ttl <= 86400
