@@ -113,6 +113,16 @@ The daemon loop is fail-safe per symbol: a strategy/resolver raising for one sym
 - LLM/regime adapter gates for stock (stock strategies are self-contained today).
 - Position sizing fidelity at the candidate stage (sizer needs portfolio cash; the producer emits a nominal quantity, risk/order refine later).
 
+## 10b. Known warmup-fidelity limitations (validate in shadow; fix before cutover)
+
+Surfaced during implementation (Task 5). The producer is correct for the **1-min** strategy path, but warmup fidelity is partial — these are deliberate for the shadow producer and are exactly what shadow validation should catch before any cutover:
+
+- **Daily-dependent strategies are dormant.** `_warmup_engine_from_parquet` seeds only **1-min** candles. `pattern_pullback` (a daily strategy: `sma_200/60/20`, `highest_high`, daily `volume_ratio`) needs the engine's **daily** candles (the orchestrator calls `seed_daily_candles` from parquet daily bars); the daemon does not seed those, so `pattern_pullback` produces no candidates until daily-candle seeding is added. **Validatable path = `williams_r` (1-min).**
+- **MTF buckets / multi-day tracking not seeded.** The 1-min warmup omits the `datetime` column, so seeded candles collapse to MTF bucket 0 and daily-high/close tracking is skipped (identical to the merged futures daemon — fix both consistently). Affects strategies relying on MTF or multi-day-from-warmup.
+- **`market_state` for `williams_r`** comes from the LLM nightly-analysis context, which `StrategyManager.check_entries` injects via its own `LLMContextProvider` (so it works in production where the nightly LLM data is in Redis) — NOT from the daemon's `EntryContext.metadata`. In a synthetic test with no LLM data, `williams_r`'s `market_state_filter` blocks (hence Task 5's pipeline-integrity fallback).
+
+Follow-up (a small increment before cutover): seed daily candles + include `datetime` in 1-min warmup (across both daemons), then re-validate the shadow counterfactual covers all enabled stock strategies.
+
 ## 11. Risks & mitigations
 
 | 리스크 | 완화 |
