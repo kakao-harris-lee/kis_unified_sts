@@ -591,6 +591,44 @@ class FuturesRiskConfig(ServiceConfigBase):
     )
 
 
+class StockRiskConfig(FuturesRiskConfig):
+    """Stock intraday risk parameters for the M4-R StockRiskFilterDaemon.
+
+    FuturesRiskConfig's fields are asset-neutral (equity, MDD, consecutive-loss,
+    trade-count, spread); only the YAML section and env prefix differ. Loaded
+    from ``config/risk.yaml`` under the ``risk_stock:`` section.
+    """
+
+    _default_config_file: ClassVar[str] = "risk.yaml"
+    _default_section: ClassVar[str] = "risk_stock"
+    _env_prefix: ClassVar[str] = "STOCK_RISK_"
+
+
+def load_stock_trading_windows(path: str | None = None) -> list[str]:
+    """Load the ``trading_windows_stock`` list from ``config/risk.yaml``.
+
+    Mirrors :func:`load_trading_windows` but reads the stock session key.
+    Returns ``[]`` if the key is absent.
+    """
+    from shared.config.loader import ConfigLoader
+
+    if path is None:
+        env_config_dir = os.environ.get("KIS_CONFIG_DIR")
+        if env_config_dir and Path(env_config_dir) != ConfigLoader.get_config_dir():
+            ConfigLoader.set_config_dir(env_config_dir)
+        raw_data = ConfigLoader.load("risk.yaml")
+    else:
+        import yaml
+
+        if os.path.isabs(str(path)) and not os.path.exists(path):
+            return []
+        with open(path, encoding="utf-8") as f:
+            raw_data = yaml.safe_load(f) or {}
+
+    windows = raw_data.get("trading_windows_stock", [])
+    return list(windows) if isinstance(windows, list) else []
+
+
 def load_trading_windows(path: str | None = None) -> list[str]:
     """Load the ``trading_windows`` list from ``config/risk.yaml``.
 

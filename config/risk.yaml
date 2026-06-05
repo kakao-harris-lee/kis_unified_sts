@@ -13,6 +13,23 @@ trading_windows:
   - "09:00-10:30"
   - "14:30-15:20"
 
+# Stock intraday risk parameters (Phase M4-R — StockRiskFilterDaemon).
+# Same field set as `risk:` (FuturesRiskConfig is asset-neutral); stock values.
+risk_stock:
+  account_equity_krw: 10000000
+  daily_mdd_limit_pct: 0.03
+  weekly_mdd_limit_pct: 0.07
+  max_position_risk_pct: 0.02
+  max_daily_trades: 10
+  max_position_size_contracts: 1000
+  consecutive_loss_soft_threshold: 4
+  consecutive_loss_hard_threshold: 6
+  max_spread_ticks: 5
+
+# Korean equity regular session, KST. Half-open [start, end).
+trading_windows_stock:
+  - "09:00-15:30"
+
 # Position sizer parameters for SizerRegistry[fixed_fractional_futures].
 # Mirrors the "risk" section above for the fields a sizer actually needs,
 # separated so the sizer config is independently overridable.
