@@ -45,14 +45,14 @@ async def test_loop_records_error_and_keeps_running_on_fetch_exception():
 
     daemon = NewsCollectorDaemon(
         redis=redis,
-        ch_client=ch,
+        archive_client=ch,
         sources=[source],
         stream="stream:news.raw",
         stream_maxlen=100,
         dedupe_memory=100,
         dedupe_ttl_days=1,
-        ch_batch_size=10,
-        ch_flush_interval=60,
+        archive_batch_size=10,
+        archive_flush_interval=60,
         body_truncate_chars=500,
     )
 
@@ -80,8 +80,8 @@ def _make_cfg(**source_enables):
     cfg = MagicMock()
     cfg.redis_stream = "stream:news.raw"
     cfg.redis_maxlen = 100
-    cfg.clickhouse_batch_size = 10
-    cfg.clickhouse_flush_interval_seconds = 60
+    cfg.archive_batch_size = 10
+    cfg.archive_flush_interval_seconds = 60
     cfg.body_truncate_chars = 500
     cfg.dedupe.memory_size = 100
     cfg.dedupe.redis_ttl_days = 1
@@ -139,7 +139,6 @@ class _NoopSource(NewsSource):
 async def test_build_and_run_all_sources_enabled(monkeypatch):
     """Exercises the full construction path when every source is enabled."""
     cfg = _make_cfg()
-    monkeypatch.setenv("RUNTIME_STORAGE_CLICKHOUSE_MIRROR_ENABLED", "true")
     cfg.sources.marketaux.enabled = True
     cfg.sources.naver_search.enabled = True
     cfg.sources.gdelt.enabled = True
@@ -163,16 +162,6 @@ async def test_build_and_run_all_sources_enabled(monkeypatch):
         "redis.asyncio.from_url",
         lambda *_a, **_kw: fakeredis.aioredis.FakeRedis(),
     )
-    fake_ch = AsyncMock()
-    monkeypatch.setattr(
-        "shared.db.client.AsyncClickHouseClient",
-        lambda *_a, **_kw: fake_ch,
-    )
-    monkeypatch.setattr(
-        "shared.db.config.ClickHouseConfig.from_env",
-        classmethod(lambda _cls, database=None: MagicMock()),  # noqa: ARG005
-    )
-
     # Real aiohttp.ClientSession is fine — we never issue requests because
     # we immediately stop the daemon. Make session.close() a no-op safe net.
     fake_session = AsyncMock()
@@ -231,14 +220,12 @@ async def test_build_and_run_all_sources_enabled(monkeypatch):
 
     rc = await _build_and_run_from_config()
     assert rc == 0
-    fake_ch.connect.assert_awaited()
-    fake_ch.close.assert_awaited()
     fake_session.close.assert_awaited()
 
 
 @pytest.mark.asyncio
-async def test_build_and_run_clickhouse_disabled(monkeypatch):
-    """Default runtime path should not require ClickHouse."""
+async def test_build_and_run_uses_archive_noop(monkeypatch):
+    """Default runtime path should not require an external archive DB."""
     cfg = _make_cfg(
         yonhap=False,
         reuters=False,
@@ -248,7 +235,6 @@ async def test_build_and_run_clickhouse_disabled(monkeypatch):
         dart=False,
         mk=False,
     )
-    monkeypatch.setenv("RUNTIME_STORAGE_CLICKHOUSE_MIRROR_ENABLED", "false")
     monkeypatch.setattr(
         "shared.news.config.NewsCollectorConfig.from_yaml",
         classmethod(lambda _cls, *_a, **_kw: cfg),
@@ -256,11 +242,6 @@ async def test_build_and_run_clickhouse_disabled(monkeypatch):
     monkeypatch.setattr(
         "redis.asyncio.from_url",
         lambda *_a, **_kw: fakeredis.aioredis.FakeRedis(),
-    )
-    fake_ch = AsyncMock()
-    monkeypatch.setattr(
-        "shared.db.client.AsyncClickHouseClient",
-        lambda *_a, **_kw: fake_ch,
     )
     fake_session = AsyncMock()
     monkeypatch.setattr("aiohttp.ClientSession", lambda *_a, **_kw: fake_session)
@@ -272,8 +253,6 @@ async def test_build_and_run_clickhouse_disabled(monkeypatch):
 
     rc = await _build_and_run_from_config()
     assert rc == 0
-    fake_ch.connect.assert_not_awaited()
-    fake_ch.close.assert_not_awaited()
     fake_session.close.assert_awaited()
 
 
@@ -298,15 +277,6 @@ async def test_build_and_run_skips_naver_search_without_credentials(monkeypatch)
     monkeypatch.setattr(
         "redis.asyncio.from_url",
         lambda *_a, **_kw: fakeredis.aioredis.FakeRedis(),
-    )
-    fake_ch = AsyncMock()
-    monkeypatch.setattr(
-        "shared.db.client.AsyncClickHouseClient",
-        lambda *_a, **_kw: fake_ch,
-    )
-    monkeypatch.setattr(
-        "shared.db.config.ClickHouseConfig.from_env",
-        classmethod(lambda _cls, database=None: MagicMock()),  # noqa: ARG005
     )
     fake_session = AsyncMock()
     monkeypatch.setattr("aiohttp.ClientSession", lambda *_a, **_kw: fake_session)
@@ -337,16 +307,6 @@ async def test_build_and_run_dart_mk_import_error(monkeypatch):
         "redis.asyncio.from_url",
         lambda *_a, **_kw: fakeredis.aioredis.FakeRedis(),
     )
-    fake_ch = AsyncMock()
-    monkeypatch.setattr(
-        "shared.db.client.AsyncClickHouseClient",
-        lambda *_a, **_kw: fake_ch,
-    )
-    monkeypatch.setattr(
-        "shared.db.config.ClickHouseConfig.from_env",
-        classmethod(lambda _cls, database=None: MagicMock()),  # noqa: ARG005
-    )
-
     fake_session = AsyncMock()
     monkeypatch.setattr("aiohttp.ClientSession", lambda *_a, **_kw: fake_session)
 

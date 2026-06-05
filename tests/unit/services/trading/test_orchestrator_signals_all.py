@@ -1,11 +1,10 @@
-"""Unit tests for orchestrator → kospi.signals_all persistence (Phase 2 gates).
+"""Unit tests for orchestrator setup-signal row mapping.
 
 The interim futures paper path (TradingOrchestrator) records executed Setup
 A/C entries to ``kospi.signals_all`` so the Phase 2 verification gates
 (``setup_a_signals_today`` + the 30-day cumulative gate) measure the running
-system. These tests cover the pure mapping/row-builder and the best-effort,
-failure-tolerant persistence — without a live ClickHouse or a full orchestrator
-instance.
+system. ClickHouse persistence has been removed; the legacy persistence hook is
+kept as a no-op so trading is not disrupted.
 """
 
 from __future__ import annotations
@@ -108,20 +107,15 @@ class TestBuildSignalsAllRow:
         assert row[6] == 0.0  # take_profit
 
 
-class TestPersistBestEffort:
+class TestPersistNoop:
     def _orch(self, asset_class: str):
         # Bypass the heavy __init__; the method only touches self.config.
         orch = TradingOrchestrator.__new__(TradingOrchestrator)
         orch.config = SimpleNamespace(asset_class=asset_class)
         return orch
 
-    def test_clickhouse_error_is_swallowed(self, monkeypatch):
-        def _boom(**_kwargs):
-            raise RuntimeError("clickhouse down")
-
-        monkeypatch.setattr("shared.storage.create_sync_clickhouse_client", _boom)
+    def test_futures_is_noop(self):
         orch = self._orch("futures")
-        # Must NOT raise — observability must never disrupt trading.
         asyncio.run(
             orch._persist_setup_signal_row(
                 _Sig("setup_a_gap_reversion"),
@@ -131,13 +125,8 @@ class TestPersistBestEffort:
             )
         )
 
-    def test_non_futures_is_noop(self, monkeypatch):
-        def _boom(**_kwargs):
-            raise AssertionError("from_env must not be called for non-futures")
-
-        monkeypatch.setattr("shared.storage.create_sync_clickhouse_client", _boom)
+    def test_non_futures_is_noop(self):
         orch = self._orch("stock")
-        # stock → returns before any ClickHouse access (no AssertionError).
         asyncio.run(
             orch._persist_setup_signal_row(
                 _Sig("setup_a_gap_reversion"),
@@ -147,11 +136,7 @@ class TestPersistBestEffort:
             )
         )
 
-    def test_non_setup_strategy_is_noop(self, monkeypatch):
-        def _boom(**_kwargs):
-            raise AssertionError("from_env must not be called for non-A/C strategy")
-
-        monkeypatch.setattr("shared.storage.create_sync_clickhouse_client", _boom)
+    def test_non_setup_strategy_is_noop(self):
         orch = self._orch("futures")
         asyncio.run(
             orch._persist_setup_signal_row(

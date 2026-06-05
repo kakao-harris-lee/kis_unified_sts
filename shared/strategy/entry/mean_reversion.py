@@ -6,6 +6,7 @@ Entry strategy based on Bollinger Bands and RSI:
 
 Migrated from kospi_mini_sts.
 """
+
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, time, timedelta
@@ -84,7 +85,9 @@ class MeanReversionConfig(ConfigMixin):
 
     # Market regime filter (LLM-based)
     regime_filter: bool = False  # Enable regime-based filtering
-    block_long_in_strong_bearish: bool = True  # Skip LONG signals in STRONG_BEARISH regime
+    block_long_in_strong_bearish: bool = (
+        True  # Skip LONG signals in STRONG_BEARISH regime
+    )
 
     # Multi-timeframe base: 0 = 1-minute base (default); N = N-min MTF base
     # When set, required_indicators includes mtf_base_{N}m to trigger T1–T4 machinery.
@@ -101,7 +104,9 @@ class MeanReversionEntry(EntrySignalGenerator[MeanReversionConfig]):
 
     CONFIG_CLASS = MeanReversionConfig
 
-    def __init__(self, config: MeanReversionConfig, gate_cfg: "GateConfig | None" = None):
+    def __init__(
+        self, config: MeanReversionConfig, gate_cfg: "GateConfig | None" = None
+    ):
         super().__init__(config)
         self._last_signal_at: dict[str, datetime] = {}
         self._gate_cfg = gate_cfg  # P2-③ T6
@@ -110,16 +115,28 @@ class MeanReversionEntry(EntrySignalGenerator[MeanReversionConfig]):
         """설정 유효성 검증"""
         assert self.config.bb_period > 0, "bb_period must be positive"
         assert self.config.rsi_period > 0, "rsi_period must be positive"
-        assert 0 < self.config.rsi_oversold < 50, "rsi_oversold must be between 0 and 50"
-        assert 0 < self.config.rsi_deep_oversold < 50, "rsi_deep_oversold must be between 0 and 50"
-        assert 50 < self.config.rsi_overbought < 100, "rsi_overbought must be between 50 and 100"
+        assert (
+            0 < self.config.rsi_oversold < 50
+        ), "rsi_oversold must be between 0 and 50"
+        assert (
+            0 < self.config.rsi_deep_oversold < 50
+        ), "rsi_deep_oversold must be between 0 and 50"
+        assert (
+            50 < self.config.rsi_overbought < 100
+        ), "rsi_overbought must be between 50 and 100"
         assert self.config.bb_touch_buffer > 0, "bb_touch_buffer must be positive"
         assert self.config.volume_threshold > 0, "volume_threshold must be positive"
         assert self.config.volume_ma_period > 0, "volume_ma_period must be positive"
-        assert self.config.signal_cooldown_seconds >= 0, "signal_cooldown_seconds must be >= 0"
+        assert (
+            self.config.signal_cooldown_seconds >= 0
+        ), "signal_cooldown_seconds must be >= 0"
         assert self.config.min_market_cap >= 0, "min_market_cap must be >= 0"
-        assert self.config.skip_market_open_minutes >= 0, "skip_market_open_minutes must be >= 0"
-        assert self.config.skip_market_close_minutes >= 0, "skip_market_close_minutes must be >= 0"
+        assert (
+            self.config.skip_market_open_minutes >= 0
+        ), "skip_market_open_minutes must be >= 0"
+        assert (
+            self.config.skip_market_close_minutes >= 0
+        ), "skip_market_close_minutes must be >= 0"
 
     @property
     def name(self) -> str:
@@ -201,12 +218,16 @@ class MeanReversionEntry(EntrySignalGenerator[MeanReversionConfig]):
             return None
 
         if self.config.skip_market_open_minutes > 0:
-            open_cutoff = open_dt + timedelta(minutes=self.config.skip_market_open_minutes)
+            open_cutoff = open_dt + timedelta(
+                minutes=self.config.skip_market_open_minutes
+            )
             if now_kst < open_cutoff:
                 return None
 
         if self.config.skip_market_close_minutes > 0:
-            close_cutoff = close_dt - timedelta(minutes=self.config.skip_market_close_minutes)
+            close_cutoff = close_dt - timedelta(
+                minutes=self.config.skip_market_close_minutes
+            )
             if now_kst >= close_cutoff:
                 return None
 
@@ -287,8 +308,7 @@ class MeanReversionEntry(EntrySignalGenerator[MeanReversionConfig]):
         # === P2-③ T6: Determine candidate direction + apply RegimeGate ONCE ===
         # Cheap recompute (existing branches also do this) — preferable to 4 gate calls
         _long_candidate = (
-            close <= bb_lower * self.config.bb_touch_buffer
-            and rsi < oversold_threshold
+            close <= bb_lower * self.config.bb_touch_buffer and rsi < oversold_threshold
         )
         _short_candidate = (
             self.config.allow_short
@@ -296,21 +316,21 @@ class MeanReversionEntry(EntrySignalGenerator[MeanReversionConfig]):
             and rsi > self.config.rsi_overbought
         )
         _candidate_direction = (
-            "long" if _long_candidate
-            else ("short" if _short_candidate else None)
+            "long" if _long_candidate else ("short" if _short_candidate else None)
         )
         if _candidate_direction is not None and self._gate_cfg is not None:
-            _redis, _ch = acquire_infra_clients()
-            if _redis is not None and _ch is not None:
-                _stand_in = type("X", (), {
-                    "metadata": {"signal_direction": _candidate_direction}})()
+            _redis, _event_reader = acquire_infra_clients()
+            if _redis is not None:
+                _stand_in = type(
+                    "X", (), {"metadata": {"signal_direction": _candidate_direction}}
+                )()
                 blocked = apply_regime_gate(
                     gate_cfg=self._gate_cfg,
                     decision_signal=_stand_in,
                     context=context,
                     strategy_name="mean_reversion",
                     redis=_redis,
-                    ch_client=_ch,
+                    event_reader=_event_reader,
                 )
                 if blocked:
                     return None
@@ -323,7 +343,10 @@ class MeanReversionEntry(EntrySignalGenerator[MeanReversionConfig]):
                 if context.market_context is not None:
                     from shared.llm.data_classes import MarketSignal
 
-                    if context.market_context.overall_signal == MarketSignal.STRONG_BEARISH:
+                    if (
+                        context.market_context.overall_signal
+                        == MarketSignal.STRONG_BEARISH
+                    ):
                         logger.info(
                             f"Blocking Mean Reversion LONG signal for {code} due to STRONG_BEARISH regime "
                             f"(regime={context.market_context.regime}, signal={context.market_context.overall_signal.name})"
@@ -344,7 +367,9 @@ class MeanReversionEntry(EntrySignalGenerator[MeanReversionConfig]):
                             price=close,
                             timestamp=context.timestamp,
                             strategy="mean_reversion",
-                            confidence=self._calculate_confidence(close, bb_lower, bb_upper, rsi, is_long=True),
+                            confidence=self._calculate_confidence(
+                                close, bb_lower, bb_upper, rsi, is_long=True
+                            ),
                             metadata={
                                 "signal_direction": "long",
                                 "stop_loss_pct": float(self.config.stop_loss_pct),
@@ -364,7 +389,9 @@ class MeanReversionEntry(EntrySignalGenerator[MeanReversionConfig]):
                         price=close,
                         timestamp=context.timestamp,
                         strategy="mean_reversion",
-                        confidence=self._calculate_confidence(close, bb_lower, bb_upper, rsi, is_long=True),
+                        confidence=self._calculate_confidence(
+                            close, bb_lower, bb_upper, rsi, is_long=True
+                        ),
                         metadata={
                             "signal_direction": "long",
                             "stop_loss_pct": float(self.config.stop_loss_pct),
@@ -384,7 +411,9 @@ class MeanReversionEntry(EntrySignalGenerator[MeanReversionConfig]):
                     price=close,
                     timestamp=context.timestamp,
                     strategy="mean_reversion",
-                    confidence=self._calculate_confidence(close, bb_lower, bb_upper, rsi, is_long=True),
+                    confidence=self._calculate_confidence(
+                        close, bb_lower, bb_upper, rsi, is_long=True
+                    ),
                     metadata={
                         "signal_direction": "long",
                         "stop_loss_pct": float(self.config.stop_loss_pct),
@@ -409,7 +438,9 @@ class MeanReversionEntry(EntrySignalGenerator[MeanReversionConfig]):
                 price=close,
                 timestamp=context.timestamp,
                 strategy="mean_reversion",
-                confidence=self._calculate_confidence(close, bb_lower, bb_upper, rsi, is_long=False),
+                confidence=self._calculate_confidence(
+                    close, bb_lower, bb_upper, rsi, is_long=False
+                ),
                 metadata={
                     "signal_direction": "short",
                     "stop_loss_pct": float(self.config.stop_loss_pct),
@@ -429,16 +460,32 @@ class MeanReversionEntry(EntrySignalGenerator[MeanReversionConfig]):
         if is_long:
             # How close to (or below) lower band — accounts for touch buffer
             buffer_line = bb_lower * self.config.bb_touch_buffer
-            bb_score = min(1, max(0, (buffer_line - close) / (bb_width * self.config.bb_width_scale_factor)))
+            bb_score = min(
+                1,
+                max(
+                    0,
+                    (buffer_line - close)
+                    / (bb_width * self.config.bb_width_scale_factor),
+                ),
+            )
             # How oversold - guard against division by zero
             if self.config.rsi_oversold <= 0:
                 rsi_score = 0.5
             else:
-                rsi_score = max(0, (self.config.rsi_oversold - rsi) / self.config.rsi_oversold)
+                rsi_score = max(
+                    0, (self.config.rsi_oversold - rsi) / self.config.rsi_oversold
+                )
         else:
             # How close to (or above) upper band — accounts for touch buffer
             buffer_line = bb_upper / self.config.bb_touch_buffer
-            bb_score = min(1, max(0, (close - buffer_line) / (bb_width * self.config.bb_width_scale_factor)))
+            bb_score = min(
+                1,
+                max(
+                    0,
+                    (close - buffer_line)
+                    / (bb_width * self.config.bb_width_scale_factor),
+                ),
+            )
             # How overbought - guard against division by zero
             divisor = 100 - self.config.rsi_overbought
             if divisor <= 0:

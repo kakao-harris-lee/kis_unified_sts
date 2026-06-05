@@ -16,27 +16,24 @@ project_root = Path(__file__).parent.parent.resolve()
 sys.path.insert(0, str(project_root))
 
 _LIVE_INFRA_TEST_PATHS = {
-    # These tests connect to real Redis DB 1 and/or ClickHouse. Some of them
+    # These tests connect to real Redis DB 1. Some of them
     # write/delete runtime-shaped keys such as trading:{asset}:positions and
     # risk:portfolio:state, so they must never run accidentally while paper
     # trading is active on the same host.
-    "tests/integration/test_clickhouse_tls.py",
     "tests/integration/test_cross_asset_trading.py",
     "tests/integration/test_graceful_shutdown.py",
     "tests/integration/test_llm_market_context.py",
     "tests/integration/test_rate_limiter_redis.py",
     "tests/integration/test_redis_tls.py",
-    "tests/performance/test_clickhouse_load.py",
     "tests/performance/test_redis_load.py",
     "tests/performance/test_websocket_load.py",
     "tests/services/trading/test_risk_integration.py",
     "tests/shared/risk/test_persistence.py",
-    "tests/unit/db/test_async_client_integration.py",
 }
 
 _LIVE_INFRA_ENV = "KIS_RUN_LIVE_INFRA_TESTS"
 
-# Load .env so tests can access infrastructure credentials (ClickHouse, Redis, etc.)
+# Load .env so tests can access infrastructure credentials (Redis, etc.)
 _env_file = project_root / ".env"
 if _env_file.exists():
     try:
@@ -104,7 +101,7 @@ def pytest_collection_modifyitems(config, items):
     }
     skip_live_infra = pytest.mark.skip(
         reason=(
-            "live Redis/ClickHouse test skipped by default; set "
+            "live Redis test skipped by default; set "
             f"{_LIVE_INFRA_ENV}=1 only on an isolated test host or after "
             "stopping paper trading"
         )
@@ -172,25 +169,5 @@ def _reset_config_loader_singleton():
         ConfigLoader._instance = None
         ConfigLoader._config_dir = None
         ConfigLoader._cache.clear()
-    except (ImportError, AttributeError):
-        pass
-
-
-@pytest.fixture(autouse=True)
-def _reset_clickhouse_client_singleton():
-    """Reset ClickHouseClient singleton between tests to prevent config pollution.
-
-    ClickHouseClient is a singleton: the first ``ClickHouseClient(cfg)`` call
-    locks the config and subsequent calls ignore their argument. A test that
-    instantiates it with throwaway/credential-less config (e.g. TLS tests that
-    strip CLICKHOUSE_* env) would otherwise leave the singleton pinned to the
-    wrong credentials, making later DB-touching tests fail auth in the full
-    suite while passing in isolation.
-    """
-    yield
-    try:
-        from shared.db.client import ClickHouseClient
-
-        ClickHouseClient.reset_singleton()
     except (ImportError, AttributeError):
         pass

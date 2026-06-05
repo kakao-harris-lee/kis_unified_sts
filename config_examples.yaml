@@ -233,12 +233,17 @@ kis_api:
 redis:
   host: localhost
   port: 6379
-  db: 0
+  db: 1
 
-clickhouse:
-  host: localhost
-  port: 9000
-  database: trading
+runtime_storage:
+  backend: sqlite
+  sqlite:
+    path: data/runtime/dev/runtime.db
+
+market_data:
+  source: parquet
+  parquet:
+    root: data/market
 
 mlflow:
   tracking_uri: "http://localhost:5000"

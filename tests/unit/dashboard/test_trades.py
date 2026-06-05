@@ -262,21 +262,13 @@ async def test_trade_statistics_empty_ledger_does_not_fallback_to_redis(
 
 
 @pytest.mark.asyncio
-async def test_trades_closed_reads_runtime_ledger_without_clickhouse(
-    monkeypatch, tmp_path
-):
-    """``/api/trades/closed`` should not call ClickHouse when RuntimeLedger is configured."""
+async def test_trades_closed_reads_runtime_ledger(monkeypatch, tmp_path):
+    """``/api/trades/closed`` should read RuntimeLedger when configured."""
     from services.dashboard.app import create_app
-    from services.dashboard.routes import trades as trades_route
 
     db_path = tmp_path / "runtime.db"
     _seed_runtime_ledger(db_path)
     _configure_runtime_ledger_env(monkeypatch, db_path)
-
-    def _boom(*_args, **_kwargs):
-        raise AssertionError("ClickHouse should not be queried")
-
-    monkeypatch.setattr(trades_route, "_query_ch", _boom)
 
     app = create_app()
     transport = ASGITransport(app=app)
@@ -292,21 +284,13 @@ async def test_trades_closed_reads_runtime_ledger_without_clickhouse(
 
 
 @pytest.mark.asyncio
-async def test_trades_closed_statistics_reads_runtime_ledger_without_clickhouse(
-    monkeypatch, tmp_path
-):
+async def test_trades_closed_statistics_reads_runtime_ledger(monkeypatch, tmp_path):
     """``/api/trades/closed/statistics`` should aggregate from RuntimeLedger."""
     from services.dashboard.app import create_app
-    from services.dashboard.routes import trades as trades_route
 
     db_path = tmp_path / "runtime.db"
     _seed_runtime_ledger(db_path)
     _configure_runtime_ledger_env(monkeypatch, db_path)
-
-    def _boom(*_args, **_kwargs):
-        raise AssertionError("ClickHouse should not be queried")
-
-    monkeypatch.setattr(trades_route, "_query_ch", _boom)
 
     app = create_app()
     transport = ASGITransport(app=app)
@@ -321,21 +305,13 @@ async def test_trades_closed_statistics_reads_runtime_ledger_without_clickhouse(
 
 
 @pytest.mark.asyncio
-async def test_trades_fills_reads_runtime_ledger_without_clickhouse(
-    monkeypatch, tmp_path
-):
+async def test_trades_fills_reads_runtime_ledger(monkeypatch, tmp_path):
     """``/api/trades/fills`` should prefer RuntimeLedger when configured."""
     from services.dashboard.app import create_app
-    from services.dashboard.routes import trades as trades_route
 
     db_path = tmp_path / "runtime.db"
     _seed_runtime_ledger_fill(db_path)
     _configure_runtime_ledger_env(monkeypatch, db_path)
-
-    def _boom(*_args, **_kwargs):
-        raise AssertionError("ClickHouse should not be queried")
-
-    monkeypatch.setattr(trades_route, "_query_ch", _boom)
 
     app = create_app()
     transport = ASGITransport(app=app)
@@ -356,22 +332,12 @@ async def test_trades_fills_reads_runtime_ledger_without_clickhouse(
 
 
 @pytest.mark.asyncio
-async def test_trades_fills_returns_empty_on_ch_failure(monkeypatch):
-    """``/api/trades/fills`` returns ``{"fills": []}`` when ClickHouse is unavailable.
-
-    The route swallows any ClickHouse failure so the cockpit panel degrades
-    gracefully instead of surfacing a 503. We patch the sync ``_query_ch``
-    helper to raise — this exercises the except branch without needing a
-    real ClickHouse cluster in CI.
-    """
+async def test_trades_fills_returns_empty_without_runtime_ledger(monkeypatch):
+    """``/api/trades/fills`` returns ``{"fills": []}`` when no ledger is configured."""
     from services.dashboard import routes as _routes  # noqa: F401  (force import)
     from services.dashboard.app import create_app
-    from services.dashboard.routes import trades as trades_route
 
-    def _boom(*_args, **_kwargs):
-        raise RuntimeError("ClickHouse unavailable")
-
-    monkeypatch.setattr(trades_route, "_query_ch", _boom)
+    monkeypatch.setenv("RUNTIME_STORAGE_SQLITE_PATH", "/tmp/nonexistent-runtime.db")
 
     app = create_app()
     transport = ASGITransport(app=app)
@@ -385,11 +351,7 @@ async def test_trades_fills_returns_empty_on_ch_failure(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_trades_fills_stock_short_circuits():
-    """``asset_class=stock`` returns empty without touching ClickHouse.
-
-    The ``order_fills`` table only contains futures fills (Phase 4 scope),
-    so the route short-circuits non-futures asset classes.
-    """
+    """``asset_class=stock`` returns empty when no RuntimeLedger fills exist."""
     from services.dashboard.app import create_app
 
     app = create_app()

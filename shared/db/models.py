@@ -1,4 +1,5 @@
-"""ClickHouse data models."""
+"""Legacy market-data row models."""
+
 from dataclasses import dataclass
 from datetime import date, datetime
 
@@ -6,6 +7,7 @@ from datetime import date, datetime
 @dataclass
 class DailyCandle:
     """일봉 데이터"""
+
     code: str
     date: date
     open: float
@@ -20,6 +22,7 @@ class DailyCandle:
 @dataclass
 class MinuteCandle:
     """분봉 데이터"""
+
     code: str
     datetime: datetime
     open: float
@@ -33,6 +36,7 @@ class MinuteCandle:
 @dataclass
 class TickData:
     """틱 데이터"""
+
     code: str
     datetime: datetime
     price: float

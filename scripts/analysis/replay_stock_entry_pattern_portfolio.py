@@ -40,7 +40,7 @@ from scripts.analysis.scan_stock_entry_patterns import (  # noqa: E402
     _pattern_param_sets,
     _select_stocks,
 )
-from shared.backtest.daily_adapter import load_stock_daily_from_clickhouse  # noqa: E402
+from shared.backtest.daily_adapter import load_stock_daily_from_parquet  # noqa: E402
 from shared.config.loader import ConfigLoader  # noqa: E402
 
 
@@ -159,7 +159,7 @@ def _load_feature_data(
     scan_config: dict[str, Any],
     *,
     horizons: tuple[int, ...],
-    loader: Loader = load_stock_daily_from_clickhouse,
+    loader: Loader = load_stock_daily_from_parquet,
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
     start = _parse_date(str(scan_config["start"]))
     end = _parse_date(str(scan_config["end"]))
@@ -707,7 +707,7 @@ def _specs_from_config(replay_config: dict[str, Any]) -> list[ReplaySpec]:
 def run_replay(
     replay_config: dict[str, Any],
     *,
-    loader: Loader = load_stock_daily_from_clickhouse,
+    loader: Loader = load_stock_daily_from_parquet,
 ) -> tuple[list[ReplayResult], list[PatternResult], dict[str, Any]]:
     scan_config = _load_scan_config(
         str(replay_config.get("scan_config") or "stock_entry_pattern_scan.yaml")

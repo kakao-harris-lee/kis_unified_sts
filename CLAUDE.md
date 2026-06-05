@@ -99,7 +99,7 @@ if pnl_pct >= self.config.exit.breakeven_threshold:
 | `IndicatorEngine` | 지표 계산/캐싱 (VWAP, RVOL, volume 가속도 포함) | `services/trading/indicator_engine.py` |
 | `PositionTracker` | 포지션 추적 + Redis 기반 재시작 복구 | `services/trading/position_tracker.py` |
 | `HolidayCache` | 장 휴일/거래일 캐시 | `services/trading/holiday_cache.py` |
-| `TradingPipeline` | 데이터 파이프라인 + Pre-market ClickHouse warmup | `services/trading/pipeline.py` |
+| `TradingPipeline` | 데이터 파이프라인 + Pre-market Parquet warmup | `services/trading/pipeline.py` |
 
 #### 운영 대시보드 (Dashboard)
 
@@ -309,7 +309,7 @@ config = MyServiceConfig.from_env()  # MY_SERVICE_THRESHOLD, MY_SERVICE_ENABLED
 config = MyServiceConfig.from_yaml(apply_env_overrides=True)
 ```
 
-**마이그레이션 완료:** 7개 서비스 설정이 ServiceConfigBase 사용 (DailyScannerConfig, FusionRankerConfig, TelegramConfig, TickStreamPublisherConfig, LLMConfig, ScreenerConfig, ClickHouseConfig) — ~385줄 boilerplate 제거.
+**마이그레이션 완료:** 서비스 설정이 ServiceConfigBase 사용 (DailyScannerConfig, FusionRankerConfig, TelegramConfig, TickStreamPublisherConfig, LLMConfig, ScreenerConfig, StorageConfig 등) — boilerplate 제거.
 
 **상세 문서:** `docs/config_patterns.md` — 고급 패턴, 마이그레이션 가이드, 테스트 예시 포함.
 
@@ -331,7 +331,7 @@ config = MyServiceConfig.from_yaml(apply_env_overrides=True)
 ### 데이터 피드 아키텍처
 
 - **WebSocket 전용**: REST polling 제거됨. 주식(`H0STCNT0`), 선물 체결(`H0IFCNT0`) + 선물 호가(`H0IFASP0`) 모두 WebSocket으로 실시간 수신.
-- **Pre-market ClickHouse warmup**: 장 시작 전 ClickHouse에서 최근 분봉을 로드하여 지표 웜업 시간 단축.
+- **Pre-market Parquet warmup**: 장 시작 전 Parquet market data에서 최근 분봉을 로드하여 지표 웜업 시간 단축.
 - **Redis 기반 포지션 복구**: 프로세스 재시작 시 `trading:{asset}:positions` Redis 키에서 오픈 포지션을 복원.
 - **Redis DB 1 전용**: DB 0은 다른 프로젝트가 사용. 모든 Redis 접속은 DB 1을 명시해야 한다.
 - **Graceful shutdown**: CLI에서 SIGTERM/SIGINT → `orchestrator.stop(timeout=10s)` → Redis force flush. Cron은 SIGTERM → 5초 대기 → `kill -0` 확인 → SIGKILL.
@@ -363,9 +363,9 @@ config = MyServiceConfig.from_yaml(apply_env_overrides=True)
 
 - **주식 전용**: 선물은 ATS 미지원 (KRX only)
 - **기본값 비활성화**: `config/execution.yaml`에서 `ats_routing.enabled: false` (opt-in)
-- **거래소 추적**: 모든 주문의 실행 거래소(`execution_venue`)를 ClickHouse에 기록 (`rl_trades`, `swing_positions`)
+- **거래소 추적**: 모든 주문의 실행 거래소(`execution_venue`)를 RuntimeLedger에 기록
 - **백테스트 시뮬레이션**: ATS는 평균 3 bps 가격 개선, 65% 체결률로 모델링 (KRX 대비)
-- **모니터링**: React Cockpit 및 ClickHouse/Prometheus 지표에서 거래소별 분포 및 가격 개선 추적
+- **모니터링**: React Cockpit, RuntimeLedger, Prometheus 지표에서 거래소별 분포 및 가격 개선 추적
 
 **설정 예시** (`config/execution.yaml`):
 
@@ -499,9 +499,9 @@ gh pr create --title "..." --body "..."
 
 **CI 인프라 & 테스트 안정성 (2026-05-30 정리, `.github/workflows/test.yml`):**
 
-- **CI는 Redis(6379) + ClickHouse(native 9000) 서비스를 띄운다.** 인프라에 접속하는 테스트는 CI에서 실제로 연결된다. ClickHouse 이미지는 **빈 비밀번호 `default` 로그인을 거부(`Code 516`)**하므로 CI는 `CLICKHOUSE_PASSWORD`를 서비스/클라이언트 양쪽에 설정한다.
+- **CI는 Redis(6379)와 파일 기반 SQLite/Parquet fixtures를 사용한다.** 기본 테스트는 서버 DB에 연결하지 않는다.
 - **선택적 의존성 import는 가드한다.** 모듈 레벨 `import optuna`(또는 다른 optional extra)는 collection 단계에서 `ModuleNotFoundError`를 던져 **전체 스위트를 abort**(exit 2)시킨다 → `main()` 내부 lazy import 또는 `pytest.importorskip("...")`를 사용한다.
-- **싱글톤은 conftest에서 리셋한다.** `ClickHouseClient`/`ConfigLoader`는 **첫 config로 고정되는 싱글톤**이라 cross-test 오염을 일으킨다(격리 실행은 통과, 풀 스위트는 실패). `tests/conftest.py`의 autouse fixture가 매 테스트 후 리셋한다 (`ClickHouseClient.reset_singleton()` 등).
+- **싱글톤은 conftest에서 리셋한다.** `ConfigLoader` 등 첫 config로 고정되는 싱글톤은 cross-test 오염을 일으킬 수 있다. `tests/conftest.py`의 autouse fixture가 매 테스트 후 리셋한다.
 - **성능 회귀 체크** (`scripts/performance/check_regression.py`)는 baseline 대비 wall-clock 비교다. baseline(`tests/performance/baselines.json`)은 **CI와 동일 하드웨어(ubuntu-latest)에서 재생성**해야 하며(다른 하드웨어 baseline은 false regression 유발), 러너 variance를 위해 `--min-duration 0.05`(50ms 미만 면제) + `--error-threshold 2.0`(≥2배만 실패) + warning non-fatal로 운용한다.
 
 ### 5. 타임존 규칙 — KST 필수
@@ -562,7 +562,7 @@ if now_kst < open_dt:
 | `KIS_FUTURES_APP_KEY`, `KIS_FUTURES_APP_SECRET`, `KIS_FUTURES_ACCOUNT_NO` | 선물 KIS API 인증 |
 | `KIS_STOCK_MARKET`, `KIS_FUTURES_MARKET` | 실전/모의 설정 (`real`/`mock`) |
 | `KIS_CONFIG_DIR` | 설정 디렉토리 오버라이드 |
-| `CLICKHOUSE_*`, `REDIS_*`, `MLFLOW_TRACKING_URI` | 인프라 설정 |
+| `REDIS_*`, `RUNTIME_STORAGE_*`, `MARKET_DATA_*`, `MLFLOW_TRACKING_URI` | 인프라/저장소 설정 |
 | `OPENAI_API_KEY`, `KRX_API_KEY`, `DART_API_KEY` | LLM/데이터 API |
 | `TELEGRAM_STOCK_*`, `TELEGRAM_FUTURES_*`, `TELEGRAM_BRIEFING_*` | Telegram 알림 |
 | `API_KEY`, `PROMETHEUS_PORT` | API/모니터링 |

@@ -41,29 +41,6 @@ def _make_closed_stock_position(
 
 
 @pytest.mark.asyncio
-async def test_save_stock_trade_appends_to_buffer():
-    """save_stock_trade_to_db 호출이 _pending_stock_trades 버퍼에 row를 추가해야 한다."""
-    config = PositionTrackerConfig(asset_class="stock", batch_size=50)
-    tracker = PositionTracker(config=config)
-    tracker._get_db_client = MagicMock(return_value=(MagicMock(), "market"))
-
-    position = _make_closed_stock_position()
-    await tracker.save_stock_trade_to_db(position)
-
-    assert len(tracker._pending_stock_trades) == 1
-    row = tracker._pending_stock_trades[0]
-    # Row: (id, code, name, side, strategy, execution_venue,
-    #       entry_date, entry_price, exit_date, exit_price, quantity,
-    #       pnl, pnl_pct, commission, slippage, hold_seconds,
-    #       exit_reason, exit_state, metadata_json)
-    assert row[0] == "test-stk-1"
-    assert row[1] == "000720"
-    assert row[4] == "momentum_breakout"
-    assert row[11] == pytest.approx(-15000.0)  # (98500-100000)*10
-    assert row[15] == 1800  # 30 min
-
-
-@pytest.mark.asyncio
 async def test_save_stock_trade_rejects_negative_hold_window():
     """exit_time이 entry_time보다 빠른 불가능한 거래는 적재하지 않는다."""
     config = PositionTrackerConfig(asset_class="stock", batch_size=50)
@@ -75,21 +52,6 @@ async def test_save_stock_trade_rejects_negative_hold_window():
 
     assert result is False
     assert tracker._pending_stock_trades == []
-
-
-@pytest.mark.asyncio
-async def test_save_stock_trade_flushes_when_batch_full():
-    """버퍼가 batch_size에 도달하면 _flush_stock_trades_batch 호출."""
-    config = PositionTrackerConfig(asset_class="stock", batch_size=2)
-    tracker = PositionTracker(config=config)
-    tracker._get_db_client = MagicMock(return_value=(MagicMock(), "market"))
-    tracker._flush_stock_trades_batch = AsyncMock()
-
-    for i in range(2):
-        pos = _make_closed_stock_position(code=f"00072{i}")
-        await tracker.save_stock_trade_to_db(pos)
-
-    tracker._flush_stock_trades_batch.assert_awaited_once()
 
 
 @pytest.mark.asyncio

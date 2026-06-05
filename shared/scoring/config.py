@@ -58,8 +58,8 @@ class NewsScorerConfig(ServiceConfigBase):
     input_stream: str = "stream:news.raw"
     output_stream: str = "stream:news.scored"
     output_stream_maxlen: int = 100_000
-    ch_batch_size: int = 20
-    ch_flush_interval_seconds: int = 10
+    archive_batch_size: int = 20
+    archive_flush_interval_seconds: int = 10
     body_truncate_chars: int = 2000
     scorer: _ScorerSection = Field(default_factory=_ScorerSection)
     budget: _BudgetSection = Field(default_factory=_BudgetSection)

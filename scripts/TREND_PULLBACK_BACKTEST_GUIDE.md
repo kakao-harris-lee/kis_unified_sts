@@ -25,13 +25,13 @@ The backtest must demonstrate:
   ```
 
 **Infrastructure:**
-- ClickHouse running (for real data mode)
+- Parquet market data available (for real data mode)
 - Redis running (optional, for MLflow)
 - MLflow tracking server (optional)
 
 ### 2. Data Availability
 
-**Option A: ClickHouse Data (Recommended)**
+**Option A: Parquet Data (Recommended)**
 
 Verify 6+ months of data is available:
 ```bash
@@ -63,9 +63,9 @@ For testing only - generates artificial data that mimics real market behavior.
 ### Method 1: Standalone Script (Recommended)
 
 ```bash
-# With ClickHouse data (6 months, Samsung Electronics)
+# With Parquet data (6 months, Samsung Electronics)
 python3 scripts/run_trend_pullback_backtest.py \
-    --mode clickhouse \
+    --mode parquet \
     --symbol 005930 \
     --days 180 \
     --output-dir ./output/backtests/trend_pullback
@@ -213,7 +213,7 @@ After running the backtest, verify:
 
 ## Troubleshooting
 
-### Issue: No ClickHouse Data
+### Issue: No Parquet Data
 
 **Error:** `No data found for symbol 005930`
 
@@ -254,20 +254,14 @@ python3 --version
 docker-compose run --rm app python3 scripts/run_trend_pullback_backtest.py --mode synthetic
 ```
 
-### Issue: ClickHouse Connection Error
+### Issue: Parquet Data Error
 
-**Error:** `Cannot connect to ClickHouse`
+**Error:** `No market-data Parquet files found`
 
 **Solution:**
 ```bash
-# Check ClickHouse is running
-docker ps | grep clickhouse
-
-# Start infrastructure
-docker-compose up -d clickhouse redis
-
-# Test connection
-clickhouse-client --query "SELECT 1"
+# Validate Parquet data
+sts data validate-parquet
 ```
 
 ### Issue: Insufficient Data (<6 months)

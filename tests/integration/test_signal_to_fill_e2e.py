@@ -1,17 +1,16 @@
 """End-to-end integration test: decision_engine → risk_filter → order_router → fill.
 
 Phase 4 Task 18 — wires Group {10-13} daemons together with fakeredis +
-AsyncMock CH/KIS, drives one signal through the full pipeline, and asserts
-the contract at each boundary:
+AsyncMock KIS, drives one signal through the full pipeline, and asserts the
+contract at each boundary:
 
   1. decision_engine emits Signal → stream:signal.candidate
-  2. risk_filter accepts → kospi.signals_all row + stream:signal.final
+  2. risk_filter accepts → stream:signal.final
   3. order_router consumes → PassiveMaker.place_passive_limit_futures
-  4. PassiveMaker fills → FillLogger writes stream:order.fill + kospi.order_fills
+  4. PassiveMaker fills → FillLogger writes stream:order.fill
   5. PseudoOCO bracket registered
 
-The CH writes are observed via AsyncMock.execute.call_args. Redis state
-is observed via fakeredis xrange.
+Redis state is observed via fakeredis xrange.
 """
 
 import asyncio
@@ -80,14 +79,8 @@ def redis():
     return fakeredis.aioredis.FakeRedis(db=1)
 
 
-@pytest.fixture
-def ch_client():
-    """Mock ClickHouse — observed via call_args."""
-    return AsyncMock()
-
-
 @pytest.mark.asyncio
-async def test_signal_to_fill_pipeline(redis, ch_client):
+async def test_signal_to_fill_pipeline(redis):
     # --- 1. decision_engine ---
     # Provider yields ONE context then None forever, so only one signal fires.
     contexts_remaining = [
@@ -110,7 +103,7 @@ async def test_signal_to_fill_pipeline(redis, ch_client):
     )
 
     # --- 2. risk_filter ---
-    signals_writer = SignalsAllWriter(ch_client=ch_client, batch_size=1)
+    signals_writer = SignalsAllWriter(batch_size=1)
     runtime_state = AsyncMock()
     runtime_state.snapshot = AsyncMock(return_value=SimpleNamespace())
     risk_filter = RiskFilterDaemon(
@@ -128,9 +121,7 @@ async def test_signal_to_fill_pipeline(redis, ch_client):
     )
 
     # --- 3+4. order_router (PassiveMaker + FillLogger + PseudoOCO) ---
-    fill_logger = FillLogger(
-        redis=redis, ch_client=ch_client, stream=ORDER_FILL, ch_batch_size=1
-    )
+    fill_logger = FillLogger(redis=redis, stream=ORDER_FILL, batch_size=1)
     kis = AsyncMock()
     kis.get_futures_orderbook.return_value = SimpleNamespace(
         bid=[SimpleNamespace(price=331.20)],
@@ -182,17 +173,6 @@ async def test_signal_to_fill_pipeline(redis, ch_client):
     assert len(finals) >= 1
     assert finals[0][1][b"signal_id"].decode() == candidate_signal_id
 
-    # signals_all CH row was written with the matching signal_id (PR #134 fix)
-    # SignalsAllWriter.execute call_args has the rows tuple at [0][1]
-    assert ch_client.execute.await_count >= 1
-    # Find the signals_all INSERT call
-    signals_calls = [
-        c for c in ch_client.execute.await_args_list if "signals_all" in c.args[0]
-    ]
-    assert signals_calls, "signals_all INSERT not observed"
-    signals_row = signals_calls[0].args[1][0]  # first row
-    assert signals_row[0] == candidate_signal_id  # signal_id column
-
     # order_router placed a passive limit
     kis.place_futures_order.assert_awaited()
     placed_kwargs = kis.place_futures_order.call_args.kwargs
@@ -204,14 +184,6 @@ async def test_signal_to_fill_pipeline(redis, ch_client):
     assert len(fills) >= 1
     assert fills[0][1][b"signal_id"].decode() == candidate_signal_id
 
-    # order_fills CH row exists with matching signal_id
-    fills_calls = [
-        c for c in ch_client.execute.await_args_list if "order_fills" in c.args[0]
-    ]
-    assert fills_calls, "order_fills INSERT not observed"
-    fills_row = fills_calls[0].args[1][0]
-    assert fills_row[0] == candidate_signal_id
-
     # PseudoOCO has an active bracket
     assert len(pseudo_oco.active_handles) == 1
     handle = pseudo_oco.active_handles[0]
@@ -220,7 +192,7 @@ async def test_signal_to_fill_pipeline(redis, ch_client):
 
 
 @pytest.mark.asyncio
-async def test_kill_switch_sentinel_blocks_order_router(redis, tmp_path, ch_client):
+async def test_kill_switch_sentinel_blocks_order_router(redis, tmp_path):
     """Pre-existing sentinel must keep order_router from consuming the final stream."""
     sentinel = tmp_path / "tripped"
     sentinel.write_text("previous trip")
@@ -245,7 +217,7 @@ async def test_kill_switch_sentinel_blocks_order_router(redis, tmp_path, ch_clie
         },
     )
 
-    fill_logger = FillLogger(redis=redis, ch_client=ch_client, ch_batch_size=1)
+    fill_logger = FillLogger(redis=redis, batch_size=1)
     kis = AsyncMock()
     passive = PassiveMaker(kis_client=kis, fill_logger=fill_logger)
     pseudo_oco = PseudoOCO(fill_logger=fill_logger)

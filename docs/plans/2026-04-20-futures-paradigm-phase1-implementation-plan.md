@@ -6,7 +6,7 @@
 
 **Architecture:** 소스 불가지론적 `NewsSource` ABC를 정의하고, 어댑터(DART/Yonhap/Reuters/MK)를 pluggable로 구성. 각 소스는 독립 async loop에서 polling → dedupe → Redis XADD + ClickHouse batch insert. 매크로는 cron 기반 배치. 모든 서비스는 기존 `ServiceConfigBase` + `shared/streaming/publisher.py` + `shared/db/client.py` 재사용.
 
-**Tech Stack:** Python 3.11+, asyncio, `redis.asyncio`, `aiohttp`, `aiochclient`, `feedparser`, `pydantic v2`, `pytest` + `pytest-asyncio` + `fakeredis` + `aioresponses`. 기존 `shared/config/base.py::ServiceConfigBase` 패턴 준수.
+**Tech Stack:** Python 3.11+, asyncio, `redis.asyncio`, `aiohttp`, `feedparser`, `pydantic v2`, `pytest` + `pytest-asyncio` + `fakeredis` + `aioresponses`. 기존 `shared/config/base.py::ServiceConfigBase` 패턴 준수.
 
 **Parent spec:** `docs/plans/2026-04-20-futures-paradigm-phase1-data-infra.md`
 

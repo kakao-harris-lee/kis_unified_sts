@@ -310,11 +310,14 @@ def create_database_check(connection_string: str) -> HealthCheckFunc:
             loop = asyncio.get_event_loop()
 
             def _sync_check():
-                from shared.storage import create_sync_clickhouse_client_from_url
+                import sqlite3
+                from pathlib import Path
 
-                client = create_sync_clickhouse_client_from_url(connection_string)
-                result = client.execute("SELECT 1")
-                return result
+                if not connection_string.startswith("sqlite:///"):
+                    raise ValueError("Only sqlite:/// health-check URLs are supported")
+                db_path = Path(connection_string.removeprefix("sqlite:///"))
+                with sqlite3.connect(db_path) as conn:
+                    return conn.execute("SELECT 1").fetchone()
 
             await loop.run_in_executor(_thread_pool, _sync_check)
 
@@ -329,8 +332,7 @@ def create_database_check(connection_string: str) -> HealthCheckFunc:
                 status=ComponentStatus.UNKNOWN,
                 message="database driver not installed",
             )
-        except (OSError, TimeoutError) as e:
-            # Network errors, connection failures, timeout errors from ClickHouse
+        except (OSError, TimeoutError, ValueError) as e:
             return ComponentHealth(
                 name="database",
                 status=ComponentStatus.UNHEALTHY,

@@ -1,6 +1,6 @@
 """Daily Indicator Scanner — pre-compute daily indicators for paper trading.
 
-Reads daily candles from ClickHouse `market.daily_candles`, computes SMA/RSI/ATR/
+Reads daily candles from Parquet market-data files, computes SMA/RSI/ATR/
 Highest High per symbol, and publishes results to Redis for the TradingOrchestrator.
 By default, it scans the baseline stock universe plus recent Redis candidates from
 the screener/fusion pipeline so dynamic trading targets have daily indicator
@@ -40,6 +40,9 @@ from shared.collector.historical.daily_quality import (
     quality_fetch_limit,
 )
 from shared.collector.historical.stock_universe import STOCK_UNIVERSE
+from shared.scanner.trade_trend_priority import TradeTrendPriorityRanker
+from shared.storage.config import StorageConfig
+from shared.storage.market_data_store import ParquetMarketDataStore
 
 logging.basicConfig(
     level=logging.INFO,
@@ -307,16 +310,13 @@ async def build_strategy_candidate_watchlist(
     return watchlist
 
 
-def get_clickhouse_client():
-    """Create ClickHouse client from env vars."""
-    import clickhouse_connect
-
+def get_market_data_store():
+    """Return the Parquet market-data store."""
     _load_repo_env()
-    return clickhouse_connect.get_client(
-        host=os.getenv("CLICKHOUSE_HOST", "localhost"),
-        port=int(os.getenv("CLICKHOUSE_PORT", "8123")),
-        username=os.getenv("CLICKHOUSE_USER", "default"),
-        password=os.getenv("CLICKHOUSE_PASSWORD", ""),
+    storage_config = StorageConfig.load_or_default()
+    return ParquetMarketDataStore(
+        storage_config.market_data.parquet.root,
+        asset_class="stock",
     )
 
 
@@ -326,32 +326,14 @@ def load_daily_candles(
     days: int = 250,
     quality_config: DailyCandleQualityConfig | None = None,
 ) -> pd.DataFrame:
-    """Load recent daily candles from ClickHouse."""
+    """Load recent daily candles from Parquet."""
     quality_config = quality_config or load_daily_quality_config()
     fetch_limit = quality_fetch_limit(days, quality_config)
-    query = """
-        SELECT
-            code,
-            date,
-            argMax(open, created_at) AS open,
-            argMax(high, created_at) AS high,
-            argMax(low, created_at) AS low,
-            argMax(close, created_at) AS close,
-            argMax(volume, created_at) AS volume
-        FROM market.daily_candles
-        WHERE code = {code:String}
-        GROUP BY code, date
-        ORDER BY date DESC
-        LIMIT {limit:UInt32}
-    """
-    result = client.query(query, parameters={"code": symbol, "limit": int(fetch_limit)})
-    if not result.result_rows:
+    df = client.get_daily_bars(symbol, limit=int(fetch_limit))
+    if df.empty:
         return pd.DataFrame()
 
-    df = pd.DataFrame(
-        result.result_rows,
-        columns=["code", "date", "open", "high", "low", "close", "volume"],
-    )
+    df = df.rename(columns={"datetime": "date"})
     return clean_daily_candle_frame(df, config=quality_config, limit=days)
 
 
@@ -697,7 +679,9 @@ def compute_futures_daily_indicators(df: pd.DataFrame) -> dict[str, float] | Non
     return {k: v for k, v in result.items() if v is not None}
 
 
-def scan_futures_symbols(client: Any, symbols: Iterable[str]) -> dict[str, dict[str, Any]]:
+def scan_futures_symbols(
+    client: Any, symbols: Iterable[str]
+) -> dict[str, dict[str, Any]]:
     """Compute daily indicators for the configured futures symbols.
 
     Returns a dict ready to merge into the scanner's stock-symbol payload —
@@ -715,7 +699,8 @@ def scan_futures_symbols(client: Any, symbols: Iterable[str]) -> dict[str, dict[
             if inds is None:
                 logger.warning(
                     "futures daily scan: %s has %d daily bars (<60 minimum)",
-                    sym, len(df),
+                    sym,
+                    len(df),
                 )
                 continue
             out[sym] = inds
@@ -776,6 +761,12 @@ def publish_to_redis(
             "strategies": merged,
             "counts": {name: len(codes) for name, codes in merged.items()},
         }
+        watchlist_metadata = (metadata or {}).get("metadata")
+        if isinstance(watchlist_metadata, dict) and watchlist_metadata:
+            compat_payload["metadata"] = watchlist_metadata
+        sources = (metadata or {}).get("sources")
+        if isinstance(sources, dict) and sources:
+            compat_payload["sources"] = sources
         redis_client.set(
             DAILY_WATCHLIST_COMPAT_KEY,
             json.dumps(compat_payload, ensure_ascii=False),
@@ -892,7 +883,7 @@ def main():
         expected_latest,
     )
 
-    client = get_clickhouse_client()
+    client = get_market_data_store()
     quality_config = load_daily_quality_config()
 
     results: dict[str, dict] = {}
@@ -964,6 +955,8 @@ def main():
     errors = len(failures)
 
     strategy_candidates: dict[str, list[str]] = {}
+    watchlist_metadata: dict[str, dict[str, Any]] = {}
+    trade_trend_priority_summary: dict[str, Any] = {}
     if results and args.build_strategy_watchlist:
         strategy_candidates = asyncio.run(
             build_strategy_candidate_watchlist(
@@ -979,6 +972,12 @@ def main():
                     for name, codes in sorted(strategy_candidates.items())
                 ),
             )
+            ranker = TradeTrendPriorityRanker.from_default_config()
+            (
+                strategy_candidates,
+                watchlist_metadata,
+                trade_trend_priority_summary,
+            ) = ranker.rank_watchlists(strategy_candidates)
 
     # Augment with futures daily indicators (Setup A/C daily_regime_trend_filter
     # consumes daily_close / daily_ema_20 / daily_ema_60 / daily_rsi_14 for
@@ -1010,6 +1009,10 @@ def main():
                 "strategies": strategy_candidates,
                 "strategy_counts": strategy_counts,
                 "strategy_watchlist_size": max(1, args.strategy_watchlist_size),
+                "metadata": watchlist_metadata,
+                "sources": {
+                    "trade_trend_priority": trade_trend_priority_summary,
+                },
             },
         )
     else:

@@ -4,7 +4,7 @@ import fakeredis.aioredis
 import pytest
 
 from shared.news.base import NewsItem
-from shared.news.publisher import ClickHouseNewsWriter, NewsStreamPublisher
+from shared.news.publisher import NewsArchiveNoopWriter, NewsStreamPublisher
 
 
 def _item(news_id="x"):
@@ -94,30 +94,31 @@ async def test_publisher_also_publishes_to_pubsub_channel(redis):
 
 
 @pytest.mark.asyncio
-async def test_ch_writer_batches_and_flushes_on_size():
-    ch_client = AsyncMock()
-    writer = ClickHouseNewsWriter(ch_client, batch_size=3, flush_interval_seconds=60)
+async def test_archive_writer_noops_on_batch_size():
+    archive_client = AsyncMock()
+    writer = NewsArchiveNoopWriter(
+        archive_client, batch_size=3, flush_interval_seconds=60
+    )
     await writer.enqueue(_item("a"))
     await writer.enqueue(_item("b"))
-    ch_client.execute.assert_not_awaited()
+    archive_client.execute.assert_not_awaited()
     await writer.enqueue(_item("c"))
-    # 3 items triggered flush
-    ch_client.execute.assert_awaited()
+    archive_client.execute.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_ch_writer_noop_when_disabled():
-    writer = ClickHouseNewsWriter(None, batch_size=1, flush_interval_seconds=60)
+async def test_archive_writer_noop_when_disabled():
+    writer = NewsArchiveNoopWriter(None, batch_size=1, flush_interval_seconds=60)
     await writer.enqueue(_item("disabled"))
     await writer.flush()
 
 
 @pytest.mark.asyncio
-async def test_ch_writer_flush_explicit():
-    ch_client = AsyncMock()
-    writer = ClickHouseNewsWriter(ch_client, batch_size=100, flush_interval_seconds=60)
+async def test_archive_writer_flush_explicit_noops():
+    archive_client = AsyncMock()
+    writer = NewsArchiveNoopWriter(
+        archive_client, batch_size=100, flush_interval_seconds=60
+    )
     await writer.enqueue(_item("a"))
     await writer.flush()
-    ch_client.execute.assert_awaited_once()
-    call_sql = ch_client.execute.await_args.args[0]
-    assert "INSERT INTO kospi.news_raw" in call_sql
+    archive_client.execute.assert_not_awaited()

@@ -1,8 +1,8 @@
 """Runtime and market-data storage configuration.
 
 This module is the configuration entry point for the runtime storage
-decoupling work. It intentionally does not import ClickHouse clients; it only
-describes which storage backend should be selected by factories/call sites.
+decoupling work. Runtime ledgers use SQLite and historical market data uses
+Parquet/DuckDB.
 """
 
 from __future__ import annotations
@@ -17,9 +17,9 @@ from pydantic import BaseModel, Field, field_validator
 from shared.config.base import ServiceConfigBase
 from shared.config.loader import ConfigNotFoundError
 
-RuntimeStorageBackend = Literal["sqlite", "clickhouse", "null"]
-MarketDataSource = Literal["parquet", "clickhouse"]
-DashboardTradeStatsSource = Literal["runtime_ledger", "clickhouse"]
+RuntimeStorageBackend = Literal["sqlite", "null"]
+MarketDataSource = Literal["parquet"]
+DashboardTradeStatsSource = Literal["runtime_ledger"]
 
 
 def _env_bool(name: str) -> bool | None:
@@ -77,16 +77,6 @@ class SQLiteStorageConfig(BaseModel):
         return value
 
 
-class ClickHouseMirrorConfig(BaseModel):
-    """Best-effort ClickHouse runtime mirror settings."""
-
-    enabled: bool = Field(
-        default=False,
-        description="Mirror runtime ledger writes to ClickHouse best-effort",
-    )
-    database: str = Field(default="market", description="ClickHouse mirror database")
-
-
 class RuntimeStorageConfig(BaseModel):
     """Runtime durable ledger backend selection."""
 
@@ -95,9 +85,6 @@ class RuntimeStorageConfig(BaseModel):
         description="Primary runtime ledger backend",
     )
     sqlite: SQLiteStorageConfig = Field(default_factory=SQLiteStorageConfig)
-    clickhouse_mirror: ClickHouseMirrorConfig = Field(
-        default_factory=ClickHouseMirrorConfig
-    )
 
 
 class ParquetMarketDataConfig(BaseModel):
@@ -114,14 +101,6 @@ class ParquetMarketDataConfig(BaseModel):
         return root
 
 
-class ClickHouseMarketDataConfig(BaseModel):
-    """Optional ClickHouse historical market-data source."""
-
-    enabled: bool = Field(default=False, description="Enable ClickHouse market data")
-    stock_database: str = Field(default="market", description="Stock database")
-    futures_database: str = Field(default="kospi", description="Futures database")
-
-
 class MarketDataStorageConfig(BaseModel):
     """Historical market-data backend selection."""
 
@@ -130,9 +109,6 @@ class MarketDataStorageConfig(BaseModel):
         description="Historical market-data source",
     )
     parquet: ParquetMarketDataConfig = Field(default_factory=ParquetMarketDataConfig)
-    clickhouse: ClickHouseMarketDataConfig = Field(
-        default_factory=ClickHouseMarketDataConfig
-    )
 
 
 class DashboardStorageConfig(BaseModel):
@@ -216,30 +192,11 @@ class StorageConfig(ServiceConfigBase):
         if synchronous := os.environ.get("RUNTIME_STORAGE_SQLITE_SYNCHRONOUS"):
             self.runtime_storage.sqlite.synchronous = synchronous.upper()  # type: ignore[assignment]
 
-        mirror_enabled = _env_bool("RUNTIME_STORAGE_CLICKHOUSE_MIRROR_ENABLED")
-        if mirror_enabled is None:
-            mirror_enabled = _env_bool("CLICKHOUSE_MIRROR_ENABLED")
-        if mirror_enabled is not None:
-            self.runtime_storage.clickhouse_mirror.enabled = mirror_enabled
-
-        if mirror_database := os.environ.get("RUNTIME_STORAGE_CLICKHOUSE_DATABASE"):
-            self.runtime_storage.clickhouse_mirror.database = mirror_database
-
         if source := os.environ.get("MARKET_DATA_SOURCE"):
             self.market_data.source = source.lower()  # type: ignore[assignment]
 
         if parquet_root := os.environ.get("MARKET_DATA_PARQUET_ROOT"):
             self.market_data.parquet.root = parquet_root
-
-        clickhouse_enabled = _env_bool("MARKET_DATA_CLICKHOUSE_ENABLED")
-        if clickhouse_enabled is not None:
-            self.market_data.clickhouse.enabled = clickhouse_enabled
-
-        if stock_db := os.environ.get("MARKET_DATA_CLICKHOUSE_STOCK_DATABASE"):
-            self.market_data.clickhouse.stock_database = stock_db
-
-        if futures_db := os.environ.get("MARKET_DATA_CLICKHOUSE_FUTURES_DATABASE"):
-            self.market_data.clickhouse.futures_database = futures_db
 
         if trade_stats_source := os.environ.get("DASHBOARD_TRADE_STATS_SOURCE"):
             self.dashboard.trade_stats_source = trade_stats_source.lower()  # type: ignore[assignment]

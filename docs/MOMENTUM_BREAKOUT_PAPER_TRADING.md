@@ -23,7 +23,7 @@ This guide covers starting, monitoring, and managing paper trading for the `mome
 ```
 
 The script will:
-1. Check all prerequisites (Redis, ClickHouse, .env)
+1. Check all prerequisites (Redis DB 1, Parquet market data, .env)
 2. Verify strategy config is enabled
 3. Check for daily indicators in Redis
 4. Start paper trading with default capital (30M KRW) and max positions (8)
@@ -59,14 +59,10 @@ python -m cli.main paper start \
    # Expected: PONG
    ```
 
-2. **ClickHouse**
+2. **Parquet market data**
    ```bash
-   # Start via Docker
-   docker-compose up -d clickhouse
-
    # Verify
-   clickhouse-client --query "SELECT 1"
-   # Expected: 1
+   sts data validate-parquet --root data/market
    ```
 
 3. **Daily Indicator Scanner** (Highly Recommended)
@@ -94,8 +90,11 @@ python -m cli.main paper start \
    KIS_STOCK_MARKET=mock  # or 'real' for live
 
    # Infrastructure
-   CLICKHOUSE_HOST=localhost
-   CLICKHOUSE_PORT=9000
+   REDIS_DB=1
+   RUNTIME_STORAGE_BACKEND=sqlite
+   RUNTIME_STORAGE_SQLITE_PATH=data/runtime/paper/runtime.db
+   MARKET_DATA_SOURCE=parquet
+   MARKET_DATA_PARQUET_ROOT=data/market
    REDIS_HOST=localhost
    REDIS_PORT=6379
 
@@ -438,9 +437,9 @@ grep "trend_mode_regimes" config/strategies/stock/momentum_breakout.yaml
 **Issue: Slow Signal Generation**
 ```bash
 # Breakout detection requires recent high calculation
-# Check ClickHouse query performance for bars_1m
-# Ensure indexes exist on (symbol, timestamp)
-# Consider data cleanup if table > 10M rows
+# Check Parquet dataset and partition layout
+sts data validate-parquet --root data/market
+# Consider partition cleanup if data/market grows unexpectedly
 ```
 
 ## Stopping Paper Trading

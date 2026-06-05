@@ -1,6 +1,6 @@
-"""Tests for jobs/weekly_edge_review.py — Phase 4 Task 15."""
+"""Tests for jobs/weekly_edge_review.py."""
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -88,20 +88,18 @@ class TestFormatTelegramMessage:
 
 class TestWeeklyEdgeReviewJob:
     @pytest.mark.asyncio
-    async def test_run_queries_ch_and_sends_telegram(self):
-        ch_client = AsyncMock()
-        # current week returns 6-tuple per the materialise_rows contract
-        # prev week returns 2-tuple (setup_type, n) — entry-only count
-        ch_client.fetch.side_effect = [
-            [("A_gap_reversion", 10, 0.2, 0.4, 500_000, 0.55)],
-            [("A_gap_reversion", 8)],
+    async def test_run_queries_ledger_and_sends_telegram(self):
+        ledger = MagicMock()
+        ledger.query_trades.side_effect = [
+            [{"strategy": "A_gap_reversion", "pnl": 500_000}],
+            [{"strategy": "A_gap_reversion", "pnl": 100_000}],
         ]
         telegram = AsyncMock()
-        job = WeeklyEdgeReviewJob(ch_client=ch_client, telegram_client=telegram)
+        job = WeeklyEdgeReviewJob(ledger=ledger, telegram_client=telegram)
 
         await job.run()
 
-        assert ch_client.fetch.await_count == 2
+        assert ledger.query_trades.call_count == 2
         telegram.send_message.assert_awaited_once()
         msg = telegram.send_message.call_args.args[0]
         assert "A_gap_reversion" in msg
@@ -110,13 +108,13 @@ class TestWeeklyEdgeReviewJob:
     async def test_telegram_uses_is_critical_to_bypass_05_kst_gate(self):
         """05:00 KST cron is outside TelegramNotifier's 08:30-15:40 window;
         is_critical=True must be set so the gate doesn't drop the message."""
-        ch_client = AsyncMock()
-        ch_client.fetch.side_effect = [
-            [("A_gap_reversion", 10, 0.2, 0.4, 500_000, 0.55)],
-            [("A_gap_reversion", 8)],
+        ledger = MagicMock()
+        ledger.query_trades.side_effect = [
+            [{"strategy": "A_gap_reversion", "pnl": 500_000}],
+            [{"strategy": "A_gap_reversion", "pnl": 100_000}],
         ]
         telegram = AsyncMock()
-        job = WeeklyEdgeReviewJob(ch_client=ch_client, telegram_client=telegram)
+        job = WeeklyEdgeReviewJob(ledger=ledger, telegram_client=telegram)
 
         await job.run()
 
@@ -125,10 +123,10 @@ class TestWeeklyEdgeReviewJob:
 
     @pytest.mark.asyncio
     async def test_run_does_not_send_when_no_data(self):
-        ch_client = AsyncMock()
-        ch_client.fetch.side_effect = [[], []]
+        ledger = MagicMock()
+        ledger.query_trades.side_effect = [[], []]
         telegram = AsyncMock()
-        job = WeeklyEdgeReviewJob(ch_client=ch_client, telegram_client=telegram)
+        job = WeeklyEdgeReviewJob(ledger=ledger, telegram_client=telegram)
 
         await job.run()
 

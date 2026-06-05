@@ -253,9 +253,8 @@ class MetricsCollector:
             "trading_signal_evaluations_total",
             "Total signal evaluation cycles",
         )
-        # Shadow logger health. These metrics let operators detect persistent
-        # CH flush failures that would silently drop LLM-veto counterfactual
-        # data.
+        # Shadow logger health. These metrics let operators detect pending
+        # rows and rows drained before a durable archive exists.
         self.prom_shadow_logger_pending = Gauge(
             "trading_shadow_logger_pending_rows",
             "Rows currently buffered awaiting next flush",
@@ -263,12 +262,12 @@ class MetricsCollector:
         )
         self.prom_shadow_logger_dropped_batches = Gauge(
             "trading_shadow_logger_dropped_batches_total",
-            "Cumulative batches dropped due to ClickHouse insert failure",
+            "Cumulative batches drained without durable archive",
             ["logger"],
         )
         self.prom_shadow_logger_dropped_rows = Gauge(
             "trading_shadow_logger_dropped_rows_total",
-            "Cumulative rows dropped due to ClickHouse insert failure",
+            "Cumulative rows drained without durable archive",
             ["logger"],
         )
         self.prom_shadow_logger_last_flush_rows = Gauge(
@@ -299,7 +298,7 @@ class MetricsCollector:
             "Cumulative messages dropped by the WebSocket price feed (queue full)",
             ["feed"],
         )
-        # Warmup miss counter: symbols that returned 0 bars from ClickHouse warmup.
+        # Warmup miss counter: symbols with insufficient historical warmup bars.
         # Counter semantics: callers call once per miss event.
         self.prom_warmup_misses_total = Counter(
             "trading_warmup_misses_total",

@@ -125,74 +125,6 @@ async def test_flush_empty_buffer_returns_zero():
     ch.execute.assert_not_called()
 
 
-@pytest.mark.asyncio
-async def test_flush_success_drains_buffer():
-    """Successful flush drains the buffer and calls CH execute once."""
-    ch = MagicMock()
-    veto_logger.record_veto(_payload())
-    veto_logger.record_veto(_payload(direction="short", overall_signal="STRONG_BULLISH"))
-
-    result = await veto_logger.flush_llm_veto_events(ch)
-
-    assert result == 2
-    assert veto_logger.pending_count() == 0
-    ch.execute.assert_called_once()
-
-
-@pytest.mark.asyncio
-async def test_flush_success_no_drop_counters_unchanged():
-    """Successful flush does not increment dropped counters."""
-    ch = MagicMock()
-    veto_logger.record_veto(_payload())
-
-    await veto_logger.flush_llm_veto_events(ch)
-
-    batches, rows = veto_logger.dropped_counts()
-    assert batches == 0
-    assert rows == 0
-
-
-@pytest.mark.asyncio
-async def test_flush_passes_correct_columns_to_ch():
-    """flush_llm_veto_events passes expected column values to CH execute."""
-    captured: list = []
-
-    def _fake_execute(query: str, data: list) -> None:
-        captured.extend(data)
-
-    ch = MagicMock()
-    ch.execute.side_effect = _fake_execute
-
-    ts = _ts()
-    veto_logger.record_veto(
-        _payload(
-            symbol="A05603",
-            direction="long",
-            regime="BEAR_STRONG",
-            overall_signal="STRONG_BEARISH",
-            confidence=0.75,
-            setup="setup_a_gap_reversion",
-            ts=ts,
-        )
-    )
-
-    await veto_logger.flush_llm_veto_events(ch)
-
-    assert len(captured) == 1
-    row = captured[0]
-    # Expected tuple layout: (ts, symbol, direction, regime, overall_signal,
-    #                          confidence, setup, executed, skip_reason)
-    assert row[0] == ts
-    assert row[1] == "A05603"
-    assert row[2] == "long"
-    assert row[3] == "BEAR_STRONG"
-    assert row[4] == "STRONG_BEARISH"
-    assert abs(row[5] - 0.75) < 1e-9
-    assert row[6] == "setup_a_gap_reversion"
-    assert row[7] == 0          # executed = 0 (vetoed)
-    assert row[8] == "llm_veto"  # skip_reason
-
-
 # ---------------------------------------------------------------------------
 # flush_llm_veto_events — failure / best-effort path
 # ---------------------------------------------------------------------------
@@ -266,32 +198,3 @@ def test_buffer_displacement_preserves_newest_rows():
     # First symbol in buffer should be SYM00005 (index 5), not SYM00000
     assert symbols[0] == f"SYM{5:05d}"
     assert symbols[-1] == f"SYM{max_size + 4:05d}"
-
-
-# ---------------------------------------------------------------------------
-# Naive ts handling in _do_insert
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_flush_naive_ts_is_replaced_with_utc_now():
-    """_do_insert replaces naive ts with datetime.now(UTC) rather than crashing."""
-    ch = MagicMock()
-
-    captured: list = []
-
-    def _fake_execute(query: str, data: list) -> None:
-        captured.extend(data)
-
-    ch.execute.side_effect = _fake_execute
-
-    # Inject a naive ts directly into the buffer (bypasses record_veto guard)
-    naive_ts = datetime(2026, 5, 4, 9, 0, 0)  # tz-naive
-    veto_logger._pending_veto_events.append(_payload(ts=naive_ts))
-
-    result = await veto_logger.flush_llm_veto_events(ch)
-
-    assert result == 1
-    row = captured[0]
-    # ts must be a datetime (replaced from naive to tz-aware)
-    assert isinstance(row[0], datetime)

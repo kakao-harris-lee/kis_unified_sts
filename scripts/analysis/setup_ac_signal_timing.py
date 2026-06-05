@@ -8,11 +8,9 @@ orchestrator's Setup A/C path actually generates signals — and, critically,
 generates them *throughout* the session rather than only before the old
 ~4-hour cache-freeze point.
 
-Why a log monitor (not kospi.signals_all)
------------------------------------------
-``kospi.signals_all`` can lag runtime behavior when optional ClickHouse mirrors
-are disabled, so the orchestrator's own ``strategy_manager`` log line is the
-deployment-correct source:
+Why a log monitor
+-----------------
+Runtime strategy-manager logs are the deployment-correct source for this check:
 
     ... services.trading.strategy_manager - INFO -
         Signal cycle: <N> signals from [setup_a_gap_reversion,

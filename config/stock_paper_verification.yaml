@@ -22,11 +22,6 @@ targets:
   require_daily_indicators: ${STOCK_PAPER_VERIFY_REQUIRE_DAILY_INDICATORS:true}
   skip_live_redis_gates_on_non_trading_day: ${STOCK_PAPER_VERIFY_SKIP_LIVE_REDIS_ON_NON_TRADING_DAY:true}
 
-clickhouse:
-  database: ${CLICKHOUSE_STOCK_DATABASE:market}
-  table: "stock_trades"
-  position_table: "swing_positions"
-
 redis:
   status_key: "trading:stock:status"
   signals_key: "trading:stock:signals"

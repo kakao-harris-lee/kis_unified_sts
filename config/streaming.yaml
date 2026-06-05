@@ -102,17 +102,6 @@ kis_api_error_rate:
   publish_interval_seconds: 10                          # how often to write to Redis (seconds)
   redis_key: "kill_switch:metrics:api_error_rate_5min"  # target key (DB 1)
 
-# ClickHouse Insert Failure Rate Tracker (§10.3-B)
-# Published to Redis key kill_switch:metrics:clickhouse_insert_fail_rate (DB 1).
-# Consumed by services/kill_switch/main.py _build_clickhouse_insert_fail_provider
-# (PR #164 stub provider — this config activates the real writer).
-clickhouse_insert_fail_rate:
-  enabled: true
-  window_seconds: 300              # Rolling window length in seconds (5 minutes)
-  publish_interval_seconds: 10     # How often to write the rate to Redis (seconds)
-  redis_key: "kill_switch:metrics:clickhouse_insert_fail_rate"
-  redis_ttl_seconds: 600           # Key TTL: 2 × window so it self-expires if process dies
-
 # WebSocket Failover with REST Fallback 설정
 failover:
   enabled: true                  # WebSocket 실패 시 REST API로 자동 전환 활성화

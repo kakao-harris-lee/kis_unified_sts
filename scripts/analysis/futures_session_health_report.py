@@ -2,7 +2,7 @@
 """Generate a daily futures session health report.
 
 This report combines:
-1) Closed-trade stats from ClickHouse `rl_trades`
+1) Closed-trade stats from RuntimeLedger
 2) Optional matrix execution summary (spread/depth blocks)
 3) Redis runtime state sanity checks (stale open positions)
 """
@@ -20,9 +20,6 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 import redis
-from clickhouse_driver import Client
-
-from shared.db.config import ClickHouseConfig
 
 KST = ZoneInfo("Asia/Seoul")
 
@@ -126,11 +123,6 @@ def _parse_args() -> argparse.Namespace:
         help="Directory for generated JSON/MD report files.",
     )
     parser.add_argument(
-        "--database",
-        default="",
-        help="ClickHouse database (default from CLICKHOUSE_FUTURES_DATABASE or 'kospi').",
-    )
-    parser.add_argument(
         "--notify-on-issues",
         dest="notify_on_issues",
         action="store_true",
@@ -152,56 +144,47 @@ def _resolve_report_date(raw: str) -> date:
     return datetime.now(KST).date()
 
 
-def _build_clickhouse_client(database: str) -> Client:
-    cfg = ClickHouseConfig.from_env(database=database)
-    return Client(
-        host=cfg.host,
-        port=cfg.port,
-        user=cfg.user,
-        password=cfg.password,
-        database=cfg.database,
-        connect_timeout=cfg.connect_timeout,
-    )
+def _coerce_dt(raw: Any, default: datetime) -> datetime:
+    if isinstance(raw, datetime):
+        return raw
+    if raw:
+        return datetime.fromisoformat(str(raw))
+    return default
 
 
-def _fetch_trade_rows(database: str, report_date: date) -> list[TradeRow]:
+def _fetch_trade_rows(report_date: date) -> list[TradeRow]:
     start_dt = datetime.combine(report_date, datetime.min.time())
     end_dt = start_dt + timedelta(days=1)
-    client = _build_clickhouse_client(database)
+    from shared.storage import SQLiteRuntimeLedger, StorageConfig
 
-    query = f"""
-    SELECT
-        strategy,
-        side,
-        entry_date,
-        exit_date,
-        pnl,
-        pnl_pct,
-        hold_seconds,
-        exit_reason,
-        metadata_json
-    FROM {database}.rl_trades
-    WHERE asset_class = 'futures'
-      AND exit_date >= %(start)s
-      AND exit_date < %(end)s
-    ORDER BY exit_date
-    """
-    rows = client.execute(query, {"start": start_dt, "end": end_dt})
-    client.disconnect()
+    storage_config = StorageConfig.load_or_default()
+    ledger = SQLiteRuntimeLedger(storage_config.runtime_storage.sqlite)
+    try:
+        rows = ledger.query_trades(
+            {
+                "asset_class": "futures",
+                "start": start_dt.isoformat(),
+                "end": end_dt.isoformat(),
+                "limit": 0,
+            }
+        )
+    finally:
+        ledger.close()
 
     out: list[TradeRow] = []
     for row in rows:
+        payload = _safe_json_loads(str(row.get("payload_json") or ""))
         out.append(
             TradeRow(
-                strategy=str(row[0]),
-                side=str(row[1]),
-                entry_date=row[2],
-                exit_date=row[3],
-                pnl=float(row[4]),
-                pnl_pct=float(row[5]),
-                hold_seconds=int(row[6]),
-                exit_reason=str(row[7]),
-                metadata_json=str(row[8] or ""),
+                strategy=str(row.get("strategy") or ""),
+                side=str(row.get("side") or "long"),
+                entry_date=_coerce_dt(row.get("entry_time"), start_dt),
+                exit_date=_coerce_dt(row.get("exit_time"), end_dt),
+                pnl=float(row.get("pnl") or 0.0),
+                pnl_pct=float(row.get("pnl_pct") or 0.0),
+                hold_seconds=int(row.get("hold_seconds") or 0),
+                exit_reason=str(row.get("exit_reason") or ""),
+                metadata_json=json.dumps(payload, ensure_ascii=False),
             )
         )
     return out
@@ -668,9 +651,8 @@ def _to_markdown(report: HealthReport) -> str:
 def main() -> int:
     args = _parse_args()
     report_date = _resolve_report_date(args.date)
-    database = args.database or os.getenv("CLICKHOUSE_FUTURES_DATABASE", "kospi")
 
-    trade_rows = _fetch_trade_rows(database=database, report_date=report_date)
+    trade_rows = _fetch_trade_rows(report_date=report_date)
     trade_summary = _compute_trade_summary(trade_rows)
     matrix_summary = _load_matrix_summary(args.run_dir)
     redis_summary = _load_redis_summary()

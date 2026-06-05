@@ -15,6 +15,7 @@ re-run cleanly:
    WHERE model_version = 'har_rv_v1_recompute'
      AND asof >= '<test_start>' AND asof < '<test_end+1>';
 """
+
 from __future__ import annotations
 
 import argparse
@@ -48,7 +49,7 @@ def _validate_split(train_end: dt.date, test_start: dt.date) -> None:
 
 
 def _fetch_minute_candles(client, start: dt.date, end: dt.date) -> pd.DataFrame:
-    """Fetch 1-minute bars from ClickHouse, returning UTC-indexed DataFrame."""
+    """Fetch 1-minute bars from CSV, returning UTC-indexed DataFrame."""
     rows = client.execute(
         "SELECT datetime, open, high, low, close, volume "
         "FROM kospi.kospi200f_1m "
@@ -126,7 +127,7 @@ def recompute_and_insert(
             (applied to every timestamp — simple but biased over long windows)
             or a callable taking the asof datetime and returning the per-
             timestamp close (preferred for multi-day OOS windows).
-        client: ClickHouse client (None in tests — _insert_rows handles it).
+        client: Legacy archive client (None in tests — _insert_rows handles it).
         full_rv: optional combined daily RV Series (train + OOS), indexed by
             date objects. When supplied, enables rolling-components walk-forward
             so regime_percentile labels vary across OOS days. Look-ahead-safe:
@@ -155,14 +156,16 @@ def recompute_and_insert(
                     forecaster._latest_components = (last_d, last_w, last_m)
                 last_day_seen = D
         vf = forecaster.forecast(asof, current_close=_resolve(current_close, asof))
-        rows.append((
-            asof,
-            vf.horizon_minutes,
-            vf.forecast_pct,
-            vf.forecast_atr_equivalent,
-            vf.regime_percentile,
-            RECOMPUTE_MODEL_VERSION,
-        ))
+        rows.append(
+            (
+                asof,
+                vf.horizon_minutes,
+                vf.forecast_pct,
+                vf.forecast_atr_equivalent,
+                vf.regime_percentile,
+                RECOMPUTE_MODEL_VERSION,
+            )
+        )
     return _insert_rows(client, rows)
 
 
@@ -175,11 +178,17 @@ def main(argv=None) -> int:
     ap.add_argument("--train-end", required=True, help="YYYY-MM-DD (exclusive)")
     ap.add_argument("--test-start", required=True, help="YYYY-MM-DD (inclusive)")
     ap.add_argument("--test-end", required=True, help="YYYY-MM-DD (inclusive)")
-    ap.add_argument("--cadence-minutes", type=int, default=15,
-                    help="Forecast cadence in minutes (default: 15)")
-    ap.add_argument("--candles-csv", default=None,
-                    help="path to clean OHLCV CSV (datetime,open,high,low,close,volume); "
-                         "if set, train+test fetches use this CSV instead of ClickHouse")
+    ap.add_argument(
+        "--cadence-minutes",
+        type=int,
+        default=15,
+        help="Forecast cadence in minutes (default: 15)",
+    )
+    ap.add_argument(
+        "--candles-csv",
+        default=None,
+        help="path to clean OHLCV CSV (datetime,open,high,low,close,volume)",
+    )
     a = ap.parse_args(argv)
 
     ts_d = dt.date.fromisoformat(a.train_start)
@@ -191,23 +200,13 @@ def main(argv=None) -> int:
         print(f"ERROR: test window inverted: test_end={xe_d} < test_start={xs_d}")
         return 2
 
-    from clickhouse_driver import Client
-
-    from shared.db.config import ClickHouseConfig
-
-    ch_cfg = ClickHouseConfig.from_env(database="kospi")
-    client = Client(
-        host=ch_cfg.host,
-        port=ch_cfg.port,
-        user=ch_cfg.user,
-        password=ch_cfg.password,
-        database="kospi",
-    )
+    if not a.candles_csv:
+        print("ERROR: --candles-csv is required")
+        return 2
+    client = None
 
     if a.candles_csv:
         train_df = _load_candles_from_csv(a.candles_csv, ts_d, te_d)
-    else:
-        train_df = _fetch_minute_candles(client, ts_d, te_d)
     if train_df.empty:
         print(f"ERROR: no minute candles in train window {ts_d}..{te_d}")
         return 2
@@ -222,8 +221,6 @@ def main(argv=None) -> int:
         test_df = _load_candles_from_csv(
             a.candles_csv, xs_d, xe_d + dt.timedelta(days=1)
         )
-    else:
-        test_df = _fetch_minute_candles(client, xs_d, xe_d + dt.timedelta(days=1))
 
     # Build the FULL daily RV series (train + test) for rolling-components walk-forward.
     # This mirrors production's daily-refit semantics: _latest_components updates
@@ -238,7 +235,7 @@ def main(argv=None) -> int:
     current_close_arg: float | Callable[[dt.datetime], float]
     if not test_df.empty:
         # _fetch_minute_candles returns a UTC-DatetimeIndex df; strip tz for
-        # tz-naive asof lookups (matches ClickHouse DateTime64 storage).
+        # tz-naive asof lookups for stable historical joins.
         tdf = test_df.copy()
         tdf.index = tdf.index.tz_convert(None)
         daily_close = tdf["close"].resample("1D").last().ffill()
@@ -255,7 +252,9 @@ def main(argv=None) -> int:
     else:
         current_close_arg = 380.0
 
-    n = recompute_and_insert(train_rv, test_minutes, current_close_arg, client, full_rv=full_rv)
+    n = recompute_and_insert(
+        train_rv, test_minutes, current_close_arg, client, full_rv=full_rv
+    )
     print(f"wrote {n} vol_forecasts rows (model_version={RECOMPUTE_MODEL_VERSION})")
     return 0
 

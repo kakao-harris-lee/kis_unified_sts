@@ -6,9 +6,9 @@ Tests verify:
 - A: Key-name normalisation: stock uses 'dropped_count', futures uses 'messages_dropped'.
 - B: Warmup returning 0 bars logs a WARNING and increments the warmup_miss_count.
 - B: Warmup returning fewer bars than warmup_min_candles also warns + increments.
-- B: _fetch_candles_from_clickhouse exception emits WARNING (not just debug).
+- B: _fetch_candles_from_market_data_store exception emits WARNING (not just debug).
 
-No hardcoded datetimes; no real network/Redis/ClickHouse connections used.
+No hardcoded datetimes; no real network/Redis/Parquet connections used.
 """
 
 import logging
@@ -260,8 +260,8 @@ class TestWarmupMissWarnings:
 
         # Mock dependencies for _prewarm_symbols internals.
         orch._load_candle_cache_from_redis = AsyncMock(return_value=0)
-        orch._fetch_candles_from_clickhouse = AsyncMock(return_value=[])
-        orch._fetch_daily_candles_from_clickhouse = AsyncMock(return_value=[])
+        orch._fetch_candles_from_market_data_store = AsyncMock(return_value=[])
+        orch._fetch_daily_candles_from_market_data_store = AsyncMock(return_value=[])
 
         with caplog.at_level(logging.WARNING, logger="services.trading.orchestrator"):
             await orch._prewarm_symbols(["A000000"])
@@ -288,7 +288,7 @@ class TestWarmupMissWarnings:
         mock_ie.seed_candles = MagicMock()
         orch._indicator_engine = mock_ie
 
-        # ClickHouse returns 5 bars (below min 20).
+        # Parquet returns 5 bars (below min 20).
         sparse_candles = [
             {
                 "datetime": "2026-05-01 09:00",
@@ -301,8 +301,10 @@ class TestWarmupMissWarnings:
             for _ in range(5)
         ]
         orch._load_candle_cache_from_redis = AsyncMock(return_value=0)
-        orch._fetch_candles_from_clickhouse = AsyncMock(return_value=sparse_candles)
-        orch._fetch_daily_candles_from_clickhouse = AsyncMock(return_value=[])
+        orch._fetch_candles_from_market_data_store = AsyncMock(
+            return_value=sparse_candles
+        )
+        orch._fetch_daily_candles_from_market_data_store = AsyncMock(return_value=[])
 
         with caplog.at_level(logging.WARNING, logger="services.trading.orchestrator"):
             await orch._prewarm_symbols(["A000000"])
@@ -339,8 +341,10 @@ class TestWarmupMissWarnings:
             for _ in range(10)
         ]
         orch._load_candle_cache_from_redis = AsyncMock(return_value=0)
-        orch._fetch_candles_from_clickhouse = AsyncMock(return_value=enough_candles)
-        orch._fetch_daily_candles_from_clickhouse = AsyncMock(return_value=[])
+        orch._fetch_candles_from_market_data_store = AsyncMock(
+            return_value=enough_candles
+        )
+        orch._fetch_daily_candles_from_market_data_store = AsyncMock(return_value=[])
 
         with caplog.at_level(logging.WARNING, logger="services.trading.orchestrator"):
             await orch._prewarm_symbols(["A000000"])
@@ -349,27 +353,27 @@ class TestWarmupMissWarnings:
         orch._metrics.record_warmup_miss.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_clickhouse_exception_emits_warning_not_debug(self, caplog):
-        """B: _fetch_candles_from_clickhouse exception → WARNING (not just DEBUG)."""
+    async def test_parquet_exception_emits_warning_not_debug(self, caplog, monkeypatch):
+        """B: _fetch_candles_from_market_data_store exception → WARNING (not just DEBUG)."""
         orch = _make_minimal_orchestrator("stock")
 
-        # Patch the executor so we can simulate a connection error without real infra.
-        with patch("asyncio.get_event_loop") as mock_loop:
-            # Make the executor call raise an OSError (connection refused).
-            mock_loop.return_value.run_in_executor = AsyncMock(
-                side_effect=OSError("Connection refused")
-            )
+        import shared.storage
 
-            with caplog.at_level(
-                logging.WARNING, logger="services.trading.orchestrator"
-            ):
-                result = await orch._fetch_candles_from_clickhouse("A000000", limit=120)
+        def _raise(*_args, **_kwargs):
+            raise OSError("Connection refused")
+
+        monkeypatch.setattr(shared.storage, "load_market_bars_for_backtest", _raise)
+
+        with caplog.at_level(logging.WARNING, logger="services.trading.orchestrator"):
+            result = await orch._fetch_candles_from_market_data_store(
+                "A000000", limit=120
+            )
 
         assert result == [], "Exception should return empty list"
         warning_msgs = [r for r in caplog.records if r.levelno >= logging.WARNING]
         assert any(
             "prewarm" in r.message.lower() for r in warning_msgs
-        ), f"Expected WARNING about ClickHouse prewarm failure; got: {[r.message for r in caplog.records]}"
+        ), f"Expected WARNING about Parquet prewarm failure; got: {[r.message for r in caplog.records]}"
 
     @pytest.mark.asyncio
     async def test_multiple_symbols_accumulate_miss_count(self):
@@ -392,8 +396,8 @@ class TestWarmupMissWarnings:
 
         orch._kis_client = mock_kis
         orch._load_candle_cache_from_redis = AsyncMock(return_value=0)
-        orch._fetch_candles_from_clickhouse = AsyncMock(return_value=[])
-        orch._fetch_daily_candles_from_clickhouse = AsyncMock(return_value=[])
+        orch._fetch_candles_from_market_data_store = AsyncMock(return_value=[])
+        orch._fetch_daily_candles_from_market_data_store = AsyncMock(return_value=[])
 
         await orch._prewarm_symbols(symbols)
 

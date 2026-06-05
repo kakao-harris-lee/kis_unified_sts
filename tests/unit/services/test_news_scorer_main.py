@@ -7,8 +7,6 @@ ALL external I/O monkeypatched so no real infra is touched.
 
 Monkeypatched surfaces:
   - redis.asyncio.from_url          → returns a mock with aclose()
-  - shared.db.config.ClickHouseConfig.from_env → MagicMock
-  - shared.db.client.AsyncClickHouseClient     → AsyncMock (connect + close)
   - openai.AsyncOpenAI              → AsyncMock with close()
   - shared.scoring.config.NewsScorerConfig.from_yaml  → pre-built config obj
   - shared.scoring.budget.DailyBudget          → MagicMock
@@ -40,8 +38,8 @@ def _make_scorer_cfg() -> MagicMock:
     cfg.input_stream = "stream:news.raw"
     cfg.output_stream = "stream:news.scored"
     cfg.output_stream_maxlen = 100_000
-    cfg.ch_batch_size = 20
-    cfg.ch_flush_interval_seconds = 10
+    cfg.archive_batch_size = 20
+    cfg.archive_flush_interval_seconds = 10
     cfg.body_truncate_chars = 2000
     # scorer sub-section
     cfg.scorer.model = "gpt-4o-mini"
@@ -74,7 +72,6 @@ async def test_build_and_run_returns_zero(monkeypatch: pytest.MonkeyPatch) -> No
 
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test-unit")
     monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/1")
-    monkeypatch.setenv("RUNTIME_STORAGE_CLICKHOUSE_MIRROR_ENABLED", "false")
 
     # --- NewsScorerConfig.from_yaml -----------------------------------------
     monkeypatch.setattr(
@@ -85,17 +82,6 @@ async def test_build_and_run_returns_zero(monkeypatch: pytest.MonkeyPatch) -> No
     # --- redis.asyncio.from_url ---------------------------------------------
     fake_redis = AsyncMock()
     monkeypatch.setattr("redis.asyncio.from_url", lambda *_a, **_kw: fake_redis)
-
-    # --- ClickHouseConfig.from_env + AsyncClickHouseClient ------------------
-    monkeypatch.setattr(
-        "shared.db.config.ClickHouseConfig.from_env",
-        classmethod(lambda _cls, **_kw: MagicMock()),
-    )
-    fake_ch = AsyncMock()
-    monkeypatch.setattr(
-        "shared.db.client.AsyncClickHouseClient",
-        lambda *_a, **_kw: fake_ch,
-    )
 
     # --- openai.AsyncOpenAI -------------------------------------------------
     fake_openai = AsyncMock()
@@ -121,7 +107,6 @@ async def test_build_and_run_returns_zero(monkeypatch: pytest.MonkeyPatch) -> No
     rc = await _build_and_run()
 
     assert rc == 0
-    fake_ch.connect.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------
@@ -131,12 +116,11 @@ async def test_build_and_run_returns_zero(monkeypatch: pytest.MonkeyPatch) -> No
 
 @pytest.mark.asyncio
 async def test_build_and_run_cleanup_awaited(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Verify openai_client.close, redis.aclose, ch.close are all awaited."""
+    """Verify openai_client.close and redis.aclose are awaited."""
     cfg = _make_scorer_cfg()
 
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test-unit")
     monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/1")
-    monkeypatch.setenv("RUNTIME_STORAGE_CLICKHOUSE_MIRROR_ENABLED", "true")
 
     monkeypatch.setattr(
         "shared.scoring.config.NewsScorerConfig.from_yaml",
@@ -145,16 +129,6 @@ async def test_build_and_run_cleanup_awaited(monkeypatch: pytest.MonkeyPatch) ->
 
     fake_redis = AsyncMock()
     monkeypatch.setattr("redis.asyncio.from_url", lambda *_a, **_kw: fake_redis)
-
-    monkeypatch.setattr(
-        "shared.db.config.ClickHouseConfig.from_env",
-        classmethod(lambda _cls, **_kw: MagicMock()),
-    )
-    fake_ch = AsyncMock()
-    monkeypatch.setattr(
-        "shared.db.client.AsyncClickHouseClient",
-        lambda *_a, **_kw: fake_ch,
-    )
 
     fake_openai = AsyncMock()
     monkeypatch.setattr("openai.AsyncOpenAI", lambda *_a, **_kw: fake_openai)
@@ -176,12 +150,9 @@ async def test_build_and_run_cleanup_awaited(monkeypatch: pytest.MonkeyPatch) ->
 
     await _build_and_run()
 
-    # All three cleanup coroutines must have been awaited.
+    # Cleanup coroutines must have been awaited.
     fake_openai.close.assert_awaited_once()
     fake_redis.aclose.assert_awaited_once()
-    fake_ch.close.assert_awaited_once()
-    # ClickHouse must have been connected before use.
-    fake_ch.connect.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------
@@ -197,7 +168,6 @@ async def test_build_and_run_cleanup_on_daemon_error(
     cfg = _make_scorer_cfg()
 
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test-unit")
-    monkeypatch.setenv("RUNTIME_STORAGE_CLICKHOUSE_MIRROR_ENABLED", "true")
 
     monkeypatch.setattr(
         "shared.scoring.config.NewsScorerConfig.from_yaml",
@@ -206,16 +176,6 @@ async def test_build_and_run_cleanup_on_daemon_error(
 
     fake_redis = AsyncMock()
     monkeypatch.setattr("redis.asyncio.from_url", lambda *_a, **_kw: fake_redis)
-
-    monkeypatch.setattr(
-        "shared.db.config.ClickHouseConfig.from_env",
-        classmethod(lambda _cls, **_kw: MagicMock()),
-    )
-    fake_ch = AsyncMock()
-    monkeypatch.setattr(
-        "shared.db.client.AsyncClickHouseClient",
-        lambda *_a, **_kw: fake_ch,
-    )
 
     fake_openai = AsyncMock()
     monkeypatch.setattr("openai.AsyncOpenAI", lambda *_a, **_kw: fake_openai)
@@ -244,7 +204,6 @@ async def test_build_and_run_cleanup_on_daemon_error(
     # Cleanup must still run despite the exception.
     fake_openai.close.assert_awaited_once()
     fake_redis.aclose.assert_awaited_once()
-    fake_ch.close.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------
@@ -274,15 +233,6 @@ async def test_build_and_run_default_redis_url(monkeypatch: pytest.MonkeyPatch) 
 
     monkeypatch.setattr("redis.asyncio.from_url", _capture_url)
 
-    monkeypatch.setattr(
-        "shared.db.config.ClickHouseConfig.from_env",
-        classmethod(lambda _cls, **_kw: MagicMock()),
-    )
-    fake_ch = AsyncMock()
-    monkeypatch.setattr(
-        "shared.db.client.AsyncClickHouseClient",
-        lambda *_a, **_kw: fake_ch,
-    )
     monkeypatch.setattr("openai.AsyncOpenAI", lambda *_a, **_kw: AsyncMock())
     monkeypatch.setattr(
         "shared.scoring.budget.DailyBudget",
@@ -322,15 +272,6 @@ async def test_build_and_run_worker_id_format(monkeypatch: pytest.MonkeyPatch) -
     )
     monkeypatch.setattr("redis.asyncio.from_url", lambda *_a, **_kw: AsyncMock())
 
-    monkeypatch.setattr(
-        "shared.db.config.ClickHouseConfig.from_env",
-        classmethod(lambda _cls, **_kw: MagicMock()),
-    )
-    fake_ch = AsyncMock()
-    monkeypatch.setattr(
-        "shared.db.client.AsyncClickHouseClient",
-        lambda *_a, **_kw: fake_ch,
-    )
     monkeypatch.setattr("openai.AsyncOpenAI", lambda *_a, **_kw: AsyncMock())
     monkeypatch.setattr(
         "shared.scoring.budget.DailyBudget",
@@ -427,14 +368,6 @@ async def test_build_and_run_passes_budget_key_prefix_from_yaml(
         classmethod(lambda _cls, *_a, **_kw: cfg),
     )
     monkeypatch.setattr("redis.asyncio.from_url", lambda *_a, **_kw: AsyncMock())
-    monkeypatch.setattr(
-        "shared.db.config.ClickHouseConfig.from_env",
-        classmethod(lambda _cls, **_kw: MagicMock()),
-    )
-    monkeypatch.setattr(
-        "shared.db.client.AsyncClickHouseClient",
-        lambda *_a, **_kw: AsyncMock(),
-    )
     monkeypatch.setattr("openai.AsyncOpenAI", lambda *_a, **_kw: AsyncMock())
     monkeypatch.setattr(
         "shared.scoring.fallback.FallbackScorer",

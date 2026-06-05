@@ -256,7 +256,7 @@ class TestJob:
         ]
         telegram = AsyncMock()
         job = WeeklyEdgeReviewFullJob(
-            ch_client=ch,
+            query_client=ch,
             telegram_client=telegram,
             backtest_baseline={"A_gap_reversion": 12.64},
             window_days=7,
@@ -292,7 +292,7 @@ class TestJob:
         ]
         telegram = AsyncMock()
         job = WeeklyEdgeReviewFullJob(
-            ch_client=ch,
+            query_client=ch,
             telegram_client=telegram,
             backtest_baseline={},
             window_days=7,

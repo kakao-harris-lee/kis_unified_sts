@@ -50,9 +50,6 @@ from shared.storage.runtime_ledger import RuntimeLedger, RuntimeLedgerError
 from shared.utils.calc import validate_price
 
 if TYPE_CHECKING:
-    from services.trading.ch_insert_fail_tracker import (  # noqa: F401
-        ClickHouseInsertFailTracker,
-    )
     from shared.models.signal import Signal
 
 logger = logging.getLogger(__name__)
@@ -97,7 +94,7 @@ class PositionTrackerConfig:
     max_events: int = 1000
     max_closed_positions: int = 100
 
-    # ClickHouse database name (empty = env default)
+    # Legacy database name kept for backward-compatible config construction.
     database: str = ""
 
     # Batch insert configuration
@@ -108,9 +105,7 @@ class PositionTrackerConfig:
     asset_class: str = ""  # e.g. 'stock', 'futures'
 
     # Runtime ledger backend.
-    # "clickhouse" preserves the legacy batching path. Orchestrator runtime
-    # passes the explicit backend from config/storage.yaml (default: sqlite).
-    runtime_ledger_backend: str = "clickhouse"  # sqlite|clickhouse|null
+    runtime_ledger_backend: str = "sqlite"  # sqlite|null
     runtime_ledger_sqlite_path: str = ""
 
     def __post_init__(self):
@@ -172,9 +167,9 @@ class PositionTrackerConfig:
             raise ValueError(
                 f"flush_interval_seconds must be >= 0, got {self.flush_interval_seconds}"
             )
-        if self.runtime_ledger_backend not in {"sqlite", "clickhouse", "null"}:
+        if self.runtime_ledger_backend not in {"sqlite", "null"}:
             raise ValueError(
-                "runtime_ledger_backend must be one of sqlite|clickhouse|null, "
+                "runtime_ledger_backend must be one of sqlite|null, "
                 f"got {self.runtime_ledger_backend!r}"
             )
 
@@ -203,7 +198,7 @@ class PositionTrackerConfig:
         batch_size = data.get("batch_size", 50)
         flush_interval = data.get("flush_interval_seconds", 5.0)
         asset_class = data.get("asset_class", "")
-        runtime_ledger_backend = data.get("runtime_ledger_backend", "clickhouse")
+        runtime_ledger_backend = data.get("runtime_ledger_backend", "sqlite")
         runtime_ledger_sqlite_path = data.get("runtime_ledger_sqlite_path", "")
 
         # Type validation
@@ -289,21 +284,15 @@ class PositionTracker:
         config: PositionTrackerConfig | None = None,
         uuid_generator: Callable[[], str] | None = None,
         redis_client: Any | None = None,
-        ch_fail_tracker: ClickHouseInsertFailTracker | None = None,
+        ch_fail_tracker: Any | None = None,
         runtime_ledger: RuntimeLedger | None = None,
     ):
         """
         Args:
             config: Tracker configuration
             uuid_generator: Optional UUID generator for testing (default: uuid4)
-            redis_client: Optional async Redis client (DB 1) used to auto-build
-                a :class:`ClickHouseInsertFailTracker` when ``ch_fail_tracker``
-                is not supplied explicitly.  When both are ``None`` the CH
-                failure rate is not tracked.
-            ch_fail_tracker: Pre-built
-                :class:`~services.trading.ch_insert_fail_tracker.ClickHouseInsertFailTracker`
-                instance.  Injected directly during tests; in production the
-                tracker is built automatically from ``redis_client``.
+            redis_client: Optional async Redis client (DB 1).
+            ch_fail_tracker: Legacy parameter ignored after external DB removal.
         """
         self.config = config or PositionTrackerConfig()
 
@@ -344,12 +333,8 @@ class PositionTracker:
         # Auto-flush background task
         self._auto_flush_task: asyncio.Task | None = None
 
-        # ClickHouse insert failure rate tracker (Phase 3 Track A observability)
-        self._ch_fail_tracker: ClickHouseInsertFailTracker | None = (
-            (ch_fail_tracker or self._build_ch_fail_tracker(redis_client))
-            if self._uses_clickhouse_persistence()
-            else None
-        )
+        _ = ch_fail_tracker, redis_client
+        self._ch_fail_tracker: Any | None = None
 
         logger.info(
             f"PositionTracker initialized: max_positions={self.config.max_positions}"
@@ -1014,54 +999,6 @@ class PositionTracker:
         """Generate unique position ID using injected generator."""
         return self._uuid_generator()
 
-    @staticmethod
-    def _build_ch_fail_tracker(
-        redis_client: Any | None,
-    ) -> ClickHouseInsertFailTracker | None:
-        """Build a :class:`ClickHouseInsertFailTracker` from config + Redis client.
-
-        Reads ``clickhouse_insert_fail_rate`` section from
-        ``config/streaming.yaml`` via :class:`~shared.config.loader.ConfigLoader`.
-        Returns ``None`` when:
-
-        - ``redis_client`` is ``None`` (no Redis available).
-        - The config section is absent.
-        - ``enabled: false`` in config.
-
-        Args:
-            redis_client: Async Redis client bound to DB 1, or ``None``.
-
-        Returns:
-            A :class:`ClickHouseInsertFailTracker` ready to be started, or
-            ``None`` when tracking is not available/configured.
-        """
-        if redis_client is None:
-            logger.debug("No Redis client — CH insert fail tracking disabled")
-            return None
-
-        try:
-            from services.trading.ch_insert_fail_tracker import (
-                ChInsertFailTrackerConfig,
-                ClickHouseInsertFailTracker,
-            )
-            from shared.config.loader import ConfigLoader
-
-            raw = ConfigLoader.load("streaming.yaml")
-            section = raw.get("clickhouse_insert_fail_rate", {})
-            cfg = ChInsertFailTrackerConfig.from_dict(section)
-
-            if not cfg.enabled:
-                logger.debug("CH insert fail tracking disabled by config")
-                return None
-
-            return ClickHouseInsertFailTracker(cfg, redis_client)
-        except Exception:
-            logger.debug(
-                "Could not build ChInsertFailTracker — tracking disabled",
-                exc_info=True,
-            )
-            return None
-
     def _record_event(self, event_type: str, position_id: str, details: dict[str, Any]):
         """Record position event.
 
@@ -1076,14 +1013,14 @@ class PositionTracker:
         # deque with maxlen automatically discards oldest items
         self._events.append(event)
 
-    def _uses_clickhouse_persistence(self) -> bool:
-        """Return True when legacy ClickHouse persistence is selected."""
-        return self.config.runtime_ledger_backend == "clickhouse"
+    def _uses_legacy_persistence(self) -> bool:
+        """Compatibility guard for removed external DB persistence."""
+        return False
 
     def _get_runtime_ledger(self) -> RuntimeLedger | None:
         """Return the configured RuntimeLedger, lazily creating SQLite backend."""
         backend = self.config.runtime_ledger_backend
-        if backend == "null" or backend == "clickhouse":
+        if backend == "null":
             return None
 
         if self._runtime_ledger is not None:
@@ -1337,24 +1274,20 @@ class PositionTracker:
     )
 
     def _get_db_client(self):
-        """Get legacy ClickHouse client and database name for position persistence.
+        """Return the removed legacy database client.
 
-        Returns:
-            Tuple of (backend client, database_name)
+        The method remains only so older tests/extensions fail with an explicit
+        removal message instead of importing deleted storage modules.
         """
-        from shared.storage.clickhouse_runtime_ledger import get_clickhouse_db_client
+        from shared.db.client import ClickHouseRemovedError
 
-        return get_clickhouse_db_client(self.config.database)
+        raise ClickHouseRemovedError(
+            "External position persistence has been removed; use RuntimeLedger"
+        )
 
     @staticmethod
     def _db_datetime(value: datetime | None) -> datetime | None:
-        """Return a stable naive UTC datetime for ClickHouse DateTime columns.
-
-        clickhouse-driver converts tz-aware datetimes to the server timezone for
-        naive DateTime columns. Runtime positions recovered from Redis carry UTC
-        offsets, so passing them through directly changes the ReplacingMergeTree
-        key from the original UTC value and creates duplicate open rows.
-        """
+        """Return a stable naive UTC datetime for legacy tuple helpers."""
         if value is None:
             return None
         if value.tzinfo is None:
@@ -1396,7 +1329,7 @@ class PositionTracker:
         if not self._positions:
             return 0
 
-        if not self._uses_clickhouse_persistence():
+        if not self._uses_legacy_persistence():
             ledger = self._get_runtime_ledger()
             if ledger is None:
                 return 0
@@ -1466,10 +1399,10 @@ class PositionTracker:
     ) -> dict[str, int]:
         """Synchronize open-position ledger rows with current active positions.
 
-        Current tracker positions are inserted as open rows. Existing ClickHouse
+        Current tracker positions are inserted as open rows. Existing legacy
         open rows absent by both id and code are closed via replacement rows.
         """
-        if not self._uses_clickhouse_persistence():
+        if not self._uses_legacy_persistence():
             open_saved = await self.save_to_db()
             logger.info(
                 "Reconciled runtime ledger open positions: open_saved=%d",
@@ -1599,14 +1532,14 @@ class PositionTracker:
 
             result = await asyncio.to_thread(_sync_reconcile)
             logger.info(
-                "Reconciled ClickHouse open positions: open_saved=%d, closed_orphans=%d",
+                "Reconciled legacy open positions: open_saved=%d, closed_orphans=%d",
                 result["open_saved"],
                 result["closed_orphans"],
             )
             return result
 
         except InfrastructureError as e:
-            logger.error("Failed to reconcile swing positions in ClickHouse: %s", e)
+            logger.error("Failed to reconcile legacy swing positions: %s", e)
             return {"open_saved": 0, "closed_orphans": 0}
 
     async def save_closed_to_db(self, position: Position) -> bool:
@@ -1614,13 +1547,12 @@ class PositionTracker:
 
         This method uses a batching strategy to optimize database performance by
         accumulating closed positions and flushing them in bulk. Individual row
-        inserts create excessive parts in ClickHouse MergeTree tables, triggering
-        frequent background merges that degrade read performance.
+        inserts create excessive write amplification in external stores.
 
         Batching Behavior:
             - Positions are accumulated in an in-memory buffer (_pending_swing_positions)
             - Not immediately written to the database
-            - Batched inserts reduce ClickHouse connection overhead and write amplification
+            - Batched inserts reduce external store write amplification
 
         Flush Triggers (positions are written to DB when):
             1. Batch size threshold reached (config.batch_size, default 50)
@@ -1651,7 +1583,7 @@ class PositionTracker:
         if not position.exit_price or not position.exit_time:
             return False
 
-        if not self._uses_clickhouse_persistence():
+        if not self._uses_legacy_persistence():
             ledger = self._get_runtime_ledger()
             if ledger is None:
                 return False
@@ -1729,12 +1661,12 @@ class PositionTracker:
         This method uses a batching strategy to optimize database performance by
         accumulating closed futures trades and flushing them in bulk. During backtesting
         with Optuna, hundreds of positions may close per trial, making batching
-        critical to avoid overwhelming ClickHouse with individual inserts.
+        critical to avoid overwhelming external stores with individual inserts.
 
         Batching Behavior:
             - Trades are accumulated in an in-memory buffer (_pending_futures_trades)
             - Not immediately written to the database
-            - Batched inserts reduce ClickHouse connection overhead and write amplification
+            - Batched inserts reduce external store write amplification
 
         Flush Triggers (trades are written to DB when):
             1. Batch size threshold reached (config.batch_size, default 50)
@@ -1766,7 +1698,7 @@ class PositionTracker:
         if not position.exit_price or not position.exit_time:
             return False
 
-        if not self._uses_clickhouse_persistence():
+        if not self._uses_legacy_persistence():
             ledger = self._get_runtime_ledger()
             if ledger is None:
                 return False
@@ -1855,7 +1787,7 @@ class PositionTracker:
         Batching Behavior:
             - Trades are accumulated in an in-memory buffer (_pending_stock_trades)
             - Not immediately written to the database
-            - Batched inserts reduce ClickHouse connection overhead
+            - Batched inserts reduce external store overhead
 
         Flush Triggers (trades are written to DB when):
             1. Batch size threshold reached (config.batch_size, default 50)
@@ -1883,7 +1815,7 @@ class PositionTracker:
             )
             return False
 
-        if not self._uses_clickhouse_persistence():
+        if not self._uses_legacy_persistence():
             ledger = self._get_runtime_ledger()
             if ledger is None:
                 return False
@@ -1986,7 +1918,7 @@ class PositionTracker:
 
         Args:
             pending_list: The accumulator list (e.g. _pending_swing_positions).
-            table_name: Target ClickHouse table (without database prefix).
+            table_name: Target legacy table (without database prefix).
             insert_cols: Column spec string for the INSERT statement.
             label: Human-readable label for log messages.
             pre_execute_sql: Optional SQL to run before the INSERT (e.g. schema ensure).
@@ -2018,7 +1950,7 @@ class PositionTracker:
             await asyncio.to_thread(_sync_flush)
             logger.info(f"Flushed {len(rows)} {label} batch to DB")
 
-            # Observability: record successful CH insert (Phase 3 Track A)
+            # Observability: record successful legacy archive insert.
             if self._ch_fail_tracker is not None:
                 self._ch_fail_tracker.record_success()
 
@@ -2043,14 +1975,14 @@ class PositionTracker:
                     exc_info=True,
                 )
 
-            # Observability: record failed CH insert (Phase 3 Track A)
+            # Observability: record failed legacy archive insert.
             if self._ch_fail_tracker is not None:
                 self._ch_fail_tracker.record_failure()
 
             return 0, pending_list
 
     async def _flush_swing_positions_batch(self) -> int:
-        """Flush accumulated swing positions batch to ClickHouse.
+        """Flush accumulated swing positions batch to the legacy archive.
 
         Returns:
             Number of positions flushed
@@ -2064,7 +1996,7 @@ class PositionTracker:
         return count
 
     async def _flush_futures_trades_batch(self) -> int:
-        """Flush accumulated futures trades batch to ClickHouse.
+        """Flush accumulated futures trades batch to the legacy archive.
 
         Returns:
             Number of trades flushed
@@ -2079,7 +2011,7 @@ class PositionTracker:
         return count
 
     async def _flush_stock_trades_batch(self) -> int:
-        """Flush accumulated stock trades batch to ClickHouse market.stock_trades.
+        """Flush accumulated stock trades batch to the legacy archive.
 
         Returns:
             Number of trades flushed
@@ -2101,7 +2033,7 @@ class PositionTracker:
         Returns:
             Tuple of (swing_positions_flushed, futures_trades_flushed)
         """
-        if not self._uses_clickhouse_persistence():
+        if not self._uses_legacy_persistence():
             ledger = self._get_runtime_ledger()
             if ledger is not None:
                 await asyncio.to_thread(ledger.flush)
@@ -2169,13 +2101,6 @@ class PositionTracker:
         self._auto_flush_task = loop.create_task(_auto_flush_loop())
         logger.info("Auto-flush task created")
 
-        # Start CH insert fail rate publish loop (Phase 3 Track A observability)
-        if self._ch_fail_tracker is not None:
-            loop.create_task(
-                self._ch_fail_tracker.start(),
-                name="ch_insert_fail_tracker_start",
-            )
-
     async def stop_auto_flush(self) -> None:
         """Stop the auto-flush background task and flush remaining positions.
 
@@ -2205,10 +2130,6 @@ class PositionTracker:
                 f"{futures_count} futures trades"
             )
 
-        # Stop CH insert fail tracker publish loop (Phase 3 Track A observability)
-        if self._ch_fail_tracker is not None:
-            await self._ch_fail_tracker.stop()
-
     @staticmethod
     def _calc_realized_pnl(position: Position) -> float:
         """Calculate side-aware realized PnL for a closed position."""
@@ -2224,7 +2145,7 @@ class PositionTracker:
         Returns:
             Number of positions loaded
         """
-        if not self._uses_clickhouse_persistence():
+        if not self._uses_legacy_persistence():
             ledger = self._get_runtime_ledger()
             if ledger is None:
                 return 0

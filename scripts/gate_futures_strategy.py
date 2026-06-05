@@ -8,6 +8,7 @@ Usage:
     --space config/optuna/futures/williams_r_15m.yaml \
     --holdout-split 2026-02-01 --min-trades 50 --trials 70
 """
+
 from __future__ import annotations
 
 import argparse
@@ -107,19 +108,19 @@ def _load_data(path: str):
     )
 
 
-class _CHInputs:
-    """Pre-loaded ClickHouse-backed inputs for RegimeGate (T5).
+class _PreloadedGateInputs:
+    """Pre-loaded inputs for RegimeGate (T5).
 
-    vol_rows / event_rows must be SORTED by asof (the SQL ORDER BY asof
-    already guarantees this). We bisect on a key list for O(log n) lookups.
+    vol_rows / event_rows must be sorted by asof. We bisect on a key list for
+    O(log n) lookups.
     """
 
     def __init__(self, vol_rows, event_rows, macro_map):
-        # CH DateTime64(3,'UTC') returns tz-aware datetimes; downstream
-        # bisect needs tz-naive (incoming ts is .replace(tzinfo=None)).
+        # Downstream bisect needs tz-naive values (incoming ts is normalized).
         # Normalize ONCE at load so all subsequent compares are naive-vs-naive.
         def _naive(d):
             return d.replace(tzinfo=None) if getattr(d, "tzinfo", None) else d
+
         self._vol = [(_naive(r[0]),) + tuple(r[1:]) for r in vol_rows]
         self._vol_keys = [r[0] for r in self._vol]
         self._events = [(_naive(r[0]),) + tuple(r[1:]) for r in event_rows]
@@ -146,31 +147,15 @@ class _CHInputs:
 
 
 def _build_gate(gate_cfg, df):
-    """Pre-load vol_forecasts / event_scores / macro_history for the df window,
+    """Pre-load macro_history for the df window,
     construct a RegimeGate ready to use as engine `gate=`."""
     from shared.backtest.macro_history import fetch_macro_history
-    from shared.db.client import get_clickhouse_client
-    from shared.db.config import ClickHouseConfig
     from shared.strategy.gates.regime_gate import RegimeGate
 
     start = df["datetime"].min().to_pydatetime()
     end = df["datetime"].max().to_pydatetime()
-    start_n = start.replace(tzinfo=None) if getattr(start, "tzinfo", None) else start
-    end_n = end.replace(tzinfo=None) if getattr(end, "tzinfo", None) else end
-
-    cli = get_clickhouse_client(ClickHouseConfig.from_env()).get_sync_client()
-    vol = cli.execute(
-        "SELECT asof, regime_percentile FROM kospi.vol_forecasts "
-        "WHERE asof >= %(s)s AND asof < %(e)s ORDER BY asof",
-        {"s": start_n, "e": end_n},
-    )
-    ev = cli.execute(
-        "SELECT asof, impact_score FROM kospi.event_scores "
-        "WHERE asof >= %(s)s AND asof < %(e)s ORDER BY asof",
-        {"s": start_n, "e": end_n},
-    )
     macro = fetch_macro_history(start.date(), end.date())
-    return RegimeGate(gate_cfg, _CHInputs(vol, ev, macro))
+    return RegimeGate(gate_cfg, _PreloadedGateInputs([], [], macro))
 
 
 def _make_objective(base_cfg, space, opt_df, bt_config, min_trades, gate=None):

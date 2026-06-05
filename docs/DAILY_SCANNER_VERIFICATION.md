@@ -256,8 +256,8 @@ python scripts/daily_indicator_scanner.py 2>&1 | tee scanner_debug.log
 ```
 
 **Common errors:**
-- ClickHouse not accessible → Start ClickHouse: `docker-compose up -d clickhouse`
-- No daily candle data → Run backfill: `python -m cli.main backfill daily --days 250`
+- Parquet market data missing → Run backfill: `python -m cli.main stock-backfill run --days 250`
+- No daily candle data → Validate data: `sts data validate-parquet --root data/market`
 - Redis connection refused → Check REDIS_HOST, REDIS_PORT in .env
 
 ### Issue: Stale data (> 24 hours old)
@@ -286,7 +286,7 @@ redis-cli -h localhost -p 6379 -n 1 GET system:daily_indicators:latest | \
 
 ### Issue: Low symbol count
 
-**Check ClickHouse data availability:**
+**Check Parquet data availability:**
 ```bash
 python scripts/verify_backtest_data.py
 ```

@@ -1,8 +1,7 @@
 """Rolling-window rate tracker base class.
 
-Provides the shared rolling-window failure-rate logic used by both
-``KISApiErrorRateTracker`` (PR #173) and ``ClickHouseInsertFailTracker``
-(PR #174).  Extracted as part of §10.3 DRY follow-up to eliminate the
+Provides shared rolling-window failure-rate logic for operational trackers.
+Extracted as part of §10.3 DRY follow-up to eliminate the
 duplicated deque / publish-loop / Redis-write pattern.
 
 Design

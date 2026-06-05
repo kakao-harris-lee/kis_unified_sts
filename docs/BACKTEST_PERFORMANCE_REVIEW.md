@@ -233,7 +233,7 @@ Data Completeness: ___%
 
 ### Environment
 - Python Version: 3.11+
-- Data Source: ClickHouse (`market.bars_1m`)
+- Data Source: Parquet market data (`data/market`)
 - Backtest Engine: `shared/backtest/engine.py`
 - MLflow Tracking: Enabled/Disabled
 
@@ -242,7 +242,7 @@ Data Completeness: ___%
 **trend_pullback:**
 ```bash
 python3 scripts/run_trend_pullback_backtest.py \
-    --mode clickhouse \
+    --mode parquet \
     --symbol 005930 \
     --days 180 \
     --output-dir ./output/backtests/trend_pullback
@@ -251,7 +251,7 @@ python3 scripts/run_trend_pullback_backtest.py \
 **momentum_breakout:**
 ```bash
 python3 scripts/run_momentum_breakout_backtest.py \
-    --mode clickhouse \
+    --mode parquet \
     --symbol 005930 \
     --days 180 \
     --output-dir ./output/backtests/momentum_breakout
@@ -383,7 +383,7 @@ The infrastructure for running backtests is complete:
 - ✅ Performance review template created
 - ✅ Output directories prepared
 - ⏳ Python environment setup required
-- ⏳ ClickHouse data verification needed
+- ⏳ Parquet data verification needed
 - ⏳ Actual backtest execution pending
 
 ### Immediate Actions Required
@@ -406,8 +406,8 @@ The infrastructure for running backtests is complete:
    python3 scripts/verify_backtest_data.py
 
    # Run backtests
-   python3 scripts/run_trend_pullback_backtest.py --mode clickhouse --symbol 005930 --days 180
-   python3 scripts/run_momentum_breakout_backtest.py --mode clickhouse --symbol 005930 --days 180
+   python3 scripts/run_trend_pullback_backtest.py --mode parquet --symbol 005930 --days 180
+   python3 scripts/run_momentum_breakout_backtest.py --mode parquet --symbol 005930 --days 180
 
    # Validate results
    python3 scripts/validate_backtest_results.py \

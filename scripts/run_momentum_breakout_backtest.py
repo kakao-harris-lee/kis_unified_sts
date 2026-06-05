@@ -10,8 +10,8 @@ following the project's acceptance criteria:
 - MLflow tracking logs saved
 
 Usage:
-    # With ClickHouse data
-    python3 scripts/run_momentum_breakout_backtest.py --mode clickhouse
+    # With Parquet data
+    python3 scripts/run_momentum_breakout_backtest.py --mode parquet
 
     # With CSV data
     python3 scripts/run_momentum_breakout_backtest.py --mode csv --data ./data/backtest.csv
@@ -22,7 +22,7 @@ Usage:
 Requirements:
     - Python 3.11+ (project requirement)
     - Dependencies installed: pip install -e ".[dev]"
-    - ClickHouse running (for --mode clickhouse)
+    - Parquet market data available under config/storage.yaml market_data.parquet.root
     - 6+ months of minute-bar data available
 """
 
@@ -49,8 +49,8 @@ load_dotenv(REPO_ROOT / ".env")
 # Import after path setup
 from shared.backtest import BacktestConfig, BacktestEngine
 from shared.backtest.adapter import BacktestStrategyAdapter
-from shared.collector.historical.stock import load_stock_minute_from_clickhouse
 from shared.config.loader import ConfigLoader
+from shared.storage import StorageConfig, load_market_bars_for_backtest
 from shared.strategy.registry import StrategyFactory, register_builtin_components
 
 # Setup logging
@@ -64,7 +64,7 @@ register_builtin_components()
 
 
 def _align_timestamp_bound(value: datetime, ts: pd.Series) -> pd.Timestamp:
-    """Return a pandas bound comparable with the loaded ClickHouse timestamps."""
+    """Return a pandas bound comparable with the loaded Parquet timestamps."""
     bound = pd.Timestamp(value)
     tz = ts.dt.tz
     if tz is not None and bound.tz is None:
@@ -151,18 +151,20 @@ def generate_synthetic_data(
     return df
 
 
-def load_clickhouse_data(
+def load_parquet_data(
     symbol: str, start_date: datetime, end_date: datetime
 ) -> pd.DataFrame:
-    """Load OHLCV data from the canonical stock minute candle table."""
-    try:
-        df = load_stock_minute_from_clickhouse(
-            symbol,
-            start_date=start_date.date(),
-            end_date=end_date.date(),
-        )
-    except ValueError:
-        return pd.DataFrame()
+    """Load OHLCV data from the configured Parquet market-data store."""
+    df = load_market_bars_for_backtest(
+        symbol=symbol,
+        asset_class="stock",
+        timeframe="minute",
+        start=start_date.date(),
+        end=end_date.date(),
+        config=StorageConfig.load_or_default(),
+    )
+    if df.empty:
+        return df
 
     ts = pd.to_datetime(df["datetime"])
     start_ts = _align_timestamp_bound(start_date, ts)
@@ -328,8 +330,8 @@ def main():
     )
     parser.add_argument(
         "--mode",
-        choices=["clickhouse", "csv", "synthetic"],
-        default="synthetic",
+        choices=["parquet", "csv", "synthetic"],
+        default="parquet",
         help="Data source mode",
     )
     parser.add_argument(
@@ -338,13 +340,13 @@ def main():
     parser.add_argument(
         "--symbol",
         default="005930",
-        help="Stock symbol (for ClickHouse or synthetic mode)",
+        help="Stock symbol (for Parquet or synthetic mode)",
     )
     parser.add_argument(
         "--days",
         type=int,
         default=180,
-        help="Number of days of data (for ClickHouse or synthetic mode)",
+        help="Number of days of data (for Parquet or synthetic mode)",
     )
     parser.add_argument(
         "--output-dir",
@@ -364,14 +366,14 @@ def main():
     # Load data based on mode
     logger.info(f"Loading data in {args.mode} mode...")
 
-    if args.mode == "clickhouse":
+    if args.mode == "parquet":
         end_date = datetime.now()
         start_date = end_date - timedelta(days=args.days)
-        df = load_clickhouse_data(args.symbol, start_date, end_date)
+        df = load_parquet_data(args.symbol, start_date, end_date)
 
         if df.empty:
             logger.error(f"No data found for symbol {args.symbol}")
-            logger.error("Please run data collection first:")
+            logger.error("Please run Parquet data collection first:")
             logger.error(
                 f"  python -m cli.main stock-backfill run --days {args.days} -c {args.symbol}"
             )

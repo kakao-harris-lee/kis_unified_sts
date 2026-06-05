@@ -7,6 +7,7 @@ Bidirectional trend-follow:
 Uses 15-minute MACD line/signal already produced by IndicatorEngine momentum DF.
 EMA-fast/EMA-slow are computed inline from `close` to keep the entry self-contained.
 """
+
 from __future__ import annotations
 
 import logging
@@ -49,7 +50,7 @@ class MACDEMACrossoverConfig(ConfigMixin):
 
     # Histogram filter — require macd_oscillator strength above absolute floor
     use_hist_filter: bool = True
-    hist_min_abs: float = 0.0   # default 0 = simple sign check
+    hist_min_abs: float = 0.0  # default 0 = simple sign check
 
     # Volume confirmation
     volume_confirm: bool = False
@@ -78,7 +79,11 @@ class MACDEMACrossoverConfig(ConfigMixin):
 
     # Optional market_state filter (LLM regime, etc.)
     market_state_filter: dict[str, Any] = field(
-        default_factory=lambda: {"enabled": False, "allowed_states": [], "blocked_states": []}
+        default_factory=lambda: {
+            "enabled": False,
+            "allowed_states": [],
+            "blocked_states": [],
+        }
     )
 
     # Minimum bars in df before we evaluate (must cover ema_slow + macd_slow + buffer)
@@ -103,7 +108,9 @@ class MACDEMACrossoverEntry(EntrySignalGenerator[MACDEMACrossoverConfig]):
         c = self.config
         assert c.macd_fast > 0 and c.macd_slow > c.macd_fast, "macd_fast/slow invalid"
         assert c.macd_signal > 0, "macd_signal must be positive"
-        assert c.ema_fast_period > 0 and c.ema_slow_period > c.ema_fast_period, "ema_fast/slow invalid"
+        assert (
+            c.ema_fast_period > 0 and c.ema_slow_period > c.ema_fast_period
+        ), "ema_fast/slow invalid"
         assert c.timeframe_minutes > 0, "timeframe_minutes must be positive"
         assert c.confidence_hist_scale > 0, "confidence_hist_scale must be positive"
         assert c.min_candles > 0, "min_candles must be positive"
@@ -148,7 +155,10 @@ class MACDEMACrossoverEntry(EntrySignalGenerator[MACDEMACrossoverConfig]):
 
         if self.config.signal_cooldown_seconds > 0:
             last = self._last_signal_at.get(code)
-            if last and (now - last).total_seconds() < self.config.signal_cooldown_seconds:
+            if (
+                last
+                and (now - last).total_seconds() < self.config.signal_cooldown_seconds
+            ):
                 return None
 
         if not self._market_state_allows(context, indicators, data, code):
@@ -231,8 +241,12 @@ class MACDEMACrossoverEntry(EntrySignalGenerator[MACDEMACrossoverConfig]):
 
         # EMA regime filter
         close_series = df["close"]
-        ema_fast = close_series.ewm(span=self.config.ema_fast_period, adjust=False).mean()
-        ema_slow = close_series.ewm(span=self.config.ema_slow_period, adjust=False).mean()
+        ema_fast = close_series.ewm(
+            span=self.config.ema_fast_period, adjust=False
+        ).mean()
+        ema_slow = close_series.ewm(
+            span=self.config.ema_slow_period, adjust=False
+        ).mean()
         close_now = float(close_series.iloc[-1])
         ema_fast_now = float(ema_fast.iloc[-1])
         ema_slow_now = float(ema_slow.iloc[-1])
@@ -292,8 +306,8 @@ class MACDEMACrossoverEntry(EntrySignalGenerator[MACDEMACrossoverConfig]):
     def _gate_allows(self, context: EntryContext, direction: str) -> bool:
         if self._gate_cfg is None:
             return True
-        redis_client, ch_client = acquire_infra_clients()
-        if redis_client is None or ch_client is None:
+        redis_client, event_reader = acquire_infra_clients()
+        if redis_client is None:
             return True  # PERMISSIVE on missing infra
         stand_in = type("X", (), {"metadata": {"signal_direction": direction}})()
         blocked = apply_regime_gate(
@@ -302,7 +316,7 @@ class MACDEMACrossoverEntry(EntrySignalGenerator[MACDEMACrossoverConfig]):
             context=context,
             strategy_name=self.name,
             redis=redis_client,
-            ch_client=ch_client,
+            event_reader=event_reader,
         )
         return not blocked
 
@@ -321,10 +335,14 @@ class MACDEMACrossoverEntry(EntrySignalGenerator[MACDEMACrossoverConfig]):
         if now_kst < open_dt or now_kst >= close_dt:
             return False
         if self.config.skip_market_open_minutes > 0:
-            if now_kst < open_dt + timedelta(minutes=self.config.skip_market_open_minutes):
+            if now_kst < open_dt + timedelta(
+                minutes=self.config.skip_market_open_minutes
+            ):
                 return False
         if self.config.skip_market_close_minutes > 0:
-            if now_kst >= close_dt - timedelta(minutes=self.config.skip_market_close_minutes):
+            if now_kst >= close_dt - timedelta(
+                minutes=self.config.skip_market_close_minutes
+            ):
                 return False
         return True
 

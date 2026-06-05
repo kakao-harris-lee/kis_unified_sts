@@ -76,14 +76,14 @@ pytest tests/unit/strategy/test_trend_pullback_entry.py \
 ```bash
 # trend_pullback backtest
 python3 scripts/run_trend_pullback_backtest.py \
-    --mode clickhouse \
+    --mode parquet \
     --symbol 005930 \
     --days 180 \
     --output-dir ./output/backtests/trend_pullback
 
 # momentum_breakout backtest
 python3 scripts/run_momentum_breakout_backtest.py \
-    --mode clickhouse \
+    --mode parquet \
     --symbol 005930 \
     --days 180 \
     --output-dir ./output/backtests/momentum_breakout
@@ -97,7 +97,7 @@ python3 scripts/validate_backtest_results.py \
 
 **Backtest Results (Synthetic Data - 180 Days):**
 
-⚠️ **IMPORTANT**: Results below are from **synthetic data** mode due to ClickHouse/production data unavailability. Real market validation pending.
+⚠️ **IMPORTANT**: Results below are from **synthetic data** mode due to production Parquet data unavailability. Real market validation pending.
 
 | Metric | trend_pullback | momentum_breakout | Target | Status |
 |--------|----------------|-------------------|--------|--------|
@@ -125,13 +125,13 @@ python3 scripts/validate_backtest_results.py \
 - Low win rate (34.2%) - losing more than winning
 - **Root Cause**: Strategy may be poorly suited to synthetic data OR requires parameter optimization
 - **Next Steps**:
-  1. Validate on real market data (ClickHouse)
+  1. Validate on real market data (Parquet)
   2. Parameter optimization via Optuna
   3. Review entry/exit logic for false signal generation
 
 **Synthetic Data Limitations:**
 - Synthetic data uses random walk with trends - may not reflect real market microstructure
-- Real validation on production data (ClickHouse) is required before production deployment
+- Real validation on production Parquet data is required before production deployment
 - momentum_breakout's success suggests robustness, but real data confirmation needed
 
 ### Phase 3: Paper Trading Deployment (INFRASTRUCTURE READY ⏳)
@@ -262,7 +262,7 @@ Once 20+ trading days complete, document results here:
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| Data Preparation | ✓ Ready | Scripts created, awaiting ClickHouse data |
+| Data Preparation | ✓ Ready | Scripts created, awaiting Parquet data |
 | Backtest Scripts | ✓ Ready | Standalone runners with 3 data modes |
 | Validation Scripts | ✓ Ready | Automated acceptance criteria checking |
 | Documentation | ✓ Complete | Guides and templates created |
@@ -365,7 +365,7 @@ mypy shared/strategy/entry/
 **Pending Work:**
 1. **Environment Setup** (blocking execution)
    - Python 3.11+ environment with dependencies
-   - ClickHouse with 6+ months of data
+   - Parquet with 6+ months of data
    - Redis for paper trading state
 
 2. **Backtest Execution** (Phase 1 validation)
@@ -407,7 +407,7 @@ mypy shared/strategy/entry/
 **Date Executed:** _____-__-__
 **Data Period:** _____-__-__ to _____-__-__
 **Total Bars:** _______
-**Environment:** Python ____, ClickHouse ____, Engine version ____
+**Environment:** Python ____, Parquet dataset ____, Engine version ____
 
 **trend_pullback Backtest:**
 ```

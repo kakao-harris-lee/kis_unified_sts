@@ -9,9 +9,6 @@
 #                              Written by: shared/kis/client.py (TODO Phase 3 Track A)
 #   news_pipeline_lag_seconds → Redis stream: stream:news.raw (last message timestamp)
 #                               Written by: news collector (services/)
-#   clickhouse_insert_fail_rate → Redis key: kill_switch:metrics:clickhouse_insert_fail_rate
-#                                 Written by: services/trading/position_tracker.py
-#                                 (TODO Phase 3 Track A)
 # Until TODO items are wired, providers return 0.0 (never trigger).
 #
 # force_flatten signalling (Phase 0.2):
@@ -50,11 +47,6 @@ kill_switch:
       # Redis stream key inspected for lag computation. Must match the news
       # collector's output stream (canonical: config/news_sources.yaml::redis_stream).
       stream_key: "stream:news.raw"
-    clickhouse_insert_fail_rate:
-      # Effective only when runtime_storage.clickhouse_mirror.enabled=true.
-      enabled: true
-      threshold: 0.1             # 10% of inserts failing in 5-min window (fraction 0–1)
-
 kill_switch_consumer:
   poll_interval_seconds: 5.0          # How often TradingOrchestrator polls the sentinel
   sentinel_key: "kill_switch:force_flatten:requested"

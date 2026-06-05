@@ -1,7 +1,6 @@
 """Tests for services/trading/position_tracker.py"""
 
 from datetime import UTC, datetime
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -58,11 +57,13 @@ class TestPositionTrackerConfig:
         """Test from_dict factory method"""
         from services.trading.position_tracker import PositionTrackerConfig
 
-        config = PositionTrackerConfig.from_dict({
-            "max_positions": 5,
-            "max_positions_per_symbol": 2,
-            "default_fee_rate": 0.002,
-        })
+        config = PositionTrackerConfig.from_dict(
+            {
+                "max_positions": 5,
+                "max_positions_per_symbol": 2,
+                "default_fee_rate": 0.002,
+            }
+        )
         assert config.max_positions == 5
         assert config.default_fee_rate == 0.002
 
@@ -188,20 +189,21 @@ class TestPositionTracker:
         assert tracker.get_position("nonexistent") is None
 
     def test_db_datetime_converts_aware_values_to_naive_utc(self):
-        """ClickHouse DateTime rows should use stable naive UTC keys."""
+        """Legacy tuple helpers should use stable naive UTC keys."""
         from services.trading.position_tracker import PositionTracker
 
         aware = datetime(2026, 5, 22, 11, 42, 52, tzinfo=UTC)
 
-        assert PositionTracker._db_datetime(aware) == datetime(
-            2026, 5, 22, 11, 42, 52
-        )
+        assert PositionTracker._db_datetime(aware) == datetime(2026, 5, 22, 11, 42, 52)
 
     @pytest.mark.asyncio
-    async def test_reconcile_closes_duplicate_entry_date_rows(self):
-        """Same id/code with a different entry_date is a stale ClickHouse duplicate."""
+    async def test_reconcile_saves_open_positions_to_runtime_ledger(
+        self, tmp_path, monkeypatch
+    ):
+        """RuntimeLedger reconcile saves current open positions."""
         from services.trading.position_tracker import PositionTracker
 
+        monkeypatch.setenv("RUNTIME_STORAGE_SQLITE_PATH", str(tmp_path / "runtime.db"))
         tracker = PositionTracker()
         position = Position(
             id="broker_stock_001740_long",
@@ -216,56 +218,9 @@ class TestPositionTracker:
         )
         tracker.add_recovered_position(position)
 
-        client = MagicMock()
-        client.execute.side_effect = [
-            [
-                (
-                    "broker_stock_001740_long",
-                    "001740",
-                    "SK네트웍스",
-                    datetime(2026, 5, 22, 11, 42, 52),
-                    7262.16,
-                    238,
-                    "external",
-                    "KRX",
-                    0.0,
-                    8430.0,
-                    "survival",
-                    "long",
-                    0.003,
-                ),
-                (
-                    "broker_stock_001740_long",
-                    "001740",
-                    "SK네트웍스",
-                    datetime(2026, 5, 22, 20, 42, 52),
-                    7262.16,
-                    238,
-                    "external",
-                    "KRX",
-                    0.0,
-                    8430.0,
-                    "survival",
-                    "long",
-                    0.003,
-                ),
-            ],
-            None,
-            None,
-        ]
-        ch = MagicMock()
-        ch.get_sync_client.return_value = client
-        tracker._get_db_client = MagicMock(return_value=(ch, "market"))
-
         result = await tracker.reconcile_open_positions_to_db()
 
-        assert result == {"open_saved": 1, "closed_orphans": 1}
-        close_rows = client.execute.call_args_list[1].args[1]
-        open_rows = client.execute.call_args_list[2].args[1]
-        assert close_rows[0][0] == "broker_stock_001740_long"
-        assert close_rows[0][3] == datetime(2026, 5, 22, 20, 42, 52)
-        assert close_rows[0][11] == 0
-        assert open_rows[0][3] == datetime(2026, 5, 22, 11, 42, 52)
+        assert result == {"open_saved": 1, "closed_orphans": 0}
 
     def test_get_positions_by_symbol(self):
         """Test getting positions by symbol"""
@@ -300,10 +255,18 @@ class TestPositionTracker:
 
         tracker = PositionTracker()
         tracker.add_position(
-            code="005930", name="A", entry_price=100, quantity=1, strategy="bb_reversion"
+            code="005930",
+            name="A",
+            entry_price=100,
+            quantity=1,
+            strategy="bb_reversion",
         )
         tracker.add_position(
-            code="000660", name="B", entry_price=100, quantity=1, strategy="bb_reversion"
+            code="000660",
+            name="B",
+            entry_price=100,
+            quantity=1,
+            strategy="bb_reversion",
         )
         tracker.add_position(
             code="035720", name="C", entry_price=100, quantity=1, strategy="momentum"
@@ -457,7 +420,11 @@ class TestPositionTracker:
         # Add more positions than max_events
         for i in range(10):
             tracker.add_position(
-                code=f"TEST{i}", name=f"Test{i}", entry_price=100, quantity=1, strategy="test"
+                code=f"TEST{i}",
+                name=f"Test{i}",
+                entry_price=100,
+                quantity=1,
+                strategy="test",
             )
 
         # Events should be capped
@@ -476,7 +443,11 @@ class TestPositionTracker:
         # Add and close positions
         for i in range(5):
             pos = tracker.add_position(
-                code=f"TEST{i}", name=f"Test{i}", entry_price=100, quantity=1, strategy="test"
+                code=f"TEST{i}",
+                name=f"Test{i}",
+                entry_price=100,
+                quantity=1,
+                strategy="test",
             )
             tracker.close_position(pos.id, exit_price=110, reason="test")
 
@@ -528,7 +499,11 @@ class TestPositionTracker:
         # Add 7 positions (more than max_events=5)
         for i in range(7):
             tracker.add_position(
-                code=f"TEST{i}", name=f"Test{i}", entry_price=100, quantity=1, strategy="test"
+                code=f"TEST{i}",
+                name=f"Test{i}",
+                entry_price=100,
+                quantity=1,
+                strategy="test",
             )
 
         # Events should be capped at 5
@@ -557,7 +532,11 @@ class TestPositionTracker:
         # Add and close 5 positions
         for i in range(5):
             pos = tracker.add_position(
-                code=f"TEST{i}", name=f"Test{i}", entry_price=100, quantity=1, strategy="test"
+                code=f"TEST{i}",
+                name=f"Test{i}",
+                entry_price=100,
+                quantity=1,
+                strategy="test",
             )
             tracker.close_position(pos.id, exit_price=110, reason="test")
 
@@ -618,7 +597,11 @@ class TestConcurrentOperations:
 
         async def add_and_close(code: str):
             pos = tracker.add_position(
-                code=code, name=f"Test-{code}", entry_price=100, quantity=10, strategy="test"
+                code=code,
+                name=f"Test-{code}",
+                entry_price=100,
+                quantity=10,
+                strategy="test",
             )
             if pos:
                 await asyncio.sleep(0.001)  # Small delay
@@ -626,9 +609,7 @@ class TestConcurrentOperations:
             return None
 
         # Run multiple add/close cycles concurrently
-        results = await asyncio.gather(
-            *[add_and_close(f"TEST{i}") for i in range(5)]
-        )
+        results = await asyncio.gather(*[add_and_close(f"TEST{i}") for i in range(5)])
 
         # All should succeed
         successful = [r for r in results if r is not None]

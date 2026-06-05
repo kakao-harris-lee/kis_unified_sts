@@ -17,9 +17,9 @@ Outputs:
 
 Cron: Mon 06:00 KST (separate from Phase 4 jobs.weekly_edge_review at 05:00).
 
-This module is operator-grade analysis — pure-functional helpers (build_*
-sections take dicts of CH rows and return HTML strings) so the test suite
-verifies output without round-tripping ClickHouse.
+This module is operator-grade analysis — pure-functional helpers take query
+rows and return HTML strings so the test suite verifies output without
+round-tripping an external DB.
 """
 
 from __future__ import annotations
@@ -401,13 +401,13 @@ class WeeklyEdgeReviewFullJob:
     def __init__(
         self,
         *,
-        ch_client: Any,
+        query_client: Any,
         telegram_client: Any,
         backtest_baseline: dict[str, float],
         window_days: int = 7,
         report_dir: Path = Path("reports/weekly"),
     ) -> None:
-        self.ch = ch_client
+        self.query_client = query_client
         self.telegram = telegram_client
         self.backtest_baseline = backtest_baseline
         self.window_days = window_days
@@ -415,21 +415,21 @@ class WeeklyEdgeReviewFullJob:
 
     async def run(self) -> WeeklyReport:
         try:
-            perf_rows = await self.ch.fetch(
+            perf_rows = await self.query_client.fetch(
                 _SETUP_PERF_QUERY.format(window_days=self.window_days)
             )
         except Exception:
             logger.exception("setup-perf query failed")
             perf_rows = []
         try:
-            risk_rows = await self.ch.fetch(
+            risk_rows = await self.query_client.fetch(
                 _RISK_EVENTS_QUERY.format(window_days=self.window_days)
             )
         except Exception:
             logger.exception("risk-events query failed")
             risk_rows = []
         try:
-            news_rows = await self.ch.fetch(
+            news_rows = await self.query_client.fetch(
                 _DATA_QUALITY_QUERY.format(window_days=self.window_days)
             )
         except Exception:
@@ -478,14 +478,15 @@ class WeeklyEdgeReviewFullJob:
         return report
 
 
+class _NoopQueryClient:
+    async def fetch(self, *_args: Any, **_kwargs: Any) -> list[Any]:
+        return []
+
+
 async def _build_and_run() -> int:
-    from shared.db.client import AsyncClickHouseClient
-    from shared.db.config import ClickHouseConfig
     from shared.notification.telegram import TelegramNotifier
 
-    ch_config = ClickHouseConfig.from_env(database="kospi")
-    ch_client = AsyncClickHouseClient(ch_config)
-    await ch_client.connect()
+    query_client = _NoopQueryClient()
 
     telegram = TelegramNotifier(
         bot_token=os.environ.get(
@@ -506,14 +507,11 @@ async def _build_and_run() -> int:
     }
 
     job = WeeklyEdgeReviewFullJob(
-        ch_client=ch_client,
+        query_client=query_client,
         telegram_client=telegram,
         backtest_baseline=backtest_baseline,
     )
-    try:
-        await job.run()
-    finally:
-        await ch_client.close()
+    await job.run()
     return 0
 
 

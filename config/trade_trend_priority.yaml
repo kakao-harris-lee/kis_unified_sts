@@ -1,0 +1,70 @@
+# Trade trend priority adjustment for stock screeners.
+#
+# This adjusts candidate ordering only. It does not include or exclude symbols
+# and must fail open when the snapshot is missing or stale.
+
+enabled: true
+snapshot_path: data/macro/trade_trends/latest.parquet
+cache_seconds: 3600
+stale_after_days: 75
+max_bonus: 0.15
+
+# Used only when a snapshot row does not provide an explicit score column.
+pct_scale: 20.0
+export_yoy_weight: 0.7
+export_mom_weight: 0.2
+import_yoy_weight: -0.1
+balance_yoy_weight: 0.0
+
+# Map local stock codes to trade-sensitive export/import sectors.
+symbol_sectors:
+  "005930": ["semiconductor"]
+  "000660": ["semiconductor"]
+  "009150": ["semiconductor", "electronics"]
+  "005380": ["auto"]
+  "000270": ["auto"]
+  "012330": ["auto"]
+  "005490": ["steel"]
+  "051910": ["battery", "petrochemical"]
+  "006400": ["battery"]
+  "247540": ["battery"]
+  "086520": ["battery"]
+  "373220": ["battery"]
+  "003670": ["battery"]
+  "066570": ["electronics"]
+  "207940": ["bio"]
+  "068270": ["bio"]
+  "196170": ["bio"]
+
+# Normalize common source labels to canonical sector keys.
+sector_aliases:
+  semiconductor: semiconductor
+  semiconductors: semiconductor
+  chips: semiconductor
+  반도체: semiconductor
+  auto: auto
+  automotive: auto
+  automobile: auto
+  automobiles: auto
+  자동차: auto
+  steel: steel
+  철강: steel
+  battery: battery
+  batteries: battery
+  2차전지: battery
+  이차전지: battery
+  ship: shipbuilding
+  ships: shipbuilding
+  shipbuilding: shipbuilding
+  조선: shipbuilding
+  선박: shipbuilding
+  petrochemical: petrochemical
+  petrochemicals: petrochemical
+  석유화학: petrochemical
+  electronics: electronics
+  전자: electronics
+  bio: bio
+  biotech: bio
+  pharmaceutical: bio
+  의약품: bio
+  바이오: bio

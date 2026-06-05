@@ -32,11 +32,16 @@ from shared.backtest.adapter import BacktestStrategyAdapter  # noqa: E402
 from shared.backtest.config import RiskConfig  # noqa: E402
 from shared.backtest.daily_adapter import (  # noqa: E402
     DailyBacktestAdapter,
-    load_stock_daily_from_clickhouse,
+    load_stock_daily_from_parquet,
 )
-from shared.collector.historical.stock import load_stock_minute_from_clickhouse  # noqa: E402
+from shared.collector.historical.stock import (
+    load_stock_minute_from_parquet,
+)  # noqa: E402
 from shared.config.loader import ConfigLoader  # noqa: E402
-from shared.strategy.registry import StrategyFactory, register_builtin_components  # noqa: E402
+from shared.strategy.registry import (
+    StrategyFactory,
+    register_builtin_components,
+)  # noqa: E402
 
 
 @dataclass
@@ -94,7 +99,9 @@ def _to_plot_timestamp(value: Any) -> pd.Timestamp:
     return ts
 
 
-def _build_backtest_config(strategy_cfg: dict[str, Any], capital: float) -> BacktestConfig:
+def _build_backtest_config(
+    strategy_cfg: dict[str, Any], capital: float
+) -> BacktestConfig:
     bt = strategy_cfg.get("strategy", {}).get("backtest", {})
     pos = strategy_cfg.get("strategy", {}).get("position", {}).get("params", {})
 
@@ -116,11 +123,13 @@ def _build_backtest_config(strategy_cfg: dict[str, Any], capital: float) -> Back
     return cfg
 
 
-def _load_symbol_data(symbol: str, timeframe: str, start: date, end: date) -> pd.DataFrame:
+def _load_symbol_data(
+    symbol: str, timeframe: str, start: date, end: date
+) -> pd.DataFrame:
     if timeframe == "daily":
-        df = load_stock_daily_from_clickhouse(symbol, start, end)
+        df = load_stock_daily_from_parquet(symbol, start, end)
     else:
-        df = load_stock_minute_from_clickhouse(symbol, start, end)
+        df = load_stock_minute_from_parquet(symbol, start, end)
 
     if "code" not in df.columns:
         df["code"] = symbol
@@ -130,7 +139,9 @@ def _load_symbol_data(symbol: str, timeframe: str, start: date, end: date) -> pd
     return df.sort_values("datetime").reset_index(drop=True)
 
 
-def _resolve_strategy_names(user_input: str | None, include_disabled: bool) -> list[str]:
+def _resolve_strategy_names(
+    user_input: str | None, include_disabled: bool
+) -> list[str]:
     if user_input:
         names = [x.strip() for x in user_input.split(",") if x.strip()]
         return sorted(set(names))
@@ -208,7 +219,9 @@ def _render_chart(
             y0 = float(row["entry_price"])
             y1 = float(row["exit_price"])
             line_color = "green" if float(row.get("pnl", 0.0)) >= 0 else "red"
-            ax_price.plot([x0, x1], [y0, y1], color=line_color, alpha=0.25, linewidth=1.0)
+            ax_price.plot(
+                [x0, x1], [y0, y1], color=line_color, alpha=0.25, linewidth=1.0
+            )
 
     ax_price.set_ylabel("Price")
     ax_price.grid(alpha=0.25)
@@ -227,7 +240,9 @@ def _render_chart(
 
     width_days = 0.005
     if len(dt) > 1:
-        width_days = max((dt.iloc[1] - dt.iloc[0]).total_seconds() / 86400 * 0.8, 0.0008)
+        width_days = max(
+            (dt.iloc[1] - dt.iloc[0]).total_seconds() / 86400 * 0.8, 0.0008
+        )
     ax_vol.bar(dt, volume, color="#4C78A8", width=width_days, alpha=0.65)
     ax_vol.set_ylabel("Volume")
     ax_vol.grid(alpha=0.2)
@@ -369,7 +384,9 @@ def _write_summary_markdown(
     lines.append(f"- capital: {capital:,.0f}")
     lines.append(f"- strategies: {len(rows)}")
     lines.append("")
-    lines.append("| Strategy | TF | Status | Return% | Trades | WinRate% | MDD% | Sharpe | Chart | Trades |")
+    lines.append(
+        "| Strategy | TF | Status | Return% | Trades | WinRate% | MDD% | Sharpe | Chart | Trades |"
+    )
     lines.append("|---|---|---|---:|---:|---:|---:|---:|---|---|")
     for r in rows:
         chart = Path(r.chart_png).name if r.chart_png else "-"
@@ -394,12 +411,18 @@ def _write_summary_markdown(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Backtest one symbol across stock strategies and create charts.")
+    parser = argparse.ArgumentParser(
+        description="Backtest one symbol across stock strategies and create charts."
+    )
     parser.add_argument("--symbol", default="005930", help="Stock code")
     parser.add_argument("--start", default="2026-02-01", help="YYYY-MM-DD")
     parser.add_argument("--end", default="2026-02-28", help="YYYY-MM-DD")
     parser.add_argument("--capital", type=float, default=100_000_000)
-    parser.add_argument("--strategies", default=None, help="Comma-separated strategy names (default: all yaml)")
+    parser.add_argument(
+        "--strategies",
+        default=None,
+        help="Comma-separated strategy names (default: all yaml)",
+    )
     parser.add_argument(
         "--enabled-only",
         action="store_true",
@@ -418,7 +441,9 @@ def main() -> None:
         raise SystemExit("end must be >= start")
 
     register_builtin_components()
-    strategy_names = _resolve_strategy_names(args.strategies, include_disabled=not args.enabled_only)
+    strategy_names = _resolve_strategy_names(
+        args.strategies, include_disabled=not args.enabled_only
+    )
     if not strategy_names:
         raise SystemExit("No strategies selected")
 

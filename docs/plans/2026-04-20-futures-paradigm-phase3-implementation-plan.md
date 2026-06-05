@@ -6,7 +6,7 @@
 
 **Architecture:** signal pipeline is a composable chain: `MarketContext` (live data aggregator) → `SignalGenerator` (Setup A/C entry rules) → `stream:signal.candidate` / in-process candidate → `RiskFilterLayer` (8 sequential filters) → `stream:signal.final` / `signals_all`. Filter rejections log to `signals_all` too with `skip_reason`. Every numeric threshold lives in YAML; no hardcoded contract multipliers or tick sizes. Existing `shared/backtest/engine.py` gains a `MarketContext` replay adapter so the same Setup code runs in backtest + (future) live.
 
-**Tech Stack:** Python 3.11+, asyncio, `redis.asyncio`, `aiochclient`, `pydantic v2`, `pytest` + `pytest-asyncio` + `fakeredis`, `yfinance` for retroactive macro backfill in backtests. Reuses Phase 1/2 shared modules.
+**Tech Stack:** Python 3.11+, asyncio, `redis.asyncio`, `pydantic v2`, `pytest` + `pytest-asyncio` + `fakeredis`, `yfinance` for retroactive macro backfill in backtests. Reuses Phase 1/2 shared modules.
 
 **Parent spec:** `docs/plans/2026-04-20-futures-paradigm-phase3-decision-engine.md`
 **Depends on:** `feat/futures-paradigm-phase2` merged to main (Phase 2 48h gate passed or explicitly waived). Currently branched from post-Phase-2 main.

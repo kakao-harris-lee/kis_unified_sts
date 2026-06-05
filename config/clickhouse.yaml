@@ -1,8 +1,0 @@
-clickhouse:
-  host: ${CLICKHOUSE_HOST:localhost}
-  port: ${CLICKHOUSE_PORT:9000}
-  user: ${CLICKHOUSE_USER:default}
-  password: ${CLICKHOUSE_PASSWORD:}
-  database: ${CLICKHOUSE_DATABASE:market}
-  pool_size: 5
-  connect_timeout: 10

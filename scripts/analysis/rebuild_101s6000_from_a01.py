@@ -2,18 +2,21 @@
 """Rebuild continuous 101S6000 minute bars from A01* full-size contracts.
 
 Default: dry-run report + CSV export.
-Apply mode: delete old 101S6000 rows in range and reinsert rebuilt rows.
+Apply mode was removed with the external DB writer; the script now produces a dry-run
+summary and optional CSV from Parquet source data.
 """
 
 from __future__ import annotations
 
 import argparse
-import os
 from dataclasses import dataclass
+from pathlib import Path
 
 import pandas as pd
-from clickhouse_driver import Client
 from dotenv import load_dotenv
+
+from shared.storage.config import StorageConfig
+from shared.storage.market_data_store import ParquetMarketDataStore
 
 
 @dataclass
@@ -26,54 +29,32 @@ class RebuildSummary:
     phantom_ratio: float
 
 
-def _connect(database: str) -> Client:
-    return Client(
-        host=os.getenv("CLICKHOUSE_HOST", "localhost"),
-        port=int(os.getenv("CLICKHOUSE_NATIVE_PORT", "9000")),
-        user=os.getenv("CLICKHOUSE_USER", "default"),
-        password=os.getenv("CLICKHOUSE_PASSWORD", ""),
-        database=database,
+def _store() -> ParquetMarketDataStore:
+    storage_config = StorageConfig.load_or_default()
+    return ParquetMarketDataStore(
+        storage_config.market_data.parquet.root,
+        asset_class="futures",
     )
 
 
 def _load_minute_by_contract(
-    client: Client,
-    database: str,
-    table: str,
+    store: ParquetMarketDataStore,
     start: str | None,
     end: str | None,
 ) -> pd.DataFrame:
-    where = "code LIKE 'A01%%'"
-    params: dict[str, str] = {}
-    if start:
-        where += " AND datetime >= %(start)s"
-        params["start"] = start
-    if end:
-        where += " AND datetime <= %(end)s"
-        params["end"] = end
-
-    rows = client.execute(
-        f"""
-        SELECT
-            code,
-            toStartOfMinute(datetime) AS dt,
-            argMin(open, datetime) AS open,
-            max(high) AS high,
-            min(low) AS low,
-            argMax(close, datetime) AS close,
-            sum(volume) AS volume
-        FROM {database}.{table}
-        WHERE {where}
-        GROUP BY code, dt
-        ORDER BY dt, code
-        """,
-        params,
+    dataset_dir = store.root / "futures" / "minute"
+    codes = sorted(
+        path.name.removeprefix("code=")
+        for path in dataset_dir.glob("code=A01*")
+        if path.is_dir()
     )
-    df = pd.DataFrame(
-        rows,
-        columns=["code", "datetime", "open", "high", "low", "close", "volume"],
-    )
-    return df
+    frames = [store.get_minute_bars(code, start=start, end=end) for code in codes]
+    frames = [df for df in frames if not df.empty]
+    if not frames:
+        return pd.DataFrame(
+            columns=["code", "datetime", "open", "high", "low", "close", "volume"]
+        )
+    return pd.concat(frames, ignore_index=True).sort_values(["datetime", "code"])
 
 
 def _build_continuous(df: pd.DataFrame) -> pd.DataFrame:
@@ -101,7 +82,9 @@ def _build_continuous(df: pd.DataFrame) -> pd.DataFrame:
 
     merged["source_code"] = merged["code"]
     merged["code"] = "101S6000"
-    merged = merged[["code", "datetime", "open", "high", "low", "close", "volume", "source_code"]]
+    merged = merged[
+        ["code", "datetime", "open", "high", "low", "close", "volume", "source_code"]
+    ]
     return merged.reset_index(drop=True)
 
 
@@ -120,57 +103,12 @@ def _summarize(df: pd.DataFrame) -> RebuildSummary:
     )
 
 
-def _apply_to_clickhouse(
-    client: Client,
-    database: str,
-    table: str,
-    rebuilt: pd.DataFrame,
-) -> None:
-    if rebuilt.empty:
-        return
-    start = rebuilt["datetime"].min().strftime("%Y-%m-%d %H:%M:%S")
-    end = rebuilt["datetime"].max().strftime("%Y-%m-%d %H:%M:%S")
-
-    client.execute(
-        f"""
-        ALTER TABLE {database}.{table}
-        DELETE WHERE code = '101S6000'
-          AND datetime >= %(start)s
-          AND datetime <= %(end)s
-        """,
-        {"start": start, "end": end},
-    )
-
-    values = [
-        (
-            "101S6000",
-            row.datetime.to_pydatetime(),
-            float(row.open),
-            float(row.high),
-            float(row.low),
-            float(row.close),
-            int(row.volume),
-        )
-        for row in rebuilt.itertuples(index=False)
-    ]
-    client.execute(
-        f"""
-        INSERT INTO {database}.{table}
-        (code, datetime, open, high, low, close, volume)
-        VALUES
-        """,
-        values,
-    )
-
-
 def main() -> int:
     load_dotenv(".env")
 
     parser = argparse.ArgumentParser(
         description="Rebuild continuous 101S6000 from A01* contracts"
     )
-    parser.add_argument("--database", default="kospi")
-    parser.add_argument("--table", default="kospi200f_1m")
     parser.add_argument("--start", default=None, help="YYYY-MM-DD HH:MM:SS")
     parser.add_argument("--end", default=None, help="YYYY-MM-DD HH:MM:SS")
     parser.add_argument(
@@ -181,15 +119,16 @@ def main() -> int:
     parser.add_argument(
         "--apply",
         action="store_true",
-        help="Apply replacement to ClickHouse table",
+        help="Removed; write the generated CSV through the Parquet backfill path",
     )
     args = parser.parse_args()
 
-    client = _connect(args.database)
+    if args.apply:
+        raise SystemExit("--apply was removed; use the Parquet backfill path")
+
+    store = _store()
     raw = _load_minute_by_contract(
-        client,
-        database=args.database,
-        table=args.table,
+        store,
         start=args.start,
         end=args.end,
     )
@@ -197,8 +136,9 @@ def main() -> int:
     summary = _summarize(rebuilt)
 
     if args.output_csv:
-        os.makedirs(os.path.dirname(args.output_csv), exist_ok=True)
-        rebuilt.to_csv(args.output_csv, index=False)
+        output_path = Path(args.output_csv)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        rebuilt.to_csv(output_path, index=False)
 
     print("=== Rebuild Summary ===")
     print(f"rows: {summary.rows}")
@@ -217,11 +157,9 @@ def main() -> int:
         for code, count in front_mix.items():
             print(f"  {code}: {int(count)}")
 
-    if args.apply:
-        _apply_to_clickhouse(client, args.database, args.table, rebuilt)
-        print("Applied rebuilt 101S6000 rows to ClickHouse.")
-    else:
-        print("Dry-run only. Use --apply to write back to ClickHouse.")
+    print(
+        "Dry-run only. Generated output should be imported through the Parquet backfill path."
+    )
 
     return 0
 

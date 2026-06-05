@@ -427,7 +427,7 @@ If strategies are fundamentally flawed:
 
 **Step 1: Prepare Data**
 ```bash
-# Ensure ClickHouse has 6+ months of data
+# Ensure Parquet has 6+ months of data
 python3 scripts/verify_backtest_data.py
 ```
 
@@ -437,7 +437,7 @@ python3 scripts/verify_backtest_data.py
 python -m cli.main optimize \
     --strategy trend_pullback \
     --asset stock \
-    --data clickhouse \
+    --data parquet \
     --symbol 005930 \
     --days 180 \
     --trials 100 \
@@ -449,7 +449,7 @@ python -m cli.main optimize \
 python -m cli.main optimize \
     --strategy momentum_breakout \
     --asset stock \
-    --data clickhouse \
+    --data parquet \
     --symbol 005930 \
     --days 180 \
     --trials 100 \
@@ -485,7 +485,7 @@ strategy:
 Re-run backtest with optimized parameters:
 ```bash
 python3 scripts/run_trend_pullback_backtest.py \
-    --mode clickhouse \
+    --mode parquet \
     --symbol 005930 \
     --days 180
 ```
@@ -508,7 +508,7 @@ If you know which parameter to adjust:
 
 2. **Run Single Backtest**
    ```bash
-   python3 scripts/run_trend_pullback_backtest.py --mode clickhouse --symbol 005930 --days 180
+   python3 scripts/run_trend_pullback_backtest.py --mode parquet --symbol 005930 --days 180
    ```
 
 3. **Compare Results**
@@ -672,12 +672,12 @@ python3 scripts/validate_backtest_results.py \
     --show-details
 
 # Re-run backtest (if needed)
-python3 scripts/run_trend_pullback_backtest.py --mode clickhouse --symbol 005930 --days 180
-python3 scripts/run_momentum_breakout_backtest.py --mode clickhouse --symbol 005930 --days 180
+python3 scripts/run_trend_pullback_backtest.py --mode parquet --symbol 005930 --days 180
+python3 scripts/run_momentum_breakout_backtest.py --mode parquet --symbol 005930 --days 180
 
 # Optimize parameters (if Sharpe < 1.0)
 python -m cli.main optimize \
-    --strategy trend_pullback --asset stock --data clickhouse \
+    --strategy trend_pullback --asset stock --data parquet \
     --symbol 005930 --days 180 --trials 100 --metric sharpe_ratio
 
 # View trades

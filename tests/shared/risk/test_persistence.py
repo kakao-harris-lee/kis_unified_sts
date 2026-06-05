@@ -23,7 +23,7 @@ _LIVE_INFRA_ENV = "KIS_RUN_LIVE_INFRA_TESTS"
 
 
 def live_infra_enabled():
-    """Return whether live Redis/ClickHouse tests may touch infrastructure."""
+    """Return whether live Redis tests may touch infrastructure."""
     return os.getenv(_LIVE_INFRA_ENV, "").lower() in {"1", "true", "yes"}
 
 

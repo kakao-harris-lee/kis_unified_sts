@@ -1,4 +1,4 @@
-"""Redis-backed live data source for RegimeGate (P2-③ T2).
+"""Redis-backed live data source for RegimeGate.
 
 Implements the same duck-typed interface RegimeGate expects:
   - latest_vol_at(ts) → (asof_naive, regime_percentile) | None
@@ -6,10 +6,10 @@ Implements the same duck-typed interface RegimeGate expects:
   - macro_for(date) → float | None   (always None in live; PERMISSIVE)
 
 Vol reads from `forecast:vol:current` (the live ForecastPublisher's
-60s-cadence write). Event reads do a low-volume CH SELECT (called once
-per entry decision). PERMISSIVE on EVERY missing/stale/error path —
-never propagates to the trading hot path.
+60s-cadence write). Event reads are disabled until a Parquet/RuntimeLedger
+event archive is introduced. PERMISSIVE on EVERY missing/stale/error path.
 """
+
 from __future__ import annotations
 
 import datetime as dt
@@ -25,16 +25,17 @@ _DEFAULT_MAX_AGE_S = 120  # matches ForecastPublisher's Redis TTL
 
 
 class LiveVolInputs:
-    """Live (Redis + CH) inputs for RegimeGate."""
+    """Live Redis inputs for RegimeGate."""
 
     def __init__(
         self,
         redis: Any,
-        ch_client: Any,
+        event_reader: Any | None = None,
         max_age_s: int = _DEFAULT_MAX_AGE_S,
+        **legacy_kwargs: Any,
     ):
+        _ = event_reader, legacy_kwargs
         self._redis = redis
-        self._ch = ch_client
         self._max_age_s = max_age_s
 
     def latest_vol_at(
@@ -65,24 +66,8 @@ class LiveVolInputs:
     def events_within(
         self, ts: dt.datetime, window_min: int
     ) -> list[tuple[dt.datetime, int]]:
-        try:
-            ts_n = ts.replace(tzinfo=None) if getattr(ts, "tzinfo", None) else ts
-            lo = ts_n - dt.timedelta(minutes=window_min)
-            hi = ts_n + dt.timedelta(minutes=window_min)
-            rows = self._ch.execute(
-                "SELECT asof, impact_score FROM kospi.event_scores "
-                "WHERE asof >= %(lo)s AND asof <= %(hi)s ORDER BY asof",
-                {"lo": lo, "hi": hi},
-            )
-        except Exception as e:  # noqa: BLE001
-            logger.debug("LiveVolInputs: events_within CH failed: %s", e)
-            return []
-        return [
-            (r[0].replace(tzinfo=None) if getattr(r[0], "tzinfo", None) else r[0],
-             int(r[1]))
-            for r in rows
-            if r[0] is not None
-        ]
+        _ = ts, window_min
+        return []
 
     def macro_for(self, date: dt.date) -> float | None:  # noqa: ARG002
         """Live EntryContext has no macro_overnight field. RegimeGate's

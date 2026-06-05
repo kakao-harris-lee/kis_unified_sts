@@ -23,7 +23,7 @@ All infrastructure for running the momentum_breakout strategy backtest is comple
 
 **Features:**
 - Standalone backtest runner with 3 data modes:
-  - `clickhouse`: Production data from ClickHouse (recommended)
+  - `parquet`: Production data from Parquet (recommended)
   - `csv`: Pre-exported CSV data
   - `synthetic`: Generated test data (infrastructure validation only)
 - Automatic validation of all acceptance criteria:
@@ -99,7 +99,7 @@ All infrastructure for running the momentum_breakout strategy backtest is comple
 **Cannot execute immediately due to:**
 
 1. **Python Dependencies Not Installed**
-   - Missing: pandas, numpy, clickhouse-driver, pydantic, pyyaml, etc.
+   - Missing: pandas, numpy, pydantic, pyyaml, etc.
    - Cause: Proxy blocking PyPI access (403 Forbidden)
    - Impact: Cannot run script locally
 
@@ -107,7 +107,7 @@ All infrastructure for running the momentum_breakout strategy backtest is comple
    - Cannot use containerized execution
    - Docker Desktop needs permissions
 
-3. **ClickHouse Access Unavailable**
+3. **Parquet Data Unavailable**
    - Cannot verify real data availability
    - Cannot test production data path
 
@@ -132,9 +132,9 @@ python3 scripts/verify_backtest_data.py
 ### Step 2: Run Backtest (2-5 minutes)
 
 ```bash
-# Option A: ClickHouse data (recommended)
+# Option A: Parquet data (recommended)
 python3 scripts/run_momentum_breakout_backtest.py \
-    --mode clickhouse \
+    --mode parquet \
     --symbol 005930 \
     --days 180 \
     --output-dir ./output/backtests/momentum_breakout
@@ -214,7 +214,7 @@ gh pr create --title "Stock Strategy Redesign: Validation & Deployment" \
 **Requirements:**
 - Python 3.11+ environment
 - Project dependencies installed
-- ClickHouse running with 6+ months of data
+- Parquet market data available
 
 **Handoff:**
 ```bash
@@ -224,7 +224,7 @@ scripts/MOMENTUM_BREAKOUT_BACKTEST_GUIDE.md
 
 # Execution command
 python3 scripts/run_momentum_breakout_backtest.py \
-    --mode clickhouse \
+    --mode parquet \
     --symbol 005930 \
     --days 180
 ```
@@ -240,7 +240,7 @@ python3 scripts/run_momentum_breakout_backtest.py \
 **Execution:**
 ```bash
 # Start infrastructure
-docker-compose up -d clickhouse redis
+docker-compose up -d redis
 
 # Ensure data is loaded
 docker-compose run --rm app \
@@ -249,7 +249,7 @@ docker-compose run --rm app \
 # Run backtest
 docker-compose run --rm app \
     python3 scripts/run_momentum_breakout_backtest.py \
-    --mode clickhouse \
+    --mode parquet \
     --symbol 005930 \
     --days 180
 ```
@@ -382,7 +382,7 @@ strategy = StrategyFactory.create_from_file("stock", "momentum_breakout")
 
 ### Deferred (Requires Environment)
 - [ ] Install Python dependencies (or use CI/Docker)
-- [ ] Verify 6+ months of ClickHouse data
+- [ ] Verify 6+ months of Parquet data
 - [ ] Execute backtest script (10 min)
 - [ ] Validate results meet all criteria
 - [ ] Save metrics to MLflow (if configured)

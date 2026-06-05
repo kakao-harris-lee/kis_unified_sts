@@ -308,6 +308,16 @@ async def _write_minute_tasks(
             continue
 
         rows = parser(code, date_str, data)
+        rows = [
+            row
+            for row in rows
+            if (
+                row[1].date()
+                if isinstance(row[1], datetime)
+                else datetime.strptime(str(row[1])[:10], "%Y-%m-%d").date()
+            )
+            == day
+        ]
         if not rows:
             result.failed += 1
             state.mark_failed(

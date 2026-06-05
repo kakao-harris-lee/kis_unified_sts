@@ -97,14 +97,13 @@ class TestKillSwitch:
         assert "active_conditions" in body
         assert isinstance(body["active_conditions"], list)
 
-    def test_six_conditions_namespace(self, client):
+    def test_conditions_namespace(self, client):
         res = client.get("/api/health/kill-switch")
         EXPECTED = {
             "daily_mdd_exceeded",
             "weekly_mdd_exceeded",
             "consecutive_losses",
             "kis_error_rate_high",
-            "clickhouse_insert_fail_rate_high",
             "news_pipeline_lag",
         }
         for cond in res.json()["active_conditions"]:
@@ -132,11 +131,6 @@ class TestHealthSummary:
         monkeypatch.setenv("RUNTIME_STORAGE_BACKEND", "sqlite")
         monkeypatch.setenv("RUNTIME_STORAGE_SQLITE_PATH", str(db_path))
         monkeypatch.setattr(health, "_futures_multiplier_krw_per_point", lambda: 50_000)
-
-        def _boom(_asset):
-            raise AssertionError("ClickHouse fallback should not be called")
-
-        monkeypatch.setattr(health, "_today_pnl_from_clickhouse", _boom)
 
         kst = ZoneInfo("Asia/Seoul")
         today = datetime.now(kst).replace(hour=10, minute=0, second=0, microsecond=0)

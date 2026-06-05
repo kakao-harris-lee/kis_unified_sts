@@ -18,20 +18,18 @@ The backtest must demonstrate:
 ### Required Software
 - Python 3.11+ (project requirement)
 - Project dependencies installed: `pip install -e ".[dev]"`
-- ClickHouse running (for real data testing)
+- Parquet market data available (for real data testing)
 - Redis running (for strategy context)
 
 ### Required Data
-- 6+ months of 1-minute OHLCV data in ClickHouse `market.bars_1m`
+- 6+ months of 1-minute OHLCV data in Parquet under `data/market`
 - Data collection: `python -m cli.main stock-backfill run --days 180`
 - Data verification: `python3 scripts/verify_backtest_data.py`
 
 ### Environment Variables
 Ensure `.env` file is configured:
 ```bash
-CLICKHOUSE_HOST=localhost
-CLICKHOUSE_NATIVE_PORT=9000
-CLICKHOUSE_STOCK_DATABASE=market
+MARKET_DATA_PARQUET_ROOT=data/market
 KIS_STOCK_APP_KEY=your_app_key
 KIS_STOCK_APP_SECRET=your_app_secret
 ```
@@ -42,10 +40,10 @@ KIS_STOCK_APP_SECRET=your_app_secret
 
 The dedicated backtest script provides the most control and detailed output.
 
-#### With ClickHouse Data (Production-Ready)
+#### With Parquet Data (Production-Ready)
 ```bash
 python3 scripts/run_momentum_breakout_backtest.py \
-    --mode clickhouse \
+    --mode parquet \
     --symbol 005930 \
     --days 180 \
     --output-dir ./output/backtests/momentum_breakout
@@ -97,7 +95,7 @@ python scripts/analysis/backtest_all_strategies.py \
 ### Console Output
 
 ```
-2026-03-05 13:30:00 - INFO - Loading data in clickhouse mode...
+2026-03-05 13:30:00 - INFO - Loading data in parquet mode...
 2026-03-05 13:30:01 - INFO - Running backtest for momentum_breakout
 2026-03-05 13:30:01 - INFO - Data: 46800 bars from 2025-09-05 to 2026-03-05
 2026-03-05 13:30:05 - INFO - Loaded strategy: momentum_breakout
@@ -234,7 +232,7 @@ Insufficient data: 800 bars (minimum 1000 required)
 
 **Solution:**
 - Increase collection period: `--days 200`
-- Check data quality in ClickHouse
+- Check data quality in Parquet
 - Verify trading days vs calendar days
 
 ### Issue: Strategy Not Found
@@ -257,7 +255,7 @@ ls -l config/strategies/stock/momentum_breakout.yaml
 
 **Error:**
 ```
-ModuleNotFoundError: No module named 'clickhouse_driver'
+ModuleNotFoundError: No module named '<dependency>'
 ```
 
 **Solution:**
@@ -326,7 +324,7 @@ Based on strategy design and Optuna optimization:
 
 1. **Run Backtest**
    ```bash
-   python3 scripts/run_momentum_breakout_backtest.py --mode clickhouse --symbol 005930 --days 180
+   python3 scripts/run_momentum_breakout_backtest.py --mode parquet --symbol 005930 --days 180
    ```
 
 2. **Validate Results**

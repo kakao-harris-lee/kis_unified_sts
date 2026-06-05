@@ -35,10 +35,13 @@ from shared.backtest.adapter import BacktestStrategyAdapter  # noqa: E402
 from shared.backtest.config import RiskConfig  # noqa: E402
 from shared.collector.historical.stock import (  # noqa: E402
     STOCK_UNIVERSE,
-    load_stock_minute_from_clickhouse,
+    load_stock_minute_from_parquet,
 )
 from shared.config.loader import ConfigLoader  # noqa: E402
-from shared.strategy.registry import StrategyFactory, register_builtin_components  # noqa: E402
+from shared.strategy.registry import (
+    StrategyFactory,
+    register_builtin_components,
+)  # noqa: E402
 
 
 def _parse_date(v: str) -> date:
@@ -61,7 +64,9 @@ def _select_stocks(tier: str) -> list[dict[str, str]]:
     return [s for s in STOCK_UNIVERSE if s["tier"] == tier]
 
 
-def _load_portfolio_data(tier: str, start: date, end: date) -> tuple[pd.DataFrame, list[str], int]:
+def _load_portfolio_data(
+    tier: str, start: date, end: date
+) -> tuple[pd.DataFrame, list[str], int]:
     stocks = _select_stocks(tier)
     frames: list[pd.DataFrame] = []
     missing: list[str] = []
@@ -69,7 +74,7 @@ def _load_portfolio_data(tier: str, start: date, end: date) -> tuple[pd.DataFram
     for s in stocks:
         code = s["code"]
         try:
-            df = load_stock_minute_from_clickhouse(code, start, end)
+            df = load_stock_minute_from_parquet(code, start, end)
         except Exception:
             missing.append(code)
             continue
@@ -88,11 +93,17 @@ def _load_portfolio_data(tier: str, start: date, end: date) -> tuple[pd.DataFram
     if not frames:
         raise RuntimeError("No symbol data loaded")
 
-    data = pd.concat(frames, ignore_index=True).sort_values(["datetime", "code"]).reset_index(drop=True)
+    data = (
+        pd.concat(frames, ignore_index=True)
+        .sort_values(["datetime", "code"])
+        .reset_index(drop=True)
+    )
     return data, missing, len(stocks)
 
 
-def _build_backtest_config(strategy_cfg: dict[str, Any], capital: float) -> BacktestConfig:
+def _build_backtest_config(
+    strategy_cfg: dict[str, Any], capital: float
+) -> BacktestConfig:
     bt = strategy_cfg.get("strategy", {}).get("backtest", {})
     pos = strategy_cfg.get("strategy", {}).get("position", {}).get("params", {})
 
@@ -114,7 +125,9 @@ def _build_backtest_config(strategy_cfg: dict[str, Any], capital: float) -> Back
     return config
 
 
-def _run_once(strategy_cfg: dict[str, Any], data: pd.DataFrame, capital: float) -> BacktestEngine:
+def _run_once(
+    strategy_cfg: dict[str, Any], data: pd.DataFrame, capital: float
+) -> BacktestEngine:
     config = _build_backtest_config(strategy_cfg, capital)
     strategy = StrategyFactory.create(strategy_cfg)
     adapted = BacktestStrategyAdapter(strategy, strategy_cfg)
@@ -128,7 +141,9 @@ def _position_grid() -> list[dict[str, Any]]:
         for max_positions in (5, 10):
             combos.append(
                 {
-                    "strategy.position.params.order_amount_per_stock": float(order_amount),
+                    "strategy.position.params.order_amount_per_stock": float(
+                        order_amount
+                    ),
                     "strategy.position.params.max_positions": int(max_positions),
                 }
             )
@@ -145,7 +160,9 @@ def _bull_grid(strategy_name: str) -> list[dict[str, Any]]:
                         {
                             "strategy.entry.params.rsi_oversold": float(rsi),
                             "strategy.entry.params.bb_touch_buffer": float(bb_touch),
-                            "strategy.entry.params.signal_cooldown_seconds": int(cooldown),
+                            "strategy.entry.params.signal_cooldown_seconds": int(
+                                cooldown
+                            ),
                         }
                     )
     elif strategy_name == "momentum_breakout":
@@ -155,8 +172,12 @@ def _bull_grid(strategy_name: str) -> list[dict[str, Any]]:
                     combos.append(
                         {
                             "strategy.entry.params.rvol_threshold": float(rvol),
-                            "strategy.entry.params.breakout_buffer_pct": float(breakout),
-                            "strategy.entry.params.signal_cooldown_seconds": int(cooldown),
+                            "strategy.entry.params.breakout_buffer_pct": float(
+                                breakout
+                            ),
+                            "strategy.entry.params.signal_cooldown_seconds": int(
+                                cooldown
+                            ),
                         }
                     )
     else:
@@ -169,10 +190,14 @@ def _format_params(params: dict[str, Any]) -> str:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Sweep bull-regime parameters for minute stock strategies.")
+    parser = argparse.ArgumentParser(
+        description="Sweep bull-regime parameters for minute stock strategies."
+    )
     parser.add_argument("--start", default="2026-02-01", help="YYYY-MM-DD")
     parser.add_argument("--end", default="2026-02-26", help="YYYY-MM-DD")
-    parser.add_argument("--tier", default="all", choices=["top", "mid", "bottom", "all"])
+    parser.add_argument(
+        "--tier", default="all", choices=["top", "mid", "bottom", "all"]
+    )
     parser.add_argument("--capital", type=float, default=100_000_000)
     parser.add_argument("--output-dir", default="output/analysis/bull_sweep")
     args = parser.parse_args()
@@ -224,8 +249,16 @@ def main() -> None:
                 f"trades={row['total_trades']} sharpe={row['sharpe_ratio']:.3f}"
             )
 
-        pos_df = pd.DataFrame([r for r in rows if r["phase"] == "position" and r["strategy"] == strategy_name])
-        best_row = pos_df.sort_values(["total_return_pct", "sharpe_ratio"], ascending=False).iloc[0]
+        pos_df = pd.DataFrame(
+            [
+                r
+                for r in rows
+                if r["phase"] == "position" and r["strategy"] == strategy_name
+            ]
+        )
+        best_row = pos_df.sort_values(
+            ["total_return_pct", "sharpe_ratio"], ascending=False
+        ).iloc[0]
         best_position_for_strategy[strategy_name] = json.loads(best_row["params"])
         print(
             f"[phase1-best] {strategy_name} "
@@ -287,14 +320,18 @@ def main() -> None:
         lines.append(f"## {strategy_name}")
         lines.append("")
         sdf = df[df["strategy"] == strategy_name].copy()
-        best = sdf.sort_values(["total_return_pct", "sharpe_ratio"], ascending=False).iloc[0]
+        best = sdf.sort_values(
+            ["total_return_pct", "sharpe_ratio"], ascending=False
+        ).iloc[0]
         lines.append(
             f"- best: return={best['total_return_pct']:+.3f}% "
             f"trades={int(best['total_trades'])} sharpe={best['sharpe_ratio']:.3f}"
         )
         lines.append(f"- params: `{best['params']}`")
         lines.append("")
-        top5 = sdf.sort_values(["total_return_pct", "sharpe_ratio"], ascending=False).head(5)
+        top5 = sdf.sort_values(
+            ["total_return_pct", "sharpe_ratio"], ascending=False
+        ).head(5)
         lines.append("| phase | return% | trades | sharpe | mdd% | params |")
         lines.append("|---|---:|---:|---:|---:|---|")
         for _, r in top5.iterrows():

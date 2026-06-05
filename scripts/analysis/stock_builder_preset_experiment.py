@@ -30,7 +30,7 @@ if str(REPO_ROOT) not in sys.path:
 
 load_dotenv(REPO_ROOT / ".env")
 
-from shared.backtest.daily_adapter import load_stock_daily_from_clickhouse  # noqa: E402
+from shared.backtest.daily_adapter import load_stock_daily_from_parquet  # noqa: E402
 from shared.config.loader import ConfigLoader  # noqa: E402
 from shared.strategy_builder.evaluator import StrategyBuilderEvaluator  # noqa: E402
 from shared.strategy_builder.kis_compat import (  # noqa: E402
@@ -680,7 +680,7 @@ def run_experiment(
     *,
     start: date | None = None,
     end: date | None = None,
-    loader: DailyLoader = load_stock_daily_from_clickhouse,
+    loader: DailyLoader = load_stock_daily_from_parquet,
 ) -> dict[str, Any]:
     experiment_id = str(config.get("id") or "stock_builder_preset_experiment")
     start_date = start or _as_date(config["start_date"])

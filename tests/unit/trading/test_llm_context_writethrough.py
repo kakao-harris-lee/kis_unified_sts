@@ -1,4 +1,3 @@
-import datetime
 import json
 import sqlite3
 
@@ -9,13 +8,9 @@ def _ctx():
     return MarketContext()  # defaults: NEUTRAL / 50.0 / 0.5
 
 
-def _configure_runtime_ledger(monkeypatch, db_path, *, mirror_enabled=False):
+def _configure_runtime_ledger(monkeypatch, db_path):
     monkeypatch.setenv("RUNTIME_STORAGE_BACKEND", "sqlite")
     monkeypatch.setenv("RUNTIME_STORAGE_SQLITE_PATH", str(db_path))
-    monkeypatch.setenv(
-        "RUNTIME_STORAGE_CLICKHOUSE_MIRROR_ENABLED",
-        "true" if mirror_enabled else "false",
-    )
 
 
 def _market_context_rows(db_path):
@@ -115,12 +110,12 @@ def test_history_appended_even_if_redis_publish_raises(monkeypatch, tmp_path):
     assert len(_market_context_rows(db_path)) == 1
 
 
-def test_clickhouse_mirror_appends_only_when_enabled(monkeypatch, tmp_path):
+def test_external_mirror_is_not_used(monkeypatch, tmp_path):
     from services.trading import llm_context_publisher as mod
 
     db_path = tmp_path / "runtime.db"
-    _configure_runtime_ledger(monkeypatch, db_path, mirror_enabled=True)
-    redis_calls, ch_rows = [], []
+    _configure_runtime_ledger(monkeypatch, db_path)
+    redis_calls = []
 
     class FakePublisher:
         def __init__(self, asset):
@@ -129,17 +124,8 @@ def test_clickhouse_mirror_appends_only_when_enabled(monkeypatch, tmp_path):
         def publish_market_context(self, ctx):
             redis_calls.append(ctx)
 
-    class FakeCH:
-        def insert_llm_market_context(self, rows):
-            ch_rows.extend(rows)
-            return len(rows)
-
     monkeypatch.setattr(
         "shared.streaming.trading_state.TradingStatePublisher", FakePublisher
-    )
-    monkeypatch.setattr(
-        "shared.db.client.get_clickhouse_client",
-        lambda cfg=None: FakeCH(),  # noqa: ARG005
     )
 
     pub = mod.LLMContextPublisher.__new__(mod.LLMContextPublisher)
@@ -148,18 +134,3 @@ def test_clickhouse_mirror_appends_only_when_enabled(monkeypatch, tmp_path):
 
     assert len(redis_calls) == 1
     assert len(_market_context_rows(db_path)) == 1
-    assert len(ch_rows) == 1
-    assert ch_rows[0]["asset"] == "futures"
-    assert ch_rows[0]["overall_signal"] == "중립"
-    assert ch_rows[0]["risk_mode"] == "중립"
-    assert ch_rows[0]["confidence"] == 0.5
-
-    row = ch_rows[0]
-    assert row["regime"] == "NEUTRAL"
-    assert row["risk_score"] == 50.0
-    assert json.loads(row["metadata_json"]) == {}
-    assert isinstance(row["ts"], datetime.datetime) and row["ts"].tzinfo is None
-    assert (
-        isinstance(row["generated_at"], datetime.datetime)
-        and row["generated_at"].tzinfo is None
-    )

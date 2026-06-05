@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
-"""Compare KIS API samples against ClickHouse backfill rows for a single day."""
+"""Compare KIS API samples against Parquet backfill rows for a single day."""
 
 from __future__ import annotations
 
 import argparse
 import asyncio
 import json
-import os
 from dataclasses import asdict, dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import httpx
-from clickhouse_driver import Client
 from dotenv import load_dotenv
 
 from shared.collector.historical.backfill import fetch_minute_async, parse_ohlcv
+from shared.storage.config import StorageConfig
+from shared.storage.market_data_store import ParquetMarketDataStore
 
 
 def _split_codes(raw: str) -> list[str]:
@@ -23,13 +23,11 @@ def _split_codes(raw: str) -> list[str]:
     return [code.strip().upper() for code in raw.split(",") if code.strip()]
 
 
-def _connect(database: str) -> Client:
-    return Client(
-        host=os.getenv("CLICKHOUSE_HOST", "localhost"),
-        port=int(os.getenv("CLICKHOUSE_NATIVE_PORT", "9000")),
-        user=os.getenv("CLICKHOUSE_USER", "default"),
-        password=os.getenv("CLICKHOUSE_PASSWORD", ""),
-        database=database,
+def _store() -> ParquetMarketDataStore:
+    storage_config = StorageConfig.load_or_default()
+    return ParquetMarketDataStore(
+        storage_config.market_data.parquet.root,
+        asset_class="futures",
     )
 
 
@@ -55,28 +53,23 @@ class CompareResult:
     findings: list[str]
 
 
-def _db_stats(client: Client, database: str, table: str, code: str, day: str) -> Stat:
-    row = client.execute(
-        f"""
-        SELECT
-            count() AS rows,
-            min(datetime) AS min_dt,
-            max(datetime) AS max_dt,
-            sum(volume = 0) AS zero_rows,
-            sum(volume) AS total_volume,
-            countIf(toSecond(datetime) != 0) AS non_minute_rows
-        FROM {database}.{table}
-        WHERE code = %(code)s AND toDate(datetime) = toDate(%(day)s)
-        """,
-        {"code": code, "day": day},
-    )[0]
-
-    rows = int(row[0] or 0)
-    min_dt = row[1]
-    max_dt = row[2]
-    zero_rows = int(row[3] or 0)
-    total_volume = int(row[4] or 0)
-    non_minute_rows = int(row[5] or 0)
+def _db_stats(store: ParquetMarketDataStore, table: str, code: str, day: str) -> Stat:
+    start = datetime.strptime(day, "%Y-%m-%d")
+    end = start + timedelta(days=1) - timedelta(microseconds=1)
+    df = store.get_minute_bars(code, start=start, end=end)
+    rows = int(len(df))
+    if rows:
+        min_dt = df["datetime"].min()
+        max_dt = df["datetime"].max()
+        zero_rows = int((df["volume"] == 0).sum())
+        total_volume = int(df["volume"].sum())
+        non_minute_rows = int((df["datetime"].dt.second != 0).sum())
+    else:
+        min_dt = None
+        max_dt = None
+        zero_rows = 0
+        total_volume = 0
+        non_minute_rows = 0
     return Stat(
         rows=rows,
         start=str(min_dt) if min_dt else "",
@@ -89,12 +82,21 @@ def _db_stats(client: Client, database: str, table: str, code: str, day: str) ->
 
 async def _api_stats(code: str, yyyymmdd: str, max_pages: int) -> Stat:
     async with httpx.AsyncClient(timeout=30.0) as client:
-        _, _, data = await fetch_minute_async(client, code, yyyymmdd, max_pages=max_pages)
+        _, _, data = await fetch_minute_async(
+            client, code, yyyymmdd, max_pages=max_pages
+        )
 
     bars = parse_ohlcv(code, yyyymmdd, data) if isinstance(data, dict) else []
     rows = len(bars)
     if not rows:
-        return Stat(rows=0, start="", end="", zero_volume_ratio=0.0, total_volume=0, non_minute_ratio=0.0)
+        return Stat(
+            rows=0,
+            start="",
+            end="",
+            zero_volume_ratio=0.0,
+            total_volume=0,
+            non_minute_ratio=0.0,
+        )
 
     vols = [int(r[6]) for r in bars]
     zero_rows = sum(1 for v in vols if v == 0)
@@ -108,7 +110,9 @@ async def _api_stats(code: str, yyyymmdd: str, max_pages: int) -> Stat:
     )
 
 
-def _evaluate(code: str, table: str, trade_date: str, api: Stat, db: Stat) -> CompareResult:
+def _evaluate(
+    code: str, table: str, trade_date: str, api: Stat, db: Stat
+) -> CompareResult:
     findings: list[str] = []
     status = "pass"
 
@@ -145,8 +149,7 @@ def _evaluate(code: str, table: str, trade_date: str, api: Stat, db: Stat) -> Co
 
 
 async def _run_for_codes(
-    client: Client,
-    database: str,
+    store: ParquetMarketDataStore,
     table: str,
     codes: list[str],
     day: str,
@@ -156,7 +159,7 @@ async def _run_for_codes(
     results: list[CompareResult] = []
     for code in codes:
         api = await _api_stats(code, yyyymmdd, max_pages=max_pages)
-        db = _db_stats(client, database, table, code, day)
+        db = _db_stats(store, table, code, day)
         results.append(_evaluate(code, table, day, api, db))
     return results
 
@@ -164,9 +167,11 @@ async def _run_for_codes(
 def main() -> int:
     load_dotenv(".env")
 
-    parser = argparse.ArgumentParser(description="Check KIS vs ClickHouse backfill integrity")
+    parser = argparse.ArgumentParser(
+        description="Check KIS vs Parquet backfill integrity"
+    )
     parser.add_argument("--date", required=True, help="Trade date YYYY-MM-DD")
-    parser.add_argument("--database", default="kospi")
+    parser.add_argument("--database", default="kospi", help="Legacy no-op option")
     parser.add_argument("--mini-table", default="kospi_mini_1m")
     parser.add_argument("--futures-table", default="kospi200f_1m")
     parser.add_argument("--mini-codes", default="A05603")
@@ -183,15 +188,14 @@ def main() -> int:
         print("No codes provided.")
         return 1
 
-    ch_client = _connect(args.database)
+    store = _store()
 
     async def _run() -> list[CompareResult]:
         all_results: list[CompareResult] = []
         if mini_codes:
             all_results.extend(
                 await _run_for_codes(
-                    ch_client,
-                    database=args.database,
+                    store,
                     table=args.mini_table,
                     codes=mini_codes,
                     day=args.date,
@@ -201,8 +205,7 @@ def main() -> int:
         if futures_codes:
             all_results.extend(
                 await _run_for_codes(
-                    ch_client,
-                    database=args.database,
+                    store,
                     table=args.futures_table,
                     codes=futures_codes,
                     day=args.date,

@@ -11,7 +11,7 @@
 #   - Screener가 KOSPI/KOSDAQ loser 중 -2% 이상 하락 종목 발굴
 #   - Orchestrator가 LLM blacklist 필터 후 bb_reversion에 전달
 #
-# 백테스트 결과 (2025-11 ~ 2026-02, 30종목 ClickHouse 분봉):
+# 백테스트 결과 (2025-11 ~ 2026-02, 30종목 Parquet 분봉):
 #   - Avg Sharpe: -1.05 (30종목), 수익 종목: 9/30, 총 거래: 1,882건
 #   - Optuna 100 trials 최적화: 9종목 subset에서 0.33 달성하나 30종목 일반화 실패
 #   - 결론: 파라미터 문제가 아닌 전략/시장 구조 문제 (2025-11~2026-02 약세장)

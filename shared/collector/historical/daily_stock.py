@@ -12,6 +12,7 @@ Usage:
     from shared.collector.historical.daily_stock import collect_daily_candles
     await collect_daily_candles(days=100)
 """
+
 import os
 import asyncio
 import logging
@@ -27,7 +28,6 @@ from .stock import (
     _get_rate_limiter,
     _get_semaphore,
     STOCK_UNIVERSE,
-    _get_clickhouse_config,
     get_stock_db_client,
     ensure_stock_database,
 )
@@ -46,51 +46,15 @@ MAX_DAILY_DAYS = int(os.getenv("STOCK_DAILY_MAX_DAYS", "100"))
 # Database Operations
 # =============================================================================
 
+
 def ensure_daily_candles_table():
-    """Ensure daily_candles table exists."""
-    import clickhouse_connect
-
-    config = _get_clickhouse_config()
-    kwargs = {
-        "host": config["host"],
-        "port": config["port"],
-        "username": config["user"],
-        "password": config["password"],
-        "secure": config["secure"],
-        "verify": config["verify"],
-    }
-    if config.get("ca_cert"):
-        kwargs["ca_cert"] = config["ca_cert"]
-    client = clickhouse_connect.get_client(**kwargs)
-
-    # Create database
-    client.command(f"CREATE DATABASE IF NOT EXISTS {config['database']}")
-
-    # Switch to database
-    client.command(f"USE {config['database']}")
-
-    # Create daily_candles table
-    client.command("""
-        CREATE TABLE IF NOT EXISTS daily_candles (
-            code String,
-            date Date,
-            open Float64,
-            high Float64,
-            low Float64,
-            close Float64,
-            volume UInt64,
-            value UInt64,
-            change_rate Float64
-        ) ENGINE = ReplacingMergeTree()
-        ORDER BY (code, date)
-        PARTITION BY toYYYYMM(date)
-    """)
-
-    client.close()
-    logger.debug("Daily candles table ensured")
+    """Legacy no-op retained for backward-compatible imports."""
+    return None
 
 
-def insert_daily_candles_batch(db_client, rows: List[Tuple], table_name: str = "daily_candles"):
+def insert_daily_candles_batch(
+    db_client, rows: List[Tuple], table_name: str = "daily_candles"
+):
     """Insert daily candles batch."""
     if not rows:
         return 0
@@ -98,12 +62,24 @@ def insert_daily_candles_batch(db_client, rows: List[Tuple], table_name: str = "
     db_client.insert(
         table_name,
         rows,
-        column_names=["code", "date", "open", "high", "low", "close", "volume", "value", "change_rate"],
+        column_names=[
+            "code",
+            "date",
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume",
+            "value",
+            "change_rate",
+        ],
     )
     return len(rows)
 
 
-def delete_daily_candles_range(db_client, code: str, start_date: date, end_date: date) -> None:
+def delete_daily_candles_range(
+    db_client, code: str, start_date: date, end_date: date
+) -> None:
     """Delete existing rows for a code/date range to avoid duplicates."""
     if not code or not isinstance(start_date, date) or not isinstance(end_date, date):
         return
@@ -136,12 +112,13 @@ def delete_daily_candles_batch(
 # API Fetching
 # =============================================================================
 
+
 async def fetch_daily_candles_async(
     client: httpx.AsyncClient,
     code: str,
     start_date: date,
     end_date: date,
-    max_retries: int = 3
+    max_retries: int = 3,
 ) -> Tuple[str, dict]:
     """
     Fetch stock daily candles asynchronously.
@@ -272,10 +249,9 @@ def parse_daily_ohlcv(code: str, data: dict) -> List[Tuple]:
 # Main Collection Functions
 # =============================================================================
 
+
 async def collect_daily_candles(
-    codes: List[str] = None,
-    days: int = 100,
-    verbose: bool = True
+    codes: List[str] = None, days: int = 100, verbose: bool = True
 ) -> int:
     """
     Collect daily candles for stock universe.
@@ -437,7 +413,9 @@ def get_daily_collection_status(days: int = 100) -> Dict[str, Any]:
             AND date <= {end:Date}
         """
 
-        result = db_client.query(query, parameters={"start": start_date, "end": end_date})
+        result = db_client.query(
+            query, parameters={"start": start_date, "end": end_date}
+        )
         row = result.first_row if result.result_rows else None
 
         db_client.close()

@@ -26,7 +26,7 @@ from shared.backtest.config import BacktestConfig
 from shared.backtest.engine import BacktestEngine
 from shared.collector.historical.stock import (
     STOCK_UNIVERSE,
-    load_stock_minute_from_clickhouse,
+    load_stock_minute_from_parquet,
 )
 from shared.config.loader import ConfigLoader
 from shared.strategy.registry import (
@@ -44,10 +44,11 @@ register_builtin_components()
 # Data loaders
 # ---------------------------------------------------------------------------
 
+
 def load_minute_data(code: str) -> pd.DataFrame | None:
-    """ClickHouse에서 1분봉 로드."""
+    """Parquet에서 1분봉 로드."""
     try:
-        df = load_stock_minute_from_clickhouse(code)
+        df = load_stock_minute_from_parquet(code)
         if df is not None and len(df) >= 100:
             return df
     except Exception as e:
@@ -56,10 +57,11 @@ def load_minute_data(code: str) -> pd.DataFrame | None:
 
 
 def load_daily_data(code: str) -> pd.DataFrame | None:
-    """ClickHouse에서 일봉 로드."""
+    """Parquet에서 일봉 로드."""
     try:
-        from shared.backtest.daily_adapter import load_stock_daily_from_clickhouse
-        df = load_stock_daily_from_clickhouse(code)
+        from shared.backtest.daily_adapter import load_stock_daily_from_parquet
+
+        df = load_stock_daily_from_parquet(code)
         if df is not None and len(df) >= 100:
             return df
     except Exception as e:
@@ -70,6 +72,7 @@ def load_daily_data(code: str) -> pd.DataFrame | None:
 # ---------------------------------------------------------------------------
 # Adapter builders
 # ---------------------------------------------------------------------------
+
 
 def build_minute_adapter(strategy_name: str, params: dict):
     """1분봉 전략용 BacktestStrategyAdapter 생성."""
@@ -119,6 +122,7 @@ def build_daily_adapter(strategy_name: str, params: dict):
 # Objective
 # ---------------------------------------------------------------------------
 
+
 def multi_symbol_objective(
     params: dict,
     datasets: dict[str, pd.DataFrame],
@@ -154,42 +158,83 @@ def multi_symbol_objective(
 # Search spaces per strategy
 # ---------------------------------------------------------------------------
 
+
 def define_trend_pullback_params(trial):
     return {
-        "bb_touch_buffer": trial.suggest_float("bb_touch_buffer", 1.000, 1.020, step=0.005),
+        "bb_touch_buffer": trial.suggest_float(
+            "bb_touch_buffer", 1.000, 1.020, step=0.005
+        ),
         "rsi_oversold": trial.suggest_int("rsi_oversold", 30, 48),
-        "stop_atr_multiplier": trial.suggest_float("stop_atr_multiplier", 2.0, 4.0, step=0.5),
-        "signal_cooldown_seconds": trial.suggest_int("signal_cooldown_seconds", 120, 360, step=60),
-        "exit_stop_atr_multiplier": trial.suggest_float("exit_stop_atr_multiplier", 2.0, 4.0, step=0.5),
-        "exit_trail_activation_atr": trial.suggest_float("exit_trail_activation_atr", 0.5, 2.0, step=0.5),
-        "exit_trail_atr_multiplier": trial.suggest_float("exit_trail_atr_multiplier", 1.0, 2.5, step=0.5),
+        "stop_atr_multiplier": trial.suggest_float(
+            "stop_atr_multiplier", 2.0, 4.0, step=0.5
+        ),
+        "signal_cooldown_seconds": trial.suggest_int(
+            "signal_cooldown_seconds", 120, 360, step=60
+        ),
+        "exit_stop_atr_multiplier": trial.suggest_float(
+            "exit_stop_atr_multiplier", 2.0, 4.0, step=0.5
+        ),
+        "exit_trail_activation_atr": trial.suggest_float(
+            "exit_trail_activation_atr", 0.5, 2.0, step=0.5
+        ),
+        "exit_trail_atr_multiplier": trial.suggest_float(
+            "exit_trail_atr_multiplier", 1.0, 2.5, step=0.5
+        ),
     }
 
 
 def define_momentum_breakout_params(trial):
     return {
-        "breakout_buffer_pct": trial.suggest_float("breakout_buffer_pct", 0.03, 0.15, step=0.01),
+        "breakout_buffer_pct": trial.suggest_float(
+            "breakout_buffer_pct", 0.03, 0.15, step=0.01
+        ),
         "rvol_threshold": trial.suggest_float("rvol_threshold", 1.0, 2.0, step=0.1),
-        "accumulation_score_min": trial.suggest_int("accumulation_score_min", 30, 70, step=5),
-        "stop_atr_multiplier": trial.suggest_float("stop_atr_multiplier", 1.0, 3.0, step=0.5),
-        "signal_cooldown_seconds": trial.suggest_int("signal_cooldown_seconds", 180, 720, step=60),
-        "exit_stop_atr_multiplier": trial.suggest_float("exit_stop_atr_multiplier", 1.0, 3.0, step=0.5),
-        "exit_trail_activation_atr": trial.suggest_float("exit_trail_activation_atr", 0.5, 2.0, step=0.5),
-        "exit_trail_atr_multiplier": trial.suggest_float("exit_trail_atr_multiplier", 0.5, 2.5, step=0.5),
+        "accumulation_score_min": trial.suggest_int(
+            "accumulation_score_min", 30, 70, step=5
+        ),
+        "stop_atr_multiplier": trial.suggest_float(
+            "stop_atr_multiplier", 1.0, 3.0, step=0.5
+        ),
+        "signal_cooldown_seconds": trial.suggest_int(
+            "signal_cooldown_seconds", 180, 720, step=60
+        ),
+        "exit_stop_atr_multiplier": trial.suggest_float(
+            "exit_stop_atr_multiplier", 1.0, 3.0, step=0.5
+        ),
+        "exit_trail_activation_atr": trial.suggest_float(
+            "exit_trail_activation_atr", 0.5, 2.0, step=0.5
+        ),
+        "exit_trail_atr_multiplier": trial.suggest_float(
+            "exit_trail_atr_multiplier", 0.5, 2.5, step=0.5
+        ),
         "exit_max_hold_days": trial.suggest_int("exit_max_hold_days", 3, 10),
     }
 
 
 def define_vr_composite_params(trial):
     return {
-        "vr_bottom_threshold": trial.suggest_float("vr_bottom_threshold", 50.0, 85.0, step=5.0),
-        "vr_depression_threshold": trial.suggest_float("vr_depression_threshold", 70.0, 100.0, step=5.0),
-        "rsi_weak_oversold": trial.suggest_float("rsi_weak_oversold", 35.0, 50.0, step=2.5),
+        "vr_bottom_threshold": trial.suggest_float(
+            "vr_bottom_threshold", 50.0, 85.0, step=5.0
+        ),
+        "vr_depression_threshold": trial.suggest_float(
+            "vr_depression_threshold", 70.0, 100.0, step=5.0
+        ),
+        "rsi_weak_oversold": trial.suggest_float(
+            "rsi_weak_oversold", 35.0, 50.0, step=2.5
+        ),
         "signal_cooldown_days": trial.suggest_int("signal_cooldown_days", 1, 5),
-        "exit_vr_overheat_threshold": trial.suggest_float("exit_vr_overheat_threshold", 250.0, 450.0, step=25.0),
-        "exit_vr_extreme_overheat_threshold": trial.suggest_float("exit_vr_extreme_overheat_threshold", 350.0, 550.0, step=25.0),
-        "exit_rsi_overbought": trial.suggest_float("exit_rsi_overbought", 65.0, 85.0, step=5.0),
-        "exit_hard_stop_pct": trial.suggest_float("exit_hard_stop_pct", -0.08, -0.04, step=0.01),
+        "exit_vr_overheat_threshold": trial.suggest_float(
+            "exit_vr_overheat_threshold", 250.0, 450.0, step=25.0
+        ),
+        "exit_vr_extreme_overheat_threshold": trial.suggest_float(
+            "exit_vr_extreme_overheat_threshold", 350.0, 550.0, step=25.0
+        ),
+        "exit_rsi_overbought": trial.suggest_float(
+            "exit_rsi_overbought", 65.0, 85.0, step=5.0
+        ),
+        "exit_hard_stop_pct": trial.suggest_float(
+            "exit_hard_stop_pct", -0.08, -0.04, step=0.01
+        ),
     }
 
 
@@ -206,6 +251,7 @@ DAILY_STRATEGIES = {"vr_composite"}
 # Main
 # ---------------------------------------------------------------------------
 
+
 def run_optimization(
     strategy_name: str,
     symbols: list[dict],
@@ -218,7 +264,9 @@ def run_optimization(
     loader = load_daily_data if is_daily else load_minute_data
 
     print(f"\n{'='*60}")
-    print(f"Loading {'daily' if is_daily else 'minute'} data for {len(symbols)} symbols...")
+    print(
+        f"Loading {'daily' if is_daily else 'minute'} data for {len(symbols)} symbols..."
+    )
     datasets: dict[str, pd.DataFrame] = {}
     for s in symbols:
         code, name = s["code"], s["name"]
@@ -253,6 +301,7 @@ def run_optimization(
     bt_override = strategy_config.get("strategy", {}).get("backtest", {})
     if "risk" in bt_override:
         from shared.backtest.config import RiskConfig
+
         backtest_config.risk = RiskConfig.from_dict(bt_override["risk"])
 
     param_definer = PARAM_DEFINERS[strategy_name]
@@ -261,7 +310,11 @@ def run_optimization(
         params = param_definer(trial)
         try:
             return multi_symbol_objective(
-                params, datasets, backtest_config, strategy_name, is_daily,
+                params,
+                datasets,
+                backtest_config,
+                strategy_name,
+                is_daily,
             )
         except Exception:
             return -10.0
@@ -286,7 +339,7 @@ def run_optimization(
     print("OPTIMIZATION RESULTS")
     print(f"{'='*60}")
     print(f"Best Sharpe: {study.best_value:.4f}")
-    print(f"\nBest parameters:")
+    print("\nBest parameters:")
     for k, v in sorted(study.best_params.items()):
         print(f"  {k}: {v}")
 
@@ -294,12 +347,26 @@ def run_optimization(
     print(f"\n{'='*60}")
     print("CURRENT vs BEST")
     print(f"{'='*60}")
-    current_params = param_definer(type("FakeTrial", (), {
-        "suggest_float": lambda self, name, *a, **kw: _get_current(strategy_name, name),
-        "suggest_int": lambda self, name, *a, **kw: _get_current(strategy_name, name),
-    })())
+    current_params = param_definer(
+        type(
+            "FakeTrial",
+            (),
+            {
+                "suggest_float": lambda self, name, *a, **kw: _get_current(
+                    strategy_name, name
+                ),
+                "suggest_int": lambda self, name, *a, **kw: _get_current(
+                    strategy_name, name
+                ),
+            },
+        )()
+    )
     current_sharpe = multi_symbol_objective(
-        current_params, datasets, backtest_config, strategy_name, is_daily,
+        current_params,
+        datasets,
+        backtest_config,
+        strategy_name,
+        is_daily,
     )
     print(f"{'Parameter':<40} {'Current':>10} {'Best':>10}")
     print(f"{'-'*60}")
@@ -354,12 +421,17 @@ def _get_current(strategy_name: str, param_name: str):
 def main():
     parser = argparse.ArgumentParser(description="주식 전략 파라미터 최적화")
     parser.add_argument(
-        "--strategy", "-s", required=True,
+        "--strategy",
+        "-s",
+        required=True,
         choices=["trend_pullback", "momentum_breakout", "vr_composite"],
     )
     parser.add_argument("--trials", "-n", type=int, default=100)
     parser.add_argument(
-        "--tier", "-t", type=str, default=None,
+        "--tier",
+        "-t",
+        type=str,
+        default=None,
         choices=["top", "mid", "bottom", "all"],
     )
     parser.add_argument("--symbol", type=str, default=None)

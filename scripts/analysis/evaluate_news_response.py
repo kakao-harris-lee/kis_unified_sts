@@ -4,7 +4,7 @@
 This script builds an event-study style report using existing artifacts:
 - ``output/llm/training_rows.jsonl`` (event candidates + selected flag)
 - ``output/llm/unified_data_*.json`` (news/theme enrichment per snapshot)
-- minute bars from ClickHouse (preferred) or local CSV fallback
+- minute bars from Parquet or local CSV fallback
 
 Outputs (under ``--output-dir``):
 - ``event_returns.csv``: per-event forward returns and metadata
@@ -129,8 +129,12 @@ def _load_training_events(path: Path) -> pd.DataFrame:
                 "news_sentiment": sentiment,
                 "news_direction": _news_direction(sentiment),
                 "news_count": news_count,
-                "news_headline_1": str(news_headlines[0]) if len(news_headlines) >= 1 else "",
-                "news_headline_2": str(news_headlines[1]) if len(news_headlines) >= 2 else "",
+                "news_headline_1": (
+                    str(news_headlines[0]) if len(news_headlines) >= 1 else ""
+                ),
+                "news_headline_2": (
+                    str(news_headlines[1]) if len(news_headlines) >= 2 else ""
+                ),
                 "screening_score": _to_float(features.get("screening_score")),
                 "theme_score": _to_float(metrics.get("theme_score")),
                 "theme_matched": str(metrics.get("theme_matched", "")),
@@ -162,7 +166,9 @@ def _len_safe(value: Any) -> int:
     return len(value) if isinstance(value, (list, tuple, set)) else 0
 
 
-def _load_unified_enrichment(glob_pattern: str) -> dict[tuple[str, str], dict[str, Any]]:
+def _load_unified_enrichment(
+    glob_pattern: str,
+) -> dict[tuple[str, str], dict[str, Any]]:
     result: dict[tuple[str, str], dict[str, Any]] = {}
     for path in sorted(Path().glob(glob_pattern)):
         try:
@@ -231,17 +237,19 @@ class MinuteDataLoader:
         df: pd.DataFrame | None = None
         errors: list[str] = []
 
-        if self.config.source in ("auto", "clickhouse"):
+        if self.config.source in ("auto", "parquet"):
             try:
-                from shared.collector.historical.stock import load_stock_minute_from_clickhouse
+                from shared.collector.historical.stock import (
+                    load_stock_minute_from_parquet,
+                )
 
-                df = load_stock_minute_from_clickhouse(
+                df = load_stock_minute_from_parquet(
                     code,
                     start_date=self.config.start_date,
                     end_date=self.config.end_date,
                 )
             except Exception as e:
-                errors.append(f"clickhouse:{e}")
+                errors.append(f"parquet:{e}")
 
         if (df is None or df.empty) and self.config.source in ("auto", "csv"):
             try:
@@ -255,14 +263,22 @@ class MinuteDataLoader:
         df = df.copy()
         df["datetime"] = pd.to_datetime(df["datetime"], errors="coerce")
         if getattr(df["datetime"].dt, "tz", None) is not None:
-            df["datetime"] = df["datetime"].dt.tz_convert("Asia/Seoul").dt.tz_localize(None)
+            df["datetime"] = (
+                df["datetime"].dt.tz_convert("Asia/Seoul").dt.tz_localize(None)
+            )
 
         df["close"] = pd.to_numeric(df["close"], errors="coerce")
-        df = df.dropna(subset=["datetime", "close"]).sort_values("datetime").reset_index(drop=True)
+        df = (
+            df.dropna(subset=["datetime", "close"])
+            .sort_values("datetime")
+            .reset_index(drop=True)
+        )
 
         start_dt = datetime.combine(self.config.start_date, time(0, 0))
         end_dt = datetime.combine(self.config.end_date + timedelta(days=1), time(0, 0))
-        df = df[(df["datetime"] >= start_dt) & (df["datetime"] < end_dt)].reset_index(drop=True)
+        df = df[(df["datetime"] >= start_dt) & (df["datetime"] < end_dt)].reset_index(
+            drop=True
+        )
 
         if df.empty:
             raise ValueError(f"Minute data empty after date filter for {code}")
@@ -369,7 +385,9 @@ def _directional_accuracy(df: pd.DataFrame, ret_col: str) -> float | None:
     sub = df[(df["news_direction"] != 0) & df[ret_col].notna()]
     if sub.empty:
         return None
-    hit = np.sign(sub[ret_col].to_numpy(dtype="float64")) == sub["news_direction"].to_numpy(dtype="int64")
+    hit = np.sign(sub[ret_col].to_numpy(dtype="float64")) == sub[
+        "news_direction"
+    ].to_numpy(dtype="int64")
     return float(hit.mean())
 
 
@@ -380,10 +398,15 @@ def _summarize(
     summary: dict[str, Any] = {
         "rows": int(len(df)),
         "selected_rows": int(df["selected"].sum()) if "selected" in df.columns else 0,
-        "data_available_rows": int(df["data_available"].sum()) if "data_available" in df.columns else 0,
+        "data_available_rows": (
+            int(df["data_available"].sum()) if "data_available" in df.columns else 0
+        ),
         "sentiment_counts": {
             str(k): int(v)
-            for k, v in df["news_sentiment"].value_counts(dropna=False).to_dict().items()
+            for k, v in df["news_sentiment"]
+            .value_counts(dropna=False)
+            .to_dict()
+            .items()
         },
         "horizons": {},
     }
@@ -405,8 +428,12 @@ def _summarize(
         h_info["avg_return_unselected_pct"] = _to_float(sub_unsel[col].mean())
         h_info["median_return_selected_pct"] = _to_float(sub_sel[col].median())
 
-        h_info["directional_accuracy_all"] = _to_float(_directional_accuracy(sub_all, col))
-        h_info["directional_accuracy_selected"] = _to_float(_directional_accuracy(sub_sel, col))
+        h_info["directional_accuracy_all"] = _to_float(
+            _directional_accuracy(sub_all, col)
+        )
+        h_info["directional_accuracy_selected"] = _to_float(
+            _directional_accuracy(sub_sel, col)
+        )
 
         snap_diffs: list[float] = []
         for _, g in sub_all.groupby("snapshot_id"):
@@ -417,7 +444,9 @@ def _summarize(
 
         if snap_diffs:
             h_info["snapshot_ab_mean_diff_pct"] = _to_float(float(np.mean(snap_diffs)))
-            h_info["snapshot_ab_win_rate"] = _to_float(float(np.mean(np.array(snap_diffs) > 0.0)))
+            h_info["snapshot_ab_win_rate"] = _to_float(
+                float(np.mean(np.array(snap_diffs) > 0.0))
+            )
         else:
             h_info["snapshot_ab_mean_diff_pct"] = None
             h_info["snapshot_ab_win_rate"] = None
@@ -427,7 +456,9 @@ def _summarize(
             by_sentiment[str(sentiment)] = {
                 "count": int(len(gs)),
                 "avg_return_pct": _to_float(gs[col].mean()),
-                "selected_avg_return_pct": _to_float(gs.loc[gs["selected"], col].mean()),
+                "selected_avg_return_pct": _to_float(
+                    gs.loc[gs["selected"], col].mean()
+                ),
                 "selected_count": int(gs["selected"].sum()),
             }
         h_info["by_sentiment"] = by_sentiment
@@ -463,9 +494,15 @@ def _render_summary_md(
         info = summary.get("horizons", {}).get(str(h), {})
         lines.append(f"### {h}m")
         lines.append(f"- coverage_selected: {info.get('coverage_selected')}")
-        lines.append(f"- avg_return_selected_pct: {info.get('avg_return_selected_pct')}")
-        lines.append(f"- directional_accuracy_selected: {info.get('directional_accuracy_selected')}")
-        lines.append(f"- snapshot_ab_mean_diff_pct: {info.get('snapshot_ab_mean_diff_pct')}")
+        lines.append(
+            f"- avg_return_selected_pct: {info.get('avg_return_selected_pct')}"
+        )
+        lines.append(
+            f"- directional_accuracy_selected: {info.get('directional_accuracy_selected')}"
+        )
+        lines.append(
+            f"- snapshot_ab_mean_diff_pct: {info.get('snapshot_ab_mean_diff_pct')}"
+        )
         lines.append(f"- snapshot_ab_win_rate: {info.get('snapshot_ab_win_rate')}")
         lines.append("")
 
@@ -506,13 +543,17 @@ def _apply_filters(df: pd.DataFrame, args: argparse.Namespace) -> pd.DataFrame:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(description="Evaluate stock response quality after news-driven LLM events")
+    p = argparse.ArgumentParser(
+        description="Evaluate stock response quality after news-driven LLM events"
+    )
     p.add_argument("--training-rows", default="output/llm/training_rows.jsonl")
     p.add_argument("--unified-glob", default="output/llm/unified_data_*.json")
     p.add_argument("--output-dir", default="artifacts/news_response_eval")
 
-    p.add_argument("--horizons", default="5,15,30,60", help="Forward return horizons in minutes")
-    p.add_argument("--source", choices=["auto", "clickhouse", "csv"], default="auto")
+    p.add_argument(
+        "--horizons", default="5,15,30,60", help="Forward return horizons in minutes"
+    )
+    p.add_argument("--source", choices=["auto", "parquet", "csv"], default="auto")
     p.add_argument("--allow-overnight-horizon", action="store_true")
 
     p.add_argument("--selected-only", action="store_true")
@@ -568,8 +609,14 @@ def main() -> None:
             theme_score_raw.append(info.get("theme_score_raw"))
             theme_matched_raw.append(info.get("theme_matched_raw", ""))
 
-        existing_news_count = pd.to_numeric(events.get("news_count", 0), errors="coerce").fillna(0).astype(int)
-        events["news_count"] = np.where(np.array(news_count) > 0, np.array(news_count), existing_news_count)
+        existing_news_count = (
+            pd.to_numeric(events.get("news_count", 0), errors="coerce")
+            .fillna(0)
+            .astype(int)
+        )
+        events["news_count"] = np.where(
+            np.array(news_count) > 0, np.array(news_count), existing_news_count
+        )
         events["news_headline_1"] = np.where(
             np.array([len(x) > 0 for x in news_h1]),
             np.array(news_h1, dtype=object),
@@ -619,7 +666,10 @@ def main() -> None:
         event_returns[hit_col] = np.where(
             event_returns["news_direction"] == 0,
             np.nan,
-            (np.sign(event_returns[col].astype(float)) == event_returns["news_direction"]).astype(float),
+            (
+                np.sign(event_returns[col].astype(float))
+                == event_returns["news_direction"]
+            ).astype(float),
         )
 
     summary = _summarize(event_returns, horizons)
@@ -628,7 +678,9 @@ def main() -> None:
     summary_json = output_dir / "summary.json"
     summary_md = output_dir / "summary.md"
 
-    event_returns.sort_values(["generated_at", "selected", "code"], ascending=[True, False, True]).to_csv(
+    event_returns.sort_values(
+        ["generated_at", "selected", "code"], ascending=[True, False, True]
+    ).to_csv(
         event_csv,
         index=False,
         encoding="utf-8-sig",
@@ -642,19 +694,31 @@ def main() -> None:
 
     key_h = 30 if 30 in horizons else horizons[-1]
     key_col = f"ret_{key_h}m_pct"
-    selected = event_returns[event_returns["selected"] & event_returns[key_col].notna()].copy()
+    selected = event_returns[
+        event_returns["selected"] & event_returns[key_col].notna()
+    ].copy()
     if not selected.empty:
-        selected.nlargest(20, key_col).to_csv(output_dir / "top_winners.csv", index=False, encoding="utf-8-sig")
-        selected.nsmallest(20, key_col).to_csv(output_dir / "top_losers.csv", index=False, encoding="utf-8-sig")
+        selected.nlargest(20, key_col).to_csv(
+            output_dir / "top_winners.csv", index=False, encoding="utf-8-sig"
+        )
+        selected.nsmallest(20, key_col).to_csv(
+            output_dir / "top_losers.csv", index=False, encoding="utf-8-sig"
+        )
 
-    print(json.dumps({
-        "events": int(len(event_returns)),
-        "selected_events": int(event_returns["selected"].sum()),
-        "output_dir": str(output_dir),
-        "event_returns": str(event_csv),
-        "summary_json": str(summary_json),
-        "summary_md": str(summary_md),
-    }, ensure_ascii=False, indent=2))
+    print(
+        json.dumps(
+            {
+                "events": int(len(event_returns)),
+                "selected_events": int(event_returns["selected"].sum()),
+                "output_dir": str(output_dir),
+                "event_returns": str(event_csv),
+                "summary_json": str(summary_json),
+                "summary_md": str(summary_md),
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
 
 
 if __name__ == "__main__":

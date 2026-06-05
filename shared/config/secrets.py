@@ -1,11 +1,12 @@
 """Secrets management - load from environment variables.
 
 환경변수 구조:
-- 공통: CLICKHOUSE_*, REDIS_*, MLFLOW_*
+- 공통: REDIS_*, MLFLOW_*
 - 주식: KIS_STOCK_*, TELEGRAM_STOCK_*
 - 선물: KIS_FUTURES_*, TELEGRAM_FUTURES_*
 - LLM: OPENAI_*, KRX_*, TELEGRAM_BRIEFING_*
 """
+
 import os
 import logging
 from typing import Literal, Optional
@@ -201,7 +202,11 @@ class SecretsManager:
         host = cls.get("REDIS_HOST", "localhost")
         port = cls.get("REDIS_PORT", "6379")
         password = cls.get("REDIS_PASSWORD", "")
-        tls_enabled = cls.get("REDIS_TLS_ENABLED", "false").lower() in ("true", "1", "yes")
+        tls_enabled = cls.get("REDIS_TLS_ENABLED", "false").lower() in (
+            "true",
+            "1",
+            "yes",
+        )
 
         if domain == "stock":
             db = cls.get("REDIS_STOCK_DB", "1")
@@ -216,23 +221,6 @@ class SecretsManager:
         if password:
             return f"{scheme}://:{password}@{host}:{port}/{db}"
         return f"{scheme}://{host}:{port}/{db}"
-
-    @classmethod
-    def clickhouse_database(cls, domain: Optional[Domain] = None) -> str:
-        """Get ClickHouse database name.
-
-        Args:
-            domain: "stock", "futures", or None for default
-        """
-        return cls._domain_value(
-            domain,
-            {
-                "stock": "CLICKHOUSE_STOCK_DATABASE",
-                "futures": "CLICKHOUSE_FUTURES_DATABASE",
-            },
-            "CLICKHOUSE_DATABASE",
-            "default",
-        )
 
     # =========================================================================
     # LLM

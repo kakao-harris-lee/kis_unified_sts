@@ -16,7 +16,7 @@
 # Prerequisites:
 #   - Python 3.11+ with dependencies installed
 #   - Redis running (for position tracking)
-#   - ClickHouse running (for market data)
+#   - Parquet market data available under data/market (for warmup)
 #   - KIS API credentials configured in .env
 #   - Daily indicator scanner cron job running (08:50 KST)
 #
@@ -77,17 +77,18 @@ else
     echo -e "${YELLOW}⚠ redis-cli not found, skipping Redis check${NC}"
 fi
 
-# Check ClickHouse
-if command -v clickhouse-client &> /dev/null; then
-    if clickhouse-client --query "SELECT 1" &> /dev/null; then
-        echo -e "${GREEN}✓ ClickHouse is running${NC}"
+# Check Parquet market data
+MARKET_DATA_ROOT="${MARKET_DATA_PARQUET_ROOT:-data/market}"
+if [ -d "$MARKET_DATA_ROOT" ]; then
+    if find "$MARKET_DATA_ROOT" -name "*.parquet" -print -quit | grep -q .; then
+        echo -e "${GREEN}✓ Parquet market data found at ${MARKET_DATA_ROOT}${NC}"
     else
-        echo -e "${RED}✗ ClickHouse is not responding${NC}"
-        echo -e "${YELLOW}  Please start ClickHouse: docker-compose up -d clickhouse${NC}"
-        exit 1
+        echo -e "${YELLOW}⚠ No Parquet files found at ${MARKET_DATA_ROOT}${NC}"
+        echo -e "${YELLOW}  Run: python -m cli.main stock-backfill run --days 30${NC}"
     fi
 else
-    echo -e "${YELLOW}⚠ clickhouse-client not found, skipping ClickHouse check${NC}"
+    echo -e "${YELLOW}⚠ Parquet market data directory not found: ${MARKET_DATA_ROOT}${NC}"
+    echo -e "${YELLOW}  Run: python -m cli.main stock-backfill run --days 30${NC}"
 fi
 
 # Check .env file

@@ -7,8 +7,8 @@ news_scorer:
   input_stream: "stream:news.raw"
   output_stream: "stream:news.scored"
   output_stream_maxlen: 100000
-  ch_batch_size: 20
-  ch_flush_interval_seconds: 10
+  archive_batch_size: 20
+  archive_flush_interval_seconds: 10
 
   scorer:
     provider: "openai"

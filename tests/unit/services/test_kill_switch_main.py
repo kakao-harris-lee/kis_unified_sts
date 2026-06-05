@@ -8,16 +8,13 @@ from services.kill_switch.main import (
     _EVENTS_STREAM,
     _FORCE_FLATTEN_KEY,
     ApiErrorRateCondition,
-    ClickHouseInsertFailCondition,
     ConsecutiveLossesCondition,
     DailyLossCondition,
     KillSwitchDaemon,
     NewsPipelineLagCondition,
     WeeklyLossCondition,
     _build_api_error_rate_provider,
-    _build_clickhouse_insert_fail_provider,
     _build_news_pipeline_lag_provider,
-    _clickhouse_insert_fail_condition_enabled,
 )
 
 # ---------------------------------------------------------------------------
@@ -96,28 +93,6 @@ class TestNewsPipelineLag:
     def test_no_trigger_when_fresh(self):
         c = NewsPipelineLagCondition(threshold_seconds=300, lag_provider=lambda: 60)
         assert c.check(snapshot=None) is False
-
-
-class TestClickHouseInsertFail:
-    def test_trigger_when_fail_rate_exceeds(self):
-        c = ClickHouseInsertFailCondition(threshold=0.1, rate_provider=lambda: 0.2)
-        assert c.check(snapshot=None) is True
-
-    def test_no_trigger_in_normal_op(self):
-        c = ClickHouseInsertFailCondition(threshold=0.1, rate_provider=lambda: 0.0)
-        assert c.check(snapshot=None) is False
-
-    def test_condition_registration_disabled_when_mirror_disabled(self, monkeypatch):
-        monkeypatch.setenv("RUNTIME_STORAGE_CLICKHOUSE_MIRROR_ENABLED", "false")
-        condition = MagicMock(enabled=True, threshold=0.1)
-
-        assert _clickhouse_insert_fail_condition_enabled(condition) is False
-
-    def test_condition_registration_enabled_when_mirror_enabled(self, monkeypatch):
-        monkeypatch.setenv("RUNTIME_STORAGE_CLICKHOUSE_MIRROR_ENABLED", "true")
-        condition = MagicMock(enabled=True, threshold=0.1)
-
-        assert _clickhouse_insert_fail_condition_enabled(condition) is True
 
 
 # ---------------------------------------------------------------------------
@@ -521,72 +496,6 @@ class TestNewsPipelineLagProvider:
             cond = NewsPipelineLagCondition(
                 threshold_seconds=1800, lag_provider=provider
             )
-            result = cond.check(snapshot=None)
-
-        assert result is False
-
-
-class TestClickHouseInsertFailProvider:
-    """Verify _build_clickhouse_insert_fail_provider reads from Redis key correctly."""
-
-    def _make_redis_mock(self, url="redis://localhost:6379/1"):
-        pool = MagicMock()
-        pool.connection_kwargs = {"url": url}
-        redis_mock = MagicMock()
-        redis_mock.connection_pool = pool
-        return redis_mock
-
-    def test_returns_float_from_redis_key(self):
-        redis_mock = self._make_redis_mock()
-        sync_redis_mock = MagicMock()
-        sync_redis_mock.get.return_value = b"0.15"
-
-        with patch("redis.from_url", return_value=sync_redis_mock):
-            provider = _build_clickhouse_insert_fail_provider(redis_mock)
-            result = provider()
-
-        assert result == pytest.approx(0.15)
-
-    def test_returns_zero_when_key_absent(self):
-        redis_mock = self._make_redis_mock()
-        sync_redis_mock = MagicMock()
-        sync_redis_mock.get.return_value = None
-
-        with patch("redis.from_url", return_value=sync_redis_mock):
-            provider = _build_clickhouse_insert_fail_provider(redis_mock)
-            result = provider()
-
-        assert result == 0.0
-
-    def test_returns_zero_on_error(self):
-        redis_mock = self._make_redis_mock()
-
-        with patch("redis.from_url", side_effect=Exception("timeout")):
-            provider = _build_clickhouse_insert_fail_provider(redis_mock)
-            result = provider()
-
-        assert result == 0.0
-
-    def test_condition_triggers_when_fail_rate_exceeds_threshold(self):
-        redis_mock = self._make_redis_mock()
-        sync_redis_mock = MagicMock()
-        sync_redis_mock.get.return_value = b"0.20"
-
-        with patch("redis.from_url", return_value=sync_redis_mock):
-            provider = _build_clickhouse_insert_fail_provider(redis_mock)
-            cond = ClickHouseInsertFailCondition(threshold=0.1, rate_provider=provider)
-            result = cond.check(snapshot=None)
-
-        assert result is True
-
-    def test_condition_does_not_trigger_in_normal_op(self):
-        redis_mock = self._make_redis_mock()
-        sync_redis_mock = MagicMock()
-        sync_redis_mock.get.return_value = b"0.00"
-
-        with patch("redis.from_url", return_value=sync_redis_mock):
-            provider = _build_clickhouse_insert_fail_provider(redis_mock)
-            cond = ClickHouseInsertFailCondition(threshold=0.1, rate_provider=provider)
             result = cond.check(snapshot=None)
 
         assert result is False

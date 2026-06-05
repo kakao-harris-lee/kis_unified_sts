@@ -2,7 +2,7 @@
 
 Reads from ``stream:news.raw`` using a Redis consumer-group (XREADGROUP /
 XACK), scores each item via an injected :class:`~shared.scoring.base.Scorer`,
-and fan-outs the result to ``stream:news.scored`` plus optional ClickHouse via
+and fan-outs the result to ``stream:news.scored`` via
 :class:`~shared.scoring.publisher.ScoredPublisher`.
 
 Error taxonomy
@@ -98,7 +98,7 @@ class NewsScorerDaemon(StreamStage):
 
     Args:
         redis: Async Redis client (``redis.asyncio`` or ``fakeredis.aioredis``).
-        ch_client: Optional ClickHouse async client for mirror inserts.
+        archive_client: Optional archive hook; currently ignored.
         scorer: Primary :class:`~shared.scoring.base.Scorer` (LLM-backed).
         fallback: Fallback scorer used when the primary fails gracefully.
         input_stream: Redis stream key to consume from.
@@ -106,7 +106,7 @@ class NewsScorerDaemon(StreamStage):
         consumer_group: Redis consumer-group name.
         worker_id: Unique consumer name within the group (typically hostname+pid).
         output_maxlen: ``MAXLEN ~`` cap for the output stream.
-        ch_batch_size: Rows to buffer before flushing to ClickHouse.
+        archive_batch_size: Legacy archive batch size.
         xread_block_ms: Milliseconds to block on ``XREADGROUP`` when idle.
         batch_size: Maximum number of messages to fetch per ``XREADGROUP`` call.
     """
@@ -115,7 +115,7 @@ class NewsScorerDaemon(StreamStage):
         self,
         *,
         redis: Any,
-        ch_client: Any,
+        archive_client: Any,
         scorer: Scorer,
         fallback: Scorer,
         input_stream: str,
@@ -123,7 +123,7 @@ class NewsScorerDaemon(StreamStage):
         consumer_group: str,
         worker_id: str,
         output_maxlen: int,
-        ch_batch_size: int,
+        archive_batch_size: int,
         xread_block_ms: int,
         batch_size: int,
     ) -> None:
@@ -140,10 +140,10 @@ class NewsScorerDaemon(StreamStage):
         self.fallback = fallback
         self.publisher = ScoredPublisher(
             redis=redis,
-            ch_client=ch_client,
+            archive_client=archive_client,
             stream=output_stream,
             maxlen=output_maxlen,
-            ch_batch_size=ch_batch_size,
+            archive_batch_size=archive_batch_size,
         )
 
     async def handle_message(self, msg_id: bytes, fields: dict[bytes, bytes]) -> bool:
@@ -273,18 +273,11 @@ async def _build_and_run() -> int:
     from shared.scoring.config import NewsScorerConfig
     from shared.scoring.fallback import FallbackScorer
     from shared.scoring.llm_scorer import LLMScorer
-    from shared.storage import create_async_clickhouse_client
-    from shared.storage.config import StorageConfig
 
     cfg = NewsScorerConfig.from_yaml()
 
     redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/1")
     redis_client = aioredis.from_url(redis_url)
-
-    ch_client = None
-    storage_config = StorageConfig.load_or_default()
-    if storage_config.runtime_storage.clickhouse_mirror.enabled:
-        ch_client = await create_async_clickhouse_client(database="kospi")
 
     openai_client = AsyncOpenAI(api_key=os.environ[cfg.scorer.api_key_env])
     budget = DailyBudget(
@@ -308,7 +301,7 @@ async def _build_and_run() -> int:
     worker_id = f"{cfg.worker_id_prefix}-{socket.gethostname()}-{os.getpid()}"
     daemon = NewsScorerDaemon(
         redis=redis_client,
-        ch_client=ch_client,
+        archive_client=None,
         scorer=llm,
         fallback=fallback,
         input_stream=cfg.input_stream,
@@ -316,7 +309,7 @@ async def _build_and_run() -> int:
         consumer_group=cfg.consumer_group,
         worker_id=worker_id,
         output_maxlen=cfg.output_stream_maxlen,
-        ch_batch_size=cfg.ch_batch_size,
+        archive_batch_size=cfg.archive_batch_size,
         xread_block_ms=cfg.xread_block_ms,
         batch_size=cfg.batch_size,
     )
@@ -330,8 +323,6 @@ async def _build_and_run() -> int:
     finally:
         await openai_client.close()
         await redis_client.aclose()
-        if ch_client is not None:
-            await ch_client.close()
 
     return 0
 

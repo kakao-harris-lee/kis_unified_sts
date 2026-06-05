@@ -59,7 +59,7 @@ broker_verification:
   remove_redis_only: true        # 브로커 미보유/Redis 잔존 포지션은 런타임 추적에서 제거
   reconcile_quantity: true       # 수량 불일치 시 브로커 기준 보정
   reconcile_price: true          # 평균단가 불일치 시 브로커 기준 보정
-  sync_clickhouse: true          # 검증 결과를 ClickHouse open snapshot에 동기화
+  sync_runtime_ledger: true      # 검증 결과를 RuntimeLedger open snapshot에 동기화
   notify_on_mismatch: true       # 불일치 시 Telegram 알림
 
 # KOSPI200 Mini 슬리피지 모델 (백테스트/페이퍼 트레이딩 전용)

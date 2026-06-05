@@ -1,7 +1,6 @@
 """End-to-end integration tests for NewsScorerDaemon.
 
-Uses ``fakeredis.aioredis`` for Redis isolation and ``AsyncMock`` for the
-ClickHouse client.  The primary scorer and fallback are replaced with
+Uses ``fakeredis.aioredis`` for Redis isolation. The primary scorer and fallback are replaced with
 ``_FakeScorer`` — a lightweight in-process stub that avoids any real I/O.
 
 Test coverage
@@ -89,13 +88,13 @@ def _make_daemon(
     redis: fakeredis.aioredis.FakeRedis,
     scorer: Scorer,
     fallback: Scorer,
-    ch: AsyncMock | None = None,
+    archive_client: AsyncMock | None = None,
 ) -> NewsScorerDaemon:
-    if ch is None:
-        ch = AsyncMock()
+    if archive_client is None:
+        archive_client = AsyncMock()
     return NewsScorerDaemon(
         redis=redis,
-        ch_client=ch,
+        archive_client=archive_client,
         scorer=scorer,
         fallback=fallback,
         input_stream="stream:news.raw",
@@ -103,7 +102,7 @@ def _make_daemon(
         consumer_group="news_scorer-v1",
         worker_id="worker-test",
         output_maxlen=100,
-        ch_batch_size=1,
+        archive_batch_size=1,
         xread_block_ms=100,
         batch_size=10,
     )
@@ -288,24 +287,16 @@ async def test_daemon_processes_multiple_messages() -> None:
 
 
 @pytest.mark.asyncio
-async def test_daemon_does_not_ack_on_clickhouse_failure() -> None:
-    """Publisher failure (ClickHouse down) → NO XACK (message stays pending).
-
-    Enforces the main.py error taxonomy: "Publisher failure → NO XACK (leave
-    pending)". Prior to this regression test, ScoredPublisher.flush() silently
-    swallowed CH errors, causing publish() to return normally, _process to
-    XACK, and the row to be lost (Redis stream XADD succeeded; CH insert did
-    not) — an unrecoverable Redis/CH split-brain.
-    """
+async def test_daemon_does_not_ack_on_publish_failure() -> None:
+    """Publisher failure → NO XACK (message stays pending)."""
     redis = fakeredis.aioredis.FakeRedis()
     await _seed_raw(redis, "n1")
 
     scorer = _FakeScorer(outcomes=["ok"])
     fallback = _FakeScorer(outcomes=["ok"])
 
-    ch = AsyncMock()
-    ch.execute.side_effect = RuntimeError("clickhouse down")
-    daemon = _make_daemon(redis, scorer, fallback, ch=ch)
+    daemon = _make_daemon(redis, scorer, fallback)
+    daemon.publisher.publish = AsyncMock(side_effect=RuntimeError("publish down"))
     await _run_daemon_briefly(daemon)
 
     # The message must remain pending for redelivery.

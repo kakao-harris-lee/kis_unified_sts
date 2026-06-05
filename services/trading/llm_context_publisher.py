@@ -30,7 +30,6 @@ Usage:
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import time
 from datetime import UTC, datetime
@@ -465,7 +464,6 @@ class LLMContextPublisher:
 
     def _append_market_context_history(self, context: MarketContext) -> None:
         """Best-effort forward-only history; storage failure never affects Redis."""
-        storage_config: StorageConfig | None = None
         try:
             storage_config = StorageConfig.load_or_default()
             ledger = self._get_runtime_ledger(storage_config)
@@ -485,9 +483,6 @@ class LLMContextPublisher:
                 e,
                 exc_info=True,
             )
-
-        if self._clickhouse_mirror_enabled(storage_config):
-            self._append_clickhouse_market_context_mirror(context)
 
     def _get_runtime_ledger(
         self, storage_config: StorageConfig | None = None
@@ -540,44 +535,3 @@ class LLMContextPublisher:
             "sector_rotation": context.sector_rotation,
             "metadata": context.metadata or {},
         }
-
-    def _clickhouse_mirror_enabled(
-        self, storage_config: StorageConfig | None = None
-    ) -> bool:
-        try:
-            storage_config = storage_config or StorageConfig.load_or_default()
-            return bool(storage_config.runtime_storage.clickhouse_mirror.enabled)
-        except Exception:
-            return False
-
-    def _append_clickhouse_market_context_mirror(self, context: MarketContext) -> None:
-        """Best-effort ClickHouse mirror for explicitly enabled analytics setups."""
-        try:
-            from shared.storage import get_clickhouse_client_wrapper
-
-            gen = context.generated_at
-            if getattr(gen, "tzinfo", None) is not None:
-                # ClickHouse DateTime64 expects naive datetimes.
-                gen = gen.replace(tzinfo=None)
-            row = {
-                "ts": datetime.now(UTC).replace(tzinfo=None),
-                "asset": getattr(self, "asset_class", "unknown"),
-                "regime": context.regime,
-                "overall_signal": getattr(
-                    context.overall_signal, "value", str(context.overall_signal)
-                ),
-                "risk_mode": getattr(
-                    context.risk_mode, "value", str(context.risk_mode)
-                ),
-                "risk_score": float(context.risk_score),
-                "confidence": float(context.confidence),
-                "generated_at": gen,
-                "metadata_json": json.dumps(context.metadata or {}, ensure_ascii=False),
-            }
-            get_clickhouse_client_wrapper().insert_llm_market_context([row])
-        except Exception as e:
-            logger.warning(
-                "llm_market_context ClickHouse mirror append skipped: %s",
-                e,
-                exc_info=True,
-            )

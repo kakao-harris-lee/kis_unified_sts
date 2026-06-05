@@ -116,8 +116,8 @@ class NewsCollectorConfig(ServiceConfigBase):
 
     redis_stream: str
     redis_maxlen: int = Field(default=100000, gt=0)
-    clickhouse_batch_size: int = Field(default=50, gt=0)
-    clickhouse_flush_interval_seconds: int = Field(default=10, gt=0)
+    archive_batch_size: int = Field(default=50, gt=0)
+    archive_flush_interval_seconds: int = Field(default=10, gt=0)
     body_truncate_chars: int = Field(default=2000, gt=0)
     dedupe: DedupeConfig
     sources: SourcesConfig

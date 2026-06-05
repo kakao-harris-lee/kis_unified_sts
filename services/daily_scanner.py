@@ -30,6 +30,9 @@ from shared.collector.historical.calendar import (
 )
 from shared.config.base import ServiceConfigBase
 from shared.exceptions import InfrastructureError
+from shared.scanner.trade_trend_priority import TradeTrendPriorityRanker
+from shared.storage.config import StorageConfig
+from shared.storage.market_data_store import ParquetMarketDataStore
 from shared.streaming.client import RedisClient
 
 logger = logging.getLogger(__name__)
@@ -39,9 +42,11 @@ logger = logging.getLogger(__name__)
 # Data model
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class DailyBar:
     """Simplified daily bar for scanner logic."""
+
     code: str
     date: date
     open: float
@@ -55,6 +60,7 @@ class DailyBar:
 # Configuration
 # ---------------------------------------------------------------------------
 
+
 class DailyScannerConfig(ServiceConfigBase):
     """Configuration for DailyScanner.
 
@@ -65,28 +71,45 @@ class DailyScannerConfig(ServiceConfigBase):
 
     # Trend-pullback filter params
     tp_sma_period: int = Field(default=20, description="SMA period for trend detection")
-    tp_rsi_period: int = Field(default=14, description="RSI period for pullback detection")
-    tp_rsi_max: float = Field(default=45.0, description="Maximum RSI value for pullback zone")
-    tp_trend_deviation_pct: float = Field(
-        default=5.0, description="Maximum deviation percentage below SMA to consider trend intact"
+    tp_rsi_period: int = Field(
+        default=14, description="RSI period for pullback detection"
     )
-    tp_min_volume_20d: int = Field(default=500_000, description="Minimum 20-day average volume for liquidity")
+    tp_rsi_max: float = Field(
+        default=45.0, description="Maximum RSI value for pullback zone"
+    )
+    tp_trend_deviation_pct: float = Field(
+        default=5.0,
+        description="Maximum deviation percentage below SMA to consider trend intact",
+    )
+    tp_min_volume_20d: int = Field(
+        default=500_000, description="Minimum 20-day average volume for liquidity"
+    )
 
     # Momentum-breakout filter params
-    mb_high_period: int = Field(default=20, description="Period for N-day high calculation")
-    mb_proximity_pct: float = Field(default=5.0, description="Maximum distance below N-day high (percentage)")
+    mb_high_period: int = Field(
+        default=20, description="Period for N-day high calculation"
+    )
+    mb_proximity_pct: float = Field(
+        default=5.0, description="Maximum distance below N-day high (percentage)"
+    )
     mb_volume_trend_ratio: float = Field(
         default=1.2, description="Required ratio of short-term to long-term volume MA"
     )
     mb_max_extension_pct: float = Field(
-        default=15.0, description="Maximum extension above N-day high to avoid overextension"
+        default=15.0,
+        description="Maximum extension above N-day high to avoid overextension",
     )
 
     # Minimum-edge filter params
-    me_atr_period: int = Field(default=14, description="ATR period for volatility measurement")
-    me_round_trip_cost: float = Field(default=0.005, description="Round-trip trading cost (slippage + commission)")
+    me_atr_period: int = Field(
+        default=14, description="ATR period for volatility measurement"
+    )
+    me_round_trip_cost: float = Field(
+        default=0.005, description="Round-trip trading cost (slippage + commission)"
+    )
     me_min_atr_cost_ratio: float = Field(
-        default=2.0, description="Minimum ratio of ATR to round-trip cost for sufficient edge"
+        default=2.0,
+        description="Minimum ratio of ATR to round-trip cost for sufficient edge",
     )
     max_stale_trading_days: int = Field(
         default=1,
@@ -95,16 +118,22 @@ class DailyScannerConfig(ServiceConfigBase):
     )
 
     # Redis publish params
-    max_watchlist_size: int = Field(default=40, description="Maximum number of stocks per watchlist")
-    redis_key: str = Field(
-        default="system:daily_watchlist:latest", description="Redis key for publishing watchlist"
+    max_watchlist_size: int = Field(
+        default=40, description="Maximum number of stocks per watchlist"
     )
-    redis_ttl_seconds: int = Field(default=86400, description="TTL for Redis key (seconds)")
+    redis_key: str = Field(
+        default="system:daily_watchlist:latest",
+        description="Redis key for publishing watchlist",
+    )
+    redis_ttl_seconds: int = Field(
+        default=86400, description="TTL for Redis key (seconds)"
+    )
 
 
 # ---------------------------------------------------------------------------
 # Pure helper functions
 # ---------------------------------------------------------------------------
+
 
 def _sma(values: list[float], period: int) -> Optional[float]:
     """Simple moving average of the last ``period`` values.
@@ -135,7 +164,7 @@ def _rsi(closes: list[float], period: int) -> Optional[float]:
     if len(closes) < period + 1:
         return None
 
-    window = closes[-(period + 1):]
+    window = closes[-(period + 1) :]
     gains: list[float] = []
     losses: list[float] = []
     for i in range(1, len(window)):
@@ -170,7 +199,7 @@ def _atr(bars: list[DailyBar], period: int) -> Optional[float]:
     if len(bars) < period + 1:
         return None
 
-    window = bars[-(period + 1):]
+    window = bars[-(period + 1) :]
     true_ranges: list[float] = []
     for i in range(1, len(window)):
         prev_close = window[i - 1].close
@@ -190,6 +219,7 @@ def _atr(bars: list[DailyBar], period: int) -> Optional[float]:
 # Scanner
 # ---------------------------------------------------------------------------
 
+
 class DailyScanner:
     """Scans a stock universe using daily candle data.
 
@@ -204,6 +234,9 @@ class DailyScanner:
 
     def __init__(self, config: Optional[DailyScannerConfig] = None) -> None:
         self.config = config or DailyScannerConfig()
+        self._trade_trend_ranker = TradeTrendPriorityRanker.from_default_config()
+        self._last_watchlist_metadata: dict[str, dict[str, object]] = {}
+        self._last_trade_trend_priority_summary: dict[str, object] = {}
 
     # ------------------------------------------------------------------
     # Filters
@@ -229,7 +262,12 @@ class DailyScanner:
         cfg = self.config
         min_bars = max(cfg.tp_sma_period, cfg.tp_rsi_period + 1)
         if len(bars) < min_bars:
-            logger.debug("%s trend_pullback: insufficient bars (%d < %d)", code, len(bars), min_bars)
+            logger.debug(
+                "%s trend_pullback: insufficient bars (%d < %d)",
+                code,
+                len(bars),
+                min_bars,
+            )
             return False
 
         closes = [b.close for b in bars]
@@ -245,18 +283,27 @@ class DailyScanner:
 
         # Close must be above SMA — uptrend
         if current_close <= sma:
-            logger.debug("%s trend_pullback: close %.2f <= sma %.2f", code, current_close, sma)
+            logger.debug(
+                "%s trend_pullback: close %.2f <= sma %.2f", code, current_close, sma
+            )
             return False
 
         # RSI must be below threshold — pullback zone
         if rsi >= cfg.tp_rsi_max:
-            logger.debug("%s trend_pullback: rsi %.1f >= %.1f", code, rsi, cfg.tp_rsi_max)
+            logger.debug(
+                "%s trend_pullback: rsi %.1f >= %.1f", code, rsi, cfg.tp_rsi_max
+            )
             return False
 
         # Average volume must meet liquidity minimum
         avg_vol = _sma(volumes, min(cfg.tp_sma_period, len(volumes)))
         if avg_vol is None or avg_vol < cfg.tp_min_volume_20d:
-            logger.debug("%s trend_pullback: avg_vol %.0f < %d", code, avg_vol or 0, cfg.tp_min_volume_20d)
+            logger.debug(
+                "%s trend_pullback: avg_vol %.0f < %d",
+                code,
+                avg_vol or 0,
+                cfg.tp_min_volume_20d,
+            )
             return False
 
         # Close must not have deviated too far below SMA (broken trend guard)
@@ -264,7 +311,9 @@ class DailyScanner:
         if deviation_pct > cfg.tp_trend_deviation_pct:
             logger.debug(
                 "%s trend_pullback: deviation %.1f%% > %.1f%%",
-                code, deviation_pct, cfg.tp_trend_deviation_pct,
+                code,
+                deviation_pct,
+                cfg.tp_trend_deviation_pct,
             )
             return False
 
@@ -289,10 +338,15 @@ class DailyScanner:
         """
         cfg = self.config
         if len(bars) < cfg.mb_high_period:
-            logger.debug("%s momentum_breakout: insufficient bars (%d < %d)", code, len(bars), cfg.mb_high_period)
+            logger.debug(
+                "%s momentum_breakout: insufficient bars (%d < %d)",
+                code,
+                len(bars),
+                cfg.mb_high_period,
+            )
             return False
 
-        recent = bars[-cfg.mb_high_period:]
+        recent = bars[-cfg.mb_high_period :]
         high_n = max(b.high for b in recent)
 
         current_close = bars[-1].close
@@ -303,7 +357,8 @@ class DailyScanner:
         if distance_below_pct > cfg.mb_proximity_pct:
             logger.debug(
                 "%s momentum_breakout: %.1f%% below high_n — too far",
-                code, distance_below_pct,
+                code,
+                distance_below_pct,
             )
             return False
 
@@ -312,7 +367,8 @@ class DailyScanner:
         if extension_pct > cfg.mb_max_extension_pct:
             logger.debug(
                 "%s momentum_breakout: %.1f%% above high_n — overextended",
-                code, extension_pct,
+                code,
+                extension_pct,
             )
             return False
 
@@ -326,13 +382,19 @@ class DailyScanner:
         if vol_ma5 < vol_ma20 * cfg.mb_volume_trend_ratio:
             logger.debug(
                 "%s momentum_breakout: vol_ma5 %.0f < vol_ma20 %.0f × %.1f",
-                code, vol_ma5, vol_ma20, cfg.mb_volume_trend_ratio,
+                code,
+                vol_ma5,
+                vol_ma20,
+                cfg.mb_volume_trend_ratio,
             )
             return False
 
         logger.debug(
             "%s passes momentum_breakout (high_n=%.2f close=%.2f vol_ma5=%.0f)",
-            code, high_n, current_close, vol_ma5,
+            code,
+            high_n,
+            current_close,
+            vol_ma5,
         )
         return True
 
@@ -356,7 +418,9 @@ class DailyScanner:
         if len(bars) < cfg.me_atr_period + 1:
             logger.debug(
                 "%s minimum_edge: insufficient bars (%d < %d)",
-                code, len(bars), cfg.me_atr_period + 1,
+                code,
+                len(bars),
+                cfg.me_atr_period + 1,
             )
             return False
 
@@ -372,7 +436,9 @@ class DailyScanner:
         if atr_pct < required:
             logger.debug(
                 "%s minimum_edge: atr_pct=%.3f%% < required=%.3f%%",
-                code, atr_pct * 100, required * 100,
+                code,
+                atr_pct * 100,
+                required * 100,
             )
             return False
 
@@ -414,7 +480,7 @@ class DailyScanner:
     # ------------------------------------------------------------------
 
     def _load_daily_bars(self, code: str, lookback_days: int = 60) -> list[DailyBar]:
-        """Load daily bars for ``code`` from ClickHouse.
+        """Load daily bars for ``code`` from Parquet.
 
         Args:
             code: Stock code.
@@ -424,30 +490,34 @@ class DailyScanner:
             List of ``DailyBar`` ordered oldest → newest. Empty on error.
         """
         try:
-            from shared.storage import get_clickhouse_client_wrapper
-
-            client = get_clickhouse_client_wrapper()
             end_date = date.today()
             start_date = end_date - timedelta(days=lookback_days)
-            candles = client.get_daily_candles(code, start_date, end_date)
+            storage_config = StorageConfig.load_or_default()
+            store = ParquetMarketDataStore(
+                storage_config.market_data.parquet.root,
+                asset_class="stock",
+            )
+            candles = store.get_daily_bars(code, start_date, end_date)
             return [
                 DailyBar(
-                    code=c.code,
-                    date=c.date,
-                    open=c.open,
-                    high=c.high,
-                    low=c.low,
-                    close=c.close,
-                    volume=c.volume,
+                    code=str(row.code),
+                    date=row.datetime.date(),
+                    open=float(row.open),
+                    high=float(row.high),
+                    low=float(row.low),
+                    close=float(row.close),
+                    volume=int(row.volume),
                 )
-                for c in candles
+                for row in candles.itertuples(index=False)
             ]
-        except InfrastructureError as exc:
-            logger.warning("Failed to load daily bars for %s: %s", code, exc)
-            return []
         except Exception as exc:
             # Catch unexpected errors (e.g., data conversion issues)
-            logger.warning("Unexpected error loading daily bars for %s: %s", code, exc, exc_info=True)
+            logger.warning(
+                "Unexpected error loading daily bars for %s: %s",
+                code,
+                exc,
+                exc_info=True,
+            )
             return []
 
     # ------------------------------------------------------------------
@@ -472,6 +542,8 @@ class DailyScanner:
             each mapping to a list of passing codes (up to ``max_watchlist_size``).
         """
         if not codes:
+            self._last_watchlist_metadata = {}
+            self._last_trade_trend_priority_summary = self._trade_trend_ranker.summary()
             return {"trend_pullback": [], "momentum_breakout": []}
 
         # Filter funnel metrics
@@ -515,23 +587,52 @@ class DailyScanner:
 
         cfg = self.config
 
+        ranked_watchlists, priority_metadata, priority_summary = (
+            self._trade_trend_ranker.rank_watchlists(
+                {
+                    "trend_pullback": trend_pullback,
+                    "momentum_breakout": momentum_breakout,
+                }
+            )
+        )
+        trend_pullback = ranked_watchlists.get("trend_pullback", trend_pullback)
+        momentum_breakout = ranked_watchlists.get(
+            "momentum_breakout", momentum_breakout
+        )
+        self._last_watchlist_metadata = priority_metadata
+        self._last_trade_trend_priority_summary = priority_summary
+
         # Log funnel metrics
         logger.info("=" * 60)
         logger.info("Daily Scanner Filter Funnel:")
         logger.info(f"  Universe (input):        {total_input:>5} stocks")
-        logger.info(f"  Data loaded:             {loaded_count:>5} stocks ({loaded_count/total_input*100:.1f}%)")
-        logger.info(f"  Stale daily data:        {stale_count:>5} stocks ({stale_count/total_input*100:.1f}%)")
-        logger.info(f"  Minimum edge passed:     {min_edge_count:>5} stocks ({min_edge_count/total_input*100:.1f}%)")
-        logger.info(f"  Trend pullback (raw):    {trend_pullback_raw:>5} stocks ({trend_pullback_raw/total_input*100:.1f}%)")
-        logger.info(f"  Momentum breakout (raw): {momentum_breakout_raw:>5} stocks ({momentum_breakout_raw/total_input*100:.1f}%)")
+        logger.info(
+            f"  Data loaded:             {loaded_count:>5} stocks ({loaded_count/total_input*100:.1f}%)"
+        )
+        logger.info(
+            f"  Stale daily data:        {stale_count:>5} stocks ({stale_count/total_input*100:.1f}%)"
+        )
+        logger.info(
+            f"  Minimum edge passed:     {min_edge_count:>5} stocks ({min_edge_count/total_input*100:.1f}%)"
+        )
+        logger.info(
+            f"  Trend pullback (raw):    {trend_pullback_raw:>5} stocks ({trend_pullback_raw/total_input*100:.1f}%)"
+        )
+        logger.info(
+            f"  Momentum breakout (raw): {momentum_breakout_raw:>5} stocks ({momentum_breakout_raw/total_input*100:.1f}%)"
+        )
         logger.info("-" * 60)
 
         # Truncate to max watchlist size
         final_tp = trend_pullback[: cfg.max_watchlist_size]
         final_mb = momentum_breakout[: cfg.max_watchlist_size]
 
-        logger.info(f"  Final trend_pullback:    {len(final_tp):>5} stocks (max={cfg.max_watchlist_size})")
-        logger.info(f"  Final momentum_breakout: {len(final_mb):>5} stocks (max={cfg.max_watchlist_size})")
+        logger.info(
+            f"  Final trend_pullback:    {len(final_tp):>5} stocks (max={cfg.max_watchlist_size})"
+        )
+        logger.info(
+            f"  Final momentum_breakout: {len(final_mb):>5} stocks (max={cfg.max_watchlist_size})"
+        )
         logger.info("=" * 60)
 
         return {
@@ -559,7 +660,12 @@ class DailyScanner:
                 "timestamp": date.today().isoformat(),
                 "strategies": result,
                 "counts": {k: len(v) for k, v in result.items()},
+                "sources": {
+                    "trade_trend_priority": self._last_trade_trend_priority_summary
+                },
             }
+            if self._last_watchlist_metadata:
+                payload["metadata"] = self._last_watchlist_metadata
             redis.set(
                 self.config.redis_key,
                 json.dumps(payload, ensure_ascii=False),
@@ -574,6 +680,8 @@ class DailyScanner:
             logger.warning("Failed to publish watchlist to Redis: %s", exc)
         except Exception as exc:
             # Catch unexpected errors (e.g., JSON serialization issues)
-            logger.warning("Unexpected error publishing watchlist: %s", exc, exc_info=True)
+            logger.warning(
+                "Unexpected error publishing watchlist: %s", exc, exc_info=True
+            )
 
         return result

@@ -2,7 +2,7 @@
 """Paper-data fold-in for Phase 3 final sign-off — Path 3.
 
 After Phase 4 paper has been live for 60-90 days, combine the real
-``kospi.signals_all`` × ``kospi.order_fills`` evidence with the existing
+RuntimeLedger paper-trade evidence with the existing
 backtest dataset and re-evaluate the bootstrap gate. Recency-weights
 paper-derived folds 1.5× by default.
 
@@ -19,10 +19,9 @@ Usage:
         --n-samples 100 \\
         --out results/phase3_final_signoff.json
 
-The script queries the live ClickHouse ``kospi.signals_all`` ×
-``kospi.order_fills`` join, materialises per-trade PnL_ticks, and feeds
-those into both the bootstrap gate (against the merged dataset) and the
-direct paper PnL/Sharpe checks.
+The script reads RuntimeLedger futures trades, materialises per-trade
+PnL_ticks, and feeds those into both the bootstrap gate (against the merged
+dataset) and the direct paper PnL/Sharpe checks.
 
 This script is run by the operator at 60-90 day mark — not by CI.
 """
@@ -48,26 +47,6 @@ if str(_REPO_ROOT) not in sys.path:
 logger = logging.getLogger(__name__)
 
 
-_PAPER_QUERY = """
-SELECT
-    s.signal_id              AS signal_id,
-    s.setup_type             AS setup_type,
-    s.direction              AS direction,
-    s.generated_at           AS generated_at,
-    e.filled_price           AS entry_price,
-    e.quantity               AS quantity,
-    x.filled_price           AS exit_price,
-    x.slippage_ticks         AS slippage_ticks,
-    x.tick_size_points       AS tick_size_points
-FROM kospi.signals_all s
-INNER JOIN kospi.order_fills e ON s.signal_id = e.signal_id AND e.trade_role = 'entry'
-INNER JOIN kospi.order_fills x ON s.signal_id = x.signal_id
-WHERE s.generated_at >= toDateTime('{paper_since}')
-  AND s.executed = 1
-  AND x.trade_role IN ('stop_loss', 'take_profit', 'force_close')
-"""
-
-
 @dataclass(frozen=True)
 class PaperTrade:
     setup_type: str
@@ -87,29 +66,55 @@ class PaperTrade:
 
 
 async def fetch_paper_trades(paper_since: date) -> list[PaperTrade]:
-    """Pull paper trades from ClickHouse — operator must have ``.env`` loaded."""
-    from shared.db.client import AsyncClickHouseClient
-    from shared.db.config import ClickHouseConfig
+    """Pull paper trades from the durable runtime ledger."""
+    import asyncio
 
-    config = ClickHouseConfig.from_env(database="kospi")
-    client = AsyncClickHouseClient(config)
-    await client.connect()
-    try:
-        rows = await client.fetch(_PAPER_QUERY.format(paper_since=paper_since))
-    finally:
-        await client.close()
+    from shared.storage import SQLiteRuntimeLedger, StorageConfig
 
+    def _load() -> list[dict]:
+        storage_config = StorageConfig.load_or_default()
+        ledger = SQLiteRuntimeLedger(storage_config.runtime_storage.sqlite)
+        try:
+            return ledger.query_trades(
+                {
+                    "asset_class": "futures",
+                    "start": datetime.combine(
+                        paper_since, datetime.min.time()
+                    ).isoformat(),
+                    "limit": 0,
+                }
+            )
+        finally:
+            ledger.close()
+
+    rows = await asyncio.to_thread(_load)
     trades: list[PaperTrade] = []
-    for r in rows:
+    for row in rows:
+        payload = row.get("payload_json")
+        try:
+            payload_obj = json.loads(payload) if isinstance(payload, str) else {}
+        except json.JSONDecodeError:
+            payload_obj = {}
+        tick_size = float(
+            payload_obj.get("tick_size_points") or row.get("tick_size_points") or 0.05
+        )
         trades.append(
             PaperTrade(
-                setup_type=str(r[1]),
-                direction=str(r[2]),
-                generated_at=r[3],
-                entry_price=float(r[4]),
-                exit_price=float(r[6]),
-                quantity=int(r[5]),
-                tick_size_points=float(r[8]) if r[8] else 0.02,
+                setup_type=str(row.get("strategy") or "unknown"),
+                direction=str(row.get("side") or "long"),
+                generated_at=datetime.fromisoformat(
+                    str(
+                        row.get("entry_time")
+                        or row.get("exit_time")
+                        or datetime.combine(
+                            paper_since, datetime.min.time()
+                        ).isoformat()
+                    )
+                ),
+                entry_price=float(row.get("entry_price") or 0.0),
+                exit_price=float(row.get("exit_price") or 0.0),
+                quantity=int(row.get("quantity") or 0),
+                tick_size_points=tick_size,
             )
         )
     return trades

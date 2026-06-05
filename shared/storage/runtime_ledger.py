@@ -2,9 +2,7 @@
 
 The ledger stores durable operational records that must survive process
 restart: orders, fills, trades, position snapshots, risk events, signal
-decisions, and market context history. SQLite is the default runtime backend;
-ClickHouse mirror/backends can be added behind this interface without keeping
-ClickHouse on the hot path.
+decisions, and market context history. SQLite is the default runtime backend.
 """
 
 from __future__ import annotations

@@ -16,10 +16,9 @@ PID_FILE="$PROJECT_DIR/pids/forecasting.pid"
 
 mkdir -p "$LOG_DIR" "$(dirname "$PID_FILE")"
 
-# Load .env so cron-spawned runs see CLICKHOUSE_*, REDIS_*, OPENAI_API_KEY etc.
-# Without this the host fallback path (.venv/bin/python refit_har_rv.py) hits
-# ClickHouse with empty CLICKHOUSE_PASSWORD → "Authentication failed" (Code 516)
-# and HAR-RV refit silently fails every trading day.
+# Load .env so cron-spawned runs see REDIS_*, OPENAI_API_KEY, and storage paths.
+# Without this the host fallback path may miss Redis/storage configuration and
+# HAR-RV refit can silently fail every trading day.
 if [ -f "$PROJECT_DIR/.env" ]; then
   set -a
   # shellcheck disable=SC1091
@@ -58,7 +57,7 @@ refit_service() {
   cd "$PROJECT_DIR"
   log "Running standalone HAR-RV refit"
   # The container shares the same shared/ modules; run the fit in-container so
-  # it reads the same config and writes to the same Redis/ClickHouse instances
+  # it reads the same config and writes to the same Redis/storage instances
   # the daemon will read back.
   CID=$(docker ps -q -f name=kis-forecasting)
   if [ -n "$CID" ]; then
@@ -73,7 +72,7 @@ refit_service() {
     docker kill -s SIGUSR1 "$CID" >> "$LOG_FILE" 2>&1
   else
     # No daemon — run via venv on host so the cron job still produces a model
-    # in Redis/ClickHouse. Daemon will load it on next start.
+    # in Redis/storage. Daemon will load it on next start.
     "$PROJECT_DIR/.venv/bin/python" \
       "$PROJECT_DIR/scripts/forecasting/refit_har_rv.py" >> "$LOG_FILE" 2>&1
     rc=$?

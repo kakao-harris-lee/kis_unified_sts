@@ -54,6 +54,7 @@ from shared.exceptions import APIError, InfrastructureError, TradingSystemError
 from shared.kis import KISAuthConfig
 from shared.kis.client import KISClient
 from shared.kis.ranking_client import KISRankingClient
+from shared.scanner.trade_trend_priority import TradeTrendPriorityRanker
 from shared.streaming.client import RedisClient
 from shared.streaming.publisher import StreamPublisher
 
@@ -212,7 +213,14 @@ def _select_top_codes(
     top_n: int,
     weight_trade_value: float,
     weight_gainer: float,
-) -> tuple[list[str], dict[str, float], dict[str, dict[str, Any]]]:
+    trade_trend_ranker: TradeTrendPriorityRanker | None = None,
+) -> tuple[
+    list[str],
+    dict[str, float],
+    dict[str, dict[str, Any]],
+    dict[str, dict[str, Any]],
+    dict[str, Any],
+]:
     # Normalize inputs
     volume_rows = list(sources.get("kospi_volume", [])) + list(
         sources.get("kosdaq_volume", [])
@@ -260,22 +268,47 @@ def _select_top_codes(
                 "change_pct": row.get("change_pct", 0),
             }
 
-    # Final selection
-    codes = [
-        code
-        for code, _score in sorted(
-            score_by_code.items(), key=lambda kv: kv[1], reverse=True
+    ranked_scores = score_by_code
+    priority_metadata: dict[str, dict[str, Any]] = {}
+    priority_summary: dict[str, Any] = {"enabled": False, "status": "not_configured"}
+
+    if trade_trend_ranker is not None:
+        rank_result = trade_trend_ranker.rank_codes(
+            list(score_by_code.keys()), score_by_code
         )
-    ][:top_n]
+        ranked_all_codes = rank_result.codes
+        ranked_scores = rank_result.scores
+        priority_metadata = rank_result.metadata
+        priority_summary = rank_result.summary
+    else:
+        ranked_all_codes = [
+            code
+            for code, _score in sorted(
+                score_by_code.items(), key=lambda kv: kv[1], reverse=True
+            )
+        ]
+
+    # Final selection
+    codes = ranked_all_codes[:top_n]
 
     # Normalize scores to 0-1 for readability
     if codes:
-        max_score = max(score_by_code[c] for c in codes) or 1.0
-        normalized_scores = {c: round(score_by_code[c] / max_score, 6) for c in codes}
+        max_score = max(ranked_scores[c] for c in codes) or 1.0
+        normalized_scores = {c: round(ranked_scores[c] / max_score, 6) for c in codes}
     else:
         normalized_scores = {}
 
-    return codes, normalized_scores, info_by_code
+    selected_priority_metadata = {
+        code: priority_metadata[code] for code in codes if code in priority_metadata
+    }
+
+    return (
+        codes,
+        normalized_scores,
+        info_by_code,
+        selected_priority_metadata,
+        priority_summary,
+    )
 
 
 def _select_dip_candidates(
@@ -546,6 +579,7 @@ async def run_screener(config: ScreenerConfig) -> None:
 
     redis_client = RedisClient.get_client()
     publisher = StreamPublisher(config.universe_stream)
+    trade_trend_ranker = TradeTrendPriorityRanker.from_default_config()
 
     last_codes: list[str] = []
     last_notified_codes: set[str] = set()
@@ -595,12 +629,19 @@ async def run_screener(config: ScreenerConfig) -> None:
                 sources = await ranking.get_all_aggressive_sources(
                     limit=config.rank_limit
                 )
-                codes, scores, info = _select_top_codes(
+                (
+                    codes,
+                    scores,
+                    info,
+                    priority_metadata,
+                    priority_summary,
+                ) = _select_top_codes(
                     sources,
                     rank_limit=config.rank_limit,
                     top_n=config.top_n,
                     weight_trade_value=config.weight_trade_value,
                     weight_gainer=config.weight_gainer,
+                    trade_trend_ranker=trade_trend_ranker,
                 )
                 trend_diagnostics: dict[str, dict[str, Any]] = {}
                 if (
@@ -629,6 +670,11 @@ async def run_screener(config: ScreenerConfig) -> None:
                             )
                         codes = filtered_codes[: config.top_n]
                         scores = _normalize_scores_for_codes(scores, codes)
+                        priority_metadata = {
+                            code: priority_metadata[code]
+                            for code in codes
+                            if code in priority_metadata
+                        }
 
                 if codes and codes != last_codes:
                     # Lazy-fill prev-day volumes for any new codes
@@ -637,6 +683,8 @@ async def run_screener(config: ScreenerConfig) -> None:
                 if codes:
                     names = {c: info[c]["name"] for c in codes if c in info}
                     metadata = prev_vol_cache.build_metadata(codes)
+                    for code, extra in priority_metadata.items():
+                        metadata.setdefault(code, {}).update(extra)
                     for code in codes:
                         diag = trend_diagnostics.get(code)
                         if not diag:
@@ -664,6 +712,7 @@ async def run_screener(config: ScreenerConfig) -> None:
                         "generated_at": datetime.now().isoformat(),
                         "sources": {
                             "counts": {k: len(v) for k, v in sources.items()},
+                            "trade_trend_priority": priority_summary,
                         },
                     }
                     now = time.time()

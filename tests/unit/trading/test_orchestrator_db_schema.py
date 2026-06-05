@@ -1,8 +1,8 @@
-"""Tests for orchestrator ClickHouse schema initialization."""
+"""Tests for orchestrator storage schema initialization."""
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -17,7 +17,7 @@ def _make_orchestrator():
 
 
 @pytest.mark.asyncio
-async def test_initialize_components_ensures_db_schema_before_position_recovery():
+async def test_initialize_components_keeps_schema_step_before_position_recovery():
     orch = _make_orchestrator()
     calls: list[str] = []
 
@@ -41,38 +41,7 @@ async def test_initialize_components_ensures_db_schema_before_position_recovery(
 
 
 @pytest.mark.asyncio
-async def test_ensure_db_schema_migrates_swing_execution_venue_column():
+async def test_ensure_db_schema_is_runtime_ledger_noop():
     orch = _make_orchestrator()
 
-    sync_client = MagicMock()
-    temp_client = MagicMock()
-    clickhouse = MagicMock()
-    clickhouse.config.host = "localhost"
-    clickhouse.config.port = 9000
-    clickhouse.config.user = "default"
-    clickhouse.config.password = ""
-    clickhouse.get_sync_client.return_value = sync_client
-
-    tracker = MagicMock()
-    tracker._get_db_client.return_value = (clickhouse, "market")
-    orch._position_tracker = tracker
-
-    with patch("shared.db.client.SyncClient", return_value=temp_client):
-        await orch._ensure_db_schema()
-
-    executed_sql = [call.args[0] for call in sync_client.execute.call_args_list]
-
-    assert any(
-        "CREATE TABLE IF NOT EXISTS market.swing_positions" in sql
-        for sql in executed_sql
-    )
-    assert any(
-        "CREATE TABLE IF NOT EXISTS market.rl_trades" in sql for sql in executed_sql
-    )
-    assert any(
-        "ALTER TABLE market.swing_positions ADD COLUMN IF NOT EXISTS execution_venue"
-        in sql
-        for sql in executed_sql
-    )
-    temp_client.execute.assert_called_once_with("CREATE DATABASE IF NOT EXISTS market")
-    temp_client.disconnect.assert_called_once()
+    assert await orch._ensure_db_schema() is None
