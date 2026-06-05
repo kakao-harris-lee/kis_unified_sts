@@ -51,13 +51,22 @@ def stock_signal_from_stream_fields(
         return datetime.fromtimestamp(int(ms) / 1000, tz=UTC)
 
     code = _s("code")
+    if not code:
+        raise ValueError("stock candidate missing required field 'code'")
+
+    direction = _s("direction") or "long"
+    if direction not in {"long", "short"}:
+        raise ValueError(f"invalid stock candidate direction {direction!r}")
+
     signal = StockRiskSignal(
         symbol=code,
         code=code,
         name=_s("name"),
         strategy=_s("strategy"),
-        direction=_s("direction") or "long",
+        direction=direction,
         price=float(_s("price") or 0.0),
+        # int(float(...)) tolerates decimal-strings like "10.0"; do not
+        # "simplify" to int(...), which raises on a fractional string.
         quantity=int(float(_s("quantity") or 0)),
         confidence=float(_s("confidence") or 0.0),
         generated_at=_ms_to_dt(_s("generated_at_ms")),
