@@ -7,8 +7,13 @@ bars and today_open is captured from the first observed price of the session.
 from __future__ import annotations
 
 import contextlib
-from datetime import date, datetime
+import logging
+from datetime import date, datetime, time
 from typing import Any
+
+logger = logging.getLogger(__name__)
+
+_MARKET_OPEN = time(9, 0)  # KST — matches MarketContext.market_open_time
 
 
 class FuturesDailyReference:
@@ -33,8 +38,16 @@ class FuturesDailyReference:
         try:
             df = self._store.get_daily_bars(self._symbol)
         except Exception:
+            logger.warning(
+                "prev_close: failed to read daily bars for %s; returning 0.0",
+                self._symbol,
+            )
             return 0.0
         if df is None or len(df) == 0 or "close" not in df.columns:
+            logger.warning(
+                "prev_close: no daily bar data for %s; returning 0.0",
+                self._symbol,
+            )
             return 0.0
         # Exclude today's (partial) bar so prev_close is yesterday's close.
         dt_col = (
@@ -53,7 +66,18 @@ class FuturesDailyReference:
             return 0.0
 
     def observe(self, *, price: float, now: datetime) -> None:
-        """Record the session's first price as today_open (resets daily)."""
+        """Record the session's first price as today_open (resets daily).
+
+        Silently no-ops before 09:00 KST so that warmup-seeded prices
+        (pre-session closes) cannot poison today_open.  Setup A's own
+        ``valid_minutes_min`` guard prevents signals before 09:10 KST, so
+        a 0.0 today_open before open is harmless.
+
+        ``now`` must already be KST-aware (the caller — FuturesContextProvider
+        — converts UTC→KST before calling here).
+        """
+        if now.time() < _MARKET_OPEN:
+            return
         d = now.date()
         if self._today != d:
             self._today = d

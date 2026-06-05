@@ -52,6 +52,11 @@ class FuturesContextProvider:
         atr_14 = float(
             (self._engine.get_indicators(symbol) or {}).get("atr", 0.0) or 0.0
         )
+        if atr_14 <= 0.0:
+            # Engine is warm (enough candles) but indicators are absent or
+            # stale (>180 s no tick).  Without a valid ATR, Setup A/C would
+            # compute zero-width stops — suppress the context until ATR recovers.
+            return None
 
         now = self._now_fn()
         now_kst = now.astimezone(_KST) if now.tzinfo else now.replace(tzinfo=_KST)

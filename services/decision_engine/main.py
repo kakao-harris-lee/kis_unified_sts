@@ -151,8 +151,15 @@ def _warmup_engine_from_parquet(
         symbol: Futures symbol to warm (e.g. ``"A05"``).
         lookback_minutes: Number of 1-min bars to seed (default 240 = 4 h).
     """
+    from datetime import UTC, datetime, timedelta
+
+    # Bound the read to the last few calendar days so we don't load months of
+    # history on every startup, then take the tail so we always get the MOST
+    # RECENT bars (ParquetMarketDataStore orders ASC; a bare `limit=N` would
+    # return the OLDEST N bars — same bug class as FuturesDailyReference.prev_close).
+    start_bound = (datetime.now(UTC) - timedelta(days=5)).date().isoformat()
     try:
-        df = store.get_minute_bars(symbol, limit=lookback_minutes)
+        df = store.get_minute_bars(symbol, start=start_bound)
     except Exception:
         logger.warning(
             "parquet warmup read failed for %s; warming from live ticks", symbol
@@ -160,6 +167,7 @@ def _warmup_engine_from_parquet(
         return
     if df is None or len(df) == 0:
         return
+    df = df.iloc[-lookback_minutes:]
     candles = [
         {
             "open": float(r["open"]),
