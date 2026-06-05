@@ -18,6 +18,7 @@ from typing import Any
 
 from services.stock_strategy.candidate import stock_signal_to_stream_dict
 from services.stock_strategy.universe import parse_watchlist_codes
+from shared.models.signal import Signal
 from shared.strategy.base import EntryContext
 
 logger = logging.getLogger(__name__)
@@ -91,7 +92,7 @@ class StockStrategyDaemon:
                 logger.exception("stock entry eval failed symbol=%s", symbol)
         return published
 
-    async def _publish(self, signal) -> None:
+    async def _publish(self, signal: Signal) -> None:
         fields = stock_signal_to_stream_dict(signal, signal_id=uuid.uuid4().hex)
         await self.redis.xadd(
             self.candidate_stream,

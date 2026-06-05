@@ -26,9 +26,17 @@ class _FakeResolver:
 class _FakeFeed:
     def __init__(self):
         self.symbols = []
+        self.started = False
+        self.stopped = False
 
     def update_symbols(self, codes):
         self.symbols = list(codes)
+
+    async def start(self):
+        self.started = True
+
+    async def stop(self):
+        self.stopped = True
 
     async def get_current_price(self, _symbol):
         return {"code": _symbol, "close": 71000.0, "timestamp": 1.0}
@@ -124,3 +132,30 @@ def test_refresh_universe_updates_feed():
     d._apply_watchlist(json.dumps({"strategies": {"w": ["005930", "000660"]}}))
     assert set(feed.symbols) == {"005930", "000660"}
     assert set(d._universe) == {"005930", "000660"}
+
+
+@pytest.mark.asyncio
+async def test_run_start_stop_lifecycle():
+    """run() calls feed.start(), runs the loops, exits promptly on stop(), calls feed.stop()."""
+    import asyncio
+    import json
+
+    feed = _FakeFeed()
+    d = _daemon(
+        feed=feed,
+        eval_interval_seconds=0.01,
+        universe_refresh_seconds=0.01,
+        watchlist_reader=lambda: json.dumps({"strategies": {"w": ["005930"]}}),
+    )
+    # empty universe so evaluate_once is a no-op (no manager calls needed)
+    d._universe = []
+
+    task = asyncio.create_task(d.run())
+    await asyncio.sleep(0.05)  # let eval + refresh loops tick a couple times
+    await d.stop()
+    await asyncio.wait_for(
+        task, timeout=1.0
+    )  # must return promptly — proves interruptible sleeps
+
+    assert feed.started is True, "run() must call feed.start()"
+    assert feed.stopped is True, "run() finally block must call feed.stop()"
