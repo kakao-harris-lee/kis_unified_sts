@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 
 from services.decision_engine.daily_reference import FuturesDailyReference
+
+_KST = ZoneInfo("Asia/Seoul")
 
 
 class _FakeStore:
@@ -46,3 +49,38 @@ def test_today_open_tracks_first_observed_price_of_day():
 def test_prev_close_zero_when_no_daily_bars():
     ref = FuturesDailyReference(store=_FakeStore(pd.DataFrame()), symbol="A05")
     assert ref.prev_close() == 0.0  # Setup A self-guards on prev_close<=0
+
+
+# ---------------------------------------------------------------------------
+# Bug B: pre-open guard — observe() before 09:00 KST must not capture today_open
+# ---------------------------------------------------------------------------
+
+
+def test_observe_before_market_open_does_not_capture_today_open():
+    """Bug B regression: pre-open call must NOT set today_open.
+
+    08:55 KST is before 09:00 KST open — the warmup-seeded price must not
+    poison today_open for Setup A's gap calculation.
+    """
+    ref = FuturesDailyReference(store=_FakeStore(pd.DataFrame()), symbol="A05")
+    pre_open_kst = datetime(2026, 6, 5, 8, 55, tzinfo=_KST)
+    ref.observe(price=999.0, now=pre_open_kst)
+    assert (
+        ref.today_open() == 0.0
+    ), "today_open must stay 0.0 when observe is called before 09:00 KST"
+
+
+def test_observe_at_and_after_market_open_captures_today_open():
+    """Bug B: first in-session price IS captured as today_open."""
+    ref = FuturesDailyReference(store=_FakeStore(pd.DataFrame()), symbol="A05")
+    # Call once before open (should be ignored)
+    ref.observe(price=999.0, now=datetime(2026, 6, 5, 8, 55, tzinfo=_KST))
+    # First in-session call at exactly 09:01 KST
+    in_session_kst = datetime(2026, 6, 5, 9, 1, tzinfo=_KST)
+    ref.observe(price=350.0, now=in_session_kst)
+    assert (
+        ref.today_open() == 350.0
+    ), "today_open must be captured from the first in-session price"
+    # Subsequent in-session call same day must NOT change today_open
+    ref.observe(price=360.0, now=datetime(2026, 6, 5, 9, 5, tzinfo=_KST))
+    assert ref.today_open() == 350.0

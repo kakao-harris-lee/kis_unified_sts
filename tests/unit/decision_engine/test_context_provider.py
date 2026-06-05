@@ -196,3 +196,50 @@ async def test_events_provider_exception_yields_empty_events():
     ctx = await p()
     assert ctx is not None
     assert ctx.scheduled_events == []
+
+
+# ---------------------------------------------------------------------------
+# Bug C: atr_14 == 0 (stale engine) must suppress the context
+# ---------------------------------------------------------------------------
+
+
+class _FakeEngineStaleIndicators:
+    """Engine that is warm (enough candles) but returns empty indicators.
+
+    This simulates the staleness case: get_indicators() returns {} when the
+    last tick was >180 s ago, even though is_warm() stays True.
+    """
+
+    def is_warm(self, _symbol):
+        return True
+
+    def get_last_price(self, _symbol):
+        return 352.0
+
+    def get_indicators(self, _symbol):
+        # Stale: no indicators available (atr absent)
+        return {}
+
+    def get_recent_range(self, _symbol, _minutes=15):
+        return (360.0, 340.0)
+
+
+@pytest.mark.asyncio
+async def test_returns_none_when_atr_is_zero_or_absent():
+    """Bug C regression: warm engine with stale/absent ATR must return None.
+
+    Without a valid ATR, stop-loss distances become zero (degenerate signal).
+    The provider must suppress the context rather than emit a broken one.
+    """
+    p = FuturesContextProvider(
+        engine=_FakeEngineStaleIndicators(),
+        daily_ref=_FakeDailyRef(),
+        symbol="A05",
+        macro_reader=lambda: None,
+        events_provider=lambda: [],
+        now_fn=lambda: datetime(2026, 6, 5, 9, 10, tzinfo=UTC),
+    )
+    result = await p()
+    assert (
+        result is None
+    ), "Provider must return None when ATR is 0 / absent (stale engine)"
