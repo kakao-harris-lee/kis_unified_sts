@@ -1499,6 +1499,13 @@ class TradingOrchestrator:
 
     def _init_tick_stream_publisher(self) -> None:
         """Initialize optional Redis tick mirroring for monitoring."""
+        if self._stream_consumer_feed is not None:
+            # Stream path: the market-ingest daemon owns publishing. Leave the
+            # publisher None so the reused _on_stock_tick publish (guarded by
+            # `if self._tick_stream_publisher:`) no-ops — no double-publish.
+            self._tick_stream_publisher = None
+            logger.info("Tick stream publisher skipped (stock data source = stream)")
+            return
         try:
             from services.monitoring.tick_stream_publisher import (
                 TickStreamPublisher,

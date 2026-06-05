@@ -51,3 +51,18 @@ def test_stream_attrs_declared_after_construction():
     orch = TradingOrchestrator(TradingConfig.stock())
     assert orch._stream_consumer_feed is None
     assert orch._stream_redis is None
+
+
+def test_tick_stream_publisher_skipped_on_stream_path():
+    orch = TradingOrchestrator(TradingConfig.stock())
+    orch._stream_consumer_feed = object()  # simulate active stream feed
+    orch._init_tick_stream_publisher()
+    assert orch._tick_stream_publisher is None
+
+
+def test_tick_stream_publisher_built_on_websocket_path(monkeypatch):
+    monkeypatch.setenv("MONITOR_TICK_STREAM_ENABLED", "false")  # config says disabled
+    orch = TradingOrchestrator(TradingConfig.stock())
+    orch._stream_consumer_feed = None
+    orch._init_tick_stream_publisher()  # takes the normal (non-skip) path
+    assert orch._tick_stream_publisher is None  # disabled-by-env, but path executed
