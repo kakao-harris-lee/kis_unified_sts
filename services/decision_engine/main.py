@@ -180,11 +180,11 @@ def _warmup_engine_from_parquet(
 
 async def _build_shadow_context_provider(
     redis_client: Any,
-) -> tuple[Any, Any]:
+) -> tuple[Any, Any, Any]:
     """Wire indicator engine + StreamConsumerFeed(raw_data) + FuturesContextProvider.
 
-    Returns ``(context_provider, feed)``.  The caller is responsible for
-    calling ``await feed.stop()`` on shutdown.
+    Returns ``(context_provider, feed, sync_redis)``.  The caller is responsible
+    for calling ``await feed.stop()`` and ``sync_redis.close()`` on shutdown.
     """
     import os
     from datetime import UTC, datetime
@@ -251,7 +251,7 @@ async def _build_shadow_context_provider(
         events_provider=_events_provider,
         now_fn=lambda: datetime.now(UTC),
     )
-    return provider, feed
+    return provider, feed, sync_redis
 
 
 # ---------------------------------------------------------------------------
@@ -284,8 +284,11 @@ async def _build_and_run() -> int:
     candidate_stream = _candidate_stream_for(mode)
 
     feed = None
+    sync_redis = None
     if mode == "shadow":
-        context_provider, feed = await _build_shadow_context_provider(redis_client)
+        context_provider, feed, sync_redis = await _build_shadow_context_provider(
+            redis_client
+        )
     else:
 
         async def _stub_context_provider() -> None:
@@ -312,6 +315,8 @@ async def _build_and_run() -> int:
     finally:
         if feed is not None:
             await feed.stop()
+        if sync_redis is not None:
+            sync_redis.close()
         await redis_client.aclose()
     return 0
 
