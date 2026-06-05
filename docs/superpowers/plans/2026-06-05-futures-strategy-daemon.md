@@ -110,11 +110,15 @@ If a private accessor like `_completed_candles` does not already exist, replace 
 Run: `pytest tests/unit/trading/test_indicator_15min_range.py -v`
 Expected: PASS (2 tests).
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 6: Add `get_last_price` (the provider's price source — `get_indicators` has NO price key)**
+
+Add a second accessor to `StreamingIndicatorEngine` returning the freshest close (the in-progress 1-min candle's close, falling back to the last completed candle's close, `None` if no data). Read the `CandleAccumulator` (line ~54) to use the real fields — it has the in-progress `_close` (updated every tick) and `candles` (completed). Prefer exposing a public accessor on `CandleAccumulator` (e.g. `latest_close`) over reaching into `_close`. Test (add to the same test file): after feeding ticks, `get_last_price(symbol)` returns the most recent close; `None` for an unknown symbol.
+
+- [ ] **Step 7: Commit**
 
 ```bash
 git add services/trading/indicator_engine.py tests/unit/trading/test_indicator_15min_range.py
-git commit -m "feat: StreamingIndicatorEngine.get_recent_range (15-min high/low for Setup C)"
+git commit -m "feat: StreamingIndicatorEngine.get_recent_range + get_last_price"
 ```
 
 ---
@@ -144,6 +148,10 @@ from services.decision_engine.daily_reference import FuturesDailyReference
 
 
 class _FakeStore:
+    """Honors the real store contract: ASC by datetime, returns ALL rows
+    (the real get_daily_bars LIMIT takes the head, so prev_close must not
+    rely on limit — it fetches all and tails after excluding today)."""
+
     def __init__(self, df: pd.DataFrame) -> None:
         self._df = df
 
@@ -151,12 +159,18 @@ class _FakeStore:
         return self._df
 
 
-def test_prev_close_is_last_daily_close_before_today():
+def test_prev_close_is_most_recent_close_before_today():
+    # ASC by datetime; includes today's (2026-06-05) partial bar which must be excluded
     df = pd.DataFrame(
-        {"date": ["2026-06-03", "2026-06-04"], "close": [340.0, 351.5], "open": [338.0, 349.0]}
+        {
+            "datetime": ["2026-06-03", "2026-06-04", "2026-06-05"],
+            "close": [340.0, 351.5, 999.0],
+            "open": [338.0, 349.0, 352.0],
+        }
     )
     ref = FuturesDailyReference(store=_FakeStore(df), symbol="A05")
-    assert ref.prev_close() == 351.5  # most recent daily close
+    ref.observe(price=352.0, now=datetime(2026, 6, 5, 9, 0, tzinfo=UTC))  # sets _today
+    assert ref.prev_close() == 351.5  # 06-04 close, NOT today's 999.0 nor oldest 340.0
 
 
 def test_today_open_tracks_first_observed_price_of_day():
@@ -203,12 +217,31 @@ class FuturesDailyReference:
         self._today: date | None = None
 
     def prev_close(self) -> float:
-        """Most recent daily close from parquet, or 0.0 if unavailable."""
+        """Most recent daily close STRICTLY BEFORE today, or 0.0 if unavailable.
+
+        IMPORTANT: ``ParquetMarketDataStore.get_daily_bars`` orders ``datetime``
+        ASC and ``LIMIT`` takes the HEAD — so we must NOT use ``limit`` to get
+        recent bars. Fetch the (small) daily history, drop today's in-progress
+        bar (``self._today``, set by ``observe``), and take the tail.
+        """
+        import pandas as pd
+
         try:
-            df = self._store.get_daily_bars(self._symbol, limit=2)
+            df = self._store.get_daily_bars(self._symbol)
         except Exception:
             return 0.0
         if df is None or len(df) == 0 or "close" not in df.columns:
+            return 0.0
+        # Exclude today's (partial) bar so prev_close is yesterday's close.
+        dt_col = "datetime" if "datetime" in df.columns else (
+            "date" if "date" in df.columns else None
+        )
+        if self._today is not None and dt_col is not None:
+            try:
+                df = df[pd.to_datetime(df[dt_col]).dt.date < self._today]
+            except Exception:
+                pass
+        if len(df) == 0:
             return 0.0
         try:
             return float(df["close"].iloc[-1])
@@ -405,11 +438,13 @@ class FuturesContextProvider:
         if not self._engine.is_warm(symbol):
             return None
 
-        ind = self._engine.get_indicators(symbol) or {}
-        current_price = float(ind.get("close", 0.0) or 0.0)
+        # NOTE: get_indicators() does NOT contain a price key. Use get_last_price
+        # for the freshest close (Task 1 adds this accessor); atr from get_indicators.
+        price = self._engine.get_last_price(symbol)
+        current_price = float(price) if price is not None else 0.0
         if current_price <= 0.0:
             return None
-        atr_14 = float(ind.get("atr", 0.0) or 0.0)
+        atr_14 = float((self._engine.get_indicators(symbol) or {}).get("atr", 0.0) or 0.0)
 
         now = self._now_fn()
         now_kst = now.astimezone(_KST) if now.tzinfo else now.replace(tzinfo=_KST)
