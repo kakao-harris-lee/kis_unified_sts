@@ -4385,6 +4385,31 @@ class TradingOrchestrator:
         # when tracking many symbols. Each symbol refreshes at most once per TTL.
         return await self._data_provider.get_data(symbols=symbols)
 
+    async def _start_stream_consumer_feed(self) -> None:
+        """Start the Redis stream consumer feed (M1c stream path) if active."""
+        if not self._stream_consumer_feed:
+            return
+        await self._stream_consumer_feed.start()
+        self._stream_consumer_feed.update_symbols(self.config.symbols)
+        logger.info(
+            "Stock stream-consumer feed started (%d symbols)",
+            len(self.config.symbols or []),
+        )
+
+    async def _stop_stream_consumer_feed(self) -> None:
+        """Stop the stream consumer feed and close its async redis client."""
+        if not self._stream_consumer_feed:
+            return
+        try:
+            await self._stream_consumer_feed.stop()
+        finally:
+            if self._stream_redis is not None:
+                closer = getattr(self._stream_redis, "aclose", None) or (
+                    self._stream_redis.close
+                )
+                await closer()
+                self._stream_redis = None
+
     async def _start_market_data_loop(self) -> None:
         if self._market_data_running:
             return
@@ -4431,6 +4456,8 @@ class TradingOrchestrator:
             ) as e:
                 logger.warning(f"Futures WebSocket feed start failed: {e}")
                 self._futures_price_feed = None
+
+        await self._start_stream_consumer_feed()
 
         if self._data_provider and self._data_provider_failover_enabled:
             try:
@@ -4502,6 +4529,8 @@ class TradingOrchestrator:
                 ConnectionError,
             ) as e:
                 logger.warning(f"Futures price feed stop error: {e}")
+
+        await self._stop_stream_consumer_feed()
 
         if self._universe_refresh_task:
             self._universe_refresh_task.cancel()
