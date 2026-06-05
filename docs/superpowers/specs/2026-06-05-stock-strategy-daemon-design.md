@@ -20,7 +20,7 @@ The futures strategy daemon (M2+M3, merged #414) completed the futures producer.
 | 롤아웃 | **shadow-first**, flag `STOCK_STRATEGY_DAEMON=off`(기본)\|`shadow`, systemd disabled |
 | 스키마 | **주식-native** `signal.candidate.stock.shadow` (orchestrator Signal 직렬화). 선물 11-필드 decision 스키마 미사용(주식은 진입시 stop/target 없음) |
 | 전략 범위 | 현재 활성 주식 전략 그대로 (`williams_r`, `pattern_pullback`) — self-contained(어댑터 LLM/regime 게이트 없음 → parity 무관) |
-| 유니버스 | 동적 — Redis `system:trade_targets:latest` 30s 폴 → `feed.update_symbols`, ≤40 |
+| 유니버스 | 동적 — Redis `system:daily_watchlist:latest` 30s 폴 → `feed.update_symbols`, ≤40 |
 | 프레임워크 | 재사용 `StreamConsumerFeed`(M1b) + `StreamingIndicatorEngine` + `StreamingIndicatorResolver` + `StrategyManager`. 신규: 데몬 루프 + 유니버스 루프 + 후보 직렬화기 |
 | warmup | `ParquetMarketDataStore` 1분봉 시드 (M2+M3 헬퍼 패턴 재사용) |
 
@@ -32,7 +32,7 @@ The futures strategy daemon (M2+M3, merged #414) completed the futures producer.
                                   ▼
         StreamConsumerFeed (REUSED M1b) ──on_tick──> StreamingIndicatorEngine (daemon-local)
                                                          ▲ resolver.collect_entry_indicators(symbol)
-  Redis system:trade_targets:latest ──30s poll──> universe ──feed.update_symbols(codes)──┘
+  Redis system:daily_watchlist:latest ──30s poll──> universe ──feed.update_symbols(codes)──┘
                                   │
   decision cadence (1-min close): for each symbol in universe:
      build EntryContext(indicators=resolver(symbol), market_data=latest tick,
@@ -49,7 +49,7 @@ The feed pushes ticks to the engine continuously (warm state); the daemon's deci
 | Unit | New/Reused | Responsibility |
 |---|---|---|
 | `StockStrategyDaemon` | **NEW** | own the indicator engine + feed + StrategyManager; decision-cadence loop; publish candidates |
-| universe-refresh loop | **NEW** (in the daemon) | poll `system:trade_targets:latest` (30s) → parse codes → `feed.update_symbols` |
+| universe-refresh loop | **NEW** (in the daemon) | poll `system:daily_watchlist:latest` (30s) → parse codes → `feed.update_symbols` |
 | `StockCandidate` serializer | **NEW** | orchestrator `Signal` → stock candidate `dict[str,str]` (+ `signal_id`) for XADD |
 | `StreamConsumerFeed` | **reused (M1b)** | `market:ticks` → indicator engine |
 | `StreamingIndicatorEngine` | **reused** | daemon-local per-symbol indicators |
@@ -81,7 +81,7 @@ This is a **new** stock serializer (the orchestrator `Signal` has no `to_stream_
 ## 6. Decision cadence, universe, warmth
 
 - **Cadence:** the enabled stock strategies are 1-min; the daemon evaluates on the 1-min close boundary (the same decision-cadence the orchestrator applies). The feed keeps the engine warm per-tick.
-- **Universe (dynamic):** poll `system:trade_targets:latest` every 30s; parse the screener JSON (`strategies`/codes), cap at the configured max (≤40); on change, `feed.update_symbols(codes)`. New symbols warm from live ticks (and optionally a parquet top-up).
+- **Universe (dynamic):** poll `system:daily_watchlist:latest` every 30s; parse the screener JSON (`strategies`/codes), cap at the configured max (≤40); on change, `feed.update_symbols(codes)`. New symbols warm from live ticks (and optionally a parquet top-up).
 - **Warmth:** per-symbol `engine.is_warm(symbol)` gates evaluation; a symbol not yet warm is skipped (no candidate) until it has enough candles.
 - **EntryContext per symbol:** `indicators = resolver.collect_entry_indicators(symbol)`, `market_data = latest tick dict` (from the engine/feed), `current_positions = []` (the risk_filter re-checks open positions later; the producer doesn't need them), `timestamp = now (UTC)`, `market_context = None` (stock strategies are self-contained; `williams_r`'s `market_state_filter` derives state from indicators, not external LLM).
 
@@ -99,10 +99,10 @@ The daemon loop is fail-safe per symbol: a strategy/resolver raising for one sym
 
 ## 9. Testing
 
-- **Unit — universe refresh:** parse `system:trade_targets:latest` JSON → code list (cap respected); malformed/missing → keep prior; change → `update_symbols` called.
+- **Unit — universe refresh:** parse `system:daily_watchlist:latest` JSON → code list (cap respected); malformed/missing → keep prior; change → `update_symbols` called.
 - **Unit — `StockCandidate` serializer:** orchestrator `Signal` → the stock field dict (all keys, types, `direction` from metadata, `generated_at_ms` epoch ms, `metadata_json` round-trips).
 - **Unit — EntryContext build + warm-gating:** a not-warm symbol is skipped; a warm symbol builds a context with resolved indicators and is passed to `check_entries`.
-- **Integration:** fake-redis `market:ticks` ticks for N symbols + a `system:trade_targets:latest` key → daemon warms the engine → publishes a stock candidate to `signal.candidate.stock.shadow` (a strategy fires). Reuse the futures daemon integration harness pattern.
+- **Integration:** fake-redis `market:ticks` ticks for N symbols + a `system:daily_watchlist:latest` key → daemon warms the engine → publishes a stock candidate to `signal.candidate.stock.shadow` (a strategy fires). Reuse the futures daemon integration harness pattern.
 - **Regression:** flag `off`/unset → daemon inert; orchestrator stock path + existing tests unchanged.
 - Whole `tests/` suite green; ruff/black clean.
 
@@ -126,7 +126,7 @@ The daemon loop is fail-safe per symbol: a strategy/resolver raising for one sym
 
 ## 12. Acceptance criteria
 
-- [ ] `StockStrategyDaemon` consumes `market:ticks` (reused `StreamConsumerFeed` → daemon-local engine), refreshes a dynamic universe from `system:trade_targets:latest`, and on the 1-min cadence builds an `EntryContext` per warm symbol and calls `StrategyManager.check_entries`.
+- [ ] `StockStrategyDaemon` consumes `market:ticks` (reused `StreamConsumerFeed` → daemon-local engine), refreshes a dynamic universe from `system:daily_watchlist:latest`, and on the 1-min cadence builds an `EntryContext` per warm symbol and calls `StrategyManager.check_entries`.
 - [ ] Emitted signals serialize to the stock-native schema and XADD to `signal.candidate.stock.shadow` with a fresh `signal_id`.
 - [ ] Warm-gating: not-warm symbols skipped; per-symbol failures isolated.
 - [ ] Flag `off`/unset → daemon inert; orchestrator stock path + existing tests green; systemd unit disabled.
@@ -134,7 +134,7 @@ The daemon loop is fail-safe per symbol: a strategy/resolver raising for one sym
 
 ## 13. Open questions (resolve in the plan)
 
-- Exact `system:trade_targets:latest` JSON shape + the code-extraction (reuse the orchestrator's `_load_static_watchlist`/universe-parse logic vs a small parser).
+- Exact `system:daily_watchlist:latest` JSON shape + the code-extraction (reuse the orchestrator's `_load_static_watchlist`/universe-parse logic vs a small parser).
 - The decision-cadence trigger in the daemon (a 60s timer like the futures daemon vs a candle-close signal from the engine) — and how to evaluate "1-min close" for many symbols.
 - `EntryContext.market_data` source for each symbol (the feed's `get_current_price(symbol)` cache vs the engine) and which enriched fields the enabled strategies require.
 - Whether `StrategyManager` needs the indicator engine wired (`set_indicator_engine`) for the decision-cadence gate, and how to construct it standalone (config load of enabled stock strategies).
