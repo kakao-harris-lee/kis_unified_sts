@@ -110,3 +110,110 @@ class StockRiskFilterDaemon(StreamStage):
         return True
 
     # No on_shutdown override: stock daemon has no audit-sink to flush.
+
+
+# ---------------------------------------------------------------------------
+# Flag-gated entrypoint (shadow-first, default-off)
+# ---------------------------------------------------------------------------
+
+
+def _resolve_mode() -> str:
+    import os
+
+    return os.getenv("STOCK_RISK_FILTER", "off").strip().lower()
+
+
+def _streams_for(mode: str) -> tuple[str, str]:
+    """Return ``(candidate_stream, final_stream)`` for the mode.
+
+    shadow -> (signal.candidate.stock.shadow, signal.final.stock.shadow).
+    The else branch reserves the live (unsuffixed) names for a future cutover.
+    """
+    if mode == "shadow":
+        return "signal.candidate.stock.shadow", "signal.final.stock.shadow"
+    return "signal.candidate.stock", "signal.final.stock"
+
+
+async def _build_and_run() -> int:
+    import asyncio
+    import os
+    import signal as signal_mod
+    import socket
+
+    import redis.asyncio as aioredis
+
+    redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/1")
+    redis_client = aioredis.from_url(redis_url)
+
+    mode = _resolve_mode()
+    if mode != "shadow":
+        logger.info("STOCK_RISK_FILTER=%s (off) — daemon inert, exiting", mode)
+        await redis_client.aclose()
+        return 0
+
+    from shared.risk.config import StockRiskConfig, load_stock_trading_windows
+    from shared.streaming.client import RedisClient
+
+    candidate_stream, final_stream = _streams_for(mode)
+    candidate_stream = os.environ.get("STOCK_CANDIDATE_STREAM", candidate_stream)
+    final_stream = os.environ.get("STOCK_FINAL_STREAM", final_stream)
+
+    config = StockRiskConfig.from_yaml()
+    windows = load_stock_trading_windows()
+
+    # Sync redis for the open-position provider (layer.evaluate is sync).
+    sync_redis = RedisClient.get_client()
+    positions_key = os.environ.get("STOCK_POSITIONS_KEY", "trading:stock:positions")
+
+    def _has_open_position(code: str) -> bool:
+        try:
+            return bool(sync_redis.hexists(positions_key, code))
+        except Exception:
+            return False  # fail-open
+
+    layer = RiskFilterLayer.from_config(
+        config=config,
+        trading_windows=windows,
+        has_open_position_provider=_has_open_position,
+    )
+    runtime_state = RuntimeRiskState(redis=redis_client, asset_class="stock")
+
+    worker_id = f"stock-risk-filter-{socket.gethostname()}-{os.getpid()}"
+    daemon = StockRiskFilterDaemon(
+        redis=redis_client,
+        layer=layer,
+        runtime_state=runtime_state,
+        candidate_stream=candidate_stream,
+        final_stream=final_stream,
+        consumer_group="stock_risk_filter",
+        worker_id=worker_id,
+        final_maxlen=10_000,
+        xread_block_ms=2000,
+        batch_size=10,
+    )
+
+    loop = asyncio.get_running_loop()
+    for sig in (signal_mod.SIGTERM, signal_mod.SIGINT):
+        loop.add_signal_handler(sig, lambda: asyncio.create_task(daemon.stop()))
+
+    try:
+        await daemon.run()
+    finally:
+        await redis_client.aclose()
+    return 0
+
+
+def main() -> int:
+    import asyncio
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
+    return asyncio.run(_build_and_run())
+
+
+if __name__ == "__main__":
+    import sys
+
+    sys.exit(main())
