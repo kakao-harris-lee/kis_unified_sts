@@ -858,6 +858,23 @@ class StreamingIndicatorEngine:
 
         return result
 
+    def get_recent_range(
+        self, symbol: str, minutes: int = 15
+    ) -> tuple[float, float] | None:
+        """Return (high, low) over the last ``minutes`` completed 1-min candles.
+
+        Used for Setup C's 15-minute breakout range. Returns ``None`` when the
+        symbol has no candle history yet.
+        """
+        acc = self._accumulators.get(symbol)
+        if acc is None:
+            return None
+        candles = list(acc.candles)
+        if not candles:
+            return None
+        window = candles[-minutes:]
+        return (max(c.high for c in window), min(c.low for c in window))
+
     def get_indicator_features(self, symbol: str) -> dict[str, float]:
         """Compute all 25 indicator features from stored candle history (pure Python).
 
