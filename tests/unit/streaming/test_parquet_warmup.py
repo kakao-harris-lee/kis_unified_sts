@@ -1,4 +1,4 @@
-"""Parquet warmup seeds the engine so it is warm without live ticks."""
+"""Shared parquet warmup helper seeds the engine correctly."""
 
 from __future__ import annotations
 
@@ -6,9 +6,7 @@ import pandas as pd
 import pytest
 
 from services.trading.indicator_engine import StreamingIndicatorEngine
-from shared.streaming.parquet_warmup import (
-    warmup_engine_from_parquet as _warmup_engine_from_parquet,
-)
+from shared.streaming.parquet_warmup import warmup_engine_from_parquet
 
 
 class _Store:
@@ -20,10 +18,10 @@ class _Store:
         return pd.DataFrame(rows)
 
 
-def test_warmup_seeds_candles_into_engine():
+def test_seeds_candles_into_engine():
+    """30 seeded 1-min bars >= bb_period(20) → engine is warm."""
     eng = StreamingIndicatorEngine()
-    _warmup_engine_from_parquet(eng, _Store(), "A05")
-    # 30 seeded 1-min bars >= bb_period(20) -> warm
+    warmup_engine_from_parquet(eng, _Store(), "A05")
     assert eng.is_warm("A05") is True
 
 
@@ -42,7 +40,7 @@ class _StoreTailCheck:
         self._total_rows = total_rows
 
     def get_minute_bars(self, symbol, start=None, end=None, limit=None):  # noqa: ARG002
-        lookback = 240  # default in _warmup_engine_from_parquet
+        lookback = 240  # default in warmup_engine_from_parquet
         bad_count = max(0, self._total_rows - lookback)
         rows = [
             {
@@ -66,8 +64,8 @@ class _StoreTailCheck:
         return pd.DataFrame(rows)
 
 
-def test_warmup_uses_most_recent_bars_not_oldest():
-    """Bug A regression: warmup must tail the most recent bars.
+def test_uses_most_recent_bars_not_oldest():
+    """Regression: warmup must tail the most recent bars.
 
     The store returns 300 bars in ASC order: the first 60 have close=555.0
     (old/bad), the last 240 have close=350.0 (recent/good).  After warmup the
@@ -75,7 +73,7 @@ def test_warmup_uses_most_recent_bars_not_oldest():
     """
     store = _StoreTailCheck(total_rows=300)
     eng = StreamingIndicatorEngine()
-    _warmup_engine_from_parquet(eng, store, "A05")
+    warmup_engine_from_parquet(eng, store, "A05")
 
     assert eng.is_warm("A05"), "Engine should be warm after seeding ≥20 candles"
     last_price = eng.get_last_price("A05")
@@ -85,10 +83,10 @@ def test_warmup_uses_most_recent_bars_not_oldest():
     )
 
 
-def test_warmup_with_fewer_bars_than_lookback():
+def test_with_fewer_bars_than_lookback():
     """When fewer bars exist than lookback_minutes, all bars are used (no crash)."""
     # Store returns only 25 bars (< 240 lookback) — engine should still warm.
     store = _StoreTailCheck(total_rows=25)
     eng = StreamingIndicatorEngine()
-    _warmup_engine_from_parquet(eng, store, "A05")
+    warmup_engine_from_parquet(eng, store, "A05")
     assert eng.is_warm("A05") is True

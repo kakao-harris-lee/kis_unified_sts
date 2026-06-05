@@ -16,8 +16,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
+
+from shared.streaming.parquet_warmup import warmup_engine_from_parquet
 
 logger = logging.getLogger(__name__)
 
@@ -35,54 +37,19 @@ def _resolve_mode() -> str:
 def _candidate_stream_for(mode: str) -> str:
     """Map a mode string to the Redis stream name for signal candidates.
 
-    shadow → isolated shadow stream (not consumed by risk_filter); any other
-    value (off) → the real candidate stream.
+    shadow → isolated shadow stream (not consumed by risk_filter).
+
+    Note: the ``else`` branch returns the live candidate stream.  The current
+    ``off`` path never reaches this function (``_build_and_run`` returns early
+    before calling it), so this return value is reserved for a future live
+    cutover — the point at which ``STOCK_STRATEGY_DAEMON=live`` (or similar)
+    will route signals into the real risk_filter pipeline.
     """
     return (
         "signal.candidate.stock.shadow"
         if mode == "shadow"
         else "signal.candidate.stock"
     )
-
-
-# ---------------------------------------------------------------------------
-# Parquet warmup helper
-# ---------------------------------------------------------------------------
-
-
-def _warmup_engine_from_parquet(
-    engine: Any, store: Any, symbol: str, lookback_minutes: int = 240
-) -> None:
-    """Seed the engine's 1-min candles from parquet so it is warm at startup.
-
-    Best-effort: on any read error the engine simply warms from live ticks.
-
-    Mirrors services/decision_engine/main.py with asset_class="stock".
-    ParquetMarketDataStore orders ASC; a bare limit=N would return the OLDEST N
-    bars, so we fetch with a recency bound then take the tail (fixed in #414).
-    """
-    start_bound = (datetime.now(UTC) - timedelta(days=5)).date().isoformat()
-    try:
-        df = store.get_minute_bars(symbol, start=start_bound)
-    except Exception:
-        logger.warning(
-            "parquet warmup read failed for %s; warming from live ticks", symbol
-        )
-        return
-    if df is None or len(df) == 0:
-        return
-    df = df.iloc[-lookback_minutes:]
-    candles = [
-        {
-            "open": float(r["open"]),
-            "high": float(r["high"]),
-            "low": float(r["low"]),
-            "close": float(r["close"]),
-            "volume": float(r.get("volume", 0) or 0),
-        }
-        for _, r in df.iterrows()
-    ]
-    engine.seed_candles(symbol, candles)
 
 
 # ---------------------------------------------------------------------------
@@ -117,6 +84,8 @@ async def _build_and_run() -> int:
     from services.trading.indicator_engine import StreamingIndicatorEngine
     from services.trading.strategy_manager import StrategyManager
     from services.trading.stream_consumer_feed import StreamConsumerFeed
+    from shared.config.loader import ConfigLoader
+    from shared.indicators.contracts import IndicatorContract
     from shared.indicators.resolver import StreamingIndicatorResolver
     from shared.storage.config import StorageConfig
     from shared.storage.market_data_store import ParquetMarketDataStore
@@ -124,19 +93,51 @@ async def _build_and_run() -> int:
 
     candidate_stream = _candidate_stream_for(mode)
 
-    engine = StreamingIndicatorEngine()
+    # Build StrategyManager FIRST (no engine arg) so we can read
+    # required_indicators to compute the correct MTF warmth gate.
+    manager = StrategyManager(asset_class="stock")
+
+    # Read MTF / staleness config from streaming.yaml, mirroring
+    # TradingOrchestrator._init_indicator_engine.
+    try:
+        _ie_cfg = ConfigLoader.load("streaming.yaml").get("indicator_engine", {})
+        staleness_seconds = float(_ie_cfg.get("staleness_seconds", 180.0))
+        mtf_timeframes = _ie_cfg.get("mtf_timeframes", None)
+        mtf_maxlen = int(_ie_cfg.get("mtf_maxlen", 250))
+    except Exception:
+        staleness_seconds = 180.0
+        mtf_timeframes = None
+        mtf_maxlen = 250
+
+    # Warmth gate must reflect what the *strategy* needs, not the broad
+    # streaming.yaml accumulation set — mirrors orchestrator logic.
+    try:
+        contract = IndicatorContract.from_required_keys(
+            tuple(manager.required_indicators)
+        )
+        mtf_warmth_timeframe: int | None = contract.warmth_timeframe
+    except Exception:
+        mtf_warmth_timeframe = None
+
+    engine = StreamingIndicatorEngine(
+        mtf_timeframes=mtf_timeframes,
+        mtf_maxlen=mtf_maxlen,
+        staleness_seconds=staleness_seconds,
+        mtf_warmth_timeframe=mtf_warmth_timeframe,
+    )
+
+    # Wire engine into manager (single call — no double-set).
+    manager.set_indicator_engine(engine)
+
+    resolver = StreamingIndicatorResolver(
+        engine=engine,
+        required_keys=tuple(manager.required_indicators),
+    )
 
     # Cold-start warmup from parquet (best-effort, stock asset class).
     store = ParquetMarketDataStore(
         StorageConfig.load_or_default().market_data.parquet.root,
         asset_class="stock",
-    )
-
-    manager = StrategyManager(asset_class="stock", indicator_engine=engine)
-    manager.set_indicator_engine(engine)
-    resolver = StreamingIndicatorResolver(
-        engine=engine,
-        required_keys=tuple(manager.required_indicators),
     )
 
     tick_stream = os.environ.get("STOCK_TICK_STREAM", "market:ticks")
@@ -165,7 +166,7 @@ async def _build_and_run() -> int:
             max_symbols=int(os.environ.get("STOCK_MAX_SYMBOLS", "40")),
         )
         for sym in initial_codes:
-            _warmup_engine_from_parquet(engine, store, sym)
+            warmup_engine_from_parquet(engine, store, sym)
 
     daemon = StockStrategyDaemon(
         redis=redis_client,
