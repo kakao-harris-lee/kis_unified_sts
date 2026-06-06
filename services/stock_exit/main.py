@@ -91,8 +91,10 @@ async def _build_and_run() -> int:
     for sig in (signal_mod.SIGTERM, signal_mod.SIGINT):
         loop.add_signal_handler(sig, lambda: asyncio.create_task(daemon.stop()))
 
-    worker = f"stock-exit-{socket.gethostname()}-{os.getpid()}"
-    logger.info("stock exit daemon starting worker=%s interval=%.1fs", worker, interval)
+    worker_id = f"stock-exit-{socket.gethostname()}-{os.getpid()}"
+    logger.info(
+        "stock exit daemon starting worker=%s interval=%.1fs", worker_id, interval
+    )
     try:
         await daemon.run()
     finally:
