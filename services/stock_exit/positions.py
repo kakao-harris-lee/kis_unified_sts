@@ -38,7 +38,12 @@ def parse_position_record(value: Any) -> dict[str, Any] | None:
 
 
 def position_from_record(rec: dict[str, Any], *, fee_rate: float) -> Position:
-    """Build a LONG `Position` from an M4-O record (+ persisted high/low if present)."""
+    """Build a LONG `Position` from an M4-O record (+ persisted high/low if present).
+
+    Raises:
+        KeyError/ValueError if required fields are absent or non-numeric; callers
+        (the daemon cycle) catch these per-record.
+    """
     opened_ms = int(rec["opened_at_ms"])
     entry_time = datetime.fromtimestamp(opened_ms / 1000, tz=UTC)
     state = _STATE_BY_VALUE.get(
@@ -64,7 +69,11 @@ def position_from_record(rec: dict[str, Any], *, fee_rate: float) -> Position:
 
 
 def record_with_high_water(rec: dict[str, Any], pos: Position) -> str:
-    """Re-serialize the record with the position's running extremes (restart recovery)."""
+    """Re-serialize the record with the position's running extremes (restart recovery).
+
+    Returns:
+        A JSON string ready for ``redis.hset`` back into the positions hash.
+    """
     return json.dumps(
         {**rec, "high_water": pos.highest_price, "low_water": pos.lowest_price}
     )
