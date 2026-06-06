@@ -66,11 +66,11 @@ def _decode(value: Any) -> str:
 
 
 def _group_names(groups: list[Any]) -> set[str]:
-    """Extract group names from xinfo_groups output (bytes-or-str dict keys)."""
+    """Extract group names from xinfo_groups output (str-keyed dicts, bytes-or-str values)."""
     names: set[str] = set()
     for g in groups:
         if isinstance(g, dict):
-            raw = g.get("name", g.get(b"name"))
+            raw = g.get("name")
             if raw is not None:
                 names.add(_decode(raw))
     return names
@@ -79,6 +79,7 @@ def _group_names(groups: list[Any]) -> set[str]:
 async def _check_group(
     redis: Any, stream: str, group: str, *, critical: bool
 ) -> CheckResult:
+    """Check that ``group`` exists as a consumer group on ``stream``."""
     try:
         groups = await redis.xinfo_groups(stream)
     except Exception as exc:
@@ -98,6 +99,7 @@ async def _check_group(
 
 
 async def check_streams(redis: Any, mode: str) -> list[CheckResult]:
+    """Check core (critical) and observability (warn) consumer groups are wired."""
     sfx = _stream_suffix(mode)
     results: list[CheckResult] = []
     for base, group in _CORE_GROUPS:
@@ -108,6 +110,7 @@ async def check_streams(redis: Any, mode: str) -> list[CheckResult]:
 
 
 async def check_risk_freshness(redis: Any, now_kst: datetime) -> CheckResult:
+    """Check the risk:state:stock daily counter was reset today (KST)."""
     today = now_kst.date().isoformat()
     last = await redis.hget("risk:state:stock:meta", "last_reset_date_kst")
     last_str = _decode(last) if last is not None else None
@@ -121,6 +124,7 @@ async def check_risk_freshness(redis: Any, now_kst: datetime) -> CheckResult:
 
 
 async def check_market_context(redis: Any, mode: str) -> CheckResult:
+    """Check the market_context key is present and looks valid (warn-level)."""
     key = f"trading:stock:market_context{_key_suffix(mode)}"
     raw = await redis.get(key)
     ok = raw is not None and b"generated_at" in (
@@ -135,6 +139,7 @@ async def check_market_context(redis: Any, mode: str) -> CheckResult:
 
 
 async def check_positions(redis: Any, mode: str) -> CheckResult:
+    """Surface the open-positions hash count (warn-level, never fails)."""
     key = f"trading:stock:positions{_key_suffix(mode)}"
     try:
         count = await redis.hlen(key)
@@ -159,25 +164,26 @@ async def run_verify(
         now_kst = datetime.now(_KST)
 
     owns_redis = redis_client is None
-    if redis_client is None:
+    _client: Any = redis_client
+    if _client is None:
         import redis.asyncio as aioredis
 
         redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/1")
-        redis_client = aioredis.from_url(redis_url)
+        _client = aioredis.from_url(redis_url)
 
     try:
         results: list[CheckResult] = []
-        results.extend(await check_streams(redis_client, mode))
-        results.append(await check_risk_freshness(redis_client, now_kst))
-        results.append(await check_market_context(redis_client, mode))
-        results.append(await check_positions(redis_client, mode))
+        results.extend(await check_streams(_client, mode))
+        results.append(await check_risk_freshness(_client, now_kst))
+        results.append(await check_market_context(_client, mode))
+        results.append(await check_positions(_client, mode))
     finally:
         if owns_redis:
-            await redis_client.aclose()  # type: ignore[union-attr]
+            await _client.aclose()
 
     critical_failed = False
     for r in results:
-        level = "OK " if r.ok else ("FAIL" if r.critical else "WARN")
+        level = "OK  " if r.ok else ("FAIL" if r.critical else "WARN")
         logger.info("[%s] %s — %s", level, r.name, r.detail)
         if r.critical and not r.ok:
             critical_failed = True
@@ -188,6 +194,7 @@ async def run_verify(
 
 
 def main() -> int:
+    """CLI entry point: parse --mode and run the verification, returning its rc."""
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s"
     )

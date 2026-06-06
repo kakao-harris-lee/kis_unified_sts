@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 from zoneinfo import ZoneInfo
 
 import fakeredis.aioredis
@@ -18,7 +19,7 @@ def _now() -> datetime:
 
 
 async def _setup_healthy(
-    redis, *, stream_sfx: str, key_sfx: str, reset_date: str
+    redis: Any, *, stream_sfx: str, key_sfx: str, reset_date: str
 ) -> None:
     # the consumer groups a healthy pipeline has on each (suffixed) stream
     for stream, group in (
@@ -92,5 +93,36 @@ async def test_verify_missing_market_context_is_warn_not_fail() -> None:
         redis, stream_sfx=".shadow", key_sfx=":shadow", reset_date="2026-06-08"
     )
     await redis.delete("trading:stock:market_context:shadow")
+    rc = await m.run_verify(mode="shadow", now_kst=_now(), redis_client=redis)
+    assert rc == 0
+
+
+@pytest.mark.asyncio
+async def test_verify_unknown_mode_returns_1() -> None:
+    redis = fakeredis.aioredis.FakeRedis(db=1)
+    rc = await m.run_verify(mode="unknown", now_kst=_now(), redis_client=redis)
+    assert rc == 1
+
+
+@pytest.mark.asyncio
+async def test_verify_both_core_groups_missing_returns_1() -> None:
+    redis = fakeredis.aioredis.FakeRedis(db=1)
+    await _setup_healthy(
+        redis, stream_sfx=".shadow", key_sfx=":shadow", reset_date="2026-06-08"
+    )
+    await redis.xgroup_destroy("signal.candidate.stock.shadow", "stock_risk_filter")
+    await redis.xgroup_destroy("signal.final.stock.shadow", "stock_order_router")
+    rc = await m.run_verify(mode="shadow", now_kst=_now(), redis_client=redis)
+    assert rc == 1
+
+
+@pytest.mark.asyncio
+async def test_verify_positions_count_surfaced() -> None:
+    redis = fakeredis.aioredis.FakeRedis(db=1)
+    await _setup_healthy(
+        redis, stream_sfx=".shadow", key_sfx=":shadow", reset_date="2026-06-08"
+    )
+    await redis.hset("trading:stock:positions:shadow", "005930", '{"qty": 10}')
+    await redis.hset("trading:stock:positions:shadow", "000660", '{"qty": 5}')
     rc = await m.run_verify(mode="shadow", now_kst=_now(), redis_client=redis)
     assert rc == 0
