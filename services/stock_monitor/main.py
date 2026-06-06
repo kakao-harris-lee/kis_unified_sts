@@ -2,6 +2,9 @@
 
 off (default): inert. shadow: publish to trading:stock:*:shadow + suppress
 Telegram-to-log. live (M5d): live keys + real Telegram.
+
+Consumes the daemon streams ``order.fill.stock[.shadow]`` and
+``signal.final.stock[.shadow]`` (suffix in shadow mode).
 """
 
 from __future__ import annotations
@@ -15,10 +18,12 @@ logger = logging.getLogger(__name__)
 
 
 def _resolve_mode() -> str:
+    """Return the daemon mode from STOCK_MONITOR_DAEMON (default 'off')."""
     return os.getenv("STOCK_MONITOR_DAEMON", "off").strip().lower()
 
 
 def _streams_for(mode: str) -> tuple[str, str]:
+    """Return (fill_stream, signal_stream) for the mode (shadow -> suffixed, else live)."""
     if mode == "shadow":
         return "order.fill.stock.shadow", "signal.final.stock.shadow"
     return "order.fill.stock", "signal.final.stock"
@@ -80,6 +85,7 @@ async def _build_and_run() -> int:
     feed = StreamConsumerFeed(redis=redis_client, stream=tick_stream)
     publisher = TradingStatePublisher(asset_class="stock")
 
+    worker_id = f"stock-monitor-{socket.gethostname()}-{os.getpid()}"
     daemon = StockMonitorDaemon(
         redis=redis_client,
         feed=feed,
@@ -89,7 +95,7 @@ async def _build_and_run() -> int:
         fill_stream=fill_stream,
         signal_stream=signal_stream,
         consumer_group="stock_monitor",
-        worker_id=f"stock-monitor-{socket.gethostname()}-{os.getpid()}",
+        worker_id=worker_id,
         fee_rate=fee_rate,
         status_interval=status_interval,
         signal_meta_max=int(os.environ.get("STOCK_MONITOR_SIGNAL_META_MAX", "1000")),
@@ -100,7 +106,8 @@ async def _build_and_run() -> int:
         loop.add_signal_handler(sig, lambda: asyncio.create_task(daemon.stop()))
 
     logger.info(
-        "stock monitor starting mode=%s suffix=%s",
+        "stock monitor starting worker=%s mode=%s suffix=%s",
+        worker_id,
         mode,
         os.environ.get("TRADING_STATE_KEY_SUFFIX", ""),
     )
