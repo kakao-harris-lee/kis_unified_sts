@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -39,7 +40,7 @@ class StockExitDaemon:
         runtime_state: Any,
         positions_key: str,
         interval_seconds: float,
-        now_fn: Any = lambda: datetime.now(UTC),
+        now_fn: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self.redis = redis
         self.feed = feed
@@ -110,6 +111,8 @@ class StockExitDaemon:
         signals = await self.exit_strategy.scan_positions(
             priced_positions, market_data, market_state=None
         )
+        # Keyed over ALL positions, so the ``pos is None`` guard in
+        # ``_execute_exit`` is defence-in-depth (sig.code always ∈ priced ⊆ positions).
         pos_by_code = {p.code: p for p in positions}
         for sig in signals:
             await self._execute_exit(sig, pos_by_code.get(sig.code))
@@ -117,7 +120,7 @@ class StockExitDaemon:
     async def _execute_exit(self, sig: Any, pos: Any) -> None:
         if pos is None:
             return
-        qty = int(sig.quantity) if getattr(sig, "quantity", 0) else pos.quantity
+        qty = int(sig.quantity) if sig.quantity else pos.quantity
         current = (
             float(sig.current_price) if sig.current_price > 0 else pos.current_price
         )
@@ -140,6 +143,9 @@ class StockExitDaemon:
 
         filled = float(order.fill_price or current)
         gross = (filled - pos.entry_price) * qty
+        # Position.fee_rate is the round-trip rate (0.003), separate from
+        # VirtualBroker's one-way commission accounting — no double count
+        # (cross-process).
         round_trip_fee = (pos.entry_price + filled) * qty * (pos.fee_rate / 2)
         pnl = gross - round_trip_fee
 
@@ -152,7 +158,7 @@ class StockExitDaemon:
             await self.runtime_state.record_loss()
 
         now_ms = int(self.now_fn().timestamp() * 1000)
-        reason = getattr(sig.reason, "value", str(sig.reason))
+        reason = sig.reason.value
         try:
             await self.fill_logger.log_fill(
                 signal_id=pos.id,
