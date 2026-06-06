@@ -38,7 +38,6 @@ from .backfill import (
     get_db_client,
     ensure_database,
     load_futures_minute_from_parquet,
-    load_futures_minute_from_clickhouse,
 )
 from .calendar import (
     is_trading_day,
@@ -64,7 +63,6 @@ from .stock import (
     get_stock_db_client,
     ensure_stock_database,
     load_stock_minute_from_parquet,
-    load_stock_minute_from_clickhouse,
 )
 
 __all__ = [
@@ -80,7 +78,6 @@ __all__ = [
     "get_db_client",
     "ensure_database",
     "load_futures_minute_from_parquet",
-    "load_futures_minute_from_clickhouse",
     # Stock backfill functions
     "STOCK_UNIVERSE",
     "collect_stock_minute_today",
@@ -90,7 +87,6 @@ __all__ = [
     "get_stock_db_client",
     "ensure_stock_database",
     "load_stock_minute_from_parquet",
-    "load_stock_minute_from_clickhouse",
     # Calendar functions
     "is_trading_day",
     "is_after_market_close",

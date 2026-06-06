@@ -81,7 +81,7 @@ cat .auto-claude/specs/041-websocket-failover-with-rest-fallback/TEST_CHECKLIST.
 
 - ✅ Virtual environment activated
 - ✅ Redis running (DB 1)
-- ✅ ClickHouse running (optional, for historical data)
+- ✅ Parquet market-data fixtures available (optional, for historical warmup)
 - ✅ Telegram bot configured
 - ✅ KIS API credentials configured
 - ✅ Failover enabled in `config/streaming.yaml`

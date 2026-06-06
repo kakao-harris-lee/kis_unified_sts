@@ -689,7 +689,7 @@ All 7 service configs now use ServiceConfigBase:
 | `TickStreamPublisherConfig` | `services/monitoring/tick_stream_publisher.py` | 12 | `from_env()` (multi-prefix) |
 | `LLMConfig` | `shared/llm/config.py` | 100+ | `from_yaml()` + `from_env()` (provider-aware) |
 | `ScreenerConfig` | `services/screener.py` | 23 | `from_env()` (non-prefixed vars) |
-| `ClickHouseConfig` | `shared/db/config.py` | 8 | `from_env()` (port logic) |
+| `StorageConfig` | `shared/storage/config.py` | runtime + market data | `load_or_default()` + env overrides |
 
 **Boilerplate Eliminated:** ~385 lines of duplicated code removed
 

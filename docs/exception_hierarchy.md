@@ -25,8 +25,7 @@ TradingSystemError (base)
 │   └── KISAuthenticationError
 │
 ├── InfrastructureError
-│   ├── RedisUnavailableError
-│   └── ClickHouseQueryError
+│   └── RedisUnavailableError
 │
 ├── ConfigurationError
 │   ├── InvalidConfigError
@@ -240,7 +239,7 @@ raise KISAuthenticationError(
 
 ### 5. InfrastructureError
 
-**Purpose:** Infrastructure service failures (Redis, ClickHouse, databases).
+**Purpose:** Infrastructure service failures (Redis, storage, databases).
 
 **Characteristics:**
 - **Service availability issues** - May be transient
@@ -249,7 +248,7 @@ raise KISAuthenticationError(
 
 **When to use:**
 - Redis connection/operation errors
-- ClickHouse query failures
+- SQLite/Parquet/DuckDB storage failures
 - Database connection errors
 - Message queue errors
 - Disk I/O failures
@@ -281,17 +280,6 @@ raise RedisUnavailableError(
     operation="xadd",
     key="market_ticks",
     details="Connection refused"
-)
-```
-
-**ClickHouseQueryError**
-```python
-# Attributes: query, database, table, error_code
-raise ClickHouseQueryError(
-    query="SELECT * FROM ohlcv WHERE ...",
-    database="market",
-    table="ohlcv_1m",
-    error_code=60
 )
 ```
 
@@ -445,7 +433,6 @@ All specific exception classes include structured attributes for better debuggin
 | `KISRateLimitError` | `endpoint`, `retry_after`, `message` | Rate limit details and retry timing |
 | `KISAuthenticationError` | `reason`, `account` | Auth failure reason and account |
 | `RedisUnavailableError` | `operation`, `key`, `details` | Redis operation and error details |
-| `ClickHouseQueryError` | `query`, `database`, `table`, `error_code` | Query context and error code |
 | `InvalidConfigError` | `config_key`, `value`, `reason` | Invalid config and reason |
 | `MissingConfigError` | `config_key`, `config_file` | Missing config location |
 | `InsufficientBalanceError` | `required`, `available`, `symbol` | Balance requirement details |
@@ -626,7 +613,7 @@ Is it a configuration problem?
          └─ No → Is it an infrastructure service?
             ├─ Yes → InfrastructureError
             │  ├─ Redis → RedisUnavailableError
-            │  └─ ClickHouse → ClickHouseQueryError
+            │  └─ Storage/database → InfrastructureError
             │
             └─ No → Is it a business rule violation?
                ├─ Yes → BusinessLogicError

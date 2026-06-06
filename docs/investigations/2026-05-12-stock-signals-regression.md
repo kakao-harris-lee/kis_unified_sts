@@ -69,7 +69,7 @@ Validation in PR #159 watched `kospi.rl_trades` (futures) only — `market.stock
 
 ### H1 — `is_warm` check failing for all symbols
 
-`check_symbol` in `services/trading/orchestrator.py` early-returns if `not self._indicator_engine.is_warm(symbol)`. `is_warm` requires `≥ bb_period` (20) candles. `_prewarm_symbols` calls `_fetch_candles_from_clickhouse(symbol, limit=120)` and `get_minute_bars(symbol, count=120)` — **uniform 120-candle seed**, no major/minor distinction. (Earlier write-up claimed a 120/26 split — that was wrong; the 26 figure came from MACD slow-EMA, unrelated.)
+`check_symbol` in `services/trading/orchestrator.py` early-returns if `not self._indicator_engine.is_warm(symbol)`. `is_warm` requires `≥ bb_period` (20) candles. The current prewarm path reads recent bars from Parquet market data when available, then can fall back to `get_minute_bars(symbol, count=120)` — **uniform 120-candle seed**, no major/minor distinction. (Earlier write-up claimed a 120/26 split — that was wrong; the 26 figure came from MACD slow-EMA, unrelated.)
 
 So `is_warm` should be true for all pre-warmed symbols. If H0 turns out wrong, the next thing to verify is whether on-tick is actually appending candles since 5/6 (regardless of pre-warm). A symbol that pre-warmed 120 but received no on-tick updates would still be `is_warm=True` until the candle accumulator decays.
 

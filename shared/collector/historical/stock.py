@@ -29,7 +29,6 @@ from typing import List, Tuple, Dict, Any, Optional
 import httpx
 
 from shared.config.secrets import SecretsManager
-from .calendar import get_trading_days_range, is_after_market_close, is_trading_day
 from .stock_universe import STOCK_UNIVERSE
 
 logger = logging.getLogger(__name__)
@@ -231,10 +230,8 @@ def _get_semaphore() -> asyncio.Semaphore:
 
 
 def get_stock_db_client() -> Any:
-    """Legacy DB client entrypoint removed with ClickHouse support."""
-    raise RuntimeError(
-        "ClickHouse has been removed; use Parquet stock-backfill commands"
-    )
+    """Legacy DB client entrypoint removed; use Parquet stock-backfill commands."""
+    raise RuntimeError("Legacy DB sink removed; use Parquet stock-backfill commands")
 
 
 def ensure_stock_database() -> None:
@@ -604,47 +601,13 @@ async def collect_stock_batch(
 
 
 async def collect_stock_minute_today(verbose: bool = True) -> int:
-    """
-    Collect today's stock minute data (run after market close).
-    """
-    if not is_after_market_close():
-        if verbose:
-            print("Market is still open. Please run after 15:45 KST.")
-        return 0
+    """Collect today's stock minute data into Parquet."""
+    from shared.collector.historical.parquet_backfill import (
+        collect_today_stock_minute_parquet,
+    )
 
-    today = date.today()
-    if not is_trading_day(today):
-        if verbose:
-            print("Today is not a trading day.")
-        return 0
-
-    if verbose:
-        print(f"Collecting stock minute data for {today}")
-        print(f"Universe: {len(STOCK_UNIVERSE)} stocks")
-
-    ensure_stock_database()
-    db_client = get_stock_db_client()
-
-    tasks = [(stock["code"], today) for stock in STOCK_UNIVERSE]
-
-    total_rows = 0
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        # Process in batches of 10
-        batch_size = 10
-        for i in range(0, len(tasks), batch_size):
-            batch = tasks[i : i + batch_size]
-            if verbose:
-                codes = [t[0] for t in batch]
-                print(f"Batch {i // batch_size + 1}: {codes}")
-            rows = await collect_stock_batch(client, db_client, batch)
-            total_rows += rows
-
-    db_client.close()
-
-    if verbose:
-        print(f"Total: {total_rows} rows collected")
-
-    return total_rows
+    result = await collect_today_stock_minute_parquet(verbose=verbose)
+    return result.rows
 
 
 async def backfill_stock_minute(
@@ -653,91 +616,18 @@ async def backfill_stock_minute(
     verbose: bool = True,
     resume: bool = True,
 ) -> int:
-    """
-    Backfill stock minute data for specified days.
+    """Backfill stock minute data into Parquet."""
+    from shared.collector.historical.parquet_backfill import (
+        backfill_stock_minute_parquet,
+    )
 
-    Args:
-        days: Number of days to backfill (max 180)
-        codes: Specific codes to backfill (None = all universe)
-        verbose: Print progress
-        resume: Skip already-collected days (for long backfills)
-
-    Returns:
-        Total rows collected
-    """
-    days = min(days, 180)
-
-    end_date = date.today()
-    start_date = end_date - timedelta(days=days)
-    trading_days = get_trading_days_range(start_date, end_date)
-    if not trading_days:
-        if verbose:
-            print("No trading days in range")
-        return 0
-
-    # Select codes
-    if codes:
-        selected_codes = list(dict.fromkeys(codes))
-    else:
-        selected_codes = [s["code"] for s in STOCK_UNIVERSE]
-
-    # Resume: load state and skip completed days
-    state = load_collection_state() if resume else {"completed_days": {}}
-    completed = state.get("completed_days", {})
-    codes_key = ",".join(sorted(selected_codes))
-
-    if resume:
-        original_count = len(trading_days)
-        trading_days = [
-            d for d in trading_days if f"{d.isoformat()}:{codes_key}" not in completed
-        ]
-        skipped = original_count - len(trading_days)
-        if skipped > 0 and verbose:
-            print(f"Resuming: skipping {skipped} already-collected days")
-
-    if not trading_days:
-        if verbose:
-            print("All days already collected (use --no-resume to force re-collect)")
-        return 0
-
-    if verbose:
-        print("Stock Minute Backfill")
-        print(f"Trading days: {len(trading_days)}")
-        print(f"Date range: {trading_days[0]} ~ {trading_days[-1]}")
-        print(f"Stocks: {len(selected_codes)}")
-
-    ensure_stock_database()
-    db_client = get_stock_db_client()
-
-    total_rows = 0
-
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        for day_idx, day in enumerate(reversed(trading_days), start=1):
-            tasks = [(code, day) for code in selected_codes]
-
-            if verbose:
-                print(f"{day_idx}/{len(trading_days)} {day} stocks={len(tasks)}")
-
-            rows = await collect_stock_batch(client, db_client, tasks)
-            total_rows += rows
-
-            # Mark day as completed and save state
-            if resume and rows > 0:
-                completed[f"{day.isoformat()}:{codes_key}"] = True
-                state["completed_days"] = completed
-                state["last_run"] = datetime.now().isoformat()
-                save_collection_state(state)
-
-            # Throttle between days for long backfills
-            if len(trading_days) > 30:
-                await asyncio.sleep(1.0)
-
-    db_client.close()
-
-    if verbose:
-        print(f"Backfill complete. Total rows: {total_rows}")
-
-    return total_rows
+    result = await backfill_stock_minute_parquet(
+        days=days,
+        codes=codes,
+        resume=resume,
+        verbose=verbose,
+    )
+    return result.rows
 
 
 def get_stock_codes_from_db(days: Optional[int] = None) -> List[str]:
@@ -794,9 +684,6 @@ def load_stock_minute_from_parquet(
     return df
 
 
-load_stock_minute_from_clickhouse = load_stock_minute_from_parquet
-
-
 # =============================================================================
 # Exports
 # =============================================================================
@@ -810,5 +697,4 @@ __all__ = [
     "get_stock_db_client",
     "ensure_stock_database",
     "load_stock_minute_from_parquet",
-    "load_stock_minute_from_clickhouse",
 ]

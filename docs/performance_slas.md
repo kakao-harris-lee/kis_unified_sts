@@ -1,7 +1,7 @@
 # Performance Service Level Agreements (SLAs)
 
 **Version:** 1.0
-**Last Updated:** 2026-03-08
+**Last Updated:** 2026-06-06
 **Status:** Active
 
 ---
@@ -57,17 +57,20 @@ Prometheus Alerts:
 
 ---
 
-### 2. ClickHouse Query Performance
+### 2. Parquet/DuckDB Market Data Performance
 
-**Purpose:** Historical market data retrieval for indicator warmup, backtesting, and analysis.
+**Purpose:** Historical market data retrieval for indicator warmup, backtesting,
+research, and strategy validation. ClickHouse is retired from the active stack;
+SLA coverage applies to Parquet files queried through `ParquetMarketDataStore`
+and DuckDB.
 
 #### Performance Targets
 
 | Metric | Baseline | Warning Threshold | Critical Threshold | Unit |
 |--------|----------|-------------------|-------------------|------|
-| 1-Day Query p95 | < 500 | 600 | 750 | ms |
-| 30-Day Query p95 | < 1000 | 1200 | 1500 | ms |
-| 100-Day Query p95 | TBD | Baseline × 1.2 | Baseline × 1.5 | ms |
+| 1-Day Parquet Query p95 | < 500 | 600 | 750 | ms |
+| 30-Day Parquet Query p95 | < 1000 | 1200 | 1500 | ms |
+| 100-Day Parquet Query p95 | TBD | Baseline × 1.2 | Baseline × 1.5 | ms |
 | Concurrent Queries (5 workers) | TBD | Baseline × 0.8 | Baseline × 0.5 | qps |
 | Concurrent Queries (20 workers) | TBD | Baseline × 0.8 | Baseline × 0.5 | qps |
 | Query Latency p50 | TBD | Baseline × 1.2 | Baseline × 1.5 | ms |
@@ -84,10 +87,10 @@ Prometheus Alerts:
 
 ```yaml
 Prometheus Metrics:
-  - clickhouse_query_duration_seconds (histogram, p50/p95/p99)
-  - clickhouse_queries_total (counter, labeled by data_range)
-  - clickhouse_concurrent_queries (gauge)
-  - clickhouse_query_throughput_qps (gauge)
+  - market_data_query_duration_seconds (histogram, p50/p95/p99)
+  - market_data_queries_total (counter, labeled by data_range,timeframe)
+  - market_data_concurrent_queries (gauge)
+  - market_data_query_throughput_qps (gauge)
 
 Prometheus Alerts:
   - Warning: 30-day query p95 > 1200ms for 5 minutes
@@ -98,10 +101,13 @@ Prometheus Alerts:
 
 #### Capacity Planning
 
-- **Data Growth:** Query performance degrades linearly with data volume
-- **Partitioning:** Monthly partitions recommended for > 1 year of data
-- **Indexing:** Ensure code/timestamp composite index exists
-- **Hardware:** Consider SSD for ClickHouse data directory if p95 > 1000ms consistently
+- **Data Growth:** Query performance depends on partition/file count and row-group
+  shape.
+- **Partitioning:** Use symbol/date partitioning under `data/market`.
+- **Query Engine:** Prefer DuckDB predicate pushdown for broad scans and
+  `ParquetMarketDataStore` for symbol/time-window access.
+- **Hardware:** Use SSD-backed storage for `data/market` if 30-day p95 exceeds
+  1000ms consistently.
 
 ---
 
@@ -342,7 +348,7 @@ scrape_configs:
       - targets: ['localhost:9090']
     metric_relabel_configs:
       - source_labels: [__name__]
-        regex: '(websocket|clickhouse|redis|orchestrator|rl)_.*'
+        regex: '(websocket|market_data|redis|orchestrator|rl)_.*'
         action: keep
 ```
 
@@ -355,7 +361,7 @@ scrape_configs:
    - Latency percentiles (p50/p95/p99) heatmap
    - Peak vs sustained load comparison
 
-2. **ClickHouse Query Performance**
+2. **Parquet/DuckDB Market Data Performance**
    - Query latency by data range (1d/30d/100d)
    - Concurrent query throughput
    - Query duration distribution (histogram)
@@ -399,7 +405,7 @@ Warning Alerts → Slack → #trading-alerts (business hours)
 | Component | Scale Trigger | Recommended Action |
 |-----------|---------------|-------------------|
 | WebSocket | p95 latency > 1.2× baseline | Increase Redis memory, optimize pub/sub |
-| ClickHouse | 30-day query p95 > 1200ms | Add SSD, increase ClickHouse memory, partition data |
+| Market data store | 30-day query p95 > 1200ms | Add SSD, compact Parquet files, review partitioning |
 | Redis | Write ops/s < 800 | Increase Redis memory, enable persistence optimization |
 | Orchestrator | 10-position cycle > 6s | Profile hot paths, optimize indicator calculations |
 | RL Inference | p99 > 30s (CPU) | Deploy GPU, enable model quantization, batch inference |
@@ -420,7 +426,7 @@ Warning Alerts → Slack → #trading-alerts (business hours)
 | Module | Test Scenarios | Metrics Captured | Dependencies |
 |--------|----------------|------------------|--------------|
 | `test_websocket_load.py` | 6 scenarios (100-5000 msg) | Throughput, latency p50/p95/p99 | Redis |
-| `test_clickhouse_load.py` | 6 scenarios (1d-100d, concurrent) | Query latency, throughput (qps) | ClickHouse |
+| `test_market_data_store_load.py` | 6 scenarios (1d-100d, concurrent) | Query latency, throughput (qps) | Parquet/DuckDB |
 | `test_redis_load.py` | 6 scenarios (CRUD, concurrent) | Ops/s, latency p50/p95/p99 | Redis |
 | `test_orchestrator_scalability.py` | 6 scenarios (1-20 positions) | Cycle time, memory, scalability factor | None (pure) |
 | `test_orchestrator_hot_path_benchmark.py` | 7 scenarios (entry/exit, cache) | Execution time, speedup ratio, memory overhead | None (pure) |
@@ -442,7 +448,7 @@ Warning Alerts → Slack → #trading-alerts (business hours)
     "end_to_end_latency_p95_ms": 8.0,
     "end_to_end_latency_p99_ms": 12.0
   },
-  "clickhouse": {
+  "market_data": {
     "query_latency_1d_p95_ms": 150.0,
     "query_latency_30d_p95_ms": 800.0,
     "concurrent_queries_20_workers_qps": 25.0
@@ -477,7 +483,7 @@ Warning Alerts → Slack → #trading-alerts (business hours)
 
 - **p50/p95/p99:** Percentile latency (50th, 95th, 99th percentile)
 - **ops/s:** Operations per second (throughput metric)
-- **qps:** Queries per second (ClickHouse throughput)
+- **qps:** Queries per second (market-data query throughput)
 - **CV:** Coefficient of Variation (stddev / mean × 100%)
 - **Cycle Time:** Time to complete one orchestrator iteration (entry check → exit check → state update)
 - **Cold Start:** First inference including model loading overhead
@@ -493,6 +499,8 @@ Warning Alerts → Slack → #trading-alerts (business hours)
 **Owner:** Platform Engineering Team
 **Approval Required:** CTO sign-off for SLA changes
 **Changelog:**
+- 2026-06-06 v1.1: Retired ClickHouse query SLA and replaced it with
+  Parquet/DuckDB market-data SLA.
 - 2026-03-08 v1.0: Initial SLA establishment (derived from empirical baselines)
 
 ---

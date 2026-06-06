@@ -79,14 +79,14 @@ sts rl paper --symbol A05603
 | RL 모델 추론 | ✅ | ✅ | 동일 |
 | WebSocket 실시간 데이터 | ✅ | ✅ | 동일 |
 | Redis 포지션 추적 | ✅ | ✅ | 동일 |
-| ClickHouse 지표 워밍업 | ❌ | ✅ | 개선됨 |
+| Parquet 지표 워밍업 | ❌ | ✅ | 개선됨 |
 | IndicatorEngine 통합 | 부분적 | ✅ | 개선됨 |
 | 재시작 시 복구 | ✅ | ✅ | 동일 |
 | Telegram 알림 | ✅ | ✅ | 동일 |
 | Hard stop / EOD 안전장치 | ✅ | ✅ | 동일 |
 
 **개선된 점:**
-- **Pre-market ClickHouse warmup**: 장 시작 전 지표 사전 로드로 초기 레이턴시 감소
+- **Pre-market Parquet warmup**: 장 시작 전 Parquet market data에서 지표 사전 로드로 초기 레이턴시 감소
 - **IndicatorEngine 완전 통합**: VWAP, RVOL, volume 가속도 등 추가 지표 지원
 - **단일 코드베이스**: 유지보수 부담 감소, 버그 수정 시 일관성 보장
 
@@ -101,7 +101,7 @@ sts rl paper --symbol A05603
 - [ ] 기존 모델 파일 경로 정상 작동 (`RL_MPPO_MODEL_PATH` 환경변수)
 - [ ] Redis 포지션 복구 정상 작동 (프로세스 재시작 테스트)
 - [ ] Telegram 알림 정상 수신
-- [ ] ClickHouse 지표 데이터 조회 정상
+- [ ] Parquet 지표 데이터 조회 정상
 
 ---
 
