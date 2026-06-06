@@ -34,7 +34,7 @@ class _FakeFeed:
 
 @pytest.mark.asyncio
 async def test_bridge_publishes_dashboard_state_in_shadow_namespace(
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     server = fakeredis.FakeServer()
     redis = fakeredis.aioredis.FakeRedis(server=server, db=1)
@@ -56,7 +56,7 @@ async def test_bridge_publishes_dashboard_state_in_shadow_namespace(
         status_interval=5.0,
     )
 
-    def _fill(role, side, price):
+    def _fill(role: str, side: str, price: str) -> dict[bytes, bytes]:
         return _enc(
             {
                 "signal_id": "sig-1",
@@ -95,12 +95,18 @@ async def test_bridge_publishes_dashboard_state_in_shadow_namespace(
         }
     )
 
+    reader = TradingStateReader(asset_class="stock")
+
     await daemon.handle_signal(final)
     await daemon.handle_fill(_fill("entry", "BUY", "71000.0"))
+    open_positions = reader.get_positions()
+    assert len(open_positions) == 1 and open_positions[0]["code"] == "005930"
+    assert open_positions[0]["strategy"] == "vr_composite"  # signal correlation worked
     await daemon.handle_fill(_fill("exit", "SELL", "73000.0"))
 
-    reader = TradingStateReader(asset_class="stock")
-    assert reader.get_signals()[0]["strategy"] == "vr_composite"
+    signals = reader.get_signals()
+    assert len(signals) == 1  # no accidental double-publish
+    assert signals[0]["strategy"] == "vr_composite"
     assert reader.get_positions() == []  # opened then closed
     trades = reader.get_trades()
     assert len(trades) == 1 and trades[0]["symbol"] == "005930"
