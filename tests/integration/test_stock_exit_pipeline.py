@@ -48,6 +48,7 @@ async def test_open_exit_close_and_reentry_freed() -> None:
                 "code": "005930",
                 "entry_price": 71000.0,
                 "quantity": 10,
+                # 2023-11 UTC — deliberately old so holding >> time_cut
                 "opened_at_ms": 1_700_000_000_000,
                 "state": "SURVIVAL",
                 "signal_id": "sig-1",
@@ -87,9 +88,11 @@ async def test_open_exit_close_and_reentry_freed() -> None:
     # Exit fill published.
     fills = await redis.xrange("order.fill.stock.shadow")
     assert len(fills) == 1 and fills[0][1][b"trade_role"] == b"exit"
+    assert fills[0][1][b"side"] == b"SELL"
     # Position closed -> re-entry freed (M4-R provider now returns False).
     assert _has_open_position("005930") is False
     # Realized loss fed to the shared risk state M4-R reads.
     snap = await RuntimeRiskState(redis=redis, asset_class="stock").snapshot()
     assert snap.daily_pnl_krw < 0
     assert snap.consecutive_losses == 1
+    assert snap.daily_trade_count == 1
