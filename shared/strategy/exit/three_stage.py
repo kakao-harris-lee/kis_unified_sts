@@ -35,7 +35,7 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import datetime, time
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 from shared.models.position import Position, PositionSide, PositionState
 from shared.models.signal import ExitReason, ExitSignal
@@ -89,6 +89,8 @@ class ThreeStageExitConfig:
 
         # BEAR 시장 청산
         enable_bear_exit: BEAR 시장 시 청산 활성화
+        eod_exempt_maximize: True면 MAXIMIZE 포지션을 EOD_CLOSE에서 면제
+            (기본 False = 전 단계 강제청산)
     """
 
     # Stage 1: Survival
@@ -113,6 +115,10 @@ class ThreeStageExitConfig:
 
     # BEAR 시장 청산
     enable_bear_exit: bool = True
+
+    # EOD 면제: True면 MAXIMIZE stage 포지션은 EOD_CLOSE 면제(추세 종목 overnight 보유).
+    # 기본 False = 기존 동작(전 stage 강제청산) 보존.
+    eod_exempt_maximize: bool = False
 
     @property
     def eod_close_time(self) -> time:
@@ -167,6 +173,7 @@ class ThreeStageExitConfig:
             eod_close_minute=data.get("eod_close_minute", 15),
             fee_rate=data.get("fee_rate", 0.003),
             enable_bear_exit=data.get("enable_bear_exit", True),
+            eod_exempt_maximize=data.get("eod_exempt_maximize", False),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -183,6 +190,7 @@ class ThreeStageExitConfig:
             "eod_close_minute": self.eod_close_minute,
             "fee_rate": self.fee_rate,
             "enable_bear_exit": self.enable_bear_exit,
+            "eod_exempt_maximize": self.eod_exempt_maximize,
         }
 
 
@@ -250,9 +258,7 @@ class ThreeStageExit(ExitSignalGenerator[ThreeStageExitConfig]):
     # Main Interface
     # -------------------------------------------------------------------------
 
-    async def should_exit(
-        self, context: ExitContext
-    ) -> tuple[bool, Optional[ExitSignal]]:
+    async def should_exit(self, context: ExitContext) -> tuple[bool, ExitSignal | None]:
         """단일 포지션 청산 여부 판단
 
         Args:
@@ -274,7 +280,7 @@ class ThreeStageExit(ExitSignalGenerator[ThreeStageExitConfig]):
         self,
         positions: list[Position],
         market_data: dict[str, Any],
-        market_state: Optional[MarketStateProtocol] = None,
+        market_state: MarketStateProtocol | None = None,
     ) -> list[ExitSignal]:
         """여러 포지션에 대해 청산 시그널 스캔
 
@@ -333,8 +339,11 @@ class ThreeStageExit(ExitSignalGenerator[ThreeStageExitConfig]):
         """Most favorable price since entry (high for LONG, low for SHORT)."""
         if position.side == PositionSide.SHORT:
             return min(
-                position.lowest_price if position.lowest_price < float("inf")
-                else position.entry_price,
+                (
+                    position.lowest_price
+                    if position.lowest_price < float("inf")
+                    else position.entry_price
+                ),
                 current_price,
             )
         return max(position.highest_price or position.entry_price, current_price)
@@ -354,9 +363,9 @@ class ThreeStageExit(ExitSignalGenerator[ThreeStageExitConfig]):
         self,
         position: Position,
         market_data: dict[str, Any],
-        market_state: Optional[MarketStateProtocol],
+        market_state: MarketStateProtocol | None,
         now: datetime,
-    ) -> Optional[ExitSignal]:
+    ) -> ExitSignal | None:
         """개별 포지션 청산 조건 체크
 
         우선순위:
@@ -385,9 +394,13 @@ class ThreeStageExit(ExitSignalGenerator[ThreeStageExitConfig]):
         # 현재 Stage 결정
         stage = self._determine_stage(position, profit_pct)
 
-        # 1. EOD 체크 (최우선)
+        # 1. EOD 체크 (최우선) — eod_exempt_maximize 시 MAXIMIZE는 면제(no-flatten)
         close_time = effective_close_time(self.config.eod_close_time)
-        if is_trading_day_kst(now) and to_kst(now).time() >= close_time:
+        eod_due = is_trading_day_kst(now) and to_kst(now).time() >= close_time
+        maximize_exempt = (
+            self.config.eod_exempt_maximize and stage == PositionState.MAXIMIZE
+        )
+        if eod_due and not maximize_exempt:
             return self._create_exit_signal(
                 position=position,
                 current_price=current_price,
@@ -428,10 +441,7 @@ class ThreeStageExit(ExitSignalGenerator[ThreeStageExitConfig]):
             return stage_exit
 
         # 4. Time Cut (수익 없이 시간 초과)
-        if (
-            holding_minutes >= self.config.time_cut_minutes
-            and profit_pct <= 0
-        ):
+        if holding_minutes >= self.config.time_cut_minutes and profit_pct <= 0:
             return self._create_exit_signal(
                 position=position,
                 current_price=current_price,
@@ -448,7 +458,7 @@ class ThreeStageExit(ExitSignalGenerator[ThreeStageExitConfig]):
 
     def _get_current_price(
         self, position: Position, market_data: dict[str, Any]
-    ) -> Optional[float]:
+    ) -> float | None:
         """현재가 조회"""
         # market_data에서 조회 (code -> dict 표준)
         snapshot = get_symbol_snapshot(market_data, position.code)
@@ -462,9 +472,7 @@ class ThreeStageExit(ExitSignalGenerator[ThreeStageExitConfig]):
 
         return None
 
-    def _determine_stage(
-        self, position: Position, profit_pct: float
-    ) -> PositionState:
+    def _determine_stage(self, position: Position, profit_pct: float) -> PositionState:
         """현재 수익률에 따른 Stage 결정 (항상 profit_pct 기준으로 승격)"""
         if profit_pct >= self.config.maximize_threshold_pct:
             return PositionState.MAXIMIZE
@@ -473,7 +481,7 @@ class ThreeStageExit(ExitSignalGenerator[ThreeStageExitConfig]):
         else:
             return PositionState.SURVIVAL
 
-    def _is_bear_market(self, market_state: Optional[MarketStateProtocol]) -> bool:
+    def _is_bear_market(self, market_state: MarketStateProtocol | None) -> bool:
         """BEAR 시장 여부 체크"""
         if market_state is None:
             return False
@@ -497,7 +505,7 @@ class ThreeStageExit(ExitSignalGenerator[ThreeStageExitConfig]):
         stage: PositionState,
         high_since_entry: float,
         holding_minutes: int,
-    ) -> Optional[ExitSignal]:
+    ) -> ExitSignal | None:
         """Stage별 청산 조건 체크
 
         Stage 1 (SURVIVAL): Hard Stop
@@ -711,7 +719,7 @@ class ThreeStageExit(ExitSignalGenerator[ThreeStageExitConfig]):
 
     async def update_position_state(
         self, position: Position, current_price: float
-    ) -> Optional[PositionState]:
+    ) -> PositionState | None:
         """Thread-safe 포지션 상태 업데이트 (State Transition)
 
         외부에서 호출하여 Position의 state를 업데이트.
@@ -729,7 +737,7 @@ class ThreeStageExit(ExitSignalGenerator[ThreeStageExitConfig]):
 
     def _update_position_state_internal(
         self, position: Position, current_price: float
-    ) -> Optional[PositionState]:
+    ) -> PositionState | None:
         """실제 상태 업데이트 로직 (lock 내에서 호출)
 
         Args:

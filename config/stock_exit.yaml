@@ -1,0 +1,15 @@
+# Stock exit (M4-X — StockExitDaemon) ThreeStageExit config.
+# Single config for all stock positions (v1; per-strategy is a follow-up).
+stock_exit:
+  stop_loss_pct: -0.015
+  breakeven_threshold_pct: 0.015
+  maximize_threshold_pct: 0.03
+  trailing_stop_pct: -0.03
+  overshoot_threshold_pct: 0.07
+  overshoot_trailing_pct: -0.015
+  time_cut_minutes: 20
+  eod_close_hour: 15
+  eod_close_minute: 15
+  eod_exempt_maximize: true     # MAXIMIZE positions ride overnight (no-flatten)
+  enable_bear_exit: false       # v1: no regime wiring
+  fee_rate: 0.003
