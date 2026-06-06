@@ -89,6 +89,8 @@ class ThreeStageExitConfig:
 
         # BEAR 시장 청산
         enable_bear_exit: BEAR 시장 시 청산 활성화
+        eod_exempt_maximize: True면 MAXIMIZE 포지션을 EOD_CLOSE에서 면제
+            (기본 False = 전 단계 강제청산)
     """
 
     # Stage 1: Survival
@@ -256,9 +258,7 @@ class ThreeStageExit(ExitSignalGenerator[ThreeStageExitConfig]):
     # Main Interface
     # -------------------------------------------------------------------------
 
-    async def should_exit(
-        self, context: ExitContext
-    ) -> tuple[bool, ExitSignal | None]:
+    async def should_exit(self, context: ExitContext) -> tuple[bool, ExitSignal | None]:
         """단일 포지션 청산 여부 판단
 
         Args:

@@ -39,8 +39,7 @@ async def test_maximize_exempt_from_eod_when_flag_set() -> None:
         sig = await strat._check_position(
             position=_pos(), market_data=md, market_state=None, now=_EOD_NOW
         )
-    # MAXIMIZE exempt -> no EOD_CLOSE; at-high -> no trailing -> held (None).
-    assert sig is None or sig.reason != ExitReason.EOD_CLOSE
+    assert sig is None  # MAXIMIZE exempt from EOD + at-high (no trailing) -> held
 
 
 @pytest.mark.asyncio
