@@ -1,4 +1,10 @@
 #!/bin/bash
+# DEPRECATED (M5e): the monolithic orchestrator no longer runs stock once the
+# M5d cutover is complete. Stock trades via the decoupled M4 pipeline
+# (kis-stock-{strategy-daemon,risk-filter,order-router,exit-daemon}). This script
+# invokes `sts trade start --asset stock`, which the CLI refuses when
+# STOCK_ORCHESTRATOR_ENABLED=false (set by the operator at cutover).
+# Runbook: docs/runbooks/stock-pipeline-cutover-m5d.md
 # Stock Trading Service - kis_unified_sts
 # Replaces: quant_moment_sts main.py
 #

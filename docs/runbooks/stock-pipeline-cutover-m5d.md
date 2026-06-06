@@ -49,6 +49,7 @@ Record the date + a one-line shadow-validation summary before proceeding.
    - `python -m scripts.ops.stock_cutover_verify --mode live` → PASS (exit 0).
    - `systemctl is-active kis-stock-strategy-daemon kis-stock-risk-filter kis-stock-order-router kis-stock-exit-daemon kis-stock-monitor-daemon` → all `active`.
    - Watch the first 09:00 KST session on the M5a dashboard (live keys): positions/fills appear.
+5. **Permanently block the orchestrator stock path** (M5e): set `STOCK_ORCHESTRATOR_ENABLED=false` in the operator `.env` so `sts trade start --asset stock` (and the stock cron) is refused at the CLI even if accidentally invoked — belt-and-suspenders on top of disabling the cron in step 1.
 
 ## Rollback triggers
 Roll back if ANY of: `verify --mode live` fails; no fills flowing for >10 min during
@@ -63,6 +64,7 @@ bash scripts/ops/stock_cutover_rollback.sh             # execute
 Then: re-enable `config/llm.yaml::market_context_publisher.enabled: true`, revert the
 M5b crontab to `STOCK_LLM_CONTEXT=shadow`, re-enable the orchestrator cron, and confirm
 `verify --mode shadow` + orchestrator pid alive.
+Also set `STOCK_ORCHESTRATOR_ENABLED=true` (re-allow the orchestrator stock path) before re-enabling the orchestrator cron.
 
 ## Notes
 - Residual positions in the paper (KIS mock) account from the orchestrator are a

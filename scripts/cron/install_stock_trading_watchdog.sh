@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# DEPRECATED (M5e): installs the stock-orchestrator watchdog cron. Superseded by
+# the decoupled M4 pipeline + its systemd units after the M5d cutover. Do not
+# install on a cut-over host. Runbook: docs/runbooks/stock-pipeline-cutover-m5d.md
 # Idempotent install of the stock trading watchdog cron entries.
 #
 # stock_trading.sh start is idempotent and recovers an existing process when
