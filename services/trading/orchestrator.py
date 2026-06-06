@@ -81,6 +81,7 @@ except Exception:  # pragma: no cover
 
 if TYPE_CHECKING:
     from shared.config.schema import PipelineConfig
+    from shared.execution.live_mode_guard import LiveModeGuard
 
 logger = logging.getLogger(__name__)
 
@@ -796,6 +797,11 @@ class TradingOrchestrator:
         # via futs_prdy_clpr. Setup A (gap_reversion) requires this for gap_pct.
         self._futures_daily_reference: dict[str, dict[str, float]] = {}
         self._order_executor: Any | None = None
+        # F-7: futures live-mode gate for the real-order entry path. Built for
+        # futures in _init_execution_layer; None for non-futures (never consulted).
+        self._live_mode_guard: LiveModeGuard | None = None
+        self._guard_redis: Any | None = None
+        self._live_guard_warned: bool = False
         self._mock_mirror: Any | None = None
         self._mock_mirror_stats: dict[str, int] = {
             "entry_success": 0,
@@ -2027,6 +2033,25 @@ class TradingOrchestrator:
             ) as e:
                 logger.warning(f"OrderExecutor init failed; orders will be mocked: {e}")
                 self._order_executor = None
+
+        # F-7: build the futures live-mode guard + a dedicated async Redis handle.
+        # Always built for futures so the real-order path is fail-closed by default
+        # (futures_live.enabled defaults to False -> all real entries blocked until
+        # the operator completes Phase-5 Gate 3 and enables live).
+        if self.config.asset_class == "futures":
+            import redis.asyncio as aioredis
+
+            from shared.execution.live_mode_guard import LiveModeGuard
+
+            self._live_mode_guard = LiveModeGuard.from_yaml()
+            self._guard_redis = aioredis.from_url(
+                os.environ.get("REDIS_URL", "redis://localhost:6379/1")
+            )
+            logger.info(
+                "futures live-mode guard active (enabled=%s, suspend_key=%s)",
+                self._live_mode_guard.enabled,
+                self._live_mode_guard.suspend_key,
+            )
 
     async def _load_swing_positions(self):
         """Recover open positions from Redis and initialize state publishers."""
@@ -4082,6 +4107,18 @@ class TradingOrchestrator:
             ) as e:
                 logger.warning(f"OrderExecutor cleanup failed: {e}")
             self._order_executor = None
+
+        # F-7: release the dedicated live-mode guard Redis pool.
+        if self._guard_redis is not None:
+            try:
+                closer = (
+                    getattr(self._guard_redis, "aclose", None)
+                    or self._guard_redis.close
+                )
+                await closer()
+            except Exception as e:
+                logger.warning("LiveModeGuard redis close failed: %s", e)
+            self._guard_redis = None
 
         if self._mock_mirror is not None:
             try:
@@ -6786,6 +6823,23 @@ class TradingOrchestrator:
             logger.warning(f"Venue routing failed, using default KRX: {e}")
             return ExecutionVenue.KRX
 
+    async def _real_entry_blocked(self) -> bool:
+        """True if a real (non-paper) ENTRY order must be refused (F-7).
+
+        Futures-only: the live-money gate (``futures_live.enabled`` + the Redis
+        ``futures:live:suspended`` flag) applies to the orchestrator's real-order
+        entry path the same way it gates the order_router daemon. Fail-closed: a
+        missing guard/redis handle, or a Redis read error, returns True (block).
+        Non-futures assets are never blocked here.
+        """
+        if self.config.asset_class != "futures":
+            return False
+        guard = self._live_mode_guard
+        redis = self._guard_redis
+        if guard is None or redis is None:
+            return True
+        return await guard.is_live_suspended(redis)
+
     async def _place_entry_order(
         self,
         *,
@@ -6836,6 +6890,21 @@ class TradingOrchestrator:
             return is_filled, fill_price, (quantity if is_filled else 0), venue
 
         if self._order_executor is not None:
+            if await self._real_entry_blocked():
+                logger.warning(
+                    "futures live suspended — real ENTRY blocked for %s "
+                    "(enable: set futures_live.enabled=true + clear the redis "
+                    "suspend key)",
+                    code,
+                )
+                if not self._live_guard_warned:
+                    self._schedule_notify(
+                        f"⛔ 선물 실주문 차단 (live suspended): {code} — "
+                        "futures_live.enabled / futures:live:suspended 확인"
+                    )
+                    self._live_guard_warned = True
+                return False, 0.0, 0, "KRX"
+
             from shared.execution.models import OrderRequest, OrderSide, OrderType
 
             side = OrderSide.SELL if is_short else OrderSide.BUY
