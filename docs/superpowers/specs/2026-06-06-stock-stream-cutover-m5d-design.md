@@ -6,6 +6,12 @@
 - Predecessors merged: M5a monitor bridge (#419), M5b LLM context cron (#420), M5c daily risk reset cron (#421)
 - Scope: **M5d — the fourth M5 sub-project, the live cutover.** The operator runbook + a verification script + a rollback script that flip stock paper trading from the monolithic orchestrator to the decoupled M4 pipeline (M4-P → M4-R → M4-O → M4-X) + M5a/M5b/M5c.
 
+> 2026-06-06 update: the implementation target moved from host `systemd` units
+> to Docker Compose profiles. Treat the `systemctl` command examples below as
+> historical design context; the active operator runbook is
+> `docs/runbooks/stock-pipeline-cutover-m5d.md`, and the compose migration plan is
+> `docs/plans/2026-06-06-compose-pipeline-services.md`.
+
 ## 1. Goal & scope
 
 The decoupled stock pipeline (M4-P/R/O/X) and its supporting cutover infra (M5a monitor, M5b LLM context cron, M5c daily risk reset cron) are all built, merged, and running default-off/shadow. M5d makes the decoupled pipeline the LIVE stock path: stop the orchestrator's stock process, flip each daemon shadow→live (which switches it from `.shadow` to unsuffixed streams), and document a gated, reversible procedure with health verification and a one-command rollback.
@@ -14,18 +20,18 @@ The decoupled stock pipeline (M4-P/R/O/X) and its supporting cutover infra (M5a 
 
 **Success criterion:** (a) a Phase-5-style runbook (`docs/runbooks/stock-pipeline-cutover-m5d.md`) with prerequisites → shadow-validation gate → operator approval → cutover sequence → post-cutover verification → rollback; (b) a read-only, mode-aware verification script (`scripts/ops/stock_cutover_verify.py`) that confirms decoupled-pipeline health in shadow (pre-cutover gate) and live (post-cutover check); (c) a rollback script (`scripts/ops/stock_cutover_rollback.sh`) that stops the decoupled daemons and restores the orchestrator. **No new trading code** — M4/orchestrator are unchanged; verify.py is read-only; rollback.sh is operational.
 
-비목표(out of scope): any change to the M4 daemons / orchestrator / RuntimeRiskState; a kill-switch consumer for the decoupled stock pipeline (manual `systemctl stop` is the paper-grade halt — deferred); migrating the orchestrator's open positions (operator decision: flatten + abandon, see §4); cleaning up residual paper-account positions (documented follow-up); M5e (orchestrator reduction to supervisor/health — separate, after the cutover proves stable).
+비목표(out of scope): any change to the M4 daemons / orchestrator / RuntimeRiskState; a kill-switch consumer for the decoupled stock pipeline (manual `docker compose stop stock-*` is the paper-grade halt — deferred); migrating the orchestrator's open positions (operator decision: flatten + abandon, see §4); cleaning up residual paper-account positions (documented follow-up); M5e (orchestrator reduction to supervisor/health — separate, after the cutover proves stable).
 
 ## 2. Locked decisions (브레인스토밍 2026-06-06)
 
 | 결정 | 선택 | 근거 |
 |---|---|---|
-| 산출물 | **런북 + 검증 스크립트 + 롤백 스크립트** | flag-flip + systemd 중심 운영. 검증/롤백 스크립트가 반복·안전성 부여. 신규 트레이딩 코드 없음 |
+| 산출물 | **런북 + 검증 스크립트 + 롤백 스크립트** | flag-flip + Compose 중심 운영. 검증/롤백 스크립트가 반복·안전성 부여. 신규 트레이딩 코드 없음 |
 | 포지션 연속성 | **전부 청산 + decoupled fresh 시작** (마이그레이션 없음) | 운영자: "현 모의투자 데이터 무의미, 잔여 계좌 포지션은 후속 정리". M4-X가 orchestrator 레코드를 skip(포맷 상이)하는 문제를 클린 슬레이트로 회피 |
-| kill-switch 소비자 | **defer** | paper라 수동 `systemctl stop`이 사실상 halt. 별도 prerequisite |
+| kill-switch 소비자 | **defer** | paper라 수동 `docker compose stop stock-*`이 사실상 halt. 별도 prerequisite |
 | orchestrator 정지 | **전체 정지** (stock_trading.sh stop + cron 비활성) | stock orchestrator는 stock 전용 별도 크론(futures와 독립) → 전체 정지 깔끔, 이중거래 방지 |
 | 검증 스크립트 | **Python, read-only, mode-aware** | Redis 헬스 로직 → 테스트 가능(fakeredis). shadow/live 양쪽 재사용 |
-| 롤백 | **shell 스크립트 + 런북** | systemctl/cron/process 오케스트레이션 → shell(promote_live.sh 스타일), `--dry-run` |
+| 롤백 | **shell 스크립트 + 런북** | compose/process 오케스트레이션 → shell(promote_live.sh 스타일), `--dry-run` |
 
 ## 3. Current state (감사 2026-06-06)
 

@@ -35,7 +35,7 @@
 | 지표 warmup | **parquet** (`MARKET_DATA_SOURCE=parquet`) — **ClickHouse 배제** |
 | 영구 기록 | **SQLite runtime ledger** — ClickHouse는 optional async mirror(범위 밖) |
 | tick back-pressure | `MAXLEN ~ N` drop-oldest (최신 우선) |
-| 배포 | systemd 데몬(자산×단계), paper/live 별도 clone + per-env Redis(6381/6382) 정합 |
+| 배포 | Docker Compose profiles(자산×단계), paper/live env file + compose project 분리. host systemd unit은 legacy scaffold |
 | 컷오버 | strangler, 자산별 flag, 측정 게이트, 롤백가능 |
 
 ## 4. Target architecture
@@ -82,8 +82,12 @@
 - **선물 stub 해소**: decision_engine의 `context_provider` stub을 **indicators 스트림 + context key 소비**로 대체 → 실시그널 생성(파이프라인 head 완성).
 
 ### 4.4 배포 & 환경 정합
-- 운용 = systemd 데몬(Phase 5 패턴 확장): 자산 × 단계. 주식도 cron 모놀리식 → 데몬 모델로 이동.
-- **paper/live 분리 정합**: 방금 도입된 별도 clone(`kis_unified_sts` / `_live`) + per-env Redis(paper 6381 / live 6382)에 그대로 적재 — 각 env 데몬이 해당 env Redis/스트림에 접속. 스트림 격리는 Redis 인스턴스 격리로 자동.
+- 운용 = Docker Compose profiles: `trading`(monolith), `stock-pipeline`
+  (M4/M5 consumers), `stock-ingest`(KIS stock WebSocket owner). 주식도 cron
+  모놀리식 → compose-managed 데몬 모델로 이동한다.
+- **paper/live 분리 정합**: compose env file + `COMPOSE_PROJECT_NAME` + host
+  port/volume 분리로 paper/live를 분리한다. 각 env 데몬이 해당 env
+  Redis/스트림에 접속하며, 스트림 격리는 compose project/env 분리로 유지한다.
 - **CH→SQLite 전환과 정합**: indicator warmup의 parquet 의존은 진행 중인 parquet market-data store(예: PR #404/#407)에 의존 → M2는 parquet store 완성 후 착수.
 
 ## 5. Migration (strangler, 측정 게이트, 자산별 flag, 롤백가능)
@@ -117,7 +121,7 @@
 | 주식 실행 일반화 복잡(ATS/three_stage/EOD) | 공유 프레임워크 + 자산별 order_router 인스턴스, M4를 마지막에 |
 | CH→SQLite 전환과 충돌 | indicator warmup을 parquet로 정렬, M2를 parquet store 후 착수 |
 | strangler 이중 실행(모놀리식+데몬 동시 주문 위험) | 자산별 flag 상호배제, 한쪽만 실행 보장, kill-switch 유지 |
-| 데몬 수 증가(자산×단계×env) | 공유 프레임워크 + systemd 템플릿 + paper/live Redis 격리 |
+| 데몬 수 증가(자산×단계×env) | 공유 프레임워크 + compose profiles + paper/live env/project 격리 |
 
 ## 8. Acceptance criteria
 

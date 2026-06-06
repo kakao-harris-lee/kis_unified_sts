@@ -8,8 +8,8 @@ futures slippage controller requires).
 
 ## Preconditions
 
-1. `kis-market-ingest-stock` (M1a) running and healthy:
-   - `systemctl status kis-market-ingest-stock`
+1. `stock-market-ingest` (M1a) running and healthy:
+   - `docker compose --env-file .env.paper --profile stock-ingest ps stock-market-ingest`
    - Redis: `redis-cli -n 1 XLEN market:ticks` rising during market hours.
 2. No second WebSocket consumer for the same KIS stock account (the ingest
    daemon owns the WS connection; the orchestrator must NOT also connect).
@@ -20,8 +20,10 @@ futures slippage controller requires).
    `STOCK_MARKET_DATA_SOURCE=stream`
    (also ensure `REDIS_URL` points at the right DB — paper `…/1` on 6381,
    live `…/1` on 6382, per the paper/live separation runbook).
-2. Restart the stock orchestrator.
-3. Confirm in logs: `Stock data source = STREAM (market:ticks); KIS WebSocket feed skipped`
+2. Start the ingest daemon through compose:
+   `docker compose --env-file .env.paper --profile stock-ingest up -d stock-market-ingest`.
+3. Restart the stock orchestrator.
+4. Confirm in logs: `Stock data source = STREAM (market:ticks); KIS WebSocket feed skipped`
    and `Stock stream-consumer feed started (N symbols)`.
 
 ## Validate the SLO

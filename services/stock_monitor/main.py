@@ -33,7 +33,7 @@ def _ensure_shadow_isolation(mode: str) -> None:
     """Fail-safe dashboard key suffix handling.
 
     Shadow must always use isolated keys. Live must always use unsuffixed keys,
-    even when the base systemd unit supplied ``TRADING_STATE_KEY_SUFFIX=shadow``.
+    even when a base service environment supplied ``TRADING_STATE_KEY_SUFFIX=shadow``.
     """
     if mode == "shadow" and not os.environ.get("TRADING_STATE_KEY_SUFFIX", "").strip():
         os.environ["TRADING_STATE_KEY_SUFFIX"] = "shadow"

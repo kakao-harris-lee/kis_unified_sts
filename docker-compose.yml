@@ -25,6 +25,56 @@ x-runtime-storage-env: &runtime-storage-env
   MARKET_DATA_PARQUET_ROOT: "${MARKET_DATA_PARQUET_ROOT:-data/market}"
   DASHBOARD_TRADE_STATS_SOURCE: "${DASHBOARD_TRADE_STATS_SOURCE:-runtime_ledger}"
 
+x-kis-runtime-env: &kis-runtime-env
+  KIS_APP_KEY: "${KIS_APP_KEY:-}"
+  KIS_APP_SECRET: "${KIS_APP_SECRET:-}"
+  KIS_STOCK_APP_KEY: "${KIS_STOCK_APP_KEY:-}"
+  KIS_STOCK_APP_SECRET: "${KIS_STOCK_APP_SECRET:-}"
+  KIS_FUTURES_APP_KEY: "${KIS_FUTURES_APP_KEY:-}"
+  KIS_FUTURES_APP_SECRET: "${KIS_FUTURES_APP_SECRET:-}"
+  KIS_IS_REAL: "${KIS_IS_REAL:-false}"
+  KIS_REAL_TRADING: "${KIS_REAL_TRADING:-false}"
+  KIS_MARKET: "${KIS_MARKET:-mock}"
+  KIS_STOCK_MARKET: "${KIS_STOCK_MARKET:-mock}"
+  KIS_FUTURES_MARKET: "${KIS_FUTURES_MARKET:-real}"
+  KIS_TOKEN_CACHE_DIR: "${KIS_TOKEN_CACHE_DIR:-/app/.cache}"
+
+x-alert-runtime-env: &alert-runtime-env
+  TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN:-}"
+  TELEGRAM_CHAT_ID: "${TELEGRAM_CHAT_ID:-}"
+  TELEGRAM_STOCK_BOT_TOKEN: "${TELEGRAM_STOCK_BOT_TOKEN:-}"
+  TELEGRAM_STOCK_CHAT_ID: "${TELEGRAM_STOCK_CHAT_ID:-}"
+  TELEGRAM_FUTURES_BOT_TOKEN: "${TELEGRAM_FUTURES_BOT_TOKEN:-}"
+  TELEGRAM_FUTURES_CHAT_ID: "${TELEGRAM_FUTURES_CHAT_ID:-}"
+  TELEGRAM_BRIEFING_BOT_TOKEN: "${TELEGRAM_BRIEFING_BOT_TOKEN:-}"
+  TELEGRAM_BRIEFING_CHAT_ID: "${TELEGRAM_BRIEFING_CHAT_ID:-}"
+
+x-trading-runtime-volumes: &trading-runtime-volumes
+  - ./config:/app/config:ro
+  - ./logs:/app/logs
+  - ./.cache:/app/.cache
+  - ./data/runtime:/app/data/runtime
+  - ./data/market:/app/data/market:ro
+
+x-stock-pipeline-service: &stock-pipeline-service
+  build:
+    context: .
+    dockerfile: Dockerfile
+  restart: unless-stopped
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+  volumes: *trading-runtime-volumes
+  depends_on:
+    redis:
+      condition: service_healthy
+  networks:
+    - trading-network
+  logging:
+    driver: "json-file"
+    options:
+      max-size: "10m"
+      max-file: "3"
+
 services:
   # =============================================================================
   # Trading loop daemon (optional profile)
@@ -40,17 +90,7 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
-      <<: [*redis-runtime-env, *runtime-storage-env]
-      KIS_APP_KEY: "${KIS_APP_KEY:-}"
-      KIS_APP_SECRET: "${KIS_APP_SECRET:-}"
-      KIS_IS_REAL: "${KIS_IS_REAL:-false}"
-      KIS_REAL_TRADING: "${KIS_REAL_TRADING:-false}"
-      KIS_MARKET: "${KIS_MARKET:-mock}"
-      KIS_STOCK_MARKET: "${KIS_STOCK_MARKET:-mock}"
-      KIS_FUTURES_MARKET: "${KIS_FUTURES_MARKET:-real}"
-      KIS_TOKEN_CACHE_DIR: "${KIS_TOKEN_CACHE_DIR:-/app/.cache}"
-      TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN:-}"
-      TELEGRAM_CHAT_ID: "${TELEGRAM_CHAT_ID:-}"
+      <<: [*redis-runtime-env, *runtime-storage-env, *kis-runtime-env, *alert-runtime-env]
       OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
       TRADING_MODE: "${TRADING_MODE:-paper}"
       TRADING_ASSET_CLASS: "${TRADING_ASSET_CLASS:-stock}"
@@ -58,12 +98,7 @@ services:
       TRADING_INITIAL_CAPITAL: "${TRADING_INITIAL_CAPITAL:-10000000}"
       TRADING_RUN_MODE: "${TRADING_RUN_MODE:-daemon}"
       TRADING_LIVE_CONFIRM: "${TRADING_LIVE_CONFIRM:-}"
-    volumes:
-      - ./config:/app/config:ro
-      - ./logs:/app/logs
-      - ./.cache:/app/.cache
-      - ./data/runtime:/app/data/runtime
-      - ./data/market:/app/data/market:ro
+    volumes: *trading-runtime-volumes
     depends_on:
       redis:
         condition: service_healthy
@@ -74,6 +109,81 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+  # =============================================================================
+  # Stock decoupled pipeline daemons (Compose-managed M4/M5)
+  # =============================================================================
+  stock-market-ingest:
+    <<: *stock-pipeline-service
+    container_name: ${COMPOSE_PROJECT_NAME:-kis}-stock-market-ingest
+    profiles: ["stock-ingest"]
+    command: ["python", "-m", "services.market_ingest.main"]
+    environment:
+      <<: [*redis-runtime-env, *runtime-storage-env, *kis-runtime-env]
+      INGEST_ASSET: "stock"
+      INGEST_MAX_SYMBOLS: "${INGEST_MAX_SYMBOLS:-40}"
+      INGEST_REFRESH_SECONDS: "${INGEST_REFRESH_SECONDS:-30}"
+      TRADE_TARGETS_LATEST_KEY: "${TRADE_TARGETS_LATEST_KEY:-system:trade_targets:latest}"
+
+  stock-strategy:
+    <<: *stock-pipeline-service
+    container_name: ${COMPOSE_PROJECT_NAME:-kis}-stock-strategy
+    profiles: ["stock-pipeline"]
+    command: ["python", "-m", "services.stock_strategy.main"]
+    environment:
+      <<: [*redis-runtime-env, *runtime-storage-env, *kis-runtime-env]
+      STOCK_STRATEGY_DAEMON: "${STOCK_PIPELINE_MODE:-shadow}"
+      STOCK_TICK_STREAM: "${STOCK_TICK_STREAM:-market:ticks}"
+      STOCK_WATCHLIST_KEY: "${STOCK_WATCHLIST_KEY:-system:daily_watchlist:latest}"
+      STOCK_MAX_SYMBOLS: "${STOCK_MAX_SYMBOLS:-40}"
+
+  stock-risk-filter:
+    <<: *stock-pipeline-service
+    container_name: ${COMPOSE_PROJECT_NAME:-kis}-stock-risk-filter
+    profiles: ["stock-pipeline"]
+    command: ["python", "-m", "services.stock_risk_filter.main"]
+    environment:
+      <<: [*redis-runtime-env, *runtime-storage-env]
+      STOCK_RISK_FILTER: "${STOCK_PIPELINE_MODE:-shadow}"
+      STOCK_POSITIONS_KEY: "${STOCK_POSITIONS_KEY:-stock:daemon:positions}"
+
+  stock-order-router:
+    <<: *stock-pipeline-service
+    container_name: ${COMPOSE_PROJECT_NAME:-kis}-stock-order-router
+    profiles: ["stock-pipeline"]
+    command: ["python", "-m", "services.stock_order_router.main"]
+    environment:
+      <<: [*redis-runtime-env, *runtime-storage-env]
+      STOCK_ORDER_ROUTER: "${STOCK_PIPELINE_MODE:-shadow}"
+      STOCK_POSITIONS_KEY: "${STOCK_POSITIONS_KEY:-stock:daemon:positions}"
+      STOCK_PAPER_SLIPPAGE_RATE: "${STOCK_PAPER_SLIPPAGE_RATE:-0.0001}"
+
+  stock-exit:
+    <<: *stock-pipeline-service
+    container_name: ${COMPOSE_PROJECT_NAME:-kis}-stock-exit
+    profiles: ["stock-pipeline"]
+    command: ["python", "-m", "services.stock_exit.main"]
+    environment:
+      <<: [*redis-runtime-env, *runtime-storage-env]
+      STOCK_EXIT_DAEMON: "${STOCK_PIPELINE_MODE:-shadow}"
+      STOCK_POSITIONS_KEY: "${STOCK_POSITIONS_KEY:-stock:daemon:positions}"
+      STOCK_TICK_STREAM: "${STOCK_TICK_STREAM:-market:ticks}"
+      STOCK_EXIT_INTERVAL: "${STOCK_EXIT_INTERVAL:-5}"
+      STOCK_PAPER_SLIPPAGE_RATE: "${STOCK_PAPER_SLIPPAGE_RATE:-0.0001}"
+
+  stock-monitor:
+    <<: *stock-pipeline-service
+    container_name: ${COMPOSE_PROJECT_NAME:-kis}-stock-monitor
+    profiles: ["stock-pipeline"]
+    command: ["python", "-m", "services.stock_monitor.main"]
+    environment:
+      <<: [*redis-runtime-env, *runtime-storage-env, *alert-runtime-env]
+      STOCK_MONITOR_DAEMON: "${STOCK_PIPELINE_MODE:-shadow}"
+      STOCK_POSITIONS_KEY: "${STOCK_POSITIONS_KEY:-stock:daemon:positions}"
+      STOCK_TICK_STREAM: "${STOCK_TICK_STREAM:-market:ticks}"
+      STOCK_MONITOR_STATUS_INTERVAL: "${STOCK_MONITOR_STATUS_INTERVAL:-5}"
+      STOCK_MONITOR_SIGNAL_META_MAX: "${STOCK_MONITOR_SIGNAL_META_MAX:-1000}"
+      TRADING_STATE_KEY_SUFFIX: "${STOCK_TRADING_STATE_KEY_SUFFIX:-}"
 
   # =============================================================================
   # 대시보드 API

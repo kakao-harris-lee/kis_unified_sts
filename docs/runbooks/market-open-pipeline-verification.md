@@ -20,6 +20,7 @@ Paper:
 
 ```bash
 docker compose --env-file .env.paper.example --profile trading config --services
+docker compose --env-file .env.paper.example --profile stock-pipeline config --services
 ```
 
 Live:
@@ -27,10 +28,18 @@ Live:
 ```bash
 TRADING_LIVE_CONFIRM=I_UNDERSTAND_LIVE_TRADING \
   docker compose --env-file .env.live.example --profile trading config --services
+docker compose --env-file .env.live.example --profile stock-pipeline config --services
 ```
 
 Do not start live trading unless the account, market, and confirmation token are
 intentional.
+
+Stock decoupled cutover uses `stock-ingest` only after the monolithic stock
+trader is stopped:
+
+```bash
+docker compose --env-file .env.paper.example --profile stock-ingest config --services
+```
 
 ## Signal And Trade Checks
 

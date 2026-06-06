@@ -3,7 +3,7 @@
 Confirms the decoupled stock pipeline (M4-P/R/O + M5a/b/c) is wired and fresh,
 in SHADOW (pre-cutover gate) or LIVE (post-cutover check). Read-only: no key is
 mutated. Returns exit 0 if all CRITICAL checks pass, 1 otherwise; warn-level
-checks never fail the run. Process liveness (systemctl is-active) is the runbook's
+checks never fail the run. Process liveness (`docker compose ps`) is the runbook's
 job — this script only inspects Redis.
 
 Suffix rules (verified):
@@ -39,7 +39,7 @@ _KST = ZoneInfo("Asia/Seoul")
 
 # (stream base, expected consumer group). Streams are suffixed per mode.
 # M4-R reads candidates; M4-O reads finals; M5a monitor reads fills.
-# (M4-X polls the positions hash — no group — so its liveness is systemctl-only.)
+# (M4-X polls the positions hash — no group — so its liveness is compose-only.)
 _CORE_GROUPS: tuple[tuple[str, str], ...] = (
     ("signal.candidate.stock", "stock_risk_filter"),
     ("signal.final.stock", "stock_order_router"),

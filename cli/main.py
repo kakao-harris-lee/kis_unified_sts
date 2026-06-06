@@ -1733,8 +1733,7 @@ def trade_start(
     if _stock_orchestrator_blocked(asset):
         click.echo(
             "Error: the monolithic orchestrator no longer runs stock — stock trades "
-            "via the decoupled M4 pipeline "
-            "(kis-stock-{strategy-daemon,risk-filter,order-router,exit-daemon}).",
+            "via the compose stock-pipeline/stock-ingest services.",
             err=True,
         )
         click.echo(

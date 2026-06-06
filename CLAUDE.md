@@ -47,7 +47,7 @@
 
 #### 주식 (Stock)
 
-- **운용 경로**: stock은 decoupled M4 파이프라인(M4-P/R/O/X + M5a/b/c)으로 운용한다 (M5d 컷오버 후). orchestrator 경로는 `STOCK_ORCHESTRATOR_ENABLED=false`로 차단되며 futures 전용으로 남는다. 롤백은 플래그를 `true`로 되돌린다.
+- **운용 경로**: stock은 Compose `stock-pipeline`/`stock-ingest` profiles의 decoupled M4 파이프라인(M4-P/R/O/X + M5a/b/c)으로 운용한다 (M5d 컷오버 후). orchestrator 경로는 `STOCK_ORCHESTRATOR_ENABLED=false`로 차단되며 futures 전용으로 남는다. 롤백은 플래그를 `true`로 되돌리고 Compose `trader`를 복원한다.
 - Screener 기반 종목 선정 + bb_reversion / opening_volume_surge 전략
 - Paper trading 운용 중
 - **EOD 전량 청산 금지**: Intraday trading이 아님. 장 마감 시 무조건 전량 청산하지 않는다
@@ -596,7 +596,7 @@ sts stock-backfill run --days 7
 
 # 트레이딩/모의
 # (DEPRECATED M5e) sts trade start --asset stock — 컷오버 후 orchestrator는 stock 미운용.
-#   stock은 decoupled M4 파이프라인(kis-stock-{strategy-daemon,risk-filter,order-router,exit-daemon})으로 운용.
+#   stock은 Compose stock-pipeline/stock-ingest profiles의 decoupled M4 파이프라인으로 운용.
 #   롤백: STOCK_ORCHESTRATOR_ENABLED=true. 런북: docs/runbooks/stock-pipeline-cutover-m5d.md
 sts trade start --strategy pure_micro --asset futures   # 선물은 orchestrator 경로 유지
 sts paper start --strategy bb_reversion --asset stock

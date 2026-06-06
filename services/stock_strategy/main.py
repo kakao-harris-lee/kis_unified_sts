@@ -1,7 +1,7 @@
 """Stock strategy daemon entrypoint (flag-gated, shadow-first).
 
 Default-off: STOCK_STRATEGY_DAEMON env var must be set to ``shadow`` or ``live`` to
-activate.  The systemd unit ships disabled; no live impact on merge.
+activate. Compose keeps the service profile-gated; no live impact on merge.
 
 Flag routing:
   off (default / unset) — inert: log + close redis + return 0, no objects

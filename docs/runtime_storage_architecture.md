@@ -235,6 +235,11 @@ Use compose profiles.
 
 - Base compose: app, dashboard, forecasting, strategy-builder UI, Redis, Prometheus, stream exporter.
 - Trading profile: optional `trader` daemon service that runs `sts trade start` from compose.
+- Stock pipeline profile: optional decoupled M4/M5 services
+  (`stock-strategy`, `stock-risk-filter`, `stock-order-router`, `stock-exit`,
+  `stock-monitor`) for the stock stream pipeline.
+- Stock ingest profile: `stock-market-ingest`, separated from `stock-pipeline`
+  so shadow validation cannot accidentally open a second KIS stock WebSocket.
 - Runtime storage: SQLite file volume mounted into app/dashboard/forecasting.
 - `.env.dev`, `.env.paper.example`, `.env.live.example` carry `COMPOSE_PROJECT_NAME`, unique host ports, Redis DB 1, and runtime SQLite paths.
 
@@ -251,6 +256,15 @@ docker compose --env-file .env.live up -d
 
 docker compose --env-file .env.paper --profile trading up -d trader
 
+docker compose --env-file .env.paper --profile stock-pipeline up -d \
+  stock-strategy stock-risk-filter stock-order-router stock-exit stock-monitor
+
+STOCK_PIPELINE_MODE=live \
+  docker compose --env-file .env.paper \
+    --profile stock-ingest --profile stock-pipeline up -d \
+    stock-market-ingest stock-strategy stock-risk-filter stock-order-router \
+    stock-exit stock-monitor
+
 TRADING_LIVE_CONFIRM=I_UNDERSTAND_LIVE_TRADING \
   docker compose --env-file .env.live --profile trading up -d trader
 
@@ -258,7 +272,10 @@ docker compose --env-file .env.dev --profile research up -d mlflow
 ```
 
 The base compose should not require any ClickHouse host or port.
-The `trader` profile is excluded from the base service set, so paper/live dashboards can run without starting the trading loop. Live trader startup also requires both `KIS_REAL_TRADING=true` and `TRADING_LIVE_CONFIRM=I_UNDERSTAND_LIVE_TRADING`.
+The `trader`, `stock-pipeline`, and `stock-ingest` profiles are excluded from
+the base service set, so paper/live dashboards can run without starting any
+trading loop. Live trader startup also requires both `KIS_REAL_TRADING=true` and
+`TRADING_LIVE_CONFIRM=I_UNDERSTAND_LIVE_TRADING`.
 
 ## Configuration
 
@@ -294,7 +311,11 @@ Do not use database env vars as implicit feature flags. Storage behavior is cont
 - `sts backfill` and `sts stock-backfill` accept only `--sink parquet`. They write KIS historical candles directly to `ParquetMarketDataStore` with code/day replace-write semantics and track resume/status in `data/market/_metadata/backfill_state.sqlite3`.
 - `sts backtest run --symbol` and strategy backtest scripts load from Parquet market data. `MARKET_DATA_SOURCE=clickhouse` is invalid.
 - `docker-compose.yml` injects Redis DB 1 and storage env into runtime services and mounts `./data/runtime:/app/data/runtime`. MLflow is optional experiment tracking for backtests, not an ML/RL runtime requirement.
-- `docker-compose.yml` includes a `profiles: ["trading"]` `trader` service for compose-managed paper/live trading loops. It uses the same runtime storage mounts and requires an explicit live confirmation token before non-interactive live mode.
+- `docker-compose.yml` includes a `profiles: ["trading"]` `trader` service for compose-managed paper/live monolithic trading loops. It uses the same runtime storage mounts and requires an explicit live confirmation token before non-interactive live mode.
+- `docker-compose.yml` also includes stock decoupled pipeline services behind
+  `stock-pipeline` and `stock-ingest` profiles. `stock-ingest` is separate from
+  `stock-pipeline` to prevent duplicate KIS stock WebSocket ownership during
+  shadow validation.
 - `.env.dev`, `.env.paper.example`, `.env.live.example`, and `.env.production.example` separate dev/paper/live by project name, host ports, Redis volume, and SQLite ledger path rather than Redis DB number.
 - Runtime-facing code has no active ClickHouse client construction; a unit policy guard prevents regressions.
 
