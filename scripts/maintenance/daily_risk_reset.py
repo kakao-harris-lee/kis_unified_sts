@@ -11,6 +11,9 @@ No shadow/live mode: ``risk:state:{asset}`` is written/read only by the decouple
 M4 daemons (the orchestrator uses a separate in-memory RiskManager), so there is
 no live key to clobber. Market-day gating is the crontab's job.
 
+REDIS_URL defaults to redis://localhost:6379/1; the operator sets it per
+environment (paper=6381, live=6382) in the crontab.
+
 Recommended crontab (KST, CRON_TZ=Asia/Seoul; operator-managed):
   59 8 * * 1-5  /home/deploy/project/kis_unified_sts/.venv/bin/python -m scripts.maintenance.daily_risk_reset
 """
@@ -28,10 +31,8 @@ logger = logging.getLogger(__name__)
 
 _KST = ZoneInfo("Asia/Seoul")
 
-
-def _assets() -> tuple[str, ...]:
-    """Asset classes whose daily risk counters M5c resets (idempotent / harmless)."""
-    return ("stock", "futures")
+# Asset classes whose daily risk counters M5c resets (idempotent / harmless).
+_ASSETS: tuple[str, ...] = ("stock", "futures")
 
 
 async def reset_asset(
@@ -76,7 +77,7 @@ async def run_reset(
 
     rc = 0
     try:
-        for asset in _assets():
+        for asset in _ASSETS:
             try:
                 await reset_asset(_client, asset, now_kst=now_kst)
             except Exception:

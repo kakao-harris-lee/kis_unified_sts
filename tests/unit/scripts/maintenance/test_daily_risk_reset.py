@@ -78,6 +78,15 @@ async def test_run_reset_resets_both_assets() -> None:
 
 
 @pytest.mark.asyncio
+async def test_run_reset_rc0_when_all_already_reset() -> None:
+    redis = fakeredis.aioredis.FakeRedis(db=1)
+    now = _kst_open(2026, 6, 8)
+    assert await m.run_reset(now_kst=now, redis_client=redis) == 0  # first run resets
+    # second run same day: every asset skips -> still rc=0, nothing wiped
+    assert await m.run_reset(now_kst=now, redis_client=redis) == 0
+
+
+@pytest.mark.asyncio
 async def test_run_reset_isolates_per_asset_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
