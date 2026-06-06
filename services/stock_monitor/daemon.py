@@ -17,12 +17,14 @@ from typing import Any
 
 from services.stock_exit.positions import parse_position_record
 from services.stock_monitor.serializers import (
+    _ms_to_iso,
     build_position_dict,
     build_signal_dict,
     build_trade_dict,
     parse_fill,
     parse_final_signal,
 )
+from shared.utils.calc import calc_realized_pnl
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +67,12 @@ class StockMonitorDaemon:
     # -- handlers --------------------------------------------------------- #
 
     async def handle_signal(self, fields: dict[bytes, bytes]) -> None:
+        """Correlate a final-signal record and publish it to the dashboard.
+
+        Caches ``signal_id -> {strategy, name, code}`` (FIFO-bounded by
+        ``signal_meta_max``) so a later entry fill can enrich its position, and
+        publishes the signal via ``publisher.publish_raw_signal``.
+        """
         sig = parse_final_signal(fields)
         self._signal_meta[sig["signal_id"]] = {
             "strategy": sig["strategy"],
@@ -76,26 +84,37 @@ class StockMonitorDaemon:
         self.publisher.publish_raw_signal(build_signal_dict(sig))
 
     async def handle_fill(self, fields: dict[bytes, bytes]) -> None:
+        """Dispatch a fill to entry/exit handling.
+
+        Entry: opens ``_open[code]`` and publishes the position (enriched with
+        cached signal meta). Exit: pairs with the open entry by ``code``,
+        publishes the closed trade + realized PnL and removes the position.
+        Orphaned exits and unknown ``trade_role`` values are logged and dropped.
+        Fires entry/exit alerts when an ``alert_sink`` is configured.
+        """
         fill = parse_fill(fields)
         code = fill["code"]
         if fill["trade_role"] == "entry":
             meta = self._signal_meta.get(fill["signal_id"], {})
             pos_dict = build_position_dict(fill, meta, fee_rate=self.fee_rate)
             self.publisher.publish_raw_position(code, pos_dict)
+            entry_price = fill["filled_price"]
             self._open[code] = {
                 "code": code,
                 "name": meta.get("name", ""),
                 "strategy": meta.get("strategy", ""),
-                "entry_price": fill["filled_price"],
+                "entry_price": entry_price,
                 "quantity": fill["quantity"],
                 "entry_time": pos_dict["entry_time"],
+                "highest_price": entry_price,
+                "lowest_price": entry_price,
             }
             if self.alert_sink is not None:
                 await self.alert_sink.on_entry(
                     code=code,
                     strategy=meta.get("strategy", ""),
                     quantity=fill["quantity"],
-                    price=fill["filled_price"],
+                    price=entry_price,
                 )
         elif fill["trade_role"] == "exit":
             entry = self._open.pop(code, None)
@@ -106,7 +125,10 @@ class StockMonitorDaemon:
                 self.publisher.remove_position(code)
                 return
             ep, xp, qty = entry["entry_price"], fill["filled_price"], fill["quantity"]
-            pnl = (xp - ep) * qty - (ep + xp) * qty * (self.fee_rate / 2)
+            # matches M4-X exit pnl (services/stock_exit/daemon.py) for
+            # dashboard/risk-state parity — calc_realized_pnl is value-identical
+            # to the inline (xp-ep)*qty - (ep+xp)*qty*(fee_rate/2).
+            pnl = calc_realized_pnl(ep, xp, qty, side="long", fee_rate=self.fee_rate)
             trade = build_trade_dict(entry, fill, pnl=pnl)
             self.publisher.publish_raw_trade(trade)
             self.publisher.remove_position(code)
@@ -115,10 +137,22 @@ class StockMonitorDaemon:
                 await self.alert_sink.on_exit(
                     code=code, pnl=pnl, pnl_pct=trade["pnl_pct"]
                 )
+        else:
+            logger.warning(
+                "unknown trade_role %r for %s; dropping", fill["trade_role"], code
+            )
 
     # -- recovery + status ------------------------------------------------ #
 
     async def recover_open_positions(self) -> None:
+        """Rebuild ``_open`` from the daemon positions hash on startup.
+
+        Reads ``positions_key``, decodes each value via ``parse_position_record``
+        (skipping foreign orchestrator records that lack ``opened_at_ms``),
+        seeds the running high/low watermarks from the persisted
+        ``high_water``/``low_water``, and republishes each recovered position.
+        Read failures are logged and leave ``_open`` empty (non-fatal).
+        """
         try:
             raw = await self.redis.hgetall(self.positions_key)
         except Exception:
@@ -131,13 +165,18 @@ class StockMonitorDaemon:
             code = str(rec["code"])
             entry_price = float(rec["entry_price"])
             quantity = int(rec["quantity"])
+            entry_time = _ms_to_iso(str(rec.get("opened_at_ms", "")))
+            high = float(rec.get("high_water", entry_price))
+            low = float(rec.get("low_water", entry_price))
             self._open[code] = {
                 "code": code,
                 "name": str(rec.get("name", "")),
                 "strategy": str(rec.get("strategy", "")),
                 "entry_price": entry_price,
                 "quantity": quantity,
-                "entry_time": "",
+                "entry_time": entry_time,
+                "highest_price": high,
+                "lowest_price": low,
             }
             self.publisher.publish_raw_position(
                 code,
@@ -151,11 +190,11 @@ class StockMonitorDaemon:
                     "current_price": entry_price,
                     "unrealized_pnl": 0.0,
                     "pnl_pct": 0.0,
-                    "entry_time": "",
+                    "entry_time": entry_time,
                     "strategy": self._open[code]["strategy"],
                     "state": "survival",
-                    "highest_price": float(rec.get("high_water", entry_price)),
-                    "lowest_price": float(rec.get("low_water", entry_price)),
+                    "highest_price": high,
+                    "lowest_price": low,
                     "fee_rate": self.fee_rate,
                     "stop_price": None,
                     "client_order_id": str(rec.get("signal_id", "")),
@@ -163,7 +202,14 @@ class StockMonitorDaemon:
             )
 
     async def publish_status_and_mtm(self) -> None:
-        for code, entry in self._open.items():
+        """Mark each open position to market and publish a daemon status row.
+
+        Iterates a snapshot of ``_open`` (concurrent fills from the consume loop
+        may mutate it across the ``get_current_price`` await), updates the
+        running high/low watermarks, republishes each position with current
+        price / unrealized PnL, then publishes an aggregate status dict.
+        """
+        for code, entry in list(self._open.items()):
             price = await self.feed.get_current_price(code)
             close = price.get("close")
             if close is None:
@@ -171,6 +217,10 @@ class StockMonitorDaemon:
             close = float(close)
             qty = int(entry.get("quantity", 0) or 0)
             ep = entry["entry_price"]
+            high = max(float(entry.get("highest_price", ep)), close)
+            low = min(float(entry.get("lowest_price", ep)), close)
+            entry["highest_price"] = high
+            entry["lowest_price"] = low
             self.publisher.publish_raw_position(
                 code,
                 {
@@ -186,8 +236,8 @@ class StockMonitorDaemon:
                     "entry_time": entry.get("entry_time", ""),
                     "strategy": entry["strategy"],
                     "state": "survival",
-                    "highest_price": ep,
-                    "lowest_price": ep,
+                    "highest_price": high,
+                    "lowest_price": low,
                     "fee_rate": self.fee_rate,
                     "stop_price": None,
                     "client_order_id": "",
@@ -204,6 +254,12 @@ class StockMonitorDaemon:
     # -- loops ------------------------------------------------------------ #
 
     async def run(self) -> None:
+        """Run the daemon: start feed, ensure groups, recover, then loop.
+
+        Creates the consumer groups (idempotent), recovers open positions, and
+        runs the consume + status loops until ``stop()`` is signalled, then
+        cancels both loops and stops the feed.
+        """
         await self.feed.start()
         for stream in (self.fill_stream, self.signal_stream):
             with contextlib.suppress(Exception):
@@ -224,9 +280,16 @@ class StockMonitorDaemon:
             await self.feed.stop()
 
     async def stop(self) -> None:
+        """Signal the run/consume/status loops to exit (idempotent)."""
         self._stop.set()
 
     async def _consume_loop(self) -> None:
+        """Read fill+signal streams via the consumer group and dispatch + ACK.
+
+        Blocks up to 2s per ``xreadgroup``; routes by stream name to
+        ``handle_fill`` / ``handle_signal``; handler exceptions are logged and
+        the message is still ACKed (poison-pill drop). Read errors back off 0.5s.
+        """
         while not self._stop.is_set():
             try:
                 messages = await self.redis.xreadgroup(
@@ -250,13 +313,20 @@ class StockMonitorDaemon:
                     try:
                         if name == self.fill_stream:
                             await self.handle_fill(data)
-                        else:
+                        elif name == self.signal_stream:
                             await self.handle_signal(data)
+                        else:
+                            logger.warning("unexpected stream %s", name)
                     except Exception:
                         logger.exception("handler error; dropping (poison-pill)")
                     await self.redis.xack(name, self.consumer_group, msg_id)
 
     async def _status_loop(self) -> None:
+        """Periodically mark to market + publish status every ``status_interval``.
+
+        Calls ``publish_status_and_mtm`` each tick (errors logged, loop
+        continues) and sleeps interruptibly until the next tick or ``stop()``.
+        """
         while not self._stop.is_set():
             try:
                 await self.publish_status_and_mtm()

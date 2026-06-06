@@ -175,3 +175,49 @@ async def test_mark_to_market(wired) -> None:
     pos = reader.get_positions()[0]
     assert pos["current_price"] == 72000.0
     assert pos["unrealized_pnl"] == (72000.0 - 71000.0) * 10
+
+
+@pytest.mark.asyncio
+async def test_mtm_survives_concurrent_mutation(wired) -> None:
+    """A fill arriving mid-MTM (yielded on the price await) must not crash."""
+    daemon, redis, reader = wired
+    await daemon.handle_fill(_enc(_fill("entry", "BUY", "71000.0", code="005930")))
+    await daemon.handle_fill(_enc(_fill("entry", "BUY", "50000.0", code="000660")))
+
+    class _MutatingFeed:
+        prices = {"005930": {"close": 72000.0}, "000660": {"close": 51000.0}}
+
+        async def get_current_price(self, symbol: str) -> dict[str, float]:
+            # Simulate a concurrent exit fill popping _open during iteration.
+            daemon._open.pop("000660", None)
+            return dict(self.prices.get(symbol, {}))
+
+    daemon.feed = _MutatingFeed()
+    # Iterates a snapshot -> no "dictionary changed size during iteration".
+    await daemon.publish_status_and_mtm()
+    assert "000660" not in daemon._open
+
+
+@pytest.mark.asyncio
+async def test_signal_meta_fifo_eviction(wired) -> None:
+    """Pushing > signal_meta_max signals evicts the oldest (FIFO)."""
+    daemon, redis, reader = wired
+    daemon.signal_meta_max = 3
+    for i in range(5):
+        await daemon.handle_signal(_enc(_final(code=f"00000{i}")))
+    assert len(daemon._signal_meta) == 3
+    # oldest two evicted, newest three retained
+    assert "sig-000000" not in daemon._signal_meta
+    assert "sig-000001" not in daemon._signal_meta
+    assert "sig-000004" in daemon._signal_meta
+
+
+@pytest.mark.asyncio
+async def test_entry_without_signal_meta_is_graceful(wired) -> None:
+    """Entry fill with no prior signal -> position with empty strategy/name."""
+    daemon, redis, reader = wired
+    await daemon.handle_fill(_enc(_fill("entry", "BUY", "71000.0")))
+    pos = reader.get_positions()[0]
+    assert pos["strategy"] == ""
+    assert pos["name"] == ""
+    assert pos["entry_price"] == 71000.0
