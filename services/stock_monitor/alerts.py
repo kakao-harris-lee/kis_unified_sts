@@ -49,6 +49,8 @@ class AlertSink:
         mode: str,
         pnl_alert_pct: float,
     ) -> None:
+        if mode not in ("live", "shadow"):
+            raise ValueError(f"AlertSink: unknown mode {mode!r}")
         self.notifier = notifier
         self.mode = mode
         self.pnl_alert_pct = pnl_alert_pct
@@ -68,8 +70,9 @@ class AlertSink:
         return None
 
     async def on_exit(self, *, code: str, pnl: float, pnl_pct: float) -> None:
+        self.digest.add(pnl=pnl)  # every exit counts toward the daily digest
         if abs(pnl_pct) < self.pnl_alert_pct:
-            return  # routine exit -> digest only
+            return  # routine exit -> digest only, no alert
         icon = "🟢" if pnl >= 0 else "🔴"
         await self._dispatch(
             f"{icon} <b>주목 청산</b> {code}\nPnL {pnl:,.0f}원 ({pnl_pct:+.2f}%)"
@@ -79,6 +82,12 @@ class AlertSink:
         await self._dispatch(f"⚠️ <b>헬스 이상</b>\n{message}")
 
     async def emit_digest(self, *, open_count: int) -> None:
+        """Emit the session digest. Pure emitter — no side effects.
+
+        Does NOT reset the accumulator. The daemon owns the once-per-day emit
+        guard and the daily ``self.digest.reset()`` (at 09:00 KST), keeping this
+        method side-effect-free and safe to call without mutating state.
+        """
         d = self.digest
         win_rate = (d.wins / d.trades * 100) if d.trades else 0.0
         await self._dispatch(
