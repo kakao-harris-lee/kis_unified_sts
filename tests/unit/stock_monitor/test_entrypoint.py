@@ -29,13 +29,17 @@ def test_off_mode_is_inert(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_shadow_forces_key_suffix(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("TRADING_STATE_KEY_SUFFIX", raising=False)
+    # setenv (not delenv) so monkeypatch TRACKS the key and removes it on
+    # teardown — _ensure_shadow_isolation writes os.environ directly, which a
+    # delenv-on-absent would NOT undo, leaking the suffix into later tests.
+    monkeypatch.setenv("TRADING_STATE_KEY_SUFFIX", "")
     m._ensure_shadow_isolation("shadow")
     assert os.environ["TRADING_STATE_KEY_SUFFIX"] == "shadow"
 
 
 def test_live_leaves_suffix_unset(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("TRADING_STATE_KEY_SUFFIX", raising=False)
+    # Tracked via setenv so teardown restores cleanly (see note above).
+    monkeypatch.setenv("TRADING_STATE_KEY_SUFFIX", "")
     m._ensure_shadow_isolation("live")
     assert os.environ.get("TRADING_STATE_KEY_SUFFIX", "") == ""
 
