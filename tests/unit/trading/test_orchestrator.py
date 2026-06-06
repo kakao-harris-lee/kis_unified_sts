@@ -893,6 +893,16 @@ class TestTradingOrchestrator:
         config.paper_trading = False
         orch = TradingOrchestrator(config)
 
+        # F-7: the real-execution entry path now requires the live-mode gate to
+        # permit it; wire an enabled guard so this test still exercises the real
+        # execute_order fill-confirmation logic (not the guard's block path).
+        import fakeredis.aioredis
+
+        from shared.execution.live_mode_guard import LiveModeGuard
+
+        orch._live_mode_guard = LiveModeGuard(enabled=True)
+        orch._guard_redis = fakeredis.aioredis.FakeRedis(db=1)
+
         orch._order_executor = MagicMock()
         orch._order_executor.execute_order = AsyncMock(
             return_value=OrderResponse(
