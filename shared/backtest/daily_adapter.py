@@ -618,6 +618,3 @@ def load_stock_daily_from_parquet(
 
     logger.info(f"Loaded {len(df)} daily bars for {code}")
     return df
-
-
-load_stock_daily_from_clickhouse = load_stock_daily_from_parquet

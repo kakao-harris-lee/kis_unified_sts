@@ -18,14 +18,12 @@ Historical Data Backfill Module
 import asyncio
 import logging
 import os
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from typing import Any
 
 import httpx
 
 from shared.config.secrets import SecretsManager
-from .calendar import get_trading_days_range, is_after_market_close
-from .futures import get_active_codes_for_date
 
 logger = logging.getLogger(__name__)
 
@@ -608,11 +606,9 @@ def parse_ohlcv(code: str, date_str: str, data: dict) -> list[tuple]:
 
 
 def get_db_client(database: str = None):
-    """Legacy DB client entrypoint removed with ClickHouse support."""
+    """Legacy DB client entrypoint removed; use Parquet backfill commands."""
     _ = database
-    raise RuntimeError(
-        "ClickHouse has been removed; use Parquet backfill/status commands"
-    )
+    raise RuntimeError("Legacy DB sink removed; use Parquet backfill/status commands")
 
 
 def ensure_database():
@@ -639,7 +635,7 @@ def ensure_kospi200_index_table(client=None):
 def insert_batch(client, rows: list[tuple], table_name: str = "kospi_mini_1m"):
     """Legacy DB insert removed."""
     _ = client, rows, table_name
-    raise RuntimeError("ClickHouse inserts have been removed; write Parquet instead")
+    raise RuntimeError("Legacy DB inserts have been removed; write Parquet instead")
 
 
 def _load_continuous_source_rows(
@@ -812,9 +808,6 @@ def load_futures_minute_from_parquet(
     return df
 
 
-load_futures_minute_from_clickhouse = load_futures_minute_from_parquet
-
-
 # =============================================================================
 # Backfill Functions
 # =============================================================================
@@ -899,91 +892,35 @@ async def collect_index_batch(
 
 
 async def backfill(days: int = 365, verbose: bool = True, resume: bool = True):
-    """
-    Run backfill for the past N days.
+    """Run mini KOSPI200 futures backfill into Parquet."""
+    from shared.collector.historical.parquet_backfill import (
+        backfill_futures_parquet,
+    )
 
-    Args:
-        days: Number of days to backfill
-        verbose: Print progress
-    """
-    if verbose:
-        print("Starting backfill...")
-
-    start = date.today() - timedelta(days=max(days, 1))
-    end = date.today()
-    trading_days = get_trading_days_range(start, end)
-
-    if verbose:
-        print(f"Trading days: {len(trading_days)}")
-
-    ensure_database()
-    db_client = get_db_client()
-    ensure_table(db_client)
-
-    collected: set[tuple[str, date]] = set()
-    if resume:
-        try:
-            collected = get_collected_pairs_in_range(db_client, start, end)
-        except Exception as e:
-            logger.warning(
-                f"Failed to get collected pairs (proceeding with empty set): {e}"
-            )
-
-    total_rows = 0
-    total_tasks = 0
-
-    trading_days_iter = list(reversed(trading_days))
-
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        for idx, day in enumerate(trading_days_iter, start=1):
-            codes = get_active_codes_for_date(day)
-            day_tasks = [(code, day) for code in codes if (code, day) not in collected]
-
-            if not day_tasks:
-                continue
-
-            total_tasks += len(day_tasks)
-            if verbose:
-                print(f"{idx}/{len(trading_days_iter)} {day} tasks={len(day_tasks)}")
-
-            rows = await collect_batch(client, db_client, day_tasks)
-            total_rows += rows
-
-    if verbose:
-        print(f"Backfill complete. tasks={total_tasks}, rows={total_rows}")
-
-    return total_rows
+    result = await backfill_futures_parquet(
+        days=days,
+        mini=True,
+        index=False,
+        futures=False,
+        resume=resume,
+        verbose=verbose,
+    )
+    return result.rows
 
 
 async def collect_today(verbose: bool = True):
-    """
-    Collect today's data (run after market close).
-    """
-    if not is_after_market_close():
-        if verbose:
-            print("Market is still open. Please run after 15:45 KST.")
-        return 0
+    """Collect today's mini KOSPI200 futures bars into Parquet."""
+    from shared.collector.historical.parquet_backfill import (
+        collect_today_futures_parquet,
+    )
 
-    today = date.today()
-
-    if verbose:
-        print(f"Collecting data for {today}")
-
-    codes = get_active_codes_for_date(today)
-
-    ensure_database()
-    db_client = get_db_client()
-    ensure_table(db_client)
-
-    tasks = [(code, today) for code in codes]
-
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        rows = await collect_batch(client, db_client, tasks)
-
-    if verbose:
-        print(f"Today's collection complete. Rows: {rows}")
-
-    return rows
+    result = await collect_today_futures_parquet(
+        mini=True,
+        index=False,
+        futures=False,
+        verbose=verbose,
+    )
+    return result.rows
 
 
 # =============================================================================
@@ -996,93 +933,35 @@ async def backfill_kospi200_index(
     verbose: bool = True,
     resume: bool = True,
 ):
-    """
-    Run backfill for KOSPI 200 Index for the past N days.
-    """
-    if verbose:
-        print("Starting KOSPI 200 Index backfill...")
+    """Run KOSPI200 index backfill into Parquet."""
+    from shared.collector.historical.parquet_backfill import (
+        backfill_futures_parquet,
+    )
 
-    start = date.today() - timedelta(days=max(days, 1))
-    end = date.today()
-    trading_days = get_trading_days_range(start, end)
-
-    if verbose:
-        print(f"Trading days: {len(trading_days)}")
-
-    ensure_database()
-    db_client = get_db_client()
-    ensure_kospi200_index_table(db_client)
-
-    collected_dates: set[date] = set()
-    if resume:
-        try:
-            result = db_client.query(
-                """
-                SELECT DISTINCT toDate(datetime) as dt
-                FROM kospi200_index_1m
-                WHERE dt >= %(start)s AND dt <= %(end)s
-                """,
-                parameters={"start": start, "end": end},
-            )
-            collected_dates = {row[0] for row in result.result_rows}
-        except Exception as e:
-            logger.warning(
-                f"Failed to get collected dates (proceeding with empty set): {e}"
-            )
-
-    total_rows = 0
-    trading_days_iter = list(reversed(trading_days))
-    index_symbol = _get_index_symbol()
-
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        for idx, day in enumerate(trading_days_iter, start=1):
-            if day in collected_dates:
-                continue
-
-            if verbose:
-                print(f"{idx}/{len(trading_days_iter)} {day}")
-
-            tasks = [(index_symbol, day)]
-            rows = await collect_index_batch(
-                client, db_client, tasks, table_name="kospi200_index_1m"
-            )
-            total_rows += rows
-
-    if verbose:
-        print(f"KOSPI 200 Index backfill complete. rows={total_rows}")
-
-    return total_rows
+    result = await backfill_futures_parquet(
+        days=days,
+        mini=False,
+        index=True,
+        futures=False,
+        resume=resume,
+        verbose=verbose,
+    )
+    return result.rows
 
 
 async def collect_today_kospi200_index(verbose: bool = True):
-    """
-    Collect today's KOSPI 200 Index data (run after market close).
-    """
-    if not is_after_market_close():
-        if verbose:
-            print("Market is still open. Please run after 15:45 KST.")
-        return 0
+    """Collect today's KOSPI200 index bars into Parquet."""
+    from shared.collector.historical.parquet_backfill import (
+        collect_today_futures_parquet,
+    )
 
-    today = date.today()
-
-    if verbose:
-        print(f"Collecting KOSPI 200 Index data for {today}")
-
-    ensure_database()
-    db_client = get_db_client()
-    ensure_kospi200_index_table(db_client)
-
-    tasks = [(_get_index_symbol(), today)]
-
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        rows = await collect_index_batch(
-            client, db_client, tasks, table_name="kospi200_index_1m"
-        )
-
-    if verbose:
-        print(f"Today's KOSPI 200 Index collection complete. Rows: {rows}")
-
-    return rows
+    result = await collect_today_futures_parquet(
+        mini=False,
+        index=True,
+        futures=False,
+        verbose=verbose,
+    )
+    return result.rows
 
 
 # =============================================================================
@@ -1124,129 +1003,35 @@ async def backfill_kospi200f(
     verbose: bool = True,
     resume: bool = True,
 ):
-    """
-    Run backfill for KOSPI 200 Futures (full-size) for the past N days.
+    """Run KOSPI200 full-size futures backfill into Parquet."""
+    from shared.collector.historical.parquet_backfill import (
+        backfill_futures_parquet,
+    )
 
-    Uses actual contract codes (A01xxx) instead of auto-rolling code.
-
-    Args:
-        days: Number of days to backfill
-        verbose: Print progress
-    """
-    if verbose:
-        print("Starting KOSPI 200 Futures backfill...")
-
-    start = date.today() - timedelta(days=max(days, 1))
-    end = date.today()
-    trading_days = get_trading_days_range(start, end)
-
-    if verbose:
-        print(f"Trading days: {len(trading_days)}")
-
-    ensure_database()
-    db_client = get_db_client()
-    ensure_kospi200f_table(db_client)
-
-    # Check what we already have
-    collected: set[tuple[str, date]] = set()
-    if resume:
-        try:
-            collected = get_collected_pairs_in_range(
-                db_client,
-                start,
-                end,
-                table_name="kospi200f_1m",
-            )
-        except Exception as e:
-            logger.warning(
-                f"Failed to get collected pairs (proceeding with empty set): {e}"
-            )
-
-    total_rows = 0
-    total_tasks = 0
-    trading_days_iter = list(reversed(trading_days))
-
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        for idx, day in enumerate(trading_days_iter, start=1):
-            codes = _get_kospi200f_codes_for_date(day)
-            day_tasks = [(code, day) for code in codes if (code, day) not in collected]
-
-            if not day_tasks:
-                continue
-
-            total_tasks += len(day_tasks)
-            if verbose:
-                print(
-                    f"{idx}/{len(trading_days_iter)} {day} codes={[c for c, _ in day_tasks]}"
-                )
-
-            rows = await collect_batch(
-                client, db_client, day_tasks, table_name="kospi200f_1m"
-            )
-            total_rows += rows
-
-    rebuilt_rows = rebuild_continuous_kospi200f(
-        db_client,
-        start,
-        end,
-        table_name="kospi200f_1m",
+    result = await backfill_futures_parquet(
+        days=days,
+        mini=False,
+        index=False,
+        futures=True,
+        resume=resume,
         verbose=verbose,
     )
-    db_client.close()
-
-    if verbose:
-        print(
-            "KOSPI 200 Futures backfill complete. "
-            f"tasks={total_tasks}, rows={total_rows}, rebuilt_101S6000={rebuilt_rows}"
-        )
-
-    return total_rows
+    return result.rows
 
 
 async def collect_today_kospi200f(verbose: bool = True):
-    """
-    Collect today's KOSPI 200 Futures data (run after market close).
-    """
-    if not is_after_market_close():
-        if verbose:
-            print("Market is still open. Please run after 15:45 KST.")
-        return 0
+    """Collect today's KOSPI200 full-size futures bars into Parquet."""
+    from shared.collector.historical.parquet_backfill import (
+        collect_today_futures_parquet,
+    )
 
-    today = date.today()
-
-    if verbose:
-        print(f"Collecting KOSPI 200 Futures data for {today}")
-
-    codes = _get_kospi200f_codes_for_date(today)
-
-    if verbose:
-        print(f"Active codes: {codes}")
-
-    ensure_database()
-    db_client = get_db_client()
-    ensure_kospi200f_table(db_client)
-
-    tasks = [(code, today) for code in codes]
-
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        rows = await collect_batch(client, db_client, tasks, table_name="kospi200f_1m")
-
-    rebuilt_rows = rebuild_continuous_kospi200f(
-        db_client,
-        today,
-        today,
-        table_name="kospi200f_1m",
+    result = await collect_today_futures_parquet(
+        mini=False,
+        index=False,
+        futures=True,
         verbose=verbose,
     )
-    db_client.close()
-
-    if verbose:
-        print(
-            "Today's KOSPI 200 Futures collection complete. "
-            f"Rows: {rows}, rebuilt_101S6000={rebuilt_rows}"
-        )
-
-    return rows
+    return result.rows
 
 
 async def backfill_all(
@@ -1254,34 +1039,28 @@ async def backfill_all(
     verbose: bool = True,
     resume: bool = True,
 ):
-    """
-    Backfill all data types: Mini Futures, KOSPI 200 Index, and KOSPI 200 Futures.
-    """
-    if verbose:
-        print("=== Backfilling Mini Futures ===")
-    await backfill(days=days, verbose=verbose, resume=resume)
+    """Backfill mini futures, KOSPI200 index, and full-size futures to Parquet."""
+    from shared.collector.historical.parquet_backfill import (
+        backfill_futures_parquet,
+    )
 
-    if verbose:
-        print("\n=== Backfilling KOSPI 200 Index ===")
-    await backfill_kospi200_index(days=days, verbose=verbose, resume=resume)
-
-    if verbose:
-        print("\n=== Backfilling KOSPI 200 Futures ===")
-    await backfill_kospi200f(days=days, verbose=verbose, resume=resume)
+    result = await backfill_futures_parquet(
+        days=days,
+        all_products=True,
+        resume=resume,
+        verbose=verbose,
+    )
+    return result.rows
 
 
 async def collect_today_all(verbose: bool = True):
-    """
-    Collect today's data for all types.
-    """
-    if verbose:
-        print("=== Collecting Mini Futures ===")
-    await collect_today(verbose=verbose)
+    """Collect today's mini futures, index, and full-size futures to Parquet."""
+    from shared.collector.historical.parquet_backfill import (
+        collect_today_futures_parquet,
+    )
 
-    if verbose:
-        print("\n=== Collecting KOSPI 200 Index ===")
-    await collect_today_kospi200_index(verbose=verbose)
-
-    if verbose:
-        print("\n=== Collecting KOSPI 200 Futures ===")
-    await collect_today_kospi200f(verbose=verbose)
+    result = await collect_today_futures_parquet(
+        all_products=True,
+        verbose=verbose,
+    )
+    return result.rows

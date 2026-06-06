@@ -16,20 +16,17 @@ Usage:
 import os
 import asyncio
 import logging
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from typing import List, Tuple, Dict, Any
 
 import httpx
 
 from shared.config.secrets import SecretsManager
-from .calendar import get_trading_days_range
 from .stock import (
     StockKISToken,
     _get_rate_limiter,
     _get_semaphore,
     STOCK_UNIVERSE,
-    get_stock_db_client,
-    ensure_stock_database,
 )
 
 logger = logging.getLogger(__name__)
@@ -55,57 +52,22 @@ def ensure_daily_candles_table():
 def insert_daily_candles_batch(
     db_client, rows: List[Tuple], table_name: str = "daily_candles"
 ):
-    """Insert daily candles batch."""
-    if not rows:
-        return 0
-
-    db_client.insert(
-        table_name,
-        rows,
-        column_names=[
-            "code",
-            "date",
-            "open",
-            "high",
-            "low",
-            "close",
-            "volume",
-            "value",
-            "change_rate",
-        ],
-    )
-    return len(rows)
+    """Legacy DB sink entrypoint removed; use Parquet stock daily collection."""
+    raise RuntimeError("Legacy DB sink removed; use Parquet stock daily collection")
 
 
 def delete_daily_candles_range(
     db_client, code: str, start_date: date, end_date: date
 ) -> None:
-    """Delete existing rows for a code/date range to avoid duplicates."""
-    if not code or not isinstance(start_date, date) or not isinstance(end_date, date):
-        return
-    if not str(code).isalnum():
-        raise ValueError(f"Invalid code: {code}")
-    db_client.command(
-        "ALTER TABLE daily_candles DELETE "
-        "WHERE code = {code:String} AND date >= {start:Date} AND date <= {end:Date}",
-        parameters={"code": code, "start": start_date, "end": end_date},
-    )
+    """Legacy DB sink entrypoint removed; use Parquet stock daily collection."""
+    raise RuntimeError("Legacy DB sink removed; use Parquet stock daily collection")
 
 
 def delete_daily_candles_batch(
     db_client, codes: List[str], start_date: date, end_date: date
 ) -> None:
-    """Batch delete existing rows for multiple codes to avoid N+1 mutations."""
-    if not codes or not isinstance(start_date, date) or not isinstance(end_date, date):
-        return
-    for code in codes:
-        if not str(code).isalnum():
-            raise ValueError(f"Invalid code: {code}")
-    db_client.command(
-        "ALTER TABLE daily_candles DELETE "
-        "WHERE code IN {codes:Array(String)} AND date >= {start:Date} AND date <= {end:Date}",
-        parameters={"codes": codes, "start": start_date, "end": end_date},
-    )
+    """Legacy DB sink entrypoint removed; use Parquet stock daily collection."""
+    raise RuntimeError("Legacy DB sink removed; use Parquet stock daily collection")
 
 
 # =============================================================================
@@ -264,59 +226,14 @@ async def collect_daily_candles(
     Returns:
         Total rows collected
     """
-    days = min(days, MAX_DAILY_DAYS)
+    from .parquet_backfill import collect_stock_daily_parquet
 
-    end_date = date.today()
-    start_date = end_date - timedelta(days=days)
-
-    # Get trading days range
-    trading_days = get_trading_days_range(start_date, end_date)
-    if not trading_days:
-        if verbose:
-            print("No trading days in range")
-        return 0
-
-    if verbose:
-        _log_daily_collection_header(trading_days)
-
-    ensure_stock_database()
-    ensure_daily_candles_table()
-    db_client = get_stock_db_client()
-
-    # Select codes
-    selected_codes = _select_daily_codes(codes)
-
-    if verbose:
-        print(f"Stocks: {len(selected_codes)}")
-
-    total_rows = 0
-
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        batch_rows, succeeded_codes, failed_codes = await _collect_daily_rows(
-            client,
-            selected_codes,
-            trading_days[0],
-            trading_days[-1],
-        )
-
-        total_rows = _persist_daily_rows(
-            db_client,
-            batch_rows,
-            succeeded_codes,
-            trading_days[0],
-            trading_days[-1],
-            verbose,
-        )
-
-        if failed_codes and verbose:
-            print(f"Failed: {len(failed_codes)} stocks")
-
-    db_client.close()
-
-    if verbose:
-        print(f"Total: {total_rows} rows collected")
-
-    return total_rows
+    result = await collect_stock_daily_parquet(
+        codes=codes,
+        days=min(days, MAX_DAILY_DAYS),
+        verbose=verbose,
+    )
+    return result.rows
 
 
 def _select_daily_codes(codes: List[str] | None) -> List[str]:
@@ -373,68 +290,14 @@ def _persist_daily_rows(
     end_date: date,
     verbose: bool,
 ) -> int:
-    if not batch_rows:
-        return 0
-
-    # Remove existing rows for all succeeded codes in a single mutation
-    try:
-        delete_daily_candles_batch(db_client, succeeded_codes, start_date, end_date)
-    except Exception as e:
-        logger.warning(f"Failed to delete existing rows: {e}")
-
-    insert_daily_candles_batch(db_client, batch_rows)
-    total_rows = len(batch_rows)
-
-    if verbose:
-        print(
-            f"Inserted {total_rows} rows from {len(succeeded_codes)} stocks into daily_candles"
-        )
-
-    return total_rows
+    raise RuntimeError("Legacy DB sink removed; use Parquet stock daily collection")
 
 
 def get_daily_collection_status(days: int = 100) -> Dict[str, Any]:
     """Get daily candles collection status."""
-    try:
-        db_client = get_stock_db_client()
+    from .parquet_backfill import get_parquet_backfill_status
 
-        start_date = date.today() - timedelta(days=days)
-        end_date = date.today()
-
-        query = """
-            SELECT
-                count(*) as total_rows,
-                count(DISTINCT date) as days_collected,
-                min(date) as min_date,
-                max(date) as max_date,
-                count(DISTINCT code) as unique_codes
-            FROM daily_candles
-            WHERE date >= {start:Date}
-            AND date <= {end:Date}
-        """
-
-        result = db_client.query(
-            query, parameters={"start": start_date, "end": end_date}
-        )
-        row = result.first_row if result.result_rows else None
-
-        db_client.close()
-
-        if row:
-            return {
-                "table": "daily_candles",
-                "rows": row[0],
-                "days_collected": row[1],
-                "min_date": str(row[2]) if row[2] else None,
-                "max_date": str(row[3]) if row[3] else None,
-                "unique_codes": row[4],
-            }
-
-        return {"table": "daily_candles", "rows": 0}
-
-    except Exception as e:
-        logger.error(f"Failed to get status: {e}")
-        return {"error": str(e)}
+    return get_parquet_backfill_status(days=days, asset_class="stock")
 
 
 # =============================================================================
