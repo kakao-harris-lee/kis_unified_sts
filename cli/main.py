@@ -1657,6 +1657,27 @@ def trade():
     pass
 
 
+def _stock_orchestrator_enabled() -> bool:
+    """The monolithic orchestrator runs stock only when explicitly enabled.
+
+    Default ``True`` (pre-cutover behaviour). The operator sets
+    ``STOCK_ORCHESTRATOR_ENABLED=false`` as the final M5d cutover step so the
+    orchestrator permanently refuses stock — the decoupled M4 pipeline owns it.
+    Rollback: set it back to ``true`` (``1``/``yes`` also accepted). Any other
+    value (e.g. ``false``/``0``/``no``) keeps stock blocked.
+    """
+    return os.getenv("STOCK_ORCHESTRATOR_ENABLED", "true").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+
+
+def _stock_orchestrator_blocked(asset: str) -> bool:
+    """True when the orchestrator must refuse this asset (stock + flag disabled)."""
+    return asset == "stock" and not _stock_orchestrator_enabled()
+
+
 @trade.command("start")
 @click.option(
     "--strategy",
@@ -1709,6 +1730,20 @@ def trade_start(
         sts trade start -s pure_micro -a futures --capital 5000000
         sts trade start -s bb_reversion -a stock --daemon
     """
+    if _stock_orchestrator_blocked(asset):
+        click.echo(
+            "Error: the monolithic orchestrator no longer runs stock — stock trades "
+            "via the decoupled M4 pipeline "
+            "(kis-stock-{strategy-daemon,risk-filter,order-router,exit-daemon}).",
+            err=True,
+        )
+        click.echo(
+            "  Rollback to the orchestrator stock path: set "
+            "STOCK_ORCHESTRATOR_ENABLED=true.",
+            err=True,
+        )
+        sys.exit(1)
+
     import asyncio
 
     mode_str = "Paper" if paper else "LIVE"
