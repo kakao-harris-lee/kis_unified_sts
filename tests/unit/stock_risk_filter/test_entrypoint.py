@@ -26,8 +26,13 @@ def test_streams_for_shadow() -> None:
 
 
 def test_streams_for_non_shadow_is_unsuffixed() -> None:
-    # The else branch reserves the live (unsuffixed) names for a future cutover.
-    assert m._streams_for("off") == ("signal.candidate.stock", "signal.final.stock")
+    assert m._streams_for("live") == ("signal.candidate.stock", "signal.final.stock")
+
+
+def test_live_mode_is_active() -> None:
+    assert m._is_active_mode("live") is True
+    assert m._is_active_mode("shadow") is True
+    assert m._is_active_mode("off") is False
 
 
 def test_off_mode_is_inert(monkeypatch: pytest.MonkeyPatch) -> None:

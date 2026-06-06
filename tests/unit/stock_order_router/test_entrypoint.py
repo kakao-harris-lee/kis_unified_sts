@@ -25,8 +25,14 @@ def test_stream_mapping_shadow() -> None:
 
 
 def test_stream_mapping_non_shadow_is_unsuffixed() -> None:
-    assert m._final_stream_for("off") == "signal.final.stock"
-    assert m._fill_stream_for("off") == "order.fill.stock"
+    assert m._final_stream_for("live") == "signal.final.stock"
+    assert m._fill_stream_for("live") == "order.fill.stock"
+
+
+def test_live_mode_is_active() -> None:
+    assert m._is_active_mode("live") is True
+    assert m._is_active_mode("shadow") is True
+    assert m._is_active_mode("off") is False
 
 
 def test_off_mode_is_inert(monkeypatch: pytest.MonkeyPatch) -> None:

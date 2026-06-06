@@ -17,7 +17,7 @@ The futures strategy daemon (M2+M3, merged #414) completed the futures producer.
 | 결정 | 선택 |
 |---|---|
 | 증분 | M4의 첫 하위 증분 = **주식 시그 producer**(전략 데몬). risk/order/exit는 후속(M4-R/O/X) |
-| 롤아웃 | **shadow-first**, flag `STOCK_STRATEGY_DAEMON=off`(기본)\|`shadow`, systemd disabled |
+| 롤아웃 | **shadow-first**, flag `STOCK_STRATEGY_DAEMON=off`(기본)\|`shadow`\|`live`, systemd disabled |
 | 스키마 | **주식-native** `signal.candidate.stock.shadow` (orchestrator Signal 직렬화). 선물 11-필드 decision 스키마 미사용(주식은 진입시 stop/target 없음) |
 | 전략 범위 | 현재 활성 주식 전략 그대로 (`williams_r`, `pattern_pullback`) — self-contained(어댑터 LLM/regime 게이트 없음 → parity 무관) |
 | 유니버스 | 동적 — Redis `system:daily_watchlist:latest` 30s 폴 → `feed.update_symbols`, ≤40 |
@@ -87,7 +87,7 @@ This is a **new** stock serializer (the orchestrator `Signal` has no `to_stream_
 
 ## 7. Shadow rollout & safety
 
-- **Flag:** `STOCK_STRATEGY_DAEMON` = `off` (default) | `shadow`, read in the entrypoint. `off`/unset → the daemon does not run (systemd unit disabled); merging is operationally inert.
+- **Flag:** `STOCK_STRATEGY_DAEMON` = `off` (default) | `shadow` | `live`, read in the entrypoint. `off`/unset → the daemon does not run (systemd unit disabled); merging is operationally inert.
 - **Shadow target:** publishes to `signal.candidate.stock.shadow` (separate stream). No consumer exists until M4-R (risk_filter generalization), so no live/paper path and no positions result. The orchestrator's in-process stock entry path is **untouched**.
 - **Validation:** the shadow candidates are compared against the orchestrator's actual stock entry signals (counterfactual) to confirm the daemon reproduces the in-process strategy decisions before any cutover.
 - **systemd:** `kis-stock-strategy-daemon.service` delivered **disabled**.

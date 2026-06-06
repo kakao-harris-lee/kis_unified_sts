@@ -70,7 +70,7 @@ stock candidate는 선물 `Signal`(setup_type/entry_price/stop_loss/take_profit)
 ### 5.1 모듈 & 골격
 - 신규 `services/stock_risk_filter/main.py`, `StockRiskFilterDaemon(StreamStage)`
 - group `stock_risk_filter`, in `signal.candidate.stock.shadow` → out `signal.final.stock.shadow`
-- 플래그 `STOCK_RISK_FILTER` (`off` 기본=inert exit 0 / `shadow`=full wiring)
+- 플래그 `STOCK_RISK_FILTER` (`off` 기본=inert exit 0 / `shadow`=shadow wiring / `live`=unsuffixed live wiring)
 - systemd `kis-stock-risk-filter.service` **disabled**
 - StreamStage 상속으로 루프/그룹/XACK/poison-pill drop/NO-XACK retry/graceful shutdown/metrics **전부 상속**(재구현 0)
 
@@ -107,7 +107,7 @@ LayerResult의 `size_multiplier`([0,1])를 final에 부착만 한다. 실제 수
 ### 6.1 모듈 & 골격
 - 신규 `services/stock_order_router/main.py`, `StockOrderRouterDaemon(StreamStage)`
 - group `stock_order_router`, in `signal.final.stock.shadow` → out `order.fill.stock.shadow`
-- 플래그 `STOCK_ORDER_ROUTER` (`off` 기본 / `shadow`)
+- 플래그 `STOCK_ORDER_ROUTER` (`off` 기본 / `shadow` / `live`)
 - systemd `kis-stock-order-router.service` **disabled**
 - StreamStage 상속(루프/XACK/에러정책/shutdown)
 
@@ -119,7 +119,7 @@ final.stock.shadow 파싱
   → PaperBroker.submit_order(code, buy, qty, price)   ← shared/paper 재사용, 슬리피지 적용(필수)
   → FillLogger.log_fill(asset_class="stock", venue="KRX", trade_role="entry")
        → XADD order.fill.stock.shadow  +  RuntimeLedger.record_fill (SQLite)
-  → 포지션 오픈 기록 → trading:stock:positions (shadow) + ledger
+  → 포지션 오픈 기록 → stock:daemon:positions + ledger
 ```
 
 ### 6.3 재사용 vs 신규/제외
@@ -133,7 +133,7 @@ final.stock.shadow 파싱
 | `KISFuturesAdapter` / futures live guard | **제외** — 주식 paper-only |
 
 ### 6.4 핵심 통합점 — 포지션 오픈 기록
-M4-O가 fill 시 **포지션을 shadow ledger + `trading:stock:positions`에 오픈 기록**한다. 이게:
+M4-O가 fill 시 **포지션을 shadow ledger + `stock:daemon:positions`에 오픈 기록**한다. 이게:
 - **(a)** M4-R `OpenPositionFilter`가 read하는 소스(재진입 차단)
 - **(b)** 나중에 **X(청산)가 소비할 포지션 상태**의 생성 지점(entry_price/quantity/state=SURVIVAL 초깃값)
 
@@ -149,8 +149,8 @@ M4-O가 fill 시 **포지션을 shadow ledger + `trading:stock:positions`에 오
 ### 7.1 플래그 (M4-P `STOCK_STRATEGY_DAEMON` 패턴 동형)
 | 데몬 | env | 값 |
 |------|-----|----|
-| M4-R | `STOCK_RISK_FILTER` | `off`(기본, inert) / `shadow` |
-| M4-O | `STOCK_ORDER_ROUTER` | `off`(기본) / `shadow` |
+| M4-R | `STOCK_RISK_FILTER` | `off`(기본, inert) / `shadow` / `live` |
+| M4-O | `STOCK_ORDER_ROUTER` | `off`(기본) / `shadow` / `live` |
 
 스트림 키는 선택적 env 오버라이드(`STOCK_CANDIDATE_STREAM`/`STOCK_FINAL_STREAM`/`STOCK_FILL_STREAM`)로 테스트 격리 — M4-P `STOCK_TICK_STREAM` 선례.
 
@@ -180,7 +180,7 @@ shadow-first 엔트리포인트 boilerplate(`_resolve_mode`/`_candidate_stream_f
 ## 9. Testing
 
 - **M4-R 단위**: stock candidate parse round-trip · 활성 필터(TradingHours 주식윈도우/DailyTradeCount/OpenPosition) · size_multiplier passthrough · poison-pill drop · 플래그 off=inert · `risk:state:stock` 네임스페이스 격리.
-- **M4-O 단위**: final parse · `qty=quantity×size_multiplier` floor · PaperBroker fill+슬리피지 · FillLogger 스키마(asset_class=stock/venue=KRX/trade_role=entry) · **포지션 오픈 기록**(`trading:stock:positions`) · 플래그 off=inert.
+- **M4-O 단위**: final parse · `qty=quantity×size_multiplier` floor · PaperBroker fill+슬리피지 · FillLogger 스키마(asset_class=stock/venue=KRX/trade_role=entry) · **포지션 오픈 기록**(`stock:daemon:positions`) · 플래그 off=inert.
 - **통합(핵심)**: `candidate.stock.shadow → M4-R → final.stock.shadow → M4-O → fill.stock.shadow` e2e + 페이로드 정합 + **OpenPositionFilter가 오픈된 포지션 인식**(같은 code 2차 candidate 재진입 차단).
 - **회귀**: full `tests/` 게이트(병렬+직렬) green, ruff/black/mypy clean. **선물 데몬 무변경 → 선물 테스트 그대로 green = 회귀 0 증명**. 기존 RiskFilterLayer/PaperBroker 테스트 재사용.
 
@@ -199,4 +199,4 @@ shadow-first 엔트리포인트 boilerplate(`_resolve_mode`/`_candidate_stream_f
 - PR 분할: R·O 2 PR 순차(R→O) vs 1 PR(R+O). 둘 다 shared 재사용으로 소형 — writing-plans에서 결정.
 - §7.3 daemon_entrypoint DRY 추출을 이 증분에 포함할지 vs 별도 chore.
 - `StockRiskConfig` 필터 파라미터 기본값(주식 세션 윈도우, daily trade cap) 초깃값 — 기존 stock paper 운용 설정에서 가져온다.
-- OpenPosition provider가 read하는 포지션 소스 키(`trading:stock:positions` shadow 네임스페이스) 정확한 형식 — M4-O 포지션 오픈 기록 스키마와 정합 확정.
+- OpenPosition provider가 read하는 포지션 소스 키(`stock:daemon:positions`) 정확한 형식 — M4-O 포지션 오픈 기록 스키마와 정합 확정.

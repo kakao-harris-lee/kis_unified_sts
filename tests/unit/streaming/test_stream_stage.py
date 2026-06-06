@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 
+import fakeredis.aioredis
 import pytest
 
 from shared.streaming.stage import StreamStage
@@ -16,11 +17,17 @@ class FakeRedis:
     Records xgroup_create args and xack calls.
     """
 
-    def __init__(self, batches: list[list[tuple[bytes, dict[bytes, bytes]]]]):
+    def __init__(
+        self,
+        batches: list[list[tuple[bytes, dict[bytes, bytes]]]],
+        claimed_batches: list[list[tuple[bytes, dict[bytes, bytes]]]] | None = None,
+    ):
         self._batches = list(batches)
+        self._claimed_batches = list(claimed_batches or [])
         self.group_created: tuple | None = None
         self.acked: list[bytes] = []
         self.xreadgroup_calls = 0
+        self.xautoclaim_calls = 0
 
     async def xgroup_create(self, stream, group, id="0", mkstream=False):
         self.group_created = (stream, group, id, mkstream)
@@ -33,6 +40,12 @@ class FakeRedis:
             return [(stream_key, msgs)]
         await asyncio.sleep(0)
         return []
+
+    async def xautoclaim(self, *_args, **_kwargs):
+        self.xautoclaim_calls += 1
+        if self._claimed_batches:
+            return [b"0-0", self._claimed_batches.pop(0), []]
+        return [b"0-0", [], []]
 
     async def xack(self, _stream, _group, msg_id):
         self.acked.append(msg_id)
@@ -113,6 +126,23 @@ async def test_no_ack_when_handle_returns_false():
     await _run_briefly(stage)
     assert stage.handled == [b"1-0"]
     assert redis.acked == []
+
+
+@pytest.mark.asyncio
+async def test_reclaims_idle_pending_from_previous_consumer():
+    redis = fakeredis.aioredis.FakeRedis(db=1)
+    msg_id = await redis.xadd("s:in", {"k": "v"})
+    await redis.xgroup_create("s:in", "g", id="0")
+    await redis.xreadgroup(
+        groupname="g", consumername="old-worker", streams={"s:in": ">"}, count=1
+    )
+
+    stage = _stage(redis, pending_retry_idle_ms=0)
+    await _run_briefly(stage)
+
+    assert stage.handled == [msg_id]
+    pending = await redis.xpending("s:in", "g")
+    assert pending["pending"] == 0
 
 
 @pytest.mark.asyncio

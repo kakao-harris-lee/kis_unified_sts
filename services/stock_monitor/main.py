@@ -30,10 +30,16 @@ def _streams_for(mode: str) -> tuple[str, str]:
 
 
 def _ensure_shadow_isolation(mode: str) -> None:
-    """Fail-safe: in shadow, force the dashboard key suffix if the operator
-    forgot to set it, so M5a can never clobber the orchestrator's live keys."""
+    """Fail-safe dashboard key suffix handling.
+
+    Shadow must always use isolated keys. Live must always use unsuffixed keys,
+    even when the base systemd unit supplied ``TRADING_STATE_KEY_SUFFIX=shadow``.
+    """
     if mode == "shadow" and not os.environ.get("TRADING_STATE_KEY_SUFFIX", "").strip():
         os.environ["TRADING_STATE_KEY_SUFFIX"] = "shadow"
+    if mode == "live" and os.environ.get("TRADING_STATE_KEY_SUFFIX", "").strip():
+        logger.warning("clearing TRADING_STATE_KEY_SUFFIX for live stock monitor")
+        os.environ["TRADING_STATE_KEY_SUFFIX"] = ""
 
 
 async def _build_and_run() -> int:
@@ -57,12 +63,13 @@ async def _build_and_run() -> int:
     from services.trading.stream_consumer_feed import StreamConsumerFeed
     from shared.config.loader import ConfigLoader
     from shared.notification.telegram import notifier_for_domain
+    from shared.streaming.stock_keys import stock_daemon_positions_key
     from shared.streaming.trading_state import TradingStatePublisher
 
     fill_default, signal_default = _streams_for(mode)
     fill_stream = os.environ.get("STOCK_FILL_STREAM", fill_default)
     signal_stream = os.environ.get("STOCK_FINAL_STREAM", signal_default)
-    positions_key = os.environ.get("STOCK_POSITIONS_KEY", "trading:stock:positions")
+    positions_key = stock_daemon_positions_key()
     status_interval = float(os.environ.get("STOCK_MONITOR_STATUS_INTERVAL", "5"))
     tick_stream = os.environ.get("STOCK_TICK_STREAM", "market:ticks")
 

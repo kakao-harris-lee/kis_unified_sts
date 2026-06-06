@@ -15,3 +15,9 @@ def test_resolve_mode_shadow(monkeypatch):
     assert m._resolve_mode() == "shadow"
     assert m._candidate_stream_for("shadow") == "signal.candidate.stock.shadow"
     assert m._candidate_stream_for("off") == "signal.candidate.stock"
+
+
+def test_live_mode_is_active_and_unsuffixed() -> None:
+    assert m._is_active_mode("live") is True
+    assert m._candidate_stream_for("live") == "signal.candidate.stock"
+    assert m._is_active_mode("off") is False

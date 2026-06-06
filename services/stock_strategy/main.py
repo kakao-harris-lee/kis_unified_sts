@@ -1,6 +1,6 @@
 """Stock strategy daemon entrypoint (flag-gated, shadow-first).
 
-Default-off: STOCK_STRATEGY_DAEMON env var must be set to ``shadow`` to
+Default-off: STOCK_STRATEGY_DAEMON env var must be set to ``shadow`` or ``live`` to
 activate.  The systemd unit ships disabled; no live impact on merge.
 
 Flag routing:
@@ -9,6 +9,7 @@ Flag routing:
   shadow                — full wiring: StreamConsumerFeed + StreamingIndicatorEngine
                           + StrategyManager + StockStrategyDaemon, publishing to
                           signal.candidate.stock.shadow.
+  live                  — same wiring, publishing to signal.candidate.stock.
 """
 
 from __future__ import annotations
@@ -34,16 +35,17 @@ def _resolve_mode() -> str:
     return os.getenv("STOCK_STRATEGY_DAEMON", "off").strip().lower()
 
 
+def _is_active_mode(mode: str) -> bool:
+    """Return True when the daemon should run."""
+    return mode in {"shadow", "live"}
+
+
 def _candidate_stream_for(mode: str) -> str:
     """Map a mode string to the Redis stream name for signal candidates.
 
     shadow → isolated shadow stream (not consumed by risk_filter).
 
-    Note: the ``else`` branch returns the live candidate stream.  The current
-    ``off`` path never reaches this function (``_build_and_run`` returns early
-    before calling it), so this return value is reserved for a future live
-    cutover — the point at which ``STOCK_STRATEGY_DAEMON=live`` (or similar)
-    will route signals into the real risk_filter pipeline.
+    live → unsuffixed stream consumed by the live risk_filter pipeline.
     """
     return (
         "signal.candidate.stock.shadow"
@@ -62,7 +64,7 @@ async def _build_and_run() -> int:
 
     off / unset: inert — log and return 0, constructing NONE of the
                  engine/feed/manager objects.
-    shadow:      full wiring to signal.candidate.stock.shadow.
+    shadow/live: full wiring to mode-appropriate candidate stream.
     """
     import signal as signal_mod
 
@@ -73,13 +75,13 @@ async def _build_and_run() -> int:
 
     mode = _resolve_mode()
 
-    if mode != "shadow":
+    if not _is_active_mode(mode):
         # off branch: completely inert — no engine, no feed, no manager.
         logger.info("STOCK_STRATEGY_DAEMON=%s (off) — daemon inert, exiting", mode)
         await redis_client.aclose()
         return 0
 
-    # shadow mode: wire everything up.
+    # active mode: wire everything up.
     from services.stock_strategy.daemon import StockStrategyDaemon
     from services.trading.indicator_engine import StreamingIndicatorEngine
     from services.trading.strategy_manager import StrategyManager

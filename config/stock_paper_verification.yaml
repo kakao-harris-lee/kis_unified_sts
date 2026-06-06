@@ -27,6 +27,7 @@ redis:
   signals_key: "trading:stock:signals"
   trades_key: "trading:stock:trades"
   positions_key: "trading:stock:positions"
+  daemon_positions_key: "${STOCK_POSITIONS_KEY:stock:daemon:positions}"
   candle_cache_key: "trading:stock:candle_cache"
   data_freshness_key: "trading:stock:data_freshness"
   trade_targets_key: "${TRADE_TARGETS_LATEST_KEY:system:trade_targets:latest}"

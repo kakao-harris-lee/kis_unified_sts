@@ -124,5 +124,10 @@ async def test_verify_positions_count_surfaced() -> None:
     )
     await redis.hset("trading:stock:positions:shadow", "005930", '{"qty": 10}')
     await redis.hset("trading:stock:positions:shadow", "000660", '{"qty": 5}')
+    await redis.hset("stock:daemon:positions", "005930", '{"qty": 10}')
     rc = await m.run_verify(mode="shadow", now_kst=_now(), redis_client=redis)
     assert rc == 0
+
+    result = await m.check_positions(redis, "shadow")
+    assert "dashboard=trading:stock:positions:shadow count=2" in result.detail
+    assert "daemon=stock:daemon:positions count=1" in result.detail

@@ -10,7 +10,7 @@
 
 M4-R/O built the stock entry-execution path (candidate → risk → final → order → fill + position record) but **entry-only**: open positions accumulate with no exit. M4-X closes the lifecycle — it owns the **exit** half (open ↔ close symmetry with M4-O).
 
-**Success criterion:** A shadow-first, default-off daemon that, per decision cadence, reconstructs open stock positions from `trading:stock:positions`, tracks each position's running high, runs `ThreeStageExit` (stop/breakeven/trailing/time_cut/EOD), paper-executes full-position sells with slippage, publishes exit fills to `order.fill.stock.shadow`, closes positions (HDEL), and feeds realized PnL to `RuntimeRiskState` — **activating M4-R's currently-inert MDD/consecutive-loss filters** (the key value). Heavy logic (`ThreeStageExit` / `VirtualBroker` / `FillLogger` / `StreamConsumerFeed` / `RuntimeRiskState`) is reused; the only shared-code change is one additive, backward-compatible `ThreeStageExitConfig` flag.
+**Success criterion:** A shadow-first, default-off daemon that, per decision cadence, reconstructs open stock positions from `stock:daemon:positions`, tracks each position's running high, runs `ThreeStageExit` (stop/breakeven/trailing/time_cut/EOD), paper-executes full-position sells with slippage, publishes exit fills to `order.fill.stock.shadow`, closes positions (HDEL), and feeds realized PnL to `RuntimeRiskState` — **activating M4-R's currently-inert MDD/consecutive-loss filters** (the key value). Heavy logic (`ThreeStageExit` / `VirtualBroker` / `FillLogger` / `StreamConsumerFeed` / `RuntimeRiskState`) is reused; the only shared-code change is one additive, backward-compatible `ThreeStageExitConfig` flag.
 
 비목표(이번 spec out of scope): BEAR_EXIT / regime / `market_state` wiring (deferred — `enable_bear_exit=false`), per-strategy exit configs (v1 single config; needs M4-O to persist `strategy`), partial exits (full-close only), real KIS sell execution + stock live guard, stock short exit, `FillLogger` exit_reason/pnl fields, orchestrator adopting `eod_exempt_maximize`, M5 monolithic-orchestrator cutover.
 
@@ -29,9 +29,9 @@ M4-R/O built the stock entry-execution path (candidate → risk → final → or
 - **`ThreeStageExitConfig`**(`three_stage.py:63`): stop/breakeven/maximize/trailing/overshoot/time_cut/eod_close_hour·minute/fee_rate/enable_bear_exit. **`enable_eod_close`/`eod_exempt` 류 플래그 없음** — EOD_CLOSE가 `eod_close_time`(기본 15:15)에 모든 stage 무조건 발동.
 - **EOD 모순**: `config/exit/three_stage.yaml` = 15:15. `vr_composite`는 기본값 사용→15:15 강제청산. `bb_reversion`만 23:59로 override. CLAUDE.md no-flatten 정책은 **현 코드 미적용**.
 - **`Position`**(`shared/models/position.py`): `id/code/name/side/quantity/entry_price/entry_time/current_price/highest_price/lowest_price/stop_price/state/strategy/fee_rate/metadata`. `update_price(price)`가 high/low 갱신. `__post_init__`가 high/low/current를 entry_price로 초기화.
-- **M4-O 포지션 레코드**(consumer 입력): `trading:stock:positions` hash, **field=code**, value JSON `{code, entry_price, quantity, opened_at_ms, state, signal_id}`. **`strategy`/`name`/`highest_price` 미저장**.
+- **M4-O 포지션 레코드**(consumer 입력): `stock:daemon:positions` hash, **field=code**, value JSON `{code, entry_price, quantity, opened_at_ms, state, signal_id}`. **`strategy`/`name`/`highest_price` 미저장**.
 - **realized PnL 경로(orchestrator)**: 청산 시 `RiskManager.record_realized_pnl(pnl)`(`shared/risk/manager.py`) — daily_realized_pnl 누적. **이는 M4-R이 읽는 `RuntimeRiskState`(`shared/risk/runtime_state.py`)와 다른 객체.** `RuntimeRiskState`: `record_trade(pnl_krw)` / `record_win()` / `record_loss()` / `snapshot()`, `risk:state:{asset}` 네임스페이스. M4-R `RiskFilterLayer.evaluate(signal, snapshot)`가 이 snapshot의 daily/weekly PnL·consecutive_losses를 읽음.
-- **PositionTracker 충돌**: orchestrator `PositionTracker`도 `trading:stock:positions`를 쓰되 **field=position.id(uuid)·`entry_time` 스키마**(M4-O와 다름). 공존 시 hash 혼재.
+- **Dashboard key 분리**: `TradingStatePublisher`가 쓰는 `trading:stock:positions[:shadow]`와 M4-O/X working-store를 분리해 monitor live publish가 exit working-store를 덮어쓰지 않게 한다.
 - **재사용 컴포넌트**: `StreamConsumerFeed`(M1b, `services/trading/stream_consumer_feed.py` — market:ticks XREAD → price 캐시, `get_current_price`), `VirtualBroker`(`shared/paper/broker.py` — `submit_order(side=SELL,...)`), `FillLogger`, `SQLiteRuntimeLedger`.
 
 ## 4. Target architecture (Approach A — self-contained timer-loop daemon)
@@ -47,7 +47,7 @@ services/stock_exit/
 
 ### 4.2 사이클당 데이터 흐름
 ```
-1. trading:stock:positions(hash) 읽기 → opened_at_ms 시그니처 가진 레코드만 채택(§4.6 가드)
+1. stock:daemon:positions(hash) 읽기 → opened_at_ms 시그니처 가진 레코드만 채택(§4.6 가드)
 2. feed.update_symbols(보유 codes); code별 current = feed.get_current_price(code)
 3. Position 재구성/갱신(in-memory): position.update_price(current) → highest/lowest 갱신
 4. 갱신된 highest/lowest를 hash 레코드(high_water/low_water)에 영속 — running-high 재시작 복구
@@ -92,7 +92,7 @@ stock_exit:
 **per-strategy 청산 config는 follow-up**(M4-O가 position 레코드에 `strategy` 영속 필요). v1 shadow 검증엔 단일 config로 충분.
 
 ### 4.6 포지션 키 공존 가드 (orchestrator 충돌)
-orchestrator PositionTracker(field=position.id·`entry_time`)와 M4-O(field=code·`opened_at_ms`)가 같은 키 사용. M4-X는 **`opened_at_ms` 시그니처를 가진 레코드만 처리**(orchestrator `entry_time` 레코드 skip) → 이종 엔트리 오관리 방지. 운영 권고: shadow를 orchestrator와 동시 검증 시 M4-O/R/X에 `STOCK_POSITIONS_KEY`를 격리 네임스페이스로 설정. M5 컷오버 후 무의미.
+M4-O/R/X는 `stock:daemon:positions`를 사용하고 dashboard-native positions key와 섞지 않는다. M4-X는 방어적으로 **`opened_at_ms` 시그니처를 가진 레코드만 처리**한다.
 
 ### 4.7 캐던스
 `STOCK_EXIT_INTERVAL`초마다 스캔(기본값은 config). 포지션 변경 시 `feed.update_symbols` 갱신.
@@ -129,8 +129,8 @@ await fill_logger.log_fill(signal_id=pos.signal_id, order_id=order.order_id, sym
 
 ## 6. 플래그 · systemd · DRY
 
-- 플래그 `STOCK_EXIT_DAEMON` = `off`(기본, inert) / `shadow`. systemd `kis-stock-exit-daemon.service` **disabled**, `Environment=STOCK_EXIT_DAEMON=shadow`, ExecStart `-m services.stock_exit.main` (M4-P/R/O 유닛 템플릿).
-- Env 오버라이드: `STOCK_POSITIONS_KEY`(기본 `trading:stock:positions`) · `STOCK_FILL_STREAM`(기본 `order.fill.stock.shadow`) · `STOCK_TICK_STREAM`(기본 `market:ticks`) · `STOCK_EXIT_INTERVAL`.
+- 플래그 `STOCK_EXIT_DAEMON` = `off`(기본, inert) / `shadow` / `live`. systemd `kis-stock-exit-daemon.service` **disabled**, `Environment=STOCK_EXIT_DAEMON=shadow`, ExecStart `-m services.stock_exit.main` (M4-P/R/O 유닛 템플릿).
+- Env 오버라이드: `STOCK_POSITIONS_KEY`(기본 `stock:daemon:positions`) · `STOCK_FILL_STREAM`(기본 `order.fill.stock.shadow`) · `STOCK_TICK_STREAM`(기본 `market:ticks`) · `STOCK_EXIT_INTERVAL`.
 - DRY: `StreamConsumerFeed`·`ThreeStageExit`·`VirtualBroker`·`FillLogger`·`RuntimeRiskState`·`ConfigLoader` 재사용. 엔트리포인트 boilerplate는 M4-P/R/O와 동일 — `shared/streaming/daemon_entrypoint.py` 추출은 **4번째 반복**으로 근거 강화되나 여전히 deferred follow-up.
 
 ## 7. Error handling (사이클 회복성)
@@ -149,7 +149,7 @@ await fill_logger.log_fill(signal_id=pos.signal_id, order_id=order.order_id, sym
 - **회귀**: orchestrator/backtest ThreeStageExit 무영향(`eod_exempt_maximize` 기본 False) — 기존 `tests/.../test_three_stage*` green. full `tests/` 게이트(병렬+직렬), ruff/black/mypy.
 
 ## 9. Acceptance criteria
-- [ ] StockExitDaemon이 `trading:stock:positions`(opened_at_ms 가드) 읽어 Position 재구성 + running high 추적·영속.
+- [ ] StockExitDaemon이 `stock:daemon:positions`(opened_at_ms 가드) 읽어 Position 재구성 + running high 추적·영속.
 - [ ] `ThreeStageExit`에 하위호환 `eod_exempt_maximize` 추가; 기본 False는 orchestrator 동작 보존(기존 테스트 green).
 - [ ] MAXIMIZE는 EOD 면제, SURVIVAL/BREAKEVEN은 EOD 청산.
 - [ ] 청산 → paper SELL → `order.fill.stock.shadow`(trade_role=exit) + HDEL close + `RuntimeRiskState` PnL 피드백.

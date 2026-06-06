@@ -1,6 +1,6 @@
 """Stock exit daemon (M4-X, timer-loop, shadow-first).
 
-Scans open stock positions from ``trading:stock:positions`` (written by M4-O),
+Scans open stock positions from the M4 daemon working-store (written by M4-O),
 tracks each running high, runs ThreeStageExit, paper-sells exits, closes
 positions (HDEL), and feeds realized PnL to RuntimeRiskState — activating M4-R's
 PnL-dependent filters. Not a StreamStage (no upstream exit-candidate stream);

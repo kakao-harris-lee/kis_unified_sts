@@ -37,9 +37,17 @@ def test_shadow_forces_key_suffix(monkeypatch: pytest.MonkeyPatch) -> None:
     assert os.environ["TRADING_STATE_KEY_SUFFIX"] == "shadow"
 
 
-def test_live_leaves_suffix_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_live_leaves_empty_suffix_unset(monkeypatch: pytest.MonkeyPatch) -> None:
     # Tracked via setenv so teardown restores cleanly (see note above).
     monkeypatch.setenv("TRADING_STATE_KEY_SUFFIX", "")
+    m._ensure_shadow_isolation("live")
+    assert os.environ.get("TRADING_STATE_KEY_SUFFIX", "") == ""
+
+
+def test_live_clears_shadow_suffix_from_base_unit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TRADING_STATE_KEY_SUFFIX", "shadow")
     m._ensure_shadow_isolation("live")
     assert os.environ.get("TRADING_STATE_KEY_SUFFIX", "") == ""
 

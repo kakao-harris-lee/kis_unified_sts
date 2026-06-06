@@ -1,6 +1,6 @@
 """Codec between the M4-O position hash record and a `Position`.
 
-M4-O (services/stock_order_router) writes ``trading:stock:positions`` hash:
+M4-O (services/stock_order_router) writes the daemon positions hash:
 field = code, value = JSON ``{code, entry_price, quantity, opened_at_ms, state,
 signal_id}``. M4-X reconstructs a `Position`, restores the running extremes
 (``high_water``/``low_water``) it persists each cycle, and skips foreign records

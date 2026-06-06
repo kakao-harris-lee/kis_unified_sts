@@ -1,8 +1,8 @@
 """Shared Redis consumer-group stage framework.
 
-Extracts the consumer-group loop (XGROUP_CREATE → XREADGROUP → per-message
-handle → XACK) that news_scorer / risk_filter / order_router each reimplemented,
-so every streaming daemon shares one tested loop.
+Extracts the consumer-group loop (XGROUP_CREATE → pending reclaim / XREADGROUP
+→ per-message handle → XACK) that news_scorer / risk_filter / order_router each
+reimplemented, so every streaming daemon shares one tested loop.
 
 Subclasses implement ``handle_message`` (return ``True`` ⇒ the framework XACKs;
 ``False`` ⇒ leave the message pending for retry) and may override the optional
@@ -33,6 +33,7 @@ class StreamStage(ABC):
         xread_block_ms: int,
         batch_size: int,
         xreadgroup_error_sleep_seconds: float = 0.5,
+        pending_retry_idle_ms: int = 60_000,
     ) -> None:
         self.redis = redis
         self.input_stream = input_stream
@@ -41,6 +42,9 @@ class StreamStage(ABC):
         self.xread_block_ms = xread_block_ms
         self.batch_size = batch_size
         self._xreadgroup_error_sleep = xreadgroup_error_sleep_seconds
+        self.pending_retry_idle_ms = pending_retry_idle_ms
+        self._pending_claim_start_id: str | bytes = "0-0"
+        self._pending_claim_disabled = pending_retry_idle_ms < 0
         self._stop = asyncio.Event()
 
     # -- subclass contract ------------------------------------------------ #
@@ -88,6 +92,62 @@ class StreamStage(ABC):
 
     # -- framework loop (not overridden) --------------------------------- #
 
+    async def _claim_pending_messages(self) -> list[tuple[bytes, dict[bytes, bytes]]]:
+        """Claim idle pending messages for retry.
+
+        ``handle_message(False)`` intentionally leaves a record in the consumer
+        group's pending-entry list. ``XAUTOCLAIM`` makes that contract real
+        across worker restarts and avoids a hot loop by waiting until the entry
+        has been idle for ``pending_retry_idle_ms``.
+        """
+        if self._pending_claim_disabled:
+            return []
+        try:
+            result = await self.redis.xautoclaim(
+                self.input_stream,
+                self.consumer_group,
+                self.worker_id,
+                self.pending_retry_idle_ms,
+                self._pending_claim_start_id,
+                count=self.batch_size,
+            )
+        except AttributeError:
+            logger.warning("redis client lacks XAUTOCLAIM; pending retry disabled")
+            self._pending_claim_disabled = True
+            return []
+        except Exception as exc:
+            message = str(exc).lower()
+            if "unknown command" in message or "syntax" in message:
+                logger.warning(
+                    "redis XAUTOCLAIM unavailable; pending retry disabled",
+                    exc_info=True,
+                )
+                self._pending_claim_disabled = True
+                return []
+            logger.exception(
+                "xautoclaim error; sleeping %.1fs",
+                self._xreadgroup_error_sleep,
+            )
+            await asyncio.sleep(self._xreadgroup_error_sleep)
+            return []
+
+        if not isinstance(result, (list, tuple)) or len(result) < 2:
+            return []
+        next_id = result[0]
+        messages = result[1] or []
+        self._pending_claim_start_id = next_id or "0-0"
+        if self._pending_claim_start_id in {b"0-0", "0-0"}:
+            self._pending_claim_start_id = "0-0"
+        return list(messages)
+
+    async def _process_messages(
+        self, messages: list[tuple[bytes, dict[bytes, bytes]]]
+    ) -> None:
+        for msg_id, data in messages:
+            should_ack = await self.handle_message(msg_id, data)
+            if should_ack:
+                await self.redis.xack(self.input_stream, self.consumer_group, msg_id)
+
     @final
     async def run(self) -> None:
         try:
@@ -101,6 +161,12 @@ class StreamStage(ABC):
             while not self._stop.is_set():
                 if not await self.pre_iteration_gate():
                     return
+
+                claimed = await self._claim_pending_messages()
+                if claimed:
+                    await self.post_poll(len(claimed))
+                    await self._process_messages(claimed)
+                    continue
 
                 try:
                     messages = await self.redis.xreadgroup(
@@ -126,12 +192,7 @@ class StreamStage(ABC):
                     continue
 
                 for _stream, msgs in messages:
-                    for msg_id, data in msgs:
-                        should_ack = await self.handle_message(msg_id, data)
-                        if should_ack:
-                            await self.redis.xack(
-                                self.input_stream, self.consumer_group, msg_id
-                            )
+                    await self._process_messages(list(msgs))
         finally:
             await self.on_shutdown()
 

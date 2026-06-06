@@ -10,6 +10,7 @@ User=deploy
 WorkingDirectory=/home/deploy/project/kis_unified_sts
 EnvironmentFile=/home/deploy/project/kis_unified_sts/.env
 Environment=STOCK_ORDER_ROUTER=shadow
+Environment=STOCK_POSITIONS_KEY=stock:daemon:positions
 ExecStart=/home/deploy/project/kis_unified_sts/.venv/bin/python -m services.stock_order_router.main
 Restart=on-failure
 RestartSec=10s

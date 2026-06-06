@@ -2,8 +2,9 @@
 
 Reads filtered stock signals from ``signal.final.stock.shadow``, paper-executes
 via VirtualBroker (slippage modeled), logs the fill to ``order.fill.stock.shadow``
-+ RuntimeLedger, and records the open position to the ``trading:stock:positions``
-hash (read by M4-R OpenPositionFilter; consumed later by M4-X exit).
++ RuntimeLedger, and records the open position to the daemon working-store hash.
+M4-R/M4-X read that store; the dashboard ``trading:stock:positions`` key is owned
+by the monitor bridge.
 
 KRX-only (no ATS this increment); share-based sizing (no ContractSpec); no
 PseudoOCO bracket (stock has no entry-time stop/target — M4-X owns exit).
@@ -30,6 +31,7 @@ from shared.execution.fill_logger import FillLogger
 from shared.paper.broker import VirtualBroker
 from shared.paper.models import OrderSide, OrderType
 from shared.streaming.stage import StreamStage
+from shared.streaming.stock_keys import stock_daemon_positions_key
 
 logger = logging.getLogger(__name__)
 
@@ -202,13 +204,18 @@ def _resolve_mode() -> str:
     return os.getenv("STOCK_ORDER_ROUTER", "off").strip().lower()
 
 
+def _is_active_mode(mode: str) -> bool:
+    """Return True when the daemon should run."""
+    return mode in {"shadow", "live"}
+
+
 def _final_stream_for(mode: str) -> str:
-    """Input stream: shadow -> suffixed; else reserved live (unsuffixed)."""
+    """Input stream: shadow -> suffixed; live -> unsuffixed."""
     return "signal.final.stock.shadow" if mode == "shadow" else "signal.final.stock"
 
 
 def _fill_stream_for(mode: str) -> str:
-    """Output fill stream: shadow -> suffixed; else reserved live (unsuffixed)."""
+    """Output fill stream: shadow -> suffixed; live -> unsuffixed."""
     return "order.fill.stock.shadow" if mode == "shadow" else "order.fill.stock"
 
 
@@ -217,7 +224,7 @@ async def _build_and_run() -> int:
 
     off / unset: inert — log + close redis + return 0, constructing no broker,
                  fill-logger, or daemon.
-    shadow:      full wiring to order.fill.stock.shadow.
+    shadow/live: full wiring to mode-appropriate fill stream.
     """
     import signal as signal_mod
 
@@ -227,7 +234,7 @@ async def _build_and_run() -> int:
     redis_client = aioredis.from_url(redis_url)
 
     mode = _resolve_mode()
-    if mode != "shadow":
+    if not _is_active_mode(mode):
         logger.info("STOCK_ORDER_ROUTER=%s (off) — daemon inert, exiting", mode)
         await redis_client.aclose()
         return 0
@@ -237,7 +244,7 @@ async def _build_and_run() -> int:
 
     final_stream = os.environ.get("STOCK_FINAL_STREAM", _final_stream_for(mode))
     fill_stream = os.environ.get("STOCK_FILL_STREAM", _fill_stream_for(mode))
-    positions_key = os.environ.get("STOCK_POSITIONS_KEY", "trading:stock:positions")
+    positions_key = stock_daemon_positions_key()
 
     runtime_ledger = None
     storage_config = StorageConfig.load_or_default()

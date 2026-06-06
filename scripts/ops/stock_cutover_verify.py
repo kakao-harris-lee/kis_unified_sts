@@ -9,6 +9,7 @@ job — this script only inspects Redis.
 Suffix rules (verified):
   streams      -> ".shadow" in shadow, "" in live   (M4 _streams_for)
   dashboard keys -> ":shadow" in shadow, "" in live  (TRADING_STATE_KEY_SUFFIX _key)
+  daemon positions -> STOCK_POSITIONS_KEY or stock:daemon:positions, never suffixed
   risk:state:stock(+:meta) -> NEVER suffixed         (decoupled-only)
 
 Usage:
@@ -26,6 +27,11 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
+
+from shared.streaming.stock_keys import (
+    DASHBOARD_STOCK_POSITIONS_KEY,
+    stock_daemon_positions_key,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -139,17 +145,25 @@ async def check_market_context(redis: Any, mode: str) -> CheckResult:
 
 
 async def check_positions(redis: Any, mode: str) -> CheckResult:
-    """Surface the open-positions hash count (warn-level, never fails)."""
-    key = f"trading:stock:positions{_key_suffix(mode)}"
+    """Surface dashboard and daemon open-position counts (warn-level)."""
+    dashboard_key = f"{DASHBOARD_STOCK_POSITIONS_KEY}{_key_suffix(mode)}"
+    daemon_key = stock_daemon_positions_key()
     try:
-        count = await redis.hlen(key)
+        dashboard_count = await redis.hlen(dashboard_key)
     except Exception:
-        count = 0
+        dashboard_count = 0
+    try:
+        daemon_count = await redis.hlen(daemon_key)
+    except Exception:
+        daemon_count = 0
     return CheckResult(
         name="positions",
         ok=True,
         critical=False,
-        detail=f"{key} count={count}",
+        detail=(
+            f"dashboard={dashboard_key} count={dashboard_count}; "
+            f"daemon={daemon_key} count={daemon_count}"
+        ),
     )
 
 

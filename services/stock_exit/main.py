@@ -1,7 +1,7 @@
 """Stock exit daemon entrypoint (flag-gated, shadow-first, default-off).
 
 off (default): inert — log + close redis + return 0, constructing nothing.
-shadow:        full wiring to order.fill.stock.shadow.
+shadow/live:   full wiring to mode-appropriate order.fill.stock stream.
 """
 
 from __future__ import annotations
@@ -19,8 +19,13 @@ def _resolve_mode() -> str:
     return os.getenv("STOCK_EXIT_DAEMON", "off").strip().lower()
 
 
+def _is_active_mode(mode: str) -> bool:
+    """Return True when the daemon should run."""
+    return mode in {"shadow", "live"}
+
+
 def _fill_stream_for(mode: str) -> str:
-    """shadow -> suffixed exit-fill stream; else reserved live (unsuffixed)."""
+    """shadow -> suffixed exit-fill stream; live -> unsuffixed."""
     return "order.fill.stock.shadow" if mode == "shadow" else "order.fill.stock"
 
 
@@ -33,7 +38,7 @@ async def _build_and_run() -> int:
     redis_client = aioredis.from_url(redis_url)
 
     mode = _resolve_mode()
-    if mode != "shadow":
+    if not _is_active_mode(mode):
         logger.info("STOCK_EXIT_DAEMON=%s (off) — daemon inert, exiting", mode)
         await redis_client.aclose()
         return 0
@@ -47,6 +52,7 @@ async def _build_and_run() -> int:
     from shared.storage import SQLiteRuntimeLedger
     from shared.storage.config import StorageConfig
     from shared.strategy.exit.three_stage import ThreeStageExit, ThreeStageExitConfig
+    from shared.streaming.stock_keys import stock_daemon_positions_key
 
     raw = ConfigLoader.load("stock_exit.yaml").get("stock_exit", {})
     exit_strategy = ThreeStageExit(ThreeStageExitConfig.from_dict(raw))
@@ -55,7 +61,7 @@ async def _build_and_run() -> int:
     feed = StreamConsumerFeed(redis=redis_client, stream=tick_stream)
 
     fill_stream = os.environ.get("STOCK_FILL_STREAM", _fill_stream_for(mode))
-    positions_key = os.environ.get("STOCK_POSITIONS_KEY", "trading:stock:positions")
+    positions_key = stock_daemon_positions_key()
     interval = float(os.environ.get("STOCK_EXIT_INTERVAL", "5"))
 
     runtime_ledger = None

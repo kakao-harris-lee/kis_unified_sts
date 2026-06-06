@@ -10,6 +10,7 @@ User=deploy
 WorkingDirectory=/home/deploy/project/kis_unified_sts
 EnvironmentFile=/home/deploy/project/kis_unified_sts/.env
 Environment=STOCK_MONITOR_DAEMON=shadow
+Environment=STOCK_POSITIONS_KEY=stock:daemon:positions
 Environment=TRADING_STATE_KEY_SUFFIX=shadow
 ExecStart=/home/deploy/project/kis_unified_sts/.venv/bin/python -m services.stock_monitor.main
 Restart=on-failure

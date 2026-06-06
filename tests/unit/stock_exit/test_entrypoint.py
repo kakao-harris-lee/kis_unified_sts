@@ -21,7 +21,13 @@ def test_resolve_mode_shadow(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_fill_stream_for() -> None:
     assert m._fill_stream_for("shadow") == "order.fill.stock.shadow"
-    assert m._fill_stream_for("off") == "order.fill.stock"
+    assert m._fill_stream_for("live") == "order.fill.stock"
+
+
+def test_live_mode_is_active() -> None:
+    assert m._is_active_mode("live") is True
+    assert m._is_active_mode("shadow") is True
+    assert m._is_active_mode("off") is False
 
 
 def test_off_mode_is_inert(monkeypatch: pytest.MonkeyPatch) -> None:

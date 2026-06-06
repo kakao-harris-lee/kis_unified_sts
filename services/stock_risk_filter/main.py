@@ -16,6 +16,7 @@ Flag routing (STOCK_RISK_FILTER env var):
   shadow                — full wiring: RiskFilterLayer + StockRiskFilterDaemon,
                           consuming signal.candidate.stock.shadow and emitting
                           signal.final.stock.shadow.
+  live                  — same wiring on unsuffixed live streams.
 """
 
 from __future__ import annotations
@@ -34,6 +35,7 @@ from services.stock_risk_filter.codec import (
 from shared.risk.layer import RiskFilterLayer
 from shared.risk.runtime_state import RuntimeRiskState
 from shared.streaming.stage import StreamStage
+from shared.streaming.stock_keys import stock_daemon_positions_key
 
 logger = logging.getLogger(__name__)
 
@@ -132,11 +134,16 @@ def _resolve_mode() -> str:
     return os.getenv("STOCK_RISK_FILTER", "off").strip().lower()
 
 
+def _is_active_mode(mode: str) -> bool:
+    """Return True when the daemon should run."""
+    return mode in {"shadow", "live"}
+
+
 def _streams_for(mode: str) -> tuple[str, str]:
     """Return ``(candidate_stream, final_stream)`` for the mode.
 
     shadow -> (signal.candidate.stock.shadow, signal.final.stock.shadow).
-    The else branch reserves the live (unsuffixed) names for a future cutover.
+    live -> unsuffixed streams.
     """
     if mode == "shadow":
         return "signal.candidate.stock.shadow", "signal.final.stock.shadow"
@@ -148,8 +155,7 @@ async def _build_and_run() -> int:
 
     off / unset: inert — log and return 0, constructing NONE of the
                  layer/runtime-state/daemon objects.
-    shadow:      full wiring — consume signal.candidate.stock.shadow through
-                 RiskFilterLayer and emit signal.final.stock.shadow.
+    shadow/live: full wiring through RiskFilterLayer on mode-appropriate streams.
     """
     import signal as signal_mod
 
@@ -159,7 +165,7 @@ async def _build_and_run() -> int:
     redis_client = aioredis.from_url(redis_url)
 
     mode = _resolve_mode()
-    if mode != "shadow":
+    if not _is_active_mode(mode):
         logger.info("STOCK_RISK_FILTER=%s (off) — daemon inert, exiting", mode)
         await redis_client.aclose()
         return 0
@@ -176,7 +182,7 @@ async def _build_and_run() -> int:
 
     # Sync redis for the open-position provider (layer.evaluate is sync).
     sync_redis = RedisClient.get_client()
-    positions_key = os.environ.get("STOCK_POSITIONS_KEY", "trading:stock:positions")
+    positions_key = stock_daemon_positions_key()
 
     def _has_open_position(code: str) -> bool:
         try:
