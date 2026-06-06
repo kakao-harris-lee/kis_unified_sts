@@ -81,6 +81,7 @@ except Exception:  # pragma: no cover
 
 if TYPE_CHECKING:
     from shared.config.schema import PipelineConfig
+    from shared.execution.live_mode_guard import LiveModeGuard
 
 logger = logging.getLogger(__name__)
 
@@ -798,8 +799,9 @@ class TradingOrchestrator:
         self._order_executor: Any | None = None
         # F-7: futures live-mode gate for the real-order entry path. Built for
         # futures in _init_execution_layer; None for non-futures (never consulted).
-        self._live_mode_guard: Any | None = None
+        self._live_mode_guard: LiveModeGuard | None = None
         self._guard_redis: Any | None = None
+        self._live_guard_warned: bool = False
         self._mock_mirror: Any | None = None
         self._mock_mirror_stats: dict[str, int] = {
             "entry_success": 0,
@@ -2046,7 +2048,7 @@ class TradingOrchestrator:
                 os.environ.get("REDIS_URL", "redis://localhost:6379/1")
             )
             logger.info(
-                "F-7 futures live-mode guard active (enabled=%s, suspend_key=%s)",
+                "futures live-mode guard active (enabled=%s, suspend_key=%s)",
                 self._live_mode_guard.enabled,
                 self._live_mode_guard.suspend_key,
             )
@@ -4105,6 +4107,18 @@ class TradingOrchestrator:
             ) as e:
                 logger.warning(f"OrderExecutor cleanup failed: {e}")
             self._order_executor = None
+
+        # F-7: release the dedicated live-mode guard Redis pool.
+        if self._guard_redis is not None:
+            try:
+                closer = (
+                    getattr(self._guard_redis, "aclose", None)
+                    or self._guard_redis.close
+                )
+                await closer()
+            except Exception as e:
+                logger.warning("LiveModeGuard redis close failed: %s", e)
+            self._guard_redis = None
 
         if self._mock_mirror is not None:
             try:
@@ -6876,17 +6890,19 @@ class TradingOrchestrator:
             return is_filled, fill_price, (quantity if is_filled else 0), venue
 
         if self._order_executor is not None:
-            if await TradingOrchestrator._real_entry_blocked(self):
+            if await self._real_entry_blocked():
                 logger.warning(
                     "futures live suspended — real ENTRY blocked for %s "
                     "(enable: set futures_live.enabled=true + clear the redis "
                     "suspend key)",
                     code,
                 )
-                self._schedule_notify(
-                    f"⛔ 선물 실주문 차단 (live suspended): {code} — "
-                    "futures_live.enabled / futures:live:suspended 확인"
-                )
+                if not self._live_guard_warned:
+                    self._schedule_notify(
+                        f"⛔ 선물 실주문 차단 (live suspended): {code} — "
+                        "futures_live.enabled / futures:live:suspended 확인"
+                    )
+                    self._live_guard_warned = True
                 return False, 0.0, 0, "KRX"
 
             from shared.execution.models import OrderRequest, OrderSide, OrderType

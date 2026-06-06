@@ -88,8 +88,10 @@ async def test_entry_real_branch_blocked_for_futures_when_suspended() -> None:
         _order_executor=executor,
         _live_mode_guard=_guard(False),
         _guard_redis=_redis(),
+        _live_guard_warned=False,
         _schedule_notify=lambda msg: notes.append(msg),
     )
+    fake._real_entry_blocked = TradingOrchestrator._real_entry_blocked.__get__(fake)
 
     result = await TradingOrchestrator._place_entry_order(
         fake,
