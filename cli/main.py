@@ -1663,9 +1663,14 @@ def _stock_orchestrator_enabled() -> bool:
     Default ``True`` (pre-cutover behaviour). The operator sets
     ``STOCK_ORCHESTRATOR_ENABLED=false`` as the final M5d cutover step so the
     orchestrator permanently refuses stock — the decoupled M4 pipeline owns it.
-    Rollback: set it back to ``true``.
+    Rollback: set it back to ``true`` (``1``/``yes`` also accepted). Any other
+    value (e.g. ``false``/``0``/``no``) keeps stock blocked.
     """
-    return os.getenv("STOCK_ORCHESTRATOR_ENABLED", "true").strip().lower() == "true"
+    return os.getenv("STOCK_ORCHESTRATOR_ENABLED", "true").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+    }
 
 
 def _stock_orchestrator_blocked(asset: str) -> bool:
@@ -1737,7 +1742,7 @@ def trade_start(
             "STOCK_ORCHESTRATOR_ENABLED=true.",
             err=True,
         )
-        raise SystemExit(1)
+        sys.exit(1)
 
     import asyncio
 

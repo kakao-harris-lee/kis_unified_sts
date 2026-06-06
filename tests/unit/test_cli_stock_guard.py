@@ -22,6 +22,21 @@ def test_enabled_false_and_case_insensitive(monkeypatch: pytest.MonkeyPatch) -> 
     assert m._stock_orchestrator_enabled() is True
 
 
+def test_enabled_truthy_set_matches_kis_real_trading(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Match the KIS_REAL_TRADING truthy set {"1","true","yes"} for rollback robustness.
+    monkeypatch.setenv("STOCK_ORCHESTRATOR_ENABLED", "1")
+    assert m._stock_orchestrator_enabled() is True
+    monkeypatch.setenv("STOCK_ORCHESTRATOR_ENABLED", "YES")
+    assert m._stock_orchestrator_enabled() is True
+    # Non-truthy values keep stock blocked.
+    monkeypatch.setenv("STOCK_ORCHESTRATOR_ENABLED", "0")
+    assert m._stock_orchestrator_enabled() is False
+    monkeypatch.setenv("STOCK_ORCHESTRATOR_ENABLED", "no")
+    assert m._stock_orchestrator_enabled() is False
+
+
 def test_blocked_matrix(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("STOCK_ORCHESTRATOR_ENABLED", "false")
     assert m._stock_orchestrator_blocked("stock") is True
