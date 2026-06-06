@@ -99,6 +99,9 @@ async def _build_and_run() -> int:
         fee_rate=fee_rate,
         status_interval=status_interval,
         signal_meta_max=int(os.environ.get("STOCK_MONITOR_SIGNAL_META_MAX", "1000")),
+        health_stale_seconds=float(tg.get("health_stale_seconds", 600)),
+        health_cooldown_seconds=float(tg.get("health_cooldown_seconds", 1800)),
+        digest_time_kst=str(tg.get("digest_time_kst", "15:40")),
     )
 
     loop = asyncio.get_running_loop()

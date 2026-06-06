@@ -13,7 +13,10 @@ import asyncio
 import contextlib
 import logging
 from collections import OrderedDict
+from collections.abc import Callable
+from datetime import UTC, datetime, time
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from services.stock_exit.positions import parse_position_record
 from services.stock_monitor.serializers import (
@@ -27,6 +30,8 @@ from services.stock_monitor.serializers import (
 from shared.utils.calc import calc_realized_pnl
 
 logger = logging.getLogger(__name__)
+
+_KST = ZoneInfo("Asia/Seoul")
 
 
 class StockMonitorDaemon:
@@ -47,6 +52,10 @@ class StockMonitorDaemon:
         fee_rate: float,
         status_interval: float,
         signal_meta_max: int = 1000,
+        now_fn: Callable[[], datetime] = lambda: datetime.now(UTC),
+        health_stale_seconds: float = 600.0,
+        health_cooldown_seconds: float = 1800.0,
+        digest_time_kst: str = "15:40",
     ) -> None:
         self.redis = redis
         self.feed = feed
@@ -60,9 +69,16 @@ class StockMonitorDaemon:
         self.fee_rate = fee_rate
         self.status_interval = status_interval
         self.signal_meta_max = signal_meta_max
+        self.now_fn = now_fn
+        self.health_stale_seconds = health_stale_seconds
+        self.health_cooldown_seconds = health_cooldown_seconds
+        self.digest_time_kst = digest_time_kst
         self._open: dict[str, dict[str, Any]] = {}
         self._signal_meta: OrderedDict[str, dict[str, Any]] = OrderedDict()
         self._stop = asyncio.Event()
+        self._last_health_alert_ts: float = 0.0
+        self._digest_emitted_date: str = ""
+        self._digest_reset_date: str = ""
 
     # -- handlers --------------------------------------------------------- #
 
@@ -251,6 +267,47 @@ class StockMonitorDaemon:
             }
         )
 
+    async def _check_health_and_digest(self) -> None:
+        """KST-guarded health-anomaly + session-digest alerts (spec §7 ②/③).
+
+        Called once per status tick. Resets the digest daily at/after 09:00 KST,
+        emits one non-empty session digest per day at/after ``digest_time_kst``,
+        and (during market hours) sends a cooldown-gated health alert when the
+        feed's market-data staleness exceeds ``health_stale_seconds``. No-op when
+        no ``alert_sink`` is configured.
+        """
+        if self.alert_sink is None:
+            return
+        now_kst = self.now_fn().astimezone(_KST)
+        today = now_kst.date().isoformat()
+        hhmm = now_kst.strftime("%H:%M")
+        in_market = time(9, 0) <= now_kst.time() <= time(15, 30)
+
+        # daily digest reset at/after 09:00 KST (once/day)
+        if now_kst.time() >= time(9, 0) and self._digest_reset_date != today:
+            self.alert_sink.digest.reset()
+            self._digest_reset_date = today
+
+        # session digest once/day at/after digest_time_kst (skip empty)
+        if hhmm >= self.digest_time_kst and self._digest_emitted_date != today:
+            if self.alert_sink.digest.trades > 0:
+                await self.alert_sink.emit_digest(open_count=len(self._open))
+            # mark even if empty, so we don't recheck all day
+            self._digest_emitted_date = today
+
+        # health anomaly: market data stale during market hours, cooldown-gated.
+        # Signal is feed staleness (upstream ingest down), NOT "no trades" — a
+        # quiet market legitimately has no trades and must not alert.
+        if in_market:
+            staleness = self.feed.get_staleness_seconds()
+            if staleness is not None and staleness > self.health_stale_seconds:
+                now_ts = self.now_fn().timestamp()
+                if now_ts - self._last_health_alert_ts > self.health_cooldown_seconds:
+                    await self.alert_sink.send_health(
+                        f"market data stale {staleness:.0f}s (feed)"
+                    )
+                    self._last_health_alert_ts = now_ts
+
     # -- loops ------------------------------------------------------------ #
 
     async def run(self) -> None:
@@ -324,12 +381,14 @@ class StockMonitorDaemon:
     async def _status_loop(self) -> None:
         """Periodically mark to market + publish status every ``status_interval``.
 
-        Calls ``publish_status_and_mtm`` each tick (errors logged, loop
-        continues) and sleeps interruptibly until the next tick or ``stop()``.
+        Calls ``publish_status_and_mtm`` then ``_check_health_and_digest`` each
+        tick (errors logged, loop continues) and sleeps interruptibly until the
+        next tick or ``stop()``.
         """
         while not self._stop.is_set():
             try:
                 await self.publish_status_and_mtm()
+                await self._check_health_and_digest()
             except Exception:
                 logger.exception("status loop error; continuing")
             with contextlib.suppress(asyncio.TimeoutError):

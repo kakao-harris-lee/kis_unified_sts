@@ -3,14 +3,34 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import fakeredis
 import fakeredis.aioredis
 import pytest
 
 import shared.streaming.trading_state as ts
+from services.stock_monitor.alerts import AlertSink
 from services.stock_monitor.daemon import StockMonitorDaemon
 from shared.streaming.trading_state import TradingStatePublisher, TradingStateReader
+
+_KST = ZoneInfo("Asia/Seoul")
+
+
+class _FakeNotifier:
+    """Records dispatched messages so live-mode AlertSink emits can be asserted."""
+
+    def __init__(self) -> None:
+        self.messages: list[str] = []
+
+    async def send_message(self, message: str) -> None:
+        self.messages.append(message)
+
+
+def _kst_at(hour: int, minute: int) -> datetime:
+    """Fixed KST datetime on 2026-06-08 (a Monday) for now_fn injection."""
+    return datetime(2026, 6, 8, hour, minute, tzinfo=_KST)
 
 
 def _enc(d: dict[str, str]) -> dict[bytes, bytes]:
@@ -58,12 +78,16 @@ def _final(code: str = "005930") -> dict[str, str]:
 class _FakeFeed:
     def __init__(self) -> None:
         self.prices: dict[str, dict[str, float]] = {}
+        self.staleness: float | None = None
 
     def update_symbols(self, symbols: list[str]) -> None:
         pass
 
     async def get_current_price(self, symbol: str) -> dict[str, float]:
         return dict(self.prices.get(symbol, {}))
+
+    def get_staleness_seconds(self) -> float | None:
+        return self.staleness
 
     async def start(self) -> None:
         pass
@@ -93,6 +117,44 @@ def wired(monkeypatch):
         status_interval=5.0,
     )
     return daemon, redis, TradingStateReader(asset_class="stock")
+
+
+@pytest.fixture()
+def alerting(monkeypatch):
+    """Daemon wired with a real (live-mode) AlertSink + injectable now/clock.
+
+    Returns (build, redis, feed, notifier): ``build(now_fn=...)`` constructs the
+    daemon with that injected clock so health/digest KST windows are testable.
+    """
+    server = fakeredis.FakeServer()
+    redis = fakeredis.aioredis.FakeRedis(server=server, db=1)
+    sync = fakeredis.FakeStrictRedis(server=server, db=1)
+    monkeypatch.setattr(ts, "_get_redis", lambda: sync)
+    monkeypatch.setenv("TRADING_STATE_KEY_SUFFIX", "shadow")
+    notifier = _FakeNotifier()
+    sink = AlertSink(notifier=notifier, mode="live", pnl_alert_pct=3.0)
+    feed = _FakeFeed()
+
+    def build(now_fn):
+        return StockMonitorDaemon(
+            redis=redis,
+            feed=feed,
+            publisher=TradingStatePublisher(asset_class="stock"),
+            alert_sink=sink,
+            positions_key="trading:stock:positions",
+            fill_stream="order.fill.stock.shadow",
+            signal_stream="signal.final.stock.shadow",
+            consumer_group="stock_monitor",
+            worker_id="test",
+            fee_rate=0.003,
+            status_interval=5.0,
+            now_fn=now_fn,
+            health_stale_seconds=600.0,
+            health_cooldown_seconds=1800.0,
+            digest_time_kst="15:40",
+        )
+
+    return build, redis, feed, notifier, sink
 
 
 @pytest.mark.asyncio
@@ -221,3 +283,102 @@ async def test_entry_without_signal_meta_is_graceful(wired) -> None:
     assert pos["strategy"] == ""
     assert pos["name"] == ""
     assert pos["entry_price"] == 71000.0
+
+
+# -- spec §7 ②/③: health anomaly + session digest --------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_digest_emits_once_per_day_after_digest_time(alerting) -> None:
+    """At/after 15:40 KST with ≥1 trade -> one digest; a 2nd check same day no-op.
+
+    Follows the real daily lifecycle: the 09:00 tick resets first, THEN trades
+    accumulate, THEN the 15:40+ tick emits (a same-day 09:00 reset never wipes
+    intraday trades because reset is once/day, guarded by ``_digest_reset_date``).
+    """
+    build, redis, feed, notifier, sink = alerting
+    clock = {"now": _kst_at(9, 0)}
+    daemon = build(now_fn=lambda: clock["now"])
+
+    # 09:00 reset tick (clears any carryover)
+    await daemon._check_health_and_digest()
+
+    # intraday: accumulate one trade via the AlertSink exit path (on_exit -> add)
+    await sink.on_exit(code="005930", pnl=17840.0, pnl_pct=2.82)
+    assert sink.digest.trades == 1
+
+    # 15:41 digest tick (same day -> reset guard prevents a second reset)
+    clock["now"] = _kst_at(15, 41)
+    await daemon._check_health_and_digest()
+    digests = [m for m in notifier.messages if "세션 다이제스트" in m]
+    assert len(digests) == 1
+
+    # second check the same day must NOT re-emit
+    await daemon._check_health_and_digest()
+    digests = [m for m in notifier.messages if "세션 다이제스트" in m]
+    assert len(digests) == 1
+
+
+@pytest.mark.asyncio
+async def test_empty_digest_does_not_emit(alerting) -> None:
+    """0 trades at 15:41 KST -> digest is skipped (and date still marked)."""
+    build, redis, feed, notifier, sink = alerting
+    daemon = build(now_fn=lambda: _kst_at(15, 41))
+    assert sink.digest.trades == 0
+
+    await daemon._check_health_and_digest()
+    assert [m for m in notifier.messages if "세션 다이제스트" in m] == []
+    # marked emitted so it won't recheck all day
+    assert daemon._digest_emitted_date == _kst_at(15, 41).date().isoformat()
+
+
+@pytest.mark.asyncio
+async def test_digest_resets_at_market_open(alerting) -> None:
+    """09:01 KST tick resets yesterday's accumulator (digest.trades -> 0)."""
+    build, redis, feed, notifier, sink = alerting
+    daemon = build(now_fn=lambda: _kst_at(9, 1))
+    sink.digest.add(pnl=1000.0)  # stale carryover from "yesterday"
+    assert sink.digest.trades == 1
+
+    await daemon._check_health_and_digest()
+    assert sink.digest.trades == 0
+
+
+@pytest.mark.asyncio
+async def test_health_alert_during_market_hours_cooldown_gated(alerting) -> None:
+    """Stale feed (700s > 600s) at 10:00 KST -> one health alert; 2nd within cooldown no-op."""
+    build, redis, feed, notifier, sink = alerting
+    daemon = build(now_fn=lambda: _kst_at(10, 0))
+    feed.staleness = 700.0
+
+    await daemon._check_health_and_digest()
+    health = [m for m in notifier.messages if "헬스 이상" in m]
+    assert len(health) == 1
+
+    # second check within the cooldown window must not re-send
+    await daemon._check_health_and_digest()
+    health = [m for m in notifier.messages if "헬스 이상" in m]
+    assert len(health) == 1
+
+
+@pytest.mark.asyncio
+async def test_health_alert_suppressed_outside_market_and_when_fresh(alerting) -> None:
+    """No health alert outside market hours, nor when staleness is None/below threshold."""
+    build, redis, feed, notifier, sink = alerting
+
+    # outside market hours (16:00 KST) even with a very stale feed
+    feed.staleness = 9999.0
+    daemon = build(now_fn=lambda: _kst_at(16, 0))
+    await daemon._check_health_and_digest()
+    assert [m for m in notifier.messages if "헬스 이상" in m] == []
+
+    # in market hours but no ticks yet (None) -> no alert
+    feed.staleness = None
+    daemon = build(now_fn=lambda: _kst_at(10, 0))
+    await daemon._check_health_and_digest()
+    assert [m for m in notifier.messages if "헬스 이상" in m] == []
+
+    # in market hours but below threshold (300s < 600s) -> no alert
+    feed.staleness = 300.0
+    await daemon._check_health_and_digest()
+    assert [m for m in notifier.messages if "헬스 이상" in m] == []
