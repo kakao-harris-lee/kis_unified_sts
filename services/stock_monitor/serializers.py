@@ -18,7 +18,12 @@ def _s(fields: dict[bytes, bytes], key: str) -> str:
 
 
 def _ms_to_iso(ms: str) -> str:
-    """Epoch-ms string -> tz-aware ISO; empty/invalid -> current UTC."""
+    """Epoch-ms string -> tz-aware ISO; empty/invalid -> current UTC.
+
+    The empty/invalid -> ``datetime.now(UTC)`` fallback intentionally matches
+    ``_tz_aware_iso(None)`` in ``shared/streaming/trading_state.py`` — do not
+    "fix" it to epoch-zero.
+    """
     if not ms:
         return datetime.now(UTC).isoformat()
     try:
@@ -83,7 +88,7 @@ def build_position_dict(
 
 
 def build_trade_dict(
-    entry: dict[str, Any], exit_fill: dict[str, Any], *, pnl: float, fee_rate: float
+    entry: dict[str, Any], exit_fill: dict[str, Any], *, pnl: float
 ) -> dict[str, Any]:
     """Dashboard closed-trade dict (mirrors _serialize_closed_position)."""
     ep = float(entry["entry_price"])
@@ -113,8 +118,11 @@ def build_signal_dict(sig: dict[str, Any]) -> dict[str, Any]:
         "id": sig["signal_id"],
         "symbol": sig["code"],
         "name": sig["name"],
-        "side": sig["direction"],
-        "signal_type": sig["direction"],
+        # signal.final.stock.shadow records are risk-passed entry candidates;
+        # mirror the orchestrator's convention (side/signal_type = "entry"/"exit",
+        # NOT long/short) so M5a signals render identically on the Cockpit.
+        "side": "entry",
+        "signal_type": "entry",
         "strategy": sig["strategy"],
         "price": sig["price"],
         "confidence": sig["confidence"],

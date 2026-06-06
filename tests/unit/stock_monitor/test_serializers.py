@@ -100,7 +100,7 @@ def test_build_trade_dict_pnl() -> None:
         "entry_time": "2023-11-14T22:13:20+00:00",
     }
     exit_fill = parse_fill(_fill(role="exit", side="SELL", price="73000.0"))
-    t = build_trade_dict(entry, exit_fill, pnl=17840.0, fee_rate=0.003)
+    t = build_trade_dict(entry, exit_fill, pnl=17840.0)
     assert t["symbol"] == "005930" and t["side"] == "long"
     assert t["entry_price"] == 71000.0 and t["exit_price"] == 73000.0
     assert t["pnl"] == 17840.0
@@ -111,5 +111,11 @@ def test_build_trade_dict_pnl() -> None:
 def test_build_signal_dict() -> None:
     s = build_signal_dict(parse_final_signal(_final()))
     assert s["symbol"] == "005930" and s["strategy"] == "vr_composite"
-    assert s["side"] == "long" and s["signal_type"] == "long"
+    assert s["side"] == "entry" and s["signal_type"] == "entry"
     assert s["confidence"] == 0.62 and s["executed"] is True
+    assert isinstance(s["timestamp"], str) and s["timestamp"]
+
+
+def test_parse_fill_empty_defaults() -> None:
+    f = parse_fill({})
+    assert f["code"] == "" and f["filled_price"] == 0.0 and f["quantity"] == 0
