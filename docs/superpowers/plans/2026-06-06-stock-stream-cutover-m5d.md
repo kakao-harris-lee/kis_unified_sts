@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** The operator artifacts to flip stock paper trading from the monolithic orchestrator to the decoupled M4 pipeline + M5a/b/c: a read-only mode-aware verification script (`scripts/ops/stock_cutover_verify.py`), a rollback script (`scripts/ops/stock_cutover_rollback.sh`), and a gated runbook (`docs/runbooks/stock-stream-cutover.md`).
+**Goal:** The operator artifacts to flip stock paper trading from the monolithic orchestrator to the decoupled M4 pipeline + M5a/b/c: a read-only mode-aware verification script (`scripts/ops/stock_cutover_verify.py`), a rollback script (`scripts/ops/stock_cutover_rollback.sh`), and a gated runbook (`docs/runbooks/stock-pipeline-cutover-m5d.md`).
 
 **Architecture:** No new trading code — the cutover is operational. `verify.py` confirms decoupled-pipeline health over Redis (stream consumer groups + risk-state freshness + market-context + positions), mode-aware (shadow checks `.shadow` streams / `:shadow` keys; live checks unsuffixed), returning exit 1 on any critical failure. `rollback.sh` stops the decoupled daemons and restores the orchestrator (idempotent, `--dry-run`). The runbook mirrors the futures Phase-5 pattern (gates → cutover sequence → rollback).
 
@@ -23,7 +23,7 @@
 **Create:**
 - `scripts/ops/stock_cutover_verify.py` — read-only mode-aware health checker.
 - `scripts/ops/stock_cutover_rollback.sh` — decoupled-stop + orchestrator-restore (idempotent, `--dry-run`).
-- `docs/runbooks/stock-stream-cutover.md` — gated cutover runbook.
+- `docs/runbooks/stock-pipeline-cutover-m5d.md` — gated cutover runbook.
 - `tests/unit/scripts/ops/test_stock_cutover_verify.py` — verify unit tests (create the dir; namespace package, no `__init__.py`).
 
 **Modify:** none (purely additive).
@@ -470,11 +470,11 @@ git commit -m "feat(m5d): stock cutover rollback script (idempotent, --dry-run)"
 ## Task 3: Runbook + full gate + PR
 
 **Files:**
-- Create: `docs/runbooks/stock-stream-cutover.md`
+- Create: `docs/runbooks/stock-pipeline-cutover-m5d.md`
 
 - [ ] **Step 1: Write the runbook**
 
-Create `docs/runbooks/stock-stream-cutover.md`:
+Create `docs/runbooks/stock-pipeline-cutover-m5d.md`:
 
 ```markdown
 # Runbook: Stock Stream Cutover (M5d)
@@ -572,7 +572,7 @@ Expected: green (M5d is additive — scripts + doc only — so no regression).
 
 ```bash
 cd /tmp/m5d-impl
-git add docs/runbooks/stock-stream-cutover.md
+git add docs/runbooks/stock-pipeline-cutover-m5d.md
 git commit -m "docs(m5d): stock stream cutover runbook (gates, sequence, rollback)"
 git push -u origin feat/stock-stream-cutover-m5d
 gh pr create --base main --head feat/stock-stream-cutover-m5d \
@@ -583,7 +583,7 @@ The fourth M5 sub-project: the operator artifacts to flip stock **paper** tradin
 from the monolithic orchestrator to the decoupled M4 pipeline + M5a/b/c —
 a read-only mode-aware verification script (`scripts/ops/stock_cutover_verify.py`),
 an idempotent rollback script (`scripts/ops/stock_cutover_rollback.sh`), and a gated
-runbook (`docs/runbooks/stock-stream-cutover.md`).
+runbook (`docs/runbooks/stock-pipeline-cutover-m5d.md`).
 
 ## Why
 M4-P/R/O/X + M5a/b/c are all built and running shadow. M5d is the cutover itself —

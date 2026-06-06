@@ -1,72 +1,51 @@
-# Runbook: Stock Stream Cutover (M5d)
+# Runbook — Stock Market-Data Stream Cutover (M1c)
 
-Flip stock **paper** trading from the monolithic orchestrator to the decoupled M4
-pipeline (M4-P → M4-R → M4-O → M4-X) + M5a monitor + M5b LLM context cron + M5c
-daily risk reset cron. Paper→paper (VirtualBroker in both shadow and live; the only
-difference is the stream suffix), so there is no real-money risk — the risks are
-operational (silent stop, double-trading, no halt). Reversible via the rollback script.
+Switch the stock orchestrator from owning the KIS WebSocket feed to consuming
+the Redis tick stream published by the `kis-market-ingest-stock` daemon (M1a).
+Flag: `STOCK_MARKET_DATA_SOURCE` (`websocket` default | `stream`). Stock only —
+futures stays `websocket` (the tick stream carries no orderbook, which the
+futures slippage controller requires).
 
-Spec: `docs/superpowers/specs/2026-06-06-stock-stream-cutover-m5d-design.md`
+## Preconditions
 
-## Gate 0 — Prerequisites
-- M4-P/R/O/X + M5a monitor running in SHADOW (`systemctl status kis-stock-*`).
-- M5b crontab (`STOCK_LLM_CONTEXT=shadow`) and M5c crontab (`scripts.maintenance.daily_risk_reset`) installed.
-- Orchestrator stock running normally (`scripts/cron/stock_trading.sh status` / pid alive).
-- Operator has read this runbook AND the rollback section.
+1. `kis-market-ingest-stock` (M1a) running and healthy:
+   - `systemctl status kis-market-ingest-stock`
+   - Redis: `redis-cli -n 1 XLEN market:ticks` rising during market hours.
+2. No second WebSocket consumer for the same KIS stock account (the ingest
+   daemon owns the WS connection; the orchestrator must NOT also connect).
 
-## Gate 1 — Shadow validation (>= 3-5 trading days)
-Each trading day:
-- `python -m scripts.ops.stock_cutover_verify --mode shadow` → PASS (exit 0).
-- M5a dashboard (`:shadow` keys) shows decoupled positions / fills / signals flowing.
-- No unbounded stream backlog; no daemon crash (`systemctl status kis-stock-*`).
-- (Optional) sanity-compare decoupled shadow paper trades vs orchestrator live paper
-  trades — directional agreement only (different broker/timing, not an exact match).
+## Activate
 
-## Gate 2 — Operator written approval
-Record the date + a one-line shadow-validation summary before proceeding.
+1. Set the flag for the stock orchestrator process/unit env:
+   `STOCK_MARKET_DATA_SOURCE=stream`
+   (also ensure `REDIS_URL` points at the right DB — paper `…/1` on 6381,
+   live `…/1` on 6382, per the paper/live separation runbook).
+2. Restart the stock orchestrator.
+3. Confirm in logs: `Stock data source = STREAM (market:ticks); KIS WebSocket feed skipped`
+   and `Stock stream-consumer feed started (N symbols)`.
 
-## Cutover sequence (run OFF-HOURS — after 16:00 KST or a weekend)
-1. **Flatten + clear positions** (current paper data is disposable):
-   - `python scripts/trading/flatten_all.py --asset stock`  (optional — close orchestrator positions)
-   - `bash scripts/cron/stock_trading.sh stop`
-   - Disable the orchestrator cron (comment out the `stock_trading.sh` + watchdog lines in the crontab) so the 5-min watchdog does not resurrect it.
-   - `redis-cli -n 1 del trading:stock:positions`  (decoupled starts clean; M4-X skips no foreign records)
-2. **Flip M4 daemons to live** (per unit, via systemd drop-in — keeps the repo-tracked unit unmodified):
-   ```
-   sudo mkdir -p /etc/systemd/system/kis-stock-strategy-daemon.service.d
-   printf '[Service]\nEnvironment=STOCK_STRATEGY_DAEMON=live\n' | sudo tee /etc/systemd/system/kis-stock-strategy-daemon.service.d/live.conf
-   # repeat for: kis-stock-risk-filter (STOCK_RISK_FILTER=live),
-   #             kis-stock-order-router (STOCK_ORDER_ROUTER=live),
-   #             kis-stock-exit-daemon (STOCK_EXIT_DAEMON=live)
-   sudo systemctl daemon-reload
-   sudo systemctl enable --now kis-stock-strategy-daemon kis-stock-risk-filter kis-stock-order-router kis-stock-exit-daemon
-   ```
-3. **Flip M5a/b/c to live**:
-   - M5a: drop-in `Environment=STOCK_MONITOR_DAEMON=live` for `kis-stock-monitor-daemon`, `daemon-reload`, `systemctl restart kis-stock-monitor-daemon`.
-   - M5b: change the crontab entry to `STOCK_LLM_CONTEXT=live`; set `config/llm.yaml::market_context_publisher.enabled: false`.
-   - M5c: no change (mode-agnostic).
-4. **Post-cutover verification**:
-   - `python -m scripts.ops.stock_cutover_verify --mode live` → PASS (exit 0).
-   - `systemctl is-active kis-stock-strategy-daemon kis-stock-risk-filter kis-stock-order-router kis-stock-exit-daemon kis-stock-monitor-daemon` → all `active`.
-   - Watch the first 09:00 KST session on the M5a dashboard (live keys): positions/fills appear.
+## Validate the SLO
 
-## Rollback triggers
-Roll back if ANY of: `verify --mode live` fails; no fills flowing for >10 min during
-market hours while signals are present; a stream backlog grows unbounded; a daemon
-crash-loops; M5a emits a health-anomaly Telegram alert.
+The goal is ingest latency independent of downstream compute load. Check:
+
+- `market_data_staleness` p99 flat/improved vs the websocket baseline and not
+  rising when indicator/strategy/LLM load spikes.
+- tick→XADD latency (ingest side) stable.
+- `trading_signal_latency_ms` unchanged or better.
+- Positions/signals/fills appear normal vs the websocket baseline; paper PnL
+  marks update per tick (paper_broker observations preserved).
 
 ## Rollback
-```
-bash scripts/ops/stock_cutover_rollback.sh --dry-run   # preview
-bash scripts/ops/stock_cutover_rollback.sh             # execute
-```
-Then: re-enable `config/llm.yaml::market_context_publisher.enabled: true`, revert the
-M5b crontab to `STOCK_LLM_CONTEXT=shadow`, re-enable the orchestrator cron, and confirm
-`verify --mode shadow` + orchestrator pid alive.
+
+1. Set `STOCK_MARKET_DATA_SOURCE=websocket` (or unset).
+2. Restart the stock orchestrator. It rebuilds the KIS WebSocket feed; the
+   stream feed and its async redis client are torn down on stop.
+
+No data migration is involved — the flag flip is the whole switch.
 
 ## Notes
-- Residual positions in the paper (KIS mock) account from the orchestrator are a
-  documented FOLLOW-UP cleanup — out of M5d scope (operator decision: current paper
-  data is disposable).
-- A decoupled-pipeline kill-switch consumer is deferred; the paper-grade halt is
-  `systemctl stop kis-stock-*`.
+
+- If the ingest daemon dies/lags while `stream` is active, the orchestrator's
+  `MarketDataProvider` failover degrades to KIS REST polling (the `_kis_client`
+  is retained) rather than going dark.
+- Futures cutover is a separate increment (needs an orderbook transport).
