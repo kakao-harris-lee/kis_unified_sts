@@ -13,8 +13,8 @@ Modes (env ``STOCK_LLM_CONTEXT``):
   live (M5d)    — publish to the live key (orchestrator publisher gated off).
 
 Recommended crontab (KST, CRON_TZ=Asia/Seoul; operator-managed):
-  30 8  * * 1-5  STOCK_LLM_CONTEXT=shadow  python -m scripts.analysis.llm_market_context
-  0 9-15 * * 1-5 STOCK_LLM_CONTEXT=shadow  python -m scripts.analysis.llm_market_context
+  30 8  * * 1-5  STOCK_LLM_CONTEXT=shadow  /home/deploy/project/kis_unified_sts/.venv/bin/python -m scripts.analysis.llm_market_context
+  0 9-15 * * 1-5 STOCK_LLM_CONTEXT=shadow  /home/deploy/project/kis_unified_sts/.venv/bin/python -m scripts.analysis.llm_market_context
 """
 
 from __future__ import annotations
@@ -64,6 +64,7 @@ async def run_once(mode: str) -> int:
 
 
 def main() -> int:
+    """Entry point: configure logging, run one analysis cycle, return the exit code."""
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s"
     )

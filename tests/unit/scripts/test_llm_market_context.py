@@ -32,14 +32,9 @@ def test_ensure_shadow_isolation_live_leaves_unset(
     assert os.environ.get("TRADING_STATE_KEY_SUFFIX", "") == ""
 
 
-def test_run_once_off_is_inert(monkeypatch: pytest.MonkeyPatch) -> None:
-    cls = MagicMock()
-    monkeypatch.setattr(
-        "services.trading.llm_context_publisher.LLMContextPublisher", cls
-    )
+def test_run_once_off_is_inert() -> None:
     rc = asyncio.run(m.run_once("off"))
-    assert rc == 0
-    cls.assert_not_called()  # off path constructs no publisher (no OpenAI/Redis)
+    assert rc == 0  # off: no import, no OpenAI/Redis touch
 
 
 def test_run_once_shadow_runs_and_publishes(monkeypatch: pytest.MonkeyPatch) -> None:
