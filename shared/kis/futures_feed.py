@@ -72,6 +72,12 @@ class KISFuturesPriceFeed:
         self._orderbook_missing_warn_interval = float(
             feed_cfg.get("orderbook_missing_warn_interval_seconds", 30.0)
         )
+        self._reconnect_initial_delay = float(
+            feed_cfg.get("reconnect_initial_delay", 1.0)
+        )
+        self._reconnect_max_delay = float(
+            feed_cfg.get("reconnect_max_delay", 60.0)
+        )
 
         self._prices: dict[str, dict[str, Any]] = {}
         self._orderbooks: dict[str, dict[str, Any]] = {}
