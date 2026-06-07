@@ -49,6 +49,21 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
+def _record_ws_disconnect(feed: str) -> None:
+    """Best-effort WS disconnect counter.
+
+    Lazy guarded import so a missing/failing collector never breaks the
+    WebSocket thread.
+    """
+    try:
+        from services.monitoring.metrics import get_metrics_collector
+
+        get_metrics_collector().record_ws_disconnect(feed)
+    except Exception:  # noqa: BLE001 — observability must never break the WS thread
+        pass
+
+
 # =============================================================================
 # Constants
 # =============================================================================
@@ -612,6 +627,7 @@ class KISWebSocketAdapter(BaseAPIAdapter):
     def _on_close(self, _ws, close_status_code, close_msg) -> None:
         """WebSocket connection closed."""
         logger.info(f"[KIS WS] Connection closed: {close_status_code} {close_msg}")
+        _record_ws_disconnect("futures")
         self._set_connected(False)
 
     # -------------------------------------------------------------------------

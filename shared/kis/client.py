@@ -51,6 +51,21 @@ _INVEST_OPINION_PATH = "/uapi/domestic-stock/v1/quotations/invest-opinion"
 _INVEST_OPINION_TR_ID = "FHKST663300C0"
 
 
+def _record_rate_limit_penalty() -> None:
+    """Best-effort: record a rate-limit penalty metric.
+
+    Uses a lazy, guarded import so ``shared.kis`` never gains an import-time
+    dependency on the monitoring stack, and a missing/failing collector can
+    never break the rate limiter.
+    """
+    try:
+        from services.monitoring.metrics import get_metrics_collector
+
+        get_metrics_collector().record_rate_limit_penalty()
+    except Exception:  # noqa: BLE001 — observability must never break the limiter
+        pass
+
+
 class _RateLimiter:
     """Fixed-interval rate limiter with exponential backoff for KIS API.
 
@@ -125,11 +140,14 @@ class _RateLimiter:
             f"Rate limit penalty: {backoff:.1f}s "
             f"(consecutive={self._consecutive_penalties})"
         )
+        _record_rate_limit_penalty()
 
     def reset_backoff(self):
         """Reset consecutive penalty counter after a successful request."""
-        if self._consecutive_penalties > 0:
+        prev = self._consecutive_penalties
+        if prev > 0:
             self._consecutive_penalties = 0
+            logger.info("Rate limit recovered after %d penalties", prev)
 
 
 class KISClient(AsyncSessionMixin):

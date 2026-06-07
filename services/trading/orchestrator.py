@@ -5138,6 +5138,8 @@ class TradingOrchestrator:
                 ConnectionError,
             ) as e:
                 logger.warning(f"Market data refresh failed: {e}")
+                if self._metrics:
+                    self._metrics.record_error("redis")
 
             next_tick += interval
             sleep_time = next_tick - time.monotonic()
@@ -6236,8 +6238,10 @@ class TradingOrchestrator:
                 try:
                     self._save_candle_cache_to_redis()
                 except (InfrastructureError, OSError, ConnectionError):
-                    # Silently skip if Redis is unavailable
-                    pass
+                    # Redis unavailable: skip the save but surface it as a metric
+                    # (no log — this path is intentionally non-fatal).
+                    if self._metrics:
+                        self._metrics.record_error("redis")
 
         positions = self._position_tracker.positions
         if not positions:

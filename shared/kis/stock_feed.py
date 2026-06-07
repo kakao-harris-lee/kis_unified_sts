@@ -41,6 +41,22 @@ from shared.kis.auth import KISAuthConfig
 
 logger = logging.getLogger(__name__)
 
+
+def _record_ws_metric(method: str, feed: str) -> None:
+    """Best-effort WS counter (disconnect/reconnect).
+
+    Lazy guarded import so a missing/failing collector never breaks the
+    WebSocket thread. ``method`` is one of ``record_ws_disconnect`` /
+    ``record_ws_reconnect``.
+    """
+    try:
+        from services.monitoring.metrics import get_metrics_collector
+
+        getattr(get_metrics_collector(), method)(feed)
+    except Exception:  # noqa: BLE001 — observability must never break the WS thread
+        pass
+
+
 # H0STCNT0 field indices (^-separated)
 # Reference: KIS API 국내주식 실시간체결가
 _F_SYMBOL = 0       # MKSC_SHRN_ISCD - 종목코드
@@ -437,6 +453,7 @@ class KISStockPriceFeed:
 
     def _on_close(self, _ws, code, msg):
         logger.info(f"[StockPriceFeed] Connection closed: {code} {msg}")
+        _record_ws_metric("record_ws_disconnect", "stock")
         self._connected.clear()
         with self._prices_lock:
             self._prices.clear()  # Invalidate stale cache
@@ -484,6 +501,7 @@ class KISStockPriceFeed:
 
                 if self._connected.wait(timeout=self._connection_timeout):
                     logger.info("[StockPriceFeed] Reconnected successfully")
+                    _record_ws_metric("record_ws_reconnect", "stock")
                     self._reconnect_delay = self._initial_reconnect_delay
                     # Re-subscribe all symbols
                     with self._sub_lock:

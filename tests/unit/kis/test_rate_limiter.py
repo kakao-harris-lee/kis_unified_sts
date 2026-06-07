@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import asyncio
+import logging
 import time
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -98,3 +98,59 @@ class TestRateLimiterBackoff:
 
         # Should be nearly instant
         assert elapsed < 0.05
+
+
+class TestRateLimitRecoveryObservability:
+    """Recovery INFO log + best-effort penalty metric (Increment 1 obs)."""
+
+    def test_reset_backoff_logs_recovery_when_consecutive_positive(self, caplog):
+        limiter = _RateLimiter(max_requests=5)
+        limiter.penalty(1.0)
+        limiter.penalty(1.0)
+        assert limiter._consecutive_penalties == 2
+
+        with caplog.at_level(logging.INFO, logger="shared.kis.client"):
+            limiter.reset_backoff()
+
+        assert limiter._consecutive_penalties == 0
+        recovery_logs = [
+            r for r in caplog.records if "Rate limit recovered" in r.getMessage()
+        ]
+        assert len(recovery_logs) == 1
+        assert recovery_logs[0].levelno == logging.INFO
+        assert "after 2 penalties" in recovery_logs[0].getMessage()
+
+    def test_reset_backoff_no_log_when_never_penalized(self, caplog):
+        limiter = _RateLimiter(max_requests=5)
+        with caplog.at_level(logging.INFO, logger="shared.kis.client"):
+            limiter.reset_backoff()  # noop, no recovery log
+        assert not [
+            r for r in caplog.records if "Rate limit recovered" in r.getMessage()
+        ]
+
+    def test_penalty_records_metric_best_effort(self):
+        """penalty() records the rate-limit penalty counter via the collector."""
+        limiter = _RateLimiter(max_requests=5)
+        fake_collector = MagicMock()
+        with patch(
+            "services.monitoring.metrics.get_metrics_collector",
+            return_value=fake_collector,
+        ):
+            limiter.penalty(1.0)
+        fake_collector.record_rate_limit_penalty.assert_called_once_with()
+
+    def test_penalty_swallows_collector_failure(self):
+        """A failing collector must never break penalty()."""
+        limiter = _RateLimiter(max_requests=5)
+        with patch(
+            "services.monitoring.metrics.get_metrics_collector",
+            side_effect=RuntimeError("boom"),
+        ):
+            limiter.penalty(1.0)  # must not raise
+        assert limiter._consecutive_penalties == 1
+
+    def test_penalty_no_collector_does_not_raise(self):
+        """Default path (real lazy import) must not raise either."""
+        limiter = _RateLimiter(max_requests=5)
+        limiter.penalty(1.0)  # must not raise even if metrics absent/duplicated
+        assert limiter._consecutive_penalties == 1
