@@ -1,0 +1,7 @@
+# Futures monitor / observability bridge (F-5) — selective Telegram policy.
+futures_monitor:
+  telegram:
+    pnl_alert_pct: 3.0            # notify only on exits with |pnl%| >= 3%
+    health_stale_seconds: 600     # no market data for 10min during market hours -> anomaly
+    health_cooldown_seconds: 1800 # min gap between repeated health alerts
+    digest_time_kst: "15:40"      # one daily session digest
