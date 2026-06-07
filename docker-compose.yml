@@ -111,6 +111,44 @@ services:
         max-file: "3"
 
   # =============================================================================
+  # Futures trading loop daemon (orchestrator path; asset-pinned).
+  # Mirror of `trader` but TRADING_ASSET_CLASS=futures. paper/live is the STACK
+  # distinction (TRADING_MODE / KIS_REAL_TRADING), NOT hardcoded — the same
+  # service runs in the paper stack and the live stack. Run both assets:
+  #   docker compose --profile trading up -d trader trader-futures
+  # =============================================================================
+  trader-futures:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ${COMPOSE_PROJECT_NAME:-kis}-trader-futures
+    restart: unless-stopped
+    profiles: ["trading"]
+    command: ["bash", "scripts/docker/trading_loop_entrypoint.sh"]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      <<: [*redis-runtime-env, *runtime-storage-env, *kis-runtime-env, *alert-runtime-env]
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      TRADING_MODE: "${TRADING_MODE:-paper}"
+      TRADING_ASSET_CLASS: "futures"
+      TRADING_STRATEGY: "${FUTURES_TRADING_STRATEGY:-}"
+      TRADING_INITIAL_CAPITAL: "${TRADING_INITIAL_CAPITAL:-10000000}"
+      TRADING_RUN_MODE: "${TRADING_RUN_MODE:-daemon}"
+      TRADING_LIVE_CONFIRM: "${TRADING_LIVE_CONFIRM:-}"
+    volumes: *trading-runtime-volumes
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - trading-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # =============================================================================
   # Stock decoupled pipeline daemons (Compose-managed M4/M5)
   # =============================================================================
   stock-market-ingest:
