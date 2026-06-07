@@ -235,23 +235,40 @@ class PseudoOCO:
         # State transition before the log I/O: a re-raised log_fill failure must
         # not leave the handle ACTIVE for a duplicate fire (see PR #134 note).
         handle.state = new_state
-        await self.fill_logger.log_fill(
-            signal_id=handle.signal_id,
-            order_id=f"{handle.handle_id}-{trade_role}",
-            symbol=handle.symbol,
-            side=_opposite(handle.direction),
-            order_type=order_type,
-            requested_price=fill_price,
-            filled_price=actual_price,
-            tick_size_points=handle.tick_size_points,
-            slippage_ticks=0.0,
-            quantity=handle.quantity,
-            requested_at_ms=now_ms,
-            filled_at_ms=now_ms,
-            venue=self.venue,
-            trade_role=trade_role,
-        )
-        await self._record_pnl(handle, exit_price=actual_price)
+        try:
+            await self.fill_logger.log_fill(
+                signal_id=handle.signal_id,
+                order_id=f"{handle.handle_id}-{trade_role}",
+                symbol=handle.symbol,
+                side=_opposite(handle.direction),
+                order_type=order_type,
+                requested_price=fill_price,
+                filled_price=actual_price,
+                tick_size_points=handle.tick_size_points,
+                slippage_ticks=0.0,
+                quantity=handle.quantity,
+                requested_at_ms=now_ms,
+                filled_at_ms=now_ms,
+                venue=self.venue,
+                trade_role=trade_role,
+            )
+            await self._record_pnl(handle, exit_price=actual_price)
+        except Exception:
+            if self._close_executor is not None:
+                # The real exit order already FILLED — the position is flat.
+                # Losing the fill log / PnL must NOT cause a second real flatten
+                # on the next poll, so treat the handle as closed (return True →
+                # caller deletes it) and scream for manual reconciliation.
+                logger.critical(
+                    "RECONCILIATION GAP: real exit %s filled @%.4f (role=%s) but "
+                    "fill-log/PnL failed; position IS flat — reconcile manually",
+                    handle.handle_id,
+                    actual_price,
+                    trade_role,
+                )
+                return True
+            # Paper (no real order placed): preserve the redelivery invariant.
+            raise
         return True
 
     async def _record_pnl(self, handle: OCOHandle, *, exit_price: float) -> None:

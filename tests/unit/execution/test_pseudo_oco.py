@@ -339,3 +339,30 @@ class TestCloseExecutor:
         assert h.state is OCOState.ACTIVE  # stays active for retry
         fill_logger.log_fill.assert_not_awaited()
         assert len(oco.active_handles) == 1
+
+    @pytest.mark.asyncio
+    async def test_live_log_failure_after_real_fill_is_reconciliation_not_retry(
+        self, fill_logger
+    ):
+        from shared.execution.passive_maker import Fill
+
+        executor = AsyncMock()
+        executor.flatten.return_value = Fill(
+            order_id="EXIT-1", price=329.5, quantity=1, filled_at_ms=2000
+        )
+        fill_logger.log_fill.side_effect = RuntimeError("redis down")
+        oco = PseudoOCO(fill_logger=fill_logger, close_executor=executor)
+        await oco.register_bracket(signal=_signal("long"), signal_id="s1", fill=_fill())
+        # Real order filled, but log_fill raises → must NOT propagate, handle
+        # must be removed (no double-flatten), and it counts as fired.
+        fired = await oco.on_tick(symbol="A05603", price=329.0, now_ms=2000)
+        assert len(fired) == 1
+        assert oco.active_handles == []  # handle removed (no re-fire / double-flatten)
+
+    @pytest.mark.asyncio
+    async def test_paper_log_failure_propagates(self, fill_logger):
+        fill_logger.log_fill.side_effect = RuntimeError("redis down")
+        oco = PseudoOCO(fill_logger=fill_logger)  # paper: no real order placed
+        await oco.register_bracket(signal=_signal("long"), signal_id="s1", fill=_fill())
+        with pytest.raises(RuntimeError):
+            await oco.on_tick(symbol="A05603", price=329.0, now_ms=2000)
