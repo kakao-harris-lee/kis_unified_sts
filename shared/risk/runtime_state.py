@@ -29,11 +29,19 @@ _META_TTL_SECONDS = 86400 * 7  # 7-day rolling window covers KR holidays.
 
 
 class RuntimeRiskState:
-    def __init__(self, *, redis: Any, asset_class: str = "futures") -> None:
+    def __init__(
+        self, *, redis: Any, asset_class: str = "futures", key_suffix: str = ""
+    ) -> None:
         self._redis = redis
         self._asset_class = asset_class
-        self._risk_state = RiskState(redis, asset_class)
-        self._meta_key = f"risk:state:{asset_class}:meta"
+        # key_suffix isolates a shadow/paper run's risk-state from live
+        # (F-1). Default "" → identical keys to before (stock + all existing
+        # callers unaffected). Colon-delimited to match the key convention.
+        suffix = f":{key_suffix}" if key_suffix else ""
+        self._risk_state = RiskState(
+            redis, asset_class, key=f"risk:state:{asset_class}{suffix}"
+        )
+        self._meta_key = f"risk:state:{asset_class}{suffix}:meta"
 
     async def snapshot(self) -> RiskStateSnapshot:
         return await self._risk_state.load()
