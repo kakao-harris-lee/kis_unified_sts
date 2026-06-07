@@ -11,7 +11,7 @@ from shared.decision.context import MarketContext
 from shared.decision.setup_base import Setup
 from shared.decision.signal import Signal
 
-CANDIDATE_STREAM = "stream:signal.candidate"
+CANDIDATE_STREAM = "signal.candidate.futures"
 
 
 def _ctx(now=None) -> MarketContext:

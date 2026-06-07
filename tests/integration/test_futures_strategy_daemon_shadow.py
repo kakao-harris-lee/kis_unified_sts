@@ -37,7 +37,6 @@ from shared.decision.setups.event_reaction import SetupCEventReaction
 
 _SYMBOL = "A05"
 _BASE = datetime(2026, 6, 5, 9, 0, tzinfo=UTC)
-_SHADOW_STREAM = "signal.candidate.futures.shadow"
 
 
 class _Macro:
@@ -68,8 +67,16 @@ def _make_tick(
 
 
 @pytest.mark.asyncio
-async def test_event_breakout_produces_shadow_candidate():
-    """End-to-end: rising tick series + near-event → Setup C fires → shadow stream."""
+@pytest.mark.parametrize(
+    "candidate_stream",
+    ["signal.candidate.futures.shadow", "signal.candidate.futures"],
+)
+async def test_event_breakout_produces_candidate(candidate_stream):
+    """End-to-end: rising tick series + near-event → Setup C fires → candidate stream.
+
+    Parametrized over the shadow and live candidate streams (F-2): the producer
+    → daemon path carries a candidate on either stream.
+    """
     server = fakeredis.aioredis.FakeServer()
     # Two clients on the same server: one drives the feed/daemon, one for assertions.
     # Using separate client objects avoids the fakeredis connection-close side-effect
@@ -148,7 +155,7 @@ async def test_event_breakout_produces_shadow_candidate():
         redis=redis_ops,
         setups=[SetupCEventReaction()],
         context_provider=provider,
-        candidate_stream=_SHADOW_STREAM,
+        candidate_stream=candidate_stream,
         candidate_maxlen=1000,
         tick_interval_seconds=0.01,
     )
@@ -160,8 +167,8 @@ async def test_event_breakout_produces_shadow_candidate():
 
     # Assert via the assertion client BEFORE stopping the feed
     # (feed.stop() cancels the xread task and disrupts redis_ops state).
-    entries = await redis_assert.xrange(_SHADOW_STREAM)
-    assert entries, "Expected at least one shadow candidate on the stream"
+    entries = await redis_assert.xrange(candidate_stream)
+    assert entries, "Expected at least one candidate on the stream"
 
     fields = entries[0][1]
     assert (

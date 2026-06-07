@@ -1678,6 +1678,27 @@ def _stock_orchestrator_blocked(asset: str) -> bool:
     return asset == "stock" and not _stock_orchestrator_enabled()
 
 
+def _futures_orchestrator_enabled() -> bool:
+    """The monolithic orchestrator runs futures only when explicitly enabled.
+
+    Default ``True`` (the orchestrator IS today's futures path). The operator
+    sets ``FUTURES_ORCHESTRATOR_ENABLED=false`` at the futures cutover so the
+    orchestrator refuses futures — the decoupled chain (decision_engine →
+    risk_filter → order_router) owns it, preventing double-trading on the same
+    account. Rollback: set it back to ``true`` (``1``/``yes`` also accepted).
+    """
+    return os.getenv("FUTURES_ORCHESTRATOR_ENABLED", "true").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+
+
+def _futures_orchestrator_blocked(asset: str) -> bool:
+    """True when the orchestrator must refuse this asset (futures + flag disabled)."""
+    return asset == "futures" and not _futures_orchestrator_enabled()
+
+
 @trade.command("start")
 @click.option(
     "--strategy",
@@ -1739,6 +1760,20 @@ def trade_start(
         click.echo(
             "  Rollback to the orchestrator stock path: set "
             "STOCK_ORCHESTRATOR_ENABLED=true.",
+            err=True,
+        )
+        sys.exit(1)
+
+    if _futures_orchestrator_blocked(asset):
+        click.echo(
+            "Error: the monolithic orchestrator no longer runs futures — futures "
+            "trades via the decoupled chain (decision_engine → risk_filter → "
+            "order_router).",
+            err=True,
+        )
+        click.echo(
+            "  Rollback to the orchestrator futures path: set "
+            "FUTURES_ORCHESTRATOR_ENABLED=true.",
             err=True,
         )
         sys.exit(1)

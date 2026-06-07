@@ -13,7 +13,11 @@ from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from shared.decision.context import MarketContext, ScheduledEvent
+from shared.decision.context import (
+    MarketContext,
+    ScheduledEvent,
+    build_market_context,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -79,18 +83,15 @@ class FuturesContextProvider:
             logger.exception("events_provider failed; treating as no events")
             events = []
 
-        return MarketContext(
+        return build_market_context(
             now=now_kst,
             symbol=symbol,
             current_price=current_price,
             prev_close=prev_close,
             today_open=today_open,
-            vwap=0.0,  # unused by Setup A/C
             atr_14=atr_14,
-            atr_90th_percentile=0.0,  # unused
             last_15min_high=float(last_15min_high),
             last_15min_low=float(last_15min_low),
-            current_spread_ticks=0.0,  # unused; no orderbook in raw_data
             macro_overnight=macro,
             scheduled_events=list(events),
         )

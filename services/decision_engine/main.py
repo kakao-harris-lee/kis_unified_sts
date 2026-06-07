@@ -1,9 +1,10 @@
-"""Decision-engine daemon — Setup A/C → stream:signal.candidate.
+"""Decision-engine daemon — Setup A/C → signal.candidate.futures.
 
 Phase 4 Task 10. Polls a context provider on a fixed cadence (default
 ~1 minute), runs each registered :class:`Setup` (A_gap_reversion,
 C_event_reaction) against the snapshot, and publishes any emitted
-:class:`Signal` to ``stream:signal.candidate`` for the risk_filter daemon
+:class:`Signal` to ``signal.candidate.futures`` (live) /
+``signal.candidate.futures.shadow`` (shadow) for the risk_filter daemon
 (Task 11) to consume.
 
 The ``context_provider`` is an injected async callable returning either a
@@ -125,28 +126,39 @@ def _resolve_mode() -> str:
 def _candidate_stream_for(mode: str) -> str:
     """Map a mode string to the Redis stream name for signal candidates.
 
-    shadow → isolated shadow stream (not consumed by risk_filter); any other
-    value (off / live) → the real candidate stream.
+    shadow → isolated shadow stream; any other value (off / live) → the live
+    candidate stream. Bases mirror the stock chain (F-1): asset-infixed, with a
+    `.shadow` suffix for the shadow form.
     """
     return (
         "signal.candidate.futures.shadow"
         if mode == "shadow"
-        else "stream:signal.candidate"
+        else "signal.candidate.futures"
     )
 
 
+def _is_producing_mode(mode: str) -> bool:
+    """True when the daemon builds a REAL context provider (shadow|live).
+
+    off / unset / unknown → False → inert stub (no candidates emitted). The
+    candidate stream is mode-correct via _candidate_stream_for regardless.
+    """
+    return mode in ("shadow", "live")
+
+
 # ---------------------------------------------------------------------------
-# Shadow context-provider builder
+# Context-provider builder (shadow|live)
 # ---------------------------------------------------------------------------
 
 
-async def _build_shadow_context_provider(
+async def _build_context_provider(
     redis_client: Any,
 ) -> tuple[Any, Any, Any]:
     """Wire indicator engine + StreamConsumerFeed(raw_data) + FuturesContextProvider.
 
-    Returns ``(context_provider, feed, sync_redis)``.  The caller is responsible
-    for calling ``await feed.stop()`` and ``sync_redis.close()`` on shutdown.
+    Mode-agnostic: used for both shadow and live producing modes. Returns
+    ``(context_provider, feed, sync_redis)``.  The caller is responsible for
+    calling ``await feed.stop()`` and ``sync_redis.close()`` on shutdown.
     """
     import os
     from datetime import UTC, datetime
@@ -164,7 +176,7 @@ async def _build_shadow_context_provider(
 
     symbol = os.environ.get("FUTURES_STRATEGY_SYMBOL", "").strip()
     if not symbol:
-        raise RuntimeError("FUTURES_STRATEGY_SYMBOL must be set for shadow mode")
+        raise RuntimeError("FUTURES_STRATEGY_SYMBOL must be set for shadow/live mode")
 
     engine = StreamingIndicatorEngine()
 
@@ -216,19 +228,37 @@ async def _build_shadow_context_provider(
     return provider, feed, sync_redis
 
 
+async def _resolve_context_provider(
+    mode: str, redis_client: Any
+) -> tuple[Any, Any, Any]:
+    """Return (context_provider, feed, sync_redis) for the mode.
+
+    Producing modes (shadow|live) → real FuturesContextProvider (+ feed +
+    sync_redis to close on shutdown). Otherwise an inert stub returning None,
+    with feed=sync_redis=None.
+    """
+    if _is_producing_mode(mode):
+        return await _build_context_provider(redis_client)
+
+    async def _stub_context_provider() -> None:
+        return None
+
+    return _stub_context_provider, None, None
+
+
 # ---------------------------------------------------------------------------
 # Production entrypoint
 # ---------------------------------------------------------------------------
 
 
 async def _build_and_run() -> int:
-    """Production entrypoint — flag-gated (FUTURES_STRATEGY_DAEMON=off|shadow).
+    """Production entrypoint — flag-gated (FUTURES_STRATEGY_DAEMON=off|shadow|live).
 
     off / unset: inert stub (context_provider returns None, no signals emitted).
-                 Candidate stream: stream:signal.candidate (real, inert).
-    shadow:      real context_provider wired to StreamConsumerFeed(raw_data) +
-                 FuturesContextProvider.  Candidate stream:
-                 signal.candidate.futures.shadow (not consumed by risk_filter).
+    shadow:      real context_provider → signal.candidate.futures.shadow.
+    live:        real context_provider → signal.candidate.futures.
+    The producer is ungated (emits candidates, not orders — order_router is the
+    gated, wallet-authority stage).
     """
     import os
     import signal as signal_mod
@@ -245,19 +275,9 @@ async def _build_and_run() -> int:
     mode = _resolve_mode()
     candidate_stream = _candidate_stream_for(mode)
 
-    feed = None
-    sync_redis = None
-    if mode == "shadow":
-        context_provider, feed, sync_redis = await _build_shadow_context_provider(
-            redis_client
-        )
-    else:
-
-        async def _stub_context_provider() -> None:
-            # off mode: emit nothing (inert stub — original Task 10 behaviour).
-            return None
-
-        context_provider = _stub_context_provider
+    context_provider, feed, sync_redis = await _resolve_context_provider(
+        mode, redis_client
+    )
 
     daemon = DecisionEngineDaemon(
         redis=redis_client,
