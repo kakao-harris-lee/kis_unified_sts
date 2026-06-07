@@ -321,6 +321,26 @@ class MetricsCollector:
             "Order execution latency in ms",
             buckets=[10, 50, 100, 250, 500, 1000, 2500, 5000],
         )
+        self.prom_pipeline_stage_latency = Histogram(
+            "trading_pipeline_stage_latency_ms",
+            "Pipeline stage handler latency in ms",
+            ["stage"],
+            buckets=[1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500],
+        )
+        self.prom_ws_reconnect_total = Counter(
+            "trading_ws_reconnect_total",
+            "WebSocket feed reconnect successes",
+            ["feed"],
+        )
+        self.prom_ws_disconnect_total = Counter(
+            "trading_ws_disconnect_total",
+            "WebSocket feed disconnects",
+            ["feed"],
+        )
+        self.prom_rate_limit_penalty_total = Counter(
+            "trading_rate_limit_penalty_total",
+            "KIS rate-limit penalty events (EGW00201 backoff)",
+        )
 
     def register_strategies(self, strategy_names: list[str]) -> None:
         """Pre-initialize Prometheus counters with known strategy names.
@@ -424,6 +444,26 @@ class MetricsCollector:
 
         if HAS_PROMETHEUS:
             self.prom_order_latency.observe(latency_ms)
+
+    def record_pipeline_stage_latency(self, stage: str, latency_ms: float) -> None:
+        """Pipeline stage handler latency (best-effort)."""
+        if HAS_PROMETHEUS:
+            self.prom_pipeline_stage_latency.labels(stage=stage).observe(latency_ms)
+
+    def record_ws_reconnect(self, feed: str) -> None:
+        """WS feed reconnect success (best-effort)."""
+        if HAS_PROMETHEUS:
+            self.prom_ws_reconnect_total.labels(feed=feed).inc()
+
+    def record_ws_disconnect(self, feed: str) -> None:
+        """WS feed disconnect (best-effort)."""
+        if HAS_PROMETHEUS:
+            self.prom_ws_disconnect_total.labels(feed=feed).inc()
+
+    def record_rate_limit_penalty(self) -> None:
+        """KIS rate-limit penalty event (best-effort)."""
+        if HAS_PROMETHEUS:
+            self.prom_rate_limit_penalty_total.inc()
 
     def record_position_change(self, open_positions: int):
         """포지션 변경 기록"""

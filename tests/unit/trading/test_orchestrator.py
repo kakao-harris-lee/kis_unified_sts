@@ -1,9 +1,10 @@
 """Trading Orchestrator 테스트"""
 
-import pytest
 from datetime import date, time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 
 class TestIsTradingDay:
@@ -204,8 +205,8 @@ class TestTradingOrchestrator:
     def test_init(self):
         """초기화"""
         from services.trading.orchestrator import (
-            TradingOrchestrator,
             TradingConfig,
+            TradingOrchestrator,
             TradingState,
         )
 
@@ -218,7 +219,7 @@ class TestTradingOrchestrator:
 
     def test_is_running_when_idle(self):
         """IDLE 상태에서 is_running"""
-        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from services.trading.orchestrator import TradingConfig, TradingOrchestrator
 
         config = TradingConfig.stock()
         orch = TradingOrchestrator(config)
@@ -228,12 +229,12 @@ class TestTradingOrchestrator:
     @pytest.mark.asyncio
     async def test_start_changes_state(self, monkeypatch):
         """start() 호출 시 상태 변경"""
+        from services.monitoring.metrics import MetricsCollector
         from services.trading.orchestrator import (
-            TradingOrchestrator,
             TradingConfig,
+            TradingOrchestrator,
             TradingState,
         )
-        from services.monitoring.metrics import MetricsCollector
 
         monkeypatch.setattr(
             MetricsCollector, "start_prometheus_server", lambda *a, **kw: None
@@ -250,12 +251,12 @@ class TestTradingOrchestrator:
     @pytest.mark.asyncio
     async def test_stop_changes_state(self, monkeypatch):
         """stop() 호출 시 상태 변경"""
+        from services.monitoring.metrics import MetricsCollector
         from services.trading.orchestrator import (
-            TradingOrchestrator,
             TradingConfig,
+            TradingOrchestrator,
             TradingState,
         )
-        from services.monitoring.metrics import MetricsCollector
 
         monkeypatch.setattr(
             MetricsCollector, "start_prometheus_server", lambda *a, **kw: None
@@ -345,12 +346,12 @@ class TestTradingOrchestrator:
     @pytest.mark.asyncio
     async def test_pause_and_resume(self, monkeypatch):
         """pause/resume 동작"""
+        from services.monitoring.metrics import MetricsCollector
         from services.trading.orchestrator import (
-            TradingOrchestrator,
             TradingConfig,
+            TradingOrchestrator,
             TradingState,
         )
-        from services.monitoring.metrics import MetricsCollector
 
         monkeypatch.setattr(
             MetricsCollector, "start_prometheus_server", lambda *a, **kw: None
@@ -373,7 +374,7 @@ class TestTradingOrchestrator:
 
     def test_get_status(self):
         """상태 조회"""
-        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from services.trading.orchestrator import TradingConfig, TradingOrchestrator
 
         config = TradingConfig.stock()
         orch = TradingOrchestrator(config)
@@ -386,7 +387,7 @@ class TestTradingOrchestrator:
 
     def test_get_status_includes_risk_capital_when_risk_manager_exists(self):
         """Redis status exposes risk-manager capital for operational verification."""
-        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from services.trading.orchestrator import TradingConfig, TradingOrchestrator
         from shared.risk.config import RiskConfig
         from shared.risk.manager import RiskManager
 
@@ -408,7 +409,7 @@ class TestTradingOrchestrator:
 
     def test_get_metrics_without_pipeline(self):
         """파이프라인 없을 때 메트릭 조회"""
-        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from services.trading.orchestrator import TradingConfig, TradingOrchestrator
 
         config = TradingConfig.stock()
         orch = TradingOrchestrator(config)
@@ -419,7 +420,7 @@ class TestTradingOrchestrator:
     @pytest.mark.asyncio
     async def test_record_risk_realized_pnl_updates_entry_gate(self):
         """청산 실현손익은 다음 진입 리스크 게이트에 즉시 반영된다."""
-        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from services.trading.orchestrator import TradingConfig, TradingOrchestrator
         from shared.risk.config import RiskConfig
         from shared.risk.manager import RiskManager
         from shared.risk.models import BlockReason
@@ -446,7 +447,7 @@ class TestTradingOrchestrator:
 
     def test_create_pipeline_applies_pipeline_yaml(self, monkeypatch):
         """pipeline.yaml의 스테이지 간격이 TradingPipeline에 반영된다."""
-        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from services.trading.orchestrator import TradingConfig, TradingOrchestrator
         from services.trading.pipeline import PipelineStage
         from shared.config.loader import ConfigLoader
 
@@ -470,7 +471,7 @@ class TestTradingOrchestrator:
 
     def test_record_market_metrics_syncs_open_positions(self):
         """시장 메트릭 기록 시 open positions gauge 동기화."""
-        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from services.trading.orchestrator import TradingConfig, TradingOrchestrator
 
         config = TradingConfig.futures(strategy_name="setup_a_gap_reversion")
         orch = TradingOrchestrator(config)
@@ -489,7 +490,7 @@ class TestTradingOrchestrator:
     @pytest.mark.asyncio
     async def test_execute_entry_short_direction_uses_sell_and_short_side(self):
         """숏 진입 신호는 SELL 주문 + SHORT 포지션으로 처리."""
-        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from services.trading.orchestrator import TradingConfig, TradingOrchestrator
         from shared.models.signal import Signal
         from shared.paper.models import OrderSide as PaperOrderSide
 
@@ -531,7 +532,7 @@ class TestTradingOrchestrator:
     @pytest.mark.asyncio
     async def test_submit_entry_order_blocks_when_spread_wide(self):
         """선물 슬리피지 가드: 스프레드 과도 시 진입 차단."""
-        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from services.trading.orchestrator import TradingConfig, TradingOrchestrator
         from shared.execution.slippage_control import (
             FuturesSlippageController,
             SlippageControlConfig,
@@ -585,7 +586,7 @@ class TestTradingOrchestrator:
     @pytest.mark.asyncio
     async def test_submit_entry_order_uses_passive_path_when_filters_pass(self):
         """선물 슬리피지 가드: 필터 통과 시 패시브 지정가 경로 사용."""
-        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from services.trading.orchestrator import TradingConfig, TradingOrchestrator
         from shared.execution.slippage_control import (
             FuturesSlippageController,
             SlippageControlConfig,
@@ -641,7 +642,7 @@ class TestTradingOrchestrator:
     @pytest.mark.asyncio
     async def test_submit_entry_order_retries_market_once_after_passive_timeout(self):
         """선물 슬리피지 가드: 패시브 미체결 후 market_once 재시도."""
-        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from services.trading.orchestrator import TradingConfig, TradingOrchestrator
         from shared.execution.slippage_control import (
             FuturesSlippageController,
             SlippageControlConfig,
@@ -714,7 +715,7 @@ class TestTradingOrchestrator:
         """
         from datetime import UTC, datetime, timedelta
 
-        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from services.trading.orchestrator import TradingConfig, TradingOrchestrator
         from shared.execution.slippage_control import (
             FuturesSlippageController,
             SlippageControlConfig,
@@ -786,7 +787,7 @@ class TestTradingOrchestrator:
     @pytest.mark.asyncio
     async def test_submit_entry_order_does_not_retry_on_partial_fill_signal(self):
         """부분체결 감지 시 재시도 없이 부분 수량만 반영한다."""
-        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from services.trading.orchestrator import TradingConfig, TradingOrchestrator
         from shared.execution.slippage_control import (
             FuturesSlippageController,
             SlippageControlConfig,
@@ -847,7 +848,7 @@ class TestTradingOrchestrator:
     @pytest.mark.asyncio
     async def test_execute_entry_uses_actual_filled_quantity(self):
         """부분체결 시 요청수량이 아니라 실체결수량으로 포지션을 연다."""
-        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from services.trading.orchestrator import TradingConfig, TradingOrchestrator
         from shared.models.signal import Signal
 
         config = TradingConfig.futures(strategy_name="setup_a_gap_reversion")
@@ -886,7 +887,7 @@ class TestTradingOrchestrator:
     @pytest.mark.asyncio
     async def test_place_entry_order_futures_limit_needs_fill_confirmation(self):
         """선물 지정가의 접수성공(success=True)만으로 체결 처리하지 않는다."""
-        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from services.trading.orchestrator import TradingConfig, TradingOrchestrator
         from shared.execution.models import OrderResponse
 
         config = TradingConfig.futures(strategy_name="setup_a_gap_reversion")
@@ -927,7 +928,7 @@ class TestTradingOrchestrator:
     @pytest.mark.asyncio
     async def test_place_entry_order_tracks_partial_fill_even_on_cancel(self):
         """타임아웃 후 취소 응답(success=False)이어도 부분체결 수량은 반영한다."""
-        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from services.trading.orchestrator import TradingConfig, TradingOrchestrator
         from shared.execution.models import OrderResponse
 
         config = TradingConfig.futures(strategy_name="setup_a_gap_reversion")
@@ -972,9 +973,9 @@ class TestTradingOrchestrator:
     @pytest.mark.asyncio
     async def test_execute_exit_short_position_uses_buy(self):
         """숏 포지션 청산은 BUY 주문으로 처리."""
-        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from services.trading.orchestrator import TradingConfig, TradingOrchestrator
         from shared.models.position import PositionSide
-        from shared.models.signal import ExitSignal, ExitReason
+        from shared.models.signal import ExitReason, ExitSignal
         from shared.paper.models import OrderSide as PaperOrderSide
 
         config = TradingConfig.futures(strategy_name="setup_a_gap_reversion")
@@ -1022,7 +1023,7 @@ class TestTradingOrchestrator:
     @pytest.mark.asyncio
     async def test_verify_positions_skips_futures_paper_broker_check(self, monkeypatch):
         """선물 paper 모드에서는 브로커 잔고검증 API를 호출하지 않는다."""
-        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from services.trading.orchestrator import TradingConfig, TradingOrchestrator
         from shared.config.loader import ConfigLoader
 
         config = TradingConfig.futures(strategy_name="setup_a_gap_reversion")
@@ -1059,9 +1060,10 @@ class TestDefaultHolidayLoader:
 
     def test_loads_holidays_from_config(self):
         """설정 파일에서 공휴일 로드"""
-        from services.trading.orchestrator import default_holiday_loader
-        import tempfile
         import os
+        import tempfile
+
+        from services.trading.orchestrator import default_holiday_loader
 
         content = """
 holidays:
@@ -1328,7 +1330,7 @@ class TestStaticUniverse:
 
     def test_daily_watchlist_init(self):
         """Orchestrator initializes _daily_watchlist as empty dict"""
-        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from services.trading.orchestrator import TradingConfig, TradingOrchestrator
 
         config = TradingConfig.stock()
         orch = TradingOrchestrator(config)
@@ -1338,8 +1340,9 @@ class TestStaticUniverse:
     def test_load_static_watchlist_success(self, monkeypatch):
         """_load_static_watchlist loads symbols from Redis"""
         import json
-        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+
         import shared.streaming.client
+        from services.trading.orchestrator import TradingConfig, TradingOrchestrator
 
         config = TradingConfig(asset_class="stock", universe_mode="static")
         orch = TradingOrchestrator(config)
@@ -1371,7 +1374,7 @@ class TestStaticUniverse:
 
     def test_load_static_watchlist_no_data(self, monkeypatch):
         """_load_static_watchlist returns False when Redis key missing"""
-        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from services.trading.orchestrator import TradingConfig, TradingOrchestrator
 
         config = TradingConfig(asset_class="stock", universe_mode="static")
         orch = TradingOrchestrator(config)
@@ -1394,7 +1397,8 @@ class TestStaticUniverse:
     def test_load_static_watchlist_empty_strategies(self, monkeypatch):
         """_load_static_watchlist returns False when strategies are empty"""
         import json
-        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+
+        from services.trading.orchestrator import TradingConfig, TradingOrchestrator
 
         config = TradingConfig(asset_class="stock", universe_mode="static")
         orch = TradingOrchestrator(config)
@@ -1416,7 +1420,7 @@ class TestStaticUniverse:
 
     def test_hydrate_missing_symbol_names_uses_krx_open_api_map(self, monkeypatch):
         """Missing stock names are hydrated from KRX Open API map."""
-        from services.trading.orchestrator import TradingOrchestrator, TradingConfig
+        from services.trading.orchestrator import TradingConfig, TradingOrchestrator
 
         config = TradingConfig(asset_class="stock")
         orch = TradingOrchestrator(config)
@@ -1436,3 +1440,77 @@ class TestStaticUniverse:
         assert orch._symbol_names["000660"] == "SK하이닉스"
         assert "035720" in orch._symbol_name_lookup_attempted
         assert orch._symbol_metadata_cache["005930"]["name"] == "삼성전자"
+
+
+class TestOrderLatencyActivation:
+    """Bottleneck observability: the execute path records real submit latency."""
+
+    @pytest.mark.asyncio
+    async def test_execute_entry_records_positive_order_latency(self):
+        """_execute_entry brackets the submit, records order latency, threads it on."""
+        from services.trading.orchestrator import TradingConfig, TradingOrchestrator
+        from shared.models.signal import Signal
+
+        config = TradingConfig.futures(strategy_name="setup_a_gap_reversion")
+        config.paper_trading = True
+        orch = TradingOrchestrator(config)
+
+        orch._metrics = MagicMock()
+        orch._position_tracker = MagicMock()
+        orch._position_tracker.can_open_position.return_value = True
+        orch._calculate_quantity = MagicMock(return_value=2)
+        orch._submit_entry_order = AsyncMock(
+            return_value=(True, 330.50, {"filled_qty": 2})
+        )
+        orch._process_filled_entry = AsyncMock()
+
+        signal = Signal(
+            code="A05603",
+            strategy="setup_a_gap_reversion",
+            price=330.49,
+            confidence=0.8,
+        )
+
+        await orch._execute_entry(signal)
+
+        # record_order_latency called once with a non-negative latency
+        assert orch._metrics.record_order_latency.call_count == 1
+        latency_arg = orch._metrics.record_order_latency.call_args.args[0]
+        assert latency_arg >= 0.0
+
+        # latency threaded into _process_filled_entry as order_latency_ms
+        call = orch._process_filled_entry.await_args
+        assert call.kwargs["order_latency_ms"] == latency_arg
+
+    @pytest.mark.asyncio
+    async def test_execute_exit_records_positive_order_latency(self):
+        """_execute_exit brackets the submit and records order latency."""
+        from services.trading.orchestrator import TradingConfig, TradingOrchestrator
+        from shared.models.position import PositionSide
+
+        config = TradingConfig.futures(strategy_name="setup_a_gap_reversion")
+        config.paper_trading = True
+        orch = TradingOrchestrator(config)
+
+        orch._metrics = MagicMock()
+        orch._position_tracker = MagicMock()
+        orch._position_tracker.get_position.return_value = SimpleNamespace(
+            side=PositionSide.LONG,
+            quantity=2,
+        )
+        orch._submit_exit_order = AsyncMock(return_value=(True, 331.0))
+        orch._process_filled_exit = AsyncMock()
+
+        signal = SimpleNamespace(
+            code="A05603",
+            position_id="pos-1",
+            quantity=2,
+            exit_price=331.0,
+        )
+
+        await orch._execute_exit(signal)
+
+        assert orch._metrics.record_order_latency.call_count == 1
+        latency_arg = orch._metrics.record_order_latency.call_args.args[0]
+        assert latency_arg >= 0.0
+        assert orch._process_filled_exit.await_count == 1

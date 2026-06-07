@@ -5138,6 +5138,8 @@ class TradingOrchestrator:
                 ConnectionError,
             ) as e:
                 logger.warning(f"Market data refresh failed: {e}")
+                if self._metrics:
+                    self._metrics.record_error("redis")
 
             next_tick += interval
             sleep_time = next_tick - time.monotonic()
@@ -6236,8 +6238,10 @@ class TradingOrchestrator:
                 try:
                     self._save_candle_cache_to_redis()
                 except (InfrastructureError, OSError, ConnectionError):
-                    # Silently skip if Redis is unavailable
-                    pass
+                    # Redis unavailable: skip the save but surface it as a metric
+                    # (no log — this path is intentionally non-fatal).
+                    if self._metrics:
+                        self._metrics.record_error("redis")
 
         positions = self._position_tracker.positions
         if not positions:
@@ -6553,6 +6557,7 @@ class TradingOrchestrator:
                 direction = self._get_signal_direction(signal)
                 is_short = direction == "short"
 
+                t0 = time.monotonic()
                 is_filled, fill_price, execution_meta = await self._submit_entry_order(
                     signal.code,
                     is_short,
@@ -6561,6 +6566,9 @@ class TradingOrchestrator:
                     signal=signal,
                     price_source_time=getattr(signal, "timestamp", None),
                 )
+                order_latency_ms = (time.monotonic() - t0) * 1000
+                if self._metrics:
+                    self._metrics.record_order_latency(order_latency_ms)
                 execution_meta = execution_meta or {}
                 filled_qty = int(execution_meta.get("filled_qty", quantity) or 0)
 
@@ -6572,6 +6580,7 @@ class TradingOrchestrator:
                         is_short,
                         direction,
                         execution_meta=execution_meta,
+                        order_latency_ms=order_latency_ms,
                     )
                 elif is_filled:
                     logger.warning(
@@ -6982,6 +6991,7 @@ class TradingOrchestrator:
         is_short,
         direction,
         execution_meta: dict[str, Any] | None = None,
+        order_latency_ms: float = 0.0,
     ):
         """Handle post-entry logic."""
         exec_meta = self._finalize_entry_execution_meta(
@@ -7096,7 +7106,9 @@ class TradingOrchestrator:
         if self._state_publisher:
             self._state_publisher.publish_position_opened(position)
             self._state_publisher.publish_signal(signal, "entry", True)
-            self._metrics.record_signal("entry", strategy=signal.strategy)
+            self._metrics.record_signal(
+                "entry", strategy=signal.strategy, latency_ms=order_latency_ms
+            )
 
         # Persist executed Setup A/C entry to kospi.signals_all so the Phase 2
         # verification gates can measure the interim orchestrator paper path
@@ -7378,9 +7390,13 @@ class TradingOrchestrator:
                     signal.quantity if signal.quantity > 0 else position.quantity
                 )
 
+                t0 = time.monotonic()
                 is_filled, fill_price = await self._submit_exit_order(
                     signal.code, close_is_buy, exit_quantity, signal.exit_price
                 )
+                order_latency_ms = (time.monotonic() - t0) * 1000
+                if self._metrics:
+                    self._metrics.record_order_latency(order_latency_ms)
 
                 if is_filled:
                     await self._process_filled_exit(

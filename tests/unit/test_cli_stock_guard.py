@@ -51,5 +51,5 @@ def test_cli_blocks_stock_when_disabled(monkeypatch: pytest.MonkeyPatch) -> None
         m.cli, ["trade", "start", "--asset", "stock", "--paper"]
     )
     assert result.exit_code == 1
-    assert "decoupled M4 pipeline" in result.output
+    assert "compose stock-pipeline" in result.output  # matches the cli/main.py message (7d0f078)
     assert "STOCK_ORCHESTRATOR_ENABLED=true" in result.output  # rollback hint
