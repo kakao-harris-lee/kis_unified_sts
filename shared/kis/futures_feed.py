@@ -218,8 +218,7 @@ class KISFuturesPriceFeed:
 
         self._running = True
         self._thread = threading.Thread(
-            target=self._adapter.subscribe,
-            args=(self._symbols, self._on_tick),
+            target=self._run_with_reconnect,
             daemon=True,
             name="FuturesPriceFeed",
         )
@@ -230,6 +229,42 @@ class KISFuturesPriceFeed:
             self._running = False
             raise
         logger.info(f"[FuturesPriceFeed] Started with {len(self._symbols)} symbols")
+
+    def _run_with_reconnect(self) -> None:
+        """Worker thread: run the subscribe loop, reconnect on drop.
+
+        Runs the initial ``subscribe`` (the adapter is already connected by
+        ``start()``); it blocks until the WebSocket drops or ``stop()`` is
+        called. On an *unexpected* drop (``_running`` still True), retries with
+        exponential backoff using a fresh adapter per attempt, re-subscribes,
+        and records ``record_ws_reconnect("futures")``. A deliberate ``stop()``
+        (which sets ``_running=False`` before ``disconnect()``) ends the loop
+        without reconnecting. Mirrors ``KISStockPriceFeed._reconnect``.
+        """
+        try:
+            self._adapter.subscribe(self._symbols, self._on_tick)
+        except Exception as e:  # noqa: BLE001 — log and fall through to reconnect
+            logger.error(f"[FuturesPriceFeed] Subscribe loop error: {e}")
+
+        delay = self._reconnect_initial_delay
+        while self._running:
+            time.sleep(delay)
+            if not self._running:
+                break
+            try:
+                # The previous adapter is spent (is_running permanently False);
+                # build a fresh one for the new connection.
+                self._adapter = KISWebSocketAdapter(self._config)
+                self._adapter.connect()
+                logger.info("[FuturesPriceFeed] Reconnected to futures WS feed")
+                _record_ws_reconnect("futures")
+                self._adapter.subscribe(self._symbols, self._on_tick)
+                # subscribe() returned: the connection lived then dropped (or
+                # stop()). Reset backoff so the next attempt starts at the floor.
+                delay = self._reconnect_initial_delay
+            except Exception as e:  # noqa: BLE001 — backoff and retry
+                logger.error(f"[FuturesPriceFeed] Reconnect attempt failed: {e}")
+                delay = min(delay * 2, self._reconnect_max_delay)
 
     async def stop(self) -> None:
         if not self._running:
