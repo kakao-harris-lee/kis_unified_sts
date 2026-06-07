@@ -275,6 +275,11 @@ services:
     environment:
       <<: [*redis-runtime-env, *runtime-storage-env, *kis-runtime-env]
       FUTURES_ORDER_ROUTER: "${FUTURES_ORDER_ROUTER_MODE:-paper}"
+      # Executor real/paper gate (config/execution.yaml::execution.trading_mode
+      # reads ${TRADING_MODE}). Dedicated knob, safe default PAPER — distinct from
+      # the orchestrator's paper/live TRADING_MODE space (executor enum is
+      # PAPER/MOCK/REAL). LIVE order placement requires FUTURES_EXECUTOR_TRADING_MODE=REAL.
+      TRADING_MODE: "${FUTURES_EXECUTOR_TRADING_MODE:-PAPER}"
 
   futures-monitor:
     <<: *pipeline-service

@@ -45,6 +45,7 @@ def test_paper_and_live_env_templates_separate_kis_markets():
     assert paper["FUTURES_PIPELINE_MODE"] == "shadow"
     assert paper["FUTURES_ORDER_ROUTER_MODE"] == "paper"
     assert paper["FUTURES_STRATEGY_SYMBOL"] == ""
+    assert paper["FUTURES_EXECUTOR_TRADING_MODE"] == "PAPER"
 
     assert live["COMPOSE_PROJECT_NAME"] == "kis_live"
     assert live["KIS_IS_REAL"] == "true"
@@ -69,6 +70,7 @@ def test_paper_and_live_env_templates_separate_kis_markets():
     assert live["FUTURES_PIPELINE_MODE"] == "shadow"
     assert live["FUTURES_ORDER_ROUTER_MODE"] == "paper"
     assert live["FUTURES_STRATEGY_SYMBOL"] == ""
+    assert live["FUTURES_EXECUTOR_TRADING_MODE"] == "PAPER"
 
 
 def test_compose_trader_passes_kis_market_env_to_trading_runtime():
@@ -235,6 +237,10 @@ def test_futures_pipeline_compose_services_are_profile_gated():
     order_env = services["futures-order-router"]["environment"]
     assert "KIS_FUTURES_APP_KEY" in order_env
     assert "KIS_FUTURES_APP_SECRET" in order_env
+    # Executor real/paper gate (dedicated knob, safe PAPER default).
+    assert (
+        order_env["TRADING_MODE"] == "${FUTURES_EXECUTOR_TRADING_MODE:-PAPER}"
+    )
 
     # monitor needs futures Telegram (live alerts).
     monitor_env = services["futures-monitor"]["environment"]

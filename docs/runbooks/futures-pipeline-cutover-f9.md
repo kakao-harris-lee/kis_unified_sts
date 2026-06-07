@@ -110,25 +110,30 @@ Record the date and a one-line shadow validation summary before proceeding.
    This makes `sts trade start --asset futures` refuse, so `trader-futures` cannot
    re-trade alongside the decoupled chain.
 
-3. **(live only)** Enable real order placement:
+3. **(live only)** Enable real order placement — **three** independent gates, all
+   required (see "Live-path requirements" below for why):
 
-   - `config/futures_live.yaml::enabled: true`
+   - `config/futures_live.yaml::enabled: true` (LiveModeGuard)
    - `docker compose --env-file .env.live exec -T redis sh -c 'REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli -n 1 del futures:live:suspended'`
+   - `FUTURES_EXECUTOR_TRADING_MODE=REAL` in `.env.live` (the OrderExecutor real/paper
+     gate; default `PAPER` **silently simulates** even when the router is in live mode).
 
-   For a **paper** cutover, skip this step and keep `FUTURES_ORDER_ROUTER_MODE=paper`.
+   For a **paper** cutover, skip this step and keep `FUTURES_ORDER_ROUTER_MODE=paper`
+   and `FUTURES_EXECUTOR_TRADING_MODE=PAPER`.
 
 4. Start the decoupled chain + ingest (+ kill_switch for live):
 
    ```bash
-   FUTURES_PIPELINE_MODE=live FUTURES_ORDER_ROUTER_MODE=live \
+   FUTURES_PIPELINE_MODE=live FUTURES_ORDER_ROUTER_MODE=live FUTURES_EXECUTOR_TRADING_MODE=REAL \
      docker compose --env-file .env.live \
        --profile futures-ingest --profile futures-pipeline --profile futures-killswitch up -d \
        futures-market-ingest futures-decision-engine futures-risk-filter \
        futures-order-router futures-monitor futures-kill-switch
    ```
 
-   Paper cutover: use `--env-file .env.paper`, keep `FUTURES_ORDER_ROUTER_MODE=paper`,
-   and omit `--profile futures-killswitch` / `futures-kill-switch`.
+   Paper cutover: use `--env-file .env.paper`, keep `FUTURES_ORDER_ROUTER_MODE=paper`
+   and `FUTURES_EXECUTOR_TRADING_MODE=PAPER`, and omit `--profile futures-killswitch` /
+   `futures-kill-switch`.
 
 5. Post-cutover verification:
 
@@ -174,6 +179,42 @@ docker compose --env-file .env.paper --profile trading up -d trader-futures
 For a **live** rollback also disable real orders:
 `config/futures_live.yaml::enabled: false` (or
 `redis-cli -n 1 set futures:live:suspended 1`).
+
+## Live-path requirements (must verify before the live cutover)
+
+The dormant/shadow wiring is safe by default. The **live** path has three
+topology-specific requirements that the decoupled containers do NOT satisfy
+automatically — verify each before going live:
+
+1. **Executor real-order gate (`FUTURES_EXECUTOR_TRADING_MODE=REAL`).** In live router
+   mode the order_router builds `OrderExecutor` from
+   `config/execution.yaml::execution.trading_mode = ${TRADING_MODE:PAPER}`. The
+   `futures-order-router` service maps its container `TRADING_MODE` from the dedicated
+   `FUTURES_EXECUTOR_TRADING_MODE` knob (default `PAPER`). If left `PAPER`, the executor
+   **silently simulates** orders even with `FUTURES_ORDER_ROUTER_MODE=live` +
+   `futures_live.enabled=true`. Set `FUTURES_EXECUTOR_TRADING_MODE=REAL` (the executor
+   enum is `PAPER|MOCK|REAL` — note this is a different value space from the orchestrator's
+   `paper|live` `TRADING_MODE`). This is intentionally a separate knob so the stack-wide
+   `TRADING_MODE=live` (orchestrator) does not accidentally arm the decoupled executor.
+
+2. **kill_switch → order_router sentinel must be on a shared volume.** The order_router's
+   only kill-switch interlock is the filesystem sentinel at
+   `config/kill_switch.yaml::sentinel_path` (default `/var/run/kis_kill_switch.tripped`).
+   The kill_switch daemon and order_router run in **separate containers**; the default
+   `/var/run` path is container-local, so a trip written by `futures-kill-switch` is NOT
+   visible to `futures-order-router` and the "refuse to place new orders after a trip"
+   interlock is dead. **Before live**, set `config/kill_switch.yaml::sentinel_path` to a
+   path under the shared `data/runtime` mount, e.g. `data/runtime/kis_kill_switch.tripped`
+   (both containers mount `./data/runtime` and `./config`), so both share the sentinel.
+   (The kill_switch's Telegram alert + Redis `kill_switch:events` stream + force-flatten
+   Redis key fire regardless; only the order_router *file* interlock needs the shared path.
+   Wiring order_router to also honor the Redis `kill_switch:force_flatten:requested` key is
+   a documented follow-up.)
+
+3. **`FUTURES_STRATEGY_SYMBOL` must be set.** decision_engine raises and crash-loops
+   (`restart: unless-stopped`) in shadow/live if `FUTURES_STRATEGY_SYMBOL` is empty. If
+   `futures-decision-engine` restart-loops, check its log for the missing-symbol error and
+   set the current KOSPI200 mini front-month code.
 
 ## Notes
 
