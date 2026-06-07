@@ -181,6 +181,23 @@ def calc_realized_pnl(
     return gross_pnl
 
 
+def calc_futures_realized_pnl(
+    entry_price: float,
+    exit_price: float,
+    quantity: int,
+    side: str,
+    *,
+    multiplier_krw_per_point: float,
+) -> float:
+    """Futures realized PnL in KRW. Matches PseudoOCO._record_pnl (F-6), no fee.
+
+    sign = +1 for long, -1 for short → (exit-entry)*sign*qty*multiplier. Used by
+    the futures monitor for dashboard PnL parity with the risk-state writer.
+    """
+    sign = 1.0 if side == "long" else -1.0
+    return (exit_price - entry_price) * sign * quantity * multiplier_krw_per_point
+
+
 def calc_drop_from_high(
     current_price: float,
     highest_price: float,
