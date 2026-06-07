@@ -1,10 +1,10 @@
 """Order-router consumer-group daemon.
 
 Phase 4 Task 12 — reads filtered :class:`Signal`s from
-``stream:signal.final``, places passive limit entries via
-:class:`PassiveMaker`, and on fill registers a stop+target bracket via
-:class:`PseudoOCO`. Fills are logged through :class:`FillLogger` (already
-wired into PassiveMaker).
+``signal.final.futures`` (live) / ``signal.final.futures.shadow`` (paper),
+places passive limit entries via :class:`PassiveMaker`, and on fill registers
+a stop+target bracket via :class:`PseudoOCO`. Fills are logged through
+:class:`FillLogger` to ``order.fill.futures`` / ``order.fill.futures.shadow``.
 
 This is the only daemon that holds wallet authority — every other Phase 4
 component reads/audits, but the order_router places real orders. The
