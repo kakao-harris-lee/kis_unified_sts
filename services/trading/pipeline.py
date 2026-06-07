@@ -32,6 +32,25 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_SLOW_STAGE_FACTOR = 1.0  # WARN when a stage exec exceeds factor × its interval
+
+
+def _observe_stage_latency(stage: str, latency_ms: float, interval_s: float) -> None:
+    """Best-effort: export stage latency + WARN when a stage falls behind cadence."""
+    try:
+        from services.monitoring.metrics import get_metrics_collector
+
+        get_metrics_collector().record_pipeline_stage_latency(stage, latency_ms)
+    except Exception:  # noqa: BLE001 — observability must never break the loop
+        pass
+    if latency_ms > interval_s * 1000 * _SLOW_STAGE_FACTOR:
+        logger.warning(
+            "stage %s slow: %.0fms (interval %.0fms)",
+            stage,
+            latency_ms,
+            interval_s * 1000,
+        )
+
 
 class PipelineStage(Enum):
     """파이프라인 스테이지"""
@@ -233,10 +252,26 @@ class TradingPipeline:
                 PipelineStage.EXIT: 0.5,
             }
             self._breaker_config = {
-                PipelineStage.REGIME: {"failure_threshold": 3, "reset_timeout": 60.0, "half_open_max_calls": 2},
-                PipelineStage.ENTRY: {"failure_threshold": 5, "reset_timeout": 30.0, "half_open_max_calls": 2},
-                PipelineStage.MONITORING: {"failure_threshold": 5, "reset_timeout": 30.0, "half_open_max_calls": 2},
-                PipelineStage.EXIT: {"failure_threshold": 2, "reset_timeout": 10.0, "half_open_max_calls": 1},
+                PipelineStage.REGIME: {
+                    "failure_threshold": 3,
+                    "reset_timeout": 60.0,
+                    "half_open_max_calls": 2,
+                },
+                PipelineStage.ENTRY: {
+                    "failure_threshold": 5,
+                    "reset_timeout": 30.0,
+                    "half_open_max_calls": 2,
+                },
+                PipelineStage.MONITORING: {
+                    "failure_threshold": 5,
+                    "reset_timeout": 30.0,
+                    "half_open_max_calls": 2,
+                },
+                PipelineStage.EXIT: {
+                    "failure_threshold": 2,
+                    "reset_timeout": 10.0,
+                    "half_open_max_calls": 1,
+                },
             }
             self._retry_config = {"max_retries": 2, "delay": 1.0}
 
@@ -323,6 +358,7 @@ class TradingPipeline:
                 metrics.executions += 1
                 metrics.successes += 1
                 metrics.total_latency_ms += latency
+                _observe_stage_latency(stage.value, latency, interval)
                 metrics.last_execution = datetime.now()
 
                 breaker.record_success()
@@ -339,7 +375,10 @@ class TradingPipeline:
                 metrics.executions += 1
                 metrics.failures += 1
                 breaker.record_failure()
-                logger.error(f"{stage.value} unexpected error: {type(e).__name__}: {e}", exc_info=True)
+                logger.error(
+                    f"{stage.value} unexpected error: {type(e).__name__}: {e}",
+                    exc_info=True,
+                )
 
             next_tick += interval
             sleep_time = next_tick - time.monotonic()
