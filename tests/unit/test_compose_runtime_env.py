@@ -42,6 +42,9 @@ def test_paper_and_live_env_templates_separate_kis_markets():
     assert paper["TELEGRAM_STOCK_CHAT_ID"] == "CHANGE_ME_PAPER_TELEGRAM_CHAT_ID"
     assert paper["TELEGRAM_FUTURES_BOT_TOKEN"] == "CHANGE_ME_PAPER_TELEGRAM_BOT_TOKEN"
     assert paper["TELEGRAM_FUTURES_CHAT_ID"] == "CHANGE_ME_PAPER_TELEGRAM_CHAT_ID"
+    assert paper["FUTURES_PIPELINE_MODE"] == "shadow"
+    assert paper["FUTURES_ORDER_ROUTER_MODE"] == "paper"
+    assert paper["FUTURES_STRATEGY_SYMBOL"] == ""
 
     assert live["COMPOSE_PROJECT_NAME"] == "kis_live"
     assert live["KIS_IS_REAL"] == "true"
@@ -63,6 +66,9 @@ def test_paper_and_live_env_templates_separate_kis_markets():
     assert live["TELEGRAM_STOCK_CHAT_ID"] == "CHANGE_ME_LIVE_TELEGRAM_CHAT_ID"
     assert live["TELEGRAM_FUTURES_BOT_TOKEN"] == "CHANGE_ME_LIVE_TELEGRAM_BOT_TOKEN"
     assert live["TELEGRAM_FUTURES_CHAT_ID"] == "CHANGE_ME_LIVE_TELEGRAM_CHAT_ID"
+    assert live["FUTURES_PIPELINE_MODE"] == "shadow"
+    assert live["FUTURES_ORDER_ROUTER_MODE"] == "paper"
+    assert live["FUTURES_STRATEGY_SYMBOL"] == ""
 
 
 def test_compose_trader_passes_kis_market_env_to_trading_runtime():
@@ -179,3 +185,68 @@ def test_stock_pipeline_compose_services_are_profile_gated():
     )
     assert "TELEGRAM_STOCK_BOT_TOKEN" in services["stock-monitor"]["environment"]
     assert "TELEGRAM_STOCK_CHAT_ID" in services["stock-monitor"]["environment"]
+
+
+def test_futures_pipeline_compose_services_are_profile_gated():
+    compose = yaml.safe_load(
+        (_REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    )
+    services = compose["services"]
+
+    ingest = services["futures-market-ingest"]
+    assert ingest["profiles"] == ["futures-ingest"]
+    assert ingest["command"] == ["python", "-m", "services.market_ingest.main"]
+    assert ingest["environment"]["INGEST_ASSET"] == "futures"
+    assert "KIS_FUTURES_APP_KEY" in ingest["environment"]
+    assert "KIS_FUTURES_APP_SECRET" in ingest["environment"]
+
+    # shadow|live daemons share FUTURES_PIPELINE_MODE; order_router uses paper|live.
+    expected_pipeline = {
+        "futures-decision-engine": (
+            ["python", "-m", "services.decision_engine.main"],
+            "FUTURES_STRATEGY_DAEMON",
+            "${FUTURES_PIPELINE_MODE:-shadow}",
+        ),
+        "futures-risk-filter": (
+            ["python", "-m", "services.risk_filter.main"],
+            "FUTURES_RISK_FILTER",
+            "${FUTURES_PIPELINE_MODE:-shadow}",
+        ),
+        "futures-order-router": (
+            ["python", "-m", "services.order_router.main"],
+            "FUTURES_ORDER_ROUTER",
+            "${FUTURES_ORDER_ROUTER_MODE:-paper}",
+        ),
+        "futures-monitor": (
+            ["python", "-m", "services.futures_monitor.main"],
+            "FUTURES_MONITOR_DAEMON",
+            "${FUTURES_PIPELINE_MODE:-shadow}",
+        ),
+    }
+    for service_name, (command, mode_env_key, mode_value) in expected_pipeline.items():
+        service = services[service_name]
+        service_env = service["environment"]
+        assert service["profiles"] == ["futures-pipeline"]
+        assert service["command"] == command
+        assert service["depends_on"]["redis"]["condition"] == "service_healthy"
+        assert service_env[mode_env_key] == mode_value
+
+    # order_router self-feeds a real KIS WS — needs futures creds.
+    order_env = services["futures-order-router"]["environment"]
+    assert "KIS_FUTURES_APP_KEY" in order_env
+    assert "KIS_FUTURES_APP_SECRET" in order_env
+
+    # monitor needs futures Telegram (live alerts).
+    monitor_env = services["futures-monitor"]["environment"]
+    assert "TELEGRAM_FUTURES_BOT_TOKEN" in monitor_env
+    assert "TELEGRAM_FUTURES_CHAT_ID" in monitor_env
+
+    # kill_switch is live-only safety, isolated in its own profile.
+    kill = services["futures-kill-switch"]
+    assert kill["profiles"] == ["futures-killswitch"]
+    assert kill["command"] == ["python", "-m", "services.kill_switch.main"]
+    assert "TELEGRAM_FUTURES_BOT_TOKEN" in kill["environment"]
+    assert (
+        kill["environment"]["KIS_FUTURES_EQUITY_KRW"]
+        == "${KIS_FUTURES_EQUITY_KRW:-100000000}"
+    )
