@@ -35,3 +35,30 @@ class TestReconnectConfigKnobs:
             feed = _make_feed()
         assert feed._reconnect_initial_delay == 1.0
         assert feed._reconnect_max_delay == 60.0
+
+
+class TestRecordWsReconnectHelper:
+    def test_calls_collector(self):
+        fake = MagicMock()
+        with patch(
+            "services.monitoring.metrics.get_metrics_collector",
+            return_value=fake,
+        ):
+            ff._record_ws_reconnect("futures")
+        fake.record_ws_reconnect.assert_called_once_with("futures")
+
+    def test_swallows_collector_construction_failure(self):
+        with patch(
+            "services.monitoring.metrics.get_metrics_collector",
+            side_effect=RuntimeError("boom"),
+        ):
+            ff._record_ws_reconnect("futures")  # must not raise
+
+    def test_swallows_method_failure(self):
+        fake = MagicMock()
+        fake.record_ws_reconnect.side_effect = RuntimeError("boom")
+        with patch(
+            "services.monitoring.metrics.get_metrics_collector",
+            return_value=fake,
+        ):
+            ff._record_ws_reconnect("futures")  # must not raise

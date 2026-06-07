@@ -23,6 +23,20 @@ from shared.kis.websocket import KISWebSocketAdapter
 logger = logging.getLogger(__name__)
 
 
+def _record_ws_reconnect(feed: str) -> None:
+    """Best-effort WS reconnect counter.
+
+    Lazy guarded import so a missing/failing collector never breaks the
+    WebSocket supervisor thread.
+    """
+    try:
+        from services.monitoring.metrics import get_metrics_collector
+
+        get_metrics_collector().record_ws_reconnect(feed)
+    except Exception:  # noqa: BLE001 — observability must never break the WS thread
+        pass
+
+
 def _load_futures_feed_config() -> dict[str, Any]:
     """Load futures_feed section from config/streaming.yaml."""
     cfg = ConfigLoader.load("streaming.yaml")
