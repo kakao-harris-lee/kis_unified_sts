@@ -239,3 +239,40 @@ async def test_kill_switch_sentinel_blocks_order_router(redis, tmp_path):
 
     assert order_router.refused_due_to_sentinel is True
     kis.place_futures_order.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_paper_entry_then_stop_exit_logs_two_fills():
+    """F-6: a registered bracket fires a simulated stop close + records PnL."""
+    redis = fakeredis.aioredis.FakeRedis(db=1)
+    fill_logger = FillLogger(redis=redis, stream=ORDER_FILL, batch_size=1)
+    runtime_state = AsyncMock()
+    pseudo_oco = PseudoOCO(
+        fill_logger=fill_logger,
+        runtime_state=runtime_state,
+        multiplier_krw_per_point=50_000,
+    )
+    signal = Signal(
+        setup_type="A_gap_reversion",
+        direction="long",
+        symbol="A05603",
+        entry_price=331.20,
+        stop_loss=330.00,
+        take_profit=333.00,
+        confidence=0.85,
+        valid_until=datetime(2026, 6, 8, 6, 0, tzinfo=UTC),
+        generated_at=datetime(2026, 6, 8, 5, 0, tzinfo=UTC),
+    )
+    await pseudo_oco.register_bracket(
+        signal=signal,
+        signal_id="s1",
+        fill=Fill(order_id="E1", price=331.20, quantity=1, filled_at_ms=1000),
+    )
+    # market drops to 329 → stop fires (synthetic close @ stop 330.00)
+    fired = await pseudo_oco.on_tick(symbol="A05603", price=329.0, now_ms=2000)
+    assert len(fired) == 1
+    await fill_logger.flush()
+    fills = await redis.xrange(ORDER_FILL)
+    roles = [f[1][b"trade_role"].decode() for f in fills]
+    assert "stop_loss" in roles
+    runtime_state.record_trade.assert_awaited_once()
