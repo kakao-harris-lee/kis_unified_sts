@@ -292,10 +292,16 @@ class OrderRouterDaemon(StreamStage):
 
 
 def _resolve_mode() -> str:
-    """order_router execution mode: off (default) | paper | live."""
+    """order_router execution mode: off (default) | paper | live.
+
+    Anything other than ``paper``/``live`` (including unset or empty) resolves
+    to the safety-critical default ``off`` so the helper always returns one of
+    the three documented modes.
+    """
     import os
 
-    return os.getenv("FUTURES_ORDER_ROUTER", "off").strip().lower()
+    mode = os.getenv("FUTURES_ORDER_ROUTER", "off").strip().lower()
+    return mode if mode in ("paper", "live") else "off"
 
 
 async def _build_and_run() -> int:

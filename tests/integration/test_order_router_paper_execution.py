@@ -70,11 +70,8 @@ async def test_paper_passive_entry_fills_at_bid_and_logs() -> None:
     assert result.is_filled
     assert result.filled_price == 331.20  # passive fill at posted bid
     fill_logger.log_fill.assert_awaited_once()
-    # paper: only synthetic order ids ever existed (no real KIS order)
-    assert (
-        all(oid.startswith("PAPER-") for oid in adapter._pending)
-        or not adapter._pending
-    )
+    # paper: the order id is synthetic (no real KIS order was ever placed)
+    assert result.order_id.startswith("PAPER-")
 
 
 @pytest.mark.asyncio
