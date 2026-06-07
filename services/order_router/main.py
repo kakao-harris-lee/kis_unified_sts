@@ -291,6 +291,19 @@ class OrderRouterDaemon(StreamStage):
         return True  # success: consume
 
 
+def _resolve_mode() -> str:
+    """order_router execution mode: off (default) | paper | live.
+
+    Anything other than ``paper``/``live`` (including unset or empty) resolves
+    to the safety-critical default ``off`` so the helper always returns one of
+    the three documented modes.
+    """
+    import os
+
+    mode = os.getenv("FUTURES_ORDER_ROUTER", "off").strip().lower()
+    return mode if mode in ("paper", "live") else "off"
+
+
 async def _build_and_run() -> int:
     """Production entrypoint — wires KIS adapter + PassiveMaker + PseudoOCO.
 
@@ -328,6 +341,12 @@ async def _build_and_run() -> int:
     redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/1")
     redis_client = aioredis.from_url(redis_url)
 
+    mode = _resolve_mode()
+    if mode not in ("paper", "live"):
+        logger.info("FUTURES_ORDER_ROUTER=%s (off) — order_router inert, exiting", mode)
+        await redis_client.aclose()
+        return 0
+
     runtime_ledger = None
     storage_config = StorageConfig.load_or_default()
     if storage_config.runtime_storage.backend == "sqlite":
@@ -353,27 +372,36 @@ async def _build_and_run() -> int:
         asset_class="futures",
     )
 
-    # ExecutionConfig is a plain Pydantic BaseModel (not ServiceConfigBase),
-    # so we go through ConfigLoader → constructor manually.
-    execution_section = ConfigLoader.load("execution.yaml").get("execution", {})
-    execution_config = ExecutionConfig(**execution_section)
-    order_executor = OrderExecutor(execution_config)
-    await order_executor.initialize()
-
-    # Futures-side KIS auth — this is the order-placement account.
+    # Feed is ALWAYS real (both paper AND live): KIS 모의투자 serves no futures
+    # realtime feed, so the real WS is the only orderbook source. This drops the
+    # old KIS_FUTURES_MARKET gating on the feed — paper mode simulates execution,
+    # not data; live order placement remains gated by OrderExecutor.config.trading_mode.
     kis_auth = KISAuthConfig(
         app_key=os.environ.get("KIS_FUTURES_APP_KEY", ""),
         app_secret=os.environ.get("KIS_FUTURES_APP_SECRET", ""),
-        is_real=os.environ.get("KIS_FUTURES_MARKET", "real").lower() == "real",
+        is_real=True,
     )
     futures_feed = KISFuturesPriceFeed(config=kis_auth)
     futures_feed.update_symbols([symbol])
     await futures_feed.start()
 
-    kis_adapter = KISFuturesAdapter(
-        order_executor=order_executor,
-        futures_price_feed=futures_feed,
-    )
+    if mode == "paper":
+        from shared.execution.paper_kis_futures_adapter import PaperKISFuturesAdapter
+
+        kis_adapter: Any = PaperKISFuturesAdapter(futures_price_feed=futures_feed)
+        guard_for_daemon = None  # paper places no real orders
+        logger.info(
+            "order_router PAPER mode — real orderbook, simulated fills, no real orders"
+        )
+    else:  # live
+        execution_section = ConfigLoader.load("execution.yaml").get("execution", {})
+        order_executor = OrderExecutor(ExecutionConfig(**execution_section))
+        await order_executor.initialize()
+        kis_adapter = KISFuturesAdapter(
+            order_executor=order_executor,
+            futures_price_feed=futures_feed,
+        )
+        guard_for_daemon = live_guard
 
     passive_maker = PassiveMaker(kis_client=kis_adapter, fill_logger=fill_logger)
     pseudo_oco = PseudoOCO(fill_logger=fill_logger)
@@ -392,8 +420,8 @@ async def _build_and_run() -> int:
         passive_timeout_seconds=phase4_config.passive_timeout_seconds,
         base_quantity=phase4_config.base_quantity,
         kill_switch_sentinel_path=kill_config.sentinel_path,
-        live_mode_guard=live_guard,
-        locked_symbol=symbol,  # auto-detected front-month mini
+        live_mode_guard=guard_for_daemon,
+        locked_symbol=symbol,
     )
 
     loop = asyncio.get_running_loop()

@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock
 import fakeredis.aioredis
 import pytest
 
-from services.order_router.main import OrderRouterDaemon
+from services.order_router.main import OrderRouterDaemon, _resolve_mode
 from shared.decision.signal import Signal
 from shared.execution.contract_spec import ContractSpec
 from shared.execution.passive_maker import Fill
@@ -609,3 +609,25 @@ def test_seconds_until_next_kst_midnight_caps_at_24h():
 
     utc_ts = datetime(2026, 5, 1, 0, 0, tzinfo=UTC)
     assert _seconds_until_next_kst_midnight(utc_ts) <= 86_400
+
+
+def test_resolve_mode_defaults_off(monkeypatch) -> None:
+    monkeypatch.delenv("FUTURES_ORDER_ROUTER", raising=False)
+    assert _resolve_mode() == "off"
+
+
+def test_resolve_mode_paper_and_live(monkeypatch) -> None:
+    monkeypatch.setenv("FUTURES_ORDER_ROUTER", "paper")
+    assert _resolve_mode() == "paper"
+    monkeypatch.setenv("FUTURES_ORDER_ROUTER", "live")
+    assert _resolve_mode() == "live"
+
+
+def test_resolve_mode_normalizes_case_and_whitespace(monkeypatch) -> None:
+    monkeypatch.setenv("FUTURES_ORDER_ROUTER", "  PAPER ")
+    assert _resolve_mode() == "paper"
+
+
+def test_resolve_mode_empty_falls_through_to_off(monkeypatch) -> None:
+    monkeypatch.setenv("FUTURES_ORDER_ROUTER", "")
+    assert _resolve_mode() == "off"
