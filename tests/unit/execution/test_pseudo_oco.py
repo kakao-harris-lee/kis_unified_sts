@@ -239,3 +239,130 @@ class TestCloseFailureSafety:
         fired = await oco.on_tick(symbol="A05603", price=328.0, now_ms=3000)
         assert fired == []
         oco.fill_logger.log_fill.assert_not_awaited()
+
+
+class TestPnLRecording:
+    @pytest.mark.asyncio
+    async def test_entry_price_stored(self, fill_logger):
+        oco = PseudoOCO(fill_logger=fill_logger)
+        h = await oco.register_bracket(
+            signal=_signal("long"), signal_id="s1", fill=_fill()
+        )
+        assert h.entry_price == 331.20
+
+    @pytest.mark.asyncio
+    async def test_long_stop_records_loss(self, fill_logger):
+        rs = AsyncMock()
+        oco = PseudoOCO(
+            fill_logger=fill_logger, runtime_state=rs, multiplier_krw_per_point=50_000
+        )
+        await oco.register_bracket(signal=_signal("long"), signal_id="s1", fill=_fill())
+        # long entry 331.20, stop 330.00 → loss = (330.00-331.20)*1*1*50000 = -60000
+        await oco.on_tick(symbol="A05603", price=329.0, now_ms=2000)
+        rs.record_trade.assert_awaited_once()
+        assert rs.record_trade.await_args.kwargs["pnl_krw"] == pytest.approx(-60_000.0)
+        rs.record_loss.assert_awaited_once()
+        rs.record_win.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_long_target_records_win(self, fill_logger):
+        rs = AsyncMock()
+        oco = PseudoOCO(
+            fill_logger=fill_logger, runtime_state=rs, multiplier_krw_per_point=50_000
+        )
+        await oco.register_bracket(signal=_signal("long"), signal_id="s1", fill=_fill())
+        # target 333.00 → win = (333.00-331.20)*50000 = +90000
+        await oco.on_tick(symbol="A05603", price=334.0, now_ms=2000)
+        assert rs.record_trade.await_args.kwargs["pnl_krw"] == pytest.approx(90_000.0)
+        rs.record_win.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_short_stop_records_loss(self, fill_logger):
+        rs = AsyncMock()
+        oco = PseudoOCO(
+            fill_logger=fill_logger, runtime_state=rs, multiplier_krw_per_point=50_000
+        )
+        await oco.register_bracket(
+            signal=_signal("short"), signal_id="s1", fill=_fill()
+        )
+        # short entry 331.20, stop 332.40 → loss = (332.40-331.20)*(-1)*1*50000 = -60000
+        await oco.on_tick(symbol="A05603", price=333.0, now_ms=2000)
+        assert rs.record_trade.await_args.kwargs["pnl_krw"] == pytest.approx(-60_000.0)
+        rs.record_loss.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_no_runtime_state_records_nothing(self, fill_logger):
+        oco = PseudoOCO(fill_logger=fill_logger)  # back-compat: no recording
+        await oco.register_bracket(signal=_signal("long"), signal_id="s1", fill=_fill())
+        fired = await oco.on_tick(symbol="A05603", price=329.0, now_ms=2000)
+        assert len(fired) == 1  # still closes
+        fill_logger.log_fill.assert_awaited_once()  # still logs
+
+
+class TestCloseExecutor:
+    @pytest.mark.asyncio
+    async def test_live_close_uses_real_fill_price(self, fill_logger):
+        from shared.execution.passive_maker import Fill
+
+        executor = AsyncMock()
+        executor.flatten.return_value = Fill(
+            order_id="EXIT-1", price=329.5, quantity=1, filled_at_ms=2000
+        )
+        rs = AsyncMock()
+        oco = PseudoOCO(
+            fill_logger=fill_logger,
+            runtime_state=rs,
+            multiplier_krw_per_point=50_000,
+            close_executor=executor,
+        )
+        await oco.register_bracket(signal=_signal("long"), signal_id="s1", fill=_fill())
+        fired = await oco.on_tick(symbol="A05603", price=329.0, now_ms=2000)
+        assert len(fired) == 1
+        executor.flatten.assert_awaited_once()
+        assert executor.flatten.await_args.kwargs["side"] == "short"  # flatten a long
+        # logged + PnL use the REAL fill price 329.5, not the stop 330.00
+        assert fill_logger.log_fill.await_args.kwargs["filled_price"] == 329.5
+        assert rs.record_trade.await_args.kwargs["pnl_krw"] == pytest.approx(
+            (329.5 - 331.20) * 50_000
+        )
+
+    @pytest.mark.asyncio
+    async def test_live_close_blocked_keeps_handle_active(self, fill_logger):
+        executor = AsyncMock()
+        executor.flatten.return_value = None  # guard-blocked / unfilled
+        oco = PseudoOCO(fill_logger=fill_logger, close_executor=executor)
+        h = await oco.register_bracket(
+            signal=_signal("long"), signal_id="s1", fill=_fill()
+        )
+        fired = await oco.on_tick(symbol="A05603", price=329.0, now_ms=2000)
+        assert fired == []  # not closed
+        assert h.state is OCOState.ACTIVE  # stays active for retry
+        fill_logger.log_fill.assert_not_awaited()
+        assert len(oco.active_handles) == 1
+
+    @pytest.mark.asyncio
+    async def test_live_log_failure_after_real_fill_is_reconciliation_not_retry(
+        self, fill_logger
+    ):
+        from shared.execution.passive_maker import Fill
+
+        executor = AsyncMock()
+        executor.flatten.return_value = Fill(
+            order_id="EXIT-1", price=329.5, quantity=1, filled_at_ms=2000
+        )
+        fill_logger.log_fill.side_effect = RuntimeError("redis down")
+        oco = PseudoOCO(fill_logger=fill_logger, close_executor=executor)
+        await oco.register_bracket(signal=_signal("long"), signal_id="s1", fill=_fill())
+        # Real order filled, but log_fill raises → must NOT propagate, handle
+        # must be removed (no double-flatten), and it counts as fired.
+        fired = await oco.on_tick(symbol="A05603", price=329.0, now_ms=2000)
+        assert len(fired) == 1
+        assert oco.active_handles == []  # handle removed (no re-fire / double-flatten)
+
+    @pytest.mark.asyncio
+    async def test_paper_log_failure_propagates(self, fill_logger):
+        fill_logger.log_fill.side_effect = RuntimeError("redis down")
+        oco = PseudoOCO(fill_logger=fill_logger)  # paper: no real order placed
+        await oco.register_bracket(signal=_signal("long"), signal_id="s1", fill=_fill())
+        with pytest.raises(RuntimeError):
+            await oco.on_tick(symbol="A05603", price=329.0, now_ms=2000)

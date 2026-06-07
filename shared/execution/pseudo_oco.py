@@ -21,10 +21,14 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import TYPE_CHECKING, Any
 
 from shared.decision.signal import Signal
 from shared.execution.fill_logger import FillLogger
 from shared.execution.passive_maker import Fill
+
+if TYPE_CHECKING:
+    from shared.risk.runtime_state import RuntimeRiskState
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +54,7 @@ class OCOHandle:
     tick_size_points: float = 0.0  # for slippage logging; harness can ignore
     state: OCOState = OCOState.ACTIVE
     entry_filled_at_ms: int = field(default=0)
+    entry_price: float = 0.0
 
 
 def _opposite(direction: str) -> str:
@@ -71,9 +76,20 @@ def _is_target_hit(handle: OCOHandle, price: float) -> bool:
 class PseudoOCO:
     """Track stop+target brackets for paper futures, log fills on trigger."""
 
-    def __init__(self, *, fill_logger: FillLogger, venue: str = "KRX") -> None:
+    def __init__(
+        self,
+        *,
+        fill_logger: FillLogger,
+        venue: str = "KRX",
+        runtime_state: RuntimeRiskState | None = None,
+        multiplier_krw_per_point: float = 0.0,
+        close_executor: Any = None,
+    ) -> None:
         self.fill_logger = fill_logger
         self.venue = venue
+        self._runtime_state = runtime_state
+        self._multiplier = multiplier_krw_per_point
+        self._close_executor = close_executor
         self._handles: dict[str, OCOHandle] = {}
         self._next_id: int = 1
 
@@ -96,6 +112,7 @@ class PseudoOCO:
             symbol=signal.symbol,
             direction=signal.direction,
             quantity=fill.quantity,
+            entry_price=fill.price,
             stop_price=signal.stop_loss,
             target_price=signal.take_profit,
             valid_until_ms=valid_until_ms,
@@ -123,7 +140,7 @@ class PseudoOCO:
                 continue
             # Loss-wins: stop checked before target.
             if _is_stop_hit(handle, price):
-                await self._close(
+                closed = await self._close(
                     handle,
                     fill_price=handle.stop_price,
                     now_ms=now_ms,
@@ -131,10 +148,8 @@ class PseudoOCO:
                     order_type="stop",
                     new_state=OCOState.STOP_HIT,
                 )
-                fired.append(handle)
-                del self._handles[handle_id]
             elif _is_target_hit(handle, price):
-                await self._close(
+                closed = await self._close(
                     handle,
                     fill_price=handle.target_price,
                     now_ms=now_ms,
@@ -142,6 +157,9 @@ class PseudoOCO:
                     order_type="limit_passive",
                     new_state=OCOState.TARGET_HIT,
                 )
+            else:
+                continue
+            if closed:
                 fired.append(handle)
                 del self._handles[handle_id]
         return fired
@@ -168,16 +186,16 @@ class PseudoOCO:
                 fill_price = (
                     market_price if market_price is not None else handle.target_price
                 )
-                await self._close(
+                if await self._close(
                     handle,
                     fill_price=fill_price,
                     now_ms=now_ms,
                     trade_role="force_close",
                     order_type="market",
                     new_state=OCOState.EXPIRED,
-                )
-                expired.append(handle)
-                del self._handles[handle_id]
+                ):
+                    expired.append(handle)
+                    del self._handles[handle_id]
         return expired
 
     async def _close(
@@ -189,32 +207,85 @@ class PseudoOCO:
         trade_role: str,
         order_type: str,
         new_state: OCOState,
-    ) -> None:
-        # State transitions BEFORE the I/O so a re-raised CH failure inside
-        # log_fill cannot leave the handle ACTIVE for a duplicate fire on the
-        # next tick. The Phase 2 ScoredPublisher invariant (re-raise on CH
-        # failure → caller leaves source pending for redelivery) still holds:
-        # the handle is removed from active state, log_fill propagates, the
-        # daemon sees the exception and leaves the OCO bracket message
-        # unacked. On retry the daemon re-registers; without this ordering
-        # the in-memory state would record the close twice.
+    ) -> bool:
+        """Close a handle. Returns True if closed, False if blocked (retry).
+
+        Paper (no close_executor): synthesize a fill at ``fill_price``.
+        Live (close_executor set): place a real order; None return = guard-
+        blocked/unfilled → leave the handle ACTIVE for the next poll.
+        """
+        if self._close_executor is not None:
+            real_fill = await self._close_executor.flatten(
+                symbol=handle.symbol,
+                side=_opposite(handle.direction),
+                quantity=handle.quantity,
+                requested_price=fill_price,
+                now_ms=now_ms,
+            )
+            if real_fill is None:
+                logger.warning(
+                    "live exit not placed handle=%s role=%s; will retry",
+                    handle.handle_id,
+                    trade_role,
+                )
+                return False
+            actual_price = float(real_fill.price)
+        else:
+            actual_price = fill_price
+        # State transition before the log I/O: a re-raised log_fill failure must
+        # not leave the handle ACTIVE for a duplicate fire (see PR #134 note).
         handle.state = new_state
-        await self.fill_logger.log_fill(
-            signal_id=handle.signal_id,
-            order_id=f"{handle.handle_id}-{trade_role}",
-            symbol=handle.symbol,
-            side=_opposite(handle.direction),
-            order_type=order_type,
-            requested_price=fill_price,
-            filled_price=fill_price,
-            tick_size_points=handle.tick_size_points,
-            slippage_ticks=0.0,
-            quantity=handle.quantity,
-            requested_at_ms=now_ms,
-            filled_at_ms=now_ms,
-            venue=self.venue,
-            trade_role=trade_role,
+        try:
+            await self.fill_logger.log_fill(
+                signal_id=handle.signal_id,
+                order_id=f"{handle.handle_id}-{trade_role}",
+                symbol=handle.symbol,
+                side=_opposite(handle.direction),
+                order_type=order_type,
+                requested_price=fill_price,
+                filled_price=actual_price,
+                tick_size_points=handle.tick_size_points,
+                slippage_ticks=0.0,
+                quantity=handle.quantity,
+                requested_at_ms=now_ms,
+                filled_at_ms=now_ms,
+                venue=self.venue,
+                trade_role=trade_role,
+            )
+            await self._record_pnl(handle, exit_price=actual_price)
+        except Exception:
+            if self._close_executor is not None:
+                # The real exit order already FILLED — the position is flat.
+                # Losing the fill log / PnL must NOT cause a second real flatten
+                # on the next poll, so treat the handle as closed (return True →
+                # caller deletes it) and scream for manual reconciliation.
+                logger.critical(
+                    "RECONCILIATION GAP: real exit %s filled @%.4f (role=%s) but "
+                    "fill-log/PnL failed; position IS flat — reconcile manually",
+                    handle.handle_id,
+                    actual_price,
+                    trade_role,
+                )
+                return True
+            # Paper (no real order placed): preserve the redelivery invariant.
+            raise
+        return True
+
+    async def _record_pnl(self, handle: OCOHandle, *, exit_price: float) -> None:
+        if self._runtime_state is None or self._multiplier <= 0.0:
+            return
+        sign = 1.0 if handle.direction == "long" else -1.0
+        pnl = (
+            (exit_price - handle.entry_price)
+            * sign
+            * handle.quantity
+            * self._multiplier
         )
+        await self._runtime_state.record_trade(pnl_krw=pnl)
+        if pnl < 0:
+            await self._runtime_state.record_loss()
+        else:
+            await self._runtime_state.record_win()
 
     @property
     def active_handles(self) -> list[OCOHandle]:

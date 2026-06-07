@@ -144,7 +144,7 @@ class KISFuturesAdapter:
     async def await_fill(
         self,
         order_id: str,
-        timeout_seconds: int,  # noqa: ARG002 — honored by executor internally
+        timeout_seconds: float,  # noqa: ARG002 — honored by executor internally
     ) -> Fill | None:
         """Return the stashed fill (or None if missed). ``timeout_seconds``
         is honored by ``_send_kis_futures_order`` itself; this method is
