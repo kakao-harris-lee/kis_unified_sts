@@ -233,6 +233,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.strategy_builder_ui
+      args:
+        NEXT_PUBLIC_API_KEY: "${NEXT_PUBLIC_API_KEY:-${DASHBOARD_API_KEY:-}}"
     container_name: ${COMPOSE_PROJECT_NAME:-kis}-strategy-builder-ui
     restart: unless-stopped
     # External access goes through caddy on host port 5080. Port 3100 is
@@ -242,6 +244,7 @@ services:
     environment:
       - KIS_BUILDER_API_BASE=http://dashboard:8001
       - KIS_BUILDER_API_KEY=${DASHBOARD_API_KEY:-}
+      - NEXT_PUBLIC_API_KEY=${NEXT_PUBLIC_API_KEY:-${DASHBOARD_API_KEY:-}}
     depends_on:
       dashboard:
         condition: service_healthy

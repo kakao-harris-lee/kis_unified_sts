@@ -20,14 +20,18 @@ RUN npm install --legacy-peer-deps
 
 # Copy the rest of the source and build
 COPY strategy-builder-ui/ .
-ENV NEXT_TELEMETRY_DISABLED=1
+ARG NEXT_PUBLIC_API_KEY=""
+ENV NEXT_TELEMETRY_DISABLED=1 \
+    NEXT_PUBLIC_API_KEY=${NEXT_PUBLIC_API_KEY}
 RUN npm run build
 
 # Stage 2: runtime
 FROM node:20-slim AS runtime
 WORKDIR /app
+ARG NEXT_PUBLIC_API_KEY=""
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
+    NEXT_PUBLIC_API_KEY=${NEXT_PUBLIC_API_KEY} \
     PORT=3100 \
     HOSTNAME=0.0.0.0 \
     KIS_BUILDER_API_BASE=http://dashboard:8001

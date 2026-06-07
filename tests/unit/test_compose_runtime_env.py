@@ -30,6 +30,7 @@ def test_paper_and_live_env_templates_separate_kis_markets():
     assert paper["TRADING_MODE"] == "paper"
     assert paper["TRADING_LIVE_CONFIRM"] == ""
     assert paper["KIS_TOKEN_CACHE_DIR"] == "/app/.cache"
+    assert paper["NEXT_PUBLIC_API_KEY"] == "CHANGE_ME_PAPER_DASHBOARD_API_KEY"
     assert paper["STOCK_PIPELINE_MODE"] == "shadow"
     assert paper["STOCK_POSITIONS_KEY"] == "stock:daemon:positions"
     assert paper["STOCK_TICK_STREAM"] == "market:ticks"
@@ -50,6 +51,7 @@ def test_paper_and_live_env_templates_separate_kis_markets():
     assert live["TRADING_MODE"] == "live"
     assert live["TRADING_LIVE_CONFIRM"] == ""
     assert live["KIS_TOKEN_CACHE_DIR"] == "/app/.cache"
+    assert live["NEXT_PUBLIC_API_KEY"] == "CHANGE_ME_LIVE_DASHBOARD_API_KEY"
     assert live["STOCK_PIPELINE_MODE"] == "shadow"
     assert live["STOCK_POSITIONS_KEY"] == "stock:daemon:positions"
     assert live["STOCK_TICK_STREAM"] == "market:ticks"
@@ -100,6 +102,22 @@ def test_compose_trader_is_profile_gated_and_uses_runtime_env():
     assert trader_env["TRADING_ASSET_CLASS"] == "${TRADING_ASSET_CLASS:-stock}"
     assert trader_env["TRADING_LIVE_CONFIRM"] == "${TRADING_LIVE_CONFIRM:-}"
     assert trader_env["KIS_TOKEN_CACHE_DIR"] == "${KIS_TOKEN_CACHE_DIR:-/app/.cache}"
+
+
+def test_strategy_builder_ui_receives_dashboard_public_api_key():
+    compose = yaml.safe_load(
+        (_REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    )
+    service = compose["services"]["strategy-builder-ui"]
+
+    assert (
+        service["build"]["args"]["NEXT_PUBLIC_API_KEY"]
+        == "${NEXT_PUBLIC_API_KEY:-${DASHBOARD_API_KEY:-}}"
+    )
+    assert (
+        "NEXT_PUBLIC_API_KEY=${NEXT_PUBLIC_API_KEY:-${DASHBOARD_API_KEY:-}}"
+        in service["environment"]
+    )
 
 
 def test_stock_pipeline_compose_services_are_profile_gated():
