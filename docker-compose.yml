@@ -224,6 +224,79 @@ services:
       TRADING_STATE_KEY_SUFFIX: "${STOCK_TRADING_STATE_KEY_SUFFIX:-}"
 
   # =============================================================================
+  # Futures decoupled pipeline daemons (Compose-managed, DORMANT by default).
+  # Profile-gated: nothing starts unless a futures-* profile is passed to
+  # `docker compose up`. Modes default to the SAFE end (shadow / paper). Cutover
+  # is operator-gated (Phase-5 Gate 1-3 + written approval) — see
+  # docs/runbooks/futures-pipeline-cutover-f9.md. Double-trade guard: set
+  # FUTURES_ORCHESTRATOR_ENABLED=false on trader-futures at cutover.
+  #
+  #   Shadow run (reuses trader-futures' raw_data; NO ingest):
+  #     docker compose --profile futures-pipeline up -d \
+  #       futures-decision-engine futures-risk-filter futures-order-router futures-monitor
+  #   Cutover (live): also bring up futures-ingest + futures-killswitch and set
+  #     FUTURES_PIPELINE_MODE=live FUTURES_ORDER_ROUTER_MODE=live.
+  # =============================================================================
+  futures-market-ingest:
+    <<: *pipeline-service
+    container_name: ${COMPOSE_PROJECT_NAME:-kis}-futures-market-ingest
+    profiles: ["futures-ingest"]
+    command: ["python", "-m", "services.market_ingest.main"]
+    environment:
+      <<: [*redis-runtime-env, *runtime-storage-env, *kis-runtime-env]
+      INGEST_ASSET: "futures"
+      INGEST_REFRESH_SECONDS: "${FUTURES_INGEST_REFRESH_SECONDS:-3600}"
+
+  futures-decision-engine:
+    <<: *pipeline-service
+    container_name: ${COMPOSE_PROJECT_NAME:-kis}-futures-decision-engine
+    profiles: ["futures-pipeline"]
+    command: ["python", "-m", "services.decision_engine.main"]
+    environment:
+      <<: [*redis-runtime-env, *runtime-storage-env]
+      FUTURES_STRATEGY_DAEMON: "${FUTURES_PIPELINE_MODE:-shadow}"
+      FUTURES_STRATEGY_SYMBOL: "${FUTURES_STRATEGY_SYMBOL:-}"
+      FUTURES_TICK_STREAM: "${FUTURES_TICK_STREAM:-raw_data}"
+
+  futures-risk-filter:
+    <<: *pipeline-service
+    container_name: ${COMPOSE_PROJECT_NAME:-kis}-futures-risk-filter
+    profiles: ["futures-pipeline"]
+    command: ["python", "-m", "services.risk_filter.main"]
+    environment:
+      <<: [*redis-runtime-env, *runtime-storage-env]
+      FUTURES_RISK_FILTER: "${FUTURES_PIPELINE_MODE:-shadow}"
+
+  futures-order-router:
+    <<: *pipeline-service
+    container_name: ${COMPOSE_PROJECT_NAME:-kis}-futures-order-router
+    profiles: ["futures-pipeline"]
+    command: ["python", "-m", "services.order_router.main"]
+    environment:
+      <<: [*redis-runtime-env, *runtime-storage-env, *kis-runtime-env]
+      FUTURES_ORDER_ROUTER: "${FUTURES_ORDER_ROUTER_MODE:-paper}"
+
+  futures-monitor:
+    <<: *pipeline-service
+    container_name: ${COMPOSE_PROJECT_NAME:-kis}-futures-monitor
+    profiles: ["futures-pipeline"]
+    command: ["python", "-m", "services.futures_monitor.main"]
+    environment:
+      <<: [*redis-runtime-env, *runtime-storage-env, *alert-runtime-env]
+      FUTURES_MONITOR_DAEMON: "${FUTURES_PIPELINE_MODE:-shadow}"
+      FUTURES_MONITOR_STATUS_INTERVAL: "${FUTURES_MONITOR_STATUS_INTERVAL:-5}"
+      FUTURES_TICK_STREAM: "${FUTURES_TICK_STREAM:-raw_data}"
+
+  futures-kill-switch:
+    <<: *pipeline-service
+    container_name: ${COMPOSE_PROJECT_NAME:-kis}-futures-kill-switch
+    profiles: ["futures-killswitch"]
+    command: ["python", "-m", "services.kill_switch.main"]
+    environment:
+      <<: [*redis-runtime-env, *runtime-storage-env, *alert-runtime-env]
+      KIS_FUTURES_EQUITY_KRW: "${KIS_FUTURES_EQUITY_KRW:-100000000}"
+
+  # =============================================================================
   # 대시보드 API
   # =============================================================================
   dashboard:
