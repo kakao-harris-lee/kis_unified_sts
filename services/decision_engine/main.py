@@ -1,9 +1,10 @@
-"""Decision-engine daemon — Setup A/C → stream:signal.candidate.
+"""Decision-engine daemon — Setup A/C → signal.candidate.futures.
 
 Phase 4 Task 10. Polls a context provider on a fixed cadence (default
 ~1 minute), runs each registered :class:`Setup` (A_gap_reversion,
 C_event_reaction) against the snapshot, and publishes any emitted
-:class:`Signal` to ``stream:signal.candidate`` for the risk_filter daemon
+:class:`Signal` to ``signal.candidate.futures`` (live) /
+``signal.candidate.futures.shadow`` (shadow) for the risk_filter daemon
 (Task 11) to consume.
 
 The ``context_provider`` is an injected async callable returning either a
@@ -125,13 +126,14 @@ def _resolve_mode() -> str:
 def _candidate_stream_for(mode: str) -> str:
     """Map a mode string to the Redis stream name for signal candidates.
 
-    shadow → isolated shadow stream (not consumed by risk_filter); any other
-    value (off / live) → the real candidate stream.
+    shadow → isolated shadow stream; any other value (off / live) → the live
+    candidate stream. Bases mirror the stock chain (F-1): asset-infixed, with a
+    `.shadow` suffix for the shadow form.
     """
     return (
         "signal.candidate.futures.shadow"
         if mode == "shadow"
-        else "stream:signal.candidate"
+        else "signal.candidate.futures"
     )
 
 
@@ -225,10 +227,10 @@ async def _build_and_run() -> int:
     """Production entrypoint — flag-gated (FUTURES_STRATEGY_DAEMON=off|shadow).
 
     off / unset: inert stub (context_provider returns None, no signals emitted).
-                 Candidate stream: stream:signal.candidate (real, inert).
+                 Candidate stream: signal.candidate.futures (live base, inert).
     shadow:      real context_provider wired to StreamConsumerFeed(raw_data) +
                  FuturesContextProvider.  Candidate stream:
-                 signal.candidate.futures.shadow (not consumed by risk_filter).
+                 signal.candidate.futures.shadow (consumed by risk_filter shadow).
     """
     import os
     import signal as signal_mod

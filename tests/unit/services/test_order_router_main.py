@@ -8,7 +8,12 @@ from unittest.mock import AsyncMock
 import fakeredis.aioredis
 import pytest
 
-from services.order_router.main import OrderRouterDaemon, _resolve_mode
+from services.order_router.main import (
+    OrderRouterDaemon,
+    _fill_stream_for,
+    _final_stream_for,
+    _resolve_mode,
+)
 from shared.decision.signal import Signal
 from shared.execution.contract_spec import ContractSpec
 from shared.execution.passive_maker import Fill
@@ -609,6 +614,25 @@ def test_seconds_until_next_kst_midnight_caps_at_24h():
 
     utc_ts = datetime(2026, 5, 1, 0, 0, tzinfo=UTC)
     assert _seconds_until_next_kst_midnight(utc_ts) <= 86_400
+
+
+def test_final_stream_for_paper_and_live(monkeypatch) -> None:
+    monkeypatch.delenv("FUTURES_FINAL_STREAM", raising=False)
+    assert _final_stream_for("paper") == "signal.final.futures.shadow"
+    assert _final_stream_for("live") == "signal.final.futures"
+
+
+def test_fill_stream_for_paper_and_live(monkeypatch) -> None:
+    monkeypatch.delenv("FUTURES_FILL_STREAM", raising=False)
+    assert _fill_stream_for("paper") == "order.fill.futures.shadow"
+    assert _fill_stream_for("live") == "order.fill.futures"
+
+
+def test_stream_helpers_env_override(monkeypatch) -> None:
+    monkeypatch.setenv("FUTURES_FINAL_STREAM", "custom.final")
+    monkeypatch.setenv("FUTURES_FILL_STREAM", "custom.fill")
+    assert _final_stream_for("paper") == "custom.final"
+    assert _fill_stream_for("live") == "custom.fill"
 
 
 def test_resolve_mode_defaults_off(monkeypatch) -> None:

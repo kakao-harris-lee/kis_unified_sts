@@ -1,10 +1,10 @@
 """Order-router consumer-group daemon.
 
 Phase 4 Task 12 — reads filtered :class:`Signal`s from
-``stream:signal.final``, places passive limit entries via
-:class:`PassiveMaker`, and on fill registers a stop+target bracket via
-:class:`PseudoOCO`. Fills are logged through :class:`FillLogger` (already
-wired into PassiveMaker).
+``signal.final.futures`` (live) / ``signal.final.futures.shadow`` (paper),
+places passive limit entries via :class:`PassiveMaker`, and on fill registers
+a stop+target bracket via :class:`PseudoOCO`. Fills are logged through
+:class:`FillLogger` to ``order.fill.futures`` / ``order.fill.futures.shadow``.
 
 This is the only daemon that holds wallet authority — every other Phase 4
 component reads/audits, but the order_router places real orders. The
@@ -304,6 +304,26 @@ def _resolve_mode() -> str:
     return mode if mode in ("paper", "live") else "off"
 
 
+def _final_stream_for(mode: str) -> str:
+    """Final-signal stream the order_router consumes (F-1).
+
+    paper → `.shadow` isolated stream (forms the shadow pipeline with
+    risk_filter shadow); live → unsuffixed. Env-overridable.
+    """
+    import os
+
+    base = "signal.final.futures.shadow" if mode == "paper" else "signal.final.futures"
+    return os.getenv("FUTURES_FINAL_STREAM", base)
+
+
+def _fill_stream_for(mode: str) -> str:
+    """Fill stream FillLogger writes (F-1). paper → `.shadow`; live → unsuffixed."""
+    import os
+
+    base = "order.fill.futures.shadow" if mode == "paper" else "order.fill.futures"
+    return os.getenv("FUTURES_FILL_STREAM", base)
+
+
 async def _build_and_run() -> int:
     """Production entrypoint — wires KIS adapter + PassiveMaker + PseudoOCO.
 
@@ -365,7 +385,7 @@ async def _build_and_run() -> int:
     fill_logger = FillLogger(
         redis=redis_client,
         archive_client=None,
-        stream="stream:order.fill",
+        stream=_fill_stream_for(mode),
         maxlen=phase4_config.final_stream_maxlen,
         batch_size=10,
         runtime_ledger=runtime_ledger,
@@ -412,7 +432,7 @@ async def _build_and_run() -> int:
         passive_maker=passive_maker,
         pseudo_oco=pseudo_oco,
         contract_spec=spec,
-        final_stream="stream:signal.final",
+        final_stream=_final_stream_for(mode),
         consumer_group="order_router",
         worker_id=worker_id,
         xread_block_ms=phase4_config.xread_block_ms,

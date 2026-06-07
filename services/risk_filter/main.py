@@ -1,16 +1,16 @@
 """Risk-filter consumer-group daemon.
 
 Phase 4 Task 11 — reads :class:`Signal` candidates from
-``stream:signal.candidate``, runs the :class:`RiskFilterLayer`, persists
+``signal.candidate.futures``, runs the :class:`RiskFilterLayer`, persists
 every (signal, layer_result) pair to ``kospi.signals_all`` (Phase 3
-audit), and on pass forwards the enriched signal to ``stream:signal.final``
+audit), and on pass forwards the enriched signal to ``signal.final.futures``
 where the order_router daemon (Task 12) consumes it.
 
 Error taxonomy (mirrors services.news_scorer.main):
 - Parse error → XACK (poison-pill drop)
 - Filter evaluation raises → NO XACK (leave pending)
 - ``signals_all`` flush raises → NO XACK
-- ``stream:signal.final`` XADD raises → NO XACK
+- ``signal.final.futures`` XADD raises → NO XACK
 """
 
 from __future__ import annotations
@@ -30,6 +30,35 @@ from shared.streaming.stage import StreamStage
 logger = logging.getLogger(__name__)
 
 _STREAM_TTL_SECONDS = 86400
+
+
+def _resolve_mode() -> str:
+    """risk_filter mode: off (default, inert) | shadow | live."""
+    import os
+
+    mode = os.getenv("FUTURES_RISK_FILTER", "off").strip().lower()
+    return mode if mode in ("shadow", "live") else "off"
+
+
+def _streams_for(mode: str) -> tuple[str, str]:
+    """Return (candidate, final) stream names for the mode (F-1).
+
+    shadow → `.shadow`-suffixed isolated streams; live → unsuffixed. Both are
+    env-overridable (FUTURES_CANDIDATE_STREAM / FUTURES_FINAL_STREAM), mirroring
+    the stock chain.
+    """
+    import os
+
+    if mode == "shadow":
+        candidate = "signal.candidate.futures.shadow"
+        final = "signal.final.futures.shadow"
+    else:  # live
+        candidate = "signal.candidate.futures"
+        final = "signal.final.futures"
+    return (
+        os.getenv("FUTURES_CANDIDATE_STREAM", candidate),
+        os.getenv("FUTURES_FINAL_STREAM", final),
+    )
 
 
 def _signal_from_stream_fields(fields: dict[bytes, bytes]) -> tuple[str, Signal]:
@@ -174,10 +203,20 @@ async def _build_and_run() -> int:
     redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/1")
     redis_client = aioredis.from_url(redis_url)
 
+    mode = _resolve_mode()
+    if mode not in ("shadow", "live"):
+        logger.info("FUTURES_RISK_FILTER=%s (off) — risk_filter inert, exiting", mode)
+        await redis_client.aclose()
+        return 0
+    candidate_stream, final_stream = _streams_for(mode)
+    risk_state_suffix = "shadow" if mode == "shadow" else ""
+
     risk_config = FuturesRiskConfig.from_yaml()
     trading_windows = load_trading_windows()
     layer = RiskFilterLayer.from_config(risk_config, trading_windows)
-    runtime_state = RuntimeRiskState(redis=redis_client, asset_class="futures")
+    runtime_state = RuntimeRiskState(
+        redis=redis_client, asset_class="futures", key_suffix=risk_state_suffix
+    )
     signals_writer = SignalsAllWriter(archive_client=None, batch_size=10)
 
     worker_id = f"risk-filter-{socket.gethostname()}-{os.getpid()}"
@@ -186,8 +225,8 @@ async def _build_and_run() -> int:
         layer=layer,
         signals_writer=signals_writer,
         runtime_state=runtime_state,
-        candidate_stream="stream:signal.candidate",
-        final_stream="stream:signal.final",
+        candidate_stream=candidate_stream,
+        final_stream=final_stream,
         consumer_group="risk_filter",
         worker_id=worker_id,
         final_maxlen=10_000,

@@ -14,4 +14,5 @@ def test_resolve_candidate_stream_shadow(monkeypatch):
     monkeypatch.setenv("FUTURES_STRATEGY_DAEMON", "shadow")
     assert dem._resolve_mode() == "shadow"
     assert dem._candidate_stream_for("shadow") == "signal.candidate.futures.shadow"
-    assert dem._candidate_stream_for("off") == "stream:signal.candidate"
+    assert dem._candidate_stream_for("off") == "signal.candidate.futures"
+    assert dem._candidate_stream_for("live") == "signal.candidate.futures"

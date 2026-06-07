@@ -6,12 +6,17 @@ from unittest.mock import AsyncMock
 import fakeredis.aioredis
 import pytest
 
-from services.risk_filter.main import RiskFilterDaemon, _signal_from_stream_fields
+from services.risk_filter.main import (
+    RiskFilterDaemon,
+    _resolve_mode,
+    _signal_from_stream_fields,
+    _streams_for,
+)
 from shared.decision.signal import Signal
 from shared.risk.layer import LayerResult, RiskFilterLayer
 
-CANDIDATE_STREAM = "stream:signal.candidate"
-FINAL_STREAM = "stream:signal.final"
+CANDIDATE_STREAM = "signal.candidate.futures"
+FINAL_STREAM = "signal.final.futures"
 GROUP = "risk_filter"
 
 
@@ -223,3 +228,39 @@ def test_signal_from_stream_fields_round_trip():
     assert parsed.direction == "short"
     assert parsed.entry_price == 331.20
     assert parsed.confidence == 0.85
+
+
+def test_resolve_mode_defaults_off(monkeypatch) -> None:
+    monkeypatch.delenv("FUTURES_RISK_FILTER", raising=False)
+    assert _resolve_mode() == "off"
+
+
+def test_resolve_mode_shadow_and_live(monkeypatch) -> None:
+    monkeypatch.setenv("FUTURES_RISK_FILTER", "shadow")
+    assert _resolve_mode() == "shadow"
+    monkeypatch.setenv("FUTURES_RISK_FILTER", "LIVE")
+    assert _resolve_mode() == "live"
+
+
+def test_resolve_mode_unknown_falls_through_to_off(monkeypatch) -> None:
+    monkeypatch.setenv("FUTURES_RISK_FILTER", "garbage")
+    assert _resolve_mode() == "off"
+
+
+def test_streams_for_shadow_and_live(monkeypatch) -> None:
+    monkeypatch.delenv("FUTURES_CANDIDATE_STREAM", raising=False)
+    monkeypatch.delenv("FUTURES_FINAL_STREAM", raising=False)
+    assert _streams_for("shadow") == (
+        "signal.candidate.futures.shadow",
+        "signal.final.futures.shadow",
+    )
+    assert _streams_for("live") == (
+        "signal.candidate.futures",
+        "signal.final.futures",
+    )
+
+
+def test_streams_for_env_override(monkeypatch) -> None:
+    monkeypatch.setenv("FUTURES_CANDIDATE_STREAM", "custom.candidate")
+    monkeypatch.setenv("FUTURES_FINAL_STREAM", "custom.final")
+    assert _streams_for("live") == ("custom.candidate", "custom.final")
