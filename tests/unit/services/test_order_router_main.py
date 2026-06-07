@@ -16,6 +16,7 @@ from services.order_router.main import (
 )
 from shared.decision.signal import Signal
 from shared.execution.contract_spec import ContractSpec
+from shared.execution.fill_logger import FillLogger
 from shared.execution.passive_maker import Fill
 from shared.execution.pseudo_oco import PseudoOCO
 
@@ -655,3 +656,75 @@ def test_resolve_mode_normalizes_case_and_whitespace(monkeypatch) -> None:
 def test_resolve_mode_empty_falls_through_to_off(monkeypatch) -> None:
     monkeypatch.setenv("FUTURES_ORDER_ROUTER", "")
     assert _resolve_mode() == "off"
+
+
+# -----------------------------------------------------------------------------
+# F-6 Task 2 — exit-monitor poll task + paper wiring
+# -----------------------------------------------------------------------------
+
+
+class _FakeFeed:
+    def __init__(self, close: float) -> None:
+        self._close = close
+
+    async def get_current_price(self, symbol: str) -> dict:  # noqa: ARG002
+        return {"close": self._close}
+
+
+@pytest.mark.asyncio
+async def test_exit_monitor_closes_bracket_and_records_pnl(redis):
+    fill_logger = FillLogger(
+        redis=redis, stream="order.fill.futures.shadow", batch_size=1
+    )
+    runtime_state = AsyncMock()
+    pseudo_oco = PseudoOCO(
+        fill_logger=fill_logger,
+        runtime_state=runtime_state,
+        multiplier_krw_per_point=50_000,
+    )
+    # register a long bracket: entry 331.20, stop 330.00
+    await pseudo_oco.register_bracket(
+        signal=_signal("long"),
+        signal_id="s1",
+        fill=Fill(order_id="E1", price=331.20, quantity=1, filled_at_ms=1000),
+    )
+    daemon = OrderRouterDaemon(
+        redis=redis,
+        passive_maker=AsyncMock(),
+        pseudo_oco=pseudo_oco,
+        contract_spec=_spec(),
+        final_stream="signal.final.futures.shadow",
+        consumer_group="order_router",
+        worker_id="w1",
+        xread_block_ms=100,
+        batch_size=1,
+        passive_timeout_seconds=1,
+        locked_symbol="A05603",
+        futures_price_feed=_FakeFeed(close=329.0),  # below the stop → fires
+        exit_poll_interval=0.01,
+    )
+    await daemon.on_startup()
+    await asyncio.sleep(0.05)  # let the monitor poll at least once
+    await daemon.on_shutdown()
+    assert pseudo_oco.active_handles == []  # bracket closed
+    runtime_state.record_trade.assert_awaited()  # PnL recorded
+
+
+@pytest.mark.asyncio
+async def test_no_feed_starts_no_monitor(redis):
+    daemon = OrderRouterDaemon(
+        redis=redis,
+        passive_maker=AsyncMock(),
+        pseudo_oco=AsyncMock(),
+        contract_spec=_spec(),
+        final_stream="signal.final.futures",
+        consumer_group="order_router",
+        worker_id="w1",
+        xread_block_ms=100,
+        batch_size=1,
+        passive_timeout_seconds=1,
+        locked_symbol="A05603",
+    )
+    await daemon.on_startup()
+    assert daemon._exit_task is None
+    await daemon.on_shutdown()  # no-op, must not raise

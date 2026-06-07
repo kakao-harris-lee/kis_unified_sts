@@ -31,6 +31,7 @@ Error taxonomy:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from datetime import UTC, datetime, timedelta, timezone
 from datetime import time as dt_time
@@ -110,6 +111,8 @@ class OrderRouterDaemon(StreamStage):
         kill_switch_sentinel_path: str | None = None,
         live_mode_guard: LiveModeGuard | None = None,
         locked_symbol: str | None = None,
+        futures_price_feed: Any = None,
+        exit_poll_interval: float = 1.0,
     ) -> None:
         super().__init__(
             redis=redis,
@@ -130,6 +133,10 @@ class OrderRouterDaemon(StreamStage):
         )
         self.live_mode_guard = live_mode_guard
         self.locked_symbol = locked_symbol
+        self.futures_price_feed = futures_price_feed
+        self.exit_poll_interval = exit_poll_interval
+        self._exit_task: asyncio.Task[None] | None = None
+        self.exits_fired_count: int = 0
         self.refused_due_to_sentinel: bool = False
         self.live_suspended_count: int = 0
         # Phase 5 Gate-3 cap counters (observability + tests)
@@ -151,6 +158,53 @@ class OrderRouterDaemon(StreamStage):
                 self.sentinel_path,
             )
             self._stop.set()  # prevent the consume loop from running any iteration
+        if self.futures_price_feed is not None and not self.refused_due_to_sentinel:
+            self._exit_task = asyncio.create_task(self._exit_monitor_loop())
+
+    async def on_shutdown(self) -> None:
+        if self._exit_task is not None:
+            self._exit_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._exit_task
+            self._exit_task = None
+
+    async def _exit_monitor_loop(self) -> None:
+        """Poll the live feed and drive PseudoOCO stop/target/expiry closes.
+
+        KIS server-side OCO is restricted, so brackets are monitored client-
+        side here. Paper closes are synthetic; live closes place real orders
+        via the PseudoOCO close_executor. Resilient: a bad iteration is logged
+        and retried so the consume loop and feed stay alive.
+        """
+        symbol = self.locked_symbol
+        if symbol is None:
+            logger.warning("exit-monitor: no locked_symbol — not polling")
+            return
+        while not self._stop.is_set():
+            try:
+                price = await self.futures_price_feed.get_current_price(symbol)
+                close = price.get("close") if price else None
+                now_ms = int(datetime.now(UTC).timestamp() * 1000)
+                if close is not None:
+                    fired = await self.pseudo_oco.on_tick(
+                        symbol=symbol,
+                        price=float(close),
+                        now_ms=now_ms,
+                    )
+                    self.exits_fired_count += len(fired)
+                expired = await self.pseudo_oco.check_expiry(
+                    now_ms=now_ms,
+                    market_price=float(close) if close is not None else None,
+                )
+                self.exits_fired_count += len(expired)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("exit-monitor iteration failed; continuing")
+            try:
+                await asyncio.sleep(self.exit_poll_interval)
+            except asyncio.CancelledError:
+                raise
 
     async def pre_iteration_gate(self) -> bool:
         # Per-iteration guard: a mid-session trip must drain pre-trip messages
@@ -355,6 +409,7 @@ async def _build_and_run() -> int:
     from shared.execution.pseudo_oco import PseudoOCO
     from shared.kis.auth import KISAuthConfig
     from shared.kis.futures_feed import KISFuturesPriceFeed
+    from shared.risk.runtime_state import RuntimeRiskState
     from shared.storage import SQLiteRuntimeLedger
     from shared.storage.config import StorageConfig
 
@@ -410,6 +465,11 @@ async def _build_and_run() -> int:
 
         kis_adapter: Any = PaperKISFuturesAdapter(futures_price_feed=futures_feed)
         guard_for_daemon = None  # paper places no real orders
+        exit_runtime_state: Any = RuntimeRiskState(
+            redis=redis_client, asset_class="futures", key_suffix="shadow"
+        )
+        exit_close_executor: Any = None  # paper: synthetic fills, no real orders
+        exit_feed: Any = futures_feed
         logger.info(
             "order_router PAPER mode — real orderbook, simulated fills, no real orders"
         )
@@ -422,9 +482,18 @@ async def _build_and_run() -> int:
             futures_price_feed=futures_feed,
         )
         guard_for_daemon = live_guard
+        # Live exit-monitor wiring is added in F-6 Task 3 (LiveExitExecutor).
+        exit_runtime_state = None
+        exit_close_executor = None
+        exit_feed = None
 
     passive_maker = PassiveMaker(kis_client=kis_adapter, fill_logger=fill_logger)
-    pseudo_oco = PseudoOCO(fill_logger=fill_logger)
+    pseudo_oco = PseudoOCO(
+        fill_logger=fill_logger,
+        runtime_state=exit_runtime_state,
+        multiplier_krw_per_point=spec.multiplier_krw_per_point,
+        close_executor=exit_close_executor,
+    )
 
     worker_id = f"order-router-{socket.gethostname()}-{os.getpid()}"
     daemon = OrderRouterDaemon(
@@ -442,6 +511,7 @@ async def _build_and_run() -> int:
         kill_switch_sentinel_path=kill_config.sentinel_path,
         live_mode_guard=guard_for_daemon,
         locked_symbol=symbol,
+        futures_price_feed=exit_feed,
     )
 
     loop = asyncio.get_running_loop()
