@@ -404,6 +404,7 @@ async def _build_and_run() -> int:
     from shared.execution.executor import OrderExecutor
     from shared.execution.fill_logger import FillLogger
     from shared.execution.kis_futures_adapter import KISFuturesAdapter
+    from shared.execution.live_exit_executor import LiveExitExecutor
     from shared.execution.live_mode_guard import LiveModeGuard
     from shared.execution.passive_maker import PassiveMaker
     from shared.execution.pseudo_oco import PseudoOCO
@@ -482,10 +483,12 @@ async def _build_and_run() -> int:
             futures_price_feed=futures_feed,
         )
         guard_for_daemon = live_guard
-        # Live exit-monitor wiring is added in F-6 Task 3 (LiveExitExecutor).
-        exit_runtime_state = None
-        exit_close_executor = None
-        exit_feed = None
+        # Live exit-monitor wiring (F-6 Task 3): real market flatten, guard-blocked.
+        exit_runtime_state = RuntimeRiskState(redis=redis_client, asset_class="futures")
+        exit_close_executor = LiveExitExecutor(
+            kis_client=kis_adapter, live_mode_guard=live_guard, redis=redis_client
+        )
+        exit_feed = futures_feed
 
     passive_maker = PassiveMaker(kis_client=kis_adapter, fill_logger=fill_logger)
     pseudo_oco = PseudoOCO(
