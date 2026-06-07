@@ -93,7 +93,9 @@ async def test_builds_market_context_when_warm():
     assert ctx.macro_overnight.sp500_change_pct == 0.8
     assert ctx.scheduled_events == ev
     # unused fields defaulted, not crashing
-    assert ctx.current_spread_ticks == 0.0
+    assert ctx.current_spread_ticks == 1.0  # F-4 canonical default
+    assert ctx.vwap == ctx.current_price  # F-4: vwap defaults to current_price
+    assert ctx.atr_90th_percentile == ctx.atr_14 * 1.5  # F-4 default
 
 
 @pytest.mark.asyncio

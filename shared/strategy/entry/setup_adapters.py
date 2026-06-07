@@ -76,7 +76,11 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal
 from pydantic import BaseModel, Field
 
 from shared.config.base import ServiceConfigBase
-from shared.decision.context import MarketContext, ScheduledEvent
+from shared.decision.context import (
+    MarketContext,
+    ScheduledEvent,
+    build_market_context,
+)
 from shared.strategy.base import EntryContext, EntrySignalGenerator
 from shared.strategy.gates.adapter_helper import (
     acquire_infra_clients,
@@ -436,17 +440,17 @@ def _build_market_context(context: EntryContext) -> MarketContext | None:
     else:
         macro_overnight = (context.metadata or {}).get("macro_overnight")
 
-    return MarketContext(
+    return build_market_context(
         now=ts_kst,
         symbol=symbol,
         current_price=current_price,
         prev_close=prev_close,
         today_open=today_open,
-        vwap=vwap,
         atr_14=atr_14,
-        atr_90th_percentile=atr_90th,
         last_15min_high=last_15min_high,
         last_15min_low=last_15min_low,
+        vwap=vwap,
+        atr_90th_percentile=atr_90th,
         current_spread_ticks=spread_ticks,
         macro_overnight=macro_overnight,
         scheduled_events=scheduled_events,

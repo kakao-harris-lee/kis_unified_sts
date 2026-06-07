@@ -113,3 +113,49 @@ def load_scheduled_events(path: str) -> list[ScheduledEvent]:
             )
         )
     return events
+
+
+def build_market_context(
+    *,
+    now: datetime,
+    symbol: str,
+    current_price: float,
+    prev_close: float,
+    today_open: float,
+    atr_14: float,
+    last_15min_high: float,
+    last_15min_low: float,
+    vwap: float | None = None,
+    atr_90th_percentile: float | None = None,
+    current_spread_ticks: float | None = None,
+    macro_overnight: object | None = None,
+    scheduled_events: list[ScheduledEvent] | None = None,
+) -> MarketContext:
+    """Assemble a MarketContext with the canonical default policy (F-4).
+
+    Setup A and Setup C read NONE of ``vwap`` / ``atr_90th_percentile`` /
+    ``current_spread_ticks`` (locked by the F-4 invariance test). They are
+    assembled here with shared defaults so the decoupled (decision_engine) and
+    orchestrator (setup_adapters) builders stay consistent: vwap→current_price,
+    atr_90th→atr_14*1.5, spread→1.0. ``current_spread_ticks`` is uncomputable
+    from the OHLCV-only tick stream, so the decoupled path always defaults it.
+    """
+    return MarketContext(
+        now=now,
+        symbol=symbol,
+        current_price=current_price,
+        prev_close=prev_close,
+        today_open=today_open,
+        vwap=vwap if vwap is not None else current_price,
+        atr_14=atr_14,
+        atr_90th_percentile=(
+            atr_90th_percentile if atr_90th_percentile is not None else atr_14 * 1.5
+        ),
+        last_15min_high=last_15min_high,
+        last_15min_low=last_15min_low,
+        current_spread_ticks=(
+            current_spread_ticks if current_spread_ticks is not None else 1.0
+        ),
+        macro_overnight=macro_overnight,
+        scheduled_events=list(scheduled_events) if scheduled_events else [],
+    )
