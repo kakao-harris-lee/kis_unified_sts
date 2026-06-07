@@ -56,7 +56,7 @@ x-trading-runtime-volumes: &trading-runtime-volumes
   - ./data/runtime:/app/data/runtime
   - ./data/market:/app/data/market:ro
 
-x-stock-pipeline-service: &stock-pipeline-service
+x-pipeline-service: &pipeline-service
   build:
     context: .
     dockerfile: Dockerfile
@@ -152,7 +152,7 @@ services:
   # Stock decoupled pipeline daemons (Compose-managed M4/M5)
   # =============================================================================
   stock-market-ingest:
-    <<: *stock-pipeline-service
+    <<: *pipeline-service
     container_name: ${COMPOSE_PROJECT_NAME:-kis}-stock-market-ingest
     profiles: ["stock-ingest"]
     command: ["python", "-m", "services.market_ingest.main"]
@@ -164,7 +164,7 @@ services:
       TRADE_TARGETS_LATEST_KEY: "${TRADE_TARGETS_LATEST_KEY:-system:trade_targets:latest}"
 
   stock-strategy:
-    <<: *stock-pipeline-service
+    <<: *pipeline-service
     container_name: ${COMPOSE_PROJECT_NAME:-kis}-stock-strategy
     profiles: ["stock-pipeline"]
     command: ["python", "-m", "services.stock_strategy.main"]
@@ -176,7 +176,7 @@ services:
       STOCK_MAX_SYMBOLS: "${STOCK_MAX_SYMBOLS:-40}"
 
   stock-risk-filter:
-    <<: *stock-pipeline-service
+    <<: *pipeline-service
     container_name: ${COMPOSE_PROJECT_NAME:-kis}-stock-risk-filter
     profiles: ["stock-pipeline"]
     command: ["python", "-m", "services.stock_risk_filter.main"]
@@ -186,7 +186,7 @@ services:
       STOCK_POSITIONS_KEY: "${STOCK_POSITIONS_KEY:-stock:daemon:positions}"
 
   stock-order-router:
-    <<: *stock-pipeline-service
+    <<: *pipeline-service
     container_name: ${COMPOSE_PROJECT_NAME:-kis}-stock-order-router
     profiles: ["stock-pipeline"]
     command: ["python", "-m", "services.stock_order_router.main"]
@@ -197,7 +197,7 @@ services:
       STOCK_PAPER_SLIPPAGE_RATE: "${STOCK_PAPER_SLIPPAGE_RATE:-0.0001}"
 
   stock-exit:
-    <<: *stock-pipeline-service
+    <<: *pipeline-service
     container_name: ${COMPOSE_PROJECT_NAME:-kis}-stock-exit
     profiles: ["stock-pipeline"]
     command: ["python", "-m", "services.stock_exit.main"]
@@ -210,7 +210,7 @@ services:
       STOCK_PAPER_SLIPPAGE_RATE: "${STOCK_PAPER_SLIPPAGE_RATE:-0.0001}"
 
   stock-monitor:
-    <<: *stock-pipeline-service
+    <<: *pipeline-service
     container_name: ${COMPOSE_PROJECT_NAME:-kis}-stock-monitor
     profiles: ["stock-pipeline"]
     command: ["python", "-m", "services.stock_monitor.main"]
