@@ -4,10 +4,10 @@ Phase 4 Task 18 — wires Group {10-13} daemons together with fakeredis +
 AsyncMock KIS, drives one signal through the full pipeline, and asserts the
 contract at each boundary:
 
-  1. decision_engine emits Signal → stream:signal.candidate
-  2. risk_filter accepts → stream:signal.final
+  1. decision_engine emits Signal → signal.candidate.futures
+  2. risk_filter accepts → signal.final.futures
   3. order_router consumes → PassiveMaker.place_passive_limit_futures
-  4. PassiveMaker fills → FillLogger writes stream:order.fill
+  4. PassiveMaker fills → FillLogger writes order.fill.futures
   5. PseudoOCO bracket registered
 
 Redis state is observed via fakeredis xrange.
@@ -33,9 +33,9 @@ from shared.execution.passive_maker import Fill, PassiveMaker
 from shared.execution.pseudo_oco import PseudoOCO
 from shared.risk.layer import LayerResult, RiskFilterLayer
 
-CANDIDATE = "stream:signal.candidate"
-FINAL = "stream:signal.final"
-ORDER_FILL = "stream:order.fill"
+CANDIDATE = "signal.candidate.futures"
+FINAL = "signal.final.futures"
+ORDER_FILL = "order.fill.futures"
 
 
 def _spec() -> ContractSpec:
