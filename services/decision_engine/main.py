@@ -125,13 +125,14 @@ def _resolve_mode() -> str:
 def _candidate_stream_for(mode: str) -> str:
     """Map a mode string to the Redis stream name for signal candidates.
 
-    shadow → isolated shadow stream (not consumed by risk_filter); any other
-    value (off / live) → the real candidate stream.
+    shadow → isolated shadow stream; any other value (off / live) → the live
+    candidate stream. Bases mirror the stock chain (F-1): asset-infixed, with a
+    `.shadow` suffix for the shadow form.
     """
     return (
         "signal.candidate.futures.shadow"
         if mode == "shadow"
-        else "stream:signal.candidate"
+        else "signal.candidate.futures"
     )
 
 
