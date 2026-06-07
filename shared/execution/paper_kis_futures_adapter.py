@@ -90,16 +90,18 @@ class PaperKISFuturesAdapter:
         order_type: str,  # noqa: ARG002 — part of duck-typed kis_client interface
         price: float | None,
     ) -> str:
+        if price is None:
+            raise ValueError("paper passive order requires a price (limit)")
         order_id = f"PAPER-{uuid4().hex[:12]}"
         self._pending[order_id] = _PaperOrder(
             symbol=symbol,
             side=side,
-            limit=float(price or 0.0),
+            limit=float(price),
             quantity=int(quantity),
         )
         return order_id
 
-    async def await_fill(self, order_id: str, timeout_seconds: int) -> Fill | None:
+    async def await_fill(self, order_id: str, timeout_seconds: float) -> Fill | None:
         order = self._pending.get(order_id)
         if order is None:
             logger.warning("paper await_fill: no pending order %s", order_id)
@@ -112,6 +114,7 @@ class PaperKISFuturesAdapter:
             best_bid = _to_float(snap.get("bid_price_1"))
             best_ask = _to_float(snap.get("ask_price_1"))
             if _passive_filled(order.side, order.limit, last_trade, best_bid, best_ask):
+                self._pending.pop(order_id, None)  # terminal: order is done
                 return Fill(
                     order_id=order_id,
                     price=order.limit,

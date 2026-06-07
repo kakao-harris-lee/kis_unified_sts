@@ -102,3 +102,35 @@ async def test_cancel_order_is_noop_true() -> None:
     )
     assert await adapter.cancel_order(oid) is True
     assert oid not in adapter._pending
+
+
+@pytest.mark.asyncio
+async def test_pending_cleared_after_fill() -> None:
+    feed = _FakeFeed({"bid_price_1": 100.0, "ask_price_1": 100.5}, {"close": 99.0})
+    adapter = PaperKISFuturesAdapter(futures_price_feed=feed, poll_interval=0.01)
+    oid = await adapter.place_futures_order(
+        symbol="A05603", side="long", quantity=1, order_type="limit", price=100.0
+    )
+    fill = await adapter.await_fill(oid, timeout_seconds=1)
+    assert isinstance(fill, Fill)
+    assert oid not in adapter._pending
+
+
+@pytest.mark.asyncio
+async def test_await_fill_short_fills_at_limit() -> None:
+    feed = _FakeFeed({"bid_price_1": 100.0, "ask_price_1": 100.5}, {"close": 101.0})
+    adapter = PaperKISFuturesAdapter(futures_price_feed=feed, poll_interval=0.01)
+    oid = await adapter.place_futures_order(
+        symbol="A05603", side="short", quantity=1, order_type="limit", price=100.5
+    )
+    fill = await adapter.await_fill(oid, timeout_seconds=1)
+    assert isinstance(fill, Fill)
+    assert fill.price == 100.5
+
+
+@pytest.mark.asyncio
+async def test_await_fill_unknown_order_id_returns_none() -> None:
+    adapter = PaperKISFuturesAdapter(
+        futures_price_feed=_FakeFeed({"bid_price_1": 100.0, "ask_price_1": 100.5}, {})
+    )
+    assert await adapter.await_fill("no-such-id", timeout_seconds=1) is None
