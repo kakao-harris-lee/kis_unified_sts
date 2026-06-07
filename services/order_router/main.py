@@ -372,8 +372,10 @@ async def _build_and_run() -> int:
         asset_class="futures",
     )
 
-    # Feed is ALWAYS real: KIS 모의투자 serves no futures realtime feed, so the
-    # real WS is the only orderbook source (paper mode simulates execution, not data).
+    # Feed is ALWAYS real (both paper AND live): KIS 모의투자 serves no futures
+    # realtime feed, so the real WS is the only orderbook source. This drops the
+    # old KIS_FUTURES_MARKET gating on the feed — paper mode simulates execution,
+    # not data; live order placement remains gated by OrderExecutor.config.trading_mode.
     kis_auth = KISAuthConfig(
         app_key=os.environ.get("KIS_FUTURES_APP_KEY", ""),
         app_secret=os.environ.get("KIS_FUTURES_APP_SECRET", ""),
