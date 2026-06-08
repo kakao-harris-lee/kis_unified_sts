@@ -56,13 +56,25 @@ def test_cli_blocks_futures_when_disabled(monkeypatch: pytest.MonkeyPatch) -> No
 def test_cli_allows_futures_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     """Default-true: the guard does NOT block futures (it proceeds past the gate).
 
-    We don't run a full session — just assert the guard's block message is absent.
+    Mock the orchestrator + ``asyncio.run`` so the command returns immediately
+    AFTER the guard instead of starting a real trading session. Without this,
+    when Redis is reachable (as on CI) the orchestrator run loop blocks forever
+    and the test hangs — it only "exited quickly" locally because Redis was
+    unavailable. The key assertion is that the FUTURES guard message never appears.
     """
+    from unittest.mock import MagicMock
+
     monkeypatch.delenv("FUTURES_ORCHESTRATOR_ENABLED", raising=False)
-    # Invoke with an invalid strategy so it exits quickly AFTER the guard; the
-    # key assertion is that the FUTURES guard message never appears.
+    # `trade_start` does `from services.trading.orchestrator import ...` at call
+    # time, so patching the attribute there is picked up by the import.
+    monkeypatch.setattr(
+        "services.trading.orchestrator.TradingOrchestrator", MagicMock()
+    )
+    # Belt-and-suspenders: never enter a real event loop / run loop.
+    monkeypatch.setattr("asyncio.run", lambda *args, **kwargs: None)
+
     result = CliRunner().invoke(
         m.cli,
-        ["trade", "start", "--asset", "futures", "--paper", "--strategy", "__nope__"],
+        ["trade", "start", "--asset", "futures", "--paper", "--strategy", "bb_reversion"],
     )
     assert "the monolithic orchestrator no longer runs futures" not in result.output
