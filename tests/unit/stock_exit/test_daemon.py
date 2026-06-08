@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import fakeredis.aioredis
 import pytest
@@ -12,6 +14,25 @@ from shared.execution.fill_logger import FillLogger
 from shared.paper.broker import VirtualBroker
 from shared.risk.runtime_state import RuntimeRiskState
 from shared.strategy.exit.three_stage import ThreeStageExit, ThreeStageExitConfig
+
+_KST = ZoneInfo("Asia/Seoul")
+
+
+@pytest.fixture(autouse=True)
+def _pin_mid_session(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Freeze the exit strategy clock to mid-session KST.
+
+    ``ThreeStageExit.scan_positions`` reads wall-clock via ``now_kst()`` and the
+    EOD cutoff is bounded by the exchange close (``effective_close_time`` caps any
+    config to 15:30 KST), so a test config of ``eod_close_hour=23`` cannot disable
+    EOD after 15:30 KST. Without this pin the suite fails every afternoon/evening
+    KST when EOD flattens the seeded position. 13:00 KST keeps every cycle in
+    session regardless of when CI runs.
+    """
+    monkeypatch.setattr(
+        "shared.strategy.exit.three_stage.now_kst",
+        lambda: datetime(2025, 6, 9, 13, 0, tzinfo=_KST),
+    )
 
 
 def _seed_record(code: str = "005930", entry: float = 71000.0) -> dict[str, object]:
@@ -119,8 +140,8 @@ async def test_unfilled_sell_does_not_close() -> None:
 @pytest.mark.asyncio
 async def test_high_water_persisted() -> None:
     redis = fakeredis.aioredis.FakeRedis()
-    # Use a late eod_close_hour so EOD check never fires during test runs,
-    # regardless of wall-clock time.
+    # EOD is neutralised by the autouse mid-session clock pin (not by
+    # eod_close_hour — effective_close_time caps it to the 15:30 KST close).
     daemon = StockExitDaemon(
         redis=redis,
         feed=_FakeFeed(),
