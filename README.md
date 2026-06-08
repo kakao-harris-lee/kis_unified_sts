@@ -123,7 +123,7 @@ sts optimize --strategy bb_reversion --asset stock --metric sharpe_ratio --trial
 ├─────────────────────────────────────────────────────────────┤
 │                    Infrastructure                            │
 │  ┌───────────┐  ┌───────────┐  ┌───────────┐  ┌──────────┐│
-│  │ KIS API   │  │ Redis     │  │ ClickHouse│  │ MLflow   ││
+│  │ KIS API   │  │ Redis     │  │ Parquet   │  │ MLflow   ││
 │  └───────────┘  └───────────┘  └───────────┘  └──────────┘│
 └─────────────────────────────────────────────────────────────┘
 ```
