@@ -36,10 +36,26 @@ from `FUTURES_TRADING_STRATEGY` (falls back to the strategy registry default whe
 
 ## Launch (both assets)
 
+**Always pass `--env-file .env.paper`.** Without it, `docker compose` auto-loads the
+repo-root `.env` (the legacy host/dev file: `REDIS_HOST=localhost`,
+`KIS_FUTURES_MARKET=mock`, empty `REDIS_PASSWORD`), which breaks the stack — inside a
+container `localhost` is the container itself, so the Redis connection fails, and the
+futures feed needs `KIS_FUTURES_MARKET=real`. Create the stack env first:
+
 ```bash
-# from the repo root, in the desired stack (e.g. paper)
-docker compose --profile trading up -d trader trader-futures
+cp .env.paper.example .env.paper   # then fill every CHANGE_ME_* secret
 ```
+
+```bash
+# from the repo root — build once, bring up infra, then both trading daemons
+docker compose --env-file .env.paper build
+docker compose --env-file .env.paper up -d \
+  redis dashboard strategy-builder-ui caddy stream-exporter prometheus
+docker compose --env-file .env.paper --profile trading up -d trader trader-futures
+```
+
+> Drop `trader` to run futures-only. The decoupled futures pipeline stays dormant
+> (profile-gated) — see `docs/runbooks/futures-pipeline-cutover-f9.md`.
 
 Both daemons require their orchestrator path enabled (the default):
 
