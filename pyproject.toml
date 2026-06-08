@@ -96,6 +96,7 @@ dev = [
     "pytest-cov>=4.1",
     "pytest-mock>=3.12",
     "pytest-xdist>=3.5",  # Parallel test runs (`pytest -n auto`). Enabled in CI as a parallel pass + serial pass for `serial`-marked tests (#399) — see docs/CI_PARALLEL_NOTES.md.
+    "pytest-timeout>=2.2",  # Per-test wall-clock timeout. CI uses `--timeout --timeout-method=thread` so a hung test (e.g. a blocking Redis read on an empty stream) fails fast and NAMES the test, instead of stalling the whole job for hours.
     "hypothesis>=6.100",  # Property-based testing
     "aioresponses>=0.7.6",  # Mock aiohttp responses
     "fakeredis>=2.23.0",  # Mock Redis
@@ -223,6 +224,10 @@ addopts = "-ra -q --strict-markers"
 testpaths = ["tests"]
 pythonpath = ["."]
 asyncio_mode = "auto"
+# Built-in pytest faulthandler: if any single test runs longer than this, dump
+# the tracebacks of ALL threads to stderr (does not kill the test). Backstop for
+# diagnosing hangs even without pytest-timeout. No legitimate test runs this long.
+faulthandler_timeout = 300
 markers = [
     "unit: Unit tests",
     "integration: Integration tests",
