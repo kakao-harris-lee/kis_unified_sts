@@ -37,6 +37,12 @@ x-kis-runtime-env: &kis-runtime-env
   KIS_STOCK_APP_SECRET: "${KIS_STOCK_APP_SECRET:-}"
   KIS_FUTURES_APP_KEY: "${KIS_FUTURES_APP_KEY:-}"
   KIS_FUTURES_APP_SECRET: "${KIS_FUTURES_APP_SECRET:-}"
+  # Account numbers pair with the app keys — KISClient._resolve_account_no reads
+  # KIS_{STOCK,FUTURES}_ACCOUNT_NO (fallback KIS_ACCOUNT_NO) and warns if absent.
+  KIS_STOCK_ACCOUNT_NO: "${KIS_STOCK_ACCOUNT_NO:-}"
+  KIS_FUTURES_ACCOUNT_NO: "${KIS_FUTURES_ACCOUNT_NO:-}"
+  KIS_ACCOUNT_NO: "${KIS_ACCOUNT_NO:-}"
+  KIS_ACCOUNT_PRODUCT_CODE: "${KIS_ACCOUNT_PRODUCT_CODE:-01}"
   KIS_IS_REAL: "${KIS_IS_REAL:-false}"
   KIS_REAL_TRADING: "${KIS_REAL_TRADING:-false}"
   KIS_MARKET: "${KIS_MARKET:-mock}"
