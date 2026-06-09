@@ -19,7 +19,9 @@ def _make_orchestrator(
     asset_class: str = "stock",
 ) -> TradingOrchestrator:
     orch = TradingOrchestrator.__new__(TradingOrchestrator)
-    orch.config = TradingConfig(asset_class=asset_class, strategy_name="momentum_breakout")
+    orch.config = TradingConfig(
+        asset_class=asset_class, strategy_name="momentum_breakout"
+    )
     orch._entry_reentry_guard = guard or EntryReentryGuardConfig(
         enabled=True,
         scope="symbol_strategy",
@@ -81,9 +83,10 @@ def test_symbol_scope_blocks_other_strategy_reentry() -> None:
 
     orch._record_recent_exit_for_reentry_guard(closed, exit_signal, "stop_loss")
 
-    assert orch._reentry_guard_block(
-        Signal(code="064400", strategy="trend_pullback")
-    ) is not None
+    assert (
+        orch._reentry_guard_block(Signal(code="064400", strategy="trend_pullback"))
+        is not None
+    )
 
 
 def test_expired_reentry_guard_allows_signal_and_prunes_record() -> None:
@@ -102,14 +105,34 @@ def test_expired_reentry_guard_allows_signal_and_prunes_record() -> None:
     assert key not in orch._recent_exit_cooldowns
 
 
-def test_reentry_guard_disabled_for_futures() -> None:
+def test_reentry_guard_applies_to_futures() -> None:
+    # Futures whipsaw (shake-out stop → immediate re-entry) must be guarded too.
     orch = _make_orchestrator(asset_class="futures")
-    closed = SimpleNamespace(code="A05ABC", strategy="williams_r_15m")
-    exit_signal = ExitSignal(code="A05ABC", strategy="williams_r_15m")
+    closed = SimpleNamespace(code="A05ABC", strategy="setup_a_gap_reversion")
+    exit_signal = ExitSignal(
+        code="A05ABC",
+        strategy="setup_a_gap_reversion",
+        reason=ExitReason.STOP_LOSS,
+    )
 
     orch._record_recent_exit_for_reentry_guard(closed, exit_signal, "stop_loss")
 
-    assert orch._recent_exit_cooldowns == {}
-    assert orch._reentry_guard_block(
-        Signal(code="A05ABC", strategy="williams_r_15m")
-    ) is None
+    assert orch._recent_exit_cooldowns != {}
+    block = orch._reentry_guard_block(
+        Signal(code="A05ABC", strategy="setup_a_gap_reversion")
+    )
+    assert block is not None
+    assert block["reason"] == "stop_loss"
+
+
+def test_load_guard_config_applies_futures_override() -> None:
+    # execution.yaml: futures override -> shorter cooldowns than stock.
+    stock = _make_orchestrator(asset_class="stock")
+    futures = _make_orchestrator(asset_class="futures")
+
+    stock_cfg = stock._load_entry_reentry_guard_config()
+    futures_cfg = futures._load_entry_reentry_guard_config()
+
+    assert stock_cfg.cooldown_for("stop_loss") == 3600  # stock: 60 min
+    assert futures_cfg.cooldown_for("stop_loss") == 1800  # futures: 30 min
+    assert futures_cfg.cooldown_for("target_reached") == 600  # futures default 10 min
