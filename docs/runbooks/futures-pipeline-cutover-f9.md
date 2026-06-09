@@ -11,7 +11,28 @@ This runbook is the operator half of F-9. The compose wiring is dormant
 
 Spec: `docs/superpowers/specs/2026-06-08-futures-pipeline-cutover-f9-design.md`
 Stock analogue: `docs/runbooks/stock-pipeline-cutover-m5d.md`
+Host-redis cutover analogue: `docs/runbooks/cron-to-compose-cutover.md`
 Phase-5 gates (HARD prerequisite for live): `docs/runbooks/phase5-verification.md`
+
+## Redis access (paper vs live)
+
+The **paper** stack uses a **single host Redis** — `host.docker.internal:6379`,
+**db 1**, **no password** (established by the 2026-06-09 cron→compose cutover).
+There is **no `kis_paper-redis` container**: compose runs the stack with `--no-deps`
+against host Redis (`.env.paper`: `REDIS_URL=redis://host.docker.internal:6379/1`,
+`REDIS_PASSWORD=` empty). So in **paper**, run Redis commands **directly on the
+host**, not via `docker compose exec redis`:
+
+```bash
+redis-cli -p 6379 -n 1 <cmd>          # paper — host Redis, db 1, no auth
+```
+
+The **live** stack is isolated from paper and its Redis topology differs (separate
+clone/host per `docs/runbooks/paper-live-code-separation.md`). **Confirm the live
+Redis (compose `redis` service vs host port) at the live cutover** and adjust the
+`.env.live` examples below accordingly — the `docker compose --env-file .env.live
+exec -T redis …` form only works if the live stack actually runs a compose `redis`
+service. All commands target **db 1** (CLAUDE.md: Redis DB 1 전용).
 
 ## Compose Profiles
 
@@ -42,8 +63,9 @@ decoupled chain reuses the orchestrator's `raw_data` stream instead.
 
 - `.env.paper` / `.env.live` filled (copy from `.env.paper.example` /
   `.env.live.example`).
-- Core stack up:
-  `docker compose --env-file .env.paper up -d redis dashboard strategy-builder-ui caddy stream-exporter`.
+- Core stack up (paper uses host Redis — do **not** start a compose `redis`):
+  `docker compose --env-file .env.paper up -d dashboard strategy-builder-ui caddy stream-exporter`.
+  (Confirm host Redis is reachable: `redis-cli -p 6379 -n 1 ping` → `PONG`.)
 - `trader-futures` running normally:
   `docker compose --env-file .env.paper --profile trading up -d trader-futures`.
 - `FUTURES_PIPELINE_MODE=shadow` and `FUTURES_ORDER_ROUTER_MODE=paper` in the env
@@ -70,7 +92,7 @@ Each trading day, verify:
 - `risk:state:futures:shadow` populates (PseudoOCO is its only writer).
 - No unbounded backlog on the shadow streams (`signal.candidate.futures.shadow`,
   `signal.final.futures.shadow`, `order.fill.futures.shadow`):
-  `docker compose --env-file .env.paper exec -T redis sh -c 'REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli -n 1 xlen signal.final.futures.shadow'`.
+  `redis-cli -p 6379 -n 1 xlen signal.final.futures.shadow` (paper; host Redis).
 - No restart loop:
   `docker compose --env-file .env.paper ps futures-decision-engine futures-risk-filter futures-order-router futures-monitor`.
 - Sanity: compare shadow decisions with the orchestrator's paper trades for
@@ -97,8 +119,8 @@ Record the date and a one-line shadow validation summary before proceeding.
    ```bash
    python scripts/trading/flatten_all.py --asset futures        # optional
    docker compose --env-file .env.paper --profile trading stop trader-futures
-   docker compose --env-file .env.paper exec -T redis sh -c \
-     'REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli -n 1 del futures:monitor:positions trading:futures:positions risk:state:futures'
+   # paper — host Redis (db 1, no auth). For live, target the live stack's Redis.
+   redis-cli -p 6379 -n 1 del futures:monitor:positions trading:futures:positions risk:state:futures
    ```
 
 2. Block the orchestrator futures path (F-8 double-trade guard). In the env file:
@@ -109,6 +131,13 @@ Record the date and a one-line shadow validation summary before proceeding.
 
    This makes `sts trade start --asset futures` refuse, so `trader-futures` cannot
    re-trade alongside the decoupled chain.
+
+   ⚠️ Keep `trader-futures` **stopped** (from step 1). With the guard `false`, do
+   **not** `up -d trader-futures` — the entrypoint's `sts trade start --asset
+   futures` refuses and exits, and under `restart: unless-stopped` the container
+   would restart-loop (same failure class as the 2026-06-09 after-close loop fixed
+   in #450; see `docs/runbooks/cron-to-compose-cutover.md` appendix). Re-enable +
+   restart it only on rollback.
 
 3. **(live only)** Enable real order placement — **three** independent gates, all
    required (see "Live-path requirements" below for why):
