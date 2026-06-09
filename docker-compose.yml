@@ -103,6 +103,14 @@ services:
     environment:
       <<: [*redis-runtime-env, *runtime-storage-env, *kis-runtime-env, *alert-runtime-env]
       OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      # `sts` is a console script (from cli.main import main); pip install . does not
+      # make /app importable for it, so put the repo root on the path. (stock daemons
+      # use `python -m services.*` which gets /app via cwd, so they don't need this.)
+      PYTHONPATH: "/app"
+      # Korea-only market: run the orchestrator in KST so the market-open/session
+      # window is computed correctly. In UTC the 09:00 open resolves to 18:00 KST
+      # and the loop "waits for market open" all session (CLAUDE.md §5).
+      TZ: "Asia/Seoul"
       TRADING_MODE: "${TRADING_MODE:-paper}"
       TRADING_ASSET_CLASS: "${TRADING_ASSET_CLASS:-stock}"
       TRADING_STRATEGY: "${TRADING_STRATEGY:-}"
@@ -141,6 +149,14 @@ services:
     environment:
       <<: [*redis-runtime-env, *runtime-storage-env, *kis-runtime-env, *alert-runtime-env]
       OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      # `sts` is a console script (from cli.main import main); pip install . does not
+      # make /app importable for it, so put the repo root on the path. (stock daemons
+      # use `python -m services.*` which gets /app via cwd, so they don't need this.)
+      PYTHONPATH: "/app"
+      # Korea-only market: run the orchestrator in KST so the market-open/session
+      # window is computed correctly. In UTC the 09:00 open resolves to 18:00 KST
+      # and the loop "waits for market open" all session (CLAUDE.md §5).
+      TZ: "Asia/Seoul"
       TRADING_MODE: "${TRADING_MODE:-paper}"
       TRADING_ASSET_CLASS: "futures"
       TRADING_STRATEGY: "${FUTURES_TRADING_STRATEGY:-}"
@@ -515,6 +531,10 @@ services:
       dockerfile: Dockerfile.stream_exporter
     container_name: ${COMPOSE_PROJECT_NAME:-kis}-stream-exporter
     restart: unless-stopped
+    # Needs host-gateway so REDIS_HOST=host.docker.internal resolves when the
+    # stack points at a host redis (paper cutover) instead of the compose redis.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     command: ["python", "/app/services/monitoring/stream_exporter.py"]
     ports:
       - "127.0.0.1:${STREAM_EXPORTER_HOST_PORT:-9093}:9093"

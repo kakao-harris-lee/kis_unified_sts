@@ -432,6 +432,16 @@ class KISStockPriceFeed:
     def _on_open(self, _ws):
         logger.info("[StockPriceFeed] Connection opened")
         self._connected.set()
+        # Subscribe any symbols registered before the socket was connected.
+        # update_symbols() may run pre-start() (e.g. market_ingest builds the
+        # universe then start()s); _send_sub() skips sending while disconnected,
+        # so those symbols sit in _subscribed unsent. Flush them now that the
+        # connection is open, mirroring the reconnect re-subscribe path.
+        with self._sub_lock:
+            pending = list(self._subscribed)
+        for sym in pending:
+            self._send_sub(sym)
+            time.sleep(self._subscription_delay)
 
     def _on_message(self, _ws, message: str):
         try:

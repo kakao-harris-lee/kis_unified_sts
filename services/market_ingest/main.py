@@ -162,16 +162,35 @@ async def _build_and_run() -> int:
         redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/1")
         redis_client = aioredis.from_url(redis_url)
         cleanup_redis = redis_client
+        from services.stock_strategy.universe import parse_watchlist_codes
+
         target_key = os.environ.get(
             "TRADE_TARGETS_LATEST_KEY", "system:trade_targets:latest"
         )
+        watchlist_key = os.environ.get(
+            "STOCK_WATCHLIST_KEY", "system:daily_watchlist:latest"
+        )
         max_symbols = int(os.environ.get("INGEST_MAX_SYMBOLS", "40"))
 
-        async def symbol_provider() -> list[str]:
-            raw = await redis_client.get(target_key)
+        async def _get_text(key: str) -> str | None:
+            raw = await redis_client.get(key)
             if isinstance(raw, bytes):
                 raw = raw.decode("utf-8", errors="replace")
-            return _parse_trade_targets(raw, max_symbols)
+            return raw
+
+        async def symbol_provider() -> list[str]:
+            # Tick the UNION of fusion trade_targets and the stock-strategy's
+            # daily-watchlist universe. The two sources read different keys and
+            # can diverge intraday; ticking only trade_targets starves the
+            # strategy of data for watchlist-only symbols (no signals).
+            merged: dict[str, None] = {}
+            for code in _parse_trade_targets(await _get_text(target_key), max_symbols):
+                merged.setdefault(code, None)
+            for code in parse_watchlist_codes(
+                await _get_text(watchlist_key), max_symbols=max_symbols
+            ):
+                merged.setdefault(code, None)
+            return list(merged)[:max_symbols]
 
         refresh_interval = float(os.environ.get("INGEST_REFRESH_SECONDS", "30"))
         restart_on_change = False
