@@ -515,6 +515,10 @@ services:
       dockerfile: Dockerfile.stream_exporter
     container_name: ${COMPOSE_PROJECT_NAME:-kis}-stream-exporter
     restart: unless-stopped
+    # Needs host-gateway so REDIS_HOST=host.docker.internal resolves when the
+    # stack points at a host redis (paper cutover) instead of the compose redis.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     command: ["python", "/app/services/monitoring/stream_exporter.py"]
     ports:
       - "127.0.0.1:${STREAM_EXPORTER_HOST_PORT:-9093}:9093"
