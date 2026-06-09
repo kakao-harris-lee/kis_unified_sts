@@ -49,6 +49,19 @@ def effective_close_time(config_close: time | None = None) -> time:
     return config_close if config_close <= market_close else market_close
 
 
+def is_regular_session_open(dt: datetime | None = None) -> bool:
+    """True during the KRX regular session (trading day + 09:00–close KST).
+
+    Used by always-on producer services (screener / fusion_ranker) to idle
+    outside the session instead of polling KIS continuously — off-hours and on
+    holidays the KIS ranking feed is empty, so producing is pointless.
+    """
+    now = to_kst(dt) if dt is not None else now_kst()
+    if not is_trading_day_kst(now):
+        return False
+    return time(9, 0) <= now.time() <= calendar_close_time()
+
+
 def is_futures_night_session_enabled() -> bool:
     """Read ``config/market_schedule.yaml::futures.night.enabled`` (default False).
 
@@ -70,9 +83,7 @@ def is_futures_night_session_enabled() -> bool:
         return False
     if not isinstance(data, dict):
         return False
-    night = (
-        data.get("market_schedule", {}).get("futures", {}).get("night", {}) or {}
-    )
+    night = data.get("market_schedule", {}).get("futures", {}).get("night", {}) or {}
     if not isinstance(night, dict):
         return False
     return bool(night.get("enabled", False))

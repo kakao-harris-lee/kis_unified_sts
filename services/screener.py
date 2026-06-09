@@ -55,6 +55,7 @@ from shared.kis import KISAuthConfig
 from shared.kis.client import KISClient
 from shared.kis.ranking_client import KISRankingClient
 from shared.scanner.trade_trend_priority import TradeTrendPriorityRanker
+from shared.strategy.market_time import is_regular_session_open
 from shared.streaming.client import RedisClient
 from shared.streaming.publisher import StreamPublisher
 
@@ -152,7 +153,7 @@ class ScreenerConfig(ServiceConfigBase):
     @classmethod
     def from_env(
         cls, env_prefix: str | None = None, **overrides: Any
-    ) -> "ScreenerConfig":
+    ) -> ScreenerConfig:
         """Load configuration from environment variables.
 
         Handles special non-prefixed environment variables:
@@ -624,6 +625,11 @@ async def run_screener(config: ScreenerConfig) -> None:
 
     try:
         while True:
+            if not is_regular_session_open():
+                # Idle outside the KRX regular session — the KIS ranking feed is
+                # empty off-hours, so polling/producing is pointless.
+                await asyncio.sleep(60)
+                continue
             started = time.time()
             try:
                 sources = await ranking.get_all_aggressive_sources(

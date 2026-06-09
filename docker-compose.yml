@@ -354,6 +354,31 @@ services:
       TZ: "Asia/Seoul"
 
   # =============================================================================
+  # Producers — market-hours daemons that feed the trading pipeline
+  # (system:universe / dip_candidates / trade_targets). Self-gate to the KRX
+  # regular session (idle off-hours), so they can run as always-on services.
+  # Profile-gated; cutover off-hours alongside the scheduler (host crons run the
+  # same daemons until then). cron→compose migration PR-C.
+  # =============================================================================
+  screener:
+    <<: *pipeline-service
+    container_name: ${COMPOSE_PROJECT_NAME:-kis}-screener
+    profiles: ["producers"]
+    command: ["python", "-m", "services.screener"]
+    environment:
+      <<: [*redis-runtime-env, *runtime-storage-env, *kis-runtime-env, *alert-runtime-env]
+      TZ: "Asia/Seoul"
+
+  fusion-ranker:
+    <<: *pipeline-service
+    container_name: ${COMPOSE_PROJECT_NAME:-kis}-fusion-ranker
+    profiles: ["producers"]
+    command: ["python", "-m", "services.fusion_ranker"]
+    environment:
+      <<: [*redis-runtime-env, *runtime-storage-env, *kis-runtime-env, *alert-runtime-env]
+      TZ: "Asia/Seoul"
+
+  # =============================================================================
   # 대시보드 API
   # =============================================================================
   dashboard:
