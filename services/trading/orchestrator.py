@@ -1191,7 +1191,14 @@ class TradingOrchestrator:
     def _load_entry_reentry_guard_config(self) -> EntryReentryGuardConfig:
         """Load post-exit re-entry guard config from execution.yaml."""
         try:
-            raw = ConfigLoader.load("execution.yaml").get("entry_reentry_guard", {})
+            raw = dict(
+                ConfigLoader.load("execution.yaml").get("entry_reentry_guard", {})
+            )
+            # Futures use shorter cooldowns than stock (more intraday
+            # re-entry opportunity) — merge the `futures` override block.
+            overrides = raw.pop("futures", None)
+            if self.config.asset_class == "futures" and isinstance(overrides, dict):
+                raw = {**raw, **overrides}
             return EntryReentryGuardConfig.from_dict(raw)
         except (
             InvalidConfigError,
@@ -5866,7 +5873,10 @@ class TradingOrchestrator:
             "_entry_reentry_guard",
             EntryReentryGuardConfig(enabled=False),
         )
-        if not cfg.enabled or self.config.asset_class != "stock":
+        # Applies to stock AND futures. Futures whipsaw (shake-out stop →
+        # immediate re-entry) accumulates round-trip slippage; per-asset
+        # cooldowns come from execution.yaml entry_reentry_guard[.futures].
+        if not cfg.enabled:
             return
 
         cooldown_seconds = cfg.cooldown_for(reason)
@@ -5905,7 +5915,7 @@ class TradingOrchestrator:
             "_entry_reentry_guard",
             EntryReentryGuardConfig(enabled=False),
         )
-        if not cfg.enabled or self.config.asset_class != "stock":
+        if not cfg.enabled:
             return None
 
         recent = getattr(self, "_recent_exit_cooldowns", {})
