@@ -329,6 +329,31 @@ services:
       KIS_FUTURES_EQUITY_KRW: "${KIS_FUTURES_EQUITY_KRW:-100000000}"
 
   # =============================================================================
+  # Scheduler — supercronic runs the one-shot KIS jobs that used to live in the
+  # host crontab (scanners, backfills, briefings, macro, forecasting refit,
+  # verifications). Profile-gated; DO NOT start it while the host crontab still
+  # runs the same jobs (double-execution). Cutover is off-hours after disabling
+  # the host KIS crons — docs/plans/2026-06-09-cron-to-compose-scheduler.md.
+  # Market-hours daemons (screener/fusion) are separate services (PR-C).
+  # =============================================================================
+  scheduler:
+    <<: *pipeline-service
+    container_name: ${COMPOSE_PROJECT_NAME:-kis}-scheduler
+    profiles: ["scheduler"]
+    # tini as PID 1 — supercronic's process reaper fatals ("Failed to fork
+    # exec") when it is PID 1; as a child it reads the crontab fine.
+    init: true
+    command: ["supercronic", "/app/deploy/scheduler.crontab"]
+    environment:
+      <<: [*redis-runtime-env, *runtime-storage-env, *kis-runtime-env, *alert-runtime-env]
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      KRX_API_KEY: "${KRX_API_KEY:-}"
+      DART_API_KEY: "${DART_API_KEY:-}"
+      ECOS_API_KEY: "${ECOS_API_KEY:-}"
+      PYTHONPATH: "/app"
+      TZ: "Asia/Seoul"
+
+  # =============================================================================
   # 대시보드 API
   # =============================================================================
   dashboard:

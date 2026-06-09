@@ -19,6 +19,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
+# supercronic — crontab runner for the `scheduler` compose service (cron→compose
+# migration, docs/plans/2026-06-09-cron-to-compose-scheduler.md). Logs to stdout,
+# honours TZ, no PID-1/docker-socket. Shared into the app image so the scheduler
+# uses the same code + entrypoints. TODO(hardening): pin a sha256.
+ENV SUPERCRONIC_VERSION=v0.2.33
+RUN curl -fsSL "https://github.com/aptible/supercronic/releases/download/${SUPERCRONIC_VERSION}/supercronic-linux-amd64" \
+    -o /usr/local/bin/supercronic \
+    && chmod +x /usr/local/bin/supercronic
+
 # 작업 디렉토리
 WORKDIR /app
 
