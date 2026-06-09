@@ -4198,8 +4198,24 @@ class TradingOrchestrator:
         open_time = schedule.get_open_time(self.config.asset_class)
         close_time = schedule.get_close_time(self.config.asset_class)
 
-        # 장 시작 대기
         open_dt = datetime.combine(today, open_time)
+        close_dt = datetime.combine(today, close_time)
+
+        # 장 마감 후 기동(데몬이 장 종료 뒤 재시작된 경우): 세션을 시작하지 않고 반환.
+        # start()→stop() 경로를 타면 stop()이 _running=False로 설정해 데몬 루프가
+        # 매 사이클 즉시 종료→재시작되는 무한 루프가 된다(장 마감 후 KIS REST/WS
+        # prewarm + 기동 시 LLM 분석을 14초마다 반복 호출 → API 낭비/레이트리밋 위험).
+        # 조기 반환하면 _running 이 유지되어 데몬 루프가 다음 거래일까지 대기한다.
+        if now >= close_dt:
+            logger.info(
+                "Market already closed for today (close %s); skipping session",
+                close_time.strftime("%H:%M"),
+            )
+            self.state = TradingState.IDLE
+            self._publish_status_snapshot()
+            return
+
+        # 장 시작 대기
         if now < open_dt:
             wait_seconds = (open_dt - now).total_seconds()
             logger.info(f"Waiting for market open: {wait_seconds:.0f}s")
@@ -4214,7 +4230,6 @@ class TradingOrchestrator:
         self.session_count += 1
 
         # 장 종료까지 대기
-        close_dt = datetime.combine(today, close_time)
         now = datetime.now()
 
         if now < close_dt:
