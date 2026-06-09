@@ -35,12 +35,15 @@
 10 16 * * 1-5  cd /app && python scripts/analysis/stock_paper_daily_verification.py
 20 16 * * 1-5  cd /app && python -m cli.main stock-backfill daily
 
+# --- accumulation pattern scan (16:10) → system:accumulation:latest ---
+10 16 * * 1-5  cd /app && python scripts/run_accumulation_scan.py
+
 # --- maintenance / weekly ---
 0 4  * * 0  cd /app && python -m scripts.maintenance.rotate_reports
 0 18 * * 0  cd /app && python scripts/analysis/regime_gate_counterfactual.py
 
-# --- TBD (resolve in PR-B; verify entrypoint + whether still wanted) ---
-# 16:00 M-F  phase2_daily_verification   (scripts/cron/phase2_daily_verification.sh)
-# 16:10 M-F  accumulation_scan           (scripts/cron/accumulation_scan.sh — inline)
-# Mon 07:00  counterfactual_weekly       (scripts/cron/counterfactual_weekly.sh)
-# Sun 14:00  forecast_weekly_report      (forecast_vs_rl_comparison.py — RL-stale, likely DROP)
+# --- DROPPED (PR-B): host crons that point at missing/stale scripts — NOT migrated ---
+#   phase2_daily_verification  — scripts/cron/phase2_daily_verification.sh is MISSING (dead cron)
+#   counterfactual_weekly      — scripts/cron/counterfactual_weekly.sh is MISSING (dead cron)
+#   forecast_weekly_report     — forecast_vs_rl_comparison.py is RL-removed/stale
+# PR-D host-cron teardown removes these dead entries from the host crontab.
