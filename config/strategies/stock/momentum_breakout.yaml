@@ -7,7 +7,12 @@ strategy:
   # DISABLED 2026-06-02: 0% win over 6 paper trades (2026-05-12..06-03,
   # -403k KRW, all stop_loss). Re-enable only after Optuna re-tune of entry
   # quality + stop placement for the current regime.
-  enabled: false
+  # RE-ENABLED 2026-06-09 (PAPER OBSERVATION ONLY): intraday surge pilot in the
+  # decoupled stock pipeline. In the daemon's dynamic mode the daily-watchlist
+  # gate is bypassed, so it evaluates the screener trade_targets universe and
+  # enters on intraday breakout+RVOL. Paper/VirtualBroker — no real orders.
+  # Watch win-rate vs the 2026-06 record; re-tune (or re-disable) on the data.
+  enabled: true
   description: "멀티 타임프레임 모멘텀 돌파 전략"
   paper:
     enabled: true
