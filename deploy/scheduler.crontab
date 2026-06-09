@@ -1,0 +1,46 @@
+# KIS scheduler crontab — run by the `scheduler` compose service via supercronic.
+# Times are KST (the service sets TZ=Asia/Seoul; supercronic honours TZ).
+# Replaces the host crontab KIS jobs (cron→compose migration,
+# docs/plans/2026-06-09-cron-to-compose-scheduler.md). One-shot jobs only — the
+# market-hours daemons (screener/fusion) are separate compose services.
+#
+# Entrypoints run from /app (the app image); no host .sh wrappers, no `sts`
+# console-script (PYTHONPATH=/app is set on the service for `-m cli.main`).
+
+# --- pre-market (06:30) ---
+30 6  * * 1-5  cd /app && python scripts/llm_premarket_briefing.py
+30 6  * * 1-5  cd /app && python -m services.macro_overnight_collector.main us
+
+# --- intraday macro (every 15 min) ---
+*/15 * * * 1-5  cd /app && python -m services.macro_overnight_collector.main fx
+
+# --- forecasting refit (07:35) ---
+35 7  * * 1-5  cd /app && python scripts/forecasting/refit_har_rv.py
+
+# --- pre-open scanners (08:30 / 08:50 / 08:58) → daily_watchlist, indicators ---
+30 8  * * 1-5  cd /app && python scripts/run_daily_scanner.py
+50 8  * * 1-5  cd /app && python scripts/daily_indicator_scanner.py
+58 8  * * 1-5  cd /app && python scripts/daily_indicator_scanner.py
+
+# --- intraday LLM refresh (hourly 10:00–15:00) ---
+0 10-15 * * 1-5  cd /app && python -m scripts.analysis.llm_intraday_refresh
+
+# --- market close (15:30 / 15:40) ---
+30 15 * * 1-5  cd /app && python -m scripts.analysis.llm_market_close_briefing
+40 15 * * 1-5  cd /app && python scripts/analysis/publish_equity_snapshot.py
+
+# --- EOD backfill + verification (15:50–16:20) ---
+50 15 * * 1-5  cd /app && python -m cli.main stock-backfill run
+5  16 * * 1-5  cd /app && python -m cli.main backfill run
+10 16 * * 1-5  cd /app && python scripts/analysis/stock_paper_daily_verification.py
+20 16 * * 1-5  cd /app && python -m cli.main stock-backfill daily
+
+# --- maintenance / weekly ---
+0 4  * * 0  cd /app && python -m scripts.maintenance.rotate_reports
+0 18 * * 0  cd /app && python scripts/analysis/regime_gate_counterfactual.py
+
+# --- TBD (resolve in PR-B; verify entrypoint + whether still wanted) ---
+# 16:00 M-F  phase2_daily_verification   (scripts/cron/phase2_daily_verification.sh)
+# 16:10 M-F  accumulation_scan           (scripts/cron/accumulation_scan.sh — inline)
+# Mon 07:00  counterfactual_weekly       (scripts/cron/counterfactual_weekly.sh)
+# Sun 14:00  forecast_weekly_report      (forecast_vs_rl_comparison.py — RL-stale, likely DROP)
