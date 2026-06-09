@@ -149,26 +149,35 @@ async def _build_and_run() -> int:
         indicator_engine=engine,
     )
 
-    # Sync redis for watchlist reads (decode_responses=True so get() → str).
+    # Sync redis for universe reads (decode_responses=True so get() → str).
     sync_redis = RedisClient.get_client()
     watchlist_key = os.environ.get(
         "STOCK_WATCHLIST_KEY", "system:daily_watchlist:latest"
     )
+    trade_targets_key = os.environ.get(
+        "TRADE_TARGETS_LATEST_KEY", "system:trade_targets:latest"
+    )
+    _max_symbols = int(os.environ.get("STOCK_MAX_SYMBOLS", "40"))
+
+    from services.stock_strategy.universe import (
+        merge_screener_universe,
+        parse_watchlist_codes,
+    )
 
     def _watchlist_reader() -> Any:
-        return sync_redis.get(watchlist_key)
-
-    # Seed parquet warmup for any symbol already in the watchlist.
-    initial_raw = _watchlist_reader()
-    if initial_raw:
-        from services.stock_strategy.universe import parse_watchlist_codes
-
-        initial_codes = parse_watchlist_codes(
-            initial_raw,
-            max_symbols=int(os.environ.get("STOCK_MAX_SYMBOLS", "40")),
+        # Universe = daily-watchlist (scanner) ∪ trade_targets (screener) so the
+        # strategy evaluates the screener's ranked candidates, not just the thin
+        # technical watchlist. market-ingest ticks the same union.
+        return merge_screener_universe(
+            sync_redis.get(watchlist_key),
+            sync_redis.get(trade_targets_key),
+            max_symbols=_max_symbols,
         )
-        for sym in initial_codes:
-            warmup_engine_from_parquet(engine, store, sym)
+
+    # Seed parquet warmup for the initial universe.
+    initial_codes = parse_watchlist_codes(_watchlist_reader(), max_symbols=_max_symbols)
+    for sym in initial_codes:
+        warmup_engine_from_parquet(engine, store, sym)
 
     daemon = StockStrategyDaemon(
         redis=redis_client,

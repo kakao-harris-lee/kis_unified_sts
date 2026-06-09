@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import json
 
-from services.stock_strategy.universe import parse_watchlist_codes
+from services.stock_strategy.universe import (
+    merge_screener_universe,
+    parse_trade_targets_codes,
+    parse_watchlist_codes,
+)
 
 
 def test_unions_codes_across_strategies():
@@ -30,3 +34,47 @@ def test_none_or_malformed_returns_empty():
     assert parse_watchlist_codes(None, max_symbols=40) == []
     assert parse_watchlist_codes("not json", max_symbols=40) == []
     assert parse_watchlist_codes(json.dumps({"strategies": {}}), max_symbols=40) == []
+
+
+def test_parse_watchlist_codes_accepts_dict():
+    payload = {"strategies": {"s": ["005930", "000660"]}}
+    assert parse_watchlist_codes(payload, max_symbols=40) == ["005930", "000660"]
+
+
+def test_parse_trade_targets_codes():
+    raw = json.dumps({"codes": ["005930", "000660", "005930"], "names": {}})
+    assert parse_trade_targets_codes(raw, max_symbols=40) == ["005930", "000660"]
+    assert parse_trade_targets_codes(raw, max_symbols=1) == ["005930"]
+    assert parse_trade_targets_codes(None, max_symbols=40) == []
+    assert parse_trade_targets_codes("not json", max_symbols=40) == []
+    assert parse_trade_targets_codes(json.dumps({}), max_symbols=40) == []
+
+
+def test_merge_screener_universe_unions_watchlist_and_targets():
+    wl = json.dumps({"strategies": {"pattern_pullback": ["105560"]}})
+    tt = json.dumps({"codes": ["005930", "000660", "105560"]})
+    merged = merge_screener_universe(wl, tt, max_symbols=40)
+    codes = parse_watchlist_codes(merged, max_symbols=40)
+    # watchlist candidate kept first, then screener targets, de-duped.
+    assert codes[0] == "105560"
+    assert set(codes) == {"105560", "005930", "000660"}
+
+
+def test_merge_screener_universe_handles_empty_sources():
+    # No watchlist, only screener targets.
+    merged = merge_screener_universe(
+        None, json.dumps({"codes": ["005930"]}), max_symbols=40
+    )
+    assert parse_watchlist_codes(merged, max_symbols=40) == ["005930"]
+    # No targets, only watchlist.
+    merged = merge_screener_universe(
+        json.dumps({"strategies": {"s": ["000660"]}}), None, max_symbols=40
+    )
+    assert parse_watchlist_codes(merged, max_symbols=40) == ["000660"]
+    # Both empty -> empty universe.
+    assert (
+        parse_watchlist_codes(
+            merge_screener_universe(None, None, max_symbols=40), max_symbols=40
+        )
+        == []
+    )
