@@ -45,7 +45,11 @@ strategy:
       retrace_max: 0.70          # was 0.55; catches deeper retrace (e.g. 4/22 ret=0.61, 5/6 ret=0.63)
 
       # Exit targets
-      stop_atr_mult: 1.5           # ATR multiplier for hard stop-loss
+      # Widened 2026-06-09 1.5 → 2.5: the tight 1.5×ATR stop got shaken out by
+      # noise in the volatile post-crash recovery (2 of 3 trades = quick
+      # stop_loss; #2's 1.5×ATR stop hit at 1218.3 would have survived at 2.5×).
+      # Trade-off: larger loss per stop, fewer false stops. Revisit via backtest.
+      stop_atr_mult: 2.5           # ATR multiplier for hard stop-loss
       target_gap_fill_ratio: 0.9   # Fraction of the gap to fill as take-profit
 
       # Signal validity
