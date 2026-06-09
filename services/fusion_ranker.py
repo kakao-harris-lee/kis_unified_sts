@@ -25,6 +25,7 @@ if TYPE_CHECKING:
 from shared.config.base import ServiceConfigBase
 from shared.config.loader import ConfigLoader
 from shared.exceptions import InfrastructureError, TradingSystemError
+from shared.strategy.market_time import is_regular_session_open
 from shared.streaming.client import RedisClient
 from shared.streaming.publisher import StreamPublisher
 
@@ -254,11 +255,15 @@ class FusionRanker:
             scores = _normalize_scores_by_rank(codes)
 
         names_raw = payload.get("names", {})
-        names = {
-            str(k): str(v)
-            for k, v in names_raw.items()
-            if isinstance(k, str) and isinstance(v, str)
-        } if isinstance(names_raw, dict) else {}
+        names = (
+            {
+                str(k): str(v)
+                for k, v in names_raw.items()
+                if isinstance(k, str) and isinstance(v, str)
+            }
+            if isinstance(names_raw, dict)
+            else {}
+        )
 
         # Pass through per-symbol metadata from screener (e.g. prev_day_volume)
         metadata_raw = payload.get("metadata", {})
@@ -274,18 +279,26 @@ class FusionRanker:
         self, payload: dict[str, Any]
     ) -> tuple[dict[str, float], dict[str, list[str]], set[str], dict[str, str], str]:
         quality_raw = payload.get("quality", {})
-        quality = {
-            str(k): max(0.0, min(1.0, float(v)))
-            for k, v in quality_raw.items()
-            if isinstance(v, (int, float))
-        } if isinstance(quality_raw, dict) else {}
+        quality = (
+            {
+                str(k): max(0.0, min(1.0, float(v)))
+                for k, v in quality_raw.items()
+                if isinstance(v, (int, float))
+            }
+            if isinstance(quality_raw, dict)
+            else {}
+        )
 
         risk_raw = payload.get("risk_flags", {})
-        risk_flags = {
-            str(k): [str(x) for x in v if str(x)]
-            for k, v in risk_raw.items()
-            if isinstance(v, list)
-        } if isinstance(risk_raw, dict) else {}
+        risk_flags = (
+            {
+                str(k): [str(x) for x in v if str(x)]
+                for k, v in risk_raw.items()
+                if isinstance(v, list)
+            }
+            if isinstance(risk_raw, dict)
+            else {}
+        )
 
         excluded_raw = payload.get("excluded", {})
         excluded = set()
@@ -294,17 +307,23 @@ class FusionRanker:
                 if not isinstance(reasons, list):
                     continue
                 if any(
-                    str(r).startswith(("blacklist:", "keyword:", "preferred_share", "name_keyword:"))
+                    str(r).startswith(
+                        ("blacklist:", "keyword:", "preferred_share", "name_keyword:")
+                    )
                     for r in reasons
                 ):
                     excluded.add(str(code))
 
         names_raw = payload.get("names", {})
-        names = {
-            str(k): str(v)
-            for k, v in names_raw.items()
-            if isinstance(k, str) and isinstance(v, str)
-        } if isinstance(names_raw, dict) else {}
+        names = (
+            {
+                str(k): str(v)
+                for k, v in names_raw.items()
+                if isinstance(k, str) and isinstance(v, str)
+            }
+            if isinstance(names_raw, dict)
+            else {}
+        )
 
         snapshot_id = str(payload.get("snapshot_id", "")).strip()
         return quality, risk_flags, excluded, names, snapshot_id
@@ -453,9 +472,11 @@ class FusionRanker:
                         "llm_effective_quality": round(effective_lq, 6),
                         "llm_confidence": round(llm_confidence, 6),
                         "llm_freshness": round(llm_freshness, 6),
-                        "llm_age_seconds": round(llm_age_seconds, 2)
-                        if llm_age_seconds is not None
-                        else None,
+                        "llm_age_seconds": (
+                            round(llm_age_seconds, 2)
+                            if llm_age_seconds is not None
+                            else None
+                        ),
                         "llm_snapshot_id": llm_snapshot_id,
                         "recency_component": round(rec, 6),
                         "risk_flags": risk_hits,
@@ -479,10 +500,7 @@ class FusionRanker:
         codes = [r[0] for r in rows]
         scores = {r[0]: r[1] for r in rows}
         # Merge screener metadata (e.g. prev_day_volume) under fusion scores
-        metadata = {
-            r[0]: {**realtime_metadata.get(r[0], {}), **r[2]}
-            for r in rows
-        }
+        metadata = {r[0]: {**realtime_metadata.get(r[0], {}), **r[2]} for r in rows}
         names = {c: realtime_names.get(c, llm_names.get(c, "")) for c in codes}
 
         payload = {
@@ -496,9 +514,7 @@ class FusionRanker:
                 "llm_quality_key": self.config.llm_quality_key,
                 "daily_indicators_key": self.config.daily_indicators_key,
                 "daily_indicator_coverage": coverage_stats,
-                "coverage_filtered_count": coverage_stats[
-                    "coverage_filtered_count"
-                ],
+                "coverage_filtered_count": coverage_stats["coverage_filtered_count"],
             },
         }
 
@@ -514,6 +530,10 @@ def run_fusion_ranker(config: FusionRankerConfig) -> None:
 
     try:
         while True:
+            if not is_regular_session_open():
+                # Idle outside the KRX regular session (no fresh ranking inputs).
+                time.sleep(60)
+                continue
             started = time.time()
             try:
                 fusion.run_once()
