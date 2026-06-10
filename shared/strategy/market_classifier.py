@@ -35,6 +35,22 @@ class MarketState(Enum):
     UNKNOWN = "UNKNOWN"
 
 
+# Canonical regime strings treated as bear by entry gates and bear exits
+# (single source — see issue #459). ``classify()`` only produces
+# BEAR_MODERATE/BEAR_STRONG; plain "BEAR" comes from the orchestrator's
+# avg-change warmup fallback (``TradingOrchestrator._classify_market``).
+BEAR_REGIMES: tuple[str, ...] = (
+    "BEAR",
+    MarketState.BEAR_MODERATE.value,
+    MarketState.BEAR_STRONG.value,
+)
+
+
+def is_bear_regime(regime: str | None) -> bool:
+    """Return True when ``regime`` is one of the bear classifications."""
+    return regime in BEAR_REGIMES
+
+
 class MarketClassifier:
     """시장 상태 분류기
 

@@ -25,6 +25,7 @@ from shared.config.mixins import ConfigMixin
 from shared.models.position import Position, PositionSide, PositionState
 from shared.models.signal import ExitReason, ExitSignal
 from shared.strategy.base import ExitContext, ExitSignalGenerator, MarketStateProtocol
+from shared.strategy.market_classifier import is_bear_regime
 from shared.strategy.market_data import get_price_from_snapshot, get_symbol_snapshot
 from shared.strategy.market_time import (
     effective_close_time,
@@ -330,14 +331,10 @@ class MeanReversionExit(ExitSignalGenerator[MeanReversionExitConfig]):
 
     @staticmethod
     def _is_bear_market(market_state: Optional[MarketStateProtocol]) -> bool:
+        """BEAR 시장 여부 체크 (단일 소스: market_classifier.BEAR_REGIMES)"""
         if market_state is None:
             return False
-
-        return market_state.regime in (
-            "BEAR",
-            "BEAR_STRONG",
-            "BEAR_MODERATE",
-        )
+        return is_bear_regime(market_state.regime)
 
     def _create_exit_signal(
         self,
