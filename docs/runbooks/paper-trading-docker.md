@@ -29,6 +29,8 @@ stay isolated (`kis_paper-trader` vs `kis_live-trader`, separate Redis DBs, etc.
 |---------|-------|----------------|-------|
 | `trader` | `${TRADING_ASSET_CLASS:-stock}` (stock) | `${COMPOSE_PROJECT_NAME:-kis}-trader` | stock daemon |
 | `trader-futures` | `futures` (pinned) | `${COMPOSE_PROJECT_NAME:-kis}-trader-futures` | futures daemon |
+| `news-collector` | news/market events | `${COMPOSE_PROJECT_NAME:-kis}-news-collector` | profile `news`, publishes `stream:news.raw` |
+| `news-scorer` | LLM news scoring | `${COMPOSE_PROJECT_NAME:-kis}-news-scorer` | profile `news`, consumes `stream:news.raw`, publishes `stream:news.scored` |
 
 Both share the same `environment` block; `trader-futures` differs only in
 `TRADING_ASSET_CLASS: "futures"` and its `container_name`. `trader-futures` reads its strategy
@@ -52,10 +54,22 @@ docker compose --env-file .env.paper build
 docker compose --env-file .env.paper up -d \
   redis dashboard strategy-builder-ui caddy stream-exporter prometheus
 docker compose --env-file .env.paper --profile trading up -d trader trader-futures
+docker compose --env-file .env.paper --profile news up -d news-collector news-scorer
 ```
 
 > Drop `trader` to run futures-only. The decoupled futures pipeline stays dormant
 > (profile-gated) — see `docs/runbooks/futures-pipeline-cutover-f9.md`.
+
+The same `news` profile is used for the live stack:
+
+```bash
+docker compose --env-file .env.live --profile news up -d news-collector news-scorer
+```
+
+Use stack-specific secrets in `.env.paper` / `.env.live` (`OPENAI_API_KEY`,
+`DART_API_KEY`, `MARKETAUX_API_TOKEN`, `NAVER_SEARCH_CLIENT_ID`,
+`NAVER_SEARCH_CLIENT_SECRET`) so paper and live keep separate Redis volumes,
+consumer state, and API budgets.
 
 Both daemons require their orchestrator path enabled (the default):
 

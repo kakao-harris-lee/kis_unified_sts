@@ -226,9 +226,11 @@ async def test_build_and_run_default_redis_url(monkeypatch: pytest.MonkeyPatch) 
     )
 
     captured_urls: list[str] = []
+    captured_kwargs: list[dict[str, object]] = []
 
     def _capture_url(url: str, **_kw: object) -> AsyncMock:
         captured_urls.append(url)
+        captured_kwargs.append(_kw)
         return AsyncMock()
 
     monkeypatch.setattr("redis.asyncio.from_url", _capture_url)
@@ -251,6 +253,7 @@ async def test_build_and_run_default_redis_url(monkeypatch: pytest.MonkeyPatch) 
     await _build_and_run()
 
     assert captured_urls == ["redis://localhost:6379/1"]
+    assert captured_kwargs == [{"socket_connect_timeout": 5.0, "socket_timeout": 30.0}]
 
 
 # ---------------------------------------------------------------------------

@@ -379,6 +379,39 @@ services:
       TZ: "Asia/Seoul"
 
   # =============================================================================
+  # News / LLM stream pipeline — long-running daemons that used to be systemd
+  # units. Profile-gated to avoid accidental external API / LLM spend; run the
+  # same service definitions in paper and live stacks with stack-specific env:
+  #   docker compose --env-file .env.paper --profile news up -d news-collector news-scorer
+  #   docker compose --env-file .env.live  --profile news up -d news-collector news-scorer
+  # =============================================================================
+  news-collector:
+    <<: *pipeline-service
+    container_name: ${COMPOSE_PROJECT_NAME:-kis}-news-collector
+    profiles: ["news"]
+    command: ["python", "-m", "services.news_collector.main"]
+    environment:
+      <<: [*redis-runtime-env, *runtime-storage-env]
+      PYTHONPATH: "/app"
+      TZ: "Asia/Seoul"
+      DART_API_KEY: "${DART_API_KEY:-}"
+      MARKETAUX_API_TOKEN: "${MARKETAUX_API_TOKEN:-}"
+      NAVER_SEARCH_CLIENT_ID: "${NAVER_SEARCH_CLIENT_ID:-}"
+      NAVER_SEARCH_CLIENT_SECRET: "${NAVER_SEARCH_CLIENT_SECRET:-}"
+
+  news-scorer:
+    <<: *pipeline-service
+    container_name: ${COMPOSE_PROJECT_NAME:-kis}-news-scorer
+    profiles: ["news"]
+    command: ["python", "-m", "services.news_scorer.main"]
+    environment:
+      <<: [*redis-runtime-env, *runtime-storage-env]
+      PYTHONPATH: "/app"
+      TZ: "Asia/Seoul"
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      NEWS_SCORER_CONSUMER_GROUP: "${NEWS_SCORER_CONSUMER_GROUP:-news_scorer-v1}"
+
+  # =============================================================================
   # 대시보드 API
   # =============================================================================
   dashboard:
