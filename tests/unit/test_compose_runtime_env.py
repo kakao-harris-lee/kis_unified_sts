@@ -46,6 +46,12 @@ def test_paper_and_live_env_templates_separate_kis_markets():
     assert paper["FUTURES_ORDER_ROUTER_MODE"] == "paper"
     assert paper["FUTURES_STRATEGY_SYMBOL"] == ""
     assert paper["FUTURES_EXECUTOR_TRADING_MODE"] == "PAPER"
+    assert paper["OPENAI_API_KEY"] == ""
+    assert paper["DART_API_KEY"] == ""
+    assert paper["MARKETAUX_API_TOKEN"] == ""
+    assert paper["NAVER_SEARCH_CLIENT_ID"] == ""
+    assert paper["NAVER_SEARCH_CLIENT_SECRET"] == ""
+    assert paper["NEWS_SCORER_CONSUMER_GROUP"] == "news_scorer-v1"
 
     assert live["COMPOSE_PROJECT_NAME"] == "kis_live"
     assert live["KIS_IS_REAL"] == "true"
@@ -71,6 +77,12 @@ def test_paper_and_live_env_templates_separate_kis_markets():
     assert live["FUTURES_ORDER_ROUTER_MODE"] == "paper"
     assert live["FUTURES_STRATEGY_SYMBOL"] == ""
     assert live["FUTURES_EXECUTOR_TRADING_MODE"] == "PAPER"
+    assert live["OPENAI_API_KEY"] == ""
+    assert live["DART_API_KEY"] == ""
+    assert live["MARKETAUX_API_TOKEN"] == ""
+    assert live["NAVER_SEARCH_CLIENT_ID"] == ""
+    assert live["NAVER_SEARCH_CLIENT_SECRET"] == ""
+    assert live["NEWS_SCORER_CONSUMER_GROUP"] == "news_scorer-v1"
 
 
 def test_compose_trader_passes_kis_market_env_to_trading_runtime():
@@ -189,6 +201,46 @@ def test_stock_pipeline_compose_services_are_profile_gated():
     assert "TELEGRAM_STOCK_CHAT_ID" in services["stock-monitor"]["environment"]
 
 
+def test_news_llm_compose_services_are_profile_gated():
+    compose = yaml.safe_load(
+        (_REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    )
+    services = compose["services"]
+
+    collector = services["news-collector"]
+    collector_env = collector["environment"]
+    assert collector["profiles"] == ["news"]
+    assert collector["command"] == ["python", "-m", "services.news_collector.main"]
+    assert collector["depends_on"]["redis"]["condition"] == "service_healthy"
+    assert collector["container_name"] == "${COMPOSE_PROJECT_NAME:-kis}-news-collector"
+    assert (
+        collector_env["REDIS_URL"]
+        == "${REDIS_URL:-redis://:${REDIS_PASSWORD-changeme}@redis:6379/1}"
+    )
+    assert collector_env["DART_API_KEY"] == "${DART_API_KEY:-}"
+    assert collector_env["MARKETAUX_API_TOKEN"] == "${MARKETAUX_API_TOKEN:-}"
+    assert collector_env["NAVER_SEARCH_CLIENT_ID"] == "${NAVER_SEARCH_CLIENT_ID:-}"
+    assert (
+        collector_env["NAVER_SEARCH_CLIENT_SECRET"] == "${NAVER_SEARCH_CLIENT_SECRET:-}"
+    )
+
+    scorer = services["news-scorer"]
+    scorer_env = scorer["environment"]
+    assert scorer["profiles"] == ["news"]
+    assert scorer["command"] == ["python", "-m", "services.news_scorer.main"]
+    assert scorer["depends_on"]["redis"]["condition"] == "service_healthy"
+    assert scorer["container_name"] == "${COMPOSE_PROJECT_NAME:-kis}-news-scorer"
+    assert (
+        scorer_env["REDIS_URL"]
+        == "${REDIS_URL:-redis://:${REDIS_PASSWORD-changeme}@redis:6379/1}"
+    )
+    assert scorer_env["OPENAI_API_KEY"] == "${OPENAI_API_KEY:-}"
+    assert (
+        scorer_env["NEWS_SCORER_CONSUMER_GROUP"]
+        == "${NEWS_SCORER_CONSUMER_GROUP:-news_scorer-v1}"
+    )
+
+
 def test_futures_pipeline_compose_services_are_profile_gated():
     compose = yaml.safe_load(
         (_REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
@@ -238,9 +290,7 @@ def test_futures_pipeline_compose_services_are_profile_gated():
     assert "KIS_FUTURES_APP_KEY" in order_env
     assert "KIS_FUTURES_APP_SECRET" in order_env
     # Executor real/paper gate (dedicated knob, safe PAPER default).
-    assert (
-        order_env["TRADING_MODE"] == "${FUTURES_EXECUTOR_TRADING_MODE:-PAPER}"
-    )
+    assert order_env["TRADING_MODE"] == "${FUTURES_EXECUTOR_TRADING_MODE:-PAPER}"
 
     # monitor needs futures Telegram (live alerts).
     monitor_env = services["futures-monitor"]["environment"]

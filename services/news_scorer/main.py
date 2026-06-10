@@ -274,10 +274,14 @@ async def _build_and_run() -> int:
     from shared.scoring.fallback import FallbackScorer
     from shared.scoring.llm_scorer import LLMScorer
 
-    cfg = NewsScorerConfig.from_yaml()
+    cfg = NewsScorerConfig.from_yaml(apply_env_overrides=True)
 
     redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/1")
-    redis_client = aioredis.from_url(redis_url)
+    redis_client = aioredis.from_url(
+        redis_url,
+        socket_connect_timeout=5.0,
+        socket_timeout=max(30.0, cfg.xread_block_ms / 1000.0 + 5.0),
+    )
 
     openai_client = AsyncOpenAI(api_key=os.environ[cfg.scorer.api_key_env])
     budget = DailyBudget(
