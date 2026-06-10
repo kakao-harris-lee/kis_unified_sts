@@ -101,6 +101,14 @@ class PositionTrackerConfig:
     batch_size: int = 50  # Number of closed positions to batch before flush
     flush_interval_seconds: float = 5.0  # Max seconds to wait before flush
 
+    # Durable open-position snapshot mirroring. When True, the auto-flush
+    # loop also mirrors all currently-open positions to the runtime ledger
+    # ``position_snapshots`` table every ``flush_interval_seconds`` so that
+    # open positions survive a Redis loss / container recreate and remain
+    # queryable for testing. Idempotent: each position UPSERTs a single row
+    # keyed by ``<asset_class>:<position_id>`` (no duplicate-row spam).
+    snapshot_open_positions: bool = True
+
     # Asset class for this tracker instance (used to guard stock-only paths)
     asset_class: str = ""  # e.g. 'stock', 'futures'
 
@@ -1052,12 +1060,24 @@ class PositionTracker:
         asset_class: str | None = None,
         is_open: bool | None = None,
     ) -> dict[str, Any]:
-        """Build a RuntimeLedger position snapshot payload."""
+        """Build a RuntimeLedger position snapshot payload.
+
+        The ``idempotency_key`` is intentionally stable per position
+        (``<asset_class>:<position_id>``) and independent of open/closed
+        state. This makes repeated open-position snapshots UPSERT a single
+        row (no duplicate-row spam from the periodic auto-flush mirror) and
+        lets the closing snapshot supersede the open row *in place* — it
+        flips ``is_open`` to 0 on the same row, so ``load_open_positions``
+        (which filters ``is_open = 1``) never resurrects a closed position
+        on the next restart.
+        """
+        resolved_asset_class = asset_class or self._position_asset_class()
         open_flag = position.exit_time is None if is_open is None else is_open
         return {
             "id": position.id,
             "position_id": position.id,
-            "asset_class": asset_class or self._position_asset_class(),
+            "idempotency_key": f"{resolved_asset_class}:{position.id}",
+            "asset_class": resolved_asset_class,
             "code": position.code,
             "symbol": position.code,
             "name": position.name,
@@ -2083,11 +2103,21 @@ class PositionTracker:
                     await asyncio.sleep(self.config.flush_interval_seconds)
                     swing_count, futures_count = await self.flush_pending_positions()
 
-                    # Only log if we actually flushed something
-                    if swing_count > 0 or futures_count > 0:
+                    # Mirror currently-open positions to the durable runtime
+                    # ledger so they survive a Redis loss / container recreate.
+                    # Idempotent UPSERT keyed by position id => the
+                    # position_snapshots table always reflects the live set of
+                    # open positions without duplicate-row spam.
+                    snapshot_count = 0
+                    if self.config.snapshot_open_positions:
+                        snapshot_count = await self.save_to_db()
+
+                    # Only log if we actually flushed/mirrored something
+                    if swing_count > 0 or futures_count > 0 or snapshot_count > 0:
                         logger.info(
                             f"Auto-flush triggered: {swing_count} swing positions, "
-                            f"{futures_count} futures trades"
+                            f"{futures_count} futures trades, "
+                            f"{snapshot_count} open snapshots"
                         )
                 except asyncio.CancelledError:
                     logger.info("Auto-flush task cancelled")

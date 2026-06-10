@@ -1640,6 +1640,9 @@ class TradingOrchestrator:
                 database=db_name,
                 batch_size=int(pt_cfg.get("batch_size", 50)),
                 flush_interval_seconds=float(pt_cfg.get("flush_interval_seconds", 5.0)),
+                snapshot_open_positions=bool(
+                    pt_cfg.get("snapshot_open_positions", True)
+                ),
                 asset_class=self.config.asset_class,
                 runtime_ledger_backend=storage_cfg.runtime_storage.backend,
                 runtime_ledger_sqlite_path=storage_cfg.runtime_storage.sqlite.path,
@@ -2088,6 +2091,25 @@ class TradingOrchestrator:
             )
         elif self._position_tracker:
             await self._recover_positions_from_redis()
+            # Durable fallback: recover open positions from the SQLite runtime
+            # ledger as well. Redis is ephemeral (a container recreate or DB
+            # flush loses open positions), but the runtime ledger
+            # position_snapshots table is durable. load_from_db() dedupes
+            # against positions already recovered from Redis (it skips any
+            # position id already tracked), so a position present in BOTH
+            # Redis and SQLite is added only once.
+            try:
+                db_loaded = await self._position_tracker.load_from_db()
+                if db_loaded:
+                    logger.info(
+                        "Recovered %d open position(s) from runtime ledger "
+                        "(durable SQLite fallback)",
+                        db_loaded,
+                    )
+            except (InfrastructureError, OSError, ConnectionError) as e:
+                logger.warning(
+                    "Durable SQLite position recovery failed (continuing): %s", e
+                )
 
         # --- Risk state recovery from Redis ---
         if self._risk_manager:
@@ -2533,12 +2555,22 @@ class TradingOrchestrator:
             strategy = str(strategy or "")
             if self.config.asset_class == "stock":
                 await self._position_tracker.save_stock_trade_to_db(closed)
-                if strategy in self.SWING_STRATEGIES:
-                    await self._position_tracker.save_closed_to_db(closed)
             elif self.config.asset_class == "futures":
                 await self._position_tracker.save_futures_trade_to_db(
                     closed, self.config.asset_class
                 )
+
+            # Supersede the durable open-position snapshot for this position.
+            # The periodic auto-flush mirror (save_to_db) may have written an
+            # is_open=1 row for this position; without an is_open=0 close
+            # snapshot it would be resurrected as open on the next restart.
+            # The close snapshot shares the same idempotency_key, so it flips
+            # the existing row to is_open=0 in place (no new row). This runs
+            # for BOTH stock (all strategies, not just SWING) and futures;
+            # save_closed_to_db is a no-op when exit data is missing or
+            # persistence is disabled.
+            if self.config.asset_class in ("stock", "futures"):
+                await self._position_tracker.save_closed_to_db(closed)
             else:
                 logger.debug(
                     "persist skipped: asset_class=%s strategy=%s",

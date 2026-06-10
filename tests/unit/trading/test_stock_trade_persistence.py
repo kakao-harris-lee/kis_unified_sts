@@ -85,14 +85,19 @@ class TestOrchestratorRouting:
 
         save_stock = AsyncMock(return_value=True)
         save_futures = AsyncMock(return_value=True)
+        save_closed = AsyncMock(return_value=True)
         orch._position_tracker = MagicMock()
         orch._position_tracker.save_stock_trade_to_db = save_stock
         orch._position_tracker.save_futures_trade_to_db = save_futures
+        orch._position_tracker.save_closed_to_db = save_closed
 
         await orch._persist_closed_position(closed, "momentum_breakout")
 
         save_stock.assert_awaited_once_with(closed)
         save_futures.assert_not_awaited()
+        # Durable open-snapshot supersede: stock close also writes an
+        # is_open=0 position snapshot so it is not re-recovered on restart.
+        save_closed.assert_awaited_once_with(closed)
 
     @pytest.mark.asyncio
     async def test_futures_orchestrator_routes_to_futures_trades(self):
@@ -110,11 +115,16 @@ class TestOrchestratorRouting:
 
         save_stock = AsyncMock(return_value=True)
         save_futures = AsyncMock(return_value=True)
+        save_closed = AsyncMock(return_value=True)
         orch._position_tracker = MagicMock()
         orch._position_tracker.save_stock_trade_to_db = save_stock
         orch._position_tracker.save_futures_trade_to_db = save_futures
+        orch._position_tracker.save_closed_to_db = save_closed
 
         await orch._persist_closed_position(closed, "setup_a_gap_reversion")
 
         save_futures.assert_awaited_once()
         save_stock.assert_not_awaited()
+        # Durable open-snapshot supersede: futures close also writes an
+        # is_open=0 position snapshot so it is not re-recovered on restart.
+        save_closed.assert_awaited_once_with(closed)

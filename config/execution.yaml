@@ -23,6 +23,11 @@ stale_position:
 position_tracker:
   batch_size: 50                  # Number of closed positions to batch before flush
   flush_interval_seconds: 5.0     # Max seconds to wait before auto-flush (0 = disabled)
+  # Durably mirror open positions to the SQLite runtime ledger
+  # (position_snapshots) on every auto-flush so open positions survive a
+  # Redis loss / container recreate. Idempotent UPSERT per position id
+  # (no duplicate-row spam). Applies to BOTH stock and futures.
+  snapshot_open_positions: true
 
 # Post-exit re-entry guard — prevents same-symbol churn after a loss/exit signal.
 # This is especially important for stock paper trading where a stop-loss can
