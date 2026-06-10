@@ -33,20 +33,24 @@ from statistics import median
 from typing import Any
 
 from shared.strategy.base import MarketStateAdapter
-from shared.strategy.market_classifier import MarketClassifier
+from shared.strategy.market_classifier import (
+    BEAR_REGIMES,
+    MarketClassifier,
+    is_bear_regime,
+)
+
+__all__ = [
+    "BEAR_REGIMES",
+    "StockRegimeConfig",
+    "compute_regime_payload",
+    "is_bear_regime",
+    "parse_market_state",
+]
 
 logger = logging.getLogger(__name__)
 
-# Regime values ThreeStageExit._is_bear_market treats as bear.
-BEAR_REGIMES = ("BEAR", "BEAR_STRONG", "BEAR_MODERATE")
-
 _CONFIG_FILE = "stock_regime.yaml"
 _CONFIG_SECTION = "stock_regime"
-
-
-def is_bear_regime(regime: str | None) -> bool:
-    """Return True when ``regime`` is one of the bear classifications."""
-    return regime in BEAR_REGIMES
 
 
 @dataclass(frozen=True)

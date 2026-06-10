@@ -40,6 +40,7 @@ from typing import TYPE_CHECKING, Any
 from shared.models.position import Position, PositionSide, PositionState
 from shared.models.signal import ExitReason, ExitSignal
 from shared.strategy.base import ExitContext, ExitSignalGenerator, MarketStateProtocol
+from shared.strategy.market_classifier import is_bear_regime
 from shared.strategy.market_data import get_price_from_snapshot, get_symbol_snapshot
 from shared.strategy.market_time import (
     effective_close_time,
@@ -482,15 +483,10 @@ class ThreeStageExit(ExitSignalGenerator[ThreeStageExitConfig]):
             return PositionState.SURVIVAL
 
     def _is_bear_market(self, market_state: MarketStateProtocol | None) -> bool:
-        """BEAR 시장 여부 체크"""
+        """BEAR 시장 여부 체크 (단일 소스: market_classifier.BEAR_REGIMES)"""
         if market_state is None:
             return False
-
-        return market_state.regime in (
-            "BEAR",
-            "BEAR_STRONG",
-            "BEAR_MODERATE",
-        )
+        return is_bear_regime(market_state.regime)
 
     # -------------------------------------------------------------------------
     # Stage-based Exit Logic
