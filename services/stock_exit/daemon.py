@@ -22,6 +22,7 @@ from services.stock_exit.positions import (
     record_with_high_water,
 )
 from shared.paper.models import OrderSide, OrderType
+from shared.strategy.base import MarketStateAdapter
 from shared.streaming.stock_regime import StockRegimeConfig, parse_market_state
 
 logger = logging.getLogger(__name__)
@@ -75,7 +76,7 @@ class StockExitDaemon:
     async def stop(self) -> None:
         self._stop.set()
 
-    async def _load_market_state(self) -> Any:
+    async def _load_market_state(self) -> MarketStateAdapter | None:
         """Read the M4-P-published regime; None for missing/stale/malformed.
 
         None disables bear logic for the cycle (``ThreeStageExit._is_bear_market``

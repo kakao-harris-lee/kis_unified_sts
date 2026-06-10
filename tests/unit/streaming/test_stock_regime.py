@@ -125,6 +125,11 @@ def test_parse_future_timestamp_is_none() -> None:
         json.dumps({"regime": "BEAR_STRONG"}),  # missing computed_at_ms
         json.dumps({"computed_at_ms": _NOW_MS}),  # missing regime
         json.dumps({"regime": 1, "computed_at_ms": _NOW_MS}),  # wrong type
+        # json.loads accepts the NaN literal; NaN compares False to every
+        # bound, so a negated/two-sided gate is required to reject it
+        '{"regime": "BEAR_STRONG", "computed_at_ms": NaN}',
+        '{"regime": "BEAR_STRONG", "computed_at_ms": Infinity}',
+        '{"regime": "BEAR_STRONG", "computed_at_ms": -Infinity}',
     ],
 )
 def test_parse_malformed_is_none(raw: object) -> None:
@@ -144,3 +149,10 @@ def test_config_yaml_loads_and_is_coherent() -> None:
     assert cfg.max_age_seconds > 0
     # low-confidence classification must never trigger liquidation
     assert not is_bear_regime(cfg.low_confidence_regime)
+
+
+@pytest.mark.parametrize("regime", BEAR_REGIMES)
+def test_bear_low_confidence_regime_is_rejected(regime: str) -> None:
+    """The never-bear invariant is enforced in code, not just the YAML comment."""
+    with pytest.raises(ValueError, match="low_confidence_regime"):
+        StockRegimeConfig(low_confidence_regime=regime)

@@ -82,8 +82,12 @@ class StockStrategyDaemon:
     async def _publish_regime(self, now: datetime) -> dict[str, Any] | None:
         """Compute + publish the market regime; return the payload (None if off).
 
-        Best-effort: any failure logs and returns None — entry evaluation
-        proceeds ungated, and M4-X's staleness gate handles the missed publish.
+        Compute failures log and return None — entry evaluation proceeds
+        ungated, and M4-X's staleness gate covers the missed publish. A
+        publish (``redis.set``) failure still returns the locally computed
+        payload so the bear entry gate keeps working: M4-X may still act on
+        the previous fresh payload, and entering long during BEAR in that
+        window is exactly the fee churn the gate prevents.
         """
         cfg = self._regime_config
         if cfg is None or not cfg.enabled:
@@ -98,13 +102,16 @@ class StockStrategyDaemon:
                 config=cfg,
                 now_ms=int(now.timestamp() * 1000),
             )
+        except Exception:
+            logger.exception("stock regime compute failed")
+            return None
+        try:
             await self.redis.set(
                 cfg.redis_key, json.dumps(payload), ex=cfg.publish_ttl_seconds
             )
-            return payload
         except Exception:
             logger.exception("stock regime publish failed")
-            return None
+        return payload
 
     async def evaluate_once(self) -> int:
         """Build context + check_entries per warm symbol; publish. Returns #published."""

@@ -263,6 +263,35 @@ async def test_missing_regime_key_does_not_liquidate() -> None:
 
 
 @pytest.mark.asyncio
+async def test_regime_read_failure_does_not_liquidate() -> None:
+    """redis.get raising must yield no regime — never liquidate on read errors."""
+    redis = fakeredis.aioredis.FakeRedis()
+    daemon = _bear_exit_daemon(redis)
+    await redis.hset("trading:stock:positions", "005930", json.dumps(_seed_record()))
+    daemon.feed.prices["005930"] = {"close": 71300.0}
+    await redis.set(_REGIME_CFG.redis_key, _regime_payload("BEAR_STRONG", 10))
+
+    class _GetBoomRedis:
+        """Delegates everything to fakeredis except ``get``, which raises."""
+
+        def __init__(self, inner):
+            self._inner = inner
+
+        async def get(self, _key):
+            raise RuntimeError("redis down")
+
+        def __getattr__(self, name):
+            return getattr(self._inner, name)
+
+    daemon.redis = _GetBoomRedis(redis)
+
+    await daemon.run_cycle()  # must not raise
+
+    assert await redis.hexists("trading:stock:positions", "005930")
+    assert await redis.xrange("order.fill.stock.shadow") == []
+
+
+@pytest.mark.asyncio
 async def test_no_regime_config_keeps_market_state_none() -> None:
     redis = fakeredis.aioredis.FakeRedis()
     daemon = _bear_exit_daemon(redis, regime_config=None)

@@ -29,6 +29,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
+from statistics import median
 from typing import Any
 
 from shared.strategy.base import MarketStateAdapter
@@ -60,6 +61,16 @@ class StockRegimeConfig:
     block_entries_in_bear: bool = True
     max_age_seconds: float = 300.0
 
+    def __post_init__(self) -> None:
+        # Low-confidence classification must never trigger liquidation —
+        # enforce the invariant in code, not just in the YAML comment.
+        # ``load()`` catches this and falls back to safe defaults.
+        if is_bear_regime(self.low_confidence_regime):
+            raise ValueError(
+                "low_confidence_regime must not be a bear value: "
+                f"{self.low_confidence_regime!r}"
+            )
+
     @classmethod
     def load(cls) -> StockRegimeConfig:
         """Load from ``config/stock_regime.yaml`` (defaults on any failure)."""
@@ -87,16 +98,6 @@ class StockRegimeConfig:
             return cls()
 
 
-def _median(values: list[float]) -> float | None:
-    if not values:
-        return None
-    ordered = sorted(values)
-    n = len(ordered)
-    if n % 2 == 0:
-        return (ordered[n // 2 - 1] + ordered[n // 2]) / 2
-    return ordered[n // 2]
-
-
 def compute_regime_payload(
     mfi_by_symbol: dict[str, float],
     *,
@@ -111,7 +112,8 @@ def compute_regime_payload(
     classification is preserved in ``raw_regime`` for observability.
     """
     classifier = classifier or MarketClassifier()
-    mfi = _median(list(mfi_by_symbol.values()))
+    mfi = float(median(mfi_by_symbol.values())) if mfi_by_symbol else None
+    # classify() is MFI-only (adx is accepted but ignored) — pass a literal 0.
     raw_regime = (
         classifier.classify(mfi=mfi, adx=0.0).value if mfi is not None else "UNKNOWN"
     )
@@ -152,6 +154,9 @@ def parse_market_state(
     if not isinstance(regime, str) or not isinstance(computed_at_ms, (int, float)):
         return None
     age_seconds = (now_ms - float(computed_at_ms)) / 1000.0
-    if age_seconds > config.max_age_seconds or age_seconds < 0:
+    # Positive-form bound: json.loads accepts the NaN literal, and NaN
+    # compares False to everything — so NaN is rejected here along with
+    # stale and future (negative-age) timestamps.
+    if not 0.0 <= age_seconds <= config.max_age_seconds:
         return None
     return MarketStateAdapter(regime)

@@ -253,15 +253,18 @@ async def test_engine_without_mfi_support_skips_publish():
     assert redis.kv == {}
 
 
-@pytest.mark.asyncio
-async def test_regime_publish_failure_does_not_block_entries():
-    class _BoomRedis(_FakeRedis):
-        async def set(self, *_a, **_k):
-            raise RuntimeError("redis down")
+class _SetBoomRedis(_FakeRedis):
+    async def set(self, *_a, **_k):
+        raise RuntimeError("redis down")
 
-    redis = _BoomRedis()
+
+@pytest.mark.asyncio
+async def test_publish_failure_still_gates_entries_on_bear():
+    # redis.set failing must not discard the locally computed BEAR payload:
+    # M4-X may still act on the previous fresh publish, so entering long in
+    # that window is exactly the fee churn the gate prevents.
     d = _daemon(
-        redis=redis,
+        redis=_SetBoomRedis(),
         engine=_FakeEngine(mfi_values={"005930": 28.0, "000660": 30.0}),
         regime_config=_REGIME_CFG,
     )
@@ -269,7 +272,39 @@ async def test_regime_publish_failure_does_not_block_entries():
 
     published = await d.evaluate_once()  # must not raise
 
-    assert published == 1  # publish failed -> ungated evaluation proceeds
+    assert published == 0  # gate works off the local payload
+
+
+@pytest.mark.asyncio
+async def test_publish_failure_does_not_block_entries_when_not_bear():
+    d = _daemon(
+        redis=_SetBoomRedis(),
+        engine=_FakeEngine(mfi_values={"005930": 55.0, "000660": 60.0}),
+        regime_config=_REGIME_CFG,
+    )
+    d._universe = ["005930"]
+
+    published = await d.evaluate_once()  # must not raise
+
+    assert published == 1  # bull regime: publish failure changes nothing
+
+
+@pytest.mark.asyncio
+async def test_regime_compute_failure_does_not_block_entries():
+    class _BoomEngine(_FakeEngine):
+        def get_market_mfi_values(self, _active_symbols=None):
+            raise RuntimeError("engine broken")
+
+    d = _daemon(
+        redis=_FakeRedis(),
+        engine=_BoomEngine(),
+        regime_config=_REGIME_CFG,
+    )
+    d._universe = ["005930"]
+
+    published = await d.evaluate_once()  # must not raise
+
+    assert published == 1  # compute failed -> ungated evaluation proceeds
 
 
 @pytest.mark.asyncio
