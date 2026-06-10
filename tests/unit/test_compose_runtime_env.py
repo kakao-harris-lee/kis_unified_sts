@@ -256,3 +256,24 @@ def test_futures_pipeline_compose_services_are_profile_gated():
         kill["environment"]["KIS_FUTURES_EQUITY_KRW"]
         == "${KIS_FUTURES_EQUITY_KRW:-100000000}"
     )
+
+
+def test_scheduler_mounts_data_market_and_reports_writable():
+    """The scheduler runs EOD backfills + report jobs, so data/market and reports
+    must be writable (the shared pipeline-service mount is data/market:ro and does
+    not mount reports — see fix/scheduler-writable-data-reports)."""
+    compose = yaml.safe_load(
+        (_REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    )
+    scheduler = compose["services"]["scheduler"]
+    volumes = scheduler["volumes"]
+
+    # data/market writable (NOT :ro) — EOD parquet backfills write here.
+    assert "./data/market:/app/data/market" in volumes
+    assert "./data/market:/app/data/market:ro" not in volumes
+
+    # reports mounted + writable — verification/counterfactual/rotate jobs persist here.
+    assert "./reports:/app/reports" in volumes
+
+    # config stays read-only (jobs only read config).
+    assert "./config:/app/config:ro" in volumes
