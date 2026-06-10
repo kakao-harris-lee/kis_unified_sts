@@ -53,6 +53,7 @@ async def _build_and_run() -> int:
     from shared.storage.config import StorageConfig
     from shared.strategy.exit.three_stage import ThreeStageExit, ThreeStageExitConfig
     from shared.streaming.stock_keys import stock_daemon_positions_key
+    from shared.streaming.stock_regime import StockRegimeConfig
 
     raw = ConfigLoader.load("stock_exit.yaml").get("stock_exit", {})
     exit_strategy = ThreeStageExit(ThreeStageExitConfig.from_dict(raw))
@@ -82,6 +83,11 @@ async def _build_and_run() -> int:
     broker = VirtualBroker(slippage_rate=slippage_rate)
     runtime_state = RuntimeRiskState(redis=redis_client, asset_class="stock")
 
+    # Regime consumer for bear exit (None when disabled → market_state=None).
+    regime_config = StockRegimeConfig.load()
+    if not regime_config.enabled:
+        regime_config = None
+
     daemon = StockExitDaemon(
         redis=redis_client,
         feed=feed,
@@ -91,6 +97,7 @@ async def _build_and_run() -> int:
         runtime_state=runtime_state,
         positions_key=positions_key,
         interval_seconds=interval,
+        regime_config=regime_config,
     )
 
     loop = asyncio.get_running_loop()

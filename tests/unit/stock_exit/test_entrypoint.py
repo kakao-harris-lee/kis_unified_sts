@@ -43,4 +43,6 @@ def test_stock_exit_config_loads() -> None:
     raw = ConfigLoader.load("stock_exit.yaml").get("stock_exit", {})
     cfg = ThreeStageExitConfig.from_dict(raw)
     assert cfg.eod_exempt_maximize is True
-    assert cfg.enable_bear_exit is False
+    # bear exit is wired via the stock_regime contract (M4-P publishes,
+    # M4-X consumes with staleness gating) — see config/stock_regime.yaml.
+    assert cfg.enable_bear_exit is True

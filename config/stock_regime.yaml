@@ -1,0 +1,23 @@
+# Stock market-regime contract for the decoupled pipeline (M4-P → M4-X).
+#
+# M4-P (StockStrategyDaemon) computes the market-wide regime each eval cycle
+# (median MFI over its watchlist universe → MarketClassifier) and publishes a
+# JSON payload to `redis_key`. Consumers:
+#   * M4-X (StockExitDaemon) — passes the regime as market_state to
+#     ThreeStageExit.scan_positions, enabling `enable_bear_exit`
+#     (config/stock_exit.yaml) to liquidate on BEAR_* regimes.
+#   * M4-P itself — skips entry evaluation while the regime is BEAR_*
+#     (block_entries_in_bear), preventing long-entry → immediate bear-exit
+#     fee churn.
+#
+# Staleness contract: consumers treat payloads older than `max_age_seconds`
+# (or missing/malformed) as "no regime" — bear logic never fires on outdated
+# information. publish_ttl_seconds is a Redis-side backstop only.
+stock_regime:
+  enabled: true
+  redis_key: "stock:daemon:market_regime"
+  publish_ttl_seconds: 900        # Redis TTL backstop (M4-P republishes every eval cycle)
+  min_mfi_symbols: 8              # below this coverage → low_confidence_regime published
+  low_confidence_regime: UNKNOWN  # never a BEAR_* value: low confidence must not liquidate
+  block_entries_in_bear: true     # M4-P skips check_entries during BEAR_* regimes
+  max_age_seconds: 300            # consumer-side staleness gate (M4-P eval cadence is 60s)

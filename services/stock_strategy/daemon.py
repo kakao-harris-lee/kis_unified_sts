@@ -4,12 +4,19 @@ Owns a daemon-local indicator engine fed by market:ticks (StreamConsumerFeed),
 a dynamic screener universe, and the existing StrategyManager. On a decision
 cadence it builds an EntryContext per warm symbol and publishes the resulting
 orchestrator Signals to signal.candidate.stock(.shadow).
+
+As the only decoupled component with an indicator engine, it also computes the
+market-wide regime (median MFI over the universe) and publishes it to Redis for
+M4-X's bear exit — see ``shared.streaming.stock_regime``. While the regime is
+BEAR_* it skips entry evaluation (``block_entries_in_bear``): long-only entries
+in a bear market would be liquidated by M4-X immediately (fee churn).
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import uuid
 from collections.abc import Callable
@@ -20,6 +27,11 @@ from services.stock_strategy.candidate import stock_signal_to_stream_dict
 from services.stock_strategy.universe import parse_watchlist_codes
 from shared.models.signal import Signal
 from shared.strategy.base import EntryContext
+from shared.streaming.stock_regime import (
+    StockRegimeConfig,
+    compute_regime_payload,
+    is_bear_regime,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +54,7 @@ class StockStrategyDaemon:
         universe_refresh_seconds: float = 30.0,
         max_symbols: int = 40,
         watchlist_reader: Callable[[], Any] | None = None,
+        regime_config: StockRegimeConfig | None = None,
     ) -> None:
         self.redis = redis
         self.feed = feed
@@ -55,6 +68,7 @@ class StockStrategyDaemon:
         self._universe_refresh = universe_refresh_seconds
         self._max_symbols = max_symbols
         self._watchlist_reader = watchlist_reader
+        self._regime_config = regime_config
         self._universe: list[str] = []
         self._stop = asyncio.Event()
 
@@ -65,10 +79,58 @@ class StockStrategyDaemon:
         self._universe = codes
         self.feed.update_symbols(codes)
 
+    async def _publish_regime(self, now: datetime) -> dict[str, Any] | None:
+        """Compute + publish the market regime; return the payload (None if off).
+
+        Compute failures log and return None — entry evaluation proceeds
+        ungated, and M4-X's staleness gate covers the missed publish. A
+        publish (``redis.set``) failure still returns the locally computed
+        payload so the bear entry gate keeps working: M4-X may still act on
+        the previous fresh payload, and entering long during BEAR in that
+        window is exactly the fee churn the gate prevents.
+        """
+        cfg = self._regime_config
+        if cfg is None or not cfg.enabled:
+            return None
+        get_mfi = getattr(self.engine, "get_market_mfi_values", None)
+        if get_mfi is None:
+            return None
+        try:
+            mfi_by_symbol = get_mfi(set(self._universe))
+            payload = compute_regime_payload(
+                mfi_by_symbol,
+                config=cfg,
+                now_ms=int(now.timestamp() * 1000),
+            )
+        except Exception:
+            logger.exception("stock regime compute failed")
+            return None
+        try:
+            await self.redis.set(
+                cfg.redis_key, json.dumps(payload), ex=cfg.publish_ttl_seconds
+            )
+        except Exception:
+            logger.exception("stock regime publish failed")
+        return payload
+
     async def evaluate_once(self) -> int:
         """Build context + check_entries per warm symbol; publish. Returns #published."""
         published = 0
         now = self._now_fn()
+        regime_payload = await self._publish_regime(now)
+        if (
+            regime_payload is not None
+            and self._regime_config is not None
+            and self._regime_config.block_entries_in_bear
+            and is_bear_regime(regime_payload.get("regime"))
+        ):
+            logger.info(
+                "bear regime %s (mfi=%s, symbols=%s) — skipping entry evaluation",
+                regime_payload.get("regime"),
+                regime_payload.get("mfi"),
+                regime_payload.get("mfi_symbols"),
+            )
+            return 0
         for symbol in list(self._universe):
             try:
                 if not self.engine.is_warm(symbol):

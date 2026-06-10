@@ -92,6 +92,7 @@ async def _build_and_run() -> int:
     from shared.storage.config import StorageConfig
     from shared.storage.market_data_store import ParquetMarketDataStore
     from shared.streaming.client import RedisClient
+    from shared.streaming.stock_regime import StockRegimeConfig
 
     candidate_stream = _candidate_stream_for(mode)
 
@@ -179,6 +180,11 @@ async def _build_and_run() -> int:
     for sym in initial_codes:
         warmup_engine_from_parquet(engine, store, sym)
 
+    # Market-regime publisher for M4-X's bear exit (None when disabled).
+    regime_config = StockRegimeConfig.load()
+    if not regime_config.enabled:
+        regime_config = None
+
     daemon = StockStrategyDaemon(
         redis=redis_client,
         feed=feed,
@@ -190,6 +196,7 @@ async def _build_and_run() -> int:
         now_fn=lambda: datetime.now(UTC),
         max_symbols=int(os.environ.get("STOCK_MAX_SYMBOLS", "40")),
         watchlist_reader=_watchlist_reader,
+        regime_config=regime_config,
     )
 
     loop = asyncio.get_running_loop()

@@ -22,6 +22,8 @@ from services.stock_exit.positions import (
     record_with_high_water,
 )
 from shared.paper.models import OrderSide, OrderType
+from shared.strategy.base import MarketStateAdapter
+from shared.streaming.stock_regime import StockRegimeConfig, parse_market_state
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +43,7 @@ class StockExitDaemon:
         positions_key: str,
         interval_seconds: float,
         now_fn: Callable[[], datetime] = lambda: datetime.now(UTC),
+        regime_config: StockRegimeConfig | None = None,
     ) -> None:
         self.redis = redis
         self.feed = feed
@@ -51,6 +54,7 @@ class StockExitDaemon:
         self.positions_key = positions_key
         self.interval_seconds = interval_seconds
         self.now_fn = now_fn
+        self.regime_config = regime_config
         self.fee_rate = float(getattr(exit_strategy.config, "fee_rate", 0.003))
         self._stop = asyncio.Event()
 
@@ -71,6 +75,24 @@ class StockExitDaemon:
 
     async def stop(self) -> None:
         self._stop.set()
+
+    async def _load_market_state(self) -> MarketStateAdapter | None:
+        """Read the M4-P-published regime; None for missing/stale/malformed.
+
+        None disables bear logic for the cycle (``ThreeStageExit._is_bear_market``
+        returns False for None) — the daemon never liquidates on outdated regime
+        information. See ``shared.streaming.stock_regime``.
+        """
+        cfg = self.regime_config
+        if cfg is None or not cfg.enabled:
+            return None
+        try:
+            raw = await self.redis.get(cfg.redis_key)
+        except Exception:
+            logger.warning("stock regime read failed; no regime this cycle")
+            return None
+        now_ms = int(self.now_fn().timestamp() * 1000)
+        return parse_market_state(raw, config=cfg, now_ms=now_ms)
 
     async def run_cycle(self) -> None:
         raw = await self.redis.hgetall(self.positions_key)
@@ -108,8 +130,9 @@ class StockExitDaemon:
         # falling through to ThreeStageExit's entry_price fallback, which
         # would evaluate them at profit_pct=0 and fire TIME_CUT incorrectly.
         priced_positions = [p for p in positions if p.code in market_data]
+        market_state = await self._load_market_state()
         signals = await self.exit_strategy.scan_positions(
-            priced_positions, market_data, market_state=None
+            priced_positions, market_data, market_state=market_state
         )
         # Keyed over ALL positions, so the ``pos is None`` guard in
         # ``_execute_exit`` is defence-in-depth (sig.code always ∈ priced ⊆ positions).
