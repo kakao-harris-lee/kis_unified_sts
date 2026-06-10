@@ -48,6 +48,7 @@ from shared.risk.market_risk_gate import (
     MarketRiskGateConfig,
 )
 from shared.risk.volatility_reference import VolatilityReferenceSettings
+from shared.strategy.market_time import is_regular_session_open
 from shared.strategy.symbol_strength import compute_strong_symbols
 from shared.streaming.audit import decode_stream_id, format_audit_kv
 from shared.streaming.stock_bear_override import (
@@ -58,6 +59,7 @@ from shared.streaming.stock_keys import stock_daemon_positions_key
 from shared.streaming.stock_regime import (
     StockRegimeConfig,
     compute_regime_payload,
+    indicator_lag_seconds,
 )
 from shared.streaming.stock_signal_eval import (
     StockSignalEvalConfig,
@@ -420,15 +422,18 @@ class StockStrategyDaemon(
         if get_mfi is None:
             return None
         try:
-            mfi_by_symbol = get_mfi(set(self._universe))
+            universe = set(self._universe)
+            mfi_by_symbol = get_mfi(universe)
             payload = compute_regime_payload(
                 mfi_by_symbol,
                 config=cfg,
                 now_ms=int(now.timestamp() * 1000),
+                last_tick_ts_ms=self._latest_tick_ts_ms(universe),
             )
         except Exception:
             logger.exception("stock regime compute failed")
             return None
+        self._observe_indicator_lag(payload, now)
         try:
             await self.redis.set(
                 cfg.redis_key, json.dumps(payload), ex=cfg.publish_ttl_seconds
@@ -436,6 +441,48 @@ class StockStrategyDaemon(
         except Exception:
             logger.exception("stock regime publish failed")
         return payload
+
+    def _latest_tick_ts_ms(self, universe: set[str]) -> int | None:
+        """Freshest engine tick timestamp as epoch ms (None when unavailable).
+
+        Duck-typed like ``get_market_mfi_values`` — an engine without the
+        method (or with no ticks yet) yields None, which publishes a
+        null ``last_tick_ts_ms`` (old-schema behavior).
+        """
+        get_latest = getattr(self.engine, "get_market_latest_tick_ts", None)
+        if get_latest is None:
+            return None
+        ts = get_latest(universe)
+        if ts is None:
+            return None
+        return int(ts.timestamp() * 1000)
+
+    def _observe_indicator_lag(self, payload: dict[str, Any], now: datetime) -> None:
+        """Log the candle-freshness lag of the regime payload (issue #460).
+
+        WARNING only when the lag breaches ``warn_indicator_lag_seconds``
+        *during the regular session* — off-hours the tick stream is silent by
+        design and the lag grows unboundedly (would spam all night). The
+        unconditional DEBUG line keeps the lag inspectable at any time.
+        """
+        cfg = self._regime_config
+        lag = indicator_lag_seconds(payload)
+        if lag is None or cfg is None:
+            return
+        logger.debug(
+            "stock regime computed: regime=%s mfi_symbols=%s indicator_lag=%.0fs",
+            payload.get("regime"),
+            payload.get("mfi_symbols"),
+            lag,
+        )
+        if lag > cfg.warn_indicator_lag_seconds and is_regular_session_open(now):
+            logger.warning(
+                "stock regime indicator lag %.0fs exceeds %.0fs in-session — "
+                "regime %s is computed from stale candles (tick stream stall?)",
+                lag,
+                cfg.warn_indicator_lag_seconds,
+                payload.get("regime"),
+            )
 
     async def _publish_strong_set(self, now: datetime) -> set[str]:
         """Compute strong symbols from daily indicators and publish to Redis.
