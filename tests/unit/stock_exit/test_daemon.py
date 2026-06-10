@@ -14,8 +14,10 @@ from shared.execution.fill_logger import FillLogger
 from shared.paper.broker import VirtualBroker
 from shared.risk.runtime_state import RuntimeRiskState
 from shared.strategy.exit.three_stage import ThreeStageExit, ThreeStageExitConfig
+from shared.streaming.stock_regime import StockRegimeConfig
 
 _KST = ZoneInfo("Asia/Seoul")
+_MID_SESSION = datetime(2025, 6, 9, 13, 0, tzinfo=_KST)
 
 
 @pytest.fixture(autouse=True)
@@ -31,7 +33,7 @@ def _pin_mid_session(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     monkeypatch.setattr(
         "shared.strategy.exit.three_stage.now_kst",
-        lambda: datetime(2025, 6, 9, 13, 0, tzinfo=_KST),
+        lambda: _MID_SESSION,
     )
 
 
@@ -65,11 +67,14 @@ class _FakeFeed:
         pass
 
 
-def _build_daemon(redis, *, broker=None, fill_logger=None) -> StockExitDaemon:
+def _build_daemon(
+    redis, *, broker=None, fill_logger=None, exit_strategy=None, regime_config=None
+) -> StockExitDaemon:
     return StockExitDaemon(
         redis=redis,
         feed=_FakeFeed(),
-        exit_strategy=ThreeStageExit(
+        exit_strategy=exit_strategy
+        or ThreeStageExit(
             ThreeStageExitConfig(enable_bear_exit=False, eod_exempt_maximize=True)
         ),
         broker=broker or VirtualBroker(slippage_rate=0.0001),
@@ -83,6 +88,8 @@ def _build_daemon(redis, *, broker=None, fill_logger=None) -> StockExitDaemon:
         runtime_state=RuntimeRiskState(redis=redis, asset_class="stock"),
         positions_key="trading:stock:positions",
         interval_seconds=1.0,
+        now_fn=lambda: _MID_SESSION,
+        regime_config=regime_config,
     )
 
 
@@ -170,3 +177,101 @@ async def test_high_water_persisted() -> None:
     await daemon.run_cycle()
     rec = json.loads(await redis.hget("trading:stock:positions", "005930"))
     assert rec["high_water"] == 72000.0
+
+
+# ---------------------------------------------------------------------------
+# Bear-exit regime wiring (M4-P publishes -> M4-X consumes)
+# ---------------------------------------------------------------------------
+
+_REGIME_CFG = StockRegimeConfig()  # defaults: max_age_seconds=300
+
+
+def _bear_exit_daemon(redis, *, regime_config=_REGIME_CFG) -> StockExitDaemon:
+    return _build_daemon(
+        redis,
+        exit_strategy=ThreeStageExit(
+            ThreeStageExitConfig(enable_bear_exit=True, eod_exempt_maximize=True)
+        ),
+        regime_config=regime_config,
+    )
+
+
+def _regime_payload(regime: str, age_seconds: float) -> str:
+    now_ms = int(_MID_SESSION.timestamp() * 1000)
+    return json.dumps(
+        {"regime": regime, "computed_at_ms": now_ms - int(age_seconds * 1000)}
+    )
+
+
+@pytest.mark.asyncio
+async def test_fresh_bear_regime_liquidates_position() -> None:
+    redis = fakeredis.aioredis.FakeRedis()
+    daemon = _bear_exit_daemon(redis)
+    await redis.hset("trading:stock:positions", "005930", json.dumps(_seed_record()))
+    # +0.4% — no stop-loss, profit>0 so TIME_CUT can't fire; only BEAR_EXIT applies
+    daemon.feed.prices["005930"] = {"close": 71300.0}
+    await redis.set(_REGIME_CFG.redis_key, _regime_payload("BEAR_STRONG", 10))
+
+    await daemon.run_cycle()
+
+    assert not await redis.hexists("trading:stock:positions", "005930")
+    fills = await redis.xrange("order.fill.stock.shadow")
+    assert len(fills) == 1
+    assert fills[0][1][b"side"] == b"SELL"
+
+
+@pytest.mark.asyncio
+async def test_stale_bear_regime_does_not_liquidate() -> None:
+    redis = fakeredis.aioredis.FakeRedis()
+    daemon = _bear_exit_daemon(redis)
+    await redis.hset("trading:stock:positions", "005930", json.dumps(_seed_record()))
+    daemon.feed.prices["005930"] = {"close": 71300.0}
+    stale_age = _REGIME_CFG.max_age_seconds + 60
+    await redis.set(_REGIME_CFG.redis_key, _regime_payload("BEAR_STRONG", stale_age))
+
+    await daemon.run_cycle()
+
+    assert await redis.hexists("trading:stock:positions", "005930")
+    assert await redis.xrange("order.fill.stock.shadow") == []
+
+
+@pytest.mark.asyncio
+async def test_non_bear_regime_does_not_liquidate() -> None:
+    redis = fakeredis.aioredis.FakeRedis()
+    daemon = _bear_exit_daemon(redis)
+    await redis.hset("trading:stock:positions", "005930", json.dumps(_seed_record()))
+    daemon.feed.prices["005930"] = {"close": 71300.0}
+    await redis.set(_REGIME_CFG.redis_key, _regime_payload("SIDEWAYS_DOWN", 10))
+
+    await daemon.run_cycle()
+
+    assert await redis.hexists("trading:stock:positions", "005930")
+    assert await redis.xrange("order.fill.stock.shadow") == []
+
+
+@pytest.mark.asyncio
+async def test_missing_regime_key_does_not_liquidate() -> None:
+    redis = fakeredis.aioredis.FakeRedis()
+    daemon = _bear_exit_daemon(redis)
+    await redis.hset("trading:stock:positions", "005930", json.dumps(_seed_record()))
+    daemon.feed.prices["005930"] = {"close": 71300.0}
+
+    await daemon.run_cycle()
+
+    assert await redis.hexists("trading:stock:positions", "005930")
+    assert await redis.xrange("order.fill.stock.shadow") == []
+
+
+@pytest.mark.asyncio
+async def test_no_regime_config_keeps_market_state_none() -> None:
+    redis = fakeredis.aioredis.FakeRedis()
+    daemon = _bear_exit_daemon(redis, regime_config=None)
+    await redis.hset("trading:stock:positions", "005930", json.dumps(_seed_record()))
+    daemon.feed.prices["005930"] = {"close": 71300.0}
+    # bear payload present but the daemon has no regime config -> ignored
+    await redis.set(_REGIME_CFG.redis_key, _regime_payload("BEAR_STRONG", 10))
+
+    await daemon.run_cycle()
+
+    assert await redis.hexists("trading:stock:positions", "005930")
+    assert await redis.xrange("order.fill.stock.shadow") == []

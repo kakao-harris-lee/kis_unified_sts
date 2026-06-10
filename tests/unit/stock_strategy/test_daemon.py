@@ -2,20 +2,28 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 
 import pytest
 
 from services.stock_strategy.daemon import StockStrategyDaemon
 from shared.models.signal import Signal
+from shared.streaming.stock_regime import StockRegimeConfig
+
+_NOW = datetime(2026, 6, 5, 0, 30, tzinfo=UTC)
 
 
 class _FakeEngine:
-    def __init__(self, warm=("005930",)):
+    def __init__(self, warm=("005930",), mfi_values=None):
         self._warm = set(warm)
+        self._mfi_values = mfi_values
 
     def is_warm(self, symbol):
         return symbol in self._warm
+
+    def get_market_mfi_values(self, _active_symbols=None):
+        return dict(self._mfi_values or {})
 
 
 class _FakeResolver:
@@ -58,11 +66,16 @@ class _FakeManager:
 class _FakeRedis:
     def __init__(self):
         self.added = []
+        self.kv = {}
 
     async def xadd(self, stream, fields, **_kw):
         self.added.append((stream, fields))
 
     async def expire(self, *_a, **_k):
+        return True
+
+    async def set(self, key, value, **_kw):
+        self.kv[key] = value
         return True
 
 
@@ -75,7 +88,7 @@ def _daemon(**kw):
         "manager": _FakeManager(),
         "candidate_stream": "signal.candidate.stock.shadow",
         "candidate_maxlen": 10_000,
-        "now_fn": lambda: datetime(2026, 6, 5, 0, 30, tzinfo=UTC),
+        "now_fn": lambda: _NOW,
     }
     defaults.update(kw)
     return StockStrategyDaemon(**defaults)
@@ -132,6 +145,131 @@ def test_refresh_universe_updates_feed():
     d._apply_watchlist(json.dumps({"strategies": {"w": ["005930", "000660"]}}))
     assert set(feed.symbols) == {"005930", "000660"}
     assert set(d._universe) == {"005930", "000660"}
+
+
+# ---------------------------------------------------------------------------
+# Market-regime publisher + bear entry gate
+# ---------------------------------------------------------------------------
+
+_REGIME_CFG = StockRegimeConfig(min_mfi_symbols=2)
+
+
+@pytest.mark.asyncio
+async def test_bear_regime_published_and_blocks_entries():
+    redis = _FakeRedis()
+    d = _daemon(
+        redis=redis,
+        engine=_FakeEngine(mfi_values={"005930": 28.0, "000660": 30.0}),
+        regime_config=_REGIME_CFG,
+    )
+    d._universe = ["005930"]
+
+    published = await d.evaluate_once()
+
+    assert published == 0
+    assert redis.added == []  # entry evaluation skipped
+    payload = json.loads(redis.kv[_REGIME_CFG.redis_key])
+    assert payload["regime"] == "BEAR_STRONG"
+    assert payload["computed_at_ms"] == int(_NOW.timestamp() * 1000)
+
+
+@pytest.mark.asyncio
+async def test_non_bear_regime_published_and_entries_proceed():
+    redis = _FakeRedis()
+    d = _daemon(
+        redis=redis,
+        engine=_FakeEngine(mfi_values={"005930": 55.0, "000660": 60.0}),
+        regime_config=_REGIME_CFG,
+    )
+    d._universe = ["005930"]
+
+    published = await d.evaluate_once()
+
+    assert published == 1
+    assert json.loads(redis.kv[_REGIME_CFG.redis_key])["regime"] == "BULL_STRONG"
+
+
+@pytest.mark.asyncio
+async def test_bear_gate_disabled_publishes_but_does_not_block():
+    redis = _FakeRedis()
+    d = _daemon(
+        redis=redis,
+        engine=_FakeEngine(mfi_values={"005930": 28.0, "000660": 30.0}),
+        regime_config=StockRegimeConfig(
+            min_mfi_symbols=2, block_entries_in_bear=False
+        ),
+    )
+    d._universe = ["005930"]
+
+    published = await d.evaluate_once()
+
+    assert published == 1  # gate off: bear regime published but entries proceed
+    assert json.loads(redis.kv[_REGIME_CFG.redis_key])["regime"] == "BEAR_STRONG"
+
+
+@pytest.mark.asyncio
+async def test_low_confidence_regime_does_not_block_entries():
+    redis = _FakeRedis()
+    d = _daemon(
+        redis=redis,
+        engine=_FakeEngine(mfi_values={"005930": 28.0}),  # 1 < min_mfi_symbols=2
+        regime_config=_REGIME_CFG,
+    )
+    d._universe = ["005930"]
+
+    published = await d.evaluate_once()
+
+    assert published == 1
+    payload = json.loads(redis.kv[_REGIME_CFG.redis_key])
+    assert payload["regime"] == "UNKNOWN"
+    assert payload["raw_regime"] == "BEAR_STRONG"
+
+
+@pytest.mark.asyncio
+async def test_no_regime_config_publishes_nothing():
+    redis = _FakeRedis()
+    d = _daemon(redis=redis)  # regime_config=None (default)
+    d._universe = ["005930"]
+
+    published = await d.evaluate_once()
+
+    assert published == 1
+    assert redis.kv == {}
+
+
+@pytest.mark.asyncio
+async def test_engine_without_mfi_support_skips_publish():
+    class _LegacyEngine:
+        def is_warm(self, _symbol):
+            return True
+
+    redis = _FakeRedis()
+    d = _daemon(redis=redis, engine=_LegacyEngine(), regime_config=_REGIME_CFG)
+    d._universe = ["005930"]
+
+    published = await d.evaluate_once()
+
+    assert published == 1  # entries ungated when the engine can't provide MFI
+    assert redis.kv == {}
+
+
+@pytest.mark.asyncio
+async def test_regime_publish_failure_does_not_block_entries():
+    class _BoomRedis(_FakeRedis):
+        async def set(self, *_a, **_k):
+            raise RuntimeError("redis down")
+
+    redis = _BoomRedis()
+    d = _daemon(
+        redis=redis,
+        engine=_FakeEngine(mfi_values={"005930": 28.0, "000660": 30.0}),
+        regime_config=_REGIME_CFG,
+    )
+    d._universe = ["005930"]
+
+    published = await d.evaluate_once()  # must not raise
+
+    assert published == 1  # publish failed -> ungated evaluation proceeds
 
 
 @pytest.mark.asyncio
