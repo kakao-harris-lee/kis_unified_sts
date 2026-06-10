@@ -5,6 +5,8 @@ Ranking references are sourced from `kis_docs/[국내주식] 순위분석.xlsx`.
 Key endpoints used for screening:
   - 거래량순위: /uapi/domestic-stock/v1/quotations/volume-rank (TR: FHPST01710000)
   - 국내주식 등락률 순위: /uapi/domestic-stock/v1/ranking/fluctuation (TR: FHPST01700000)
+  - 체결강도상위: /uapi/domestic-stock/v1/ranking/volume-power (TR: FHPST01680000)
+  - 신고/신저 근접종목 상위: /uapi/domestic-stock/v1/ranking/near-new-highlow (TR: FHPST01870000)
 """
 
 from __future__ import annotations
@@ -25,7 +27,7 @@ from shared.utils.parsing import parse_float, parse_int
 logger = logging.getLogger(__name__)
 
 
-RankingType = Literal["volume", "gainer"]
+RankingType = Literal["volume", "gainer", "volume_power", "near_new_high"]
 MarketType = Literal["KOSPI", "KOSDAQ", "ALL", "KOSPI200", "KRX100"]
 
 
@@ -57,6 +59,14 @@ class RankingEndpoints:
     # 등락률 순위 (HTS 0170)
     fluctuation_path: str = "/uapi/domestic-stock/v1/ranking/fluctuation"
     fluctuation_tr_id_real: str = "FHPST01700000"
+
+    # 체결강도상위 (HTS 0168)
+    volume_power_path: str = "/uapi/domestic-stock/v1/ranking/volume-power"
+    volume_power_tr_id_real: str = "FHPST01680000"
+
+    # 신고/신저 근접종목 상위 (HTS 0187)
+    near_new_highlow_path: str = "/uapi/domestic-stock/v1/ranking/near-new-highlow"
+    near_new_highlow_tr_id_real: str = "FHPST01870000"
 
 
 class KISRankingClient(AsyncSessionMixin):
@@ -95,7 +105,7 @@ class KISRankingClient(AsyncSessionMixin):
         """Fetch a ranking list.
 
         Args:
-            type: "volume" or "gainer"
+            type: "volume", "gainer", "volume_power", or "near_new_high"
             market: "KOSPI" | "KOSDAQ" | "ALL" | "KOSPI200" | "KRX100"
             limit: Max number of rows (KIS returns at most 30)
             direction: For gainer ranking, "up" or "down"
@@ -120,15 +130,28 @@ class KISRankingClient(AsyncSessionMixin):
             normalized = [self._normalize_fluctuation_row(x) for x in items]
             return normalized[:limit]
 
+        if type == "volume_power":
+            raw = await self._get_volume_power_rank(market=market)
+            items = self._extract_output_list(raw)
+            normalized = [self._normalize_volume_power_row(x) for x in items]
+            return normalized[:limit]
+
+        if type == "near_new_high":
+            raw = await self._get_near_new_highlow_rank(market=market)
+            items = self._extract_output_list(raw)
+            normalized = [self._normalize_near_new_highlow_row(x) for x in items]
+            return normalized[:limit]
+
         raise ValueError(f"Unsupported ranking type: {type}")
 
     async def get_all_aggressive_sources(
-        self, limit: int = _MAX_KIS_RANKING_ROWS
+        self, limit: int = _MAX_KIS_RANKING_ROWS, *, include_swing: bool = True
     ) -> dict[str, Any]:
         """Fetch multiple ranking sources concurrently.
 
         This is meant for screeners: high volume + strong gainers + losers
-        across KOSPI/KOSDAQ.
+        across KOSPI/KOSDAQ. When include_swing is true, also fetches
+        short-term momentum discovery inputs for volume power and near-new-high.
         """
         tasks = {
             "kospi_volume": self.get_ranking(
@@ -150,6 +173,23 @@ class KISRankingClient(AsyncSessionMixin):
                 type="gainer", market="KOSDAQ", limit=limit, direction="down"
             ),
         }
+        if include_swing:
+            tasks.update(
+                {
+                    "kospi_volume_power": self.get_ranking(
+                        type="volume_power", market="KOSPI", limit=limit
+                    ),
+                    "kosdaq_volume_power": self.get_ranking(
+                        type="volume_power", market="KOSDAQ", limit=limit
+                    ),
+                    "kospi_near_new_high": self.get_ranking(
+                        type="near_new_high", market="KOSPI", limit=limit
+                    ),
+                    "kosdaq_near_new_high": self.get_ranking(
+                        type="near_new_high", market="KOSDAQ", limit=limit
+                    ),
+                }
+            )
 
         gathered = await asyncio.gather(*tasks.values(), return_exceptions=True)
         results: dict[str, Any] = {}
@@ -160,6 +200,14 @@ class KISRankingClient(AsyncSessionMixin):
             else:
                 results[key] = result
 
+        for key in (
+            "kospi_volume_power",
+            "kosdaq_volume_power",
+            "kospi_near_new_high",
+            "kosdaq_near_new_high",
+        ):
+            results.setdefault(key, [])
+
         return {
             "kospi_volume": results["kospi_volume"],
             "kosdaq_volume": results["kosdaq_volume"],
@@ -167,6 +215,10 @@ class KISRankingClient(AsyncSessionMixin):
             "kosdaq_gainer": results["kosdaq_gainer"],
             "kospi_loser": results["kospi_loser"],
             "kosdaq_loser": results["kosdaq_loser"],
+            "kospi_volume_power": results["kospi_volume_power"],
+            "kosdaq_volume_power": results["kosdaq_volume_power"],
+            "kospi_near_new_high": results["kospi_near_new_high"],
+            "kosdaq_near_new_high": results["kosdaq_near_new_high"],
         }
 
     @staticmethod
@@ -223,6 +275,43 @@ class KISRankingClient(AsyncSessionMixin):
         }
         return await self._get(
             self.endpoints.fluctuation_path, headers=headers, params=params
+        )
+
+    async def _get_volume_power_rank(self, market: MarketType) -> dict[str, Any]:
+        headers = await self._get_headers(self.endpoints.volume_power_tr_id_real)
+        params = {
+            "fid_trgt_exls_cls_code": "0",
+            "fid_cond_mrkt_div_code": "J",
+            "fid_cond_scr_div_code": "20168",
+            "fid_input_iscd": _market_to_input_iscd(market),
+            "fid_div_cls_code": "0",
+            "fid_input_price_1": "0",
+            "fid_input_price_2": "1000000",
+            "fid_vol_cnt": "0",
+            "fid_trgt_cls_code": "0",
+        }
+        return await self._get(
+            self.endpoints.volume_power_path, headers=headers, params=params
+        )
+
+    async def _get_near_new_highlow_rank(self, market: MarketType) -> dict[str, Any]:
+        headers = await self._get_headers(self.endpoints.near_new_highlow_tr_id_real)
+        params = {
+            "fid_aply_rang_vol": "100",
+            "fid_cond_mrkt_div_code": "J",
+            "fid_cond_scr_div_code": "20187",
+            "fid_div_cls_code": "0",
+            "fid_input_cnt_1": "0",
+            "fid_input_cnt_2": "10",
+            "fid_prc_cls_code": "0",
+            "fid_input_iscd": _market_to_input_iscd(market),
+            "fid_trgt_cls_code": "0",
+            "fid_trgt_exls_cls_code": "0",
+            "fid_aply_rang_prc_1": "0",
+            "fid_aply_rang_prc_2": "1000000",
+        }
+        return await self._get(
+            self.endpoints.near_new_highlow_path, headers=headers, params=params
         )
 
     async def _get_headers(self, tr_id: str) -> dict[str, str]:
@@ -299,5 +388,46 @@ class KISRankingClient(AsyncSessionMixin):
             "volume": parse_int(row.get("acml_vol") or row.get("cntg_vol")),
             "trade_value": parse_int(row.get("acml_tr_pbmn") or row.get("tr_pbmn")),
             "rank": parse_int(row.get("data_rank")),
+            "raw": row,
+        }
+
+    @staticmethod
+    def _normalize_volume_power_row(row: dict[str, Any]) -> dict[str, Any]:
+        code = row.get("stck_shrn_iscd") or row.get("mksc_shrn_iscd") or ""
+        name = row.get("hts_kor_isnm") or ""
+        return {
+            "code": str(code).strip(),
+            "name": str(name).strip(),
+            "price": parse_float(row.get("stck_prpr")),
+            "change_pct": parse_float(row.get("prdy_ctrt")),
+            "volume": parse_int(row.get("acml_vol")),
+            "trade_value": parse_int(row.get("acml_tr_pbmn") or row.get("tr_pbmn")),
+            "rank": parse_int(row.get("data_rank")),
+            "volume_power": parse_float(row.get("tday_rltv")),
+            "sell_volume": parse_int(row.get("seln_cnqn_smtn")),
+            "buy_volume": parse_int(row.get("shnu_cnqn_smtn")),
+            "raw": row,
+        }
+
+    @staticmethod
+    def _normalize_near_new_highlow_row(row: dict[str, Any]) -> dict[str, Any]:
+        code = row.get("mksc_shrn_iscd") or row.get("stck_shrn_iscd") or ""
+        name = row.get("hts_kor_isnm") or ""
+        return {
+            "code": str(code).strip(),
+            "name": str(name).strip(),
+            "price": parse_float(row.get("stck_prpr")),
+            "change_pct": parse_float(row.get("prdy_ctrt")),
+            "volume": parse_int(row.get("acml_vol")),
+            "trade_value": parse_int(row.get("acml_tr_pbmn") or row.get("tr_pbmn")),
+            "rank": parse_int(row.get("data_rank")),
+            "near_high_rate": parse_float(row.get("hprc_near_rate")),
+            "new_high": parse_float(row.get("new_hgpr")),
+            "near_low_rate": parse_float(row.get("lwpr_near_rate")),
+            "new_low": parse_float(row.get("new_lwpr")),
+            "bid_price": parse_float(row.get("bidp")),
+            "ask_price": parse_float(row.get("askp")),
+            "bid_quantity": parse_int(row.get("bidp_rsqn1")),
+            "ask_quantity": parse_int(row.get("askp_rsqn1")),
             "raw": row,
         }
