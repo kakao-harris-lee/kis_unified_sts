@@ -344,6 +344,20 @@ services:
     # exec") when it is PID 1; as a child it reads the crontab fine.
     init: true
     command: ["supercronic", "/app/deploy/scheduler.crontab"]
+    # The scheduler runs the EOD backfills (stock-backfill / backfill) + the
+    # daily_indicator_scanner candidate backfill, which WRITE parquet to
+    # data/market, and the verification/counterfactual/rotate jobs, which WRITE
+    # under reports/. The shared *pipeline-service mount is data/market:ro (for
+    # read-only consumers) and does not mount reports at all — override volumes
+    # here so both are writable; otherwise those jobs hit a read-only FS
+    # (data/market) or write to ephemeral container-local paths (reports/).
+    volumes:
+      - ./config:/app/config:ro
+      - ./logs:/app/logs
+      - ./.cache:/app/.cache
+      - ./data/runtime:/app/data/runtime
+      - ./data/market:/app/data/market
+      - ./reports:/app/reports
     environment:
       <<: [*redis-runtime-env, *runtime-storage-env, *kis-runtime-env, *alert-runtime-env]
       OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
