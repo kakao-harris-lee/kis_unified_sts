@@ -24,6 +24,12 @@ def test_endpoints_match_kis_docs():
     assert e.volume_tr_id_real == "FHPST01710000"
     assert e.fluctuation_path == "/uapi/domestic-stock/v1/ranking/fluctuation"
     assert e.fluctuation_tr_id_real == "FHPST01700000"
+    assert e.volume_power_path == "/uapi/domestic-stock/v1/ranking/volume-power"
+    assert e.volume_power_tr_id_real == "FHPST01680000"
+    assert e.near_new_highlow_path == (
+        "/uapi/domestic-stock/v1/ranking/near-new-highlow"
+    )
+    assert e.near_new_highlow_tr_id_real == "FHPST01870000"
 
 
 def test_rate_limit_error_detection():
@@ -39,3 +45,82 @@ async def test_ranking_rejects_mock_investment():
     )
     with pytest.raises(RuntimeError):
         await client.get_ranking(type="volume", market="KOSPI")
+
+
+def test_normalize_volume_power_row():
+    row = {
+        "stck_shrn_iscd": "005930",
+        "hts_kor_isnm": "삼성전자",
+        "stck_prpr": "75000",
+        "prdy_ctrt": "3.21",
+        "acml_vol": "1234567",
+        "data_rank": "2",
+        "tday_rltv": "185.5",
+        "seln_cnqn_smtn": "1111",
+        "shnu_cnqn_smtn": "2222",
+    }
+
+    normalized = KISRankingClient._normalize_volume_power_row(row)
+
+    assert normalized["code"] == "005930"
+    assert normalized["name"] == "삼성전자"
+    assert normalized["price"] == 75000.0
+    assert normalized["change_pct"] == 3.21
+    assert normalized["volume"] == 1234567
+    assert normalized["rank"] == 2
+    assert normalized["volume_power"] == 185.5
+    assert normalized["sell_volume"] == 1111
+    assert normalized["buy_volume"] == 2222
+
+
+def test_normalize_near_new_highlow_row():
+    row = {
+        "mksc_shrn_iscd": "000660",
+        "hts_kor_isnm": "SK하이닉스",
+        "stck_prpr": "210000",
+        "prdy_ctrt": "4.5",
+        "acml_vol": "555555",
+        "new_hgpr": "215000",
+        "hprc_near_rate": "1.23",
+        "new_lwpr": "120000",
+        "lwpr_near_rate": "75.0",
+        "bidp": "209500",
+        "askp": "210000",
+        "bidp_rsqn1": "99",
+        "askp_rsqn1": "88",
+    }
+
+    normalized = KISRankingClient._normalize_near_new_highlow_row(row)
+
+    assert normalized["code"] == "000660"
+    assert normalized["name"] == "SK하이닉스"
+    assert normalized["near_high_rate"] == 1.23
+    assert normalized["new_high"] == 215000.0
+    assert normalized["near_low_rate"] == 75.0
+    assert normalized["new_low"] == 120000.0
+    assert normalized["bid_quantity"] == 99
+    assert normalized["ask_quantity"] == 88
+
+
+@pytest.mark.asyncio
+async def test_get_all_aggressive_sources_can_disable_swing_sources(monkeypatch):
+    client = KISRankingClient(
+        KISAuthConfig(app_key="dummy", app_secret="dummy", is_real=True)
+    )
+    calls: list[str] = []
+
+    async def fake_get_ranking(*, type, market, limit=30, direction="up"):
+        _ = market, limit, direction
+        calls.append(type)
+        return []
+
+    monkeypatch.setattr(client, "get_ranking", fake_get_ranking)
+
+    sources = await client.get_all_aggressive_sources(limit=5, include_swing=False)
+
+    assert "volume_power" not in calls
+    assert "near_new_high" not in calls
+    assert sources["kospi_volume_power"] == []
+    assert sources["kosdaq_volume_power"] == []
+    assert sources["kospi_near_new_high"] == []
+    assert sources["kosdaq_near_new_high"] == []

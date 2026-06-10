@@ -15,9 +15,10 @@ ranking:
   top_n: 30
 
 weights:
-  realtime: 0.55
-  llm: 0.35
+  realtime: 0.50
+  llm: 0.30
   recency: 0.10
+  swing: 0.10
 
 staleness:
   fresh_window_seconds: 600

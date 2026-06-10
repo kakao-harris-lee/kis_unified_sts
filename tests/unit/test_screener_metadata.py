@@ -84,10 +84,7 @@ class TestFusionMetadataMerge:
         ]
 
         # This is the exact merge logic from run_once
-        metadata = {
-            r[0]: {**realtime_metadata.get(r[0], {}), **r[2]}
-            for r in rows
-        }
+        metadata = {r[0]: {**realtime_metadata.get(r[0], {}), **r[2]} for r in rows}
 
         # prev_day_volume from screener should be present
         assert metadata["005930"]["prev_day_volume"] == 10_000_000
@@ -106,18 +103,19 @@ class TestFusionMetadataMerge:
             ("005930", 0.85, {"realtime_score": 0.9}),  # fusion version
         ]
 
-        metadata = {
-            r[0]: {**realtime_metadata.get(r[0], {}), **r[2]}
-            for r in rows
-        }
+        metadata = {r[0]: {**realtime_metadata.get(r[0], {}), **r[2]} for r in rows}
 
         # Fusion's value should win
         assert metadata["005930"]["realtime_score"] == 0.9
 
 
 class TestFusionDailyIndicatorCoverage:
-    def _make_ranker(self, payloads: dict[str, dict[str, Any]]) -> FusionRanker:
-        config = FusionRankerConfig()
+    def _make_ranker(
+        self,
+        payloads: dict[str, dict[str, Any]],
+        config: FusionRankerConfig | None = None,
+    ) -> FusionRanker:
+        config = config or FusionRankerConfig()
         ranker = FusionRanker.__new__(FusionRanker)
         ranker.config = config
         ranker._last_seen = {}
@@ -191,3 +189,39 @@ class TestFusionDailyIndicatorCoverage:
         assert filtered == rows
         assert stats["enabled"] is False
         assert stats["coverage_filtered_count"] == 0
+
+    def test_run_once_applies_swing_discovery_component(self):
+        ranker = self._make_ranker(
+            {
+                "system:universe:latest": {
+                    "codes": ["005930", "000660"],
+                    "scores": {"005930": 0.0, "000660": 0.0},
+                    "metadata": {
+                        "005930": {"swing_discovery": {"score": 0.25}},
+                        "000660": {"swing_discovery": {"score": 0.95}},
+                    },
+                },
+                "system:llm_quality:latest": {
+                    "quality": {},
+                    "risk_flags": {},
+                    "excluded": {},
+                },
+                "system:daily_indicators:latest": {
+                    "indicators": {"005930": {}, "000660": {}}
+                },
+            },
+            FusionRankerConfig(
+                weight_realtime=0.0,
+                weight_llm=0.0,
+                weight_recency=0.0,
+                weight_swing=1.0,
+            ),
+        )
+
+        assert ranker.run_once() is True
+        payload = ranker.publisher.payloads[-1]
+
+        assert payload["codes"] == ["000660", "005930"]
+        assert payload["scores"]["000660"] == 0.95
+        assert payload["metadata"]["000660"]["swing_discovery_score"] == 0.95
+        assert payload["sources"]["weights"]["swing"] == 1.0

@@ -75,16 +75,20 @@ class FusionRankerConfig(ServiceConfigBase):
 
     # Fusion weights
     weight_realtime: float = Field(
-        default=0.55,
+        default=0.50,
         description="Weight for real-time screener score",
     )
     weight_llm: float = Field(
-        default=0.35,
+        default=0.30,
         description="Weight for LLM quality score",
     )
     weight_recency: float = Field(
         default=0.10,
         description="Weight for recency component",
+    )
+    weight_swing: float = Field(
+        default=0.10,
+        description="Weight for swing discovery metadata from the screener",
     )
 
     # Staleness parameters
@@ -173,6 +177,7 @@ class FusionRankerConfig(ServiceConfigBase):
             "weight_realtime": weights.get("realtime"),
             "weight_llm": weights.get("llm"),
             "weight_recency": weights.get("recency"),
+            "weight_swing": weights.get("swing"),
             # Staleness
             "fresh_window_seconds": staleness.get("fresh_window_seconds"),
             "stale_seconds": staleness.get("stale_seconds"),
@@ -328,6 +333,17 @@ class FusionRanker:
         snapshot_id = str(payload.get("snapshot_id", "")).strip()
         return quality, risk_flags, excluded, names, snapshot_id
 
+    @staticmethod
+    def _extract_swing_score(metadata: dict[str, Any]) -> float:
+        swing = metadata.get("swing_discovery")
+        if not isinstance(swing, dict):
+            return 0.0
+        try:
+            score = float(swing.get("score", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            return 0.0
+        return max(0.0, min(1.0, score))
+
     def _recency_component(self, code: str, now: float) -> float:
         first = self._first_seen.get(code)
         if first is None:
@@ -455,10 +471,12 @@ class FusionRanker:
             effective_lq = lq * llm_freshness * llm_confidence
 
             rec = self._recency_component(code, now)
+            swing_score = self._extract_swing_score(realtime_metadata.get(code, {}))
             score = (
                 self.config.weight_realtime * rt
                 + self.config.weight_llm * effective_lq
                 + self.config.weight_recency * rec
+                + self.config.weight_swing * swing_score
             )
             final_score = max(0.0, min(1.0, score))
 
@@ -479,6 +497,7 @@ class FusionRanker:
                         ),
                         "llm_snapshot_id": llm_snapshot_id,
                         "recency_component": round(rec, 6),
+                        "swing_discovery_score": round(swing_score, 6),
                         "risk_flags": risk_hits,
                     },
                 )
@@ -515,6 +534,12 @@ class FusionRanker:
                 "daily_indicators_key": self.config.daily_indicators_key,
                 "daily_indicator_coverage": coverage_stats,
                 "coverage_filtered_count": coverage_stats["coverage_filtered_count"],
+                "weights": {
+                    "realtime": self.config.weight_realtime,
+                    "llm": self.config.weight_llm,
+                    "recency": self.config.weight_recency,
+                    "swing": self.config.weight_swing,
+                },
             },
         }
 

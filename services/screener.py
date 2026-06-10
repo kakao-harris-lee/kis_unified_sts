@@ -11,8 +11,11 @@ Environment variables:
   - `SCREENER_INTERVAL_SECONDS` (default: 5.0)
   - `SCREENER_RANK_LIMIT` (default: 30)
   - `SCREENER_TOP_N` (default: 20)
-  - `SCREENER_WEIGHT_TRADE_VALUE` (default: 0.6)
-  - `SCREENER_WEIGHT_GAINER` (default: 0.4)
+  - `SCREENER_WEIGHT_TRADE_VALUE` (default: 0.45)
+  - `SCREENER_WEIGHT_GAINER` (default: 0.30)
+  - `SCREENER_SWING_RANKING_ENABLED` (default: true)
+  - `SCREENER_WEIGHT_VOLUME_POWER` (default: 0.15)
+  - `SCREENER_WEIGHT_NEAR_NEW_HIGH` (default: 0.10)
   - `SCREENER_NOTIFY_INTERVAL_SECONDS` (default: 1800)
   - `UNIVERSE_STREAM` (default: system:universe)
   - `UNIVERSE_LATEST_KEY` (default: system:universe:latest)
@@ -81,9 +84,19 @@ class ScreenerConfig(ServiceConfigBase):
     )
     top_n: int = Field(default=20, description="Number of top stocks to select")
     weight_trade_value: float = Field(
-        default=0.6, description="Weight for trade value ranking"
+        default=0.45, description="Weight for trade value ranking"
     )
-    weight_gainer: float = Field(default=0.4, description="Weight for gainer ranking")
+    weight_gainer: float = Field(default=0.30, description="Weight for gainer ranking")
+    swing_ranking_enabled: bool = Field(
+        default=True,
+        description="Fetch KIS swing discovery ranking sources",
+    )
+    weight_volume_power: float = Field(
+        default=0.15, description="Weight for KIS volume-power ranking"
+    )
+    weight_near_new_high: float = Field(
+        default=0.10, description="Weight for KIS near-new-high ranking"
+    )
     notify_interval_seconds: float = Field(
         default=1800.0, description="Notification interval in seconds"
     )
@@ -187,6 +200,66 @@ def _rank_to_score(rank: int, max_rank: int) -> float:
     return (max_rank - rank + 1) / max_rank
 
 
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return default
+
+
+def _set_symbol_info(
+    info_by_code: dict[str, dict[str, Any]],
+    code: str,
+    row: dict[str, Any],
+) -> None:
+    if code in info_by_code:
+        return
+    info_by_code[code] = {
+        "name": str(row.get("name", "")).strip(),
+        "price": row.get("price", 0),
+        "change_pct": row.get("change_pct", 0),
+    }
+
+
+def _add_swing_metadata(
+    swing_metadata: dict[str, dict[str, Any]],
+    *,
+    code: str,
+    source: str,
+    rank: int,
+    row: dict[str, Any],
+) -> None:
+    metadata = swing_metadata.setdefault(
+        code,
+        {
+            "score": 0.0,
+            "source_hits": [],
+        },
+    )
+    hits = metadata.setdefault("source_hits", [])
+    if isinstance(hits, list) and source not in hits:
+        hits.append(source)
+
+    if source == "volume_power":
+        metadata["volume_power_rank"] = rank
+        metadata["volume_power"] = _safe_float(row.get("volume_power"))
+        metadata["buy_volume"] = _safe_int(row.get("buy_volume"))
+        metadata["sell_volume"] = _safe_int(row.get("sell_volume"))
+    elif source == "near_new_high":
+        metadata["near_new_high_rank"] = rank
+        metadata["near_high_rate"] = _safe_float(row.get("near_high_rate"))
+        metadata["new_high"] = _safe_float(row.get("new_high"))
+        metadata["bid_quantity"] = _safe_int(row.get("bid_quantity"))
+        metadata["ask_quantity"] = _safe_int(row.get("ask_quantity"))
+
+
 def _code_set_signature(codes: list[str]) -> str:
     """Stable code-set signature for publish de-dupe."""
     return json.dumps(sorted(str(code) for code in codes), ensure_ascii=False)
@@ -214,6 +287,8 @@ def _select_top_codes(
     top_n: int,
     weight_trade_value: float,
     weight_gainer: float,
+    weight_volume_power: float = 0.0,
+    weight_near_new_high: float = 0.0,
     trade_trend_ranker: TradeTrendPriorityRanker | None = None,
 ) -> tuple[
     list[str],
@@ -229,6 +304,12 @@ def _select_top_codes(
     gainer_rows = list(sources.get("kospi_gainer", [])) + list(
         sources.get("kosdaq_gainer", [])
     )
+    volume_power_rows = list(sources.get("kospi_volume_power", [])) + list(
+        sources.get("kosdaq_volume_power", [])
+    )
+    near_new_high_rows = list(sources.get("kospi_near_new_high", [])) + list(
+        sources.get("kosdaq_near_new_high", [])
+    )
 
     # Trade-value ranking: KIS "volume-rank" returns trade_value per row.
     # We re-rank by trade_value to approximate "거래대금 순위".
@@ -240,6 +321,8 @@ def _select_top_codes(
 
     score_by_code: dict[str, float] = {}
     info_by_code: dict[str, dict[str, Any]] = {}
+    swing_score_by_code: dict[str, float] = {}
+    swing_metadata: dict[str, dict[str, Any]] = {}
 
     for i, row in enumerate(volume_sorted_by_value, start=1):
         code = str(row.get("code", "")).strip()
@@ -248,12 +331,7 @@ def _select_top_codes(
         score_by_code[code] = score_by_code.get(
             code, 0.0
         ) + weight_trade_value * _rank_to_score(i, rank_limit)
-        if code not in info_by_code:
-            info_by_code[code] = {
-                "name": str(row.get("name", "")).strip(),
-                "price": row.get("price", 0),
-                "change_pct": row.get("change_pct", 0),
-            }
+        _set_symbol_info(info_by_code, code, row)
 
     for i, row in enumerate(gainer_rows[:rank_limit], start=1):
         code = str(row.get("code", "")).strip()
@@ -262,12 +340,51 @@ def _select_top_codes(
         score_by_code[code] = score_by_code.get(
             code, 0.0
         ) + weight_gainer * _rank_to_score(i, rank_limit)
-        if code not in info_by_code:
-            info_by_code[code] = {
-                "name": str(row.get("name", "")).strip(),
-                "price": row.get("price", 0),
-                "change_pct": row.get("change_pct", 0),
-            }
+        _set_symbol_info(info_by_code, code, row)
+
+    for i, row in enumerate(volume_power_rows[:rank_limit], start=1):
+        code = str(row.get("code", "")).strip()
+        if not code:
+            continue
+        signal_score = weight_volume_power * _rank_to_score(i, rank_limit)
+        score_by_code[code] = score_by_code.get(code, 0.0) + signal_score
+        swing_score_by_code[code] = swing_score_by_code.get(code, 0.0) + signal_score
+        _set_symbol_info(info_by_code, code, row)
+        _add_swing_metadata(
+            swing_metadata,
+            code=code,
+            source="volume_power",
+            rank=i,
+            row=row,
+        )
+
+    for i, row in enumerate(near_new_high_rows[:rank_limit], start=1):
+        code = str(row.get("code", "")).strip()
+        if not code:
+            continue
+        signal_score = weight_near_new_high * _rank_to_score(i, rank_limit)
+        score_by_code[code] = score_by_code.get(code, 0.0) + signal_score
+        swing_score_by_code[code] = swing_score_by_code.get(code, 0.0) + signal_score
+        _set_symbol_info(info_by_code, code, row)
+        _add_swing_metadata(
+            swing_metadata,
+            code=code,
+            source="near_new_high",
+            rank=i,
+            row=row,
+        )
+
+    if swing_score_by_code:
+        max_swing_score = max(swing_score_by_code.values()) or 1.0
+        for code, swing_score in swing_score_by_code.items():
+            metadata = swing_metadata.setdefault(
+                code,
+                {
+                    "score": 0.0,
+                    "source_hits": [],
+                },
+            )
+            metadata["score"] = round(min(1.0, swing_score / max_swing_score), 6)
 
     ranked_scores = score_by_code
     priority_metadata: dict[str, dict[str, Any]] = {}
@@ -289,8 +406,18 @@ def _select_top_codes(
             )
         ]
 
+    swing_summary = {
+        "enabled": weight_volume_power > 0 or weight_near_new_high > 0,
+        "source_counts": {
+            "volume_power": len(volume_power_rows),
+            "near_new_high": len(near_new_high_rows),
+        },
+        "candidate_count": len(swing_score_by_code),
+    }
+
     # Final selection
     codes = ranked_all_codes[:top_n]
+    swing_summary["selected_count"] = sum(1 for code in codes if code in swing_metadata)
 
     # Normalize scores to 0-1 for readability
     if codes:
@@ -299,9 +426,17 @@ def _select_top_codes(
     else:
         normalized_scores = {}
 
-    selected_priority_metadata = {
-        code: priority_metadata[code] for code in codes if code in priority_metadata
-    }
+    selected_priority_metadata: dict[str, dict[str, Any]] = {}
+    for code in codes:
+        merged: dict[str, Any] = {}
+        if code in priority_metadata:
+            merged.update(priority_metadata[code])
+        if code in swing_metadata:
+            merged["swing_discovery"] = swing_metadata[code]
+        if merged:
+            selected_priority_metadata[code] = merged
+
+    priority_summary["swing_discovery"] = swing_summary
 
     return (
         codes,
@@ -620,7 +755,8 @@ async def run_screener(config: ScreenerConfig) -> None:
     logger.info(
         "Stock screener started "
         f"(interval={config.interval_seconds}s, top_n={config.top_n}, "
-        f"rank_limit={config.rank_limit}, trend_confirm={config.trend_confirm_enabled})"
+        f"rank_limit={config.rank_limit}, swing_ranking={config.swing_ranking_enabled}, "
+        f"trend_confirm={config.trend_confirm_enabled})"
     )
 
     try:
@@ -633,7 +769,8 @@ async def run_screener(config: ScreenerConfig) -> None:
             started = time.time()
             try:
                 sources = await ranking.get_all_aggressive_sources(
-                    limit=config.rank_limit
+                    limit=config.rank_limit,
+                    include_swing=config.swing_ranking_enabled,
                 )
                 (
                     codes,
@@ -647,6 +784,8 @@ async def run_screener(config: ScreenerConfig) -> None:
                     top_n=config.top_n,
                     weight_trade_value=config.weight_trade_value,
                     weight_gainer=config.weight_gainer,
+                    weight_volume_power=config.weight_volume_power,
+                    weight_near_new_high=config.weight_near_new_high,
                     trade_trend_ranker=trade_trend_ranker,
                 )
                 trend_diagnostics: dict[str, dict[str, Any]] = {}
