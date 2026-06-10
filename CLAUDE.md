@@ -30,7 +30,7 @@
   - **향후**: LLM 시장 맥락 판단 + Williams %R / RSI / MACD / ATR / momentum decay 등 명시적 기술 지표 기반 전략으로 확장 (2026-06-03 운영 결정).
   - **`rl_mppo` — REMOVED** (`enabled: false`, shadow logging 종료). 사유 정정(v4.11): "매 cycle 0 signals → HOLD bias"는 **오독** — 실제 entry action 55%/conf~0.56, "0 signals"는 shadow_mode 설계상 억제. 유효 사유는 **counterfactual EOD-proxy PnL 음수**(5/11–15 9 trades -1.35M) + Setup A/C 채택. 2026-06-03 결정으로 retraining/aux 보존 방향도 폐기했고, 코드 경로(`RLMPPOEntry/RLMPPOExit/rl_model_helpers`)는 제거했다. 상세: `docs/plans/2026-06-03-ml-rl-removal-llm-indicator-futures.md`.
 - **계약 명세**: `config/execution.yaml ::futures_contract_spec` (multiplier 50_000 KRW/pt, tick 0.02pt, tick_value 1_000 KRW)
-- **운용 경로 표준**: `TradingOrchestrator` 경로를 사용한다 (Setup A/C). Phase 5 paradigm은 systemd 단위로 분리 (`kis-decision-engine`, `kis-risk-filter`, `kis-order-router`, `kis-kill-switch`).
+- **운용 경로 표준**: `TradingOrchestrator` 경로를 사용한다 (Setup A/C). Decoupled pipeline 데몬은 Docker Compose profile(`futures-ingest`, `futures-pipeline`, `futures-killswitch`)로 운용하며 host systemd unit은 사용하지 않는다.
 - **Phase 5 운영 런북**:
   - `docs/runbooks/futures-paradigm-operations.md` — 일일 운영 체크리스트
   - `docs/runbooks/futures-paradigm-rollback.md` — 비상 롤백 절차
