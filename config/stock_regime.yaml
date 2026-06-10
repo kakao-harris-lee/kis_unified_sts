@@ -13,6 +13,15 @@
 # Staleness contract: consumers treat payloads older than `max_age_seconds`
 # (or missing/malformed) as "no regime" — bear logic never fires on outdated
 # information. publish_ttl_seconds is a Redis-side backstop only.
+#
+# Candle-freshness observability (issue #460): the payload also carries
+# `last_tick_ts_ms` — the freshest tick feeding the publisher's candle
+# accumulators (null when unknown). The staleness gate validates *publish*
+# time only, so a tick-stream stall keeps payloads "fresh" while the MFI
+# underneath goes stale; `computed_at_ms - last_tick_ts_ms` (indicator lag)
+# is the signal. M4-P logs a WARNING when the lag breaches
+# `warn_indicator_lag_seconds` during the regular session (off-hours the
+# stream is silent by design — no warning).
 stock_regime:
   enabled: true
   redis_key: "stock:daemon:market_regime"
@@ -21,3 +30,4 @@ stock_regime:
   low_confidence_regime: UNKNOWN  # never a BEAR_* value: low confidence must not liquidate
   block_entries_in_bear: true     # M4-P skips check_entries during BEAR_* regimes
   max_age_seconds: 300            # consumer-side staleness gate (M4-P eval cadence is 60s)
+  warn_indicator_lag_seconds: 180 # in-session WARNING when MFI candles lag the publish clock

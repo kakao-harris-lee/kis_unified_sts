@@ -10,6 +10,7 @@ from shared.streaming.stock_regime import (
     BEAR_REGIMES,
     StockRegimeConfig,
     compute_regime_payload,
+    indicator_lag_seconds,
     is_bear_regime,
     parse_market_state,
 )
@@ -78,6 +79,67 @@ def test_compute_bull_payload() -> None:
     assert payload["low_confidence"] is False
 
 
+def test_compute_includes_last_tick_ts_ms() -> None:
+    payload = compute_regime_payload(
+        {"A": 55.0, "B": 60.0, "C": 52.0},
+        config=_CFG,
+        now_ms=_NOW_MS,
+        last_tick_ts_ms=_NOW_MS - 5_000,
+    )
+    assert payload["last_tick_ts_ms"] == _NOW_MS - 5_000
+    # round-trips through JSON alongside the rest of the schema
+    assert json.loads(json.dumps(payload))["last_tick_ts_ms"] == _NOW_MS - 5_000
+
+
+def test_compute_last_tick_ts_defaults_to_none() -> None:
+    payload = compute_regime_payload({}, config=_CFG, now_ms=_NOW_MS)
+    assert payload["last_tick_ts_ms"] is None
+
+
+# ---------------------------------------------------------------------------
+# indicator_lag_seconds (issue #460)
+# ---------------------------------------------------------------------------
+
+
+def test_indicator_lag_normal() -> None:
+    payload = {"computed_at_ms": _NOW_MS, "last_tick_ts_ms": _NOW_MS - 90_000}
+    assert indicator_lag_seconds(payload) == 90.0
+
+
+def test_indicator_lag_negative_clamps_to_zero() -> None:
+    # a tick can land between the engine read and the now_ms capture
+    payload = {"computed_at_ms": _NOW_MS, "last_tick_ts_ms": _NOW_MS + 300}
+    assert indicator_lag_seconds(payload) == 0.0
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {},  # old-schema payload: no last_tick_ts_ms
+        {"computed_at_ms": _NOW_MS},
+        {"last_tick_ts_ms": _NOW_MS},
+        {"computed_at_ms": _NOW_MS, "last_tick_ts_ms": None},
+        {"computed_at_ms": _NOW_MS, "last_tick_ts_ms": "soon"},
+        # json.loads accepts NaN/Infinity literals — isfinite must reject
+        json.loads('{"computed_at_ms": NaN, "last_tick_ts_ms": 1}'),
+        json.loads(f'{{"computed_at_ms": {_NOW_MS}, "last_tick_ts_ms": NaN}}'),
+        json.loads(f'{{"computed_at_ms": {_NOW_MS}, "last_tick_ts_ms": -Infinity}}'),
+    ],
+)
+def test_indicator_lag_missing_or_invalid_is_none(payload: dict) -> None:
+    assert indicator_lag_seconds(payload) is None
+
+
+def test_compute_then_lag_round_trip() -> None:
+    payload = compute_regime_payload(
+        {"A": 55.0, "B": 60.0, "C": 52.0},
+        config=_CFG,
+        now_ms=_NOW_MS,
+        last_tick_ts_ms=_NOW_MS - 120_000,
+    )
+    assert indicator_lag_seconds(json.loads(json.dumps(payload))) == 120.0
+
+
 # ---------------------------------------------------------------------------
 # parse_market_state
 # ---------------------------------------------------------------------------
@@ -93,6 +155,21 @@ def test_parse_fresh_payload_yields_market_state() -> None:
     state = parse_market_state(
         _fresh_payload(age_seconds=10), config=_CFG, now_ms=_NOW_MS
     )
+    assert state is not None
+    assert state.regime == "BEAR_STRONG"
+
+
+def test_parse_ignores_last_tick_ts_ms() -> None:
+    """Staleness gate stays publish-time only (#460 adds observability, not
+    gating) — a fresh payload with an ancient last_tick_ts_ms still parses."""
+    raw = json.dumps(
+        {
+            "regime": "BEAR_STRONG",
+            "computed_at_ms": _NOW_MS,
+            "last_tick_ts_ms": _NOW_MS - 3_600_000,
+        }
+    )
+    state = parse_market_state(raw, config=_CFG, now_ms=_NOW_MS)
     assert state is not None
     assert state.regime == "BEAR_STRONG"
 
