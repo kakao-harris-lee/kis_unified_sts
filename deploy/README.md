@@ -11,11 +11,11 @@ docker compose --env-file .env.paper --profile news up -d news-collector news-sc
 docker compose --env-file .env.live --profile news up -d news-collector news-scorer
 ```
 
-`deploy/systemd/` is retained as historical Phase 1-5 scaffolding and migration
-reference only. Do not install stock/news pipeline units from this directory for
-new paper/live operation.
+Host systemd units are not part of the supported runtime. Do not install stock,
+futures, news, or LLM pipeline daemons through systemd; run both paper and live
+stacks with Docker Compose profiles instead.
 
-## Historical Phase 1 Deployment
+## Legacy Cron Deployment
 
 ## Macro overnight
 
