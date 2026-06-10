@@ -33,6 +33,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import os
 from datetime import UTC, datetime, timedelta, timezone
 from datetime import time as dt_time
 from pathlib import Path
@@ -433,9 +434,14 @@ async def _build_and_run() -> int:
     live_guard = LiveModeGuard.from_yaml()
 
     contract_specs = ContractSpecRegistry.from_yaml("config/execution.yaml")
-    # Auto-detect front-month KOSPI200 mini contract — handles quarterly
-    # rollover without code change (CLAUDE.md / MEMORY.md RL Symbol Policy).
-    symbol = get_front_month_code(product="mini")
+    # Auto-detect front-month contract — handles quarterly rollover without code
+    # change. Product is env-selectable (FUTURES_TRADING_PRODUCT): "mini" (default,
+    # live A05…) or "kospi200" (full F200 A01…, paper validation). Mirrors the
+    # orchestrator path (TradingOrchestrator._get_futures_default_symbols).
+    product = os.getenv("FUTURES_TRADING_PRODUCT", "mini").strip().lower()
+    if product not in {"mini", "kospi200"}:
+        product = "mini"
+    symbol = get_front_month_code(product=product)
     spec = resolve_contract_spec(symbol, contract_specs)
 
     fill_logger = FillLogger(

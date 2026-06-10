@@ -716,11 +716,27 @@ class TradingConfig:
 
     @staticmethod
     def _get_futures_default_symbols() -> list[str]:
-        """Get default KOSPI200 mini futures front-month symbol."""
+        """Get default KOSPI200 futures front-month symbol.
+
+        Product is env-selectable via ``FUTURES_TRADING_PRODUCT``:
+        - ``mini`` (default): KOSPI200 mini front-month (A05…) — the live product.
+        - ``kospi200``: full-size F200 front-month (A01…) — tighter spread, used
+          for paper signal validation (the mini's low liquidity blocks most
+          entries on the wide-spread guard).
+        """
         from shared.collector.historical.futures import get_front_month_code
 
-        code = get_front_month_code(product="mini")
-        logger.info(f"Futures default symbol (auto-detected): {code}")
+        product = os.getenv("FUTURES_TRADING_PRODUCT", "mini").strip().lower()
+        if product not in {"mini", "kospi200"}:
+            logger.warning(
+                "Invalid FUTURES_TRADING_PRODUCT=%r; falling back to 'mini'", product
+            )
+            product = "mini"
+
+        code = get_front_month_code(product=product)
+        logger.info(
+            "Futures default symbol (auto-detected): %s (product=%s)", code, product
+        )
         return [code]
 
 

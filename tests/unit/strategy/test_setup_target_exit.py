@@ -66,6 +66,24 @@ async def test_long_exits_at_setup_target():
 
 
 @pytest.mark.asyncio
+async def test_eod_close_enabled_does_not_raise():
+    """Regression: `_should_eod_close` called the refactored market-time helpers
+    with stale signatures — `is_trading_day_kst(now.date())` (expects a datetime)
+    and `effective_close_time(date, time)` (now takes one arg). With
+    `eod_close_enabled=True`, every exit scan of an open Setup A/C position raised
+    `AttributeError: 'datetime.date' object has no attribute 'tzinfo'`. Exposed
+    only once a futures position actually opened (F200 paper validation)."""
+    exit_strategy = SetupTargetExit(SetupTargetExitConfig(eod_close_enabled=True))
+    # price strictly between stop and target → neither fires, so _check_position
+    # reaches the EOD-close branch that used to crash.
+    position = _position(side=PositionSide.LONG, stop_price=98.0, take_profit=104.0)
+    fired, _ = await exit_strategy.should_exit(
+        ExitContext(position=position, market_data={"close": 100.5})
+    )
+    assert isinstance(fired, bool)  # no AttributeError
+
+
+@pytest.mark.asyncio
 async def test_short_uses_inverted_stop_and_target():
     exit_strategy = SetupTargetExit(SetupTargetExitConfig(eod_close_enabled=False))
     position = _position(side=PositionSide.SHORT, stop_price=102.0, take_profit=96.0)

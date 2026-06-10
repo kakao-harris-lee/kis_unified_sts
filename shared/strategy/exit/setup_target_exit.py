@@ -164,9 +164,9 @@ class SetupTargetExit(ExitSignalGenerator[SetupTargetExitConfig]):
         if not self.config.eod_close_enabled:
             return False
         now_local = to_kst(now)
-        if not is_trading_day_kst(now_local.date()):
+        if not is_trading_day_kst(now_local):
             return False
-        close_time = effective_close_time(now_local.date(), self.config.eod_close_time)
+        close_time = effective_close_time(self.config.eod_close_time)
         return now_local.time() >= close_time
 
     @staticmethod
