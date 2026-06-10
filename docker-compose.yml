@@ -163,6 +163,14 @@ services:
       TRADING_INITIAL_CAPITAL: "${TRADING_INITIAL_CAPITAL:-10000000}"
       TRADING_RUN_MODE: "${TRADING_RUN_MODE:-daemon}"
       TRADING_LIVE_CONFIRM: "${TRADING_LIVE_CONFIRM:-}"
+      # Futures product: "mini" (default, live A05…) or "kospi200" (full F200 A01…,
+      # tighter spread for paper signal validation). FUTURES_SLIPPAGE_TICK_SIZE
+      # MUST match the product (mini 0.02 / F200 0.05) or the spread guard
+      # (spread_points / tick_size) blocks every entry. MAX_SPREAD_TICKS widens the
+      # paper spread cap (F200 ~10 ticks vs mini ~13; default 6 blocks both).
+      FUTURES_TRADING_PRODUCT: "${FUTURES_TRADING_PRODUCT:-mini}"
+      FUTURES_SLIPPAGE_TICK_SIZE: "${FUTURES_SLIPPAGE_TICK_SIZE:-0.02}"
+      FUTURES_PAPER_MAX_SPREAD_TICKS: "${FUTURES_PAPER_MAX_SPREAD_TICKS:-6}"
     volumes: *trading-runtime-volumes
     depends_on:
       redis:

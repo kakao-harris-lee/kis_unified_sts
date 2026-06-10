@@ -35,6 +35,10 @@ class ContractSpecRegistry:
 
 def resolve_contract_spec(symbol: str, registry: ContractSpecRegistry) -> ContractSpec:
     for spec in registry.specs.values():
-        if symbol.startswith(spec.symbol_prefix):
+        # symbol_prefix may list several comma-separated prefixes — e.g. the full
+        # KOSPI200 future is the continuous "101…" code (backtest) AND the live
+        # "A01…" front-month. str.startswith accepts a tuple of prefixes.
+        prefixes = tuple(p.strip() for p in spec.symbol_prefix.split(",") if p.strip())
+        if symbol.startswith(prefixes):
             return spec
     raise ValueError(f"no contract spec for symbol={symbol}")

@@ -133,10 +133,13 @@ ats_routing:
     price_improvement_std_bps: 2.0           # 가격 개선 표준편차
     latency_penalty_ms: 15.0                 # ATS 추가 레이턴시 (15ms)
 
-# KOSPI200 Mini 실시간 진입 슬리피지 제어 (선물 전용)
+# KOSPI200 실시간 진입 슬리피지 제어 (선물 전용)
+# tick_size는 거래 상품에 맞춰야 한다: mini=0.02, full(F200)=0.05. 환경변수로
+# 오버라이드 — F200 paper 검증 시 FUTURES_SLIPPAGE_TICK_SIZE=0.05 (기본 mini 0.02).
+# spread_ticks = spread_points / tick_size 이므로 틀리면 진입이 전량 차단된다.
 futures_slippage_control:
   enabled: true
-  tick_size: 0.02
+  tick_size: ${FUTURES_SLIPPAGE_TICK_SIZE:0.02}
 
   # Rule 1: 유동성/스프레드 필터
   max_spread_ticks: 1
@@ -215,7 +218,7 @@ futures_contract_spec:
     tick_size_points: 0.05               # minimum price movement (index points)
     tick_value_krw: 12500                # tick_size_points × multiplier_krw_per_point
     commission_rate: 0.00003             # 0.003% per side (KIS futures rate)
-    symbol_prefix: "101"                 # KIS symbol prefix for KOSPI200 full futures (연결선물)
+    symbol_prefix: "101,A01"             # KIS prefixes: 101=연결선물(backtest), A01=live 근월물(F200)
 
 # Phase 4 — passive maker + force-close timings (spec §3.2 / §4.3).
 # Loaded by services.order_router._build_and_run via Phase4ExecutionConfig.
