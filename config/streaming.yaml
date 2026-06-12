@@ -68,6 +68,7 @@ futures_feed:
   orderbook_missing_warn_interval_seconds: 30.0  # 호가 누락 경고 최소 간격
   reconnect_initial_delay: 1.0   # 재접속 초기 대기 (초)
   reconnect_max_delay: 60.0      # 재접속 최대 대기 (초)
+  connect_max_attempts: 3        # 초기 connect 재시도 횟수 (KIS approval 직후 일시적 reset 흡수)
 
 # Feed observability thresholds
 feed_observability:
