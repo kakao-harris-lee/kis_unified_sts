@@ -81,6 +81,17 @@ function statusView(status: string) {
         "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300",
     };
   }
+  if (status === "ended_incomplete") {
+    // The schedule window has passed but not every weekday produced a report
+    // (e.g. a holiday or a skipped run). This is a normal terminal state, not
+    // an error — show it as a neutral "종료" rather than the red fallback.
+    return {
+      label: "종료 (일부 미완료)",
+      icon: CheckCircle2,
+      className:
+        "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300",
+    };
+  }
   return {
     label: "확인 필요",
     icon: AlertCircle,
@@ -307,7 +318,7 @@ export default function ExperimentsPage() {
                         <XAxis dataKey="date" tick={{ fontSize: 12 }} />
                         <YAxis tick={{ fontSize: 12 }} width={78} />
                         <Tooltip formatter={(value) => formatKrw(Number(value))} />
-                        {summaries.slice(0, 8).map((summary, index) => (
+                        {summaries.map((summary, index) => (
                           <Line
                             key={summary.strategy_id}
                             type="monotone"

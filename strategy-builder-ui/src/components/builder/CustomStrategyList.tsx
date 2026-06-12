@@ -74,7 +74,7 @@ export function CustomStrategyList({
         });
         await refreshRegistered();
         toast.success(
-          `'${strategy.name}' 전략을 페이퍼에 등록했습니다 (비활성). 활성화는 운영자 작업입니다.`,
+          `'${strategy.name}' 전략을 등록했습니다 (비활성). 활성화는 운영자 작업입니다.`,
         );
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -170,7 +170,7 @@ export function CustomStrategyList({
                     </div>
                     {registeredIds.has(strategy.id) && (
                       <span
-                        title="페이퍼 트레이딩에 등록됨"
+                        title="전략 목록에 등록됨"
                         className="inline-flex items-center gap-0.5 text-[10px] font-medium text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/30 px-1.5 py-0.5 rounded"
                       >
                         <CheckCircle2 className="w-2.5 h-2.5" />
@@ -217,9 +217,7 @@ export function CustomStrategyList({
                       ) : (
                         <Play className="w-3.5 h-3.5" />
                       )}
-                      {registeredIds.has(strategy.id)
-                        ? "등록됨"
-                        : "페이퍼로 등록"}
+                      {registeredIds.has(strategy.id) ? "등록됨" : "등록"}
                     </button>
                     <button
                       onClick={(e) => handleDuplicate(strategy.id, e)}

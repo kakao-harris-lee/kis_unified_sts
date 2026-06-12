@@ -36,7 +36,7 @@ export function BuilderActionBar({
           />
           <div className="flex-1 text-xs text-emerald-800 dark:text-emerald-200">
             <p className="font-medium">
-              &apos;{lastRegistered.name}&apos; 전략이 페이퍼에 등록되었습니다 (비활성).
+              &apos;{lastRegistered.name}&apos; 전략이 등록되었습니다 (비활성).
             </p>
             <p className="mt-0.5 text-emerald-700/80 dark:text-emerald-300/80">
               활성화는 운영자 작업이며 orchestrator 재적용 후 반영됩니다. 체결·포지션은 대시보드에서 모니터링하세요.
@@ -75,7 +75,7 @@ export function BuilderActionBar({
           ) : (
             <Play className="w-4 h-4" aria-hidden="true" />
           )}
-          페이퍼로 등록
+          등록
         </button>
       </div>
     </div>

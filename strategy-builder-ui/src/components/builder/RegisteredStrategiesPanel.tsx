@@ -84,7 +84,7 @@ export function RegisteredStrategiesPanel() {
     async (strategy: RegisteredStrategy) => {
       if (
         !confirm(
-          `'${strategy.name}' 전략의 페이퍼 등록을 해제하시겠습니까?\n` +
+          `'${strategy.name}' 전략의 등록을 해제하시겠습니까?\n` +
             "YAML 파일이 삭제되며 오케스트레이터가 더 이상 로드하지 않습니다.",
         )
       ) {
@@ -109,7 +109,7 @@ export function RegisteredStrategiesPanel() {
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-subheading text-slate-900 dark:text-white flex items-center gap-2">
           <Rocket className="w-4 h-4 text-primary" aria-hidden="true" />
-          페이퍼 등록 전략
+          등록된 전략
           <span className="text-caption text-slate-400 font-normal">({strategies.length})</span>
         </h2>
         <button
@@ -131,8 +131,8 @@ export function RegisteredStrategiesPanel() {
       ) : strategies.length === 0 ? (
         <div className="text-center py-8 text-slate-400">
           <Activity className="w-10 h-10 mx-auto mb-2 opacity-40" aria-hidden="true" />
-          <p className="text-sm">페이퍼에 등록된 전략이 없습니다</p>
-          <p className="text-xs mt-1">내 전략에서 &quot;페이퍼로 등록&quot;을 사용하세요</p>
+          <p className="text-sm">등록된 전략이 없습니다</p>
+          <p className="text-xs mt-1">내 전략에서 &quot;등록&quot;을 사용하세요</p>
         </div>
       ) : (
         <div className="space-y-2">

@@ -2,9 +2,23 @@
  * API Client for P1 Strategy Builder
  */
 
-// Keep empty by default so calls stay same-origin and the Next server proxy can
-// route /api/* to the STS compatibility API with server-side auth headers.
+// Keep empty by default so calls stay same-origin. Some Builder paths
+// (/api/experiments, /api/account, ...) are rewritten by the Next.js catch-all
+// proxy, which injects the auth header server-side. But Caddy routes the direct
+// namespaces — /api/kis-builder/* and /api/strategies/* — straight to the
+// dashboard, bypassing that proxy. Those requests carry no key and were 401ing
+// (preset list, register, indicators, preview-code, ...). So we attach the same
+// X-API-Key the STS-native cockpit client uses (src/lib/dashboard/client.ts).
+// The key is already shipped to the browser via NEXT_PUBLIC_API_KEY, so this
+// adds no new exposure; it just stops the builder calls from being rejected.
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
+const API_KEY = process.env.NEXT_PUBLIC_API_KEY || "";
+
+function buildHeaders(extra?: HeadersInit): HeadersInit {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (API_KEY) headers["X-API-Key"] = API_KEY;
+  return { ...headers, ...(extra as Record<string, string> | undefined) };
+}
 
 export interface ApiResponse<T> {
   status: "success" | "error";
@@ -40,9 +54,7 @@ async function handleResponse<T>(response: Response): Promise<T> {
 export async function apiGet<T>(path: string): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
     method: "GET",
-    headers: {
-      "Content-Type": "application/json",
-    },
+    headers: buildHeaders(),
   });
   return handleResponse<T>(response);
 }
@@ -53,9 +65,7 @@ export async function apiPost<T>(
 ): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
+    headers: buildHeaders(),
     body: body ? JSON.stringify(body) : undefined,
   });
   return handleResponse<T>(response);
@@ -67,9 +77,7 @@ export async function apiPut<T>(
 ): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
     method: "PUT",
-    headers: {
-      "Content-Type": "application/json",
-    },
+    headers: buildHeaders(),
     body: body ? JSON.stringify(body) : undefined,
   });
   return handleResponse<T>(response);
@@ -78,9 +86,7 @@ export async function apiPut<T>(
 export async function apiDelete<T>(path: string): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
     method: "DELETE",
-    headers: {
-      "Content-Type": "application/json",
-    },
+    headers: buildHeaders(),
   });
   return handleResponse<T>(response);
 }
