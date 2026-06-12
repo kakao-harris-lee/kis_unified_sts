@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 import shared.kis.stock_feed as sf
 from shared.kis.auth import KISAuthConfig
 from shared.kis.stock_feed import KISStockPriceFeed
@@ -30,6 +32,29 @@ class _FakeThread:
 
     def start(self):
         pass
+
+
+@pytest.mark.asyncio
+async def test_start_does_not_crash_on_initial_connect_timeout():
+    """A failed initial connect must NOT raise — it would crash-loop the daemon.
+
+    Regression: stock_feed.start() set _running=False and raised on connect
+    timeout; services/market_ingest does not catch it, so a KIS reset-on-connect
+    window restart-looped the container (RestartCount climbing). start() must
+    instead keep _running=True (so the WS thread's on_close drives the
+    background reconnect) and return without raising.
+    """
+    feed = _make_feed()
+    feed._connection_timeout = 0.0  # _connected.wait() returns False immediately
+
+    with (
+        patch.object(feed, "_get_approval_key"),
+        patch("shared.kis.stock_feed.websocket.WebSocketApp", return_value=MagicMock()),
+        patch("shared.kis.stock_feed.threading.Thread", _FakeThread),
+    ):
+        await feed.start()  # must NOT raise ConnectionError
+
+    assert feed._running is True  # stays alive for the background reconnect loop
 
 
 def test_reconnect_noop_when_a_loop_already_holds_the_lock():

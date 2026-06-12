@@ -258,8 +258,19 @@ class KISStockPriceFeed:
         self._proc_thread.start()
 
         if not self._connected.wait(timeout=self._connection_timeout):
-            self._running = False
-            raise ConnectionError("Stock WebSocket connection timeout")
+            # Initial connect did not complete in time — e.g. KIS resets the
+            # socket right after the approval handshake (some sessions reject
+            # every attempt). Do NOT clear _running or raise: _running stays
+            # True so the WS thread's on_close has already spawned the
+            # single-loop-guarded background reconnect, which keeps retrying
+            # until KIS recovers. Raising here instead crash-loops the daemon
+            # (services/market_ingest does not catch start() failures), so the
+            # feed never gets the chance to self-heal.
+            logger.warning(
+                "[StockPriceFeed] Initial connect timed out; the feed will keep "
+                "reconnecting in the background"
+            )
+            return
 
         logger.info(f"[StockPriceFeed] Connected to {self._ws_url}")
 
