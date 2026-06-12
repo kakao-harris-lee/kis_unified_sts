@@ -59,14 +59,14 @@ def _record_ws_metric(method: str, feed: str) -> None:
 
 # H0STCNT0 field indices (^-separated)
 # Reference: KIS API 국내주식 실시간체결가
-_F_SYMBOL = 0       # MKSC_SHRN_ISCD - 종목코드
-_F_TIME = 1         # STCK_CNTG_HOUR - 체결시간 (HHMMSS)
-_F_PRICE = 2        # STCK_PRPR - 현재가
-_F_CHANGE_PCT = 5   # PRDY_CTRT - 전일대비율
-_F_OPEN = 7         # STCK_OPRC - 시가
-_F_HIGH = 8         # STCK_HGPR - 고가
-_F_LOW = 9          # STCK_LWPR - 저가
-_F_VOLUME = 13      # ACML_VOL - 누적거래량
+_F_SYMBOL = 0  # MKSC_SHRN_ISCD - 종목코드
+_F_TIME = 1  # STCK_CNTG_HOUR - 체결시간 (HHMMSS)
+_F_PRICE = 2  # STCK_PRPR - 현재가
+_F_CHANGE_PCT = 5  # PRDY_CTRT - 전일대비율
+_F_OPEN = 7  # STCK_OPRC - 시가
+_F_HIGH = 8  # STCK_HGPR - 고가
+_F_LOW = 9  # STCK_LWPR - 저가
+_F_VOLUME = 13  # ACML_VOL - 누적거래량
 
 TR_STOCK_TRADE = "H0STCNT0"
 
@@ -158,9 +158,7 @@ class KISStockPriceFeed:
         self._subscription_delay = float(feed_cfg.get("subscription_delay", 0.05))
         self._approval_key_timeout = int(feed_cfg.get("approval_key_timeout", 10))
         queue_maxsize = int(feed_cfg.get("queue_maxsize", 10000))
-        self._stale_threshold = float(
-            feed_cfg.get("stale_threshold_seconds", 3.0)
-        )
+        self._stale_threshold = float(feed_cfg.get("stale_threshold_seconds", 3.0))
 
         # Price cache: {symbol: price_dict}
         self._prices: dict[str, dict[str, Any]] = {}
@@ -197,6 +195,10 @@ class KISStockPriceFeed:
         self._reconnect_delay = float(feed_cfg.get("reconnect_initial_delay", 1.0))
         self._max_reconnect_delay = float(feed_cfg.get("reconnect_max_delay", 60.0))
         self._initial_reconnect_delay = self._reconnect_delay
+        # Collapses concurrent reconnect loops to one. _on_close spawns a
+        # reconnect thread on every WS close; without this guard a flapping
+        # connection multiplies them exponentially (see _reconnect).
+        self._reconnect_lock = threading.Lock()
 
     def set_tick_callback(
         self, callback: Callable[[str, dict[str, Any], datetime], None] | None
@@ -278,16 +280,14 @@ class KISStockPriceFeed:
         with self._prices_lock:
             self._prices.clear()
             self._symbol_tick_ts.clear()
-        logger.info(
-            f"[StockPriceFeed] Stopped (processed {self._tick_count} ticks)"
-        )
+        logger.info(f"[StockPriceFeed] Stopped (processed {self._tick_count} ticks)")
 
     def update_symbols(self, symbols: list[str]) -> None:
         """Update subscribed symbols (subscribe new, unsubscribe removed).
 
         Respects max_symbols limit. Excess symbols are silently dropped.
         """
-        desired = set(symbols[:self._max_symbols])
+        desired = set(symbols[: self._max_symbols])
 
         with self._sub_lock:
             to_add = desired - self._subscribed
@@ -477,52 +477,72 @@ class KISStockPriceFeed:
             ).start()
 
     def _reconnect(self):
-        """Reconnect with exponential backoff."""
-        delay = self._reconnect_delay
-        while self._running and not self._connected.is_set():
-            logger.info(f"[StockPriceFeed] Reconnecting in {delay:.1f}s...")
-            time.sleep(delay)
-            if not self._running:
-                break
+        """Reconnect with exponential backoff (single-loop guarded).
 
-            try:
-                self._get_approval_key()
-                self._aes_key = None
-                self._aes_iv = None
+        ``_on_close`` spawns a reconnect thread on every WS close. A flapping
+        connection (KIS reset-on-connect) would otherwise multiply these
+        threads exponentially — each reconnect opens a WS whose close spawns
+        yet another thread — producing a hot loop that hammered the KIS
+        approval endpoint (~1000 req/s → 403 rate-limit, with collateral
+        resets on the shared-IP futures feed). The non-blocking lock collapses
+        concurrent loops to one; the loop persists (does not early-return on a
+        successful connect) until the connection is genuinely up, so a flap
+        during the connect wait cannot leave the feed permanently dead.
+        """
+        if not self._reconnect_lock.acquire(blocking=False):
+            return  # a reconnect loop is already running
+        try:
+            delay = self._reconnect_delay
+            while self._running and not self._connected.is_set():
+                logger.info(f"[StockPriceFeed] Reconnecting in {delay:.1f}s...")
+                time.sleep(delay)
+                if not self._running:
+                    break
 
-                self._ws = websocket.WebSocketApp(
-                    self._ws_url,
-                    on_open=self._on_open,
-                    on_message=self._on_message,
-                    on_error=self._on_error,
-                    on_close=self._on_close,
-                )
+                try:
+                    self._get_approval_key()
+                    self._aes_key = None
+                    self._aes_iv = None
 
-                self._ws_thread = threading.Thread(
-                    target=self._ws.run_forever,
-                    kwargs={
-                        "ping_interval": self._ping_interval,
-                        "ping_timeout": self._ping_timeout,
-                    },
-                    daemon=True,
-                    name="StockPriceFeed-WS",
-                )
-                self._ws_thread.start()
+                    self._ws = websocket.WebSocketApp(
+                        self._ws_url,
+                        on_open=self._on_open,
+                        on_message=self._on_message,
+                        on_error=self._on_error,
+                        on_close=self._on_close,
+                    )
 
-                if self._connected.wait(timeout=self._connection_timeout):
-                    logger.info("[StockPriceFeed] Reconnected successfully")
-                    _record_ws_metric("record_ws_reconnect", "stock")
-                    self._reconnect_delay = self._initial_reconnect_delay
-                    # Re-subscribe all symbols
-                    with self._sub_lock:
-                        for sym in list(self._subscribed):
-                            self._send_sub(sym)
-                            time.sleep(0.05)
-                    return
-            except Exception as e:
-                logger.error(f"[StockPriceFeed] Reconnect failed: {e}")
+                    self._ws_thread = threading.Thread(
+                        target=self._ws.run_forever,
+                        kwargs={
+                            "ping_interval": self._ping_interval,
+                            "ping_timeout": self._ping_timeout,
+                        },
+                        daemon=True,
+                        name="StockPriceFeed-WS",
+                    )
+                    self._ws_thread.start()
 
-            delay = min(delay * 2, self._max_reconnect_delay)
+                    if self._connected.wait(timeout=self._connection_timeout):
+                        logger.info("[StockPriceFeed] Reconnected successfully")
+                        _record_ws_metric("record_ws_reconnect", "stock")
+                        self._reconnect_delay = self._initial_reconnect_delay
+                        # Re-subscribe all symbols
+                        with self._sub_lock:
+                            for sym in list(self._subscribed):
+                                self._send_sub(sym)
+                                time.sleep(0.05)
+                        # Let the while condition decide: if the WS stayed up
+                        # the loop exits; if it flapped closed during/after the
+                        # wait, keep retrying instead of leaving the feed dead.
+                        delay = self._initial_reconnect_delay
+                        continue
+                except Exception as e:
+                    logger.error(f"[StockPriceFeed] Reconnect failed: {e}")
+
+                delay = min(delay * 2, self._max_reconnect_delay)
+        finally:
+            self._reconnect_lock.release()
 
     # ----- Message Processing -----
 
@@ -549,9 +569,7 @@ class KISStockPriceFeed:
                     try:
                         data_str = self._decrypt(data_str)
                     except Exception as e:
-                        logger.warning(
-                            f"[StockPriceFeed] Decryption failed: {e}"
-                        )
+                        logger.warning(f"[StockPriceFeed] Decryption failed: {e}")
                         return
 
                 if tr_id == TR_STOCK_TRADE:
@@ -575,7 +593,9 @@ class KISStockPriceFeed:
                             try:
                                 self._tick_callback(parsed["code"], parsed, tick_ts)
                             except Exception as e:
-                                logger.debug(f"[StockPriceFeed] Tick callback error: {e}")
+                                logger.debug(
+                                    f"[StockPriceFeed] Tick callback error: {e}"
+                                )
         else:
             try:
                 data = json.loads(message)
@@ -601,9 +621,7 @@ class KISStockPriceFeed:
 
         msg_code = body.get("msg_cd", "")
         if msg_code and msg_code != "OPSP0000":
-            logger.warning(
-                f"[StockPriceFeed] {msg_code}: {body.get('msg1', '')}"
-            )
+            logger.warning(f"[StockPriceFeed] {msg_code}: {body.get('msg1', '')}")
 
     # ----- Subscribe / Unsubscribe -----
 
