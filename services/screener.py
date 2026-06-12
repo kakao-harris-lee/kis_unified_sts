@@ -7,7 +7,8 @@
   - Key: `system:universe:latest` (JSON snapshot for fast bootstrap)
 
 Environment variables:
-  - `KIS_APP_KEY`, `KIS_APP_SECRET`, `KIS_IS_REAL` ("true"/"false")
+  - `KIS_STOCK_APP_KEY`, `KIS_STOCK_APP_SECRET`, `KIS_STOCK_MARKET` ("real"/"mock")
+    — stock-specific; ranking/등락률 APIs require real investment.
   - `SCREENER_INTERVAL_SECONDS` (default: 5.0)
   - `SCREENER_RANK_LIMIT` (default: 30)
   - `SCREENER_TOP_N` (default: 20)
@@ -706,9 +707,27 @@ async def _apply_trend_confirmation(
     return [], diagnostics
 
 
+def _stock_kis_config() -> KISAuthConfig:
+    """Build the stock KIS auth config for the screener.
+
+    The KIS ranking/등락률 APIs are real-investment only, so the screener must
+    use the **stock-specific** credentials and market flag (``KIS_STOCK_*``), not
+    the generic ``KIS_IS_REAL`` / ``KIS_APP_KEY``. Mirrors
+    ``services/market_ingest/main.py``. Reading the generic ``KIS_IS_REAL``
+    (which is ``"false"`` in the paper stack while ``KIS_STOCK_MARKET=real``)
+    made ``KISRankingClient`` raise "ranking APIs are not supported in mock
+    investment", yielding 0 candidates → missing trade_targets → idle stock
+    pipeline.
+    """
+    return KISAuthConfig(
+        app_key=os.environ.get("KIS_STOCK_APP_KEY", ""),
+        app_secret=os.environ.get("KIS_STOCK_APP_SECRET", ""),
+        is_real=os.environ.get("KIS_STOCK_MARKET", "mock").lower() == "real",
+    )
+
+
 async def run_screener(config: ScreenerConfig) -> None:
-    kis_is_real = os.environ.get("KIS_IS_REAL", "true").lower() == "true"
-    kis_config = KISAuthConfig(is_real=kis_is_real)
+    kis_config = _stock_kis_config()
     ranking = KISRankingClient(kis_config)
     trend_kis_client = KISClient(kis_config) if config.trend_confirm_enabled else None
     trend_confirm_cache: dict[str, tuple[float, dict[str, Any]]] = {}
