@@ -91,6 +91,82 @@ class TestStartUsesSupervisor:
         assert captured["target"] == feed._run_with_reconnect
 
 
+class TestStartInitialConnectRetry:
+    def test_connect_max_attempts_read_from_config(self):
+        feed = _make_feed()
+        # streaming.yaml::futures_feed provides 3
+        assert feed._connect_max_attempts == 3
+
+    def test_connect_max_attempts_default_and_floor(self):
+        cfg = {
+            "max_symbols": 10,
+            "subscription_delay": 0.05,
+            "connection_timeout": 10.0,
+            "shutdown_timeout": 5.0,
+        }
+        with patch.object(ff, "_load_futures_feed_config", return_value=cfg):
+            feed = _make_feed()
+        assert feed._connect_max_attempts == 3  # default
+        # a config of 0 is clamped to at least one attempt
+        cfg["connect_max_attempts"] = 0
+        with patch.object(ff, "_load_futures_feed_config", return_value=cfg):
+            feed = _make_feed()
+        assert feed._connect_max_attempts == 1
+
+    @pytest.mark.asyncio
+    async def test_initial_connect_reset_then_succeeds(self):
+        """A transient initial-connect reset is retried; the feed still starts."""
+        feed = _make_feed()
+        feed.update_symbols(["A05603"])
+        feed._connect_max_attempts = 3
+        feed._adapter = MagicMock()  # attempt-1 adapter
+
+        # to_thread(connect): reset once (Errno 104), then succeed.
+        to_thread = AsyncMock(side_effect=[OSError("[Errno 104] reset"), None])
+        fresh = MagicMock()  # fresh adapter built for attempt 2
+
+        class FakeThread:
+            def __init__(self, **kw):
+                self._kw = kw
+
+            def start(self):
+                pass
+
+        with (
+            patch("asyncio.to_thread", new=to_thread),
+            patch("asyncio.sleep", new=AsyncMock()),
+            patch.object(ff, "KISWebSocketAdapter", return_value=fresh) as ctor,
+            patch.object(ff.threading, "Thread", FakeThread),
+        ):
+            await feed.start()
+
+        assert feed._running is True
+        assert to_thread.await_count == 2  # retried once
+        ctor.assert_called_once_with(feed._config)  # fresh adapter on retry
+        assert feed._adapter is fresh
+
+    @pytest.mark.asyncio
+    async def test_initial_connect_exhausts_attempts_then_raises(self):
+        """If every attempt resets, start() raises so the orchestrator REST-fails over."""
+        feed = _make_feed()
+        feed.update_symbols(["A05603"])
+        feed._connect_max_attempts = 2
+        feed._adapter = MagicMock()
+
+        to_thread = AsyncMock(side_effect=OSError("[Errno 104] reset"))
+
+        with (
+            patch("asyncio.to_thread", new=to_thread),
+            patch("asyncio.sleep", new=AsyncMock()),
+            patch.object(ff, "KISWebSocketAdapter", return_value=MagicMock()),
+            pytest.raises(OSError, match="reset"),
+        ):
+            await feed.start()
+
+        assert feed._running is False  # failover semantics preserved
+        assert to_thread.await_count == 2  # all attempts consumed
+
+
 class TestSupervisorNoReconnectAfterStop:
     def test_no_reconnect_when_not_running(self):
         feed = _make_feed()

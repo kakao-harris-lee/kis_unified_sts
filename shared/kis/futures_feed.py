@@ -89,8 +89,14 @@ class KISFuturesPriceFeed:
         self._reconnect_initial_delay = float(
             feed_cfg.get("reconnect_initial_delay", 1.0)
         )
-        self._reconnect_max_delay = float(
-            feed_cfg.get("reconnect_max_delay", 60.0)
+        self._reconnect_max_delay = float(feed_cfg.get("reconnect_max_delay", 60.0))
+        # Bounded retries for the *initial* connect. KIS intermittently resets
+        # the WS right after the approval handshake; without this a single
+        # startup reset leaves the feed permanently dead (the supervisor loop
+        # only handles drops after a successful start), forcing the whole
+        # session onto REST fallback. See _connect_initial_with_retry.
+        self._connect_max_attempts = max(
+            1, int(feed_cfg.get("connect_max_attempts", 3))
         )
 
         self._prices: dict[str, dict[str, Any]] = {}
@@ -210,11 +216,7 @@ class KISFuturesPriceFeed:
         if not self._symbols:
             raise ValueError("No futures symbols configured for WebSocket feed")
 
-        try:
-            await asyncio.to_thread(self._adapter.connect)
-        except Exception as e:
-            logger.error(f"[FuturesPriceFeed] Connection failed: {e}")
-            raise
+        await self._connect_initial_with_retry()
 
         self._running = True
         self._thread = threading.Thread(
@@ -229,6 +231,61 @@ class KISFuturesPriceFeed:
             self._running = False
             raise
         logger.info(f"[FuturesPriceFeed] Started with {len(self._symbols)} symbols")
+
+    async def _connect_initial_with_retry(self) -> None:
+        """Connect the initial adapter, retrying transient failures with backoff.
+
+        KIS intermittently resets the WebSocket connection right after the
+        approval handshake (``[Errno 104] Connection reset by peer``) — some
+        sessions the first connect succeeds, others it is reset. Previously a
+        single failed initial connect raised straight out of ``start()``,
+        leaving the feed permanently dead: ``_run_with_reconnect`` only retries
+        drops *after* a successful start, so on an initial failure it never even
+        spawned, and ``MarketDataProvider`` failed over to REST polling with no
+        path back to WebSocket for the rest of the session.
+
+        Retrying the initial connect a bounded number of times (with exponential
+        backoff, a fresh adapter per attempt) absorbs these transient resets. If
+        every attempt fails we re-raise so the orchestrator still fails over to
+        REST polling exactly as before.
+        """
+        delay = self._reconnect_initial_delay
+        last_exc: Exception | None = None
+        for attempt in range(1, self._connect_max_attempts + 1):
+            if attempt > 1:
+                # A failed adapter is spent (is_running permanently False); build
+                # a fresh one per attempt, mirroring the supervisor loop.
+                self._adapter = KISWebSocketAdapter(self._config)
+            try:
+                await asyncio.to_thread(self._adapter.connect)
+                if attempt > 1:
+                    logger.info(
+                        "[FuturesPriceFeed] Initial connect succeeded on "
+                        "attempt %d/%d",
+                        attempt,
+                        self._connect_max_attempts,
+                    )
+                return
+            except Exception as e:  # noqa: BLE001 — retry transient connect resets
+                last_exc = e
+                logger.warning(
+                    "[FuturesPriceFeed] Initial connect attempt %d/%d failed: %s",
+                    attempt,
+                    self._connect_max_attempts,
+                    e,
+                )
+                if attempt < self._connect_max_attempts:
+                    await asyncio.sleep(delay)
+                    delay = min(delay * 2, self._reconnect_max_delay)
+
+        logger.error(
+            "[FuturesPriceFeed] Connection failed after %d attempts: %s",
+            self._connect_max_attempts,
+            last_exc,
+        )
+        if last_exc is not None:
+            raise last_exc
+        raise RuntimeError("[FuturesPriceFeed] Connection failed: no attempts made")
 
     def _run_with_reconnect(self) -> None:
         """Worker thread: run the subscribe loop, reconnect on drop.
