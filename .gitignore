@@ -39,6 +39,14 @@ mlruns/
 *.log
 logs/
 
+# KIS token cache (.kis_token_real / .kis_token_mock hold live KIS tokens —
+# secrets, never commit). The dir itself is tracked via .gitkeep so the
+# ./.cache:/app/.cache bind-mount source exists owned by the deploy user on a
+# fresh checkout; otherwise `docker compose up` auto-creates it as root and the
+# container (appuser, uid 1000) cannot persist tokens → re-issues on every restart.
+/.cache/*
+!/.cache/.gitkeep
+
 # Local artifacts
 .venv/
 output/
