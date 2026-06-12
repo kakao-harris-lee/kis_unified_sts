@@ -100,7 +100,9 @@ class _FakeFeed:
 def wired(monkeypatch):
     server = fakeredis.FakeServer()
     redis = fakeredis.aioredis.FakeRedis(server=server, db=1)
-    sync = fakeredis.FakeStrictRedis(server=server, db=1)
+    # decode_responses=True mirrors production RedisClient.get_client() so the
+    # status reader returns str keys (status.get("state")) — not bytes.
+    sync = fakeredis.FakeStrictRedis(server=server, db=1, decode_responses=True)
     monkeypatch.setattr(ts, "_get_redis", lambda: sync)
     monkeypatch.setenv("TRADING_STATE_KEY_SUFFIX", "shadow")
     daemon = StockMonitorDaemon(
@@ -128,7 +130,9 @@ def alerting(monkeypatch):
     """
     server = fakeredis.FakeServer()
     redis = fakeredis.aioredis.FakeRedis(server=server, db=1)
-    sync = fakeredis.FakeStrictRedis(server=server, db=1)
+    # decode_responses=True mirrors production RedisClient.get_client() so the
+    # status reader returns str keys (status.get("state")) — not bytes.
+    sync = fakeredis.FakeStrictRedis(server=server, db=1, decode_responses=True)
     monkeypatch.setattr(ts, "_get_redis", lambda: sync)
     monkeypatch.setenv("TRADING_STATE_KEY_SUFFIX", "shadow")
     notifier = _FakeNotifier()
@@ -237,6 +241,48 @@ async def test_mark_to_market(wired) -> None:
     pos = reader.get_positions()[0]
     assert pos["current_price"] == 72000.0
     assert pos["unrealized_pnl"] == (72000.0 - 71000.0) * 10
+
+
+@pytest.mark.asyncio
+async def test_status_reports_running_with_aggregates(wired) -> None:
+    """Status row carries state=running + nested positions/strategies aggregates.
+
+    Regression: the decoupled stock pipeline previously published only
+    {open_positions, worker_id, source}, so the dashboard's
+    _status_response_from_raw defaulted state -> "stopped" and the cockpit
+    stock tab rendered a halted/empty system while the daemon was live.
+    """
+    daemon, redis, reader = wired
+    await daemon.handle_signal(_enc(_final()))
+    await daemon.handle_fill(_enc(_fill("entry", "BUY", "71000.0")))
+    daemon.feed.prices["005930"] = {"close": 72000.0}
+
+    await daemon.publish_status_and_mtm()
+
+    status = reader.get_status()
+    assert status["state"] == "running"
+    assert status["source"] == "stock_monitor"
+    assert status["open_positions"] == 1
+    assert status["positions"]["open_positions"] == 1
+    assert status["positions"]["unrealized_pnl"] == (72000.0 - 71000.0) * 10
+    assert status["positions"]["winning_positions"] == 1
+    assert status["strategies"]["strategies"] == ["vr_composite"]
+    assert status["strategies"]["strategy_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_status_reports_running_when_flat(wired) -> None:
+    """A flat daemon (no open positions) still reports state=running, not stopped."""
+    daemon, redis, reader = wired
+
+    await daemon.publish_status_and_mtm()
+
+    status = reader.get_status()
+    assert status["state"] == "running"
+    assert status["open_positions"] == 0
+    assert status["positions"]["open_positions"] == 0
+    assert status["positions"]["unrealized_pnl"] == 0.0
+    assert status["strategies"]["strategies"] == []
 
 
 @pytest.mark.asyncio
