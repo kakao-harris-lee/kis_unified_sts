@@ -63,6 +63,10 @@ x-alert-runtime-env: &alert-runtime-env
 x-trading-runtime-volumes: &trading-runtime-volumes
   - ./config:/app/config:ro
   - ./logs:/app/logs
+  # KIS token cache. The host ./.cache dir must be owned by uid 1000 (the
+  # container's appuser) so tokens persist across restarts. It is tracked via
+  # .cache/.gitkeep so a fresh checkout has it deploy-owned; if it is ever
+  # missing, `docker compose up` auto-creates it as root and token saves fail.
   - ./.cache:/app/.cache
   - ./data/runtime:/app/data/runtime
   - ./data/market:/app/data/market:ro
