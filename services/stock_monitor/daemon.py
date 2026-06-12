@@ -224,7 +224,17 @@ class StockMonitorDaemon:
         may mutate it across the ``get_current_price`` await), updates the
         running high/low watermarks, republishes each position with current
         price / unrealized PnL, then publishes an aggregate status dict.
+
+        The status row carries ``state="running"`` plus nested ``positions`` /
+        ``strategies`` aggregates so the dashboard renders the decoupled stock
+        pipeline as live. Without these, ``_status_response_from_raw`` (in
+        services/dashboard/routes/trading.py) defaults ``state`` to ``stopped``
+        and the cockpit's stock tab shows a halted/empty system even while the
+        daemon is actively trading.
         """
+        unrealized_total = 0.0
+        winning = 0
+        by_strategy: dict[str, int] = {}
         for code, entry in list(self._open.items()):
             price = await self.feed.get_current_price(code)
             close = price.get("close")
@@ -237,6 +247,13 @@ class StockMonitorDaemon:
             low = min(float(entry.get("lowest_price", ep)), close)
             entry["highest_price"] = high
             entry["lowest_price"] = low
+            unrealized = (close - ep) * qty
+            unrealized_total += unrealized
+            if unrealized > 0:
+                winning += 1
+            strategy = entry.get("strategy") or ""
+            if strategy:
+                by_strategy[strategy] = by_strategy.get(strategy, 0) + 1
             self.publisher.publish_raw_position(
                 code,
                 {
@@ -247,7 +264,7 @@ class StockMonitorDaemon:
                     "quantity": qty,
                     "entry_price": ep,
                     "current_price": close,
-                    "unrealized_pnl": (close - ep) * qty,
+                    "unrealized_pnl": unrealized,
                     "pnl_pct": ((close - ep) / ep * 100) if ep else 0.0,
                     "entry_time": entry.get("entry_time", ""),
                     "strategy": entry["strategy"],
@@ -259,11 +276,25 @@ class StockMonitorDaemon:
                     "client_order_id": "",
                 },
             )
+        open_count = len(self._open)
+        strategies = sorted(by_strategy)
         self.publisher.publish_status(
             {
-                "open_positions": len(self._open),
-                "worker_id": self.worker_id,
+                "state": "running",
                 "source": "stock_monitor",
+                "worker_id": self.worker_id,
+                "open_positions": open_count,
+                "strategies": {
+                    "asset_class": "stock",
+                    "strategy_count": len(strategies),
+                    "strategies": strategies,
+                },
+                "positions": {
+                    "open_positions": open_count,
+                    "unrealized_pnl": unrealized_total,
+                    "winning_positions": winning,
+                    "by_strategy": by_strategy,
+                },
             }
         )
 
