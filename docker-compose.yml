@@ -460,6 +460,12 @@ services:
       TRADING_ASSET_CLASS: "${TRADING_ASSET_CLASS:-stock}"
     volumes:
       - ./config:/app/config:ro
+      # Builder→paper registration drop point: the only path the dashboard
+      # *writes* under /app/config. This nested rw bind overrides the :ro parent
+      # for that subtree so POST /api/kis-builder/register-paper (and the
+      # enable/unregister endpoints) can materialize built/<id>.yaml. Trading
+      # services read it back through their own ./config:ro mount (same host dir).
+      - ./config/strategies/built:/app/config/strategies/built
       - ./logs:/app/logs
       - ./reports:/app/reports:ro
       - ./data/runtime:/app/data/runtime
