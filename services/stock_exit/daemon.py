@@ -21,6 +21,7 @@ from services.stock_exit.positions import (
     position_from_record,
     record_with_high_water,
 )
+from shared.models.position import Position
 from shared.paper.models import OrderSide, OrderType
 from shared.strategy.base import MarketStateAdapter
 from shared.streaming.stock_regime import StockRegimeConfig, parse_market_state
@@ -44,6 +45,7 @@ class StockExitDaemon:
         interval_seconds: float,
         now_fn: Callable[[], datetime] = lambda: datetime.now(UTC),
         regime_config: StockRegimeConfig | None = None,
+        runtime_ledger: Any | None = None,
     ) -> None:
         self.redis = redis
         self.feed = feed
@@ -51,6 +53,7 @@ class StockExitDaemon:
         self.broker = broker
         self.fill_logger = fill_logger
         self.runtime_state = runtime_state
+        self.runtime_ledger = runtime_ledger
         self.positions_key = positions_key
         self.interval_seconds = interval_seconds
         self.now_fn = now_fn
@@ -198,6 +201,7 @@ class StockExitDaemon:
                 filled_at_ms=now_ms,
                 venue="KRX",
                 trade_role="exit",
+                strategy=pos.strategy,
             )
         except Exception:
             logger.warning(
@@ -205,4 +209,54 @@ class StockExitDaemon:
                 sig.code,
                 exc_info=True,
             )
+        await self._record_ledger_trade(
+            pos, sig, filled=filled, qty=qty, pnl=pnl, reason=reason
+        )
         logger.info("stock exit code=%s reason=%s pnl=%.0f", sig.code, reason, pnl)
+
+    async def _record_ledger_trade(
+        self,
+        pos: Position,
+        sig: Any,
+        *,
+        filled: float,
+        qty: int,
+        pnl: float,
+        reason: str,
+    ) -> None:
+        """Persist the closed trade to the RuntimeLedger ``trades`` table.
+
+        The decoupled stock path otherwise only publishes closed trades to the
+        Redis ``trading:stock:trades`` LIST (via the monitor); the dashboard
+        ``/api/trades`` prefers the ledger, so without this the decoupled
+        trades — and their strategy attribution — never appear. Keyed on
+        ``pos.id`` (the entry signal id) so a retry de-dups via
+        ``ON CONFLICT(idempotency_key)``. Best-effort: a ledger failure must not
+        re-open an already-closed position.
+        """
+        if self.runtime_ledger is None:
+            return
+        trade = {
+            "trade_id": pos.id,
+            "idempotency_key": pos.id,
+            "asset_class": "stock",
+            "symbol": sig.code,
+            "name": pos.name,
+            "side": "long",
+            "strategy": pos.strategy,
+            "entry_time": pos.entry_time.isoformat(),
+            "entry_price": pos.entry_price,
+            "exit_time": self.now_fn().isoformat(),
+            "exit_price": filled,
+            "quantity": qty,
+            "pnl": pnl,
+            "exit_reason": reason,
+        }
+        try:
+            await asyncio.to_thread(self.runtime_ledger.record_trade, trade)
+        except Exception:
+            logger.warning(
+                "exit trade ledger persist failed code=%s (position already closed)",
+                sig.code,
+                exc_info=True,
+            )

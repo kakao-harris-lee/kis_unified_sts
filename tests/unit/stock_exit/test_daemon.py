@@ -68,7 +68,13 @@ class _FakeFeed:
 
 
 def _build_daemon(
-    redis, *, broker=None, fill_logger=None, exit_strategy=None, regime_config=None
+    redis,
+    *,
+    broker=None,
+    fill_logger=None,
+    exit_strategy=None,
+    regime_config=None,
+    runtime_ledger=None,
 ) -> StockExitDaemon:
     return StockExitDaemon(
         redis=redis,
@@ -90,7 +96,53 @@ def _build_daemon(
         interval_seconds=1.0,
         now_fn=lambda: _MID_SESSION,
         regime_config=regime_config,
+        runtime_ledger=runtime_ledger,
     )
+
+
+class _FakeLedger:
+    """Captures record_trade calls (sync, as the real SQLite ledger is)."""
+
+    def __init__(self) -> None:
+        self.trades: list[dict] = []
+
+    def record_trade(self, trade: dict) -> str:
+        self.trades.append(trade)
+        return str(trade.get("trade_id", ""))
+
+
+@pytest.mark.asyncio
+async def test_closed_trade_recorded_to_ledger_with_strategy() -> None:
+    redis = fakeredis.aioredis.FakeRedis()
+    ledger = _FakeLedger()
+    daemon = _build_daemon(redis, runtime_ledger=ledger)
+    record = {**_seed_record(), "strategy": "pattern_pullback", "name": "삼성전자"}
+    await redis.hset("trading:stock:positions", "005930", json.dumps(record))
+    daemon.feed.prices["005930"] = {"close": 69580.0}  # -2% -> STOP_LOSS
+
+    await daemon.run_cycle()
+
+    # The decoupled close must land in the ledger trades table (the dashboard
+    # /api/trades source) carrying the originating strategy.
+    assert len(ledger.trades) == 1
+    trade = ledger.trades[0]
+    assert trade["strategy"] == "pattern_pullback"
+    assert trade["symbol"] == "005930"
+    assert trade["asset_class"] == "stock"
+    assert trade["exit_reason"]
+    assert trade["pnl"] < 0  # closed at a loss
+    assert trade["idempotency_key"] == "sig-005930"
+
+
+@pytest.mark.asyncio
+async def test_no_ledger_does_not_crash_close() -> None:
+    # runtime_ledger is optional; a close with no ledger configured still works.
+    redis = fakeredis.aioredis.FakeRedis()
+    daemon = _build_daemon(redis, runtime_ledger=None)
+    await redis.hset("trading:stock:positions", "005930", json.dumps(_seed_record()))
+    daemon.feed.prices["005930"] = {"close": 69580.0}
+    await daemon.run_cycle()
+    assert not await redis.hexists("trading:stock:positions", "005930")
 
 
 @pytest.mark.asyncio

@@ -73,6 +73,8 @@ async def test_fill_published_and_position_recorded() -> None:
     assert f[b"venue"] == b"KRX"
     assert f[b"trade_role"] == b"entry"
     assert int(f[b"quantity"]) == 10
+    # Strategy attribution rides the fill stream too (for ledger fill payload).
+    assert f[b"strategy"] == b"vr_composite"
 
     raw = await redis.hget("trading:stock:positions", "005930")
     assert raw is not None
@@ -80,6 +82,10 @@ async def test_fill_published_and_position_recorded() -> None:
     assert pos["quantity"] == 10
     assert pos["entry_price"] > 0
     assert pos["state"] == "SURVIVAL"
+    # Strategy + name are persisted on the position record so restart recovery
+    # and the closed-trade ledger row stay attributed (not just live fills).
+    assert pos["strategy"] == "vr_composite"
+    assert pos["name"] == "n"
 
 
 @pytest.mark.asyncio
