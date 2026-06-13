@@ -82,6 +82,17 @@ const STATUS_ORDER: Record<Lifecycle, number> = {
 };
 
 /**
+ * The id that links a local draft to its server-side registration. The backend
+ * keys registrations off ``metadata.id`` (config/strategies/built/<id>.yaml),
+ * so a draft must register under, and merge by, the same value. Saved drafts
+ * pin ``metadata.id`` to the record id (see storage.saveStrategy); legacy
+ * drafts with a blank metadata.id fall back to the record id.
+ */
+function linkKeyOf(s: StoredStrategy): string {
+  return (s.state.metadata.id || "").trim() || s.id;
+}
+
+/**
  * Unified "내 전략" list: one row per strategy across its whole lifecycle —
  * local draft → registered (paper) → active (orchestrator pickup). Merges the
  * browser-local drafts with the server-side registered roster (keyed by id) so
@@ -131,7 +142,7 @@ export function CustomStrategyList({
 
   const rows = useMemo<StrategyRow[]>(() => {
     const registeredById = new Map(registered.map((s) => [s.id, s]));
-    const localById = new Map(strategies.map((s) => [s.id, s]));
+    const localById = new Map(strategies.map((s) => [linkKeyOf(s), s]));
     const ids = new Set<string>([...localById.keys(), ...registeredById.keys()]);
     const built = [...ids].map((id) => {
       const draft = localById.get(id);
@@ -166,7 +177,15 @@ export function CustomStrategyList({
       if (!row.draft) return; // can only register a strategy we hold locally
       setBusyId(row.id);
       try {
-        await registerPaperStrategy({ builder_state: row.draft.state });
+        // Register under the link key (row.id) so the server record's id
+        // matches this row and the next refresh merges them into one entry
+        // instead of spawning a separate "등록됨" row.
+        await registerPaperStrategy({
+          builder_state: {
+            ...row.draft.state,
+            metadata: { ...row.draft.state.metadata, id: row.id },
+          },
+        });
         await refreshRegistered();
         toast.success(
           `'${row.name}' 전략을 등록했습니다 (비활성). 활성화는 운영자 작업입니다.`,

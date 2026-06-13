@@ -29,6 +29,7 @@ import { useStrategyBuilder, INITIAL_STATE } from "@/hooks/useStrategyBuilder";
 import { useLocalStrategies } from "@/hooks/useLocalStrategies";
 import { listKisBuilderPresets, previewCodeFromState, registerPaperStrategy } from "@/lib/api";
 import { parseYamlToBuilderState } from "@/lib/builder/yamlImporter";
+import { generateId } from "@/lib/builder/storage";
 import {
   computeStageStatuses,
   firstIncompleteStageId,
@@ -195,8 +196,14 @@ export default function BuilderPage() {
   }, [builder, toast]);
 
   const handleSelectCustomStrategy = useCallback(
-    (strategy: { state: typeof INITIAL_STATE }) => {
-      builder.loadState(strategy.state);
+    (strategy: { id: string; state: typeof INITIAL_STATE }) => {
+      // Pin metadata.id to the draft's link key so registering the loaded canvas
+      // (via the action bar) lands under the same id the unified list merges by.
+      const linkId = (strategy.state.metadata.id || "").trim() || strategy.id;
+      builder.loadState({
+        ...strategy.state,
+        metadata: { ...strategy.state.metadata, id: linkId },
+      });
     },
     [builder]
   );
@@ -238,6 +245,9 @@ export default function BuilderPage() {
     // describe before defining conditions.
     builder.reset();
     builder.setMetadata({
+      // Mint a stable id up front so a save and a (later) registration share
+      // one identity — the unified list merges draft↔registration by it.
+      id: generateId(),
       name: newName,
       description: "",
       category: "custom",

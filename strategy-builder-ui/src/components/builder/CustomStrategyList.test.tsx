@@ -52,6 +52,15 @@ describe("CustomStrategyList register feedback", () => {
     await userEvent.click(screen.getByRole("button", { name: "전략 메뉴" }));
     await userEvent.click(screen.getByRole("button", { name: /등록/ }));
     await waitFor(() => expect(registerPaperStrategy).toHaveBeenCalled());
+    // Registers under the draft's link key (metadata.id || record id) so the
+    // server record's id matches this row and merges into one entry.
+    expect(registerPaperStrategy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        builder_state: expect.objectContaining({
+          metadata: expect.objectContaining({ id: "s1" }),
+        }),
+      }),
+    );
     expect(window.alert).not.toHaveBeenCalled();
     await waitFor(() =>
       expect(screen.getByText(/등록되었습니다|등록했습니다/)).toBeInTheDocument(),

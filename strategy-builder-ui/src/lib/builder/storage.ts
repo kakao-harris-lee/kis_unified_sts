@@ -10,7 +10,7 @@ const MAX_STRATEGIES = 50;
 /**
  * Generate unique ID for new strategy
  */
-function generateId(): string {
+export function generateId(): string {
   return `custom_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
 }
 
@@ -59,7 +59,10 @@ export function saveStrategy(state: BuilderState, existingId?: string): StoredSt
         ...strategies[index],
         name: state.metadata.name,
         updatedAt: now,
-        state,
+        // Keep metadata.id pinned to the record id so the unified builder list
+        // can link this draft to its server-side registration (which keys off
+        // metadata.id). See CustomStrategyList's lifecycle merge.
+        state: { ...state, metadata: { ...state.metadata, id: existingId } },
       };
       const newStrategies = [...strategies];
       newStrategies[index] = updated;
@@ -68,13 +71,16 @@ export function saveStrategy(state: BuilderState, existingId?: string): StoredSt
     }
   }
 
-  // Create new strategy
+  // Create new strategy. Reuse a pre-set metadata.id (e.g. an imported preset
+  // slug) as the record id so both stay in sync; otherwise mint one and stamp
+  // it back onto metadata so registration and the draft share an identity.
+  const id = (state.metadata.id || "").trim() || generateId();
   const newStrategy: StoredStrategy = {
-    id: generateId(),
+    id,
     name: state.metadata.name,
     createdAt: now,
     updatedAt: now,
-    state,
+    state: { ...state, metadata: { ...state.metadata, id } },
   };
 
   // Enforce max limit
