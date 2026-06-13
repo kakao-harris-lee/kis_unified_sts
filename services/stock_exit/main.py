@@ -98,6 +98,7 @@ async def _build_and_run() -> int:
         positions_key=positions_key,
         interval_seconds=interval,
         regime_config=regime_config,
+        runtime_ledger=runtime_ledger,
     )
 
     loop = asyncio.get_running_loop()

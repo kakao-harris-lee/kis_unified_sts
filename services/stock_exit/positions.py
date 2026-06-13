@@ -1,8 +1,10 @@
 """Codec between the M4-O position hash record and a `Position`.
 
 M4-O (services/stock_order_router) writes the daemon positions hash:
-field = code, value = JSON ``{code, entry_price, quantity, opened_at_ms, state,
-signal_id}``. M4-X reconstructs a `Position`, restores the running extremes
+field = code, value = JSON ``{code, name, entry_price, quantity, opened_at_ms,
+state, signal_id, strategy}``. M4-X reconstructs a `Position` (carrying the
+originating ``strategy`` so the closed-trade ledger row is attributed), restores
+the running extremes
 (``high_water``/``low_water``) it persists each cycle, and skips foreign records
 (the orchestrator's PositionTracker uses ``entry_time``, not ``opened_at_ms``).
 """
@@ -59,6 +61,7 @@ def position_from_record(rec: dict[str, Any], *, fee_rate: float) -> Position:
         entry_time=entry_time,
         state=state,
         fee_rate=fee_rate,
+        strategy=str(rec.get("strategy", "")),
     )
     # __post_init__ seeds high/low to entry; restore persisted extremes if any.
     if rec.get("high_water") is not None:

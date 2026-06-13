@@ -149,6 +149,7 @@ class StockOrderRouterDaemon(StreamStage):
                 filled_at_ms=now_ms,
                 venue="KRX",
                 trade_role="entry",
+                strategy=signal.strategy,
             )
         except Exception:
             logger.exception(
@@ -174,11 +175,17 @@ class StockOrderRouterDaemon(StreamStage):
                 json.dumps(
                     {
                         "code": signal.code,
+                        "name": signal.name,
                         "entry_price": filled_price,
                         "quantity": quantity,
                         "opened_at_ms": now_ms,
                         "state": "SURVIVAL",
                         "signal_id": signal_id,
+                        # Strategy attribution so the monitor's restart recovery
+                        # and M4-X's closed-trade ledger row carry the originating
+                        # strategy (live fills get it via signal_meta; recovery
+                        # reads it straight from this record).
+                        "strategy": signal.strategy,
                     }
                 ),
             )

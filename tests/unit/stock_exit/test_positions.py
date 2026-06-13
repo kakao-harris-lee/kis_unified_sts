@@ -79,6 +79,21 @@ def test_id_falls_back_to_code_when_signal_id_missing() -> None:
     assert position_from_record(rec, fee_rate=0.003).id == "005930"
 
 
+def test_position_from_record_extracts_strategy_and_name() -> None:
+    rec = {**_m4o_record(), "strategy": "pattern_pullback", "name": "삼성전자"}
+    pos = position_from_record(rec, fee_rate=0.003)
+    # Strategy attribution must survive the hash round-trip so the closed-trade
+    # ledger row (and restart-recovered positions) are attributed.
+    assert pos.strategy == "pattern_pullback"
+    assert pos.name == "삼성전자"
+
+
+def test_strategy_defaults_empty_when_absent() -> None:
+    # Older records written before the strategy field was added must still parse.
+    pos = position_from_record(_m4o_record(), fee_rate=0.003)
+    assert pos.strategy == ""
+
+
 def test_high_water_round_trip() -> None:
     rec = _m4o_record()
     pos = position_from_record(rec, fee_rate=0.003)

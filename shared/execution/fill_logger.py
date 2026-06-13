@@ -71,6 +71,7 @@ class FillLogger:
         venue: str,
         trade_role: str,
         broker_error_code: str = "",
+        strategy: str = "",
     ) -> None:
         """Publish to ``stream:order.fill`` and persist to RuntimeLedger if enabled.
 
@@ -96,6 +97,7 @@ class FillLogger:
             "venue": venue,
             "trade_role": trade_role,
             "broker_error_code": broker_error_code,
+            "strategy": strategy,
         }
         await self.redis.xadd(self.stream, fields, maxlen=self.maxlen, approximate=True)
         await self.redis.expire(self.stream, _STREAM_TTL_SECONDS)
@@ -122,6 +124,7 @@ class FillLogger:
                         venue=venue,
                         trade_role=trade_role,
                         broker_error_code=broker_error_code,
+                        strategy=strategy,
                     ),
                 )
             except Exception:
@@ -151,6 +154,7 @@ class FillLogger:
         venue: str,
         trade_role: str,
         broker_error_code: str,
+        strategy: str = "",
     ) -> dict[str, Any]:
         fill_id = f"fill:{order_id}:{trade_role}:{filled_at_ms}"
         return {
@@ -162,6 +166,7 @@ class FillLogger:
             "asset_class": self.asset_class,
             "symbol": symbol,
             "code": symbol,
+            "strategy": strategy,
             "side": side,
             "order_type": order_type,
             "requested_price": float(requested_price),
