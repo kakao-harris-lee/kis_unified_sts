@@ -19,7 +19,6 @@ import {
   MetadataEditor,
   PreviewPanel,
   CustomStrategyList,
-  RegisteredStrategiesPanel,
   ActiveStrategiesPanel,
   FunnelStage,
   StageRail,
@@ -30,6 +29,7 @@ import { useStrategyBuilder, INITIAL_STATE } from "@/hooks/useStrategyBuilder";
 import { useLocalStrategies } from "@/hooks/useLocalStrategies";
 import { listKisBuilderPresets, previewCodeFromState, registerPaperStrategy } from "@/lib/api";
 import { parseYamlToBuilderState } from "@/lib/builder/yamlImporter";
+import { generateId } from "@/lib/builder/storage";
 import {
   computeStageStatuses,
   firstIncompleteStageId,
@@ -50,6 +50,9 @@ export default function BuilderPage() {
   const [activeStage, setActiveStage] = useState<StageId>("metadata");
   const [registering, setRegistering] = useState(false);
   const [lastRegistered, setLastRegistered] = useState<{ name: string } | null>(null);
+  // Bumped after the action-bar register so the unified "내 전략" list re-pulls
+  // the server roster and reflects the new 등록됨/활성 status.
+  const [registeredRefresh, setRegisteredRefresh] = useState(0);
   const [showImport, setShowImport] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
 
@@ -169,6 +172,7 @@ export default function BuilderPage() {
     try {
       const result = await registerPaperStrategy({ builder_state: builder.state });
       setLastRegistered({ name: result.name });
+      setRegisteredRefresh((n) => n + 1);
       toast.success(`'${result.name}' 전략을 등록했습니다.`);
     } catch (err) {
       toast.error(`등록 실패: ${err instanceof Error ? err.message : String(err)}`);
@@ -192,8 +196,14 @@ export default function BuilderPage() {
   }, [builder, toast]);
 
   const handleSelectCustomStrategy = useCallback(
-    (strategy: { state: typeof INITIAL_STATE }) => {
-      builder.loadState(strategy.state);
+    (strategy: { id: string; state: typeof INITIAL_STATE }) => {
+      // Pin metadata.id to the draft's link key so registering the loaded canvas
+      // (via the action bar) lands under the same id the unified list merges by.
+      const linkId = (strategy.state.metadata.id || "").trim() || strategy.id;
+      builder.loadState({
+        ...strategy.state,
+        metadata: { ...strategy.state.metadata, id: linkId },
+      });
     },
     [builder]
   );
@@ -235,6 +245,9 @@ export default function BuilderPage() {
     // describe before defining conditions.
     builder.reset();
     builder.setMetadata({
+      // Mint a stable id up front so a save and a (later) registration share
+      // one identity — the unified list merges draft↔registration by it.
+      id: generateId(),
       name: newName,
       description: "",
       category: "custom",
@@ -426,14 +439,12 @@ export default function BuilderPage() {
               onDelete={localStrategies.remove}
               onDuplicate={localStrategies.duplicate}
               onCreateNew={handleCreateNew}
+              refreshSignal={registeredRefresh}
             />
           </div>
 
-          {/* Active (runtime) strategies — read-only */}
+          {/* Code strategies (non-builder, runtime registry) — read-only */}
           <ActiveStrategiesPanel assetClass={builder.state.assetClass} />
-
-          {/* Registered paper-trading strategies */}
-          <RegisteredStrategiesPanel />
         </div>
 
         {/* Right: Funnel Feed + Preview */}
