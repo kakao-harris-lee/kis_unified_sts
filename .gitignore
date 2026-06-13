@@ -106,3 +106,6 @@ logs/security/
 # Secrets
 .api_key.secret
 *.secret
+
+# Builder→paper generated strategies (runtime drop point; keep the dir + .gitkeep)
+config/strategies/built/*.yaml
