@@ -23,7 +23,7 @@ describe("BuilderActionBar", () => {
       />,
     );
     expect(screen.getByRole("button", { name: /저장/ })).toBeDisabled();
-    expect(screen.getByRole("button", { name: /페이퍼로 등록/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /등록/ })).toBeDisabled();
   });
 
   it("유효하면 onSave/onRegister를 호출한다", async () => {
@@ -31,14 +31,14 @@ describe("BuilderActionBar", () => {
     const onRegister = vi.fn();
     render(<BuilderActionBar {...baseProps} onSave={onSave} onRegister={onRegister} />);
     await userEvent.click(screen.getByRole("button", { name: /저장/ }));
-    await userEvent.click(screen.getByRole("button", { name: /페이퍼로 등록/ }));
+    await userEvent.click(screen.getByRole("button", { name: /등록/ }));
     expect(onSave).toHaveBeenCalledOnce();
     expect(onRegister).toHaveBeenCalledOnce();
   });
 
   it("등록 중에는 등록 버튼이 비활성", () => {
     render(<BuilderActionBar {...baseProps} registering={true} />);
-    const btn = screen.getByRole("button", { name: /페이퍼로 등록/ });
+    const btn = screen.getByRole("button", { name: /등록/ });
     expect(btn).toBeDisabled();
     expect(btn.querySelector(".animate-spin")).not.toBeNull();
   });

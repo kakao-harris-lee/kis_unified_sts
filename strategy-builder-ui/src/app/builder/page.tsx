@@ -80,8 +80,11 @@ export default function BuilderPage() {
             state: s.builder_state as BuilderState,
           }));
         setPresetStrategies(strategies);
-      } catch {
-        // silently fail - strategies will show as empty
+      } catch (err) {
+        // Non-fatal: the builder still works with custom strategies only.
+        // Log so a regressed preset endpoint (e.g. the 401 fixed in this PR)
+        // is visible in the console instead of silently showing an empty list.
+        console.warn("Failed to load builder presets:", err);
       } finally {
         setIsLoadingStrategies(false);
       }
@@ -166,7 +169,7 @@ export default function BuilderPage() {
     try {
       const result = await registerPaperStrategy({ builder_state: builder.state });
       setLastRegistered({ name: result.name });
-      toast.success(`'${result.name}' 전략을 페이퍼에 등록했습니다.`);
+      toast.success(`'${result.name}' 전략을 등록했습니다.`);
     } catch (err) {
       toast.error(`등록 실패: ${err instanceof Error ? err.message : String(err)}`);
     } finally {

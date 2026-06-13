@@ -47,7 +47,7 @@ describe("CustomStrategyList register feedback", () => {
     });
     renderList();
     await userEvent.click(screen.getByRole("button", { name: "전략 메뉴" }));
-    await userEvent.click(screen.getByRole("button", { name: /페이퍼로 등록/ }));
+    await userEvent.click(screen.getByRole("button", { name: /등록/ }));
     await waitFor(() => expect(registerPaperStrategy).toHaveBeenCalled());
     expect(window.alert).not.toHaveBeenCalled();
     await waitFor(() =>
@@ -59,7 +59,7 @@ describe("CustomStrategyList register feedback", () => {
     vi.mocked(registerPaperStrategy).mockRejectedValueOnce(new Error("boom"));
     renderList();
     await userEvent.click(screen.getByRole("button", { name: "전략 메뉴" }));
-    await userEvent.click(screen.getByRole("button", { name: /페이퍼로 등록/ }));
+    await userEvent.click(screen.getByRole("button", { name: /등록/ }));
     await waitFor(() => expect(registerPaperStrategy).toHaveBeenCalled());
     expect(window.alert).not.toHaveBeenCalled();
     await waitFor(() => expect(screen.getByText(/등록 실패/)).toBeInTheDocument());
