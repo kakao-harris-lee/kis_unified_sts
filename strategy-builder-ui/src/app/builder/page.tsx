@@ -19,7 +19,6 @@ import {
   MetadataEditor,
   PreviewPanel,
   CustomStrategyList,
-  RegisteredStrategiesPanel,
   ActiveStrategiesPanel,
   FunnelStage,
   StageRail,
@@ -50,6 +49,9 @@ export default function BuilderPage() {
   const [activeStage, setActiveStage] = useState<StageId>("metadata");
   const [registering, setRegistering] = useState(false);
   const [lastRegistered, setLastRegistered] = useState<{ name: string } | null>(null);
+  // Bumped after the action-bar register so the unified "내 전략" list re-pulls
+  // the server roster and reflects the new 등록됨/활성 status.
+  const [registeredRefresh, setRegisteredRefresh] = useState(0);
   const [showImport, setShowImport] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
 
@@ -169,6 +171,7 @@ export default function BuilderPage() {
     try {
       const result = await registerPaperStrategy({ builder_state: builder.state });
       setLastRegistered({ name: result.name });
+      setRegisteredRefresh((n) => n + 1);
       toast.success(`'${result.name}' 전략을 등록했습니다.`);
     } catch (err) {
       toast.error(`등록 실패: ${err instanceof Error ? err.message : String(err)}`);
@@ -426,14 +429,12 @@ export default function BuilderPage() {
               onDelete={localStrategies.remove}
               onDuplicate={localStrategies.duplicate}
               onCreateNew={handleCreateNew}
+              refreshSignal={registeredRefresh}
             />
           </div>
 
-          {/* Active (runtime) strategies — read-only */}
+          {/* Code strategies (non-builder, runtime registry) — read-only */}
           <ActiveStrategiesPanel assetClass={builder.state.assetClass} />
-
-          {/* Registered paper-trading strategies */}
-          <RegisteredStrategiesPanel />
         </div>
 
         {/* Right: Funnel Feed + Preview */}
