@@ -230,8 +230,12 @@ class StockExitDaemon:
         Redis ``trading:stock:trades`` LIST (via the monitor); the dashboard
         ``/api/trades`` prefers the ledger, so without this the decoupled
         trades — and their strategy attribution — never appear. Keyed on
-        ``pos.id`` (the entry signal id) so a retry de-dups via
-        ``ON CONFLICT(idempotency_key)``. Best-effort: a ledger failure must not
+        ``pos.id`` (the entry signal id, globally unique per M4-P signal) so a
+        retry de-dups via ``ON CONFLICT(idempotency_key)``. This is the sole
+        writer of stock trades to the ledger: the legacy orchestrator path is
+        operationally disabled for stock (``STOCK_ORCHESTRATOR_ENABLED=false``)
+        and the monitor only LPUSHes the Redis LIST — so no second writer
+        double-records the same close. Best-effort: a ledger failure must not
         re-open an already-closed position.
         """
         if self.runtime_ledger is None:
