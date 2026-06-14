@@ -5,9 +5,17 @@ from __future__ import annotations
 import os
 from datetime import datetime
 
+import pytest
+
 from shared.models.position import Position, PositionSide
 from shared.streaming import trading_state
 from shared.streaming.trading_state import TradingStatePublisher
+
+# Flaky under the `-n auto` parallel pass (intermittent empty-LIST / stale-hash
+# assertions) despite using a per-test Redis double; stable serially. Pin to the
+# serial pass like the other shared-external-state-sensitive tests.
+# See docs/CI_PARALLEL_NOTES.md.
+pytestmark = pytest.mark.serial
 
 
 class _FakePipeline:

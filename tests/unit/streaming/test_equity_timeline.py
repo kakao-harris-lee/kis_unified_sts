@@ -1,4 +1,5 @@
 """TradingStatePublisher running-totals + equity_timeline regression tests."""
+
 from __future__ import annotations
 
 import json
@@ -9,9 +10,17 @@ import pytest
 from shared.streaming import trading_state
 from shared.streaming.trading_state import TradingStatePublisher, TradingStateReader
 
+# These exercise the TradingStatePublisher against a Redis double and proved
+# flaky under the `-n auto` parallel pass (intermittent "publish should push to
+# LIST → []"), while passing locally and in the sequential pass. Pin them to the
+# serial pass — same remedy as the other shared-external-state-sensitive tests
+# (test_redis_tls, test_rate_limiter, test_health). See docs/CI_PARALLEL_NOTES.md.
+pytestmark = pytest.mark.serial
+
 # ---------------------------------------------------------------------------
 # Minimal fake-Redis (pipeline + sorted set + hash)
 # ---------------------------------------------------------------------------
+
 
 class _FakePipeline:
     def __init__(self, redis_client: "_FakeRedis") -> None:
@@ -131,6 +140,7 @@ class _FakeRedis:
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def fake_redis():
     return _FakeRedis()
@@ -158,6 +168,7 @@ def reader(fake_redis, monkeypatch):
 # Tests: running totals
 # ---------------------------------------------------------------------------
 
+
 def test_running_totals_survive_across_sessions(publisher, reader):
     publisher.increment_running_totals(pnl=150.0, trades=1, win=True)
     publisher.increment_running_totals(pnl=-80.0, trades=1, win=False)
@@ -178,6 +189,7 @@ def test_running_totals_zero_defaults_when_empty(reader):
 # ---------------------------------------------------------------------------
 # Tests: equity timeline
 # ---------------------------------------------------------------------------
+
 
 def test_equity_timeline_records_daily_snapshot(publisher, reader):
     today = date(2026, 4, 15)
@@ -224,6 +236,7 @@ def test_equity_timeline_empty_when_no_data(reader):
 # Tests: orchestrator running totals integration
 # ---------------------------------------------------------------------------
 
+
 def test_orchestrator_record_running_totals_helper_increments_publisher():
     """_record_running_totals calls publisher.increment_running_totals with pnl/win."""
     from datetime import datetime
@@ -268,6 +281,7 @@ def test_orchestrator_record_running_totals_helper_increments_publisher():
 # Tests: publish_signal uses tz-aware signal.timestamp
 # ---------------------------------------------------------------------------
 
+
 def test_publish_signal_uses_signal_timestamp(publisher, redis_client):
     """publish_signal must serialize the signal's own tz-aware timestamp,
     not a fresh naive datetime.now() at publish time.
@@ -292,9 +306,9 @@ def test_publish_signal_uses_signal_timestamp(publisher, redis_client):
     assert raw, "publish_signal should push to signals LIST"
     payload = json.loads(raw[0])
     stored_ts_str = payload["timestamp"]
-    assert "+00:00" in stored_ts_str or stored_ts_str.endswith("Z"), (
-        f"Stored timestamp must be tz-aware ISO, got: {stored_ts_str!r}"
-    )
+    assert "+00:00" in stored_ts_str or stored_ts_str.endswith(
+        "Z"
+    ), f"Stored timestamp must be tz-aware ISO, got: {stored_ts_str!r}"
     # Parse back and confirm equality with the source signal.timestamp
     stored_ts = datetime.fromisoformat(stored_ts_str)
     assert stored_ts == tz_utc_15_30
