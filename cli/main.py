@@ -69,6 +69,64 @@ def backtest():
     pass
 
 
+@cli.group()
+def experiment():
+    """전략 실험(백테스트) — 현재 운용 전략을 수집 데이터로 비교 실행
+
+    \b
+    Examples:
+        sts experiment run --spec config/experiments/stock_default.yaml
+    """
+    pass
+
+
+@experiment.command("run")
+@click.option("--spec", "-s", required=True, help="Experiment spec YAML 경로")
+@click.option("--start", default=None, help="시작일 오버라이드 (YYYY-MM-DD)")
+@click.option("--end", default=None, help="종료일 오버라이드 (YYYY-MM-DD)")
+@click.option(
+    "--output-dir", default="reports/stock_experiment", help="리포트 출력 디렉토리"
+)
+def experiment_run(spec: str, start: str | None, end: str | None, output_dir: str):
+    """전략 실험을 실행하고 통합 리포트 JSON을 기록한다."""
+    import yaml
+
+    from shared.backtest.experiment_runner import (
+        ExperimentSpec,
+        run_stock_experiment,
+        write_experiment_report,
+    )
+
+    with open(spec, encoding="utf-8") as fh:
+        data = yaml.safe_load(fh) or {}
+    if start:
+        data["start"] = start
+    if end:
+        data["end"] = end
+
+    exp_spec = ExperimentSpec.from_dict(data)
+    click.echo(
+        f"Running experiment '{exp_spec.id}' — "
+        f"{len(exp_spec.strategies)} strategies × {len(exp_spec.symbols)} symbols"
+    )
+    report = run_stock_experiment(exp_spec)
+
+    for s in report["summaries"]:
+        click.echo(
+            f"  {s['strategy_id']:<22} "
+            f"ret {s['total_return_pct']:+7.2f}%  "
+            f"Sharpe {s['sharpe_ratio']:+5.2f}  "
+            f"MDD {s['max_drawdown_pct']:5.2f}%  "
+            f"trades {s['closed_trades']:>3}  win {s['win_rate_pct']:.0f}%"
+        )
+    for st in report["status_by_strategy"]:
+        if st["status"] != "ok":
+            click.echo(f"  [{st['status']}] {st['strategy_id']}: {st['error']}")
+
+    path = write_experiment_report(report, output_dir)
+    click.echo(f"\nReport written: {path}")
+
+
 def _run_tier_backtest(
     strategy: str,
     asset: str,
