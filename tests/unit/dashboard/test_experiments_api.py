@@ -79,6 +79,27 @@ async def test_job_manager_serializes_runs():
     assert mgr.get(j2.job_id).status == "done"
 
 
+@pytest.mark.asyncio
+async def test_eviction_does_not_leak_reports():
+    """A job evicted while queued must not re-leak its (heavy) report into
+    _reports — _reports/_tasks stay bounded to the tracked jobs."""
+    import asyncio
+
+    from services.dashboard.routes.experiments import ExperimentJobManager
+
+    mgr = ExperimentJobManager(runner=_fake_report, max_jobs=2)
+    tasks = []
+    for _ in range(6):
+        job = await mgr.submit(_MINIMAL_SPEC)
+        tasks.append(mgr._tasks[job.job_id])  # capture before a later submit evicts it
+    await asyncio.gather(*tasks)  # all 6 serialized runs finish
+
+    # tracking + retained results never exceed the cap, even though 6 ran
+    assert len(mgr._jobs) <= 2
+    assert len(mgr._reports) <= 2
+    assert set(mgr._reports).issubset(set(mgr._jobs))
+
+
 def _client(monkeypatch, tmp_path: Path) -> tuple[TestClient, object]:
     monkeypatch.setenv("STOCK_EXPERIMENT_OUTPUT_DIR", str(tmp_path / "reports"))
     from services.dashboard.routes import experiments

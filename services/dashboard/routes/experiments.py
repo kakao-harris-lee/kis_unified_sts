@@ -113,8 +113,12 @@ class ExperimentJobManager:
             job.started_at = _now_iso()
             try:
                 report = await asyncio.to_thread(self._runner_fn(), spec)
-                self._reports[job.job_id] = report
                 job.experiment_id = report.get("experiment", {}).get("id")
+                # Only retain the (heavy) report if the job is still tracked — a
+                # job evicted while queued must not re-leak its report into
+                # _reports, which would then never be evicted again.
+                if job.job_id in self._jobs:
+                    self._reports[job.job_id] = report
                 job.status = "done"
             except Exception as exc:  # noqa: BLE001 - surface as job failure
                 logger.exception("experiment job %s failed", job.job_id)
@@ -122,6 +126,16 @@ class ExperimentJobManager:
                 job.error = f"{type(exc).__name__}: {exc}"
             finally:
                 job.finished_at = _now_iso()
+                self._prune()
+
+    def _prune(self) -> None:
+        """Keep _reports/_tasks bounded to the tracked jobs (defends against an
+        eviction that raced with an in-flight run)."""
+        live = set(self._jobs)
+        for jid in [k for k in self._reports if k not in live]:
+            self._reports.pop(jid, None)
+        for jid in [k for k, t in self._tasks.items() if k not in live and t.done()]:
+            self._tasks.pop(jid, None)
 
     def get(self, job_id: str) -> ExperimentJob | None:
         return self._jobs.get(job_id)
@@ -241,12 +255,11 @@ async def strategy_catalog() -> dict[str, Any]:
 
 @router.post("/run")
 async def run_experiment(req: RunExperimentRequest) -> dict[str, Any]:
-    spec_dict = _load_default_spec()
-    overrides = req.model_dump(exclude_none=True)
-    spec_dict.update(overrides)
     try:
+        spec_dict = _load_default_spec()
+        spec_dict.update(req.model_dump(exclude_none=True))
         job = await _manager.submit(spec_dict)
-    except Exception as exc:  # noqa: BLE001 - spec validation error → 400
+    except Exception as exc:  # noqa: BLE001 - bad spec/config → 400
         raise HTTPException(
             status_code=400, detail=f"Invalid experiment spec: {exc}"
         ) from exc
