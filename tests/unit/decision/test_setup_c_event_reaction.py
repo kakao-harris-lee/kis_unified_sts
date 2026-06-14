@@ -131,7 +131,8 @@ class TestSetupCEventReaction:
         assert signal is not None, "Expected a long Signal"
         assert signal.direction == "long"
         assert signal.entry_price == 350.30
-        assert signal.stop_loss == ctx.last_15min_low  # 348.00
+        # stop = opposite edge − stop_buffer_atr_mult(0.5)×atr(1.0) = 348.00 − 0.5
+        assert signal.stop_loss == ctx.last_15min_low - 0.5 * ctx.atr_14  # 347.50
         # target = entry + target_atr_mult * atr = 350.30 + 2.5 * 1.0 = 352.80
         assert signal.take_profit == pytest.approx(352.80)
         # Event is now marked as traded
@@ -162,7 +163,8 @@ class TestSetupCEventReaction:
         assert signal is not None, "Expected a short Signal"
         assert signal.direction == "short"
         assert signal.entry_price == 347.70
-        assert signal.stop_loss == ctx.last_15min_high  # 350.00
+        # stop = opposite edge + stop_buffer_atr_mult(0.5)×atr(1.0) = 350.00 + 0.5
+        assert signal.stop_loss == ctx.last_15min_high + 0.5 * ctx.atr_14  # 350.50
         # target = entry - target_atr_mult * atr = 347.70 - 2.5 * 1.0 = 345.20
         assert signal.take_profit == pytest.approx(345.20)
         assert tracker.already_traded(event.event_id)

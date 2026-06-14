@@ -21,7 +21,8 @@ A tier-1 FOMC event is placed 5 minutes before ``now`` so
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import fakeredis.aioredis
 import pandas as pd
@@ -36,7 +37,12 @@ from shared.decision.context import ScheduledEvent
 from shared.decision.setups.event_reaction import SetupCEventReaction
 
 _SYMBOL = "A05"
-_BASE = datetime(2026, 6, 5, 9, 0, tzinfo=UTC)
+# 09:00 KST market open. now_fn = _BASE + 25min = 09:25 KST, well inside the
+# Setup C no_entry_after cutoff (15:00 KST). KST-native per the project's
+# timezone rule — a UTC base here mapped to 18:25 KST (evening), which the new
+# late-session entry cutoff now (correctly) blocks.
+_KST = ZoneInfo("Asia/Seoul")
+_BASE = datetime(2026, 6, 5, 9, 0, tzinfo=_KST)
 
 
 class _Macro:

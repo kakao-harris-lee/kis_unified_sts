@@ -83,6 +83,24 @@ class SetupCConfig(ServiceConfigBase):
             "(1 = top tier, 3 = minor; default=2 means tier-3 events are skipped)"
         ),
     )
+    stop_buffer_atr_mult: float = Field(
+        default=0.5,
+        description=(
+            "Extra cushion (in ATRs) placed BEYOND the opposite 15-min range edge "
+            "for the protective stop. The raw stop sits at the range edge, which is "
+            "only ~1.3× 1-min ATR away → whipsawed out in minutes on a failed "
+            "breakout. This buffer widens it so normal post-breakout pullback does "
+            "not trigger an immediate stop."
+        ),
+    )
+    no_entry_after_minutes_since_open: int = Field(
+        default=360,
+        description=(
+            "No new entries after this many minutes since the 09:00 KST open "
+            "(360 = 15:00 KST). Prevents late-session entries that would be "
+            "force-closed at the 15:45 session close → churn/slippage."
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -177,6 +195,13 @@ class SetupCEventReaction(Setup):
         """
         c = self.config
 
+        # 0. Late-session entry cutoff (KST-anchored via minutes_since_open).
+        #    No new entries after no_entry_after_minutes_since_open (360 = 15:00
+        #    KST) so a late breakout isn't opened minutes before the 15:45 close
+        #    and force-liquidated → churn.
+        if ctx.minutes_since_open() > c.no_entry_after_minutes_since_open:
+            return None
+
         # 1. Look for a qualifying scheduled event within the window
         recent_event: ScheduledEvent | None = ctx.find_recent_event(
             window_minutes=c.window_minutes,
@@ -193,20 +218,23 @@ class SetupCEventReaction(Setup):
         atr = ctx.atr_14
         buffer = c.breakout_buffer_atr_mult * atr
 
+        stop_cushion = c.stop_buffer_atr_mult * atr
         if (
             ctx.current_price > ctx.last_15min_high
             and (ctx.current_price - ctx.last_15min_high) < buffer
         ):
             direction = "long"
             entry = ctx.current_price
-            stop = ctx.last_15min_low
+            # Stop below the opposite (low) edge, with a cushion so a normal
+            # pullback into the range doesn't immediately trigger it.
+            stop = ctx.last_15min_low - stop_cushion
         elif (
             ctx.current_price < ctx.last_15min_low
             and (ctx.last_15min_low - ctx.current_price) < buffer
         ):
             direction = "short"
             entry = ctx.current_price
-            stop = ctx.last_15min_high
+            stop = ctx.last_15min_high + stop_cushion
         else:
             return None
 
