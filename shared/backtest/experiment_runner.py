@@ -17,6 +17,8 @@ report viewer can render it once the API is generalized (Phase 3/4):
 from __future__ import annotations
 
 import logging
+import math
+import statistics
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
@@ -93,20 +95,24 @@ def _strategy_timeframe(strategy_config: dict[str, Any]) -> str:
     return str(strategy_config.get("strategy", {}).get("timeframe", "minute"))
 
 
-def _load_symbols(
+def _load_symbol_frames(
     *,
     symbols: list[str],
     timeframe: str,
     window: _ResolvedWindow,
     bar_loader: BarLoader,
-) -> tuple[pd.DataFrame | None, dict[str, Any]]:
-    """Load + concat bars for all symbols; return (df_or_none, coverage_by_symbol).
+) -> tuple[dict[str, pd.DataFrame], dict[str, Any]]:
+    """Load bars PER SYMBOL (single-symbol frames) + coverage_by_symbol.
 
-    Per-symbol coverage records loaded/rows/start/end, or an error/no_data marker —
-    so a missing symbol surfaces in the report instead of silently shrinking the
-    universe.
+    Returns one frame per loaded symbol — NOT a concatenated multi-symbol frame.
+    ``DailyBacktestAdapter`` pre-computes rolling indicators over the whole frame
+    and indexes bars positionally, so it is single-symbol only; the experiment
+    therefore backtests each symbol independently and aggregates (equal-weight),
+    mirroring the CLI's tier backtest. The whole per-symbol body is guarded so a
+    malformed frame surfaces as that symbol's coverage error instead of aborting
+    the run.
     """
-    frames: list[pd.DataFrame] = []
+    frames: dict[str, pd.DataFrame] = {}
     coverage: dict[str, Any] = {}
     for symbol in symbols:
         try:
@@ -117,31 +123,26 @@ def _load_symbols(
                 start=window.start,
                 end=window.end,
             )
-        except Exception as exc:  # noqa: BLE001 - record, don't abort the whole run
+            if df is None or df.empty:
+                coverage[symbol] = {"loaded": False, "error": "no_data"}
+                continue
+            df = df.copy()
+            if "code" not in df.columns:
+                df["code"] = symbol
+            df = df.sort_values("datetime").reset_index(drop=True)
+            coverage[symbol] = {
+                "loaded": True,
+                "rows": int(len(df)),
+                "start": str(pd.to_datetime(df["datetime"].min()).date()),
+                "end": str(pd.to_datetime(df["datetime"].max()).date()),
+            }
+            frames[symbol] = df
+        except Exception as exc:  # noqa: BLE001 - record, never abort the run
             coverage[symbol] = {
                 "loaded": False,
                 "error": f"{type(exc).__name__}: {exc}",
             }
-            continue
-        if df is None or df.empty:
-            coverage[symbol] = {"loaded": False, "error": "no_data"}
-            continue
-        df = df.copy()
-        if "code" not in df.columns:
-            df["code"] = symbol
-        coverage[symbol] = {
-            "loaded": True,
-            "rows": int(len(df)),
-            "start": str(pd.to_datetime(df["datetime"].min()).date()),
-            "end": str(pd.to_datetime(df["datetime"].max()).date()),
-        }
-        frames.append(df)
-
-    if not frames:
-        return None, coverage
-    combined = pd.concat(frames, ignore_index=True)
-    combined = combined.sort_values(["datetime", "code"]).reset_index(drop=True)
-    return combined, coverage
+    return frames, coverage
 
 
 def _daily_equity_points(
@@ -154,28 +155,69 @@ def _daily_equity_points(
     return [{"date": d, "equity": v} for d, v in sorted(by_date.items())]
 
 
-def _summary_from_result(strategy_id: str, name: str, result: Any) -> dict[str, Any]:
-    """Map a ``BacktestResult`` to the unified report summary shape (frontend schema
-    fields + Sharpe/MDD/win-rate that the legacy paper-sim never produced)."""
+def _finite(value: float, ndigits: int = 4) -> float | None:
+    """Round a float, mapping non-finite (inf/nan) → None so the report stays valid
+    JSON (browser ``JSON.parse`` rejects ``Infinity``; e.g. profit_factor with no
+    losing trades is ``inf`` in the engine)."""
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return None
+    return round(f, ndigits) if math.isfinite(f) else None
+
+
+def _portfolio_metrics(
+    equity_points: list[dict[str, Any]], initial: float
+) -> dict[str, float]:
+    """Equal-weight portfolio metrics from a combined daily-equity series."""
+    eq = [float(p["equity"]) for p in equity_points] or [initial]
+    final = eq[-1]
+    total_return_pct = (final - initial) / initial * 100 if initial > 0 else 0.0
+    rets = [eq[i] / eq[i - 1] - 1 for i in range(1, len(eq)) if eq[i - 1] > 0]
+    sharpe = sortino = 0.0
+    if len(rets) >= 2:
+        mean = statistics.fmean(rets)
+        sd = statistics.pstdev(rets)
+        sharpe = mean / sd * math.sqrt(252) if sd > 0 else 0.0
+        downside = [r for r in rets if r < 0]
+        dsd = statistics.pstdev(downside) if len(downside) >= 2 else 0.0
+        sortino = mean / dsd * math.sqrt(252) if dsd > 0 else 0.0
+    peak = eq[0]
+    mdd = 0.0
+    for v in eq:
+        peak = max(peak, v)
+        if peak > 0:
+            mdd = max(mdd, (peak - v) / peak * 100)
     return {
-        "strategy_id": strategy_id,
-        "strategy_name": name,
-        "engine": "backtest_engine",
-        "initial_capital": float(result.initial_capital),
-        "final_equity": float(result.final_capital),
-        "total_return_pct": round(float(result.total_return_pct), 4),
-        "realized_pnl": float(result.total_pnl),
-        "unrealized_pnl": 0.0,  # the engine liquidates all positions at data end
-        "closed_trades": int(result.total_trades),
-        "admitted_entries": int(result.total_trades),
-        "open_positions": 0,
-        "win_rate_pct": round(float(result.win_rate), 2),
-        "max_drawdown_pct": round(float(result.max_drawdown_pct), 4),
-        "sharpe_ratio": round(float(result.sharpe_ratio), 3),
-        "sortino_ratio": round(float(result.sortino_ratio), 3),
-        "profit_factor": round(float(result.profit_factor), 3),
-        "positions": [],
+        "final_equity": final,
+        "total_return_pct": total_return_pct,
+        "sharpe_ratio": sharpe,
+        "sortino_ratio": sortino,
+        "max_drawdown_pct": mdd,
     }
+
+
+def _aggregate_equity(
+    per_symbol_curves: list[list[dict[str, Any]]], cap_per_symbol: float
+) -> list[dict[str, Any]]:
+    """Combine per-symbol daily equity curves into one equal-weight portfolio NAV
+    (each symbol starts at ``cap_per_symbol``; forward-fill, then sum by date)."""
+    all_dates: set[str] = set()
+    maps: list[dict[str, float]] = []
+    for curve in per_symbol_curves:
+        m = {p["date"]: float(p["equity"]) for p in curve}
+        maps.append(m)
+        all_dates |= set(m.keys())
+    last = [cap_per_symbol] * len(maps)
+    points: list[dict[str, Any]] = []
+    for d in sorted(all_dates):
+        total = 0.0
+        for i, m in enumerate(maps):
+            if d in m:
+                last[i] = m[d]
+            total += last[i]
+        points.append({"date": d, "equity": total})
+    return points
 
 
 def _trades_from_result(
@@ -226,13 +268,13 @@ def _run_registry_strategy(
         return StrategyOutcome(sid, "error", error=f"config load failed: {exc}")
 
     timeframe = _strategy_timeframe(strategy_config)
-    df, coverage = _load_symbols(
+    frames, coverage = _load_symbol_frames(
         symbols=spec.symbols,
         timeframe="daily" if timeframe == "daily" else "minute",
         window=window,
         bar_loader=bar_loader,
     )
-    if df is None:
+    if not frames:
         return StrategyOutcome(
             sid,
             "skipped",
@@ -245,38 +287,87 @@ def _run_registry_strategy(
         strategy_config.get("strategy", {}).get("position", {}).get("params", {})
     )
     order_amount = float(position_params.get("order_amount_per_stock", 0) or 0) or None
-    try:
-        config = BacktestConfig.stock(
-            initial_capital=float(bt.get("initial_capital", spec.initial_capital)),
-            position_size_pct=float(bt.get("position_size_pct", 10.0) or 10.0),
-            order_amount_per_stock=order_amount,
-            max_positions=int(position_params.get("max_positions", 5) or 5),
-        )
-        if "risk" in bt:
-            config.risk = RiskConfig.from_dict(bt["risk"])
-
-        trading_strategy = StrategyFactory.create(strategy_config)
-        adapted = (
-            DailyBacktestAdapter(trading_strategy, strategy_config)
-            if timeframe == "daily"
-            else BacktestStrategyAdapter(trading_strategy, strategy_config)
-        )
-        result = BacktestEngine(adapted, config).run(df)
-    except Exception as exc:  # noqa: BLE001 - isolate per-strategy failure
-        logger.warning("experiment strategy %s failed", sid, exc_info=True)
-        return StrategyOutcome(
-            sid, "error", error=f"{type(exc).__name__}: {exc}", coverage=coverage
-        )
-
     name = str(strategy_config.get("strategy", {}).get("name", sid))
-    summary = _summary_from_result(sid, name, result)
-    summary["timeframe"] = timeframe
+    total_capital = float(bt.get("initial_capital", spec.initial_capital))
+    cap_per_symbol = total_capital / len(frames)
+
+    # Backtest each symbol independently (equal-weight slice of capital), then
+    # aggregate — a true portfolio backtest would need a multi-symbol daily
+    # adapter, which does not exist (see _load_symbol_frames).
+    per_curves: list[list[dict[str, Any]]] = []
+    trades: list[dict[str, Any]] = []
+    closed = winners = 0
+    gains = losses = 0.0
+    ran = 0
+    for symbol, df in frames.items():
+        try:
+            config = BacktestConfig.stock(
+                initial_capital=cap_per_symbol,
+                position_size_pct=float(bt.get("position_size_pct", 10.0) or 10.0),
+                order_amount_per_stock=order_amount,
+                max_positions=int(position_params.get("max_positions", 5) or 5),
+            )
+            if "risk" in bt:
+                config.risk = RiskConfig.from_dict(bt["risk"])
+            trading_strategy = StrategyFactory.create(strategy_config)
+            adapted = (
+                DailyBacktestAdapter(trading_strategy, strategy_config)
+                if timeframe == "daily"
+                else BacktestStrategyAdapter(trading_strategy, strategy_config)
+            )
+            result = BacktestEngine(adapted, config).run(df)
+        except Exception as exc:  # noqa: BLE001 - isolate per-symbol failure
+            logger.warning("experiment %s/%s failed", sid, symbol, exc_info=True)
+            coverage[symbol] = {
+                "loaded": False,
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+            continue
+        ran += 1
+        per_curves.append(_daily_equity_points(result.equity_curve))
+        trades.extend(_trades_from_result(sid, name, result))
+        closed += int(result.total_trades)
+        winners += int(result.winning_trades)
+        for t in result.trades:
+            if t.pnl > 0:
+                gains += float(t.pnl)
+            elif t.pnl < 0:
+                losses += abs(float(t.pnl))
+
+    if ran == 0:
+        return StrategyOutcome(
+            sid, "error", error="all symbols failed to backtest", coverage=coverage
+        )
+
+    equity_curve = _aggregate_equity(per_curves, cap_per_symbol)
+    metrics = _portfolio_metrics(equity_curve, total_capital)
+    summary = {
+        "strategy_id": sid,
+        "strategy_name": name,
+        "engine": "backtest_engine",
+        "timeframe": timeframe,
+        "initial_capital": total_capital,
+        "final_equity": _finite(metrics["final_equity"], 0),
+        "total_return_pct": _finite(metrics["total_return_pct"]),
+        "realized_pnl": _finite(metrics["final_equity"] - total_capital, 0),
+        "unrealized_pnl": 0.0,
+        "closed_trades": closed,
+        "admitted_entries": closed,
+        "open_positions": 0,
+        "win_rate_pct": round(winners / closed * 100, 2) if closed else 0.0,
+        "max_drawdown_pct": _finite(metrics["max_drawdown_pct"]),
+        "sharpe_ratio": _finite(metrics["sharpe_ratio"], 3),
+        "sortino_ratio": _finite(metrics["sortino_ratio"], 3),
+        "profit_factor": _finite(gains / losses, 3) if losses > 0 else None,
+        "symbols_ran": ran,
+        "positions": [],
+    }
     return StrategyOutcome(
         strategy_id=sid,
         status="ok",
         summary=summary,
-        equity_curve=_daily_equity_points(result.equity_curve),
-        trades=_trades_from_result(sid, name, result),
+        equity_curve=equity_curve,
+        trades=trades,
         coverage=coverage,
     )
 
@@ -330,7 +421,7 @@ def run_stock_experiment(
     coverage = _merge_coverage(outcomes)
 
     summaries = [o.summary for o in outcomes if o.status == "ok"]
-    summaries.sort(key=lambda s: s.get("total_return_pct", 0.0), reverse=True)
+    summaries.sort(key=lambda s: s.get("total_return_pct") or 0.0, reverse=True)
     equity_curves = {
         o.strategy_id: o.equity_curve for o in outcomes if o.status == "ok"
     }
@@ -358,6 +449,18 @@ def run_stock_experiment(
     }
 
 
+def _json_safe(obj: Any) -> Any:
+    """Recursively replace non-finite floats (inf/nan) with None so the report is
+    strict JSON — the dashboard's browser ``JSON.parse`` rejects ``Infinity``."""
+    if isinstance(obj, float):
+        return obj if math.isfinite(obj) else None
+    if isinstance(obj, dict):
+        return {k: _json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_json_safe(v) for v in obj]
+    return obj
+
+
 def write_experiment_report(
     report: dict[str, Any], output_dir: str | Path, *, now: datetime | None = None
 ) -> Path:
@@ -370,7 +473,12 @@ def write_experiment_report(
     exp_id = report.get("experiment", {}).get("id", "stock_experiment")
     stamp = now.astimezone(UTC).strftime("%Y%m%d_%H%M%S")
     path = out / f"{exp_id}_{stamp}.json"
-    path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    # allow_nan=False guarantees we never emit Infinity/NaN; _json_safe removes
+    # them first so it cannot raise.
+    payload = json.dumps(
+        _json_safe(report), ensure_ascii=False, indent=2, allow_nan=False
+    )
+    path.write_text(payload, encoding="utf-8")
     return path
 
 
