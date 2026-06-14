@@ -1,0 +1,33 @@
+# Default stock strategy experiment spec (Phase 1).
+#
+# Consumed by `sts experiment run --spec config/experiments/stock_default.yaml`
+# and (Phase 2) the compose scheduler. Each strategy runs through the real
+# BacktestEngine; its timeframe comes from the strategy YAML (daily vs minute).
+#
+# Data reality: daily bars are rich (421 symbols, ~3y) → daily/swing strategies
+# (pattern_pullback, vr_composite) have full coverage. Minute bars are thin
+# (45 symbols, ~3 months) → intraday strategies (momentum_breakout, williams_r)
+# get limited coverage and may be partly `skipped` until backfill expands.
+id: stock_strategies
+description: "현재 운용/연구 주식 전략 백테스트 (일봉 풍부 / 분봉 제한)"
+
+lookback_days: 365          # window = [today - lookback, today] unless start/end set
+initial_capital: 10000000
+
+symbols:
+  - "005930"  # 삼성전자
+  - "000660"  # SK하이닉스
+  - "005380"  # 현대차
+  - "000270"  # 기아
+  - "035420"  # NAVER
+  - "035720"  # 카카오
+  - "068270"  # 셀트리온
+  - "051910"  # LG화학
+  - "006400"  # 삼성SDI
+  - "105560"  # KB금융
+
+strategies:
+  - { type: registry, name: pattern_pullback }   # daily — rich data
+  - { type: registry, name: vr_composite }       # daily — rich data (disabled live, research)
+  - { type: registry, name: momentum_breakout }  # minute — limited coverage
+  - { type: registry, name: williams_r }         # minute — limited coverage
