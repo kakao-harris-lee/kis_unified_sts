@@ -192,6 +192,7 @@ def create_app(
 def _register_routes(app: FastAPI) -> None:
     """Register API routers, the /ws WebSocket, and the root pointer endpoint."""
     from services.dashboard.routes import (
+        experiments,
         health,
         kis_builder,
         metrics,
@@ -209,6 +210,7 @@ def _register_routes(app: FastAPI) -> None:
     app.include_router(signals.router)
     app.include_router(strategy_builder.router)
     app.include_router(kis_builder.router)
+    app.include_router(experiments.router)
     app.include_router(strategy_lab.router)
     app.include_router(trades.router)
     app.include_router(strategies.router)
