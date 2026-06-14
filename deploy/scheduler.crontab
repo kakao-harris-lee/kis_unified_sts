@@ -38,6 +38,11 @@
 # --- accumulation pattern scan (16:10) → system:accumulation:latest ---
 10 16 * * 1-5  cd /app && python scripts/run_accumulation_scan.py
 
+# --- strategy experiment (16:40, after daily backfill) → reports/stock_experiment ---
+# Backtests the current registry strategies on collected data via the real
+# BacktestEngine; the dashboard /experiments page reads the latest report.
+40 16 * * 1-5  cd /app && python -m cli.main experiment run --spec config/experiments/stock_default.yaml >> /app/logs/stock_experiment_$(date +\%Y\%m\%d).log 2>&1
+
 # --- maintenance / weekly ---
 0 4  * * 0  cd /app && python -m scripts.maintenance.rotate_reports
 0 18 * * 0  cd /app && python scripts/analysis/regime_gate_counterfactual.py
