@@ -27,7 +27,7 @@
 strategy:
   name: bb_reversion_15m
   asset_class: futures
-  enabled: true  # PAPER ONLY. Live execution gated by config/futures_live.yaml::futures_live.enabled=false + Redis futures:live:suspended. Paper-validation gate + accepted intra-15m-stop tradeoff: docs/runbooks/bb-reversion-15m-paper.md. Robust-gate + parity evidence: reports/optuna/BB_REVERSION_15M_PROBE.md.
+  enabled: false  # DISABLED 2026-06-14: stock-style mean-reversion on futures diluted the "Setup A/C high-confidence only" intent (over-trading) and its three_stage exit fired a stock-regime BEAR_EXIT on a futures position. Re-enable only after a futures-appropriate exit + selectivity review. (was PAPER-ONLY; live still gated by config/futures_live.yaml + Redis futures:live:suspended.)
   timeframe: 15min  # 1분봉 데이터를 15분으로 리샘플링
   description: "볼린저 밴드 평균회귀 선물 전략 (15분봉)"
 

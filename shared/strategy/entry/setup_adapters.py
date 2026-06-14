@@ -334,6 +334,14 @@ class SetupCEntryConfig(ServiceConfigBase):
             "(1 = top tier, 3 = minor; default=2 means tier-3 events are skipped)"
         ),
     )
+    stop_buffer_atr_mult: float = Field(
+        default=0.5,
+        description="Extra ATR cushion beyond the opposite 15-min range edge for the stop",
+    )
+    no_entry_after_minutes_since_open: int = Field(
+        default=360,
+        description="No new entries after this many minutes since 09:00 KST (360=15:00)",
+    )
     llm_tuning: LLMTuningConfig = Field(
         default_factory=LLMTuningConfig,
         description="Phase 1.1 LLM-threshold tuning parameters",
@@ -1180,6 +1188,8 @@ class SetupCEntryAdapter(EntrySignalGenerator[SetupCEntryConfig]):
             target_atr_mult=config.target_atr_mult,
             signal_ttl_minutes=config.signal_ttl_minutes,
             min_impact_tier=config.min_impact_tier,
+            stop_buffer_atr_mult=config.stop_buffer_atr_mult,
+            no_entry_after_minutes_since_open=config.no_entry_after_minutes_since_open,
         )
         self._setup = SetupCEventReaction(config=setup_cfg)
         # Phase 5 forecast integration — optional ForecastClient (default off).
@@ -1239,6 +1249,10 @@ class SetupCEntryAdapter(EntrySignalGenerator[SetupCEntryConfig]):
         assert (
             1 <= self.config.min_impact_tier <= 3
         ), "min_impact_tier must be between 1 and 3"
+        assert self.config.stop_buffer_atr_mult >= 0.0, "stop_buffer_atr_mult must be >= 0"
+        assert (
+            self.config.no_entry_after_minutes_since_open > 0
+        ), "no_entry_after_minutes_since_open must be > 0"
 
     @property
     def name(self) -> str:

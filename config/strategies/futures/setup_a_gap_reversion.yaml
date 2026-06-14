@@ -49,7 +49,7 @@ strategy:
       # noise in the volatile post-crash recovery (2 of 3 trades = quick
       # stop_loss; #2's 1.5×ATR stop hit at 1218.3 would have survived at 2.5×).
       # Trade-off: larger loss per stop, fewer false stops. Revisit via backtest.
-      stop_atr_mult: 2.5           # ATR multiplier for hard stop-loss
+      stop_atr_mult: 3.5           # widened 2.5→3.5: post-gap 1-min noise was hitting the 2.5×ATR (~10pt) stop in 3-11 min; more room, larger loss per stop but fewer false stops
       target_gap_fill_ratio: 0.9   # Fraction of the gap to fill as take-profit
 
       # Signal validity
