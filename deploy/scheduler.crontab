@@ -30,7 +30,10 @@
 40 15 * * 1-5  cd /app && python scripts/analysis/publish_equity_snapshot.py
 
 # --- EOD backfill + verification (15:50–16:20) ---
-50 15 * * 1-5  cd /app && python -m cli.main stock-backfill run
+# --days 30 keeps the full KIS-max minute window filled (heals failed days +
+# denser intraday history for experiments); state-DB resume skips done (code,date)
+# so it stays cheap. KIS caps 1-min history at ~30 days — can't go deeper.
+50 15 * * 1-5  cd /app && python -m cli.main stock-backfill run --days 30
 5  16 * * 1-5  cd /app && python -m cli.main backfill run
 10 16 * * 1-5  cd /app && python scripts/analysis/stock_paper_daily_verification.py
 20 16 * * 1-5  cd /app && python -m cli.main stock-backfill daily
