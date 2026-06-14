@@ -81,14 +81,20 @@ def test_registered_backtest_matches_probe_15m_profile():
 
 
 @pytest.mark.integration
-def test_bb_reversion_15m_enabled_for_paper_but_live_gated():
-    """Strategy must be enabled (loaded for PAPER) while live execution
-    remains independently gated via futures_live.yaml and Redis flag.
-    Invariant: strategy.enabled=True AND futures_live.enabled=False.
+def test_bb_reversion_15m_disabled_pending_futures_exit_review():
+    """DISABLED 2026-06-14: stock-style mean-reversion on futures diluted the
+    "Setup A/C high-confidence only" intent (over-trading) and its three_stage
+    exit fired a stock-regime BEAR_EXIT on a futures position. The strategy is
+    turned off until a futures-appropriate exit + selectivity review.
+
+    The 15m MTF wiring (timeframe_minutes=15) and the independent live gate
+    (futures_live.enabled=False) must remain intact so re-enabling is a one-line
+    flip — not a re-plumb. Invariant: strategy.enabled=False AND
+    futures_live.enabled=False.
     """
     with open(_ROOT / "config" / "strategies" / "futures" / "bb_reversion_15m.yaml") as f:
         d = yaml.safe_load(f)
-    assert d["strategy"]["enabled"] is True            # loaded for PAPER
+    assert d["strategy"]["enabled"] is False           # disabled pending exit review
     assert d["strategy"]["entry"]["params"]["timeframe_minutes"] == 15
     with open(_ROOT / "config" / "futures_live.yaml") as f:
         live = yaml.safe_load(f)
