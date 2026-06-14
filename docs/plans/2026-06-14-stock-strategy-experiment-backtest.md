@@ -93,9 +93,16 @@ StockExperimentRunner  (신규, shared/backtest/experiment_runner.py)
 ## 4. 핵심 결정·리스크
 - **엔진 통합 범위**: 엔진 자체는 통합하지 않고(레지스트리=BacktestEngine, 빌더=evaluator) **리포트 스키마만 통합**하는 게 실용적·저위험. 빌더→BacktestEngine 어댑터는 후속 선택.
 - **CPU 비용**: 온디맨드 다전략×다종목×수년은 느림 → 큐+상한+진행률 필수.
-- **인트라데이 데이터 갭**: 최대 제약. 일봉 전략부터 가치 입증, 분봉은 커버리지 확대 후 확장.
+- **인트라데이 데이터 갭**: 최대 제약. **KIS 분봉 히스토리는 ~30일이 하드 실링**(코드로 못 넘김) — `data/market/stock/minute`는 데일리 크론이 누적한 결과다. 일봉 전략(pattern_pullback/vr_composite)은 3년치로 충분, 분봉 전략(momentum_breakout/williams_r)은 유니버스(30종목) × 최근 ~30일만 가능. 그 밖 종목은 `skipped`로 표면화.
 - **paper/live 분리 유지**: 실험은 분석용(paper 스택), 주문 경로와 무관.
 - **DRY**: 기존 `stock_builder_preset_experiment.py`의 빌더 평가 로직은 재사용(삭제 아님), 통합 러너가 호출.
 
 ## 5. 권장 순서
 Phase 1(코어 러너) → Phase 2(배치, 빠른 가치) → Phase 3·4(온디맨드+UI) → Phase 5(데이터, 병행). Phase 1이 모든 것의 토대.
+
+## 6. 구현 현황 (2026-06-14)
+- **Phase 1 ✅ #473** — `shared/backtest/experiment_runner.py` + `sts experiment run` (심볼별 실행+등가중 집계, finite-safe).
+- **Phase 2 ✅ #475** — 야간 스케줄러 엔트리(16:40 KST) → `reports/stock_experiment/`.
+- **Phase 3 ✅ #476** — `services/dashboard/routes/experiments.py` 온디맨드 잡(`asyncio.to_thread`+락) + API.
+- **Phase 4 ✅ #477** — `/experiments` UI(새 실험 폼/폴링/상태 칩).
+- **Phase 5 ✅** — 스케줄러 분봉 백필 `--days 30`(KIS-max 윈도우 유지) + UI 데이터 커버리지 패널 + KIS ~30일 한계 문서화. 인트라데이 전략이 커버된 유니버스 심볼에서 실제 동작 검증 완료(momentum_breakout: ok, 거래 발생).

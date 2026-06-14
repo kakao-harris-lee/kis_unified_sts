@@ -118,6 +118,9 @@ function ReportView({ report }: { report: ExperimentRunReport }) {
   }, [report]);
 
   const notOk = report.status_by_strategy.filter((s) => s.status !== "ok");
+  const coverage = Object.entries(report.data_coverage ?? {});
+  const loadedCount = coverage.filter(([, v]) => v.loaded).length;
+  const noData = coverage.filter(([, v]) => !v.loaded);
 
   return (
     <div className="space-y-5">
@@ -149,6 +152,21 @@ function ReportView({ report }: { report: ExperimentRunReport }) {
               <span className="text-amber-700/80 dark:text-amber-300/80 truncate">{s.error}</span>
             </div>
           ))}
+        </div>
+      )}
+
+      {coverage.length > 0 && (
+        <div className="rounded-lg border border-slate-200 bg-white p-3 text-xs dark:border-slate-800 dark:bg-slate-900">
+          <div className="flex items-center gap-2">
+            <span className="font-medium text-slate-700 dark:text-slate-200">데이터 커버리지</span>
+            <span className="text-slate-500">{loadedCount}/{coverage.length} 종목 로드됨</span>
+          </div>
+          {noData.length > 0 && (
+            <div className="mt-1 text-slate-500">
+              데이터 없음: {noData.map(([sym, v]) => `${sym} (${v.error ?? "no_data"})`).join(", ")}
+              <span className="ml-1 text-slate-400">— 분봉 데이터는 KIS 제약으로 최근 ~30일/유니버스 종목만 제공됩니다.</span>
+            </div>
+          )}
         </div>
       )}
 
