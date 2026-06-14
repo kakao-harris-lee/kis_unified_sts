@@ -1,4 +1,106 @@
-import { apiGet } from "./client";
+import { apiGet, apiPost } from "./client";
+
+// --- Phase 3/4: registry-strategy experiments (real BacktestEngine) ----------
+
+export interface RunStrategySummary {
+  strategy_id: string;
+  strategy_name: string;
+  engine: string;
+  timeframe: string;
+  initial_capital: number;
+  final_equity: number | null;
+  total_return_pct: number | null;
+  realized_pnl: number | null;
+  unrealized_pnl: number;
+  closed_trades: number;
+  admitted_entries: number;
+  open_positions: number;
+  win_rate_pct: number;
+  max_drawdown_pct: number | null;
+  sharpe_ratio: number | null;
+  sortino_ratio: number | null;
+  profit_factor: number | null;
+  symbols_ran?: number;
+}
+
+export interface StrategyStatus {
+  strategy_id: string;
+  status: "ok" | "skipped" | "error";
+  error: string | null;
+}
+
+export interface ExperimentRunReport {
+  experiment: {
+    id: string;
+    description: string;
+    start_date: string;
+    end_date: string;
+    generated_at: string;
+    symbols: string[];
+    strategies: string[];
+    initial_capital: number;
+  };
+  data_coverage: Record<
+    string,
+    { loaded: boolean; rows?: number; start?: string; end?: string; error?: string }
+  >;
+  summaries: RunStrategySummary[];
+  equity_curves: Record<string, Array<{ date: string; equity: number }>>;
+  trades: Array<Record<string, unknown>>;
+  status_by_strategy: StrategyStatus[];
+}
+
+export interface ExperimentJob {
+  job_id: string;
+  status: "queued" | "running" | "done" | "failed";
+  created_at: string;
+  started_at?: string | null;
+  finished_at?: string | null;
+  error?: string | null;
+  experiment_id?: string | null;
+  report?: ExperimentRunReport | null;
+}
+
+export interface StrategyCatalogItem {
+  name: string;
+  enabled: boolean;
+  timeframe: string;
+  description: string;
+}
+
+export interface RunExperimentRequest {
+  strategies?: Array<{ type: string; name: string; asset?: string }>;
+  symbols?: string[];
+  start?: string;
+  end?: string;
+  lookback_days?: number;
+  id?: string;
+  description?: string;
+}
+
+export async function getExperimentStrategies(): Promise<{
+  strategies: StrategyCatalogItem[];
+}> {
+  return apiGet("/api/experiments/strategies");
+}
+
+export async function getLatestExperiment(): Promise<{
+  report: ExperimentRunReport | null;
+}> {
+  return apiGet("/api/experiments/latest");
+}
+
+export async function runExperiment(
+  body: RunExperimentRequest,
+): Promise<ExperimentJob> {
+  return apiPost<ExperimentJob>("/api/experiments/run", body);
+}
+
+export async function getExperimentJob(jobId: string): Promise<ExperimentJob> {
+  return apiGet<ExperimentJob>(
+    `/api/experiments/jobs/${encodeURIComponent(jobId)}`,
+  );
+}
 
 export interface ExperimentSummary {
   strategy_id: string;
