@@ -178,6 +178,14 @@ class SetupCEventReaction(Setup):
         """
         super().__init__(config=config)
         self._tracker = tracker if tracker is not None else EventTradeTracker()
+        # Why the last check() returned None (observability — "why no Setup C
+        # trade"). Set at every reject gate; None after a fired signal.
+        self.last_reject_reason: str | None = None
+
+    def _reject(self, reason: str) -> None:
+        """Record the rejection reason and return None (early-return helper)."""
+        self.last_reject_reason = reason
+        return None
 
     # Expose tracker for external inspection / injection (e.g. tests)
     @property
@@ -200,7 +208,10 @@ class SetupCEventReaction(Setup):
         #    KST) so a late breakout isn't opened minutes before the 15:45 close
         #    and force-liquidated → churn.
         if ctx.minutes_since_open() > c.no_entry_after_minutes_since_open:
-            return None
+            return self._reject(
+                f"after_cutoff({ctx.minutes_since_open():.0f}m>"
+                f"{c.no_entry_after_minutes_since_open})"
+            )
 
         # 1. Look for a qualifying scheduled event within the window
         recent_event: ScheduledEvent | None = ctx.find_recent_event(
@@ -208,11 +219,13 @@ class SetupCEventReaction(Setup):
             min_tier=c.min_impact_tier,
         )
         if recent_event is None:
-            return None
+            return self._reject(
+                f"no_event_in_window({c.window_minutes}m,tier<={c.min_impact_tier})"
+            )
 
         # 2. Deduplication guard — one trade per event_id
         if self._tracker.already_traded(recent_event.event_id):
-            return None
+            return self._reject(f"event_already_traded({recent_event.event_id})")
 
         # 3. 15-minute-range breakout check
         atr = ctx.atr_14
@@ -236,7 +249,11 @@ class SetupCEventReaction(Setup):
             entry = ctx.current_price
             stop = ctx.last_15min_high + stop_cushion
         else:
-            return None
+            return self._reject(
+                f"no_breakout_within_buffer(px={ctx.current_price:.2f},"
+                f"hi={ctx.last_15min_high:.2f},lo={ctx.last_15min_low:.2f},"
+                f"buf={buffer:.2f})"
+            )
 
         # 4. Take-profit target
         if direction == "long":
@@ -257,6 +274,7 @@ class SetupCEventReaction(Setup):
         # 7. Mark as traded BEFORE returning the signal
         self._tracker.mark(recent_event.event_id)
 
+        self.last_reject_reason = None  # fired — clear any prior reject reason
         return Signal(
             setup_type="C_event_reaction",
             direction=direction,

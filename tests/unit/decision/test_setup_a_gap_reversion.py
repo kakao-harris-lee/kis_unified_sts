@@ -78,6 +78,44 @@ def _default_config() -> SetupAConfig:
     return SetupAConfig()
 
 
+def test_last_reject_reason_observability():
+    """check() records WHY it rejected (and clears it on a fired signal)."""
+    setup = SetupAGapReversion(config=_default_config())
+
+    # No macro snapshot → no_macro_overnight
+    assert setup.check(_ctx(now_hhmm=(9, 30), macro=None)) is None
+    assert setup.last_reject_reason == "no_macro_overnight"
+
+    # Outside the time window → outside_time_window
+    assert setup.check(_ctx(now_hhmm=(9, 5), macro=_macro(-1.2))) is None
+    assert setup.last_reject_reason.startswith("outside_time_window")
+
+    # SP500 gap below the minimum → sp500_gap_below_min
+    assert (
+        setup.check(
+            _ctx(
+                now_hhmm=(9, 30), prev_close=350.0, today_open=347.0, macro=_macro(0.05)
+            )
+        )
+        is None
+    )
+    assert setup.last_reject_reason.startswith("sp500_gap_below_min")
+
+    # A fired signal clears the reason
+    fired = setup.check(
+        _ctx(
+            now_hhmm=(9, 30),
+            current_price=348.5,
+            prev_close=350.0,
+            today_open=347.0,
+            atr_14=1.0,
+            macro=_macro(-1.2),
+        )
+    )
+    assert fired is not None
+    assert setup.last_reject_reason is None
+
+
 def test_zero_prev_close_is_skipped_without_division_error():
     setup = SetupAGapReversion(config=_default_config())
 
