@@ -31,17 +31,20 @@ import json
 import logging
 import queue
 import re
+import socket
 import threading
 import time
+from collections.abc import Callable
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
+from typing import TYPE_CHECKING, Any
 
+import websocket
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import unpad
-import websocket
 
 from shared.collector.adapter import BaseAPIAdapter
 from shared.collector.models import TickData
+from shared.kis.approval_cache import approval_key_cache
 from shared.kis.auth import KISAuthConfig
 
 if TYPE_CHECKING:
@@ -133,8 +136,8 @@ class WSMessageType(str, Enum):
 
 
 def _safe_float(
-    fields: List[str], index: int, default: Optional[float] = None
-) -> Optional[float]:
+    fields: list[str], index: int, default: float | None = None
+) -> float | None:
     """Safely extract and validate float from fields.
 
     Args:
@@ -160,7 +163,7 @@ def _safe_float(
 
 def parse_futures_orderbook(
     symbol: str, data: str, timestamp: float
-) -> Optional[TickData]:
+) -> TickData | None:
     """Parse futures orderbook (호가) data.
 
     Pure function for easy testing.
@@ -221,7 +224,7 @@ def parse_futures_orderbook(
         return None
 
 
-def parse_futures_trade(symbol: str, data: str, timestamp: float) -> Optional[TickData]:
+def parse_futures_trade(symbol: str, data: str, timestamp: float) -> TickData | None:
     """Parse futures trade (체결) data.
 
     Pure function for easy testing.
@@ -304,8 +307,8 @@ class KISWebSocketAdapter(BaseAPIAdapter):
         self.ws_url = self.WS_URL_REAL if config.is_real else self.WS_URL_MOCK
 
         # WebSocket instance
-        self.ws: Optional[websocket.WebSocketApp] = None
-        self._ws_thread: Optional[threading.Thread] = None
+        self.ws: websocket.WebSocketApp | None = None
+        self._ws_thread: threading.Thread | None = None
 
         # Thread-safe state management
         self._state_lock = threading.Lock()
@@ -314,21 +317,21 @@ class KISWebSocketAdapter(BaseAPIAdapter):
         self._connected = False
 
         # Callback (protected by _state_lock)
-        self._callback: Optional[Callable[[TickData], None]] = None
-        self._subscribed_symbols: List[str] = []
+        self._callback: Callable[[TickData], None] | None = None
+        self._subscribed_symbols: list[str] = []
 
         # AES decryption key (obtained from approval response)
-        self._aes_key: Optional[bytes] = None
-        self._aes_iv: Optional[bytes] = None
+        self._aes_key: bytes | None = None
+        self._aes_iv: bytes | None = None
 
         # Approval key (for subscription)
-        self._approval_key: Optional[str] = None
+        self._approval_key: str | None = None
 
         # Bounded message queue to prevent OOM
         self._message_queue: queue.Queue = queue.Queue(maxsize=MESSAGE_QUEUE_MAXSIZE)
 
         # Health monitoring
-        self._last_message_ts: Optional[float] = None
+        self._last_message_ts: float | None = None
         # Counters for message throughput and queue-drop tracking.
         # Both are incremented under _state_lock (same lock that guards
         # _last_message_ts) for thread-safe reads in get_health_status().
@@ -369,7 +372,7 @@ class KISWebSocketAdapter(BaseAPIAdapter):
     # Health Monitoring
     # -------------------------------------------------------------------------
 
-    def get_connection_staleness(self) -> Optional[float]:
+    def get_connection_staleness(self) -> float | None:
         """Get time in seconds since last WebSocket message.
 
         Returns:
@@ -380,7 +383,7 @@ class KISWebSocketAdapter(BaseAPIAdapter):
                 return None
             return max(0.0, time.time() - self._last_message_ts)
 
-    def get_health_status(self) -> Dict[str, Any]:
+    def get_health_status(self) -> dict[str, Any]:
         """Get comprehensive health status of WebSocket connection.
 
         Returns:
@@ -459,7 +462,7 @@ class KISWebSocketAdapter(BaseAPIAdapter):
         logger.info(f"[KIS WS] Connected to {self.ws_url}")
 
     def subscribe(
-        self, symbols: List[str], callback: Callable[[TickData], None]
+        self, symbols: list[str], callback: Callable[[TickData], None]
     ) -> None:
         """Subscribe to symbols and start receiving data.
 
@@ -541,6 +544,15 @@ class KISWebSocketAdapter(BaseAPIAdapter):
         """
         import requests
 
+        # Reuse a still-valid (24h) approval key for this app key. The futures
+        # feed rebuilds a fresh adapter on every reconnect, so without a
+        # process-wide cache each reconnect would re-issue a key — needless auth
+        # churn that can contribute to KIS-side throttling/blocking.
+        cached = approval_key_cache.get(self.config.app_key, self.config.is_real)
+        if cached is not None:
+            self._approval_key = cached
+            return
+
         url = f"{self.config.base_url}/oauth2/Approval"
 
         # Security: Ensure HTTPS is used
@@ -562,9 +574,16 @@ class KISWebSocketAdapter(BaseAPIAdapter):
             if "approval_key" not in data:
                 # Sanitize error message (don't leak secrets)
                 error_code = data.get("error_code", data.get("msg_cd", "unknown"))
+                # Surface EGW server errors explicitly (KIS guidance: an
+                # EGW-prefixed code identifies a server-side error state).
+                if str(error_code).startswith("EGW"):
+                    logger.error("[KIS WS] Approval key EGW error %s", error_code)
                 raise ValueError(f"Failed to get approval key: error_code={error_code}")
 
             self._approval_key = data["approval_key"]
+            approval_key_cache.set(
+                self.config.app_key, self.config.is_real, self._approval_key
+            )
             logger.info("[KIS WS] Approval key obtained")
 
         except requests.RequestException as e:
@@ -583,7 +602,16 @@ class KISWebSocketAdapter(BaseAPIAdapter):
     def _run_websocket(self) -> None:
         """Run WebSocket event loop in background thread."""
         try:
-            self.ws.run_forever(ping_interval=30, ping_timeout=10)
+            # ping_interval=0 disables websocket-client's own WS PING. KIS does
+            # not PONG standard WS pings (it runs app-level PINGPONG, echoed in
+            # the message handler), so a client ping would hit ping_timeout and
+            # drop a healthy connection. KIS guidance: turn KeepAlive off. Dead
+            # connections are detected via staleness (get_connection_staleness)
+            # plus OS-level TCP keepalive (SO_KEEPALIVE) for silent half-opens.
+            self.ws.run_forever(
+                ping_interval=0,
+                sockopt=((socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1),),
+            )
         except Exception as e:
             logger.error(f"[KIS WS] WebSocket error: {e}")
         finally:
@@ -725,7 +753,7 @@ class KISWebSocketAdapter(BaseAPIAdapter):
             except json.JSONDecodeError:
                 logger.warning(f"[KIS WS] Unknown message format: {message[:100]}")
 
-    def _handle_json_message(self, data: Dict[str, Any]) -> None:
+    def _handle_json_message(self, data: dict[str, Any]) -> None:
         """Handle JSON formatted message (subscription response, etc.)."""
         header = data.get("header", {})
         body = data.get("body", {})
@@ -777,11 +805,11 @@ class KISWebSocketAdapter(BaseAPIAdapter):
     # Legacy Parsing Methods (delegate to pure functions)
     # -------------------------------------------------------------------------
 
-    def _parse_futures_ask(self, symbol: str, data: str) -> Optional[TickData]:
+    def _parse_futures_ask(self, symbol: str, data: str) -> TickData | None:
         """Parse futures orderbook data. Delegates to pure function."""
         return parse_futures_orderbook(symbol, data, time.time())
 
-    def _parse_futures_cnt(self, symbol: str, data: str) -> Optional[TickData]:
+    def _parse_futures_cnt(self, symbol: str, data: str) -> TickData | None:
         """Parse futures trade data. Delegates to pure function."""
         return parse_futures_trade(symbol, data, time.time())
 
@@ -792,8 +820,8 @@ class KISWebSocketAdapter(BaseAPIAdapter):
 
 
 def create_websocket_adapter(
-    app_key: Optional[str] = None,
-    app_secret: Optional[str] = None,
+    app_key: str | None = None,
+    app_secret: str | None = None,
     is_real: bool = True,
 ) -> KISWebSocketAdapter:
     """Create KIS WebSocket adapter.

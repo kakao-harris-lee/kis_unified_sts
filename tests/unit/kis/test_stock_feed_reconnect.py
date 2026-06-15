@@ -156,3 +156,49 @@ def test_reconnect_releases_lock_on_approval_exception():
     # Even on the error/stop path, finally releases the lock.
     assert feed._reconnect_lock.acquire(blocking=False)
     feed._reconnect_lock.release()
+
+
+def test_reconnect_breaker_trips_on_open_then_drop_flap():
+    """An open-then-immediate-drop flap must escalate the breaker (not reset it).
+
+    KIS can accept the socket (so _on_open sets _connected) then drop it within
+    ms. Resetting the breaker on _on_open alone would hold it permanently reset
+    and let the flap hammer the approval endpoint — the storm the breaker exists
+    to stop. The stability check requires the socket to stay up past
+    _reconnect_stability_seconds before the breaker clears; a flap therefore
+    counts as a failure, trips the breaker after the threshold, and invalidates
+    the cached approval key so the next attempt re-fetches (self-heal).
+    """
+    feed = _make_feed()
+    feed._running = True
+    feed._connected.clear()
+    feed._connection_timeout = 0.0
+    feed._reconnect_breaker_threshold = 3
+    feed._reconnect_stability_seconds = 0.01
+
+    invalidated = {"n": 0}
+
+    def fake_sleep(d):
+        # The stability sleep is when the flap drops the connection.
+        if d == feed._reconnect_stability_seconds:
+            feed._connected.clear()
+
+    def inval(*_a, **_k):
+        invalidated["n"] += 1
+        feed._running = False  # stop the loop once the breaker has self-healed
+
+    with (
+        # approval "succeeds" and opens the socket each attempt...
+        patch.object(
+            feed, "_get_approval_key", side_effect=lambda: feed._connected.set()
+        ),
+        patch("shared.kis.stock_feed.websocket.WebSocketApp", return_value=MagicMock()),
+        patch("shared.kis.stock_feed.threading.Thread", _FakeThread),
+        patch("shared.kis.stock_feed.time.sleep", side_effect=fake_sleep),
+        patch.object(sf, "_record_ws_metric"),
+        patch.object(sf.approval_key_cache, "invalidate", side_effect=inval),
+    ):
+        feed._reconnect()
+
+    # Breaker opened (≥ threshold flaps) and invalidated the approval key.
+    assert invalidated["n"] >= 1
