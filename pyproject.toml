@@ -77,6 +77,14 @@ dependencies = [
     # with a different sqlite schema than the pinned Dockerfile.mlflow server.
     "mlflow>=2.9,<4",
 
+    # Web API (dashboard). Also pulled transitively by mlflow-skinny, so the
+    # cap must live here in base deps — a cap in the `api` extra does NOT bind
+    # the `.[dev]` CI install and pip would resolve mlflow's `fastapi<1` to the
+    # latest. Cap <0.135: FastAPI 0.135 added `_IncludedRouter` entries to
+    # `app.routes` that lack `.path`, breaking the dashboard websocket
+    # route-registration test. Lift once that test handles the new route type.
+    "fastapi>=0.109,<0.135",
+
     # LLM Analysis
     "openai>=1.0",
     "anthropic>=0.39",
@@ -125,7 +133,10 @@ visualization = [
 ]
 
 api = [
-    "fastapi>=0.109",
+    # fastapi is declared (and version-capped) in base `dependencies` because it
+    # is also a transitive mlflow-skinny dep and must be constrained for the
+    # `.[dev]` CI install too.
+    "fastapi>=0.109,<0.135",
     "uvicorn[standard]>=0.25",
     "slowapi>=0.1.9",  # Rate limiting
 ]
