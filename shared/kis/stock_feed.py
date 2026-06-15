@@ -37,7 +37,9 @@ from Crypto.Cipher import AES
 from Crypto.Util.Padding import unpad
 
 from shared.config.loader import ConfigLoader
+from shared.kis.approval_cache import approval_key_cache
 from shared.kis.auth import KISAuthConfig
+from shared.kis.reconnect_policy import ReconnectPolicy
 
 logger = logging.getLogger(__name__)
 
@@ -152,11 +154,22 @@ class KISStockPriceFeed:
         # Load feed config from streaming.yaml
         feed_cfg = _load_feed_config()
         self._max_symbols = int(feed_cfg.get("max_symbols", 40))
-        self._ping_interval = int(feed_cfg.get("ping_interval", 30))
+        # Default ping_interval=0 disables websocket-client's own WS PING frames.
+        # KIS does not answer standard WS pings with PONG — it runs its own
+        # app-level PINGPONG (echoed in _handle_message) — so a client ping would
+        # hit ping_timeout and close a healthy connection. KIS guidance: turn
+        # KeepAlive off (=0). Dead connections are caught by staleness/health.
+        self._ping_interval = int(feed_cfg.get("ping_interval", 0))
         self._ping_timeout = int(feed_cfg.get("ping_timeout", 10))
         self._connection_timeout = float(feed_cfg.get("connection_timeout", 10.0))
         self._subscription_delay = float(feed_cfg.get("subscription_delay", 0.05))
         self._approval_key_timeout = int(feed_cfg.get("approval_key_timeout", 10))
+        # Approval key is valid 24h; reuse within this window instead of
+        # re-issuing on every reconnect (cuts auth-endpoint churn that can
+        # contribute to KIS-side throttling/blocking).
+        self._approval_key_ttl = float(
+            feed_cfg.get("approval_key_ttl_seconds", 23 * 3600)
+        )
         queue_maxsize = int(feed_cfg.get("queue_maxsize", 10000))
         self._stale_threshold = float(feed_cfg.get("stale_threshold_seconds", 3.0))
 
@@ -172,7 +185,8 @@ class KISStockPriceFeed:
         self._running = False
         self._connected = threading.Event()
 
-        # Approval key for WebSocket subscription
+        # Approval key for WebSocket subscription (cached process-wide by app key
+        # in approval_key_cache so reconnects reuse a still-valid 24h key).
         self._approval_key: str | None = None
 
         # AES decryption
@@ -195,6 +209,17 @@ class KISStockPriceFeed:
         self._reconnect_delay = float(feed_cfg.get("reconnect_initial_delay", 1.0))
         self._max_reconnect_delay = float(feed_cfg.get("reconnect_max_delay", 60.0))
         self._initial_reconnect_delay = self._reconnect_delay
+        # Circuit breaker: after N consecutive failed reconnects, back off to a
+        # long cooldown instead of looping forever at the cap. KIS blocks the
+        # account on unbounded reconnect attempts; the breaker keeps retries slow
+        # enough to self-heal without sustaining a block. The decoupled stock
+        # pipeline rides REST fallback while the breaker is open.
+        self._reconnect_breaker_threshold = int(
+            feed_cfg.get("reconnect_breaker_threshold", 6)
+        )
+        self._reconnect_breaker_cooldown = float(
+            feed_cfg.get("reconnect_breaker_cooldown_seconds", 300.0)
+        )
         # Collapses concurrent reconnect loops to one. _on_close spawns a
         # reconnect thread on every WS close; without this guard a flapping
         # connection multiplies them exponentially (see _reconnect).
@@ -241,10 +266,7 @@ class KISStockPriceFeed:
 
         self._ws_thread = threading.Thread(
             target=self._ws.run_forever,
-            kwargs={
-                "ping_interval": self._ping_interval,
-                "ping_timeout": self._ping_timeout,
-            },
+            kwargs=self._run_forever_kwargs(),
             daemon=True,
             name="StockPriceFeed-WS",
         )
@@ -406,10 +428,33 @@ class KISStockPriceFeed:
         """Signal to data provider that reads are instant (no stagger needed)."""
         return True
 
+    def _run_forever_kwargs(self) -> dict[str, Any]:
+        """run_forever kwargs; omit ping_timeout when keepalive is disabled."""
+        if self._ping_interval <= 0:
+            return {"ping_interval": 0}
+        return {
+            "ping_interval": self._ping_interval,
+            "ping_timeout": self._ping_timeout,
+        }
+
     # ----- Approval Key -----
 
-    def _get_approval_key(self) -> None:
+    def _get_approval_key(self, force: bool = False) -> None:
+        """Fetch a WebSocket approval key, reusing a cached one within its TTL.
+
+        The key is valid ~24h; reissuing on every reconnect adds needless load to
+        the KIS auth endpoint. Reuse unless expired or ``force`` is set (e.g. an
+        approval/auth error suggests the cached key is bad).
+        """
         import requests
+
+        if not force:
+            cached = approval_key_cache.get(
+                self._config.app_key, self._approval_key_ttl
+            )
+            if cached is not None:
+                self._approval_key = cached
+                return  # reuse a still-valid key
 
         url = f"{self._config.base_url}/oauth2/Approval"
         if not url.startswith("https://"):
@@ -433,9 +478,18 @@ class KISStockPriceFeed:
 
         if "approval_key" not in data:
             error_code = data.get("error_code", data.get("msg_cd", "unknown"))
+            # Surface EGW server errors explicitly (e.g. EGW00201 throttling) —
+            # KIS guidance: an EGW-prefixed code points at a server-side state.
+            if str(error_code).startswith("EGW"):
+                logger.error(
+                    "[StockPriceFeed] Approval key EGW error %s: %s",
+                    error_code,
+                    data.get("msg1", data.get("error_description", "")),
+                )
             raise ValueError(f"Failed to get approval key: {error_code}")
 
         self._approval_key = data["approval_key"]
+        approval_key_cache.set(self._config.app_key, self._approval_key)
         logger.info("[StockPriceFeed] Approval key obtained")
 
     # ----- WebSocket Handlers -----
@@ -503,9 +557,24 @@ class KISStockPriceFeed:
         if not self._reconnect_lock.acquire(blocking=False):
             return  # a reconnect loop is already running
         try:
-            delay = self._reconnect_delay
+            policy = ReconnectPolicy(
+                initial_delay=self._initial_reconnect_delay,
+                max_delay=self._max_reconnect_delay,
+                breaker_threshold=self._reconnect_breaker_threshold,
+                breaker_cooldown=self._reconnect_breaker_cooldown,
+            )
+            delay = self._initial_reconnect_delay
             while self._running and not self._connected.is_set():
-                logger.info(f"[StockPriceFeed] Reconnecting in {delay:.1f}s...")
+                if policy.breaker_open:
+                    logger.warning(
+                        "[StockPriceFeed] Reconnect circuit breaker OPEN "
+                        "(%d consecutive failures) — backing off %.0fs to avoid a "
+                        "KIS account block; REST fallback covers data meanwhile",
+                        policy.consecutive_failures,
+                        delay,
+                    )
+                else:
+                    logger.info(f"[StockPriceFeed] Reconnecting in {delay:.1f}s...")
                 time.sleep(delay)
                 if not self._running:
                     break
@@ -525,10 +594,7 @@ class KISStockPriceFeed:
 
                     self._ws_thread = threading.Thread(
                         target=self._ws.run_forever,
-                        kwargs={
-                            "ping_interval": self._ping_interval,
-                            "ping_timeout": self._ping_timeout,
-                        },
+                        kwargs=self._run_forever_kwargs(),
                         daemon=True,
                         name="StockPriceFeed-WS",
                     )
@@ -537,6 +603,7 @@ class KISStockPriceFeed:
                     if self._connected.wait(timeout=self._connection_timeout):
                         logger.info("[StockPriceFeed] Reconnected successfully")
                         _record_ws_metric("record_ws_reconnect", "stock")
+                        policy.reset()
                         self._reconnect_delay = self._initial_reconnect_delay
                         # Re-subscribe all symbols
                         with self._sub_lock:
@@ -551,7 +618,9 @@ class KISStockPriceFeed:
                 except Exception as e:
                     logger.error(f"[StockPriceFeed] Reconnect failed: {e}")
 
-                delay = min(delay * 2, self._max_reconnect_delay)
+                # Failed to (re)connect — advance backoff, tripping the breaker
+                # into a long cooldown after repeated failures.
+                delay = policy.record_failure()
         finally:
             self._reconnect_lock.release()
 

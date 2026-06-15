@@ -18,6 +18,7 @@ from typing import Any
 from shared.collector.models import TickData
 from shared.config.loader import ConfigLoader
 from shared.kis.auth import KISAuthConfig
+from shared.kis.reconnect_policy import ReconnectPolicy
 from shared.kis.websocket import KISWebSocketAdapter
 
 logger = logging.getLogger(__name__)
@@ -90,6 +91,16 @@ class KISFuturesPriceFeed:
             feed_cfg.get("reconnect_initial_delay", 1.0)
         )
         self._reconnect_max_delay = float(feed_cfg.get("reconnect_max_delay", 60.0))
+        # Circuit breaker: after N consecutive failed reconnects, back off to a
+        # long cooldown rather than looping at the cap forever. KIS blocks the
+        # account on unbounded reconnect attempts; the orchestrator's REST
+        # failover carries data while the breaker is open.
+        self._reconnect_breaker_threshold = int(
+            feed_cfg.get("reconnect_breaker_threshold", 6)
+        )
+        self._reconnect_breaker_cooldown = float(
+            feed_cfg.get("reconnect_breaker_cooldown_seconds", 300.0)
+        )
         # Bounded retries for the *initial* connect. KIS intermittently resets
         # the WS right after the approval handshake; without this a single
         # startup reset leaves the feed permanently dead (the supervisor loop
@@ -303,8 +314,22 @@ class KISFuturesPriceFeed:
         except Exception as e:  # noqa: BLE001 — log and fall through to reconnect
             logger.error(f"[FuturesPriceFeed] Subscribe loop error: {e}")
 
+        policy = ReconnectPolicy(
+            initial_delay=self._reconnect_initial_delay,
+            max_delay=self._reconnect_max_delay,
+            breaker_threshold=self._reconnect_breaker_threshold,
+            breaker_cooldown=self._reconnect_breaker_cooldown,
+        )
         delay = self._reconnect_initial_delay
         while self._running:
+            if policy.breaker_open:
+                logger.warning(
+                    "[FuturesPriceFeed] Reconnect circuit breaker OPEN "
+                    "(%d consecutive failures) — backing off %.0fs to avoid a KIS "
+                    "account block; REST fallback covers data meanwhile",
+                    policy.consecutive_failures,
+                    delay,
+                )
             time.sleep(delay)
             if not self._running:
                 break
@@ -317,11 +342,15 @@ class KISFuturesPriceFeed:
                 _record_ws_reconnect("futures")
                 self._adapter.subscribe(self._symbols, self._on_tick)
                 # subscribe() returned: the connection lived then dropped (or
-                # stop()). Reset backoff so the next attempt starts at the floor.
+                # stop()). Only now reset the breaker/backoff — resetting before
+                # subscribe would let a connect-ok-but-subscribe-fails flap loop
+                # forever without ever tripping the breaker.
+                policy.reset()
                 delay = self._reconnect_initial_delay
             except Exception as e:  # noqa: BLE001 — backoff and retry
                 logger.error(f"[FuturesPriceFeed] Reconnect attempt failed: {e}")
-                delay = min(delay * 2, self._reconnect_max_delay)
+                # Advance backoff / trip the breaker after repeated failures.
+                delay = policy.record_failure()
 
     async def stop(self) -> None:
         if not self._running:
