@@ -16,6 +16,7 @@ class FakeFeed:
         self.symbol_calls: list[list[str]] = []
         self.started = 0
         self.stopped = 0
+        self.healthy = True  # controls is_healthy() for REST-fallback tests
 
     def set_tick_callback(self, cb):
         self.callback = cb
@@ -28,6 +29,9 @@ class FakeFeed:
 
     async def stop(self):
         self.stopped += 1
+
+    def is_healthy(self) -> bool:
+        return self.healthy
 
 
 class FakePublisher:
@@ -135,6 +139,142 @@ async def test_symbol_provider_failure_keeps_current_symbols():
     await _run_briefly(_daemon(feed, pub, flaky))
     assert feed.symbol_calls == [["A"]]
     assert feed.started == 1
+
+
+def _fetcher(calls: list[str]):
+    """Async REST price fetcher recording calls; returns a WS-shaped tick."""
+
+    async def f(symbol: str) -> dict:
+        calls.append(symbol)
+        return {
+            "close": 100.0,
+            "high": 100.5,
+            "low": 99.5,
+            "volume": 1,
+            "timestamp": 1.0,
+            "code": symbol,
+        }
+
+    return f
+
+
+def _fallback_daemon(
+    feed,
+    pub,
+    fetcher,
+    *,
+    grace=0.0,
+    session=lambda: True,
+    interval=0.02,
+    rate_limited=None,
+):
+    return MarketIngestDaemon(
+        asset="stock",
+        feed=feed,
+        publisher=pub,
+        symbol_provider=_provider([["A", "B"]]),
+        refresh_interval_seconds=0.05,
+        rest_price_fetcher=fetcher,
+        rest_poll_interval_seconds=interval,
+        ws_unhealthy_grace_seconds=grace,
+        session_gate=session,
+        rest_rate_limited=rate_limited,
+    )
+
+
+@pytest.mark.asyncio
+async def test_rest_fallback_polls_when_ws_stale():
+    feed, pub = FakeFeed(), FakePublisher()
+    feed.healthy = False
+    calls: list[str] = []
+    await _run_briefly(_fallback_daemon(feed, pub, _fetcher(calls)), seconds=0.18)
+    assert calls, "REST fetcher should be polled when the WS feed is stale"
+    assert pub.published, "REST-sourced ticks should be republished"
+    assert {s for (_, s, _) in pub.published} <= {"A", "B"}
+    assert all(asset == "stock" for (asset, _, _) in pub.published)
+
+
+@pytest.mark.asyncio
+async def test_rest_fallback_dormant_when_ws_healthy():
+    feed, pub = FakeFeed(), FakePublisher()
+    feed.healthy = True
+    calls: list[str] = []
+    await _run_briefly(_fallback_daemon(feed, pub, _fetcher(calls)), seconds=0.18)
+    assert calls == [], "healthy WS → REST must stay dormant"
+    assert pub.published == []
+
+
+@pytest.mark.asyncio
+async def test_rest_fallback_gated_off_outside_session():
+    feed, pub = FakeFeed(), FakePublisher()
+    feed.healthy = False
+    calls: list[str] = []
+    daemon = _fallback_daemon(feed, pub, _fetcher(calls), session=lambda: False)
+    await _run_briefly(daemon, seconds=0.18)
+    assert calls == [], "outside the session, REST must not poll (stale last-close)"
+
+
+@pytest.mark.asyncio
+async def test_rest_fallback_respects_grace_window():
+    feed, pub = FakeFeed(), FakePublisher()
+    feed.healthy = False
+    calls: list[str] = []
+    # grace far longer than the run window → poll never triggers
+    daemon = _fallback_daemon(feed, pub, _fetcher(calls), grace=100.0)
+    await _run_briefly(daemon, seconds=0.18)
+    assert calls == [], "REST must wait out the grace window before polling"
+
+
+@pytest.mark.asyncio
+async def test_rest_fallback_disabled_without_fetcher_is_noop():
+    feed, pub = FakeFeed(), FakePublisher()
+    feed.healthy = False  # stale, but no fetcher wired → no REST, no crash
+    await _run_briefly(_daemon(feed, pub, _provider([["A"]])), seconds=0.12)
+    assert pub.published == []
+
+
+@pytest.mark.asyncio
+async def test_rest_fallback_stops_after_ws_recovers():
+    feed, pub = FakeFeed(), FakePublisher()
+    feed.healthy = False
+    calls: list[str] = []
+    daemon = _fallback_daemon(feed, pub, _fetcher(calls))
+    task = asyncio.create_task(daemon.run())
+    await asyncio.sleep(0.1)
+    assert calls, "should be polling while WS is stale"
+    feed.healthy = True  # WS recovers
+    await asyncio.sleep(0.05)
+    frozen = len(calls)
+    await asyncio.sleep(0.08)  # several more poll intervals
+    assert len(calls) == frozen, "REST polling must stop once the WS recovers"
+    await daemon.stop()
+    await asyncio.wait_for(task, timeout=1.0)
+
+
+@pytest.mark.asyncio
+async def test_rest_fallback_skips_publish_when_fetcher_returns_none():
+    feed, pub = FakeFeed(), FakePublisher()
+    feed.healthy = False
+    fetched: list[str] = []
+
+    async def none_fetcher(symbol: str) -> dict | None:
+        fetched.append(symbol)
+        return None
+
+    await _run_briefly(_fallback_daemon(feed, pub, none_fetcher), seconds=0.18)
+    assert fetched, "fetcher should be called"
+    assert pub.published == [], "a None price must not be republished"
+
+
+@pytest.mark.asyncio
+async def test_rest_fallback_skips_when_rate_limited():
+    feed, pub = FakeFeed(), FakePublisher()
+    feed.healthy = False
+    calls: list[str] = []
+    daemon = _fallback_daemon(feed, pub, _fetcher(calls), rate_limited=lambda: True)
+    await _run_briefly(daemon, seconds=0.18)
+    assert calls == [], "rate-limited KIS client → skip the poll, don't block"
+    assert pub.published == []
 
 
 def test_parse_trade_targets_extracts_codes_capped():
