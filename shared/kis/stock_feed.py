@@ -26,6 +26,7 @@ import base64
 import json
 import logging
 import queue
+import socket
 import threading
 import time
 from collections.abc import Callable
@@ -219,6 +220,13 @@ class KISStockPriceFeed:
         )
         self._reconnect_breaker_cooldown = float(
             feed_cfg.get("reconnect_breaker_cooldown_seconds", 300.0)
+        )
+        # Min seconds a reconnected socket must stay up before the breaker is
+        # cleared — a KIS open-then-immediate-drop flap clears _connected within
+        # ms, so resetting on _on_open alone would hold the breaker permanently
+        # reset and let the flap hammer the approval endpoint.
+        self._reconnect_stability_seconds = float(
+            feed_cfg.get("reconnect_stability_seconds", 2.0)
         )
         # Collapses concurrent reconnect loops to one. _on_close spawns a
         # reconnect thread on every WS close; without this guard a flapping
@@ -429,12 +437,19 @@ class KISStockPriceFeed:
         return True
 
     def _run_forever_kwargs(self) -> dict[str, Any]:
-        """run_forever kwargs; omit ping_timeout when keepalive is disabled."""
+        """run_forever kwargs; omit ping_timeout when keepalive is disabled.
+
+        Enables OS-level TCP keepalive (SO_KEEPALIVE) so a silent half-open
+        connection is eventually detected and torn down even with WS ping off
+        (ping_interval=0) — otherwise such a drop would hang undetected.
+        """
+        sockopt = ((socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1),)
         if self._ping_interval <= 0:
-            return {"ping_interval": 0}
+            return {"ping_interval": 0, "sockopt": sockopt}
         return {
             "ping_interval": self._ping_interval,
             "ping_timeout": self._ping_timeout,
+            "sockopt": sockopt,
         }
 
     # ----- Approval Key -----
@@ -450,7 +465,7 @@ class KISStockPriceFeed:
 
         if not force:
             cached = approval_key_cache.get(
-                self._config.app_key, self._approval_key_ttl
+                self._config.app_key, self._config.is_real, self._approval_key_ttl
             )
             if cached is not None:
                 self._approval_key = cached
@@ -489,7 +504,9 @@ class KISStockPriceFeed:
             raise ValueError(f"Failed to get approval key: {error_code}")
 
         self._approval_key = data["approval_key"]
-        approval_key_cache.set(self._config.app_key, self._approval_key)
+        approval_key_cache.set(
+            self._config.app_key, self._config.is_real, self._approval_key
+        )
         logger.info("[StockPriceFeed] Approval key obtained")
 
     # ----- WebSocket Handlers -----
@@ -601,26 +618,37 @@ class KISStockPriceFeed:
                     self._ws_thread.start()
 
                     if self._connected.wait(timeout=self._connection_timeout):
-                        logger.info("[StockPriceFeed] Reconnected successfully")
-                        _record_ws_metric("record_ws_reconnect", "stock")
-                        policy.reset()
-                        self._reconnect_delay = self._initial_reconnect_delay
                         # Re-subscribe all symbols
                         with self._sub_lock:
                             for sym in list(self._subscribed):
                                 self._send_sub(sym)
                                 time.sleep(0.05)
-                        # Let the while condition decide: if the WS stayed up
-                        # the loop exits; if it flapped closed during/after the
-                        # wait, keep retrying instead of leaving the feed dead.
-                        delay = self._initial_reconnect_delay
-                        continue
+                        # Only clear the breaker once the socket has genuinely
+                        # stayed up — guards against an open-then-drop flap that
+                        # would otherwise reset the breaker every cycle.
+                        time.sleep(self._reconnect_stability_seconds)
+                        if self._connected.is_set():
+                            logger.info("[StockPriceFeed] Reconnected successfully")
+                            _record_ws_metric("record_ws_reconnect", "stock")
+                            policy.reset()
+                            # WS is up; the while condition will exit the loop.
+                            delay = self._initial_reconnect_delay
+                            continue
+                        # Flapped closed during the stability window — treat as a
+                        # failure (fall through to record_failure below).
                 except Exception as e:
                     logger.error(f"[StockPriceFeed] Reconnect failed: {e}")
 
-                # Failed to (re)connect — advance backoff, tripping the breaker
-                # into a long cooldown after repeated failures.
+                # Failed/flapped — advance backoff, tripping the breaker into a
+                # long cooldown after repeated failures. When the breaker opens,
+                # invalidate the cached approval key so the next cooldown-spaced
+                # attempt re-fetches a fresh one (recovers from a revoked/stale
+                # key without re-adding per-reconnect auth churn).
                 delay = policy.record_failure()
+                if policy.breaker_open:
+                    approval_key_cache.invalidate(
+                        self._config.app_key, self._config.is_real
+                    )
         finally:
             self._reconnect_lock.release()
 

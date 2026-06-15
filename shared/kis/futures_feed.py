@@ -17,6 +17,7 @@ from typing import Any
 
 from shared.collector.models import TickData
 from shared.config.loader import ConfigLoader
+from shared.kis.approval_cache import approval_key_cache
 from shared.kis.auth import KISAuthConfig
 from shared.kis.reconnect_policy import ReconnectPolicy
 from shared.kis.websocket import KISWebSocketAdapter
@@ -351,6 +352,13 @@ class KISFuturesPriceFeed:
                 logger.error(f"[FuturesPriceFeed] Reconnect attempt failed: {e}")
                 # Advance backoff / trip the breaker after repeated failures.
                 delay = policy.record_failure()
+                # When the breaker opens, drop the cached approval key so the
+                # next cooldown-spaced attempt re-fetches a fresh one — recovers
+                # from a revoked/stale key without re-adding auth churn.
+                if policy.breaker_open:
+                    approval_key_cache.invalidate(
+                        self._config.app_key, self._config.is_real
+                    )
 
     async def stop(self) -> None:
         if not self._running:

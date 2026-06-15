@@ -49,13 +49,15 @@ indicator_engine:
 stock_feed:
   max_symbols: 40               # KIS 제한: 41, 안전 마진으로 40
   queue_maxsize: 10000           # 내부 메시지 큐 최대 크기
-  ping_interval: 30              # WebSocket ping 간격 (초)
-  ping_timeout: 10               # WebSocket ping 타임아웃 (초)
+  ping_interval: 0              # 0=client WS ping 비활성. KIS는 표준 WS ping에 PONG하지 않고 자체 PINGPONG(echo)을 쓰므로 client ping은 ping_timeout으로 정상 연결을 끊음. KIS 가이드: KeepAlive off. (반쪽 연결은 OS TCP keepalive + staleness로 감지)
+  ping_timeout: 10               # ping_interval=0이면 미사용
   connection_timeout: 10.0       # 초기 연결 타임아웃 (초)
   subscription_delay: 0.05       # 구독 간 딜레이 (초)
   approval_key_timeout: 10       # 인증키 요청 타임아웃 (초)
   reconnect_initial_delay: 1.0   # 재접속 초기 대기 (초)
   reconnect_max_delay: 60.0      # 재접속 최대 대기 (초)
+  reconnect_breaker_threshold: 6        # 연속 실패 N회 후 circuit breaker open (무한 재연결→KIS 계정 차단 방지)
+  reconnect_breaker_cooldown_seconds: 300.0  # breaker open 시 재시도 간격 (REST fallback이 데이터 커버)
   stale_threshold_seconds: 30.0   # 종목별 tick stale 판단 기준 (DataProvider failover 기준과 정렬)
 
 # KIS WebSocket Futures Price Feed (H0IFCNT0) 설정
@@ -68,6 +70,8 @@ futures_feed:
   orderbook_missing_warn_interval_seconds: 30.0  # 호가 누락 경고 최소 간격
   reconnect_initial_delay: 1.0   # 재접속 초기 대기 (초)
   reconnect_max_delay: 60.0      # 재접속 최대 대기 (초)
+  reconnect_breaker_threshold: 6        # 연속 실패 N회 후 circuit breaker open (무한 재연결→KIS 계정 차단 방지)
+  reconnect_breaker_cooldown_seconds: 300.0  # breaker open 시 재시도 간격 (REST polling이 데이터 커버)
   connect_max_attempts: 3        # 초기 connect 재시도 횟수 (KIS approval 직후 일시적 reset 흡수)
 
 # Feed observability thresholds

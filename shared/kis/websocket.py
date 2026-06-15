@@ -31,6 +31,7 @@ import json
 import logging
 import queue
 import re
+import socket
 import threading
 import time
 from collections.abc import Callable
@@ -547,7 +548,7 @@ class KISWebSocketAdapter(BaseAPIAdapter):
         # feed rebuilds a fresh adapter on every reconnect, so without a
         # process-wide cache each reconnect would re-issue a key — needless auth
         # churn that can contribute to KIS-side throttling/blocking.
-        cached = approval_key_cache.get(self.config.app_key)
+        cached = approval_key_cache.get(self.config.app_key, self.config.is_real)
         if cached is not None:
             self._approval_key = cached
             return
@@ -580,7 +581,9 @@ class KISWebSocketAdapter(BaseAPIAdapter):
                 raise ValueError(f"Failed to get approval key: error_code={error_code}")
 
             self._approval_key = data["approval_key"]
-            approval_key_cache.set(self.config.app_key, self._approval_key)
+            approval_key_cache.set(
+                self.config.app_key, self.config.is_real, self._approval_key
+            )
             logger.info("[KIS WS] Approval key obtained")
 
         except requests.RequestException as e:
@@ -603,8 +606,12 @@ class KISWebSocketAdapter(BaseAPIAdapter):
             # not PONG standard WS pings (it runs app-level PINGPONG, echoed in
             # the message handler), so a client ping would hit ping_timeout and
             # drop a healthy connection. KIS guidance: turn KeepAlive off. Dead
-            # connections are detected via staleness (get_connection_staleness).
-            self.ws.run_forever(ping_interval=0)
+            # connections are detected via staleness (get_connection_staleness)
+            # plus OS-level TCP keepalive (SO_KEEPALIVE) for silent half-opens.
+            self.ws.run_forever(
+                ping_interval=0,
+                sockopt=((socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1),),
+            )
         except Exception as e:
             logger.error(f"[KIS WS] WebSocket error: {e}")
         finally:
