@@ -101,9 +101,18 @@ class SetupAGapReversion(Setup):
 
     CONFIG_CLASS = SetupAConfig
 
+    # Why the last check() returned None (observability — answers "why no
+    # Setup A trade today"). Set at every reject gate; None after a fired signal.
+    last_reject_reason: str | None = None
+
     # ------------------------------------------------------------------
     # Core entry check
     # ------------------------------------------------------------------
+
+    def _reject(self, reason: str) -> None:
+        """Record the rejection reason and return None (early-return helper)."""
+        self.last_reject_reason = reason
+        return None
 
     def check(self, ctx: MarketContext) -> Signal | None:  # noqa: PLR0911
         """Evaluate *ctx* and return a Signal when all conditions are met.
@@ -115,46 +124,57 @@ class SetupAGapReversion(Setup):
         # 1. Time window guard
         minutes_since_open = ctx.minutes_since_open()
         if not (c.valid_minutes_min <= minutes_since_open <= c.valid_minutes_max):
-            return None
+            return self._reject(
+                f"outside_time_window({minutes_since_open:.0f}m"
+                f"∉[{c.valid_minutes_min},{c.valid_minutes_max}])"
+            )
 
         # 2. Overnight macro confirmation
         if ctx.macro_overnight is None:
-            return None
+            return self._reject("no_macro_overnight")
         sp500_pct: float = ctx.macro_overnight.sp500_change_pct  # type: ignore[union-attr]
         if sp500_pct is None:
-            return None
+            return self._reject("no_sp500_data")
         if abs(sp500_pct) < c.min_sp500_gap_pct:
-            return None
+            return self._reject(
+                f"sp500_gap_below_min({abs(sp500_pct):.2f}<{c.min_sp500_gap_pct})"
+            )
 
         # 3. Korean open gap
         if ctx.prev_close <= 0:
-            return None
+            return self._reject("no_prev_close")
         gap_pct = (ctx.today_open - ctx.prev_close) / ctx.prev_close * 100
         if abs(gap_pct) < c.min_kr_gap_pct:
-            return None
+            return self._reject(
+                f"kr_gap_below_min({abs(gap_pct):.2f}<{c.min_kr_gap_pct})"
+            )
 
         # 4. Alignment check: overnight SP500 direction must match the KR gap
         if math.copysign(1.0, sp500_pct) != math.copysign(1.0, gap_pct):
-            return None
+            return self._reject(
+                f"sp500_kr_gap_misaligned(sp500={sp500_pct:+.2f},gap={gap_pct:+.2f})"
+            )
 
         # 5. Retrace band check
         if gap_pct > 0:
             # Gap-UP: price fell back from the high → buy the dip ("long")
             gap_magnitude = ctx.today_open - ctx.prev_close  # positive
             if gap_magnitude <= 0:
-                return None
+                return self._reject("no_gap_up_magnitude")
             retrace = (ctx.today_open - ctx.current_price) / gap_magnitude
             direction = "long"
         else:
             # Gap-DOWN: price bounced up from the low → short the bounce ("short")
             gap_magnitude = ctx.prev_close - ctx.today_open  # positive
             if gap_magnitude <= 0:
-                return None
+                return self._reject("no_gap_down_magnitude")
             retrace = (ctx.current_price - ctx.today_open) / gap_magnitude
             direction = "short"
 
         if not (c.retrace_min <= retrace <= c.retrace_max):
-            return None
+            return self._reject(
+                f"retrace_out_of_band({retrace:.2f}∉[{c.retrace_min},{c.retrace_max}])"
+            )
 
         # 6. Build Signal
         atr = ctx.atr_14
@@ -173,6 +193,7 @@ class SetupAGapReversion(Setup):
 
         confidence = self._compute_confidence(retrace, sp500_pct)
 
+        self.last_reject_reason = None  # fired — clear any prior reject reason
         return Signal(
             setup_type="A_gap_reversion",
             direction=direction,

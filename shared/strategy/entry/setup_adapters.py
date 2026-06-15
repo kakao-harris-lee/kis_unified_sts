@@ -880,6 +880,38 @@ def _send_veto_alert_background(
 # Adapters
 # ---------------------------------------------------------------------------
 
+# Redis hash holding each futures setup's latest per-cycle evaluation outcome so
+# "why didn't futures trade today?" is answerable at a glance (field=setup name,
+# value=JSON{outcome, reason, ts_kst}). Best-effort; never breaks the entry loop.
+SETUP_EVAL_KEY = "trading:futures:setup_eval"
+
+
+def _publish_setup_eval(name: str, outcome: str, reason: str) -> None:
+    """Log + publish a setup's latest evaluation outcome (observability only)."""
+    if outcome == "reject":
+        logger.info("[%s] no signal this cycle: %s", name, reason)
+    try:
+        import json
+
+        from shared.strategy.market_time import now_kst
+
+        redis, _ = acquire_infra_clients()
+        if redis is not None:
+            redis.hset(
+                SETUP_EVAL_KEY,
+                name,
+                json.dumps(
+                    {
+                        "outcome": outcome,
+                        "reason": reason,
+                        "ts_kst": now_kst().isoformat(),
+                    }
+                ),
+            )
+            redis.expire(SETUP_EVAL_KEY, 86_400)
+    except Exception:  # noqa: BLE001 — observability must never break entries
+        logger.debug("[%s] setup-eval publish failed", name, exc_info=True)
+
 
 class SetupAEntryAdapter(EntrySignalGenerator[SetupAEntryConfig]):
     """EntrySignalGenerator adapter wrapping :class:`SetupAGapReversion`.
@@ -1043,10 +1075,14 @@ class SetupAEntryAdapter(EntrySignalGenerator[SetupAEntryConfig]):
         mc = _build_market_context(context)
         if mc is None:
             logger.debug("SetupAEntryAdapter: unable to build MarketContext — skipping")
+            _publish_setup_eval(self.name, "reject", "no_market_context")
             return None
 
         decision_signal = self._setup.check(mc)
         if decision_signal is None:
+            _publish_setup_eval(
+                self.name, "reject", self._setup.last_reject_reason or "setup_rejected"
+            )
             return None
 
         ts = context.timestamp
@@ -1082,6 +1118,9 @@ class SetupAEntryAdapter(EntrySignalGenerator[SetupAEntryConfig]):
                     min_signal_confidence=tuning.min_signal_confidence,
                 )
                 if skip_reason is not None:
+                    _publish_setup_eval(
+                        self.name, "reject", f"llm_tuning:{skip_reason}"
+                    )
                     return None
                 confidence_override = adjusted_confidence
 
@@ -1102,6 +1141,7 @@ class SetupAEntryAdapter(EntrySignalGenerator[SetupAEntryConfig]):
                     ts=ts,
                 )
                 if should_veto:
+                    _publish_setup_eval(self.name, "reject", f"llm_veto:{_veto_reason}")
                     return None
 
         # === P2-③ T5: RegimeGate check (after LLM veto, before Signal return) ===
@@ -1117,8 +1157,10 @@ class SetupAEntryAdapter(EntrySignalGenerator[SetupAEntryConfig]):
                     event_reader=_event_reader,
                 )
                 if blocked:
+                    _publish_setup_eval(self.name, "reject", "regime_gate_blocked")
                     return None
 
+        _publish_setup_eval(self.name, "fired", decision_signal.direction)
         return _decision_signal_to_orchestrator_signal(
             decision_signal,
             strategy_name=self.name,
@@ -1249,7 +1291,9 @@ class SetupCEntryAdapter(EntrySignalGenerator[SetupCEntryConfig]):
         assert (
             1 <= self.config.min_impact_tier <= 3
         ), "min_impact_tier must be between 1 and 3"
-        assert self.config.stop_buffer_atr_mult >= 0.0, "stop_buffer_atr_mult must be >= 0"
+        assert (
+            self.config.stop_buffer_atr_mult >= 0.0
+        ), "stop_buffer_atr_mult must be >= 0"
         assert (
             self.config.no_entry_after_minutes_since_open > 0
         ), "no_entry_after_minutes_since_open must be > 0"
@@ -1284,10 +1328,14 @@ class SetupCEntryAdapter(EntrySignalGenerator[SetupCEntryConfig]):
         mc = _build_market_context(context)
         if mc is None:
             logger.debug("SetupCEntryAdapter: unable to build MarketContext — skipping")
+            _publish_setup_eval(self.name, "reject", "no_market_context")
             return None
 
         decision_signal = self._setup.check(mc)
         if decision_signal is None:
+            _publish_setup_eval(
+                self.name, "reject", self._setup.last_reject_reason or "setup_rejected"
+            )
             return None
 
         ts = context.timestamp
@@ -1322,6 +1370,9 @@ class SetupCEntryAdapter(EntrySignalGenerator[SetupCEntryConfig]):
                     tuning=tuning,
                 )
                 if skip_reason is not None:
+                    _publish_setup_eval(
+                        self.name, "reject", f"llm_tuning:{skip_reason}"
+                    )
                     return None
                 confidence_override = adjusted_confidence
 
@@ -1342,6 +1393,7 @@ class SetupCEntryAdapter(EntrySignalGenerator[SetupCEntryConfig]):
                     ts=ts,
                 )
                 if should_veto:
+                    _publish_setup_eval(self.name, "reject", f"llm_veto:{_veto_reason}")
                     return None
 
         # === P2-③ T5: RegimeGate check (after LLM veto, before Signal return) ===
@@ -1357,8 +1409,10 @@ class SetupCEntryAdapter(EntrySignalGenerator[SetupCEntryConfig]):
                     event_reader=_event_reader,
                 )
                 if blocked:
+                    _publish_setup_eval(self.name, "reject", "regime_gate_blocked")
                     return None
 
+        _publish_setup_eval(self.name, "fired", decision_signal.direction)
         return _decision_signal_to_orchestrator_signal(
             decision_signal,
             strategy_name=self.name,

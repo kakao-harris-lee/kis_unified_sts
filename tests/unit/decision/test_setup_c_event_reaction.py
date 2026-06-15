@@ -448,6 +448,40 @@ class TestSetupCEventReaction:
         assert setup.check(ctx) is None
 
 
+class TestSetupCRejectReason:
+    """Observability: check() records WHY it rejected, clears on fired signal."""
+
+    def test_no_event_in_window_reason(self) -> None:
+        setup = SetupCEventReaction(config=_default_config())
+        now = datetime(2026, 5, 1, 14, 0, 0, tzinfo=KST)
+        assert setup.check(_ctx(now=now, scheduled_events=[])) is None
+        assert setup.last_reject_reason.startswith("no_event_in_window")
+
+    def test_after_cutoff_reason(self) -> None:
+        setup = SetupCEventReaction(config=_default_config())
+        now = datetime(2026, 5, 1, 15, 30, 0, tzinfo=KST)  # 390 min > 360 cutoff
+        event = _make_event(minutes_ago=5.0, now=now)
+        assert setup.check(_ctx(now=now, scheduled_events=[event])) is None
+        assert setup.last_reject_reason.startswith("after_cutoff")
+
+    def test_fired_clears_reason(self) -> None:
+        setup = SetupCEventReaction(config=_default_config())
+        now = datetime(2026, 5, 1, 14, 0, 0, tzinfo=KST)
+        event = _make_event(minutes_ago=5.0, impact_tier=1, now=now)
+        sig = setup.check(
+            _ctx(
+                now=now,
+                current_price=350.30,
+                last_15min_high=350.00,
+                last_15min_low=348.00,
+                atr_14=1.0,
+                scheduled_events=[event],
+            )
+        )
+        assert sig is not None
+        assert setup.last_reject_reason is None
+
+
 class TestEventTradeTracker:
     """Unit tests for the in-memory EventTradeTracker."""
 
