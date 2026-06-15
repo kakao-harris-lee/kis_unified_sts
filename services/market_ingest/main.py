@@ -62,8 +62,9 @@ class MarketIngestDaemon:
             Callable[[str], Awaitable[dict[str, Any] | None]] | None
         ) = None,
         rest_poll_interval_seconds: float = 15.0,
-        ws_unhealthy_grace_seconds: float = 90.0,
+        ws_unhealthy_grace_seconds: float = 120.0,
         session_gate: Callable[[], bool] | None = None,
+        rest_rate_limited: Callable[[], bool] | None = None,
     ) -> None:
         self.asset = asset
         self.feed = feed
@@ -77,8 +78,16 @@ class MarketIngestDaemon:
         # injected (unit tests, or a feed with no REST equivalent).
         self.rest_price_fetcher = rest_price_fetcher
         self.rest_poll_interval_seconds = rest_poll_interval_seconds
+        # Grace defaults to 120s to match the futures MarketDataProvider's
+        # startup_grace: KIS WS often delivers first ticks per-symbol staggered
+        # right after open, and a shorter window caused REST-fallback storms.
         self.ws_unhealthy_grace_seconds = ws_unhealthy_grace_seconds
         self.session_gate = session_gate
+        # When the KIS client is rate-limited (EGW00201 penalty/cooldown) — the
+        # likely state during the very outage that triggers fallback — skip the
+        # poll instead of blocking minutes inside acquire(). Mirrors the futures
+        # _rest_poll_loop is_rate_limited short-circuit.
+        self.rest_rate_limited = rest_rate_limited
         self._symbols: list[str] = []
         self._stop = asyncio.Event()
         self._rest_active = False
@@ -120,23 +129,29 @@ class MarketIngestDaemon:
         symbols = list(self._symbols)
         if not symbols or self.rest_price_fetcher is None:
             return
+        if self.rest_rate_limited is not None and self.rest_rate_limited():
+            logger.warning(
+                "REST fallback: KIS client rate-limited, skipping poll asset=%s",
+                self.asset,
+            )
+            return
         published = 0
         for symbol in symbols:
             if self._stop.is_set():
                 break
             try:
                 data = await self.rest_price_fetcher(symbol)
+                if data:
+                    self.publisher.publish(self.asset, symbol, data)
+                    published += 1
             except Exception:
                 logger.warning(
-                    "REST fallback fetch failed asset=%s symbol=%s",
+                    "REST fallback fetch/publish failed asset=%s symbol=%s",
                     self.asset,
                     symbol,
                     exc_info=True,
                 )
                 continue
-            if data:
-                self.publisher.publish(self.asset, symbol, data)
-                published += 1
         if published:
             logger.warning(
                 "REST fallback active: WS feed stale, republished %d/%d %s prices",
@@ -182,6 +197,21 @@ class MarketIngestDaemon:
             self._rest_active = True
             await self._poll_rest_once()
 
+    def _on_fallback_done(self, task: asyncio.Task) -> None:
+        """Surface a fallback-loop crash immediately.
+
+        asyncio task exceptions are silent unless retrieved; without this a crash
+        in the fallback loop would silently disable REST failover for the rest of
+        the session (the exact scenario the feature exists to cover).
+        """
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.error(
+                "REST fallback loop crashed asset=%s: %r", self.asset, exc, exc_info=exc
+            )
+
     async def run(self) -> None:
         self.feed.set_tick_callback(self._on_tick)
         symbols = await self.symbol_provider()
@@ -192,6 +222,7 @@ class MarketIngestDaemon:
             "market-ingest started asset=%s symbols=%d", self.asset, len(symbols)
         )
         fallback_task = asyncio.create_task(self._rest_fallback_loop())
+        fallback_task.add_done_callback(self._on_fallback_done)
         try:
             while not self._stop.is_set():
                 with contextlib.suppress(TimeoutError):
@@ -219,7 +250,11 @@ class MarketIngestDaemon:
                     )
         finally:
             fallback_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
+            # Suppress BOTH the expected CancelledError AND any exception the task
+            # already died with (already logged by _on_fallback_done) so feed/
+            # publisher cleanup below always runs and the original error isn't
+            # masked.
+            with contextlib.suppress(asyncio.CancelledError, Exception):
                 await fallback_task
             await self.feed.stop()
             self.publisher.close()
@@ -253,6 +288,7 @@ async def _build_and_run() -> int:
     cleanup_kis: Any | None = None
     rest_price_fetcher: Callable[[str], Awaitable[dict[str, Any] | None]] | None = None
     session_gate: Callable[[], bool] | None = None
+    rest_rate_limited: Callable[[], bool] | None = None
     if asset == "stock":
         from shared.kis.stock_feed import KISStockPriceFeed
 
@@ -274,6 +310,7 @@ async def _build_and_run() -> int:
             cleanup_kis = kis_client
             rest_price_fetcher = kis_client.get_current_price
             session_gate = is_regular_session_open
+            rest_rate_limited = lambda: kis_client.is_rate_limited  # noqa: E731
         redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/1")
         redis_client = aioredis.from_url(redis_url)
         cleanup_redis = redis_client
@@ -339,9 +376,10 @@ async def _build_and_run() -> int:
             os.environ.get("INGEST_REST_POLL_SECONDS", "15")
         ),
         ws_unhealthy_grace_seconds=float(
-            os.environ.get("INGEST_REST_GRACE_SECONDS", "90")
+            os.environ.get("INGEST_REST_GRACE_SECONDS", "120")
         ),
         session_gate=session_gate,
+        rest_rate_limited=rest_rate_limited,
     )
 
     loop = asyncio.get_running_loop()
