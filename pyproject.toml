@@ -125,7 +125,11 @@ visualization = [
 ]
 
 api = [
-    "fastapi>=0.109",
+    # Cap <0.135: FastAPI 0.135 introduced `_IncludedRouter` entries in
+    # `app.routes` that lack the `.path` attribute, breaking the dashboard
+    # websocket route-registration test (`'_IncludedRouter' object has no
+    # attribute 'path'`). Lift the cap once that test handles the new route type.
+    "fastapi>=0.109,<0.135",
     "uvicorn[standard]>=0.25",
     "slowapi>=0.1.9",  # Rate limiting
 ]
