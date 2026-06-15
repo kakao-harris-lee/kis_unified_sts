@@ -58,6 +58,12 @@ class MarketIngestDaemon:
         symbol_provider: SymbolProvider,
         refresh_interval_seconds: float,
         restart_on_symbol_change: bool = False,
+        rest_price_fetcher: (
+            Callable[[str], Awaitable[dict[str, Any] | None]] | None
+        ) = None,
+        rest_poll_interval_seconds: float = 15.0,
+        ws_unhealthy_grace_seconds: float = 90.0,
+        session_gate: Callable[[], bool] | None = None,
     ) -> None:
         self.asset = asset
         self.feed = feed
@@ -65,8 +71,17 @@ class MarketIngestDaemon:
         self.symbol_provider = symbol_provider
         self.refresh_interval_seconds = refresh_interval_seconds
         self.restart_on_symbol_change = restart_on_symbol_change
+        # REST fallback: when the WS feed goes stale (KIS resets the connection),
+        # poll KIS REST for current prices and republish via the SAME publish path
+        # so downstream (M4-P) sees no difference. Disabled when no fetcher is
+        # injected (unit tests, or a feed with no REST equivalent).
+        self.rest_price_fetcher = rest_price_fetcher
+        self.rest_poll_interval_seconds = rest_poll_interval_seconds
+        self.ws_unhealthy_grace_seconds = ws_unhealthy_grace_seconds
+        self.session_gate = session_gate
         self._symbols: list[str] = []
         self._stop = asyncio.Event()
+        self._rest_active = False
 
     def _on_tick(
         self, symbol: str, data: dict[str, Any], ts: datetime  # noqa: ARG002
@@ -86,6 +101,87 @@ class MarketIngestDaemon:
             self.feed.update_symbols(symbols)
         self._symbols = symbols
 
+    def _feed_is_healthy(self) -> bool:
+        """True if the WS feed is delivering fresh ticks.
+
+        Feeds without ``is_healthy`` introspection (e.g. test doubles) are
+        treated as healthy so the REST fallback stays dormant for them.
+        """
+        is_healthy = getattr(self.feed, "is_healthy", None)
+        if not callable(is_healthy):
+            return True
+        try:
+            return bool(is_healthy())
+        except Exception:
+            return False
+
+    async def _poll_rest_once(self) -> None:
+        """Fetch each subscribed symbol's price via REST and republish it."""
+        symbols = list(self._symbols)
+        if not symbols or self.rest_price_fetcher is None:
+            return
+        published = 0
+        for symbol in symbols:
+            if self._stop.is_set():
+                break
+            try:
+                data = await self.rest_price_fetcher(symbol)
+            except Exception:
+                logger.warning(
+                    "REST fallback fetch failed asset=%s symbol=%s",
+                    self.asset,
+                    symbol,
+                    exc_info=True,
+                )
+                continue
+            if data:
+                self.publisher.publish(self.asset, symbol, data)
+                published += 1
+        if published:
+            logger.warning(
+                "REST fallback active: WS feed stale, republished %d/%d %s prices",
+                published,
+                len(symbols),
+                self.asset,
+            )
+
+    async def _rest_fallback_loop(self) -> None:
+        """Poll KIS REST while the WS feed is stale (KIS reset / outage).
+
+        Only runs during the regular session — off-hours and on holidays KIS
+        REST returns a stale last-close that would be stamped ``now`` and could
+        mislead the strategy, so polling is gated by ``session_gate``.
+        """
+        if self.rest_price_fetcher is None:
+            return  # fallback disabled
+        unhealthy_for = 0.0
+        while not self._stop.is_set():
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(
+                    self._stop.wait(), timeout=self.rest_poll_interval_seconds
+                )
+            if self._stop.is_set():
+                break
+            if self.session_gate is not None and not self.session_gate():
+                unhealthy_for = 0.0
+                self._rest_active = False
+                continue
+            if self._feed_is_healthy():
+                if self._rest_active:
+                    logger.info(
+                        "REST fallback: WS feed recovered asset=%s, stopping REST poll",
+                        self.asset,
+                    )
+                unhealthy_for = 0.0
+                self._rest_active = False
+                continue
+            # WS unhealthy — give it a grace window to self-recover before polling.
+            unhealthy_for += self.rest_poll_interval_seconds
+            if unhealthy_for < self.ws_unhealthy_grace_seconds:
+                continue
+            self._rest_active = True
+            await self._poll_rest_once()
+
     async def run(self) -> None:
         self.feed.set_tick_callback(self._on_tick)
         symbols = await self.symbol_provider()
@@ -95,6 +191,7 @@ class MarketIngestDaemon:
         logger.info(
             "market-ingest started asset=%s symbols=%d", self.asset, len(symbols)
         )
+        fallback_task = asyncio.create_task(self._rest_fallback_loop())
         try:
             while not self._stop.is_set():
                 with contextlib.suppress(TimeoutError):
@@ -121,6 +218,9 @@ class MarketIngestDaemon:
                         "symbol_provider returned empty list; keeping current symbols"
                     )
         finally:
+            fallback_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await fallback_task
             await self.feed.stop()
             self.publisher.close()
             logger.info("market-ingest stopped asset=%s", self.asset)
@@ -150,6 +250,9 @@ async def _build_and_run() -> int:
     publisher = TickStreamPublisher(TickStreamPublisherConfig.from_env())
 
     cleanup_redis: Any | None = None
+    cleanup_kis: Any | None = None
+    rest_price_fetcher: Callable[[str], Awaitable[dict[str, Any] | None]] | None = None
+    session_gate: Callable[[], bool] | None = None
     if asset == "stock":
         from shared.kis.stock_feed import KISStockPriceFeed
 
@@ -159,6 +262,18 @@ async def _build_and_run() -> int:
             is_real=os.environ.get("KIS_STOCK_MARKET", "mock").lower() == "real",
         )
         feed: Any = KISStockPriceFeed(config=auth)
+        # REST fallback so a KIS WS reset doesn't blind the decoupled stock
+        # pipeline (the futures orchestrator already fails over to REST). Gated
+        # to the regular session so off-hours/holiday last-closes aren't
+        # republished as live ticks.
+        if os.environ.get("INGEST_REST_FALLBACK_ENABLED", "true").lower() == "true":
+            from shared.kis.client import KISClient
+            from shared.strategy.market_time import is_regular_session_open
+
+            kis_client = KISClient(auth)
+            cleanup_kis = kis_client
+            rest_price_fetcher = kis_client.get_current_price
+            session_gate = is_regular_session_open
         redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/1")
         redis_client = aioredis.from_url(redis_url)
         cleanup_redis = redis_client
@@ -219,6 +334,14 @@ async def _build_and_run() -> int:
         symbol_provider=symbol_provider,
         refresh_interval_seconds=refresh_interval,
         restart_on_symbol_change=restart_on_change,
+        rest_price_fetcher=rest_price_fetcher,
+        rest_poll_interval_seconds=float(
+            os.environ.get("INGEST_REST_POLL_SECONDS", "15")
+        ),
+        ws_unhealthy_grace_seconds=float(
+            os.environ.get("INGEST_REST_GRACE_SECONDS", "90")
+        ),
+        session_gate=session_gate,
     )
 
     loop = asyncio.get_running_loop()
@@ -230,6 +353,8 @@ async def _build_and_run() -> int:
     finally:
         if cleanup_redis is not None:
             await cleanup_redis.aclose()
+        if cleanup_kis is not None:
+            await cleanup_kis.close()
     return 0
 
 
